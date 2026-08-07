@@ -25,6 +25,7 @@ class TradeEvaluator:
     def __init__(self):
         self._evaluated_tickets = set()
         self._lessons = []
+        self._lessons_summary = ""
         self._load_memory()
 
     def _load_memory(self):
@@ -34,23 +35,52 @@ class TradeEvaluator:
                 with open(MEMORY_FILE, "r") as f:
                     data = json.load(f)
                 self._lessons = data.get("lessons", [])
+                self._lessons_summary = data.get("lessons_summary", "")
                 self._evaluated_tickets = set(data.get("evaluated_tickets", []))
         except Exception as e:
             print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json: {e}")
 
     def _save_memory(self):
-        """Save lessons and evaluated tickets to disk."""
+        """Save lessons, summary, and evaluated tickets to disk."""
         try:
-            # Keep only the most recent MAX_LESSONS
-            trimmed_lessons = self._lessons[-MAX_LESSONS:]
             with open(MEMORY_FILE, "w") as f:
                 json.dump({
-                    "lessons": trimmed_lessons,
+                    "lessons": self._lessons[-MAX_LESSONS:],
+                    "lessons_summary": self._lessons_summary,
                     "evaluated_tickets": list(self._evaluated_tickets),
                     "last_updated": time.time()
                 }, f, indent=4)
         except Exception as e:
             print(f"[EVALUATOR WARNING] Gagal menyimpan memory_lessons.json: {e}")
+
+    def _summarize_and_reset(self):
+        """
+        When lessons reach MAX_LESSONS, ask gpt-5.4-mini to condense ALL lessons
+        into one summary, store it, and reset lessons to empty. The prompt then
+        only reads the summary (compact, token-light, still actionable).
+        """
+        lessons_text = "\n".join(
+            l.get("lesson", "") if isinstance(l, dict) else str(l)
+            for l in self._lessons
+        )
+        prompt = f"""
+You are an expert trading post-mortem analyst. Below are the last {len(self._lessons)} lessons learned from scalping trades.
+
+{lessons_text}
+
+Task: Summarize ALL of these into ONE concise, actionable block of trading wisdom (maximum 60 words). Group them into themes (e.g. entries, risk, timing, momentum). Output ONLY the summary text — no intro, no bullets numbering.
+"""
+        try:
+            summary = llm.query_primary_model(prompt)
+            if summary:
+                summary = summary.strip()
+                # Fallback model override: use gpt-5.4-mini for the summarizer
+                self._lessons_summary = summary
+                print(f"📋 [LESSONS SUMMARY] {summary}")
+                self._lessons = []
+                self._save_memory()
+        except Exception as e:
+            print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons: {e}")
 
     def check_and_evaluate_closed_trades(self):
         """
@@ -79,7 +109,11 @@ class TradeEvaluator:
             if lesson:
                 print(f"💡 [PELAJARAN BARU DITERIMA] {lesson}")
                 self._lessons.append({"symbol": deal_symbol, "lesson": lesson})
-                self._save_memory()
+                # When lessons reach MAX_LESSONS, summarize & reset (AI reads summary only)
+                if len(self._lessons) >= MAX_LESSONS:
+                    self._summarize_and_reset()
+                else:
+                    self._save_memory()
 
     def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None):
         """Asks the primary LLM (Gemini) to evaluate the trade outcome."""
@@ -113,8 +147,11 @@ Respond with the lesson text ONLY. Do not include introductory conversational fi
 
     def get_lessons_context(self):
         """Returns formatted lessons markdown block for prompt injection.
-        Only lessons from the active symbol are injected, so gold lessons
-        never leak into BTCUSD prompts (and vice versa)."""
+        Uses the condensed SUMMARY when available (token-light), plus the most
+        recent raw lessons until the next summary reset. Per-symbol isolated."""
+        if self._lessons_summary:
+            return f"\n### LESSONS LEARNED (SUMMARY)\n{self._lessons_summary}\n"
+
         if not self._lessons:
             return ""
 

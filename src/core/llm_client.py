@@ -35,36 +35,16 @@ def asset_desc(symbol):
 
 def query_primary_model(prompt, search_grounding=False):
     """
-    Queries a single model (prefers Gemini, then OpenAI, then DeepSeek)
-    for background macro/fundamental or timeframe analysis.
-    If search_grounding is True, it enables Google Search tools on Gemini.
+    Queries a single model for background analysis (post-mortem, MTF, lessons
+    summary). Primary = OpenAI gpt-5.4-mini (free tier), then Gemini, then
+    DeepSeek. Search grounding (Google Search) is only supported on Gemini,
+    so it forces the Gemini branch when enabled.
     """
-    # 1. Try Gemini
-    if gemini_client and config.GEMINI_API_KEY:
-        try:
-            from google.genai import types
-            
-            gen_config = None
-            if search_grounding:
-                gen_config = types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())]
-                )
-                
-            response = gemini_client.models.generate_content(
-                model=config.PRIMARY_ANALYSIS_MODEL,
-                contents=prompt,
-                config=gen_config
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
-
-    # 2. Try OpenAI (does not support Google Search grounding out-of-the-box in SDK)
+    # 1. Try OpenAI (primary — gpt-5.4-mini, free tier)
     if openai_client and config.OPENAI_API_KEY:
         try:
             response = openai_client.chat.completions.create(
-                model=config.OPENAI_MODEL,
+                model=config.PRIMARY_ANALYSIS_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a professional financial trading assistant."},
                     {"role": "user", "content": prompt}
@@ -75,6 +55,27 @@ def query_primary_model(prompt, search_grounding=False):
             return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"[PRIMARY MODEL ERROR - OPENAI] {e}")
+
+    # 2. Try Gemini (fallback; required for search grounding)
+    if gemini_client and config.GEMINI_API_KEY:
+        try:
+            from google.genai import types
+
+            gen_config = None
+            if search_grounding:
+                gen_config = types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                )
+
+            response = gemini_client.models.generate_content(
+                model=config.GEMINI_MODEL,
+                contents=prompt,
+                config=gen_config
+            )
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
 
     # 3. Try DeepSeek
     if deepseek_client and config.DEEPSEEK_API_KEY:
