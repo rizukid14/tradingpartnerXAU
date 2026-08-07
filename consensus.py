@@ -1,0 +1,97 @@
+import config
+
+def calculate_consensus(decisions):
+    """
+    Analyzes decisions from all 3 LLMs and determines if consensus is met.
+    decisions: dict of model decisions, e.g.:
+      {
+        "OpenAI": {"signal": "BUY", "confidence": 0.8, "sl_points": 300, "tp_points": 600, "reasoning": "..."},
+        "Gemini": {"signal": "BUY", "confidence": 0.9, "sl_points": 250, "tp_points": 500, "reasoning": "..."},
+        "DeepSeek": {"signal": "HOLD", "confidence": 0.0, "sl_points": None, "tp_points": None, "reasoning": "..."}
+      }
+    Returns:
+      dict: {
+        "signal": "BUY" | "SELL" | "HOLD",
+        "confidence": float,
+        "sl_points": int,
+        "tp_points": int,
+        "details": str
+      }
+    """
+    print("\n" + "="*50)
+    print("           ANALISIS KONSENSUS MULTI-LLM           ")
+    print("="*50)
+    
+    signals_count = {"BUY": 0, "SELL": 0, "HOLD": 0}
+    agreeing_models = []
+    
+    # Print details for each model
+    for model_name, dec in decisions.items():
+        sig = dec.get("signal", "HOLD")
+        conf = dec.get("confidence", 0.0)
+        reason = dec.get("reasoning", "Tidak ada alasan.")
+        sl = dec.get("sl_points")
+        tp = dec.get("tp_points")
+        
+        signals_count[sig] += 1
+        print(f"🤖 [{model_name}] Decision: {sig} (Conf: {conf*100:.1f}%)")
+        print(f"   SL: {sl} pts, TP: {tp} pts")
+        print(f"   Reason: {reason}")
+        print("-" * 50)
+        
+    # Check if we have a consensus for BUY or SELL
+    consensus_signal = "HOLD"
+    final_sl = config.DEFAULT_SL_POINTS
+    final_tp = config.DEFAULT_TP_POINTS
+    avg_confidence = 0.0
+    
+    for sig in ["BUY", "SELL"]:
+        if signals_count[sig] >= config.CONSENSUS_THRESHOLD:
+            consensus_signal = sig
+            # Find models that agreed
+            agreeing_models = [name for name, dec in decisions.items() if dec.get("signal") == sig]
+            
+            # Calculate average SL, TP and Confidence of agreeing models
+            sl_list = []
+            tp_list = []
+            conf_list = []
+            
+            for name in agreeing_models:
+                dec = decisions[name]
+                conf_list.append(dec.get("confidence", 0.5))
+                
+                # Extract SL/TP and handle nulls
+                sl_val = dec.get("sl_points")
+                if isinstance(sl_val, (int, float)) and sl_val > 0:
+                    sl_list.append(sl_val)
+                    
+                tp_val = dec.get("tp_points")
+                if isinstance(tp_val, (int, float)) and tp_val > 0:
+                    tp_list.append(tp_val)
+                    
+            # Averages
+            avg_confidence = sum(conf_list) / len(conf_list) if conf_list else 0.5
+            final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.DEFAULT_SL_POINTS
+            final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.DEFAULT_TP_POINTS
+            break
+            
+    if consensus_signal == "HOLD":
+        print(f"🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus ({config.CONSENSUS_THRESHOLD} model). Posisi: HOLD.")
+    else:
+        models_str = ", ".join(agreeing_models)
+        print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal}")
+        print(f"   Model yang sepakat: {models_str}")
+        print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")
+        print(f"   Final SL: {final_sl} points | Final TP: {final_tp} points")
+        
+    print("="*50 + "\n")
+    
+    details_str = f"Consensus by: {agreeing_models if agreeing_models else 'None'}"
+    
+    return {
+        "signal": consensus_signal,
+        "confidence": avg_confidence,
+        "sl_points": final_sl,
+        "tp_points": final_tp,
+        "details": details_str
+    }

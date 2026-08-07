@@ -1,0 +1,28 @@
+# --- SENSITIVE DATA (DO NOT COMMIT!) ---
+.env
+
+# --- BOT CACHE & STATE ---
+analysis_cache.json
+risk_state.json
+
+# --- BOT LOGS ---
+*.log
+trading_bot.log
+
+# --- PYTHON TEMP & CACHE ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# --- LOCAL EDITOR CONFIGS ---
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# --- OTHER TEMP DIRECTORIES ---
+.aionrs/
+.commandcode/
+cloned_repos/
