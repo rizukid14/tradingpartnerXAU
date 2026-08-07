@@ -9,8 +9,19 @@ else:
         import MetaTrader5 as mt5
 from dotenv import load_dotenv
 
+# --- PATH & DIRECTORY SETUP ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Add modular package search paths
+for path in [BASE_DIR, os.path.join(BASE_DIR, "src"), os.path.join(BASE_DIR, "src", "core"), os.path.join(BASE_DIR, "src", "analytics")]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
 # Load environmental variables from .env file
-load_dotenv()
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 
 # --- API KEYS ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

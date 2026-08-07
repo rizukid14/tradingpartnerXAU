@@ -11,7 +11,8 @@ import time
 import config
 import llm_client as llm
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forecast_cache.json")
+CACHE_FILE = os.path.join(config.DATA_DIR, "forecast_cache.json")
+
 CACHE_DURATION_SECONDS = 900  # 15 minutes forecast validity
 
 class ForecastEngine:

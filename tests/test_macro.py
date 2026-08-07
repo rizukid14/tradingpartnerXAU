@@ -4,7 +4,10 @@ import os
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 import MetaTrader5 as mt5
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 import config
+
 import mt5_connector as connector
 from macro_analyst import MacroAnalyst
 

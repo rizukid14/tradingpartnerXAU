@@ -9,7 +9,8 @@ import os
 import json
 import time
 
-DYNAMIC_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dynamic_rules.json")
+DYNAMIC_CONFIG_FILE = os.path.join(config.DATA_DIR, "dynamic_rules.json")
+
 
 # Strict Python Min/Max Guardrails (Safety Bounds)
 MIN_CONSENSUS_THRESHOLD = 2

@@ -6,7 +6,10 @@ if sys.platform == 'win32':
 from openai import OpenAI
 from google import genai
 from dotenv import load_dotenv
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 import config
+
 
 # Load env
 load_dotenv()

@@ -12,7 +12,8 @@ import config
 import mt5_connector as connector
 import llm_client as llm
 
-MEMORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_lessons.json")
+MEMORY_FILE = os.path.join(config.DATA_DIR, "memory_lessons.json")
+
 MAX_LESSONS = 15
 
 class TradeEvaluator:
