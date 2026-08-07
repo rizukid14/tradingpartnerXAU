@@ -18,6 +18,7 @@ else:
 import config
 
 
+
 def manage_all_positions():
     """
     Iterates all open positions for our symbol and applies:

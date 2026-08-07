@@ -171,17 +171,18 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
 
     lessons_str = ""
     try:
-        import trade_evaluator
+        from src.analytics import trade_evaluator
         lessons_str = trade_evaluator.evaluator.get_lessons_context()
     except Exception:
         pass
 
     forecast_str = ""
     try:
-        import forecast_engine
+        from src.analytics import forecast_engine
         forecast_str = forecast_engine.forecaster.get_forecast_context()
     except Exception:
         pass
+
 
     prompt = f"""
 You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).
@@ -208,6 +209,9 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - Look for quick entries and exits.
 - Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
 - HIGH-IMPACT NEWS TIMING RULE: High-impact economic news (such as NFP, CPI, or FOMC) ONLY restricts trading during the 15-30 minutes IMMEDIATELY preceding or following the actual release time. If the news event is hours away in a future session (e.g. NFP in NY session while currently in Tokyo/London session), DO NOT hold back high-probability 5-minute scalping setups during current session!
+- OPTIMAL ENTRY RANGE & R:R RULE: If the current market price is heavily extended far away from Support/Invalidation Level (e.g., projection R:R T+15m < 0.50), DO NOT chase entries at extreme highs/lows! You MUST select 'HOLD' or provide lower confidence to wait for a healthy price pullback into the Optimal Entry Zone near Support/Resistance before issuing a BUY or SELL signal.
+
+
 
 - Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 Gold point = 0.01 USD, e.g., 300 points = $3.00 movement).
 - Based on the current ATR of {atr_points} points:

@@ -30,11 +30,13 @@ else:
     except ImportError:
         import MetaTrader5 as mt5
 import config
-import mt5_connector as connector
+from src.core import mt5_connector as connector
+
 
 WIB = ZoneInfo("Asia/Jakarta")
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risk_state.json")
+STATE_FILE = os.path.join(config.DATA_DIR, "risk_state.json")
+
 
 
 class RiskEngine:

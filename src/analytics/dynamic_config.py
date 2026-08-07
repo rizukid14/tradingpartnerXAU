@@ -8,8 +8,12 @@ pre-approved Python safety boundaries.
 import os
 import json
 import time
+import config
+from core import mt5_connector as connector
 
-DYNAMIC_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dynamic_rules.json")
+
+DYNAMIC_CONFIG_FILE = os.path.join(config.DATA_DIR, "dynamic_rules.json")
+
 
 # Strict Python Min/Max Guardrails (Safety Bounds)
 MIN_CONSENSUS_THRESHOLD = 2
@@ -58,6 +62,7 @@ class DynamicConfig:
         """
         if not closed_deals or len(closed_deals) < 3:
             return
+
 
         wins = sum(1 for d in closed_deals if d.get("profit", 0) >= 0)
         total = len(closed_deals)

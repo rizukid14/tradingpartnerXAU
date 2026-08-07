@@ -4,9 +4,13 @@ import os
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 import MetaTrader5 as mt5
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 import config
-import mt5_connector as connector
-from macro_analyst import MacroAnalyst
+from src.core import mt5_connector as connector
+from src.analytics.macro_analyst import MacroAnalyst
+
+
 
 
 def main():
@@ -45,7 +49,8 @@ def main():
         print(context_str if context_str else "⚠️ Macro context is empty!")
         
         print("\n--- 5. Verify caching persistency on disk ---")
-        cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_cache.json")
+        cache_path = os.path.join(config.DATA_DIR, "analysis_cache.json")
+
         if os.path.exists(cache_path):
             print(f"✅ Cache file successfully written to disk at: {cache_path}")
             print(f"Cache file size: {os.path.getsize(cache_path)} bytes")

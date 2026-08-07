@@ -32,21 +32,49 @@ graph TD
 
 ---
 
-## 📂 Struktur Proyek
+## 📂 Struktur Proyek Modular (`src/`)
 
-* `config.py` : Berisi konfigurasi trading (symbol, lot, timeframe, SL/TP), nama model AI, dan model fallback.
-* `mt5_connector.py` : Modul untuk berkomunikasi dengan aplikasi MetaTrader 5 (ambil data, hitung indikator teknikal, eksekusi order).
-* `llm_client.py` : Modul yang menangani pemanggilan paralel ke API OpenAI, Gemini, dan DeepSeek, pengukur latensi, serta protokol Multi-Agent Debate.
-* `consensus.py` : Mesin voting untuk menentukan apakah sinyal BUY/SELL memenuhi threshold kesepakatan (2 dari 3 model).
-* `macro_analyst.py` : Analis latar belakang untuk Multi-Timeframe (M30, H1) dan Fundamental Search Grounding.
-* `trade_evaluator.py` : Mesin evaluasi pasca-close (Post-Mortem) untuk menghasilkan *lessons learned*.
-* `dynamic_config.py` : Penyesuai parameter risiko dinamis berdasarkan *win rate* transaksi terakhir.
-* `risk_engine.py` : Proteksi risiko komprehensif (circuit breaker, daily loss limit, spread filter, session lot multipliers, trailing stop, break-even).
-* `memory_lessons.json` : Memori pembelajaran dari hasil evaluasi transaksi.
-* `dynamic_rules.json` : Aturan konfigurasi dinamis yang disesuaikan secara otomatis.
-* `analysis_cache.json` : Cache analisis struktur Multi-Timeframe dan Fundamental.
-* `trading_bot.log` : Log ganda (stdout dan file) untuk menyimpan rekam jejak eksekusi bot.
-* `main.py` : Script utama yang menjalankan loop analisa dan eksekusi trading.
+```text
+c:\Vibe\tradingpartner\
+├── main.py                  # Entry point utama loop trading
+├── config.py                # Konfigurasi parameter, API keys, dan direktori
+├── .env / .env.example      # File environmental variables
+├── README.md                # Dokumentasi proyek
+├── requirements.txt         # Daftar dependency library Python
+│
+├── src/                     # Paket Modul Utama
+│   ├── core/                # Mesin Utama & Konektivitas
+│   │   ├── mt5_connector.py # Konektor API MetaTrader 5
+│   │   ├── llm_client.py    # Client API OpenAI, Gemini, DeepSeek (Paralel & Debate)
+│   │   ├── consensus.py     # Mesin Voting Konsensus Multi-LLM
+│   │   ├── risk_engine.py   # Master Risk Gate, Circuit Breaker & Limits
+│   │   └── telegram_alerts.py # Modul Notifikasi Telegram Bot
+│   │
+│   └── analytics/           # Fitur Analitis & AI Lanjutan
+│       ├── forecast_engine.py   # Proyeksi Harga Multi-Horizon (T+15m, T+60m)
+│       ├── trade_evaluator.py   # Post-Mortem Evaluator & Lessons Memory
+│       ├── macro_analyst.py     # MTF (M30, H1) & Fundamental Search Grounding
+│       ├── dynamic_config.py    # Penyesuai Parameter Risiko Dinamis (Self-Tuning)
+│       └── position_manager.py  # Pengelola Trailing Stop & Break-Even
+│
+├── data/                    # Cache JSON & State Lokal
+│   ├── analysis_cache.json  # Cache analisis struktur MTF & Fundamental
+│   ├── forecast_cache.json  # Cache proyeksi harga Multi-Horizon
+│   ├── memory_lessons.json  # Memori pembelajaran hasil Post-Mortem
+│   ├── dynamic_rules.json   # Parameter aturan dinamis
+│   └── risk_state.json      # Rekam jejak state risiko & tiket historis
+│
+├── docs/                    # Dokumentasi & Tinjauan Kode
+│   ├── command_code_review.md
+│   ├── gpt-mini-code_review.md
+│   ├── opus_review.md
+│   └── vps_deployment.md
+│
+└── tests/                   # Script Pengujian API & Modul
+    ├── test_apis.py         # Penguji keaktifan API Key
+    └── test_macro.py        # Penguji modul MacroAnalyst
+```
+
 
 ---
 

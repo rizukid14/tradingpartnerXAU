@@ -73,25 +73,30 @@ def calculate_consensus(decisions):
             avg_confidence = sum(conf_list) / len(conf_list) if conf_list else 0.5
             final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.DEFAULT_SL_POINTS
             final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.DEFAULT_TP_POINTS
-            break
             
-    if consensus_signal == "HOLD":
-        print(f"🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus ({config.CONSENSUS_THRESHOLD} model). Posisi: HOLD.")
-    else:
-        models_str = ", ".join(agreeing_models)
-        print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal}")
-        print(f"   Model yang sepakat: {models_str}")
-        print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")
-        print(f"   Final SL: {final_sl} points | Final TP: {final_tp} points")
-        
-    print("="*50 + "\n")
-    
-    details_str = f"Consensus by: {agreeing_models if agreeing_models else 'None'}"
+            print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal}")
+            print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
+            print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")
+            print(f"   Final SL: {final_sl} points | Final TP: {final_tp} points")
+            print("=" * 50 + "\n")
+            
+            return {
+                "signal": consensus_signal,
+                "confidence": avg_confidence,
+                "sl_points": final_sl,
+                "tp_points": final_tp,
+                "agreeing_count": len(agreeing_models),
+                "details": f"Consensus by: {agreeing_models}"
+            }
+            
+    print(f"🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus ({config.CONSENSUS_THRESHOLD} model). Posisi: HOLD.")
+    print("=" * 50 + "\n")
     
     return {
-        "signal": consensus_signal,
-        "confidence": avg_confidence,
-        "sl_points": final_sl,
-        "tp_points": final_tp,
-        "details": details_str
+        "signal": "HOLD",
+        "confidence": 0.0,
+        "sl_points": config.DEFAULT_SL_POINTS,
+        "tp_points": config.DEFAULT_TP_POINTS,
+        "agreeing_count": 0,
+        "details": "Consensus failed"
     }

@@ -9,8 +9,19 @@ else:
         import MetaTrader5 as mt5
 from dotenv import load_dotenv
 
+# --- PATH & DIRECTORY SETUP ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Add modular package search paths
+for path in [BASE_DIR, os.path.join(BASE_DIR, "src"), os.path.join(BASE_DIR, "src", "core"), os.path.join(BASE_DIR, "src", "analytics")]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
 # Load environmental variables from .env file
-load_dotenv()
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 
 # --- API KEYS ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -42,7 +53,7 @@ LLM_TIMEOUT_SECONDS = 24.0
 
 # --- TRADING PARAMETERS ---
 # Symbol to trade (e.g., "XAUUSD" for Gold, "EURUSD" for Forex)
-SYMBOL = "XAUUSD-ECN"
+SYMBOL = "XAUUSD-ECNc"
 
 # Timeframe for Scalping: 5 Minutes
 TIMEFRAME = mt5.TIMEFRAME_M5
@@ -98,7 +109,8 @@ PARTIAL_CLOSE_TP1_POINTS = 400     # TP1 trigger: 400 pts profit (~$4.00)
 MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today
 MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
 PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
-MAX_OPEN_POSITIONS = 5             # Max simultaneous positions
+MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layering cycles of 2 positions)
+
 
 
 # --- RECOVERY MODE (from xaubot-ai smart_risk_manager.py) ---
@@ -107,8 +119,9 @@ RECOVERY_MODE_ENABLED = True
 RECOVERY_LOT_MULTIPLIER = 0.5     # Use 50% of normal lot size during recovery
 
 # --- COOLDOWN (from xaubot-ai smart_risk_manager.py) ---
-# Minimum time between trades to avoid overtrading
-TRADE_COOLDOWN_SECONDS = 60        # Wait at least 60 seconds between new trades
+# Set to 0 because main loop already runs every 5 minutes on candle closures
+TRADE_COOLDOWN_SECONDS = 0
+
 
 # --- SPREAD FILTER (from both repos) ---
 # Skip trade entry if spread is too wide (common during news/low liquidity)
@@ -142,6 +155,8 @@ WEEKEND_MAX_LOSS_TO_HOLD_USD = 20.0  # Max loss $ to hold over weekend (larger =
 TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
+
 
 # --- MT5 CONNECTION ---
 # Leave empty to connect to the currently running MT5 terminal instance

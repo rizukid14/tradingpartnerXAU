@@ -9,9 +9,14 @@ import os
 import json
 import time
 import config
-import llm_client as llm
+from src.core import llm_client as llm
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forecast_cache.json")
+
+
+
+
+CACHE_FILE = os.path.join(config.DATA_DIR, "forecast_cache.json")
+
 CACHE_DURATION_SECONDS = 900  # 15 minutes forecast validity
 
 class ForecastEngine:
@@ -44,9 +49,22 @@ class ForecastEngine:
         now = time.time()
         last_time = float(self._forecast.get("timestamp", 0))
         
-        # Check if cache is still valid
+        # Check if cache is still valid or if price breached invalidation level
         if not force_refresh and (now - last_time < CACHE_DURATION_SECONDS) and self._forecast.get("symbol") == symbol:
-            return self._forecast
+            inv = float(self._forecast.get("invalidation_level", 0.0))
+            bias = self._forecast.get("forecast_bias", "NEUTRAL").upper()
+            curr_bid = current_tick.get("bid", 0.0)
+            curr_ask = current_tick.get("ask", 0.0)
+
+            if inv > 0:
+                if (bias == "BULLISH" and curr_ask <= inv) or (bias == "BEARISH" and curr_bid >= inv):
+                    print(f"🔄 [FORECAST AUTO-REFRESH] Harga ({curr_bid}) telah menembus batas invalidasi lama ({inv}). Membuat proyeksi baru real-time...")
+                    force_refresh = True
+                else:
+                    return self._forecast
+            else:
+                return self._forecast
+
 
         print(f"🔮 [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
         new_forecast = self._generate_forecast_with_llm(symbol, df, current_tick, macro_context)
@@ -188,11 +206,12 @@ Respond in STRICT JSON format ONLY with the following keys:
         bid = current_tick["bid"]
         ask = current_tick["ask"]
 
-        # Rule 1: Directional Alignment
-        if signal == "BUY" and bias != "BULLISH":
-            return False, f"Arah sinyal BUY bertentangan dengan bias prediksi ({bias})", 0, 0
-        if signal == "SELL" and bias != "BEARISH":
-            return False, f"Arah sinyal SELL bertentangan dengan bias prediksi ({bias})", 0, 0
+        # Rule 1: Directional Alignment (Only block on DIRECT contradiction: BUY vs BEARISH or SELL vs BULLISH)
+        if signal == "BUY" and bias == "BEARISH":
+            return False, f"Arah sinyal BUY bertentangan langsung dengan bias prediksi ({bias})", 0, 0
+        if signal == "SELL" and bias == "BULLISH":
+            return False, f"Arah sinyal SELL bertentangan langsung dengan bias prediksi ({bias})", 0, 0
+
 
         # Rule 2: Invalidation Guard
         if signal == "BUY" and ask <= invalidation:
@@ -211,11 +230,9 @@ Respond in STRICT JSON format ONLY with the following keys:
         if sl_points <= 0 or tp_points <= 0:
             return False, "Batas TP/SL dari proyeksi prediksi bernilai negatif atau 0", 0, 0
 
-        rr_ratio = tp_points / float(sl_points)
-        if rr_ratio < 1.2:
-            return False, f"Rasio Risk/Reward dari proyeksi ({rr_ratio:.2f}) di bawah batas aman 1.20", 0, 0
+        rr_ratio = tp_points / float(sl_points) if sl_points > 0 else 1.0
+        return True, f"Bias: {bias} | Proyeksi R:R (T+15m): {rr_ratio:.2f} (Target T+15m: {target_t15m}, Invalidation: {invalidation})", sl_points, tp_points
 
-        return True, f"✅ Prediksi Terkonfirmasi! Bias: {bias} | R:R Proyeksi: {rr_ratio:.2f} (SL: {sl_points} pts, TP: {tp_points} pts)", sl_points, tp_points
 
     def get_forecast_context(self):
         """Returns formatted forecast matrix markdown block for prompt injection."""

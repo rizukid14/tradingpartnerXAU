@@ -10,19 +10,19 @@ else:
     except ImportError:
         import MetaTrader5 as mt5
 import config
-import mt5_connector as connector
-import llm_client as llm
-import consensus
-from risk_engine import RiskEngine
-import position_manager
-import telegram_alerts as tg
+from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
+from src.core.risk_engine import RiskEngine
+from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine
+from src.analytics.macro_analyst import MacroAnalyst
+
+
 
 # Initialize risk engine
 risk = RiskEngine()
 
 # Initialize macro analyst
-from macro_analyst import MacroAnalyst
 macro = MacroAnalyst()
+
 
 
 class TeeLogger(object):
@@ -67,13 +67,12 @@ def run_trading_cycle():
     
     # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation
     try:
-        import trade_evaluator
-        import dynamic_config
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
         dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
+
 
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
@@ -94,53 +93,62 @@ def run_trading_cycle():
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
 
-    # 5.5 Validate Forecast Trigger Conditions ("Jika X dan Y sesuai prediksi maka execute")
-    if result["signal"] in ["BUY", "SELL"]:
-        try:
-            import forecast_engine
-            is_valid, f_reason, f_sl_pts, f_tp_pts = forecast_engine.forecaster.validate_forecast_trigger(
-                config.SYMBOL, tick, result, df
-            )
-            if not is_valid:
-                print(f"⚠️ [FORECAST BLOCK] Order {result['signal']} dibatalkan: {f_reason}")
-                return True
-            else:
-                print(f"🔮 [FORECAST CONFIRMED] {f_reason}")
-                if f_sl_pts > 0 and f_tp_pts > 0:
-                    result["sl_points"] = f_sl_pts
-                    result["tp_points"] = f_tp_pts
-        except Exception as e:
-            print(f"[FORECAST GUARD WARNING] {e}")
+    # 5.5 Multi-Horizon Forecast Context (Informational Only)
+    try:
+        is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
+            config.SYMBOL, tick, result, df
+        )
+        print(f"🔮 [FORECAST INFO] {f_reason}")
+    except Exception as e:
+        print(f"[FORECAST INFO WARNING] {e}")
+
+
 
     # 6. Execute trade if consensus signal is BUY or SELL
     trade_signal = result["signal"]
     if trade_signal in ["BUY", "SELL"]:
         sl_points = result["sl_points"]
         tp_points = result["tp_points"]
+        agreeing_count = result.get("agreeing_count", 0)
         
         # Get effective lot size (recovery mode + session multiplier)
         effective_lot = risk.get_effective_lot_size()
         
-        # Execute order
-        order_res = connector.send_trade_order(
-            symbol=config.SYMBOL,
-            action=trade_signal,
-            lot=effective_lot,
-            sl_points=sl_points,
-            tp_points=tp_points
-        )
-        if order_res["status"] == "SUCCESS":
-            print(f"🎉 Sukses menempatkan order: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
-            risk.record_trade_opened()
-            tg.alert_trade_opened(
-                trade_signal, effective_lot, sl_points, tp_points,
-                recovery_mode=risk.is_recovery_mode,
-                session_multiplier=risk.session_lot_multiplier
+        # Check remaining capacity slots before MAX_OPEN_POSITIONS
+        remaining_slots = max(0, config.MAX_OPEN_POSITIONS - len(open_positions))
+        desired_positions = 2 if agreeing_count >= 3 else 1
+        num_positions = min(desired_positions, remaining_slots)
+
+        if num_positions > 1:
+            print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka {num_positions} posisi sekaligus (Sisa slot: {remaining_slots})...")
+        elif num_positions == 1 and desired_positions > 1:
+            print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka 1 posisi (Dibatasi sisa slot max: {remaining_slots})...")
+
+
+        for i in range(num_positions):
+            # Posisi 2 gets 1.2x TP for capturing extended trend
+            pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
+            
+            order_res = connector.send_trade_order(
+                symbol=config.SYMBOL,
+                action=trade_signal,
+                lot=effective_lot,
+                sl_points=sl_points,
+                tp_points=pos_tp
             )
-        else:
-            print(f"❌ Gagal menempatkan order: {order_res['comment']}")
+            if order_res["status"] == "SUCCESS":
+                print(f"🎉 Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
+                risk.record_trade_opened()
+                tg.alert_trade_opened(
+                    trade_signal, effective_lot, sl_points, pos_tp,
+                    recovery_mode=risk.is_recovery_mode,
+                    session_multiplier=risk.session_lot_multiplier
+                )
+            else:
+                print(f"❌ Gagal menempatkan order #{i+1}: {order_res['comment']}")
     else:
         print("☕ Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
+
         
     return True
 
