@@ -277,8 +277,14 @@ def main():
             else:
                 print("⚠️ Gagal mengecek status candle di MT5. Mencoba kembali...")
             
+            # Show live status clock line in CLI every loop iteration
+            now_str = time.strftime('%H:%M:%S')
+            sys.stdout.write(f"\r🕒 [LIVE CLOCK: {now_str}] ⏳ Waiting for next tick / M5 candle...")
+            sys.stdout.flush()
+
             # Sleep 5 seconds between checks
             time.sleep(5)
+
             
     except KeyboardInterrupt:
         print("\n👋 Bot dimatikan secara manual oleh user.")
