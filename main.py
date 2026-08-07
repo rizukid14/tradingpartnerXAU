@@ -69,29 +69,35 @@ def run_trading_cycle():
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
-        dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
 
-
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
-    if len(open_positions) >= config.MAX_OPEN_POSITIONS:
-        print(f"ℹ️ Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
-        for pos in open_positions:
-            print(f"   - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-        print(f"➡️ Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({config.MAX_OPEN_POSITIONS}).")
-        return True
 
-    # 4. Query AI models in parallel
+
+    # 4. Query AI models in parallel (including active open_positions for 5-min AI re-evaluation!)
+
     macro_context = macro.get_macro_context()
     if macro_context:
         print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
     print("🧠 Mengirim data ke OpenAI, Gemini, dan DeepSeek...")
-    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context)
+    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
     
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
+
+    # 5.1 Execute AI Position Re-Evaluator Close Actions
+    tickets_to_close = result.get("tickets_to_close", [])
+    for close_req in tickets_to_close:
+        t_ticket = close_req["ticket"]
+        t_reason = close_req["reason"]
+        t_models = close_req.get("models", "AI Consensus")
+        print(f"⚡ [AI RE-EVALUATOR] {t_models} sepakat CLOSE order #{t_ticket}: {t_reason}")
+        close_res = connector.close_position(t_ticket)
+        if close_res:
+            print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
+            risk.record_position_closed(t_ticket, 0.0)
 
     # 5.5 Multi-Horizon Forecast Context (Informational Only)
     try:
@@ -101,6 +107,15 @@ def run_trading_cycle():
         print(f"🔮 [FORECAST INFO] {f_reason}")
     except Exception as e:
         print(f"[FORECAST INFO WARNING] {e}")
+
+    # Check if max open positions reached for NEW trades
+    if len(open_positions) >= config.MAX_OPEN_POSITIONS:
+        print(f"ℹ️ Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
+        for pos in open_positions:
+            print(f"   - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
+        print(f"➡️ Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({config.MAX_OPEN_POSITIONS}).")
+        return True
+
 
 
 

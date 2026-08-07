@@ -144,18 +144,18 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
     return query_primary_model(prompt, search_grounding=True)
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
-    Constructs a highly structured trading prompt with market context
-    and requests a standard JSON response.
+    Constructs a rich prompt for LLM models containing price action,
+    multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
-    # Take the last 10 candles for context
-    recent_candles = df.tail(10).to_dict(orient="records")
-    
-    # Format candle list for readability in prompt
+
+    # Create recent candles string (last 10 candles)
+    recent_candles = df.tail(10)
     candles_str = ""
-    for c in recent_candles:
-        candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
+    for idx, row in recent_candles.iterrows():
+        time_str = row['time'].strftime('%Y-%m-%d %H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
+        candles_str += f"- [{time_str}] Open: {row['open']}, High: {row['high']}, Low: {row['low']}, Close: {row['close']}, Vol: {row['tick_volume']}\n"
 
     latest = df.iloc[-1]
     point_size = current_tick.get("point", 0.01)
@@ -183,6 +183,21 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
     except Exception:
         pass
 
+    positions_str = ""
+    if open_positions and len(open_positions) > 0:
+        pos_lines = []
+        for pos in open_positions:
+            p_ticket = pos.get('ticket')
+            p_type = pos.get('type')
+            p_vol = pos.get('volume')
+            p_open = pos.get('price_open')
+            p_profit = pos.get('profit', 0.0)
+            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open} | Floating P/L: ${p_profit:.2f} USD")
+        positions_str = (
+            "\n### ACTIVE OPEN POSITIONS TO RE-EVALUATE\n" +
+            "\n".join(pos_lines) + "\n" +
+            "For each active position above, decide if it should be closed early ('CLOSE') to secure profit / cut loss in stale or sideways market conditions, or held ('HOLD').\n"
+        )
 
     prompt = f"""
 You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).
@@ -204,7 +219,7 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{forecast_str}
+{macro_str}{lessons_str}{forecast_str}{positions_str}
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
 - Look for quick entries and exits.
 - Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
@@ -226,7 +241,10 @@ JSON schema:
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the decision based on RSI, EMAs, and price action."
+  "reasoning": "A concise sentence explaining the decision based on RSI, EMAs, and price action.",
+  "position_actions": [
+    {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
+  ]
 }}
 
 """
@@ -428,12 +446,14 @@ Re-evaluate your position and cast your REVISED final decision for Round 2.
     return debate_prompt
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
     Sends the prompt to OpenAI, Gemini, and DeepSeek in parallel threads
     to minimize latency. If Round 1 lacks consensus, triggers Multi-Agent Debate Round 2.
+    Also evaluates active open positions for early close recommendations.
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
+
     
     results = {}
     latencies = {}

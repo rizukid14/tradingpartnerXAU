@@ -45,6 +45,31 @@ def calculate_consensus(decisions):
     final_tp = config.DEFAULT_TP_POINTS
     avg_confidence = 0.0
     
+    # Evaluate consensus for active position early-close actions
+    close_votes = {}  # ticket -> list of (model_name, reason)
+    for model_name, dec in decisions.items():
+        pos_actions = dec.get("position_actions", [])
+        if isinstance(pos_actions, list):
+            for item in pos_actions:
+                if isinstance(item, dict) and item.get("action") == "CLOSE":
+                    ticket = item.get("ticket")
+                    if ticket:
+                        if ticket not in close_votes:
+                            close_votes[ticket] = []
+                        close_votes[ticket].append((model_name, item.get("reason", "Proyeksi sideways/risiko balik arah")))
+
+    tickets_to_close = []
+    for ticket, votes in close_votes.items():
+        if len(votes) >= config.CONSENSUS_THRESHOLD:
+            models_str = ", ".join([v[0] for v in votes])
+            reason_sample = votes[0][1]
+            tickets_to_close.append({
+                "ticket": ticket,
+                "models": models_str,
+                "reason": reason_sample
+            })
+            print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/3 AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
+
     for sig in ["BUY", "SELL"]:
         if signals_count[sig] >= config.CONSENSUS_THRESHOLD:
             consensus_signal = sig
@@ -70,7 +95,7 @@ def calculate_consensus(decisions):
                     tp_list.append(tp_val)
                     
             # Averages
-            avg_confidence = sum(conf_list) / len(conf_list) if conf_list else 0.5
+            avg_confidence = float(sum(conf_list) / len(conf_list))
             final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.DEFAULT_SL_POINTS
             final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.DEFAULT_TP_POINTS
             
@@ -86,6 +111,7 @@ def calculate_consensus(decisions):
                 "sl_points": final_sl,
                 "tp_points": final_tp,
                 "agreeing_count": len(agreeing_models),
+                "tickets_to_close": tickets_to_close,
                 "details": f"Consensus by: {agreeing_models}"
             }
             
@@ -98,5 +124,6 @@ def calculate_consensus(decisions):
         "sl_points": config.DEFAULT_SL_POINTS,
         "tp_points": config.DEFAULT_TP_POINTS,
         "agreeing_count": 0,
+        "tickets_to_close": tickets_to_close,
         "details": "Consensus failed"
     }
