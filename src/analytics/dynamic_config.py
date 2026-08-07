@@ -60,7 +60,7 @@ class DynamicConfig:
         """
         Calculates recent win rate from closed deals and dynamically adjusts rules.
         """
-        if not closed_deals or len(closed_deals) < 1:
+        if not closed_deals or len(closed_deals) < 3:
             return
 
 
