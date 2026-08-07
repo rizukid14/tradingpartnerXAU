@@ -1,0 +1,11 @@
+{
+    "forecast_bias": "BULLISH",
+    "target_t15m": 4298.17,
+    "target_t60m": 4302.67,
+    "invalidation_level": 4286.83,
+    "optimal_entry_min": 4293.17,
+    "optimal_entry_max": 4295.5,
+    "forecast_reasoning": "Multi-LLM Consensus (Gemini: BULLISH, OpenAI: BULLISH, DeepSeek: BULLISH)",
+    "symbol": "XAUUSD-ECN",
+    "timestamp": 1786087788.1786976
+}
