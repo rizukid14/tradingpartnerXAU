@@ -22,9 +22,10 @@ OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 
 # --- MODEL NAMES & FALLBACKS ---
-# DeepSeek Model & Fallback
-DEEPSEEK_MODEL = "deepseek-v4-flash"
-DEEPSEEK_FALLBACK_MODEL = "deepseek-v4-pro"
+# DeepSeek Model & Fallback (Official production endpoint)
+DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_FALLBACK_MODEL = "deepseek-chat"
+
 
 # Gemini Model & Fallback
 GEMINI_MODEL = "gemini-3.1-flash-lite"
