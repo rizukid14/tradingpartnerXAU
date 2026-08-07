@@ -49,7 +49,8 @@ def main():
         print(context_str if context_str else "⚠️ Macro context is empty!")
         
         print("\n--- 5. Verify caching persistency on disk ---")
-        cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_cache.json")
+        cache_path = os.path.join(config.DATA_DIR, "analysis_cache.json")
+
         if os.path.exists(cache_path):
             print(f"✅ Cache file successfully written to disk at: {cache_path}")
             print(f"Cache file size: {os.path.getsize(cache_path)} bytes")
