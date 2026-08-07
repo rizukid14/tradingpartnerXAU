@@ -65,6 +65,16 @@ def run_trading_cycle():
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
     
+    # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation
+    try:
+        import trade_evaluator
+        import dynamic_config
+        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
+        closed_deals = connector.get_closed_positions_today()
+        dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
+    except Exception as e:
+        print(f"[EVALUATOR WARNING] {e}")
+
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
     if len(open_positions) >= config.MAX_OPEN_POSITIONS:

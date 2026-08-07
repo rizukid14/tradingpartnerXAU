@@ -169,6 +169,13 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
     if macro_context:
         macro_str = f"\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT\n{macro_context}\n"
 
+    lessons_str = ""
+    try:
+        import trade_evaluator
+        lessons_str = trade_evaluator.evaluator.get_lessons_context()
+    except Exception:
+        pass
+
     prompt = f"""
 You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).
 Analyze the current market condition and determine the next trading decision.
@@ -189,7 +196,7 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}
+{macro_str}{lessons_str}
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
 - Look for quick entries and exits.
 - Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
@@ -384,10 +391,34 @@ def query_deepseek(prompt):
 
 
 
+def prepare_debate_prompt(symbol, base_prompt, round1_results):
+    """Constructs the Round 2 debate prompt showcasing all initial model decisions."""
+    summary_lines = []
+    for model_name, res in round1_results.items():
+        sig = res.get("signal", "HOLD")
+        conf = res.get("confidence", 0.0)
+        reason = res.get("reasoning", "")
+        summary_lines.append(f"- **{model_name}**: Decision = `{sig}` (Conf: {conf*100:.0f}%), Reasoning: \"{reason}\"")
+
+    debate_context = "\n".join(summary_lines)
+
+    debate_prompt = f"""{base_prompt}
+
+### MULTI-AGENT DEBATE ROUND 2
+In Round 1, the 3 AI models evaluated the market and produced conflicting decisions:
+{debate_context}
+
+Carefully review and critique the counter-arguments provided by the other models.
+Consider if their observations regarding technical indicators, dynamic EMAs, support/resistance, or macro risk alter your assessment.
+Re-evaluate your position and cast your REVISED final decision for Round 2.
+"""
+    return debate_prompt
+
+
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
     """
     Sends the prompt to OpenAI, Gemini, and DeepSeek in parallel threads
-    to minimize latency, measuring elapsed execution time for each model.
+    to minimize latency. If Round 1 lacks consensus, triggers Multi-Agent Debate Round 2.
     """
     prompt = prepare_prompt(symbol, df, current_tick, macro_context)
     
@@ -422,6 +453,45 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
 
     total_elapsed = time.time() - start_total
     lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in latencies])
-    print(f"⏱️ [LATENSI MODEL] {lat_str} (Total Paralel: {total_elapsed:.2f}s)")
-                
+    print(f"⏱️ [LATENSI MODEL (Ronde 1)] {lat_str} (Total: {total_elapsed:.2f}s)")
+    
+    # Check consensus from Round 1
+    signals_count = {"BUY": 0, "SELL": 0, "HOLD": 0}
+    for m, res in results.items():
+        sig = res.get("signal", "HOLD")
+        signals_count[sig] = signals_count.get(sig, 0) + 1
+
+    consensus_target = getattr(config, "CONSENSUS_THRESHOLD", 2)
+    has_consensus = signals_count["BUY"] >= consensus_target or signals_count["SELL"] >= consensus_target
+
+    debate_enabled = getattr(config, "DEBATE_ENABLED", True)
+    if not has_consensus and debate_enabled:
+        print("\n💬 [DEBATE TRIGGERED] Ronde 1 tidak mencapai konsensus. Memulai diskusi Multi-Agent Debate...")
+        debate_prompt = prepare_debate_prompt(symbol, prompt, results)
+        
+        round2_results = {}
+        round2_latencies = {}
+        start_d = time.time()
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_model = {
+                executor.submit(_query_timed, query_openai, debate_prompt): "OpenAI",
+                executor.submit(_query_timed, query_gemini, debate_prompt): "Gemini",
+                executor.submit(_query_timed, query_deepseek, debate_prompt): "DeepSeek"
+            }
+            for future in concurrent.futures.as_completed(future_to_model):
+                model_name = future_to_model[future]
+                try:
+                    data, elapsed = future.result()
+                    round2_results[model_name] = data
+                    round2_latencies[model_name] = elapsed
+                except Exception as exc:
+                    round2_results[model_name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": str(exc)}
+                    round2_latencies[model_name] = 0.0
+                    
+        total_d = time.time() - start_d
+        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in round2_latencies])
+        print(f"💬 [DEBATE SELESAI] {d_str} (Total Debate: {total_d:.2f}s)")
+        return round2_results
+
     return results
