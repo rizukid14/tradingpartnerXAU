@@ -42,7 +42,7 @@ LLM_TIMEOUT_SECONDS = 24.0
 
 # --- TRADING PARAMETERS ---
 # Symbol to trade (e.g., "XAUUSD" for Gold, "EURUSD" for Forex)
-SYMBOL = "XAUUSD-ECN"
+SYMBOL = "XAUUSD-ECNc"
 
 # Timeframe for Scalping: 5 Minutes
 TIMEFRAME = mt5.TIMEFRAME_M5
@@ -107,8 +107,9 @@ RECOVERY_MODE_ENABLED = True
 RECOVERY_LOT_MULTIPLIER = 0.5     # Use 50% of normal lot size during recovery
 
 # --- COOLDOWN (from xaubot-ai smart_risk_manager.py) ---
-# Minimum time between trades to avoid overtrading
-TRADE_COOLDOWN_SECONDS = 60        # Wait at least 60 seconds between new trades
+# Set to 0 because main loop already runs every 5 minutes on candle closures
+TRADE_COOLDOWN_SECONDS = 0
+
 
 # --- SPREAD FILTER (from both repos) ---
 # Skip trade entry if spread is too wide (common during news/low liquidity)
