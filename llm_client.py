@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import concurrent.futures
 from openai import OpenAI
 from google import genai
@@ -336,27 +337,41 @@ def query_deepseek(prompt):
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
     """
     Sends the prompt to OpenAI, Gemini, and DeepSeek in parallel threads
-    to minimize latency.
+    to minimize latency, measuring elapsed execution time for each model.
     """
     prompt = prepare_prompt(symbol, df, current_tick, macro_context)
     
     results = {}
+    latencies = {}
+    start_total = time.time()
     
+    def _query_timed(query_fn, p):
+        t0 = time.time()
+        res = query_fn(p)
+        elapsed = time.time() - t0
+        return res, elapsed
+
     # Run in parallel using thread pool
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_to_model = {
-            executor.submit(query_openai, prompt): "OpenAI",
-            executor.submit(query_gemini, prompt): "Gemini",
-            executor.submit(query_deepseek, prompt): "DeepSeek"
+            executor.submit(_query_timed, query_openai, prompt): "OpenAI",
+            executor.submit(_query_timed, query_gemini, prompt): "Gemini",
+            executor.submit(_query_timed, query_deepseek, prompt): "DeepSeek"
         }
         
         for future in concurrent.futures.as_completed(future_to_model):
             model_name = future_to_model[future]
             try:
-                data = future.result()
+                data, elapsed = future.result()
                 results[model_name] = data
+                latencies[model_name] = elapsed
             except Exception as exc:
                 print(f"[LLM CLIENT ERROR] Model {model_name} generated an exception: {exc}")
                 results[model_name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": str(exc)}
+                latencies[model_name] = 0.0
+
+    total_elapsed = time.time() - start_total
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in latencies])
+    print(f"⏱️ [LATENSI MODEL] {lat_str} (Total Paralel: {total_elapsed:.2f}s)")
                 
     return results
