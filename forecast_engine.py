@@ -225,11 +225,9 @@ Respond in STRICT JSON format ONLY with the following keys:
         if sl_points <= 0 or tp_points <= 0:
             return False, "Batas TP/SL dari proyeksi prediksi bernilai negatif atau 0", 0, 0
 
-        rr_ratio = tp_points / float(sl_points)
-        if rr_ratio < 1.2:
-            return False, f"Rasio Risk/Reward dari proyeksi ({rr_ratio:.2f}) di bawah batas aman 1.20", 0, 0
+        rr_ratio = tp_points / float(sl_points) if sl_points > 0 else 1.0
+        return True, f"Bias: {bias} | Proyeksi R:R (T+15m): {rr_ratio:.2f} (Target T+15m: {target_t15m}, Invalidation: {invalidation})", sl_points, tp_points
 
-        return True, f"✅ Prediksi Terkonfirmasi! Bias: {bias} | R:R Proyeksi: {rr_ratio:.2f} (SL: {sl_points} pts, TP: {tp_points} pts)", sl_points, tp_points
 
     def get_forecast_context(self):
         """Returns formatted forecast matrix markdown block for prompt injection."""
