@@ -13,7 +13,7 @@ else:
 import config
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
-from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine
+from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
 
 
@@ -85,8 +85,8 @@ def run_trading_cycle():
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
         dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
-        
-        # Display Daily WinRate Summary Log
+
+        # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
             total_t = len(closed_deals)
             wins_t = sum(1 for d in closed_deals if d.get("profit", 0) >= 0)
@@ -94,6 +94,22 @@ def run_trading_cycle():
             wr = (wins_t / total_t) * 100.0
             pnl_t = sum(d.get("profit", 0) for d in closed_deals)
             print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%) | Net PnL: ${pnl_t:+.2f} USD")
+
+            # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
+            by_symbol = {}
+            for d in closed_deals:
+                sym = d.get("symbol", "UNKNOWN")
+                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0})
+                bucket["n"] += 1
+                bucket["pnl"] += d.get("profit", 0)
+                if d.get("profit", 0) >= 0:
+                    bucket["wins"] += 1
+            if len(by_symbol) > 1:
+                parts = []
+                for sym, b in sorted(by_symbol.items()):
+                    sym_wr = (b["wins"] / b["n"]) * 100.0 if b["n"] else 0.0
+                    parts.append(f"{sym}: {b['n']}T {b['wins']}W WR {sym_wr:.0f}% ${b['pnl']:+.2f}")
+                print(f"📊 [PERFORMA PER SIMBOL] " + " | ".join(parts))
         else:
             print("📊 [PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
     except Exception as e:
@@ -109,6 +125,15 @@ def run_trading_cycle():
     macro_context = macro.get_macro_context()
     if macro_context:
         print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
+
+    # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
+    # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
+    # will receive the (possibly stale) cache now and the next cycle gets the new one.
+    try:
+        forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
+    except Exception as e:
+        print(f"[FORECAST WARNING] {e}")
+
     print("🧠 Mengirim data ke OpenAI, Gemini, dan DeepSeek...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
     
@@ -122,10 +147,18 @@ def run_trading_cycle():
         t_reason = close_req["reason"]
         t_models = close_req.get("models", "AI Consensus")
         print(f"⚡ [AI RE-EVALUATOR] {t_models} sepakat CLOSE order #{t_ticket}: {t_reason}")
+        # Capture pre-close profit so daily P/L + loss streak stay accurate
+        pre_profit = 0.0
+        try:
+            pos_pre = mt5.positions_get(ticket=t_ticket)
+            if pos_pre and len(pos_pre) > 0:
+                pre_profit = pos_pre[0].profit + pos_pre[0].swap + pos_pre[0].commission
+        except Exception:
+            pass
         close_res = connector.close_position(t_ticket)
         if close_res:
             print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
-            risk.record_position_closed(t_ticket, 0.0)
+            risk.record_position_closed(t_ticket, pre_profit)
 
     # 5.5 Multi-Horizon Forecast Context (Informational Only)
     try:
@@ -193,7 +226,18 @@ def run_trading_cycle():
     else:
         print("☕ Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
 
-        
+    # Record this cycle's final decision for Recent Decision Memory
+    # (so the LLM next cycle can see if it has been HOLDing too long).
+    try:
+        decision_memory.memory.record(
+            config.SYMBOL,
+            signal=result.get("signal", "HOLD"),
+            confidence=result.get("confidence", 0.0),
+            reasoning=result.get("details", ""),
+        )
+    except Exception as e:
+        print(f"[DECISION MEMORY WARNING] {e}")
+
     return True
 
 

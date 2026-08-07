@@ -6,7 +6,12 @@ Combines the best from:
 - xaubot-ai: Partial close at TP1, weekend close handler
 
 Runs every tick cycle (every 5 seconds), NOT just on new candles.
+
+State persistence: tracks which tickets have already been partially-closed
+or moved to break-even so a bot restart cannot re-trigger those actions.
 """
+import os
+import json
 import sys
 if sys.platform == 'win32':
     import MetaTrader5 as mt5
@@ -17,6 +22,38 @@ else:
         import MetaTrader5 as mt5
 import config
 
+
+STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
+
+
+def _load_state():
+    """Load persisted tickets from disk. Returns (partial_set, be_set)."""
+    try:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r") as f:
+                data = json.load(f)
+            partial = set(int(t) for t in data.get("partial_closed_tickets", []))
+            be = set(int(t) for t in data.get("break_even_tickets", []))
+            return partial, be
+    except Exception as e:
+        print(f"[POS MANAGER WARNING] Gagal memuat position_manager_state.json: {e}")
+    return set(), set()
+
+
+def _save_state(partial_set, be_set):
+    """Persist tickets to disk so restart can recover state."""
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump({
+                "partial_closed_tickets": sorted(int(t) for t in partial_set),
+                "break_even_tickets": sorted(int(t) for t in be_set),
+            }, f)
+    except Exception as e:
+        print(f"[POS MANAGER WARNING] Gagal menyimpan position_manager_state.json: {e}")
+
+
+# Module-level state, loaded once at import (survives within a process)
+_partial_closed_tickets, _break_even_tickets = _load_state()
 
 
 def manage_all_positions():
@@ -71,13 +108,10 @@ def manage_all_positions():
 # =============================================================================
 #  PARTIAL CLOSE (from XAU-60 trade_executor.py)
 # =============================================================================
-_partial_closed_tickets = set()  # Track which tickets already had partial close
 
 
 def _check_partial_close(pos, profit_points, symbol_info):
     """Close a portion of the position at TP1 to lock in some profit."""
-    global _partial_closed_tickets
-
     if pos.ticket in _partial_closed_tickets:
         return  # Already partially closed
 
@@ -121,6 +155,7 @@ def _check_partial_close(pos, profit_points, symbol_info):
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _partial_closed_tickets.add(pos.ticket)
+        _save_state(_partial_closed_tickets, _break_even_tickets)
         remaining = round(pos.volume - close_volume, 2)
         print(f"💰 [PARTIAL CLOSE] Ticket #{pos.ticket}: Ditutup {close_volume} lot "
               f"(profit {profit_points:.0f} pts). Sisa: {remaining} lot — trailing sisanya.")
@@ -132,13 +167,10 @@ def _check_partial_close(pos, profit_points, symbol_info):
 # =============================================================================
 #  BREAK-EVEN (from XAU-60 trade_executor.py)
 # =============================================================================
-_break_even_tickets = set()  # Track which tickets already moved to break-even
 
 
 def _check_break_even(pos, profit_points, point, symbol_info):
     """Move SL to entry price + padding once profit threshold is reached."""
-    global _break_even_tickets
-
     if pos.ticket in _break_even_tickets:
         return  # Already at break-even
 
@@ -152,11 +184,13 @@ def _check_break_even(pos, profit_points, point, symbol_info):
         # Only move if current SL is below break-even level
         if pos.sl >= be_price:
             _break_even_tickets.add(pos.ticket)
+            _save_state(_partial_closed_tickets, _break_even_tickets)
             return
     else:  # SELL
         be_price = pos.price_open - (be_padding * point)
         if pos.sl != 0 and pos.sl <= be_price:
             _break_even_tickets.add(pos.ticket)
+            _save_state(_partial_closed_tickets, _break_even_tickets)
             return
 
     be_price = round(be_price, symbol_info.digits)
@@ -173,6 +207,7 @@ def _check_break_even(pos, profit_points, point, symbol_info):
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _break_even_tickets.add(pos.ticket)
+        _save_state(_partial_closed_tickets, _break_even_tickets)
         print(f"🔒 [BREAK-EVEN] Ticket #{pos.ticket}: SL dipindahkan ke entry {be_price}")
     else:
         comment = result.comment if result else "Unknown error"

@@ -1,8 +1,20 @@
 import config
+from src.analytics import dynamic_config
+
+
+def _effective_consensus_threshold():
+    """Returns the active consensus threshold (dynamic rules win over static config)."""
+    try:
+        return int(dynamic_config.dynamic_rules.consensus_threshold)
+    except Exception:
+        return config.CONSENSUS_THRESHOLD
+
 
 def calculate_consensus(decisions):
     """
     Analyzes decisions from all 3 LLMs and determines if consensus is met.
+    The threshold is read from DynamicConfig (self-tuning); falls back to
+    config.CONSENSUS_THRESHOLD if dynamic_rules is unavailable.
     decisions: dict of model decisions, e.g.:
       {
         "OpenAI": {"signal": "BUY", "confidence": 0.8, "sl_points": 300, "tp_points": 600, "reasoning": "..."},
@@ -15,6 +27,8 @@ def calculate_consensus(decisions):
         "confidence": float,
         "sl_points": int,
         "tp_points": int,
+        "agreeing_count": int,
+        "tickets_to_close": list,
         "details": str
       }
     """
@@ -59,8 +73,9 @@ def calculate_consensus(decisions):
                         close_votes[ticket].append((model_name, item.get("reason", "Proyeksi sideways/risiko balik arah")))
 
     tickets_to_close = []
+    consensus_threshold = _effective_consensus_threshold()
     for ticket, votes in close_votes.items():
-        if len(votes) >= config.CONSENSUS_THRESHOLD:
+        if len(votes) >= consensus_threshold:
             models_str = ", ".join([v[0] for v in votes])
             reason_sample = votes[0][1]
             tickets_to_close.append({
@@ -71,7 +86,7 @@ def calculate_consensus(decisions):
             print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/3 AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
 
     for sig in ["BUY", "SELL"]:
-        if signals_count[sig] >= config.CONSENSUS_THRESHOLD:
+        if signals_count[sig] >= consensus_threshold:
             consensus_signal = sig
             # Find models that agreed
             agreeing_models = [name for name, dec in decisions.items() if dec.get("signal") == sig]
@@ -115,7 +130,7 @@ def calculate_consensus(decisions):
                 "details": f"Consensus by: {agreeing_models}"
             }
             
-    print(f"🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus ({config.CONSENSUS_THRESHOLD} model). Posisi: HOLD.")
+    print(f"🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus ({consensus_threshold} model). Posisi: HOLD.")
     print("=" * 50 + "\n")
     
     return {

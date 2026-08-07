@@ -68,10 +68,22 @@ python main.py
   8. **Model**: OpenAI = `gpt-5.4-mini` (utama=fallback), Gemini = `gemini-3.1-flash-lite`, DeepSeek = `deepseek-chat`. `PRIMARY_ANALYSIS_MODEL = "gpt-5.4-mini"` (OpenAI free tier 2.5M token/hari) — `query_primary_model` urutan OpenAI → Gemini → DeepSeek
   9. **Parameter BTC di-scale** ke target **$10/trade** (0.01 lot): SL 50000 pts (~$5 risk, 0.5% modal), TP 100000 pts (~$10), trailing activation 25000/distance 15000, BE 20000/padding 1000, partial TP1 40000. (1 pt BTC = ~$0.0001; 10000 pts = $1)
   10. **Lessons memory**: pas 15 lessons penuh → di-summary jadi 1 blok via gpt-5.4-mini, lalu reset dari 0. Prompt inject summary aja.
-- **Masih BELUM diimplementasi**: "Recent Decision Memory" (simpan 5-6 keputusan terakhir per symbol ke `data/decision_memory.json`, inject ke prompt biar LLM sadar udah HOLD berapa lama).
+
+- **Bug fix & improvement sesi 8 Agustus 2026** (akan di-commit+push, branch `dev`):
+  1. **Dynamic config wired ke consensus**: `dynamic_rules.consensus_threshold` sekarang live dipakai `consensus.calculate_consensus()` lewat helper `_effective_consensus_threshold()`. Sebelumnya cuma di-print & simpan JSON tanpa efek ke keputusan.
+  2. **AI re-evaluator close pass real profit**: di `main.py`, sebelum `connector.close_position(ticket)`, tangkap profit dari `mt5.positions_get(ticket=...)` lalu pass ke `risk.record_position_closed(ticket, pre_profit)`. Sebelumnya di-pass `0.0` → daily P/L & loss streak jadi ngaco.
+  3. **Position manager state persisted**: `_partial_closed_tickets` & `_break_even_tickets` di-load/save ke `data/position_manager_state.json` (module-level di-import). Restart bot gak double-trigger partial close atau BE.
+  4. **Order retry + fill-policy fallback**: helper `_send_with_retry()` di `mt5_connector.py`. Retry sampai 2× pada retcode PRICE_OFF/PRICE_CHANGED/REQUOTE/REJECT (deviation melebar 5 pts tiap retry), fallback ke `ORDER_FILLING_RETURN` kalo IOC gagal. Dipakai `send_trade_order` + `close_position`.
+  5. **Recent Decision Memory (per-symbol)**: `src/analytics/decision_memory.py` baru. Record 6 keputusan terakhir per symbol, inject ke prompt dengan HOLD-streak note kalo ≥3 trailing HOLD. LLM jadi aware perpetual-HOLD & bisa self-correct.
+  6. **Forecast pre-warm di background thread**: `_kick_background_refresh()` di `forecast_engine.py` dengan `_refresh_lock` + `_refresh_in_progress` flag. Caller `get_active_forecast()` return cache immediately, refresh di background. Plus explicit pre-call di `main.py` setelah macro context, biar cache fresh tiap cycle.
+  7. **Lesson theme tagging + diversified summary**: `_extract_theme()` di `trade_evaluator.py` dengan keyword-based classifier (hard-override untuk timing/psychology/risk markers). Tiap lesson di-tag `{symbol, lesson, theme}`. Saat summary, lessons dikelompokkan per-theme dengan prompt eksplisit "preserve coverage of each theme".
+  8. **Per-symbol Daily Breakdown**: di `main.py`, tambah baris `📊 [PERFORMA PER SIMBOL]` setelah aggregate line — breakdown XAU vs BTC (hanya muncul kalo `len(by_symbol) > 1`).
+
+- **File baru sesi 8 Agustus**: `src/analytics/decision_memory.py`. File modified: `main.py`, `src/core/consensus.py`, `src/core/llm_client.py`, `src/core/mt5_connector.py`, `src/analytics/forecast_engine.py`, `src/analytics/position_manager.py`, `src/analytics/trade_evaluator.py`, `README.md`, `AGENTS.md`.
+
 - **Catatan akun**: LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065 (cent account? profit kecil per trade). Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
-- Git branch: `dev`. Commit terakhir: `f9643db`.
-- `git status` biasanya ada `data/dynamic_rules.json`, `data/forecast_cache.json`, `data/memory_lessons.json` ter-modif — itu runtime state, jangan commit kalau nggak sengaja.
+- Git branch: `dev`. Commit terakhir sesi 7 Agustus: `f9643db`. Sesi 8 Agustus akan buat commit baru.
+- `git status` biasanya ada `data/dynamic_rules.json`, `data/forecast_cache.json`, `data/memory_lessons.json`, `data/decision_memory.json`, `data/position_manager_state.json` ter-modif — itu runtime state, jangan commit kalau nggak sengaja.
 
 ## Konvensi & hal yang perlu diingat
 

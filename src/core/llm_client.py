@@ -197,6 +197,13 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
+    decision_memory_str = ""
+    try:
+        from src.analytics import decision_memory
+        decision_memory_str = decision_memory.memory.get_context(symbol)
+    except Exception:
+        pass
+
     forecast_str = ""
     try:
         from src.analytics import forecast_engine
@@ -250,7 +257,7 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{forecast_str}{calendar_str}{positions_str}
+{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
 - Scalp M5: quick entries/exits, high probability setups only. Decide from the data provided — do not wait for hypothetical pullbacks/breakouts.
 - BUY and SELL are equally valid. Follow the dominant M5 price action and momentum (M1/M5 candles); a clear impulse with structure break is a valid entry even against a higher-timeframe bias.

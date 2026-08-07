@@ -8,9 +8,9 @@ using the primary LLM (Gemini) and enforces strict conditional trigger rules
 import os
 import json
 import time
+import threading
 import config
 from src.core import llm_client as llm
-
 
 
 
@@ -19,9 +19,14 @@ CACHE_FILE = os.path.join(config.DATA_DIR, "forecast_cache.json")
 
 CACHE_DURATION_SECONDS = 900  # 15 minutes forecast validity
 
+# How close to expiry (in seconds) before we pre-warm in the background.
+PRE_WARM_WINDOW_SECONDS = 60
+
 class ForecastEngine:
     def __init__(self):
         self._forecast = {}
+        self._refresh_lock = threading.Lock()
+        self._refresh_in_progress = False
         self._load_cache()
 
     def _load_cache(self):
@@ -43,19 +48,53 @@ class ForecastEngine:
 
     def get_active_forecast(self, symbol, df, current_tick, macro_context=None, force_refresh=False):
         """
-        Retrieves active forecast matrix. Generates new projection via Gemini
-        ONLY if cache is expired (>15 mins) or force_refresh. Price breaches of
-        the invalidation level no longer trigger a refresh — the forecast is
-        informational (does not block execution), so refreshing on every breach
-        only added 3 extra LLM calls and latency to the cycle.
+        Retrieves active forecast matrix.
+
+        - If cache is fresh AND for this symbol: returns immediately.
+        - If cache is stale or missing: kicks off a background refresh
+          and returns whatever is currently cached (may be empty on first
+          call). The caller does NOT block on the refresh.
+        - If force_refresh=True: refreshes synchronously (legacy callers).
         """
         now = time.time()
         last_time = float(self._forecast.get("timestamp", 0))
-        
-        # Check if cache is still valid (no more invalidation-breach auto-refresh)
-        if not force_refresh and (now - last_time < CACHE_DURATION_SECONDS) and self._forecast.get("symbol") == symbol:
+        cache_valid = (
+            self._forecast.get("symbol") == symbol
+            and (now - last_time) < CACHE_DURATION_SECONDS
+        )
+
+        if cache_valid:
             return self._forecast
 
+        if force_refresh:
+            return self._do_refresh(symbol, df, current_tick, macro_context)
+
+        # Pre-warm: trigger background refresh, return stale cache immediately
+        self._kick_background_refresh(symbol, df, current_tick, macro_context)
+        return self._forecast
+
+    def _kick_background_refresh(self, symbol, df, current_tick, macro_context):
+        """Spawn a daemon thread to refresh the forecast without blocking the caller."""
+        with self._refresh_lock:
+            if self._refresh_in_progress:
+                return  # already running — don't stack threads
+            self._refresh_in_progress = True
+
+        def _runner():
+            try:
+                self._do_refresh(symbol, df, current_tick, macro_context)
+            except Exception as e:
+                print(f"[FORECAST WARNING] Background refresh gagal: {e}")
+            finally:
+                with self._refresh_lock:
+                    self._refresh_in_progress = False
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+
+    def _do_refresh(self, symbol, df, current_tick, macro_context):
+        """Actual refresh logic (synchronous). Updates cache + disk."""
+        now = time.time()
         print(f"🔮 [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
         new_forecast = self._generate_forecast_with_llm(symbol, df, current_tick, macro_context)
         if new_forecast:
@@ -64,7 +103,6 @@ class ForecastEngine:
             self._forecast = new_forecast
             self._save_cache()
             print(f"✅ [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | Target T+15m: {new_forecast.get('target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
-        
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
