@@ -26,19 +26,33 @@ macro = MacroAnalyst()
 
 
 class TeeLogger(object):
-    """Redirects stdout and stderr to both the console and a log file."""
-    def __init__(self, filepath):
+    """Redirects stdout and stderr to both the console and a log file with auto-size rotation."""
+    def __init__(self, filepath, max_bytes=2000000):
         self.terminal = sys.stdout
+        self.filepath = filepath
+        # Rotate log if size exceeds max_bytes (keep last 5000 lines)
+        if os.path.exists(filepath) and os.path.getsize(filepath) > max_bytes:
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                keep_lines = lines[-5000:]
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.writelines(keep_lines)
+            except Exception:
+                pass
         self.log = open(filepath, "a", encoding="utf-8")
 
     def write(self, message):
         self.terminal.write(message)
-        self.log.write(message)
-        self.log.flush()
+        # Skip carriage return live clock lines from spamming log file
+        if "\r" not in message:
+            self.log.write(message)
+            self.log.flush()
 
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+
 
 
 def run_trading_cycle():
@@ -65,12 +79,25 @@ def run_trading_cycle():
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
     
-    # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation
+    # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
+        dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
+        
+        # Display Daily WinRate Summary Log
+        if closed_deals and len(closed_deals) > 0:
+            total_t = len(closed_deals)
+            wins_t = sum(1 for d in closed_deals if d.get("profit", 0) >= 0)
+            loss_t = total_t - wins_t
+            wr = (wins_t / total_t) * 100.0
+            pnl_t = sum(d.get("profit", 0) for d in closed_deals)
+            print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%) | Net PnL: ${pnl_t:+.2f} USD")
+        else:
+            print("📊 [PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
+
 
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
