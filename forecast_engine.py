@@ -44,9 +44,22 @@ class ForecastEngine:
         now = time.time()
         last_time = float(self._forecast.get("timestamp", 0))
         
-        # Check if cache is still valid
+        # Check if cache is still valid or if price breached invalidation level
         if not force_refresh and (now - last_time < CACHE_DURATION_SECONDS) and self._forecast.get("symbol") == symbol:
-            return self._forecast
+            inv = float(self._forecast.get("invalidation_level", 0.0))
+            bias = self._forecast.get("forecast_bias", "NEUTRAL").upper()
+            curr_bid = current_tick.get("bid", 0.0)
+            curr_ask = current_tick.get("ask", 0.0)
+
+            if inv > 0:
+                if (bias == "BULLISH" and curr_ask <= inv) or (bias == "BEARISH" and curr_bid >= inv):
+                    print(f"🔄 [FORECAST AUTO-REFRESH] Harga ({curr_bid}) telah menembus batas invalidasi lama ({inv}). Membuat proyeksi baru real-time...")
+                    force_refresh = True
+                else:
+                    return self._forecast
+            else:
+                return self._forecast
+
 
         print(f"🔮 [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
         new_forecast = self._generate_forecast_with_llm(symbol, df, current_tick, macro_context)
