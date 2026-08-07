@@ -36,6 +36,8 @@ OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 
 # Maximum time (seconds) per model before triggering fallback
 LLM_TIMEOUT_SECONDS = 24.0
+DEEPSEEK_TIMEOUT_SECONDS = 5.0
+
 
 
 

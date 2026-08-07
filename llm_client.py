@@ -373,7 +373,8 @@ def query_deepseek(prompt):
 
     primary_model = config.DEEPSEEK_MODEL
     fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", None)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    timeout_sec = getattr(config, "DEEPSEEK_TIMEOUT_SECONDS", getattr(config, "LLM_TIMEOUT_SECONDS", 5.0))
+
 
     try:
         return _execute_deepseek_single(primary_model, prompt, timeout_sec)
