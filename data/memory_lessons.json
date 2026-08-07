@@ -5,11 +5,17 @@
         "[LESSON] Secure partial profits at key resistance levels to avoid full retracement during high-volatility XAUUSD scalping sessions.",
         "[LESSON] Exit positions before high-impact news releases to avoid erratic slippage and preserve gains from sudden volatility spikes.",
         "[LESSON] Always confirm scalping entries with a higher timeframe trend alignment to avoid premature exits during minor retracements.",
-        "[LESSON] Secure partial profits at the first sign of price stagnation to protect gains against sudden mean-reversion volatility."
+        "[LESSON] Secure partial profits at the first sign of price stagnation to protect gains against sudden mean-reversion volatility.",
+        "[LESSON] Always secure partial profits at the nearest liquidity level to prevent a winning scalp from turning into loss.",
+        "[LESSON] Always confirm scalping entries with trend alignment on the 15-minute timeframe to avoid fading momentum near resistance levels.",
+        "[LESSON] Exit quickly at the first sign of stalling momentum; avoid holding scalps through potential reversal zones near resistance.",
+        "[LESSON] Secure partial profits at immediate liquidity zones to prevent small wins from turning into full-stop losses.",
+        "[LESSON] Secure profits immediately at the nearest liquidity level to avoid commission-heavy scalping results on tight spreads."
     ],
     "evaluated_tickets": [
         568943364,
         568701714,
+        1159364628,
         568982169,
         568574255,
         568274610,
@@ -17,6 +23,7 @@
         568475962,
         568328891,
         568528833,
+        1159319878,
         568274887,
         568974545,
         568554197,
@@ -25,8 +32,11 @@
         568383461,
         568486251,
         568542443,
+        1159213419,
+        1159364590,
         568458737,
-        568388978
+        568388978,
+        1159207538
     ],
-    "last_updated": 1786090802.7911012
+    "last_updated": 1786093207.4574578
 }

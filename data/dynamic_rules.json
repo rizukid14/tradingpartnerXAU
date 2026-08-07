@@ -2,6 +2,6 @@
     "consensus_threshold": 2,
     "sl_multiplier": 1.5,
     "tp_multiplier": 3.0,
-    "status_message": "\ud83d\ude80 Optimal (Win Rate 89.5%: Standar 2/3 Konsensus)",
-    "last_updated": 1786090802.7962909
+    "status_message": "\ud83d\ude80 Optimal (Win Rate 100.0%: Standar 2/3 Konsensus)",
+    "last_updated": 1786093207.4615202
 }
