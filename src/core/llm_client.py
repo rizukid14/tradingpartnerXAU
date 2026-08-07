@@ -251,19 +251,11 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
 {macro_str}{lessons_str}{forecast_str}{calendar_str}{positions_str}
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
-- Look for quick entries and exits. Aim for high-probability setups: a clear directional bias, price aligned with momentum, and a risk/reward of at least 1.0 to the forecast target (0.8 acceptable for clear M5 momentum — see entry filter below).
-- Decide based on the CURRENT state of the market — do not wait for a hypothetical pullback, breakout, or confirmation that has not happened yet. If a valid setup exists at the current price, signal BUY/SELL. Only output HOLD when you can state a concrete, current reason (e.g., sideways structure, spread too high relative to ATR, or price outside a clear setup).
-- HIGH-IMPACT NEWS TIMING RULE: The 'UPCOMING HIGH-IMPACT ECONOMIC EVENTS' block above is the AUTHORITATIVE schedule (deterministic). Only restrict trading during the 15-30 minutes IMMEDIATELY preceding or following a listed event's exact release time. If no event is listed in the next 48h, do NOT hold back on account of news — trade normally. Treat vague 'news risk' as an invalid reason to HOLD when no event is imminent.
-- BALANCED DIRECTION: Treat BUY and SELL as equally valid. Do not assume an uptrend means 'buy pullbacks' — if price action clearly turns down (lower highs, break of recent support, bearish momentum), SELL is valid even when the higher-timeframe bias is bullish. The M5 setup is the priority, not the H1 trend.
-- M5 SCALPING PRIORITY: You are a 5-minute scalper. Enter on M5 momentum and price action — do NOT wait for H1/M30 confirmation. A clear M5 move (momentum + volume + price breaking structure) is a valid entry even if it counters the higher timeframe.
-- Entry filter — only enter when the following all hold:
-  - Forecast bias (from the forecast matrix) is not in DIRECT contradiction with your signal (BUY vs BEARISH or SELL vs BULLISH is a direct contradiction).
-  - Price is not extended far beyond the forecast target (e.g., for BUY, price is not already above the T+15m target).
-  - Risk/reward to the T+15m forecast target relative to the invalidation level is at least 1.0. EXCEPTION: if price action clearly supports the direction (strong momentum, structure break), a lower R:R (down to 0.8) is acceptable — do not block a clear M5 move just because the R:R is not as high as trend-following would give.
-- Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 point = {current_tick['point']} USD on {symbol}; on Gold 1 point ≈ $0.01, on BTCUSD 1 point ≈ $0.01 too, so e.g. 300 points = $3.00 movement).
-- Based on the current ATR of {atr_points} points:
-  - Your Stop Loss (SL) MUST be between {min_sl} and {max_sl} points (1.5x to 2x the ATR).
-  - Your Take Profit (TP) MUST be at least 1.5x of your suggested SL (e.g., between {min_tp} and {max_tp} points).
+- Scalp M5: quick entries/exits, high probability setups only. Decide from the data provided — do not wait for hypothetical pullbacks/breakouts.
+- BUY and SELL are equally valid. Follow the dominant M5 price action and momentum (M1/M5 candles); a clear impulse with structure break is a valid entry even against a higher-timeframe bias.
+- Only restrict trading 15-30 min before/after a HIGH-impact event listed in the economic calendar block above. If none is listed, trade normally — 'news risk' is not a valid HOLD reason when no event is imminent.
+- Entry: avoid entering against a DIRECT forecast-bias contradiction (BUY vs BEARISH, SELL vs BULLISH) or when price is already beyond the T+15m target. R:R to the T+15m target should be >= 1.0 (0.8 acceptable on clear momentum).
+- Suggested SL/TP in POINTS (1 point = {current_tick['point']} USD). Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL.
 
 ### RESPONSE FORMAT
 You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
@@ -273,7 +265,7 @@ JSON schema:
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the decision based on RSI, EMAs, and price action.",
+  "reasoning": "A concise sentence explaining the decision based on ALL the market data provided above: M5/M1 price action, indicators (RSI/EMA/ATR), forecast matrix, macro/fundamental context, economic calendar, and open positions.",
   "position_actions": [
     {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
   ]

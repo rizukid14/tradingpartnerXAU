@@ -43,7 +43,7 @@ GEMINI_MODEL = "gemini-3.1-flash-lite"
 GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
 
 # OpenAI Model & Fallback
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = "gpt-5.4-mini"
 OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 
 # Maximum time (seconds) per model before triggering fallback
@@ -218,7 +218,7 @@ HIGHER_TIMEFRAMES = {
     "H1": mt5.TIMEFRAME_H1
 }
 
-FUNDAMENTAL_ANALYSIS_ENABLED = True
+FUNDAMENTAL_ANALYSIS_ENABLED = False
 # Model that performs background macro/fundamental analysis
 PRIMARY_ANALYSIS_MODEL = GEMINI_MODEL
 

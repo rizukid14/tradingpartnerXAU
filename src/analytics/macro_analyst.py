@@ -59,6 +59,9 @@ class MacroAnalyst:
     def get_current_session(self):
         """
         Determines the current active session name matching WIB configuration.
+        When sessions overlap (e.g. London 15:00-23:59 vs London-NY 20:00-23:59),
+        returns the most SPECIFIC / most recent one (shortest window, latest start)
+        so the fundamental analysis label follows the actual active phase.
         Returns 'None' if no session is active.
         """
         if not config.SESSION_FILTER_ENABLED:
@@ -67,6 +70,7 @@ class MacroAnalyst:
         now_wib = datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
+        matches = []
         for session in config.ALLOWED_SESSIONS_WIB:
             start = session["start"][0] * 60 + session["start"][1]
             end = session["end"][0] * 60 + session["end"][1]
@@ -78,8 +82,16 @@ class MacroAnalyst:
                 in_session = start <= current_minutes < end
 
             if in_session:
-                return session["name"]
-        return "None"
+                # Duration (handle overnight): minutes from start to end
+                duration = (end - start) % (24 * 60)
+                matches.append((session["name"], start, duration))
+
+        if not matches:
+            return "None"
+
+        # Pick most specific: shortest duration, then latest start
+        matches.sort(key=lambda m: (m[2], -m[1]))
+        return matches[0][0]
 
     def check_and_update_analysis(self, force=False):
         """
@@ -163,14 +175,7 @@ class MacroAnalyst:
         """Formats the cached macro & MTF analyses into a unified context block."""
         context = []
 
-        # 1. Add Fundamental Outlook
-        if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):
-            outlook = self.cache.get("fundamental_outlook")
-            session = self.cache.get("last_fundamental_session", "None")
-            if outlook:
-                context.append(f"### FUNDAMENTAL OUTLOOK (Sesi: {session})\n{outlook}")
-
-        # 2. Add Multi-Timeframe Analysis
+        # 1. Add Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
             tf_analyses = []
             tf_cache = self.cache.get("timeframe_analysis", {})

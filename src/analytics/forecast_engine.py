@@ -44,27 +44,17 @@ class ForecastEngine:
     def get_active_forecast(self, symbol, df, current_tick, macro_context=None, force_refresh=False):
         """
         Retrieves active forecast matrix. Generates new projection via Gemini
-        if cache is expired (>15 mins) or invalidation level was breached.
+        ONLY if cache is expired (>15 mins) or force_refresh. Price breaches of
+        the invalidation level no longer trigger a refresh — the forecast is
+        informational (does not block execution), so refreshing on every breach
+        only added 3 extra LLM calls and latency to the cycle.
         """
         now = time.time()
         last_time = float(self._forecast.get("timestamp", 0))
         
-        # Check if cache is still valid or if price breached invalidation level
+        # Check if cache is still valid (no more invalidation-breach auto-refresh)
         if not force_refresh and (now - last_time < CACHE_DURATION_SECONDS) and self._forecast.get("symbol") == symbol:
-            inv = float(self._forecast.get("invalidation_level", 0.0))
-            bias = self._forecast.get("forecast_bias", "NEUTRAL").upper()
-            curr_bid = current_tick.get("bid", 0.0)
-            curr_ask = current_tick.get("ask", 0.0)
-
-            if inv > 0:
-                if (bias == "BULLISH" and curr_ask <= inv) or (bias == "BEARISH" and curr_bid >= inv):
-                    print(f"🔄 [FORECAST AUTO-REFRESH] Harga ({curr_bid}) telah menembus batas invalidasi lama ({inv}). Membuat proyeksi baru real-time...")
-                    force_refresh = True
-                else:
-                    return self._forecast
-            else:
-                return self._forecast
-
+            return self._forecast
 
         print(f"🔮 [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
         new_forecast = self._generate_forecast_with_llm(symbol, df, current_tick, macro_context)
