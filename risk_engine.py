@@ -54,7 +54,7 @@ class RiskEngine:
     #  STATE PERSISTENCE (survives restarts)
     # =========================================================================
     def _load_state(self):
-        """Restore loss streak / pause / recovery from disk."""
+        """Restore loss streak / pause / recovery / known closed from disk."""
         try:
             if os.path.exists(STATE_FILE):
                 with open(STATE_FILE, "r") as f:
@@ -62,17 +62,21 @@ class RiskEngine:
                 self._consecutive_losses = int(data.get("consecutive_losses", 0))
                 self._paused_until = float(data.get("paused_until", 0))
                 self._in_recovery_mode = bool(data.get("recovery_mode", False))
+                self._last_trade_time = float(data.get("last_trade_time", 0))
+                self._known_closed = set(data.get("known_closed", []))
         except Exception as e:
             print(f"[RISK WARNING] Gagal memuat state: {e}")
 
     def _save_state(self):
-        """Persist loss streak / pause / recovery to disk."""
+        """Persist loss streak / pause / recovery / known closed to disk."""
         try:
             with open(STATE_FILE, "w") as f:
                 json.dump({
                     "consecutive_losses": self._consecutive_losses,
                     "paused_until": self._paused_until,
                     "recovery_mode": self._in_recovery_mode,
+                    "last_trade_time": self._last_trade_time,
+                    "known_closed": list(self._known_closed),
                 }, f)
         except Exception as e:
             print(f"[RISK WARNING] Gagal menyimpan state: {e}")
@@ -85,6 +89,21 @@ class RiskEngine:
         """
         closed = connector.get_closed_positions_today()
         if not closed:
+            return
+
+        # If starting up for the first time without prior cached state
+        if not self._known_closed:
+            for c in closed:
+                self._known_closed.add(c["ticket"])
+            # Calculate current loss streak looking back from the latest deal
+            losses = 0
+            for c in reversed(closed):
+                if c["profit"] < 0:
+                    losses += 1
+                else:
+                    break
+            self._consecutive_losses = losses
+            self._save_state()
             return
 
         any_updated = False
