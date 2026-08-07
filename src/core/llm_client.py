@@ -138,14 +138,16 @@ Your response must be extremely brief (maximum 2-3 sentences) as it will be used
 
 def analyze_fundamentals(symbol):
     """
-    Queries Gemini using Google Search Grounding to summarize the latest 
-    macroeconomic sentiment and news affecting the asset.
+    Queries Gemini using Google Search Grounding to summarize the latest
+    macroeconomic SENTIMENT affecting the asset (news, outlook, positioning).
+    Event SCHEDULING is handled deterministically by economic_calendar.py —
+    search grounding is only a qualitative complement, never the schedule source.
     """
     prompt = f"""
-What is the latest macroeconomic news affecting {symbol} ({asset_desc(symbol)}) prices today? 
-Summarize the main themes, current market sentiment, and any high-impact economic news releases (like NFP, CPI, central bank decisions, or crypto-specific events).
+What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
+Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
 
-Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a 5-minute scalping execution model.
+Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a 5-minute scalping execution model. Focus on DIRECTIONAL macro bias, not event schedules.
 """
     # Force search grounding tool
     return query_primary_model(prompt, search_grounding=True)
@@ -163,6 +165,17 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     for idx, row in recent_candles.iterrows():
         time_str = row['time'].strftime('%Y-%m-%d %H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
         candles_str += f"- [{time_str}] Open: {row['open']}, High: {row['high']}, Low: {row['low']}, Close: {row['close']}, Vol: {row['tick_volume']}\n"
+
+    # Micro price action: last 3 M1 candles (token-light, shows intra-M5 momentum)
+    m1_str = ""
+    try:
+        from src.core import mt5_connector
+        m1_candles = mt5_connector.get_last_m1_candles(symbol, num_candles=3)
+        if m1_candles:
+            m1_lines = [f"- [{c['time']}] O:{c['open']} H:{c['high']} L:{c['low']} C:{c['close']} V:{c['volume']}" for c in m1_candles]
+            m1_str = "\n### LAST 3 M1 CANDLES (micro price action)\n" + "\n".join(m1_lines) + "\n"
+    except Exception:
+        pass
 
     latest = df.iloc[-1]
     point_size = current_tick.get("point", 0.01)
@@ -190,6 +203,13 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
+    calendar_str = ""
+    try:
+        from src.analytics import economic_calendar
+        calendar_str = economic_calendar.calendar.get_context()
+    except Exception:
+        pass
+
     positions_str = ""
     if open_positions and len(open_positions) > 0:
         pos_lines = []
@@ -201,9 +221,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             p_profit = pos.get('profit', 0.0)
             pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open} | Floating P/L: ${p_profit:.2f} USD")
         positions_str = (
-            "\n### ACTIVE OPEN POSITIONS TO RE-EVALUATE\n" +
+            "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
-            "For each active position above, decide if it should be closed early ('CLOSE') to secure profit / cut loss in stale or sideways market conditions, or held ('HOLD').\n"
+            "For EACH open position above, make an explicit decision:\n" +
+            "- 'CLOSE' if the trade thesis is broken (price rejected the forecast target, trend reversed, or the position is stale with no momentum) or if a hard risk limit is at risk (e.g., floating loss approaching the daily max, or spread blowing out).\n" +
+            "- 'HOLD' if the thesis remains intact and the position is progressing toward target.\n" +
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected the T+15m target at 4280 with RSI diverging, floating +$0.40', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
         )
 
     prompt = f"""
@@ -219,22 +242,24 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 
 ### RECENT CANDLES (Last 10 candles, M5):
 {candles_str}
-
+{m1_str}
 ### CURRENT INDICATORS SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{forecast_str}{positions_str}
+{macro_str}{lessons_str}{forecast_str}{calendar_str}{positions_str}
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
-- Look for quick entries and exits.
-- Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
-- HIGH-IMPACT NEWS TIMING RULE: High-impact economic news (such as NFP, CPI, or FOMC) ONLY restricts trading during the 15-30 minutes IMMEDIATELY preceding or following the actual release time. If the news event is hours away in a future session (e.g. NFP in NY session while currently in Tokyo/London session), DO NOT hold back high-probability 5-minute scalping setups during current session!
-- OPTIMAL ENTRY RANGE & R:R RULE: If the current market price is heavily extended far away from Support/Invalidation Level (e.g., projection R:R T+15m < 0.50), DO NOT chase entries at extreme highs/lows! You MUST select 'HOLD' or provide lower confidence to wait for a healthy price pullback into the Optimal Entry Zone near Support/Resistance before issuing a BUY or SELL signal.
-
-
-
+- Look for quick entries and exits. Aim for high-probability setups: a clear directional bias, price aligned with momentum, and a risk/reward of at least 1.0 to the forecast target (0.8 acceptable for clear M5 momentum — see entry filter below).
+- Decide based on the CURRENT state of the market — do not wait for a hypothetical pullback, breakout, or confirmation that has not happened yet. If a valid setup exists at the current price, signal BUY/SELL. Only output HOLD when you can state a concrete, current reason (e.g., sideways structure, spread too high relative to ATR, or price outside a clear setup).
+- HIGH-IMPACT NEWS TIMING RULE: The 'UPCOMING HIGH-IMPACT ECONOMIC EVENTS' block above is the AUTHORITATIVE schedule (deterministic). Only restrict trading during the 15-30 minutes IMMEDIATELY preceding or following a listed event's exact release time. If no event is listed in the next 48h, do NOT hold back on account of news — trade normally. Treat vague 'news risk' as an invalid reason to HOLD when no event is imminent.
+- BALANCED DIRECTION: Treat BUY and SELL as equally valid. Do not assume an uptrend means 'buy pullbacks' — if price action clearly turns down (lower highs, break of recent support, bearish momentum), SELL is valid even when the higher-timeframe bias is bullish. The M5 setup is the priority, not the H1 trend.
+- M5 SCALPING PRIORITY: You are a 5-minute scalper. Enter on M5 momentum and price action — do NOT wait for H1/M30 confirmation. A clear M5 move (momentum + volume + price breaking structure) is a valid entry even if it counters the higher timeframe.
+- Entry filter — only enter when the following all hold:
+  - Forecast bias (from the forecast matrix) is not in DIRECT contradiction with your signal (BUY vs BEARISH or SELL vs BULLISH is a direct contradiction).
+  - Price is not extended far beyond the forecast target (e.g., for BUY, price is not already above the T+15m target).
+  - Risk/reward to the T+15m forecast target relative to the invalidation level is at least 1.0. EXCEPTION: if price action clearly supports the direction (strong momentum, structure break), a lower R:R (down to 0.8) is acceptable — do not block a clear M5 move just because the R:R is not as high as trend-following would give.
 - Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 point = {current_tick['point']} USD on {symbol}; on Gold 1 point ≈ $0.01, on BTCUSD 1 point ≈ $0.01 too, so e.g. 300 points = $3.00 movement).
 - Based on the current ATR of {atr_points} points:
   - Your Stop Loss (SL) MUST be between {min_sl} and {max_sl} points (1.5x to 2x the ATR).

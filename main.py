@@ -324,7 +324,8 @@ def main():
                         print("▶️ Menjalankan siklus analisa pertama saat startup...")
                         startup_run = False
                     else:
-                        print(f"\n🆕 Candle baru terdeteksi! Waktu: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_candle_time))}")
+                        candle_wib = connector.server_to_wib(int(current_candle_time))
+                        print(f"\n🆕 Candle baru terdeteksi! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
                     
                     last_candle_time = current_candle_time
                     

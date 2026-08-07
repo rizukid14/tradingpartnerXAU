@@ -1,6 +1,8 @@
 import time
 import pandas as pd
 import sys
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 if sys.platform == 'win32':
     import MetaTrader5 as mt5
 else:
@@ -12,6 +14,33 @@ from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 import config
+
+WIB = ZoneInfo("Asia/Jakarta")
+
+
+def server_utc_offset_hours():
+    """
+    Returns the MT5 server timezone offset in hours from UTC (e.g. +3 for
+    VTMarkets GMT+3). Falls back to 0 if terminal info is unavailable.
+    """
+    try:
+        ti = mt5.terminal_info()
+        if ti is not None and getattr(ti, "timezone", None) is not None:
+            return ti.timezone
+    except Exception:
+        pass
+    return 0
+
+
+def server_to_wib(server_ts):
+    """
+    Converts an MT5 server epoch timestamp to an aware WIB datetime.
+    MT5 timestamps are in the broker server timezone (e.g. GMT+3); this
+    shifts them into Asia/Jakarta so candle times match wall-clock WIB.
+    """
+    offset = timedelta(hours=server_utc_offset_hours())
+    server_dt = datetime.fromtimestamp(server_ts, tz=timezone(offset))
+    return server_dt.astimezone(WIB)
 
 def initialize_mt5():
     """Initializes connection to MT5 terminal."""
@@ -62,7 +91,8 @@ def get_market_data(symbol, timeframe, num_candles=50):
         return None
         
     df = pd.DataFrame(rates)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
+    # Convert server epoch -> aware WIB so candle times match wall-clock WIB
+    df['time'] = df['time'].apply(server_to_wib)
     
     # Calculate indicators using ta library
     df['ema_20'] = EMAIndicator(close=df['close'], window=20).ema_indicator()
@@ -71,6 +101,30 @@ def get_market_data(symbol, timeframe, num_candles=50):
     df['atr_14'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
     
     return df
+
+def get_last_m1_candles(symbol, num_candles=3):
+    """
+    Fetches the last N completed M1 candles (micro price action context).
+    Returns a list of dicts (time WIB, open, high, low, close, volume).
+    Returns [] on failure.
+    """
+    try:
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, num_candles)
+        if rates is None or len(rates) == 0:
+            return []
+        out = []
+        for r in rates:
+            out.append({
+                "time": server_to_wib(int(r['time'])).strftime('%H:%M'),
+                "open": r['open'],
+                "high": r['high'],
+                "low": r['low'],
+                "close": r['close'],
+                "volume": r['tick_volume'],
+            })
+        return out
+    except Exception:
+        return []
 
 def get_current_tick(symbol):
     """Gets the latest bid/ask tick data."""

@@ -8,6 +8,7 @@ risk_state.json
 # --- BOT LOGS ---
 *.log
 trading_bot.log
+logs/
 
 # --- PYTHON TEMP & CACHE ---
 __pycache__/

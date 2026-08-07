@@ -93,6 +93,11 @@ DRY_RUN = False
 # Minimum number of models that must agree (e.g., 2 out of 3)
 CONSENSUS_THRESHOLD = 2
 
+# Multi-Agent Debate Round 2 (extra LLM calls when Round 1 lacks consensus)
+# DISABLED: log analysis showed it never produced a trade (always reinforced HOLD)
+# and just burned tokens/latency. Round 1 consensus alone decides.
+DEBATE_ENABLED = False
+
 # ============================================================================
 #                     PROTECTION & EXECUTION LAYER
 #           (Inspired by XAU-60 execution engine & xaubot-ai risk system)
