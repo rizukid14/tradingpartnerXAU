@@ -57,13 +57,20 @@ python main.py
 
 ## Status terkini (AGUSTUS 2026 — PENTING)
 
-- **Prompt SUDAH diedit tapi BELUM di-commit** (`src/core/llm_client.py`):
-  - Aturan "OPTIMAL ENTRY RANGE & R:R RULE" (paksa HOLD kalau R:R < 0.5) **DIHAPUS**
-  - Diganti: "jangan tunggu pullback/breakout hipotetis; entry filter R:R ≥ 1.0; HOLD cuma kalau alasan konkret"
-  - Evaluasi posisi diubah jadi "DECISION REQUIRED" (CLOSE/HOLD wajib per ticket + alasan kuantitatif)
-- **Kenapa diubah**: user komplain prompt lama bikin jarang entry & melewatkan momen (log: banyak HOLD "wait for pullback/overbought/NFP"). Trade live justru profit konsisten (17 trade, 16W/1L, +$65.18 net hari ini 7 Agustus).
-- **Eksperimen disetujui tapi BELUM diimplementasi**: "Recent Decision Memory" — simpan 5-6 keputusan terakhir per symbol ke `data/decision_memory.json`, inject ke prompt (biar LLM sadar udah HOLD berapa lama, karena tiap call LLM = fresh session / stateless).
-- Git branch: `dev`. Commit terakhir: `72f797a` (rotasi weekend BTCUSD).
+- **Semua perubahan 7-8 Agustus SUDAH di-commit & push ke `dev`** (terakhir `f9643db`):
+  1. **Prompt di-trim ramping** (5 baris inti, "data lengkap prompt tipis"): balanced BUY/SELL, M5 momentum > H1 trend, R:R ≥ 1.0 (0.8 kalau momentum jelas), news rule dari calendar
+  2. **Calendar programatik** (`src/analytics/economic_calendar.py`): NFP/CPI/PCE/GDP/FOMC/ECB/BOE/BOJ/SNB, DST-aware, inject cuma kalau event dalam **3 jam** (hemat token)
+  3. **Fundamental analysis OFF** (`FUNDAMENTAL_ANALYSIS_ENABLED=False`) — search grounding Gemini sering kasih konteks basi ("ahead of NFP" berjam-jam setelah rilis). Murni penilaian LLM dari data teknikal.
+  4. **Debate di-disable** (`DEBATE_ENABLED=False`) — 53 debate nggak pernah ngubah keputusan jadi trade, cuma buang token
+  5. **Timezone fix**: MT5 server (GMT+3) → WIB via `server_to_wib()`; log candle & prompt pake WIB
+  6. **3 M1 candle** di-inject ke prompt (micro price action)
+  7. **Forecast auto-refresh dihapus** — refresh tiap 15 menit (cache), bukan tiap invalidation breach (ngurangin 3 LLM call/cycle)
+  8. **Model**: OpenAI = `gpt-5.4-mini` (utama=fallback), Gemini = `gemini-3.1-flash-lite`, DeepSeek = `deepseek-chat`. `PRIMARY_ANALYSIS_MODEL = "gpt-5.4-mini"` (OpenAI free tier 2.5M token/hari) — `query_primary_model` urutan OpenAI → Gemini → DeepSeek
+  9. **Parameter BTC di-scale** ke target **$10/trade** (0.01 lot): SL 50000 pts (~$5 risk, 0.5% modal), TP 100000 pts (~$10), trailing activation 25000/distance 15000, BE 20000/padding 1000, partial TP1 40000. (1 pt BTC = ~$0.0001; 10000 pts = $1)
+  10. **Lessons memory**: pas 15 lessons penuh → di-summary jadi 1 blok via gpt-5.4-mini, lalu reset dari 0. Prompt inject summary aja.
+- **Masih BELUM diimplementasi**: "Recent Decision Memory" (simpan 5-6 keputusan terakhir per symbol ke `data/decision_memory.json`, inject ke prompt biar LLM sadar udah HOLD berapa lama).
+- **Catatan akun**: LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065 (cent account? profit kecil per trade). Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
+- Git branch: `dev`. Commit terakhir: `f9643db`.
 - `git status` biasanya ada `data/dynamic_rules.json`, `data/forecast_cache.json`, `data/memory_lessons.json` ter-modif — itu runtime state, jangan commit kalau nggak sengaja.
 
 ## Konvensi & hal yang perlu diingat
