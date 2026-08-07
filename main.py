@@ -110,30 +110,40 @@ def run_trading_cycle():
     if trade_signal in ["BUY", "SELL"]:
         sl_points = result["sl_points"]
         tp_points = result["tp_points"]
+        agreeing_count = result.get("agreeing_count", 0)
         
         # Get effective lot size (recovery mode + session multiplier)
         effective_lot = risk.get_effective_lot_size()
         
-        # Execute order
-        order_res = connector.send_trade_order(
-            symbol=config.SYMBOL,
-            action=trade_signal,
-            lot=effective_lot,
-            sl_points=sl_points,
-            tp_points=tp_points
-        )
-        if order_res["status"] == "SUCCESS":
-            print(f"🎉 Sukses menempatkan order: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
-            risk.record_trade_opened()
-            tg.alert_trade_opened(
-                trade_signal, effective_lot, sl_points, tp_points,
-                recovery_mode=risk.is_recovery_mode,
-                session_multiplier=risk.session_lot_multiplier
+        # If 3/3 models agree (100% Unanimous High Confidence), execute 2 positions!
+        num_positions = 2 if agreeing_count >= 3 else 1
+        if num_positions > 1:
+            print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka {num_positions} posisi sekaligus...")
+
+        for i in range(num_positions):
+            # Posisi 2 gets 1.2x TP for capturing extended trend
+            pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
+            
+            order_res = connector.send_trade_order(
+                symbol=config.SYMBOL,
+                action=trade_signal,
+                lot=effective_lot,
+                sl_points=sl_points,
+                tp_points=pos_tp
             )
-        else:
-            print(f"❌ Gagal menempatkan order: {order_res['comment']}")
+            if order_res["status"] == "SUCCESS":
+                print(f"🎉 Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
+                risk.record_trade_opened()
+                tg.alert_trade_opened(
+                    trade_signal, effective_lot, sl_points, pos_tp,
+                    recovery_mode=risk.is_recovery_mode,
+                    session_multiplier=risk.session_lot_multiplier
+                )
+            else:
+                print(f"❌ Gagal menempatkan order #{i+1}: {order_res['comment']}")
     else:
         print("☕ Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
+
         
     return True
 
