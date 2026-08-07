@@ -108,6 +108,17 @@ def alert_recovery_mode(active, consecutive_losses):
     send_message(text)
 
 
+def alert_symbol_switch(from_symbol, to_symbol):
+    """Send notification when the bot rotates symbols (XAUUSD weekday -> BTCUSD weekend)."""
+    text = (
+        f"🔄 *Symbol Switch*\n"
+        f"• Dari: `{from_symbol}`\n"
+        f"• Ke: `{to_symbol}`\n"
+        f"• Trade berlanjut di simbol baru."
+    )
+    send_message(text)
+
+
 def alert_bot_started():
     """Send bot startup notification with full config."""
     mode = "DRY RUN" if config.DRY_RUN else "🔥 LIVE"

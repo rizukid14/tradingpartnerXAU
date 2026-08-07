@@ -26,6 +26,13 @@ if config.GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 
+def asset_desc(symbol):
+    """Human-readable asset description for prompts (Gold vs Bitcoin)."""
+    if config.is_crypto(symbol):
+        return "Bitcoin (BTCUSD) — crypto, trades 24/7 including weekends"
+    return "Gold (XAUUSD) — Forex/commodity"
+
+
 def query_primary_model(prompt, search_grounding=False):
     """
     Queries a single model (prefers Gemini, then OpenAI, then DeepSeek)
@@ -132,11 +139,11 @@ Your response must be extremely brief (maximum 2-3 sentences) as it will be used
 def analyze_fundamentals(symbol):
     """
     Queries Gemini using Google Search Grounding to summarize the latest 
-    macroeconomic sentiment and news affecting Gold/Forex.
+    macroeconomic sentiment and news affecting the asset.
     """
     prompt = f"""
-What is the latest macroeconomic news affecting {symbol} (Gold/Forex) prices today? 
-Summarize the main themes, current market sentiment, and any high-impact economic news releases (like NFP, CPI, or central bank decisions).
+What is the latest macroeconomic news affecting {symbol} ({asset_desc(symbol)}) prices today? 
+Summarize the main themes, current market sentiment, and any high-impact economic news releases (like NFP, CPI, central bank decisions, or crypto-specific events).
 
 Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a 5-minute scalping execution model.
 """
@@ -200,7 +207,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         )
 
     prompt = f"""
-You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).
+You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} — {asset_desc(symbol)}.
 Analyze the current market condition and determine the next trading decision.
 
 ### MARKET DATA CONTEXT
@@ -228,7 +235,7 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 
 
 
-- Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 Gold point = 0.01 USD, e.g., 300 points = $3.00 movement).
+- Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 point = {current_tick['point']} USD on {symbol}; on Gold 1 point ≈ $0.01, on BTCUSD 1 point ≈ $0.01 too, so e.g. 300 points = $3.00 movement).
 - Based on the current ATR of {atr_points} points:
   - Your Stop Loss (SL) MUST be between {min_sl} and {max_sl} points (1.5x to 2x the ATR).
   - Your Take Profit (TP) MUST be at least 1.5x of your suggested SL (e.g., between {min_tp} and {max_tp} points).

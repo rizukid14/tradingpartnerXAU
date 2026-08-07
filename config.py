@@ -52,14 +52,19 @@ LLM_TIMEOUT_SECONDS = 24.0
 
 
 # --- TRADING PARAMETERS ---
-# Symbol to trade (e.g., "XAUUSD" for Gold, "EURUSD" for Forex)
-SYMBOL = "XAUUSD-ECNc"
+# Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
+WEEKDAY_SYMBOL = "XAUUSD-ECNc"
+WEEKEND_SYMBOL = "BTCUSD.c"
+CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
+SYMBOL = WEEKDAY_SYMBOL            # active symbol; updated at runtime by refresh_active_symbol()
 
 # Timeframe for Scalping: 5 Minutes
 TIMEFRAME = mt5.TIMEFRAME_M5
 
 # Default trade size (0.01 is micro-lot)
 LOT_SIZE = 0.01
+LOT_SIZE_XAU = LOT_SIZE
+LOT_SIZE_BTC = LOT_SIZE
 
 # Deviation (slippage tolerance in points)
 DEVIATION = 20
@@ -69,6 +74,12 @@ DEFAULT_SL_POINTS = 300
 DEFAULT_TP_POINTS = 600
 SL_ATR_MULTIPLIER = 1.5   # Stop Loss = 1.5x ATR
 TP_ATR_MULTIPLIER = 3.0   # Take Profit = 3.0x ATR (Risk-to-Reward 1:2)
+
+# Per-symbol defaults (fallback when LLM gives no SL/TP)
+DEFAULT_SL_POINTS_XAU = DEFAULT_SL_POINTS
+DEFAULT_TP_POINTS_XAU = DEFAULT_TP_POINTS
+DEFAULT_SL_POINTS_BTC = 600
+DEFAULT_TP_POINTS_BTC = 1200
 
 
 # --- CONSENSUS SETTINGS ---
@@ -93,17 +104,33 @@ TRAILING_STOP_ENABLED = True
 TRAILING_ACTIVATION_POINTS = 200   # Activate trailing after 200 pts profit (~$2.00 on Gold)
 TRAILING_DISTANCE_POINTS = 150     # Trail SL 150 pts behind current price
 
+# Per-symbol trailing thresholds
+TRAILING_ACTIVATION_POINTS_XAU = TRAILING_ACTIVATION_POINTS
+TRAILING_DISTANCE_POINTS_XAU = TRAILING_DISTANCE_POINTS
+TRAILING_ACTIVATION_POINTS_BTC = 400   # ~$40 profit on 0.01 BTC before trailing
+TRAILING_DISTANCE_POINTS_BTC = 300     # Trail 300 pts behind (1 pt = $0.01)
+
 # --- BREAK-EVEN (from XAU-60 trade_executor.py) ---
 # Moves stop loss to entry price once trade reaches profit threshold
 BREAK_EVEN_ENABLED = True
 BREAK_EVEN_TRIGGER_POINTS = 300    # Move SL to entry after 300 pts profit (~$3.00)
 BREAK_EVEN_PADDING_POINTS = 10     # Pad SL 10 pts above entry for safety
 
+# Per-symbol break-even thresholds
+BREAK_EVEN_TRIGGER_POINTS_XAU = BREAK_EVEN_TRIGGER_POINTS
+BREAK_EVEN_PADDING_POINTS_XAU = BREAK_EVEN_PADDING_POINTS
+BREAK_EVEN_TRIGGER_POINTS_BTC = 400
+BREAK_EVEN_PADDING_POINTS_BTC = 10
+
 # --- PARTIAL CLOSE (from XAU-60 trade_executor.py) ---
 # Close portion of position at first target, let the rest ride with trailing stop
 PARTIAL_CLOSE_ENABLED = True
 PARTIAL_CLOSE_PERCENT = 50         # Close 50% of position at TP1
 PARTIAL_CLOSE_TP1_POINTS = 400     # TP1 trigger: 400 pts profit (~$4.00)
+
+# Per-symbol partial-close thresholds
+PARTIAL_CLOSE_TP1_POINTS_XAU = PARTIAL_CLOSE_TP1_POINTS
+PARTIAL_CLOSE_TP1_POINTS_BTC = 800
 
 # --- DAILY RISK LIMITS (from xaubot-ai smart_risk_manager.py) ---
 MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today
@@ -130,6 +157,8 @@ TRADE_COOLDOWN_SECONDS = 0
 # --- SPREAD FILTER (from both repos) ---
 # Skip trade entry if spread is too wide (common during news/low liquidity)
 MAX_SPREAD_POINTS = 50             # Max allowed spread in points (50 pts = ~$0.50 on Gold)
+MAX_SPREAD_POINTS_XAU = MAX_SPREAD_POINTS
+MAX_SPREAD_POINTS_BTC = 2400        # BTCUSD spread in its own point scale; raise if too tight
 
 # --- SESSION FILTER (from xaubot-ai session_filter.py) ---
 # Only allow new trades during high-liquidity market sessions
@@ -147,6 +176,7 @@ DANGER_ZONES_WIB = [
     {"name": "Rollover",  "start": (4, 0), "end": (6, 0), "reason": "Spread melebar saat rollover"},
     {"name": "Dead Zone", "start": (0, 0), "end": (4, 0), "reason": "Likuiditas rendah"},
 ]
+# NOTE: crypto (BTCUSD) bypasses danger zones — trades 24/7 (handled in risk_engine)
 
 # --- WEEKEND PROTECTION (from xaubot-ai position_manager.py) ---
 # Close profitable positions before weekend to avoid gap risk
@@ -189,4 +219,60 @@ PRIMARY_ANALYSIS_MODEL = GEMINI_MODEL
 
 # --- LOGGING SETTINGS ---
 LOG_FILE = "trading_bot.log"
+
+
+# ============================================================================
+#  SYMBOL ROTATION HELPERS (weekday XAUUSD, weekend BTCUSD)
+# ============================================================================
+def is_crypto(symbol):
+    """True if the given symbol is a crypto pair (weekend trading)."""
+    return symbol in CRYPTO_SYMBOLS
+
+
+def get_active_symbol(now=None):
+    """
+    Returns the symbol that should be traded right now:
+    - Friday >= 22:00 WIB or Saturday/Sunday -> WEEKEND_SYMBOL (BTCUSD)
+    - Otherwise -> WEEKDAY_SYMBOL (XAUUSD)
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    if (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6):
+        return WEEKEND_SYMBOL
+    return WEEKDAY_SYMBOL
+
+
+_last_symbol = {"value": SYMBOL}
+
+
+def refresh_active_symbol(now=None):
+    """
+    Updates config.SYMBOL to the symbol that should be active now.
+    Returns (new_symbol, changed: bool) — changed=True when the symbol just rotated.
+    """
+    global SYMBOL
+    target = get_active_symbol(now)
+    changed = (target != _last_symbol["value"])
+    SYMBOL = target
+    _last_symbol["value"] = target
+    return target, changed
+
+
+def lot_size_for(symbol):
+    return LOT_SIZE_BTC if is_crypto(symbol) else LOT_SIZE_XAU
+
+
+def default_sl_points_for(symbol):
+    return DEFAULT_SL_POINTS_BTC if is_crypto(symbol) else DEFAULT_SL_POINTS_XAU
+
+
+def default_tp_points_for(symbol):
+    return DEFAULT_TP_POINTS_BTC if is_crypto(symbol) else DEFAULT_TP_POINTS_XAU
+
+
+def max_spread_points_for(symbol):
+    return MAX_SPREAD_POINTS_BTC if is_crypto(symbol) else MAX_SPREAD_POINTS_XAU
 

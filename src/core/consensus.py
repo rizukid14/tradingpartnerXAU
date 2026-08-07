@@ -41,8 +41,8 @@ def calculate_consensus(decisions):
         
     # Check if we have a consensus for BUY or SELL
     consensus_signal = "HOLD"
-    final_sl = config.DEFAULT_SL_POINTS
-    final_tp = config.DEFAULT_TP_POINTS
+    final_sl = config.default_sl_points_for(config.SYMBOL)
+    final_tp = config.default_tp_points_for(config.SYMBOL)
     avg_confidence = 0.0
     
     # Evaluate consensus for active position early-close actions
@@ -96,8 +96,8 @@ def calculate_consensus(decisions):
                     
             # Averages
             avg_confidence = float(sum(conf_list) / len(conf_list))
-            final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.DEFAULT_SL_POINTS
-            final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.DEFAULT_TP_POINTS
+            final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
+            final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
             
             print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal}")
             print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
@@ -121,8 +121,8 @@ def calculate_consensus(decisions):
     return {
         "signal": "HOLD",
         "confidence": 0.0,
-        "sl_points": config.DEFAULT_SL_POINTS,
-        "tp_points": config.DEFAULT_TP_POINTS,
+        "sl_points": config.default_sl_points_for(config.SYMBOL),
+        "tp_points": config.default_tp_points_for(config.SYMBOL),
         "agreeing_count": 0,
         "tickets_to_close": tickets_to_close,
         "details": "Consensus failed"

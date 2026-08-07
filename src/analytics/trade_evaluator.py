@@ -19,6 +19,8 @@ MEMORY_FILE = os.path.join(config.DATA_DIR, "memory_lessons.json")
 
 MAX_LESSONS = 15
 
+asset_desc = llm.asset_desc
+
 class TradeEvaluator:
     def __init__(self):
         self._evaluated_tickets = set()
@@ -62,6 +64,7 @@ class TradeEvaluator:
         for deal in closed_deals:
             ticket = deal["ticket"]
             profit = deal["profit"]
+            deal_symbol = deal.get("symbol", config.SYMBOL)
 
             if ticket in self._evaluated_tickets:
                 continue
@@ -71,26 +74,27 @@ class TradeEvaluator:
             self._save_memory()
 
             # Generate post-mortem lesson via Gemini
-            print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} (P/L: ${profit:.2f})...")
-            lesson = self._analyze_trade_with_llm(ticket, profit)
+            print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, P/L: ${profit:.2f})...")
+            lesson = self._analyze_trade_with_llm(ticket, profit, deal_symbol)
             if lesson:
                 print(f"💡 [PELAJARAN BARU DITERIMA] {lesson}")
-                self._lessons.append(lesson)
+                self._lessons.append({"symbol": deal_symbol, "lesson": lesson})
                 self._save_memory()
 
-    def _analyze_trade_with_llm(self, ticket, profit):
+    def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None):
         """Asks the primary LLM (Gemini) to evaluate the trade outcome."""
         outcome_str = f"PROFIT (+${profit:.2f})" if profit >= 0 else f"LOSS (-${abs(profit):.2f})"
+        trade_symbol = trade_symbol or config.SYMBOL
         
         prompt = f"""
-You are an expert trading post-mortem analyst evaluating a closed scalping position on {config.SYMBOL}.
+You are an expert trading post-mortem analyst evaluating a closed scalping position on {trade_symbol} ({asset_desc(trade_symbol)}).
 
 Trade Summary:
 - Position Ticket: {ticket}
 - Outcome: {outcome_str}
 
 Task:
-Analyze this trade result in the context of 5-minute scalping rules on Gold/Forex.
+Analyze this trade result in the context of 5-minute scalping rules on {asset_desc(trade_symbol)}.
 Provide ONE single, highly actionable, concise lesson learned (maximum 20 words).
 The lesson MUST start with '[LESSON]' and offer a concrete tip for future trading setups (e.g. caution during overbought RSI, avoiding entries near resistance ahead of news, or respecting dynamic EMA support).
 
@@ -108,11 +112,22 @@ Respond with the lesson text ONLY. Do not include introductory conversational fi
         return None
 
     def get_lessons_context(self):
-        """Returns formatted lessons markdown block for prompt injection."""
+        """Returns formatted lessons markdown block for prompt injection.
+        Only lessons from the active symbol are injected, so gold lessons
+        never leak into BTCUSD prompts (and vice versa)."""
         if not self._lessons:
             return ""
-        
-        recent = self._lessons[-5:] # Take last 5 lessons
+
+        # Handle both old (plain string) and new (dict with symbol) lesson formats
+        relevant = [
+            item if isinstance(item, str) else item.get("lesson", "")
+            for item in self._lessons
+            if isinstance(item, str) or item.get("symbol", "") == config.SYMBOL
+        ]
+        if not relevant:
+            return ""
+
+        recent = relevant[-5:]  # Take last 5 lessons
         bullets = "\n".join([f"- {item}" for item in recent])
         return f"\n### LESSONS LEARNED FROM RECENT TRADES\n{bullets}\n"
 

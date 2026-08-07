@@ -88,8 +88,12 @@ class RiskEngine:
         Detect positions closed by MT5 (SL/TP/manual) that the bot never saw close.
         Runs at startup and every can_trade() call so loss streak and daily
         P/L stay accurate even when trades are closed outside the bot.
+
+        Streak / recovery tracking is per-symbol (pass current symbol) so
+        XAUUSD losses on Friday do not bleed into BTCUSD weekend trading.
         """
-        closed = connector.get_closed_positions_today()
+        symbol = config.SYMBOL
+        closed = connector.get_closed_positions_today(symbol=symbol)
         if not closed:
             return
 
@@ -223,7 +227,7 @@ class RiskEngine:
         - Recovery mode (from xaubot-ai: reduce lot after losses)
         - Session multiplier (from xaubot-ai: boost during London-NY overlap)
         """
-        lot = config.LOT_SIZE
+        lot = config.lot_size_for(config.SYMBOL)
 
         # Recovery mode: reduce lot size
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
@@ -290,13 +294,18 @@ class RiskEngine:
             return True, ""
 
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
-        if spread_points > config.MAX_SPREAD_POINTS:
+        max_spread = config.max_spread_points_for(config.SYMBOL)
+        if spread_points > max_spread:
             return False, (f"⚠️ [RISK] Spread terlalu tinggi: {spread_points} pts "
-                           f"(Maks: {config.MAX_SPREAD_POINTS} pts). Menunggu...")
+                           f"(Maks: {max_spread} pts). Menunggu...")
         return True, ""
 
     def _check_danger_zones(self):
         """Check if current time is in a danger zone (rollover/dead zone)."""
+        # Crypto (BTCUSD) trades 24/7 — no FX-style danger zones
+        if config.is_crypto(config.SYMBOL):
+            return True, ""
+
         now_wib = datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
@@ -308,7 +317,9 @@ class RiskEngine:
         return True, ""
 
     def _check_weekend_entry(self):
-        """Block new trade entry near weekend close."""
+        """Block new trade entry near weekend close (FX only). Crypto trades 24/7."""
+        if config.is_crypto(config.SYMBOL):
+            return True, ""
         now_wib = datetime.now(WIB)
         # Friday after 22:00 WIB or Saturday before 05:00 WIB → block new entries
         if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
@@ -321,6 +332,11 @@ class RiskEngine:
 
     def _check_session(self):
         """Check if current time falls within allowed trading sessions. Sets lot multiplier."""
+        # Crypto (BTCUSD) trades 24/7 — no FX session windows
+        if config.is_crypto(config.SYMBOL):
+            self._session_lot_multiplier = 1.0
+            return True, ""
+
         if not config.SESSION_FILTER_ENABLED:
             self._session_lot_multiplier = 1.0
             return True, ""
@@ -351,9 +367,14 @@ class RiskEngine:
     def check_weekend_positions(self):
         """
         Check if we should close profitable positions before weekend.
+        FX only — crypto (BTCUSD) trades through the weekend.
         Returns list of tickets to close with reasons.
         """
         if not config.WEEKEND_CLOSE_ENABLED:
+            return []
+
+        # Do NOT close crypto positions before weekend — BTC trades all weekend
+        if config.is_crypto(config.SYMBOL):
             return []
 
         now_wib = datetime.now(WIB)

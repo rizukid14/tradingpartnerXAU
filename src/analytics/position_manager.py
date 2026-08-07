@@ -81,7 +81,8 @@ def _check_partial_close(pos, profit_points, symbol_info):
     if pos.ticket in _partial_closed_tickets:
         return  # Already partially closed
 
-    if profit_points < config.PARTIAL_CLOSE_TP1_POINTS:
+    tp1_points = config.PARTIAL_CLOSE_TP1_POINTS_BTC if config.is_crypto(config.SYMBOL) else config.PARTIAL_CLOSE_TP1_POINTS_XAU
+    if profit_points < tp1_points:
         return
 
     # Calculate volume to close
@@ -141,17 +142,19 @@ def _check_break_even(pos, profit_points, point, symbol_info):
     if pos.ticket in _break_even_tickets:
         return  # Already at break-even
 
-    if profit_points < config.BREAK_EVEN_TRIGGER_POINTS:
+    be_trigger = config.BREAK_EVEN_TRIGGER_POINTS_BTC if config.is_crypto(config.SYMBOL) else config.BREAK_EVEN_TRIGGER_POINTS_XAU
+    be_padding = config.BREAK_EVEN_PADDING_POINTS_BTC if config.is_crypto(config.SYMBOL) else config.BREAK_EVEN_PADDING_POINTS_XAU
+    if profit_points < be_trigger:
         return
 
     if pos.type == mt5.ORDER_TYPE_BUY:
-        be_price = pos.price_open + (config.BREAK_EVEN_PADDING_POINTS * point)
+        be_price = pos.price_open + (be_padding * point)
         # Only move if current SL is below break-even level
         if pos.sl >= be_price:
             _break_even_tickets.add(pos.ticket)
             return
     else:  # SELL
-        be_price = pos.price_open - (config.BREAK_EVEN_PADDING_POINTS * point)
+        be_price = pos.price_open - (be_padding * point)
         if pos.sl != 0 and pos.sl <= be_price:
             _break_even_tickets.add(pos.ticket)
             return
@@ -181,10 +184,17 @@ def _check_break_even(pos, profit_points, point, symbol_info):
 # =============================================================================
 def _check_trailing_stop(pos, profit_points, current_price, point, symbol_info):
     """Trail stop loss behind price once activation threshold is reached."""
-    if profit_points < config.TRAILING_ACTIVATION_POINTS:
+    if config.is_crypto(config.SYMBOL):
+        activation = config.TRAILING_ACTIVATION_POINTS_BTC
+        distance = config.TRAILING_DISTANCE_POINTS_BTC
+    else:
+        activation = config.TRAILING_ACTIVATION_POINTS_XAU
+        distance = config.TRAILING_DISTANCE_POINTS_XAU
+
+    if profit_points < activation:
         return
 
-    trail_distance = config.TRAILING_DISTANCE_POINTS * point
+    trail_distance = distance * point
 
     if pos.type == mt5.ORDER_TYPE_BUY:
         new_sl = current_price - trail_distance

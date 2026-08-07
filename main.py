@@ -208,6 +208,10 @@ def main():
     print("=" * 60)
     print("    BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
     print("=" * 60)
+
+    # Set active symbol now so the banner shows the symbol that will be traded
+    config.refresh_active_symbol()
+
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
     print(f"Simbol: {config.SYMBOL} | Timeframe: M5 (5 Menit) | Lot Size: {config.LOT_SIZE}")
     print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), DeepSeek ({config.DEEPSEEK_MODEL})")
@@ -240,7 +244,7 @@ def main():
         print("Silakan salin .env.example menjadi .env dan masukkan API Key Anda.")
         sys.exit(1)
 
-    # Initialize MT5
+    # Initialize MT5 (validate the symbol that is active right now)
     if not connector.initialize_mt5():
         print("❌ Gagal terhubung ke MetaTrader 5 terminal. Pastikan MT5 Anda aktif.")
         sys.exit(1)
@@ -262,6 +266,7 @@ def main():
             
     last_candle_time = None
     startup_run = True
+    last_symbol = config.SYMBOL
 
     try:
         while True:
@@ -269,6 +274,13 @@ def main():
             #  EVERY TICK (5s): Manage open positions + weekend check
             # =================================================================
             try:
+                # Symbol rotation: XAUUSD weekdays, BTCUSD weekends
+                active_symbol, changed = config.refresh_active_symbol()
+                if changed:
+                    print(f"🔄 [SYMBOL SWITCH] {last_symbol} -> {active_symbol}")
+                    tg.alert_symbol_switch(last_symbol, active_symbol)
+                    last_symbol = active_symbol
+
                 # Trailing stop + break-even + partial close
                 position_manager.manage_all_positions()
                 
@@ -331,7 +343,7 @@ def main():
             
             # Show live status clock line in CLI every loop iteration
             now_str = time.strftime('%H:%M:%S')
-            sys.stdout.write(f"\r🕒 [LIVE CLOCK: {now_str}] ⏳ Waiting for next tick / M5 candle...")
+            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / M5 candle...")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks

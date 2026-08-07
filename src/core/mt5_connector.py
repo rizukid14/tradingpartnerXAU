@@ -103,10 +103,12 @@ def get_open_positions(symbol):
         for p in positions
     ]
 
-def get_closed_positions_today():
+def get_closed_positions_today(symbol=None):
     """
     Returns deals that closed (entry OUT) positions opened by this bot today.
     Used for daily P/L, consecutive-loss tracking, and recovery mode.
+    Pass symbol= to count only one instrument (per-symbol loss streak);
+    omit it to aggregate across all symbols (daily loss cap).
     """
     from datetime import datetime, timedelta
 
@@ -127,8 +129,11 @@ def get_closed_positions_today():
             continue
         if deal.entry != mt5.DEAL_ENTRY_OUT:
             continue
+        if symbol is not None and deal.symbol != symbol:
+            continue
         closed.append({
             "ticket": deal.position_id,
+            "symbol": deal.symbol,
             "profit": deal.profit + deal.swap + deal.commission,
             "time": deal.time,
         })
@@ -167,11 +172,13 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     else:
         return {"status": "ERROR", "comment": "Invalid action type"}
 
-    # Set default SL/TP from config if not specified by AI
-    if not sl and config.DEFAULT_SL_POINTS:
-        sl = price - (config.DEFAULT_SL_POINTS * point) if action == "BUY" else price + (config.DEFAULT_SL_POINTS * point)
-    if not tp and config.DEFAULT_TP_POINTS:
-        tp = price + (config.DEFAULT_TP_POINTS * point) if action == "BUY" else price - (config.DEFAULT_TP_POINTS * point)
+    # Set default SL/TP from config if not specified by AI (per-symbol defaults)
+    default_sl = config.default_sl_points_for(symbol)
+    default_tp = config.default_tp_points_for(symbol)
+    if not sl and default_sl:
+        sl = price - (default_sl * point) if action == "BUY" else price + (default_sl * point)
+    if not tp and default_tp:
+        tp = price + (default_tp * point) if action == "BUY" else price - (default_tp * point)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,

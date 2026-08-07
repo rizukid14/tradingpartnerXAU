@@ -32,6 +32,7 @@ class MacroAnalyst:
                     self.cache = json.load(f)
             else:
                 self.cache = {
+                    "symbol": config.SYMBOL,
                     "last_fundamental_session": "",
                     "last_fundamental_time": 0.0,
                     "fundamental_outlook": "",
@@ -40,6 +41,7 @@ class MacroAnalyst:
         except Exception as e:
             print(f"[MACRO WARNING] Gagal memuat analisa cache: {e}")
             self.cache = {
+                "symbol": config.SYMBOL,
                 "last_fundamental_session": "",
                 "last_fundamental_time": 0.0,
                 "fundamental_outlook": "",
@@ -86,6 +88,20 @@ class MacroAnalyst:
         If force=True, runs analysis immediately regardless of last candle/session times.
         """
         updated = False
+
+        # Cache is per-symbol: if the active symbol changed (XAUUSD -> BTCUSD),
+        # reset the cached analyses so stale gold data is never injected into BTC prompts.
+        cached_symbol = self.cache.get("symbol", "")
+        if cached_symbol != config.SYMBOL:
+            self.cache = {
+                "symbol": config.SYMBOL,
+                "last_fundamental_session": "",
+                "last_fundamental_time": 0.0,
+                "fundamental_outlook": "",
+                "timeframe_analysis": {}
+            }
+            print(f"🔄 [MACRO] Simbol berubah ({cached_symbol or 'none'} -> {config.SYMBOL}). Cache analisa direset.")
+            force = True
 
         # 1. Check Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
