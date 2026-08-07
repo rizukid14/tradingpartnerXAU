@@ -21,18 +21,20 @@ def send_message(text):
         return False
 
     try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+        api_base = getattr(config, "TELEGRAM_API_BASE", "https://api.telegram.org")
+        url = f"{api_base}/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": config.TELEGRAM_CHAT_ID,
             "text": text,
             "parse_mode": "Markdown",
             "disable_web_page_preview": True,
         }
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(url, json=payload, timeout=5)
         return resp.status_code == 200
-    except Exception as e:
-        print(f"[TELEGRAM ERROR] Gagal mengirim pesan: {e}")
+    except Exception:
+        # Gracefully handle network blocking (e.g. office firewall / ISP block) without throwing noise
         return False
+
 
 
 def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0):
