@@ -1,0 +1,16 @@
+{
+    "forecast_bias": "BULLISH",
+    "target_t15m": 4298.5,
+    "target_t60m": 4303.0,
+    "invalidation_level": 4287.5,
+    "optimal_entry_min": 4294.5,
+    "optimal_entry_max": 4295.8,
+    "forecast_reasoning": "Price maintains a bullish posture above both EMA20 and EMA50, suggesting continued upward momentum toward mean-reversion extensions as long as the 4287.5 support holds.",
+    "signal": "HOLD",
+    "confidence": null,
+    "sl_points": null,
+    "tp_points": null,
+    "reasoning": null,
+    "symbol": "XAUUSD-ECN",
+    "timestamp": 1786087746.1946507
+}
