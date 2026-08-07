@@ -108,12 +108,15 @@ def get_closed_positions_today():
     Returns deals that closed (entry OUT) positions opened by this bot today.
     Used for daily P/L, consecutive-loss tracking, and recovery mode.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta
 
-    now = datetime.now(timezone.utc)
-    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    # Use local PC time (naive) which matches terminal/server timezone behavior in MT5
+    now = datetime.now()
+    today_start = datetime(now.year, now.month, now.day)
+    # Query until tomorrow to prevent timezone / broker server offset cutoffs
+    tomorrow = today_start + timedelta(days=1)
 
-    deals = mt5.history_deals_get(today_start, now)
+    deals = mt5.history_deals_get(today_start, tomorrow)
     if deals is None:
         return []
 
