@@ -171,17 +171,18 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
 
     lessons_str = ""
     try:
-        import trade_evaluator
+        from src.analytics import trade_evaluator
         lessons_str = trade_evaluator.evaluator.get_lessons_context()
     except Exception:
         pass
 
     forecast_str = ""
     try:
-        import forecast_engine
+        from src.analytics import forecast_engine
         forecast_str = forecast_engine.forecaster.get_forecast_context()
     except Exception:
         pass
+
 
     prompt = f"""
 You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).

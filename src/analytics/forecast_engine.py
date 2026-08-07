@@ -9,7 +9,11 @@ import os
 import json
 import time
 import config
-import llm_client as llm
+from src.core import llm_client as llm
+
+
+
+
 
 CACHE_FILE = os.path.join(config.DATA_DIR, "forecast_cache.json")
 

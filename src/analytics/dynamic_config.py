@@ -8,6 +8,9 @@ pre-approved Python safety boundaries.
 import os
 import json
 import time
+import config
+from core import mt5_connector as connector
+
 
 DYNAMIC_CONFIG_FILE = os.path.join(config.DATA_DIR, "dynamic_rules.json")
 

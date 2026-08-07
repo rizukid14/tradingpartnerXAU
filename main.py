@@ -10,19 +10,19 @@ else:
     except ImportError:
         import MetaTrader5 as mt5
 import config
-import mt5_connector as connector
-import llm_client as llm
-import consensus
-from risk_engine import RiskEngine
-import position_manager
-import telegram_alerts as tg
+from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
+from src.core.risk_engine import RiskEngine
+from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine
+from src.analytics.macro_analyst import MacroAnalyst
+
+
 
 # Initialize risk engine
 risk = RiskEngine()
 
 # Initialize macro analyst
-from macro_analyst import MacroAnalyst
 macro = MacroAnalyst()
+
 
 
 class TeeLogger(object):
@@ -67,13 +67,12 @@ def run_trading_cycle():
     
     # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation
     try:
-        import trade_evaluator
-        import dynamic_config
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
         dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
+
 
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
@@ -96,13 +95,13 @@ def run_trading_cycle():
 
     # 5.5 Multi-Horizon Forecast Context (Informational Only)
     try:
-        import forecast_engine
         is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
             config.SYMBOL, tick, result, df
         )
         print(f"🔮 [FORECAST INFO] {f_reason}")
     except Exception as e:
         print(f"[FORECAST INFO WARNING] {e}")
+
 
 
     # 6. Execute trade if consensus signal is BUY or SELL
