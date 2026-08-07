@@ -64,6 +64,7 @@ class TradeEvaluator:
 
             # Mark ticket as processed
             self._evaluated_tickets.add(ticket)
+            self._save_memory()
 
             # Generate post-mortem lesson via Gemini
             print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} (P/L: ${profit:.2f})...")
