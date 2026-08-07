@@ -207,6 +207,8 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
 - Look for quick entries and exits.
 - Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
+- HIGH-IMPACT NEWS TIMING RULE: High-impact economic news (such as NFP, CPI, or FOMC) ONLY restricts trading during the 15-30 minutes IMMEDIATELY preceding or following the actual release time. If the news event is hours away in a future session (e.g. NFP in NY session while currently in Tokyo/London session), DO NOT hold back high-probability 5-minute scalping setups during current session!
+
 - Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 Gold point = 0.01 USD, e.g., 300 points = $3.00 movement).
 - Based on the current ATR of {atr_points} points:
   - Your Stop Loss (SL) MUST be between {min_sl} and {max_sl} points (1.5x to 2x the ATR).
