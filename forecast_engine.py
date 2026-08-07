@@ -60,7 +60,7 @@ class ForecastEngine:
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
-        """Asks Gemini to project T+15m, T+60m targets and invalidation levels."""
+        """Queries OpenAI, Gemini, and DeepSeek in parallel to form a Multi-LLM Consensus Forecast."""
         latest = df.iloc[-1]
         
         prompt = f"""
@@ -85,26 +85,83 @@ Respond in STRICT JSON format ONLY with the following keys:
     "forecast_reasoning": "<concise 1-sentence explanation of predicted price trajectory>"
 }}
 """
-        try:
-            response_json = llm.query_primary_model(prompt)
-            if isinstance(response_json, str):
-                response_json = llm.clean_json_response(response_json)
-            if isinstance(response_json, dict) and "forecast_bias" in response_json:
-                return response_json
-        except Exception as e:
-            print(f"[FORECAST ERROR] Gagal generate forecast: {e}")
-            
-        # Fallback default
-        curr = current_tick['bid']
-        atr = latest['atr_14']
+        results = {}
+        import concurrent.futures
+        
+        def _get_single(fn):
+            try:
+                res = fn(prompt)
+                if isinstance(res, str):
+                    res = llm.clean_json_response(res)
+                if isinstance(res, dict) and "forecast_bias" in res:
+                    return res
+            except Exception:
+                pass
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(_get_single, llm.query_openai): "OpenAI",
+                executor.submit(_get_single, llm.query_gemini): "Gemini",
+                executor.submit(_get_single, llm.query_deepseek): "DeepSeek"
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                m_name = futures[fut]
+                f_data = fut.result()
+                if f_data:
+                    results[m_name] = f_data
+
+        if not results:
+            curr = current_tick['bid']
+            atr = latest['atr_14']
+            return {
+                "forecast_bias": "NEUTRAL",
+                "target_t15m": round(curr + atr, 2),
+                "target_t60m": round(curr + (2 * atr), 2),
+                "invalidation_level": round(curr - (1.5 * atr), 2),
+                "optimal_entry_min": round(curr - (0.5 * atr), 2),
+                "optimal_entry_max": round(curr + (0.5 * atr), 2),
+                "forecast_reasoning": "Fallback default projection"
+            }
+
+        # Calculate consensus bias and average numeric targets
+        bias_counts = {"BULLISH": 0, "BEARISH": 0, "NEUTRAL": 0}
+        for m, data in results.items():
+            b = data.get("forecast_bias", "NEUTRAL").upper()
+            bias_counts[b] = bias_counts.get(b, 0) + 1
+
+        # Determine consensus bias
+        consensus_bias = "NEUTRAL"
+        if bias_counts["BULLISH"] >= 2:
+            consensus_bias = "BULLISH"
+        elif bias_counts["BEARISH"] >= 2:
+            consensus_bias = "BEARISH"
+        else:
+            # Pick bias of model with most specific forecast or majority
+            consensus_bias = max(bias_counts, key=bias_counts.get)
+
+        # Average numeric targets from models matching consensus_bias (or all if neutral)
+        matching_models = [d for d in results.values() if d.get("forecast_bias", "NEUTRAL").upper() == consensus_bias]
+        if not matching_models:
+            matching_models = list(results.values())
+
+        avg_t15 = sum(float(m.get("target_t15m", 0)) for m in matching_models) / len(matching_models)
+        avg_t60 = sum(float(m.get("target_t60m", 0)) for m in matching_models) / len(matching_models)
+        avg_inv = sum(float(m.get("invalidation_level", 0)) for m in matching_models) / len(matching_models)
+        avg_emin = sum(float(m.get("optimal_entry_min", 0)) for m in matching_models) / len(matching_models)
+        avg_emax = sum(float(m.get("optimal_entry_max", 0)) for m in matching_models) / len(matching_models)
+
+        models_summary = ", ".join([f"{m}: {d.get('forecast_bias')}" for m, d in results.items()])
+        print(f"🔮 [MULTI-LLM FORECAST CONSENSUS] Bias: {consensus_bias} ({models_summary})")
+
         return {
-            "forecast_bias": "NEUTRAL",
-            "target_t15m": round(curr + atr, 2),
-            "target_t60m": round(curr + (2 * atr), 2),
-            "invalidation_level": round(curr - (1.5 * atr), 2),
-            "optimal_entry_min": round(curr - (0.5 * atr), 2),
-            "optimal_entry_max": round(curr + (0.5 * atr), 2),
-            "forecast_reasoning": "Fallback default projection"
+            "forecast_bias": consensus_bias,
+            "target_t15m": round(avg_t15, 2),
+            "target_t60m": round(avg_t60, 2),
+            "invalidation_level": round(avg_inv, 2),
+            "optimal_entry_min": round(avg_emin, 2),
+            "optimal_entry_max": round(avg_emax, 2),
+            "forecast_reasoning": f"Multi-LLM Consensus ({models_summary})"
         }
 
     def validate_forecast_trigger(self, symbol, current_tick, consensus_result, df):
