@@ -60,8 +60,9 @@ class DynamicConfig:
         """
         Calculates recent win rate from closed deals and dynamically adjusts rules.
         """
-        if not closed_deals or len(closed_deals) < 3:
+        if not closed_deals or len(closed_deals) < 1:
             return
+
 
         wins = sum(1 for d in closed_deals if d.get("profit", 0) >= 0)
         total = len(closed_deals)
