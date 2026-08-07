@@ -106,9 +106,8 @@ def run_trading_cycle():
                 return True
             else:
                 print(f"🔮 [FORECAST CONFIRMED] {f_reason}")
-                if f_sl_pts > 0 and f_tp_pts > 0:
-                    result["sl_points"] = f_sl_pts
-                    result["tp_points"] = f_tp_pts
+                # Keep consensus ATR-based SL/TP intact for trade execution safety
+
         except Exception as e:
             print(f"[FORECAST GUARD WARNING] {e}")
 
