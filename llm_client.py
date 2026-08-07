@@ -257,81 +257,131 @@ def query_openai(prompt):
     """Queries OpenAI API."""
     if not openai_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
-        
-    try:
-        # Check if the model is a reasoning model (which does not support temperature/system message)
-        is_reasoning = "gpt-5" in config.OPENAI_MODEL.lower() or "o1" in config.OPENAI_MODEL.lower() or "o3" in config.OPENAI_MODEL.lower()
-        
-        if is_reasoning:
-            response = openai_client.chat.completions.create(
-                model=config.OPENAI_MODEL,
-                messages=[
-                    {"role": "user", "content": "System: You are a professional financial trading assistant.\n\n" + prompt}
-                ],
-                response_format={"type": "json_object"},
-                timeout=30
-            )
-        else:
-            response = openai_client.chat.completions.create(
-                model=config.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-                timeout=30
-            )
-        content = response.choices[0].message.content
-        return clean_json_response(content)
-    except Exception as e:
-        print(f"[OPENAI ERROR] {e}")
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"OpenAI Error: {str(e)}"}
-
-
-def query_gemini(prompt):
-    """Queries Gemini API using the new google-genai SDK."""
-    if not gemini_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Gemini API Key tidak diset."}
-        
-    try:
-        from google.genai import types
-        response = gemini_client.models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
+def _execute_openai_single(model_name, prompt, timeout_sec):
+    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower()
+    if is_reasoning:
+        response = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "user", "content": "System: You are a professional financial trading assistant.\n\n" + prompt}
+            ],
+            response_format={"type": "json_object"},
+            timeout=timeout_sec
         )
-        content = response.text
-        return clean_json_response(content)
-    except Exception as e:
-        print(f"[GEMINI ERROR] {e}")
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(e)}"}
-
-
-def query_deepseek(prompt):
-    """Queries DeepSeek API using OpenAI compatible SDK."""
-    if not deepseek_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
-        
-    try:
-        # Deepseek supports json mode as well
-        response = deepseek_client.chat.completions.create(
-            model=config.DEEPSEEK_MODEL,
+    else:
+        response = openai_client.chat.completions.create(
+            model=model_name,
             messages=[
                 {"role": "system", "content": "You are a professional financial trading assistant."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
             temperature=0.2,
-            timeout=30
+            timeout=timeout_sec
         )
-        content = response.choices[0].message.content
-        return clean_json_response(content)
+    content = response.choices[0].message.content
+    return clean_json_response(content)
+
+
+def query_openai(prompt):
+    """Queries OpenAI API with timeout and fallback model support."""
+    if not openai_client:
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
+
+    primary_model = config.OPENAI_MODEL
+    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+
+    try:
+        return _execute_openai_single(primary_model, prompt, timeout_sec)
     except Exception as e:
-        print(f"[DEEPSEEK ERROR] {e}")
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}
+        if fallback_model and fallback_model != primary_model:
+            print(f"⚠️ [OPENAI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            try:
+                return _execute_openai_single(fallback_model, prompt, timeout_sec)
+            except Exception as fb_err:
+                print(f"[OPENAI FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"OpenAI Error: {str(fb_err)}"}
+        else:
+            print(f"[OPENAI ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"OpenAI Error: {str(e)}"}
+
+
+def query_gemini(prompt):
+    """Queries Gemini API with timeout and fallback model support."""
+    if not gemini_client:
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Gemini API Key tidak diset."}
+
+    primary_model = config.GEMINI_MODEL
+    fallback_model = getattr(config, "GEMINI_FALLBACK_MODEL", None)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+
+    def _call(mod):
+        from google.genai import types
+        res = gemini_client.models.generate_content(
+            model=mod,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        return clean_json_response(res.text)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_call, primary_model)
+            return fut.result(timeout=timeout_sec)
+    except Exception as e:
+        if fallback_model and fallback_model != primary_model:
+            print(f"⚠️ [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_call, fallback_model)
+                    return fut.result(timeout=timeout_sec)
+            except Exception as fb_err:
+                print(f"[GEMINI FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(fb_err)}"}
+        else:
+            print(f"[GEMINI ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(e)}"}
+
+
+def _execute_deepseek_single(model_name, prompt, timeout_sec):
+    response = deepseek_client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": "You are a professional financial trading assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.2,
+        timeout=timeout_sec
+    )
+    content = response.choices[0].message.content
+    return clean_json_response(content)
+
+
+def query_deepseek(prompt):
+    """Queries DeepSeek API with timeout and fallback model support."""
+    if not deepseek_client:
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
+
+    primary_model = config.DEEPSEEK_MODEL
+    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", None)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+
+    try:
+        return _execute_deepseek_single(primary_model, prompt, timeout_sec)
+    except Exception as e:
+        if fallback_model and fallback_model != primary_model:
+            print(f"⚠️ [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            try:
+                return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
+            except Exception as fb_err:
+                print(f"[DEEPSEEK FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(fb_err)}"}
+        else:
+            print(f"[DEEPSEEK ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}
+
 
 
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
