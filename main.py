@@ -114,10 +114,16 @@ def run_trading_cycle():
         # Get effective lot size (recovery mode + session multiplier)
         effective_lot = risk.get_effective_lot_size()
         
-        # If 3/3 models agree (100% Unanimous High Confidence), execute 2 positions!
-        num_positions = 2 if agreeing_count >= 3 else 1
+        # Check remaining capacity slots before MAX_OPEN_POSITIONS
+        remaining_slots = max(0, config.MAX_OPEN_POSITIONS - len(open_positions))
+        desired_positions = 2 if agreeing_count >= 3 else 1
+        num_positions = min(desired_positions, remaining_slots)
+
         if num_positions > 1:
-            print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka {num_positions} posisi sekaligus...")
+            print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka {num_positions} posisi sekaligus (Sisa slot: {remaining_slots})...")
+        elif num_positions == 1 and desired_positions > 1:
+            print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka 1 posisi (Dibatasi sisa slot max: {remaining_slots})...")
+
 
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend

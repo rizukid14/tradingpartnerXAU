@@ -109,7 +109,8 @@ PARTIAL_CLOSE_TP1_POINTS = 400     # TP1 trigger: 400 pts profit (~$4.00)
 MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today
 MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
 PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
-MAX_OPEN_POSITIONS = 5             # Max simultaneous positions
+MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layering cycles of 2 positions)
+
 
 
 # --- RECOVERY MODE (from xaubot-ai smart_risk_manager.py) ---
