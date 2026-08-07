@@ -267,8 +267,9 @@ class RiskEngine:
         """Check if max open positions (of this bot) reached."""
         positions = mt5.positions_get(symbol=config.SYMBOL)
         bot_positions = [p for p in (positions or []) if p.magic == config.MAGIC_NUMBER]
-        if len(bot_positions) >= config.MAX_OPEN_POSITIONS:
-            return False, f"📊 [RISK] Posisi terbuka sudah {len(bot_positions)}/{config.MAX_OPEN_POSITIONS}."
+        max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if self._in_recovery_mode else config.MAX_OPEN_POSITIONS
+        if len(bot_positions) >= max_positions:
+            return False, f"📊 [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions}."
         return True, ""
 
     def _check_cooldown(self):

@@ -111,6 +111,10 @@ MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
 PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
 MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layering cycles of 2 positions)
 
+# --- RECOVERY MODE POSITION LIMIT ---
+# During recovery mode, cap new open positions lower than normal
+MAX_OPEN_POSITIONS_RECOVERY = 4    # Max simultaneous positions while in recovery mode
+
 
 
 # --- RECOVERY MODE (from xaubot-ai smart_risk_manager.py) ---

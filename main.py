@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 # Force UTF-8 encoding for standard output on Windows
@@ -135,12 +136,13 @@ def run_trading_cycle():
     except Exception as e:
         print(f"[FORECAST INFO WARNING] {e}")
 
-    # Check if max open positions reached for NEW trades
-    if len(open_positions) >= config.MAX_OPEN_POSITIONS:
+    # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
+    max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+    if len(open_positions) >= max_positions:
         print(f"ℹ️ Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
         for pos in open_positions:
             print(f"   - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-        print(f"➡️ Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({config.MAX_OPEN_POSITIONS}).")
+        print(f"➡️ Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
         return True
 
 
@@ -156,8 +158,8 @@ def run_trading_cycle():
         # Get effective lot size (recovery mode + session multiplier)
         effective_lot = risk.get_effective_lot_size()
         
-        # Check remaining capacity slots before MAX_OPEN_POSITIONS
-        remaining_slots = max(0, config.MAX_OPEN_POSITIONS - len(open_positions))
+        # Check remaining capacity slots before max positions (recovery mode: tighter cap)
+        remaining_slots = max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
