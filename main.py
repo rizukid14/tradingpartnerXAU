@@ -94,22 +94,16 @@ def run_trading_cycle():
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
 
-    # 5.5 Validate Forecast Trigger Conditions ("Jika X dan Y sesuai prediksi maka execute")
-    if result["signal"] in ["BUY", "SELL"]:
-        try:
-            import forecast_engine
-            is_valid, f_reason, f_sl_pts, f_tp_pts = forecast_engine.forecaster.validate_forecast_trigger(
-                config.SYMBOL, tick, result, df
-            )
-            if not is_valid:
-                print(f"⚠️ [FORECAST BLOCK] Order {result['signal']} dibatalkan: {f_reason}")
-                return True
-            else:
-                print(f"🔮 [FORECAST CONFIRMED] {f_reason}")
-                # Keep consensus ATR-based SL/TP intact for trade execution safety
+    # 5.5 Multi-Horizon Forecast Context (Informational Only)
+    try:
+        import forecast_engine
+        is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
+            config.SYMBOL, tick, result, df
+        )
+        print(f"🔮 [FORECAST INFO] {f_reason}")
+    except Exception as e:
+        print(f"[FORECAST INFO WARNING] {e}")
 
-        except Exception as e:
-            print(f"[FORECAST GUARD WARNING] {e}")
 
     # 6. Execute trade if consensus signal is BUY or SELL
     trade_signal = result["signal"]
