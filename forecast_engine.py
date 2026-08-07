@@ -188,11 +188,12 @@ Respond in STRICT JSON format ONLY with the following keys:
         bid = current_tick["bid"]
         ask = current_tick["ask"]
 
-        # Rule 1: Directional Alignment
-        if signal == "BUY" and bias != "BULLISH":
-            return False, f"Arah sinyal BUY bertentangan dengan bias prediksi ({bias})", 0, 0
-        if signal == "SELL" and bias != "BEARISH":
-            return False, f"Arah sinyal SELL bertentangan dengan bias prediksi ({bias})", 0, 0
+        # Rule 1: Directional Alignment (Only block on DIRECT contradiction: BUY vs BEARISH or SELL vs BULLISH)
+        if signal == "BUY" and bias == "BEARISH":
+            return False, f"Arah sinyal BUY bertentangan langsung dengan bias prediksi ({bias})", 0, 0
+        if signal == "SELL" and bias == "BULLISH":
+            return False, f"Arah sinyal SELL bertentangan langsung dengan bias prediksi ({bias})", 0, 0
+
 
         # Rule 2: Invalidation Guard
         if signal == "BUY" and ask <= invalidation:
