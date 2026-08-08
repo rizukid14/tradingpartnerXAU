@@ -12,31 +12,39 @@ def _effective_consensus_threshold():
 
 def _apply_sltp_floors(sl_points, tp_points):
     """
-    Enforce minimum SL/TP so the LLM cannot propose stops inside the spread
-    (which the broker would reject with INVALID_STOPS) or tiny distances that
-    are worth only cents. Floors:
-      - SL >= default SL for the symbol (per-symbol safe risk distance)
-      - SL >= 2x current spread (never inside the spread)
-      - TP >= 1.5x final SL (keep R:R sane)
+    Enforce a minimum SL so the LLM cannot propose stops inside the spread
+    (which the broker would reject with INVALID_STOPS) or smaller than the
+    instrument's real volatility (1x ATR) — averaging two models where one
+    gave a tiny SL can otherwise land the stop inside normal noise.
     """
     if not sl_points or sl_points <= 0:
         sl_points = config.default_sl_points_for(config.SYMBOL)
     if not tp_points or tp_points <= 0:
         tp_points = config.default_tp_points_for(config.SYMBOL)
 
-    # 2x spread floor (if we can read the tick)
     spread_pts = 0
+    atr_points = 0
     try:
         import MetaTrader5 as mt5
+        import pandas as pd
+        from ta.volatility import AverageTrueRange
         tick = mt5.symbol_info_tick(config.SYMBOL)
-        if tick is not None:
-            si = mt5.symbol_info(config.SYMBOL)
-            if si is not None and si.point:
-                spread_pts = int(round((tick.ask - tick.bid) / si.point))
+        si = mt5.symbol_info(config.SYMBOL)
+        if tick is not None and si is not None and si.point:
+            spread_pts = int(round((tick.ask - tick.bid) / si.point))
+            # ATR from the active timeframe (H1 for BTC) — volatility floor
+            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
+            if rates is not None and len(rates) > 0:
+                df = pd.DataFrame(rates)
+                df['atr'] = AverageTrueRange(
+                    high=df['high'], low=df['low'], close=df['close'], window=14
+                ).average_true_range()
+                atr_points = int(df.iloc[-1]['atr'] / si.point)
     except Exception:
         pass
 
-    min_sl = max(config.default_sl_points_for(config.SYMBOL), spread_pts * 2)
+    # Floor = max(2x spread, 1x ATR) — never inside spread, never inside noise
+    min_sl = max(spread_pts * 2, atr_points)
     if sl_points < min_sl:
         sl_points = min_sl
 
@@ -121,63 +129,85 @@ def calculate_consensus(decisions):
             })
             print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/3 AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
 
-    for sig in ["BUY", "SELL"]:
-        if signals_count[sig] >= consensus_threshold:
-            consensus_signal = sig
-            # Find models that agreed
-            agreeing_models = [name for name, dec in decisions.items() if dec.get("signal") == sig]
-            
-            # Calculate average SL, TP and Confidence of agreeing models
-            sl_list = []
-            tp_list = []
-            conf_list = []
-            
-            for name in agreeing_models:
-                dec = decisions[name]
-                conf_list.append(dec.get("confidence", 0.5))
-                
-                # Extract SL/TP and handle nulls
-                sl_val = dec.get("sl_points")
-                if isinstance(sl_val, (int, float)) and sl_val > 0:
-                    sl_list.append(sl_val)
-                    
-                tp_val = dec.get("tp_points")
-                if isinstance(tp_val, (int, float)) and tp_val > 0:
-                    tp_list.append(tp_val)
-                    
-            # Averages
-            avg_confidence = float(sum(conf_list) / len(conf_list))
-            final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
-            final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
+    # Dynamic weighted-confidence consensus: each model's confidence weights
+    # its vote. A direction wins when BOTH:
+    #   - at least MIN_CONSENSUS_MODELS (2) models voted that direction, and
+    #   - the SUM of their confidence clears the per-symbol threshold
+    #     (XAU 1.0, BTC 1.2, tightened to 1.8 in the 3/3 defensive regime).
+    direction_scores = {"BUY": 0.0, "SELL": 0.0}
+    direction_models = {"BUY": [], "SELL": []}
+    for model_name, dec in decisions.items():
+        sig = dec.get("signal", "HOLD")
+        conf = dec.get("confidence", 0.0)
+        if sig in direction_scores:
+            direction_scores[sig] += conf
+            direction_models[sig].append(model_name)
 
-            # Enforce minimum SL/TP (never inside spread, never absurdly tight)
-            final_sl, final_tp = _apply_sltp_floors(final_sl, final_tp)
-            
-            print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal}")
-            print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
-            print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")
-            print(f"   Final SL: {final_sl} points | Final TP: {final_tp} points")
-            print("=" * 50 + "\n")
-            
-            return {
-                "signal": consensus_signal,
-                "confidence": avg_confidence,
-                "sl_points": final_sl,
-                "tp_points": final_tp,
-                "agreeing_count": len(agreeing_models),
-                "tickets_to_close": tickets_to_close,
-                "details": f"Consensus by: {agreeing_models}"
-            }
-            
-    print(f"🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus ({consensus_threshold} model). Posisi: HOLD.")
+    # Per-symbol base threshold, scaled by the dynamic regime count
+    # (2-model regime keeps the base; 3-model defensive regime -> *1.5 = 1.8 BTC)
+    min_models = getattr(config, "MIN_CONSENSUS_MODELS", 2)
+    base_threshold = config.confidence_threshold_for(config.SYMBOL)
+    eff_count = _effective_consensus_threshold()
+    threshold = base_threshold * (eff_count / min_models)
+
+    # Pick the direction with the highest weighted score that clears threshold
+    consensus_signal = "HOLD"
+    agreeing_models = []
+    best_score = threshold  # must strictly beat this
+    for sig in ["BUY", "SELL"]:
+        if len(direction_models[sig]) >= min_models and direction_scores[sig] > best_score:
+            consensus_signal = sig
+            agreeing_models = direction_models[sig]
+            best_score = direction_scores[sig]
+
+    if consensus_signal == "HOLD":
+        print(f"🚨 [KONSENSUS GAGAL] Skor arah: BUY={direction_scores['BUY']:.2f}, "
+              f"SELL={direction_scores['SELL']:.2f} (threshold {threshold}). Posisi: HOLD.")
+        print("=" * 50 + "\n")
+        return {
+            "signal": "HOLD",
+            "confidence": 0.0,
+            "sl_points": config.default_sl_points_for(config.SYMBOL),
+            "tp_points": config.default_tp_points_for(config.SYMBOL),
+            "agreeing_count": 0,
+            "tickets_to_close": tickets_to_close,
+            "details": f"Consensus failed (BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f})"
+        }
+
+    # Calculate average SL, TP and Confidence of agreeing models
+    sl_list = []
+    tp_list = []
+    conf_list = []
+    for name in agreeing_models:
+        dec = decisions[name]
+        conf_list.append(dec.get("confidence", 0.5))
+        sl_val = dec.get("sl_points")
+        if isinstance(sl_val, (int, float)) and sl_val > 0:
+            sl_list.append(sl_val)
+        tp_val = dec.get("tp_points")
+        if isinstance(tp_val, (int, float)) and tp_val > 0:
+            tp_list.append(tp_val)
+
+    avg_confidence = float(sum(conf_list) / len(conf_list))
+    final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
+    final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
+
+    # Enforce minimum SL/TP (2x spread floor, never inside spread)
+    final_sl, final_tp = _apply_sltp_floors(final_sl, final_tp)
+
+    print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal} "
+          f"(skor {best_score:.2f} >= threshold {threshold})")
+    print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
+    print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")
+    print(f"   Final SL: {final_sl} points | Final TP: {final_tp} points")
     print("=" * 50 + "\n")
-    
+
     return {
-        "signal": "HOLD",
-        "confidence": 0.0,
-        "sl_points": config.default_sl_points_for(config.SYMBOL),
-        "tp_points": config.default_tp_points_for(config.SYMBOL),
-        "agreeing_count": 0,
+        "signal": consensus_signal,
+        "confidence": avg_confidence,
+        "sl_points": final_sl,
+        "tp_points": final_tp,
+        "agreeing_count": len(agreeing_models),
         "tickets_to_close": tickets_to_close,
-        "details": "Consensus failed"
+        "details": f"Consensus by: {agreeing_models}"
     }

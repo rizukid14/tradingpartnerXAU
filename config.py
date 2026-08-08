@@ -59,8 +59,10 @@ WEEKEND_SYMBOL = "BTCUSD.c"
 CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
 SYMBOL = WEEKDAY_SYMBOL            # active symbol; updated at runtime by refresh_active_symbol()
 
-# Timeframe for Scalping: 5 Minutes
+# Timeframe for Scalping: 5 Minutes (XAU)
 TIMEFRAME = mt5.TIMEFRAME_M5
+# BTC/crypto trades on H1 (spread ~$17 too large for M5 scalping)
+H1_TIMEFRAME = mt5.TIMEFRAME_H1
 
 # Default trade size (0.01 is micro-lot)
 LOT_SIZE = 0.01
@@ -95,6 +97,16 @@ DRY_RUN = False
 
 # Minimum number of models that must agree (e.g., 2 out of 3)
 CONSENSUS_THRESHOLD = 2
+
+# Weighted-confidence consensus: a BUY/SELL signal wins when the SUM of
+# confidence from models voting that direction meets the per-symbol threshold
+# AND at least 2 models voted that direction (prevents one strong model
+# dragging along a coincidental weak vote). Below it -> HOLD.
+# XAU (M5 scalping, 12 cycles/hour): 1.0 = two models at ~50% — fluid.
+# BTC (H1 swing, 1 cycle/hour): 1.2 = two models at ~60% — precise.
+CONFIDENCE_CONSENSUS_THRESHOLD_XAU = 1.0
+CONFIDENCE_CONSENSUS_THRESHOLD_BTC = 1.2
+MIN_CONSENSUS_MODELS = 2  # minimum models voting the same direction
 
 # Multi-Agent Debate Round 2 (extra LLM calls when Round 1 lacks consensus)
 # DISABLED: log analysis showed it never produced a trade (always reinforced HOLD)
@@ -153,8 +165,7 @@ MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layerin
 # A closed trade with |profit| <= BREAK_EVEN_TOLERANCE_USD is treated as
 # break-even: it does NOT increment the loss streak, but also does NOT reset it
 # (nor does it exit recovery mode).
-# Set to 0.50 for testing — BTC scalps with tight (pre-floor) SL/TP close
-# around +-0.03..0.44, which should not count as real losses.
+# Set to 0.50 USC for break-even tolerance
 BREAK_EVEN_TOLERANCE_USD = 0.50
 
 # --- RECOVERY MODE POSITION LIMIT ---
@@ -236,11 +247,21 @@ if MT5_LOGIN:
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = True
 # Dict of timeframe labels to MT5 timeframe constants
-# For Gold scalping, we analyze 30-minute and 1-hour timeframes
+# XAU (M5 scalper): analyze M30 and H1 context
 HIGHER_TIMEFRAMES = {
     "M30": mt5.TIMEFRAME_M30,
     "H1": mt5.TIMEFRAME_H1
 }
+# BTC (H1 trader): analyze H4 and D1 context — larger spread needs a longer
+# trading horizon, so the macro context should come from even higher timeframes.
+HIGHER_TIMEFRAMES_CRYPTO = {
+    "H4": mt5.TIMEFRAME_H4,
+    "D1": mt5.TIMEFRAME_D1
+}
+
+def get_higher_timeframes(symbol):
+    """Returns the MTF context timeframes for a symbol (crypto -> H4/D1)."""
+    return HIGHER_TIMEFRAMES_CRYPTO if is_crypto(symbol) else HIGHER_TIMEFRAMES
 
 FUNDAMENTAL_ANALYSIS_ENABLED = False
 # Model that performs background macro/fundamental analysis
@@ -295,6 +316,15 @@ def lot_size_for(symbol):
     return LOT_SIZE_BTC if is_crypto(symbol) else LOT_SIZE_XAU
 
 
+def get_timeframe(symbol):
+    """Returns the trading timeframe for a symbol.
+    BTC/crypto trades on H1 because the ~$17 spread is only ~8% of H1 ATR
+    (~$204) but ~78% of M5 ATR (~$21) — M5 scalping on BTC just bleeds spread.
+    XAU keeps M5 scalping where the spread is proportionally small.
+    """
+    return H1_TIMEFRAME if is_crypto(symbol) else TIMEFRAME
+
+
 def default_sl_points_for(symbol):
     return DEFAULT_SL_POINTS_BTC if is_crypto(symbol) else DEFAULT_SL_POINTS_XAU
 
@@ -305,4 +335,11 @@ def default_tp_points_for(symbol):
 
 def max_spread_points_for(symbol):
     return MAX_SPREAD_POINTS_BTC if is_crypto(symbol) else MAX_SPREAD_POINTS_XAU
+
+
+def confidence_threshold_for(symbol):
+    """Weighted-confidence consensus threshold per symbol.
+    BTC (H1, rare entries) needs higher conviction than XAU (M5, frequent).
+    """
+    return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 

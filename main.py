@@ -67,8 +67,8 @@ def run_trading_cycle():
         print(reason)
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (50 candles of M5)
-    df = connector.get_market_data(config.SYMBOL, config.TIMEFRAME, num_candles=50)
+    # 1. Fetch market data (50 candles of the active timeframe — M5 for XAU, H1 for BTC)
+    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=50)
     if df is None or len(df) == 0:
         print("❌ Gagal mendapatkan market data. Melewatkan siklus ini.")
         return False
@@ -268,7 +268,8 @@ def main():
     config.refresh_active_symbol()
 
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
-    print(f"Simbol: {config.SYMBOL} | Timeframe: M5 (5 Menit) | Lot Size: {config.LOT_SIZE}")
+    tf_name = "H1" if config.is_crypto(config.SYMBOL) else "M5"
+    print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
     print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), DeepSeek ({config.DEEPSEEK_MODEL})")
     print("-" * 60)
     print("🛡️ PROTEKSI AKTIF:")
@@ -282,7 +283,7 @@ def main():
     print(f"   Recovery Mode:   {'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'} "
           f"(x{config.RECOVERY_LOT_MULTIPLIER} setelah {config.MAX_CONSECUTIVE_LOSSES} loss)")
     print(f"   Cooldown:        {config.TRADE_COOLDOWN_SECONDS}s antar trade")
-    print(f"   Spread Filter:   {config.MAX_SPREAD_POINTS} pts maks")
+    print(f"   Spread Filter:   {config.max_spread_points_for(config.SYMBOL)} pts maks ({config.SYMBOL})")
     print(f"   Session Filter:  {'ON' if config.SESSION_FILTER_ENABLED else 'OFF'} (WIB)")
     print(f"   Weekend Close:   {'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}")
     print(f"   Telegram:        {'ON' if config.TELEGRAM_ENABLED else 'OFF'}")
@@ -371,7 +372,7 @@ def main():
                 except Exception as e:
                     print(f"[MACRO UPDATE ERROR] {e}")
 
-            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.TIMEFRAME, 0, 2)
+            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
             if rates is not None and len(rates) > 0:
                 current_candle_time = rates[-1]['time']
                 
@@ -402,7 +403,8 @@ def main():
             now_str = time.strftime('%H:%M:%S')
             remaining_pause = risk.get_remaining_pause()
             pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
-            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / M5 candle...{pause_str}")
+            tf_label = "H1" if config.is_crypto(config.SYMBOL) else "M5"
+            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / {tf_label} candle...{pause_str}")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks

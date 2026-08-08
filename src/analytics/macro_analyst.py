@@ -120,7 +120,7 @@ class MacroAnalyst:
             if "timeframe_analysis" not in self.cache:
                 self.cache["timeframe_analysis"] = {}
 
-            for tf_name, tf_const in config.HIGHER_TIMEFRAMES.items():
+            for tf_name, tf_const in config.get_higher_timeframes(config.SYMBOL).items():
                 rates = mt5.copy_rates_from_pos(config.SYMBOL, tf_const, 0, 2)
                 if rates is not None and len(rates) > 0:
                     current_candle_time = int(rates[-1]['time'])
@@ -179,7 +179,7 @@ class MacroAnalyst:
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
             tf_analyses = []
             tf_cache = self.cache.get("timeframe_analysis", {})
-            for tf_name in config.HIGHER_TIMEFRAMES.keys():
+            for tf_name in config.get_higher_timeframes(config.SYMBOL).keys():
                 tf_data = tf_cache.get(tf_name)
                 if tf_data and tf_data.get("analysis"):
                     tf_analyses.append(f"- **{tf_name} Timeframe**: {tf_data['analysis']}")
