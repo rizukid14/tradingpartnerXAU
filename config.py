@@ -65,7 +65,7 @@ TIMEFRAME = mt5.TIMEFRAME_M5
 # Default trade size (0.01 is micro-lot)
 LOT_SIZE = 0.01
 LOT_SIZE_XAU = LOT_SIZE
-LOT_SIZE_BTC = 0.03
+LOT_SIZE_BTC = 0.01
 
 # Deviation (slippage tolerance in points)
 DEVIATION = 20

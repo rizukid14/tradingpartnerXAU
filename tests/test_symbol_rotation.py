@@ -34,11 +34,11 @@ def test_per_symbol_helpers():
     assert config.lot_size_for("XAUUSD-ECNc") == 0.01
     assert config.default_sl_points_for("XAUUSD-ECNc") == 300
     assert config.max_spread_points_for("XAUUSD-ECNc") == 50
-    # BTC helpers
+    # BTC helpers (scaled for BTC point size — see config comments)
     assert config.lot_size_for("BTCUSD.c") == 0.01
-    assert config.default_sl_points_for("BTCUSD.c") == 600
-    assert config.default_tp_points_for("BTCUSD.c") == 1200
-    assert config.max_spread_points_for("BTCUSD.c") == 50
+    assert config.default_sl_points_for("BTCUSD.c") == config.DEFAULT_SL_POINTS_BTC
+    assert config.default_tp_points_for("BTCUSD.c") == config.DEFAULT_TP_POINTS_BTC
+    assert config.max_spread_points_for("BTCUSD.c") == config.MAX_SPREAD_POINTS_BTC
     # is_crypto
     assert config.is_crypto("BTCUSD.c") is True
     assert config.is_crypto("XAUUSD-ECNc") is False

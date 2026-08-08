@@ -12,6 +12,7 @@ or moved to break-even so a bot restart cannot re-trigger those actions.
 """
 import os
 import json
+import time
 import sys
 if sys.platform == 'win32':
     import MetaTrader5 as mt5
@@ -58,31 +59,44 @@ _partial_closed_tickets, _break_even_tickets = _load_state()
 
 def manage_all_positions():
     """
-    Iterates all open positions for our symbol and applies:
+    Iterates ALL open bot positions (any symbol — XAU or BTC) and applies:
     1. Partial close at TP1 (close 50% of position at first target)
     2. Break-even (move SL to entry once threshold hit)
     3. Trailing stop (continuously advance SL behind price)
 
     Call this every tick cycle (every 5 seconds).
+    Manages every symbol so a leftover position is still protected, but skips
+    symbols whose market is closed (no fresh tick within the last N seconds —
+    e.g. XAU over the weekend). BTC ticks 24/7 so it keeps being managed
+    across weekday/weekend rotation.
     """
-    positions = mt5.positions_get(symbol=config.SYMBOL)
+    positions = mt5.positions_get()
     if positions is None or len(positions) == 0:
         return
 
-    symbol_info = mt5.symbol_info(config.SYMBOL)
-    if symbol_info is None:
-        return
-
-    point = symbol_info.point
+    max_age = config.POSITION_MANAGER_MAX_TICK_AGE_SECONDS
+    now = time.time()
 
     for pos in positions:
         # Only manage positions opened by our bot
         if pos.magic != config.MAGIC_NUMBER:
             continue
 
-        tick = mt5.symbol_info_tick(config.SYMBOL)
+        symbol = pos.symbol
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            continue
+
+        tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             continue
+
+        # Skip symbols whose market is closed or that have no fresh ticks
+        # (e.g. XAU over the weekend). Nothing to manage without live price.
+        if now - tick.time > max_age:
+            continue
+
+        point = symbol_info.point
 
         # Calculate current profit in points
         if pos.type == mt5.ORDER_TYPE_BUY:
@@ -94,15 +108,15 @@ def manage_all_positions():
 
         # --- PARTIAL CLOSE at TP1 ---
         if config.PARTIAL_CLOSE_ENABLED:
-            _check_partial_close(pos, profit_points, symbol_info)
+            _check_partial_close(pos, symbol, profit_points, symbol_info)
 
         # --- BREAK-EVEN CHECK ---
         if config.BREAK_EVEN_ENABLED:
-            _check_break_even(pos, profit_points, point, symbol_info)
+            _check_break_even(pos, symbol, profit_points, point, symbol_info)
 
         # --- TRAILING STOP CHECK ---
         if config.TRAILING_STOP_ENABLED:
-            _check_trailing_stop(pos, profit_points, current_price, point, symbol_info)
+            _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
 
 # =============================================================================
@@ -110,12 +124,12 @@ def manage_all_positions():
 # =============================================================================
 
 
-def _check_partial_close(pos, profit_points, symbol_info):
+def _check_partial_close(pos, symbol, profit_points, symbol_info):
     """Close a portion of the position at TP1 to lock in some profit."""
     if pos.ticket in _partial_closed_tickets:
         return  # Already partially closed
 
-    tp1_points = config.PARTIAL_CLOSE_TP1_POINTS_BTC if config.is_crypto(config.SYMBOL) else config.PARTIAL_CLOSE_TP1_POINTS_XAU
+    tp1_points = config.PARTIAL_CLOSE_TP1_POINTS_BTC if config.is_crypto(symbol) else config.PARTIAL_CLOSE_TP1_POINTS_XAU
     if profit_points < tp1_points:
         return
 
@@ -127,7 +141,7 @@ def _check_partial_close(pos, profit_points, symbol_info):
     if close_volume >= pos.volume:
         return  # Would close entire position, skip
 
-    tick = mt5.symbol_info_tick(config.SYMBOL)
+    tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         return
 
@@ -140,7 +154,7 @@ def _check_partial_close(pos, profit_points, symbol_info):
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": config.SYMBOL,
+        "symbol": symbol,
         "volume": close_volume,
         "type": close_type,
         "position": pos.ticket,
@@ -157,7 +171,7 @@ def _check_partial_close(pos, profit_points, symbol_info):
         _partial_closed_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets)
         remaining = round(pos.volume - close_volume, 2)
-        print(f"💰 [PARTIAL CLOSE] Ticket #{pos.ticket}: Ditutup {close_volume} lot "
+        print(f"💰 [PARTIAL CLOSE] Ticket #{pos.ticket} ({symbol}): Ditutup {close_volume} lot "
               f"(profit {profit_points:.0f} pts). Sisa: {remaining} lot — trailing sisanya.")
     else:
         comment = result.comment if result else "Unknown error"
@@ -169,13 +183,13 @@ def _check_partial_close(pos, profit_points, symbol_info):
 # =============================================================================
 
 
-def _check_break_even(pos, profit_points, point, symbol_info):
+def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     """Move SL to entry price + padding once profit threshold is reached."""
     if pos.ticket in _break_even_tickets:
         return  # Already at break-even
 
-    be_trigger = config.BREAK_EVEN_TRIGGER_POINTS_BTC if config.is_crypto(config.SYMBOL) else config.BREAK_EVEN_TRIGGER_POINTS_XAU
-    be_padding = config.BREAK_EVEN_PADDING_POINTS_BTC if config.is_crypto(config.SYMBOL) else config.BREAK_EVEN_PADDING_POINTS_XAU
+    be_trigger = config.BREAK_EVEN_TRIGGER_POINTS_BTC if config.is_crypto(symbol) else config.BREAK_EVEN_TRIGGER_POINTS_XAU
+    be_padding = config.BREAK_EVEN_PADDING_POINTS_BTC if config.is_crypto(symbol) else config.BREAK_EVEN_PADDING_POINTS_XAU
     if profit_points < be_trigger:
         return
 
@@ -197,7 +211,7 @@ def _check_break_even(pos, profit_points, point, symbol_info):
 
     request = {
         "action": mt5.TRADE_ACTION_SLTP,
-        "symbol": config.SYMBOL,
+        "symbol": symbol,
         "position": pos.ticket,
         "sl": be_price,
         "tp": pos.tp,
@@ -208,7 +222,7 @@ def _check_break_even(pos, profit_points, point, symbol_info):
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _break_even_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets)
-        print(f"🔒 [BREAK-EVEN] Ticket #{pos.ticket}: SL dipindahkan ke entry {be_price}")
+        print(f"🔒 [BREAK-EVEN] Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
@@ -217,9 +231,9 @@ def _check_break_even(pos, profit_points, point, symbol_info):
 # =============================================================================
 #  TRAILING STOP (from XAU-60 trade_executor.py)
 # =============================================================================
-def _check_trailing_stop(pos, profit_points, current_price, point, symbol_info):
+def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info):
     """Trail stop loss behind price once activation threshold is reached."""
-    if config.is_crypto(config.SYMBOL):
+    if config.is_crypto(symbol):
         activation = config.TRAILING_ACTIVATION_POINTS_BTC
         distance = config.TRAILING_DISTANCE_POINTS_BTC
     else:
@@ -246,7 +260,7 @@ def _check_trailing_stop(pos, profit_points, current_price, point, symbol_info):
 
     request = {
         "action": mt5.TRADE_ACTION_SLTP,
-        "symbol": config.SYMBOL,
+        "symbol": symbol,
         "position": pos.ticket,
         "sl": new_sl,
         "tp": pos.tp,
@@ -255,7 +269,7 @@ def _check_trailing_stop(pos, profit_points, current_price, point, symbol_info):
 
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-        print(f"📈 [TRAILING] Ticket #{pos.ticket}: SL digeser ke {new_sl} (profit: {profit_points:.0f} pts)")
+        print(f"📈 [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts)")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

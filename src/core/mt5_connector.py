@@ -144,11 +144,21 @@ def get_current_tick(symbol):
     if tick is None:
         print(f"[MT5 ERROR] Gagal mendapatkan tick untuk {symbol}.")
         return None
+    si = mt5.symbol_info(symbol)
+    if si is None:
+        print(f"[MT5 ERROR] Gagal mendapatkan symbol info untuk {symbol}.")
+        return None
+    spread_usd = tick.ask - tick.bid
     return {
         "bid": tick.bid,
         "ask": tick.ask,
-        "spread": round((tick.ask - tick.bid) / mt5.symbol_info(symbol).point, 1),
-        "point": mt5.symbol_info(symbol).point
+        "spread": round(spread_usd / si.point, 1),
+        "spread_usd": spread_usd,
+        "point": si.point,
+        # USD value of a 1-point move for the default bot lot (used to tell
+        # the LLM how much a "point" is actually worth — e.g. BTC 0.01 lot:
+        # 10000 pts = $1).
+        "usd_per_point": si.trade_tick_value * config.lot_size_for(symbol) * (si.point / si.trade_tick_size),
     }
 
 def get_open_positions(symbol):

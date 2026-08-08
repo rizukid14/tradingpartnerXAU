@@ -186,6 +186,23 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     min_tp = int(min_sl * 1.5)
     max_tp = int(max_sl * 2.0)
 
+    # USD value of 1 point for the default bot lot — tells the LLM the real
+    # money scale of the SL/TP distances it proposes (critical for BTC, where
+    # 1 pt = $0.0001 and the LLM otherwise proposes absurdly tight stops).
+    usd_per_point = current_tick.get("usd_per_point", 0.0)
+    if usd_per_point > 0:
+        pts_per_usd = 1.0 / usd_per_point
+        usd_context = (
+            f"Money scale: 1 point = ${usd_per_point:.4f} USD with the default "
+            f"{config.lot_size_for(symbol)} lot. So {int(pts_per_usd * 10)} pts = ~$10, "
+            f"{int(pts_per_usd * 5)} pts = ~$5, and 100000 pts = ~${100000 * usd_per_point:.2f}.\n"
+            f"Current spread is {current_tick.get('spread', '?')} pts "
+            f"(≈ ${current_tick.get('spread_usd', 0.0):.2f} USD) — NEVER set SL closer than "
+            f"{int(current_tick.get('spread', 0) * 2)} pts (2x spread); the broker will reject it.\n"
+        )
+    else:
+        usd_context = ""
+
     macro_str = ""
     if macro_context:
         macro_str = f"\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT\n{macro_context}\n"
@@ -246,7 +263,7 @@ Symbol: {symbol}
 Timeframe: M5 (5 Minutes)
 Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
-Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
+Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 
 ### RECENT CANDLES (Last 10 candles, M5):
 {candles_str}
@@ -258,12 +275,13 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
 {macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}
+{usd_context}
 ### STRATEGY CONSTRAINTS (5-minute Scalping)
 - Scalp M5: quick entries/exits, high probability setups only. Decide from the data provided — do not wait for hypothetical pullbacks/breakouts.
 - BUY and SELL are equally valid. Follow the dominant M5 price action and momentum (M1/M5 candles); a clear impulse with structure break is a valid entry even against a higher-timeframe bias.
 - Only restrict trading 15-30 min before/after a HIGH-impact event listed in the economic calendar block above. If none is listed, trade normally — 'news risk' is not a valid HOLD reason when no event is imminent.
 - Entry: avoid entering against a DIRECT forecast-bias contradiction (BUY vs BEARISH, SELL vs BULLISH) or when price is already beyond the T+15m target. R:R to the T+15m target should be >= 1.0 (0.8 acceptable on clear momentum).
-- Suggested SL/TP in POINTS (1 point = {current_tick['point']} USD). Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL.
+- Suggested SL/TP in POINTS. Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL. On BTC the market moves thousands of points — do NOT give tiny SL/TP (e.g. < 5000 pts) just because the number looks big; those are worth only cents.
 
 ### RESPONSE FORMAT
 You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
