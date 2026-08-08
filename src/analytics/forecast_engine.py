@@ -17,10 +17,19 @@ from src.core import llm_client as llm
 
 CACHE_FILE = os.path.join(config.DATA_DIR, "forecast_cache.json")
 
-CACHE_DURATION_SECONDS = 900  # 15 minutes forecast validity
+CACHE_DURATION_SECONDS = 900  # XAU M5 forecast validity (15 min)
 
 # How close to expiry (in seconds) before we pre-warm in the background.
 PRE_WARM_WINDOW_SECONDS = 60
+
+
+def _cache_duration_seconds(symbol):
+    """Forecast cache validity per symbol:
+    XAU (M5 scalping): 15 minutes.
+    BTC (H1 swing, H4/D1 context): 1 hour — the T+4h/T+D1 forecast does not
+    change meaningfully every 15 minutes, so refresh once per H1 candle.
+    """
+    return 3600 if config.is_crypto(symbol) else CACHE_DURATION_SECONDS
 
 class ForecastEngine:
     def __init__(self):
@@ -60,7 +69,7 @@ class ForecastEngine:
         last_time = float(self._forecast.get("timestamp", 0))
         cache_valid = (
             self._forecast.get("symbol") == symbol
-            and (now - last_time) < CACHE_DURATION_SECONDS
+            and (now - last_time) < _cache_duration_seconds(symbol)
         )
 
         if cache_valid:
