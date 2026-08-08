@@ -145,7 +145,7 @@ def run_trading_cycle():
     except Exception as e:
         print(f"[FORECAST WARNING] {e}")
 
-    print("🧠 Mengirim data ke OpenAI, Gemini, dan DeepSeek...")
+    print("🧠 Mengirim data ke OpenAI, Gemini, dan Claude...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
     
     # 5. Calculate consensus
@@ -270,7 +270,7 @@ def main():
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
     tf_name = "H1" if config.is_crypto(config.SYMBOL) else "M5"
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
-    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), DeepSeek ({config.DEEPSEEK_MODEL})")
+    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
     print("-" * 60)
     print("🛡️ PROTEKSI AKTIF:")
     print(f"   Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
@@ -293,7 +293,7 @@ def main():
     missing_keys = []
     if not config.OPENAI_API_KEY: missing_keys.append("OPENAI_API_KEY")
     if not config.GEMINI_API_KEY: missing_keys.append("GEMINI_API_KEY")
-    if not config.DEEPSEEK_API_KEY: missing_keys.append("DEEPSEEK_API_KEY")
+    if not config.ANTHROPIC_API_KEY: missing_keys.append("ANTHROPIC_API_KEY")
     
     if missing_keys:
         print(f"❌ ERROR: Kunci API berikut tidak ditemukan di file .env: {', '.join(missing_keys)}")

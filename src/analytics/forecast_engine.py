@@ -115,7 +115,7 @@ class ForecastEngine:
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
-        """Queries OpenAI, Gemini, and DeepSeek in parallel to form a Multi-LLM Consensus Forecast."""
+        """Queries OpenAI, Gemini, and Claude in parallel to form a Multi-LLM Consensus Forecast."""
         latest = df.iloc[-1]
 
         # Per-symbol forecast horizon: XAU scalps on M5 (15m/60m ahead);
@@ -174,7 +174,7 @@ Respond in STRICT JSON format ONLY with the following keys:
             futures = {
                 executor.submit(_get_single, llm.query_openai): "OpenAI",
                 executor.submit(_get_single, llm.query_gemini): "Gemini",
-                executor.submit(_get_single, llm.query_deepseek): "DeepSeek"
+                executor.submit(_get_single, llm.query_claude): "Claude"
             }
             for fut in concurrent.futures.as_completed(futures):
                 m_name = futures[fut]

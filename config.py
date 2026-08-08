@@ -27,16 +27,15 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 # --- API KEYS ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 
 # --- MODEL NAMES & FALLBACKS ---
-# DeepSeek Model & Fallback (Official production endpoint)
-DEEPSEEK_MODEL = "deepseek-chat"
-DEEPSEEK_FALLBACK_MODEL = "deepseek-chat"
+# Claude Model & Fallback (Anthropic) — replaces DeepSeek in the consensus slot
+CLAUDE_MODEL = "claude-sonnet-5"
+CLAUDE_FALLBACK_MODEL = "claude-sonnet-5"
 
 
 # Gemini Model & Fallback

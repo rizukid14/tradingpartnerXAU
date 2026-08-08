@@ -14,12 +14,13 @@ if config.OPENAI_API_KEY:
         base_url=config.OPENAI_API_BASE
     )
 
-deepseek_client = None
-if config.DEEPSEEK_API_KEY:
-    deepseek_client = OpenAI(
-        api_key=config.DEEPSEEK_API_KEY,
-        base_url=config.DEEPSEEK_API_BASE
-    )
+claude_client = None
+if config.ANTHROPIC_API_KEY:
+    try:
+        from anthropic import Anthropic
+        claude_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    except Exception as e:
+        print(f"[LLM WARNING] Gagal init Anthropic client: {e}")
 
 gemini_client = None
 if config.GEMINI_API_KEY:
@@ -37,7 +38,7 @@ def query_primary_model(prompt, search_grounding=False):
     """
     Queries a single model for background analysis (post-mortem, MTF, lessons
     summary). Primary = OpenAI gpt-5.4-mini (free tier), then Gemini, then
-    DeepSeek. Search grounding (Google Search) is only supported on Gemini,
+    Claude. Search grounding (Google Search) is only supported on Gemini,
     so it forces the Gemini branch when enabled.
     """
     # 1. Try OpenAI (primary — gpt-5.4-mini, free tier)
@@ -77,21 +78,19 @@ def query_primary_model(prompt, search_grounding=False):
         except Exception as e:
             print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
 
-    # 3. Try DeepSeek
-    if deepseek_client and config.DEEPSEEK_API_KEY:
+    # 3. Try Claude (Anthropic)
+    if claude_client and config.ANTHROPIC_API_KEY:
         try:
-            response = deepseek_client.chat.completions.create(
-                model=config.DEEPSEEK_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
+            response = claude_client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=1000,
+                system="You are a professional financial trading assistant.",
+                messages=[{"role": "user", "content": prompt}],
                 timeout=30
             )
-            return response.choices[0].message.content.strip()
+            return "".join(b.text for b in response.content if b.type == "text").strip()
         except Exception as e:
-            print(f"[PRIMARY MODEL ERROR - DEEPSEEK] {e}")
+            print(f"[PRIMARY MODEL ERROR - CLAUDE] {e}")
 
     return None
 
@@ -474,43 +473,40 @@ def query_gemini(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(e)}"}
 
 
-def _execute_deepseek_single(model_name, prompt, timeout_sec):
-    response = deepseek_client.chat.completions.create(
+def _execute_claude_single(model_name, prompt, timeout_sec):
+    response = claude_client.messages.create(
         model=model_name,
-        messages=[
-            {"role": "system", "content": "You are a professional financial trading assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.2,
+        max_tokens=1000,
+        system="You are a professional financial trading assistant. Always respond with valid JSON only.",
+        messages=[{"role": "user", "content": prompt}],
         timeout=timeout_sec
     )
-    content = response.choices[0].message.content
+    content = "".join(b.text for b in response.content if b.type == "text")
     return clean_json_response(content)
 
 
-def query_deepseek(prompt):
-    """Queries DeepSeek API with timeout and fallback model support."""
-    if not deepseek_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
+def query_claude(prompt):
+    """Queries Claude API with timeout and fallback model support."""
+    if not claude_client:
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Claude API Key tidak diset."}
 
-    primary_model = config.DEEPSEEK_MODEL
-    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", None)
+    primary_model = config.CLAUDE_MODEL
+    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
 
     try:
-        return _execute_deepseek_single(primary_model, prompt, timeout_sec)
+        return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f"⚠️ [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f"⚠️ [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
+                return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
-                print(f"[DEEPSEEK FALLBACK ERROR] {fb_err}")
-                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(fb_err)}"}
+                print(f"[CLAUDE FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Claude Error: {str(fb_err)}"}
         else:
-            print(f"[DEEPSEEK ERROR] {e}")
-            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}
+            print(f"[CLAUDE ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Claude Error: {str(e)}"}
 
 
 
@@ -540,7 +536,7 @@ Re-evaluate your position and cast your REVISED final decision for Round 2.
 
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
-    Sends the prompt to OpenAI, Gemini, and DeepSeek in parallel threads
+    Sends the prompt to OpenAI, Gemini, and Claude in parallel threads
     to minimize latency. If Round 1 lacks consensus, triggers Multi-Agent Debate Round 2.
     Also evaluates active open positions for early close recommendations.
     """
@@ -562,7 +558,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
         future_to_model = {
             executor.submit(_query_timed, query_openai, prompt): "OpenAI",
             executor.submit(_query_timed, query_gemini, prompt): "Gemini",
-            executor.submit(_query_timed, query_deepseek, prompt): "DeepSeek"
+            executor.submit(_query_timed, query_claude, prompt): "Claude"
         }
         
         for future in concurrent.futures.as_completed(future_to_model):
@@ -577,7 +573,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                 latencies[model_name] = 0.0
 
     total_elapsed = time.time() - start_total
-    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in latencies])
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in latencies])
     print(f"⏱️ [LATENSI MODEL (Ronde 1)] {lat_str} (Total: {total_elapsed:.2f}s)")
     
     # Check consensus from Round 1
@@ -602,7 +598,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
             future_to_model = {
                 executor.submit(_query_timed, query_openai, debate_prompt): "OpenAI",
                 executor.submit(_query_timed, query_gemini, debate_prompt): "Gemini",
-                executor.submit(_query_timed, query_deepseek, debate_prompt): "DeepSeek"
+                executor.submit(_query_timed, query_claude, debate_prompt): "Claude"
             }
             for future in concurrent.futures.as_completed(future_to_model):
                 model_name = future_to_model[future]
@@ -615,7 +611,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                     round2_latencies[model_name] = 0.0
                     
         total_d = time.time() - start_d
-        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in round2_latencies])
+        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in round2_latencies])
         print(f"💬 [DEBATE SELESAI] {d_str} (Total Debate: {total_d:.2f}s)")
         return round2_results
 
