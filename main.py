@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 # Force UTF-8 encoding for standard output on Windows
@@ -6,13 +7,14 @@ if sys.platform == 'win32':
     import MetaTrader5 as mt5
 else:
     try:
-        from mt5linux import MetaTrader5 as mt5
+        import importlib
+        mt5 = importlib.import_module("mt5linux").MetaTrader5
     except ImportError:
         import MetaTrader5 as mt5
 import config
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
-from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine
+from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
 
 
@@ -26,19 +28,33 @@ macro = MacroAnalyst()
 
 
 class TeeLogger(object):
-    """Redirects stdout and stderr to both the console and a log file."""
-    def __init__(self, filepath):
+    """Redirects stdout and stderr to both the console and a log file with auto-size rotation."""
+    def __init__(self, filepath, max_bytes=2000000):
         self.terminal = sys.stdout
+        self.filepath = filepath
+        # Rotate log if size exceeds max_bytes (keep last 5000 lines)
+        if os.path.exists(filepath) and os.path.getsize(filepath) > max_bytes:
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                keep_lines = lines[-5000:]
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.writelines(keep_lines)
+            except Exception:
+                pass
         self.log = open(filepath, "a", encoding="utf-8")
 
     def write(self, message):
         self.terminal.write(message)
-        self.log.write(message)
-        self.log.flush()
+        # Skip carriage return live clock lines from spamming log file
+        if "\r" not in message:
+            self.log.write(message)
+            self.log.flush()
 
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+
 
 
 def run_trading_cycle():
@@ -51,8 +67,8 @@ def run_trading_cycle():
         print(reason)
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (50 candles of M5)
-    df = connector.get_market_data(config.SYMBOL, config.TIMEFRAME, num_candles=50)
+    # 1. Fetch market data (50 candles of the active timeframe — M5 for XAU, H1 for BTC)
+    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=50)
     if df is None or len(df) == 0:
         print("❌ Gagal mendapatkan market data. Melewatkan siklus ini.")
         return False
@@ -64,34 +80,121 @@ def run_trading_cycle():
         return False
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
+
+    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst H1/M5, Kurtosis M5/M1)
+    try:
+        from src.analytics import market_randomness
+        rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
+        ft = rand_info.get('fat_tail', {})
+        tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
+        print(f"🔬 [QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
+              f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
+              f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
+              f"Status: {'🚫 BLOCKED (Pure Random Walk)' if rand_info['is_random'] else '✅ PASSED'}")
+    except Exception as e:
+        print(f"⚠️ [QUANT MATH ERROR] {e}")
+
+    # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
+    try:
+        from src.analytics import quant_probability
+        tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+        print(f"🎲 [QUANT PROB] Monte Carlo (1000 paths): "
+              f"🟢 UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
+              f"🔴 DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
+              f"Est. Horizon: {q_res['estimated_time_str']}")
+    except Exception as e:
+        print(f"⚠️ [QUANT PROB ERROR] {e}")
     
-    # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation
+    # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
         dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
+
+        # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
+        if closed_deals and len(closed_deals) > 0:
+            # Break-even trades (|profit| within tolerance) are excluded from win-rate
+            tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
+            dec = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
+            bep_n = len(closed_deals) - len(dec)
+            total_t = len(dec)
+            wins_t = sum(1 for d in dec if d.get("profit", 0) > 0)
+            loss_t = total_t - wins_t
+            wr = (wins_t / total_t) * 100.0 if total_t else 0.0
+            pnl_t = sum(d.get("profit", 0) for d in closed_deals)
+            bep_str = f" | {bep_n} BEP" if bep_n else ""
+            print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%){bep_str} | Net PnL: ${pnl_t:+.2f} USD")
+
+            # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
+            by_symbol = {}
+            for d in closed_deals:
+                sym = d.get("symbol", "UNKNOWN")
+                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0, "bep": 0})
+                bucket["n"] += 1
+                bucket["pnl"] += d.get("profit", 0)
+                if abs(d.get("profit", 0)) <= tol:
+                    bucket["bep"] += 1
+                elif d.get("profit", 0) > 0:
+                    bucket["wins"] += 1
+            if len(by_symbol) > 1:
+                parts = []
+                for sym, b in sorted(by_symbol.items()):
+                    sym_t = b["n"] - b["bep"]
+                    sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
+                    sym_loss = sym_t - b["wins"]
+                    bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
+                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} ${b['pnl']:+.2f}")
+                print(f"📊 [PERFORMA PER SIMBOL] " + " | ".join(parts))
+        else:
+            print("📊 [PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
 
 
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
-    if len(open_positions) >= config.MAX_OPEN_POSITIONS:
-        print(f"ℹ️ Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
-        for pos in open_positions:
-            print(f"   - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-        print(f"➡️ Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({config.MAX_OPEN_POSITIONS}).")
-        return True
 
-    # 4. Query AI models in parallel
+
+    # 4. Query AI models in parallel (including active open_positions for 5-min AI re-evaluation!)
+
     macro_context = macro.get_macro_context()
     if macro_context:
         print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
-    print("🧠 Mengirim data ke OpenAI, Gemini, dan DeepSeek...")
-    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context)
+
+    # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
+    # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
+    # will receive the (possibly stale) cache now and the next cycle gets the new one.
+    try:
+        forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
+    except Exception as e:
+        print(f"[FORECAST WARNING] {e}")
+
+    print("🧠 Mengirim data ke OpenAI, Gemini, dan Claude...")
+    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
     
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
+
+    # 5.1 Execute AI Position Re-Evaluator Close Actions
+    tickets_to_close = result.get("tickets_to_close", [])
+    for close_req in tickets_to_close:
+        t_ticket = close_req["ticket"]
+        t_reason = close_req["reason"]
+        t_models = close_req.get("models", "AI Consensus")
+        print(f"⚡ [AI RE-EVALUATOR] {t_models} sepakat CLOSE order #{t_ticket}: {t_reason}")
+        # Capture pre-close profit so daily P/L + loss streak stay accurate
+        pre_profit = 0.0
+        try:
+            pos_pre = mt5.positions_get(ticket=t_ticket)
+            if pos_pre and len(pos_pre) > 0:
+                pre_profit = pos_pre[0].profit + pos_pre[0].swap + pos_pre[0].commission
+        except Exception:
+            pass
+        close_res = connector.close_position(t_ticket)
+        if close_res:
+            print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
+            risk.record_position_closed(t_ticket, pre_profit)
 
     # 5.5 Multi-Horizon Forecast Context (Informational Only)
     try:
@@ -102,6 +205,16 @@ def run_trading_cycle():
     except Exception as e:
         print(f"[FORECAST INFO WARNING] {e}")
 
+    # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
+    max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+    if len(open_positions) >= max_positions:
+        print(f"ℹ️ Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
+        for pos in open_positions:
+            print(f"   - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
+        print(f"➡️ Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
+        return True
+
+
 
 
     # 6. Execute trade if consensus signal is BUY or SELL
@@ -111,11 +224,11 @@ def run_trading_cycle():
         tp_points = result["tp_points"]
         agreeing_count = result.get("agreeing_count", 0)
         
-        # Get effective lot size (recovery mode + session multiplier)
-        effective_lot = risk.get_effective_lot_size()
+        # Get effective lot size from risk-based sizing (uses floored SL)
+        effective_lot = risk.get_effective_lot_size(sl_points)
         
-        # Check remaining capacity slots before MAX_OPEN_POSITIONS
-        remaining_slots = max(0, config.MAX_OPEN_POSITIONS - len(open_positions))
+        # Check remaining capacity slots before max positions (recovery mode: tighter cap)
+        remaining_slots = max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
@@ -149,7 +262,18 @@ def run_trading_cycle():
     else:
         print("☕ Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
 
-        
+    # Record this cycle's final decision for Recent Decision Memory
+    # (so the LLM next cycle can see if it has been HOLDing too long).
+    try:
+        decision_memory.memory.record(
+            config.SYMBOL,
+            signal=result.get("signal", "HOLD"),
+            confidence=result.get("confidence", 0.0),
+            reasoning=result.get("details", ""),
+        )
+    except Exception as e:
+        print(f"[DECISION MEMORY WARNING] {e}")
+
     return True
 
 
@@ -164,9 +288,14 @@ def main():
     print("=" * 60)
     print("    BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
     print("=" * 60)
+
+    # Set active symbol now so the banner shows the symbol that will be traded
+    config.refresh_active_symbol()
+
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
-    print(f"Simbol: {config.SYMBOL} | Timeframe: M5 (5 Menit) | Lot Size: {config.LOT_SIZE}")
-    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), DeepSeek ({config.DEEPSEEK_MODEL})")
+    tf_name = "H1" if config.is_crypto(config.SYMBOL) else "M5"
+    print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
+    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
     print("-" * 60)
     print("🛡️ PROTEKSI AKTIF:")
     print(f"   Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
@@ -179,7 +308,7 @@ def main():
     print(f"   Recovery Mode:   {'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'} "
           f"(x{config.RECOVERY_LOT_MULTIPLIER} setelah {config.MAX_CONSECUTIVE_LOSSES} loss)")
     print(f"   Cooldown:        {config.TRADE_COOLDOWN_SECONDS}s antar trade")
-    print(f"   Spread Filter:   {config.MAX_SPREAD_POINTS} pts maks")
+    print(f"   Spread Filter:   {config.max_spread_points_for(config.SYMBOL)} pts maks ({config.SYMBOL})")
     print(f"   Session Filter:  {'ON' if config.SESSION_FILTER_ENABLED else 'OFF'} (WIB)")
     print(f"   Weekend Close:   {'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}")
     print(f"   Telegram:        {'ON' if config.TELEGRAM_ENABLED else 'OFF'}")
@@ -189,14 +318,14 @@ def main():
     missing_keys = []
     if not config.OPENAI_API_KEY: missing_keys.append("OPENAI_API_KEY")
     if not config.GEMINI_API_KEY: missing_keys.append("GEMINI_API_KEY")
-    if not config.DEEPSEEK_API_KEY: missing_keys.append("DEEPSEEK_API_KEY")
+    if not config.ANTHROPIC_API_KEY: missing_keys.append("ANTHROPIC_API_KEY")
     
     if missing_keys:
         print(f"❌ ERROR: Kunci API berikut tidak ditemukan di file .env: {', '.join(missing_keys)}")
         print("Silakan salin .env.example menjadi .env dan masukkan API Key Anda.")
         sys.exit(1)
 
-    # Initialize MT5
+    # Initialize MT5 (validate the symbol that is active right now)
     if not connector.initialize_mt5():
         print("❌ Gagal terhubung ke MetaTrader 5 terminal. Pastikan MT5 Anda aktif.")
         sys.exit(1)
@@ -218,6 +347,7 @@ def main():
             
     last_candle_time = None
     startup_run = True
+    last_symbol = config.SYMBOL
 
     try:
         while True:
@@ -225,6 +355,13 @@ def main():
             #  EVERY TICK (5s): Manage open positions + weekend check
             # =================================================================
             try:
+                # Symbol rotation: XAUUSD weekdays, BTCUSD weekends
+                active_symbol, changed = config.refresh_active_symbol()
+                if changed:
+                    print(f"🔄 [SYMBOL SWITCH] {last_symbol} -> {active_symbol}")
+                    tg.alert_symbol_switch(last_symbol, active_symbol)
+                    last_symbol = active_symbol
+
                 # Trailing stop + break-even + partial close
                 position_manager.manage_all_positions()
                 
@@ -235,11 +372,12 @@ def main():
                     reason = action["reason"]
                     print(f"📅 {reason}")
                     
-                    # Get position profit before closing
+                    # Get position profit before closing (include swap+commission
+                    # so the recorded result matches what MT5 deal history reports)
                     positions = mt5.positions_get(ticket=ticket)
                     profit = 0.0
                     if positions and len(positions) > 0:
-                        profit = positions[0].profit
+                        profit = positions[0].profit + positions[0].swap + positions[0].commission
                     
                     success = connector.close_position(ticket)
                     if success:
@@ -259,7 +397,7 @@ def main():
                 except Exception as e:
                     print(f"[MACRO UPDATE ERROR] {e}")
 
-            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.TIMEFRAME, 0, 2)
+            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
             if rates is not None and len(rates) > 0:
                 current_candle_time = rates[-1]['time']
                 
@@ -268,7 +406,8 @@ def main():
                         print("▶️ Menjalankan siklus analisa pertama saat startup...")
                         startup_run = False
                     else:
-                        print(f"\n🆕 Candle baru terdeteksi! Waktu: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_candle_time))}")
+                        candle_wib = connector.server_to_wib(int(current_candle_time))
+                        print(f"\n🆕 Candle baru terdeteksi! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
                     
                     last_candle_time = current_candle_time
                     
@@ -287,7 +426,23 @@ def main():
             
             # Show live status clock line in CLI every loop iteration
             now_str = time.strftime('%H:%M:%S')
-            sys.stdout.write(f"\r🕒 [LIVE CLOCK: {now_str}] ⏳ Waiting for next tick / M5 candle...")
+            remaining_pause = risk.get_remaining_pause()
+            pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
+            tf_label = "H1" if config.is_crypto(config.SYMBOL) else "M5"
+            # Show any running (open) bot positions across ALL symbols
+            open_pos = connector.get_all_open_positions()
+            if open_pos:
+                by_sym = {}
+                for p in open_pos:
+                    by_sym.setdefault(p.get("symbol", "?"), []).append(p)
+                pos_parts = []
+                for sym, plist in sorted(by_sym.items()):
+                    float_s = sum(x.get("profit", 0.0) for x in plist)
+                    pos_parts.append(f"{sym}: {len(plist)} pos ${float_s:+.2f}")
+                pos_str = " | " + " | ".join(pos_parts)
+            else:
+                pos_str = ""
+            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / {tf_label} candle...{pause_str}{pos_str}")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks

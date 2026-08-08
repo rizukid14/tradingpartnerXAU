@@ -32,6 +32,7 @@ class MacroAnalyst:
                     self.cache = json.load(f)
             else:
                 self.cache = {
+                    "symbol": config.SYMBOL,
                     "last_fundamental_session": "",
                     "last_fundamental_time": 0.0,
                     "fundamental_outlook": "",
@@ -40,6 +41,7 @@ class MacroAnalyst:
         except Exception as e:
             print(f"[MACRO WARNING] Gagal memuat analisa cache: {e}")
             self.cache = {
+                "symbol": config.SYMBOL,
                 "last_fundamental_session": "",
                 "last_fundamental_time": 0.0,
                 "fundamental_outlook": "",
@@ -57,6 +59,9 @@ class MacroAnalyst:
     def get_current_session(self):
         """
         Determines the current active session name matching WIB configuration.
+        When sessions overlap (e.g. London 15:00-23:59 vs London-NY 20:00-23:59),
+        returns the most SPECIFIC / most recent one (shortest window, latest start)
+        so the fundamental analysis label follows the actual active phase.
         Returns 'None' if no session is active.
         """
         if not config.SESSION_FILTER_ENABLED:
@@ -65,6 +70,7 @@ class MacroAnalyst:
         now_wib = datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
+        matches = []
         for session in config.ALLOWED_SESSIONS_WIB:
             start = session["start"][0] * 60 + session["start"][1]
             end = session["end"][0] * 60 + session["end"][1]
@@ -76,8 +82,16 @@ class MacroAnalyst:
                 in_session = start <= current_minutes < end
 
             if in_session:
-                return session["name"]
-        return "None"
+                # Duration (handle overnight): minutes from start to end
+                duration = (end - start) % (24 * 60)
+                matches.append((session["name"], start, duration))
+
+        if not matches:
+            return "None"
+
+        # Pick most specific: shortest duration, then latest start
+        matches.sort(key=lambda m: (m[2], -m[1]))
+        return matches[0][0]
 
     def check_and_update_analysis(self, force=False):
         """
@@ -87,12 +101,26 @@ class MacroAnalyst:
         """
         updated = False
 
+        # Cache is per-symbol: if the active symbol changed (XAUUSD -> BTCUSD),
+        # reset the cached analyses so stale gold data is never injected into BTC prompts.
+        cached_symbol = self.cache.get("symbol", "")
+        if cached_symbol != config.SYMBOL:
+            self.cache = {
+                "symbol": config.SYMBOL,
+                "last_fundamental_session": "",
+                "last_fundamental_time": 0.0,
+                "fundamental_outlook": "",
+                "timeframe_analysis": {}
+            }
+            print(f"🔄 [MACRO] Simbol berubah ({cached_symbol or 'none'} -> {config.SYMBOL}). Cache analisa direset.")
+            force = True
+
         # 1. Check Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
             if "timeframe_analysis" not in self.cache:
                 self.cache["timeframe_analysis"] = {}
 
-            for tf_name, tf_const in config.HIGHER_TIMEFRAMES.items():
+            for tf_name, tf_const in config.get_higher_timeframes(config.SYMBOL).items():
                 rates = mt5.copy_rates_from_pos(config.SYMBOL, tf_const, 0, 2)
                 if rates is not None and len(rates) > 0:
                     current_candle_time = int(rates[-1]['time'])
@@ -147,18 +175,11 @@ class MacroAnalyst:
         """Formats the cached macro & MTF analyses into a unified context block."""
         context = []
 
-        # 1. Add Fundamental Outlook
-        if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):
-            outlook = self.cache.get("fundamental_outlook")
-            session = self.cache.get("last_fundamental_session", "None")
-            if outlook:
-                context.append(f"### FUNDAMENTAL OUTLOOK (Sesi: {session})\n{outlook}")
-
-        # 2. Add Multi-Timeframe Analysis
+        # 1. Add Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
             tf_analyses = []
             tf_cache = self.cache.get("timeframe_analysis", {})
-            for tf_name in config.HIGHER_TIMEFRAMES.keys():
+            for tf_name in config.get_higher_timeframes(config.SYMBOL).keys():
                 tf_data = tf_cache.get(tf_name)
                 if tf_data and tf_data.get("analysis"):
                     tf_analyses.append(f"- **{tf_name} Timeframe**: {tf_data['analysis']}")

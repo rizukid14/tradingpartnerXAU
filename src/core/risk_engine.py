@@ -26,7 +26,8 @@ if sys.platform == 'win32':
     import MetaTrader5 as mt5
 else:
     try:
-        from mt5linux import MetaTrader5 as mt5
+        import importlib
+        mt5 = importlib.import_module("mt5linux").MetaTrader5
     except ImportError:
         import MetaTrader5 as mt5
 import config
@@ -51,6 +52,12 @@ class RiskEngine:
         self._known_closed = set()          # Position ids already accounted for
         self._load_state()
         self._sync_closed_positions()
+
+    def get_remaining_pause(self):
+        """Returns the remaining pause duration in seconds, or 0 if not paused."""
+        if time.time() < self._paused_until:
+            return int(self._paused_until - time.time())
+        return 0
 
     # =========================================================================
     #  STATE PERSISTENCE (survives restarts)
@@ -88,8 +95,12 @@ class RiskEngine:
         Detect positions closed by MT5 (SL/TP/manual) that the bot never saw close.
         Runs at startup and every can_trade() call so loss streak and daily
         P/L stay accurate even when trades are closed outside the bot.
+
+        Streak / recovery tracking is per-symbol (pass current symbol) so
+        XAUUSD losses on Friday do not bleed into BTCUSD weekend trading.
         """
-        closed = connector.get_closed_positions_today()
+        symbol = config.SYMBOL
+        closed = connector.get_closed_positions_today(symbol=symbol)
         if not closed:
             return
 
@@ -193,6 +204,12 @@ class RiskEngine:
         """Update loss streak / recovery mode from a single realized result."""
         self._last_trade_time = time.time()
 
+        # Break-even tolerance: |profit| within tolerance does not extend the
+        # loss streak, but also does not reset it or exit recovery mode.
+        if abs(profit) <= config.BREAK_EVEN_TOLERANCE_USD:
+            print(f"⚖️ [RISK] Trade BEP ({profit:+.2f} USD). Streak dipertahankan ({self._consecutive_losses}).")
+            return
+
         if profit < 0:
             self._consecutive_losses += 1
             if self._consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
@@ -205,36 +222,103 @@ class RiskEngine:
             if self._consecutive_losses > 0:
                 print(f"✅ [RISK] Win setelah {self._consecutive_losses} loss. Streak direset.")
             self._consecutive_losses = 0
-            # Exit recovery mode after a win
+            # Exit recovery mode only after a win that clears the minimum
+            # profit threshold — a tiny win should not instantly reset the
+            # reduced-lot protection after a losing streak.
             if self._in_recovery_mode:
-                self._in_recovery_mode = False
-                print("✅ [RISK] Recovery mode dinonaktifkan setelah win.")
+                exit_profit = getattr(config, "RECOVERY_EXIT_PROFIT_USD", 0.10)
+                if profit >= exit_profit:
+                    self._in_recovery_mode = False
+                    print(f"✅ [RISK] Recovery mode dinonaktifkan setelah win {profit:+.2f} USD (>= ${exit_profit:.2f}).")
+                else:
+                    print(f"⚖️ [RISK] Win kecil ({profit:+.2f} USD) < ${exit_profit:.2f}. Recovery mode dipertahankan.")
 
     def record_trade_opened(self):
         """Record that a trade was just opened (for cooldown tracking)."""
         self._last_trade_time = time.time()
 
     # =========================================================================
-    #  LOT SIZE CALCULATION
+    #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self):
+    def get_effective_lot_size(self, sl_points=None):
         """
-        Returns adjusted lot size based on:
-        - Recovery mode (from xaubot-ai: reduce lot after losses)
-        - Session multiplier (from xaubot-ai: boost during London-NY overlap)
-        """
-        lot = config.LOT_SIZE
+        Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
+        so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
 
-        # Recovery mode: reduce lot size
+        Order of operations (important):
+          1. Compute risk-based lot from the (already floored) SL distance.
+          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2).
+          3. Clamp to broker volume_min/max and round to volume_step LAST,
+             so multipliers are not distorted by rounding.
+        Falls back to config.lot_size_for() when SL is unknown.
+        """
+        symbol = config.SYMBOL
+        risk_pct = config.risk_percent_for(symbol)
+        try:
+            account = mt5.account_info()
+            equity = float(account.equity) if account else 0.0
+        except Exception:
+            equity = 0.0
+
+        si = mt5.symbol_info(symbol)
+        if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
+            # No SL given -> fall back to the static per-symbol lot
+            lot = config.lot_size_for(symbol)
+            return self._apply_lot_multipliers(lot, symbol)
+
+        # USD value of a 1-point move for 1.0 lot
+        usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
+        if usd_per_pt_1lot <= 0:
+            lot = config.lot_size_for(symbol)
+            return self._apply_lot_multipliers(lot, symbol)
+
+        risk_usd = equity * risk_pct / 100.0
+        sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
+        if sl_usd_per_lot <= 0:
+            lot = config.lot_size_for(symbol)
+            return self._apply_lot_multipliers(lot, symbol)
+
+        lot_raw = risk_usd / sl_usd_per_lot
+        print(f"📐 [SIZING] {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd:.2f}, "
+              f"SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
+
+        # Apply recovery/session multipliers BEFORE clamping so rounding cannot
+        # erase the intended reduction.
+        lot = self._apply_lot_multipliers(lot_raw, symbol)
+
+        # Clamp to broker volume bounds and round to step
+        volume_min = getattr(si, "volume_min", 0.01)
+        volume_max = getattr(si, "volume_max", 100.0)
+        volume_step = getattr(si, "volume_step", 0.01)
+        lot = max(volume_min, min(volume_max, lot))
+        lot = round(lot / volume_step) * volume_step
+        lot = round(lot, 2)
+
+        # Margin safety net: never let the order exceed available free margin
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is not None:
+                margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot, tick.ask)
+                free_margin = float(account.margin_free) if account else 0.0
+                if margin and margin > free_margin * 0.5:  # keep 50% buffer
+                    print(f"🛡️ [SIZING] Margin {margin:.2f} > 50% free ({free_margin:.2f}). Lot diturunkan.")
+                    # Halve until it fits
+                    while lot > volume_min and margin > free_margin * 0.5:
+                        lot = round((lot - volume_step), 2)
+                        margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot, tick.ask)
+                        if not margin:
+                            break
+        except Exception:
+            pass
+
+        return lot
+
+    def _apply_lot_multipliers(self, lot, symbol):
+        """Apply recovery (x0.5) and session (x1.0/1.2) lot multipliers."""
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
             lot *= config.RECOVERY_LOT_MULTIPLIER
-            print(f"🔄 [RECOVERY] Lot size dikurangi: {lot:.2f} (x{config.RECOVERY_LOT_MULTIPLIER})")
-
-        # Session multiplier
+            print(f"🔄 [RECOVERY] Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
         lot *= self._session_lot_multiplier
-
-        # Ensure minimum lot
-        lot = max(0.01, round(lot, 2))
         return lot
 
     @property
@@ -267,8 +351,9 @@ class RiskEngine:
         """Check if max open positions (of this bot) reached."""
         positions = mt5.positions_get(symbol=config.SYMBOL)
         bot_positions = [p for p in (positions or []) if p.magic == config.MAGIC_NUMBER]
-        if len(bot_positions) >= config.MAX_OPEN_POSITIONS:
-            return False, f"📊 [RISK] Posisi terbuka sudah {len(bot_positions)}/{config.MAX_OPEN_POSITIONS}."
+        max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if self._in_recovery_mode else config.MAX_OPEN_POSITIONS
+        if len(bot_positions) >= max_positions:
+            return False, f"📊 [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions}."
         return True, ""
 
     def _check_cooldown(self):
@@ -286,16 +371,22 @@ class RiskEngine:
         tick = mt5.symbol_info_tick(config.SYMBOL)
         symbol_info = mt5.symbol_info(config.SYMBOL)
         if tick is None or symbol_info is None:
-            return True, ""
+            # Fail-closed: if we can't verify the spread, don't trade.
+            return False, "⚠️ [RISK] Tidak bisa memverifikasi spread (MT5 data unavailable). Menunggu..."
 
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
-        if spread_points > config.MAX_SPREAD_POINTS:
+        max_spread = config.max_spread_points_for(config.SYMBOL)
+        if spread_points > max_spread:
             return False, (f"⚠️ [RISK] Spread terlalu tinggi: {spread_points} pts "
-                           f"(Maks: {config.MAX_SPREAD_POINTS} pts). Menunggu...")
+                           f"(Maks: {max_spread} pts). Menunggu...")
         return True, ""
 
     def _check_danger_zones(self):
         """Check if current time is in a danger zone (rollover/dead zone)."""
+        # Crypto (BTCUSD) trades 24/7 — no FX-style danger zones
+        if config.is_crypto(config.SYMBOL):
+            return True, ""
+
         now_wib = datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
@@ -307,7 +398,9 @@ class RiskEngine:
         return True, ""
 
     def _check_weekend_entry(self):
-        """Block new trade entry near weekend close."""
+        """Block new trade entry near weekend close (FX only). Crypto trades 24/7."""
+        if config.is_crypto(config.SYMBOL):
+            return True, ""
         now_wib = datetime.now(WIB)
         # Friday after 22:00 WIB or Saturday before 05:00 WIB → block new entries
         if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
@@ -320,6 +413,11 @@ class RiskEngine:
 
     def _check_session(self):
         """Check if current time falls within allowed trading sessions. Sets lot multiplier."""
+        # Crypto (BTCUSD) trades 24/7 — no FX session windows
+        if config.is_crypto(config.SYMBOL):
+            self._session_lot_multiplier = 1.0
+            return True, ""
+
         if not config.SESSION_FILTER_ENABLED:
             self._session_lot_multiplier = 1.0
             return True, ""
@@ -327,6 +425,9 @@ class RiskEngine:
         now_wib = datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
+        # Pick the HIGHEST multiplier among all matching sessions so overlapping
+        # windows (e.g. London 1.0x inside London-NY 1.2x) apply the best one.
+        best_multiplier = None
         for session in config.ALLOWED_SESSIONS_WIB:
             start = session["start"][0] * 60 + session["start"][1]
             end = session["end"][0] * 60 + session["end"][1]
@@ -338,8 +439,13 @@ class RiskEngine:
                 in_session = start <= current_minutes < end
 
             if in_session:
-                self._session_lot_multiplier = session.get("lot_multiplier", 1.0)
-                return True, ""
+                mult = session.get("lot_multiplier", 1.0)
+                if best_multiplier is None or mult > best_multiplier:
+                    best_multiplier = mult
+
+        if best_multiplier is not None:
+            self._session_lot_multiplier = best_multiplier
+            return True, ""
 
         self._session_lot_multiplier = 1.0
         return False, f"💤 [RISK] Di luar sesi trading (WIB {now_wib.strftime('%H:%M')}). Menunggu..."
@@ -350,9 +456,14 @@ class RiskEngine:
     def check_weekend_positions(self):
         """
         Check if we should close profitable positions before weekend.
+        FX only — crypto (BTCUSD) trades through the weekend.
         Returns list of tickets to close with reasons.
         """
         if not config.WEEKEND_CLOSE_ENABLED:
+            return []
+
+        # Do NOT close crypto positions before weekend — BTC trades all weekend
+        if config.is_crypto(config.SYMBOL):
             return []
 
         now_wib = datetime.now(WIB)

@@ -14,50 +14,38 @@ if config.OPENAI_API_KEY:
         base_url=config.OPENAI_API_BASE
     )
 
-deepseek_client = None
-if config.DEEPSEEK_API_KEY:
-    deepseek_client = OpenAI(
-        api_key=config.DEEPSEEK_API_KEY,
-        base_url=config.DEEPSEEK_API_BASE
-    )
+claude_client = None
+if config.ANTHROPIC_API_KEY:
+    try:
+        from anthropic import Anthropic
+        claude_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    except Exception as e:
+        print(f"[LLM WARNING] Gagal init Anthropic client: {e}")
 
 gemini_client = None
 if config.GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 
+def asset_desc(symbol):
+    """Human-readable asset description for prompts (Gold vs Bitcoin)."""
+    if config.is_crypto(symbol):
+        return "Bitcoin (BTCUSD) — crypto, trades 24/7 including weekends"
+    return "Gold (XAUUSD) — Forex/commodity"
+
+
 def query_primary_model(prompt, search_grounding=False):
     """
-    Queries a single model (prefers Gemini, then OpenAI, then DeepSeek)
-    for background macro/fundamental or timeframe analysis.
-    If search_grounding is True, it enables Google Search tools on Gemini.
+    Queries a single model for background analysis (post-mortem, MTF, lessons
+    summary). Primary = OpenAI gpt-5.4-mini (free tier), then Gemini, then
+    Claude. Search grounding (Google Search) is only supported on Gemini,
+    so it forces the Gemini branch when enabled.
     """
-    # 1. Try Gemini
-    if gemini_client and config.GEMINI_API_KEY:
-        try:
-            from google.genai import types
-            
-            gen_config = None
-            if search_grounding:
-                gen_config = types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())]
-                )
-                
-            response = gemini_client.models.generate_content(
-                model=config.PRIMARY_ANALYSIS_MODEL,
-                contents=prompt,
-                config=gen_config
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
-
-    # 2. Try OpenAI (does not support Google Search grounding out-of-the-box in SDK)
+    # 1. Try OpenAI (primary — gpt-5.4-mini, free tier)
     if openai_client and config.OPENAI_API_KEY:
         try:
             response = openai_client.chat.completions.create(
-                model=config.OPENAI_MODEL,
+                model=config.PRIMARY_ANALYSIS_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a professional financial trading assistant."},
                     {"role": "user", "content": prompt}
@@ -69,21 +57,68 @@ def query_primary_model(prompt, search_grounding=False):
         except Exception as e:
             print(f"[PRIMARY MODEL ERROR - OPENAI] {e}")
 
-    # 3. Try DeepSeek
-    if deepseek_client and config.DEEPSEEK_API_KEY:
+    # 2. Try Gemini (fallback; required for search grounding)
+    if gemini_client and config.GEMINI_API_KEY:
         try:
-            response = deepseek_client.chat.completions.create(
-                model=config.DEEPSEEK_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant."},
-                    {"role": "user", "content": prompt}
+            from google.genai import types
+
+            gen_config = None
+            if search_grounding:
+                gen_config = types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                )
+
+            response = gemini_client.models.generate_content(
+                model=config.GEMINI_MODEL,
+                contents=prompt,
+                config=gen_config
+            )
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
+
+    # 3. Try Claude (Anthropic)
+    if claude_client and config.ANTHROPIC_API_KEY:
+        try:
+            response = claude_client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=1000,
+                system=[
+                    {
+                        "type": "text",
+                        "text": "You are a professional financial trading assistant.",
+                        "cache_control": {"type": "ephemeral"}
+                    }
                 ],
-                temperature=0.2,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
+                                "cache_control": {"type": "ephemeral"}
+                            }
+                        ]
+                    }
+                ],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
                 timeout=30
             )
-            return response.choices[0].message.content.strip()
+            return "".join(b.text for b in response.content if b.type == "text").strip()
         except Exception as e:
-            print(f"[PRIMARY MODEL ERROR - DEEPSEEK] {e}")
+            try:
+                response = claude_client.messages.create(
+                    model=config.CLAUDE_MODEL,
+                    max_tokens=1000,
+                    system="You are a professional financial trading assistant.",
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=30
+                )
+                return "".join(b.text for b in response.content if b.type == "text").strip()
+            except Exception as e2:
+                print(f"[PRIMARY MODEL ERROR - CLAUDE] {e2}")
 
     return None
 
@@ -131,39 +166,112 @@ Your response must be extremely brief (maximum 2-3 sentences) as it will be used
 
 def analyze_fundamentals(symbol):
     """
-    Queries Gemini using Google Search Grounding to summarize the latest 
-    macroeconomic sentiment and news affecting Gold/Forex.
+    Queries Gemini using Google Search Grounding to summarize the latest
+    macroeconomic SENTIMENT affecting the asset (news, outlook, positioning).
+    Event SCHEDULING is handled deterministically by economic_calendar.py —
+    search grounding is only a qualitative complement, never the schedule source.
     """
     prompt = f"""
-What is the latest macroeconomic news affecting {symbol} (Gold/Forex) prices today? 
-Summarize the main themes, current market sentiment, and any high-impact economic news releases (like NFP, CPI, or central bank decisions).
+What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
+Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
 
-Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a 5-minute scalping execution model.
+Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a 5-minute scalping execution model. Focus on DIRECTIONAL macro bias, not event schedules.
 """
     # Force search grounding tool
     return query_primary_model(prompt, search_grounding=True)
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
-    Constructs a highly structured trading prompt with market context
-    and requests a standard JSON response.
+    Constructs a rich prompt for LLM models containing price action,
+    multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
-    # Take the last 10 candles for context
-    recent_candles = df.tail(10).to_dict(orient="records")
-    
-    # Format candle list for readability in prompt
+
+    # Create recent candles string (last 10 candles)
+    recent_candles = df.tail(10)
     candles_str = ""
-    for c in recent_candles:
-        candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
+    for idx, row in recent_candles.iterrows():
+        time_str = row['time'].strftime('%Y-%m-%d %H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
+        candles_str += f"- [{time_str}] Open: {row['open']}, High: {row['high']}, Low: {row['low']}, Close: {row['close']}, Vol: {row['tick_volume']}\n"
+
+    # Micro price action: last 5 M5 candles (BTC H1) or last 5 M1 candles (XAU M5)
+    micro_candles_str = ""
+    try:
+        from src.core import mt5_connector
+        is_crypto_asset = config.is_crypto(symbol)
+        micro_tf = mt5_connector.mt5.TIMEFRAME_M5 if is_crypto_asset else mt5_connector.mt5.TIMEFRAME_M1
+        micro_tf_name = "M5" if is_crypto_asset else "M1"
+        # Fetch 20 candles so ATR(14) indicator in get_market_data doesn't raise IndexError
+        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=20)
+        if micro_df is not None and len(micro_df) > 0:
+            micro_tail = micro_df.tail(5)
+            micro_lines = []
+            for _, r in micro_tail.iterrows():
+                t_s = r['time'].strftime('%H:%M') if hasattr(r['time'], 'strftime') else str(r['time'])
+                micro_lines.append(f"- [{t_s}] O:{r['open']}, H:{r['high']}, L:{r['low']}, C:{r['close']}, Vol:{r['tick_volume']}")
+            micro_candles_str = f"\n### LAST 5 {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
+    except Exception as e:
+        pass
 
     latest = df.iloc[-1]
     point_size = current_tick.get("point", 0.01)
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
+
+    # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
+    randomness_str = ""
+    try:
+        from src.analytics import market_randomness
+        rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
+        ft = rand_info.get('fat_tail', {})
+        tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
+        randomness_str = (
+            f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
+            f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
+        )
+    except Exception:
+        pass
+
+    quant_prob_str = ""
+    try:
+        from src.analytics import quant_probability
+        tf_mins = 60 if config.is_crypto(symbol) else 5
+        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+        quant_prob_str = (
+            f"- Quant Monte Carlo Probabilities (1,000 paths): "
+            f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
+            f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
+            f"Est. Time: {q_res['estimated_time_str']}\n"
+        )
+    except Exception:
+        pass
+
+    # For crypto (BTC) the df is already H1 (config.get_timeframe) so the ATR
+    # reflects real hourly volatility. XAU df is M5 and its ATR matches the
+    # scalping scale. No flooring here — the LLM picks SL/TP from this range
+    # and consensus only enforces a 2x-spread safety floor.
+
+    # ATR-based range (pure, no default floor):
     min_sl = int(atr_points * 1.5)
     max_sl = int(atr_points * 2.0)
     min_tp = int(min_sl * 1.5)
     max_tp = int(max_sl * 2.0)
+
+    # USD value of 1 point for the default bot lot — tells the LLM the real
+    # money scale of the SL/TP distances it proposes (critical for BTC, where
+    # 1 pt = $0.0001 and the LLM otherwise proposes absurdly tight stops).
+    usd_per_point = current_tick.get("usd_per_point", 0.0)
+    if usd_per_point > 0:
+        pts_per_usd = 1.0 / usd_per_point
+        usd_context = (
+            f"Money scale: 1 point = ${usd_per_point:.4f} USD with the default "
+            f"{config.lot_size_for(symbol)} lot. So {int(pts_per_usd * 10)} pts = ~$10, "
+            f"{int(pts_per_usd * 5)} pts = ~$5, and 100000 pts = ~${100000 * usd_per_point:.2f}.\n"
+            f"Current spread is {current_tick.get('spread', '?')} pts "
+            f"(≈ ${current_tick.get('spread_usd', 0.0):.2f} USD) — NEVER set SL closer than "
+            f"{int(current_tick.get('spread', 0) * 2)} pts (2x spread); the broker will reject it.\n"
+        )
+    else:
+        usd_context = ""
 
     macro_str = ""
     if macro_context:
@@ -176,6 +284,13 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
     except Exception:
         pass
 
+    decision_memory_str = ""
+    try:
+        from src.analytics import decision_memory
+        decision_memory_str = decision_memory.memory.get_context(symbol)
+    except Exception:
+        pass
+
     forecast_str = ""
     try:
         from src.analytics import forecast_engine
@@ -183,40 +298,95 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
     except Exception:
         pass
 
+    calendar_str = ""
+    try:
+        from src.analytics import economic_calendar
+        calendar_str = economic_calendar.calendar.get_context()
+    except Exception:
+        pass
+
+    positions_str = ""
+    if open_positions and len(open_positions) > 0:
+        pos_lines = []
+        for pos in open_positions:
+            p_ticket = pos.get('ticket')
+            p_type = pos.get('type')
+            p_vol = pos.get('volume')
+            p_open = pos.get('price_open')
+            p_profit = pos.get('profit', 0.0)
+            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open} | Floating P/L: ${p_profit:.2f} USD")
+        positions_str = (
+            "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
+            "\n".join(pos_lines) + "\n" +
+            "For EACH open position above, make an explicit decision:\n" +
+            "- 'CLOSE' if the trade thesis is broken (price rejected the forecast target, trend reversed, or the position is stale with no momentum) or if a hard risk limit is at risk (e.g., floating loss approaching the daily max, or spread blowing out).\n" +
+            "- 'HOLD' if the thesis remains intact and the position is progressing toward target.\n" +
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected the T+15m target at 4280 with RSI diverging, floating +$0.40', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
+        )
+
+    # Explicitly separate the two decisions so the LLM does not mix them:
+    # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
+    if open_positions and len(open_positions) > 0:
+        separation_note = (
+            "\nIMPORTANT — TWO SEPARATE DECISIONS:\n"
+            "1. The 'signal' field above is ONLY about opening a NEW trade. "
+            "It must be BUY/SELL/HOLD based purely on whether a NEW entry is attractive now.\n"
+            "2. The 'position_actions' list is ONLY about the EXISTING positions listed above. "
+            "Do NOT let your opinion about existing positions change your 'signal', and do NOT "
+            "let your entry bias change your position_actions. Evaluate each independently.\n"
+        )
+    else:
+        separation_note = ""
+
+    # Timeframe label per symbol: BTC trades H1 (swing), XAU trades M5 (scalp)
+    is_crypto_sym = config.is_crypto(symbol)
+    tf_label = "H1" if is_crypto_sym else "M5"
+    tf_full = "1 Hour (H1) swing" if is_crypto_sym else "5 Minute (M5) scalping"
+    strategy_header = "H1 Swing Strategy" if is_crypto_sym else "M5 Scalping Strategy"
+    strategy_line = (
+        "H1: enter on clear hourly structure — follow-through after a decisive "
+        "breakout or a clean pullback to support/resistance, not every wiggle."
+        if is_crypto_sym else
+        "Scalp M5: quick entries/exits, high probability setups only. Decide from "
+        "the data provided — do not wait for hypothetical pullbacks/breakouts."
+    )
+    momentum_line = (
+        "Follow the dominant H1 price action and momentum (H1 candles); a clear "
+        "impulse with structure break is a valid entry even against the H4/D1 bias."
+        if is_crypto_sym else
+        "BUY and SELL are equally valid. Follow the dominant M5 price action and "
+        "momentum (M1/M5 candles); a clear impulse with structure break is a valid "
+        "entry even against a higher-timeframe bias."
+    )
 
     prompt = f"""
-You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).
+You are an expert algorithmic trading system specializing in {tf_full} on {symbol} — {asset_desc(symbol)}.
 Analyze the current market condition and determine the next trading decision.
 
 ### MARKET DATA CONTEXT
 Symbol: {symbol}
-Timeframe: M5 (5 Minutes)
+Timeframe: {tf_label}
 Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
-Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
+Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 
-### RECENT CANDLES (Last 10 candles, M5):
+### RECENT CANDLES (Last 10 candles, {tf_label}):
 {candles_str}
-
+{micro_candles_str}
 ### CURRENT INDICATORS SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{forecast_str}
-### STRATEGY CONSTRAINTS (5-minute Scalping)
-- Look for quick entries and exits.
-- Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
-- HIGH-IMPACT NEWS TIMING RULE: High-impact economic news (such as NFP, CPI, or FOMC) ONLY restricts trading during the 15-30 minutes IMMEDIATELY preceding or following the actual release time. If the news event is hours away in a future session (e.g. NFP in NY session while currently in Tokyo/London session), DO NOT hold back high-probability 5-minute scalping setups during current session!
-- OPTIMAL ENTRY RANGE & R:R RULE: If the current market price is heavily extended far away from Support/Invalidation Level (e.g., projection R:R T+15m < 0.50), DO NOT chase entries at extreme highs/lows! You MUST select 'HOLD' or provide lower confidence to wait for a healthy price pullback into the Optimal Entry Zone near Support/Resistance before issuing a BUY or SELL signal.
-
-
-
-- Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 Gold point = 0.01 USD, e.g., 300 points = $3.00 movement).
-- Based on the current ATR of {atr_points} points:
-  - Your Stop Loss (SL) MUST be between {min_sl} and {max_sl} points (1.5x to 2x the ATR).
-  - Your Take Profit (TP) MUST be at least 1.5x of your suggested SL (e.g., between {min_tp} and {max_tp} points).
+{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{usd_context}
+### STRATEGY CONSTRAINTS ({strategy_header})
+- {strategy_line}
+- {momentum_line}
+- Only restrict trading 15-30 min before/after a HIGH-impact event listed in the economic calendar block above. If none is listed, trade normally — 'news risk' is not a valid HOLD reason when no event is imminent.
+- Entry: avoid entering against a DIRECT forecast-bias contradiction (BUY vs BEARISH, SELL vs BULLISH) or when price is already beyond the T+15m target. R:R to the T+15m target should be >= 1.0 (0.8 acceptable on clear momentum).
+- Suggested SL/TP in POINTS. Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL. On BTC the market moves thousands of points — do NOT give tiny SL/TP (e.g. < 5000 pts) just because the number looks big; those are worth only cents.
 
 ### RESPONSE FORMAT
 You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
@@ -226,7 +396,10 @@ JSON schema:
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the decision based on RSI, EMAs, and price action."
+  "reasoning": "Concise reasoning (MAXIMUM 1-2 short sentences) explaining the NEW ENTRY decision based on price action/indicators — NOT based on existing positions (those go in position_actions).",
+  "position_actions": [
+    {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
+  ]
 }}
 
 """
@@ -248,7 +421,20 @@ def clean_json_response(text):
             if start != -1 and end != -1:
                 text_clean = text_clean[start:end+1]
         
-        parsed = json.loads(text_clean)
+        try:
+            parsed = json.loads(text_clean)
+        except json.JSONDecodeError:
+            # Truncated/incomplete JSON (Claude sometimes cuts mid-string).
+            # Recover whatever fields were already emitted line by line.
+            parsed = {}
+            for line in text_clean.splitlines():
+                m = re.match(r'\s*"(\w+)":\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|null|true|false)', line)
+                if m:
+                    key, val = m.group(1), m.group(2)
+                    try:
+                        parsed[key] = json.loads(val)
+                    except json.JSONDecodeError:
+                        parsed[key] = val.strip('"')
         # Validate keys
         for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning"]:
             if key not in parsed:
@@ -283,7 +469,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "user", "content": "System: You are a professional financial trading assistant.\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences).\n\n" + prompt}
             ],
             response_format={"type": "json_object"},
             timeout=timeout_sec
@@ -292,7 +478,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences)."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -364,43 +550,73 @@ def query_gemini(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(e)}"}
 
 
-def _execute_deepseek_single(model_name, prompt, timeout_sec):
-    response = deepseek_client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": "You are a professional financial trading assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.2,
-        timeout=timeout_sec
+def _execute_claude_single(model_name, prompt, timeout_sec):
+    system_text = (
+        "You are a professional financial trading assistant. "
+        "Always respond with valid JSON only. Keep reasoning extremely concise (max 1-2 short sentences)."
     )
-    content = response.choices[0].message.content
+    # Enable Anthropic Prompt Caching via cache_control and prompt-caching header
+    try:
+        response = claude_client.messages.create(
+            model=model_name,
+            max_tokens=2000,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt,
+                            "cache_control": {"type": "ephemeral"}
+                        }
+                    ]
+                }
+            ],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+            timeout=timeout_sec
+        )
+    except Exception:
+        # Fallback for standard call if prompt caching header or structure is not supported
+        response = claude_client.messages.create(
+            model=model_name,
+            max_tokens=2000,
+            system=system_text,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=timeout_sec
+        )
+    content = "".join(b.text for b in response.content if b.type == "text")
     return clean_json_response(content)
 
 
-def query_deepseek(prompt):
-    """Queries DeepSeek API with timeout and fallback model support."""
-    if not deepseek_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
+def query_claude(prompt):
+    """Queries Claude API with timeout and fallback model support."""
+    if not claude_client:
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Claude API Key tidak diset."}
 
-    primary_model = config.DEEPSEEK_MODEL
-    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", None)
+    primary_model = config.CLAUDE_MODEL
+    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
 
     try:
-        return _execute_deepseek_single(primary_model, prompt, timeout_sec)
+        return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f"⚠️ [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f"⚠️ [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
+                return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
-                print(f"[DEEPSEEK FALLBACK ERROR] {fb_err}")
-                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(fb_err)}"}
+                print(f"[CLAUDE FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Claude Error: {str(fb_err)}"}
         else:
-            print(f"[DEEPSEEK ERROR] {e}")
-            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}
+            print(f"[CLAUDE ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Claude Error: {str(e)}"}
 
 
 
@@ -428,12 +644,14 @@ Re-evaluate your position and cast your REVISED final decision for Round 2.
     return debate_prompt
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
-    Sends the prompt to OpenAI, Gemini, and DeepSeek in parallel threads
+    Sends the prompt to OpenAI, Gemini, and Claude in parallel threads
     to minimize latency. If Round 1 lacks consensus, triggers Multi-Agent Debate Round 2.
+    Also evaluates active open positions for early close recommendations.
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
+
     
     results = {}
     latencies = {}
@@ -450,7 +668,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
         future_to_model = {
             executor.submit(_query_timed, query_openai, prompt): "OpenAI",
             executor.submit(_query_timed, query_gemini, prompt): "Gemini",
-            executor.submit(_query_timed, query_deepseek, prompt): "DeepSeek"
+            executor.submit(_query_timed, query_claude, prompt): "Claude"
         }
         
         for future in concurrent.futures.as_completed(future_to_model):
@@ -465,7 +683,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
                 latencies[model_name] = 0.0
 
     total_elapsed = time.time() - start_total
-    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in latencies])
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in latencies])
     print(f"⏱️ [LATENSI MODEL (Ronde 1)] {lat_str} (Total: {total_elapsed:.2f}s)")
     
     # Check consensus from Round 1
@@ -490,7 +708,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
             future_to_model = {
                 executor.submit(_query_timed, query_openai, debate_prompt): "OpenAI",
                 executor.submit(_query_timed, query_gemini, debate_prompt): "Gemini",
-                executor.submit(_query_timed, query_deepseek, debate_prompt): "DeepSeek"
+                executor.submit(_query_timed, query_claude, debate_prompt): "Claude"
             }
             for future in concurrent.futures.as_completed(future_to_model):
                 model_name = future_to_model[future]
@@ -503,7 +721,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
                     round2_latencies[model_name] = 0.0
                     
         total_d = time.time() - start_d
-        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "DeepSeek"] if m in round2_latencies])
+        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in round2_latencies])
         print(f"💬 [DEBATE SELESAI] {d_str} (Total Debate: {total_d:.2f}s)")
         return round2_results
 

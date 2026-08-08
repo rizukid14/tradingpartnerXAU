@@ -63,9 +63,15 @@ class DynamicConfig:
         if not closed_deals or len(closed_deals) < 3:
             return
 
+        # Break-even trades (|profit| within tolerance) are excluded from the
+        # win-rate math — they are neither wins nor losses.
+        tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
+        trades = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
+        if not trades:
+            return
 
-        wins = sum(1 for d in closed_deals if d.get("profit", 0) >= 0)
-        total = len(closed_deals)
+        wins = sum(1 for d in trades if d.get("profit", 0) > tol)
+        total = len(trades)
         win_rate = (wins / total) * 100.0
 
         if win_rate < 40.0:

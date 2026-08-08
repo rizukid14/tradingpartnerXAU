@@ -60,29 +60,28 @@ def test_gemini():
         print(f"❌ Gemini Gagal: {e}")
         return False
 
-def test_deepseek():
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    base_url = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-    model = config.DEEPSEEK_MODEL # use default endpoint for testing
-    
+def test_claude():
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    model = config.CLAUDE_MODEL
+
     if not api_key:
-        print("❌ DeepSeek: API Key tidak ditemukan di .env")
+        print("❌ Claude: API Key tidak ditemukan di .env")
         return False
-        
-    print(f"🔄 DeepSeek: Mencoba memanggil {model} di {base_url}...")
+
+    print(f"🔄 Claude: Mencoba memanggil {model}...")
     try:
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        response = client.chat.completions.create(
+        from anthropic import Anthropic
+        client = Anthropic(api_key=api_key)
+        response = client.messages.create(
             model=model,
-            messages=[{"role": "user", "content": "Say 'DeepSeek OK' in one line."}],
             max_tokens=128,
-            temperature=0.0
+            messages=[{"role": "user", "content": "Say 'Claude OK' in one line."}],
         )
-        result = response.choices[0].message.content.strip()
-        print(f"✅ DeepSeek Sukses: '{result}'")
+        result = "".join(b.text for b in response.content if b.type == "text").strip()
+        print(f"✅ Claude Sukses: '{result}'")
         return True
     except Exception as e:
-        print(f"❌ DeepSeek Gagal: {e}")
+        print(f"❌ Claude Gagal: {e}")
         return False
 
 if __name__ == "__main__":
@@ -94,10 +93,10 @@ if __name__ == "__main__":
     print("-" * 60)
     gemini_ok = test_gemini()
     print("-" * 60)
-    deepseek_ok = test_deepseek()
+    claude_ok = test_claude()
     print("="*60)
     
-    if openai_ok and gemini_ok and deepseek_ok:
+    if openai_ok and gemini_ok and claude_ok:
         print("🎉 Semua API terhubung dengan sukses! Anda siap menjalankan bot.")
     else:
         print("⚠️ Beberapa API gagal terhubung. Silakan periksa kunci API Anda di file .env")

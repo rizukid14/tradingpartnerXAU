@@ -1,17 +1,58 @@
 import time
 import pandas as pd
 import sys
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 if sys.platform == 'win32':
     import MetaTrader5 as mt5
 else:
     try:
-        from mt5linux import MetaTrader5 as mt5
+        import importlib
+        mt5 = importlib.import_module("mt5linux").MetaTrader5
     except ImportError:
         import MetaTrader5 as mt5
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 import config
+
+WIB = ZoneInfo("Asia/Jakarta")
+
+
+def server_utc_offset_hours():
+    """
+    Dynamically calculates the MT5 server timezone offset in hours from UTC.
+    Uses BTCUSD.c first (since crypto trades 24/7 and ticks even on weekends),
+    falling back to the active config symbol, and finally to 3 (GMT+3).
+    """
+    try:
+        # 1. Try BTCUSD.c first for 24/7 active ticks
+        tick = mt5.symbol_info_tick("BTCUSD.c")
+        if tick is not None and tick.time > 0:
+            diff_seconds = tick.time - time.time()
+            return round(diff_seconds / 3600.0)
+            
+        # 2. Fallback to active symbol
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        if tick is not None and tick.time > 0:
+            diff_seconds = tick.time - time.time()
+            return round(diff_seconds / 3600.0)
+    except Exception as e:
+        print(f"[MT5 CONNECTOR WARNING] Gagal menghitung server offset dinamis: {e}")
+    return 3
+
+
+def server_to_wib(server_ts):
+    """
+    Converts an MT5 server epoch timestamp to an aware WIB datetime.
+    MT5 timestamps are in the broker server timezone (e.g. GMT+3); this
+    shifts them into Asia/Jakarta so candle times match wall-clock WIB.
+    """
+    offset_hours = server_utc_offset_hours()
+    # Convert server epoch to UTC epoch by subtracting the server's offset
+    utc_ts = int(server_ts) - (offset_hours * 3600)
+    # Convert UTC epoch to WIB datetime
+    return datetime.fromtimestamp(utc_ts, tz=timezone.utc).astimezone(WIB)
 
 def initialize_mt5():
     """Initializes connection to MT5 terminal."""
@@ -62,7 +103,8 @@ def get_market_data(symbol, timeframe, num_candles=50):
         return None
         
     df = pd.DataFrame(rates)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
+    # Convert server epoch -> aware WIB so candle times match wall-clock WIB
+    df['time'] = df['time'].apply(server_to_wib)
     
     # Calculate indicators using ta library
     df['ema_20'] = EMAIndicator(close=df['close'], window=20).ema_indicator()
@@ -72,27 +114,62 @@ def get_market_data(symbol, timeframe, num_candles=50):
     
     return df
 
+def get_last_m1_candles(symbol, num_candles=3):
+    """
+    Fetches the last N completed M1 candles (micro price action context).
+    Returns a list of dicts (time WIB, open, high, low, close, volume).
+    Returns [] on failure.
+    """
+    try:
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, num_candles)
+        if rates is None or len(rates) == 0:
+            return []
+        out = []
+        for r in rates:
+            out.append({
+                "time": server_to_wib(int(r['time'])).strftime('%H:%M'),
+                "open": r['open'],
+                "high": r['high'],
+                "low": r['low'],
+                "close": r['close'],
+                "volume": r['tick_volume'],
+            })
+        return out
+    except Exception:
+        return []
+
 def get_current_tick(symbol):
     """Gets the latest bid/ask tick data."""
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         print(f"[MT5 ERROR] Gagal mendapatkan tick untuk {symbol}.")
         return None
+    si = mt5.symbol_info(symbol)
+    if si is None:
+        print(f"[MT5 ERROR] Gagal mendapatkan symbol info untuk {symbol}.")
+        return None
+    spread_usd = tick.ask - tick.bid
     return {
         "bid": tick.bid,
         "ask": tick.ask,
-        "spread": round((tick.ask - tick.bid) / mt5.symbol_info(symbol).point, 1),
-        "point": mt5.symbol_info(symbol).point
+        "spread": round(spread_usd / si.point, 1),
+        "spread_usd": spread_usd,
+        "point": si.point,
+        # USD value of a 1-point move for the default bot lot (used to tell
+        # the LLM how much a "point" is actually worth — e.g. BTC 0.01 lot:
+        # 10000 pts = $1).
+        "usd_per_point": si.trade_tick_value * config.lot_size_for(symbol) * (si.point / si.trade_tick_size),
     }
 
 def get_open_positions(symbol):
-    """Checks if there are any open positions for the symbol."""
+    """Checks if there are any open positions for the symbol (bot-managed only)."""
     positions = mt5.positions_get(symbol=symbol)
     if positions is None:
         return []
     return [
         {
             "ticket": p.ticket,
+            "symbol": p.symbol,
             "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
             "volume": p.volume,
             "price_open": p.price_open,
@@ -101,12 +178,36 @@ def get_open_positions(symbol):
             "profit": p.profit
         }
         for p in positions
+        if p.magic == config.MAGIC_NUMBER
     ]
 
-def get_closed_positions_today():
+
+def get_all_open_positions():
+    """Returns ALL open bot-managed positions across every symbol."""
+    positions = mt5.positions_get()
+    if positions is None:
+        return []
+    return [
+        {
+            "ticket": p.ticket,
+            "symbol": p.symbol,
+            "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
+            "volume": p.volume,
+            "price_open": p.price_open,
+            "sl": p.sl,
+            "tp": p.tp,
+            "profit": p.profit
+        }
+        for p in positions
+        if p.magic == config.MAGIC_NUMBER
+    ]
+
+def get_closed_positions_today(symbol=None):
     """
     Returns deals that closed (entry OUT) positions opened by this bot today.
     Used for daily P/L, consecutive-loss tracking, and recovery mode.
+    Pass symbol= to count only one instrument (per-symbol loss streak);
+    omit it to aggregate across all symbols (daily loss cap).
     """
     from datetime import datetime, timedelta
 
@@ -127,12 +228,83 @@ def get_closed_positions_today():
             continue
         if deal.entry != mt5.DEAL_ENTRY_OUT:
             continue
+        if symbol is not None and deal.symbol != symbol:
+            continue
+        # DEAL_ENTRY_OUT: deal.type == 0 (BUY deal) closes a SELL position, deal.type == 1 (SELL deal) closes a BUY position
+        pos_type = "SELL" if deal.type == 0 else "BUY"
         closed.append({
             "ticket": deal.position_id,
+            "symbol": deal.symbol,
             "profit": deal.profit + deal.swap + deal.commission,
+            "reason": getattr(deal, "reason", None),
+            "comment": getattr(deal, "comment", ""),
+            "type": pos_type,
             "time": deal.time,
         })
     return closed
+
+# Retcodes that mean "broker wants a fresh price/wider deviation" — worth a retry.
+_RETRYABLE_RETCODES = {
+    getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
+    getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10021),
+    getattr(mt5, "TRADE_RETCODE_REQUOTE", 10004),
+    getattr(mt5, "TRADE_RETCODE_REJECT", 10013),
+}
+
+_MAX_RETRIES = 2  # up to 2 retries before falling back to ORDER_FILLING_RETURN
+
+def get_filling_policy(symbol):
+    """
+    Determines the supported filling policy for a symbol dynamically.
+    Returns mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, or mt5.ORDER_FILLING_RETURN.
+    """
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return mt5.ORDER_FILLING_FOK
+
+    # Bitmask of filling modes:
+    # 1: SYMBOL_FILLING_FOK
+    # 2: SYMBOL_FILLING_IOC
+    fm = info.filling_mode
+    if fm & 1:
+        return mt5.ORDER_FILLING_FOK
+    elif fm & 2:
+        return mt5.ORDER_FILLING_IOC
+    else:
+        return mt5.ORDER_FILLING_RETURN
+
+
+def _send_with_retry(build_request, symbol, label):
+    """
+    Send a request via mt5.order_send with retries and fill-policy fallback.
+
+    `build_request(deviation, fill_policy)` must return the dict to send.
+    Returns the raw mt5.order_send result (caller inspects retcode).
+    """
+    policy = get_filling_policy(symbol)
+
+    # Attempt 1: detected policy at base deviation
+    req = build_request(config.DEVIATION, policy)
+    result = mt5.order_send(req)
+
+    # If broker said price changed/off/requote, retry with fresh tick + widened deviation
+    for attempt in range(_MAX_RETRIES):
+        if not result or result.retcode not in _RETRYABLE_RETCODES:
+            break
+        widen = config.DEVIATION + (5 * (attempt + 1))
+        print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, "
+              f"widening deviation to {widen} pts")
+        req = build_request(widen, policy)
+        result = mt5.order_send(req)
+
+    # Fall back to RETURN ONLY if original filling policy was not RETURN, and broker complains about invalid filling mode (10030)
+    if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
+        print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
+        req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
+        result = mt5.order_send(req)
+
+    return result
+
 
 def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     """
@@ -146,12 +318,12 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
 
     tick = mt5.symbol_info_tick(symbol)
     symbol_info = mt5.symbol_info(symbol)
-    
+
     if tick is None or symbol_info is None:
         return {"status": "ERROR", "comment": "Symbol info unavailable"}
 
     point = symbol_info.point
-    
+
     if action == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
         price = tick.ask
@@ -167,74 +339,101 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     else:
         return {"status": "ERROR", "comment": "Invalid action type"}
 
-    # Set default SL/TP from config if not specified by AI
-    if not sl and config.DEFAULT_SL_POINTS:
-        sl = price - (config.DEFAULT_SL_POINTS * point) if action == "BUY" else price + (config.DEFAULT_SL_POINTS * point)
-    if not tp and config.DEFAULT_TP_POINTS:
-        tp = price + (config.DEFAULT_TP_POINTS * point) if action == "BUY" else price - (config.DEFAULT_TP_POINTS * point)
+    # Set default SL/TP from config if not specified by AI (per-symbol defaults)
+    default_sl = config.default_sl_points_for(symbol)
+    default_tp = config.default_tp_points_for(symbol)
+    if not sl and default_sl:
+        sl = price - (default_sl * point) if action == "BUY" else price + (default_sl * point)
+    if not tp and default_tp:
+        tp = price + (default_tp * point) if action == "BUY" else price - (default_tp * point)
 
-    request = {
-        "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": symbol,
-        "volume": lot,
-        "type": order_type,
-        "price": price,
-        "sl": round(sl, symbol_info.digits),
-        "tp": round(tp, symbol_info.digits),
-        "deviation": config.DEVIATION,
-        "magic": config.MAGIC_NUMBER,  # Unique ID for our bot trades
-        "comment": "Multi-LLM Bot",
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
-    }
+    def _build(deviation, fill_policy):
+        # Refresh tick so each retry uses current price
+        live_tick = mt5.symbol_info_tick(symbol)
+        live_price = live_tick.ask if action == "BUY" else live_tick.bid
+        if action == "BUY":
+            live_sl = live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0)
+            live_tp = live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0)
+        else: # SELL
+            live_sl = live_price + (sl_points * point) if sl_points else (live_price + (default_sl * point) if default_sl else 0.0)
+            live_tp = live_price - (tp_points * point) if tp_points else (live_price - (default_tp * point) if default_tp else 0.0)
+        return {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": lot,
+            "type": order_type,
+            "price": live_price,
+            "sl": round(live_sl, symbol_info.digits),
+            "tp": round(live_tp, symbol_info.digits),
+            "deviation": deviation,
+            "magic": config.MAGIC_NUMBER,  # Unique ID for our bot trades
+            "comment": "Multi-LLM Bot",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": fill_policy,
+        }
 
-    print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {request['sl']}, TP: {request['tp']})...")
-    result = mt5.order_send(request)
-    
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"[MT5 ERROR] Order gagal! Retcode: {result.retcode}, Pesan: {result.comment}")
-        return {"status": "ERROR", "comment": result.comment, "code": result.retcode}
-        
+    print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
+    result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
+
+    if result is None or result.retcode not in (
+        mt5.TRADE_RETCODE_DONE,
+        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+    ):
+        retcode = getattr(result, "retcode", "N/A") if result else "N/A"
+        comment = getattr(result, "comment", "No result") if result else "No result"
+        print(f"[MT5 ERROR] Order gagal! Retcode: {retcode}, Pesan: {comment}")
+        return {"status": "ERROR", "comment": comment, "code": retcode}
+
     print(f"[MT5] Order BERHASIL! Ticket: {result.order}")
     return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
+
 
 def close_position(ticket):
     """Closes an open position by its ticket number."""
     positions = mt5.positions_get(ticket=ticket)
     if positions is None or len(positions) == 0:
         return False
-        
+
     position = positions[0]
     symbol = position.symbol
     lot = position.volume
     pos_type = position.type
-    
-    tick = mt5.symbol_info_tick(symbol)
-    if pos_type == mt5.ORDER_TYPE_BUY:
-        order_type = mt5.ORDER_TYPE_SELL
-        price = tick.bid
-    else:
-        order_type = mt5.ORDER_TYPE_BUY
-        price = tick.ask
-        
-    request = {
-        "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": symbol,
-        "volume": lot,
-        "type": order_type,
-        "position": ticket,
-        "price": price,
-        "deviation": config.DEVIATION,
-        "magic": config.MAGIC_NUMBER,
-        "comment": "Close Position",
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
-    }
-    
+
+    symbol_info = mt5.symbol_info(symbol)
+    if symbol_info is None:
+        return False
+
+    def _build(deviation, fill_policy):
+        live_tick = mt5.symbol_info_tick(symbol)
+        if pos_type == mt5.ORDER_TYPE_BUY:
+            order_type = mt5.ORDER_TYPE_SELL
+            price = live_tick.bid
+        else:
+            order_type = mt5.ORDER_TYPE_BUY
+            price = live_tick.ask
+        return {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": lot,
+            "type": order_type,
+            "position": ticket,
+            "price": price,
+            "deviation": deviation,
+            "magic": config.MAGIC_NUMBER,
+            "comment": "Close Position",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": fill_policy,
+        }
+
     print(f"[MT5] Menutup posisi #{ticket}...")
-    result = mt5.order_send(request)
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"[MT5 ERROR] Gagal menutup posisi: {result.comment}")
+    result = _send_with_retry(_build, symbol, f"Close #{ticket}")
+
+    if result is None or result.retcode not in (
+        mt5.TRADE_RETCODE_DONE,
+        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+    ):
+        comment = getattr(result, "comment", "No result") if result else "No result"
+        print(f"[MT5 ERROR] Gagal menutup posisi: {comment}")
         return False
     print(f"[MT5] Posisi #{ticket} berhasil ditutup.")
     return True
