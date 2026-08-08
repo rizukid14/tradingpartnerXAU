@@ -209,11 +209,9 @@ Respond with the lesson text ONLY. Do not include introductory conversational fi
         """Returns formatted lessons markdown block for prompt injection.
         Uses the condensed SUMMARY when available (token-light), plus the most
         recent raw lessons until the next summary reset. Per-symbol isolated."""
+        context = ""
         if self._lessons_summary:
-            return f"\n### LESSONS LEARNED (SUMMARY)\n{self._lessons_summary}\n"
-
-        if not self._lessons:
-            return ""
+            context += f"\n### LESSONS LEARNED (SUMMARY)\n{self._lessons_summary}\n"
 
         # Handle both old (plain string) and new (dict with symbol) lesson formats
         relevant = [
@@ -221,12 +219,13 @@ Respond with the lesson text ONLY. Do not include introductory conversational fi
             for item in self._lessons
             if isinstance(item, str) or item.get("symbol", "") == config.SYMBOL
         ]
-        if not relevant:
-            return ""
+        if relevant:
+            recent = relevant[-5:]  # Take last 5 lessons
+            bullets = "\n".join([f"- {item}" for item in recent])
+            header = "### LESSONS LEARNED FROM RECENT TRADES (SINCE SUMMARY)" if self._lessons_summary else "### LESSONS LEARNED FROM RECENT TRADES"
+            context += f"\n{header}\n{bullets}\n"
 
-        recent = relevant[-5:]  # Take last 5 lessons
-        bullets = "\n".join([f"- {item}" for item in recent])
-        return f"\n### LESSONS LEARNED FROM RECENT TRADES\n{bullets}\n"
+        return context
 
 # Global singleton instance
 evaluator = TradeEvaluator()

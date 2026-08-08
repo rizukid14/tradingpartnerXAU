@@ -20,16 +20,25 @@ WIB = ZoneInfo("Asia/Jakarta")
 
 def server_utc_offset_hours():
     """
-    Returns the MT5 server timezone offset in hours from UTC (e.g. +3 for
-    VTMarkets GMT+3). Falls back to 0 if terminal info is unavailable.
+    Dynamically calculates the MT5 server timezone offset in hours from UTC.
+    Uses BTCUSD.c first (since crypto trades 24/7 and ticks even on weekends),
+    falling back to the active config symbol, and finally to 3 (GMT+3).
     """
     try:
-        ti = mt5.terminal_info()
-        if ti is not None and getattr(ti, "timezone", None) is not None:
-            return ti.timezone
-    except Exception:
-        pass
-    return 0
+        # 1. Try BTCUSD.c first for 24/7 active ticks
+        tick = mt5.symbol_info_tick("BTCUSD.c")
+        if tick is not None and tick.time > 0:
+            diff_seconds = tick.time - time.time()
+            return round(diff_seconds / 3600.0)
+            
+        # 2. Fallback to active symbol
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        if tick is not None and tick.time > 0:
+            diff_seconds = tick.time - time.time()
+            return round(diff_seconds / 3600.0)
+    except Exception as e:
+        print(f"[MT5 CONNECTOR WARNING] Gagal menghitung server offset dinamis: {e}")
+    return 3
 
 
 def server_to_wib(server_ts):
@@ -38,9 +47,11 @@ def server_to_wib(server_ts):
     MT5 timestamps are in the broker server timezone (e.g. GMT+3); this
     shifts them into Asia/Jakarta so candle times match wall-clock WIB.
     """
-    offset = timedelta(hours=server_utc_offset_hours())
-    server_dt = datetime.fromtimestamp(server_ts, tz=timezone(offset))
-    return server_dt.astimezone(WIB)
+    offset_hours = server_utc_offset_hours()
+    # Convert server epoch to UTC epoch by subtracting the server's offset
+    utc_ts = int(server_ts) - (offset_hours * 3600)
+    # Convert UTC epoch to WIB datetime
+    return datetime.fromtimestamp(utc_ts, tz=timezone.utc).astimezone(WIB)
 
 def initialize_mt5():
     """Initializes connection to MT5 terminal."""
