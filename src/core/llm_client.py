@@ -357,7 +357,20 @@ def clean_json_response(text):
             if start != -1 and end != -1:
                 text_clean = text_clean[start:end+1]
         
-        parsed = json.loads(text_clean)
+        try:
+            parsed = json.loads(text_clean)
+        except json.JSONDecodeError:
+            # Truncated/incomplete JSON (Claude sometimes cuts mid-string).
+            # Recover whatever fields were already emitted line by line.
+            parsed = {}
+            for line in text_clean.splitlines():
+                m = re.match(r'\s*"(\w+)":\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|null|true|false)', line)
+                if m:
+                    key, val = m.group(1), m.group(2)
+                    try:
+                        parsed[key] = json.loads(val)
+                    except json.JSONDecodeError:
+                        parsed[key] = val.strip('"')
         # Validate keys
         for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning"]:
             if key not in parsed:
@@ -476,7 +489,7 @@ def query_gemini(prompt):
 def _execute_claude_single(model_name, prompt, timeout_sec):
     response = claude_client.messages.create(
         model=model_name,
-        max_tokens=1000,
+        max_tokens=2000,
         system="You are a professional financial trading assistant. Always respond with valid JSON only.",
         messages=[{"role": "user", "content": prompt}],
         timeout=timeout_sec
