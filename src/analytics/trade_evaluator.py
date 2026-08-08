@@ -70,52 +70,108 @@ class TradeEvaluator:
 
     def _load_memory(self):
         """Load lessons from disk."""
+        pass
+
+    def _load_memory(self, symbol):
+        """Loads memory from memory_lessons.json and returns a dict for the specific symbol."""
         try:
             if os.path.exists(MEMORY_FILE):
                 with open(MEMORY_FILE, "r") as f:
                     data = json.load(f)
-                self._lessons = data.get("lessons", [])
-                self._lessons_summary = data.get("lessons_summary", "")
-                self._evaluated_tickets = set(data.get("evaluated_tickets", []))
+                
+                # Check for legacy format (lessons directly at the root)
+                if "lessons" in data:
+                    print("🔄 [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
+                    legacy_lessons = data.get("lessons", [])
+                    legacy_summary = data.get("lessons_summary", "")
+                    legacy_tickets = list(data.get("evaluated_tickets", []))
+                    
+                    migrated_lessons = {}
+                    for item in legacy_lessons:
+                        sym = item.get("symbol", "XAUUSD-ECNc") if isinstance(item, dict) else "XAUUSD-ECNc"
+                        # Normalise string lessons to dict format
+                        if isinstance(item, str):
+                            item = {"symbol": "XAUUSD-ECNc", "lesson": item, "theme": _extract_theme(item)}
+                        migrated_lessons.setdefault(sym, []).append(item)
+                        
+                    data = {
+                        "XAUUSD-ECNc": {
+                            "lessons": migrated_lessons.get("XAUUSD-ECNc", []),
+                            "lessons_summary": legacy_summary,
+                            "evaluated_tickets": legacy_tickets
+                        },
+                        "BTCUSD.c": {
+                            "lessons": migrated_lessons.get("BTCUSD.c", []),
+                            "lessons_summary": "",
+                            "evaluated_tickets": legacy_tickets
+                        }
+                    }
+                    # Save migrated structure back immediately
+                    with open(MEMORY_FILE, "w") as fw:
+                        json.dump(data, fw, indent=4)
+                
+                # Retrieve symbol data, initialize if missing
+                if symbol not in data:
+                    data[symbol] = {
+                        "lessons": [],
+                        "lessons_summary": "",
+                        "evaluated_tickets": []
+                    }
+                
+                return {
+                    "lessons": data[symbol].get("lessons", []),
+                    "lessons_summary": data[symbol].get("lessons_summary", ""),
+                    "evaluated_tickets": set(data[symbol].get("evaluated_tickets", []))
+                }
         except Exception as e:
             print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json: {e}")
+            
+        return {"lessons": [], "lessons_summary": "", "evaluated_tickets": set()}
 
-    def _save_memory(self):
-        """Save lessons, summary, and evaluated tickets to disk."""
+    def _save_memory(self, symbol, lessons, summary, evaluated_tickets):
+        """Save lessons, summary, and evaluated tickets for a specific symbol to memory_lessons.json."""
         try:
+            data = {}
+            if os.path.exists(MEMORY_FILE):
+                with open(MEMORY_FILE, "r") as f:
+                    try:
+                        data = json.load(f)
+                        # If legacy file is loaded, force it to dict before updating
+                        if "lessons" in data:
+                            data = {}
+                    except Exception:
+                        data = {}
+            
+            # Update symbol data
+            data[symbol] = {
+                "lessons": lessons[-MAX_LESSONS:],
+                "lessons_summary": summary,
+                "evaluated_tickets": list(evaluated_tickets)
+            }
+            
+            # Save back to disk
             with open(MEMORY_FILE, "w") as f:
-                json.dump({
-                    "lessons": self._lessons[-MAX_LESSONS:],
-                    "lessons_summary": self._lessons_summary,
-                    "evaluated_tickets": list(self._evaluated_tickets),
-                    "last_updated": time.time()
-                }, f, indent=4)
+                json.dump(data, f, indent=4)
         except Exception as e:
             print(f"[EVALUATOR WARNING] Gagal menyimpan memory_lessons.json: {e}")
 
-    def _summarize_and_reset(self):
+    def _summarize_and_reset(self, symbol, lessons, evaluated_tickets):
         """
         When lessons reach MAX_LESSONS, ask gpt-5.4-mini to condense ALL lessons
-        into one summary, store it, and reset lessons to empty. The prompt then
-        only reads the summary (compact, token-light, still actionable).
-
-        Diversification: sample up to 4 themes to keep the summary balanced
-        instead of letting one topic dominate. Themes with no representation
-        are simply omitted from the prompt.
+        into one summary, store it, and reset lessons to empty.
         """
         # Group lessons by theme (default "entry" if missing for legacy entries)
         by_theme = {}
-        for l in self._lessons:
+        for l in lessons:
             theme = l.get("theme") if isinstance(l, dict) else None
             lesson_text = l.get("lesson", "") if isinstance(l, dict) else str(l)
             theme = theme or _extract_theme(lesson_text)
             by_theme.setdefault(theme, []).append(lesson_text)
 
-        # Show count of themes represented
         theme_summary = ", ".join(f"{t}:{len(items)}" for t, items in by_theme.items())
-        print(f"📚 [LESSONS COMPOSITION] {len(self._lessons)} entries across themes — {theme_summary}")
+        print(f"📚 [LESSONS COMPOSITION] {len(lessons)} entries across themes for {symbol} — {theme_summary}")
 
-        # Build a balanced prompt with up to 4 themes represented
+        # Build a balanced prompt
         theme_blocks = []
         for theme, items in sorted(by_theme.items()):
             bullets = "\n".join(f"- {it}" for it in items)
@@ -123,7 +179,7 @@ class TradeEvaluator:
 
         lessons_text = "\n\n".join(theme_blocks)
         prompt = f"""
-You are an expert trading post-mortem analyst. Below are the last {len(self._lessons)} lessons learned from scalping trades, grouped by theme.
+You are an expert trading post-mortem analyst. Below are the last {len(lessons)} lessons learned from scalping trades on {symbol} ({asset_desc(symbol)}), grouped by theme.
 
 {lessons_text}
 
@@ -133,13 +189,10 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
             summary = llm.query_primary_model(prompt)
             if summary:
                 summary = summary.strip()
-                # Fallback model override: use gpt-5.4-mini for the summarizer
-                self._lessons_summary = summary
-                print(f"📋 [LESSONS SUMMARY] {summary}")
-                self._lessons = []
-                self._save_memory()
+                print(f"📋 [LESSONS SUMMARY FOR {symbol}] {summary}")
+                self._save_memory(symbol, [], summary, evaluated_tickets)
         except Exception as e:
-            print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons: {e}")
+            print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
 
     def check_and_evaluate_closed_trades(self):
         """
@@ -150,30 +203,40 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
         if not closed_deals:
             return
 
+        # Cache memories we load so we don't reload multiple times in the same loop
+        loaded_memories = {}
+
         for deal in closed_deals:
             ticket = deal["ticket"]
             profit = deal["profit"]
             deal_symbol = deal.get("symbol", config.SYMBOL)
 
-            if ticket in self._evaluated_tickets:
+            if deal_symbol not in loaded_memories:
+                loaded_memories[deal_symbol] = self._load_memory(deal_symbol)
+
+            mem = loaded_memories[deal_symbol]
+
+            if ticket in mem["evaluated_tickets"]:
                 continue
 
             # Mark ticket as processed
-            self._evaluated_tickets.add(ticket)
-            self._save_memory()
+            mem["evaluated_tickets"].add(ticket)
+            self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
 
-            # Generate post-mortem lesson via Gemini
+            # Generate post-mortem lesson via LLM
             print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, P/L: ${profit:.2f})...")
             lesson = self._analyze_trade_with_llm(ticket, profit, deal_symbol)
             if lesson:
                 theme = _extract_theme(lesson)
                 print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
-                self._lessons.append({"symbol": deal_symbol, "lesson": lesson, "theme": theme})
-                # When lessons reach MAX_LESSONS, summarize & reset (AI reads summary only)
-                if len(self._lessons) >= MAX_LESSONS:
-                    self._summarize_and_reset()
+                mem["lessons"].append({"symbol": deal_symbol, "lesson": lesson, "theme": theme})
+                
+                if len(mem["lessons"]) >= MAX_LESSONS:
+                    self._summarize_and_reset(deal_symbol, mem["lessons"], mem["evaluated_tickets"])
+                    # Reload memory after reset to get the empty list & updated summary
+                    loaded_memories[deal_symbol] = self._load_memory(deal_symbol)
                 else:
-                    self._save_memory()
+                    self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
 
     def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None):
         """Asks the primary LLM (Gemini) to evaluate the trade outcome."""
@@ -209,20 +272,25 @@ Respond with the lesson text ONLY. Do not include introductory conversational fi
         """Returns formatted lessons markdown block for prompt injection.
         Uses the condensed SUMMARY when available (token-light), plus the most
         recent raw lessons until the next summary reset. Per-symbol isolated."""
+        symbol = config.SYMBOL
+        mem = self._load_memory(symbol)
+        
         context = ""
-        if self._lessons_summary:
-            context += f"\n### LESSONS LEARNED (SUMMARY)\n{self._lessons_summary}\n"
+        summary = mem.get("lessons_summary", "")
+        lessons = mem.get("lessons", [])
+        
+        if summary:
+            context += f"\n### {symbol} LESSONS LEARNED (SUMMARY)\n{summary}\n"
 
-        # Handle both old (plain string) and new (dict with symbol) lesson formats
         relevant = [
             item if isinstance(item, str) else item.get("lesson", "")
-            for item in self._lessons
-            if isinstance(item, str) or item.get("symbol", "") == config.SYMBOL
+            for item in lessons
+            if isinstance(item, str) or item.get("symbol", "") == symbol
         ]
         if relevant:
             recent = relevant[-5:]  # Take last 5 lessons
             bullets = "\n".join([f"- {item}" for item in recent])
-            header = "### LESSONS LEARNED FROM RECENT TRADES (SINCE SUMMARY)" if self._lessons_summary else "### LESSONS LEARNED FROM RECENT TRADES"
+            header = f"### {symbol} LESSONS LEARNED FROM RECENT TRADES (SINCE SUMMARY)" if summary else f"### {symbol} LESSONS LEARNED FROM RECENT TRADES"
             context += f"\n{header}\n{bullets}\n"
 
         return context
