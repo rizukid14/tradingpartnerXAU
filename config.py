@@ -34,8 +34,8 @@ OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 # --- MODEL NAMES & FALLBACKS ---
 # Claude Model & Fallback (Anthropic) — replaces DeepSeek in the consensus slot
-CLAUDE_MODEL = "claude-sonnet-4-6"
-CLAUDE_FALLBACK_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+CLAUDE_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
 # Gemini Model & Fallback
