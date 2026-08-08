@@ -64,7 +64,7 @@ TIMEFRAME = mt5.TIMEFRAME_M5
 # Default trade size (0.01 is micro-lot)
 LOT_SIZE = 0.01
 LOT_SIZE_XAU = LOT_SIZE
-LOT_SIZE_BTC = LOT_SIZE
+LOT_SIZE_BTC = 0.25
 
 # Deviation (slippage tolerance in points)
 DEVIATION = 20
@@ -148,6 +148,12 @@ MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
 PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
 MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layering cycles of 2 positions)
 
+# --- BREAK-EVEN PROFIT TOLERANCE ---
+# A closed trade with |profit| <= BREAK_EVEN_TOLERANCE_USD is treated as
+# break-even: it does NOT increment the loss streak, but also does NOT reset it
+# (nor does it exit recovery mode).
+BREAK_EVEN_TOLERANCE_USD = 0.04
+
 # --- RECOVERY MODE POSITION LIMIT ---
 # During recovery mode, cap new open positions lower than normal
 MAX_OPEN_POSITIONS_RECOVERY = 4    # Max simultaneous positions while in recovery mode
@@ -158,6 +164,10 @@ MAX_OPEN_POSITIONS_RECOVERY = 4    # Max simultaneous positions while in recover
 # After hitting daily loss or consecutive losses, reduce lot size
 RECOVERY_MODE_ENABLED = True
 RECOVERY_LOT_MULTIPLIER = 0.5     # Use 50% of normal lot size during recovery
+
+# A win must clear this much profit before recovery mode is deactivated,
+# so a tiny $0.01 win cannot instantly reset a 3+ loss streak.
+RECOVERY_EXIT_PROFIT_USD = 0.10
 
 # --- COOLDOWN (from xaubot-ai smart_risk_manager.py) ---
 # Set to 0 because main loop already runs every 5 minutes on candle closures
@@ -194,6 +204,12 @@ WEEKEND_CLOSE_ENABLED = True
 WEEKEND_CLOSE_PROFIT_MIN_USD = 1.0   # Close if profit >= $1 and near weekend close
 WEEKEND_CLOSE_HOURS_BEFORE = 2.0     # Start checking 2 hours before Friday close
 WEEKEND_MAX_LOSS_TO_HOLD_USD = 20.0  # Max loss $ to hold over weekend (larger = cut loss)
+
+# --- POSITION MANAGER TICK FRESHNESS ---
+# A position whose symbol has not produced a fresh tick within this many
+# seconds is skipped (market closed — e.g. XAU over the weekend — or MT5
+# disconnected). BTC ticks 24/7 so it keeps being managed across rotation.
+POSITION_MANAGER_MAX_TICK_AGE_SECONDS = 300
 
 # --- TELEGRAM ALERTS (from both repos) ---
 TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
