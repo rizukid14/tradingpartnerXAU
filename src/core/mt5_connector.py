@@ -7,7 +7,8 @@ if sys.platform == 'win32':
     import MetaTrader5 as mt5
 else:
     try:
-        from mt5linux import MetaTrader5 as mt5
+        import importlib
+        mt5 = importlib.import_module("mt5linux").MetaTrader5
     except ImportError:
         import MetaTrader5 as mt5
 from ta.trend import EMAIndicator
@@ -151,7 +152,7 @@ def get_current_tick(symbol):
     }
 
 def get_open_positions(symbol):
-    """Checks if there are any open positions for the symbol."""
+    """Checks if there are any open positions for the symbol (bot-managed only)."""
     positions = mt5.positions_get(symbol=symbol)
     if positions is None:
         return []
@@ -166,6 +167,7 @@ def get_open_positions(symbol):
             "profit": p.profit
         }
         for p in positions
+        if p.magic == config.MAGIC_NUMBER
     ]
 
 def get_closed_positions_today(symbol=None):
@@ -214,16 +216,38 @@ _RETRYABLE_RETCODES = {
 
 _MAX_RETRIES = 2  # up to 2 retries before falling back to ORDER_FILLING_RETURN
 
+def get_filling_policy(symbol):
+    """
+    Determines the supported filling policy for a symbol dynamically.
+    Returns mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, or mt5.ORDER_FILLING_RETURN.
+    """
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return mt5.ORDER_FILLING_FOK
 
-def _send_with_retry(build_request, label):
+    # Bitmask of filling modes:
+    # 1: SYMBOL_FILLING_FOK
+    # 2: SYMBOL_FILLING_IOC
+    fm = info.filling_mode
+    if fm & 1:
+        return mt5.ORDER_FILLING_FOK
+    elif fm & 2:
+        return mt5.ORDER_FILLING_IOC
+    else:
+        return mt5.ORDER_FILLING_RETURN
+
+
+def _send_with_retry(build_request, symbol, label):
     """
     Send a request via mt5.order_send with retries and fill-policy fallback.
 
     `build_request(deviation, fill_policy)` must return the dict to send.
     Returns the raw mt5.order_send result (caller inspects retcode).
     """
-    # Attempt 1: IOC at base deviation
-    req = build_request(config.DEVIATION, mt5.ORDER_FILLING_IOC)
+    policy = get_filling_policy(symbol)
+
+    # Attempt 1: detected policy at base deviation
+    req = build_request(config.DEVIATION, policy)
     result = mt5.order_send(req)
 
     # If broker said price changed/off/requote, retry with fresh tick + widened deviation
@@ -233,14 +257,11 @@ def _send_with_retry(build_request, label):
         widen = config.DEVIATION + (5 * (attempt + 1))
         print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, "
               f"widening deviation to {widen} pts")
-        req = build_request(widen, mt5.ORDER_FILLING_IOC)
+        req = build_request(widen, policy)
         result = mt5.order_send(req)
 
-    # Last resort: fall back to RETURN (accept partial fills, no requote)
-    if result and result.retcode not in (
-        mt5.TRADE_RETCODE_DONE,
-        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),  # some brokers return PLACED instead of DONE
-    ):
+    # Fall back to RETURN ONLY if original filling policy was not RETURN, and broker complains about invalid filling mode (10030)
+    if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
         print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
         req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
         result = mt5.order_send(req)
@@ -293,8 +314,12 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         # Refresh tick so each retry uses current price
         live_tick = mt5.symbol_info_tick(symbol)
         live_price = live_tick.ask if action == "BUY" else live_tick.bid
-        live_sl = live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0)
-        live_tp = live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0)
+        if action == "BUY":
+            live_sl = live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0)
+            live_tp = live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0)
+        else: # SELL
+            live_sl = live_price + (sl_points * point) if sl_points else (live_price + (default_sl * point) if default_sl else 0.0)
+            live_tp = live_price - (tp_points * point) if tp_points else (live_price - (default_tp * point) if default_tp else 0.0)
         return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -311,7 +336,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         }
 
     print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
-    result = _send_with_retry(_build, f"Order {action} {symbol}")
+    result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
 
     if result is None or result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
@@ -324,6 +349,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
 
     print(f"[MT5] Order BERHASIL! Ticket: {result.order}")
     return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
+
 
 def close_position(ticket):
     """Closes an open position by its ticket number."""
@@ -363,7 +389,7 @@ def close_position(ticket):
         }
 
     print(f"[MT5] Menutup posisi #{ticket}...")
-    result = _send_with_retry(_build, f"Close #{ticket}")
+    result = _send_with_retry(_build, symbol, f"Close #{ticket}")
 
     if result is None or result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
