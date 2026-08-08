@@ -117,7 +117,9 @@ def run_trading_cycle():
                 for sym, b in sorted(by_symbol.items()):
                     sym_t = b["n"] - b["bep"]
                     sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
-                    parts.append(f"{sym}: {b['n']}T {b['wins']}W WR {sym_wr:.0f}% ${b['pnl']:+.2f}")
+                    sym_loss = sym_t - b["wins"]
+                    bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
+                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} ${b['pnl']:+.2f}")
                 print(f"📊 [PERFORMA PER SIMBOL] " + " | ".join(parts))
         else:
             print("📊 [PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")

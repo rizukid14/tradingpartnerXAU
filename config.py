@@ -153,7 +153,9 @@ MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layerin
 # A closed trade with |profit| <= BREAK_EVEN_TOLERANCE_USD is treated as
 # break-even: it does NOT increment the loss streak, but also does NOT reset it
 # (nor does it exit recovery mode).
-BREAK_EVEN_TOLERANCE_USD = 0.04
+# Set to 0.50 for testing — BTC scalps with tight (pre-floor) SL/TP close
+# around +-0.03..0.44, which should not count as real losses.
+BREAK_EVEN_TOLERANCE_USD = 0.50
 
 # --- RECOVERY MODE POSITION LIMIT ---
 # During recovery mode, cap new open positions lower than normal

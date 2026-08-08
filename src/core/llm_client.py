@@ -181,10 +181,34 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     latest = df.iloc[-1]
     point_size = current_tick.get("point", 0.01)
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
-    min_sl = int(atr_points * 1.5)
-    max_sl = int(atr_points * 2.0)
-    min_tp = int(min_sl * 1.5)
-    max_tp = int(max_sl * 2.0)
+
+    # For crypto (BTC) the M5 ATR is tiny ($21) compared to real single-candle
+    # moves (6000-10000 pts) and spread ($17). Use H1 ATR as the volatility
+    # basis so suggested SL/TP reflects the instrument's true range. XAU keeps
+    # its M5 ATR (its M5 ATR already matches scalping scale).
+    if config.is_crypto(symbol):
+        try:
+            import MetaTrader5 as mt5
+            from ta.volatility import AverageTrueRange
+            import pandas as pd
+            rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 50)
+            if rates is not None and len(rates) > 0:
+                h1_df = pd.DataFrame(rates)
+                h1_df['atr'] = AverageTrueRange(
+                    high=h1_df['high'], low=h1_df['low'], close=h1_df['close'], window=14
+                ).average_true_range()
+                atr_points = int(h1_df.iloc[-1]['atr'] / point_size) if point_size > 0 else atr_points
+        except Exception:
+            pass
+
+    # ATR-based range, floored at the per-symbol default SL/TP so the LLM can
+    # never propose stops inside the spread (BTC default 50000/$5, TP 100000/$10).
+    default_sl = config.default_sl_points_for(symbol)
+    default_tp = config.default_tp_points_for(symbol)
+    min_sl = max(int(atr_points * 1.5), default_sl)
+    max_sl = max(int(atr_points * 2.0), default_sl)
+    min_tp = max(int(min_sl * 1.5), default_tp)
+    max_tp = max(int(max_sl * 2.0), default_tp)
 
     # USD value of 1 point for the default bot lot — tells the LLM the real
     # money scale of the SL/TP distances it proposes (critical for BTC, where

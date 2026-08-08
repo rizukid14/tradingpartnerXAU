@@ -66,11 +66,6 @@ class TradeEvaluator:
         self._evaluated_tickets = set()
         self._lessons = []
         self._lessons_summary = ""
-        self._load_memory()
-
-    def _load_memory(self):
-        """Load lessons from disk."""
-        pass
 
     def _load_memory(self, symbol):
         """Loads memory from memory_lessons.json and returns a dict for the specific symbol."""
