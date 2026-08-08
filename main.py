@@ -7,7 +7,8 @@ if sys.platform == 'win32':
     import MetaTrader5 as mt5
 else:
     try:
-        from mt5linux import MetaTrader5 as mt5
+        import importlib
+        mt5 = importlib.import_module("mt5linux").MetaTrader5
     except ImportError:
         import MetaTrader5 as mt5
 import config
