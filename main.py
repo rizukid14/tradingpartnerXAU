@@ -80,6 +80,31 @@ def run_trading_cycle():
         return False
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
+
+    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst H1/M5, Kurtosis M5/M1)
+    try:
+        from src.analytics import market_randomness
+        rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
+        ft = rand_info.get('fat_tail', {})
+        tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
+        print(f"🔬 [QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
+              f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
+              f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
+              f"Status: {'🚫 BLOCKED (Pure Random Walk)' if rand_info['is_random'] else '✅ PASSED'}")
+    except Exception as e:
+        print(f"⚠️ [QUANT MATH ERROR] {e}")
+
+    # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
+    try:
+        from src.analytics import quant_probability
+        tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+        print(f"🎲 [QUANT PROB] Monte Carlo (1000 paths): "
+              f"🟢 UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
+              f"🔴 DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
+              f"Est. Horizon: {q_res['estimated_time_str']}")
+    except Exception as e:
+        print(f"⚠️ [QUANT PROB ERROR] {e}")
     
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary
     try:

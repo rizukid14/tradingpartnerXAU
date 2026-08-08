@@ -84,13 +84,41 @@ def query_primary_model(prompt, search_grounding=False):
             response = claude_client.messages.create(
                 model=config.CLAUDE_MODEL,
                 max_tokens=1000,
-                system="You are a professional financial trading assistant.",
-                messages=[{"role": "user", "content": prompt}],
+                system=[
+                    {
+                        "type": "text",
+                        "text": "You are a professional financial trading assistant.",
+                        "cache_control": {"type": "ephemeral"}
+                    }
+                ],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
+                                "cache_control": {"type": "ephemeral"}
+                            }
+                        ]
+                    }
+                ],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
                 timeout=30
             )
             return "".join(b.text for b in response.content if b.type == "text").strip()
         except Exception as e:
-            print(f"[PRIMARY MODEL ERROR - CLAUDE] {e}")
+            try:
+                response = claude_client.messages.create(
+                    model=config.CLAUDE_MODEL,
+                    max_tokens=1000,
+                    system="You are a professional financial trading assistant.",
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=30
+                )
+                return "".join(b.text for b in response.content if b.type == "text").strip()
+            except Exception as e2:
+                print(f"[PRIMARY MODEL ERROR - CLAUDE] {e2}")
 
     return None
 
@@ -166,20 +194,56 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         time_str = row['time'].strftime('%Y-%m-%d %H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
         candles_str += f"- [{time_str}] Open: {row['open']}, High: {row['high']}, Low: {row['low']}, Close: {row['close']}, Vol: {row['tick_volume']}\n"
 
-    # Micro price action: last 3 M1 candles (token-light, shows intra-M5 momentum)
-    m1_str = ""
+    # Micro price action: last 5 M5 candles (BTC H1) or last 5 M1 candles (XAU M5)
+    micro_candles_str = ""
     try:
         from src.core import mt5_connector
-        m1_candles = mt5_connector.get_last_m1_candles(symbol, num_candles=3)
-        if m1_candles:
-            m1_lines = [f"- [{c['time']}] O:{c['open']} H:{c['high']} L:{c['low']} C:{c['close']} V:{c['volume']}" for c in m1_candles]
-            m1_str = "\n### LAST 3 M1 CANDLES (micro price action)\n" + "\n".join(m1_lines) + "\n"
-    except Exception:
+        is_crypto_asset = config.is_crypto(symbol)
+        micro_tf = mt5_connector.mt5.TIMEFRAME_M5 if is_crypto_asset else mt5_connector.mt5.TIMEFRAME_M1
+        micro_tf_name = "M5" if is_crypto_asset else "M1"
+        # Fetch 20 candles so ATR(14) indicator in get_market_data doesn't raise IndexError
+        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=20)
+        if micro_df is not None and len(micro_df) > 0:
+            micro_tail = micro_df.tail(5)
+            micro_lines = []
+            for _, r in micro_tail.iterrows():
+                t_s = r['time'].strftime('%H:%M') if hasattr(r['time'], 'strftime') else str(r['time'])
+                micro_lines.append(f"- [{t_s}] O:{r['open']}, H:{r['high']}, L:{r['low']}, C:{r['close']}, Vol:{r['tick_volume']}")
+            micro_candles_str = f"\n### LAST 5 {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
+    except Exception as e:
         pass
 
     latest = df.iloc[-1]
     point_size = current_tick.get("point", 0.01)
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
+
+    # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
+    randomness_str = ""
+    try:
+        from src.analytics import market_randomness
+        rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
+        ft = rand_info.get('fat_tail', {})
+        tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
+        randomness_str = (
+            f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
+            f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
+        )
+    except Exception:
+        pass
+
+    quant_prob_str = ""
+    try:
+        from src.analytics import quant_probability
+        tf_mins = 60 if config.is_crypto(symbol) else 5
+        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+        quant_prob_str = (
+            f"- Quant Monte Carlo Probabilities (1,000 paths): "
+            f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
+            f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
+            f"Est. Time: {q_res['estimated_time_str']}\n"
+        )
+    except Exception:
+        pass
 
     # For crypto (BTC) the df is already H1 (config.get_timeframe) so the ATR
     # reflects real hourly volatility. XAU df is M5 and its ATR matches the
@@ -308,14 +372,14 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 
 ### RECENT CANDLES (Last 10 candles, {tf_label}):
 {candles_str}
-{m1_str}
+{micro_candles_str}
 ### CURRENT INDICATORS SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}
 ### STRATEGY CONSTRAINTS ({strategy_header})
 - {strategy_line}
@@ -332,7 +396,7 @@ JSON schema:
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the NEW ENTRY decision based on price action, indicators (RSI/EMA/ATR), forecast matrix, macro context, and economic calendar — NOT based on existing positions (those go in position_actions).",
+  "reasoning": "Concise reasoning (MAXIMUM 1-2 short sentences) explaining the NEW ENTRY decision based on price action/indicators — NOT based on existing positions (those go in position_actions).",
   "position_actions": [
     {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
   ]
@@ -405,7 +469,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "user", "content": "System: You are a professional financial trading assistant.\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences).\n\n" + prompt}
             ],
             response_format={"type": "json_object"},
             timeout=timeout_sec
@@ -414,7 +478,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences)."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -487,13 +551,46 @@ def query_gemini(prompt):
 
 
 def _execute_claude_single(model_name, prompt, timeout_sec):
-    response = claude_client.messages.create(
-        model=model_name,
-        max_tokens=2000,
-        system="You are a professional financial trading assistant. Always respond with valid JSON only.",
-        messages=[{"role": "user", "content": prompt}],
-        timeout=timeout_sec
+    system_text = (
+        "You are a professional financial trading assistant. "
+        "Always respond with valid JSON only. Keep reasoning extremely concise (max 1-2 short sentences)."
     )
+    # Enable Anthropic Prompt Caching via cache_control and prompt-caching header
+    try:
+        response = claude_client.messages.create(
+            model=model_name,
+            max_tokens=2000,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt,
+                            "cache_control": {"type": "ephemeral"}
+                        }
+                    ]
+                }
+            ],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+            timeout=timeout_sec
+        )
+    except Exception:
+        # Fallback for standard call if prompt caching header or structure is not supported
+        response = claude_client.messages.create(
+            model=model_name,
+            max_tokens=2000,
+            system=system_text,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=timeout_sec
+        )
     content = "".join(b.text for b in response.content if b.type == "text")
     return clean_json_response(content)
 

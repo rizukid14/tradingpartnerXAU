@@ -130,12 +130,12 @@ TRAILING_STOP_ENABLED = True
 TRAILING_ACTIVATION_POINTS = 200   # Activate trailing after 200 pts profit (~$2.00 on Gold)
 TRAILING_DISTANCE_POINTS = 150     # Trail SL 150 pts behind current price
 
-# Per-symbol trailing thresholds
+# Per-symbol trailing thresholds (BTC scaled to H1 SL ~33500 pts, lot 0.01:
+# activation 22000 = $2.20 profit, distance 16500 = $1.65 trail)
 TRAILING_ACTIVATION_POINTS_XAU = TRAILING_ACTIVATION_POINTS
 TRAILING_DISTANCE_POINTS_XAU = TRAILING_DISTANCE_POINTS
-# BTC: scaled to $10/trade target. Activation at $250 profit; trail $150.
-TRAILING_ACTIVATION_POINTS_BTC = 25000
-TRAILING_DISTANCE_POINTS_BTC = 15000
+TRAILING_ACTIVATION_POINTS_BTC = 22000
+TRAILING_DISTANCE_POINTS_BTC = 16500
 
 # --- BREAK-EVEN (from XAU-60 trade_executor.py) ---
 # Moves stop loss to entry price once trade reaches profit threshold
@@ -146,8 +146,8 @@ BREAK_EVEN_PADDING_POINTS = 10     # Pad SL 10 pts above entry for safety
 # Per-symbol break-even thresholds
 BREAK_EVEN_TRIGGER_POINTS_XAU = BREAK_EVEN_TRIGGER_POINTS
 BREAK_EVEN_PADDING_POINTS_XAU = BREAK_EVEN_PADDING_POINTS
-# BTC: BE at $200 profit; padding $10 (above spread ~$17).
-BREAK_EVEN_TRIGGER_POINTS_BTC = 20000
+# BTC: BE at 33500 pts profit (100% of H1 SL); padding 1000 pts ($10.00).
+BREAK_EVEN_TRIGGER_POINTS_BTC = 33500
 BREAK_EVEN_PADDING_POINTS_BTC = 1000
 
 # --- PARTIAL CLOSE (from XAU-60 trade_executor.py) ---
@@ -158,8 +158,8 @@ PARTIAL_CLOSE_TP1_POINTS = 400     # TP1 trigger: 400 pts profit (~$4.00)
 
 # Per-symbol partial-close thresholds
 PARTIAL_CLOSE_TP1_POINTS_XAU = PARTIAL_CLOSE_TP1_POINTS
-# BTC: TP1 at $400 profit.
-PARTIAL_CLOSE_TP1_POINTS_BTC = 40000
+# BTC: TP1 at 44500 pts profit (133% of H1 SL).
+PARTIAL_CLOSE_TP1_POINTS_BTC = 44500
 
 # --- DAILY RISK LIMITS (from xaubot-ai smart_risk_manager.py) ---
 MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today

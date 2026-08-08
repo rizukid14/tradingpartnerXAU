@@ -230,10 +230,15 @@ def get_closed_positions_today(symbol=None):
             continue
         if symbol is not None and deal.symbol != symbol:
             continue
+        # DEAL_ENTRY_OUT: deal.type == 0 (BUY deal) closes a SELL position, deal.type == 1 (SELL deal) closes a BUY position
+        pos_type = "SELL" if deal.type == 0 else "BUY"
         closed.append({
             "ticket": deal.position_id,
             "symbol": deal.symbol,
             "profit": deal.profit + deal.swap + deal.commission,
+            "reason": getattr(deal, "reason", None),
+            "comment": getattr(deal, "comment", ""),
+            "type": pos_type,
             "time": deal.time,
         })
     return closed

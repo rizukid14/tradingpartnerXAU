@@ -9,7 +9,7 @@ import os
 import json
 import time
 import config
-from src.core import mt5_connector as connector, llm_client as llm
+from src.core import mt5_connector as connector, llm_client as llm, telegram_alerts as tg
 
 
 
@@ -217,6 +217,19 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
             # Mark ticket as processed
             mem["evaluated_tickets"].add(ticket)
             self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
+
+            # Send Telegram notification for closed trade (TP, SL+, SL, BE, etc.)
+            try:
+                tg.alert_trade_closed(
+                    ticket=ticket,
+                    symbol=deal_symbol,
+                    profit=profit,
+                    reason_code=deal.get("reason"),
+                    comment=deal.get("comment", ""),
+                    pos_type=deal.get("type", "")
+                )
+            except Exception as e:
+                print(f"[TELEGRAM WARNING] Gagal mengirim alert trade closed: {e}")
 
             # Generate post-mortem lesson via LLM
             print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, P/L: ${profit:.2f})...")

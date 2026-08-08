@@ -1,0 +1,40 @@
+{
+  "BTCUSD.c": [
+    {
+      "signal": "HOLD",
+      "confidence": 0.0,
+      "reasoning_excerpt": "Consensus failed (BUY=0.61, SELL=0.00)",
+      "timestamp": 1786174298.2642908
+    },
+    {
+      "signal": "HOLD",
+      "confidence": 0.0,
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
+      "timestamp": 1786174376.5367658
+    },
+    {
+      "signal": "HOLD",
+      "confidence": 0.0,
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
+      "timestamp": 1786174649.6467664
+    },
+    {
+      "signal": "HOLD",
+      "confidence": 0.0,
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
+      "timestamp": 1786174918.8203893
+    },
+    {
+      "signal": "HOLD",
+      "confidence": 0.0,
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
+      "timestamp": 1786175012.0659115
+    },
+    {
+      "signal": "HOLD",
+      "confidence": 0.0,
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
+      "timestamp": 1786175133.87723
+    }
+  ]
+}

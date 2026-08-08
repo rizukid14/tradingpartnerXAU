@@ -94,6 +94,51 @@ def alert_partial_close(ticket, closed_lot, remaining_lot, profit_points):
     send_message(text)
 
 
+def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos_type=None):
+    """Send trade close notification (TP, SL+, SL, BE, or AI/Manual exit)."""
+    tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.50)
+    comment_lower = (comment or "").lower()
+
+    # Classify exit type
+    if reason_code == 5 or "[tp" in comment_lower:
+        title = "🎯 *Trade Selesai: TAKE PROFIT (TP)*"
+        status = "Target TP Max Tercapai! 🎯"
+    elif reason_code == 4 or "[sl" in comment_lower:
+        if profit > tol:
+            title = "🛡️ *Trade Selesai: STOP LOSS IN PROFIT (SL+)*"
+            status = "Trailing SL / Break-Even Hit (Profit Terkunci) 🛡️"
+        elif abs(profit) <= tol:
+            title = "⚖️ *Trade Selesai: BREAK-EVEN (BE)*"
+            status = "Break-Even Hit ⚖️"
+        else:
+            title = "🛑 *Trade Selesai: STOP LOSS (SL)*"
+            status = "Stop Loss Hit 🛑"
+    else:
+        if profit > tol:
+            title = "💰 *Trade Selesai: PROFIT (AI / Manual)*"
+            status = "Ditutup AI / Manual dengan Profit 💰"
+        elif profit < -tol:
+            title = "📉 *Trade Selesai: LOSS (AI / Manual)*"
+            status = "Ditutup AI / Manual dengan Loss 📉"
+        else:
+            title = "⚖️ *Trade Selesai: BREAK-EVEN (AI / Manual)*"
+            status = "Ditutup AI / Manual di Break-Even ⚖️"
+
+    pnl_str = f"+${profit:.2f}" if profit >= 0 else f"-${abs(profit):.2f}"
+    pos_str = f"• Arah: `{pos_type}`\n" if pos_type else ""
+
+    text = (
+        f"{title}\n"
+        f"• Symbol: `{symbol}`\n"
+        f"• Ticket: `#{ticket}`\n"
+        f"{pos_str}"
+        f"• Hasil P/L: `{pnl_str}`\n"
+        f"• Detail: {status}"
+    )
+    send_message(text)
+
+
+
 def alert_recovery_mode(active, consecutive_losses):
     """Send recovery mode toggle notification."""
     if active:
