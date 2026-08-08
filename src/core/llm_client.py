@@ -261,18 +261,39 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected the T+15m target at 4280 with RSI diverging, floating +$0.40', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
         )
 
+    # Timeframe label per symbol: BTC trades H1 (swing), XAU trades M5 (scalp)
+    is_crypto_sym = config.is_crypto(symbol)
+    tf_label = "H1" if is_crypto_sym else "M5"
+    tf_full = "1 Hour (H1) swing" if is_crypto_sym else "5 Minute (M5) scalping"
+    strategy_header = "H1 Swing Strategy" if is_crypto_sym else "M5 Scalping Strategy"
+    strategy_line = (
+        "H1: enter on clear hourly structure — follow-through after a decisive "
+        "breakout or a clean pullback to support/resistance, not every wiggle."
+        if is_crypto_sym else
+        "Scalp M5: quick entries/exits, high probability setups only. Decide from "
+        "the data provided — do not wait for hypothetical pullbacks/breakouts."
+    )
+    momentum_line = (
+        "Follow the dominant H1 price action and momentum (H1 candles); a clear "
+        "impulse with structure break is a valid entry even against the H4/D1 bias."
+        if is_crypto_sym else
+        "BUY and SELL are equally valid. Follow the dominant M5 price action and "
+        "momentum (M1/M5 candles); a clear impulse with structure break is a valid "
+        "entry even against a higher-timeframe bias."
+    )
+
     prompt = f"""
-You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} — {asset_desc(symbol)}.
+You are an expert algorithmic trading system specializing in {tf_full} on {symbol} — {asset_desc(symbol)}.
 Analyze the current market condition and determine the next trading decision.
 
 ### MARKET DATA CONTEXT
 Symbol: {symbol}
-Timeframe: M5 (5 Minutes)
+Timeframe: {tf_label}
 Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 
-### RECENT CANDLES (Last 10 candles, M5):
+### RECENT CANDLES (Last 10 candles, {tf_label}):
 {candles_str}
 {m1_str}
 ### CURRENT INDICATORS SUMMARY
@@ -283,9 +304,9 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
 {macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}
 {usd_context}
-### STRATEGY CONSTRAINTS (5-minute Scalping)
-- Scalp M5: quick entries/exits, high probability setups only. Decide from the data provided — do not wait for hypothetical pullbacks/breakouts.
-- BUY and SELL are equally valid. Follow the dominant M5 price action and momentum (M1/M5 candles); a clear impulse with structure break is a valid entry even against a higher-timeframe bias.
+### STRATEGY CONSTRAINTS ({strategy_header})
+- {strategy_line}
+- {momentum_line}
 - Only restrict trading 15-30 min before/after a HIGH-impact event listed in the economic calendar block above. If none is listed, trade normally — 'news risk' is not a valid HOLD reason when no event is imminent.
 - Entry: avoid entering against a DIRECT forecast-bias contradiction (BUY vs BEARISH, SELL vs BULLISH) or when price is already beyond the T+15m target. R:R to the T+15m target should be >= 1.0 (0.8 acceptable on clear momentum).
 - Suggested SL/TP in POINTS. Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL. On BTC the market moves thousands of points — do NOT give tiny SL/TP (e.g. < 5000 pts) just because the number looks big; those are worth only cents.
@@ -298,7 +319,7 @@ JSON schema:
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the decision based on ALL the market data provided above: M5/M1 price action, indicators (RSI/EMA/ATR), forecast matrix, macro/fundamental context, economic calendar, and open positions.",
+  "reasoning": "A concise sentence explaining the decision based on ALL the market data provided above: {tf_label} price action, indicators (RSI/EMA/ATR), forecast matrix, macro/fundamental context, economic calendar, and open positions.",
   "position_actions": [
     {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
   ]
