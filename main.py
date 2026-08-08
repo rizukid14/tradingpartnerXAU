@@ -199,8 +199,8 @@ def run_trading_cycle():
         tp_points = result["tp_points"]
         agreeing_count = result.get("agreeing_count", 0)
         
-        # Get effective lot size (recovery mode + session multiplier)
-        effective_lot = risk.get_effective_lot_size()
+        # Get effective lot size from risk-based sizing (uses floored SL)
+        effective_lot = risk.get_effective_lot_size(sl_points)
         
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
         remaining_slots = max(0, max_positions - len(open_positions))

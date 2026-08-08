@@ -69,6 +69,13 @@ LOT_SIZE = 0.01
 LOT_SIZE_XAU = LOT_SIZE
 LOT_SIZE_BTC = 0.01
 
+# Risk-based lot sizing: lot is computed from account balance so each trade
+# risks this % of equity. Per-symbol because BTC (H1 swing, few positions)
+# can take more risk per trade than XAU (M5 scalping, up to 6 concurrent
+# positions — 6 x 0.5% = 3% aggregate is the ceiling we accept).
+RISK_PERCENT_BTC = 1.5   # ~$16/trade at $1065 balance -> lot ~0.05
+RISK_PERCENT_XAU = 0.5   # ~$5.3/trade -> lot ~0.02 (x6 positions = ~3% max)
+
 # Deviation (slippage tolerance in points)
 DEVIATION = 20
 
@@ -342,4 +349,12 @@ def confidence_threshold_for(symbol):
     BTC (H1, rare entries) needs higher conviction than XAU (M5, frequent).
     """
     return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
+
+
+def risk_percent_for(symbol):
+    """Risk per trade (% of balance) for risk-based lot sizing.
+    BTC (H1 swing, few concurrent positions): 1.5%.
+    XAU (M5 scalping, up to 6 concurrent): 0.5% — aggregate ~3% max.
+    """
+    return RISK_PERCENT_BTC if is_crypto(symbol) else RISK_PERCENT_XAU
 

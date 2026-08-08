@@ -238,26 +238,87 @@ class RiskEngine:
         self._last_trade_time = time.time()
 
     # =========================================================================
-    #  LOT SIZE CALCULATION
+    #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self):
+    def get_effective_lot_size(self, sl_points=None):
         """
-        Returns adjusted lot size based on:
-        - Recovery mode (from xaubot-ai: reduce lot after losses)
-        - Session multiplier (from xaubot-ai: boost during London-NY overlap)
-        """
-        lot = config.lot_size_for(config.SYMBOL)
+        Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
+        so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
 
-        # Recovery mode: reduce lot size
+        Order of operations (important):
+          1. Compute risk-based lot from the (already floored) SL distance.
+          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2).
+          3. Clamp to broker volume_min/max and round to volume_step LAST,
+             so multipliers are not distorted by rounding.
+        Falls back to config.lot_size_for() when SL is unknown.
+        """
+        symbol = config.SYMBOL
+        risk_pct = config.risk_percent_for(symbol)
+        try:
+            account = mt5.account_info()
+            equity = float(account.equity) if account else 0.0
+        except Exception:
+            equity = 0.0
+
+        si = mt5.symbol_info(symbol)
+        if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
+            # No SL given -> fall back to the static per-symbol lot
+            lot = config.lot_size_for(symbol)
+            return self._apply_lot_multipliers(lot, symbol)
+
+        # USD value of a 1-point move for 1.0 lot
+        usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
+        if usd_per_pt_1lot <= 0:
+            lot = config.lot_size_for(symbol)
+            return self._apply_lot_multipliers(lot, symbol)
+
+        risk_usd = equity * risk_pct / 100.0
+        sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
+        if sl_usd_per_lot <= 0:
+            lot = config.lot_size_for(symbol)
+            return self._apply_lot_multipliers(lot, symbol)
+
+        lot_raw = risk_usd / sl_usd_per_lot
+        print(f"📐 [SIZING] {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd:.2f}, "
+              f"SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
+
+        # Apply recovery/session multipliers BEFORE clamping so rounding cannot
+        # erase the intended reduction.
+        lot = self._apply_lot_multipliers(lot_raw, symbol)
+
+        # Clamp to broker volume bounds and round to step
+        volume_min = getattr(si, "volume_min", 0.01)
+        volume_max = getattr(si, "volume_max", 100.0)
+        volume_step = getattr(si, "volume_step", 0.01)
+        lot = max(volume_min, min(volume_max, lot))
+        lot = round(lot / volume_step) * volume_step
+        lot = round(lot, 2)
+
+        # Margin safety net: never let the order exceed available free margin
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is not None:
+                margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot, tick.ask)
+                free_margin = float(account.margin_free) if account else 0.0
+                if margin and margin > free_margin * 0.5:  # keep 50% buffer
+                    print(f"🛡️ [SIZING] Margin {margin:.2f} > 50% free ({free_margin:.2f}). Lot diturunkan.")
+                    # Halve until it fits
+                    while lot > volume_min and margin > free_margin * 0.5:
+                        lot = round((lot - volume_step), 2)
+                        margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot, tick.ask)
+                        if not margin:
+                            break
+        except Exception:
+            pass
+
+        return lot
+
+    def _apply_lot_multipliers(self, lot, symbol):
+        """Apply recovery (x0.5) and session (x1.0/1.2) lot multipliers."""
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
             lot *= config.RECOVERY_LOT_MULTIPLIER
-            print(f"🔄 [RECOVERY] Lot size dikurangi: {lot:.2f} (x{config.RECOVERY_LOT_MULTIPLIER})")
-
-        # Session multiplier
+            print(f"🔄 [RECOVERY] Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
         lot *= self._session_lot_multiplier
-
-        # Ensure minimum lot
-        lot = max(0.01, round(lot, 2))
         return lot
 
     @property
