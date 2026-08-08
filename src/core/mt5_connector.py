@@ -169,6 +169,28 @@ def get_open_positions(symbol):
     return [
         {
             "ticket": p.ticket,
+            "symbol": p.symbol,
+            "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
+            "volume": p.volume,
+            "price_open": p.price_open,
+            "sl": p.sl,
+            "tp": p.tp,
+            "profit": p.profit
+        }
+        for p in positions
+        if p.magic == config.MAGIC_NUMBER
+    ]
+
+
+def get_all_open_positions():
+    """Returns ALL open bot-managed positions across every symbol."""
+    positions = mt5.positions_get()
+    if positions is None:
+        return []
+    return [
+        {
+            "ticket": p.ticket,
+            "symbol": p.symbol,
             "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
             "volume": p.volume,
             "price_open": p.price_open,

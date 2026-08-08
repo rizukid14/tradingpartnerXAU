@@ -404,7 +404,20 @@ def main():
             remaining_pause = risk.get_remaining_pause()
             pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
             tf_label = "H1" if config.is_crypto(config.SYMBOL) else "M5"
-            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / {tf_label} candle...{pause_str}")
+            # Show any running (open) bot positions across ALL symbols
+            open_pos = connector.get_all_open_positions()
+            if open_pos:
+                by_sym = {}
+                for p in open_pos:
+                    by_sym.setdefault(p.get("symbol", "?"), []).append(p)
+                pos_parts = []
+                for sym, plist in sorted(by_sym.items()):
+                    float_s = sum(x.get("profit", 0.0) for x in plist)
+                    pos_parts.append(f"{sym}: {len(plist)} pos ${float_s:+.2f}")
+                pos_str = " | " + " | ".join(pos_parts)
+            else:
+                pos_str = ""
+            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / {tf_label} candle...{pause_str}{pos_str}")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks
