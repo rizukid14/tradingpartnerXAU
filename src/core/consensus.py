@@ -10,6 +10,42 @@ def _effective_consensus_threshold():
         return config.CONSENSUS_THRESHOLD
 
 
+def _apply_sltp_floors(sl_points, tp_points):
+    """
+    Enforce minimum SL/TP so the LLM cannot propose stops inside the spread
+    (which the broker would reject with INVALID_STOPS) or tiny distances that
+    are worth only cents. Floors:
+      - SL >= default SL for the symbol (per-symbol safe risk distance)
+      - SL >= 2x current spread (never inside the spread)
+      - TP >= 1.5x final SL (keep R:R sane)
+    """
+    if not sl_points or sl_points <= 0:
+        sl_points = config.default_sl_points_for(config.SYMBOL)
+    if not tp_points or tp_points <= 0:
+        tp_points = config.default_tp_points_for(config.SYMBOL)
+
+    # 2x spread floor (if we can read the tick)
+    spread_pts = 0
+    try:
+        import MetaTrader5 as mt5
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        if tick is not None:
+            si = mt5.symbol_info(config.SYMBOL)
+            if si is not None and si.point:
+                spread_pts = int(round((tick.ask - tick.bid) / si.point))
+    except Exception:
+        pass
+
+    min_sl = max(config.default_sl_points_for(config.SYMBOL), spread_pts * 2)
+    if sl_points < min_sl:
+        sl_points = min_sl
+
+    if tp_points < sl_points * 1.5:
+        tp_points = int(sl_points * 1.5)
+
+    return sl_points, tp_points
+
+
 def calculate_consensus(decisions):
     """
     Analyzes decisions from all 3 LLMs and determines if consensus is met.
@@ -113,6 +149,9 @@ def calculate_consensus(decisions):
             avg_confidence = float(sum(conf_list) / len(conf_list))
             final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
             final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
+
+            # Enforce minimum SL/TP (never inside spread, never absurdly tight)
+            final_sl, final_tp = _apply_sltp_floors(final_sl, final_tp)
             
             print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal}")
             print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
