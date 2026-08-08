@@ -52,6 +52,12 @@ class RiskEngine:
         self._load_state()
         self._sync_closed_positions()
 
+    def get_remaining_pause(self):
+        """Returns the remaining pause duration in seconds, or 0 if not paused."""
+        if time.time() < self._paused_until:
+            return int(self._paused_until - time.time())
+        return 0
+
     # =========================================================================
     #  STATE PERSISTENCE (survives restarts)
     # =========================================================================
@@ -197,6 +203,12 @@ class RiskEngine:
         """Update loss streak / recovery mode from a single realized result."""
         self._last_trade_time = time.time()
 
+        # Break-even tolerance: |profit| within tolerance does not extend the
+        # loss streak, but also does not reset it or exit recovery mode.
+        if abs(profit) <= config.BREAK_EVEN_TOLERANCE_USD:
+            print(f"⚖️ [RISK] Trade BEP ({profit:+.2f} USD). Streak dipertahankan ({self._consecutive_losses}).")
+            return
+
         if profit < 0:
             self._consecutive_losses += 1
             if self._consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
@@ -209,10 +221,16 @@ class RiskEngine:
             if self._consecutive_losses > 0:
                 print(f"✅ [RISK] Win setelah {self._consecutive_losses} loss. Streak direset.")
             self._consecutive_losses = 0
-            # Exit recovery mode after a win
+            # Exit recovery mode only after a win that clears the minimum
+            # profit threshold — a tiny win should not instantly reset the
+            # reduced-lot protection after a losing streak.
             if self._in_recovery_mode:
-                self._in_recovery_mode = False
-                print("✅ [RISK] Recovery mode dinonaktifkan setelah win.")
+                exit_profit = getattr(config, "RECOVERY_EXIT_PROFIT_USD", 0.10)
+                if profit >= exit_profit:
+                    self._in_recovery_mode = False
+                    print(f"✅ [RISK] Recovery mode dinonaktifkan setelah win {profit:+.2f} USD (>= ${exit_profit:.2f}).")
+                else:
+                    print(f"⚖️ [RISK] Win kecil ({profit:+.2f} USD) < ${exit_profit:.2f}. Recovery mode dipertahankan.")
 
     def record_trade_opened(self):
         """Record that a trade was just opened (for cooldown tracking)."""
@@ -291,7 +309,8 @@ class RiskEngine:
         tick = mt5.symbol_info_tick(config.SYMBOL)
         symbol_info = mt5.symbol_info(config.SYMBOL)
         if tick is None or symbol_info is None:
-            return True, ""
+            # Fail-closed: if we can't verify the spread, don't trade.
+            return False, "⚠️ [RISK] Tidak bisa memverifikasi spread (MT5 data unavailable). Menunggu..."
 
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
         max_spread = config.max_spread_points_for(config.SYMBOL)
@@ -344,6 +363,9 @@ class RiskEngine:
         now_wib = datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
+        # Pick the HIGHEST multiplier among all matching sessions so overlapping
+        # windows (e.g. London 1.0x inside London-NY 1.2x) apply the best one.
+        best_multiplier = None
         for session in config.ALLOWED_SESSIONS_WIB:
             start = session["start"][0] * 60 + session["start"][1]
             end = session["end"][0] * 60 + session["end"][1]
@@ -355,8 +377,13 @@ class RiskEngine:
                 in_session = start <= current_minutes < end
 
             if in_session:
-                self._session_lot_multiplier = session.get("lot_multiplier", 1.0)
-                return True, ""
+                mult = session.get("lot_multiplier", 1.0)
+                if best_multiplier is None or mult > best_multiplier:
+                    best_multiplier = mult
+
+        if best_multiplier is not None:
+            self._session_lot_multiplier = best_multiplier
+            return True, ""
 
         self._session_lot_multiplier = 1.0
         return False, f"💤 [RISK] Di luar sesi trading (WIB {now_wib.strftime('%H:%M')}). Menunggu..."

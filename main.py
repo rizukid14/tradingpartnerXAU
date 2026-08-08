@@ -88,26 +88,34 @@ def run_trading_cycle():
 
         # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
-            total_t = len(closed_deals)
-            wins_t = sum(1 for d in closed_deals if d.get("profit", 0) >= 0)
+            # Break-even trades (|profit| within tolerance) are excluded from win-rate
+            tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
+            dec = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
+            bep_n = len(closed_deals) - len(dec)
+            total_t = len(dec)
+            wins_t = sum(1 for d in dec if d.get("profit", 0) > 0)
             loss_t = total_t - wins_t
-            wr = (wins_t / total_t) * 100.0
+            wr = (wins_t / total_t) * 100.0 if total_t else 0.0
             pnl_t = sum(d.get("profit", 0) for d in closed_deals)
-            print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%) | Net PnL: ${pnl_t:+.2f} USD")
+            bep_str = f" | {bep_n} BEP" if bep_n else ""
+            print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%){bep_str} | Net PnL: ${pnl_t:+.2f} USD")
 
             # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
             by_symbol = {}
             for d in closed_deals:
                 sym = d.get("symbol", "UNKNOWN")
-                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0})
+                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0, "bep": 0})
                 bucket["n"] += 1
                 bucket["pnl"] += d.get("profit", 0)
-                if d.get("profit", 0) >= 0:
+                if abs(d.get("profit", 0)) <= tol:
+                    bucket["bep"] += 1
+                elif d.get("profit", 0) > 0:
                     bucket["wins"] += 1
             if len(by_symbol) > 1:
                 parts = []
                 for sym, b in sorted(by_symbol.items()):
-                    sym_wr = (b["wins"] / b["n"]) * 100.0 if b["n"] else 0.0
+                    sym_t = b["n"] - b["bep"]
+                    sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
                     parts.append(f"{sym}: {b['n']}T {b['wins']}W WR {sym_wr:.0f}% ${b['pnl']:+.2f}")
                 print(f"📊 [PERFORMA PER SIMBOL] " + " | ".join(parts))
         else:
@@ -335,11 +343,12 @@ def main():
                     reason = action["reason"]
                     print(f"📅 {reason}")
                     
-                    # Get position profit before closing
+                    # Get position profit before closing (include swap+commission
+                    # so the recorded result matches what MT5 deal history reports)
                     positions = mt5.positions_get(ticket=ticket)
                     profit = 0.0
                     if positions and len(positions) > 0:
-                        profit = positions[0].profit
+                        profit = positions[0].profit + positions[0].swap + positions[0].commission
                     
                     success = connector.close_position(ticket)
                     if success:
@@ -388,7 +397,9 @@ def main():
             
             # Show live status clock line in CLI every loop iteration
             now_str = time.strftime('%H:%M:%S')
-            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / M5 candle...")
+            remaining_pause = risk.get_remaining_pause()
+            pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
+            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / M5 candle...{pause_str}")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks
