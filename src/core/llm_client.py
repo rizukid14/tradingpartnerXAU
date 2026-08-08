@@ -261,6 +261,20 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected the T+15m target at 4280 with RSI diverging, floating +$0.40', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
         )
 
+    # Explicitly separate the two decisions so the LLM does not mix them:
+    # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
+    if open_positions and len(open_positions) > 0:
+        separation_note = (
+            "\nIMPORTANT — TWO SEPARATE DECISIONS:\n"
+            "1. The 'signal' field above is ONLY about opening a NEW trade. "
+            "It must be BUY/SELL/HOLD based purely on whether a NEW entry is attractive now.\n"
+            "2. The 'position_actions' list is ONLY about the EXISTING positions listed above. "
+            "Do NOT let your opinion about existing positions change your 'signal', and do NOT "
+            "let your entry bias change your position_actions. Evaluate each independently.\n"
+        )
+    else:
+        separation_note = ""
+
     # Timeframe label per symbol: BTC trades H1 (swing), XAU trades M5 (scalp)
     is_crypto_sym = config.is_crypto(symbol)
     tf_label = "H1" if is_crypto_sym else "M5"
@@ -302,7 +316,7 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}
+{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}
 ### STRATEGY CONSTRAINTS ({strategy_header})
 - {strategy_line}
@@ -319,7 +333,7 @@ JSON schema:
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the decision based on ALL the market data provided above: {tf_label} price action, indicators (RSI/EMA/ATR), forecast matrix, macro/fundamental context, economic calendar, and open positions.",
+  "reasoning": "A concise sentence explaining the NEW ENTRY decision based on price action, indicators (RSI/EMA/ATR), forecast matrix, macro context, and economic calendar — NOT based on existing positions (those go in position_actions).",
   "position_actions": [
     {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
   ]
