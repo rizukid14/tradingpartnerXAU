@@ -50,7 +50,7 @@ def test_sizing():
     # qty dari risk% itu yang benar; cek hasilnya bukan None kalau notional >= min
     connector.get_account_balance_usdt = lambda: 12.0
     connector.round_qty = lambda s, q: round(int(q / 0.00001) * 0.00001, 5)
-    connector.validate_order = lambda s, q, p: (True, "")
+    connector.validate_order = lambda s, q, p, sl_pct=None: (True, "")
     config.MIN_NOTIONAL_USD = 1.0
     qty, msg = engine.get_effective_qty(65000.0, 1.0)
     if qty is None:

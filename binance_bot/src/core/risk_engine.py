@@ -152,7 +152,7 @@ class RiskEngine:
         qty = risk_usd / sl_distance
 
         qty = connector.round_qty(config.SYMBOL, qty)
-        ok, reason = connector.validate_order(config.SYMBOL, qty, price)
+        ok, reason = connector.validate_order(config.SYMBOL, qty, price, sl_pct=sl_pct)
         if not ok:
             return None, f"Sizing gagal: {reason} (qty {qty}, equity ${equity:.2f})"
         notional = qty * price

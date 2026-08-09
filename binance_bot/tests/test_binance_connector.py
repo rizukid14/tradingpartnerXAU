@@ -77,6 +77,37 @@ def test_validate_order():
     if ok2:
         print("FAIL validate: order $0.65 harus ditolak (min notional)")
         failed += 1
+    # Stoploss reserve: SL 2% → reserve 1/(1-0.02) = 1.02 → notional efektif naik
+    ok3, _ = connector.validate_order("BTCUSDT", 0.0001, 65000.0, sl_pct=2.0)  # $6.5*1.02 = $6.63
+    if not ok3:
+        print("FAIL validate: dengan SL 2% reserve, $6.5 harus tetap lolos")
+        failed += 1
+    # SL besar → reserve lebih besar → order kecil jadi ditolak
+    ok4, _ = connector.validate_order("BTCUSDT", 0.0001, 5000.0, sl_pct=20.0)  # $0.5, reserve 1.25
+    if ok4:
+        print("FAIL validate: SL 20% reserve harus tolak order kecil")
+        failed += 1
+    return failed
+
+
+def test_dry_run_market_order():
+    failed = 0
+    config.DRY_RUN = True
+    sample = {"symbol": "BTCUSDT", "bidPrice": "65000.00", "askPrice": "65001.00"}
+    orig = _patch("urlopen", FakeResponse(sample))
+    try:
+        res = connector.place_market_order("BTCUSDT", "BUY", 0.0001)
+        if not res.get("dry_run"):
+            print("FAIL dry_run: harus dry_run True")
+            failed += 1
+        if res.get("price") is None or res["price"] <= 0:
+            print("FAIL dry_run: price harus terisi (simulasi fill)")
+            failed += 1
+        if res.get("fee", 0) <= 0:
+            print("FAIL dry_run: fee harus > 0 (simulasi 0.1%)")
+            failed += 1
+    finally:
+        _patch("urlopen", orig)
     return failed
 
 
@@ -99,7 +130,8 @@ def test_ticker():
 
 if __name__ == "__main__":
     total = 0
-    for fn in (test_klines_parsing, test_round_qty, test_validate_order, test_ticker):
+    for fn in (test_klines_parsing, test_round_qty, test_validate_order,
+               test_dry_run_market_order, test_ticker):
         total += fn()
     print(f"\n{'✅ SEMUA TEST PASS' if total == 0 else f'❌ {total} TEST GAGAL'}")
     sys.exit(1 if total else 0)

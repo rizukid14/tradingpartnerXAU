@@ -211,8 +211,13 @@ def round_qty(symbol, qty):
     return round(rounded, decimals)
 
 
-def validate_order(symbol, qty, price=None):
-    """Validasi order sebelum kirim: min notional + min qty. Return (ok, reason)."""
+def validate_order(symbol, qty, price=None, sl_pct=None):
+    """
+    Validasi order sebelum kirim: min qty + min notional (dengan stoploss reserve).
+    sl_pct: persentase SL — dipakai untuk reserve (pola Freqtrade):
+      reserve = 1 / (1 - |sl|) → posisi setelah SL kena tetap di atas min notional.
+    Return (ok, reason).
+    """
     info = get_symbol_info(symbol)
     if not info:
         return True, ""
@@ -220,8 +225,15 @@ def validate_order(symbol, qty, price=None):
     min_qty = info["filters"].get("min_qty", 0)
     if min_qty and qty < min_qty:
         return False, f"qty {qty} < min_qty {min_qty}"
-    if price and min_notional and qty * price < min_notional:
-        return False, f"notional {qty*price:.2f} < min_notional {min_notional}"
+    if price and min_notional:
+        # Reserve: kalau SL kena, nilai posisi turun — pastikan tetap >= min notional
+        reserve = 1.0
+        if sl_pct and abs(sl_pct) < 1.0:
+            reserve = 1.0 / (1.0 - abs(sl_pct) / 100.0)
+            reserve = max(min(reserve, 1.5), 1.0)
+        if qty * price * reserve < min_notional:
+            return False, (f"notional {qty*price:.2f} x reserve {reserve:.2f} "
+                           f"< min_notional {min_notional} (SL {sl_pct}%)")
     return True, ""
 
 
@@ -260,10 +272,24 @@ def get_asset_balance(symbol):
 # ORDERS
 # ---------------------------------------------------------------------------
 def place_market_order(symbol, side, qty):
-    """Market order BUY/SELL. Return dict hasil atau None."""
+    """
+    Market order BUY/SELL. Return dict hasil atau None.
+    Dry-run: simulasikan fill penuh + slippage 0.05% + fee 0.1% (pola Freqtrade).
+    """
     if config.DRY_RUN:
-        log.info(f"[DRY RUN] Market {side} {qty} {symbol}")
-        return {"status": "SUCCESS", "dry_run": True, "symbol": symbol, "side": side, "qty": qty}
+        ticker = get_ticker(symbol)
+        price = ticker["price"] if ticker else 0.0
+        slippage = 0.0005  # 0.05%
+        fill_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+        cost = qty * fill_price
+        fee = cost * 0.001  # 0.1% taker
+        log.info(f"[DRY RUN] Market {side} {qty} {symbol} @ {fill_price:.2f} "
+                 f"(cost ${cost:.2f}, fee ${fee:.4f})")
+        return {
+            "status": "SUCCESS", "dry_run": True, "symbol": symbol, "side": side,
+            "qty": qty, "price": fill_price, "cost": cost, "fee": fee,
+            "fills": [{"price": str(fill_price), "qty": str(qty), "commission": str(fee)}],
+        }
     params = {
         "symbol": symbol,
         "side": side,
@@ -279,17 +305,28 @@ def place_oco_order(symbol, side, qty, stop_price, sl_price, tp_price):
     OCO order: TP limit + SL stop-limit sekaligus (one-cancels-other).
     side: BUY/SELL. stop_price = harga pemicu SL, sl_price = harga limit SL,
     tp_price = harga limit TP. Berlaku untuk posisi yang SUDAH ada.
+
+    Stop-limit safety (pola Freqtrade stoploss_on_exchange_limit_ratio):
+      - BUY (SL di bawah harga): stopLimit = stop * 1.01 (sedikit di atas trigger)
+      - SELL (SL di atas harga): stopLimit = stop * 0.99 (sedikit di bawah trigger)
+      Supaya limit SL tidak kelewatan harga saat trigger kena.
     """
     if config.DRY_RUN:
-        log.info(f"[DRY RUN] OCO {side} {qty} {symbol} (SL@{sl_price}, TP@{tp_price})")
-        return {"status": "SUCCESS", "dry_run": True}
+        log.info(f"[DRY RUN] OCO {side} {qty} {symbol} (SL@{sl_price:.2f}, TP@{tp_price:.2f})")
+        return {"status": "SUCCESS", "dry_run": True, "symbol": symbol,
+                "side": side, "qty": qty, "sl": sl_price, "tp": tp_price}
+    # Stop-limit safety ratio
+    if side == "SELL":  # SL di atas harga (posisi long)
+        safe_limit = stop_price * 0.99
+    else:               # SL di bawah harga (posisi short — jarang di spot)
+        safe_limit = stop_price * 1.01
     params = {
         "symbol": symbol,
         "side": side,
         "quantity": f"{qty:.8f}",
         "price": f"{tp_price:.2f}",          # limit price (TP)
         "stopPrice": f"{stop_price:.2f}",    # trigger SL
-        "stopLimitPrice": f"{sl_price:.2f}", # SL limit price
+        "stopLimitPrice": f"{safe_limit:.2f}",  # SL limit price (sisi aman)
         "stopLimitTimeInForce": "GTC",
         "newOrderRespType": "FULL",
     }
