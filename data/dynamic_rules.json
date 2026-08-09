@@ -1,7 +1,7 @@
 {
-    "consensus_threshold": 2,
-    "sl_multiplier": 1.5,
+    "consensus_threshold": 3,
+    "sl_multiplier": 1.2,
     "tp_multiplier": 3.0,
-    "status_message": "\ud83d\ude80 Optimal (Win Rate 100.0%: Standar 2/3 Konsensus)",
-    "last_updated": 1786175128.2746625
+    "status_message": "\ud83d\udee1\ufe0f Defensif (Win Rate 20%: Membutuhkan Konsensus 3/3)",
+    "last_updated": 1786258235.4817765
 }

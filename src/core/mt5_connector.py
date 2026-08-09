@@ -175,7 +175,9 @@ def get_open_positions(symbol):
             "price_open": p.price_open,
             "sl": p.sl,
             "tp": p.tp,
-            "profit": p.profit
+            "profit": p.profit,
+            "swap": p.swap,
+            "time": p.time
         }
         for p in positions
         if p.magic == config.MAGIC_NUMBER
@@ -196,7 +198,9 @@ def get_all_open_positions():
             "price_open": p.price_open,
             "sl": p.sl,
             "tp": p.tp,
-            "profit": p.profit
+            "profit": p.profit,
+            "swap": p.swap,
+            "time": p.time
         }
         for p in positions
         if p.magic == config.MAGIC_NUMBER

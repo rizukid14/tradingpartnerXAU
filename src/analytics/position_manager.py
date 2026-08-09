@@ -228,17 +228,51 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
         print(f"[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
 
 
+def _get_dynamic_atr_points(symbol, point):
+    """
+    Computes real-time ATR(14) in points for the given symbol using its active timeframe:
+    H1 for BTC, M5 for XAU.
+    """
+    try:
+        tf = config.get_timeframe(symbol)
+        rates = mt5.copy_rates_from_pos(symbol, tf, 0, 20)
+        if rates is not None and len(rates) >= 15:
+            import pandas as pd
+            from ta.volatility import AverageTrueRange
+            df = pd.DataFrame(rates)
+            atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+            atr_val = atr_series.iloc[-1]
+            if not pd.isna(atr_val) and atr_val > 0 and point > 0:
+                return int(atr_val / point)
+    except Exception:
+        pass
+    return 0
+
+
 # =============================================================================
 #  TRAILING STOP (from XAU-60 trade_executor.py)
 # =============================================================================
 def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info):
-    """Trail stop loss behind price once activation threshold is reached."""
+    """Trail stop loss behind price using dynamic ATR multipliers (or static fallback)."""
+    atr_points = _get_dynamic_atr_points(symbol, point)
+
     if config.is_crypto(symbol):
-        activation = config.TRAILING_ACTIVATION_POINTS_BTC
-        distance = config.TRAILING_DISTANCE_POINTS_BTC
+        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_BTC", 2.0)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 1.5)
+        fallback_act = config.TRAILING_ACTIVATION_POINTS_BTC
+        fallback_dist = config.TRAILING_DISTANCE_POINTS_BTC
     else:
-        activation = config.TRAILING_ACTIVATION_POINTS_XAU
-        distance = config.TRAILING_DISTANCE_POINTS_XAU
+        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_XAU", 2.0)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 1.5)
+        fallback_act = config.TRAILING_ACTIVATION_POINTS_XAU
+        fallback_dist = config.TRAILING_DISTANCE_POINTS_XAU
+
+    if atr_points > 0:
+        activation = int(atr_points * act_mult)
+        distance = int(atr_points * dist_mult)
+    else:
+        activation = fallback_act
+        distance = fallback_dist
 
     if profit_points < activation:
         return
