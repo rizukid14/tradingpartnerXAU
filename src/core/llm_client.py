@@ -281,25 +281,28 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         macro_str = f"\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT\n{macro_context}\n"
 
     lessons_str = ""
-    try:
-        from src.analytics import trade_evaluator
-        lessons_str = trade_evaluator.evaluator.get_lessons_context()
-    except Exception:
-        pass
+    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
+        try:
+            from src.analytics import trade_evaluator
+            lessons_str = trade_evaluator.evaluator.get_lessons_context()
+        except Exception:
+            pass
 
     decision_memory_str = ""
-    try:
-        from src.analytics import decision_memory
-        decision_memory_str = decision_memory.memory.get_context(symbol)
-    except Exception:
-        pass
+    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
+        try:
+            from src.analytics import decision_memory
+            decision_memory_str = decision_memory.memory.get_context(symbol)
+        except Exception:
+            pass
 
     forecast_str = ""
-    try:
-        from src.analytics import forecast_engine
-        forecast_str = forecast_engine.forecaster.get_forecast_context()
-    except Exception:
-        pass
+    if getattr(config, "FORECAST_ENABLED", True) and getattr(config, "MEMORY_CONTEXT_ENABLED", True):
+        try:
+            from src.analytics import forecast_engine
+            forecast_str = forecast_engine.forecaster.get_forecast_context()
+        except Exception:
+            pass
 
     calendar_str = ""
     try:

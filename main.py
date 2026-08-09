@@ -51,6 +51,9 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--spread-max-xau", type=float, help="Spread filter max XAU (pts)")
     p.add_argument("--cooldown", type=int, help="Cooldown antar trade (detik)")
     p.add_argument("--telegram", choices=["on", "off"], help="Telegram notifikasi on/off")
+    p.add_argument("--memory", choices=["on", "off"],
+                   help="Memory context (lessons/decision memory/forecast) on/off — OFF = LLM independen")
+    p.add_argument("--quant", choices=["on", "off"], help="Quant analysis (Hurst/Monte Carlo) on/off")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -114,6 +117,12 @@ def parse_cli_overrides(argv=None):
     if args.telegram:
         config.TELEGRAM_ENABLED = (args.telegram == "on")
         applied.append(f"TELEGRAM_ENABLED={config.TELEGRAM_ENABLED}")
+    if getattr(args, "memory", None):
+        config.MEMORY_CONTEXT_ENABLED = (args.memory == "on")
+        applied.append(f"MEMORY_CONTEXT_ENABLED={config.MEMORY_CONTEXT_ENABLED}")
+    if getattr(args, "quant", None):
+        config.QUANT_ANALYSIS_ENABLED = (args.quant == "on")
+        applied.append(f"QUANT_ANALYSIS_ENABLED={config.QUANT_ANALYSIS_ENABLED}")
 
     return applied, getattr(args, "yes", False)
 
@@ -147,6 +156,7 @@ def interactive_setup():
         ("Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
         ("Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
+        ("Memory (lessons/dec)", "config.MEMORY_CONTEXT_ENABLED", "ON" if config.MEMORY_CONTEXT_ENABLED else "OFF"),
         # --- PROTEKSI ---
         ("Trailing Stop", "config.TRAILING_STOP_ENABLED", "ON" if config.TRAILING_STOP_ENABLED else "OFF"),
         ("Break-Even", "config.BREAK_EVEN_ENABLED", "ON" if config.BREAK_EVEN_ENABLED else "OFF"),

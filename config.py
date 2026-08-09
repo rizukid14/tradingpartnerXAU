@@ -130,6 +130,15 @@ QUANT_ANALYSIS_ENABLED = True
 # Sudah ada sejak era legacy (commit 949ce14), tapi bisa di-off untuk A/B test.
 FORECAST_ENABLED = True
 
+# Memory/state context yang di-inject ke prompt LLM. Kalau OFF, prompt LLM
+# murni dari data pasar (candle + indikator) — TANPA bias dari trade sebelumnya:
+#   - lessons post-mortem (memory_lessons.json)
+#   - decision memory 6 keputusan terakhir (decision_memory.json)
+#   - forecast context (forecast_cache.json)
+# Ini bikin LLM lebih independen (tidak anchoring ke keputusan/lesson lama),
+# tapi kehilangan pembelajaran dari trade sebelumnya.
+MEMORY_CONTEXT_ENABLED = True
+
 # Preset era — untuk balik cepat ke konfigurasi yang mirip era tertentu.
 # Dipakai oleh interactive_setup (menu sebelum run) & --era CLI.
 #   "v1": era profit 100% (legacy) — DeepSeek, consensus 2/3, lot statis, NO quant
