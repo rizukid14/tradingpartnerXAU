@@ -20,23 +20,28 @@ from src.core import binance_connector as connector
 log = logging.getLogger("binance_bot")
 
 
-def manage_all_positions():
+def manage_all_positions(risk):
     """
-    Cek & manage semua posisi open (spot). Fase 1:
-    - Deteksi posisi yang ter-close (OCO kena SL/TP) → return info utk P/L tracking.
+    Cek & manage semua posisi open (spot) — pakai state lokal risk engine.
+    - Deteksi posisi yang ter-close (OCO kena SL/TP) → tandai closed di risk state.
     - Belum ada trailing/BE aktif (fase 2).
 
     Return list posisi open yang masih ada.
     """
-    # Cek order aktif (OCO). Kalau OCO sudah tidak ada tapi aset masih ada,
-    # berarti proteksi hilang → pasang ulang (jika ada entry price tersimpan).
     try:
+        open_positions = risk.get_open_positions(config.SYMBOL)
+        if not open_positions:
+            return []
+
         open_orders = connector.get_open_orders(config.SYMBOL)
-        qty = connector.get_asset_balance(config.SYMBOL)
-        if qty > 0 and not open_orders:
-            log.warning("[POSMAN] Aset ada tapi tidak ada OCO aktif — proteksi hilang. "
-                        "Fase 1: lewati (entry price tidak tersimpan di exchange).")
-        return connector.get_balance_and_positions()
+        # Kalau ada posisi di-track tapi tidak ada OCO aktif → posisi sudah close
+        # (OCO kena SL/TP) atau proteksi hilang. Tandai closed biar state akurat.
+        if not open_orders:
+            log.info("[POSMAN] Tidak ada OCO aktif tapi ada posisi ter-track — "
+                     "tandai closed (OCO kena SL/TP).")
+            risk.close_position(config.SYMBOL)
+            return []
+        return open_positions
     except Exception as e:
         log.error(f"[POSMAN ERROR] {e}")
         return None

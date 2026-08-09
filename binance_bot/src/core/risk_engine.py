@@ -27,6 +27,7 @@ class RiskEngine:
         self._paused_until = 0
         self._last_trade_time = 0
         self._known_closed = set()
+        self._positions = []  # posisi bot yang di-track lokal (spot tidak simpan entry price)
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -41,6 +42,7 @@ class RiskEngine:
                 self._paused_until = float(data.get("paused_until", 0))
                 self._last_trade_time = float(data.get("last_trade_time", 0))
                 self._known_closed = set(data.get("known_closed", []))
+                self._positions = data.get("positions", [])
         except Exception as e:
             log.warning(f"[RISK] Gagal load state: {e}")
 
@@ -53,6 +55,7 @@ class RiskEngine:
                     "paused_until": self._paused_until,
                     "last_trade_time": self._last_trade_time,
                     "known_closed": list(self._known_closed),
+                    "positions": self._positions,
                 }, f)
         except Exception as e:
             log.warning(f"[RISK] Gagal save state: {e}")
@@ -74,23 +77,52 @@ class RiskEngine:
         return True, ""
 
     # ------------------------------------------------------------------
-    # OPEN POSITIONS (spot: aset yang dimiliki)
+    # OPEN POSITIONS (di-track lokal — spot tidak simpan entry price di exchange)
     # ------------------------------------------------------------------
     def get_open_positions(self, symbol=None):
-        """Posisi spot = aset base (BTC) yang dimiliki. Return list atau []."""
+        """Posisi bot yang masih open (dari state lokal). Return list."""
         sym = symbol or config.SYMBOL
-        qty = connector.get_asset_balance(sym)
-        if qty <= 0:
-            return []
-        ticker = connector.get_ticker(sym)
-        price = ticker["price"] if ticker else 0
-        return [{
-            "symbol": sym,
-            "asset": sym.replace("USDT", ""),
+        return [p for p in self._positions if p.get("symbol") == sym and p.get("status") == "open"]
+
+    def record_position_opened(self, symbol, qty, entry_price, sl_price=None, tp_price=None):
+        """Catat posisi baru (dipanggil setelah order BUY sukses)."""
+        self._positions.append({
+            "symbol": symbol,
             "qty": qty,
-            "entry_price": price,  # spot tidak simpan entry di exchange — estimasi dari ticker
-            "side": "BUY",
-        }]
+            "entry_price": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "opened_at": time.time(),
+            "status": "open",
+        })
+        self._save_state()
+        log.info(f"[RISK] Posisi dicatat: {qty} {symbol} @ {entry_price}")
+
+    def close_position(self, symbol, qty=None):
+        """
+        Tandai posisi closed (dipanggil saat OCO kena / SELL exit).
+        qty=None → tutup semua posisi symbol. Return posisi yang ditutup (list).
+        """
+        sym = symbol or config.SYMBOL
+        closed = []
+        for p in self._positions:
+            if p.get("symbol") != sym or p.get("status") != "open":
+                continue
+            if qty is None or p.get("qty", 0) <= qty:
+                p["status"] = "closed"
+                p["closed_at"] = time.time()
+                closed.append(p)
+                if qty is not None:
+                    qty -= p.get("qty", 0)
+            else:
+                # partial close
+                closed_qty = qty
+                p["qty"] = p.get("qty", 0) - qty
+                qty = 0
+                closed.append(dict(p, qty=closed_qty))
+        if closed:
+            self._save_state()
+        return closed
 
     def _check_max_positions(self):
         positions = self.get_open_positions()

@@ -89,8 +89,9 @@ def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
     if open_position:
         pos_str = (
             f"\n### OPEN POSITION\n"
-            f"- {open_position['side']} {open_position['qty']} {symbol} "
-            f"@ {open_position['entry_price']} | SL: {open_position['sl']} | TP: {open_position['tp']}\n"
+            f"- {open_position.get('side', 'BUY')} {open_position.get('qty', '?')} {symbol} "
+            f"@ {open_position.get('entry_price', '?')} | "
+            f"SL: {open_position.get('sl', 'N/A')} | TP: {open_position.get('tp', 'N/A')}\n"
         )
     return f"""
 You are an expert algorithmic trader for Binance SPOT {symbol} (30-minute timeframe).

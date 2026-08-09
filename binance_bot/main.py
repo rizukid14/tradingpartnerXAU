@@ -98,6 +98,7 @@ def run_trading_cycle(risk):
 
     if config.DRY_RUN:
         log.info(f"🎯 [DRY RUN] SL @ {sl_price:.2f} ({sl_pct}%), TP @ {tp_price:.2f} ({tp_pct}%)")
+        risk.record_position_opened(config.SYMBOL, qty, entry, sl_price, tp_price)
         risk.record_trade_opened()
         return
 
@@ -111,9 +112,11 @@ def run_trading_cycle(risk):
         log.error(f"❌ [OCO] Gagal pasang SL/TP: {oco_res}")
         # Proteksi hilang — cancel posisi (jual) supaya tidak telantar
         connector.place_market_order(config.SYMBOL, "SELL", qty)
+        risk.close_position(config.SYMBOL, qty)
         log.warning("⚠️ OCO gagal — posisi ditutup (jual) demi keamanan.")
         return
 
+    risk.record_position_opened(config.SYMBOL, qty, entry, sl_price, tp_price)
     risk.record_trade_opened()
     log.info(f"✅ [DONE] BUY {qty} @ {entry:.2f} + OCO SL/TP terpasang.")
 
@@ -152,7 +155,7 @@ def main():
         while True:
             # ---- Tiap 5 detik: manage posisi + deteksi close ----
             try:
-                position_manager.manage_all_positions()
+                position_manager.manage_all_positions(risk)
                 daily_pnl = risk.get_daily_pnl()
                 balance = connector.get_account_balance_usdt()
                 qty = connector.get_asset_balance(config.SYMBOL)

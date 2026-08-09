@@ -78,9 +78,45 @@ def test_daily_loss_gate():
     return failed
 
 
+def test_position_tracking():
+    failed = 0
+    engine = RiskEngine()
+    # Bersihkan state posisi
+    engine._positions = []
+    # Record posisi
+    engine.record_position_opened("BTCUSDT", 0.001, 65000.0, sl_price=64350.0, tp_price=66300.0)
+    pos = engine.get_open_positions("BTCUSDT")
+    if len(pos) != 1:
+        print("FAIL pos: harus ada 1 posisi open")
+        failed += 1
+    elif pos[0]["qty"] != 0.001 or pos[0]["entry_price"] != 65000.0:
+        print("FAIL pos: field posisi salah")
+        failed += 1
+    # Posisi symbol lain tidak terpengaruh
+    if engine.get_open_positions("ETHUSDT"):
+        print("FAIL pos: ETHUSDT harus kosong")
+        failed += 1
+    # Close penuh
+    closed = engine.close_position("BTCUSDT")
+    if len(closed) != 1 or engine.get_open_positions("BTCUSDT"):
+        print("FAIL pos: close penuh gagal")
+        failed += 1
+    # Partial close
+    engine.record_position_opened("BTCUSDT", 0.001, 65000.0)
+    closed_part = engine.close_position("BTCUSDT", qty=0.0004)
+    remaining = engine.get_open_positions("BTCUSDT")
+    if len(closed_part) != 1 or not remaining or abs(remaining[0]["qty"] - 0.0006) > 1e-9:
+        print(f"FAIL pos: partial close gagal (closed={len(closed_part)}, remaining={remaining})")
+        failed += 1
+    engine._positions = []
+    engine._save_state()
+    return failed
+
+
 if __name__ == "__main__":
     total = 0
-    for fn in (test_consensus_2_2, test_consensus_split, test_sizing, test_daily_loss_gate):
+    for fn in (test_consensus_2_2, test_consensus_split, test_sizing,
+               test_daily_loss_gate, test_position_tracking):
         total += fn()
     print(f"\n{'✅ SEMUA TEST PASS' if total == 0 else f'❌ {total} TEST GAGAL'}")
     sys.exit(1 if total else 0)
