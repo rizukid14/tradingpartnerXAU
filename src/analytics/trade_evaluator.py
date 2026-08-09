@@ -247,21 +247,22 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
                     self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
 
     def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None):
-        """Asks the primary LLM (Gemini) to evaluate the trade outcome."""
+        """Asks the primary LLM (Gemini/OpenAI) to evaluate the trade outcome."""
         outcome_str = f"PROFIT (+${profit:.2f})" if profit >= 0 else f"LOSS (-${abs(profit):.2f})"
         trade_symbol = trade_symbol or config.SYMBOL
+        tf_str = "30-minute intraday" if config.is_crypto(trade_symbol) else "5-minute scalping"
         
         prompt = f"""
-You are an expert trading post-mortem analyst evaluating a closed scalping position on {trade_symbol} ({asset_desc(trade_symbol)}).
+You are an expert trading post-mortem analyst evaluating a closed position on {trade_symbol} ({asset_desc(trade_symbol)}).
 
 Trade Summary:
 - Position Ticket: {ticket}
 - Outcome: {outcome_str}
 
 Task:
-Analyze this trade result in the context of 5-minute scalping rules on {asset_desc(trade_symbol)}.
+Analyze this trade result in the context of {tf_str} rules on {asset_desc(trade_symbol)}.
 Provide ONE single, highly actionable, concise lesson learned (maximum 20 words).
-The lesson MUST start with '[LESSON]' and offer a concrete tip for future trading setups (e.g. caution during overbought RSI, avoiding entries near resistance ahead of news, or respecting dynamic EMA support).
+The lesson MUST start with '[LESSON]' and offer a concrete tip for future trading setups (e.g. caution during overbought RSI, avoiding entries near resistance, or respecting dynamic EMA support).
 
 Respond with the lesson text ONLY. Do not include introductory conversational filler.
 """

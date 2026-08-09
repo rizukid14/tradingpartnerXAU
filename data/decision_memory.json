@@ -3,38 +3,38 @@
     {
       "signal": "HOLD",
       "confidence": 0.0,
-      "reasoning_excerpt": "Consensus failed (BUY=0.61, SELL=0.00)",
-      "timestamp": 1786174298.2642908
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
+      "timestamp": 1786253781.4497302
+    },
+    {
+      "signal": "SELL",
+      "confidence": 0.685,
+      "reasoning_excerpt": "Consensus by: ['Gemini', 'Claude']",
+      "timestamp": 1786255094.1876738
     },
     {
       "signal": "HOLD",
       "confidence": 0.0,
-      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
-      "timestamp": 1786174376.5367658
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.72)",
+      "timestamp": 1786255204.0094602
     },
     {
       "signal": "HOLD",
       "confidence": 0.0,
-      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
-      "timestamp": 1786174649.6467664
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.72)",
+      "timestamp": 1786255217.1917846
     },
     {
       "signal": "HOLD",
       "confidence": 0.0,
-      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
-      "timestamp": 1786174918.8203893
+      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.67)",
+      "timestamp": 1786257009.0569572
     },
     {
-      "signal": "HOLD",
-      "confidence": 0.0,
-      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
-      "timestamp": 1786175012.0659115
-    },
-    {
-      "signal": "HOLD",
-      "confidence": 0.0,
-      "reasoning_excerpt": "Consensus failed (BUY=0.00, SELL=0.00)",
-      "timestamp": 1786175133.87723
+      "signal": "SELL",
+      "confidence": 0.6933333333333334,
+      "reasoning_excerpt": "Consensus by: ['Gemini', 'OpenAI', 'Claude']",
+      "timestamp": 1786258242.004077
     }
   ]
 }

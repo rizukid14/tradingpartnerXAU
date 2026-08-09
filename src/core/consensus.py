@@ -105,19 +105,30 @@ def calculate_consensus(decisions):
     
     # Evaluate consensus for active position early-close actions
     close_votes = {}  # ticket -> list of (model_name, reason)
+    hold_reasons = {} # ticket -> list of (model_name, reason)
+    all_evaluated_tickets = set()
     for model_name, dec in decisions.items():
         pos_actions = dec.get("position_actions", [])
         if isinstance(pos_actions, list):
             for item in pos_actions:
-                if isinstance(item, dict) and item.get("action") == "CLOSE":
+                if isinstance(item, dict):
                     ticket = item.get("ticket")
                     if ticket:
-                        if ticket not in close_votes:
-                            close_votes[ticket] = []
-                        close_votes[ticket].append((model_name, item.get("reason", "Proyeksi sideways/risiko balik arah")))
+                        all_evaluated_tickets.add(ticket)
+                        act = item.get("action", "HOLD")
+                        reason_str = item.get("reason", "Setup masih valid")
+                        if act == "CLOSE":
+                            if ticket not in close_votes:
+                                close_votes[ticket] = []
+                            close_votes[ticket].append((model_name, reason_str))
+                        else:
+                            if ticket not in hold_reasons:
+                                hold_reasons[ticket] = []
+                            hold_reasons[ticket].append((model_name, reason_str))
 
     tickets_to_close = []
     consensus_threshold = _effective_consensus_threshold()
+    closed_ticket_ids = set()
     for ticket, votes in close_votes.items():
         if len(votes) >= consensus_threshold:
             models_str = ", ".join([v[0] for v in votes])
@@ -127,7 +138,18 @@ def calculate_consensus(decisions):
                 "models": models_str,
                 "reason": reason_sample
             })
+            closed_ticket_ids.add(ticket)
             print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/3 AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
+
+    for ticket in sorted(all_evaluated_tickets):
+        if ticket not in closed_ticket_ids:
+            reasons_list = hold_reasons.get(ticket, [])
+            if reasons_list:
+                m_str = ", ".join([r[0] for r in reasons_list])
+                r_sample = reasons_list[0][1]
+                print(f"🛡️ [AI RE-EVALUATOR] Order #{ticket} dipertahankan (HOLD oleh {m_str}): {r_sample}")
+            else:
+                print(f"🛡️ [AI RE-EVALUATOR] Order #{ticket} dipertahankan (HOLD) oleh konsensus AI.")
 
     # Dynamic weighted-confidence consensus: each model's confidence weights
     # its vote. A direction wins when BOTH:

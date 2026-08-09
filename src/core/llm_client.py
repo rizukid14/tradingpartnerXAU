@@ -234,7 +234,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     quant_prob_str = ""
     try:
         from src.analytics import quant_probability
-        tf_mins = 60 if config.is_crypto(symbol) else 5
+        tf_mins = 30 if config.is_crypto(symbol) else 5
         q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
         quant_prob_str = (
             f"- Quant Monte Carlo Probabilities (1,000 paths): "
@@ -308,20 +308,38 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     positions_str = ""
     if open_positions and len(open_positions) > 0:
         pos_lines = []
+        now_ts = time.time()
         for pos in open_positions:
             p_ticket = pos.get('ticket')
             p_type = pos.get('type')
             p_vol = pos.get('volume')
             p_open = pos.get('price_open')
+            p_sl = pos.get('sl', 0.0)
+            p_tp = pos.get('tp', 0.0)
+            p_swap = pos.get('swap', 0.0)
             p_profit = pos.get('profit', 0.0)
-            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open} | Floating P/L: ${p_profit:.2f} USD")
+            p_time = pos.get('time')
+
+            time_str = ""
+            if p_time and p_time > 0:
+                try:
+                    from src.core import mt5_connector
+                    wib_dt = mt5_connector.server_to_wib(p_time)
+                    hours_held = max(0.0, (now_ts - wib_dt.timestamp()) / 3600.0)
+                    time_str = f" | Opened: {wib_dt.strftime('%Y-%m-%d %H:%M')} WIB (held for {hours_held:.1f}h)"
+                except Exception:
+                    pass
+
+            swap_str = f" | Swap: ${p_swap:.2f} USD" if p_swap != 0.0 else ""
+            sl_tp_str = f" (SL: {p_sl}, TP: {p_tp})" if (p_sl or p_tp) else ""
+            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open}{sl_tp_str}{time_str}{swap_str} | Floating P/L: ${p_profit:.2f} USD")
         positions_str = (
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
             "For EACH open position above, make an explicit decision:\n" +
-            "- 'CLOSE' if the trade thesis is broken (price rejected the forecast target, trend reversed, or the position is stale with no momentum) or if a hard risk limit is at risk (e.g., floating loss approaching the daily max, or spread blowing out).\n" +
+            "- 'CLOSE' if the trade thesis is broken (price rejected the forecast target, trend reversed, or the position is stale with no momentum) or if a hard risk limit is at risk.\n" +
             "- 'HOLD' if the thesis remains intact and the position is progressing toward target.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected the T+15m target at 4280 with RSI diverging, floating +$0.40', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected target with RSI diverging', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
         )
 
     # Explicitly separate the two decisions so the LLM does not mix them:
@@ -338,14 +356,14 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     else:
         separation_note = ""
 
-    # Timeframe label per symbol: BTC trades H1 (swing), XAU trades M5 (scalp)
+    # Timeframe label per symbol: BTC trades M30 (intraday), XAU trades M5 (scalp)
     is_crypto_sym = config.is_crypto(symbol)
-    tf_label = "H1" if is_crypto_sym else "M5"
-    tf_full = "1 Hour (H1) swing" if is_crypto_sym else "5 Minute (M5) scalping"
-    strategy_header = "H1 Swing Strategy" if is_crypto_sym else "M5 Scalping Strategy"
+    tf_label = "M30" if is_crypto_sym else "M5"
+    tf_full = "30 Minute (M30) intraday" if is_crypto_sym else "5 Minute (M5) scalping"
+    strategy_header = "M30 Intraday Strategy" if is_crypto_sym else "M5 Scalping Strategy"
     strategy_line = (
-        "H1: enter on clear hourly structure — follow-through after a decisive "
-        "breakout or a clean pullback to support/resistance, not every wiggle."
+        "M30: enter on clear 30-minute structure — follow-through after a decisive "
+        "M30 breakout or a clean pullback to support/resistance."
         if is_crypto_sym else
         "Scalp M5: quick entries/exits, high probability setups only. Decide from "
         "the data provided — do not wait for hypothetical pullbacks/breakouts."

@@ -2,7 +2,7 @@
 
 Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT5)** dengan tiga model bahasa besar (LLM) via API: **OpenAI**, **Google Gemini**, dan **Claude (Anthropic)**.
 
-- **Weekday**: `XAUUSD-ECNc` (Gold) — scalping **M5** — **Weekend**: `BTCUSD.c` (Bitcoin) — swing **H1** (rotasi otomatis via `config.get_active_symbol`)
+- **Weekday**: `XAUUSD-ECNc` (Gold) — scalping **M5** — **Weekend**: `BTCUSD.c` (Bitcoin) — intraday **M30** (rotasi otomatis via `config.get_active_symbol`)
 - Bot memanggil ketiga AI secara paralel, menghitung **weighted-confidence consensus**, lalu mengeksekusi order ke MT5.
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic number `20260625`.
 - Semua timestamp internal pakai **WIB** (Asia/Jakarta).
@@ -13,7 +13,7 @@ Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT
 
 ```mermaid
 graph TD
-    A["Trading Cycle (M5 XAU / H1 BTC)"] --> B{"Risk Gate (spread/session/daily-loss)"}
+    A["Trading Cycle (M5 XAU / M30 BTC)"] --> B{"Risk Gate (spread/session/daily-loss)"}
     B -- Fail --> Z["Skip cycle (no LLM cost)"]
     B -- Pass --> C["Multi-LLM Parallel Query (3 models)"]
     C --> D{"Weighted Consensus? (skor confidence > threshold)"}
@@ -67,7 +67,7 @@ tradingpartnerXAU/
 │   │   └── telegram_alerts.py # Modul Notifikasi Telegram Bot
 │   │
 │   └── analytics/           # Fitur Analitis & AI Lanjutan
-│       ├── forecast_engine.py       # Proyeksi Harga Multi-Horizon (T+15m, T+60m)
+│       ├── forecast_engine.py       # Proyeksi Harga Multi-Horizon (XAU T+15m/T+60m, BTC T+4h/T+D1)
 │       ├── trade_evaluator.py       # Post-Mortem Evaluator & Lessons Memory (theme-tagged)
 │       ├── macro_analyst.py         # MTF context per-symbol (XAU M30/H1, BTC H4/D1)
 │       ├── dynamic_config.py        # Penyesuai Parameter Risiko Dinamis (Self-Tuning)

@@ -26,10 +26,9 @@ PRE_WARM_WINDOW_SECONDS = 60
 def _cache_duration_seconds(symbol):
     """Forecast cache validity per symbol:
     XAU (M5 scalping): 15 minutes.
-    BTC (H1 swing, H4/D1 context): 1 hour — the T+4h/T+D1 forecast does not
-    change meaningfully every 15 minutes, so refresh once per H1 candle.
+    BTC (M30 intraday, H1/H4 context): 30 minutes (1800 seconds).
     """
-    return 3600 if config.is_crypto(symbol) else CACHE_DURATION_SECONDS
+    return 1800 if config.is_crypto(symbol) else CACHE_DURATION_SECONDS
 
 class ForecastEngine:
     def __init__(self):
@@ -111,7 +110,7 @@ class ForecastEngine:
             new_forecast["timestamp"] = now
             self._forecast = new_forecast
             self._save_cache()
-            print(f"✅ [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+15m/T+60m')} Target: {new_forecast.get('target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
+            print(f"✅ [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+60m')} Target: {new_forecast.get('target_t1h' if config.is_crypto(symbol) else 'target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
@@ -119,14 +118,13 @@ class ForecastEngine:
         latest = df.iloc[-1]
 
         # Per-symbol forecast horizon: XAU scalps on M5 (15m/60m ahead);
-        # BTC swings on H1 (next 4 hours / next day — 15m targets are noise
-        # relative to H1 swings and the ~$17 spread).
+        # BTC trades on M30 (next 1 hour / next 4 hours — T+1h/T+4h).
         if config.is_crypto(symbol):
-            tf_label = "H1"
-            horizon_short = "next 4 hours (T+4h)"
-            horizon_long = "next 1 day (T+D1)"
-            horizon_short_key = "target_t4h"
-            horizon_long_key = "target_t1d"
+            tf_label = "M30"
+            horizon_short = "next 1 hour (T+1h)"
+            horizon_long = "next 4 hours (T+4h)"
+            horizon_short_key = "target_t1h"
+            horizon_long_key = "target_t4h"
         else:
             tf_label = "M5"
             horizon_short = "next 15 minutes (T+15m)"
@@ -143,9 +141,9 @@ Current Market Data:
 - Macro/Timeframe Context: {macro_context or f'Standard {tf_label} trading'}
 
 Task:
-Generate a multi-horizon price forecast projection for {horizon_short} and {horizon_long}.
+Analyze the price action structure, momentum, and timeframe indicators to project the market trajectory.
 
-Respond in STRICT JSON format ONLY with the following keys:
+Generate a JSON object strictly matching this schema:
 {{
     "forecast_bias": "BULLISH" | "BEARISH" | "NEUTRAL",
     "{horizon_short_key}": <numeric price target for {horizon_short}>,
@@ -186,15 +184,15 @@ Respond in STRICT JSON format ONLY with the following keys:
             curr = current_tick['bid']
             atr = latest['atr_14']
             if config.is_crypto(symbol):
-                # H1: scale fallback targets by ~4h / ~1d of H1 ATR
+                # M30: scale fallback targets by 1h / 4h of M30 ATR
                 return {
                     "forecast_bias": "NEUTRAL",
+                    "target_t1h": round(curr + atr, 2),
                     "target_t4h": round(curr + (2 * atr), 2),
-                    "target_t1d": round(curr + (4 * atr), 2),
                     "invalidation_level": round(curr - (1.5 * atr), 2),
                     "optimal_entry_min": round(curr - (0.5 * atr), 2),
                     "optimal_entry_max": round(curr + (0.5 * atr), 2),
-                    "forecast_reasoning": "Fallback default projection (H1 horizon)"
+                    "forecast_reasoning": "Fallback default projection (M30 horizon)"
                 }
             return {
                 "forecast_bias": "NEUTRAL",
@@ -256,7 +254,7 @@ Respond in STRICT JSON format ONLY with the following keys:
             "optimal_entry_min": round(avg_emin, 2),
             "optimal_entry_max": round(avg_emax, 2),
             "forecast_reasoning": f"Multi-LLM Consensus ({models_summary})",
-            "horizon_label": "T+4h/T+D1" if config.is_crypto(symbol) else "T+15m/T+60m",
+            "horizon_label": "T+1h/T+4h" if config.is_crypto(symbol) else "T+15m/T+60m",
         }
         out[short_key] = round(avg_short, 2)
         out[long_key] = round(avg_long, 2)

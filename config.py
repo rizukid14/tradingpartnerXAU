@@ -33,16 +33,16 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 # --- MODEL NAMES & FALLBACKS ---
-# Claude Model & Fallback (Anthropic) — replaces DeepSeek in the consensus slot
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+# Claude Model & Fallback (Anthropic)
+CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
 # Gemini Model & Fallback
-GEMINI_MODEL = "gemini-3.1-flash-lite"
-GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 
-# OpenAI Model & Fallback
+# OpenAI Model & Fallback (Tetap)
 OPENAI_MODEL = "gpt-5.4-mini"
 OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 
@@ -60,7 +60,7 @@ SYMBOL = WEEKDAY_SYMBOL            # active symbol; updated at runtime by refres
 
 # Timeframe for Scalping: 5 Minutes (XAU)
 TIMEFRAME = mt5.TIMEFRAME_M5
-# BTC/crypto trades on H1 (spread ~$17 too large for M5 scalping)
+# BTC/crypto trades on M30 (spread ~$17 too large for M5 scalping, but fine vs M30 ATR)
 H1_TIMEFRAME = mt5.TIMEFRAME_H1
 
 # Default trade size (0.01 is micro-lot)
@@ -69,7 +69,7 @@ LOT_SIZE_XAU = LOT_SIZE
 LOT_SIZE_BTC = 0.01
 
 # Risk-based lot sizing: lot is computed from account balance so each trade
-# risks this % of equity. Per-symbol because BTC (H1 swing, few positions)
+# risks this % of equity. Per-symbol because BTC (M30 swing, few positions)
 # can take more risk per trade than XAU (M5 scalping, up to 6 concurrent
 # positions — 6 x 0.5% = 3% aggregate is the ceiling we accept).
 RISK_PERCENT_BTC = 1.5   # ~$16/trade at $1065 balance -> lot ~0.05
@@ -109,7 +109,7 @@ CONSENSUS_THRESHOLD = 2
 # AND at least 2 models voted that direction (prevents one strong model
 # dragging along a coincidental weak vote). Below it -> HOLD.
 # XAU (M5 scalping, 12 cycles/hour): 1.0 = two models at ~50% — fluid.
-# BTC (H1 swing, 1 cycle/hour): 1.2 = two models at ~60% — precise.
+# BTC (M30 swing, 1 cycle/30min): 1.2 = two models at ~60% — precise.
 CONFIDENCE_CONSENSUS_THRESHOLD_XAU = 1.0
 CONFIDENCE_CONSENSUS_THRESHOLD_BTC = 1.2
 MIN_CONSENSUS_MODELS = 2  # minimum models voting the same direction
@@ -130,12 +130,19 @@ TRAILING_STOP_ENABLED = True
 TRAILING_ACTIVATION_POINTS = 200   # Activate trailing after 200 pts profit (~$2.00 on Gold)
 TRAILING_DISTANCE_POINTS = 150     # Trail SL 150 pts behind current price
 
-# Per-symbol trailing thresholds (BTC scaled to H1 SL ~33500 pts, lot 0.01:
-# activation 22000 = $2.20 profit, distance 16500 = $1.65 trail)
+# Per-symbol trailing thresholds (Static fallback)
 TRAILING_ACTIVATION_POINTS_XAU = TRAILING_ACTIVATION_POINTS
 TRAILING_DISTANCE_POINTS_XAU = TRAILING_DISTANCE_POINTS
-TRAILING_ACTIVATION_POINTS_BTC = 22000
-TRAILING_DISTANCE_POINTS_BTC = 16500
+TRAILING_ACTIVATION_POINTS_BTC = 17000
+TRAILING_DISTANCE_POINTS_BTC = 12500
+
+# Dynamic ATR Trailing Multipliers (Computed in real-time from live ATR14)
+# BTC: 2.0x ATR M30 activation, 1.5x ATR M30 distance
+# XAU: 2.0x ATR M5 activation (~$2.00 @ $1.00 ATR), 1.5x ATR M5 distance (~$1.50 @ $1.00 ATR)
+TRAILING_ACTIVATION_ATR_MULT_BTC = 2.0
+TRAILING_DISTANCE_ATR_MULT_BTC = 1.5
+TRAILING_ACTIVATION_ATR_MULT_XAU = 2.0
+TRAILING_DISTANCE_ATR_MULT_XAU = 1.5
 
 # --- BREAK-EVEN (from XAU-60 trade_executor.py) ---
 # Moves stop loss to entry price once trade reaches profit threshold
@@ -146,7 +153,7 @@ BREAK_EVEN_PADDING_POINTS = 10     # Pad SL 10 pts above entry for safety
 # Per-symbol break-even thresholds
 BREAK_EVEN_TRIGGER_POINTS_XAU = BREAK_EVEN_TRIGGER_POINTS
 BREAK_EVEN_PADDING_POINTS_XAU = BREAK_EVEN_PADDING_POINTS
-# BTC: BE at 33500 pts profit (100% of H1 SL); padding 1000 pts ($10.00).
+# BTC: BE at 33500 pts profit (100% of M30 SL); padding 1000 pts ($10.00).
 BREAK_EVEN_TRIGGER_POINTS_BTC = 33500
 BREAK_EVEN_PADDING_POINTS_BTC = 1000
 
@@ -158,7 +165,7 @@ PARTIAL_CLOSE_TP1_POINTS = 400     # TP1 trigger: 400 pts profit (~$4.00)
 
 # Per-symbol partial-close thresholds
 PARTIAL_CLOSE_TP1_POINTS_XAU = PARTIAL_CLOSE_TP1_POINTS
-# BTC: TP1 at 44500 pts profit (133% of H1 SL).
+# BTC: TP1 at 44500 pts profit (133% of M30 SL).
 PARTIAL_CLOSE_TP1_POINTS_BTC = 44500
 
 # --- DAILY RISK LIMITS (from xaubot-ai smart_risk_manager.py) ---
@@ -170,9 +177,8 @@ MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layerin
 # --- BREAK-EVEN PROFIT TOLERANCE ---
 # A closed trade with |profit| <= BREAK_EVEN_TOLERANCE_USD is treated as
 # break-even: it does NOT increment the loss streak, but also does NOT reset it
-# (nor does it exit recovery mode).
-# Set to 0.50 USC for break-even tolerance
-BREAK_EVEN_TOLERANCE_USD = 0.50
+# Defensive live setting: trades with |profit| <= $0.04 are treated as BEP
+BREAK_EVEN_TOLERANCE_USD = 0.04
 
 # --- RECOVERY MODE POSITION LIMIT ---
 # During recovery mode, cap new open positions lower than normal
@@ -258,15 +264,14 @@ HIGHER_TIMEFRAMES = {
     "M30": mt5.TIMEFRAME_M30,
     "H1": mt5.TIMEFRAME_H1
 }
-# BTC (H1 trader): analyze H4 and D1 context — larger spread needs a longer
-# trading horizon, so the macro context should come from even higher timeframes.
+# BTC (M30 intraday trader): analyze H1 and H4 context
 HIGHER_TIMEFRAMES_CRYPTO = {
-    "H4": mt5.TIMEFRAME_H4,
-    "D1": mt5.TIMEFRAME_D1
+    "H1": mt5.TIMEFRAME_H1,
+    "H4": mt5.TIMEFRAME_H4
 }
 
 def get_higher_timeframes(symbol):
-    """Returns the MTF context timeframes for a symbol (crypto -> H4/D1)."""
+    """Returns the MTF context timeframes for a symbol (crypto -> H1/H4)."""
     return HIGHER_TIMEFRAMES_CRYPTO if is_crypto(symbol) else HIGHER_TIMEFRAMES
 
 FUNDAMENTAL_ANALYSIS_ENABLED = False
@@ -324,11 +329,10 @@ def lot_size_for(symbol):
 
 def get_timeframe(symbol):
     """Returns the trading timeframe for a symbol.
-    BTC/crypto trades on H1 because the ~$17 spread is only ~8% of H1 ATR
-    (~$204) but ~78% of M5 ATR (~$21) — M5 scalping on BTC just bleeds spread.
-    XAU keeps M5 scalping where the spread is proportionally small.
+    BTC/crypto trades on M30 (30-minute intraday) to avoid overnight swap charges.
+    XAU keeps M5 scalping.
     """
-    return H1_TIMEFRAME if is_crypto(symbol) else TIMEFRAME
+    return mt5.TIMEFRAME_M30 if is_crypto(symbol) else TIMEFRAME
 
 
 def default_sl_points_for(symbol):
@@ -345,14 +349,14 @@ def max_spread_points_for(symbol):
 
 def confidence_threshold_for(symbol):
     """Weighted-confidence consensus threshold per symbol.
-    BTC (H1, rare entries) needs higher conviction than XAU (M5, frequent).
+    BTC (M30, moderate entries) needs higher conviction than XAU (M5, frequent).
     """
     return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 
 
 def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
-    BTC (H1 swing, few concurrent positions): 1.5%.
+    BTC (M30 swing, few concurrent positions): 1.5%.
     XAU (M5 scalping, up to 6 concurrent): 0.5% — aggregate ~3% max.
     """
     return RISK_PERCENT_BTC if is_crypto(symbol) else RISK_PERCENT_XAU
