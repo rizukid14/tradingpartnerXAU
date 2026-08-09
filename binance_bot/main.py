@@ -190,9 +190,14 @@ def main():
                         log.info("▶️ Cycle pertama saat startup...")
                         startup_run = False
                     else:
-                        log.info(f"🆕 Candle M30 baru: {current_candle}")
+                        log.info(f"🆕 Candle {config.TIMEFRAME} baru: {current_candle}")
                     last_candle_time = current_ts
                     run_trading_cycle(risk)
+                    # Countdown langsung setelah cycle — candle berikutnya dalam Xm Ys
+                    tf_sec = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(
+                        config.TIMEFRAME, 300)
+                    remain = int(((int(time.time() // tf_sec) + 1) * tf_sec) - time.time())
+                    log.info(f"⏳ Candle {config.TIMEFRAME} berikutnya dalam {remain // 60}m {remain % 60:02d}s")
             else:
                 log.warning("⚠️ Gagal cek candle.")
 
