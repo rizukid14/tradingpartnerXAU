@@ -135,6 +135,8 @@ def analyze_timeframe(symbol, timeframe_name, df):
         candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
 
     latest = df.iloc[-1]
+
+    execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
     
     prompt = f"""
 You are an expert financial market analyst.
@@ -159,7 +161,7 @@ Provide a concise structural market analysis. Include:
 2. Key Support and Resistance zones.
 3. Relevant price action patterns or signals.
 
-Your response must be extremely brief (maximum 2-3 sentences) as it will be used as background context for a 5-minute scalping execution model.
+Your response must be extremely brief (maximum 2-3 sentences) as it will be used as background context for a {execution_style} execution model.
 """
     return query_primary_model(prompt, search_grounding=False)
 
@@ -171,11 +173,12 @@ def analyze_fundamentals(symbol):
     Event SCHEDULING is handled deterministically by economic_calendar.py —
     search grounding is only a qualitative complement, never the schedule source.
     """
+    execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
     prompt = f"""
 What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
 Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
 
-Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a 5-minute scalping execution model. Focus on DIRECTIONAL macro bias, not event schedules.
+Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a {execution_style} execution model. Focus on DIRECTIONAL macro bias, not event schedules.
 """
     # Force search grounding tool
     return query_primary_model(prompt, search_grounding=True)
@@ -194,7 +197,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         time_str = row['time'].strftime('%Y-%m-%d %H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
         candles_str += f"- [{time_str}] Open: {row['open']}, High: {row['high']}, Low: {row['low']}, Close: {row['close']}, Vol: {row['tick_volume']}\n"
 
-    # Micro price action: last 5 M5 candles (BTC H1) or last 5 M1 candles (XAU M5)
+    # Micro price action: last 5 M30 candles (BTC M30) or last 5 M1 candles (XAU M5)
     micro_candles_str = ""
     try:
         from src.core import mt5_connector
@@ -245,8 +248,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
-    # For crypto (BTC) the df is already H1 (config.get_timeframe) so the ATR
-    # reflects real hourly volatility. XAU df is M5 and its ATR matches the
+    # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
+    # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the
     # scalping scale. No flooring here — the LLM picks SL/TP from this range
     # and consensus only enforces a 2x-spread safety floor.
 
@@ -477,10 +480,6 @@ def clean_json_response(text):
         }
 
 
-def query_openai(prompt):
-    """Queries OpenAI API."""
-    if not openai_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
 def _execute_openai_single(model_name, prompt, timeout_sec):
     is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower()
     if is_reasoning:

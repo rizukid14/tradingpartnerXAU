@@ -23,13 +23,13 @@ python main.py
 
 | File | Fungsi |
 |---|---|
-| `main.py` | Loop utama: manage posisi tiap 5 detik, full cycle tiap candle (M5 utk XAU / H1 utk BTC) |
+| `main.py` | Loop utama: manage posisi tiap 5 detik, full cycle tiap candle (M5 utk XAU / M30 utk BTC) |
 | `config.py` | Semua parameter + helper per-symbol (`get_timeframe`, `get_higher_timeframes`, `lot_size_for`, `risk_percent_for`, `default_sl/tp`, `max_spread_points`, `confidence_threshold_for`) |
 | `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call 3 LLM paralel (OpenAI, Gemini, Claude) |
 | `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP floor (2× spread, 1× ATR) |
 | `src/core/risk_engine.py` | Gate: spread, sesi, danger zone, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** |
 | `src/core/mt5_connector.py` | Order send/close (retry + fill policy dinamis), history deals, market data, magic filter |
-| `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+60m, BTC T+1h/T+4h), invalidation, entry zone — **informational, tidak memblokir** |
+| `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+60m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
 | `src/analytics/macro_analyst.py` | Fundamental + MTF context (per-symbol: XAU M30/H1, BTC H1/H4), cache per symbol |
 | `src/analytics/trade_evaluator.py` | Post-mortem tiap trade → lessons (`data/memory_lessons.json`), per-symbol |
 | `src/analytics/dynamic_config.py` | Adaptasi otomatis: win rate <40% → threshold 3/3; >70% → 2/3 |
@@ -39,7 +39,7 @@ python main.py
 ## Alur cycle (main.py → run_trading_cycle)
 
 1. `risk.can_trade()` — spread/sesi/danger zone/daily loss gate. Gagal → skip (nggak ada biaya LLM)
-2. Ambil 50 candle timeframe aktif (M5 XAU / H1 BTC) + tick
+2. Ambil 50 candle timeframe aktif (M5 XAU / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
 4. **Panggil 3 LLM paralel** (decision prompt + forecast context + lessons + macro + open positions)
 5. **Weighted consensus**: skor BUY/SELL = Σ confidence model searah; menang kalau ≥ 2 model & skor > threshold (XAU 1.0, BTC 1.2, defensif ×1.5). Plus AI re-evaluator CLOSE posisi
@@ -87,6 +87,20 @@ python main.py
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
 - **Status display live** menampilkan posisi terbuka semua symbol + floating P/L tiap 5 detik (`get_all_open_positions`).
 - Claude kadang lambat di prompt panjang (34s di sonnet-5, ~8-20s di sonnet-4-6) — wajar untuk M30 cycle 1x/30 menit.
+
+## Bot Binance Spot (`binance_bot/`) — BOT KEDUA
+
+> Bot terpisah untuk **Binance spot** (BTC/ETH/SOL), modal kecil (tes ~$12/Rp 200rb), deploy Linux. **Tidak menyentuh bot MT5.**
+
+- **Arsitektur 2 proposer + 1 approver**: GPT + Gemini vote (paralel), **Claude approver** hanya dipanggil saat 2/2 sepakat & skor ≥ threshold (hemat biaya).
+- **Spot, tanpa margin/futures**: tidak bisa short (hanya BUY), nol risiko liquidation/hutang. Signal SELL tanpa posisi = hold USDT; SELL saat punya posisi = exit.
+- **SL/TP via OCO order** (`POST /api/v3/orderList/oco`) — spot tanpa SL/TP broker; jalan di sisi exchange.
+- **REST API `/api/v3/*`** + HMAC API key (dari `.env`). Changelog Binance: `/api/v1/*` sudah retire; signed request wajib percent-encode sebelum signing; `userDataStream` REST dihapus (pakai polling REST atau WebSocket API Ed25519).
+- **Risk 1.5%** per trade dari equity USDT, **daily loss $3** (ketat utk modal $12), cooldown, min notional $5, max 2 posisi, trading 24/7.
+- Config: `binance_bot/config.py` — `TESTNET=True` + `DRY_RUN=True` default (AMAN). `False` = live, jangan ubah tanpa diskusi.
+- Flow: loop 5 detik (manage posisi + deteksi close) → candle M30 → risk gate → 2 proposer → Claude approve → OCO order.
+- Test: `binance_bot/tests/` (mock API connector + risk). Testnet dulu (`testnet.binance.vision`) sebelum live.
+- Deploy: `pip install -r binance_bot/requirements.txt` + systemd `Restart=always` di VPS Linux.
 
 ## Konvensi & hal yang perlu diingat
 

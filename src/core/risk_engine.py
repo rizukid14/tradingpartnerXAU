@@ -51,7 +51,7 @@ class RiskEngine:
         self._session_lot_multiplier = 1.0  # Adjusted per session
         self._known_closed = set()          # Position ids already accounted for
         self._load_state()
-        self._sync_closed_positions()
+        self.sync_closed_positions()
 
     def get_remaining_pause(self):
         """Returns the remaining pause duration in seconds, or 0 if not paused."""
@@ -90,25 +90,26 @@ class RiskEngine:
         except Exception as e:
             print(f"[RISK WARNING] Gagal menyimpan state: {e}")
 
-    def _sync_closed_positions(self):
+    def sync_closed_positions(self):
         """
         Detect positions closed by MT5 (SL/TP/manual) that the bot never saw close.
-        Runs at startup and every can_trade() call so loss streak and daily
-        P/L stay accurate even when trades are closed outside the bot.
+        Returns the list of NEWLY detected closed deals (each: ticket, symbol,
+        profit, reason, comment, type) so callers can react immediately
+        (Telegram alert, dashboard update) instead of waiting for the next cycle.
 
-        Streak / recovery tracking is per-symbol (pass current symbol) so
-        XAUUSD losses on Friday do not bleed into BTCUSD weekend trading.
+        Updates loss streak / daily P/L / recovery mode in real time.
+        Called at startup, every can_trade(), and every 5s in the main loop.
         """
         symbol = config.SYMBOL
         closed = connector.get_closed_positions_today(symbol=symbol)
         if not closed:
-            return
+            return []
 
-        # If starting up for the first time without prior cached state
+        # If starting up for the first time without prior cached state: seed
+        # the known set (no alerts — these are historical, not new closes).
         if not self._known_closed:
             for c in closed:
                 self._known_closed.add(c["ticket"])
-            # Calculate current loss streak looking back from the latest deal
             losses = 0
             for c in reversed(closed):
                 if c["profit"] < 0:
@@ -117,18 +118,19 @@ class RiskEngine:
                     break
             self._consecutive_losses = losses
             self._save_state()
-            return
+            return []
 
-        any_updated = False
+        new_deals = []
         for c in closed:
             if c["ticket"] in self._known_closed:
                 continue
             self._known_closed.add(c["ticket"])
             self._record_result(c["profit"])
-            any_updated = True
+            new_deals.append(c)
 
-        if any_updated:
+        if new_deals:
             self._save_state()
+        return new_deals
 
     # =========================================================================
     #  MASTER GATE
@@ -139,7 +141,7 @@ class RiskEngine:
         Call this before entering any new trade.
         """
         # 0. Detect trades closed by MT5 since last check (SL/TP/manual)
-        self._sync_closed_positions()
+        self.sync_closed_positions()
 
         # 1. Check if we're in a pause cooldown (consecutive losses)
         if time.time() < self._paused_until:
@@ -398,17 +400,23 @@ class RiskEngine:
         return True, ""
 
     def _check_weekend_entry(self):
-        """Block new trade entry near weekend close (FX only). Crypto trades 24/7."""
-        if config.is_crypto(config.SYMBOL):
+        """
+        Block new trade entries during the weekend (Friday >= 22:00 WIB through
+        Monday 00:00 WIB) when WEEKEND_TRADING_ENABLED is False. This applies to
+        ALL symbols — including crypto/BTC, which would otherwise trade 24/7.
+
+        Existing open positions are NOT affected (still managed by the 5s loop);
+        only new entries are blocked.
+        """
+        if config.WEEKEND_TRADING_ENABLED:
             return True, ""
         now_wib = datetime.now(WIB)
-        # Friday after 22:00 WIB or Saturday before 05:00 WIB → block new entries
         if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
-            return False, "🚫 [RISK] Mendekati penutupan Jumat — tidak membuka posisi baru."
+            return False, "🚫 [RISK] Weekend — trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         if now_wib.weekday() == 5:  # Saturday
-            return False, "🚫 [RISK] Market tutup (weekend)."
+            return False, "🚫 [RISK] Weekend — trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         if now_wib.weekday() == 6:  # Sunday
-            return False, "🚫 [RISK] Market tutup (weekend)."
+            return False, "🚫 [RISK] Weekend — trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         return True, ""
 
     def _check_session(self):

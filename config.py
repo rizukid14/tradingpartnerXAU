@@ -231,6 +231,13 @@ WEEKEND_CLOSE_PROFIT_MIN_USD = 1.0   # Close if profit >= $1 and near weekend cl
 WEEKEND_CLOSE_HOURS_BEFORE = 2.0     # Start checking 2 hours before Friday close
 WEEKEND_MAX_LOSS_TO_HOLD_USD = 20.0  # Max loss $ to hold over weekend (larger = cut loss)
 
+# --- WEEKEND TRADING (crypto/BTC) ---
+# False = TIDAK membuka posisi baru di weekend sama sekali (BTC spread lebar,
+# M30 terlalu lambat — weekend mending istirahat). Posisi yang sudah open
+# tetap di-manage (trailing/BE/close) — hanya entry baru yang diblokir.
+# Berlaku untuk SEMUA symbol selama weekend (Jumat >= 22:00 WIB - Senin 00:00 WIB).
+WEEKEND_TRADING_ENABLED = False
+
 # --- POSITION MANAGER TICK FRESHNESS ---
 # A position whose symbol has not produced a fresh tick within this many
 # seconds is skipped (market closed — e.g. XAU over the weekend — or MT5

@@ -8,9 +8,9 @@ def calculate_quant_probabilities(df, timeframe_minutes=60, num_simulations=1000
 
     Parameters:
       df: DataFrame containing 'close', 'high', 'low', 'atr_14' columns.
-      timeframe_minutes: Candle duration in minutes (60 for H1, 5 for M5).
+      timeframe_minutes: Candle duration in minutes (30 for M30, 5 for M5).
       num_simulations: Number of Monte Carlo price paths to simulate.
-      horizon_candles: Forecast horizon in candles (e.g. 4 candles = 4 hours for H1).
+      horizon_candles: Forecast horizon in candles (e.g. 4 candles = 2 hours for M30).
 
     Returns dict:
       {
