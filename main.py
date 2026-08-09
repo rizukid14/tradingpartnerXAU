@@ -175,17 +175,21 @@ def interactive_setup():
     presets = getattr(config, "ERA_PRESETS", {})
 
     while True:
-        print("-" * 60)
-        for i, (label, attr, val) in enumerate(settings, 1):
-            print(f"  {i:2d}. {label:<22} : {val}")
-        if presets:
+        try:
             print("-" * 60)
-            print("  PRESET ERA:")
-            for name, p in presets.items():
-                print(f"     [{name}] {p.get('label', name)}")
-        print("-" * 60)
-        print("  Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
-        choice = input("  > ").strip().lower()
+            for i, (label, attr, val) in enumerate(settings, 1):
+                print(f"  {i:2d}. {label:<22} : {val}")
+            if presets:
+                print("-" * 60)
+                print("  PRESET ERA:")
+                for name, p in presets.items():
+                    print(f"     [{name}] {p.get('label', name)}")
+            print("-" * 60)
+            print("  Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
+            choice = input("  > ").strip().lower()
+        except KeyboardInterrupt:
+            print("\n👋 Dibatalkan. Bot tidak dijalankan.")
+            sys.exit(0)
 
         if choice in ("q", "quit", "exit"):
             print("👋 Dibatalkan. Bot tidak dijalankan.")
@@ -723,4 +727,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n👋 Bot dimatikan secara manual oleh user.")
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        print("🔌 Koneksi MT5 diputus. Sampai jumpa!")
