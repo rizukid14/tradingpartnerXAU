@@ -54,7 +54,7 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
-                   help="Pakai preset era (legacy / legacy-2 / modern)")
+                   help="Pakai preset era (v1 / v2 / v3)")
     args = p.parse_args(argv)
 
     applied = []

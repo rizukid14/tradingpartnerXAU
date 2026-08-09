@@ -132,28 +132,31 @@ FORECAST_ENABLED = True
 
 # Preset era — untuk balik cepat ke konfigurasi yang mirip era tertentu.
 # Dipakai oleh interactive_setup (menu sebelum run) & --era CLI.
-#   "legacy":  era profit 100% — DeepSeek, consensus 2/3, lot statis, NO quant
-#   "legacy-2": = legacy + state/test telegram
-#   "modern":  era sekarang — Claude, weighted consensus, risk-based lot, quant ON
+#   "v1": era profit 100% (legacy) — DeepSeek, consensus 2/3, lot statis, NO quant
+#   "v2": = v1 + state/test telegram (fungsional sama dengan v1)
+#   "v3": era sekarang (modern) — Claude, weighted consensus, risk-based lot, quant ON
+# CATATAN: preset hanya mengubah flag yang masih ada di kode (quant/forecast/
+# debate/threshold). Model (DeepSeek→Claude) & mekanisme consensus (2/3→weighted)
+# sudah tertanam di kode dan tidak bisa di-revert via config.
 ERA_PRESETS = {
-    "legacy": {
-        "label": "Legacy (era profit 100%)",
+    "v1": {
+        "label": "V1 — era profit 100% (legacy)",
         "QUANT_ANALYSIS_ENABLED": False,
         "FORECAST_ENABLED": True,
         "DEBATE_ENABLED": True,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
     },
-    "legacy-2": {
-        "label": "Legacy-2 (= legacy + state)",
+    "v2": {
+        "label": "V2 — legacy-2 (= v1 + state)",
         "QUANT_ANALYSIS_ENABLED": False,
         "FORECAST_ENABLED": True,
         "DEBATE_ENABLED": True,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
     },
-    "modern": {
-        "label": "Modern (sekarang — Claude + quant)",
+    "v3": {
+        "label": "V3 — modern (Claude + quant, sekarang)",
         "QUANT_ANALYSIS_ENABLED": True,
         "FORECAST_ENABLED": True,
         "DEBATE_ENABLED": False,
