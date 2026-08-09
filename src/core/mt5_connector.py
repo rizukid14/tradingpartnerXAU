@@ -149,16 +149,16 @@ def get_current_tick(symbol):
         print(f"[MT5 ERROR] Gagal mendapatkan symbol info untuk {symbol}.")
         return None
     spread_usd = tick.ask - tick.bid
+    point_val = si.point if (si and si.point) else 0.0
+    spread_pts = round(spread_usd / point_val, 1) if point_val > 0 else 0.0
+    usd_per_pt = (si.trade_tick_value * config.lot_size_for(symbol) * (si.point / si.trade_tick_size)) if (si and si.trade_tick_size and si.point) else 0.0
     return {
         "bid": tick.bid,
         "ask": tick.ask,
-        "spread": round(spread_usd / si.point, 1),
+        "spread": spread_pts,
         "spread_usd": spread_usd,
         "point": si.point,
-        # USD value of a 1-point move for the default bot lot (used to tell
-        # the LLM how much a "point" is actually worth — e.g. BTC 0.01 lot:
-        # 10000 pts = $1).
-        "usd_per_point": si.trade_tick_value * config.lot_size_for(symbol) * (si.point / si.trade_tick_size),
+        "usd_per_point": usd_per_pt,
     }
 
 def get_open_positions(symbol):
@@ -354,7 +354,10 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     def _build(deviation, fill_policy):
         # Refresh tick so each retry uses current price
         live_tick = mt5.symbol_info_tick(symbol)
-        live_price = live_tick.ask if action == "BUY" else live_tick.bid
+        if live_tick is not None:
+            live_price = live_tick.ask if action == "BUY" else live_tick.bid
+        else:
+            live_price = price
         if action == "BUY":
             live_sl = live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0)
             live_tp = live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0)

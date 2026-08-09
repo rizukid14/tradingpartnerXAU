@@ -55,6 +55,13 @@ def get_exchange():
         except Exception:
             pass
 
+    # Load markets SEKARANG (setelah URL override) — wajib karena ex.market()
+    # dipakai di get_symbol_info dan tidak auto-load setelah URL diubah.
+    try:
+        _exchange.load_markets()
+    except Exception as e:
+        log.error(f"[EXCHANGE] Gagal load_markets: {e}")
+
     log.info(f"[EXCHANGE] {_exchange.name} ({'testnet' if getattr(config,'TESTNET',False) else 'live'})")
     return _exchange
 
@@ -203,6 +210,18 @@ def get_account_balance_usdt():
         return float(usdt.get("free", 0)) + float(usdt.get("used", 0))
     except Exception as e:
         log.error(f"[EXCHANGE] Gagal get_balance: {e}")
+        return 0.0
+
+
+def get_free_usdt():
+    """USDT free (tersedia untuk beli)."""
+    ex = get_exchange()
+    try:
+        bal = ex.fetch_balance()
+        usdt = bal.get("USDT", {})
+        return float(usdt.get("free", 0))
+    except Exception as e:
+        log.error(f"[EXCHANGE] Gagal get_free_balance: {e}")
         return 0.0
 
 

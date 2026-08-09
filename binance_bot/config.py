@@ -32,13 +32,20 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 # ---------------------------------------------------------------------------
 # TRADING PARAMS
 # ---------------------------------------------------------------------------
-SYMBOL = os.getenv("BINANCE_SYMBOL", "BTCUSDT")
+SYMBOL = os.getenv("BINANCE_SYMBOL", "BTCUSDT").strip()
 # Timeframe — Binance spread tipis ($0.01), jadi M5 scalping layak (beda dgn MT5).
 # Bisa diubah via env: BINANCE_TIMEFRAME=15m / 30m / 1h
-TIMEFRAME = os.getenv("BINANCE_TIMEFRAME", "5m")
+TIMEFRAME = os.getenv("BINANCE_TIMEFRAME", "5m").strip()
 CANDLE_COUNT = 50            # candle untuk analisis
 
-RISK_PERCENT = 1.5           # risk per trade dari equity USDT
+RISK_PERCENT = 1.5           # risk per trade dari equity USDT (mode risk-based)
+
+# Mode alokasi modal (SPOT):
+#   0 = risk-based (qty dari RISK_PERCENT / jarak SL) — default, aman
+#   >0 = alokasi langsung % equity per trade, mis. 50 = pakai SETENGAH equity
+#        buat 1 posisi (spot tanpa leverage, tidak ada likuidasi — wajar agresif).
+#   Dipakai kalau modal terlalu kecil sehingga risk-based tidak realistis.
+POSITION_ALLOCATION_PCT = 0  # 0 = mati (risk-based), 50 = setengah equity per trade
 MAX_DAILY_LOSS_USD = 3.0     # ~25% dari $12 — ketat (naikkan kalau modal naik)
 MAX_OPEN_POSITIONS = 2
 TRADE_COOLDOWN_SECONDS = 300
@@ -50,6 +57,12 @@ MAX_SPREAD_PCT = 0.05        # max spread (% dari harga) — mis. 0.05% = $32 di
 # ---------------------------------------------------------------------------
 CONFIDENCE_THRESHOLD = 1.2   # skor gabungan 2 proposer (2 x 60%)
 CLAUDE_APPROVER_ENABLED = True
+
+# HOLD-streak: kalau N cycle berturut-turut semua proposer HOLD, cukup
+# 1 BUY kuat (conf >= HOLD_STREAK_BUY_CONFIDENCE) untuk lanjut ke approver.
+# Mencegah bot HOLD selamanya karena satu proposer konservatif.
+HOLD_STREAK_THRESHOLD = 5          # cycle HOLD beruntun sebelum rule aktif
+HOLD_STREAK_BUY_CONFIDENCE = 0.60  # conf minimal BUY tunggal saat streak aktif
 
 # ---------------------------------------------------------------------------
 # SL/TP (dalam persen harga — bot menghitung harga SL/TP dari entry)

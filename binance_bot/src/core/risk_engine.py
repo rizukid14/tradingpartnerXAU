@@ -28,6 +28,7 @@ class RiskEngine:
         self._last_trade_time = 0
         self._known_closed = set()
         self._positions = []  # posisi bot yang di-track lokal (spot tidak simpan entry price)
+        self._hold_streak = 0  # cycle berturut-turut semua proposer HOLD
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -43,6 +44,7 @@ class RiskEngine:
                 self._last_trade_time = float(data.get("last_trade_time", 0))
                 self._known_closed = set(data.get("known_closed", []))
                 self._positions = data.get("positions", [])
+                self._hold_streak = int(data.get("hold_streak", 0))
         except Exception as e:
             log.warning(f"[RISK] Gagal load state: {e}")
 
@@ -56,6 +58,7 @@ class RiskEngine:
                     "last_trade_time": self._last_trade_time,
                     "known_closed": list(self._known_closed),
                     "positions": self._positions,
+                    "hold_streak": self._hold_streak,
                 }, f)
         except Exception as e:
             log.warning(f"[RISK] Gagal save state: {e}")
@@ -166,22 +169,48 @@ class RiskEngine:
     # ------------------------------------------------------------------
     def get_effective_qty(self, price, sl_pct):
         """
-        Hitung qty dari risk% equity:
-          risk_usd = equity * RISK_PERCENT / 100
-          sl_distance_usd = price * sl_pct / 100
-          qty = risk_usd / sl_distance_usd
+        Hitung qty:
+          Mode ALOKASI (config.POSITION_ALLOCATION_PCT > 0, utk SPOT):
+            notional = equity * POSITION_ALLOCATION_PCT / 100
+            qty = notional / price
+            — pakai % modal langsung per posisi (spot tanpa leverage, aman).
+          Mode RISK-BASED (default):
+            risk_usd = equity * RISK_PERCENT / 100
+            sl_distance_usd = price * sl_pct / 100
+            qty = risk_usd / sl_distance_usd
         Clamp ke step size + validasi min notional.
         """
         equity = connector.get_account_balance_usdt()
         if equity <= 0:
             return None, "Equity USDT 0 atau gagal didapat."
-        risk_usd = equity * config.RISK_PERCENT / 100.0
+        free_usdt = connector.get_free_usdt()
         if sl_pct is None or sl_pct <= 0:
             sl_pct = config.DEFAULT_SL_PCT
-        sl_distance = price * sl_pct / 100.0
-        if sl_distance <= 0:
-            return None, "SL distance tidak valid."
-        qty = risk_usd / sl_distance
+
+        alloc = getattr(config, "POSITION_ALLOCATION_PCT", 0)
+        if alloc and alloc > 0:
+            # Mode alokasi: beli senilai % equity
+            notional = equity * alloc / 100.0
+            qty = notional / price
+            size_msg = f"qty {qty:.4g} (alokasi {alloc}% equity = ${notional:.2f}, SL {sl_pct}%)"
+        else:
+            # Mode risk-based: qty dari risk% / jarak SL
+            risk_usd = equity * config.RISK_PERCENT / 100.0
+            sl_distance = price * sl_pct / 100.0
+            if sl_distance <= 0:
+                return None, "SL distance tidak valid."
+            qty = risk_usd / sl_distance
+            notional = qty * price
+            size_msg = f"qty {qty:.4g} (risk ${risk_usd:.2f}, SL {sl_pct}%)"
+
+        # Clamp: notional tidak boleh melebihi USDT free (minus buffer fee 0.1%).
+        # Tanpa ini, dry-run bisa "beli" lebih dari saldo — order live pasti ditolak.
+        if free_usdt > 0:
+            max_notional = free_usdt * 0.999  # sisakan buffer utk fee
+            if notional > max_notional:
+                qty = max_notional / price
+                notional = max_notional
+                size_msg += f" → clamp ke saldo free ${free_usdt:.2f}"
 
         qty = connector.round_qty(config.SYMBOL, qty)
         ok, reason = connector.validate_order(config.SYMBOL, qty, price, sl_pct=sl_pct)
@@ -190,8 +219,8 @@ class RiskEngine:
         notional = qty * price
         if notional < config.MIN_NOTIONAL_USD:
             return None, (f"Notional ${notional:.2f} < min ${config.MIN_NOTIONAL_USD} "
-                          f"— modal terlalu kecil untuk risk {config.RISK_PERCENT}%.")
-        return qty, f"qty {qty} (risk ${risk_usd:.2f}, SL {sl_pct}%)"
+                          f"— modal terlalu kecil untuk alokasi/risk {alloc or config.RISK_PERCENT}%.")
+        return qty, size_msg
 
     # ------------------------------------------------------------------
     # RESULT TRACKING
@@ -209,3 +238,23 @@ class RiskEngine:
     def record_trade_opened(self):
         self._last_trade_time = time.time()
         self._save_state()
+
+    # ------------------------------------------------------------------
+    # HOLD-STREAK (cycle berturut-turut semua proposer HOLD)
+    # ------------------------------------------------------------------
+    def record_hold_cycle(self):
+        """Satu cycle berakhir HOLD (tidak ada BUY yang lolos) → increment."""
+        self._hold_streak += 1
+        self._save_state()
+        log.info(f"[RISK] Hold streak {self._hold_streak}/{config.HOLD_STREAK_THRESHOLD}")
+
+    def reset_hold_streak(self):
+        """Ada BUY lolos (atau trade dieksekusi) → reset."""
+        if self._hold_streak != 0:
+            self._hold_streak = 0
+            self._save_state()
+            log.info("[RISK] Hold streak reset (ada BUY).")
+
+    @property
+    def hold_streak(self):
+        return self._hold_streak

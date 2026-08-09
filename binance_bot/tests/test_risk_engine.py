@@ -46,9 +46,10 @@ def test_sizing():
     engine = RiskEngine()
     # Mock equity $12, harga $65000, SL 1%
     # risk = 1.5% * 12 = $0.18; sl_dist = 650; qty = 0.18/650 = 0.0002769 → round 0.00027
-    # notional = 0.00027 * 65000 = $17.55 — tapi equity $12 harusnya cuma bisa ~$12
-    # qty dari risk% itu yang benar; cek hasilnya bukan None kalau notional >= min
+    # notional = 0.00027 * 65000 = $17.55 > free $12 → clamp ke $12 → qty ≈ 0.00018
+    # (clamp saldo: dry-run tidak boleh "beli" lebih dari free balance)
     connector.get_account_balance_usdt = lambda: 12.0
+    connector.get_free_usdt = lambda: 12.0
     connector.round_qty = lambda s, q: round(int(q / 0.00001) * 0.00001, 5)
     connector.validate_order = lambda s, q, p, sl_pct=None: (True, "")
     connector.get_symbol_info = lambda s: {"symbol": s, "filters": {"min_qty": 0.00001, "min_notional": 0.0}}
@@ -57,8 +58,8 @@ def test_sizing():
     if qty is None:
         print(f"FAIL sizing: {msg}")
         failed += 1
-    elif abs(qty - 0.00027) > 1e-6:
-        print(f"FAIL sizing: qty {qty}, expected ~0.00027")
+    elif abs(qty - 0.00018) > 1e-6:
+        print(f"FAIL sizing: qty {qty}, expected ~0.00018 (clamp saldo)")
         failed += 1
     return failed
 

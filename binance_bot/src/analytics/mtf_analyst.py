@@ -23,8 +23,8 @@ from src.core import ccxt_connector as connector
 log = logging.getLogger("binance_bot")
 
 # Timeframe MTF yang dianalisis (di luar timeframe utama M5)
-# M30 = konteks intraday terdekat, H1 = arah lebih besar — cukup utk scalping M5
-MTF_TIMEFRAMES = ["30m", "1h"]
+# M15 = horizon pendek, M30 = konteks intraday terdekat, H1 = arah lebih besar
+MTF_TIMEFRAMES = ["15m", "30m", "1h"]
 CACHE_TTL_SECONDS = 900  # 15 menit
 
 
@@ -69,20 +69,20 @@ def analyze_timeframe(symbol, tf):
             else:
                 trend = "MIXED/RANGE"
             parts.append(f"trend={trend}")
-            parts.append(f"price vs EMA20={price - ema20:+.2f} vs EMA50={price - ema50:+.2f}")
+            parts.append(f"price vs EMA20={price - ema20:+.5g} vs EMA50={price - ema50:+.5g}")
         else:
             # Data pendek (testnet): trend dari EMA20 saja
             trend = "BULLISH" if price > ema20 else ("BEARISH" if price < ema20 else "RANGE")
             parts.append(f"trend={trend} (EMA20 only)")
-            parts.append(f"price vs EMA20={price - ema20:+.2f}")
+            parts.append(f"price vs EMA20={price - ema20:+.5g}")
     if rsi is not None and not pd.isna(rsi):
         parts.append(f"RSI={rsi:.1f}")
     if atr is not None and not pd.isna(atr):
-        parts.append(f"ATR={atr:.2f}")
+        parts.append(f"ATR={atr:.5g}")
     # Support/resistance sederhana: low/high candle terakhir (min 20)
     recent = df.tail(20)
-    parts.append(f"support={recent['low'].min():.2f}")
-    parts.append(f"resistance={recent['high'].max():.2f}")
+    parts.append(f"support={recent['low'].min():.5g}")
+    parts.append(f"resistance={recent['high'].max():.5g}")
     return " | ".join(parts)
 
 

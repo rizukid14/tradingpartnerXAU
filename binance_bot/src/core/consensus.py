@@ -3,7 +3,10 @@ Consensus 2 proposer + 1 approver.
 
 1. GPT + Gemini vote paralel (BUY/HOLD karena spot).
 2. Kalau 2/2 sepakat BUY & skor confidence >= threshold → panggil Claude approver.
-3. Claude approve → signal eksekusi. Reject / beda pendapat → HOLD.
+3. HOLD-streak: kalau N cycle berturut-turut HOLD, cukup 1 BUY kuat
+   (conf >= config.HOLD_STREAK_BUY_CONFIDENCE) → lanjut approver.
+   Mencegah satu proposer konservatif memblokir selamanya.
+4. Claude approve → signal eksekusi. Reject / beda pendapat → HOLD.
 """
 import logging
 
@@ -12,9 +15,10 @@ import config
 log = logging.getLogger("binance_bot")
 
 
-def calculate_consensus(proposals):
+def calculate_consensus(proposals, hold_streak=0):
     """
     proposals: dict dari get_proposals() → {model: {signal, confidence, sl_pct, tp_pct, reasoning}}
+    hold_streak: jumlah cycle HOLD beruntun (dari RiskEngine).
     Return dict:
       {approved, signal, score, threshold, sl_pct, tp_pct, reasoning, models}
     """
@@ -39,9 +43,32 @@ def calculate_consensus(proposals):
             hold_models.append(name)
 
     threshold = config.CONFIDENCE_THRESHOLD
-    # Butuh 2/2 sepakat BUY + skor >= threshold
+    streak_active = hold_streak >= config.HOLD_STREAK_THRESHOLD
+    buy_confirmed = False
+    reasoning = ""
+
+    # Mode 1: 2/2 proposer sepakat BUY + skor >= threshold
     if len(buy_models) >= 2 and buy_score >= threshold:
-        # SL/TP: pakai rata-rata proposal (Claude bisa koreksi nanti)
+        buy_confirmed = True
+        reasoning = f"2/2 proposer sepakat BUY (skor {buy_score:.2f})"
+    # Mode 2 (HOLD-streak): 1 BUY kuat cukup — Claude approver jadi penyeimbang
+    elif streak_active and len(buy_models) >= 1:
+        best_conf = max(p.get("confidence", 0.0) for p in proposals.values()
+                        if p.get("signal") == "BUY")
+        if best_conf >= config.HOLD_STREAK_BUY_CONFIDENCE:
+            buy_confirmed = True
+            # Pakai SL/TP dari proposer BUY (yang punya conf tertinggi)
+            best_proposal = max(
+                (p for p in proposals.values() if p.get("signal") == "BUY"),
+                key=lambda p: p.get("confidence", 0.0))
+            if best_proposal.get("sl_pct") is not None:
+                sl_pcts = [float(best_proposal["sl_pct"])]
+            if best_proposal.get("tp_pct") is not None:
+                tp_pcts = [float(best_proposal["tp_pct"])]
+            reasoning = (f"HOLD-streak {hold_streak} -> 1 BUY kuat cukup "
+                         f"(conf {best_conf:.2f} >= {config.HOLD_STREAK_BUY_CONFIDENCE})")
+
+    if buy_confirmed:
         sl_pct = sum(sl_pcts) / len(sl_pcts) if sl_pcts else config.DEFAULT_SL_PCT
         tp_pct = sum(tp_pcts) / len(tp_pcts) if tp_pcts else config.DEFAULT_TP_PCT
         return {
@@ -51,7 +78,7 @@ def calculate_consensus(proposals):
             "threshold": threshold,
             "sl_pct": sl_pct,
             "tp_pct": tp_pct,
-            "reasoning": f"2/2 proposer sepakat BUY (skor {buy_score:.2f})",
+            "reasoning": reasoning,
             "models": buy_models,
         }
     return {
@@ -66,20 +93,23 @@ def calculate_consensus(proposals):
     }
 
 
-def run_consensus_with_approver(proposals, symbol, ticker, balance_usdt):
+def run_consensus_with_approver(proposals, symbol, df, ticker, balance_usdt, hold_streak=0, open_position=None):
     """
     Jalankan consensus 2 proposer, lalu kalau lolos → Claude approver.
+    df: candle mentah — approver dapat konteks pasar yang sama dgn proposer
+        biar bisa analisis independen (bukan cuma setuju/tidak).
     Return (final_decision, approval_info).
     """
-    cons = calculate_consensus(proposals)
+    cons = calculate_consensus(proposals, hold_streak)
     if not cons["approved"]:
         return cons, None
 
-    # 2/2 sepakat → minta approval Claude
+    # 2/2 sepakat (atau 1 BUY kuat saat hold-streak) → minta approval Claude
     from src.core import llm_client
     approval = llm_client.get_approval(
-        symbol, ticker, balance_usdt,
+        symbol, df, ticker, balance_usdt,
         proposals.get("OpenAI", {}), proposals.get("Gemini", {}),
+        open_position,
     )
     if not approval or not approval.get("approved"):
         cons["approved"] = False

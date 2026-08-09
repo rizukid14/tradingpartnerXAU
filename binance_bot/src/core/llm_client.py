@@ -81,12 +81,16 @@ def _validate_decision(parsed):
 # ---------------------------------------------------------------------------
 # PROMPT
 # ---------------------------------------------------------------------------
-def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
-    """Prompt untuk proposer (GPT/Gemini) — murni entry baru (BUY/HOLD)."""
-    latest = df.iloc[-1]
-    candles = df.tail(10).to_string()
+def _build_market_context(symbol, df, ticker, balance_usdt, open_position=None):
+    """Data pasar mentah — dipakai proposer (GPT/Gemini) DAN approver (Claude).
 
-    # Indikator utama (RSI/EMA/ATR) dari candle aktif
+    Biar approver bisa analisis INDEPENDEN (bukan cuma setuju/tidak dengan
+    proposer), dia dapat konteks yang sama: 40 candle, indikator, MTF,
+    market structure, money scale.
+    """
+    latest = df.iloc[-1]
+    candles = df.tail(40).to_string()
+
     ind_str = ""
     try:
         from ta.momentum import RSIIndicator
@@ -101,13 +105,32 @@ def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
     except Exception:
         pass
 
-    # MTF context (H1/H4) — struktur timeframe lebih tinggi
     mtf_str = ""
     try:
         from src.analytics import mtf_analyst
         mtf_str = mtf_analyst.get_mtf_context(symbol)
     except Exception:
         pass
+
+    ms_str = ""
+    try:
+        from src.analytics.market_structure import get_market_structure
+        ms_str = get_market_structure(df, candle_count=40)
+    except Exception:
+        pass
+
+    tick_size = 0.01
+    try:
+        from src.core import ccxt_connector as conn
+        info = conn.get_symbol_info(symbol)
+        if info:
+            ts = info.get("filters", {}).get("tick_size") or 0.01
+            tick_size = float(ts)
+    except Exception:
+        pass
+    usd_per_tick = tick_size * latest["close"]
+    money_str = (f"- Tick size: {tick_size} | 1 tick ≈ ${usd_per_tick:.6f} per unit | "
+                 f"Spread {ticker['spread_usd']:.4f} USD\n")
 
     pos_str = ""
     if open_position:
@@ -117,11 +140,8 @@ def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
             f"@ {open_position.get('entry_price', '?')} | "
             f"SL: {open_position.get('sl', 'N/A')} | TP: {open_position.get('tp', 'N/A')}\n"
         )
-    return f"""
-You are an expert algorithmic trader for Binance SPOT {symbol} ({config.TIMEFRAME} timeframe).
-SPOT RULE: You can only BUY (long). You CANNOT short. If there is no open position,
-SELL is NOT possible — the only valid decisions are BUY or HOLD.
 
+    return f"""
 ### MARKET DATA
 - Current price: {ticker['price']} (bid {ticker['bid']}, ask {ticker['ask']})
 - Spread: {ticker['spread_usd']:.2f} USD ({ticker['spread_pct']:.3f}%)
@@ -129,10 +149,20 @@ SELL is NOT possible — the only valid decisions are BUY or HOLD.
 - Last close: {latest['close']}
 
 ### INDICATORS ({config.TIMEFRAME})
-{ind_str}
-### LAST 10 CANDLES ({config.TIMEFRAME}):
+{ind_str}{money_str}
+### LAST 40 CANDLES ({config.TIMEFRAME}):
 {candles}
-{mtf_str}{pos_str}
+{mtf_str}{ms_str}{pos_str}"""
+
+
+def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
+    """Prompt untuk proposer (GPT/Gemini) — murni entry baru (BUY/HOLD)."""
+    ctx = _build_market_context(symbol, df, ticker, balance_usdt, open_position)
+    return f"""
+You are an expert algorithmic trader for Binance SPOT {symbol} ({config.TIMEFRAME} timeframe).
+SPOT RULE: You can only BUY (long). You CANNOT short. If there is no open position,
+SELL is NOT possible — the only valid decisions are BUY or HOLD.
+{ctx}
 ### RESPONSE (JSON only)
 {{
   "signal": "BUY" | "HOLD",
@@ -145,32 +175,36 @@ Consider R:R (tp >= 1.5x sl), volatility, and the spread. Respond JSON only.
 """
 
 
-def build_approval_prompt(symbol, ticker, balance_usdt, proposal_a, proposal_b):
-    """Prompt untuk Claude approver — lihat 2 proposal, approve/reject + koreksi SL/TP."""
+def build_approval_prompt(symbol, df, ticker, balance_usdt, proposal_a, proposal_b, open_position=None):
+    """Prompt untuk Claude approver — ANALISIS INDEPENDEN.
+
+    Claude dapat data pasar mentah yang sama dengan proposer (40 candle,
+    indikator, MTF, market structure) — bukan cuma ringkasan proposal.
+    Tugasnya: nilai setup sendiri, lalu approve/reject + koreksi SL/TP.
+    Proposal proposer hanya sebagai referensi, BUKAN dasar keputusan.
+    """
+    ctx = _build_market_context(symbol, df, ticker, balance_usdt, open_position)
     return f"""
 You are the final risk approver for a Binance SPOT trading bot on {symbol}.
-Two proposer models (GPT and Gemini) BOTH recommend a trade. Your job:
-approve or reject it, and optionally adjust SL/TP.
-
-### MARKET
-- Current price: {ticker['price']} (bid {ticker['bid']}, ask {ticker['ask']})
-- Spread: {ticker['spread_usd']:.2f} USD
-- Equity (USDT): {balance_usdt:.2f}
-
+You MUST analyze the raw market data below YOURSELF (candles, indicators,
+support/resistance, sweeps, multi-timeframe) — do NOT merely agree or disagree
+with the proposers. They are advisory only; a wrong or biased proposal must be
+rejected, and a good setup must be approved even if one proposer hesitated.
+{ctx}
 ### PROPOSAL A (GPT): {json.dumps(proposal_a, ensure_ascii=False)}
 ### PROPOSAL B (Gemini): {json.dumps(proposal_b, ensure_ascii=False)}
 
 ### YOUR DECISION
-Approve only if the setup is genuinely high-probability: clear momentum/trend,
-R:R >= 1.5, SL outside noise (>= 2x spread), and no major news risk.
-Reject if it is marginal, unclear, or risky.
+Approve only if the setup is genuinely high-probability based on YOUR OWN read
+of the data: clear momentum/trend, R:R >= 1.5, SL outside noise (>= 2x spread),
+and no major news risk. Reject if it is marginal, unclear, or risky.
 
 ### RESPONSE (JSON only)
 {{
   "approved": true | false,
   "sl_pct": <final SL % or null to keep proposal>,
   "tp_pct": <final TP % or null to keep proposal>,
-  "reasoning": "1-2 sentences"
+  "reasoning": "1-2 sentences — reference the actual price action/levels you saw"
 }}
 Respond JSON only.
 """
@@ -226,15 +260,35 @@ def _query_claude(prompt):
         resp = claude_client.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=500,
-            system="You are a risk-averse crypto trading approver. Respond JSON only.",
+            system=[
+                {
+                    "type": "text",
+                    "text": "You are a risk-averse crypto trading approver. Respond JSON only.",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": prompt}],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
             timeout=config.LLM_TIMEOUT_SECONDS,
         )
         text = "".join(b.text for b in resp.content if b.type == "text")
         return _clean_json(text)
     except Exception as e:
         log.error(f"[CLAUDE ERROR] {e}")
-        return None
+        # Fallback tanpa prompt caching (kalau header/structure tidak didukung)
+        try:
+            resp = claude_client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=500,
+                system="You are a risk-averse crypto trading approver. Respond JSON only.",
+                messages=[{"role": "user", "content": prompt}],
+                timeout=config.LLM_TIMEOUT_SECONDS,
+            )
+            text = "".join(b.text for b in resp.content if b.type == "text")
+            return _clean_json(text)
+        except Exception as e2:
+            log.error(f"[CLAUDE ERROR] {e2}")
+            return None
 
 
 def get_proposals(symbol, df, ticker, balance_usdt, open_position=None):
@@ -262,11 +316,11 @@ def get_proposals(symbol, df, ticker, balance_usdt, open_position=None):
     return results
 
 
-def get_approval(symbol, ticker, balance_usdt, proposal_a, proposal_b):
+def get_approval(symbol, df, ticker, balance_usdt, proposal_a, proposal_b, open_position=None):
     """Panggil Claude approver. Return dict {approved, sl_pct, tp_pct, reasoning} atau None."""
     if not config.CLAUDE_APPROVER_ENABLED:
         return {"approved": True, "sl_pct": None, "tp_pct": None, "reasoning": "Approver disabled"}
-    prompt = build_approval_prompt(symbol, ticker, balance_usdt, proposal_a, proposal_b)
+    prompt = build_approval_prompt(symbol, df, ticker, balance_usdt, proposal_a, proposal_b, open_position)
     raw = _query_claude(prompt)
     if not raw:
         log.warning("[CLAUDE APPROVER] Tidak ada respons — reject demi keamanan (fail-closed).")

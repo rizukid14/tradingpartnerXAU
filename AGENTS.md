@@ -92,14 +92,22 @@ python main.py
 
 > Bot terpisah untuk **Binance spot** (BTC/ETH/SOL), modal kecil (tes ~$12/Rp 200rb), deploy Linux. **Tidak menyentuh bot MT5.**
 
-- **Arsitektur 2 proposer + 1 approver**: GPT + Gemini vote (paralel), **Claude approver** hanya dipanggil saat 2/2 sepakat & skor ≥ threshold (hemat biaya).
+- **Arsitektur 2 proposer + 1 approver**: GPT + Gemini vote (paralel), **Claude approver INDEPENDEN** — dapat data mentah sama dgn proposer (40 candle M5/M15, indikator, MTF M15/M30/H1, S/R zones, liquidity sweeps) dan diinstruksikan menganalisis sendiri, bukan cuma setuju/tidak dgn proposer. Dipanggil saat 2/2 sepakat ATAU HOLD-streak aktif.
+- **HOLD-streak**: `HOLD_STREAK_THRESHOLD=5` cycle HOLD beruntun → cukup **1 BUY kuat (`HOLD_STREAK_BUY_CONFIDENCE=0.60`)** lanjut ke approver. Mencegah Gemini/OpenAI yang konservatif memblokir selamanya. Di-track di `risk_state.json` (`hold_streak`), reset saat ada BUY lolos.
+- **Sizing dual-mode**: `POSITION_ALLOCATION_PCT=0` (default) = risk-based 1.5% equity; `>0` (mis. 50) = pakai % equity langsung per posisi (cocok spot). **Notional di-clamp ke saldo free USDT** (minus buffer fee) — dry-run tidak bisa "beli" > saldo. `get_free_usdt()` di connector.
 - **Spot, tanpa margin/futures**: tidak bisa short (hanya BUY), nol risiko liquidation/hutang. Signal SELL tanpa posisi = hold USDT; SELL saat punya posisi = exit.
-- **SL/TP via OCO order** (`POST /api/v3/orderList/oco`) — spot tanpa SL/TP broker; jalan di sisi exchange.
+- **SL/TP via OCO order** (`POST /api/v3/orderList/oco`) — spot tanpa SL/TP broker; jalan di sisi exchange. `stopLimitPrice` di sisi aman (SELL 0.99× / BUY 1.01× stop — pola Freqtrade).
 - **REST API `/api/v3/*`** + HMAC API key (dari `.env`). Changelog Binance: `/api/v1/*` sudah retire; signed request wajib percent-encode sebelum signing; `userDataStream` REST dihapus (pakai polling REST atau WebSocket API Ed25519).
-- **Risk 1.5%** per trade dari equity USDT, **daily loss $3** (ketat utk modal $12), cooldown, min notional $5, max 2 posisi, trading 24/7.
+- **⚠️ Dua gotcha testnet**: (1) `REST_BASE` TANPA `/api` (path endpoint sudah include `/api/v3/*` — dulu dobel → 404); (2) WAF testnet block user-agent `Python-urllib` → semua request wajib User-Agent browser.
+- **Timeframe M5 default** (env `BINANCE_TIMEFRAME=15m/30m/1h`) — **M15/M30 lebih cocok buat profit** (fee 0.2% round-trip vs target 0.5-1% M5 = boros); M5 buat validasi sinyal. **⚠️ env `BINANCE_TIMEFRAME` WAJIB `.strip()`** — trailing space bikin error "Illegal characters in interval" (bug "spasi" kedua).
+- **Risk 1.5%** per trade dari equity USDT, **daily loss $3** (ketat utk modal $12), cooldown, min notional $0.5 (TokoCrypto), max 2 posisi, trading 24/7.
+- **Balance gagal → skip cycle**: kalau `get_account_balance_usdt()` return 0 (rate limit sesaat), cycle di-skip — jangan lanjut dgn equity $0 (bikin Claude salah reject "impossible").
+- **Position tracking lokal** (`risk_state.json` → `positions`) — spot tidak simpan entry price di exchange, jadi bot track sendiri (record saat BUY, close saat OCO kena / SELL exit). Posisi dry-run nyangkut kalau tidak pernah di-close → bersihkan state manual.
+- **Dry-run realistis**: simulasi fill + slippage 0.05% + fee 0.1% (pola Freqtrade), bukan cuma log.
 - Config: `binance_bot/config.py` — `TESTNET=True` + `DRY_RUN=True` default (AMAN). `False` = live, jangan ubah tanpa diskusi.
-- Flow: loop 5 detik (manage posisi + deteksi close) → candle M30 → risk gate → 2 proposer → Claude approve → OCO order.
-- Test: `binance_bot/tests/` (mock API connector + risk). Testnet dulu (`testnet.binance.vision`) sebelum live.
+- Flow: loop 5 detik (manage posisi + deteksi close via OCO status) → candle (M5/M15/M30) → risk gate → 2 proposer → Claude approve → OCO order.
+- Test: `binance_bot/tests/` (mock API connector + risk + position tracking + hold-streak + sizing clamp + approver prompt). **Testnet sudah verified** (server_time, symbol_info, balance $10k, klines OK; API key testnet di `.env`).
+- Referensi: `external_repos/freqtrade/` (clone utk pola risk/dry-run/stoploss). Repo lain: OpenTrader (TS, grid/DCA), BTC-Trading-Since-2020 (dataset BitMEX 6 tahun).
 - Deploy: `pip install -r binance_bot/requirements.txt` + systemd `Restart=always` di VPS Linux.
 
 ## Konvensi & hal yang perlu diingat

@@ -53,6 +53,11 @@ def run_trading_cycle(risk):
         log.warning("[CYCLE] Gagal dapat ticker — skip.")
         return
     balance = connector.get_account_balance_usdt()
+    if balance <= 0:
+        # Gagal fetch balance → jangan lanjut (equity $0 bikin proposer/approver
+        # salah menilai "impossible"). Skip cycle, coba lagi candle berikutnya.
+        log.warning("[CYCLE] Balance gagal didapat (0) — skip cycle.")
+        return
     log.info(f"📈 {config.SYMBOL} price={ticker['price']} spread={ticker['spread_pct']:.3f}% equity=${balance:.2f}")
 
     # 3. Posisi open (spot: aset yang dimiliki)
@@ -67,14 +72,19 @@ def run_trading_cycle(risk):
                  f"SL {p.get('sl_pct')}% TP {p.get('tp_pct')}% | {p.get('reasoning','')[:200]}")
 
     # 5. Consensus 2/2 + Claude approver
+    #    hold_streak: kalau sudah N cycle HOLD, 1 BUY kuat cukup → approver
+    #    df & open_pos diteruskan supaya Claude bisa analisis independen
     decision, approval = consensus.run_consensus_with_approver(
-        proposals, config.SYMBOL, ticker, balance)
+        proposals, config.SYMBOL, df, ticker, balance, risk.hold_streak, open_pos)
     log.info(f"🚦 [CONSENSUS] {decision['signal']} (skor {decision['score']} >= {decision['threshold']}) — {decision['reasoning']}")
 
     if not decision["approved"] or decision["signal"] != "BUY":
         # Spot: SELL tanpa posisi = hold. Ada posisi & signal SELL = exit (fase 2).
         log.info("☕ HOLD — tidak ada trade.")
+        risk.record_hold_cycle()
         return
+    # Ada sinyal BUY valid → reset hold-streak (tidak peduli dieksekusi atau tidak)
+    risk.reset_hold_streak()
     if open_pos:
         log.info(f"📊 Sudah ada posisi {open_pos['qty']} {open_pos['asset']} — max 1 posisi BUY.")
         return
