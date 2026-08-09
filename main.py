@@ -53,6 +53,8 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--telegram", choices=["on", "off"], help="Telegram notifikasi on/off")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
+    p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
+                   help="Pakai preset era (legacy / legacy-2 / modern)")
     args = p.parse_args(argv)
 
     applied = []
@@ -60,6 +62,17 @@ def parse_cli_overrides(argv=None):
     if args.dry_run and args.live:
         print("❌ [CLI] Tidak bisa --dry-run dan --live bersamaan.")
         sys.exit(1)
+
+    # Preset era dulu (paling awal), lalu flag eksplisit menimpa
+    if getattr(args, "era", None):
+        preset = getattr(config, "ERA_PRESETS", {}).get(args.era)
+        if preset:
+            for attr, val in preset.items():
+                if attr == "label":
+                    continue
+                if hasattr(config, attr):
+                    setattr(config, attr, val)
+            applied.append(f"ERA={args.era}")
 
     if args.dry_run:
         config.DRY_RUN = True
@@ -131,14 +144,25 @@ def interactive_setup():
         ("Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
         ("Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
         ("Telegram", "config.TELEGRAM_ENABLED", "ON" if config.TELEGRAM_ENABLED else "OFF"),
+        ("Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
+        ("Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
+        ("Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
     ]
+
+    # Daftar preset era (dari config.ERA_PRESETS)
+    presets = getattr(config, "ERA_PRESETS", {})
 
     while True:
         print("-" * 60)
         for i, (label, attr, val) in enumerate(settings, 1):
             print(f"  {i:2d}. {label:<22} : {val}")
+        if presets:
+            print("-" * 60)
+            print("  PRESET ERA:")
+            for name, p in presets.items():
+                print(f"     [{name}] {p.get('label', name)}")
         print("-" * 60)
-        print("  Ketik nomor untuk ubah | 'start' / Enter = mulai | 'q' = batal")
+        print("  Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
         choice = input("  > ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
@@ -146,6 +170,26 @@ def interactive_setup():
             sys.exit(0)
         if choice in ("", "start", "s", "y"):
             break
+
+        # Preset era
+        if presets and choice in presets:
+            preset = presets[choice]
+            print(f"  ⚙️  Menerapkan preset '{choice}' ({preset.get('label', '')})...")
+            for attr, val in preset.items():
+                if attr == "label":
+                    continue
+                if hasattr(config, attr):
+                    setattr(config, attr, val)
+            # refresh tampilan
+            for i, (label, attr, _) in enumerate(settings):
+                key = attr.split(".")[1]
+                v = getattr(config, key, None)
+                settings[i] = (label, attr,
+                               "DRY RUN" if (attr == "config.DRY_RUN" and v is True)
+                               else ("LIVE" if attr == "config.DRY_RUN" else
+                                     ("ON" if v is True else ("OFF" if v is False else str(v)))))
+            print("  ✅ Preset diterapkan.")
+            continue
 
         if choice.isdigit():
             idx = int(choice) - 1
@@ -235,29 +279,31 @@ def run_trading_cycle():
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
 
     # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst M30/M5, Kurtosis M30/M1)
-    try:
-        from src.analytics import market_randomness
-        rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
-        ft = rand_info.get('fat_tail', {})
-        tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
-        print(f"🔬 [QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
-              f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
-              f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
-              f"Status: {'🚫 BLOCKED (Pure Random Walk)' if rand_info['is_random'] else '✅ PASSED'}")
-    except Exception as e:
-        print(f"⚠️ [QUANT MATH ERROR] {e}")
+    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
+        try:
+            from src.analytics import market_randomness
+            rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
+            ft = rand_info.get('fat_tail', {})
+            tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
+            print(f"🔬 [QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
+                  f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
+                  f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
+                  f"Status: {'🚫 BLOCKED (Pure Random Walk)' if rand_info['is_random'] else '✅ PASSED'}")
+        except Exception as e:
+            print(f"⚠️ [QUANT MATH ERROR] {e}")
 
     # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
-    try:
-        from src.analytics import quant_probability
-        tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
-        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-        print(f"🎲 [QUANT PROB] Monte Carlo (1000 paths): "
-              f"🟢 UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
-              f"🔴 DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
-              f"Est. Horizon: {q_res['estimated_time_str']}")
-    except Exception as e:
-        print(f"⚠️ [QUANT PROB ERROR] {e}")
+    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
+        try:
+            from src.analytics import quant_probability
+            tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+            print(f"🎲 [QUANT PROB] Monte Carlo (1000 paths): "
+                  f"🟢 UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
+                  f"🔴 DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
+                  f"Est. Horizon: {q_res['estimated_time_str']}")
+        except Exception as e:
+            print(f"⚠️ [QUANT PROB ERROR] {e}")
     
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary
     try:
@@ -318,10 +364,11 @@ def run_trading_cycle():
     # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
     # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
     # will receive the (possibly stale) cache now and the next cycle gets the new one.
-    try:
-        forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
-    except Exception as e:
-        print(f"[FORECAST WARNING] {e}")
+    if getattr(config, "FORECAST_ENABLED", True):
+        try:
+            forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
+        except Exception as e:
+            print(f"[FORECAST WARNING] {e}")
 
     print("🧠 Mengirim data ke OpenAI, Gemini, dan Claude...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
@@ -350,13 +397,14 @@ def run_trading_cycle():
             risk.record_position_closed(t_ticket, pre_profit)
 
     # 5.5 Multi-Horizon Forecast Context (Informational Only)
-    try:
-        is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
-            config.SYMBOL, tick, result, df
-        )
-        print(f"🔮 [FORECAST INFO] {f_reason}")
-    except Exception as e:
-        print(f"[FORECAST INFO WARNING] {e}")
+    if getattr(config, "FORECAST_ENABLED", True):
+        try:
+            is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
+                config.SYMBOL, tick, result, df
+            )
+            print(f"🔮 [FORECAST INFO] {f_reason}")
+        except Exception as e:
+            print(f"[FORECAST INFO WARNING] {e}")
 
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
     max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS

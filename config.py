@@ -120,6 +120,49 @@ MIN_CONSENSUS_MODELS = 2  # minimum models voting the same direction
 DEBATE_ENABLED = False
 
 # ============================================================================
+#  FEATURE TOGGLES (untuk A/B test & balik ke titik stable era lama)
+# ============================================================================
+# Quant analysis: Hurst Exponent + fat-tail kurtosis + Monte Carlo probability.
+# Ditambahkan di era modern (commit 259708d). Legacy (profit 100% dulu) TANPA ini.
+QUANT_ANALYSIS_ENABLED = True
+
+# Multi-Horizon Forecast Engine (T+15m/T+60m XAU, T+4h/T+D1 BTC) — informational.
+# Sudah ada sejak era legacy (commit 949ce14), tapi bisa di-off untuk A/B test.
+FORECAST_ENABLED = True
+
+# Preset era — untuk balik cepat ke konfigurasi yang mirip era tertentu.
+# Dipakai oleh interactive_setup (menu sebelum run) & --era CLI.
+#   "legacy":  era profit 100% — DeepSeek, consensus 2/3, lot statis, NO quant
+#   "legacy-2": = legacy + state/test telegram
+#   "modern":  era sekarang — Claude, weighted consensus, risk-based lot, quant ON
+ERA_PRESETS = {
+    "legacy": {
+        "label": "Legacy (era profit 100%)",
+        "QUANT_ANALYSIS_ENABLED": False,
+        "FORECAST_ENABLED": True,
+        "DEBATE_ENABLED": True,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
+    },
+    "legacy-2": {
+        "label": "Legacy-2 (= legacy + state)",
+        "QUANT_ANALYSIS_ENABLED": False,
+        "FORECAST_ENABLED": True,
+        "DEBATE_ENABLED": True,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
+    },
+    "modern": {
+        "label": "Modern (sekarang — Claude + quant)",
+        "QUANT_ANALYSIS_ENABLED": True,
+        "FORECAST_ENABLED": True,
+        "DEBATE_ENABLED": False,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
+    },
+}
+
+# ============================================================================
 #                     PROTECTION & EXECUTION LAYER
 #           (Inspired by XAU-60 execution engine & xaubot-ai risk system)
 # ============================================================================
