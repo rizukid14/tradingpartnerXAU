@@ -25,6 +25,10 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
     ],
 )
+# Sembunyikan log HTTP request dari SDK (openai, google-genai, dll) — biar bersih.
+# Error tetap muncul (level WARNING ke atas).
+for noisy in ("openai", "google.genai", "httpx", "urllib3", "httpcore"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger("binance_bot")
 
 
@@ -162,13 +166,21 @@ def main():
                     daily_pnl = risk.get_daily_pnl()
                     balance = connector.get_account_balance_usdt()
                     qty = connector.get_asset_balance(config.SYMBOL)
+                    # Countdown ke candle berikutnya
+                    tf_sec = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(
+                        config.TIMEFRAME, 300)
+                    now = time.time()
+                    next_candle = (int(now // tf_sec) + 1) * tf_sec
+                    remain = int(next_candle - now)
+                    cd = f"{remain // 60}m {remain % 60:02d}s"
                     log.info(f"🕒 Status: equity=${balance:.2f} | {config.SYMBOL} qty={qty} | "
-                             f"P/L hari ini ${daily_pnl:+.2f} | loss streak {risk._consecutive_losses}")
+                             f"P/L hari ini ${daily_pnl:+.2f} | loss streak {risk._consecutive_losses} | "
+                             f"candle {config.TIMEFRAME} berikutnya dalam {cd}")
                     last_status_log = time.time()
             except Exception as e:
                 log.error(f"[LOOP ERROR] {e}")
 
-            # ---- Tiap candle M30 baru: full cycle ----
+            # ---- Tiap candle baru (sesuai TIMEFRAME): full cycle ----
             df = connector.get_klines(config.SYMBOL, config.TIMEFRAME, 2)
             if df is not None and len(df) > 0:
                 current_candle = df.iloc[-1]["time"]

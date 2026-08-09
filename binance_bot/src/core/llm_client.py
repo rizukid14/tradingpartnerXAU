@@ -94,7 +94,7 @@ def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
             f"SL: {open_position.get('sl', 'N/A')} | TP: {open_position.get('tp', 'N/A')}\n"
         )
     return f"""
-You are an expert algorithmic trader for Binance SPOT {symbol} (30-minute timeframe).
+You are an expert algorithmic trader for Binance SPOT {symbol} ({config.TIMEFRAME} timeframe).
 SPOT RULE: You can only BUY (long). You CANNOT short. If there is no open position,
 SELL is NOT possible — the only valid decisions are BUY or HOLD.
 
@@ -180,7 +180,12 @@ def _query_gemini(prompt):
         resp = gemini_client.models.generate_content(
             model=config.GEMINI_MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                # Matikan Automatic Function Calling — kita tidak pakai tools,
+                # dan pesan "AFC is enabled" cuma noise di log.
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            ),
         )
         return _clean_json(resp.text)
     except Exception as e:

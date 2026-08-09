@@ -29,7 +29,9 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 # TRADING PARAMS
 # ---------------------------------------------------------------------------
 SYMBOL = os.getenv("BINANCE_SYMBOL", "BTCUSDT")
-TIMEFRAME = "30m"            # M30 (kline interval Binance)
+# Timeframe — Binance spread tipis ($0.01), jadi M5 scalping layak (beda dgn MT5).
+# Bisa diubah via env: BINANCE_TIMEFRAME=15m / 30m / 1h
+TIMEFRAME = os.getenv("BINANCE_TIMEFRAME", "5m")
 CANDLE_COUNT = 50            # candle untuk analisis
 
 RISK_PERCENT = 1.5           # risk per trade dari equity USDT
