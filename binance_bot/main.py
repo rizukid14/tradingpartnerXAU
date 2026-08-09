@@ -64,7 +64,7 @@ def run_trading_cycle(risk):
     proposals = llm_client.get_proposals(config.SYMBOL, df, ticker, balance, open_pos)
     for name, p in proposals.items():
         log.info(f"🤖 [{name}] {p['signal']} (conf {p['confidence']:.0%}) "
-                 f"SL {p.get('sl_pct')}% TP {p.get('tp_pct')}% | {p.get('reasoning','')[:80]}")
+                 f"SL {p.get('sl_pct')}% TP {p.get('tp_pct')}% | {p.get('reasoning','')[:200]}")
 
     # 5. Consensus 2/2 + Claude approver
     decision, approval = consensus.run_consensus_with_approver(
