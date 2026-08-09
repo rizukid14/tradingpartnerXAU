@@ -372,9 +372,8 @@ class RiskEngine:
         """Check if current spread is acceptable."""
         tick = mt5.symbol_info_tick(config.SYMBOL)
         symbol_info = mt5.symbol_info(config.SYMBOL)
-        if tick is None or symbol_info is None:
-            # Fail-closed: if we can't verify the spread, don't trade.
-            return False, "⚠️ [RISK] Tidak bisa memverifikasi spread (MT5 data unavailable). Menunggu..."
+        if tick is None or symbol_info is None or not symbol_info.point or symbol_info.point <= 0:
+            return False, "⚠️ [RISK] Tidak bisa memverifikasi spread (MT5 data/point unavailable). Menunggu..."
 
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
         max_spread = config.max_spread_points_for(config.SYMBOL)

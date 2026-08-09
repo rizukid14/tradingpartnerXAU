@@ -98,7 +98,6 @@ def query_primary_model(prompt, search_grounding=False):
                             {
                                 "type": "text",
                                 "text": prompt,
-                                "cache_control": {"type": "ephemeral"}
                             }
                         ]
                     }
@@ -383,11 +382,15 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         "entry even against a higher-timeframe bias."
     )
 
-    prompt = f"""
-You are an expert algorithmic trading system specializing in {tf_full} on {symbol} — {asset_desc(symbol)}.
-Analyze the current market condition and determine the next trading decision.
-
-### MARKET DATA CONTEXT
+    # ================================================================
+    # PROMPT — 2 blok:
+    #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
+    #     cache_control (lihat _execute_claude_single). Harus >= 1024
+    #     token biar Anthropic benar-benar meng-cache.
+    #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
+    # ================================================================
+    # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
+    market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
 Current Bid: {current_tick['bid']}
@@ -404,13 +407,47 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
 {randomness_str}{quant_prob_str}{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
-{usd_context}
+{usd_context}"""
+
+    # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
+    # Sl/TP range ikut ATR (berubah pelan) — tetap di blok statis biar
+    # prefix panjang (>= 1024 token) dan cache berguna. LLM tetap lihat
+    # ATR aktual di blok dinamis.
+    static_block = f"""You are an expert algorithmic trading system specializing in {tf_full} on {symbol} — {asset_desc(symbol)}.
+Analyze the current market condition and determine the next trading decision.
+
+### READING THE DATA
+- RSI(14): >70 overbought (risky long entry), <30 oversold (risky short). Divergence between price and RSI is a strong warning signal.
+- EMA20 vs EMA50: price above both = bullish structure; below both = bearish. EMA20 crossing EMA50 = momentum shift.
+- ATR(14): current volatility scale. SL should sit OUTSIDE 1.5-2x ATR so normal noise does not trigger it; TP at least 1.5x the SL distance (R:R >= 1.5).
+- Candles: a strong impulse candle with follow-through beats a single wick. Rejections at a level (long upper wick at resistance, long lower wick at support) are signals of a reversal or pause.
+- Spread: if the spread is a large fraction of your SL/TP distance, the trade is not viable — the market must move far enough to overcome the spread first.
+- Economic calendar: HIGH-impact events create volatility spikes; avoid entering 15-30 min before/after. Absence of events means 'news risk' is not a valid reason to HOLD.
+
 ### STRATEGY CONSTRAINTS ({strategy_header})
 - {strategy_line}
 - {momentum_line}
 - Only restrict trading 15-30 min before/after a HIGH-impact event listed in the economic calendar block above. If none is listed, trade normally — 'news risk' is not a valid HOLD reason when no event is imminent.
 - Entry: avoid entering against a DIRECT forecast-bias contradiction (BUY vs BEARISH, SELL vs BULLISH) or when price is already beyond the T+15m target. R:R to the T+15m target should be >= 1.0 (0.8 acceptable on clear momentum).
 - Suggested SL/TP in POINTS. Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL. On BTC the market moves thousands of points — do NOT give tiny SL/TP (e.g. < 5000 pts) just because the number looks big; those are worth only cents.
+- If no clear edge exists (choppy, no momentum, no structure), HOLD is a valid and preferred decision. Do not force a trade.
+
+### DECISION FRAMEWORK
+Evaluate a potential entry in this order:
+1. Trend & structure — is the market trending, ranging, or reversing? Only trade with a definable structure.
+2. Momentum — is there a fresh impulse (breakout, strong candle, volume) or is it stale?
+3. Location — are you near support (for BUY) / resistance (for SELL), or mid-range? Mid-range entries are weak.
+4. Risk/Reward — SL below the nearest meaningful support (BUY) or above resistance (SELL); TP at least 1.5x SL. If R:R < 1.5, skip.
+5. Spread & cost — if spread > ~20% of SL distance, the trade is uneconomical. Skip.
+6. Forecast bias — do not fight a direct forecast contradiction; if price already overshot the T+15m target, entry has no room.
+If any step fails, HOLD.
+
+### CONFIDENCE CALIBRATION
+- 0.70+ : strong, multi-factor alignment (structure + momentum + location + R:R all agree).
+- 0.50-0.70 : moderate edge, some factors align, some uncertain.
+- 0.30-0.50 : weak or speculative setup — treat as HOLD unless you have a specific, concrete reason.
+- < 0.30 : no edge — signal should be HOLD.
+A HOLD with high confidence is normal and preferred when the market offers no clear entry.
 
 ### RESPONSE FORMAT
 You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
@@ -425,8 +462,11 @@ JSON schema:
     {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
   ]
 }}
+Example reasoning: "HOLD — price rejected H1 resistance with RSI divergence; no edge for a fresh entry."
+Example: {{"signal": "HOLD", "confidence": 0.55, "sl_points": {int((min_sl+max_sl)/2)}, "tp_points": {int((min_tp+max_tp)/2)}, "reasoning": "No clear momentum; range-bound.", "position_actions": []}}"""
 
-"""
+    # Gabung: statis dulu (cache), lalu data (dinamis)
+    prompt = static_block + "\n\n" + market_data_block + "\n"
     return prompt
 
 
@@ -575,6 +615,23 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
         "You are a professional financial trading assistant. "
         "Always respond with valid JSON only. Keep reasoning extremely concise (max 1-2 short sentences)."
     )
+    # Prompt caching: pecah prompt jadi blok statis (instruksi, DI DEPAN) +
+    # dinamis (data pasar, DI BELAKANG). cache_control ditaruh di AKHIR blok
+    # statis — prefix yang identik antar request. System terlalu pendek
+    # (< 1024 token) untuk di-cache, jadi breakpoint di user block.
+    split_marker = "### MARKET DATA CONTEXT"
+    if split_marker in prompt:
+        static_part, dynamic_part = prompt.split(split_marker, 1)
+        dynamic_part = split_marker + dynamic_part
+        user_blocks = [
+            {"type": "text", "text": static_part,
+             "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_part},
+        ]
+    else:
+        # Tidak ketemu marker — fallback: cache seluruh prompt (kalau statis)
+        user_blocks = [{"type": "text", "text": prompt,
+                        "cache_control": {"type": "ephemeral"}}]
     # Enable Anthropic Prompt Caching via cache_control and prompt-caching header
     try:
         response = claude_client.messages.create(
@@ -584,19 +641,12 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
                 {
                     "type": "text",
                     "text": system_text,
-                    "cache_control": {"type": "ephemeral"}
                 }
             ],
             messages=[
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt,
-                            "cache_control": {"type": "ephemeral"}
-                        }
-                    ]
+                    "content": user_blocks,
                 }
             ],
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},

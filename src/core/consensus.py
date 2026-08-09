@@ -39,7 +39,9 @@ def _apply_sltp_floors(sl_points, tp_points):
                 df['atr'] = AverageTrueRange(
                     high=df['high'], low=df['low'], close=df['close'], window=14
                 ).average_true_range()
-                atr_points = int(df.iloc[-1]['atr'] / si.point)
+                atr_val = df.iloc[-1]['atr'] if 'atr' in df.columns else None
+                if pd.notna(atr_val) and si.point and si.point > 0:
+                    atr_points = int(atr_val / si.point)
     except Exception:
         pass
 
