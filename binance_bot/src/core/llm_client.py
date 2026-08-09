@@ -85,6 +85,30 @@ def build_proposal_prompt(symbol, df, ticker, balance_usdt, open_position=None):
     """Prompt untuk proposer (GPT/Gemini) — murni entry baru (BUY/HOLD)."""
     latest = df.iloc[-1]
     candles = df.tail(10).to_string()
+
+    # Indikator utama (RSI/EMA/ATR) dari candle aktif
+    ind_str = ""
+    try:
+        from ta.momentum import RSIIndicator
+        from ta.trend import EMAIndicator
+        from ta.volatility import AverageTrueRange
+        rsi = RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+        ema20 = EMAIndicator(close=df["close"], window=20).ema_indicator().iloc[-1]
+        ema50 = EMAIndicator(close=df["close"], window=50).ema_indicator().iloc[-1]
+        atr = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"], window=14).average_true_range().iloc[-1]
+        ind_str = (f"- RSI(14): {rsi:.1f} | EMA20: {ema20:.2f} | EMA50: {ema50:.2f} | "
+                   f"ATR(14): {atr:.2f}\n")
+    except Exception:
+        pass
+
+    # MTF context (H1/H4) — struktur timeframe lebih tinggi
+    mtf_str = ""
+    try:
+        from src.analytics import mtf_analyst
+        mtf_str = mtf_analyst.get_mtf_context(symbol)
+    except Exception:
+        pass
+
     pos_str = ""
     if open_position:
         pos_str = (
@@ -104,9 +128,11 @@ SELL is NOT possible — the only valid decisions are BUY or HOLD.
 - Equity (USDT): {balance_usdt:.2f}
 - Last close: {latest['close']}
 
+### INDICATORS ({config.TIMEFRAME})
+{ind_str}
 ### LAST 10 CANDLES ({config.TIMEFRAME}):
 {candles}
-{pos_str}
+{mtf_str}{pos_str}
 ### RESPONSE (JSON only)
 {{
   "signal": "BUY" | "HOLD",
