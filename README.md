@@ -9,6 +9,32 @@ Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT
 
 ---
 
+## 🤖 Bot Binance Spot (Terpisah, `binance_bot/`)
+
+Bot **kedua** untuk trading **Binance spot** (BTC/ETH/SOL) — berdiri sendiri di `binance_bot/`, tidak menyentuh bot MT5. Dibuat untuk **modal kecil** (tes ~$12 / Rp 200rb) dan **deploy Linux** (VPS, tanpa aplikasi tambahan — murni API).
+
+**Perbedaan utama vs bot MT5:**
+- **Arsitektur 2 proposer + 1 approver**: GPT + Gemini vote, **Claude approver** (hanya dipanggil saat 2/2 sepakat — hemat biaya).
+- **Spot, tanpa margin/futures**: tidak bisa short (hanya BUY), nol risiko liquidation/hutang.
+- **SL/TP via OCO order** di sisi exchange (spot tidak punya SL/TP broker).
+- **REST API** (`/api/v3/*`) + HMAC API key — cukup untuk bot M30. Perhatikan changelog Binance: `/api/v1/*` sudah retire, pakai `/api/v3/*`.
+- **Risk 1.5%** per trade dari equity USDT, daily loss limit ketat ($3 untuk modal $12), trading 24/7.
+
+**Cara pakai:**
+```bash
+cd binance_bot
+cp .env.example .env        # isi BINANCE_API_KEY, BINANCE_SECRET, LLM keys
+python main.py              # TESTNET=True + DRY_RUN=True default (aman)
+```
+- **Testnet dulu** (`TESTNET=True`) → validasi order flow tanpa uang asli.
+- **Dry-run** (`DRY_RUN=True`) → sinyal dihitung, order tidak dikirim.
+- **Live** (`TESTNET=False`, `DRY_RUN=False`) → order beneran. Jangan ubah tanpa diskusi.
+- Deploy Linux: `pip install -r binance_bot/requirements.txt` + systemd service (`Restart=always`).
+
+**Status:** fase 1 (connector + risk + consensus + main loop + testnet test). Fase 2: Telegram alert, dashboard, post-mortem lessons.
+
+---
+
 ## 🏗️ Arsitektur Sistem (Branch `dev`)
 
 ```mermaid
@@ -142,6 +168,21 @@ Pastikan aplikasi MT5 Anda terbuka dan terhubung ke internet, lalu jalankan:
 python main.py
 ```
 - Log: `trading_bot.log` (auto-rotate 2MB, keep 5000 baris). **Log bisa campur sesi demo + live** — untuk profit akurat, query MT5 langsung (`scratch/` script, hapus setelah dipakai).
+
+### 6. Dashboard Analisis (Opsional)
+Menampilkan kualitas trade, kualitas sinyal LLM, dan statistik standar dari log. Dua mode:
+
+**Mode static** (generate satu file HTML, buka di browser):
+```bash
+python dashboard.py          # generate dashboard.html
+```
+
+**Mode live** (server lokal, baca log fresh tiap request + auto-refresh 5 detik **tanpa reload halaman**):
+```bash
+python dashboard.py --serve --port 8765   # buka http://127.0.0.1:8765/
+```
+
+Dashboard read-only — tidak menyentuh bot/MT5. Opsi: `-o out.html` (output static lain), `--all-eras` (tampilkan semua era model, bukan hanya era aktif).
 
 ---
 

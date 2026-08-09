@@ -107,8 +107,8 @@ def calculate_fat_tail_metrics(prices):
 def analyze_market_randomness(df, symbol=None):
     """
     Analyzes DataFrame of candles for market randomness & fat-tail metrics.
-    - Hurst Exponent (H): Calculated on main timeframe (H1/M5) for trend persistence.
-    - Kurtosis & Skewness: Calculated on micro timeframe (M5 for BTC, M1 for XAU)
+    - Hurst Exponent (H): Calculated on main timeframe (M30/M5) for trend persistence.
+    - Kurtosis & Skewness: Calculated on micro timeframe (M30 for BTC, M1 for XAU)
       to detect micro-structure wicks, stop-hunts, and fat-tail spikes.
     """
     if df is None or len(df) < 30 or 'close' not in df.columns:
@@ -123,7 +123,7 @@ def analyze_market_randomness(df, symbol=None):
     prices = df['close'].values
     hurst = calculate_hurst_exponent(prices)
 
-    # Micro-structure Fat-Tail check (M30 for BTC H1 swing, M5 for XAU M5 scalp)
+    # Micro-structure Fat-Tail check (M30 for BTC M30 swing, M5 for XAU M5 scalp)
     fat_tail_prices = prices
     micro_label = "main"
     if symbol:
@@ -132,7 +132,7 @@ def analyze_market_randomness(df, symbol=None):
             from src.core import mt5_connector as connector
             if sys_mt5 := getattr(connector, "mt5", None):
                 is_cr = config.is_crypto(symbol)
-                # BTC H1 swing -> M30 (24 candles = 12 jam)
+                # BTC M30 swing -> M30 (24 candles = 12 jam)
                 # XAU M5 scalp -> M5 (48 candles = 4 jam)
                 micro_tf = sys_mt5.TIMEFRAME_M30 if is_cr else sys_mt5.TIMEFRAME_M5
                 num_micro_candles = 24 if is_cr else 48  

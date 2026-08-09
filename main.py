@@ -67,7 +67,7 @@ def run_trading_cycle():
         print(reason)
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (50 candles of the active timeframe — M5 for XAU, H1 for BTC)
+    # 1. Fetch market data (50 candles of the active timeframe — M5 for XAU, M30 for BTC)
     df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=50)
     if df is None or len(df) == 0:
         print("❌ Gagal mendapatkan market data. Melewatkan siklus ini.")
@@ -81,7 +81,7 @@ def run_trading_cycle():
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst H1/M5, Kurtosis M5/M1)
+    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst M30/M5, Kurtosis M30/M1)
     try:
         from src.analytics import market_randomness
         rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
@@ -364,6 +364,34 @@ def main():
 
                 # Trailing stop + break-even + partial close
                 position_manager.manage_all_positions()
+
+                # Detect positions closed by MT5 (SL/TP/manual) in real time.
+                # Returns newly closed deals → alert Telegram immediately,
+                # instead of waiting for the next candle cycle.
+                try:
+                    new_closed = risk.sync_closed_positions()
+                    for deal in new_closed:
+                        d_ticket = deal.get("ticket")
+                        d_symbol = deal.get("symbol", config.SYMBOL)
+                        d_profit = deal.get("profit", 0.0)
+                        d_reason = deal.get("reason")
+                        d_comment = deal.get("comment", "")
+                        d_type = deal.get("type", "")
+                        print(f"🔔 [CLOSE DETECTED] #{d_ticket} {d_symbol} {d_type} "
+                              f"ditutup (P/L: {d_profit:+.2f}, reason: {d_reason or 'unknown'})")
+                        try:
+                            tg.alert_trade_closed(
+                                ticket=d_ticket,
+                                symbol=d_symbol,
+                                profit=d_profit,
+                                reason_code=d_reason,
+                                comment=d_comment,
+                                pos_type=d_type,
+                            )
+                        except Exception as e:
+                            print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
+                except Exception as e:
+                    print(f"[CLOSE SYNC ERROR] {e}")
                 
                 # Weekend position management
                 weekend_actions = risk.check_weekend_positions()

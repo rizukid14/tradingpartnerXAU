@@ -231,7 +231,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 def _get_dynamic_atr_points(symbol, point):
     """
     Computes real-time ATR(14) in points for the given symbol using its active timeframe:
-    H1 for BTC, M5 for XAU.
+    M30 for BTC, M5 for XAU.
     """
     try:
         tf = config.get_timeframe(symbol)

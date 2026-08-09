@@ -32,7 +32,7 @@ def _apply_sltp_floors(sl_points, tp_points):
         si = mt5.symbol_info(config.SYMBOL)
         if tick is not None and si is not None and si.point:
             spread_pts = int(round((tick.ask - tick.bid) / si.point))
-            # ATR from the active timeframe (H1 for BTC) — volatility floor
+            # ATR from the active timeframe (M30 for BTC) — volatility floor
             rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
