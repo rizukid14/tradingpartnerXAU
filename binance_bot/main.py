@@ -150,21 +150,21 @@ def main():
 
     last_candle_time = None
     startup_run = True
+    last_status_log = 0.0
 
     try:
         while True:
             # ---- Tiap 5 detik: manage posisi + deteksi close ----
             try:
                 position_manager.manage_all_positions(risk)
-                daily_pnl = risk.get_daily_pnl()
-                balance = connector.get_account_balance_usdt()
-                qty = connector.get_asset_balance(config.SYMBOL)
-                sys.stdout.write(
-                    f"\r🕒 [{datetime.now().strftime('%H:%M:%S')}] "
-                    f"equity=${balance:.2f} | {config.SYMBOL} qty={qty} | "
-                    f"P/L hari ini ${daily_pnl:+.2f} | "
-                    f"loss streak {risk._consecutive_losses}")
-                sys.stdout.flush()
+                # Status ringkas via log tiap 60 detik (bukan \r — biar rapi)
+                if time.time() - last_status_log >= 60:
+                    daily_pnl = risk.get_daily_pnl()
+                    balance = connector.get_account_balance_usdt()
+                    qty = connector.get_asset_balance(config.SYMBOL)
+                    log.info(f"🕒 Status: equity=${balance:.2f} | {config.SYMBOL} qty={qty} | "
+                             f"P/L hari ini ${daily_pnl:+.2f} | loss streak {risk._consecutive_losses}")
+                    last_status_log = time.time()
             except Exception as e:
                 log.error(f"[LOOP ERROR] {e}")
 
