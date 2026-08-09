@@ -147,6 +147,18 @@ def interactive_setup():
         ("Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
         ("Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
+        # --- PROTEKSI ---
+        ("Trailing Stop", "config.TRAILING_STOP_ENABLED", "ON" if config.TRAILING_STOP_ENABLED else "OFF"),
+        ("Break-Even", "config.BREAK_EVEN_ENABLED", "ON" if config.BREAK_EVEN_ENABLED else "OFF"),
+        ("Partial Close", "config.PARTIAL_CLOSE_ENABLED", "ON" if config.PARTIAL_CLOSE_ENABLED else "OFF"),
+        ("Recovery Mode", "config.RECOVERY_MODE_ENABLED", "ON" if config.RECOVERY_MODE_ENABLED else "OFF"),
+        ("Max Consec. Loss", "config.MAX_CONSECUTIVE_LOSSES", str(config.MAX_CONSECUTIVE_LOSSES)),
+        ("Pause Setelah Loss (mnt)", "config.PAUSE_AFTER_LOSSES_MINUTES", str(config.PAUSE_AFTER_LOSSES_MINUTES)),
+        ("Recovery Lot Mult", "config.RECOVERY_LOT_MULTIPLIER", str(config.RECOVERY_LOT_MULTIPLIER)),
+        ("Session Filter", "config.SESSION_FILTER_ENABLED", "ON" if config.SESSION_FILTER_ENABLED else "OFF"),
+        ("Weekend Close", "config.WEEKEND_CLOSE_ENABLED", "ON" if config.WEEKEND_CLOSE_ENABLED else "OFF"),
+        ("MTF Analysis", "config.MTF_ANALYSIS_ENABLED", "ON" if config.MTF_ANALYSIS_ENABLED else "OFF"),
+        ("Fundamental", "config.FUNDAMENTAL_ANALYSIS_ENABLED", "ON" if config.FUNDAMENTAL_ANALYSIS_ENABLED else "OFF"),
     ]
 
     # Daftar preset era (dari config.ERA_PRESETS)
