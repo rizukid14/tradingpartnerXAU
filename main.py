@@ -51,6 +51,8 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--spread-max-xau", type=float, help="Spread filter max XAU (pts)")
     p.add_argument("--cooldown", type=int, help="Cooldown antar trade (detik)")
     p.add_argument("--telegram", choices=["on", "off"], help="Telegram notifikasi on/off")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     args = p.parse_args(argv)
 
     applied = []
@@ -100,7 +102,81 @@ def parse_cli_overrides(argv=None):
         config.TELEGRAM_ENABLED = (args.telegram == "on")
         applied.append(f"TELEGRAM_ENABLED={config.TELEGRAM_ENABLED}")
 
-    return applied
+    return applied, getattr(args, "yes", False)
+
+
+def interactive_setup():
+    """
+    Tampilkan setting aktif + izinkan user mengubah sebelum bot jalan.
+    Dipanggil di main() sebelum koneksi MT5. User bisa:
+      - ketik nomor untuk mengubah setting
+      - 'start' / enter kosong untuk mulai
+      - 'q' untuk batal
+    """
+    print()
+    print("=" * 60)
+    print("  ⚙️  SETTING BOT SEBELUM JALAN (sesi ini saja)")
+    print("=" * 60)
+
+    settings = [
+        ("Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
+        ("Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
+        ("Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
+        ("Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
+        ("Max Posisi", "config.MAX_OPEN_POSITIONS", str(config.MAX_OPEN_POSITIONS)),
+        ("Weekend Trading", "config.WEEKEND_TRADING_ENABLED", "ON" if config.WEEKEND_TRADING_ENABLED else "OFF"),
+        ("Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
+        ("Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
+        ("Spread Max BTC (pts)", "config.MAX_SPREAD_POINTS_BTC", str(config.MAX_SPREAD_POINTS_BTC)),
+        ("Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
+        ("Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
+        ("Telegram", "config.TELEGRAM_ENABLED", "ON" if config.TELEGRAM_ENABLED else "OFF"),
+    ]
+
+    while True:
+        print("-" * 60)
+        for i, (label, attr, val) in enumerate(settings, 1):
+            print(f"  {i:2d}. {label:<22} : {val}")
+        print("-" * 60)
+        print("  Ketik nomor untuk ubah | 'start' / Enter = mulai | 'q' = batal")
+        choice = input("  > ").strip().lower()
+
+        if choice in ("q", "quit", "exit"):
+            print("👋 Dibatalkan. Bot tidak dijalankan.")
+            sys.exit(0)
+        if choice in ("", "start", "s", "y"):
+            break
+
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(settings):
+                label, attr, _ = settings[idx]
+                new_val = input(f"  {label} baru (kosong = batal): ").strip()
+                if not new_val:
+                    continue
+                try:
+                    if "DRY_RUN" in attr:
+                        config.DRY_RUN = new_val.lower() in ("1", "true", "yes", "live", "on")
+                    elif "ENABLED" in attr:
+                        setattr(config, attr.split(".")[1], new_val.lower() in ("1", "true", "yes", "on"))
+                    elif "THRESHOLD" in attr or "RISK" in attr or "LOSS" in attr or "SPREAD" in attr:
+                        setattr(config, attr.split(".")[1], float(new_val))
+                    else:
+                        setattr(config, attr.split(".")[1], int(new_val))
+                    # refresh tampilan
+                    settings[idx] = (label, attr,
+                                     "DRY RUN" if (attr == "config.DRY_RUN" and config.DRY_RUN)
+                                     else ("LIVE" if attr == "config.DRY_RUN" else
+                                           ("ON" if (config.__dict__.get(attr.split('.')[1]) is True) else
+                                            ("OFF" if config.__dict__.get(attr.split('.')[1]) is False else
+                                             str(config.__dict__.get(attr.split('.')[1]))))))
+                    print(f"  ✅ {label} diubah.")
+                except ValueError:
+                    print("  ❌ Nilai tidak valid.")
+                continue
+            print("  ❌ Nomor tidak valid.")
+        else:
+            print("  ❌ Pilihan tidak dikenali.")
 
 
 
@@ -356,7 +432,7 @@ def run_trading_cycle():
 
 def main():
     # Apply CLI overrides (sesi saja) sebelum bot jalan
-    cli_applied = parse_cli_overrides()
+    cli_applied, skip_prompt = parse_cli_overrides()
 
     # Setup TeeLogger to save all terminal logs
     if getattr(config, "LOG_FILE", None):
@@ -373,6 +449,10 @@ def main():
     if cli_applied:
         print("⚙️  [CLI OVERRIDE] " + " | ".join(cli_applied))
         print("-" * 60)
+
+    # Prompt interaktif setting — kecuali --yes (langsung jalan)
+    if not skip_prompt:
+        interactive_setup()
 
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
