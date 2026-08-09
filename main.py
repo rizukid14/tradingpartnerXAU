@@ -26,6 +26,83 @@ risk = RiskEngine()
 macro = MacroAnalyst()
 
 
+def parse_cli_overrides(argv=None):
+    """
+    Parse CLI flags untuk override config sebelum bot jalan (sesi saja, tidak disimpan).
+
+    Contoh:
+      python main.py --dry-run --risk-percent-btc 1.0 --max-daily-loss 30
+      python main.py --live --weekend-trading off --threshold-btc 1.0
+
+    Return dict {config_attr: value} yang sudah di-set ke config.
+    """
+    import argparse
+    p = argparse.ArgumentParser(description="Trading bot MT5 — override config via CLI (sesi saja).")
+    p.add_argument("--dry-run", action="store_true", help="Mode dry-run (sinyal saja, tanpa order)")
+    p.add_argument("--live", action="store_true", help="Mode live (kirim order beneran)")
+    p.add_argument("--risk-percent-btc", type=float, help="Risk % equity per trade BTC (mis. 1.5)")
+    p.add_argument("--risk-percent-xau", type=float, help="Risk % equity per trade XAU (mis. 0.5)")
+    p.add_argument("--max-daily-loss", type=float, help="Batas kerugian harian USD (mis. 50)")
+    p.add_argument("--max-positions", type=int, help="Max posisi open (mis. 6)")
+    p.add_argument("--weekend-trading", choices=["on", "off"], help="Trading di weekend on/off")
+    p.add_argument("--threshold-btc", type=float, help="Confidence threshold BTC (mis. 1.2)")
+    p.add_argument("--threshold-xau", type=float, help="Confidence threshold XAU (mis. 1.0)")
+    p.add_argument("--spread-max-btc", type=float, help="Spread filter max BTC (pts)")
+    p.add_argument("--spread-max-xau", type=float, help="Spread filter max XAU (pts)")
+    p.add_argument("--cooldown", type=int, help="Cooldown antar trade (detik)")
+    p.add_argument("--telegram", choices=["on", "off"], help="Telegram notifikasi on/off")
+    args = p.parse_args(argv)
+
+    applied = []
+
+    if args.dry_run and args.live:
+        print("❌ [CLI] Tidak bisa --dry-run dan --live bersamaan.")
+        sys.exit(1)
+
+    if args.dry_run:
+        config.DRY_RUN = True
+        applied.append("DRY_RUN=True")
+    elif args.live:
+        config.DRY_RUN = False
+        applied.append("DRY_RUN=False")
+
+    if args.risk_percent_btc is not None:
+        config.RISK_PERCENT_BTC = args.risk_percent_btc
+        applied.append(f"RISK_PERCENT_BTC={args.risk_percent_btc}")
+    if args.risk_percent_xau is not None:
+        config.RISK_PERCENT_XAU = args.risk_percent_xau
+        applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
+    if args.max_daily_loss is not None:
+        config.MAX_DAILY_LOSS_USD = args.max_daily_loss
+        applied.append(f"MAX_DAILY_LOSS_USD={args.max_daily_loss}")
+    if args.max_positions is not None:
+        config.MAX_OPEN_POSITIONS = args.max_positions
+        applied.append(f"MAX_OPEN_POSITIONS={args.max_positions}")
+    if args.weekend_trading:
+        config.WEEKEND_TRADING_ENABLED = (args.weekend_trading == "on")
+        applied.append(f"WEEKEND_TRADING_ENABLED={config.WEEKEND_TRADING_ENABLED}")
+    if args.threshold_btc is not None:
+        config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC = args.threshold_btc
+        applied.append(f"CONFIDENCE_CONSENSUS_THRESHOLD_BTC={args.threshold_btc}")
+    if args.threshold_xau is not None:
+        config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU = args.threshold_xau
+        applied.append(f"CONFIDENCE_CONSENSUS_THRESHOLD_XAU={args.threshold_xau}")
+    if args.spread_max_btc is not None:
+        config.MAX_SPREAD_POINTS_BTC = args.spread_max_btc
+        applied.append(f"MAX_SPREAD_POINTS_BTC={args.spread_max_btc}")
+    if args.spread_max_xau is not None:
+        config.MAX_SPREAD_POINTS_XAU = args.spread_max_xau
+        applied.append(f"MAX_SPREAD_POINTS_XAU={args.spread_max_xau}")
+    if args.cooldown is not None:
+        config.TRADE_COOLDOWN_SECONDS = args.cooldown
+        applied.append(f"TRADE_COOLDOWN_SECONDS={args.cooldown}")
+    if args.telegram:
+        config.TELEGRAM_ENABLED = (args.telegram == "on")
+        applied.append(f"TELEGRAM_ENABLED={config.TELEGRAM_ENABLED}")
+
+    return applied
+
+
 
 class TeeLogger(object):
     """Redirects stdout and stderr to both the console and a log file with auto-size rotation."""
@@ -278,6 +355,9 @@ def run_trading_cycle():
 
 
 def main():
+    # Apply CLI overrides (sesi saja) sebelum bot jalan
+    cli_applied = parse_cli_overrides()
+
     # Setup TeeLogger to save all terminal logs
     if getattr(config, "LOG_FILE", None):
         tee_logger = TeeLogger(config.LOG_FILE)
@@ -288,6 +368,11 @@ def main():
     print("=" * 60)
     print("    BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
     print("=" * 60)
+
+    # Tampilkan override CLI kalau ada
+    if cli_applied:
+        print("⚙️  [CLI OVERRIDE] " + " | ".join(cli_applied))
+        print("-" * 60)
 
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
