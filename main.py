@@ -26,6 +26,215 @@ risk = RiskEngine()
 macro = MacroAnalyst()
 
 
+def parse_cli_overrides(argv=None):
+    """
+    Parse CLI flags untuk override config sebelum bot jalan (sesi saja, tidak disimpan).
+
+    Contoh:
+      python main.py --dry-run --risk-percent-btc 1.0 --max-daily-loss 30
+      python main.py --live --weekend-trading off --threshold-btc 1.0
+
+    Return dict {config_attr: value} yang sudah di-set ke config.
+    """
+    import argparse
+    p = argparse.ArgumentParser(description="Trading bot MT5 — override config via CLI (sesi saja).")
+    p.add_argument("--dry-run", action="store_true", help="Mode dry-run (sinyal saja, tanpa order)")
+    p.add_argument("--live", action="store_true", help="Mode live (kirim order beneran)")
+    p.add_argument("--risk-percent-btc", type=float, help="Risk % equity per trade BTC (mis. 1.5)")
+    p.add_argument("--risk-percent-xau", type=float, help="Risk % equity per trade XAU (mis. 0.5)")
+    p.add_argument("--max-daily-loss", type=float, help="Batas kerugian harian USD (mis. 50)")
+    p.add_argument("--max-positions", type=int, help="Max posisi open (mis. 6)")
+    p.add_argument("--weekend-trading", choices=["on", "off"], help="Trading di weekend on/off")
+    p.add_argument("--threshold-btc", type=float, help="Confidence threshold BTC (mis. 1.2)")
+    p.add_argument("--threshold-xau", type=float, help="Confidence threshold XAU (mis. 1.0)")
+    p.add_argument("--spread-max-btc", type=float, help="Spread filter max BTC (pts)")
+    p.add_argument("--spread-max-xau", type=float, help="Spread filter max XAU (pts)")
+    p.add_argument("--cooldown", type=int, help="Cooldown antar trade (detik)")
+    p.add_argument("--telegram", choices=["on", "off"], help="Telegram notifikasi on/off")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
+    p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
+                   help="Pakai preset era (v1 / v2 / v3)")
+    args = p.parse_args(argv)
+
+    applied = []
+
+    if args.dry_run and args.live:
+        print("❌ [CLI] Tidak bisa --dry-run dan --live bersamaan.")
+        sys.exit(1)
+
+    # Preset era dulu (paling awal), lalu flag eksplisit menimpa
+    if getattr(args, "era", None):
+        preset = getattr(config, "ERA_PRESETS", {}).get(args.era)
+        if preset:
+            for attr, val in preset.items():
+                if attr == "label":
+                    continue
+                if hasattr(config, attr):
+                    setattr(config, attr, val)
+            applied.append(f"ERA={args.era}")
+
+    if args.dry_run:
+        config.DRY_RUN = True
+        applied.append("DRY_RUN=True")
+    elif args.live:
+        config.DRY_RUN = False
+        applied.append("DRY_RUN=False")
+
+    if args.risk_percent_btc is not None:
+        config.RISK_PERCENT_BTC = args.risk_percent_btc
+        applied.append(f"RISK_PERCENT_BTC={args.risk_percent_btc}")
+    if args.risk_percent_xau is not None:
+        config.RISK_PERCENT_XAU = args.risk_percent_xau
+        applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
+    if args.max_daily_loss is not None:
+        config.MAX_DAILY_LOSS_USD = args.max_daily_loss
+        applied.append(f"MAX_DAILY_LOSS_USD={args.max_daily_loss}")
+    if args.max_positions is not None:
+        config.MAX_OPEN_POSITIONS = args.max_positions
+        applied.append(f"MAX_OPEN_POSITIONS={args.max_positions}")
+    if args.weekend_trading:
+        config.WEEKEND_TRADING_ENABLED = (args.weekend_trading == "on")
+        applied.append(f"WEEKEND_TRADING_ENABLED={config.WEEKEND_TRADING_ENABLED}")
+    if args.threshold_btc is not None:
+        config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC = args.threshold_btc
+        applied.append(f"CONFIDENCE_CONSENSUS_THRESHOLD_BTC={args.threshold_btc}")
+    if args.threshold_xau is not None:
+        config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU = args.threshold_xau
+        applied.append(f"CONFIDENCE_CONSENSUS_THRESHOLD_XAU={args.threshold_xau}")
+    if args.spread_max_btc is not None:
+        config.MAX_SPREAD_POINTS_BTC = args.spread_max_btc
+        applied.append(f"MAX_SPREAD_POINTS_BTC={args.spread_max_btc}")
+    if args.spread_max_xau is not None:
+        config.MAX_SPREAD_POINTS_XAU = args.spread_max_xau
+        applied.append(f"MAX_SPREAD_POINTS_XAU={args.spread_max_xau}")
+    if args.cooldown is not None:
+        config.TRADE_COOLDOWN_SECONDS = args.cooldown
+        applied.append(f"TRADE_COOLDOWN_SECONDS={args.cooldown}")
+    if args.telegram:
+        config.TELEGRAM_ENABLED = (args.telegram == "on")
+        applied.append(f"TELEGRAM_ENABLED={config.TELEGRAM_ENABLED}")
+
+    return applied, getattr(args, "yes", False)
+
+
+def interactive_setup():
+    """
+    Tampilkan setting aktif + izinkan user mengubah sebelum bot jalan.
+    Dipanggil di main() sebelum koneksi MT5. User bisa:
+      - ketik nomor untuk mengubah setting
+      - 'start' / enter kosong untuk mulai
+      - 'q' untuk batal
+    """
+    print()
+    print("=" * 60)
+    print("  ⚙️  SETTING BOT SEBELUM JALAN (sesi ini saja)")
+    print("=" * 60)
+
+    settings = [
+        ("Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
+        ("Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
+        ("Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
+        ("Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
+        ("Max Posisi", "config.MAX_OPEN_POSITIONS", str(config.MAX_OPEN_POSITIONS)),
+        ("Weekend Trading", "config.WEEKEND_TRADING_ENABLED", "ON" if config.WEEKEND_TRADING_ENABLED else "OFF"),
+        ("Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
+        ("Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
+        ("Spread Max BTC (pts)", "config.MAX_SPREAD_POINTS_BTC", str(config.MAX_SPREAD_POINTS_BTC)),
+        ("Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
+        ("Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
+        ("Telegram", "config.TELEGRAM_ENABLED", "ON" if config.TELEGRAM_ENABLED else "OFF"),
+        ("Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
+        ("Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
+        ("Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
+        # --- PROTEKSI ---
+        ("Trailing Stop", "config.TRAILING_STOP_ENABLED", "ON" if config.TRAILING_STOP_ENABLED else "OFF"),
+        ("Break-Even", "config.BREAK_EVEN_ENABLED", "ON" if config.BREAK_EVEN_ENABLED else "OFF"),
+        ("Partial Close", "config.PARTIAL_CLOSE_ENABLED", "ON" if config.PARTIAL_CLOSE_ENABLED else "OFF"),
+        ("Recovery Mode", "config.RECOVERY_MODE_ENABLED", "ON" if config.RECOVERY_MODE_ENABLED else "OFF"),
+        ("Max Consec. Loss", "config.MAX_CONSECUTIVE_LOSSES", str(config.MAX_CONSECUTIVE_LOSSES)),
+        ("Pause Setelah Loss (mnt)", "config.PAUSE_AFTER_LOSSES_MINUTES", str(config.PAUSE_AFTER_LOSSES_MINUTES)),
+        ("Recovery Lot Mult", "config.RECOVERY_LOT_MULTIPLIER", str(config.RECOVERY_LOT_MULTIPLIER)),
+        ("Session Filter", "config.SESSION_FILTER_ENABLED", "ON" if config.SESSION_FILTER_ENABLED else "OFF"),
+        ("Weekend Close", "config.WEEKEND_CLOSE_ENABLED", "ON" if config.WEEKEND_CLOSE_ENABLED else "OFF"),
+        ("MTF Analysis", "config.MTF_ANALYSIS_ENABLED", "ON" if config.MTF_ANALYSIS_ENABLED else "OFF"),
+        ("Fundamental", "config.FUNDAMENTAL_ANALYSIS_ENABLED", "ON" if config.FUNDAMENTAL_ANALYSIS_ENABLED else "OFF"),
+    ]
+
+    # Daftar preset era (dari config.ERA_PRESETS)
+    presets = getattr(config, "ERA_PRESETS", {})
+
+    while True:
+        print("-" * 60)
+        for i, (label, attr, val) in enumerate(settings, 1):
+            print(f"  {i:2d}. {label:<22} : {val}")
+        if presets:
+            print("-" * 60)
+            print("  PRESET ERA:")
+            for name, p in presets.items():
+                print(f"     [{name}] {p.get('label', name)}")
+        print("-" * 60)
+        print("  Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
+        choice = input("  > ").strip().lower()
+
+        if choice in ("q", "quit", "exit"):
+            print("👋 Dibatalkan. Bot tidak dijalankan.")
+            sys.exit(0)
+        if choice in ("", "start", "s", "y"):
+            break
+
+        # Preset era
+        if presets and choice in presets:
+            preset = presets[choice]
+            print(f"  ⚙️  Menerapkan preset '{choice}' ({preset.get('label', '')})...")
+            for attr, val in preset.items():
+                if attr == "label":
+                    continue
+                if hasattr(config, attr):
+                    setattr(config, attr, val)
+            # refresh tampilan
+            for i, (label, attr, _) in enumerate(settings):
+                key = attr.split(".")[1]
+                v = getattr(config, key, None)
+                settings[i] = (label, attr,
+                               "DRY RUN" if (attr == "config.DRY_RUN" and v is True)
+                               else ("LIVE" if attr == "config.DRY_RUN" else
+                                     ("ON" if v is True else ("OFF" if v is False else str(v)))))
+            print("  ✅ Preset diterapkan.")
+            continue
+
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(settings):
+                label, attr, _ = settings[idx]
+                new_val = input(f"  {label} baru (kosong = batal): ").strip()
+                if not new_val:
+                    continue
+                try:
+                    if "DRY_RUN" in attr:
+                        config.DRY_RUN = new_val.lower() in ("1", "true", "yes", "live", "on")
+                    elif "ENABLED" in attr:
+                        setattr(config, attr.split(".")[1], new_val.lower() in ("1", "true", "yes", "on"))
+                    elif "THRESHOLD" in attr or "RISK" in attr or "LOSS" in attr or "SPREAD" in attr:
+                        setattr(config, attr.split(".")[1], float(new_val))
+                    else:
+                        setattr(config, attr.split(".")[1], int(new_val))
+                    # refresh tampilan
+                    settings[idx] = (label, attr,
+                                     "DRY RUN" if (attr == "config.DRY_RUN" and config.DRY_RUN)
+                                     else ("LIVE" if attr == "config.DRY_RUN" else
+                                           ("ON" if (config.__dict__.get(attr.split('.')[1]) is True) else
+                                            ("OFF" if config.__dict__.get(attr.split('.')[1]) is False else
+                                             str(config.__dict__.get(attr.split('.')[1]))))))
+                    print(f"  ✅ {label} diubah.")
+                except ValueError:
+                    print("  ❌ Nilai tidak valid.")
+                continue
+            print("  ❌ Nomor tidak valid.")
+        else:
+            print("  ❌ Pilihan tidak dikenali.")
+
+
 
 class TeeLogger(object):
     """Redirects stdout and stderr to both the console and a log file with auto-size rotation."""
@@ -67,7 +276,7 @@ def run_trading_cycle():
         print(reason)
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (50 candles of the active timeframe — M5 for XAU, H1 for BTC)
+    # 1. Fetch market data (50 candles of the active timeframe — M5 for XAU, M30 for BTC)
     df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=50)
     if df is None or len(df) == 0:
         print("❌ Gagal mendapatkan market data. Melewatkan siklus ini.")
@@ -81,30 +290,32 @@ def run_trading_cycle():
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst H1/M5, Kurtosis M5/M1)
-    try:
-        from src.analytics import market_randomness
-        rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
-        ft = rand_info.get('fat_tail', {})
-        tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
-        print(f"🔬 [QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
-              f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
-              f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
-              f"Status: {'🚫 BLOCKED (Pure Random Walk)' if rand_info['is_random'] else '✅ PASSED'}")
-    except Exception as e:
-        print(f"⚠️ [QUANT MATH ERROR] {e}")
+    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst M30/M5, Kurtosis M30/M1)
+    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
+        try:
+            from src.analytics import market_randomness
+            rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
+            ft = rand_info.get('fat_tail', {})
+            tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
+            print(f"🔬 [QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
+                  f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
+                  f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
+                  f"Status: {'🚫 BLOCKED (Pure Random Walk)' if rand_info['is_random'] else '✅ PASSED'}")
+        except Exception as e:
+            print(f"⚠️ [QUANT MATH ERROR] {e}")
 
     # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
-    try:
-        from src.analytics import quant_probability
-        tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
-        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-        print(f"🎲 [QUANT PROB] Monte Carlo (1000 paths): "
-              f"🟢 UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
-              f"🔴 DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
-              f"Est. Horizon: {q_res['estimated_time_str']}")
-    except Exception as e:
-        print(f"⚠️ [QUANT PROB ERROR] {e}")
+    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
+        try:
+            from src.analytics import quant_probability
+            tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+            print(f"🎲 [QUANT PROB] Monte Carlo (1000 paths): "
+                  f"🟢 UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
+                  f"🔴 DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
+                  f"Est. Horizon: {q_res['estimated_time_str']}")
+        except Exception as e:
+            print(f"⚠️ [QUANT PROB ERROR] {e}")
     
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary
     try:
@@ -165,10 +376,11 @@ def run_trading_cycle():
     # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
     # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
     # will receive the (possibly stale) cache now and the next cycle gets the new one.
-    try:
-        forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
-    except Exception as e:
-        print(f"[FORECAST WARNING] {e}")
+    if getattr(config, "FORECAST_ENABLED", True):
+        try:
+            forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
+        except Exception as e:
+            print(f"[FORECAST WARNING] {e}")
 
     print("🧠 Mengirim data ke OpenAI, Gemini, dan Claude...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
@@ -197,13 +409,14 @@ def run_trading_cycle():
             risk.record_position_closed(t_ticket, pre_profit)
 
     # 5.5 Multi-Horizon Forecast Context (Informational Only)
-    try:
-        is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
-            config.SYMBOL, tick, result, df
-        )
-        print(f"🔮 [FORECAST INFO] {f_reason}")
-    except Exception as e:
-        print(f"[FORECAST INFO WARNING] {e}")
+    if getattr(config, "FORECAST_ENABLED", True):
+        try:
+            is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
+                config.SYMBOL, tick, result, df
+            )
+            print(f"🔮 [FORECAST INFO] {f_reason}")
+        except Exception as e:
+            print(f"[FORECAST INFO WARNING] {e}")
 
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
     max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
@@ -278,6 +491,9 @@ def run_trading_cycle():
 
 
 def main():
+    # Apply CLI overrides (sesi saja) sebelum bot jalan
+    cli_applied, skip_prompt = parse_cli_overrides()
+
     # Setup TeeLogger to save all terminal logs
     if getattr(config, "LOG_FILE", None):
         tee_logger = TeeLogger(config.LOG_FILE)
@@ -288,6 +504,15 @@ def main():
     print("=" * 60)
     print("    BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
     print("=" * 60)
+
+    # Tampilkan override CLI kalau ada
+    if cli_applied:
+        print("⚙️  [CLI OVERRIDE] " + " | ".join(cli_applied))
+        print("-" * 60)
+
+    # Prompt interaktif setting — kecuali --yes (langsung jalan)
+    if not skip_prompt:
+        interactive_setup()
 
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
@@ -364,6 +589,34 @@ def main():
 
                 # Trailing stop + break-even + partial close
                 position_manager.manage_all_positions()
+
+                # Detect positions closed by MT5 (SL/TP/manual) in real time.
+                # Returns newly closed deals → alert Telegram immediately,
+                # instead of waiting for the next candle cycle.
+                try:
+                    new_closed = risk.sync_closed_positions()
+                    for deal in new_closed:
+                        d_ticket = deal.get("ticket")
+                        d_symbol = deal.get("symbol", config.SYMBOL)
+                        d_profit = deal.get("profit", 0.0)
+                        d_reason = deal.get("reason")
+                        d_comment = deal.get("comment", "")
+                        d_type = deal.get("type", "")
+                        print(f"🔔 [CLOSE DETECTED] #{d_ticket} {d_symbol} {d_type} "
+                              f"ditutup (P/L: {d_profit:+.2f}, reason: {d_reason or 'unknown'})")
+                        try:
+                            tg.alert_trade_closed(
+                                ticket=d_ticket,
+                                symbol=d_symbol,
+                                profit=d_profit,
+                                reason_code=d_reason,
+                                comment=d_comment,
+                                pos_type=d_type,
+                            )
+                        except Exception as e:
+                            print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
+                except Exception as e:
+                    print(f"[CLOSE SYNC ERROR] {e}")
                 
                 # Weekend position management
                 weekend_actions = risk.check_weekend_positions()

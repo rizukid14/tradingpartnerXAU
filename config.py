@@ -120,6 +120,52 @@ MIN_CONSENSUS_MODELS = 2  # minimum models voting the same direction
 DEBATE_ENABLED = False
 
 # ============================================================================
+#  FEATURE TOGGLES (untuk A/B test & balik ke titik stable era lama)
+# ============================================================================
+# Quant analysis: Hurst Exponent + fat-tail kurtosis + Monte Carlo probability.
+# Ditambahkan di era modern (commit 259708d). Legacy (profit 100% dulu) TANPA ini.
+QUANT_ANALYSIS_ENABLED = True
+
+# Multi-Horizon Forecast Engine (T+15m/T+60m XAU, T+4h/T+D1 BTC) — informational.
+# Sudah ada sejak era legacy (commit 949ce14), tapi bisa di-off untuk A/B test.
+FORECAST_ENABLED = True
+
+# Preset era — untuk balik cepat ke konfigurasi yang mirip era tertentu.
+# Dipakai oleh interactive_setup (menu sebelum run) & --era CLI.
+#   "v1": era profit 100% (legacy) — DeepSeek, consensus 2/3, lot statis, NO quant
+#   "v2": = v1 + state/test telegram (fungsional sama dengan v1)
+#   "v3": era sekarang (modern) — Claude, weighted consensus, risk-based lot, quant ON
+# CATATAN: preset hanya mengubah flag yang masih ada di kode (quant/forecast/
+# debate/threshold). Model (DeepSeek→Claude) & mekanisme consensus (2/3→weighted)
+# sudah tertanam di kode dan tidak bisa di-revert via config.
+ERA_PRESETS = {
+    "v1": {
+        "label": "V1 — era profit 100% (legacy)",
+        "QUANT_ANALYSIS_ENABLED": False,
+        "FORECAST_ENABLED": True,
+        "DEBATE_ENABLED": True,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
+    },
+    "v2": {
+        "label": "V2 — legacy-2 (= v1 + state)",
+        "QUANT_ANALYSIS_ENABLED": False,
+        "FORECAST_ENABLED": True,
+        "DEBATE_ENABLED": True,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
+    },
+    "v3": {
+        "label": "V3 — modern (Claude + quant, sekarang)",
+        "QUANT_ANALYSIS_ENABLED": True,
+        "FORECAST_ENABLED": True,
+        "DEBATE_ENABLED": False,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2,
+    },
+}
+
+# ============================================================================
 #                     PROTECTION & EXECUTION LAYER
 #           (Inspired by XAU-60 execution engine & xaubot-ai risk system)
 # ============================================================================
@@ -230,6 +276,13 @@ WEEKEND_CLOSE_ENABLED = True
 WEEKEND_CLOSE_PROFIT_MIN_USD = 1.0   # Close if profit >= $1 and near weekend close
 WEEKEND_CLOSE_HOURS_BEFORE = 2.0     # Start checking 2 hours before Friday close
 WEEKEND_MAX_LOSS_TO_HOLD_USD = 20.0  # Max loss $ to hold over weekend (larger = cut loss)
+
+# --- WEEKEND TRADING (crypto/BTC) ---
+# False = TIDAK membuka posisi baru di weekend sama sekali (BTC spread lebar,
+# M30 terlalu lambat — weekend mending istirahat). Posisi yang sudah open
+# tetap di-manage (trailing/BE/close) — hanya entry baru yang diblokir.
+# Berlaku untuk SEMUA symbol selama weekend (Jumat >= 22:00 WIB - Senin 00:00 WIB).
+WEEKEND_TRADING_ENABLED = False
 
 # --- POSITION MANAGER TICK FRESHNESS ---
 # A position whose symbol has not produced a fresh tick within this many
