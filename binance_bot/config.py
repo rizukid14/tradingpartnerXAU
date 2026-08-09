@@ -18,9 +18,9 @@ BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 # Testnet = uang virtual (testnet.binance.vision). False = live (uang asli).
 TESTNET = os.getenv("TESTNET", "true").lower() == "true"
 
-# REST base URL — ikut changelog Binance: /api/v3/* (v1 sudah retire)
-REST_BASE = ("https://testnet.binance.vision/api" if TESTNET
-             else "https://api.binance.com/api")
+# REST base URL — path endpoint sudah include /api/v3/* (jangan tambah /api lagi)
+REST_BASE = ("https://testnet.binance.vision" if TESTNET
+             else "https://api.binance.com")
 
 # DRY_RUN = True → sinyal dihitung, order TIDAK dikirim. False = order beneran.
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"

@@ -35,6 +35,11 @@ import config
 
 log = logging.getLogger("binance_bot")
 
+# User-Agent browser — testnet Binance memblokir user-agent 'Python-urllib'
+# (WAF anti-bot). Tanpa ini, semua request dapat HTTP 404.
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
 
 def _http_get(path, params=None, signed=False):
     """GET request ke Binance REST. Return parsed JSON, atau None kalau error."""
@@ -54,11 +59,14 @@ def _http_get(path, params=None, signed=False):
         ).hexdigest()
         query += f"&signature={signature}"
         url += "?" + query
-        req = urllib.request.Request(url, headers={"X-MBX-APIKEY": config.BINANCE_API_KEY})
+        req = urllib.request.Request(
+            url,
+            headers={"X-MBX-APIKEY": config.BINANCE_API_KEY, "User-Agent": _UA},
+        )
     else:
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
 
     # Retry dengan backoff (rate limit / network)
     for attempt in range(3):
@@ -99,8 +107,11 @@ def _http_post(path, params):
     query += f"&signature={signature}"
     url = config.REST_BASE + path + "?" + query
 
-    req = urllib.request.Request(url, method="POST",
-                                 headers={"X-MBX-APIKEY": config.BINANCE_API_KEY})
+    req = urllib.request.Request(
+        url,
+        method="POST",
+        headers={"X-MBX-APIKEY": config.BINANCE_API_KEY, "User-Agent": _UA},
+    )
     for attempt in range(3):
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
