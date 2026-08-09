@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: E402
 config.DRY_RUN = True
 
-from src.core import binance_connector as connector  # noqa: E402
+from src.core import ccxt_connector as connector  # noqa: E402
 from src.core.risk_engine import RiskEngine  # noqa: E402
 from src.core import consensus  # noqa: E402
 
@@ -51,6 +51,7 @@ def test_sizing():
     connector.get_account_balance_usdt = lambda: 12.0
     connector.round_qty = lambda s, q: round(int(q / 0.00001) * 0.00001, 5)
     connector.validate_order = lambda s, q, p, sl_pct=None: (True, "")
+    connector.get_symbol_info = lambda s: {"symbol": s, "filters": {"min_qty": 0.00001, "min_notional": 0.0}}
     config.MIN_NOTIONAL_USD = 1.0
     qty, msg = engine.get_effective_qty(65000.0, 1.0)
     if qty is None:

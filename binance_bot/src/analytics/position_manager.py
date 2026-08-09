@@ -15,7 +15,7 @@ Trailing/BE aktif bisa ditambahkan di fase 2.
 import logging
 
 import config
-from src.core import binance_connector as connector
+from src.core import ccxt_connector as connector
 
 log = logging.getLogger("binance_bot")
 

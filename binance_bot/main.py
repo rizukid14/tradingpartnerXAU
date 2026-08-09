@@ -13,7 +13,7 @@ import time
 from datetime import datetime
 
 import config
-from src.core import binance_connector as connector, llm_client, consensus
+from src.core import ccxt_connector as connector, llm_client, consensus
 from src.core.risk_engine import RiskEngine
 from src.analytics import position_manager
 

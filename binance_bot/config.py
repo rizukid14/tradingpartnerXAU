@@ -10,12 +10,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# BINANCE API
+# BINANCE / TOKOCRYPTO API
 # ---------------------------------------------------------------------------
+# Exchange: "tokocrypto" (default — legal di Indonesia, tidak diblokir ISP)
+#           "binance" (global — perlu VPN kalau diblokir)
+EXCHANGE = os.getenv("EXCHANGE", "tokocrypto").lower()
+
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 
-# Testnet = uang virtual (testnet.binance.vision). False = live (uang asli).
+# Testnet = uang virtual (hanya berlaku utk Binance; TokoCrypto tidak punya testnet).
 TESTNET = os.getenv("TESTNET", "true").lower() == "true"
 
 # REST base URL — path endpoint sudah include /api/v3/* (jangan tambah /api lagi)

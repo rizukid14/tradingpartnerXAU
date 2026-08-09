@@ -18,7 +18,7 @@ from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
 
 import config
-from src.core import binance_connector as connector
+from src.core import ccxt_connector as connector
 
 log = logging.getLogger("binance_bot")
 
