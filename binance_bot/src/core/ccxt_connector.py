@@ -140,7 +140,9 @@ def get_symbol_info(symbol):
             "filters": {
                 "step_size": (limits.get("amount") or {}).get("min") or 0.00001,
                 "min_qty": (limits.get("amount") or {}).get("min") or 0.00001,
-                "min_notional": (limits.get("cost") or {}).get("min") or 5.0,
+                # cost.min sering None di TokoCrypto — biarkan 0, validate_order
+                # pakai config.MIN_NOTIONAL_USD sebagai acuan.
+                "min_notional": (limits.get("cost") or {}).get("min") or 0.0,
                 "tick_size": (limits.get("price") or {}).get("min") or 0.01,
             },
         }

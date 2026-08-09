@@ -42,7 +42,7 @@ RISK_PERCENT = 1.5           # risk per trade dari equity USDT
 MAX_DAILY_LOSS_USD = 3.0     # ~25% dari $12 — ketat (naikkan kalau modal naik)
 MAX_OPEN_POSITIONS = 2
 TRADE_COOLDOWN_SECONDS = 300
-MIN_NOTIONAL_USD = 5.0       # validasi order min (Binance tolak < min notional)
+MIN_NOTIONAL_USD = 0.5       # validasi order min — TokoCrypto min ~Rp10rb (~$0.65), Binance $5
 MAX_SPREAD_PCT = 0.05        # max spread (% dari harga) — mis. 0.05% = $32 di BTC $65k
 
 # ---------------------------------------------------------------------------
