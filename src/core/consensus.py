@@ -215,6 +215,28 @@ def calculate_consensus(decisions):
         if isinstance(tp_val, (int, float)) and tp_val > 0:
             tp_list.append(tp_val)
 
+    # Filter outlier SL/TP: buang nilai yang < 50% dari median model lain.
+    # Contoh: OpenAI kasih SL 30 pts saat Gemini 400 & DeepSeek 305 — SL 30
+    # cuma 10% ATR, menyeret rata-rata ke bawah & bikin lot membengkak.
+    # Median lebih robust daripada mean untuk deteksi anomali.
+    def _reject_low_outliers(values, label):
+        if len(values) <= 2:
+            return values
+        s = sorted(values)
+        n = len(s)
+        median = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+        keep = [v for v in values if v >= 0.5 * median]
+        dropped = [v for v in values if v < 0.5 * median]
+        if not keep:
+            return values  # jangan buang semua kalau median-nya sendiri anomali
+        if dropped:
+            print(f"   ⚠️ Outlier {label} dibuang (median {median:.0f}): "
+                  f"{', '.join(str(int(d)) for d in dropped)}")
+        return keep
+
+    sl_list = _reject_low_outliers(sl_list, "SL")
+    tp_list = _reject_low_outliers(tp_list, "TP")
+
     avg_confidence = float(sum(conf_list) / len(conf_list))
     final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
     final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
