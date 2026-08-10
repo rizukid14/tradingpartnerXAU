@@ -83,6 +83,11 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8765")
 API_TOKEN = os.getenv("API_TOKEN", "")
 
+# Multi-account registry for Telegram AI Agent (overridden via env or custom config)
+ACCOUNTS = {
+    "akun1": {"base_url": API_BASE_URL, "token": API_TOKEN},
+}
+
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
