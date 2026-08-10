@@ -281,7 +281,31 @@ def run_agent_turn(user_text: str, history: list) -> str:
     messages = history + [{"role": "user", "content": user_text}]
 
     while True:
-        response = client.chat.completions.create(model=MODEL, tools=TOOLS, messages=messages)
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                tools=TOOLS,
+                messages=messages,
+                reasoning_effort="none",
+            )
+        except Exception as e:
+            err_str = str(e)
+            if "reasoning_effort" in err_str:
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL,
+                        tools=TOOLS,
+                        messages=messages,
+                        extra_body={"reasoning_effort": "none"},
+                    )
+                except Exception:
+                    response = client.chat.completions.create(
+                        model=MODEL,
+                        tools=TOOLS,
+                        messages=messages,
+                    )
+            else:
+                raise e
         msg = response.choices[0].message
 
         if not msg.tool_calls:
