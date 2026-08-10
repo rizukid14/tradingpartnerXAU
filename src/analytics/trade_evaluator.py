@@ -189,6 +189,23 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
         except Exception as e:
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
 
+    def _get_risk_known_closed(self):
+        """
+        Tickets already accounted for by the risk engine (loss streak / daily
+        P/L). These closes have already been through the trade pipeline once, so
+        the post-mortem must not re-evaluate them after a restart — otherwise
+        every restart re-runs post-mortems on today's closed positions.
+        """
+        try:
+            risk_file = os.path.join(config.DATA_DIR, "risk_state.json")
+            if os.path.exists(risk_file):
+                with open(risk_file, "r") as f:
+                    data = json.load(f)
+                return set(int(t) for t in data.get("known_closed", []))
+        except Exception:
+            pass
+        return set()
+
     def check_and_evaluate_closed_trades(self):
         """
         Fetches today's closed positions from MT5 deal history and evaluates
@@ -197,6 +214,12 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
         closed_deals = connector.get_closed_positions_today()
         if not closed_deals:
             return
+
+        # Seed evaluated_tickets with the risk engine's known_closed so closes
+        # already accounted for (loss streak / daily P/L) are never re-evaluated
+        # after a restart. Tickets are globally unique, so this union is safe
+        # across symbols.
+        known_closed = self._get_risk_known_closed()
 
         # Cache memories we load so we don't reload multiple times in the same loop
         loaded_memories = {}
@@ -210,6 +233,7 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
                 loaded_memories[deal_symbol] = self._load_memory(deal_symbol)
 
             mem = loaded_memories[deal_symbol]
+            mem["evaluated_tickets"] |= known_closed
 
             if ticket in mem["evaluated_tickets"]:
                 continue
