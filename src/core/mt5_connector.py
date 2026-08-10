@@ -577,6 +577,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
             "magic": int(config.MAGIC_NUMBER),  # Unique ID for our bot trades
             "comment": "Multi-LLM Bot",
             "type_filling": fill_policy,
+            "type_time": getattr(mt5, "ORDER_TIME_GTC", 0),
         }
 
     print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
@@ -603,6 +604,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
                 "magic": int(config.MAGIC_NUMBER),
                 "comment": "Multi-LLM Bot",
                 "type_filling": fill_policy,
+                "type_time": getattr(mt5, "ORDER_TIME_GTC", 0),
             }
         alt_res = _send_with_retry(_build_no_sltp, symbol, f"Order {action} {symbol} (No SL/TP)")
         if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
@@ -634,6 +636,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
                 "magic": int(config.MAGIC_NUMBER),
                 "comment": "Multi-LLM Bot",
                 "type_filling": fill_policy,
+                "type_time": getattr(mt5, "ORDER_TIME_GTC", 0),
             }
         alt_res = _send_with_retry(_build_no_sltp_price_zero, symbol, f"Order {action} {symbol} (No SL/TP, Price=0)")
         if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
