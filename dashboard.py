@@ -582,13 +582,41 @@ def _print_summary(events, metrics):
         print(f"   Net P/L: ${metrics['summary']['net_pnl']:+.2f} | Win rate: {wr*100:.1f}%")
 
 
-def serve(host="127.0.0.1", port=8765):
-    """Server lokal: / (HTML) + /api/data (JSON fresh tiap request). No reload di browser."""
+def _send_json(handler, data, status_code=200):
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status_code)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def serve(host="0.0.0.0", port=8765):
+    """Server lokal & REST API untuk bot/tools interaktif."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import urlparse, parse_qs
+    import config
 
     class Handler(BaseHTTPRequestHandler):
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.end_headers()
+
         def do_GET(self):
-            if self.path in ("/", "/index.html", "/dashboard.html"):
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path.rstrip("/")
+            if path == "":
+                path = "/"
+            query_params = parse_qs(parsed_url.query)
+
+            if path in ("/", "/index.html", "/dashboard.html"):
                 _, metrics = _build_metrics()
                 html = render_html(metrics)
                 body = html.encode("utf-8")
@@ -597,31 +625,166 @@ def serve(host="127.0.0.1", port=8765):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            elif self.path == "/api/data":
+
+            elif path == "/api/data":
                 _, metrics = _build_metrics()
-                body = json.dumps(metrics, ensure_ascii=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                _send_json(self, metrics)
+
+            elif path in ("/api/summary", "/api/get_summary"):
+                _, metrics = _build_metrics()
+                summary = dict(metrics.get("summary", {}))
+                summary.update({
+                    "active_symbol": getattr(config, "SYMBOL", "XAUUSD-ECNc"),
+                    "dry_run": getattr(config, "DRY_RUN", False),
+                    "trading_paused": getattr(config, "TRADING_PAUSED", False),
+                    "starting_balance": getattr(config, "STARTING_BALANCE", 1000.0),
+                    "recovery_mode": metrics.get("risk_state", {}).get("recovery_mode", False),
+                    "consecutive_losses": metrics.get("risk_state", {}).get("consecutive_losses", 0),
+                })
+                _send_json(self, {"status": "success", "summary": summary})
+
+            elif path in ("/api/open-positions", "/api/get_open_positions"):
+                positions = []
+                try:
+                    from src.core import mt5_connector as connector
+                    open_pos = connector.get_open_positions(magic=getattr(config, "MAGIC_NUMBER", 20260625))
+                    for p in open_pos:
+                        positions.append({
+                            "ticket": p.ticket,
+                            "symbol": p.symbol,
+                            "type": "BUY" if p.type == 0 else ("SELL" if p.type == 1 else str(p.type)),
+                            "volume": p.volume,
+                            "price_open": p.price_open,
+                            "sl": p.sl,
+                            "tp": p.tp,
+                            "profit": p.profit,
+                            "magic": p.magic,
+                        })
+                except Exception:
+                    _, metrics = _build_metrics()
+                    trades = metrics.get("trades", [])
+                    positions = [t for t in trades if t.get("status") == "open"]
+
+                _send_json(self, {"status": "success", "count": len(positions), "positions": positions})
+
+            elif path in ("/api/recent-trades", "/api/get_recent_trades"):
+                limit = 10
+                if "limit" in query_params:
+                    try:
+                        limit = int(query_params["limit"][0])
+                    except ValueError:
+                        pass
+                _, metrics = _build_metrics()
+                trades = metrics.get("trades", [])
+                recent = trades[-limit:] if trades else []
+                _send_json(self, {"status": "success", "count": len(recent), "trades": recent})
+
+            elif path in ("/api/config", "/api/get_config"):
+                config_data = {
+                    "DRY_RUN": getattr(config, "DRY_RUN", False),
+                    "TRADING_PAUSED": getattr(config, "TRADING_PAUSED", False),
+                    "SYMBOL": getattr(config, "SYMBOL", "XAUUSD-ECNc"),
+                    "RISK_PERCENT_BTC": getattr(config, "RISK_PERCENT_BTC", 1.5),
+                    "RISK_PERCENT_XAU": getattr(config, "RISK_PERCENT_XAU", 0.5),
+                    "MAX_DAILY_LOSS_USD": getattr(config, "MAX_DAILY_LOSS_USD", 50),
+                    "MAX_OPEN_POSITIONS": getattr(config, "MAX_OPEN_POSITIONS", 6),
+                    "TRADE_COOLDOWN_SECONDS": getattr(config, "TRADE_COOLDOWN_SECONDS", 0),
+                    "MAX_SPREAD_POINTS_BTC": getattr(config, "MAX_SPREAD_POINTS_BTC", 2400),
+                    "MAX_SPREAD_POINTS_XAU": getattr(config, "MAX_SPREAD_POINTS_XAU", 50),
+                    "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": getattr(config, "CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2),
+                    "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": getattr(config, "CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.0),
+                    "TRAILING_STOP_ENABLED": getattr(config, "TRAILING_STOP_ENABLED", True),
+                    "BREAK_EVEN_ENABLED": getattr(config, "BREAK_EVEN_ENABLED", True),
+                    "RECOVERY_MODE_ENABLED": getattr(config, "RECOVERY_MODE_ENABLED", True),
+                    "WEEKEND_TRADING_ENABLED": getattr(config, "WEEKEND_TRADING_ENABLED", False),
+                    "available_presets": list(getattr(config, "ERA_PRESETS", {}).keys()),
+                }
+                _send_json(self, {"status": "success", "config": config_data})
+
             else:
-                self.send_response(404)
-                self.end_headers()
+                _send_json(self, {"status": "error", "message": "Endpoint not found"}, status_code=404)
+
+        def do_POST(self):
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path.rstrip("/")
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+            try:
+                payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+            except Exception:
+                payload = {}
+
+            if path in ("/api/config", "/api/update_config"):
+                updated = []
+                for k, v in payload.items():
+                    if hasattr(config, k):
+                        setattr(config, k, v)
+                        updated.append(k)
+                _send_json(self, {
+                    "status": "success",
+                    "message": f"Updated {len(updated)} config parameters",
+                    "updated_keys": updated
+                })
+
+            elif path in ("/api/preset", "/api/set_strategy_preset"):
+                preset_name = payload.get("preset") or payload.get("name") or payload.get("preset_name")
+                presets = getattr(config, "ERA_PRESETS", {})
+                if not preset_name or preset_name not in presets:
+                    _send_json(self, {
+                        "status": "error",
+                        "message": f"Invalid preset '{preset_name}'. Available: {list(presets.keys())}"
+                    }, status_code=400)
+                    return
+
+                preset_data = presets[preset_name]
+                applied_keys = []
+                for attr, val in preset_data.items():
+                    if attr == "label":
+                        continue
+                    if hasattr(config, attr):
+                        setattr(config, attr, val)
+                        applied_keys.append(attr)
+
+                _send_json(self, {
+                    "status": "success",
+                    "message": f"Applied preset '{preset_name}'",
+                    "applied_preset": preset_name,
+                    "applied_keys": applied_keys
+                })
+
+            elif path in ("/api/pause", "/api/pause_trading"):
+                config.TRADING_PAUSED = True
+                _send_json(self, {
+                    "status": "success",
+                    "message": "Trading paused successfully",
+                    "trading_paused": True
+                })
+
+            elif path in ("/api/resume", "/api/resume_trading"):
+                config.TRADING_PAUSED = False
+                _send_json(self, {
+                    "status": "success",
+                    "message": "Trading resumed successfully",
+                    "trading_paused": False
+                })
+
+            else:
+                _send_json(self, {"status": "error", "message": "Endpoint not found"}, status_code=404)
 
         def log_message(self, fmt, *args):
             pass
 
     srv = ThreadingHTTPServer((host, port), Handler)
-    print(f"🚀 Dashboard live: http://{host}:{port}/  (Ctrl+C untuk stop)")
-    print("   Baca log fresh tiap request + auto-refresh 5 detik (tanpa reload halaman).")
+    print(f"🚀 API & Dashboard Server aktif di http://{host}:{port}/")
+    print("   Endpoint REST API aktif: /api/summary, /api/open-positions, /api/recent-trades, /api/config, /api/pause, /api/resume, /api/preset")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\n🛑 Server dihentikan.")
     finally:
         srv.server_close()
+
 
 
 def main():

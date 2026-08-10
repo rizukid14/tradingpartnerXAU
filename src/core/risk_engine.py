@@ -131,9 +131,13 @@ class RiskEngine:
         """
         Master gate. Returns (bool, reason_string).
         Call this before entering any new trade.
-        """
+        # 0. Check manual trading pause flag
+        if getattr(config, "TRADING_PAUSED", False):
+            return False, "⏸️ Trading dipause secara manual via API/Tool."
+
         # 0. Detect trades closed by MT5 since last check (SL/TP/manual)
         self.sync_closed_positions()
+
 
         # 1. Check if we're in a pause cooldown (consecutive losses)
         if time.time() < self._paused_until:

@@ -145,6 +145,38 @@ DEFAULT_TP_POINTS_BTC = 100000
 # Set to False to enable live trading on MT5.
 DRY_RUN = False
 
+# Manual Pause flag (controlled via API/Tool or CLI)
+TRADING_PAUSED = False
+
+# Strategy presets definition
+ERA_PRESETS = {
+    "v1": {
+        "label": "V1 — era profit 100% (legacy)",
+        "DRY_RUN": True,
+        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_BTC": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
+    },
+    "v2": {
+        "label": "V2 — legacy-2 (= v1 + state)",
+        "DRY_RUN": True,
+        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_BTC": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
+    },
+    "v3": {
+        "label": "V3 — modern (Claude + quant, sekarang)",
+        "DRY_RUN": False,
+        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_BTC": 1.5,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
+    }
+}
+
+
 
 
 
