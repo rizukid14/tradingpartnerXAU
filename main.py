@@ -323,7 +323,7 @@ def run_trading_cycle():
             print(f"⚠️ [QUANT MATH ERROR] {e}")
 
     # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
-    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
+    if getattr(config, "MONTE_CARLO_ENABLED", False):
         try:
             from src.analytics import quant_probability
             tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5

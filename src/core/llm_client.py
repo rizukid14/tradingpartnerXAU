@@ -221,31 +221,33 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
     randomness_str = ""
-    try:
-        from src.analytics import market_randomness
-        rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
-        ft = rand_info.get('fat_tail', {})
-        tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
-        randomness_str = (
-            f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
-            f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
-        )
-    except Exception:
-        pass
+    if getattr(config, "QUANT_ANALYSIS_ENABLED", False):
+        try:
+            from src.analytics import market_randomness
+            rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
+            ft = rand_info.get('fat_tail', {})
+            tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
+            randomness_str = (
+                f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
+                f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
+            )
+        except Exception:
+            pass
 
     quant_prob_str = ""
-    try:
-        from src.analytics import quant_probability
-        tf_mins = 30 if config.is_crypto(symbol) else 5
-        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-        quant_prob_str = (
-            f"- Quant Monte Carlo Probabilities (1,000 paths): "
-            f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
-            f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
-            f"Est. Time: {q_res['estimated_time_str']}\n"
-        )
-    except Exception:
-        pass
+    if getattr(config, "MONTE_CARLO_ENABLED", False):
+        try:
+            from src.analytics import quant_probability
+            tf_mins = 30 if config.is_crypto(symbol) else 5
+            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+            quant_prob_str = (
+                f"- Quant Monte Carlo Probabilities (1,000 paths): "
+                f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
+                f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
+                f"Est. Time: {q_res['estimated_time_str']}\n"
+            )
+        except Exception:
+            pass
 
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
     # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the

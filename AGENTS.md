@@ -79,10 +79,13 @@ python main.py
 14. **Forecast horizon per-symbol**: XAU T+15m/T+60m, **BTC T+4h/T+D1** (15 menit itu noise untuk M30 swing + spread $17). Cache refresh: XAU 15 menit, **BTC 1 jam**. `horizon_label` di forecast dict.
 15. **Claude ganti DeepSeek** (`claude-sonnet-4-6`): DeepSeek konservatif (0% BUY, HOLD/SELL dominan, conf fluktuatif 0-65%) → tidak efektif di weighted voting. Claude reasoning lebih tajam (sadar R:R vs spread). **Truncated JSON recovery** di `clean_json_response` + `max_tokens=2000` karena Claude bisa motong respons. **Catatan: claude-sonnet-5 tidak support `temperature`; sonnet-4-6 ~40% lebih cepat (7.2s vs 12.1s di prompt panjang).**
 16. **Pemisahan entry vs position management di prompt**: `signal` = murni entry baru, `position_actions` = posisi existing, dinilai independen (cegah LLM campur "existing BUY masih bagus" sebagai alasan HOLD entry).
+17. **Gemini ganti ke `gemini-3.1-flash-lite`** (fallback `gemini-3.5-flash-lite`): benchmark 5 model Gemini (10 iterasi, prompt produksi, sesi bearish) — 3.5-flash-lite dominan HOLD (8/10), 2.5-flash-lite parah (10/10 HOLD conf 36%), **3.1-flash-lite paling konsisten ngikutin sinyal (10/10 SELL, conf 65%, latency 1.1s)**. 3.6-flash juga bagus (9/10, conf 69%) tapi 7.5s latency. Catatan: Gemini return confidence skala 0-1 (bukan 0-100), di-×100 di consensus.
+18. **Deteksi close manual (magic=0)**: manual close dari MT5 mobile menghasilkan OUT deal `magic=0` (magic tidak diteruskan). `get_closed_positions_today` menerima OUT magic=0 **hanya jika posisi dibuka bot** (ada IN magic bot) — posisi manual user tidak ikut kehitung. Window P/L = tengah malam WIB → next-midnight (bukan rolling 24h, biar loss kemarin tidak masuk "hari ini"). **Jangan diubah ke rolling 24h** — itu bikin daily loss cap ke-trip dari loss hari sebelumnya.
 
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
-- Git branch: `dev`. Commit terakhir sesi 8 Agustus: `e0824e2` (Claude sonnet-4-6).
+- Git branch: `dev`. Commit terakhir sesi 10 Agustus: `c8079dd` (Gemini 3.1-flash-lite).
+- **Gemini 3.1-flash-lite** (primary) + **3.5-flash-lite** (fallback); OpenAI gpt-5.4-mini; Claude sonnet-4-6. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
 - `git status` biasanya ada `data/dynamic_rules.json`, `data/forecast_cache.json`, `data/memory_lessons.json`, `data/decision_memory.json`, `data/position_manager_state.json`, `data/risk_state.json` ter-modif — itu runtime state, jangan commit kalau nggak sengaja.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
 - **Status display live** menampilkan posisi terbuka semua symbol + floating P/L tiap 5 detik (`get_all_open_positions`).
