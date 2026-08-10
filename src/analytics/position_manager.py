@@ -324,7 +324,31 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if profit_points < activation:
         return
 
-    trail_distance = distance * point
+    # ---- Progressive distance (XAU only) ----
+    # Distance mengecil linear dari START (longgar saat baru aktivasi) ke END
+    # (ketat saat mendekati TP). Progress dihitung dari posisi profit terhadap
+    # TP posisi (atau fallback: 2x activation). BTC tetap pakai distance statis.
+    if config.is_crypto(symbol):
+        trail_distance = distance * point
+    else:
+        start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.0)
+        end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.3)
+        min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.2)
+
+        # Seberapa dekat profit ke TP (0.0 = baru aktivasi, 1.0 = di TP)
+        tp_points = 0
+        if pos.tp:
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                tp_points = (pos.tp - pos.price_open) / point
+            else:
+                tp_points = (pos.price_open - pos.tp) / point
+        progress_ref = max(tp_points, activation * 2) if tp_points > 0 else activation * 2
+        progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
+
+        # Interpolasi linear start_mult -> end_mult, lalu floor ke min_mult
+        dynamic_mult = start_mult - (start_mult - end_mult) * progress
+        dynamic_mult = max(dynamic_mult, min_mult)
+        trail_distance = int(atr_points * dynamic_mult) * point if atr_points > 0 else distance * point
 
     if pos.type == mt5.ORDER_TYPE_BUY:
         new_sl = trail_ref - trail_distance
@@ -350,7 +374,10 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-        print(f"📈 [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts)")
+        if config.is_crypto(symbol):
+            print(f"📈 [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
+        else:
+            print(f"📈 [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x ATR)")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

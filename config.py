@@ -223,6 +223,15 @@ TRAILING_DISTANCE_ATR_MULT_XAU = 0.5
 TRAILING_ACTIVATION_MAX_POINTS_BTC = 40000
 TRAILING_ACTIVATION_MAX_POINTS_XAU = 500
 
+# Progressive trailing (XAU): distance mengecil linear dari START (longgar saat
+# baru aktivasi — kasih ruang pullback) ke END (ketat saat deket TP — kunci
+# profit). Fix: dulu distance statis 0.5xATR dari awal -> sering kena di dekat
+# pembukaan trailing (baru naik 1xATR, SL langsung 0.5xATR di belakang, pullback
+# 50% yang normal langsung kena SL) padahal rally belum selesai.
+TRAILING_DISTANCE_START_ATR_MULT_XAU = 1.0   # longgar pas baru aktivasi
+TRAILING_DISTANCE_END_ATR_MULT_XAU = 0.3     # ketat pas deket TP
+TRAILING_DISTANCE_MIN_ATR_MULT_XAU = 0.2     # floor absolute (anti noise/spread)
+
 # --- BREAK-EVEN (from XAU-60 trade_executor.py) ---
 # Moves stop loss to entry price once trade reaches profit threshold
 BREAK_EVEN_ENABLED = True
