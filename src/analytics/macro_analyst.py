@@ -186,6 +186,16 @@ class MacroAnalyst:
             if tf_analyses:
                 context.append("### MULTI-TIMEFRAME ANALYSIS (Struktur Trend)\n" + "\n".join(tf_analyses))
 
+        # 2. Add Fundamental Analysis (only if enabled AND there's cached content)
+        if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):
+            fund_outlook = self.cache.get("fundamental_outlook", "")
+            if fund_outlook and fund_outlook.strip():
+                session = self.cache.get("last_fundamental_session", "")
+                header = "### FUNDAMENTAL ANALYSIS (Macro Sentiment)"
+                if session:
+                    header += f" - diambil saat sesi {session}"
+                context.append(header + "\n" + fund_outlook)
+
         if not context:
             return ""
 
