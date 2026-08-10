@@ -25,8 +25,13 @@ else:
     try:
         from mt5linux import MetaTrader5
         mt5 = MetaTrader5(host=MT5_HOST, port=MT5_PORT)
-    except Exception:
-        import MetaTrader5 as mt5
+    except Exception as e:
+        print(f"[CONFIG WARNING] Could not initialize mt5linux connection: {e}")
+        try:
+            import MetaTrader5 as mt5
+        except ModuleNotFoundError:
+            mt5 = None
+
 
 
 
