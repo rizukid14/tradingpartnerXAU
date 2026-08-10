@@ -202,12 +202,16 @@ TRAILING_ACTIVATION_POINTS_BTC = 17000
 TRAILING_DISTANCE_POINTS_BTC = 12500
 
 # Dynamic ATR Trailing Multipliers (Computed in real-time from live ATR14)
-# BTC: 2.0x ATR M30 activation, 1.5x ATR M30 distance
-# XAU: 2.0x ATR M5 activation (~$2.00 @ $1.00 ATR), 1.5x ATR M5 distance (~$1.50 @ $1.00 ATR)
-TRAILING_ACTIVATION_ATR_MULT_BTC = 2.0
-TRAILING_DISTANCE_ATR_MULT_BTC = 1.5
-TRAILING_ACTIVATION_ATR_MULT_XAU = 2.0
-TRAILING_DISTANCE_ATR_MULT_XAU = 1.5
+# BTC: 1.0x ATR M30 activation, 0.5x ATR M30 distance
+# XAU: 1.0x ATR M5 activation (~$3.80 @ $3.80 ATR), 0.5x ATR M5 distance (~$1.90 @ $3.80 ATR)
+# The activation is capped so a high-ATR period cannot push the trailing
+# start unreasonably far (XAU M5 scalping target ~400-900 pts).
+TRAILING_ACTIVATION_ATR_MULT_BTC = 1.0
+TRAILING_DISTANCE_ATR_MULT_BTC = 0.5
+TRAILING_ACTIVATION_ATR_MULT_XAU = 1.0
+TRAILING_DISTANCE_ATR_MULT_XAU = 0.5
+TRAILING_ACTIVATION_MAX_POINTS_BTC = 40000
+TRAILING_ACTIVATION_MAX_POINTS_XAU = 500
 
 # --- BREAK-EVEN (from XAU-60 trade_executor.py) ---
 # Moves stop loss to entry price once trade reaches profit threshold
