@@ -99,11 +99,14 @@ def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos
     tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.50)
     comment_lower = (comment or "").lower()
 
-    # Classify exit type
-    if reason_code == 5 or "[tp" in comment_lower:
+    # Classify exit type (reason can be MT5 numeric code OR our string label)
+    reason_str = str(reason_code).lower() if reason_code is not None else ""
+    is_tp = reason_code == 5 or reason_str == "tp"
+    is_sl = reason_code == 4 or reason_str in ("sl", "stop-out", "margin", "rollover", "split")
+    if is_tp or "[tp" in comment_lower:
         title = "🎯 *Trade Selesai: TAKE PROFIT (TP)*"
         status = "Target TP Max Tercapai! 🎯"
-    elif reason_code == 4 or "[sl" in comment_lower:
+    elif is_sl or "[sl" in comment_lower:
         if profit > tol:
             title = "🛡️ *Trade Selesai: STOP LOSS IN PROFIT (SL+)*"
             status = "Trailing SL / Break-Even Hit (Profit Terkunci) 🛡️"

@@ -252,11 +252,32 @@ def get_closed_positions_today(symbol=None):
             continue
         # DEAL_ENTRY_OUT: deal.type == 0 (BUY deal) closes a SELL position, deal.type == 1 (SELL deal) closes a BUY position
         pos_type = "SELL" if deal.type == 0 else "BUY"
+
+        # Reason label. MT5 mobile manual close often leaves deal.reason empty
+        # (or magic=0), so infer "manual" from magic=0 on a bot-opened position
+        # instead of showing "unknown".
+        deal_reason = getattr(deal, "reason", None)
+        if is_manual_of_bot or not deal_reason:
+            reason = "manual"
+        else:
+            reason = {
+                mt5.DEAL_REASON_SL: "SL",
+                mt5.DEAL_REASON_TP: "TP",
+                mt5.DEAL_REASON_MOBILE: "manual (mobile)",
+                mt5.DEAL_REASON_WEB: "manual (web)",
+                mt5.DEAL_REASON_CLIENT: "manual",
+                mt5.DEAL_REASON_EXPERT: "bot",
+                mt5.DEAL_REASON_ROLLOVER: "rollover",
+                mt5.DEAL_REASON_SO: "stop-out",
+                mt5.DEAL_REASON_VMARGIN: "margin",
+                mt5.DEAL_REASON_SPLIT: "split",
+            }.get(deal_reason, f"code-{deal_reason}")
+
         closed.append({
             "ticket": deal.position_id,
             "symbol": deal.symbol,
             "profit": deal.profit + deal.swap + deal.commission,
-            "reason": getattr(deal, "reason", None),
+            "reason": reason,
             "comment": getattr(deal, "comment", ""),
             "type": pos_type,
             "time": deal.time,

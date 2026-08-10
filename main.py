@@ -1,6 +1,7 @@
 import os
 import time
 import sys
+import threading
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -655,6 +656,20 @@ def main():
                             )
                         except Exception as e:
                             print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
+
+                    # Post-mortem langsung untuk tiket yang baru saja ditutup,
+                    # jalan di background thread biar loop 5 detik nggak ke-block
+                    # sama LLM call post-mortem.
+                    if new_closed:
+                        try:
+                            _pm_deals = list(new_closed)
+                            threading.Thread(
+                                target=trade_evaluator.evaluator.check_and_evaluate_closed_trades,
+                                args=(_pm_deals,),
+                                daemon=True,
+                            ).start()
+                        except Exception as e:
+                            print(f"[POST-MORTEM ERROR] Gagal evaluasi tiket baru: {e}")
                 except Exception as e:
                     print(f"[CLOSE SYNC ERROR] {e}")
                 
