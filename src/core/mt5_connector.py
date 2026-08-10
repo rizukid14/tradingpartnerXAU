@@ -54,6 +54,8 @@ def init_mt5():
             
     return True
 
+initialize_mt5 = init_mt5
+
 def get_market_data(symbol, timeframe, num_candles=50):
     """
     Fetches historical candles from MT5 and calculates technical indicators.
