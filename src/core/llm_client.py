@@ -211,6 +211,141 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
     return query_primary_model(prompt, search_grounding=True)
 
 
+# ================================================================
+# SYSTEM PROMPT TEMPLATE (docs/prompt_claude.md)
+# "We set guardrails, the LLM sets strategy."
+# Static per-bot constitution — build once per instance, reuse across
+# cycles so provider-side prompt/context caching stays effective.
+# ================================================================
+_SYSTEM_PROMPT_TEMPLATE = """### ROLE
+You are an independent {{TIMEFRAME}} scalping analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+
+### ANALYSIS FREEDOM
+You are NOT required to follow a single predefined trading strategy. You may use any market interpretation you judge relevant, including but not limited to: trend following, momentum, breakout, pullback, mean reversion, reversal/exhaustion, support/resistance, price action, volatility, or indicator confluence -- alone or combined.
+
+Pick the interpretation you believe currently has the strongest expected edge. State what creates that edge and what would invalidate it. Do not force a trade into a fixed template just to produce a signal.
+
+Do not treat any single indicator (RSI, EMA, Fibonacci, ATR, or the forecast matrix below) as a mandatory trigger or a mandatory block. They are inputs for your own judgment, not rules you must obey.
+
+Reassess the market from scratch using only the data in THIS prompt. Do not assume your (or the bot's) previous cycle's directional view is still valid -- conditions can shift within minutes; a prior bullish or bearish read is not evidence for the current one.
+
+### DATA INTEGRITY
+Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
+
+Any "macro/HTF context" note is background only, not a ground-truth signal -- if it reads as generic, stale, or inconsistent with the actual candles/indicators shown, disregard it in favor of the concrete data.
+
+The forecast matrix comes from a separate model and is informational only, not a rule. A NEUTRAL or disagreeing forecast does not by itself require HOLD; an aligned forecast does not by itself justify a trade.
+
+The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
+
+### RISK CONSTRAINTS (apply regardless of chosen strategy)
+Any BUY or SELL must satisfy all of the following:
+- A concrete, statable entry thesis (why this direction, why now)
+- A concrete invalidation condition for that thesis
+- SL placed beyond the invalidation level, and roughly within 1.5-2x current ATR (in points) unless the invalidation logic clearly justifies otherwise
+- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker
+- TP that gives at least 1.5R relative to SL (TP distance >= 1.5x SL distance)
+- Spread must not consume a large share of the SL distance
+- Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
+
+If any of these can't be honestly satisfied, return HOLD. HOLD is a normal, often correct output -- do not force a trade to avoid it.
+
+### OUTPUT FORMAT
+Respond with a single valid JSON object ONLY -- no text before or after it.
+
+HOLD:
+{
+  "signal": "HOLD",
+  "reasoning": "One short sentence: why no valid setup exists right now."
+}
+
+BUY or SELL:
+{
+  "signal": "BUY" | "SELL",
+  "confidence": 0.0-1.0,
+  "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
+  "edge": "1-2 sentences: what specifically creates the edge here.",
+  "invalidation": "1 short sentence: what would prove this thesis wrong.",
+  "sl_points": number,
+  "tp_points": number,
+  "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
+}
+
+"position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
+
+CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
+
+
+def build_system_prompt(symbol, timeframe, asset_description):
+    """
+    Static per-bot 'constitution'. Build once per bot instance (e.g. once
+    for XAU M5, once for BTC M30) and reuse unchanged across cycles -- this
+    is the part that benefits from provider-side prompt/context caching,
+    since only the dynamic market data below changes every call.
+    """
+    return (
+        _SYSTEM_PROMPT_TEMPLATE
+        .replace("{{SYMBOL}}", symbol)
+        .replace("{{TIMEFRAME}}", timeframe)
+        .replace("{{ASSET_DESC}}", asset_description)
+    )
+
+
+def format_candles(candles):
+    """candles: list of dicts with keys time, open, high, low, close, volume."""
+    lines = []
+    for c in candles:
+        lines.append(
+            f"- [{c['time']}] O:{c['open']}, H:{c['high']}, L:{c['low']}, "
+            f"C:{c['close']}, V:{c['volume']}"
+        )
+    return "\n".join(lines)
+
+
+def format_positions(positions):
+    if not positions:
+        return ""
+    lines = ["Open positions on this symbol:"]
+    for p in positions:
+        lines.append(
+            f"- Ticket {p['ticket']}: {p['direction']} {p['volume']} lot @ "
+            f"{p['entry_price']}, P/L: {p['pnl']}, SL: {p.get('sl', 'none')}, "
+            f"TP: {p.get('tp', 'none')}"
+        )
+    return "\n".join(lines)
+
+
+def summarize_recent_outcomes(decisions, n=6):
+    """
+    Strip directional narrative out of decision history, keep outcome
+    stats only -- so the current cycle isn't anchored to the previous
+    cycle's directional story (this was likely a contributor to the bot
+    holding a stale bullish read for hours during a correction).
+
+    decisions: list of dicts, most recent last, e.g.
+        {"signal": "BUY", "result": "TP" | "SL" | "OPEN" | "N/A"}
+    """
+    recent = decisions[-n:]
+    if not recent:
+        return "No recent decision history for this symbol."
+
+    hold_count = sum(1 for d in recent if d["signal"] == "HOLD")
+    tp_count = sum(1 for d in recent if d.get("result") == "TP")
+    sl_count = sum(1 for d in recent if d.get("result") == "SL")
+    trade_count = len(recent) - hold_count
+
+    if tp_count or sl_count:
+        return (
+            f"Recent outcomes ({len(recent)} cycles): {trade_count} trade(s) taken "
+            f"({tp_count} hit TP, {sl_count} hit SL), {hold_count} HOLD. "
+            f"(Outcome only -- not a directional signal for this cycle.)"
+        )
+    return (
+        f"Recent outcomes ({len(recent)} cycles): {trade_count} trade(s) taken, "
+        f"{hold_count} HOLD. (Outcome only -- not a directional signal for this cycle.)"
+    )
+
+
 def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
     Constructs a rich prompt for LLM models containing price action,
@@ -282,11 +417,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # scalping scale. No flooring here — the LLM picks SL/TP from this range
     # and consensus only enforces a 2x-spread safety floor.
 
-    # ATR-based range (pure, no default floor):
+    # ATR-based SL/TP range: no longer hard-coded into the static prompt
+    # (the new template from docs/prompt_claude.md lets the LLM set SL/TP
+    # from its own thesis; consensus.py still enforces the 2x-spread floor
+    # and 1.5x SL->TP minimum). atr_points is still shown in market data.
     min_sl = int(atr_points * 1.5)
     max_sl = int(atr_points * 2.0)
-    min_tp = int(min_sl * 1.5)
-    max_tp = int(max_sl * 2.0)
 
     # USD value of 1 point for the default bot lot — tells the LLM the real
     # money scale of the SL/TP distances it proposes (critical for BTC, where
@@ -299,7 +435,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             f"{config.lot_size_for(symbol)} lot. So {int(pts_per_usd * 10)} pts = ~$10, "
             f"{int(pts_per_usd * 5)} pts = ~$5, and 100000 pts = ~${100000 * usd_per_point:.2f}.\n"
             f"Current spread is {current_tick.get('spread', '?')} pts "
-            f"(≈ ${current_tick.get('spread_usd', 0.0):.2f} USD) — NEVER set SL closer than "
+            f"(approx ${current_tick.get('spread_usd', 0.0):.2f} USD) — NEVER set SL closer than "
             f"{int(current_tick.get('spread', 0) * 2)} pts (2x spread); the broker will reject it.\n"
         )
     else:
@@ -307,7 +443,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     macro_str = ""
     if macro_context:
-        macro_str = f"\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT\n{macro_context}\n"
+        macro_str = (
+            "\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT (background only)\n"
+            f"{macro_context}\n"
+            "(Advisory only — if this reads generic/stale or conflicts with the "
+            "actual candles/indicators, disregard it in favor of the concrete data.)\n"
+        )
 
     lessons_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
@@ -317,11 +458,17 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         except Exception:
             pass
 
-    decision_memory_str = ""
+    recent_outcomes_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
             from src.analytics import decision_memory
-            decision_memory_str = decision_memory.memory.get_context(symbol)
+            # Convert stored decisions (signal/confidence/reasoning, no result
+            # field yet) into {signal, result} for summarize_recent_outcomes.
+            entries = decision_memory.memory._decisions.get(symbol, [])
+            decisions = [{"signal": e.get("signal", "HOLD"), "result": "N/A"} for e in entries]
+            recent_outcomes_str = summarize_recent_outcomes(decisions)
+            if recent_outcomes_str:
+                recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"
         except Exception:
             pass
 
@@ -332,6 +479,13 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             forecast_str = forecast_engine.forecaster.get_forecast_context()
         except Exception:
             pass
+    if forecast_str:
+        forecast_str = (
+            "\n### MULTI-HORIZON FORECAST (separate model — informational only, not a rule)\n"
+            f"{forecast_str}\n"
+            "(NEUTRAL or disagreeing forecast does not require HOLD; aligned forecast "
+            "does not by itself justify a trade.)\n"
+        )
 
     calendar_str = ""
     try:
@@ -394,23 +548,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # Timeframe label per symbol: BTC trades M30 (intraday), XAU trades M5 (scalp)
     is_crypto_sym = config.is_crypto(symbol)
     tf_label = "M30" if is_crypto_sym else "M5"
-    tf_full = "30 Minute (M30) intraday" if is_crypto_sym else "5 Minute (M5) scalping"
-    strategy_header = "M30 Intraday Strategy" if is_crypto_sym else "M5 Scalping Strategy"
-    strategy_line = (
-        "M30: enter on clear 30-minute structure — follow-through after a decisive "
-        "M30 breakout or a clean pullback to support/resistance."
-        if is_crypto_sym else
-        "Scalp M5: quick entries/exits, high probability setups only. Decide from "
-        "the data provided — do not wait for hypothetical pullbacks/breakouts."
-    )
-    momentum_line = (
-        "Follow the dominant H1 price action and momentum (H1 candles); a clear "
-        "impulse with structure break is a valid entry even against the H4/D1 bias."
-        if is_crypto_sym else
-        "BUY and SELL are equally valid. Follow the dominant M5 price action and "
-        "momentum (M1/M5 candles); a clear impulse with structure break is a valid "
-        "entry even against a higher-timeframe bias."
-    )
 
     # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
     swing_high = float(df['high'].max())
@@ -454,63 +591,13 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
 {fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
-    # Sl/TP range ikut ATR (berubah pelan) — tetap di blok statis biar
-    # prefix panjang (>= 1024 token) dan cache berguna. LLM tetap lihat
-    # ATR aktual di blok dinamis.
-    static_block = f"""You are an expert algorithmic trading system specializing in {tf_full} on {symbol} — {asset_desc(symbol)}.
-Analyze the current market condition and determine the next trading decision.
-
-### READING THE DATA
-- RSI: >70 overbought, <30 oversold; divergence = warning.
-- EMA20/50: above both bullish, below both bearish; EMA20 cross = momentum shift.
-- Fibonacci: Fib 38.2%/50.0%/61.8% levels act as natural pullback targets & support/resistance zones.
-- ATR: SL outside 1.5-2x ATR; TP >= 1.5x SL.
-- Candles: impulse + follow-through > single wick; rejection wicks = reversal signal.
-- Spread: large fraction of SL/TP → not viable.
-- Calendar: HIGH-impact events spike volatility; avoid 15-30 min before/after. No event = trade normally.
-
-### STRATEGY ({strategy_header})
-- {strategy_line}
-- {momentum_line}
-- Counter-trend / Pullback Scalps: Allowed during strong trends IF price is overextended near Swing High/Low (RSI > 70 or < 30), price is stretched away from EMA20/EMA50, and the entry targets a Fibonacci retracement (Fib 38.2% / 50.0% / 61.8%) or EMA20 with a tight SL beyond the swing extremum and R:R >= 1.5.
-- Forecast Alignment: Prefer trading with the forecast bias, but retracement/pullback scalps to Fibonacci levels are valid counter-trend entries when the move is extended and the pullback target is explicit. Forecast is a preference, NOT a hard block, unless the setup is a pure momentum chase with no retracement structure.
-- IMPORTANT: A bullish forecast does NOT forbid SELL, and a bearish forecast does NOT forbid BUY, if the trade is a clean Fibonacci retracement / exhaustion reversal with a tight SL and valid R:R.
-- SL/TP in POINTS. ATR {atr_points} pts: SL {min_sl}-{max_sl} pts; TP >= 1.5x SL. BTC: tiny SL/TP (< 5000 pts) are worth cents.
-- No clear edge → HOLD. Do not force a trade.
-- If bias is bullish but price is at/near Swing High and showing exhaustion, SELL retracement is allowed if TP is Fib 38.2% / 50.0% / 61.8% or EMA20 and SL is tight beyond the swing high.
-- If bias is bearish but price is at/near Swing Low and showing exhaustion, BUY retracement is allowed if TP is Fib 38.2% / 50.0% / 61.8% or EMA20 and SL is tight beyond the swing low.
-
-### DECISION ORDER
-Trend → Momentum → Location (S/R vs mid-range vs Fib levels) → R:R (SL beyond S/R, TP >= 1.5x SL, R:R < 1.5 skip) → Spread (> ~20% SL skip) → Forecast (prefer aligned, allow Fib pullback if R:R >= 1.5).
-Any step fails → HOLD.
-
-### CONFIDENCE
-0.70+ strong | 0.50-0.70 moderate | 0.30-0.50 weak → HOLD unless concrete reason | < 0.30 no edge → HOLD.
-HOLD with high confidence is normal and preferred when there is no clear entry.
-
-### RESPONSE FORMAT
-You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
-
-- HOLD (include signal & 1-sentence reasoning):
-{{
-  "signal": "HOLD",
-  "reasoning": "Concise reasoning (EXACTLY 1 short sentence) explaining why holding / no clear entry setup."
-}}
-- BUY/SELL (full format required):
-{{
-  "signal": "BUY" | "SELL",
-  "confidence": 0.0 to 1.0,
-  "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
-  "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "Concise reasoning (MAXIMUM 1-2 short sentences) explaining the NEW ENTRY decision based on price action/indicators — NOT based on existing positions (those go in position_actions)."
-}}
-Example HOLD: {{"signal": "HOLD", "reasoning": "Price is consolidating near EMA20 with RSI neutral, showing no clear breakout setup."}}
-Example BUY: {{"signal": "BUY", "confidence": 0.72, "sl_points": {int((min_sl+max_sl)/2)}, "tp_points": {int((min_tp+max_tp)/2)}, "reasoning": "Impulse breakout above H1 resistance with RSI momentum."}}
-"position_actions": include ONLY when positions are listed above — for each ticket: {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason (max 5 words)"}}"""
+    # Dipakai dari template docs/prompt_claude.md (ANALYSIS FREEDOM +
+    # RISK CONSTRAINTS). Statis = bisa di-cache provider (>= 1024 token).
+    static_block = build_system_prompt(symbol, tf_label, asset_desc(symbol))
 
     # Gabung: statis dulu (cache), lalu data (dinamis)
     prompt = static_block + "\n\n" + market_data_block + "\n"
@@ -546,8 +633,9 @@ def clean_json_response(text):
                         parsed[key] = json.loads(val)
                     except json.JSONDecodeError:
                         parsed[key] = val.strip('"')
-        # Validate keys
-        for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning"]:
+        # Validate keys (setup/edge/invalidation are optional new fields —
+        # model may omit them; HOLD responses won't have them)
+        for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning", "setup", "edge", "invalidation"]:
             if key not in parsed:
                 parsed[key] = None
         # Ensure signal is upper case
