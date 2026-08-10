@@ -6,6 +6,31 @@ from openai import OpenAI
 from google import genai
 import config
 
+# Regex untuk menghapus emoji dari prompt yang dikirim ke LLM.
+# User requirement: prompt LLM harus bebas emoji (UI/CLI boleh).
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F000-\U0001F02F"   # Mahjong tiles
+    "\U0001F0A0-\U0001F0FF"   # Playing cards
+    "\U0001F100-\U0001F64F"   # Enclosed alnum + emoticons
+    "\U0001F680-\U0001F6FF"   # Transport & map symbols
+    "\U0001F900-\U0001F9FF"   # Supplemental symbols & pictographs
+    "\U0001FA70-\U0001FAFF"   # Symbols & pictographs extended-A
+    "\U00002600-\U000027BF"   # Misc symbols + dingbats
+    "\U00002B00-\U00002BFF"   # Misc symbols & arrows
+    "\U0000FE0F"              # Variation selector-16 (emoji presentation)
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _strip_emoji(text: str) -> str:
+    """Remove all emoji characters from a string (used on LLM prompt content)."""
+    if not text:
+        return text
+    return _EMOJI_PATTERN.sub("", text)
+
+
 # Initialize clients if keys are present
 openai_client = None
 if config.OPENAI_API_KEY:
@@ -601,7 +626,9 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 
     # Gabung: statis dulu (cache), lalu data (dinamis)
     prompt = static_block + "\n\n" + market_data_block + "\n"
-    return prompt
+    # User requirement: prompt LLM bebas emoji (UI/CLI boleh). Strip semua
+    # emoji dari sumber mana pun (macro, forecast, lessons, calendar, dll).
+    return _strip_emoji(prompt)
 
 
 def clean_json_response(text):
