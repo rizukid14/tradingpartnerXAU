@@ -340,24 +340,23 @@ function renderFilters() {
   const eraSel = $('f-era'), symSel = $('f-symbol');
   const prevEra = eraSel.value, prevSym = symSel.value;
   eraSel.innerHTML = '<option value="">Semua Era</option>';
-  symSel.innerHTML = '<option value="XAUUSD-ECNc">XAUUSD-ECNc (Gold)</option>';
-  
+  symSel.innerHTML = '<option value="XAUUSD-ECNc">XAUUSD-ECNc (Gold - Default)</option>';
+  const oAll = document.createElement('option'); oAll.value = ''; oAll.text = 'Semua Simbol (XAU + BTC)';
+  symSel.appendChild(oAll);
+
   (DATA.meta.eras || []).forEach(e => {
     const o = document.createElement('option'); o.value = e; o.text = e; eraSel.appendChild(o);
   });
 
-  const symbols = (DATA.meta.symbols || []).filter(s => !s.toLowerCase().includes('btc'));
-  symbols.forEach(s => {
+  (DATA.meta.symbols || []).forEach(s => {
     if (s !== 'XAUUSD-ECNc') {
       const o = document.createElement('option'); o.value = s; o.text = s; symSel.appendChild(o);
     }
   });
-  const oAll = document.createElement('option'); oAll.value = ''; oAll.text = 'Semua Simbol (XAU+BTC)';
-  symSel.appendChild(oAll);
 
   if (prevEra && [...eraSel.options].some(o=>o.value===prevEra)) eraSel.value = prevEra;
   if (prevSym && [...symSel.options].some(o=>o.value===prevSym)) symSel.value = prevSym;
-  else symSel.value = 'XAUUSD-ECNc'; // Default to XAUUSD-ECNc
+  else symSel.value = 'XAUUSD-ECNc';
 }
 
 function renderKpi() {
