@@ -412,6 +412,18 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         "entry even against a higher-timeframe bias."
     )
 
+    # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
+    swing_high = float(df['high'].max())
+    swing_low = float(df['low'].min())
+    diff = swing_high - swing_low
+    fib_382 = round(swing_high - 0.382 * diff, 2)
+    fib_500 = round(swing_high - 0.500 * diff, 2)
+    fib_618 = round(swing_high - 0.618 * diff, 2)
+    fib_str = (
+        f"- 50-Bar Swing High: {swing_high:.2f} | Swing Low: {swing_low:.2f}\n"
+        f"- Fibonacci Retracement Levels: Fib 38.2%: {fib_382:.2f} | Fib 50.0%: {fib_500:.2f} | Fib 61.8%: {fib_618:.2f}"
+    )
+
     # ================================================================
     # PROMPT — 2 blok:
     #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
@@ -420,6 +432,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
     # ================================================================
     # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
+    print(f"[LLM PROMPT PREVIEW] symbol={symbol} tf={tf_label} bid={current_tick['bid']} ask={current_tick['ask']} spread={current_tick['spread']}pt point={current_tick['point']}")
+    print(f"[LLM PROMPT PREVIEW] close={latest['close']} rsi={latest['rsi_14']:.2f} ema20={latest['ema_20']:.2f} ema50={latest['ema_50']:.2f} atr={latest['atr_14']:.2f} atr_points={atr_points}")
+    print(f"[LLM PROMPT PREVIEW] fib382={fib_382:.2f} fib500={fib_500:.2f} fib618={fib_618:.2f} swing_high={swing_high:.2f} swing_low={swing_low:.2f}")
+    print(f"[LLM PROMPT PREVIEW] recent_candles=7 micro_candles={'yes' if micro_candles_str else 'no'} forecast={'yes' if forecast_str else 'no'} positions={'yes' if positions_str else 'no'}")
+
     market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
@@ -430,12 +447,13 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 ### RECENT CANDLES (Last 7 candles, {tf_label}):
 {candles_str}
 {micro_candles_str}
-### CURRENT INDICATORS SUMMARY
+### CURRENT INDICATORS & FIBONACCI SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
+{fib_str}
 {randomness_str}{quant_prob_str}{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 
@@ -449,6 +467,7 @@ Analyze the current market condition and determine the next trading decision.
 ### READING THE DATA
 - RSI: >70 overbought, <30 oversold; divergence = warning.
 - EMA20/50: above both bullish, below both bearish; EMA20 cross = momentum shift.
+- Fibonacci: Fib 38.2%/50.0%/61.8% levels act as natural pullback targets & support/resistance zones.
 - ATR: SL outside 1.5-2x ATR; TP >= 1.5x SL.
 - Candles: impulse + follow-through > single wick; rejection wicks = reversal signal.
 - Spread: large fraction of SL/TP → not viable.
@@ -457,12 +476,16 @@ Analyze the current market condition and determine the next trading decision.
 ### STRATEGY ({strategy_header})
 - {strategy_line}
 - {momentum_line}
-- Avoid fighting direct forecast contradiction (BUY vs BEARISH, SELL vs BULLISH) or entering beyond T+15m target. R:R to target >= 1.0 (0.8 ok on clear momentum).
+- Counter-trend / Pullback Scalps: Allowed during strong trends IF price is overextended near Swing High/Low (RSI > 70 or < 30), price is stretched away from EMA20/EMA50, and the entry targets a Fibonacci retracement (Fib 38.2% / 50.0% / 61.8%) or EMA20 with a tight SL beyond the swing extremum and R:R >= 1.5.
+- Forecast Alignment: Prefer trading with the forecast bias, but retracement/pullback scalps to Fibonacci levels are valid counter-trend entries when the move is extended and the pullback target is explicit. Forecast is a preference, NOT a hard block, unless the setup is a pure momentum chase with no retracement structure.
+- IMPORTANT: A bullish forecast does NOT forbid SELL, and a bearish forecast does NOT forbid BUY, if the trade is a clean Fibonacci retracement / exhaustion reversal with a tight SL and valid R:R.
 - SL/TP in POINTS. ATR {atr_points} pts: SL {min_sl}-{max_sl} pts; TP >= 1.5x SL. BTC: tiny SL/TP (< 5000 pts) are worth cents.
 - No clear edge → HOLD. Do not force a trade.
+- If bias is bullish but price is at/near Swing High and showing exhaustion, SELL retracement is allowed if TP is Fib 38.2% / 50.0% / 61.8% or EMA20 and SL is tight beyond the swing high.
+- If bias is bearish but price is at/near Swing Low and showing exhaustion, BUY retracement is allowed if TP is Fib 38.2% / 50.0% / 61.8% or EMA20 and SL is tight beyond the swing low.
 
 ### DECISION ORDER
-Trend → Momentum → Location (S/R vs mid-range) → R:R (SL beyond S/R, TP >= 1.5x SL, R:R < 1.5 skip) → Spread (> ~20% SL skip) → Forecast (no direct contradiction).
+Trend → Momentum → Location (S/R vs mid-range vs Fib levels) → R:R (SL beyond S/R, TP >= 1.5x SL, R:R < 1.5 skip) → Spread (> ~20% SL skip) → Forecast (prefer aligned, allow Fib pullback if R:R >= 1.5).
 Any step fails → HOLD.
 
 ### CONFIDENCE
