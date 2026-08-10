@@ -18,6 +18,11 @@ import math
 import os
 import re
 import sys
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 from datetime import datetime
 
 from dashboard_assets import TEMPLATE

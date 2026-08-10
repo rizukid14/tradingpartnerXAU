@@ -93,8 +93,16 @@ def parse_cli_overrides(argv=None):
         config.RISK_PERCENT_BTC = args.risk_percent_btc
         applied.append(f"RISK_PERCENT_BTC={args.risk_percent_btc}")
     if args.claude_model is not None:
-        config.CLAUDE_MODEL = args.claude_model
-        applied.append(f"CLAUDE_MODEL={args.claude_model}")
+        v = args.claude_model.lower().strip()
+        if v in ("deepseek", "flash", "v4-flash", "deepseek-flash", "1"):
+            config.CLAUDE_MODEL = "deepseek/deepseek-v4-flash"
+        elif v in ("claude", "sonnet", "2"):
+            config.CLAUDE_MODEL = "claude-sonnet-4-6"
+        elif v in ("haiku", "3"):
+            config.CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+        else:
+            config.CLAUDE_MODEL = args.claude_model
+        applied.append(f"CLAUDE_MODEL={config.CLAUDE_MODEL}")
     if args.risk_percent_xau is not None:
         config.RISK_PERCENT_XAU = args.risk_percent_xau
         applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
@@ -249,7 +257,13 @@ def interactive_setup():
                     elif "THRESHOLD" in attr or "RISK" in attr or "LOSS" in attr or "SPREAD" in attr:
                         setattr(config, attr.split(".")[1], float(new_val))
                     elif "MODEL" in attr:
-                        # String model name — masukkan mentah, routing di llm_client
+                        v = new_val.lower().strip()
+                        if v in ("deepseek", "flash", "v4-flash", "deepseek-flash", "1"):
+                            new_val = "deepseek/deepseek-v4-flash"
+                        elif v in ("claude", "sonnet", "2"):
+                            new_val = "claude-sonnet-4-6"
+                        elif v in ("haiku", "3"):
+                            new_val = "claude-haiku-4-5-20251001"
                         setattr(config, attr.split(".")[1], new_val)
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
@@ -417,7 +431,7 @@ def run_trading_cycle():
         except Exception as e:
             print(f"[FORECAST WARNING] {e}")
 
-    print("🧠 Mengirim data ke OpenAI, Gemini, dan Claude...")
+    print(f"🧠 Mengirim data ke OpenAI, Gemini, dan {llm.claude_slot_label()}...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
     
     # 5. Calculate consensus
