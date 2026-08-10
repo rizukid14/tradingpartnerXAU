@@ -84,9 +84,29 @@ python main.py
 19. **Post-mortem langsung saat close**: dipicu di loop 5 detik pas `sync_closed_positions` return `new_deals` (background thread biar nggak nge-block), bukan nunggu candle. `check_and_evaluate_closed_trades(deals)` nerima deals langsung. **Jangan seed `evaluated_tickets` dari `known_closed` tiap cycle** — itu nge-block tiket baru (bug yang udah diperbaiki); re-evaluation dicegah oleh `evaluated_tickets` persist di `memory_lessons.json`.
 20. **Trailing stop ATR-adaptif**: activation `min(1.0×ATR, cap)` (XAU 500 / BTC 40000 pts), distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
 
+### Perubahan 11 Agustus (sesi ini — PENTING: branch split!)
+
+**Sekarang ada DUA versi prompt yang berbeda antara branch:**
+- **`main` = prompt LAMA** (`744ad0a`): Fibonacci + counter-trend pullback rules + prompt preview prints. **TIDAK ada** prompt_claude.md, **TIDAK ada** strip emoji.
+- **`dev` = prompt BARU** (`06159f6`): semuanya dari main + prompt_claude.md + strip emoji.
+- **JANGAN merge `dev` → `main` tanpa konfirmasi user** — user sengaja mau main pakai prompt lama, prompt baru eksperimen di dev.
+
+21. **Fibonacci retracement di prompt** (sudah di main `744ad0a`): `prepare_prompt` hitung Swing High/Low dari 50 candle + Fib 38.2/50/61.8 → di-inject ke "CURRENT INDICATORS & FIBONACCI SUMMARY". Tujuannya: bot bisa lihat potensi SELL koreksi di tren bullish (target Fib) tanpa panik — LLM tidak lagi buta soal level retracement.
+22. **Prompt template baru `docs/prompt_claude.md`** (hanya di `dev`, commit `ab42c17`): ganti static block kaku (STRATEGY/DECISION ORDER/counter-trend rules) dengan:
+    - **ANALYSIS FREEDOM**: LLM bebas pilih interpretasi (trend/momentum/breakout/pullback/mean-reversion/reversal/exhaustion) — tidak dipaksa ke satu template strategi. Indikator (RSI/EMA/Fib/ATR/forecast) adalah **input untuk judgment, bukan trigger/block wajib**.
+    - **DATA INTEGRITY**: jangan invent indikator yang tidak diberikan; macro/HTF note = background only (kalau generik/stale → abaikan); forecast = informational only (NEUTRAL ≠ wajib HOLD); recent outcomes = win/loss history, bukan sinyal arah.
+    - **RISK CONSTRAINTS** (satu-satunya yang non-negotiable): thesis konkret + invalidation jelas, SL beyond invalidation & ~1.5-2× ATR & ≥ 2× spread, TP ≥ 1.5× SL, spread tidak makan SL.
+    - **Output schema baru**: `setup` (label bebas), `edge` (1-2 kalimat), `invalidation` (1 kalimat) + `sl_points`/`tp_points`/`reasoning`. Field baru opsional — HOLD tetap valid, consensus tetap jalan.
+    - `build_system_prompt(symbol, timeframe, asset_desc)` = statis per bot (cache-friendly, ≥1024 token); `prepare_prompt` gabung statis + dinamis.
+23. **Anti-anchor: `summarize_recent_outcomes`** (di `dev`): ganti inject narasi decision history dengan ringkasan outcome-only ("3 trade taken, 2 hit SL, 3 HOLD"). Sebelumnya decision_memory_str inject keputusan lama lengkap → LLM ke-anchor ke bias bullish basi berjam-jam. Sekarang cuma win/loss counts.
+24. **Macro & forecast diberi label advisory** (di `dev`): macro_str → "background only — disregard if generic/stale"; forecast_str → "informational only — NEUTRAL tidak wajib HOLD, aligned tidak otomatis trade".
+25. **Strip emoji dari prompt LLM** (di `dev`, commit `06159f6`): `_EMOJI_PATTERN` + `_strip_emoji()` diterapkan ke prompt final sebelum dikirim. **Requirement user: prompt LLM HARUS bebas emoji** (UI/CLI/log boleh pakai emoji). Sumber emoji bisa dari macro/forecast/lessons/calendar — strip di prompt final menangani semua.
+26. **Unicode safety**: `≈` diganti `approx` di prompt (UnicodeEncodeError saat print di console cp1252 Windows).
+27. **`scratch/prompt_preview_test.py`**: test file untuk preview prompt LLM dengan data MT5 asli (XAUUSD-ECNc — bukan XAUUSD, broker pakai suffix `-ECNc`). Pakai `config.get_timeframe()`; fallback ke `XAUUSD` kalau simbol utama gagal.
+
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
-- Git branch: `dev`. Commit terakhir sesi 10 Agustus: `940333e` (post-mortem realtime + reason mapping).
+- Git branch: **`dev` = prompt baru** (terakhir `06159f6`), **`main` = prompt lama** (terakhir `744ad0a`). **Sengaja split — jangan merge dev → main tanpa konfirmasi user.** Commit terakhir sesi 10 Agustus (sebelum split): `940333e` (post-mortem realtime + reason mapping).
 - **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.4-mini; fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
 - **`data/` dan `scratch/` sudah di-`.gitignore`** (untrack via `git rm --cached`, file tetap ada di disk). `git status` sekarang bersih dari runtime state — cuma source file + `docs/` yang muncul.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.

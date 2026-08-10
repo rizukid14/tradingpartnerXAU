@@ -54,6 +54,10 @@ graph TD
 14. **Deteksi Close Manual (magic=0)**: `get_closed_positions_today` menerima OUT deal dengan `magic=0` (manual close dari MT5 mobile — magic tidak diteruskan) **hanya jika posisinya dibuka bot** (ada IN magic bot). Posisi yang dibuka manual user tidak ikut kehitung. Window P/L pakai tengah malam WIB → next-midnight (loss hari kemarin tidak masuk "hari ini"). **Reason close di-label jelas** ("manual" untuk magic=0, "SL"/"TP"/"stop-out" dst. dari kode MT5) — bukan "unknown".
 15. **Post-Mortem Langsung saat Close**: Post-mortem + lesson dipicu **saat itu juga** saat close di-detect (loop 5 detik, background thread) — bukan nunggu candle berikutnya. `evaluated_tickets` persist di `memory_lessons.json` mencegah re-evaluasi tiket lama saat restart.
 16. **Trailing Stop ATR-Adaptif (work bener)**: Activation `min(1.0×ATR, cap)` (XAU 500 pts / BTC 40000 pts), distance `0.5×ATR`. SL di-trail dari **harga ekstrem** sejak entry (tracked per-ticket di state file) — pullback tidak bisa narik SL mundur. Partial close di-`skip` di lot 0.01 (50% dari 0.01 = 0, gabisa dipecah).
+17. **Fibonacci Retracement di Prompt**: `prepare_prompt` menghitung Swing High/Low dari 50 candle terakhir + level Fib 38.2%/50.0%/61.8% → di-inject ke blok "CURRENT INDICATORS & FIBONACCI SUMMARY". Bot bisa membaca potensi SELL koreksi / pullback di tren bullish dengan target Fib — tidak lagi buta soal level retracement.
+18. **Prompt Template "ANALYSIS FREEDOM" (branch `dev` — `docs/prompt_claude.md`)**: static block diganti jadi konstitusi yang memberi LLM kebebasan memilih interpretasi (trend/momentum/breakout/pullback/mean-reversion/reversal). Indikator = input untuk judgment, bukan trigger/block wajib. Output schema bertambah: `setup`, `edge`, `invalidation` (opsional — HOLD tetap valid). Yang non-negotiable hanya **RISK CONSTRAINTS** (SL ≥ 2× spread, TP ≥ 1.5× SL, thesis + invalidation jelas).
+19. **Anti-Anchoring: Outcome-Only Decision History (branch `dev`)**: keputusan lama tidak lagi di-inject sebagai narasi arah — diganti ringkasan win/loss saja ("3 trade taken, 2 hit SL, 3 HOLD"). Mencegah LLM ke-anchor ke bias bullish/bearish basi berjam-jam. Macro & forecast diberi label advisory/informational-only.
+20. **Prompt LLM Bebas Emoji (branch `dev`)**: `_strip_emoji()` diterapkan ke prompt final — emoji dari sumber mana pun (macro/forecast/lessons/calendar) dihilangkan sebelum dikirim ke LLM. UI/CLI/log tetap boleh pakai emoji.
 
 ### 🚫 Fitur Non-Aktif (Disabled)
 - **Fundamental Search Grounding**: OFF (`FUNDAMENTAL_ANALYSIS_ENABLED=False`). Search grounding Gemini sering kasih konteks basi ("ahead of NFP" berjam-jam setelah rilis).
@@ -100,6 +104,7 @@ tradingpartnerXAU/
 │
 ├── docs/                    # Dokumentasi & Tinjauan Kode
 │   ├── recap_session_2026-08-08.md  # Rekap kerjaan sesi (untuk review AI lain)
+│   ├── prompt_claude.md             # Template prompt "ANALYSIS FREEDOM" (hanya di branch dev)
 │   ├── command_code_review.md
 │   ├── gpt-mini-code-review.md
 │   ├── opus_review.md
@@ -183,6 +188,8 @@ Dashboard read-only — tidak menyentuh bot/MT5. Opsi: `-o out.html` (output sta
 | **Live** | `config.DRY_RUN = False` | Order beneran dieksekusi ke MT5. Magic number `20260625` — bot hanya kelola posisi dengan magic ini. |
 
 > ⚠️ Sangat disarankan mencoba di **Akun Demo** dulu sebelum live. Project ini saat ini berjalan di akun **LIVE** `VTMarkets-Live 3` (login `27556325`) — perubahan parameter live butuh diskusi dulu.
+
+> ⚠️ **Branch split (11 Agustus)**: `main` = prompt lama (Fibonacci + counter-trend rules, commit `744ad0a`), `dev` = prompt baru (ANALYSIS FREEDOM + strip emoji, commit `06159f6`). Sengaja dipisah — jangan merge `dev` → `main` tanpa konfirmasi.
 
 ---
 
