@@ -166,30 +166,11 @@ Generate a JSON object strictly matching this schema:
 }}
 """
         results = {}
-        import concurrent.futures
-        
-        def _get_single(fn):
-            try:
-                res = fn(prompt)
-                if isinstance(res, str):
-                    res = llm.clean_json_response(res)
-                if isinstance(res, dict) and "forecast_bias" in res:
-                    return res
-            except Exception:
-                pass
-            return None
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(_get_single, llm.query_openai): "OpenAI",
-                executor.submit(_get_single, llm.query_gemini): "Gemini",
-                executor.submit(_get_single, llm.query_claude): llm.claude_slot_label()
-            }
-            for fut in concurrent.futures.as_completed(futures):
-                m_name = futures[fut]
-                f_data = fut.result()
-                if f_data:
-                    results[m_name] = f_data
+        # Forecast: 1 AI saja (gpt-5.4 primary, gemini-3.5-flash fallback) -
+        # bukan lagi 3-LLM consensus (echo chamber: model yang sama dengan decision).
+        f_data = llm.query_forecast(prompt)
+        if isinstance(f_data, dict) and "forecast_bias" in f_data:
+            results["ForecastAI"] = f_data
 
         if not results:
             curr = current_tick['bid']
@@ -256,7 +237,7 @@ Generate a JSON object strictly matching this schema:
         avg_emax = _avg("optimal_entry_max")
 
         models_summary = ", ".join([f"{m}: {d.get('forecast_bias')}" for m, d in results.items()])
-        print(f"🔮 [MULTI-LLM FORECAST CONSENSUS] Bias: {consensus_bias} ({models_summary})")
+        print(f"🔮 [FORECAST] Bias: {consensus_bias} ({models_summary})")
 
         out = {
             "forecast_bias": consensus_bias,

@@ -51,6 +51,11 @@ GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
 OPENAI_MODEL = "gpt-5.4-mini"
 OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 
+# Forecast Engine: 1 AI saja (bukan 3-LLM consensus) — gpt-5.4 (bukan mini)
+# sebagai primary, fallback gemini-3.5-flash (bukan lite).
+FORECAST_MODEL = "gpt-5.4"
+FORECAST_FALLBACK_MODEL = "gemini-3.5-flash"
+
 # Maximum time (seconds) per model before triggering fallback
 LLM_TIMEOUT_SECONDS = 24.0
 

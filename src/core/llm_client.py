@@ -713,6 +713,42 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
+def query_forecast(prompt):
+    """Queries forecast engine with 1 AI: gpt-5.4 (bukan mini) primary,
+    fallback gemini-3.5-flash (bukan lite). Returns parsed JSON dict or None."""
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    primary_model = getattr(config, "FORECAST_MODEL", None) or config.OPENAI_MODEL
+    fallback_model = getattr(config, "FORECAST_FALLBACK_MODEL", None) or config.GEMINI_MODEL
+
+    # 1. Primary: OpenAI gpt-5.4
+    if openai_client:
+        try:
+            res = _execute_openai_single(primary_model, prompt, timeout_sec)
+            if isinstance(res, dict) and "forecast_bias" in res:
+                return res
+            print(f"[FORECAST WARNING] Response {primary_model} tidak punya forecast_bias: {str(res)[:120]}")
+        except Exception as e:
+            print(f"⚠️ [FORECAST FALLBACK] {primary_model} error ({e}). Switching ke {fallback_model}...")
+
+    # 2. Fallback: Gemini gemini-3.5-flash
+    if gemini_client:
+        try:
+            from google.genai import types
+            res = gemini_client.models.generate_content(
+                model=fallback_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if res and res.text:
+                parsed = clean_json_response(res.text)
+                if isinstance(parsed, dict) and "forecast_bias" in parsed:
+                    return parsed
+        except Exception as e:
+            print(f"[FORECAST FALLBACK ERROR] {e}")
+
+    return None
+
+
 def query_openai(prompt):
     """Queries OpenAI API with timeout and fallback model support."""
     if not openai_client:
