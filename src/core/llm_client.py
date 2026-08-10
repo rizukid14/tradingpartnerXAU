@@ -472,8 +472,11 @@ HOLD with high confidence is normal and preferred when there is no clear entry.
 ### RESPONSE FORMAT
 You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
 
-TO SAVE TOKENS, use the MINIMAL format for HOLD:
-- HOLD: `{{"signal": "HOLD"}}` — that is ALL you need. Do NOT include confidence, sl_points, tp_points, or reasoning when holding.
+- HOLD (include signal & 1-sentence reasoning):
+{{
+  "signal": "HOLD",
+  "reasoning": "Concise reasoning (EXACTLY 1 short sentence) explaining why holding / no clear entry setup."
+}}
 - BUY/SELL (full format required):
 {{
   "signal": "BUY" | "SELL",
@@ -482,7 +485,7 @@ TO SAVE TOKENS, use the MINIMAL format for HOLD:
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
   "reasoning": "Concise reasoning (MAXIMUM 1-2 short sentences) explaining the NEW ENTRY decision based on price action/indicators — NOT based on existing positions (those go in position_actions)."
 }}
-Example HOLD: {{"signal": "HOLD"}}
+Example HOLD: {{"signal": "HOLD", "reasoning": "Price is consolidating near EMA20 with RSI neutral, showing no clear breakout setup."}}
 Example BUY: {{"signal": "BUY", "confidence": 0.72, "sl_points": {int((min_sl+max_sl)/2)}, "tp_points": {int((min_tp+max_tp)/2)}, "reasoning": "Impulse breakout above H1 resistance with RSI momentum."}}
 "position_actions": include ONLY when positions are listed above — for each ticket: {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason (max 5 words)"}}"""
 

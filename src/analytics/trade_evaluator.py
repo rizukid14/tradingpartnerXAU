@@ -226,9 +226,21 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
             # the main loop (risk.sync_closed_positions, every 5s) — not here.
             # This method only does the post-mortem lesson generation.
 
-            # Generate post-mortem lesson via LLM
-            print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, P/L: ${profit:.2f})...")
-            lesson = self._analyze_trade_with_llm(ticket, profit, deal_symbol)
+            # Fetch rich trade details from MT5 (entry/exit prices, duration, reason closed, points)
+            trade_details = connector.get_trade_details(ticket)
+            if not trade_details:
+                trade_details = {
+                    "ticket": ticket,
+                    "symbol": deal_symbol,
+                    "profit": profit,
+                    "type": deal.get("type", "UNKNOWN"),
+                    "reason": deal.get("reason", "unknown"),
+                }
+
+            # Generate post-mortem lesson via LLM with rich execution context
+            pos_type_label = trade_details.get("type", "")
+            print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
+            lesson = self._analyze_trade_with_llm(ticket, profit, deal_symbol, trade_details)
             if lesson:
                 theme = _extract_theme(lesson)
                 print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
@@ -241,23 +253,51 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
                 else:
                     self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
 
-    def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None):
-        """Asks the primary LLM (Gemini/OpenAI) to evaluate the trade outcome."""
+    def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None, trade_details=None):
+        """Asks the primary LLM (Gemini/OpenAI) to evaluate the trade outcome with rich context."""
         outcome_str = f"PROFIT (+${profit:.2f})" if profit >= 0 else f"LOSS (-${abs(profit):.2f})"
         trade_symbol = trade_symbol or config.SYMBOL
         tf_str = "30-minute intraday" if config.is_crypto(trade_symbol) else "5-minute scalping"
         
+        # Build rich execution details block
+        if trade_details and isinstance(trade_details, dict):
+            pos_type = trade_details.get("type", "UNKNOWN")
+            volume = trade_details.get("volume", "")
+            volume_str = f" ({volume} lot)" if volume else ""
+            entry_p = trade_details.get("entry_price")
+            exit_p = trade_details.get("exit_price")
+            entry_t = trade_details.get("entry_time", "")
+            exit_t = trade_details.get("exit_time", "")
+            dur_min = trade_details.get("duration_min")
+            reason_closed = trade_details.get("reason", "unknown")
+            pts_pnl = trade_details.get("points_pnl")
+
+            pts_str = f" ({pts_pnl:+} pts)" if pts_pnl is not None else ""
+            price_str = f"Entry: {entry_p} -> Exit: {exit_p}" if (entry_p and exit_p) else ""
+            dur_str = f"{dur_min} minutes" if dur_min is not None else "N/A"
+
+            exec_context = f"""Trade Execution Details:
+- Ticket: #{ticket}
+- Position Type: {pos_type}{volume_str}
+- Execution: {price_str}
+- Opened At: {entry_t} | Closed At: {exit_t} (Duration: {dur_str})
+- Outcome: {outcome_str}{pts_str}
+- Close Trigger: {reason_closed} (e.g., SL, TP, manual, AI Re-evaluator)"""
+        else:
+            exec_context = f"""Trade Summary:
+- Position Ticket: #{ticket}
+- Outcome: {outcome_str}"""
+
         prompt = f"""
 You are an expert trading post-mortem analyst evaluating a closed position on {trade_symbol} ({asset_desc(trade_symbol)}).
 
-Trade Summary:
-- Position Ticket: {ticket}
-- Outcome: {outcome_str}
+{exec_context}
 
 Task:
-Analyze this trade result in the context of {tf_str} rules on {asset_desc(trade_symbol)}.
-Provide ONE single, highly actionable, concise lesson learned (maximum 20 words).
-The lesson MUST start with '[LESSON]' and offer a concrete tip for future trading setups (e.g. caution during overbought RSI, avoiding entries near resistance, or respecting dynamic EMA support).
+Analyze this exact trade result in the context of {tf_str} rules on {asset_desc(trade_symbol)}.
+Examine WHY the trade entered at {trade_details.get('entry_price', 'entry') if trade_details else 'entry'} resulted in {outcome_str} when exiting at {trade_details.get('exit_price', 'exit') if trade_details else 'exit'} via {trade_details.get('reason', 'close trigger') if trade_details else 'trigger'}.
+Provide ONE single, highly actionable, concise lesson learned (maximum 25 words).
+The lesson MUST start with '[LESSON]' and provide a concrete rule for future setups (e.g., avoiding buys directly into overhead resistance, enforcing pullbacks near EMA, or adjusting SL buffer).
 
 Respond with the lesson text ONLY. Do not include introductory conversational filler.
 """
@@ -292,7 +332,7 @@ Respond with the lesson text ONLY. Do not include introductory conversational fi
             if isinstance(item, str) or item.get("symbol", "") == symbol
         ]
         if relevant:
-            recent = relevant[-5:]  # Take last 5 lessons
+            recent = relevant[-3:]  # Take last 3 lessons
             bullets = "\n".join([f"- {item}" for item in recent])
             header = f"### {symbol} LESSONS LEARNED FROM RECENT TRADES (SINCE SUMMARY)" if summary else f"### {symbol} LESSONS LEARNED FROM RECENT TRADES"
             context += f"\n{header}\n{bullets}\n"
