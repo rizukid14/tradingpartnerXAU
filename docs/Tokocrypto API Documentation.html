@@ -1,0 +1,3207 @@
+<!DOCTYPE html>
+<!-- saved from url=(0060)https://www.tokocrypto.com/apidocs/#api-document-description -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta http-equiv="X-UA-Compatible" content="IE=11">
+    <title>Tokocrypto API Documentation</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="./Tokocrypto API Documentation_files/base.css" rel="stylesheet">
+    <link href="./Tokocrypto API Documentation_files/style.css" rel="stylesheet">
+    <link href="./Tokocrypto API Documentation_files/railscasts.css" rel="stylesheet">
+    <link rel="shortcut icon" href="https://www.tokocrypto.com/static/cloud-web-ui/cloud-toko/static/favicon.ico" type="image/x-icon">
+  </head>
+  <body>
+    <!--START--><div id="app"><div class="container unlimiter" data-reactroot="" data-reactid="1"><header class="binance-doc-header" data-reactid="2"><div class="flex_box" data-reactid="3"><a href="https://www.tokocrypto.com/" style="height:100%;display:inlineBlock;" class="LG" id="LG" data-reactid="4"><img src="./Tokocrypto API Documentation_files/logo.png" height="100%" class="logo" alt="Logo" data-reactid="5"></a></div></header><div class="scroll-styled overflow-auto pad1 width24 sidebar fixed-left fill-dark dark"><div class="pad0x small"><div class="binance-search"><div class="search-blank"><img src="./Tokocrypto API Documentation_files/search.png"><input type="text" id="searchI" placeholder="Search"></div></div><a href="https://www.tokocrypto.com/apidocs/#change-log" class="line-height48 ellipsis pad0x pad00y quiet block ">Change Log</a><div class="small pad0x quiet space-top1">Rest API</div><a href="https://www.tokocrypto.com/apidocs/#api-document-description" class="line-height48 ellipsis pad0x pad00y quiet block fill-lighten0 round">API Document Description</a><div class="space-left1"><a href="https://www.tokocrypto.com/apidocs/#general-api-information" class="line-height48 ellipsis pad0x pad00y quiet block ">General API Information</a></div><div class="space-left1"><a href="https://www.tokocrypto.com/apidocs/#limits" class="line-height48 ellipsis pad0x pad00y quiet block ">LIMITS</a></div><div class="space-left1"><a href="https://www.tokocrypto.com/apidocs/#endpoint-security-type" class="line-height48 ellipsis pad0x pad00y quiet block ">Endpoint security type</a></div><div class="space-left1"><a href="https://www.tokocrypto.com/apidocs/#signed-endpoint-security" class="line-height48 ellipsis pad0x pad00y quiet block ">SIGNED Endpoint security</a></div><div class="space-left1"><a href="https://www.tokocrypto.com/apidocs/#public-api-definitions" class="line-height48 ellipsis pad0x pad00y quiet block ">Public API Definitions</a></div><div class="space-left1"><a href="https://www.tokocrypto.com/apidocs/#filters" class="line-height48 ellipsis pad0x pad00y quiet block ">Filters</a></div><a href="https://www.tokocrypto.com/apidocs/#general-endpoints" class="line-height48 ellipsis pad0x pad00y quiet block ">General endpoints</a><a href="https://www.tokocrypto.com/apidocs/#market-data-endpoints" class="line-height48 ellipsis pad0x pad00y quiet block ">Market Data endpoints</a><a href="https://www.tokocrypto.com/apidocs/#account-endpoints" class="line-height48 ellipsis pad0x pad00y quiet block ">Account endpoints</a><a href="https://www.tokocrypto.com/apidocs/#wallet-endpoints" class="line-height48 ellipsis pad0x pad00y quiet block ">Wallet Endpoints</a><div class="small pad0x quiet space-top1">Web Socket Streams</div><a href="https://www.tokocrypto.com/apidocs/#general-wss-information" class="line-height48 ellipsis pad0x pad00y quiet block ">General WSS information</a><a href="https://www.tokocrypto.com/apidocs/#detailed-stream-information" class="line-height48 ellipsis pad0x pad00y quiet block ">Detailed Stream information</a><div class="small pad0x quiet space-top1">User Data Streams</div><a href="https://www.tokocrypto.com/apidocs/#general-wss-information-1" class="line-height48 ellipsis pad0x pad00y quiet block ">General WSS information</a><a href="https://www.tokocrypto.com/apidocs/#websocket-api" class="line-height48 ellipsis pad0x pad00y quiet block ">WebSocket API</a><a href="https://www.tokocrypto.com/apidocs/#web-socket-payloads" class="line-height48 ellipsis pad0x pad00y quiet block ">Web Socket Payloads</a><div class="small pad0x quiet space-top1">FAQs</div><a href="https://www.tokocrypto.com/apidocs/#faqs---price-range-execution-rules" class="line-height48 ellipsis pad0x pad00y quiet block ">FAQs - Price Range Execution Rules</a><a href="https://www.tokocrypto.com/apidocs/#faqs---self-trade-prevention-stp" class="line-height48 ellipsis pad0x pad00y quiet block ">FAQs - Self Trade Prevention (STP)</a></div></div><div id="binanceContent" class="space-left24 binance-content" data-reactid="8"><div class="col8 margin1" data-reactid="9"><div class="clearfix" data-reactid="10"><div class="keyline-top section contain clearfix " data-reactid="11"><div class="space-bottom4 pad2x prose clip" data-reactid="12"><!-- # Change Log -->
+</div></div><div data-title="Change Log" class="keyline-top section contain clearfix " data-reactid="13"><div class="space-bottom4 pad2x prose clip" data-reactid="14"><h2 id="change-log">Change Log</h2>
+</div></div><div data-title="2026-06-05" class="keyline-top section contain clearfix " data-reactid="15"><div class="space-bottom4 pad2x prose clip" data-reactid="16"><h3 id="2026-06-05">2026-06-05</h3>
+<p>Rest API changed.</p>
+<p><strong>Updated Endpoint — New Order (SIGNED)</strong></p>
+<pre><code>POST /open/v1/orders
+</code></pre>
+<ul>
+<li>Add <code>selfTradePreventionMode</code> (INT, optional) — <code>0</code> EXPIRE_MAKER, <code>1</code> EXPIRE_TAKER, <code>2</code> EXPIRE_BOTH, <code>4</code> DECREMENT, <code>5</code> TRANSFER</li>
+</ul>
+<p><strong>Updated Endpoint — Get all Supported Trading Symbol</strong></p>
+<pre><code>GET /open/v1/common/symbols
+</code></pre>
+<ul>
+<li>Add <code>defaultSelfTradePreventionMode</code> to symbol response</li>
+<li>Add <code>allowedSelfTradePreventionModes</code> to symbol response</li>
+</ul>
+<p><strong>Updated Documentation — FAQs</strong></p>
+<ul>
+<li>Add Self Trade Prevention (STP) FAQ section</li>
+</ul>
+</div></div><div data-title="2026-04-10" class="keyline-top section contain clearfix " data-reactid="17"><div class="space-bottom4 pad2x prose clip" data-reactid="18"><h3 id="2026-04-10">2026-04-10</h3>
+<ul>
+<li>
+<p>Add new endpoint <strong><code>GET /api/v3/executionRules</code></strong></p>
+<ul>
+<li>Query execution rules (Price Range) for trading symbols</li>
+</ul>
+</li>
+<li>
+<p>Add new FAQ section: <strong>Price Range Execution Rules</strong></p>
+<ul>
+<li>Execution rule mechanics and worked examples</li>
+<li>Edge cases and order expiry behavior</li>
+<li>Reference price calculation methods</li>
+</ul>
+</li>
+</ul>
+</div></div><div data-title="2026-03-30" class="keyline-top section contain clearfix " data-reactid="19"><div class="space-bottom4 pad2x prose clip" data-reactid="20"><h3 id="2026-03-30">2026-03-30</h3>
+<ul>
+<li>
+<p>Add deprecation notice to <strong><code>POST /open/v1/user-data-stream</code></strong>, <strong><code>PUT /open/v1/user-data-stream</code></strong>, <strong><code>DELETE /open/v1/user-data-stream</code></strong></p>
+<ul>
+<li>Please switch to <code>POST /open/v1/user-listen-token</code></li>
+<li>These endpoints are scheduled to be decommissioned on April 30, 2026</li>
+</ul>
+</li>
+<li>
+<p>Add new endpoint <strong><code>POST /open/v1/user-listen-token</code></strong></p>
+<ul>
+<li>Create a listen token for WebSocket API user data stream subscription</li>
+</ul>
+</li>
+<li>
+<p>Add <strong>WebSocket API</strong> documentation for user data stream</p>
+<ul>
+<li>Subscribe with listenToken</li>
+<li>Unsubscribe</li>
+<li>Event: Stream Terminated</li>
+</ul>
+</li>
+</ul>
+</div></div><div data-title="2025-12-30" class="keyline-top section contain clearfix " data-reactid="21"><div class="space-bottom4 pad2x prose clip" data-reactid="22"><h3 id="2025-12-30">2025-12-30</h3>
+<ul>
+<li>
+<p>Market Data endpoints params add <strong><code>Length</code></strong></p>
+<ul>
+<li>Order book</li>
+<li>Recent trades list</li>
+<li>Compressed/Aggregate trades list</li>
+<li>Kline/Candlestick data</li>
+</ul>
+</li>
+<li>
+<p>Wallet Endpoints params add <strong><code>Length</code></strong></p>
+<ul>
+<li>Withdraw (SIGNED)</li>
+<li>Withdraw History (SIGNED)</li>
+<li>Deposit History (SIGNED)</li>
+<li>Deposit Address (SIGNED)</li>
+</ul>
+</li>
+<li>
+<p>User Data Streams params add <strong><code>Length</code></strong></p>
+<ul>
+<li>Ping/Keep-alive a listenKey</li>
+<li>Close a listenKey</li>
+</ul>
+</li>
+</ul>
+</div></div><div data-title="2024-08-15" class="keyline-top section contain clearfix " data-reactid="23"><div class="space-bottom4 pad2x prose clip" data-reactid="24"><h3 id="2024-08-15">2024-08-15</h3>
+<ul>
+<li>Support <strong><code>clientId</code></strong> to cancel the order with POST /open/v1/orders/cancel (HMAC SHA256)</li>
+</ul>
+</div></div><div data-title="2024-07-10" class="keyline-top section contain clearfix " data-reactid="25"><div class="space-bottom4 pad2x prose clip" data-reactid="26"><h3 id="2024-07-10">2024-07-10</h3>
+<ul>
+<li>Update the new order response of POST /open/v1/orders</li>
+<li>Add matchId to the response of GET /open/v1/orders/trades</li>
+</ul>
+</div></div><div data-title="2024-05-10" class="keyline-top section contain clearfix " data-reactid="27"><div class="space-bottom4 pad2x prose clip" data-reactid="28"><h3 id="2024-05-10">2024-05-10</h3>
+<ul>
+<li>
+<p><code>/open/v1/orders</code> add new parameter <code>selfTradePreventionMode</code>. </p>
+<ul>
+<li>The parameter type is an <code>ENUM</code>. </li>
+<li>This parameter is NOT required. </li>
+<li>When selfTradePreventionMode is 3, self-dealing can be supported.</li>
+<li><code>0 - EXPIRE_MAKER</code>; <code>1 - EXPIRE_TAKER</code>; <code>2- EXPIRE_BOTH</code>; <code>3 - NONE</code></li>
+</ul>
+</li>
+</ul>
+</div></div><div data-title="2024-04-22" class="keyline-top section contain clearfix " data-reactid="29"><div class="space-bottom4 pad2x prose clip" data-reactid="30"><h3 id="2024-04-22">2024-04-22</h3>
+<ul>
+<li>
+<p>New filter NOTIONAL has been added.</p>
+<ul>
+<li>Defines the allowed notional value (<code>price * quantity</code>) based on a configured <code>minNotional</code> and <code>maxNotional</code></li>
+</ul>
+</li>
+</ul>
+</div></div><div data-title="2024-03-04" class="keyline-top section contain clearfix " data-reactid="31"><div class="space-bottom4 pad2x prose clip" data-reactid="32"><h3 id="2024-03-04">2024-03-04</h3>
+<ul>
+<li>
+<p><code>GET /open/v1/market/depth (when symbol type is not 1)</code>
+<br>
+change to
+<br>
+<code>GET https://cloudme-toko.2meta.app/api/v1/depth (when symbol type is 3)</code></p>
+</li>
+<li>
+<p><code>GET /open/v1/market/agg-trades (when symbol type is not 1)</code>
+<br>
+change to
+<br>
+<code>GET https://cloudme-toko.2meta.app/api/v1/aggTrades (when symbol type is 3)</code></p>
+</li>
+<li>
+<p><code>GET /open/v1/market/klines (when symbol type is not 1)</code>
+<br>
+change to
+<br>
+<code>GET https://cloudme-toko.2meta.app/api/v1/klines(when symbol type is 3)</code></p>
+</li>
+</ul>
+</div></div><div data-title="2023-11-13" class="keyline-top section contain clearfix " data-reactid="33"><div class="space-bottom4 pad2x prose clip" data-reactid="34"><h3 id="2023-11-13">2023-11-13</h3>
+<p>Account endpoints[<strong>New order(SIGNED)</strong>] changed.</p>
+<p>Add the <strong>timeInForce</strong> parameter to this api:</p>
+<pre><code>POST /open/v1/orders  (HMAC SHA256)
+</code></pre>
+<p>When make a new order, user can request the parameter "timeInForce" with the value 1/2/3/4</p>
+<table>
+<thead>
+<tr>
+<th><strong>timeInForce Value</strong></th>
+<th><strong>Content</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>GTC-Good Till Cancel</td>
+</tr>
+<tr>
+<td>2</td>
+<td>IOC-Immediate or Cancel</td>
+</tr>
+<tr>
+<td>3</td>
+<td>FOK-Fill or Kill</td>
+</tr>
+<tr>
+<td>4</td>
+<td>GTX-Good Till Crossing</td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="2023-09-06" class="keyline-top section contain clearfix " data-reactid="35"><div class="space-bottom4 pad2x prose clip" data-reactid="36"><h3 id="2023-09-06">2023-09-06</h3>
+<p>User Data Streams changed.</p>
+<p><strong>Create a listenKey:</strong></p>
+<pre><code>POST /open/v1/user-data-stream (when symbolType is 1, MBX symbol)
+</code></pre>
+<pre><code>POST /open/v1/private-n/user-data-stream (when symbolType is 3, Nextme Symbol(New Symbol) )
+</code></pre>
+<p><strong>Ping/Keep-alive a listenKey:</strong></p>
+<pre><code>PUT /open/v1/user-data-stream (when symbolType is 1, MBX symbol)
+</code></pre>
+<pre><code>PUT /open/v1/private-n/user-data-stream (when symbolType is 3, Nextme Symbol(New Symbol) )
+</code></pre>
+<p><strong>Close a listenKey:</strong></p>
+<pre><code>DELETE /open/v1/user-data-stream (when symbolType is 1, MBX symbol)
+</code></pre>
+<pre><code>DELETE /open/v1/private-n/user-data-stream (when symbolType is 3, Nextme Symbol(New Symbol) )
+</code></pre>
+</div></div><div data-title="2023-08-16" class="keyline-top section contain clearfix " data-reactid="37"><div class="space-bottom4 pad2x prose clip" data-reactid="38"><h3 id="2023-08-16">2023-08-16</h3>
+<p>General WSS information changed.</p>
+<p>Changes ws link:</p>
+<ul>
+<li><strong>wss://www.tokocrypto.com</strong>(when symbol type is 2)</li>
+<li><strong>wss://stream-toko.2meta.app</strong>(when symbol type is 3)</li>
+</ul>
+</div></div><div data-title="API Document Description" class="keyline-top section contain clearfix " data-reactid="39"><div class="space-bottom4 pad2x prose clip" data-reactid="40"><h2 id="api-document-description">API Document Description</h2>
+<p>CCXT is our authorized SDK provider and you may access the Tokocrypto API through CCXT. For more information, please visit: <strong><a href="https://ccxt.trade/">https://ccxt.trade</a></strong></p>
+</div></div><div data-title="General API Information" class="keyline-top section contain clearfix " data-reactid="41"><div class="space-bottom4 pad2x prose clip" data-reactid="42"><h3 id="general-api-information">General API Information</h3>
+<ul>
+<li>Some endpoints will require an API Key. </li>
+<li>The base endpoint is:&nbsp;<strong><a href="https://www.tokocrypto.com/">https://www.tokocrypto.com</a></strong></li>
+<li>Some specified APIs base endpoint are:&nbsp;<strong><a href="https://www.tokocrypto.site/">https://www.tokocrypto.site</a></strong></li>
+<li>All endpoints return a JSON object.</li>
+<li>Data is returned in&nbsp;<strong>ascending</strong>&nbsp;order. Oldest first, newest last.</li>
+<li>All time and timestamp related fields are in&nbsp;<strong>milliseconds</strong>.</li>
+</ul>
+</div></div><div data-title="HTTP Return Codes" class="keyline-top section contain clearfix " data-reactid="43"><div class="space-bottom4 pad2x prose clip" data-reactid="44"><h4 id="http-return-codes">HTTP Return Codes</h4>
+<ul>
+<li>
+<p>HTTP&nbsp;<code>4XX</code>&nbsp;return codes are used for malformed requests; the issue is on the sender's side.</p>
+</li>
+<li>
+<p>HTTP&nbsp;<code>403</code>&nbsp;return code is used when the WAF Limit (Web Application Firewall) has been violated.</p>
+</li>
+<li>
+<p>HTTP&nbsp;<code>429</code>&nbsp;return code is used when breaking a request rate limit.</p>
+</li>
+<li>
+<p>HTTP&nbsp;<code>418</code>&nbsp;return code is used when an IP has been auto-banned for continuing to send requests after receiving&nbsp;<code>429</code>&nbsp;codes.</p>
+</li>
+<li>
+<p>HTTP <code>5XX</code> return codes are used for internal errors; the issue is on
+Server's side.
+It is important to <strong>NOT</strong> treat this as a failure operation; the execution status is
+<strong>UNKNOWN</strong> and could have been a success.</p>
+</li>
+</ul>
+</div></div><div data-title="Response fields description" class="keyline-top section contain clearfix " data-reactid="45"><div class="space-bottom4 pad2x prose clip" data-reactid="46"><h4 id="response-fields-description">Response fields description</h4>
+<table>
+<thead>
+<tr>
+<th align="center">Name</th>
+<th align="center">Type</th>
+<th align="left">Mandatory</th>
+<th align="left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center">code</td>
+<td align="center">Number</td>
+<td align="left">Yes</td>
+<td align="left">Error Code，0 is success，else is fail</td>
+</tr>
+<tr>
+<td align="center">msg</td>
+<td align="center">String</td>
+<td align="left">Yes</td>
+<td align="left">error message</td>
+</tr>
+<tr>
+<td align="center">timestamp</td>
+<td align="center">Number</td>
+<td align="left">Yes</td>
+<td align="left">server timestamp</td>
+</tr>
+<tr>
+<td align="center">data</td>
+<td align="center">Object</td>
+<td align="left">No</td>
+<td align="left">response data</td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="General Information on Endpoints" class="keyline-top section contain clearfix " data-reactid="47"><div class="space-bottom4 pad2x prose clip" data-reactid="48"><h4 id="general-information-on-endpoints">General Information on Endpoints</h4>
+<ul>
+<li>For&nbsp;<code>GET</code>&nbsp;endpoints, parameters must be sent as a&nbsp;<code>query string</code>.</li>
+<li>For&nbsp;<code>POST</code>&nbsp;endpoints, the parameters may be sent as a&nbsp;<code>query string</code>&nbsp;or in the&nbsp;<code>request body</code>&nbsp;with content type&nbsp;<code>application/x-www-form-urlencoded</code>. You may mix parameters between both the&nbsp;<code>query string</code>&nbsp;and&nbsp;<code>request body</code>&nbsp;if you wish to do so.</li>
+<li>Parameters may be sent in any order.</li>
+<li>If a parameter sent in both the&nbsp;<code>query string</code>&nbsp;and&nbsp;<code>request body</code>, the&nbsp;<code>body string</code>&nbsp;parameter will be used.</li>
+</ul>
+</div></div><div data-title="LIMITS" class="keyline-top section contain clearfix " data-reactid="49"><div class="space-bottom4 pad2x prose clip" data-reactid="50"><h3 id="limits">LIMITS</h3>
+</div></div><div data-title="General Info on Limits" class="keyline-top section contain clearfix " data-reactid="51"><div class="space-bottom4 pad2x prose clip" data-reactid="52"><h4 id="general-info-on-limits">General Info on Limits</h4>
+<ul>
+<li>
+<p>The following&nbsp;<code>intervalLetter</code>&nbsp;values for headers:</p>
+<ul>
+<li>SECOND =&gt; S</li>
+<li>MINUTE =&gt; M</li>
+<li>HOUR =&gt; H</li>
+<li>DAY =&gt; D</li>
+</ul>
+</li>
+<li><code>intervalNum</code>&nbsp;describes the amount of the interval. For example,&nbsp;<code>intervalNum</code>&nbsp;5 with&nbsp;<code>intervalLetter</code>&nbsp;M means "Every 5 minutes".</li>
+<li>A 429 will be returned when either rate limit is violated.</li>
+</ul>
+</div></div><div data-title="IP Limits" class="keyline-top section contain clearfix " data-reactid="53"><div class="space-bottom4 pad2x prose clip" data-reactid="54"><h4 id="ip-limits">IP Limits</h4>
+<ul>
+<li>Every request will contain&nbsp;<code>X-MBX-USED-WEIGHT-(intervalNum)(intervalLetter)</code>&nbsp;in the response headers which has the current used weight for the IP for all request rate limiters defined.</li>
+<li>Each route has a&nbsp;<code>weight</code>&nbsp;which determines for the number of requests each endpoint counts for. Heavier endpoints and endpoints that do operations on multiple symbols will have a heavier&nbsp;<code>weight</code>.</li>
+<li>When a 429 is received, it's your obligation as an API to back off and not spam the API.</li>
+<li><strong>Repeatedly violating rate limits and/or failing to back off after receiving 429s will result in an automated IP ban (HTTP status 418).</strong></li>
+<li>IP bans are tracked and&nbsp;<strong>scale in duration</strong>&nbsp;for repeat offenders,&nbsp;<strong>from 2 minutes to 3 days</strong>.</li>
+<li>A&nbsp;<code>Retry-After</code>&nbsp;header is sent with a 418 or 429 responses and will give the&nbsp;<strong>number of seconds</strong>&nbsp;required to wait, in the case of a 418, to prevent a ban, or, in the case of a 429, until the ban is over.</li>
+<li><strong>The limits on the API are based on the IPs, not the API keys.</strong></li>
+</ul>
+<p>&nbsp;We recommend using the websocket for getting data as much as possible, as this will not count to the request rate limit.</p>
+</div></div><div data-title="Order Rate Limits" class="keyline-top section contain clearfix " data-reactid="55"><div class="space-bottom4 pad2x prose clip" data-reactid="56"><h4 id="order-rate-limits">Order Rate Limits</h4>
+<ul>
+<li>Every successful order response will contain a&nbsp;<code>X-MBX-ORDER-COUNT-(intervalNum)(intervalLetter)</code>&nbsp;header which has the current order count for the account for all order rate limiters defined.</li>
+<li>Rejected/unsuccessful orders are not guaranteed to have&nbsp;<code>X-MBX-ORDER-COUNT-**</code>&nbsp;headers in the response.</li>
+<li><strong>The order rate limit is counted against each account</strong>.</li>
+</ul>
+</div></div><div data-title="Endpoint security type" class="keyline-top section contain clearfix " data-reactid="57"><div class="space-bottom4 pad2x prose clip" data-reactid="58"><h3 id="endpoint-security-type">Endpoint security type</h3>
+<ul>
+<li>
+<p>Each endpoint has a security type that determines the how you will interact with it. This is stated next to the NAME of the endpoint.</p>
+<ul>
+<li>If no security type is stated, assume the security type is NONE.</li>
+</ul>
+</li>
+<li>API-keys are passed into the Rest API via the&nbsp;<code>X-MBX-APIKEY</code>&nbsp;header.</li>
+<li>API-keys and secret-keys&nbsp;<strong>are case sensitive</strong>.</li>
+<li>API-keys can be configured to only access certain types of secure endpoints. For example, one API-key could be used for SIGNED only, while another API-key can access everything except for SIGNED routes.</li>
+<li>By default, API-keys can access all secure routes.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Security Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NONE</td>
+<td>Endpoint can be accessed freely.</td>
+</tr>
+<tr>
+<td>SIGNED</td>
+<td>Endpoint requires sending a valid API-Key and signature.</td>
+</tr>
+<tr>
+<td>API_KEY</td>
+<td>Endpoint requires sending a valid API-Key.</td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="SIGNED Endpoint security" class="keyline-top section contain clearfix " data-reactid="59"><div class="space-bottom4 pad2x prose clip" data-reactid="60"><h3 id="signed-endpoint-security">SIGNED Endpoint security</h3>
+<ul>
+<li>
+<p><code>SIGNED</code> endpoints require an additional parameter, <code>signature</code>, to be
+sent in the  <code>query string</code> or <code>request body</code>.</p>
+</li>
+<li>
+<p>Endpoints use <code>HMAC SHA256</code> signatures. The <code>HMAC SHA256 signature</code> is a keyed <code>HMAC SHA256</code> operation.
+Use your <code>secretKey</code> as the key and <code>totalParams</code> as the value for the HMAC operation.</p>
+</li>
+<li>
+<p>The <code>signature</code> is <strong>not case sensitive</strong>.</p>
+</li>
+<li>
+<p><code>totalParams</code> is defined as the <code>query string</code> concatenated with the
+<code>request body</code>.</p>
+</li>
+</ul>
+</div></div><div data-title="Timing security" class="keyline-top section contain clearfix " data-reactid="61"><div class="space-bottom4 pad2x prose clip" data-reactid="62"><h4 id="timing-security">Timing security</h4>
+<ul>
+<li>
+<p>A <code>SIGNED</code> endpoint also requires a parameter, <code>timestamp</code>, to be sent which
+should be the millisecond timestamp of when the request was created and sent.</p>
+</li>
+<li>
+<p>An additional parameter, <code>recvWindow</code>, may be sent to specify the number of
+milliseconds after <code>timestamp</code> the request is valid for. If <code>recvWindow</code>
+is not sent, <strong>it defaults to 5000</strong>.</p>
+</li>
+<li>
+<p>The logic is as follows:</p>
+<pre class="hljs"><span class="hljs-keyword">if</span> (timestamp &lt; (serverTime + <span class="hljs-number">1000</span>) &amp;&amp; (serverTime - timestamp) &lt;= recvWindow)
+ {
+   <span class="hljs-comment">// process request</span>
+ } 
+ <span class="hljs-keyword">else</span> 
+ {
+   <span class="hljs-comment">// reject request</span>
+ }</pre>
+<p><strong>Serious trading is about timing.</strong> Networks can be unstable and unreliable,
+which can lead to requests taking varying amounts of time to reach the
+servers. With <code>recvWindow</code>, you can specify that the request must be
+processed within a certain number of milliseconds or be rejected by the
+server.</p>
+</li>
+</ul>
+<p><strong>It is recommended to use a small recvWindow of 5000 or less! The max cannot go beyond 60,000!</strong></p>
+</div></div><div data-title="SIGNED Endpoint Examples for POST /open/v1/orders" class="keyline-top section contain clearfix " data-reactid="63"><div class="space-bottom4 pad2x prose clip" data-reactid="64"><h4 id="signed-endpoint-examples-for-post-openv1orders">SIGNED Endpoint Examples for POST /open/v1/orders</h4>
+<p>Here is a step-by-step example of how to send a vaild signed payload from the Linux command line using&nbsp;<code>echo</code>,&nbsp;<code>openssl</code>, and&nbsp;<code>curl</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>apiKey</td>
+<td>cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV</td>
+</tr>
+<tr>
+<td>secretKey</td>
+<td>f9AbA6a8AD6bC2a97294a212244dda04ETfl0kc4BSUGOtL7m7rNELpt3Jh25SiP</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>BTC_USDT</td>
+</tr>
+<tr>
+<td>side</td>
+<td>0</td>
+</tr>
+<tr>
+<td>type</td>
+<td>1</td>
+</tr>
+<tr>
+<td>quantity</td>
+<td>'0.16'</td>
+</tr>
+<tr>
+<td>price</td>
+<td>'7500'</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>5000</td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>1581720670624</td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="Example 1: As a request body" class="keyline-top section contain clearfix " data-reactid="65"><div class="space-bottom4 pad2x prose clip" data-reactid="66"><h5 id="example-1-as-a-request-body">Example 1: As a request body</h5>
+<ul>
+<li>
+<p><strong>requestBody:</strong> symbol=BTC_USDT&amp;side=0&amp;type=1&amp;quantity=0.16&amp;price=7500×tamp=1581720670624&amp;recvWindow=5000</p>
+</li>
+<li>
+<p><strong>HMAC SHA256 signature:</strong></p>
+<pre><code>[linux]$ echo -n "symbol=BTC_USDT&amp;side=0&amp;type=1&amp;quantity=0.16&amp;price=7500&amp;timestamp=1581720670624&amp;recvWindow=5000" | openssl dgst -sha256 -hmac "cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV"
+(stdin)= 33824b5160daefc34257ab9cd3c3db7a0158a446674f896c9fc3b122ae656bfa
+</code></pre>
+</li>
+</ul>
+<ul>
+<li>
+<p><strong>curl command:</strong></p>
+<pre><code>(HMAC SHA256)
+[linux]$  curl -H "X-MBX-APIKEY: cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV" -X POST 'https://www.tokocrypto.com/open/v1/orders' -d 'symbol=BTC_USDT&amp;side=0&amp;type=1&amp;quantity=0.16&amp;price=7500&amp;timestamp=1581720670624&amp;recvWindow=5000&amp;signature=33824b5160daefc34257ab9cd3c3db7a0158a446674f896c9fc3b122ae656bfa'
+</code></pre>
+</li>
+</ul>
+</div></div><div data-title="Example 2: As a query string" class="keyline-top section contain clearfix " data-reactid="67"><div class="space-bottom4 pad2x prose clip" data-reactid="68"><h5 id="example-2-as-a-query-string">Example 2: As a query string</h5>
+<ul>
+<li>
+<p><strong>queryString:</strong> symbol=BTC_USDT&amp;side=0&amp;type=1&amp;quantity=0.16&amp;price=7500×tamp=1581720670624&amp;recvWindow=5000</p>
+</li>
+<li>
+<p><strong>HMAC SHA256 signature:</strong></p>
+<pre><code>[linux]$ echo -n "symbol=BTC_USDT&amp;side=0&amp;type=1&amp;quantity=0.16&amp;price=7500&amp;timestamp=1581720670624&amp;recvWindow=5000" | openssl dgst -sha256 -hmac "cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV"
+(stdin)= 33824b5160daefc34257ab9cd3c3db7a0158a446674f896c9fc3b122ae656bfa
+</code></pre>
+</li>
+</ul>
+<ul>
+<li>
+<p><strong>curl command:</strong></p>
+<pre><code>(HMAC SHA256)
+[linux]$ curl -H "X-MBX-APIKEY: cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV" -X POST 'https://www.tokocrypto.com/open/v1/orders?symbol=BTC_USDT&amp;side=0&amp;type=1&amp;quantity=0.16&amp;price=7500&amp;timestamp=1581720670624&amp;recvWindow=5000&amp;signature=33824b5160daefc34257ab9cd3c3db7a0158a446674f896c9fc3b122ae656bfa'
+</code></pre>
+</li>
+</ul>
+</div></div><div data-title="Example 3: Mixed query string and request body" class="keyline-top section contain clearfix " data-reactid="69"><div class="space-bottom4 pad2x prose clip" data-reactid="70"><h5 id="example-3-mixed-query-string-and-request-body">Example 3: Mixed query string and request body</h5>
+<ul>
+<li>
+<p><strong>queryString:</strong> symbol=BTC_USDT&amp;side=0&amp;type=1</p>
+</li>
+<li>
+<p><strong>requestBody:</strong> quantity=1&amp;price=0.1&amp;recvWindow=5000×tamp=1499827319559</p>
+</li>
+<li>
+<p><strong>requestBody:</strong> symbol=BTC_USDT&amp;side=0&amp;type=1quantity=0.16&amp;price=7500×tamp=1581720670624&amp;recvWindow=5000</p>
+</li>
+<li>
+<p><strong>HMAC SHA256 signature:</strong></p>
+<pre><code>[linux]$ echo -n "symbol=BTC_USDT&amp;side=0&amp;type=1quantity=0.16&amp;price=7500&amp;timestamp=1581720670624&amp;recvWindow=5000" | openssl dgst -sha256 -hmac "cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV"
+(stdin)= 27dbb813ab6ee7ef61902f88f1a0a6cd4daca0503a5195dbdd3174f49a61ad79
+</code></pre>
+</li>
+</ul>
+<ul>
+<li>
+<p><strong>curl command:</strong></p>
+<pre><code>(HMAC SHA256)
+[linux]$ curl -H "X-MBX-APIKEY: cfDC92B191b9B3Ca3D842Ae0e01108CBKI6BqEW6xr4NrPus3hoZ9Ze9YrmWwPFV" -X POST 'https://www.tokocrypto.com/open/v1/orders?symbol=BTC_USDT&amp;side=0&amp;type=1' -d 'quantity=0.16&amp;price=7500&amp;timestamp=1581720670624&amp;recvWindow=5000&amp;signature=27dbb813ab6ee7ef61902f88f1a0a6cd4daca0503a5195dbdd3174f49a61ad79'
+</code></pre>
+</li>
+</ul>
+<p>Note that the signature is different in example 3.
+There is no &amp; between "1" and "quantity=1".</p>
+</div></div><div data-title="Public API Definitions" class="keyline-top section contain clearfix " data-reactid="71"><div class="space-bottom4 pad2x prose clip" data-reactid="72"><h3 id="public-api-definitions">Public API Definitions</h3>
+</div></div><div data-title="Terminology" class="keyline-top section contain clearfix " data-reactid="73"><div class="space-bottom4 pad2x prose clip" data-reactid="74"><h4 id="terminology">Terminology</h4>
+<ul>
+<li><code>base asset</code>&nbsp;refers to the asset that is the&nbsp;<code>quantity</code>&nbsp;of a symbol.</li>
+<li><code>quote asset</code>&nbsp;refers to the asset that is the&nbsp;<code>price</code>&nbsp;of a symbol.</li>
+</ul>
+</div></div><div data-title="ENUM definitions" class="keyline-top section contain clearfix " data-reactid="75"><div class="space-bottom4 pad2x prose clip" data-reactid="76"><h4 id="enum-definitions">ENUM definitions</h4>
+<p><strong>Symbol type:</strong></p>
+<ul>
+<li>1 MAIN</li>
+<li>2 NEXT</li>
+</ul>
+<p><strong>Order status (status):</strong></p>
+<ul>
+<li>-2 SYSTEM_PROCESSING</li>
+<li>0 NEW</li>
+<li>1 PARTIALLY_FILLED</li>
+<li>2 FILLED</li>
+<li>3 CANCELED</li>
+<li>4 PENDING_CANCEL (currently unused)</li>
+<li>5 REJECTED</li>
+<li>6 EXPIRED</li>
+</ul>
+<p><strong>Order types (orderTypes, type):</strong></p>
+<ul>
+<li>1 LIMIT</li>
+<li>2 MARKET</li>
+<li>3 STOP_LOSS</li>
+<li>4 STOP_LOSS_LIMIT</li>
+<li>5 TAKE_PROFIT</li>
+<li>6 TAKE_PROFIT_LIMIT</li>
+<li>7 LIMIT_MAKER</li>
+</ul>
+<p><strong>Order side (side):</strong></p>
+<ul>
+<li>0 BUY</li>
+<li>1 SELL</li>
+</ul>
+<p><strong>Kline/Candlestick chart intervals:</strong></p>
+<p>m -&gt; minutes; h -&gt; hours; d -&gt; days; w -&gt; weeks; M -&gt; months</p>
+<ul>
+<li>1m</li>
+<li>3m</li>
+<li>5m</li>
+<li>15m</li>
+<li>30m</li>
+<li>1h</li>
+<li>2h</li>
+<li>4h</li>
+<li>6h</li>
+<li>8h</li>
+<li>12h</li>
+<li>1d</li>
+<li>3d</li>
+<li>1w</li>
+<li>1M</li>
+</ul>
+</div></div><div data-title="Filters" class="keyline-top section contain clearfix " data-reactid="77"><div class="space-bottom4 pad2x prose clip" data-reactid="78"><h3 id="filters">Filters</h3>
+<p>Filters define trading rules on a symbol or an exchange.
+Filters come in two forms: <code>symbol filters</code> and <code>exchange filters</code>.</p>
+</div></div><div data-title="Symbol Filters" class="keyline-top section contain clearfix " data-reactid="79"><div class="space-bottom4 pad2x prose clip" data-reactid="80"><h4 id="symbol-filters">Symbol Filters</h4>
+</div></div><div data-title="PRICE_FILTER" class="keyline-top section contain clearfix " data-reactid="81"><div class="space-bottom4 pad2x prose clip" data-reactid="82"><h5 id="price_filter">PRICE_FILTER</h5>
+<p>The <code>PRICE_FILTER</code> defines the <code>price</code> rules for a symbol. There are 3 parts:</p>
+<ul>
+<li><code>minPrice</code> defines the minimum <code>price</code>/<code>stopPrice</code> allowed; disabled on <code>minPrice</code> == 0.</li>
+<li><code>maxPrice</code> defines the maximum <code>price</code>/<code>stopPrice</code> allowed; disabled on <code>maxPrice</code> == 0.</li>
+<li><code>tickSize</code> defines the intervals that a <code>price</code>/<code>stopPrice</code> can be increased/decreased by; disabled on <code>tickSize</code> == 0.</li>
+</ul>
+<p>Any of the above variables can be set to 0, which disables that rule in the <code>price filter</code>. In order to pass the <code>price filter</code>, the following must be true for <code>price</code>/<code>stopPrice</code> of the enabled rules:</p>
+<ul>
+<li><code>price</code> &gt;= <code>minPrice</code></li>
+<li><code>price</code> &lt;= <code>maxPrice</code></li>
+<li>(<code>price</code>-<code>minPrice</code>) % <code>tickSize</code> == 0</li>
+</ul>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="83"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"PRICE_FILTER"</span>,
+  <span class="hljs-attr">"minPrice"</span>: <span class="hljs-string">"0.00000100"</span>,
+  <span class="hljs-attr">"maxPrice"</span>: <span class="hljs-string">"100000.00000000"</span>,
+  <span class="hljs-attr">"tickSize"</span>: <span class="hljs-string">"0.00000100"</span>
+}</pre>
+</div></div><div data-title="PERCENT_PRICE" class="keyline-top section contain clearfix " data-reactid="84"><div class="space-bottom4 pad2x prose clip" data-reactid="85"><h5 id="percent_price">PERCENT_PRICE</h5>
+<p>The <code>PERCENT_PRICE</code> filter defines valid range for a price based on the average of the previous trades.
+<code>avgPriceMins</code> is the number of minutes the average price is calculated over. 0 means the last price is used.</p>
+<p>In order to pass the <code>percent price</code>, the following must be true for <code>price</code>:</p>
+<ul>
+<li><code>price</code> &lt;= <code>weightedAveragePrice</code> * <code>multiplierUp</code></li>
+<li><code>price</code> &gt;= <code>weightedAveragePrice</code> * <code>multiplierDown</code></li>
+</ul>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="86"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"PERCENT_PRICE"</span>,
+  <span class="hljs-attr">"multiplierUp"</span>: <span class="hljs-string">"1.3000"</span>,
+  <span class="hljs-attr">"multiplierDown"</span>: <span class="hljs-string">"0.7000"</span>,
+  <span class="hljs-attr">"avgPriceMins"</span>: <span class="hljs-number">5</span>
+}</pre>
+</div></div><div data-title="LOT_SIZE" class="keyline-top section contain clearfix " data-reactid="87"><div class="space-bottom4 pad2x prose clip" data-reactid="88"><h5 id="lot_size">LOT_SIZE</h5>
+<p>The <code>LOT_SIZE</code> filter defines the <code>quantity</code> (aka "lots" in auction terms) rules for a symbol. There are 3 parts:</p>
+<ul>
+<li><code>minQty</code> defines the minimum <code>quantity</code>/<code>icebergQty</code> allowed.</li>
+<li><code>maxQty</code> defines the maximum <code>quantity</code>/<code>icebergQty</code> allowed.</li>
+<li><code>stepSize</code> defines the intervals that a <code>quantity</code>/<code>icebergQty</code> can be increased/decreased by.</li>
+</ul>
+<p>In order to pass the <code>lot size</code>, the following must be true for <code>quantity</code>/<code>icebergQty</code>:</p>
+<ul>
+<li><code>quantity</code> &gt;= <code>minQty</code></li>
+<li><code>quantity</code> &lt;= <code>maxQty</code></li>
+<li>(<code>quantity</code>-<code>minQty</code>) % <code>stepSize</code> == 0</li>
+</ul>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="89"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"LOT_SIZE"</span>,
+  <span class="hljs-attr">"minQty"</span>: <span class="hljs-string">"0.00100000"</span>,
+  <span class="hljs-attr">"maxQty"</span>: <span class="hljs-string">"100000.00000000"</span>,
+  <span class="hljs-attr">"stepSize"</span>: <span class="hljs-string">"0.00100000"</span>
+}</pre>
+</div></div><div data-title="NOTIONAL" class="keyline-top section contain clearfix " data-reactid="90"><div class="space-bottom4 pad2x prose clip" data-reactid="91"><h5 id="notional">NOTIONAL</h5>
+<p>The <code>NOTIONAL</code> filter defines the minimum/maximum notional value allowed for an order on a symbol.
+An order's notional value is the <code>price</code> * <code>quantity</code>.
+<code>applyToMarket</code> determines whether or not the <code>NOTIONAL</code> filter will also be applied to <code>MARKET</code> orders.
+Since <code>MARKET</code> orders have no price, the average price is used over the last <code>avgPriceMins</code> minutes.
+<code>avgPriceMins</code> is the number of minutes the average price is calculated over. 0 means the last price is used.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="92"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"NOTIONAL"</span>,
+  <span class="hljs-attr">"minNotional"</span>: <span class="hljs-string">"0.00100000"</span>,
+  <span class="hljs-attr">"maxNotional"</span>: <span class="hljs-string">"10000.00000000"</span>,
+  <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">true</span>,
+  <span class="hljs-attr">"avgPriceMins"</span>: <span class="hljs-number">5</span>
+}</pre>
+</div></div><div data-title="ICEBERG_PARTS" class="keyline-top section contain clearfix " data-reactid="93"><div class="space-bottom4 pad2x prose clip" data-reactid="94"><h5 id="iceberg_parts">ICEBERG_PARTS</h5>
+<p>The <code>ICEBERG_PARTS</code> filter defines the maximum parts an iceberg order can have. The number of <code>ICEBERG_PARTS</code> is defined as <code>CEIL(qty / icebergQty)</code>.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="95"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"ICEBERG_PARTS"</span>,
+  <span class="hljs-attr">"limit"</span>: <span class="hljs-number">10</span>
+}</pre>
+</div></div><div data-title="MARKET_LOT_SIZE" class="keyline-top section contain clearfix " data-reactid="96"><div class="space-bottom4 pad2x prose clip" data-reactid="97"><h5 id="market_lot_size">MARKET_LOT_SIZE</h5>
+<p>The <code>MARKET_LOT_SIZE</code> filter defines the <code>quantity</code> (aka "lots" in auction terms) rules for <code>MARKET</code> orders on a symbol. There are 3 parts:</p>
+<ul>
+<li><code>minQty</code> defines the minimum <code>quantity</code> allowed.</li>
+<li><code>maxQty</code> defines the maximum <code>quantity</code> allowed.</li>
+<li><code>stepSize</code> defines the intervals that a <code>quantity</code> can be increased/decreased by.</li>
+</ul>
+<p>In order to pass the <code>market lot size</code>, the following must be true for <code>quantity</code>:</p>
+<ul>
+<li><code>quantity</code> &gt;= <code>minQty</code></li>
+<li><code>quantity</code> &lt;= <code>maxQty</code></li>
+<li>(<code>quantity</code>-<code>minQty</code>) % <code>stepSize</code> == 0</li>
+</ul>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="98"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"MARKET_LOT_SIZE"</span>,
+  <span class="hljs-attr">"minQty"</span>: <span class="hljs-string">"0.00100000"</span>,
+  <span class="hljs-attr">"maxQty"</span>: <span class="hljs-string">"100000.00000000"</span>,
+  <span class="hljs-attr">"stepSize"</span>: <span class="hljs-string">"0.00100000"</span>
+}</pre>
+</div></div><div data-title="MAX_NUM_ORDERS" class="keyline-top section contain clearfix " data-reactid="99"><div class="space-bottom4 pad2x prose clip" data-reactid="100"><h5 id="max_num_orders">MAX_NUM_ORDERS</h5>
+<p>The <code>MAX_NUM_ORDERS</code> filter defines the maximum number of orders an account is allowed to have open on a symbol.
+Note that both "algo" orders and normal orders are counted for this filter.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="101"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"MAX_NUM_ORDERS"</span>,
+  <span class="hljs-attr">"limit"</span>: <span class="hljs-number">25</span>
+}</pre>
+</div></div><div data-title="MAX_NUM_ALGO_ORDERS" class="keyline-top section contain clearfix " data-reactid="102"><div class="space-bottom4 pad2x prose clip" data-reactid="103"><h5 id="max_num_algo_orders">MAX_NUM_ALGO_ORDERS</h5>
+<p>The <code>MAX_NUM_ALGO_ORDERS</code> filter defines the maximum number of "algo" orders an account is allowed to have open on a symbol.
+"Algo" orders are <code>STOP_LOSS</code>, <code>STOP_LOSS_LIMIT</code>, <code>TAKE_PROFIT</code>, and <code>TAKE_PROFIT_LIMIT</code> orders.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="104"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"MAX_NUM_ALGO_ORDERS"</span>,
+  <span class="hljs-attr">"maxNumAlgoOrders"</span>: <span class="hljs-number">5</span>
+}</pre>
+</div></div><div data-title="MAX_NUM_ICEBERG_ORDERS" class="keyline-top section contain clearfix " data-reactid="105"><div class="space-bottom4 pad2x prose clip" data-reactid="106"><h5 id="max_num_iceberg_orders">MAX_NUM_ICEBERG_ORDERS</h5>
+<p>The <code>MAX_NUM_ICEBERG_ORDERS</code> filter defines the maximum number of <code>ICEBERG</code> orders an account is allowed to have open on a symbol.
+An <code>ICEBERG</code> order is any order where the <code>icebergQty</code> is &gt; 0.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="107"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"MAX_NUM_ICEBERG_ORDERS"</span>,
+  <span class="hljs-attr">"maxNumIcebergOrders"</span>: <span class="hljs-number">5</span>
+}</pre>
+</div></div><div data-title="Exchange Filters" class="keyline-top section contain clearfix " data-reactid="108"><div class="space-bottom4 pad2x prose clip" data-reactid="109"><h4 id="exchange-filters">Exchange Filters</h4>
+</div></div><div data-title="EXCHANGE_MAX_NUM_ORDERS" class="keyline-top section contain clearfix " data-reactid="110"><div class="space-bottom4 pad2x prose clip" data-reactid="111"><h5 id="exchange_max_num_orders">EXCHANGE_MAX_NUM_ORDERS</h5>
+<p>The <code>MAX_NUM_ORDERS</code> filter defines the maximum number of orders an account is allowed to have open on the exchange.
+Note that both "algo" orders and normal orders are counted for this filter.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="112"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"EXCHANGE_MAX_NUM_ORDERS"</span>,
+  <span class="hljs-attr">"maxNumOrders"</span>: <span class="hljs-number">1000</span>
+}</pre>
+</div></div><div data-title="EXCHANGE_MAX_NUM_ALGO_ORDERS" class="keyline-top section contain clearfix " data-reactid="113"><div class="space-bottom4 pad2x prose clip" data-reactid="114"><h5 id="exchange_max_num_algo_orders">EXCHANGE_MAX_NUM_ALGO_ORDERS</h5>
+<p>The <code>MAX_ALGO_ORDERS</code> filter defines the maximum number of "algo" orders an account is allowed to have open on the exchange.
+"Algo" orders are <code>STOP_LOSS</code>, <code>STOP_LOSS_LIMIT</code>, <code>TAKE_PROFIT</code>, and <code>TAKE_PROFIT_LIMIT</code> orders.</p>
+<p><strong>/exchangeInfo format:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="115"><pre class="hljs">{
+  <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"EXCHANGE_MAX_ALGO_ORDERS"</span>,
+  <span class="hljs-attr">"maxNumAlgoOrders"</span>: <span class="hljs-number">200</span>
+}</pre>
+</div></div><div data-title="General endpoints" class="keyline-top section contain clearfix " data-reactid="116"><div class="space-bottom4 pad2x prose clip" data-reactid="117"><h2 id="general-endpoints">General endpoints</h2>
+</div></div><div data-title="Check server time" class="keyline-top section contain clearfix " data-reactid="118"><div class="space-bottom4 pad2x prose clip" data-reactid="119"><h3 id="check-server-time">Check server time</h3>
+<pre><code>GET /open/v1/common/time
+</code></pre>
+<p>Test connectivity to the Rest API and get the current server time.</p>
+<p><strong>Parameters:</strong>
+NONE</p>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="120"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1572265137927</span>
+}</pre>
+</div></div><div data-title="Get all Supported Trading Symbol" class="keyline-top section contain clearfix " data-reactid="121"><div class="space-bottom4 pad2x prose clip" data-reactid="122"><h3 id="get-all-supported-trading-symbol">Get all Supported Trading Symbol</h3>
+<pre><code>GET /open/v1/common/symbols
+</code></pre>
+<p>This endpoint returns all Exchange's supported trading symbol.</p>
+<p><strong>Parameters:</strong>
+NONE</p>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="123"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"list"</span>: [
+            {
+                <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>, <span class="hljs-comment">// 1 - Main, 2 - Next.</span>
+                <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"ADA_BNB"</span>,
+                <span class="hljs-attr">"baseAsset"</span>: <span class="hljs-string">"ADA"</span>,
+                <span class="hljs-attr">"basePrecision"</span>: <span class="hljs-number">8</span>,
+                <span class="hljs-attr">"quoteAsset"</span>: <span class="hljs-string">"BNB"</span>,
+                <span class="hljs-attr">"quotePrecision"</span>: <span class="hljs-number">8</span>,
+                <span class="hljs-attr">"filters"</span>: [
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">false</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"PRICE_FILTER"</span>,
+                        <span class="hljs-attr">"maxPrice"</span>: <span class="hljs-string">"1000.00000000"</span>,
+                        <span class="hljs-attr">"minPrice"</span>: <span class="hljs-string">"0.00000100"</span>,
+                        <span class="hljs-attr">"tickSize"</span>: <span class="hljs-string">"0.00000100"</span>
+                    },
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">false</span>,
+                        <span class="hljs-attr">"avgPriceMins"</span>: <span class="hljs-string">"5"</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"PERCENT_PRICE"</span>,
+                        <span class="hljs-attr">"multiplierDown"</span>: <span class="hljs-number">0.2</span>,
+                        <span class="hljs-attr">"multiplierUp"</span>: <span class="hljs-number">5</span>
+                    },
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">false</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"LOT_SIZE"</span>,
+                        <span class="hljs-attr">"maxQty"</span>: <span class="hljs-string">"9000000.00000000"</span>,
+                        <span class="hljs-attr">"minQty"</span>: <span class="hljs-string">"1.00000000"</span>,
+                        <span class="hljs-attr">"stepSize"</span>: <span class="hljs-string">"1.00000000"</span>
+                    },
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">true</span>,
+                        <span class="hljs-attr">"avgPriceMins"</span>: <span class="hljs-string">"5"</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"NOTIONAL"</span>,
+                        <span class="hljs-attr">"minNotional"</span>: <span class="hljs-string">"0.10000000"</span>
+                    },
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">false</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"ICEBERG_PARTS"</span>,
+                        <span class="hljs-attr">"limit"</span>: <span class="hljs-string">"10"</span>
+                    },
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">false</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"MARKET_LOT_SIZE"</span>,
+                        <span class="hljs-attr">"maxQty"</span>: <span class="hljs-string">"4526300.00000000"</span>,
+                        <span class="hljs-attr">"minQty"</span>: <span class="hljs-string">"0.00000000"</span>,
+                        <span class="hljs-attr">"stepSize"</span>: <span class="hljs-string">"0.00000000"</span>
+                    },
+                    {
+                        <span class="hljs-attr">"applyToMarket"</span>: <span class="hljs-literal">false</span>,
+                        <span class="hljs-attr">"filterType"</span>: <span class="hljs-string">"MAX_NUM_ALGO_ORDERS"</span>,
+                        <span class="hljs-attr">"maxNumAlgoOrders"</span>: <span class="hljs-string">"5"</span>
+                    }
+                ],
+                <span class="hljs-attr">"orderTypes"</span>: [
+                    <span class="hljs-string">"LIMIT"</span>,
+                    <span class="hljs-string">"LIMIT_MAKER"</span>,
+                    <span class="hljs-string">"MARKET"</span>,
+                    <span class="hljs-string">"STOP_LOSS_LIMIT"</span>,
+                    <span class="hljs-string">"TAKE_PROFIT_LIMIT"</span>
+                ],
+                <span class="hljs-attr">"defaultSelfTradePreventionMode"</span>: <span class="hljs-string">"EXPIRE_MAKER"</span>,
+                <span class="hljs-attr">"allowedSelfTradePreventionModes"</span>: [
+                    <span class="hljs-string">"EXPIRE_TAKER"</span>,
+                    <span class="hljs-string">"EXPIRE_MAKER"</span>,
+                    <span class="hljs-string">"EXPIRE_BOTH"</span>,
+                    <span class="hljs-string">"DECREMENT"</span>,
+                    <span class="hljs-string">"TRANSFER"</span>
+                ],
+                <span class="hljs-attr">"icebergEnable"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"ocoEnable"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"spotTradingEnable"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"marginTradingEnable"</span>: <span class="hljs-number">0</span>
+            }
+          ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571921637091</span>
+}</pre>
+</div></div><div data-title="Query Execution Rules" class="keyline-top section contain clearfix " data-reactid="124"><div class="space-bottom4 pad2x prose clip" data-reactid="125"><h3 id="query-execution-rules">Query Execution Rules</h3>
+<pre><code>GET /api/v3/executionRules
+</code></pre>
+<p>Query execution rules for trading symbols. The base endpoint is: <strong><a href="https://www.tokocrypto.site/">https://www.tokocrypto.site</a></strong></p>
+<p><strong>Weight:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter Used</th>
+<th>Weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>symbol</code></td>
+<td>2</td>
+</tr>
+<tr>
+<td><code>symbols</code></td>
+<td>2 for each requested symbol, capped at max weight of 40</td>
+</tr>
+<tr>
+<td><code>symbolStatus</code></td>
+<td>40</td>
+</tr>
+<tr>
+<td>None</td>
+<td>40</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>NO</td>
+<td>-</td>
+<td>Query for a single symbol</td>
+</tr>
+<tr>
+<td>symbols</td>
+<td>STRING</td>
+<td>NO</td>
+<td>-</td>
+<td>Query for multiple symbols</td>
+</tr>
+<tr>
+<td>symbolStatus</td>
+<td>ENUM</td>
+<td>NO</td>
+<td>-</td>
+<td>Filter by symbol status. Supported values: <code>TRADING</code>, <code>HALT</code>, <code>BREAK</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong></p>
+<ul>
+<li>Only one of <code>symbol</code>, <code>symbols</code>, or <code>symbolStatus</code> can be sent per request. They are mutually exclusive.</li>
+<li>If no parameter is sent, execution rules for all symbols are returned.</li>
+</ul>
+<p><strong>Data Source:</strong> Memory</p>
+<p><strong>Response:</strong></p>
+<p><strong>Response fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbolRules</td>
+<td>ARRAY</td>
+<td>Array of rule objects for each symbol</td>
+</tr>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>Trading pair symbol</td>
+</tr>
+<tr>
+<td>rules</td>
+<td>ARRAY</td>
+<td>Array of execution rule objects for this symbol</td>
+</tr>
+<tr>
+<td>ruleType</td>
+<td>STRING</td>
+<td>Type of execution rule (e.g., <code>PRICE_RANGE</code>)</td>
+</tr>
+<tr>
+<td>bidLimitMultUp</td>
+<td>STRING</td>
+<td>Upper multiplier limit for BUY order prices</td>
+</tr>
+<tr>
+<td>bidLimitMultDown</td>
+<td>STRING</td>
+<td>Lower multiplier limit for BUY order prices</td>
+</tr>
+<tr>
+<td>askLimitMultUp</td>
+<td>STRING</td>
+<td>Upper multiplier limit for SELL order prices</td>
+</tr>
+<tr>
+<td>askLimitMultDown</td>
+<td>STRING</td>
+<td>Lower multiplier limit for SELL order prices</td>
+</tr>
+</tbody>
+</table>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="126"><pre class="hljs">{
+    <span class="hljs-attr">"symbolRules"</span>: [
+        {
+            <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"BAZUSD"</span>,
+            <span class="hljs-attr">"rules"</span>: [
+                {
+                    <span class="hljs-attr">"ruleType"</span>: <span class="hljs-string">"PRICE_RANGE"</span>,
+                    <span class="hljs-attr">"bidLimitMultUp"</span>: <span class="hljs-string">"1.0001"</span>,
+                    <span class="hljs-attr">"bidLimitMultDown"</span>: <span class="hljs-string">"0.9999"</span>,
+                    <span class="hljs-attr">"askLimitMultUp"</span>: <span class="hljs-string">"1.0001"</span>,
+                    <span class="hljs-attr">"askLimitMultDown"</span>: <span class="hljs-string">"0.9999"</span>
+                }
+            ]
+        }
+    ]
+}</pre>
+</div></div><div data-title="Market Data endpoints" class="keyline-top section contain clearfix " data-reactid="127"><div class="space-bottom4 pad2x prose clip" data-reactid="128"><h2 id="market-data-endpoints">Market Data endpoints</h2>
+</div></div><div data-title="Order book" class="keyline-top section contain clearfix " data-reactid="129"><div class="space-bottom4 pad2x prose clip" data-reactid="130"><h3 id="order-book">Order book</h3>
+<pre><code>GET https://www.tokocrypto.site/api/v3/depth (when symbol type is 1)
+GET https://cloudme-toko.2meta.app/api/v1/depth (when symbol type is 3)
+</code></pre>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td>when symbol type is 1, replace _ of symbol with null string</td>
+</tr>
+<tr>
+<td>limit</td>
+<td>INT</td>
+<td>NO</td>
+<td>4</td>
+<td>Default 100; max 5000. Valid limits:[5, 10, 20, 50, 100, 500]</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="131"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+      <span class="hljs-attr">"lastUpdateId"</span>: <span class="hljs-number">1027024</span>,
+      <span class="hljs-attr">"bids"</span>: [
+            [
+              <span class="hljs-string">"4.00000000"</span>,     <span class="hljs-comment">// 价位</span>
+              <span class="hljs-string">"431.00000000"</span>,   <span class="hljs-comment">// 挂单量</span>
+            ]
+          ],
+          <span class="hljs-attr">"asks"</span>: [
+            [
+              <span class="hljs-string">"4.00000200"</span>,
+              <span class="hljs-string">"12.00000000"</span>,
+            ]
+          ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571921637091</span>
+}</pre>
+</div></div><div data-title="Recent trades list" class="keyline-top section contain clearfix " data-reactid="132"><div class="space-bottom4 pad2x prose clip" data-reactid="133"><h3 id="recent-trades-list">Recent trades list</h3>
+<pre><code>GET https://www.tokocrypto.site/api/v3/trades (when symbol type is 1)
+GET /open/v1/market/trades (when symbol type is not 1)
+</code></pre>
+<p>Get recent trades (up to last 500).</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td>when symbol type is 1, replace _ of symbol with null string</td>
+</tr>
+<tr>
+<td>fromId</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td>ID to get trades from INCLUSIVE.</td>
+</tr>
+<tr>
+<td>limit</td>
+<td>INT</td>
+<td>NO</td>
+<td>4</td>
+<td>Default 500; max 1000.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="134"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: [
+        {
+          <span class="hljs-attr">"id"</span>: <span class="hljs-number">28457</span>,
+          <span class="hljs-attr">"price"</span>: <span class="hljs-string">"4.00000100"</span>,
+          <span class="hljs-attr">"qty"</span>: <span class="hljs-string">"12.00000000"</span>,
+          <span class="hljs-attr">"time"</span>: <span class="hljs-number">1499865549590</span>,
+          <span class="hljs-attr">"isBuyerMaker"</span>: <span class="hljs-literal">true</span>,
+          <span class="hljs-attr">"isBestMatch"</span>: <span class="hljs-literal">true</span>
+        }
+    ],
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571921637091</span>
+}</pre>
+</div></div><div data-title="Compressed/Aggregate trades list" class="keyline-top section contain clearfix " data-reactid="135"><div class="space-bottom4 pad2x prose clip" data-reactid="136"><h3 id="compressedaggregate-trades-list">Compressed/Aggregate trades list</h3>
+<pre><code>GET https://www.tokocrypto.site/api/v3/aggTrades (when symbol type is 1)
+GET https://cloudme-toko.2meta.app/api/v1/aggTrades (when symbol type is 3)
+</code></pre>
+<p>Get compressed, aggregate trades. Trades that fill at the time, from the same
+order, with the same price will have the quantity aggregated.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td>when symbol type is 1, replace _ of symbol with null string</td>
+</tr>
+<tr>
+<td>fromId</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td>ID to get aggregate trades from INCLUSIVE.</td>
+</tr>
+<tr>
+<td>startTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td>Timestamp in ms to get aggregate trades from INCLUSIVE.</td>
+</tr>
+<tr>
+<td>endTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td>Timestamp in ms to get aggregate trades until INCLUSIVE.</td>
+</tr>
+<tr>
+<td>limit</td>
+<td>INT</td>
+<td>NO</td>
+<td>4</td>
+<td>Default 500; max 1000.</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>If fromId, startTime, and endTime are not sent, the most recent aggregate trades will be returned.</li>
+</ul>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="137"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: [
+        {
+            <span class="hljs-attr">"a"</span>: <span class="hljs-number">26129</span>,         <span class="hljs-comment">// Aggregate tradeId</span>
+            <span class="hljs-attr">"p"</span>: <span class="hljs-string">"0.01633102"</span>,  <span class="hljs-comment">// Price</span>
+            <span class="hljs-attr">"q"</span>: <span class="hljs-string">"4.70443515"</span>,  <span class="hljs-comment">// Quantity</span>
+            <span class="hljs-attr">"f"</span>: <span class="hljs-number">27781</span>,         <span class="hljs-comment">// First tradeId</span>
+            <span class="hljs-attr">"l"</span>: <span class="hljs-number">27781</span>,         <span class="hljs-comment">// Last tradeId</span>
+            <span class="hljs-attr">"T"</span>: <span class="hljs-number">1498793709153</span>, <span class="hljs-comment">// Timestamp</span>
+            <span class="hljs-attr">"m"</span>: <span class="hljs-literal">true</span>,          <span class="hljs-comment">// Was the buyer the maker?</span>
+            <span class="hljs-attr">"M"</span>: <span class="hljs-literal">true</span>           <span class="hljs-comment">// Was the trade the best price match?</span>
+        }
+    ],
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571921637091</span>
+}</pre>
+</div></div><div data-title="Kline/Candlestick data" class="keyline-top section contain clearfix " data-reactid="138"><div class="space-bottom4 pad2x prose clip" data-reactid="139"><h3 id="klinecandlestick-data">Kline/Candlestick data</h3>
+<pre><code>GET https://www.tokocrypto.site/api/v3/klines (when symbol type is 1)
+GET https://cloudme-toko.2meta.app/api/v1/klines(when symbol type is 3)
+</code></pre>
+<p>Kline/candlestick bars for a symbol.
+Klines are uniquely identified by their open time.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td>when symbol type is 1, replace _ of symbol with null string</td>
+</tr>
+<tr>
+<td>interval</td>
+<td>ENUM</td>
+<td>YES</td>
+<td>4</td>
+<td></td>
+</tr>
+<tr>
+<td>startTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td></td>
+</tr>
+<tr>
+<td>endTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td></td>
+</tr>
+<tr>
+<td>limit</td>
+<td>INT</td>
+<td>NO</td>
+<td>4</td>
+<td>Default 500; max 1000.</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>If startTime and endTime are not sent, the most recent klines are returned.</li>
+</ul>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="140"><pre class="hljs"> {
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: [
+        [
+          <span class="hljs-number">1499040000000</span>,      <span class="hljs-comment">// Open time</span>
+          <span class="hljs-string">"0.01634790"</span>,       <span class="hljs-comment">// Open</span>
+          <span class="hljs-string">"0.80000000"</span>,       <span class="hljs-comment">// High</span>
+          <span class="hljs-string">"0.01575800"</span>,       <span class="hljs-comment">// Low</span>
+          <span class="hljs-string">"0.01577100"</span>,       <span class="hljs-comment">// Close</span>
+          <span class="hljs-string">"148976.11427815"</span>,  <span class="hljs-comment">// Volume</span>
+          <span class="hljs-number">1499644799999</span>,      <span class="hljs-comment">// Close time</span>
+          <span class="hljs-string">"2434.19055334"</span>,    <span class="hljs-comment">// Quote asset volume</span>
+          <span class="hljs-number">308</span>,                <span class="hljs-comment">// Number of trades</span>
+          <span class="hljs-string">"1756.87402397"</span>,    <span class="hljs-comment">// Taker buy base asset volume</span>
+          <span class="hljs-string">"28.46694368"</span>,      <span class="hljs-comment">// Taker buy quote asset volume</span>
+          <span class="hljs-string">"17928899.62484339"</span> <span class="hljs-comment">// Ignore.</span>
+        ]
+    ],
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571921637091</span>
+}</pre>
+</div></div><div data-title="Account endpoints" class="keyline-top section contain clearfix " data-reactid="141"><div class="space-bottom4 pad2x prose clip" data-reactid="142"><h2 id="account-endpoints">Account endpoints</h2>
+</div></div><div data-title="New order  (SIGNED)" class="keyline-top section contain clearfix " data-reactid="143"><div class="space-bottom4 pad2x prose clip" data-reactid="144"><h3 id="new-order--signed">New order  (SIGNED)</h3>
+<pre><code>POST /open/v1/orders  (HMAC SHA256)
+</code></pre>
+<p>Send in a new order.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>side</td>
+<td>ENUM</td>
+<td>YES</td>
+<td>0,1</td>
+</tr>
+<tr>
+<td>type</td>
+<td>ENUM</td>
+<td>YES</td>
+<td>1,2,4,6</td>
+</tr>
+<tr>
+<td>timeInForce</td>
+<td>ENUM</td>
+<td>NO</td>
+<td>1 GTC-Good Till Cancel; 2 IOC-Immediate or Cancel; 3 FOK-Fill or Kill; 4 GTX-Good Till Crossing</td>
+</tr>
+<tr>
+<td>quantity</td>
+<td>STRING</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>quoteOrderQty</td>
+<td>STRING</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>price</td>
+<td>STRING</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>clientId</td>
+<td>STRING</td>
+<td>NO</td>
+<td>Client's custom ID for the order, Server does not check it's uniqueness. Automatically generated if not sent.</td>
+</tr>
+<tr>
+<td>stopPrice</td>
+<td>STRING</td>
+<td>NO</td>
+<td>Used with <code>STOP_LOSS</code>, <code>STOP_LOSS_LIMIT</code>, <code>TAKE_PROFIT</code>, and <code>TAKE_PROFIT_LIMIT</code> orders.</td>
+</tr>
+<tr>
+<td>icebergQty</td>
+<td>STRING</td>
+<td>NO</td>
+<td>Used with <code>LIMIT</code>, <code>STOP_LOSS_LIMIT</code>, and <code>TAKE_PROFIT_LIMIT</code> to create an iceberg order.</td>
+</tr>
+<tr>
+<td>selfTradePreventionMode</td>
+<td>ENUM</td>
+<td>NO</td>
+<td>The allowed enums is dependent on what is configured on the symbol. <br>The possible supported values are <code>0 - EXPIRE_MAKER</code>, <code>1 - EXPIRE_TAKER</code>, <code>2 - EXPIRE_BOTH</code>, <code>4 - DECREMENT</code>, <code>5 - TRANSFER</code>.</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Additional mandatory parameters based on <code>type</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Additional mandatory parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1</code></td>
+<td><code>quantity</code>, <code>price</code></td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td><code>quantity</code> (sell) or <code>quoteOrderQty</code> (buy)</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td><code>quantity</code>, <code>stopPrice</code></td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td><code>quantity</code>,  <code>price</code>, <code>stopPrice</code></td>
+</tr>
+<tr>
+<td><code>5</code></td>
+<td><code>quantity</code>, <code>stopPrice</code></td>
+</tr>
+<tr>
+<td><code>6</code></td>
+<td><code>quantity</code>, <code>price</code>, <code>stopPrice</code></td>
+</tr>
+<tr>
+<td><code>7</code></td>
+<td><code>quantity</code>, <code>price</code></td>
+</tr>
+</tbody>
+</table>
+<p>Other info:</p>
+<ul>
+<li><code>LIMIT_MAKER</code> are <code>LIMIT</code> orders that will be rejected if they would immediately match and trade as a taker.</li>
+<li><code>STOP_LOSS</code> and <code>TAKE_PROFIT</code> will execute a <code>MARKET</code> order when the <code>stopPrice</code> is reached.</li>
+<li>Any <code>LIMIT</code> or <code>LIMIT_MAKER</code> type order can be made an iceberg order by sending an <code>icebergQty</code>.</li>
+<li>Any order with an <code>icebergQty</code> MUST have <code>timeInForce</code> set to <code>GTC</code>.</li>
+<li><code>MARKET</code> orders using <code>quantity</code> specifies how much a user wants to buy or sell based on the market price.</li>
+<li><code>MARKET</code> orders using <code>quoteOrderQty</code> specifies the amount the user wants to spend (when buying) of the quote asset; the correct <code>quantity</code> will be determined based on the market liquidity and <code>quoteOrderQty</code>.</li>
+<li><code>MARKET</code> orders using <code>quoteOrderQty</code> will not break <code>LOT_SIZE</code> filter rules; the order will execute a <code>quantity</code> that will have the notional value as close as possible to <code>quoteOrderQty</code>.</li>
+</ul>
+<p>Trigger order price rules against market price for both MARKET and LIMIT versions:</p>
+<ul>
+<li>Price above market price: <code>STOP_LOSS</code> <code>BUY</code>, <code>TAKE_PROFIT</code> <code>SELL</code></li>
+<li>Price below market price: <code>STOP_LOSS</code> <code>SELL</code>, <code>TAKE_PROFIT</code> <code>BUY</code></li>
+</ul>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="145"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"message"</span>: <span class="hljs-string">"Success"</span>,
+    <span class="hljs-attr">"messageDetail"</span>: <span class="hljs-literal">null</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"orderId"</span>: <span class="hljs-number">305549804</span>,
+        <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"398035221307693184"</span>,
+        <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"TKO_IDR"</span>,
+        <span class="hljs-attr">"symbolType"</span>: <span class="hljs-number">3</span>,
+        <span class="hljs-attr">"side"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"price"</span>: <span class="hljs-string">"5653"</span>,
+        <span class="hljs-attr">"origQty"</span>: <span class="hljs-string">"4"</span>,
+        <span class="hljs-attr">"origQuoteQty"</span>: <span class="hljs-string">"22612"</span>,
+        <span class="hljs-attr">"executedQty"</span>: <span class="hljs-string">"0"</span>,
+        <span class="hljs-attr">"executedPrice"</span>: <span class="hljs-string">"0"</span>,
+        <span class="hljs-attr">"executedQuoteQty"</span>: <span class="hljs-string">"0"</span>,
+        <span class="hljs-attr">"timeInForce"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"stopPrice"</span>: <span class="hljs-string">"0"</span>,
+        <span class="hljs-attr">"icebergQty"</span>: <span class="hljs-string">"0"</span>,
+        <span class="hljs-attr">"status"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"isWorking"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1719980695955</span>,
+        <span class="hljs-attr">"borderId"</span>: <span class="hljs-string">"5614043"</span>,
+        <span class="hljs-attr">"borderListId"</span>: <span class="hljs-number">0</span>
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1719980696090</span>,
+    <span class="hljs-attr">"success"</span>: <span class="hljs-literal">true</span>
+} </pre>
+</div></div><div data-title="Query order (SIGNED)" class="keyline-top section contain clearfix " data-reactid="146"><div class="space-bottom4 pad2x prose clip" data-reactid="147"><h3 id="query-order-signed">Query order (SIGNED)</h3>
+<pre><code>GET /open/v1/orders/detail (HMAC SHA256)
+</code></pre>
+<p>Check an order's status.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>orderId</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>clientId</td>
+<td>String</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="148"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"message"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"orderId"</span>: <span class="hljs-string">"4"</span>, <span class="hljs-comment">// order id</span>
+        <span class="hljs-attr">"bOrderId"</span>: <span class="hljs-string">"100001"</span>, <span class="hljs-comment">// match engine order id</span>
+        <span class="hljs-attr">"bOrderListId"</span>: <span class="hljs-number">-1</span>, <span class="hljs-comment">// Unless part of an OCO, the value will always be -1.</span>
+        <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"1aa4f99ad7bc4fab903395afd25d0597"</span>, <span class="hljs-comment">// client custom order id</span>
+        <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"BTC_USDT"</span>,
+        <span class="hljs-attr">"side"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"price"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"status"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"origQty"</span>: <span class="hljs-number">10.88</span>,
+        <span class="hljs-attr">"origQuoteQty"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"executedQty"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"executedPrice"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"executedQuoteQty"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"taxFee"</span>: <span class="hljs-string">"0.12052382"</span>,
+        <span class="hljs-attr">"taxFeeAsset"</span>: <span class="hljs-string">"USDT"</span>,
+        <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1550130502000</span>
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1550130554182</span>
+}</pre>
+</div></div><div data-title="Cancel order (SIGNED)" class="keyline-top section contain clearfix " data-reactid="149"><div class="space-bottom4 pad2x prose clip" data-reactid="150"><h3 id="cancel-order-signed">Cancel order (SIGNED)</h3>
+<pre><code>POST /open/v1/orders/cancel  (HMAC SHA256)
+</code></pre>
+<p>Cancel an active order.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>orderId</td>
+<td>LONG</td>
+<td>NO</td>
+<td>Either <strong><code>orderId</code></strong> or <strong><code>clientId</code></strong> must be provided</td>
+</tr>
+<tr>
+<td>clientId</td>
+<td>String</td>
+<td>NO</td>
+<td>Either <strong><code>orderId</code></strong> or <strong><code>clientId</code></strong> must be provided</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="151"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"message"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"orderId"</span>: <span class="hljs-string">"4"</span>, <span class="hljs-comment">// order id</span>
+        <span class="hljs-attr">"bOrderId"</span>: <span class="hljs-string">"100001"</span>, <span class="hljs-comment">// match engine order id</span>
+        <span class="hljs-attr">"bOrderListId"</span>: <span class="hljs-number">-1</span>, <span class="hljs-comment">// Unless part of an OCO, the value will always be -1.</span>
+        <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"1aa4f99ad7bc4fab903395afd25d0597"</span>, <span class="hljs-comment">// client custom order id</span>
+        <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"BTC_USDT"</span>,
+        <span class="hljs-attr">"side"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"price"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"status"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"origQty"</span>: <span class="hljs-number">10.88</span>,
+        <span class="hljs-attr">"origQuoteQty"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"executedQty"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"executedPrice"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"executedQuoteQty"</span>: <span class="hljs-number">0</span>,
+        <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1550130502000</span>
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1550130554182</span>
+}</pre>
+</div></div><div data-title="All orders (SIGNED)" class="keyline-top section contain clearfix " data-reactid="152"><div class="space-bottom4 pad2x prose clip" data-reactid="153"><h3 id="all-orders-signed">All orders (SIGNED)</h3>
+<pre><code>GET /open/v1/orders (HMAC SHA256)
+</code></pre>
+<p>Get all account orders; active, canceled, or filled.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>type</td>
+<td>ENUM</td>
+<td>NO</td>
+<td>1-open, 2-history, -1-all</td>
+</tr>
+<tr>
+<td>side</td>
+<td>ENUM</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>startTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>endTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>fromId</td>
+<td>String</td>
+<td>NO</td>
+<td>start order ID the searching to begin with.</td>
+</tr>
+<tr>
+<td>direct</td>
+<td>ENUM</td>
+<td>NO</td>
+<td>searching direction:	prev - in ascending order from the start order ID; next - in descending order from the start order ID</td>
+</tr>
+<tr>
+<td>limit</td>
+<td>INT</td>
+<td>NO</td>
+<td>Default 500; max 1000.</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong></p>
+<ul>
+<li>if field "fromId" is defined, this field "direct" becomes mandatory.</li>
+</ul>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="154"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"list"</span>: [
+            {
+                <span class="hljs-attr">"orderId"</span>: <span class="hljs-string">"4"</span>, <span class="hljs-comment">// order id</span>
+                <span class="hljs-attr">"bOrderId"</span>: <span class="hljs-string">"100001"</span>, <span class="hljs-comment">// match engine order id</span>
+                <span class="hljs-attr">"bOrderListId"</span>: <span class="hljs-number">-1</span>, <span class="hljs-comment">// Unless part of an OCO, the value will always be -1.</span>
+                <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"1aa4f99ad7bc4fab903395afd25d0597"</span>, <span class="hljs-comment">// client custom order id</span>
+                <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"ADA_USDT"</span>,
+                <span class="hljs-attr">"symbolType"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"side"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"price"</span>: <span class="hljs-string">"0.1"</span>,
+                <span class="hljs-attr">"origQty"</span>: <span class="hljs-string">"10"</span>,
+                <span class="hljs-attr">"origQuoteQty"</span>: <span class="hljs-string">"1"</span>,
+                <span class="hljs-attr">"executedQty"</span>: <span class="hljs-string">"0"</span>,
+                <span class="hljs-attr">"executedPrice"</span>: <span class="hljs-string">"0"</span>,
+                <span class="hljs-attr">"executedQuoteQty"</span>: <span class="hljs-string">"0"</span>,
+                <span class="hljs-attr">"timeInForce"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"stopPrice"</span>: <span class="hljs-string">"0.0000000000000000"</span>,
+                <span class="hljs-attr">"icebergQty"</span>: <span class="hljs-string">"0.0000000000000000"</span>,
+                <span class="hljs-attr">"status"</span>: <span class="hljs-number">0</span>,
+                <span class="hljs-attr">"isWorking"</span>: <span class="hljs-number">0</span>,
+                <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1572692016811</span>
+            }
+        ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1572860756458</span>
+}</pre>
+</div></div><div data-title="New OCO (SIGNED)" class="keyline-top section contain clearfix " data-reactid="155"><div class="space-bottom4 pad2x prose clip" data-reactid="156"><h3 id="new-oco-signed">New OCO (SIGNED)</h3>
+<pre><code>POST /open/v1/orders/oco (HMAC SHA256)
+</code></pre>
+<p>Send in a new OCO</p>
+<p><strong>Parameters</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>listClientId</td>
+<td>STRING</td>
+<td>NO</td>
+<td>Client's custom ID for the entire orderList, Server does not check it's uniqueness. Automatically generated if not sent.</td>
+</tr>
+<tr>
+<td>side</td>
+<td>ENUM</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>quantity</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>limitClientId</td>
+<td>STRING</td>
+<td>NO</td>
+<td>Client's custom ID for the limit order, Server does not check it's uniqueness. Automatically generated if not sent.</td>
+</tr>
+<tr>
+<td>price</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>stopClientId</td>
+<td>STRING</td>
+<td>NO</td>
+<td>Client's custom ID for the stop loss/stop loss limit order, Server does not check it's uniqueness. Automatically generated if not sent.</td>
+</tr>
+<tr>
+<td>stopPrice</td>
+<td>STRING</td>
+<td>YES</td>
+<td>Stop price</td>
+</tr>
+<tr>
+<td>stopLimitPrice</td>
+<td>STRING</td>
+<td>YES</td>
+<td>Stop limit price.</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Additional Info:</p>
+<ul>
+<li>
+<p>Price Restrictions:</p>
+<ul>
+<li><code>SELL</code>: Limit Price &gt; Last Price &gt; Stop Price</li>
+<li><code>BUY</code>: Limit Price &lt; Last Price &lt; Stop Price</li>
+</ul>
+</li>
+</ul>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="157"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"message"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"bOrderListId"</span>: <span class="hljs-string">"100001"</span>, <span class="hljs-comment">// oco master order id</span>
+        <span class="hljs-attr">"listClientId"</span>: <span class="hljs-string">"2aa4f99ad7bc4fab903395afd25d0598"</span>, <span class="hljs-comment">// client custom master order id</span>
+        <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"BTC_USDT"</span>,
+        <span class="hljs-attr">"symbolType"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"contingencyType"</span>: <span class="hljs-string">"OCO"</span>,
+        <span class="hljs-attr">"listStatusType"</span>: <span class="hljs-string">"EXEC_STARTED"</span>,
+        <span class="hljs-attr">"listOrderStatus"</span>: <span class="hljs-string">"EXECUTING"</span>,
+        <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1572692016811</span>,
+        <span class="hljs-attr">"orders"</span>: [{
+            <span class="hljs-attr">"orderId"</span>: <span class="hljs-string">"1001"</span>, <span class="hljs-comment">// order id</span>
+            <span class="hljs-attr">"bOrderId"</span>: <span class="hljs-string">"10001"</span>, <span class="hljs-comment">// match engine order id</span>
+            <span class="hljs-attr">"bOrderListId"</span>: <span class="hljs-string">"100001"</span>, <span class="hljs-comment">// Unless part of an OCO, the value will always be -1.</span>
+            <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"1aa4f99ad7bc4fab903395afd25d0597"</span>, <span class="hljs-comment">// client custom order id</span>
+            <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"BTC_USDT"</span>,
+            <span class="hljs-attr">"symbolType"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"side"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"price"</span>: <span class="hljs-string">"0.1"</span>,
+            <span class="hljs-attr">"origQty"</span>: <span class="hljs-string">"10"</span>,
+            <span class="hljs-attr">"origQuoteQty"</span>: <span class="hljs-string">"1"</span>,
+            <span class="hljs-attr">"executedQty"</span>: <span class="hljs-string">"0"</span>,
+            <span class="hljs-attr">"executedPrice"</span>: <span class="hljs-string">"0"</span>,
+            <span class="hljs-attr">"executedQuoteQty"</span>: <span class="hljs-string">"0"</span>,
+            <span class="hljs-attr">"timeInForce"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"stopPrice"</span>: <span class="hljs-string">"0.0000000000000000"</span>,
+            <span class="hljs-attr">"icebergQty"</span>: <span class="hljs-string">"0.0000000000000000"</span>,
+            <span class="hljs-attr">"status"</span>: <span class="hljs-number">0</span>,
+            <span class="hljs-attr">"isWorking"</span>: <span class="hljs-number">0</span>,
+            <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1572692016811</span>
+        }, {
+            <span class="hljs-attr">"orderId"</span>: <span class="hljs-string">"1002"</span>, <span class="hljs-comment">// order id</span>
+            <span class="hljs-attr">"bOrderId"</span>: <span class="hljs-string">"10002"</span>, <span class="hljs-comment">// match engine order id</span>
+            <span class="hljs-attr">"bOrderListId"</span>: <span class="hljs-string">"100001"</span>, <span class="hljs-comment">// Unless part of an OCO, the value will always be -1.</span>
+            <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"1aa4f99ad7bc4fab903395afd25d0598"</span>, <span class="hljs-comment">// client custom order id</span>
+            <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"BTC_USDT"</span>,
+            <span class="hljs-attr">"symbolType"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"side"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"type"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"price"</span>: <span class="hljs-string">"0.2"</span>,
+            <span class="hljs-attr">"origQty"</span>: <span class="hljs-string">"10"</span>,
+            <span class="hljs-attr">"origQuoteQty"</span>: <span class="hljs-string">"1"</span>,
+            <span class="hljs-attr">"executedQty"</span>: <span class="hljs-string">"0"</span>,
+            <span class="hljs-attr">"executedPrice"</span>: <span class="hljs-string">"0"</span>,
+            <span class="hljs-attr">"executedQuoteQty"</span>: <span class="hljs-string">"0"</span>,
+            <span class="hljs-attr">"timeInForce"</span>: <span class="hljs-number">1</span>,
+            <span class="hljs-attr">"stopPrice"</span>: <span class="hljs-string">"0.0000000000000000"</span>,
+            <span class="hljs-attr">"icebergQty"</span>: <span class="hljs-string">"0.0000000000000000"</span>,
+            <span class="hljs-attr">"status"</span>: <span class="hljs-number">0</span>,
+            <span class="hljs-attr">"isWorking"</span>: <span class="hljs-number">0</span>,
+            <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1572692016811</span>
+        }]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1550130502489</span>
+}</pre>
+</div></div><div data-title="Account information (SIGNED)" class="keyline-top section contain clearfix " data-reactid="158"><div class="space-bottom4 pad2x prose clip" data-reactid="159"><h3 id="account-information-signed">Account information (SIGNED)</h3>
+<pre><code>GET /open/v1/account/spot (HMAC SHA256)
+</code></pre>
+<p>Get current account information.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="160"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"makerCommission"</span>: <span class="hljs-string">"10.00000000"</span>,
+        <span class="hljs-attr">"takerCommission"</span>: <span class="hljs-string">"10.00000000"</span>,
+        <span class="hljs-attr">"buyerCommission"</span>: <span class="hljs-string">"0.00000000"</span>,
+        <span class="hljs-attr">"sellerCommission"</span>: <span class="hljs-string">"0.00000000"</span>,
+        <span class="hljs-attr">"canTrade"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"canWithdraw"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"canDeposit"</span>: <span class="hljs-number">1</span>,
+        <span class="hljs-attr">"accountAssets"</span>: [
+            {
+                <span class="hljs-attr">"asset"</span>: <span class="hljs-string">"ADA"</span>,
+                <span class="hljs-attr">"free"</span>: <span class="hljs-string">"272.5550000000000000"</span>,
+                <span class="hljs-attr">"locked"</span>: <span class="hljs-string">"3.0000000000000000"</span>
+            }
+        ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1572514387348</span>
+}</pre>
+</div></div><div data-title="Account Asset information (SIGNED)" class="keyline-top section contain clearfix " data-reactid="161"><div class="space-bottom4 pad2x prose clip" data-reactid="162"><h3 id="account-asset-information-signed">Account Asset information (SIGNED)</h3>
+<pre><code>GET /open/v1/account/spot/asset (HMAC SHA256)
+</code></pre>
+<p>Get current account information for a specific asset.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>asset</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="163"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+          <span class="hljs-attr">"asset"</span>: <span class="hljs-string">"ADA"</span>,
+          <span class="hljs-attr">"free"</span>: <span class="hljs-string">"272.5550000000000000"</span>,
+          <span class="hljs-attr">"locked"</span>: <span class="hljs-string">"3.0000000000000000"</span>,
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1572514387348</span>
+}</pre>
+</div></div><div data-title="Account trade list (SIGNED)" class="keyline-top section contain clearfix " data-reactid="164"><div class="space-bottom4 pad2x prose clip" data-reactid="165"><h3 id="account-trade-list-signed">Account trade list (SIGNED)</h3>
+<pre><code>GET /open/v1/orders/trades  (HMAC SHA256)
+</code></pre>
+<p>Get trades for a specific account and symbol.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>symbol</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>orderId</td>
+<td>String</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>startTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>endTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td></td>
+</tr>
+<tr>
+<td>fromId</td>
+<td>LONG</td>
+<td>NO</td>
+<td>TradeId to fetch from. Default gets most recent trades.</td>
+</tr>
+<tr>
+<td>direct</td>
+<td>ENUM</td>
+<td>NO</td>
+<td>searching direction:	prev - in ascending order from the start order ID; next - in descending order from the start order ID</td>
+</tr>
+<tr>
+<td>limit</td>
+<td>INT</td>
+<td>NO</td>
+<td>Default 500; max 1000.</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>The value cannot be greater than <code>60000</code></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td></td>
+</tr>
+<tr>
+<td>rebateStatus</td>
+<td>INT</td>
+<td>NO</td>
+<td>When return 10, means system completed the trading fee calculation</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong></p>
+<ul>
+<li>if field "fromId" is defined, this field "direct" becomes mandatory.</li>
+</ul>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="166"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"success"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"list"</span>: [
+            {
+                <span class="hljs-attr">"tradeId"</span>: <span class="hljs-string">"3"</span>,
+                <span class="hljs-attr">"orderId"</span>: <span class="hljs-string">"2"</span>,
+                <span class="hljs-attr">"symbol"</span>: <span class="hljs-string">"ADA_USDT"</span>,
+                <span class="hljs-attr">"price"</span>: <span class="hljs-string">"0.04398"</span>,
+                <span class="hljs-attr">"qty"</span>: <span class="hljs-string">"250"</span>,
+                <span class="hljs-attr">"matchId"</span>: <span class="hljs-string">"12345"</span>,
+                <span class="hljs-attr">"quoteQty"</span>: <span class="hljs-string">"10.995"</span>,
+                <span class="hljs-attr">"commission"</span>: <span class="hljs-string">"0.25"</span>,
+                <span class="hljs-attr">"commissionAsset"</span>: <span class="hljs-string">"ADA"</span>,
+                <span class="hljs-attr">"isBuyer"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"isMaker"</span>: <span class="hljs-number">0</span>,
+                <span class="hljs-attr">"isBestMatch"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"taxAmount"</span>: <span class="hljs-string">"0.0942900000000000"</span>,
+                <span class="hljs-attr">"taxRate"</span>: <span class="hljs-string">"0.0021000000000000"</span>,
+                <span class="hljs-attr">"time"</span>: <span class="hljs-string">"1572920872276"</span>
+            }
+        ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1573723498893</span>
+}</pre>
+</div></div><div data-title=" " class="keyline-top section contain clearfix " data-reactid="167"><div class="space-bottom4 pad2x prose clip" data-reactid="168"><h4 id="">&nbsp;</h4>
+<p><strong>Notes:</strong></p>
+<ul>
+<li>The matchId is same with the "t" in the response of the Trade Streams.(<a href="https://www.tokocrypto.com/apidocs/#trade-streams">https://www.tokocrypto.com/apidocs/#trade-streams</a>)</li>
+</ul>
+</div></div><div data-title="Wallet Endpoints" class="keyline-top section contain clearfix " data-reactid="169"><div class="space-bottom4 pad2x prose clip" data-reactid="170"><h2 id="wallet-endpoints">Wallet Endpoints</h2>
+</div></div><div data-title="Withdraw (SIGNED)" class="keyline-top section contain clearfix " data-reactid="171"><div class="space-bottom4 pad2x prose clip" data-reactid="172"><h3 id="withdraw-signed">Withdraw (SIGNED)</h3>
+<pre><code>POST /open/v1/withdraws (HMAC SHA256)
+</code></pre>
+<p>Submit a withdraw request.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>asset</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td></td>
+</tr>
+<tr>
+<td>clientId</td>
+<td>STRING</td>
+<td>NO</td>
+<td>50</td>
+<td>Client's custom ID for withdraw order, Server does not check it's uniqueness. Automatically generated if not sent.</td>
+</tr>
+<tr>
+<td>network</td>
+<td>STRING</td>
+<td>NO</td>
+<td>50</td>
+<td></td>
+</tr>
+<tr>
+<td>address</td>
+<td>STRING</td>
+<td>YES</td>
+<td>128</td>
+<td></td>
+</tr>
+<tr>
+<td>addressTag</td>
+<td>STRING</td>
+<td>NO</td>
+<td>64</td>
+<td>Secondary address identifier for coins like XRP,XMR etc.</td>
+</tr>
+<tr>
+<td>amount</td>
+<td>STRING</td>
+<td>YES</td>
+<td>32</td>
+<td></td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td>20</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="173"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"成功"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"withdrawId"</span>:<span class="hljs-string">"12"</span>
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571745049095</span>
+}</pre>
+</div></div><div data-title="Withdraw History (SIGNED)" class="keyline-top section contain clearfix " data-reactid="174"><div class="space-bottom4 pad2x prose clip" data-reactid="175"><h3 id="withdraw-history-signed">Withdraw History (SIGNED)</h3>
+<pre><code>GET /open/v1/withdraws (HMAC SHA256)
+</code></pre>
+<p>Fetch withdraw history.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>asset</td>
+<td>STRING</td>
+<td>NO</td>
+<td>50</td>
+<td></td>
+</tr>
+<tr>
+<td>status</td>
+<td>INT</td>
+<td>NO</td>
+<td>2</td>
+<td>0(0:Email Sent,1:Cancelled 2:Awaiting Approval 3:Rejected 4:Processing 5:Failure 10:Completed)</td>
+</tr>
+<tr>
+<td>fromId</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td>ID to fetch from. Default gets most recent records.</td>
+</tr>
+<tr>
+<td>startTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td></td>
+</tr>
+<tr>
+<td>endTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td></td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td>20</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="176"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"成功"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"list"</span>: [
+            {
+                <span class="hljs-attr">"id"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"clientId"</span>: <span class="hljs-string">"1"</span>,
+                <span class="hljs-attr">"asset"</span>: <span class="hljs-string">"BTC"</span>,
+                <span class="hljs-attr">"network"</span>: <span class="hljs-string">"BTC"</span>,
+                <span class="hljs-attr">"address"</span>: <span class="hljs-string">"1G58aoKLVd1vHkv7wi6R2rKUrjuk4ZRtY3"</span>,
+                <span class="hljs-attr">"amount"</span>: <span class="hljs-string">"0.001"</span>,
+                <span class="hljs-attr">"fee"</span>: <span class="hljs-string">"0.0005"</span>,
+                <span class="hljs-attr">"txId"</span>: <span class="hljs-string">""</span>,
+                <span class="hljs-attr">"status"</span>: <span class="hljs-number">4</span>,
+                <span class="hljs-attr">"createTime"</span>: <span class="hljs-number">1572359825000</span>,
+            }
+        ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1572402980747</span>
+}</pre>
+</div></div><div data-title="Deposit History (SIGNED)" class="keyline-top section contain clearfix " data-reactid="177"><div class="space-bottom4 pad2x prose clip" data-reactid="178"><h3 id="deposit-history-signed">Deposit History (SIGNED)</h3>
+<pre><code>GET /open/v1/deposits (HMAC SHA256)
+</code></pre>
+<p>Fetch deposit history.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>asset</td>
+<td>STRING</td>
+<td>NO</td>
+<td>50</td>
+<td></td>
+</tr>
+<tr>
+<td>status</td>
+<td>INT</td>
+<td>NO</td>
+<td>2</td>
+<td>0(0:pending, 1:success)</td>
+</tr>
+<tr>
+<td>fromId</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td>ID to fetch from. Default gets most recent records.</td>
+</tr>
+<tr>
+<td>startTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td></td>
+</tr>
+<tr>
+<td>endTime</td>
+<td>LONG</td>
+<td>NO</td>
+<td>20</td>
+<td></td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td>20</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="179"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"成功"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"list"</span>: [
+            {
+                <span class="hljs-attr">"id"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"asset"</span>: <span class="hljs-string">"BTC"</span>,
+                <span class="hljs-attr">"network"</span>: <span class="hljs-string">"BTC"</span>,
+                <span class="hljs-attr">"address"</span>: <span class="hljs-string">"2"</span>,
+                <span class="hljs-attr">"addressTag"</span>: <span class="hljs-string">"2"</span>,
+                <span class="hljs-attr">"txId"</span>: <span class="hljs-string">"1"</span>,
+                <span class="hljs-attr">"amount"</span>: <span class="hljs-string">"1.000000000000000000000000000000"</span>,
+                <span class="hljs-attr">"status"</span>: <span class="hljs-number">1</span>,
+                <span class="hljs-attr">"insertTime"</span>: <span class="hljs-string">"0"</span>
+            }
+        ]
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1572317515063</span>
+}</pre>
+</div></div><div data-title="Deposit Address (SIGNED)" class="keyline-top section contain clearfix " data-reactid="180"><div class="space-bottom4 pad2x prose clip" data-reactid="181"><h3 id="deposit-address-signed">Deposit Address (SIGNED)</h3>
+<pre><code>GET  /open/v1/deposits/address (HMAC SHA256)
+</code></pre>
+<p>Fetch deposit address.</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>asset</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td></td>
+</tr>
+<tr>
+<td>network</td>
+<td>STRING</td>
+<td>YES</td>
+<td>50</td>
+<td></td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>LONG</td>
+<td>NO</td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>LONG</td>
+<td>YES</td>
+<td>20</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="182"><pre class="hljs">{
+    <span class="hljs-attr">"code"</span>: <span class="hljs-number">0</span>,
+    <span class="hljs-attr">"msg"</span>: <span class="hljs-string">"成功"</span>,
+    <span class="hljs-attr">"data"</span>: {
+        <span class="hljs-attr">"address"</span>: <span class="hljs-string">"0x6915f16f8791d0a1cc2bf47c13a6b2a92000504b"</span>,
+        <span class="hljs-attr">"addressTag"</span>: <span class="hljs-string">"1231212"</span>,
+        <span class="hljs-attr">"asset"</span>: <span class="hljs-string">"BNB"</span>
+    },
+    <span class="hljs-attr">"timestamp"</span>: <span class="hljs-number">1571745049095</span>
+}</pre>
+</div></div><div data-title="General WSS information" class="keyline-top section contain clearfix " data-reactid="183"><div class="space-bottom4 pad2x prose clip" data-reactid="184"><h2 id="general-wss-information">General WSS information</h2>
+<ul>
+<li>The base endpoint is: </li>
+</ul>
+<ol>
+<li><strong>wss://stream-cloud.tokocrypto.site/stream</strong> (when symbol type is 1, replace _ of symbol with null string and convert symbol to <strong>lowercase</strong>)</li>
+<li><strong>wss://www.tokocrypto.com</strong>(when symbol type is 2), <strong>wss://stream-toko.2meta.app</strong>(when symbol type is 3), </li>
+</ol>
+<ul>
+<li>Streams can be accessed either in a single raw stream or in a combined stream</li>
+<li>Raw streams are accessed at <strong>/ws/\&lt;streamName&gt;</strong></li>
+<li>Combined streams are accessed at <strong>/stream?streams=\&lt;streamName1&gt;/\&lt;streamName2&gt;/\&lt;streamName3&gt;</strong></li>
+<li>Combined stream events are wrapped as follows: <strong>{"stream":"\&lt;streamName&gt;","data":\&lt;rawPayload&gt;}</strong></li>
+<li>A single connection to <strong>stream-cloud.tokocrypto.site/stream</strong> is only valid for 24 hours; expect to be disconnected at the 24 hour mark</li>
+<li>The websocket server will send a <code>ping frame</code> every 3 minutes. If the websocket server does not receive a <code>pong frame</code> back from the connection within a 10 minute period, the connection will be disconnected. Unsolicited <code>pong frames</code> are allowed.</li>
+</ul>
+</div></div><div data-title="Live Subscribing/Unsubscribing to streams" class="keyline-top section contain clearfix " data-reactid="185"><div class="space-bottom4 pad2x prose clip" data-reactid="186"><h3 id="live-subscribingunsubscribing-to-streams">Live Subscribing/Unsubscribing to streams</h3>
+<ul>
+<li>The following data can be sent through the websocket instance in order to subscribe/unsubscribe from streams. Examples can be seen below.</li>
+<li>The <code>id</code> used in the JSON payloads is an unsigned INT used as an identifier to uniquely identify the messages going back and forth.</li>
+<li>In the response, if the <code>result</code> received is <code>null</code> this means the request sent was a success for non-query requests (e.g. Subscribing/Unsubscribing).</li>
+</ul>
+</div></div><div data-title="Subscribe to a stream" class="keyline-top section contain clearfix " data-reactid="187"><div class="space-bottom4 pad2x prose clip" data-reactid="188"><h4 id="subscribe-to-a-stream">Subscribe to a stream</h4>
+<ul>
+<li>
+<p>Request</p>
+<pre class="hljs">{
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"SUBSCRIBE"</span>,
+  <span class="hljs-string">"params"</span>: [
+    <span class="hljs-string">"btcusdt@aggTrade"</span>,
+    <span class="hljs-string">"btcusdt@depth"</span>
+  ],
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">1</span>
+}</pre>
+</li>
+<li>
+<p>Response</p>
+<pre class="hljs">{
+  <span class="hljs-string">"result"</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">1</span>
+}</pre>
+</li>
+</ul>
+</div></div><div data-title="Unsubscribe to a stream" class="keyline-top section contain clearfix " data-reactid="189"><div class="space-bottom4 pad2x prose clip" data-reactid="190"><h4 id="unsubscribe-to-a-stream">Unsubscribe to a stream</h4>
+<ul>
+<li>
+<p>Request</p>
+<pre class="hljs">{
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"UNSUBSCRIBE"</span>,
+  <span class="hljs-string">"params"</span>: [
+    <span class="hljs-string">"btcusdt@depth"</span>
+  ],
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">312</span>
+}</pre>
+</li>
+<li>
+<p>Response</p>
+<pre class="hljs">{
+  <span class="hljs-string">"result"</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">312</span>
+}</pre>
+</li>
+</ul>
+</div></div><div data-title="Listing Subscriptions" class="keyline-top section contain clearfix " data-reactid="191"><div class="space-bottom4 pad2x prose clip" data-reactid="192"><h4 id="listing-subscriptions">Listing Subscriptions</h4>
+<ul>
+<li>
+<p>Request</p>
+<pre class="hljs">{
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"LIST_SUBSCRIPTIONS"</span>,
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">3</span>
+}</pre>
+</li>
+<li>
+<p>Response</p>
+<pre class="hljs">{
+  <span class="hljs-string">"result"</span>: [
+    <span class="hljs-string">"btcusdt@aggTrade"</span>
+  ],
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">3</span>
+}</pre>
+</li>
+</ul>
+</div></div><div data-title="Setting Properties" class="keyline-top section contain clearfix " data-reactid="193"><div class="space-bottom4 pad2x prose clip" data-reactid="194"><h4 id="setting-properties">Setting Properties</h4>
+<p>Currently, the only property can be set is to set whether <code>combined</code> stream payloads are enabled are not.
+The combined property is set to <code>false</code> when connecting using <code>/ws/</code> ("raw streams") and <code>true</code> when connecting using <code>/stream/</code>.</p>
+<ul>
+<li>
+<p>Request</p>
+<pre class="hljs">{
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"SET_PROPERTY"</span>,
+  <span class="hljs-string">"params"</span>: [
+    <span class="hljs-string">"combined"</span>,
+    <span class="hljs-literal">true</span>
+  ],
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">5</span>
+}</pre>
+</li>
+<li>
+<p>Response</p>
+<pre class="hljs">{
+  <span class="hljs-string">"result"</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">5</span>
+}</pre>
+</li>
+</ul>
+</div></div><div data-title="Retrieving Properties" class="keyline-top section contain clearfix " data-reactid="195"><div class="space-bottom4 pad2x prose clip" data-reactid="196"><h4 id="retrieving-properties">Retrieving Properties</h4>
+<ul>
+<li>
+<p>Request</p>
+<pre class="hljs">{
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"GET_PROPERTY"</span>,
+  <span class="hljs-string">"params"</span>: [
+    <span class="hljs-string">"combined"</span>
+  ],
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">2</span>
+}</pre>
+</li>
+<li>
+<p>Response</p>
+<pre class="hljs">{
+  <span class="hljs-string">"result"</span>: <span class="hljs-literal">true</span>, <span class="hljs-comment">// Indicates that combined is set to true.</span>
+  <span class="hljs-string">"id"</span>: <span class="hljs-number">2</span>
+}</pre>
+</li>
+</ul>
+</div></div><div data-title="Error Messages" class="keyline-top section contain clearfix " data-reactid="197"><div class="space-bottom4 pad2x prose clip" data-reactid="198"><h4 id="error-messages">Error Messages</h4>
+<table>
+<thead>
+<tr>
+<th>Error Message</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>{"code": 0, "msg": "Unknown property"}</td>
+<td>Parameter used in the <code>SET_PROPERTY</code> or <code>GET_PROPERTY</code> was invalid</td>
+</tr>
+<tr>
+<td>{"code": 1, "msg": "Invalid value type: expected Boolean"}</td>
+<td>Value should only be <code>true</code> or <code>false</code></td>
+</tr>
+<tr>
+<td>{"code": 2, "msg": "Invalid request: property name must be a string"}</td>
+<td>Property name provided was invalid</td>
+</tr>
+<tr>
+<td>{"code": 2, "msg": "Invalid request: request ID must be an unsigned integer"}</td>
+<td>Parameter <code>id</code> had to be provided or the value provided in the <code>id</code> parameter is an unsupported type</td>
+</tr>
+<tr>
+<td>{"code": 2, "msg": "Invalid request: unknown variant %s, expected one of <code>SUBSCRIBE</code>, <code>UNSUBSCRIBE</code>, <code>LIST_SUBSCRIPTIONS</code>, <code>SET_PROPERTY</code>, <code>GET_PROPERTY</code> at line 1 column 28"}</td>
+<td>Possible typo in the provided method or provided method was neither of the expected values</td>
+</tr>
+<tr>
+<td>{"code": 2, "msg": "Invalid request: too many parameters"}</td>
+<td>Unnecessary parameters provided in the data</td>
+</tr>
+<tr>
+<td>{"code": 2, "msg": "Invalid request: property name must be a string"}</td>
+<td>Property name was not provided</td>
+</tr>
+<tr>
+<td>{"code": 2, "msg": "Invalid request: missing field <code>method</code> at line 1 column 73"}</td>
+<td><code>method</code> was not provided in the data</td>
+</tr>
+<tr>
+<td>{"code":3,"msg":"Invalid JSON: expected value at line %s column %s"}</td>
+<td>JSON data sent has incorrect syntax.</td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="Detailed Stream information" class="keyline-top section contain clearfix " data-reactid="199"><div class="space-bottom4 pad2x prose clip" data-reactid="200"><h2 id="detailed-stream-information">Detailed Stream information</h2>
+</div></div><div data-title="Aggregate Trade Streams" class="keyline-top section contain clearfix " data-reactid="201"><div class="space-bottom4 pad2x prose clip" data-reactid="202"><h3 id="aggregate-trade-streams">Aggregate Trade Streams</h3>
+<p>The Aggregate Trade Streams push trade information that is aggregated for a single taker order.</p>
+<p><strong>Stream Name:</strong> \&lt;symbol&gt;@aggTrade</p>
+<p><strong>Update Speed:</strong> Real-time</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="203"><pre class="hljs">{
+  <span class="hljs-string">"e"</span>: <span class="hljs-string">"aggTrade"</span>,  <span class="hljs-comment">// Event type</span>
+  <span class="hljs-string">"E"</span>: <span class="hljs-number">123456789</span>,   <span class="hljs-comment">// Event time</span>
+  <span class="hljs-string">"s"</span>: <span class="hljs-string">"BNBBTC"</span>,    <span class="hljs-comment">// Symbol</span>
+  <span class="hljs-string">"a"</span>: <span class="hljs-number">12345</span>,       <span class="hljs-comment">// Aggregate trade ID</span>
+  <span class="hljs-string">"p"</span>: <span class="hljs-string">"0.001"</span>,     <span class="hljs-comment">// Price</span>
+  <span class="hljs-string">"q"</span>: <span class="hljs-string">"100"</span>,       <span class="hljs-comment">// Quantity</span>
+  <span class="hljs-string">"f"</span>: <span class="hljs-number">100</span>,         <span class="hljs-comment">// First trade ID</span>
+  <span class="hljs-string">"l"</span>: <span class="hljs-number">105</span>,         <span class="hljs-comment">// Last trade ID</span>
+  <span class="hljs-string">"T"</span>: <span class="hljs-number">123456785</span>,   <span class="hljs-comment">// Trade time</span>
+  <span class="hljs-string">"m"</span>: <span class="hljs-literal">true</span>,        <span class="hljs-comment">// Is the buyer the market maker?</span>
+  <span class="hljs-string">"M"</span>: <span class="hljs-literal">true</span>         <span class="hljs-comment">// Ignore</span>
+}</pre>
+</div></div><div data-title="Trade Streams" class="keyline-top section contain clearfix " data-reactid="204"><div class="space-bottom4 pad2x prose clip" data-reactid="205"><h3 id="trade-streams">Trade Streams</h3>
+<p>The Trade Streams push raw trade information; each trade has a unique buyer and seller.</p>
+<p><strong>Stream Name:</strong> \&lt;symbol&gt;@trade</p>
+<p><strong>Update Speed:</strong> Real-time</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="206"><pre class="hljs">{
+  <span class="hljs-string">"e"</span>: <span class="hljs-string">"trade"</span>,     <span class="hljs-comment">// Event type</span>
+  <span class="hljs-string">"E"</span>: <span class="hljs-number">123456789</span>,   <span class="hljs-comment">// Event time</span>
+  <span class="hljs-string">"s"</span>: <span class="hljs-string">"BNBBTC"</span>,    <span class="hljs-comment">// Symbol</span>
+  <span class="hljs-string">"t"</span>: <span class="hljs-number">12345</span>,       <span class="hljs-comment">// Trade ID</span>
+  <span class="hljs-string">"p"</span>: <span class="hljs-string">"0.001"</span>,     <span class="hljs-comment">// Price</span>
+  <span class="hljs-string">"q"</span>: <span class="hljs-string">"100"</span>,       <span class="hljs-comment">// Quantity</span>
+  <span class="hljs-string">"b"</span>: <span class="hljs-number">88</span>,          <span class="hljs-comment">// Buyer order ID</span>
+  <span class="hljs-string">"a"</span>: <span class="hljs-number">50</span>,          <span class="hljs-comment">// Seller order ID</span>
+  <span class="hljs-string">"T"</span>: <span class="hljs-number">123456785</span>,   <span class="hljs-comment">// Trade time</span>
+  <span class="hljs-string">"m"</span>: <span class="hljs-literal">true</span>,        <span class="hljs-comment">// Is the buyer the market maker?</span>
+  <span class="hljs-string">"M"</span>: <span class="hljs-literal">true</span>         <span class="hljs-comment">// Ignore</span>
+}</pre>
+</div></div><div data-title="Kline/Candlestick Streams" class="keyline-top section contain clearfix " data-reactid="207"><div class="space-bottom4 pad2x prose clip" data-reactid="208"><h3 id="klinecandlestick-streams">Kline/Candlestick Streams</h3>
+<p>The Kline/Candlestick Stream push updates to the current klines/candlestick every second.</p>
+<p><strong>Kline/Candlestick chart intervals:</strong></p>
+<p>m -&gt; minutes; h -&gt; hours; d -&gt; days; w -&gt; weeks; M -&gt; months</p>
+<ul>
+<li>1m</li>
+<li>3m</li>
+<li>5m</li>
+<li>15m</li>
+<li>30m</li>
+<li>1h</li>
+<li>2h</li>
+<li>4h</li>
+<li>6h</li>
+<li>8h</li>
+<li>12h</li>
+<li>1d</li>
+<li>3d</li>
+<li>1w</li>
+<li>1M</li>
+</ul>
+<p><strong>Stream Name:</strong> \&lt;symbol&gt;@kline_\&lt;interval&gt;</p>
+<p><strong>Update Speed:</strong> 2000ms</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="209"><pre class="hljs">{
+  <span class="hljs-string">"e"</span>: <span class="hljs-string">"kline"</span>,     <span class="hljs-comment">// Event type</span>
+  <span class="hljs-string">"E"</span>: <span class="hljs-number">123456789</span>,   <span class="hljs-comment">// Event time</span>
+  <span class="hljs-string">"s"</span>: <span class="hljs-string">"BNBBTC"</span>,    <span class="hljs-comment">// Symbol</span>
+  <span class="hljs-string">"k"</span>: {
+    <span class="hljs-string">"t"</span>: <span class="hljs-number">123400000</span>, <span class="hljs-comment">// Kline start time</span>
+    <span class="hljs-string">"T"</span>: <span class="hljs-number">123460000</span>, <span class="hljs-comment">// Kline close time</span>
+    <span class="hljs-string">"s"</span>: <span class="hljs-string">"BNBBTC"</span>,  <span class="hljs-comment">// Symbol</span>
+    <span class="hljs-string">"i"</span>: <span class="hljs-string">"1m"</span>,      <span class="hljs-comment">// Interval</span>
+    <span class="hljs-string">"f"</span>: <span class="hljs-number">100</span>,       <span class="hljs-comment">// First trade ID</span>
+    <span class="hljs-string">"L"</span>: <span class="hljs-number">200</span>,       <span class="hljs-comment">// Last trade ID</span>
+    <span class="hljs-string">"o"</span>: <span class="hljs-string">"0.0010"</span>,  <span class="hljs-comment">// Open price</span>
+    <span class="hljs-string">"c"</span>: <span class="hljs-string">"0.0020"</span>,  <span class="hljs-comment">// Close price</span>
+    <span class="hljs-string">"h"</span>: <span class="hljs-string">"0.0025"</span>,  <span class="hljs-comment">// High price</span>
+    <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.0015"</span>,  <span class="hljs-comment">// Low price</span>
+    <span class="hljs-string">"v"</span>: <span class="hljs-string">"1000"</span>,    <span class="hljs-comment">// Base asset volume</span>
+    <span class="hljs-string">"n"</span>: <span class="hljs-number">100</span>,       <span class="hljs-comment">// Number of trades</span>
+    <span class="hljs-string">"x"</span>: <span class="hljs-literal">false</span>,     <span class="hljs-comment">// Is this kline closed?</span>
+    <span class="hljs-string">"q"</span>: <span class="hljs-string">"1.0000"</span>,  <span class="hljs-comment">// Quote asset volume</span>
+    <span class="hljs-string">"V"</span>: <span class="hljs-string">"500"</span>,     <span class="hljs-comment">// Taker buy base asset volume</span>
+    <span class="hljs-string">"Q"</span>: <span class="hljs-string">"0.500"</span>,   <span class="hljs-comment">// Taker buy quote asset volume</span>
+    <span class="hljs-string">"B"</span>: <span class="hljs-string">"123456"</span>   <span class="hljs-comment">// Ignore</span>
+  }
+}</pre>
+</div></div><div data-title="Individual Symbol Mini Ticker Stream" class="keyline-top section contain clearfix " data-reactid="210"><div class="space-bottom4 pad2x prose clip" data-reactid="211"><h3 id="individual-symbol-mini-ticker-stream">Individual Symbol Mini Ticker Stream</h3>
+<p>24hr rolling window mini-ticker statistics. These are NOT the statistics of the UTC day, but a 24hr rolling window for the previous 24hrs.</p>
+<p><strong>Stream Name:</strong> \&lt;symbol&gt;@miniTicker</p>
+<p><strong>Update Speed:</strong> 1000ms</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="212"><pre class="hljs">  {
+    <span class="hljs-string">"e"</span>: <span class="hljs-string">"24hrMiniTicker"</span>,  <span class="hljs-comment">// Event type</span>
+    <span class="hljs-string">"E"</span>: <span class="hljs-number">123456789</span>,         <span class="hljs-comment">// Event time</span>
+    <span class="hljs-string">"s"</span>: <span class="hljs-string">"BNBBTC"</span>,          <span class="hljs-comment">// Symbol</span>
+    <span class="hljs-string">"c"</span>: <span class="hljs-string">"0.0025"</span>,          <span class="hljs-comment">// Close price</span>
+    <span class="hljs-string">"o"</span>: <span class="hljs-string">"0.0010"</span>,          <span class="hljs-comment">// Open price</span>
+    <span class="hljs-string">"h"</span>: <span class="hljs-string">"0.0025"</span>,          <span class="hljs-comment">// High price</span>
+    <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.0010"</span>,          <span class="hljs-comment">// Low price</span>
+    <span class="hljs-string">"v"</span>: <span class="hljs-string">"10000"</span>,           <span class="hljs-comment">// Total traded base asset volume</span>
+    <span class="hljs-string">"q"</span>: <span class="hljs-string">"18"</span>               <span class="hljs-comment">// Total traded quote asset volume</span>
+  }</pre>
+</div></div><div data-title="All Market Mini Tickers Stream" class="keyline-top section contain clearfix " data-reactid="213"><div class="space-bottom4 pad2x prose clip" data-reactid="214"><h3 id="all-market-mini-tickers-stream">All Market Mini Tickers Stream</h3>
+<p>24hr rolling window mini-ticker statistics for all symbols that changed in an array. These are NOT the statistics of the UTC day, but a 24hr rolling window for the previous 24hrs. Note that only tickers that have changed will be present in the array.</p>
+<p><strong>Stream Name:</strong> !miniTicker@arr</p>
+<p><strong>Update Speed:</strong> 1000ms</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="215"><pre class="hljs">[
+  {
+    <span class="hljs-comment">// Same as &lt;symbol&gt;@miniTicker payload</span>
+  }
+]</pre>
+</div></div><div data-title="Partial Book Depth Streams" class="keyline-top section contain clearfix " data-reactid="216"><div class="space-bottom4 pad2x prose clip" data-reactid="217"><h3 id="partial-book-depth-streams">Partial Book Depth Streams</h3>
+<p>Top <strong>\&lt;levels&gt;</strong> bids and asks, pushed every second. Valid <strong>\&lt;levels&gt;</strong> are 5, 10, or 20.</p>
+<p><strong>Stream Names:</strong> \&lt;symbol&gt;@depth\&lt;levels&gt; OR \&lt;symbol&gt;@depth\&lt;levels&gt;@100ms</p>
+<p><strong>Update Speed:</strong> 1000ms or 100ms</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="218"><pre class="hljs">{
+  <span class="hljs-attr">"lastUpdateId"</span>: <span class="hljs-number">160</span>,  <span class="hljs-comment">// Last update ID</span>
+  <span class="hljs-attr">"bids"</span>: [             <span class="hljs-comment">// Bids to be updated</span>
+    [
+      <span class="hljs-string">"0.0024"</span>,         <span class="hljs-comment">// Price level to be updated</span>
+      <span class="hljs-string">"10"</span>              <span class="hljs-comment">// Quantity</span>
+    ]
+  ],
+  <span class="hljs-attr">"asks"</span>: [             <span class="hljs-comment">// Asks to be updated</span>
+    [
+      <span class="hljs-string">"0.0026"</span>,         <span class="hljs-comment">// Price level to be updated</span>
+      <span class="hljs-string">"100"</span>            <span class="hljs-comment">// Quantity</span>
+    ]
+  ]
+}</pre>
+</div></div><div data-title="Diff. Depth Stream" class="keyline-top section contain clearfix " data-reactid="219"><div class="space-bottom4 pad2x prose clip" data-reactid="220"><h3 id="diff-depth-stream">Diff. Depth Stream</h3>
+<p>Order book price and quantity depth updates used to locally manage an order book.</p>
+<p><strong>Stream Name:</strong> \&lt;symbol&gt;@depth OR \&lt;symbol&gt;@depth@100ms</p>
+<p><strong>Update Speed:</strong> 1000ms or 100ms</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="221"><pre class="hljs">{
+  <span class="hljs-attr">"e"</span>: <span class="hljs-string">"depthUpdate"</span>, <span class="hljs-comment">// Event type</span>
+  <span class="hljs-attr">"E"</span>: <span class="hljs-number">123456789</span>,     <span class="hljs-comment">// Event time</span>
+  <span class="hljs-attr">"s"</span>: <span class="hljs-string">"BNBBTC"</span>,      <span class="hljs-comment">// Symbol</span>
+  <span class="hljs-attr">"U"</span>: <span class="hljs-number">157</span>,           <span class="hljs-comment">// First update ID in event</span>
+  <span class="hljs-attr">"u"</span>: <span class="hljs-number">160</span>,           <span class="hljs-comment">// Final update ID in event</span>
+  <span class="hljs-attr">"b"</span>: [              <span class="hljs-comment">// Bids to be updated</span>
+    [
+      <span class="hljs-string">"0.0024"</span>,       <span class="hljs-comment">// Price level to be updated</span>
+      <span class="hljs-string">"10"</span>            <span class="hljs-comment">// Quantity</span>
+    ]
+  ],
+  <span class="hljs-attr">"a"</span>: [              <span class="hljs-comment">// Asks to be updated</span>
+    [
+      <span class="hljs-string">"0.0026"</span>,       <span class="hljs-comment">// Price level to be updated</span>
+      <span class="hljs-string">"100"</span>           <span class="hljs-comment">// Quantity</span>
+    ]
+  ]
+}</pre>
+</div></div><div data-title="How to manage a local order book correctly" class="keyline-top section contain clearfix " data-reactid="222"><div class="space-bottom4 pad2x prose clip" data-reactid="223"><h3 id="how-to-manage-a-local-order-book-correctly">How to manage a local order book correctly</h3>
+<ol>
+<li>Open a stream to <strong>wss://stream-cloud.tokocrypto.site/stream/ws/bnbbtc@depth</strong>.</li>
+<li>Buffer the events you receive from the stream.</li>
+<li>Get a depth snapshot from <strong><a href="https://www.tokocrypto.site/api/v3/depth?symbol=BNBBTC&amp;limit=1000">https://www.tokocrypto.site/api/v3/depth?symbol=BNBBTC&amp;limit=1000</a></strong> .</li>
+<li>Drop any event where <code>u</code> is &lt;= <code>lastUpdateId</code> in the snapshot.</li>
+<li>The first processed event should have <code>U</code> &lt;= <code>lastUpdateId</code>+1 <strong>AND</strong> <code>u</code> &gt;= <code>lastUpdateId</code>+1.</li>
+<li>While listening to the stream, each new event's <code>U</code> should be equal to the previous event's <code>u</code>+1.</li>
+<li>The data in each event is the <strong>absolute</strong> quantity for a price level.</li>
+<li>If the quantity is 0, <strong>remove</strong> the price level.</li>
+<li>Receiving an event that removes a price level that is not in your local order book can happen and is normal.</li>
+</ol>
+</div></div><div data-title="General WSS information" class="keyline-top section contain clearfix " data-reactid="224"><div class="space-bottom4 pad2x prose clip" data-reactid="225"><h2 id="general-wss-information-1">General WSS information</h2>
+<ul>
+<li>The base API endpoint is: <strong><a href="https://www.tokocrypto.com/">https://www.tokocrypto.com</a></strong></li>
+<li>A User Data Stream <code>listenKey</code> is valid for 60 minutes after creation.</li>
+<li>Doing a <code>PUT</code> on a <code>listenKey</code> will extend its validity for 60 minutes.</li>
+<li>Doing a <code>DELETE</code> on a <code>listenKey</code> will close the stream.</li>
+<li>The base websocket endpoint is: <strong>stream-cloud.tokocrypto.site/stream</strong> (when symbol type is 1)</li>
+<li>User Data Streams are accessed at <strong>/ws/\&lt;listenKey&gt;</strong></li>
+<li>A single connection to <strong>stream-cloud.tokocrypto.site/stream</strong> is only valid for 24 hours; expect to be disconnected at the 24 hour mark</li>
+<li>User data stream payloads are <strong>not guaranteed</strong> to be in order during heavy periods; <strong>make sure to order your updates using E</strong></li>
+<li>User Data Streams does not support symbols with symbol type 2 now</li>
+</ul>
+</div></div><div data-title="Create a listenKey" class="keyline-top section contain clearfix " data-reactid="226"><div class="space-bottom4 pad2x prose clip" data-reactid="227"><h3 id="create-a-listenkey">Create a listenKey</h3>
+<pre><code>POST /open/v1/user-data-stream (when symbolType is 1, MBX symbol)
+</code></pre>
+<pre><code>POST /open/v1/private-n/user-data-stream (when symbolType is 3, Nextme Symbol(New Symbol) )
+</code></pre>
+<p><strong>Notice:</strong> For symbolType 1 (MBX symbol), this interface will be deprecated soon. Please switch to <code>POST /open/v1/user-listen-token</code>. For symbolType 3, no change is required.</p>
+<p>Start a new user data stream. The stream will close after 60 minutes unless a keepalive is sent.</p>
+<p><strong>Weight:</strong>
+1</p>
+<p><strong>Parameters:</strong>
+NONE</p>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="228"><pre class="hljs">{
+  <span class="hljs-string">"code"</span>: <span class="hljs-number">0</span>,
+  <span class="hljs-string">"data"</span>: <span class="hljs-string">"pqia91ma19a5s61cv6a81va65sdf19v8a65a1a5s61cv6a81va65sdf19v8a65a1"</span>
+}</pre>
+</div></div><div data-title="Ping/Keep-alive a listenKey" class="keyline-top section contain clearfix " data-reactid="229"><div class="space-bottom4 pad2x prose clip" data-reactid="230"><h3 id="pingkeep-alive-a-listenkey">Ping/Keep-alive a listenKey</h3>
+<pre><code>PUT /open/v1/user-data-stream (when symbolType is 1, MBX symbol)
+</code></pre>
+<pre><code>PUT /open/v1/private-n/user-data-stream (when symbolType is 3, Nextme Symbol(New Symbol) )
+</code></pre>
+<p><strong>Notice:</strong> For symbolType 1 (MBX symbol), this interface will be deprecated soon. Please switch to <code>POST /open/v1/user-listen-token</code>. For symbolType 3, no change is required.</p>
+<p>Keepalive a user data stream to prevent a time out. User data streams will close after 60 minutes. It's recommended to send a ping about every 30 minutes.</p>
+<p><strong>Weight:</strong>
+1</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>listenKey</td>
+<td>STRING</td>
+<td>YES</td>
+<td>64</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="231"><pre class="hljs">{}</pre>
+</div></div><div data-title="Close a listenKey" class="keyline-top section contain clearfix " data-reactid="232"><div class="space-bottom4 pad2x prose clip" data-reactid="233"><h3 id="close-a-listenkey">Close a listenKey</h3>
+<pre><code>DELETE /open/v1/user-data-stream (when symbolType is 1, MBX symbol)
+</code></pre>
+<pre><code>DELETE /open/v1/private-n/user-data-stream (when symbolType is 3, Nextme Symbol(New Symbol) )
+</code></pre>
+<p><strong>Notice:</strong> For symbolType 1 (MBX symbol), this interface will be deprecated soon. Please switch to <code>POST /open/v1/user-listen-token</code>. For symbolType 3, no change is required.</p>
+<p>Close out a user data stream.</p>
+<p><strong>Weight:</strong>
+1</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>listenKey</td>
+<td>STRING</td>
+<td>YES</td>
+<td>64</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="234"><pre class="hljs">{}</pre>
+</div></div><div data-title="Create a listenToken (Signed)" class="keyline-top section contain clearfix " data-reactid="235"><div class="space-bottom4 pad2x prose clip" data-reactid="236"><h3 id="create-a-listentoken-signed">Create a listenToken (Signed)</h3>
+<pre><code>POST /open/v1/user-listen-token
+</code></pre>
+<p>Create a new listen token for user data stream subscription via WebSocket API.</p>
+<p><strong>Weight:</strong>
+1</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>validity</td>
+<td>Integer</td>
+<td>NO</td>
+<td>The number of milliseconds the token should be valid. Defaults to 1 day. If the validity provided is greater than the max, an error will be thrown.</td>
+</tr>
+<tr>
+<td>recvWindow</td>
+<td>Long</td>
+<td>NO</td>
+<td>The value cannot be greater than 60000</td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td>Long</td>
+<td>YES</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong></p>
+<p><strong>Notes:</strong></p>
+<ul>
+<li>The token validity is determined by the validity parameter; default is 24 hours, maximum 24 hours. expirationTime = current time + validity.</li>
+<li>The response returns the token and expirationTime.</li>
+</ul>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="237"><pre class="hljs">{
+  <span class="hljs-string">"code"</span>: <span class="hljs-number">0</span>,
+  <span class="hljs-string">"data"</span>: {
+    <span class="hljs-string">"token"</span>: <span class="hljs-string">"6xXxePXwZRjVSHKhzUCCGnmN3fkvMTXru+pYJS8RwijXk9Vcyr3rkwfVOTcP2OkONqciYA"</span>,
+    <span class="hljs-string">"expirationTime"</span>: <span class="hljs-number">1758792204196</span>  <span class="hljs-comment">// Token expiration timestamp in milliseconds</span>
+  }
+}</pre>
+</div></div><div data-title="WebSocket API" class="keyline-top section contain clearfix " data-reactid="238"><div class="space-bottom4 pad2x prose clip" data-reactid="239"><h2 id="websocket-api">WebSocket API</h2>
+</div></div><div data-title="General Information" class="keyline-top section contain clearfix " data-reactid="240"><div class="space-bottom4 pad2x prose clip" data-reactid="241"><h3 id="general-information">General Information</h3>
+<ul>
+<li>The WebSocket API base endpoint is: <strong>wss://ws-api.tokocrypto.site:443/ws-api/v3</strong></li>
+<li>The endpoint can also be obtained from <code>/v1/common/system-config</code> (field: <code>binanceWssApiBaseUrl</code> or <code>binanceWssApiBaseUrlList</code>)</li>
+<li>Use the <code>listenToken</code> obtained from <code>POST /open/v1/user-listen-token</code> to subscribe to user data streams</li>
+<li><code>listenToken</code> subscription does not require an authenticated session</li>
+<li>Tokens will NOT auto-renew; you must obtain a new token and re-subscribe before expiration</li>
+<li>Renewal flow: <code>POST /open/v1/user-listen-token</code> for new token → <code>subscribe.listenToken</code> with new token</li>
+<li>Maximum 1,000 active subscriptions per WebSocket session</li>
+<li>websocket-api only for symbolType is 1, MBX symbol</li>
+</ul>
+</div></div><div data-title="Subscribe with listenToken" class="keyline-top section contain clearfix " data-reactid="242"><div class="space-bottom4 pad2x prose clip" data-reactid="243"><h3 id="subscribe-with-listentoken">Subscribe with listenToken</h3>
+<p>Subscribe to user data stream using a <code>listenToken</code>.</p>
+<p><strong>Method:</strong> <code>userDataStream.subscribe.listenToken</code></p>
+<p><strong>Weight:</strong> 2</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>listenToken</td>
+<td>STRING</td>
+<td>YES</td>
+<td></td>
+<td>The listen token obtained from POST /open/v1/user-listen-token</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Request:</strong></p>
+<p><strong>Response:</strong></p>
+<p><strong>Notes:</strong></p>
+<ul>
+<li>Non-authenticated sessions are allowed to use this feature.</li>
+<li>The subscription is not automatically renewed by the WebSocket API.</li>
+<li>To extend the validity of your subscription, you must call <code>POST /open/v1/user-listen-token</code> before the expiration of your current subscription, obtain a new listenToken with an updated expirationTime, and call <code>userDataStream.subscribe.listenToken</code> again passing the new listenToken. This will seamlessly extend your subscription to the new expirationDate.</li>
+<li>If the subscription is not extended, it will expire and you will receive a <code>eventStreamTerminated</code> event (see example below).</li>
+</ul>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="244"><pre class="hljs">{
+  <span class="hljs-string">"id"</span>: <span class="hljs-string">"f3a8f7a29f2e54df796db582f3d"</span>,
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"userDataStream.subscribe.listenToken"</span>,
+  <span class="hljs-string">"params"</span>: {
+    <span class="hljs-string">"listenToken"</span>: <span class="hljs-string">"6xXxePXwZRjVSHKhzUCCGnmN3fkvMTXru+pYJS8RwijXk9Vcyr3rkwfVOTcP2OkONqciYA"</span>
+  }
+}</pre>
+<pre class="hljs">{
+  <span class="hljs-string">"subscriptionId"</span>: <span class="hljs-number">1</span>,
+  <span class="hljs-string">"expirationTime"</span>: <span class="hljs-number">1749094553955907</span>  <span class="hljs-comment">// Subscription expiration timestamp</span>
+}</pre>
+</div></div><div data-title="Unsubscribe" class="keyline-top section contain clearfix " data-reactid="245"><div class="space-bottom4 pad2x prose clip" data-reactid="246"><h3 id="unsubscribe">Unsubscribe</h3>
+<p>Unsubscribe from user data stream.</p>
+<p><strong>Method:</strong> <code>userDataStream.unsubscribe</code></p>
+<p><strong>Weight:</strong> 2</p>
+<p><strong>Parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Mandatory</th>
+<th>Length</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>subscriptionId</td>
+<td>INT</td>
+<td>NO</td>
+<td></td>
+<td>If omitted, all subscriptions will be closed</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Request:</strong></p>
+<p><strong>Response:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="247"><pre class="hljs">{
+  <span class="hljs-string">"id"</span>: <span class="hljs-string">"d3df8a21-98ea-4fe0-8f4e-0fcea5d418b7"</span>,
+  <span class="hljs-string">"method"</span>: <span class="hljs-string">"userDataStream.unsubscribe"</span>
+}</pre>
+<pre class="hljs">{
+  <span class="hljs-string">"result"</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-string">"id"</span>: <span class="hljs-string">"d3df8a21-98ea-4fe0-8f4e-0fcea5d418b7"</span>
+}</pre>
+</div></div><div data-title="Event: Stream Terminated" class="keyline-top section contain clearfix " data-reactid="248"><div class="space-bottom4 pad2x prose clip" data-reactid="249"><h3 id="event-stream-terminated">Event: Stream Terminated</h3>
+<p>When a subscription expires without renewal, the server will push an <code>eventStreamTerminated</code> event.</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="250"><pre class="hljs">{
+  <span class="hljs-string">"subscriptionId"</span>: <span class="hljs-number">0</span>,
+  <span class="hljs-string">"event"</span>: {
+    <span class="hljs-string">"e"</span>: <span class="hljs-string">"eventStreamTerminated"</span>,   <span class="hljs-comment">// Event type</span>
+    <span class="hljs-string">"E"</span>: <span class="hljs-number">1759089357377</span>              <span class="hljs-comment">// Event time (milliseconds)</span>
+  }
+}</pre>
+</div></div><div data-title="Web Socket Payloads" class="keyline-top section contain clearfix " data-reactid="251"><div class="space-bottom4 pad2x prose clip" data-reactid="252"><h2 id="web-socket-payloads">Web Socket Payloads</h2>
+</div></div><div data-title="Account Update" class="keyline-top section contain clearfix " data-reactid="253"><div class="space-bottom4 pad2x prose clip" data-reactid="254"><h3 id="account-update">Account Update</h3>
+<p>Account state is updated with the <code>outboundAccountPosition</code> event.</p>
+<p><strong>Payload:</strong></p>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="255"><pre class="hljs">{
+  <span class="hljs-string">"e"</span>: <span class="hljs-string">"outboundAccountPosition"</span>,   <span class="hljs-comment">// Event type</span>
+  <span class="hljs-string">"E"</span>: <span class="hljs-number">1499405658849</span>,           <span class="hljs-comment">// Event time</span>
+  <span class="hljs-string">"m"</span>: <span class="hljs-number">0</span>,                       <span class="hljs-comment">// Maker commission rate (bips)</span>
+  <span class="hljs-string">"t"</span>: <span class="hljs-number">0</span>,                       <span class="hljs-comment">// Taker commission rate (bips)</span>
+  <span class="hljs-string">"b"</span>: <span class="hljs-number">0</span>,                       <span class="hljs-comment">// Buyer commission rate (bips)</span>
+  <span class="hljs-string">"s"</span>: <span class="hljs-number">0</span>,                       <span class="hljs-comment">// Seller commission rate (bips)</span>
+  <span class="hljs-string">"T"</span>: <span class="hljs-literal">true</span>,                    <span class="hljs-comment">// Can trade?</span>
+  <span class="hljs-string">"W"</span>: <span class="hljs-literal">true</span>,                    <span class="hljs-comment">// Can withdraw?</span>
+  <span class="hljs-string">"D"</span>: <span class="hljs-literal">true</span>,                    <span class="hljs-comment">// Can deposit?</span>
+  <span class="hljs-string">"u"</span>: <span class="hljs-number">1499405658848</span>,           <span class="hljs-comment">// Time of last account update</span>
+  <span class="hljs-string">"B"</span>: [                        <span class="hljs-comment">// Balances array</span>
+    {
+      <span class="hljs-string">"a"</span>: <span class="hljs-string">"LTC"</span>,               <span class="hljs-comment">// Asset</span>
+      <span class="hljs-string">"f"</span>: <span class="hljs-string">"17366.18538083"</span>,    <span class="hljs-comment">// Free amount</span>
+      <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.00000000"</span>         <span class="hljs-comment">// Locked amount</span>
+    },
+    {
+      <span class="hljs-string">"a"</span>: <span class="hljs-string">"BTC"</span>,
+      <span class="hljs-string">"f"</span>: <span class="hljs-string">"10537.85314051"</span>,
+      <span class="hljs-string">"l"</span>: <span class="hljs-string">"2.19464093"</span>
+    },
+    {
+      <span class="hljs-string">"a"</span>: <span class="hljs-string">"ETH"</span>,
+      <span class="hljs-string">"f"</span>: <span class="hljs-string">"17902.35190619"</span>,
+      <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.00000000"</span>
+    },
+    {
+      <span class="hljs-string">"a"</span>: <span class="hljs-string">"BNC"</span>,
+      <span class="hljs-string">"f"</span>: <span class="hljs-string">"1114503.29769312"</span>,
+      <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.00000000"</span>
+    },
+    {
+      <span class="hljs-string">"a"</span>: <span class="hljs-string">"NEO"</span>,
+      <span class="hljs-string">"f"</span>: <span class="hljs-string">"0.00000000"</span>,
+      <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.00000000"</span>
+    }
+  ]
+}</pre>
+</div></div><div data-title="Order Update" class="keyline-top section contain clearfix " data-reactid="256"><div class="space-bottom4 pad2x prose clip" data-reactid="257"><h3 id="order-update">Order Update</h3>
+<p>Orders are updated with the <code>executionReport</code> event. Check the API documentation and below for relevant enum definitions.
+Average price can be found by doing <code>Z</code> divided by <code>z</code>.</p>
+<p><strong>Payload:</strong></p>
+<p><strong>Execution types:</strong></p>
+<ul>
+<li>NEW</li>
+<li>CANCELED</li>
+<li>REPLACED (currently unused)</li>
+<li>REJECTED</li>
+<li>TRADE</li>
+<li>EXPIRED</li>
+</ul>
+</div><div class="space-bottom2 pad2 prose clip fill-light space-top5" data-reactid="258"><pre class="hljs">{
+  <span class="hljs-string">"e"</span>: <span class="hljs-string">"executionReport"</span>,        <span class="hljs-comment">// Event type</span>
+  <span class="hljs-string">"E"</span>: <span class="hljs-number">1499405658658</span>,            <span class="hljs-comment">// Event time</span>
+  <span class="hljs-string">"s"</span>: <span class="hljs-string">"ETHBTC"</span>,                 <span class="hljs-comment">// Symbol</span>
+  <span class="hljs-string">"c"</span>: <span class="hljs-string">"mUvoqJxFIILMdfAW5iGSOW"</span>, <span class="hljs-comment">// order ID</span>
+  <span class="hljs-string">"S"</span>: <span class="hljs-string">"BUY"</span>,                    <span class="hljs-comment">// Side</span>
+  <span class="hljs-string">"o"</span>: <span class="hljs-string">"LIMIT"</span>,                  <span class="hljs-comment">// Order type</span>
+  <span class="hljs-string">"f"</span>: <span class="hljs-string">"GTC"</span>,                    <span class="hljs-comment">// Time in force</span>
+  <span class="hljs-string">"q"</span>: <span class="hljs-string">"1.00000000"</span>,             <span class="hljs-comment">// Order quantity</span>
+  <span class="hljs-string">"p"</span>: <span class="hljs-string">"0.10264410"</span>,             <span class="hljs-comment">// Order price</span>
+  <span class="hljs-string">"P"</span>: <span class="hljs-string">"0.00000000"</span>,             <span class="hljs-comment">// Stop price</span>
+  <span class="hljs-string">"F"</span>: <span class="hljs-string">"0.00000000"</span>,             <span class="hljs-comment">// Iceberg quantity</span>
+  <span class="hljs-string">"g"</span>: <span class="hljs-number">-1</span>,                       <span class="hljs-comment">// Ignore</span>
+  <span class="hljs-string">"C"</span>: <span class="hljs-string">"null"</span>,                   <span class="hljs-comment">// Original client order ID; This is the ID of the order being canceled</span>
+  <span class="hljs-string">"x"</span>: <span class="hljs-string">"NEW"</span>,                    <span class="hljs-comment">// Current execution type</span>
+  <span class="hljs-string">"X"</span>: <span class="hljs-string">"NEW"</span>,                    <span class="hljs-comment">// Current order status</span>
+  <span class="hljs-string">"r"</span>: <span class="hljs-string">"NONE"</span>,                   <span class="hljs-comment">// Order reject reason; will be an error code.</span>
+  <span class="hljs-string">"i"</span>: <span class="hljs-number">4293153</span>,                  <span class="hljs-comment">// Match Engine Order ID</span>
+  <span class="hljs-string">"l"</span>: <span class="hljs-string">"0.00000000"</span>,             <span class="hljs-comment">// Last executed quantity</span>
+  <span class="hljs-string">"z"</span>: <span class="hljs-string">"0.00000000"</span>,             <span class="hljs-comment">// Cumulative filled quantity</span>
+  <span class="hljs-string">"L"</span>: <span class="hljs-string">"0.00000000"</span>,             <span class="hljs-comment">// Last executed price</span>
+  <span class="hljs-string">"n"</span>: <span class="hljs-string">"0"</span>,                      <span class="hljs-comment">// Commission amount</span>
+  <span class="hljs-string">"N"</span>: <span class="hljs-literal">null</span>,                     <span class="hljs-comment">// Commission asset</span>
+  <span class="hljs-string">"T"</span>: <span class="hljs-number">1499405658657</span>,            <span class="hljs-comment">// Transaction time</span>
+  <span class="hljs-string">"t"</span>: <span class="hljs-number">-1</span>,                       <span class="hljs-comment">// Trade ID</span>
+  <span class="hljs-string">"I"</span>: <span class="hljs-number">8641984</span>,                  <span class="hljs-comment">// Ignore</span>
+  <span class="hljs-string">"w"</span>: <span class="hljs-literal">true</span>,                     <span class="hljs-comment">// Is the order working? Stops will have</span>
+  <span class="hljs-string">"m"</span>: <span class="hljs-literal">false</span>,                    <span class="hljs-comment">// Is this trade the maker side?</span>
+  <span class="hljs-string">"M"</span>: <span class="hljs-literal">false</span>,                    <span class="hljs-comment">// Ignore</span>
+  <span class="hljs-string">"O"</span>: <span class="hljs-number">1499405658657</span>,            <span class="hljs-comment">// Order creation time</span>
+  <span class="hljs-string">"Z"</span>: <span class="hljs-string">"0.00000000"</span>,             <span class="hljs-comment">// Cumulative quote asset transacted quantity</span>
+  <span class="hljs-string">"Y"</span>: <span class="hljs-string">"0.00000000"</span>              <span class="hljs-comment">// Last quote asset transacted quantity (i.e. lastPrice * lastQty)</span>
+}</pre>
+</div></div><div data-title="FAQs - Price Range Execution Rules" class="keyline-top section contain clearfix " data-reactid="259"><div class="space-bottom4 pad2x prose clip" data-reactid="260"><h2 id="faqs---price-range-execution-rules">FAQs - Price Range Execution Rules</h2>
+<p><strong>Disclaimer:</strong></p>
+<ul>
+<li>The symbols and values used here are fictional and do not imply anything about the actual configuration of the live exchange.</li>
+</ul>
+<p><strong>Note:</strong> The Price Range Execution Rule only applies to trading pairs with <code>symbolType=1</code>.</p>
+</div></div><div data-title="What are execution rules?" class="keyline-top section contain clearfix " data-reactid="261"><div class="space-bottom4 pad2x prose clip" data-reactid="262"><h3 id="what-are-execution-rules">What are execution rules?</h3>
+<p>Execution rules are trading rules that are enforced at the time of order execution. The only execution rule currently available is the Price Range rule.</p>
+</div></div><div data-title="What does the Price Range Execution Rule do?" class="keyline-top section contain clearfix " data-reactid="263"><div class="space-bottom4 pad2x prose clip" data-reactid="264"><h3 id="what-does-the-price-range-execution-rule-do">What does the Price Range Execution Rule do?</h3>
+<p>This rule ensures that trades may only be executed at prices within and equal to a price range around a reference price.</p>
+</div></div><div data-title="How can I query the execution price range allowed for a symbol?" class="keyline-top section contain clearfix " data-reactid="265"><div class="space-bottom4 pad2x prose clip" data-reactid="266"><h3 id="how-can-i-query-the-execution-price-range-allowed-for-a-symbol">How can I query the execution price range allowed for a symbol?</h3>
+<p>Refer to the following endpoints/methods:</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Request</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>REST API</td>
+<td><code>GET /api/v3/executionRules</code></td>
+</tr>
+<tr>
+<td>WebSocket API</td>
+<td><code>executionRules</code></td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="How can I query the reference price?" class="keyline-top section contain clearfix " data-reactid="267"><div class="space-bottom4 pad2x prose clip" data-reactid="268"><h3 id="how-can-i-query-the-reference-price">How can I query the reference price?</h3>
+<p>Refer to the following endpoints/methods:</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Request</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>REST API</td>
+<td><code>GET /api/v3/referencePrice</code></td>
+</tr>
+<tr>
+<td>WebSocket API</td>
+<td><code>referencePrice</code></td>
+</tr>
+<tr>
+<td>WebSocket Streams</td>
+<td><code>&lt;symbol&gt;@referencePrice</code></td>
+</tr>
+</tbody>
+</table>
+<p>Note that the <strong>reference price is continually changing</strong>, so it is recommended to monitor the reference price via WebSocket Streams.</p>
+</div></div><div data-title="How does the Price Range Execution Rule work?" class="keyline-top section contain clearfix " data-reactid="269"><div class="space-bottom4 pad2x prose clip" data-reactid="270"><h3 id="how-does-the-price-range-execution-rule-work">How does the Price Range Execution Rule work?</h3>
+<p>As an example, given the hypothetical execution rule for this symbol:</p>
+<pre><code>{
+    "symbolRules": [
+        {
+            "symbol": "BAZUSD",
+            "rules": [
+                {
+                    "ruleType": "PRICE_RANGE",
+                    "bidLimitMultUp": "2.0000",
+                    "bidLimitMultDown": "0.5000",
+                    "askLimitMultUp": "2.0000",
+                    "askLimitMultDown": "0.5000"
+                }
+            ]
+        }
+    ]
+}
+</code></pre>
+<p>If the reference price for the symbol is:</p>
+<pre><code>{
+    "symbol": "BAZUSD",
+    "referencePrice": "10.00",
+    "timestamp": 1770736694138
+}
+</code></pre>
+<p>This means that at time <code>1770736694138</code>:</p>
+<ol>
+<li>an order to <code>BUY</code> may not execute at a price more than twice the reference price or less than half the reference price and</li>
+<li>an order to <code>SELL</code> may not execute at a price more than twice the reference price or less than half the reference price.</li>
+</ol>
+</div></div><div data-title="What happens if a symbol has no execution rule of type " class="keyline-top section contain clearfix " data-reactid="271"><div class="space-bottom4 pad2x prose clip" data-reactid="272"><h3 id="what-happens-if-a-symbol-has-no-execution-rule-of-type-price_range-and-no-reference-price">What happens if a symbol has no execution rule of type <code>PRICE_RANGE</code> and no reference price?</h3>
+<p>The Price Range Execution Rule is not enforced on the symbol.</p>
+</div></div><div data-title="What happens if a symbol has no execution rule of type " class="keyline-top section contain clearfix " data-reactid="273"><div class="space-bottom4 pad2x prose clip" data-reactid="274"><h3 id="what-happens-if-a-symbol-has-no-execution-rule-of-type-price_range-but-does-have-a-reference-price">What happens if a symbol has no execution rule of type <code>PRICE_RANGE</code> but does have a reference price?</h3>
+<p>The Price Range Execution Rule is not enforced on the symbol.</p>
+</div></div><div data-title="What happens if a symbol has an execution rule of type " class="keyline-top section contain clearfix " data-reactid="275"><div class="space-bottom4 pad2x prose clip" data-reactid="276"><h3 id="what-happens-if-a-symbol-has-an-execution-rule-of-type-price_range-but-does-not-have-a-reference-price">What happens if a symbol has an execution rule of type <code>PRICE_RANGE</code> but does not have a reference price?</h3>
+<p>The Price Range Execution Rule is not enforced on the symbol.</p>
+</div></div><div data-title="What happens if a symbol has an execution rule of type " class="keyline-top section contain clearfix " data-reactid="277"><div class="space-bottom4 pad2x prose clip" data-reactid="278"><h3 id="what-happens-if-a-symbol-has-an-execution-rule-of-type-price_range-that-does-not-have-all-four-multipliers">What happens if a symbol has an execution rule of type <code>PRICE_RANGE</code> that does not have all four multipliers?</h3>
+<p>When a multiplier is not set, then Price Range Execution Rule is not enforced on the symbol for that order side and price direction. For example, if <code>bidLimitMultDown</code> was not present in the hypothetical execution rule above, then an order to <code>BUY</code> could execute at any price at or below twice the reference price.</p>
+</div></div><div data-title="What happens if the symbol&#39;s reference price is " class="keyline-top section contain clearfix " data-reactid="279"><div class="space-bottom4 pad2x prose clip" data-reactid="280"><h3 id="what-happens-if-the-symbols-reference-price-is-null">What happens if the symbol's reference price is <code>null</code>?</h3>
+<p>The Price Range Execution Rule is not enforced on the symbol.</p>
+</div></div><div data-title="When are the execution price limits for an order set?" class="keyline-top section contain clearfix " data-reactid="281"><div class="space-bottom4 pad2x prose clip" data-reactid="282"><h3 id="when-are-the-execution-price-limits-for-an-order-set">When are the execution price limits for an order set?</h3>
+<p>When an order enters its taker phase, the reference price is recalculated to set the execution price limits for the order's entire taker phase. Note that a single taker order may match with many maker orders during its taker phase.</p>
+</div></div><div data-title="What happens if an order attempts to execute at a price outside of the allowed price range?" class="keyline-top section contain clearfix " data-reactid="283"><div class="space-bottom4 pad2x prose clip" data-reactid="284"><h3 id="what-happens-if-an-order-attempts-to-execute-at-a-price-outside-of-the-allowed-price-range">What happens if an order attempts to execute at a price outside of the allowed price range?</h3>
+<p>If a taker order attempts to execute at a price outside of the allowed price range, it will be expired (i.e. status: <code>EXPIRED</code>) with the expiry reason <code>EXECUTION_RULE_PRICE_RANGE_EXCEEDED</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>APIs</td>
+<td><code>expiryReason</code></td>
+</tr>
+<tr>
+<td>User Data Stream</td>
+<td><code>"eR"</code></td>
+</tr>
+</tbody>
+</table>
+</div></div><div data-title="How is the reference price calculated?" class="keyline-top section contain clearfix " data-reactid="285"><div class="space-bottom4 pad2x prose clip" data-reactid="286"><h3 id="how-is-the-reference-price-calculated">How is the reference price calculated?</h3>
+<p>If calculated by the Matching Engine, a query returns <code>"calculationType": "ARITHMETIC_MEAN"</code>.</p>
+<p>If calculated outside the matching engine, a query returns <code>"calculationType": "EXTERNAL"</code>. See below for more details.</p>
+</div></div><div data-title="How does the Matching Engine calculate the reference price?" class="keyline-top section contain clearfix " data-reactid="287"><div class="space-bottom4 pad2x prose clip" data-reactid="288"><h3 id="how-does-the-matching-engine-calculate-the-reference-price">How does the Matching Engine calculate the reference price?</h3>
+<p>The matching engine calculates the reference price as a simple moving average of trade prices over a time window. It is configured with a bucket width in milliseconds (<code>bucketWidthMs</code>) and number of buckets (<code>bucketCount</code>). The bucket width multiplied by the number of buckets defines the size of the time window.</p>
+<p>When a trade occurs, the engine captures the trade price and adds it to the current bucket. Each bucket has:</p>
+<ul>
+<li>an open time, which is aligned to engine time modulo the bucket width</li>
+<li>a trade count, which is a fixed-point integer with four decimal places of precision</li>
+<li>a sum of all the trade prices represented in that bucket, which is a fixed-point integer with an extra four decimal places of precision over the quote asset precision.</li>
+</ul>
+<p>The engine calculates the average of a particular bucket by dividing sum by trade count. The first trade for a given open time creates a bucket, and the engine gradually accumulates buckets as trades happen. The engine drops a bucket when its close time is outside the time window. This means that:</p>
+<ul>
+<li>The oldest bucket at any given time likely has an open time outside of the time window and a close time inside of the time window.</li>
+<li>The maximum number of buckets tracked by the engine is actually 1 more than the configured <code>bucketCount</code>.</li>
+</ul>
+<p>The remainder of the explanation refers to the oldest time in the window as the "cutoff time".</p>
+<p>When the oldest bucket straddles the cutoff time, its contents are <em>prorated</em>:</p>
+<ul>
+<li>The fraction of the bucket outside the moving window is: (cutoff time - bucket's open time) / bucket width. Call this the "expired fraction."</li>
+<li>The bucket's trade count is reduced by the expired fraction.</li>
+<li>The bucket's sum is reduced by the expired fraction.</li>
+<li>The open time is set to the cutoff time.</li>
+</ul>
+<p>The reference price is the total of the sum in each bucket divided by the total of the trade count in each bucket. Division is truncating integer division.</p>
+</div></div><div data-title="How are reference prices calculated outside the matching engine?" class="keyline-top section contain clearfix " data-reactid="289"><div class="space-bottom4 pad2x prose clip" data-reactid="290"><h3 id="how-are-reference-prices-calculated-outside-the-matching-engine">How are reference prices calculated outside the matching engine?</h3>
+<p>If calculated outside the matching engine, a query returns <code>"externalCalculationId":</code> followed by an integer number. Each of these numbers indicates a different calculation method.</p>
+</div></div><div data-title="External Reference Price Calculation Method 0" class="keyline-top section contain clearfix " data-reactid="291"><div class="space-bottom4 pad2x prose clip" data-reactid="292"><h3 id="external-reference-price-calculation-method-0">External Reference Price Calculation Method 0</h3>
+<p>The reference price was set manually by a human operator. This calculation method will only be used in situations when algorithmic calculation of the reference price has been deemed unsuitable.</p>
+</div></div><div data-title="FAQs - Self Trade Prevention (STP)" class="keyline-top section contain clearfix " data-reactid="293"><div class="space-bottom4 pad2x prose clip" data-reactid="294"><h2 id="faqs---self-trade-prevention-stp">FAQs - Self Trade Prevention (STP)</h2>
+<p><strong>Disclaimer:</strong> The commissions and prices used here are fictional and do not imply anything about the actual setup on the live exchange.</p>
+</div></div><div data-title="What is Self Trade Prevention?" class="keyline-top section contain clearfix " data-reactid="295"><div class="space-bottom4 pad2x prose clip" data-reactid="296"><h3 id="what-is-self-trade-prevention">What is Self Trade Prevention?</h3>
+<p>Self Trade Prevention (or STP) prevents orders of users to match against their own.</p>
+</div></div><div data-title="What defines a self-trade?" class="keyline-top section contain clearfix " data-reactid="297"><div class="space-bottom4 pad2x prose clip" data-reactid="298"><h3 id="what-defines-a-self-trade">What defines a self-trade?</h3>
+<p>A self-trade can occur in either scenario:</p>
+<ul>
+<li>The order traded against the same account.</li>
+</ul>
+</div></div><div data-title="What happens when STP is triggered?" class="keyline-top section contain clearfix " data-reactid="299"><div class="space-bottom4 pad2x prose clip" data-reactid="300"><h3 id="what-happens-when-stp-is-triggered">What happens when STP is triggered?</h3>
+<p>There are several possible modes for what the system does when an order would create a self-trade.</p>
+<p><code>EXPIRE_TAKER</code> - This mode prevents a trade by immediately expiring the taker order's remaining quantity.</p>
+<p><code>EXPIRE_MAKER</code> - This mode prevents a trade by immediately expiring the potential maker order's remaining quantity.</p>
+<p><code>EXPIRE_BOTH</code> - This mode prevents a trade by immediately expiring both the taker and the potential maker orders' remaining quantities.</p>
+<p><code>DECREMENT</code> - This mode increases the <code>prevented quantity</code> of <em>both</em> orders by the amount of the prevented match. The smaller of the two orders will expire, or both if they have the same quantity.</p>
+<p><code>TRANSFER</code> - If orders are from the same account, then the behavior is the same as <code>DECREMENT</code>. If orders are from different accounts with the same <code>tradeGroupId</code>, then in addition to the behavior of <code>DECREMENT</code>, the <code>last prevented quantity</code> and its notional are transferred between the two accounts.</p>
+<p>STP behavior is typically determined by the STP mode of the <strong>taker order</strong> only. The exception is that for STP <code>TRANSFER</code> to occur, both the maker and taker orders must specify STP mode <code>TRANSFER</code>. If the taker order specifies STP mode <code>TRANSFER</code>, but the maker order specifies a different STP mode, then the STP behavior is <code>DECREMENT</code>.</p>
+<p>In summary:</p>
+<table>
+<thead>
+<tr>
+<th>Taker Order STP Mode</th>
+<th>Maker Order STP Mode</th>
+<th>Effective STP Mode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TRANSFER</code></td>
+<td><code>TRANSFER</code></td>
+<td><code>TRANSFER</code></td>
+</tr>
+<tr>
+<td><code>TRANSFER</code></td>
+<td><code>EXPIRE_MAKER</code>, <code>EXPIRE_TAKER</code>, <code>EXPIRE_BOTH</code>, <code>DECREMENT</code></td>
+<td><code>DECREMENT</code></td>
+</tr>
+<tr>
+<td><code>EXPIRE_MAKER</code>, <code>EXPIRE_TAKER</code>, <code>EXPIRE_BOTH</code>, <code>DECREMENT</code></td>
+<td>ANY STP MODE</td>
+<td>STP mode of the Taker Order</td>
+</tr>
+</tbody>
+</table>
+</div></div></div></div></div></div></div><!--STOP-->
+    <script src="./Tokocrypto API Documentation_files/bundle.js.download"></script>
+  
+
+</body></html>

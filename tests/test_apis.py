@@ -61,9 +61,30 @@ def test_gemini():
         return False
 
 def test_claude():
-    api_key = os.getenv("ANTHROPIC_API_KEY")
     model = config.CLAUDE_MODEL
 
+    if model.startswith("deepseek/"):
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            print("❌ DeepSeek: API Key tidak ditemukan di .env")
+            return False
+        print(f"🔄 DeepSeek: Mencoba memanggil {model}...")
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key, base_url=config.DEEPSEEK_API_BASE)
+            response = client.chat.completions.create(
+                model=model.split("/", 1)[1],
+                max_tokens=128,
+                messages=[{"role": "user", "content": "Say 'DeepSeek OK' in one line."}],
+            )
+            result = response.choices[0].message.content.strip()
+            print(f"✅ DeepSeek Sukses: '{result}'")
+            return True
+        except Exception as e:
+            print(f"❌ DeepSeek Gagal: {e}")
+            return False
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("❌ Claude: API Key tidak ditemukan di .env")
         return False

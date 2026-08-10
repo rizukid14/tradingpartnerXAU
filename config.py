@@ -75,13 +75,18 @@ else:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
 
 # --- MODEL NAMES & FALLBACKS ---
 # Claude Model & Fallback (Anthropic)
-CLAUDE_MODEL = "claude-sonnet-4-6"
+# Default: DeepSeek V4 Flash — jauh lebih murah dari sonnet, cukup buat
+# decision & forecast JSON. Mau balik ke Claude nanti: set "claude-sonnet-4-6".
+# "deepseek/..." -> DeepSeek API (OpenAI-compatible); "claude-..." -> Anthropic.
+CLAUDE_MODEL = "deepseek/deepseek-v4-flash"
 CLAUDE_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
@@ -183,6 +188,11 @@ ERA_PRESETS = {
 # Minimum number of models that must agree (e.g., 2 out of 3)
 CONSENSUS_THRESHOLD = 2
 
+# Dynamic self-tuning config — OFF untuk sekarang (fitur belum dibutuhkan).
+# Kalau OFF, consensus selalu pakai threshold statis per-symbol (XAU 1.0 / BTC 1.2,
+# 2/3 model) tanpa adaptasi win-rate ke mode defensif 3/3.
+DYNAMIC_CONFIG_ENABLED = False
+
 # Weighted-confidence consensus: a BUY/SELL signal wins when the SUM of
 # confidence from models voting that direction meets the per-symbol threshold
 # AND at least 2 models voted that direction (prevents one strong model
@@ -202,8 +212,13 @@ DEBATE_ENABLED = False
 #  FEATURE TOGGLES (untuk A/B test & balik ke titik stable era lama)
 # ============================================================================
 # Quant analysis: Hurst Exponent + fat-tail kurtosis + Monte Carlo probability.
-# Ditambahkan di era modern (commit 259708d). Legacy (profit 100% dulu) TANPA ini.
-QUANT_ANALYSIS_ENABLED = True
+# Default OFF — quant statistik (Hurst/Kurtosis/MC) sering konflik dengan
+# forecast AI dan bikin LLM bingung arah. Era legacy TANPA quant = winrate 100%.
+QUANT_ANALYSIS_ENABLED = False
+
+# Monte Carlo probability — default OFF karena probabilitas statistik dari drift
+# 50 candle sering konflik dengan forecast AI (model jadi bingung arah).
+MONTE_CARLO_ENABLED = False
 
 # Multi-Horizon Forecast Engine (T+15m/T+60m XAU, T+4h/T+D1 BTC) — informational.
 # Sudah ada sejak era legacy (commit 949ce14), tapi bisa di-off untuk A/B test.
@@ -271,12 +286,16 @@ TRAILING_ACTIVATION_POINTS_BTC = 17000
 TRAILING_DISTANCE_POINTS_BTC = 12500
 
 # Dynamic ATR Trailing Multipliers (Computed in real-time from live ATR14)
-# BTC: 2.0x ATR M30 activation, 1.5x ATR M30 distance
-# XAU: 2.0x ATR M5 activation (~$2.00 @ $1.00 ATR), 1.5x ATR M5 distance (~$1.50 @ $1.00 ATR)
-TRAILING_ACTIVATION_ATR_MULT_BTC = 2.0
-TRAILING_DISTANCE_ATR_MULT_BTC = 1.5
-TRAILING_ACTIVATION_ATR_MULT_XAU = 2.0
-TRAILING_DISTANCE_ATR_MULT_XAU = 1.5
+# BTC: 1.0x ATR M30 activation, 0.5x ATR M30 distance
+# XAU: 1.0x ATR M5 activation (~$3.80 @ $3.80 ATR), 0.5x ATR M5 distance (~$1.90 @ $3.80 ATR)
+# The activation is capped so a high-ATR period cannot push the trailing
+# start unreasonably far (XAU M5 scalping target ~400-900 pts).
+TRAILING_ACTIVATION_ATR_MULT_BTC = 1.0
+TRAILING_DISTANCE_ATR_MULT_BTC = 0.5
+TRAILING_ACTIVATION_ATR_MULT_XAU = 1.0
+TRAILING_DISTANCE_ATR_MULT_XAU = 0.5
+TRAILING_ACTIVATION_MAX_POINTS_BTC = 40000
+TRAILING_ACTIVATION_MAX_POINTS_XAU = 500
 
 # --- BREAK-EVEN (from XAU-60 trade_executor.py) ---
 # Moves stop loss to entry price once trade reaches profit threshold
@@ -304,8 +323,8 @@ PARTIAL_CLOSE_TP1_POINTS_BTC = 44500
 
 # --- DAILY RISK LIMITS (from xaubot-ai smart_risk_manager.py) ---
 MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today
-MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
-PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
+MAX_CONSECUTIVE_LOSSES = 5         # Pause trading after 5 consecutive losses
+PAUSE_AFTER_LOSSES_MINUTES = 15    # Pause duration after consecutive losses
 MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layering cycles of 2 positions)
 
 # --- BREAK-EVEN PROFIT TOLERANCE ---

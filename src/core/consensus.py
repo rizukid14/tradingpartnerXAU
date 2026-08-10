@@ -3,7 +3,10 @@ from src.analytics import dynamic_config
 
 
 def _effective_consensus_threshold():
-    """Returns the active consensus threshold (dynamic rules win over static config)."""
+    """Returns the active consensus threshold. Dynamic rules only apply when
+    DYNAMIC_CONFIG_ENABLED; otherwise fall back to static config (2/3)."""
+    if not getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
+        return config.CONSENSUS_THRESHOLD
     try:
         return int(dynamic_config.dynamic_rules.consensus_threshold)
     except Exception:

@@ -77,30 +77,24 @@ python main.py
 12. **Banner dinamis**: "Simbol: BTCUSD.c | Timeframe: M30 | Spread Filter: 2400 pts maks (BTCUSD.c)".
 13. **Risk-based lot sizing** (`get_effective_lot_size(sl_points)`): lot = risk_usd / (SL pts × usd_per_point). Per-symbol risk: **BTC 1.5%** equity, **XAU 0.5%** (karena XAU bisa 6 posisi → max ~3% aggregate). Urutan: risk-based → recovery/session multiplier → clamp+round ke volume_step. Margin safety net (lot diturunkan kalau margin > 50% free). Fallback 0.01 kalau SL tidak diketahui.
 14. **Forecast horizon per-symbol**: XAU T+15m/T+60m, **BTC T+4h/T+D1** (15 menit itu noise untuk M30 swing + spread $17). Cache refresh: XAU 15 menit, **BTC 1 jam**. `horizon_label` di forecast dict.
-15. **Claude ganti DeepSeek** (`claude-sonnet-4-6`): DeepSeek konservatif (0% BUY, HOLD/SELL dominan, conf fluktuatif 0-65%) → tidak efektif di weighted voting. Claude reasoning lebih tajam (sadar R:R vs spread). **Truncated JSON recovery** di `clean_json_response` + `max_tokens=2000` karena Claude bisa motong respons. **Catatan: claude-sonnet-5 tidak support `temperature`; sonnet-4-6 ~40% lebih cepat (7.2s vs 12.1s di prompt panjang).**
+15. **Slot ke-3 = DeepSeek V4 Flash (default, configurable)**: `CLAUDE_MODEL = "deepseek/deepseek-v4-flash"` — jauh lebih murah dari `claude-sonnet-4-6` (buat akun cent, ~$2/hari Claude itu mahal vs risk per trade puluhan sen). Routing otomatis di `query_claude()`: `deepseek/...` → DeepSeek API (OpenAI-compatible, base `https://api.deepseek.com/v1`), `claude-...` → Anthropic. Fallback `claude-haiku-4-5-20251001` (cuma kepanggil kalau DeepSeek error). Ganti model via menu setup / `--claude-model`. Log label otomatis ("DeepSeek" vs "Claude"). **Catatan lama (historis):** era sonnet-4-6 = model paling analitis (sadar R:R vs spread); DeepSeek konservatif (HOLD/SELL dominan).
 16. **Pemisahan entry vs position management di prompt**: `signal` = murni entry baru, `position_actions` = posisi existing, dinilai independen (cegah LLM campur "existing BUY masih bagus" sebagai alasan HOLD entry).
+17. **Gemini ganti ke `gemini-3.1-flash-lite`** (fallback `gemini-3.5-flash-lite`): benchmark 5 model Gemini (10 iterasi, prompt produksi, sesi bearish) — 3.5-flash-lite dominan HOLD (8/10), 2.5-flash-lite parah (10/10 HOLD conf 36%), **3.1-flash-lite paling konsisten ngikutin sinyal (10/10 SELL, conf 65%, latency 1.1s)**. 3.6-flash juga bagus (9/10, conf 69%) tapi 7.5s latency. Catatan: Gemini return confidence skala 0-1 (bukan 0-100), di-×100 di consensus.
+18. **Deteksi close manual (magic=0)**: manual close dari MT5 mobile menghasilkan OUT deal `magic=0` (magic tidak diteruskan). `get_closed_positions_today` menerima OUT magic=0 **hanya jika posisi dibuka bot** (ada IN magic bot) — posisi manual user tidak ikut kehitung. Window P/L = tengah malam WIB → next-midnight (bukan rolling 24h, biar loss kemarin tidak masuk "hari ini"). **Jangan diubah ke rolling 24h** — itu bikin daily loss cap ke-trip dari loss hari sebelumnya. **Reason close di-label** ("manual" untuk magic=0, SL/TP/stop-out dari kode MT5) — bukan "unknown".
+19. **Post-mortem langsung saat close**: dipicu di loop 5 detik pas `sync_closed_positions` return `new_deals` (background thread biar nggak nge-block), bukan nunggu candle. `check_and_evaluate_closed_trades(deals)` nerima deals langsung. **Jangan seed `evaluated_tickets` dari `known_closed` tiap cycle** — itu nge-block tiket baru (bug yang udah diperbaiki); re-evaluation dicegah oleh `evaluated_tickets` persist di `memory_lessons.json`.
+20. **Trailing stop ATR-adaptif**: activation `min(1.0×ATR, cap)` (XAU 500 / BTC 40000 pts), distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
 
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
-- Git branch: `dev`. Commit terakhir sesi 8 Agustus: `e0824e2` (Claude sonnet-4-6).
-- `git status` biasanya ada `data/dynamic_rules.json`, `data/forecast_cache.json`, `data/memory_lessons.json`, `data/decision_memory.json`, `data/position_manager_state.json`, `data/risk_state.json` ter-modif — itu runtime state, jangan commit kalau nggak sengaja.
+- Git branch: `dev`. Commit terakhir sesi 10 Agustus: `940333e` (post-mortem realtime + reason mapping).
+- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.4-mini; fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
+- **`data/` dan `scratch/` sudah di-`.gitignore`** (untrack via `git rm --cached`, file tetap ada di disk). `git status` sekarang bersih dari runtime state — cuma source file + `docs/` yang muncul.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
 - **Status display live** menampilkan posisi terbuka semua symbol + floating P/L tiap 5 detik (`get_all_open_positions`).
-- Claude kadang lambat di prompt panjang (34s di sonnet-5, ~8-20s di sonnet-4-6) — wajar untuk M30 cycle 1x/30 menit.
 
-## Bot Binance Spot (`binance_bot/`) — BOT KEDUA
+## Bot Binance Spot — BRANCH TERPISAH (`binance`)
 
-> Bot terpisah untuk **Binance spot** (BTC/ETH/SOL), modal kecil (tes ~$12/Rp 200rb), deploy Linux. **Tidak menyentuh bot MT5.**
-
-- **Arsitektur 2 proposer + 1 approver**: GPT + Gemini vote (paralel), **Claude approver** hanya dipanggil saat 2/2 sepakat & skor ≥ threshold (hemat biaya).
-- **Spot, tanpa margin/futures**: tidak bisa short (hanya BUY), nol risiko liquidation/hutang. Signal SELL tanpa posisi = hold USDT; SELL saat punya posisi = exit.
-- **SL/TP via OCO order** (`POST /api/v3/orderList/oco`) — spot tanpa SL/TP broker; jalan di sisi exchange.
-- **REST API `/api/v3/*`** + HMAC API key (dari `.env`). Changelog Binance: `/api/v1/*` sudah retire; signed request wajib percent-encode sebelum signing; `userDataStream` REST dihapus (pakai polling REST atau WebSocket API Ed25519).
-- **Risk 1.5%** per trade dari equity USDT, **daily loss $3** (ketat utk modal $12), cooldown, min notional $5, max 2 posisi, trading 24/7.
-- Config: `binance_bot/config.py` — `TESTNET=True` + `DRY_RUN=True` default (AMAN). `False` = live, jangan ubah tanpa diskusi.
-- Flow: loop 5 detik (manage posisi + deteksi close) → candle M30 → risk gate → 2 proposer → Claude approve → OCO order.
-- Test: `binance_bot/tests/` (mock API connector + risk). Testnet dulu (`testnet.binance.vision`) sebelum live.
-- Deploy: `pip install -r binance_bot/requirements.txt` + systemd `Restart=always` di VPS Linux.
+> Bot kedua untuk **Binance spot** (BTC/ETH/SOL), modal kecil, deploy Linux. **TIDAK ada di branch `dev`/`main`** — kode lengkap ada di branch `binance` (`git checkout binance`). Arsitektur: 2 proposer + 1 approver, OCO SL/TP, dry-run realistis, HOLD-streak, risk 1.5%, trading 24/7. Detail lengkap ada di AGENTS.md branch binance.
 
 ## Konvensi & hal yang perlu diingat
 
@@ -111,5 +105,5 @@ python main.py
 - Kalau bikin skrip analisis sementara → taruh di `scratch/`, lalu HAPUS setelah dipakai (user minta dibersihin).
 - User minta commit + push ke `dev` setelah kerjaan verified (tapi tanya dulu / tunggu permintaan eksplisit).
 - Magic number bot: `20260625`. Bot cuma kelola posisi dengan magic ini.
-- LLM timeout 24s, fallback berurutan (OpenAI → Gemini → Claude untuk primary).
-- **Claude = model paling analitis** (detail R:R, struktur, level). **OpenAI = konservatif tapi solid**. **Gemini = variatif, kadang confident tinggi**. HOLD conf 0 = netral di weighted voting.
+- LLM timeout 24s, fallback berurutan (OpenAI → Gemini → slot-3 untuk primary).
+- **Slot-3 (default DeepSeek, historis Claude) = model paling analitis** (detail R:R, struktur, level). **OpenAI = konservatif tapi solid**. **Gemini = variatif, kadang confident tinggi**. HOLD conf 0 = netral di weighted voting.

@@ -1,6 +1,7 @@
 import os
 import time
 import sys
+import threading
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -35,8 +36,8 @@ def parse_cli_overrides(argv=None):
     p = argparse.ArgumentParser(description="Trading bot MT5 — override config via CLI (sesi saja).")
     p.add_argument("--dry-run", action="store_true", help="Mode dry-run (sinyal saja, tanpa order)")
     p.add_argument("--live", action="store_true", help="Mode live (kirim order beneran)")
-    p.add_argument("--risk-percent-btc", type=float, help="Risk % equity per trade BTC (mis. 1.5)")
-    p.add_argument("--risk-percent-xau", type=float, help="Risk % equity per trade XAU (mis. 0.5)")
+    p.add_argument("--risk-percent-btc", type=float, help="Risk pct equity per trade BTC (mis. 1.5)")
+    p.add_argument("--risk-percent-xau", type=float, help="Risk pct equity per trade XAU (mis. 0.5)")
     p.add_argument("--max-daily-loss", type=float, help="Batas kerugian harian USD (mis. 50)")
     p.add_argument("--max-positions", type=int, help="Max posisi open (mis. 6)")
     p.add_argument("--weekend-trading", choices=["on", "off"], help="Trading di weekend on/off")
@@ -49,6 +50,10 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--memory", choices=["on", "off"],
                    help="Memory context (lessons/decision memory/forecast) on/off — OFF = LLM independen")
     p.add_argument("--quant", choices=["on", "off"], help="Quant analysis (Hurst/Monte Carlo) on/off")
+    p.add_argument("--dynamic", choices=["on", "off"],
+                   help="Dynamic self-tuning config on/off (win-rate adaptive consensus threshold)")
+    p.add_argument("--claude-model", type=str,
+                   help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -82,6 +87,9 @@ def parse_cli_overrides(argv=None):
     if args.risk_percent_btc is not None:
         config.RISK_PERCENT_BTC = args.risk_percent_btc
         applied.append(f"RISK_PERCENT_BTC={args.risk_percent_btc}")
+    if args.claude_model is not None:
+        config.CLAUDE_MODEL = args.claude_model
+        applied.append(f"CLAUDE_MODEL={args.claude_model}")
     if args.risk_percent_xau is not None:
         config.RISK_PERCENT_XAU = args.risk_percent_xau
         applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
@@ -118,6 +126,9 @@ def parse_cli_overrides(argv=None):
     if getattr(args, "quant", None):
         config.QUANT_ANALYSIS_ENABLED = (args.quant == "on")
         applied.append(f"QUANT_ANALYSIS_ENABLED={config.QUANT_ANALYSIS_ENABLED}")
+    if getattr(args, "dynamic", None):
+        config.DYNAMIC_CONFIG_ENABLED = (args.dynamic == "on")
+        applied.append(f"DYNAMIC_CONFIG_ENABLED={config.DYNAMIC_CONFIG_ENABLED}")
 
     return applied, getattr(args, "yes", False)
 
@@ -147,7 +158,9 @@ def interactive_setup():
         ("LIMIT & FILTER", "Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
+        ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
+        ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Memory (lessons/dec)", "config.MEMORY_CONTEXT_ENABLED", "ON" if config.MEMORY_CONTEXT_ENABLED else "OFF"),
@@ -235,6 +248,9 @@ def interactive_setup():
                         setattr(config, attr.split(".")[1], new_val.lower() in ("1", "true", "yes", "on"))
                     elif "THRESHOLD" in attr or "RISK" in attr or "LOSS" in attr or "SPREAD" in attr:
                         setattr(config, attr.split(".")[1], float(new_val))
+                    elif "MODEL" in attr:
+                        # String model name — masukkan mentah, routing di llm_client
+                        setattr(config, attr.split(".")[1], new_val)
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
                     # refresh tampilan
@@ -323,7 +339,7 @@ def run_trading_cycle():
             print(f"⚠️ [QUANT MATH ERROR] {e}")
 
     # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
-    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
+    if getattr(config, "MONTE_CARLO_ENABLED", False):
         try:
             from src.analytics import quant_probability
             tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
@@ -339,7 +355,8 @@ def run_trading_cycle():
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
-        dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
+        if getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
+            dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
 
         # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
@@ -539,7 +556,7 @@ def main():
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
     tf_name = "M30" if config.is_crypto(config.SYMBOL) else "M5"
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
-    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
+    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
     print("-" * 60)
     print("🛡️ PROTEKSI AKTIF:")
     print(f"   Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
@@ -640,6 +657,20 @@ def main():
                             )
                         except Exception as e:
                             print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
+
+                    # Post-mortem langsung untuk tiket yang baru saja ditutup,
+                    # jalan di background thread biar loop 5 detik nggak ke-block
+                    # sama LLM call post-mortem.
+                    if new_closed:
+                        try:
+                            _pm_deals = list(new_closed)
+                            threading.Thread(
+                                target=trade_evaluator.evaluator.check_and_evaluate_closed_trades,
+                                args=(_pm_deals,),
+                                daemon=True,
+                            ).start()
+                        except Exception as e:
+                            print(f"[POST-MORTEM ERROR] Gagal evaluasi tiket baru: {e}")
                 except Exception as e:
                     print(f"[CLOSE SYNC ERROR] {e}")
                 

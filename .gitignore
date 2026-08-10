@@ -2,8 +2,14 @@
 .env
 
 # --- BOT CACHE & STATE ---
+# data/ is fully runtime state (decision memory, dynamic rules, forecast cache,
+# lessons, position manager, risk state) — changes every cycle, never commit.
 analysis_cache.json
 risk_state.json
+data/
+
+# --- TEMPORARY ANALYSIS SCRIPTS ---
+scratch/
 
 # --- BOT LOGS ---
 *.log

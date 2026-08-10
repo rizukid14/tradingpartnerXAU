@@ -21,33 +21,35 @@ STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
 
 
 def _load_state():
-    """Load persisted tickets from disk. Returns (partial_set, be_set)."""
+    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes)."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 data = json.load(f)
             partial = set(int(t) for t in data.get("partial_closed_tickets", []))
             be = set(int(t) for t in data.get("break_even_tickets", []))
-            return partial, be
+            extremes = {int(k): float(v) for k, v in data.get("trailing_extremes", {}).items()}
+            return partial, be, extremes
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal memuat position_manager_state.json: {e}")
-    return set(), set()
+    return set(), set(), {}
 
 
-def _save_state(partial_set, be_set):
+def _save_state(partial_set, be_set, extremes):
     """Persist tickets to disk so restart can recover state."""
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({
                 "partial_closed_tickets": sorted(int(t) for t in partial_set),
                 "break_even_tickets": sorted(int(t) for t in be_set),
+                "trailing_extremes": {str(k): v for k, v in extremes.items()},
             }, f)
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal menyimpan position_manager_state.json: {e}")
 
 
 # Module-level state, loaded once at import (survives within a process)
-_partial_closed_tickets, _break_even_tickets = _load_state()
+_partial_closed_tickets, _break_even_tickets, _trailing_extremes = _load_state()
 
 
 def manage_all_positions():
@@ -122,6 +124,11 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     if pos.ticket in _partial_closed_tickets:
         return  # Already partially closed
 
+    # 0.01 lot (volume_min) can't be split: 50% of 0.01 rounds to 0, and
+    # forcing volume_min would close the entire position. Skip partial close.
+    if pos.volume <= symbol_info.volume_min:
+        return
+
     tp1_points = config.PARTIAL_CLOSE_TP1_POINTS_BTC if config.is_crypto(symbol) else config.PARTIAL_CLOSE_TP1_POINTS_XAU
     if profit_points < tp1_points:
         return
@@ -162,7 +169,7 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _partial_closed_tickets.add(pos.ticket)
-        _save_state(_partial_closed_tickets, _break_even_tickets)
+        _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         remaining = round(pos.volume - close_volume, 2)
         print(f"💰 [PARTIAL CLOSE] Ticket #{pos.ticket} ({symbol}): Ditutup {close_volume} lot "
               f"(profit {profit_points:.0f} pts). Sisa: {remaining} lot — trailing sisanya.")
@@ -214,13 +221,13 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
         # Only move if current SL is below break-even level
         if pos.sl >= be_price:
             _break_even_tickets.add(pos.ticket)
-            _save_state(_partial_closed_tickets, _break_even_tickets)
+            _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
             return
     else:  # SELL
         be_price = entry_price - (be_padding * point)
         if pos.sl != 0 and pos.sl <= be_price:
             _break_even_tickets.add(pos.ticket)
-            _save_state(_partial_closed_tickets, _break_even_tickets)
+            _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
             return
 
     be_price = round(be_price, symbol_info.digits)
@@ -237,7 +244,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _break_even_tickets.add(pos.ticket)
-        _save_state(_partial_closed_tickets, _break_even_tickets)
+        _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         print(f"🔒 [BREAK-EVEN] Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
     else:
         comment = result.comment if result else "Unknown error"
@@ -273,22 +280,39 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     atr_points = _get_dynamic_atr_points(symbol, point)
 
     if config.is_crypto(symbol):
-        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_BTC", 2.0)
-        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 1.5)
+        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
         fallback_act = config.TRAILING_ACTIVATION_POINTS_BTC
         fallback_dist = config.TRAILING_DISTANCE_POINTS_BTC
+        act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
     else:
-        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_XAU", 2.0)
-        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 1.5)
+        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_XAU", 1.0)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
         fallback_act = config.TRAILING_ACTIVATION_POINTS_XAU
         fallback_dist = config.TRAILING_DISTANCE_POINTS_XAU
+        act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_XAU", 500)
 
     if atr_points > 0:
-        activation = int(atr_points * act_mult)
+        activation = min(int(atr_points * act_mult), act_cap)
         distance = int(atr_points * dist_mult)
     else:
         activation = fallback_act
         distance = fallback_dist
+
+    # Track the extreme price seen since entry. The SL trails behind this
+    # extreme, never behind the current price, so a pullback cannot drag the
+    # SL backwards.
+    ticket = pos.ticket
+    if pos.type == mt5.ORDER_TYPE_BUY:
+        extreme = max(_trailing_extremes.get(ticket, pos.price_open), current_price)
+        trail_ref = extreme
+    else:  # SELL
+        extreme = min(_trailing_extremes.get(ticket, pos.price_open), current_price)
+        trail_ref = extreme
+
+    if extreme != _trailing_extremes.get(ticket):
+        _trailing_extremes[ticket] = extreme
+        _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
 
     if profit_points < activation:
         return
@@ -296,13 +320,13 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     trail_distance = distance * point
 
     if pos.type == mt5.ORDER_TYPE_BUY:
-        new_sl = current_price - trail_distance
+        new_sl = trail_ref - trail_distance
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL up, never down
         if pos.sl >= new_sl:
             return
     else:  # SELL
-        new_sl = current_price + trail_distance
+        new_sl = trail_ref + trail_distance
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL down, never up
         if pos.sl != 0 and pos.sl <= new_sl:

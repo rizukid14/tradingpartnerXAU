@@ -14,6 +14,19 @@ if config.OPENAI_API_KEY:
         base_url=config.OPENAI_API_BASE
     )
 
+# DeepSeek is OpenAI-compatible — same SDK, different base URL. Used when
+# CLAUDE_MODEL starts with "deepseek/" (cheap default; switch back to Claude
+# by setting CLAUDE_MODEL to "claude-...").
+deepseek_client = None
+if config.DEEPSEEK_API_KEY:
+    try:
+        deepseek_client = OpenAI(
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url=config.DEEPSEEK_API_BASE
+        )
+    except Exception as e:
+        print(f"[LLM WARNING] Gagal init DeepSeek client: {e}")
+
 claude_client = None
 if config.ANTHROPIC_API_KEY:
     try:
@@ -32,6 +45,12 @@ def asset_desc(symbol):
     if config.is_crypto(symbol):
         return "Bitcoin (BTCUSD) — crypto, trades 24/7 including weekends"
     return "Gold (XAUUSD) — Forex/commodity"
+
+
+def claude_slot_label():
+    """Display label for the 'Claude slot' model. Shows DeepSeek when the
+    configured model is deepseek/..., otherwise Claude."""
+    return "DeepSeek" if config.CLAUDE_MODEL.startswith("deepseek/") else "Claude"
 
 
 def query_primary_model(prompt, search_grounding=False):
@@ -78,8 +97,17 @@ def query_primary_model(prompt, search_grounding=False):
         except Exception as e:
             print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
 
-    # 3. Try Claude (Anthropic)
-    if claude_client and config.ANTHROPIC_API_KEY:
+    # 3. Try Claude slot (Anthropic, or DeepSeek if CLAUDE_MODEL is deepseek/)
+    if config.CLAUDE_MODEL.startswith("deepseek/"):
+        if deepseek_client and config.DEEPSEEK_API_KEY:
+            try:
+                res = _execute_deepseek_single(config.CLAUDE_MODEL, prompt, 30)
+                if isinstance(res, str):
+                    return res.strip()
+                return json.dumps(res)
+            except Exception as e:
+                print(f"[PRIMARY MODEL ERROR - DEEPSEEK] {e}")
+    elif claude_client and config.ANTHROPIC_API_KEY:
         try:
             response = claude_client.messages.create(
                 model=config.CLAUDE_MODEL,
@@ -221,31 +249,33 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
     randomness_str = ""
-    try:
-        from src.analytics import market_randomness
-        rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
-        ft = rand_info.get('fat_tail', {})
-        tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
-        randomness_str = (
-            f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
-            f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
-        )
-    except Exception:
-        pass
+    if getattr(config, "QUANT_ANALYSIS_ENABLED", False):
+        try:
+            from src.analytics import market_randomness
+            rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
+            ft = rand_info.get('fat_tail', {})
+            tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
+            randomness_str = (
+                f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
+                f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
+            )
+        except Exception:
+            pass
 
     quant_prob_str = ""
-    try:
-        from src.analytics import quant_probability
-        tf_mins = 30 if config.is_crypto(symbol) else 5
-        q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-        quant_prob_str = (
-            f"- Quant Monte Carlo Probabilities (1,000 paths): "
-            f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
-            f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
-            f"Est. Time: {q_res['estimated_time_str']}\n"
-        )
-    except Exception:
-        pass
+    if getattr(config, "MONTE_CARLO_ENABLED", False):
+        try:
+            from src.analytics import quant_probability
+            tf_mins = 30 if config.is_crypto(symbol) else 5
+            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
+            quant_prob_str = (
+                f"- Quant Monte Carlo Probabilities (1,000 paths): "
+                f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
+                f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
+                f"Est. Time: {q_res['estimated_time_str']}\n"
+            )
+        except Exception:
+            pass
 
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
     # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the
@@ -665,21 +695,49 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
-def query_claude(prompt):
-    """Queries Claude API with timeout and fallback model support."""
-    if not claude_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Claude API Key tidak diset."}
+def _execute_deepseek_single(model_name, prompt, timeout_sec):
+    """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
+    'deepseek/' prefix (e.g. 'deepseek-v4-flash')."""
+    try:
+        response = deepseek_client.chat.completions.create(
+            model=model_name.split("/", 1)[1] if "/" in model_name else model_name,
+            messages=[
+                {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            timeout=timeout_sec
+        )
+        return clean_json_response(response.choices[0].message.content)
+    except Exception as e:
+        raise e
 
+
+def query_claude(prompt):
+    """Queries the 'Claude slot' model with timeout and fallback support.
+    Routes automatically: model starting with 'deepseek/' -> DeepSeek API
+    (OpenAI-compatible, much cheaper); 'claude-...' -> Anthropic.
+    Config: config.CLAUDE_MODEL / config.CLAUDE_FALLBACK_MODEL."""
     primary_model = config.CLAUDE_MODEL
     fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
+
+    is_deepseek = primary_model.startswith("deepseek/")
 
     try:
+        if is_deepseek:
+            if not deepseek_client:
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
+            return _execute_deepseek_single(primary_model, prompt, timeout_sec)
+        if not claude_client:
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Claude API Key tidak diset."}
         return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
             print(f"⚠️ [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
+                if fallback_model.startswith("deepseek/"):
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
                 return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[CLAUDE FALLBACK ERROR] {fb_err}")
@@ -734,11 +792,12 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
         return res, elapsed
 
     # Run in parallel using thread pool
+    slot_label = claude_slot_label()
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_to_model = {
             executor.submit(_query_timed, query_openai, prompt): "OpenAI",
             executor.submit(_query_timed, query_gemini, prompt): "Gemini",
-            executor.submit(_query_timed, query_claude, prompt): "Claude"
+            executor.submit(_query_timed, query_claude, prompt): slot_label
         }
         
         for future in concurrent.futures.as_completed(future_to_model):
@@ -753,7 +812,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                 latencies[model_name] = 0.0
 
     total_elapsed = time.time() - start_total
-    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in latencies])
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", slot_label] if m in latencies])
     print(f"⏱️ [LATENSI MODEL (Ronde 1)] {lat_str} (Total: {total_elapsed:.2f}s)")
     
     # Check consensus from Round 1
@@ -778,7 +837,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
             future_to_model = {
                 executor.submit(_query_timed, query_openai, debate_prompt): "OpenAI",
                 executor.submit(_query_timed, query_gemini, debate_prompt): "Gemini",
-                executor.submit(_query_timed, query_claude, debate_prompt): "Claude"
+                executor.submit(_query_timed, query_claude, debate_prompt): slot_label
             }
             for future in concurrent.futures.as_completed(future_to_model):
                 model_name = future_to_model[future]
@@ -791,7 +850,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                     round2_latencies[model_name] = 0.0
                     
         total_d = time.time() - start_d
-        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in round2_latencies])
+        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", slot_label] if m in round2_latencies])
         print(f"💬 [DEBATE SELESAI] {d_str} (Total Debate: {total_d:.2f}s)")
         return round2_results
 

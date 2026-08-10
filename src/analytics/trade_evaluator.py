@@ -189,12 +189,16 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
         except Exception as e:
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
 
-    def check_and_evaluate_closed_trades(self):
+    def check_and_evaluate_closed_trades(self, deals=None):
         """
-        Fetches today's closed positions from MT5 deal history and evaluates
-        any newly closed positions that haven't been processed yet.
+        Evaluates closed positions that haven't been processed yet.
+        Pass `deals` (list of newly-closed deals from risk.sync_closed_positions)
+        to evaluate immediately on close; otherwise fetches today's closed
+        positions from MT5 deal history (used at candle cycle for stragglers).
+        Re-evaluation after a restart is prevented by the persisted
+        evaluated_tickets set in memory_lessons.json.
         """
-        closed_deals = connector.get_closed_positions_today()
+        closed_deals = deals if deals is not None else connector.get_closed_positions_today()
         if not closed_deals:
             return
 
