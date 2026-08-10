@@ -446,7 +446,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # (the new template from docs/prompt_claude.md lets the LLM set SL/TP
     # from its own thesis; consensus.py still enforces the 2x-spread floor
     # and 1.5x SL->TP minimum). atr_points is still shown in market data.
-    min_sl = int(atr_points * 1.5)
+    min_sl = int(atr_points * 1.2)
     max_sl = int(atr_points * 2.0)
 
     # USD value of 1 point for the default bot lot — tells the LLM the real

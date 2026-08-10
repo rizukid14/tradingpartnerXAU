@@ -17,8 +17,10 @@ def _apply_sltp_floors(sl_points, tp_points):
     """
     Enforce a minimum SL so the LLM cannot propose stops inside the spread
     (which the broker would reject with INVALID_STOPS) or smaller than the
-    instrument's real volatility (1x ATR) — averaging two models where one
-    gave a tiny SL can otherwise land the stop inside normal noise.
+    instrument's real volatility (1.2x ATR) — averaging two models where one
+    gave a tiny SL can otherwise land the stop inside normal noise. 1.2x ATR
+    (bukan 1x) karena model (DeepSeek/OpenAI) sering kasih SL cuma 6-7% ATR;
+    kompromi 1.2x (bukan 1.5x) biar tetap scalping-friendly.
     """
     if not sl_points or sl_points <= 0:
         sl_points = config.default_sl_points_for(config.SYMBOL)
@@ -48,8 +50,8 @@ def _apply_sltp_floors(sl_points, tp_points):
     except Exception:
         pass
 
-    # Floor = max(2x spread, 1x ATR) — never inside spread, never inside noise
-    min_sl = max(spread_pts * 2, atr_points)
+    # Floor = max(2x spread, 1.2x ATR) — never inside spread, never inside noise
+    min_sl = max(spread_pts * 2, int(atr_points * 1.2))
     if sl_points < min_sl:
         sl_points = min_sl
 
