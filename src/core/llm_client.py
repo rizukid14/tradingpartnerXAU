@@ -47,6 +47,12 @@ def asset_desc(symbol):
     return "Gold (XAUUSD) — Forex/commodity"
 
 
+def claude_slot_label():
+    """Display label for the 'Claude slot' model. Shows DeepSeek when the
+    configured model is deepseek/..., otherwise Claude."""
+    return "DeepSeek" if config.CLAUDE_MODEL.startswith("deepseek/") else "Claude"
+
+
 def query_primary_model(prompt, search_grounding=False):
     """
     Queries a single model for background analysis (post-mortem, MTF, lessons
@@ -786,11 +792,12 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
         return res, elapsed
 
     # Run in parallel using thread pool
+    slot_label = claude_slot_label()
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_to_model = {
             executor.submit(_query_timed, query_openai, prompt): "OpenAI",
             executor.submit(_query_timed, query_gemini, prompt): "Gemini",
-            executor.submit(_query_timed, query_claude, prompt): "Claude"
+            executor.submit(_query_timed, query_claude, prompt): slot_label
         }
         
         for future in concurrent.futures.as_completed(future_to_model):
@@ -805,7 +812,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                 latencies[model_name] = 0.0
 
     total_elapsed = time.time() - start_total
-    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in latencies])
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", slot_label] if m in latencies])
     print(f"⏱️ [LATENSI MODEL (Ronde 1)] {lat_str} (Total: {total_elapsed:.2f}s)")
     
     # Check consensus from Round 1
@@ -830,7 +837,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
             future_to_model = {
                 executor.submit(_query_timed, query_openai, debate_prompt): "OpenAI",
                 executor.submit(_query_timed, query_gemini, debate_prompt): "Gemini",
-                executor.submit(_query_timed, query_claude, debate_prompt): "Claude"
+                executor.submit(_query_timed, query_claude, debate_prompt): slot_label
             }
             for future in concurrent.futures.as_completed(future_to_model):
                 model_name = future_to_model[future]
@@ -843,7 +850,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                     round2_latencies[model_name] = 0.0
                     
         total_d = time.time() - start_d
-        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", "Claude"] if m in round2_latencies])
+        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", slot_label] if m in round2_latencies])
         print(f"💬 [DEBATE SELESAI] {d_str} (Total Debate: {total_d:.2f}s)")
         return round2_results
 
