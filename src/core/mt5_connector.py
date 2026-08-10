@@ -233,8 +233,15 @@ def get_closed_positions_today(symbol=None):
     # Used to accept manual closes: MT5 mobile/web manual close of a bot position
     # produces an OUT deal with magic=0 (magic is not forwarded), so filtering
     # strictly on magic would silently drop those closes.
+    # IMPORTANT: query a WIDE window (7 days) for bot_opened — a position opened
+    # yesterday (IN deal outside today's midnight-WIB window) closed manually
+    # today would otherwise fail is_manual_of_bot and be silently dropped.
+    wide_from_epoch = int((today_start - timedelta(days=7)).timestamp())
+    wide_deals = mt5.history_deals_get(wide_from_epoch, to_epoch)
+    if wide_deals is None:
+        wide_deals = []
     bot_opened = {
-        d.position_id for d in deals
+        d.position_id for d in wide_deals
         if d.magic == config.MAGIC_NUMBER and d.entry == mt5.DEAL_ENTRY_IN
     }
 
