@@ -90,13 +90,13 @@ def calculate_consensus(decisions):
     
     # Print details for each model
     for model_name, dec in decisions.items():
-        sig = dec.get("signal", "HOLD")
-        conf = dec.get("confidence", 0.0)
-        reason = dec.get("reasoning", "Tidak ada alasan.")
+        sig = dec.get("signal") or "HOLD"
+        conf = dec.get("confidence") if dec.get("confidence") is not None else 0.0
+        reason = dec.get("reasoning") or "Tidak ada alasan."
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
         
-        signals_count[sig] += 1
+        signals_count[sig] = signals_count.get(sig, 0) + 1
         print(f"🤖 [{model_name}] Decision: {sig} (Conf: {conf*100:.1f}%)")
         print(f"   SL: {sl} pts, TP: {tp} pts")
         print(f"   Reason: {reason}")
@@ -164,8 +164,8 @@ def calculate_consensus(decisions):
     direction_scores = {"BUY": 0.0, "SELL": 0.0}
     direction_models = {"BUY": [], "SELL": []}
     for model_name, dec in decisions.items():
-        sig = dec.get("signal", "HOLD")
-        conf = dec.get("confidence", 0.0)
+        sig = dec.get("signal") or "HOLD"
+        conf = dec.get("confidence") if dec.get("confidence") is not None else 0.0
         if sig in direction_scores:
             direction_scores[sig] += conf
             direction_models[sig].append(model_name)

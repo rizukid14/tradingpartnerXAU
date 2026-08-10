@@ -56,11 +56,11 @@ LLM_TIMEOUT_SECONDS = 24.0
 
 
 
-# --- TRADING PARAMETERS ---
 # Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
 WEEKDAY_SYMBOL = "XAUUSD-ECNc"
 WEEKEND_SYMBOL = "BTCUSD.c"
 CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
+ENABLE_BTC_ROTATION = False        # Set True to enable weekend BTC rotation; False to focus 100% on XAUUSD
 SYMBOL = WEEKDAY_SYMBOL            # active symbol; updated at runtime by refresh_active_symbol()
 
 # Timeframe for Scalping: 5 Minutes (XAU)
@@ -373,14 +373,17 @@ def is_crypto(symbol):
 
 
 def get_active_symbol(now=None):
+    """Returns the symbol that should be traded right now:
+    If ENABLE_BTC_ROTATION is True:
+      - Friday >= 22:00 WIB or Saturday/Sunday -> WEEKEND_SYMBOL (BTCUSD)
+      - Otherwise -> WEEKDAY_SYMBOL (XAUUSD)
+    If ENABLE_BTC_ROTATION is False (default):
+      - Always returns WEEKDAY_SYMBOL (XAUUSD)
     """
-    Returns the symbol that should be traded right now:
-    - Friday >= 22:00 WIB or Saturday/Sunday -> WEEKEND_SYMBOL (BTCUSD)
-    - Otherwise -> WEEKDAY_SYMBOL (XAUUSD)
-    """
+    if not getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
+        return WEEKDAY_SYMBOL
     from datetime import datetime
     from zoneinfo import ZoneInfo
-
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
     if (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6):

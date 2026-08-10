@@ -284,6 +284,94 @@ def get_closed_positions_today(symbol=None):
         })
     return closed
 
+
+def get_trade_details(ticket):
+    """
+    Retrieves full execution details for a closed position ticket from MT5 deal history.
+    Returns a dict with entry_price, exit_price, pos_type, volume, entry_time, exit_time,
+    duration_min, profit, reason, and points_pnl.
+    """
+    terminal_info = mt5.terminal_info()
+    if terminal_info is None or not getattr(terminal_info, "connected", False):
+        if not initialize_mt5():
+            return None
+    try:
+        deals = mt5.history_deals_get(position=ticket)
+        if not deals:
+            return None
+
+        in_deal = None
+        out_deal = None
+        for d in deals:
+            if d.entry == mt5.DEAL_ENTRY_IN:
+                in_deal = d
+            elif d.entry == mt5.DEAL_ENTRY_OUT:
+                out_deal = d
+
+        if not in_deal or not out_deal:
+            return None
+
+        pos_type = "BUY" if in_deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+        entry_price = in_deal.price
+        exit_price = out_deal.price
+        volume = in_deal.volume
+        symbol = in_deal.symbol
+
+        # Time formatting
+        t_in = datetime.fromtimestamp(in_deal.time)
+        t_out = datetime.fromtimestamp(out_deal.time)
+        duration_sec = max(0, out_deal.time - in_deal.time)
+        duration_min = round(duration_sec / 60.0, 1)
+
+        # Net profit
+        net_profit = sum(d.profit + d.swap + d.commission for d in deals)
+
+        # Reason
+        deal_reason = getattr(out_deal, "reason", None)
+        if out_deal.magic == 0:
+            reason = "manual"
+        else:
+            reason = {
+                mt5.DEAL_REASON_SL: "SL",
+                mt5.DEAL_REASON_TP: "TP",
+                mt5.DEAL_REASON_MOBILE: "manual (mobile)",
+                mt5.DEAL_REASON_WEB: "manual (web)",
+                mt5.DEAL_REASON_CLIENT: "manual",
+                mt5.DEAL_REASON_EXPERT: "bot",
+                mt5.DEAL_REASON_ROLLOVER: "rollover",
+                mt5.DEAL_REASON_SO: "stop-out",
+                mt5.DEAL_REASON_VMARGIN: "margin",
+                mt5.DEAL_REASON_SPLIT: "split",
+            }.get(deal_reason, "manual" if not deal_reason else f"code-{deal_reason}")
+
+        # Calculate PnL in points
+        sym_info = mt5.symbol_info(symbol)
+        point_size = sym_info.point if sym_info else 0.01
+        if pos_type == "BUY":
+            price_diff = exit_price - entry_price
+        else:
+            price_diff = entry_price - exit_price
+
+        points_pnl = round(price_diff / point_size) if point_size else 0
+
+        return {
+            "ticket": ticket,
+            "symbol": symbol,
+            "type": pos_type,
+            "volume": volume,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "entry_time": t_in.strftime("%Y-%m-%d %H:%M:%S"),
+            "exit_time": t_out.strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_min": duration_min,
+            "profit": net_profit,
+            "reason": reason,
+            "points_pnl": points_pnl,
+        }
+    except Exception as e:
+        print(f"[MT5 CONNECTOR WARNING] Gagal mengambil detail trade #{ticket}: {e}")
+        return None
+
 # Retcodes that mean "broker wants a fresh price/wider deviation" — worth a retry.
 _RETRYABLE_RETCODES = {
     getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),

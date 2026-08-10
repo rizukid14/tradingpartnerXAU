@@ -217,12 +217,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
 
-    # Create recent candles string (last 10 candles)
-    recent_candles = df.tail(10)
+    # Create recent candles string (last 7 candles)
+    recent_candles = df.tail(7)
     candles_str = ""
     for idx, row in recent_candles.iterrows():
-        time_str = row['time'].strftime('%Y-%m-%d %H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
-        candles_str += f"- [{time_str}] Open: {row['open']}, High: {row['high']}, Low: {row['low']}, Close: {row['close']}, Vol: {row['tick_volume']}\n"
+        time_str = row['time'].strftime('%H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
+        candles_str += f"- [{time_str}] O:{row['open']}, H:{row['high']}, L:{row['low']}, C:{row['close']}, V:{row['tick_volume']}\n"
 
     # Micro price action: last 5 M30 candles (BTC M30) or last 5 M1 candles (XAU M5)
     micro_candles_str = ""
@@ -412,6 +412,18 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         "entry even against a higher-timeframe bias."
     )
 
+    # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
+    swing_high = float(df['high'].max())
+    swing_low = float(df['low'].min())
+    diff = swing_high - swing_low
+    fib_382 = round(swing_high - 0.382 * diff, 2)
+    fib_500 = round(swing_high - 0.500 * diff, 2)
+    fib_618 = round(swing_high - 0.618 * diff, 2)
+    fib_str = (
+        f"- 50-Bar Swing High: {swing_high:.2f} | Swing Low: {swing_low:.2f}\n"
+        f"- Fibonacci Retracement Levels: Fib 38.2%: {fib_382:.2f} | Fib 50.0%: {fib_500:.2f} | Fib 61.8%: {fib_618:.2f}"
+    )
+
     # ================================================================
     # PROMPT — 2 blok:
     #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
@@ -420,6 +432,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
     # ================================================================
     # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
+    print(f"[LLM PROMPT PREVIEW] symbol={symbol} tf={tf_label} bid={current_tick['bid']} ask={current_tick['ask']} spread={current_tick['spread']}pt point={current_tick['point']}")
+    print(f"[LLM PROMPT PREVIEW] close={latest['close']} rsi={latest['rsi_14']:.2f} ema20={latest['ema_20']:.2f} ema50={latest['ema_50']:.2f} atr={latest['atr_14']:.2f} atr_points={atr_points}")
+    print(f"[LLM PROMPT PREVIEW] fib382={fib_382:.2f} fib500={fib_500:.2f} fib618={fib_618:.2f} swing_high={swing_high:.2f} swing_low={swing_low:.2f}")
+    print(f"[LLM PROMPT PREVIEW] recent_candles=7 micro_candles={'yes' if micro_candles_str else 'no'} forecast={'yes' if forecast_str else 'no'} positions={'yes' if positions_str else 'no'}")
+
     market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
@@ -427,15 +444,16 @@ Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 
-### RECENT CANDLES (Last 10 candles, {tf_label}):
+### RECENT CANDLES (Last 7 candles, {tf_label}):
 {candles_str}
 {micro_candles_str}
-### CURRENT INDICATORS SUMMARY
+### CURRENT INDICATORS & FIBONACCI SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
+{fib_str}
 {randomness_str}{quant_prob_str}{macro_str}{lessons_str}{decision_memory_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 
@@ -447,53 +465,52 @@ Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 Analyze the current market condition and determine the next trading decision.
 
 ### READING THE DATA
-- RSI(14): >70 overbought (risky long entry), <30 oversold (risky short). Divergence between price and RSI is a strong warning signal.
-- EMA20 vs EMA50: price above both = bullish structure; below both = bearish. EMA20 crossing EMA50 = momentum shift.
-- ATR(14): current volatility scale. SL should sit OUTSIDE 1.5-2x ATR so normal noise does not trigger it; TP at least 1.5x the SL distance (R:R >= 1.5).
-- Candles: a strong impulse candle with follow-through beats a single wick. Rejections at a level (long upper wick at resistance, long lower wick at support) are signals of a reversal or pause.
-- Spread: if the spread is a large fraction of your SL/TP distance, the trade is not viable — the market must move far enough to overcome the spread first.
-- Economic calendar: HIGH-impact events create volatility spikes; avoid entering 15-30 min before/after. Absence of events means 'news risk' is not a valid reason to HOLD.
+- RSI: >70 overbought, <30 oversold; divergence = warning.
+- EMA20/50: above both bullish, below both bearish; EMA20 cross = momentum shift.
+- Fibonacci: Fib 38.2%/50.0%/61.8% levels act as natural pullback targets & support/resistance zones.
+- ATR: SL outside 1.5-2x ATR; TP >= 1.5x SL.
+- Candles: impulse + follow-through > single wick; rejection wicks = reversal signal.
+- Spread: large fraction of SL/TP → not viable.
+- Calendar: HIGH-impact events spike volatility; avoid 15-30 min before/after. No event = trade normally.
 
-### STRATEGY CONSTRAINTS ({strategy_header})
+### STRATEGY ({strategy_header})
 - {strategy_line}
 - {momentum_line}
-- Only restrict trading 15-30 min before/after a HIGH-impact event listed in the economic calendar block above. If none is listed, trade normally — 'news risk' is not a valid HOLD reason when no event is imminent.
-- Entry: avoid entering against a DIRECT forecast-bias contradiction (BUY vs BEARISH, SELL vs BULLISH) or when price is already beyond the T+15m target. R:R to the T+15m target should be >= 1.0 (0.8 acceptable on clear momentum).
-- Suggested SL/TP in POINTS. Based on ATR {atr_points} pts: SL between {min_sl}-{max_sl} pts (1.5x-2x ATR); TP at least 1.5x your SL. On BTC the market moves thousands of points — do NOT give tiny SL/TP (e.g. < 5000 pts) just because the number looks big; those are worth only cents.
-- If no clear edge exists (choppy, no momentum, no structure), HOLD is a valid and preferred decision. Do not force a trade.
+- Counter-trend / Pullback Scalps: Allowed during strong trends IF price is overextended near Swing High/Low (RSI > 70 or < 30), price is stretched away from EMA20/EMA50, and the entry targets a Fibonacci retracement (Fib 38.2% / 50.0% / 61.8%) or EMA20 with a tight SL beyond the swing extremum and R:R >= 1.5.
+- Forecast Alignment: Prefer trading with the forecast bias, but retracement/pullback scalps to Fibonacci levels are valid counter-trend entries when the move is extended and the pullback target is explicit. Forecast is a preference, NOT a hard block, unless the setup is a pure momentum chase with no retracement structure.
+- IMPORTANT: A bullish forecast does NOT forbid SELL, and a bearish forecast does NOT forbid BUY, if the trade is a clean Fibonacci retracement / exhaustion reversal with a tight SL and valid R:R.
+- SL/TP in POINTS. ATR {atr_points} pts: SL {min_sl}-{max_sl} pts; TP >= 1.5x SL. BTC: tiny SL/TP (< 5000 pts) are worth cents.
+- No clear edge → HOLD. Do not force a trade.
+- If bias is bullish but price is at/near Swing High and showing exhaustion, SELL retracement is allowed if TP is Fib 38.2% / 50.0% / 61.8% or EMA20 and SL is tight beyond the swing high.
+- If bias is bearish but price is at/near Swing Low and showing exhaustion, BUY retracement is allowed if TP is Fib 38.2% / 50.0% / 61.8% or EMA20 and SL is tight beyond the swing low.
 
-### DECISION FRAMEWORK
-Evaluate a potential entry in this order:
-1. Trend & structure — is the market trending, ranging, or reversing? Only trade with a definable structure.
-2. Momentum — is there a fresh impulse (breakout, strong candle, volume) or is it stale?
-3. Location — are you near support (for BUY) / resistance (for SELL), or mid-range? Mid-range entries are weak.
-4. Risk/Reward — SL below the nearest meaningful support (BUY) or above resistance (SELL); TP at least 1.5x SL. If R:R < 1.5, skip.
-5. Spread & cost — if spread > ~20% of SL distance, the trade is uneconomical. Skip.
-6. Forecast bias — do not fight a direct forecast contradiction; if price already overshot the T+15m target, entry has no room.
-If any step fails, HOLD.
+### DECISION ORDER
+Trend → Momentum → Location (S/R vs mid-range vs Fib levels) → R:R (SL beyond S/R, TP >= 1.5x SL, R:R < 1.5 skip) → Spread (> ~20% SL skip) → Forecast (prefer aligned, allow Fib pullback if R:R >= 1.5).
+Any step fails → HOLD.
 
-### CONFIDENCE CALIBRATION
-- 0.70+ : strong, multi-factor alignment (structure + momentum + location + R:R all agree).
-- 0.50-0.70 : moderate edge, some factors align, some uncertain.
-- 0.30-0.50 : weak or speculative setup — treat as HOLD unless you have a specific, concrete reason.
-- < 0.30 : no edge — signal should be HOLD.
-A HOLD with high confidence is normal and preferred when the market offers no clear entry.
+### CONFIDENCE
+0.70+ strong | 0.50-0.70 moderate | 0.30-0.50 weak → HOLD unless concrete reason | < 0.30 no edge → HOLD.
+HOLD with high confidence is normal and preferred when there is no clear entry.
 
 ### RESPONSE FORMAT
 You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
-JSON schema:
+
+- HOLD (include signal & 1-sentence reasoning):
 {{
-  "signal": "BUY" | "SELL" | "HOLD",
+  "signal": "HOLD",
+  "reasoning": "Concise reasoning (EXACTLY 1 short sentence) explaining why holding / no clear entry setup."
+}}
+- BUY/SELL (full format required):
+{{
+  "signal": "BUY" | "SELL",
   "confidence": 0.0 to 1.0,
   "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
   "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "Concise reasoning (MAXIMUM 1-2 short sentences) explaining the NEW ENTRY decision based on price action/indicators — NOT based on existing positions (those go in position_actions).",
-  "position_actions": [
-    {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason for action"}}
-  ]
+  "reasoning": "Concise reasoning (MAXIMUM 1-2 short sentences) explaining the NEW ENTRY decision based on price action/indicators — NOT based on existing positions (those go in position_actions)."
 }}
-Example reasoning: "HOLD — price rejected H1 resistance with RSI divergence; no edge for a fresh entry."
-Example: {{"signal": "HOLD", "confidence": 0.55, "sl_points": {int((min_sl+max_sl)/2)}, "tp_points": {int((min_tp+max_tp)/2)}, "reasoning": "No clear momentum; range-bound.", "position_actions": []}}"""
+Example HOLD: {{"signal": "HOLD", "reasoning": "Price is consolidating near EMA20 with RSI neutral, showing no clear breakout setup."}}
+Example BUY: {{"signal": "BUY", "confidence": 0.72, "sl_points": {int((min_sl+max_sl)/2)}, "tp_points": {int((min_tp+max_tp)/2)}, "reasoning": "Impulse breakout above H1 resistance with RSI momentum."}}
+"position_actions": include ONLY when positions are listed above — for each ticket: {{"ticket": number, "action": "CLOSE" | "HOLD", "reason": "Reason (max 5 words)"}}"""
 
     # Gabung: statis dulu (cache), lalu data (dinamis)
     prompt = static_block + "\n\n" + market_data_block + "\n"
@@ -534,13 +551,19 @@ def clean_json_response(text):
             if key not in parsed:
                 parsed[key] = None
         # Ensure signal is upper case
-        if parsed["signal"]:
-            parsed["signal"] = parsed["signal"].upper()
+        if parsed.get("signal"):
+            parsed["signal"] = str(parsed["signal"]).upper()
             if parsed["signal"] not in ["BUY", "SELL", "HOLD"]:
                 parsed["signal"] = "HOLD"
         else:
             parsed["signal"] = "HOLD"
-            
+
+        if parsed["signal"] == "HOLD":
+            if parsed.get("confidence") is None:
+                parsed["confidence"] = 0.0
+            if parsed.get("reasoning") is None:
+                parsed["reasoning"] = "HOLD — No entry setup"
+
         return parsed
     except Exception as e:
         print(f"[LLM PARSE ERROR] Gagal memparsing JSON: {e}. Raw response: {text[:150]}")
@@ -697,17 +720,34 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec):
     """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
-    'deepseek/' prefix (e.g. 'deepseek-v4-flash')."""
+    'deepseek/' prefix (e.g. 'deepseek-v4-flash'). Explicitly disables thinking/reasoning
+    mode for super-fast ~1.2s latency."""
+    raw_model = model_name.split("/", 1)[1] if "/" in model_name else model_name
     try:
-        response = deepseek_client.chat.completions.create(
-            model=model_name.split("/", 1)[1] if "/" in model_name else model_name,
-            messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            timeout=timeout_sec
-        )
+        try:
+            # Explicitly disable thinking/reasoning mode for super-fast execution (~1.2s)
+            response = deepseek_client.chat.completions.create(
+                model=raw_model,
+                messages=[
+                    {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                reasoning_effort="none",
+                extra_body={"thinking": {"type": "disabled"}},
+                timeout=timeout_sec
+            )
+        except Exception:
+            # Fallback to standard call if API endpoint does not recognize reasoning params
+            response = deepseek_client.chat.completions.create(
+                model=raw_model,
+                messages=[
+                    {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                timeout=timeout_sec
+            )
         return clean_json_response(response.choices[0].message.content)
     except Exception as e:
         raise e

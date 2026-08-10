@@ -18,6 +18,11 @@ import math
 import os
 import re
 import sys
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 from datetime import datetime
 
 from dashboard_assets import TEMPLATE
@@ -329,11 +334,25 @@ def compute_metrics(events, state=None):
 
     close_by_ticket = {c["ticket"]: c for c in closes}
     known_closed = set(risk.get("known_closed") or [])
+    
+    mt5_open_tickets = None
+    try:
+        import MetaTrader5 as mt5
+        if mt5.initialize():
+            positions = mt5.positions_get()
+            mt5_open_tickets = {p.ticket for p in (positions or [])}
+            mt5.shutdown()
+    except Exception:
+        mt5_open_tickets = None
+
     trades = []
     for o in orders:
         tick = o.get("ticket")
         close = close_by_ticket.get(tick)
-        status = "closed" if (close is not None or tick in known_closed) else "open"
+        if mt5_open_tickets is not None:
+            status = "open" if tick in mt5_open_tickets else "closed"
+        else:
+            status = "closed" if (close is not None or tick in known_closed) else "open"
         pnl = close["pnl"] if close else None
         trades.append({
             "ticket": tick, "symbol": o["symbol"], "side": o["side"], "lot": o.get("lot"),
