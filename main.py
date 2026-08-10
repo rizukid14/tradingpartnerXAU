@@ -422,6 +422,11 @@ def run_trading_cycle():
     if macro_context:
         print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
 
+    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
+        lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
+        if lessons_ctx:
+            print("💡 Menyertakan Lesson Learned & Memori Trading untuk LLM...")
+
     # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
     # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
     # will receive the (possibly stale) cache now and the next cycle gets the new one.
