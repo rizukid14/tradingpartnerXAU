@@ -386,6 +386,16 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
 
     point = symbol_info.point
 
+    # Align lot size to symbol constraints (volume_min, volume_max, volume_step)
+    vol_min = getattr(symbol_info, "volume_min", 0.01) or 0.01
+    vol_max = getattr(symbol_info, "volume_max", 100.0) or 100.0
+    vol_step = getattr(symbol_info, "volume_step", 0.01) or 0.01
+
+    lot = max(vol_min, min(lot, vol_max))
+    if vol_step > 0:
+        steps = round(lot / vol_step)
+        lot = round(steps * vol_step, 4)
+
     if action == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
         price = tick.ask
@@ -409,7 +419,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     if not tp and default_tp:
         tp = price + (default_tp * point) if action == "BUY" else price - (default_tp * point)
 
-    def _build(deviation, fill_policy):
+    def _build(deviation, fill_policy, force_price_zero=False):
         # Refresh tick so each retry uses current price
         live_tick = mt5.symbol_info_tick(symbol)
         if live_tick is not None:
@@ -422,12 +432,14 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         else: # SELL
             live_sl = live_price + (sl_points * point) if sl_points else (live_price + (default_sl * point) if default_sl else 0.0)
             live_tp = live_price - (tp_points * point) if tp_points else (live_price - (default_tp * point) if default_tp else 0.0)
+        
+        p_val = 0.0 if force_price_zero else round(live_price, symbol_info.digits)
         return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": float(lot),
             "type": order_type,
-            "price": round(live_price, symbol_info.digits),
+            "price": p_val,
             "sl": round(live_sl, symbol_info.digits) if live_sl else 0.0,
             "tp": round(live_tp, symbol_info.digits) if live_tp else 0.0,
             "deviation": int(deviation),
@@ -437,10 +449,9 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         }
 
     print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
-    result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
+    result = _send_with_retry(lambda dev, pol: _build(dev, pol, force_price_zero=False), symbol, f"Order {action} {symbol}")
 
-    # Fallback for ECN accounts: If 1-step order send with SL/TP fails with 10013 (Invalid Request),
-    # attempt 2-Step Execution (Open order without SL/TP first, then attach SL/TP via TRADE_ACTION_SLTP)
+    # Fallback 1 for ECN: Try 2-Step Execution (Open order without SL/TP first)
     if (result is None or getattr(result, "retcode", None) == 10013) and (sl or tp):
         print(f"[MT5] Retcode 10013 terdeteksi. Mencoba 2-Step Execution (Order tanpa SL/TP + Attach SL/TP)...")
         def _build_no_sltp(deviation, fill_policy):
@@ -469,6 +480,13 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
             if order_ticket > 0:
                 set_position_sltp(symbol, order_ticket, sl, tp)
 
+    # Fallback 2 for Strict Market Execution: Try price = 0.0 (Market Execution price field 0)
+    if result is None or getattr(result, "retcode", None) == 10013:
+        print(f"[MT5] Retcode 10013 terdeteksi. Mencoba Market Price Zero Execution (price = 0.0)...")
+        alt_res = _send_with_retry(lambda dev, pol: _build(dev, pol, force_price_zero=True), symbol, f"Order {action} {symbol} (Price=0)")
+        if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+            result = alt_res
+
     if result is None or result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
         getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
@@ -478,6 +496,31 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         if not comment:
             last_err = mt5.last_error()
             comment = f"No result (last_error: {last_err})"
+        
+        # Detailed non-ambiguous diagnostic block
+        req_sent = _build(config.DEVIATION, get_filling_policy(symbol))
+        print(f"\n==================== [MT5 ORDER ERROR DIAGNOSTICS] ====================")
+        print(f"❌ Retcode: {retcode} | Message: {comment}")
+        print(f"📋 Request Sent: {req_sent}")
+        if symbol_info:
+            print(f"📊 Symbol Info ({symbol}):")
+            print(f"   - Name: {symbol_info.name}")
+            print(f"   - Execution Mode: {getattr(symbol_info, 'execution_mode', 'N/A')} (0=Request, 1=Instant, 2=Market, 3=Exchange)")
+            print(f"   - Filling Mode: {getattr(symbol_info, 'filling_mode', 'N/A')}")
+            print(f"   - Trade Mode: {getattr(symbol_info, 'trade_mode', 'N/A')} (0=Disabled, 1=LongOnly, 2=ShortOnly, 3=CloseOnly, 4=Full)")
+            print(f"   - Min Volume: {getattr(symbol_info, 'volume_min', 'N/A')}")
+            print(f"   - Max Volume: {getattr(symbol_info, 'volume_max', 'N/A')}")
+            print(f"   - Volume Step: {getattr(symbol_info, 'volume_step', 'N/A')}")
+            print(f"   - Digits: {getattr(symbol_info, 'digits', 'N/A')}")
+            print(f"   - Point: {getattr(symbol_info, 'point', 'N/A')}")
+            print(f"   - Ask/Bid: {tick.ask if tick else 'N/A'} / {tick.bid if tick else 'N/A'}")
+        if result:
+            print(f"🔎 Result Details:")
+            for field in ('retcode', 'deal', 'order', 'volume', 'price', 'bid', 'ask', 'comment', 'request_id', 'retcode_external'):
+                if hasattr(result, field):
+                    print(f"   - {field}: {getattr(result, field)}")
+        print(f"=======================================================================\n")
+
         print(f"[MT5 ERROR] Order gagal! Retcode: {retcode}, Pesan: {comment}")
         return {"status": "ERROR", "comment": comment, "code": retcode}
 
