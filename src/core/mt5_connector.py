@@ -292,6 +292,20 @@ def get_filling_policy(symbol):
         return mt5.ORDER_FILLING_RETURN
 
 
+def _safe_order_send(request):
+    """
+    Sends order request to MT5 safely supporting both native MetaTrader5 and mt5linux RPC bridges.
+    mt5linux RPC bridge requires keyword argument `request=request` to prevent 'Unnamed arguments not allowed'.
+    """
+    try:
+        res = mt5.order_send(request=request)
+        if res is not None:
+            return res
+    except Exception:
+        pass
+    return mt5.order_send(request)
+
+
 def _send_with_retry(build_request, symbol, label):
     """
     Send a request via mt5.order_send with retries and fill-policy fallback.
@@ -303,7 +317,7 @@ def _send_with_retry(build_request, symbol, label):
 
     # Attempt 1: detected policy at base deviation
     req = build_request(config.DEVIATION, policy)
-    result = mt5.order_send(req)
+    result = _safe_order_send(req)
 
     # If broker said price changed/off/requote, retry with fresh tick + widened deviation
     for attempt in range(_MAX_RETRIES):
@@ -313,13 +327,13 @@ def _send_with_retry(build_request, symbol, label):
         print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, "
               f"widening deviation to {widen} pts")
         req = build_request(widen, policy)
-        result = mt5.order_send(req)
+        result = _safe_order_send(req)
 
     # Fall back to RETURN ONLY if original filling policy was not RETURN, and broker complains about invalid filling mode (10030)
     if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
         print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
         req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
-        result = mt5.order_send(req)
+        result = _safe_order_send(req)
 
     return result
 
