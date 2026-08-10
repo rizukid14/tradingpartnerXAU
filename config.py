@@ -104,6 +104,11 @@ DRY_RUN = False
 # Minimum number of models that must agree (e.g., 2 out of 3)
 CONSENSUS_THRESHOLD = 2
 
+# Dynamic self-tuning config — OFF untuk sekarang (fitur belum dibutuhkan).
+# Kalau OFF, consensus selalu pakai threshold statis per-symbol (XAU 1.0 / BTC 1.2,
+# 2/3 model) tanpa adaptasi win-rate ke mode defensif 3/3.
+DYNAMIC_CONFIG_ENABLED = False
+
 # Weighted-confidence consensus: a BUY/SELL signal wins when the SUM of
 # confidence from models voting that direction meets the per-symbol threshold
 # AND at least 2 models voted that direction (prevents one strong model
