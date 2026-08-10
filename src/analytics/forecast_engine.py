@@ -276,61 +276,6 @@ Generate a JSON object strictly matching this schema:
         out["target_t60m"] = round(avg_long, 2)
         return out
 
-    def validate_forecast_trigger(self, symbol, current_tick, consensus_result, df):
-        """
-        Validates 4 conditional trigger rules before trade execution:
-        Rule 1: Consensus signal matches forecast_bias.
-        Rule 2: Current price respects invalidation_level.
-        Rule 3: Price is within acceptable entry range.
-        Rule 4: Risk/Reward ratio to target_t15m relative to invalidation_level >= 1.2.
-        """
-        signal = consensus_result.get("signal", "HOLD")
-        if signal not in ["BUY", "SELL"]:
-            return False, "Sinyal HOLD tidak diproses", 0, 0
-
-        # Ensure active forecast is loaded
-        forecast = self.get_active_forecast(symbol, df, current_tick)
-        bias = forecast.get("forecast_bias", "NEUTRAL")
-        # Short-horizon target per-symbol: XAU = T+15m, BTC = T+30m
-        short_key = "target_t15m" if not config.is_crypto(symbol) else "target_t30m"
-        target_short = float(forecast.get(short_key, 0.0))
-        invalidation = float(forecast.get("invalidation_level", 0.0))
-        entry_min = float(forecast.get("optimal_entry_min", 0.0))
-        entry_max = float(forecast.get("optimal_entry_max", 0.0))
-        point_size = current_tick.get("point", 0.01)
-        horizon_label = forecast.get("horizon_label", "T+15m")
-
-        bid = current_tick["bid"]
-        ask = current_tick["ask"]
-
-        # Rule 1: Directional Alignment (Only block on DIRECT contradiction: BUY vs BEARISH or SELL vs BULLISH)
-        if signal == "BUY" and bias == "BEARISH":
-            return False, f"Arah sinyal BUY bertentangan langsung dengan bias prediksi ({bias})", 0, 0
-        if signal == "SELL" and bias == "BULLISH":
-            return False, f"Arah sinyal SELL bertentangan langsung dengan bias prediksi ({bias})", 0, 0
-
-
-        # Rule 2: Invalidation Guard
-        if signal == "BUY" and ask <= invalidation:
-            return False, f"Harga saat ini ({ask}) telah menembus batas invalidasi prediksi BUY ({invalidation})", 0, 0
-        if signal == "SELL" and bid >= invalidation:
-            return False, f"Harga saat ini ({bid}) telah menembus batas invalidasi prediksi SELL ({invalidation})", 0, 0
-
-        # Rule 3: Entry Range & Risk/Reward Calculation
-        if signal == "BUY":
-            sl_points = int(round((ask - invalidation) / point_size))
-            tp_points = int(round((target_short - ask) / point_size))
-        else:
-            sl_points = int(round((invalidation - bid) / point_size))
-            tp_points = int(round((bid - target_short) / point_size))
-
-        if sl_points <= 0 or tp_points <= 0:
-            return False, "Batas TP/SL dari proyeksi prediksi bernilai negatif atau 0", 0, 0
-
-        rr_ratio = tp_points / float(sl_points) if sl_points > 0 else 1.0
-        return True, f"Bias: {bias} | Proyeksi R:R ({horizon_label}): {rr_ratio:.2f} (Target: {target_short}, Invalidation: {invalidation})", sl_points, tp_points
-
-
     def get_forecast_context(self):
         """Returns formatted forecast matrix markdown block for prompt injection."""
         if not self._forecast or "forecast_bias" not in self._forecast:

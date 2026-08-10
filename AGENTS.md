@@ -43,7 +43,7 @@ python main.py
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
 4. **Panggil 3 LLM paralel** (decision prompt + forecast context + lessons + macro + open positions)
 5. **Weighted consensus**: skor BUY/SELL = Σ confidence model searah; menang kalau ≥ 2 model & skor > threshold (XAU 1.0, BTC 1.2, defensif ×1.5). Plus AI re-evaluator CLOSE posisi
-6. `validate_forecast_trigger` — **HANYA INFORMATIONAL** (di-print, TIDAK ngeblokir eksekusi)
+6. Forecast context (bias/target/entry zone) **murni informational** — di-inject ke prompt LLM, TIDAK memblokir eksekusi (tidak ada gate counter-trend; `validate_forecast_trigger` sudah dihapus)
 7. **Risk-based lot sizing** — lot dihitung dari equity & SL (BTC 1.5%, XAU 0.5%), bukan statis
 8. Cek max posisi, eksekusi order (2 posisi kalau 3/3 sepakat)
 
@@ -56,8 +56,7 @@ python main.py
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)
 - **TIDAK ada** gate confidence minimum numerik tambahan di luar weighted score
 - **TIDAK ada** gate entry zone numerik — `optimal_entry_min/max` di-load tapi nggak dipakai
-- Forecast R:R cuma print (informational)
-- **Counter-trend di-block**: entry SELL saat forecast BULLISH (atau sebaliknya) langsung ditolak
+- Forecast bias/target/R:R cuma konteks buat LLM (informational) — **TIDAK ada gate counter-trend**
 
 ## Status terkini (AGUSTUS 2026 — PENTING)
 

@@ -462,15 +462,9 @@ def run_trading_cycle():
             print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
             risk.record_position_closed(t_ticket, pre_profit)
 
-    # 5.5 Multi-Horizon Forecast Context (Informational Only)
-    if getattr(config, "FORECAST_ENABLED", True):
-        try:
-            is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
-                config.SYMBOL, tick, result, df
-            )
-            print(f"🔮 [FORECAST INFO] {f_reason}")
-        except Exception as e:
-            print(f"[FORECAST INFO WARNING] {e}")
+    # 5.5 Multi-Horizon Forecast Context — INFORMATIONAL ONLY (tidak memblokir eksekusi).
+    # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
+    # counter-trend di sini. Konsensus LLM yang menentukan entry.
 
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
     max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
