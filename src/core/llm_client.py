@@ -175,49 +175,6 @@ def query_primary_model(prompt, search_grounding=False):
     return None
 
 
-def analyze_timeframe(symbol, timeframe_name, df):
-    """
-    Queries the primary model to analyze structural bias, trend, 
-    and support/resistance for a higher timeframe.
-    """
-    # Take the last 10 candles for context
-    recent_candles = df.tail(10).to_dict(orient="records")
-    candles_str = ""
-    for c in recent_candles:
-        candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
-
-    latest = df.iloc[-1]
-
-    execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
-    
-    prompt = f"""
-You are an expert financial market analyst.
-Analyze the following market data for {symbol} on timeframe {timeframe_name} to identify the structural bias and key levels.
-
-### MARKET DATA CONTEXT
-Symbol: {symbol}
-Timeframe: {timeframe_name}
-
-### RECENT CANDLES (Last 10 candles):
-{candles_str}
-
-### CURRENT INDICATORS SUMMARY
-- Close: {latest['close']}
-- RSI (14): {latest['rsi_14']:.2f}
-- EMA (20): {latest['ema_20']:.2f}
-- EMA (50): {latest['ema_50']:.2f}
-- ATR (14): {latest['atr_14']:.2f}
-
-Provide a concise structural market analysis. Include:
-1. Overall Trend (Bullish / Bearish / Range) and structural strength.
-2. Key Support and Resistance zones.
-3. Relevant price action patterns or signals.
-
-Your response must be extremely brief (maximum 2-3 sentences) as it will be used as background context for a {execution_style} execution model.
-"""
-    return query_primary_model(prompt, search_grounding=False)
-
-
 def analyze_fundamentals(symbol):
     """
     Queries Gemini using Google Search Grounding to summarize the latest

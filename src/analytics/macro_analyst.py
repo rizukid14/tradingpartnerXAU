@@ -159,13 +159,59 @@ class MacroAnalyst:
             print("💾 [MACRO] Analisa cache diperbarui dan disimpan.")
 
     def _run_timeframe_analysis(self, tf_name, tf_const):
-        """Fetches higher timeframe historical rates and queries LLM for structural bias."""
-        # Fetch 30 candles of higher timeframe to get trend structure
-        df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=30)
-        if df is None or len(df) == 0:
+        """
+        Computes higher-timeframe trend structure DIRECTLY from MT5 indicators —
+        NO LLM call. EMA20/50, RSI, ATR dan swing high/low dihitung dari df M30
+        (XAU) / H1-H4 (BTC). Output teks faktual, bukan opini LLM.
+        """
+        df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=50)
+        if df is None or len(df) < 30:
             print(f"❌ [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
             return None
-        return llm.analyze_timeframe(config.SYMBOL, tf_name, df)
+
+        latest = df.iloc[-1]
+        close = float(latest["close"])
+        ema20 = float(latest["ema_20"])
+        ema50 = float(latest["ema_50"])
+        rsi = float(latest["rsi_14"])
+        atr = float(latest["atr_14"])
+
+        # Trend direction dari hubungan harga vs EMA20 vs EMA50
+        if close > ema20 > ema50:
+            trend = "UPTREND"
+        elif close < ema20 < ema50:
+            trend = "DOWNTREND"
+        elif close > ema20:
+            trend = "BULLISH BIAS (harga di atas EMA20, EMA50 masih mendatar)"
+        elif close < ema20:
+            trend = "BEARISH BIAS (harga di bawah EMA20, EMA50 masih mendatar)"
+        else:
+            trend = "RANGING"
+
+        # Swing high/low dari 30 candle terakhir (level support/resistance)
+        window = df.tail(30)
+        swing_high = float(window["high"].max())
+        swing_low = float(window["low"].min())
+        swing_high_dist = (swing_high - close) / (atr if atr > 0 else 1.0)
+        swing_low_dist = (close - swing_low) / (atr if atr > 0 else 1.0)
+
+        # RSI label
+        if rsi >= 70:
+            rsi_label = "overbought (potensi pullback)"
+        elif rsi <= 30:
+            rsi_label = "oversold (potensi rebound)"
+        else:
+            rsi_label = "netral"
+
+        # Jarak harga ke swing (dalam satuan ATR) biar LLM tahu seberapa dekat level
+        support_line = f"support terdekat {swing_low:.2f} (~{swing_low_dist:.1f}x ATR di bawah)" if swing_low_dist <= 2.0 else f"support jauh {swing_low:.2f} (~{swing_low_dist:.1f}x ATR)"
+        resistance_line = f"resistance terdekat {swing_high:.2f} (~{swing_high_dist:.1f}x ATR di atas)" if swing_high_dist <= 2.0 else f"resistance jauh {swing_high:.2f} (~{swing_high_dist:.1f}x ATR)"
+
+        return (
+            f"trend {trend} | close {close:.2f}, EMA20 {ema20:.2f}, EMA50 {ema50:.2f} "
+            f"(gap EMA {abs(ema20 - ema50):.2f}), RSI {rsi:.1f} ({rsi_label}), ATR {atr:.2f} | "
+            f"swing 30-candle: high {swing_high:.2f} ({resistance_line}), low {swing_low:.2f} ({support_line})"
+        )
 
     def _run_fundamental_analysis(self):
         """Queries Gemini with Search Grounding to generate fundamental outlook."""
