@@ -1,13 +1,5 @@
 import os
 import sys
-if sys.platform == 'win32':
-    import MetaTrader5 as mt5
-else:
-    try:
-        import importlib
-        mt5 = importlib.import_module("mt5linux").MetaTrader5
-    except ImportError:
-        import MetaTrader5 as mt5
 from dotenv import load_dotenv
 
 # --- PATH & DIRECTORY SETUP ---
@@ -22,6 +14,20 @@ for path in [BASE_DIR, os.path.join(BASE_DIR, "src"), os.path.join(BASE_DIR, "sr
 
 # Load environmental variables from .env file
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+# --- MT5 HOST & PORT CONFIG ---
+MT5_HOST = os.getenv("MT5_HOST", "localhost")
+MT5_PORT = int(os.getenv("MT5_PORT", "18812"))
+
+if sys.platform == 'win32':
+    import MetaTrader5 as mt5
+else:
+    try:
+        from mt5linux import MetaTrader5
+        mt5 = MetaTrader5(host=MT5_HOST, port=MT5_PORT)
+    except Exception:
+        import MetaTrader5 as mt5
+
 
 
 # --- API KEYS ---

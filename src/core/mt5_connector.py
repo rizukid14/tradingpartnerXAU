@@ -3,18 +3,11 @@ import pandas as pd
 import sys
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
-if sys.platform == 'win32':
-    import MetaTrader5 as mt5
-else:
-    try:
-        import importlib
-        mt5 = importlib.import_module("mt5linux").MetaTrader5
-    except ImportError:
-        import MetaTrader5 as mt5
+import config
+from config import mt5
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
-import config
 
 WIB = ZoneInfo("Asia/Jakarta")
 

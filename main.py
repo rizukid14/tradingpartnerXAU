@@ -4,14 +4,9 @@ import sys
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
-    import MetaTrader5 as mt5
-else:
-    try:
-        import importlib
-        mt5 = importlib.import_module("mt5linux").MetaTrader5
-    except ImportError:
-        import MetaTrader5 as mt5
+
 import config
+from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
 from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory

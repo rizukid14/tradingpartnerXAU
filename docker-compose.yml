@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  trading-bot:
+    build: .
+    container_name: tradingpartner_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./trading_bot.log:/app/trading_bot.log

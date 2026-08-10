@@ -7,3 +7,5 @@ anthropic>=0.40.0
 python-dotenv>=1.0.0
 ta>=0.10.0
 requests>=2.28.0
+mt5linux>=1.0.0
+rpyc>=5.3.0

@@ -21,16 +21,8 @@ import os
 import json
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
-import sys
-if sys.platform == 'win32':
-    import MetaTrader5 as mt5
-else:
-    try:
-        import importlib
-        mt5 = importlib.import_module("mt5linux").MetaTrader5
-    except ImportError:
-        import MetaTrader5 as mt5
 import config
+from config import mt5
 from src.core import mt5_connector as connector
 
 

@@ -13,15 +13,8 @@ or moved to break-even so a bot restart cannot re-trigger those actions.
 import os
 import json
 import time
-import sys
-if sys.platform == 'win32':
-    import MetaTrader5 as mt5
-else:
-    try:
-        from mt5linux import MetaTrader5 as mt5
-    except ImportError:
-        import MetaTrader5 as mt5
 import config
+from config import mt5
 
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")

@@ -25,7 +25,7 @@ def _apply_sltp_floors(sl_points, tp_points):
     spread_pts = 0
     atr_points = 0
     try:
-        import MetaTrader5 as mt5
+        from config import mt5
         import pandas as pd
         from ta.volatility import AverageTrueRange
         tick = mt5.symbol_info_tick(config.SYMBOL)
