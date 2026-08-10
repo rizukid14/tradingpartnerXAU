@@ -86,8 +86,8 @@ CLAUDE_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
 # Gemini Model & Fallback
-GEMINI_MODEL = "gemini-3.5-flash-lite"
-GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
+GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
 
 # OpenAI Model & Fallback (Tetap)
 OPENAI_MODEL = "gpt-5.4-mini"

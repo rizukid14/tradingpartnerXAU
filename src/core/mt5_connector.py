@@ -206,26 +206,42 @@ def get_closed_positions_today(symbol=None):
     Pass symbol= to count only one instrument (per-symbol loss streak);
     omit it to aggregate across all symbols (daily loss cap).
     """
+    # history_deals_get(from, to) takes datetimes in the MT5 terminal's local
+    # wall-clock time. We use a WIB-midnight -> next-midnight window so "today"
+    # means the current trading day (bot's own closes), not a rolling 24h that
+    # would drag in the previous day's P/L. Epochs are passed as ints so the
+    # boundaries match exactly what datetime.now() produced.
     from datetime import datetime, timedelta
-
-    # Use local PC time (naive) which matches terminal/server timezone behavior in MT5
     now = datetime.now()
     today_start = datetime(now.year, now.month, now.day)
-    # Query until tomorrow to prevent timezone / broker server offset cutoffs
     tomorrow = today_start + timedelta(days=1)
+    from_epoch = int(today_start.timestamp())
+    to_epoch = int(tomorrow.timestamp())
 
-    deals = mt5.history_deals_get(today_start, tomorrow)
+    deals = mt5.history_deals_get(from_epoch, to_epoch)
     if deals is None:
         return []
 
+    # Positions opened by THIS bot (entry IN with bot magic) in the window.
+    # Used to accept manual closes: MT5 mobile/web manual close of a bot position
+    # produces an OUT deal with magic=0 (magic is not forwarded), so filtering
+    # strictly on magic would silently drop those closes.
+    bot_opened = {
+        d.position_id for d in deals
+        if d.magic == config.MAGIC_NUMBER and d.entry == mt5.DEAL_ENTRY_IN
+    }
+
     closed = []
     for deal in deals:
-        # Only count bot trades and closed positions (entry OUT)
-        if deal.magic != config.MAGIC_NUMBER:
-            continue
         if deal.entry != mt5.DEAL_ENTRY_OUT:
             continue
         if symbol is not None and deal.symbol != symbol:
+            continue
+        # Accept bot-magic closes; also accept magic=0 (external manual close)
+        # but only for positions this bot actually opened.
+        is_bot_close = deal.magic == config.MAGIC_NUMBER
+        is_manual_of_bot = deal.magic == 0 and deal.position_id in bot_opened
+        if not (is_bot_close or is_manual_of_bot):
             continue
         # DEAL_ENTRY_OUT: deal.type == 0 (BUY deal) closes a SELL position, deal.type == 1 (SELL deal) closes a BUY position
         pos_type = "SELL" if deal.type == 0 else "BUY"

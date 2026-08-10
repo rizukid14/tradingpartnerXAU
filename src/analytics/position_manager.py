@@ -176,6 +176,27 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
 # =============================================================================
 
 
+def _get_entry_fill_price(pos, symbol):
+    """
+    Returns the ACTUAL fill price of the entry deal for a position.
+    `positions_get().price_open` can differ from the real fill by slippage
+    (order request price vs executed deal price) — using it for break-even
+    puts the SL slightly inside the losing side and gets stopped out for a
+    tiny loss instead of a true break-even. The deal history is the source
+    of truth for the executed price.
+    Falls back to pos.price_open if the deal history is unavailable.
+    """
+    try:
+        deals = mt5.history_deals_get(position=pos.ticket)
+        if deals:
+            for d in deals:
+                if d.entry == mt5.DEAL_ENTRY_IN and d.symbol == symbol:
+                    return float(d.price)
+    except Exception:
+        pass
+    return float(pos.price_open)
+
+
 def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     """Move SL to entry price + padding once profit threshold is reached."""
     if pos.ticket in _break_even_tickets:
@@ -186,15 +207,17 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if profit_points < be_trigger:
         return
 
+    entry_price = _get_entry_fill_price(pos, symbol)
+
     if pos.type == mt5.ORDER_TYPE_BUY:
-        be_price = pos.price_open + (be_padding * point)
+        be_price = entry_price + (be_padding * point)
         # Only move if current SL is below break-even level
         if pos.sl >= be_price:
             _break_even_tickets.add(pos.ticket)
             _save_state(_partial_closed_tickets, _break_even_tickets)
             return
     else:  # SELL
-        be_price = pos.price_open - (be_padding * point)
+        be_price = entry_price - (be_padding * point)
         if pos.sl != 0 and pos.sl <= be_price:
             _break_even_tickets.add(pos.ticket)
             _save_state(_partial_closed_tickets, _break_even_tickets)

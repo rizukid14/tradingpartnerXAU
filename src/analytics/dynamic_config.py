@@ -79,7 +79,7 @@ class DynamicConfig:
             self.consensus_threshold = 3
             self.sl_multiplier = 1.2
             self.status_message = f"🛡️ Defensif (Win Rate {win_rate:.0f}%: Membutuhkan Konsensus 3/3)"
-        elif win_rate > 70.0:
+        elif win_rate > 65.0:
             # High win rate regime -> Standard optimal parameters
             self.consensus_threshold = 2
             self.sl_multiplier = 1.5
