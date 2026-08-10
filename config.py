@@ -124,9 +124,11 @@ LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 24.0)
 
 
 # --- TRADING PARAMETERS ---
+# Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
 WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "XAUUSD-ECNc")
-WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", "XAUUSD-ECNc")
-CRYPTO_SYMBOLS = set()
+WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", "BTCUSD.c")
+CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
+ENABLE_BTC_ROTATION = _getenv_bool("ENABLE_BTC_ROTATION", False)
 SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 
 TIMEFRAME = mt5.TIMEFRAME_M5
@@ -321,7 +323,21 @@ def is_crypto(symbol):
 
 
 def get_active_symbol(now=None):
-    """Returns the active trading symbol (100% focused on XAUUSD-ECNc)."""
+    """Returns the symbol that should be traded right now:
+    If ENABLE_BTC_ROTATION is True:
+      - Friday >= 22:00 WIB or Saturday/Sunday -> WEEKEND_SYMBOL (BTCUSD)
+      - Otherwise -> WEEKDAY_SYMBOL (XAUUSD)
+    If ENABLE_BTC_ROTATION is False (default):
+      - Always returns WEEKDAY_SYMBOL (XAUUSD)
+    """
+    if not getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
+        return WEEKDAY_SYMBOL
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    if (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6):
+        return WEEKEND_SYMBOL
     return WEEKDAY_SYMBOL
 
 

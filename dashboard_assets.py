@@ -13,7 +13,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trading Bot Dashboard</title>
+<title>Trading Bot Dashboard — XAUUSD Gold</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -194,7 +194,7 @@ tr:hover { background: var(--panel-hover); }
 
 <div class="header">
   <div class="brand">
-    <h1>📈 TRADING BOT DASHBOARD</h1>
+    <h1>🏆 GOLD (XAUUSD) DASHBOARD</h1>
     <div id="live-badge-wrap"></div>
   </div>
   <div class="sub" id="sub-line">Memuat data...</div>
@@ -202,7 +202,7 @@ tr:hover { background: var(--panel-hover); }
     <label>Era: <select id="f-era"></select></label>
     <label>Simbol: <select id="f-symbol"></select></label>
     <label>Rentang: <select id="f-range">
-      <option value="all">Semua</option>
+      <option value="all">Semua Waktu</option>
       <option value="7d">7 Hari</option>
       <option value="30d">30 Hari</option>
     </select></label>
@@ -219,12 +219,12 @@ tr:hover { background: var(--panel-hover); }
 
   <!-- Row 2: Equity Curve (8 cols) + Per-Symbol Breakdown (4 cols) -->
   <div class="bento-box col-8">
-    <div class="bento-title">Equity Curve &amp; Growth <span id="eq-hint"></span></div>
+    <div class="bento-title">Equity Curve &amp; Growth (XAUUSD) <span id="eq-hint"></span></div>
     <div class="chart-container"><canvas id="chart-equity"></canvas></div>
   </div>
 
   <div class="bento-box col-4">
-    <div class="bento-title">Per-Symbol Performance <span>XAUUSD &amp; BTCUSD</span></div>
+    <div class="bento-title">Symbol Focus <span>XAUUSD-ECNc (Gold M5)</span></div>
     <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
   </div>
 
@@ -305,6 +305,23 @@ async function loadData() {
   renderAll();
 }
 
+function getFilteredTrades() {
+  const era = $('f-era').value;
+  const sym = $('f-symbol').value;
+  const range = $('f-range').value;
+  const now = Date.now() / 1000;
+
+  return (DATA.trades || []).filter(t => {
+    if (era && t.era !== era) return false;
+    if (sym && t.symbol !== sym) return false;
+    if (range !== 'all') {
+      const days = range === '7d' ? 7 : 30;
+      if (t.ts && (now - t.ts) > days * 86400) return false;
+    }
+    return true;
+  });
+}
+
 function renderSub() {
   const meta = DATA.meta || {};
   let s = 'Era: <b>' + esc(meta.active_era || '?') + '</b>';
@@ -323,24 +340,54 @@ function renderFilters() {
   const eraSel = $('f-era'), symSel = $('f-symbol');
   const prevEra = eraSel.value, prevSym = symSel.value;
   eraSel.innerHTML = '<option value="">Semua Era</option>';
-  symSel.innerHTML = '<option value="">Semua Simbol</option>';
-  (DATA.meta.eras || []).forEach(e => { const o=document.createElement('option'); o.value=e; o.text=e; eraSel.appendChild(o); });
-  (DATA.meta.symbols || []).forEach(s => { const o=document.createElement('option'); o.value=s; o.text=s; symSel.appendChild(o); });
+  symSel.innerHTML = '<option value="XAUUSD-ECNc">XAUUSD-ECNc (Gold - Default)</option>';
+  const oAll = document.createElement('option'); oAll.value = ''; oAll.text = 'Semua Simbol (XAU + BTC)';
+  symSel.appendChild(oAll);
+
+  (DATA.meta.eras || []).forEach(e => {
+    const o = document.createElement('option'); o.value = e; o.text = e; eraSel.appendChild(o);
+  });
+
+  (DATA.meta.symbols || []).forEach(s => {
+    if (s !== 'XAUUSD-ECNc') {
+      const o = document.createElement('option'); o.value = s; o.text = s; symSel.appendChild(o);
+    }
+  });
+
   if (prevEra && [...eraSel.options].some(o=>o.value===prevEra)) eraSel.value = prevEra;
   if (prevSym && [...symSel.options].some(o=>o.value===prevSym)) symSel.value = prevSym;
+  else symSel.value = 'XAUUSD-ECNc';
 }
 
 function renderKpi() {
-  const s = DATA.summary || {};
+  const filteredTrades = getFilteredTrades();
+  const closed = filteredTrades.filter(t => t.status === 'closed' && t.pnl !== null);
+  const wins = closed.filter(t => t.pnl > 0.04);
+  const losses = closed.filter(t => t.pnl < -0.04);
+  const netPnl = closed.reduce((acc, t) => acc + t.pnl, 0);
+  const grossWin = wins.reduce((acc, t) => acc + t.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((acc, t) => acc + t.pnl, 0));
+  const winRate = (wins.length + losses.length) > 0 ? wins.length / (wins.length + losses.length) : null;
+  const pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? grossWin : null);
+  const expectancy = closed.length > 0 ? netPnl / closed.length : null;
+
+  let peak = 1000.0, bal = 1000.0, maxDd = 0.0;
+  closed.forEach(t => {
+    bal += t.pnl;
+    if (bal > peak) peak = bal;
+    const dd = peak - bal;
+    if (dd > maxDd) maxDd = dd;
+  });
+
   const cards = [
-    ['Net P/L', fmtMoney(s.net_pnl), (s.net_pnl||0)>=0?'green':'red'],
-    ['Win Rate', fmtPct(s.win_rate), ''],
-    ['Profit Factor', s.profit_factor!=null ? s.profit_factor.toFixed(2) : '—', ''],
-    ['Expectancy', fmtMoney(s.expectancy), ''],
-    ['Max Drawdown', fmtMoney(-(s.max_drawdown||0)), 'red'],
-    ['Closed Trades', String(s.total_closed||0), ''],
-    ['Open Positions', String(s.total_open||0), ''],
-    ['Total Cycles', String(s.total_cycles||0), ''],
+    ['Net P/L', fmtMoney(netPnl), netPnl >= 0 ? 'green' : 'red'],
+    ['Win Rate', fmtPct(winRate), ''],
+    ['Profit Factor', pf != null ? pf.toFixed(2) : '—', ''],
+    ['Expectancy', fmtMoney(expectancy), ''],
+    ['Max Drawdown', fmtMoney(-maxDd), 'red'],
+    ['Closed Trades', String(closed.length), ''],
+    ['Open Positions', String(filteredTrades.filter(t => t.status === 'open').length), ''],
+    ['Total Cycles', String(DATA.summary ? DATA.summary.total_cycles : 0), ''],
   ];
   $('kpi-grid').innerHTML = cards.map(([l,v,c]) =>
     `<div class="kpi-card"><div class="kpi-label">${esc(l)}</div><div class="kpi-value ${c}">${esc(v)}</div></div>`
@@ -349,13 +396,15 @@ function renderKpi() {
 
 function renderSym() {
   const ps = DATA.per_symbol || {};
-  const keys = Object.keys(ps);
+  const selectedSym = $('f-symbol').value;
+  const keys = Object.keys(ps).filter(k => selectedSym ? k === selectedSym : !k.toLowerCase().includes('btc'));
+  
   $('sym-cards').innerHTML = keys.length ? keys.map(sym => {
     const st = ps[sym];
     return `<div class="sym-card"><div class="sym-name">${esc(sym)}</div>` +
       `<div><b>${st.n} Trade</b>: ${st.win}W-${st.loss}L (WR ${fmtPct(st.win_rate)})</div>` +
       `<div style="margin-top:2px;">P/L: <b class="${(st.pnl||0)>=0?'green':'red'}">${fmtMoney(st.pnl)}</b></div></div>`;
-  }).join('') : '<div class="muted empty-hint">Belum ada trade tertutup.</div>';
+  }).join('') : '<div class="muted empty-hint">Belum ada trade XAUUSD tertutup.</div>';
 }
 
 function renderModelTable() {
@@ -383,20 +432,21 @@ function renderSltp() {
 }
 
 function renderLessons() {
-  const ls = DATA.lessons || [];
+  const ls = (DATA.lessons || []).filter(l => {
+    const sym = $('f-symbol').value;
+    return !sym || l.symbol === sym || l.symbol.includes('XAU');
+  });
   $('lessons-div').innerHTML = ls.length ? ls.map(l =>
     `<div class="lesson-item"><span class="theme-tag">${esc(l.theme)}</span><span class="sym-tag">${esc(l.symbol)}</span>${esc(l.lesson)}</div>`
   ).join('') : '<div class="empty-hint">Belum ada lesson terdaftar.</div>';
 }
 
 function renderTrades() {
-  const era = $('f-era').value, sym = $('f-symbol').value, range = $('f-range').value;
-  const now = Date.now()/1000;
-  const trades = (DATA.trades||[]).filter(t => {
-    if (era && t.era !== era) return false;
-    if (sym && t.symbol !== sym) return false;
-    if (range !== 'all') { const days = range==='7d'?7:30; if (t.ts && (now-t.ts) > days*86400) return false; }
-    return true;
+  const trades = getFilteredTrades();
+  trades.sort((a, b) => {
+    if (a.status === 'open' && b.status !== 'open') return -1;
+    if (a.status !== 'open' && b.status === 'open') return 1;
+    return (b.ts || 0) - (a.ts || 0);
   });
   $('trades-tbody').innerHTML = trades.map(t =>
     `<tr data-era="${esc(t.era||'')}" data-symbol="${esc(t.symbol)}" data-ts="${t.ts||0}">` +
@@ -404,7 +454,7 @@ function renderTrades() {
     `<td><b class="${t.side==='BUY'?'green':'red'}">${t.side}</b></td><td>${t.lot||'—'}</td>` +
     `<td>${t.entry||'—'}</td><td>${t.sl||'—'}</td><td>${t.tp||'—'}</td>` +
     `<td class="${t.pnl>0?'green':t.pnl<0?'red':''}"><b>${fmtMoney(t.pnl)}</b></td>` +
-    `<td>${fmtTs(t.ts)}</td><td><span class="theme-tag">${t.status}</span></td></tr>`
+    `<td>${fmtTs(t.ts)}</td><td><span class="theme-tag" style="${t.status==='open'?'background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,0.3);':''}">${t.status}</span></td></tr>`
   ).join('') || '<tr><td colspan="10" class="muted empty-hint">Tidak ada trade sesuai filter.</td></tr>';
 }
 
@@ -420,12 +470,18 @@ function renderCharts() {
   Chart.defaults.borderColor = '#1e2638';
   Chart.defaults.font.family = "'Inter', sans-serif";
 
-  const eq = DATA.equity_curve || [];
-  if (eq.length) {
+  const trades = getFilteredTrades().filter(t => t.status === 'closed' && t.pnl !== null);
+  let bal = 1000.0;
+  const eqData = trades.map(t => {
+    bal += t.pnl;
+    return { ts: t.ts, balance: bal };
+  });
+
+  if (eqData.length) {
     $('eq-hint').textContent = '';
     mkChart('chart-equity', {
       type:'line',
-      data:{ labels: eq.map(p => fmtTs(p.ts)), datasets:[{ label:'Balance ($)', data: eq.map(p=>p.balance), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.08)', fill:true, tension:.3, pointRadius:2 }] },
+      data:{ labels: eqData.map(p => fmtTs(p.ts)), datasets:[{ label:'Balance ($)', data: eqData.map(p=>p.balance), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.08)', fill:true, tension:.3, pointRadius:3 }] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ y:{ ticks:{ callback:v=>'$'+v.toFixed(0) } } } }
     });
   } else {
@@ -468,7 +524,6 @@ function renderCharts() {
 
 function renderAll() {
   renderSub();
-  renderFilters();
   renderKpi();
   renderSym();
   renderModelTable();
@@ -478,7 +533,13 @@ function renderAll() {
   renderTrades();
 }
 
-['f-era','f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderTrades));
+function initDashboard() {
+  renderSub();
+  renderFilters();
+  renderAll();
+}
+
+['f-era','f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderAll));
 
 document.querySelectorAll('#trades-table th').forEach(th => {
   th.addEventListener('click', () => {
@@ -495,9 +556,9 @@ document.querySelectorAll('#trades-table th').forEach(th => {
   });
 });
 
-loadData();
+loadData().then(initDashboard);
 if (location.protocol === 'http:' || location.protocol === 'https:') {
-  setInterval(async () => { await loadData(); }, 5000);
+  setInterval(async () => { await loadData(); renderAll(); }, 5000);
 }
 </script>
 </body>
