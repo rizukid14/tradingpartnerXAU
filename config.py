@@ -123,8 +123,13 @@ DEBATE_ENABLED = False
 #  FEATURE TOGGLES (untuk A/B test & balik ke titik stable era lama)
 # ============================================================================
 # Quant analysis: Hurst Exponent + fat-tail kurtosis + Monte Carlo probability.
-# Ditambahkan di era modern (commit 259708d). Legacy (profit 100% dulu) TANPA ini.
-QUANT_ANALYSIS_ENABLED = True
+# Default OFF — quant statistik (Hurst/Kurtosis/MC) sering konflik dengan
+# forecast AI dan bikin LLM bingung arah. Era legacy TANPA quant = winrate 100%.
+QUANT_ANALYSIS_ENABLED = False
+
+# Monte Carlo probability — default OFF karena probabilitas statistik dari drift
+# 50 candle sering konflik dengan forecast AI (model jadi bingung arah).
+MONTE_CARLO_ENABLED = False
 
 # Multi-Horizon Forecast Engine (T+15m/T+60m XAU, T+4h/T+D1 BTC) — informational.
 # Sudah ada sejak era legacy (commit 949ce14), tapi bisa di-off untuk A/B test.
