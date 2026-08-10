@@ -154,9 +154,10 @@ def get_current_tick(symbol):
         "usd_per_point": usd_per_pt,
     }
 
-def get_open_positions(symbol):
-    """Checks if there are any open positions for the symbol (bot-managed only)."""
-    positions = mt5.positions_get(symbol=symbol)
+def get_open_positions(symbol=None, magic=None):
+    """Checks open positions for a symbol (or all symbols if None), filtered by magic number."""
+    target_magic = magic if magic is not None else config.MAGIC_NUMBER
+    positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
     if positions is None:
         return []
     return [
@@ -170,34 +171,17 @@ def get_open_positions(symbol):
             "tp": p.tp,
             "profit": p.profit,
             "swap": p.swap,
+            "magic": p.magic,
             "time": p.time
         }
         for p in positions
-        if p.magic == config.MAGIC_NUMBER
+        if p.magic == target_magic
     ]
 
 
-def get_all_open_positions():
+def get_all_open_positions(magic=None):
     """Returns ALL open bot-managed positions across every symbol."""
-    positions = mt5.positions_get()
-    if positions is None:
-        return []
-    return [
-        {
-            "ticket": p.ticket,
-            "symbol": p.symbol,
-            "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
-            "volume": p.volume,
-            "price_open": p.price_open,
-            "sl": p.sl,
-            "tp": p.tp,
-            "profit": p.profit,
-            "swap": p.swap,
-            "time": p.time
-        }
-        for p in positions
-        if p.magic == config.MAGIC_NUMBER
-    ]
+    return get_open_positions(symbol=None, magic=magic)
 
 def get_closed_positions_today(symbol=None):
     """
@@ -417,7 +401,10 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
     ):
         retcode = getattr(result, "retcode", "N/A") if result else "N/A"
-        comment = getattr(result, "comment", "No result") if result else "No result"
+        comment = getattr(result, "comment", None) if result else None
+        if not comment:
+            last_err = mt5.last_error()
+            comment = f"No result (last_error: {last_err})"
         print(f"[MT5 ERROR] Order gagal! Retcode: {retcode}, Pesan: {comment}")
         return {"status": "ERROR", "comment": comment, "code": retcode}
 
@@ -469,7 +456,10 @@ def close_position(ticket):
         mt5.TRADE_RETCODE_DONE,
         getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
     ):
-        comment = getattr(result, "comment", "No result") if result else "No result"
+        comment = getattr(result, "comment", None) if result else None
+        if not comment:
+            last_err = mt5.last_error()
+            comment = f"No result (last_error: {last_err})"
         print(f"[MT5 ERROR] Gagal menutup posisi: {comment}")
         return False
     print(f"[MT5] Posisi #{ticket} berhasil ditutup.")

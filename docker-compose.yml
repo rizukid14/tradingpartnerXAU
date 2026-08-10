@@ -16,3 +16,19 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: tele_bot/Dockerfile
+    container_name: tradingpartner_telegram_bot
+    restart: unless-stopped
+    depends_on:
+      - trading-bot
+    environment:
+      - API_BASE_URL=http://trading-bot:8765
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+

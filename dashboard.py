@@ -647,20 +647,20 @@ def serve(host="0.0.0.0", port=8765):
                 positions = []
                 try:
                     from src.core import mt5_connector as connector
-                    open_pos = connector.get_open_positions(magic=getattr(config, "MAGIC_NUMBER", 20260625))
+                    open_pos = connector.get_all_open_positions(magic=getattr(config, "MAGIC_NUMBER", 20260625))
                     for p in open_pos:
                         positions.append({
-                            "ticket": p.ticket,
-                            "symbol": p.symbol,
-                            "type": "BUY" if p.type == 0 else ("SELL" if p.type == 1 else str(p.type)),
-                            "volume": p.volume,
-                            "price_open": p.price_open,
-                            "sl": p.sl,
-                            "tp": p.tp,
-                            "profit": p.profit,
-                            "magic": p.magic,
+                            "ticket": p.get("ticket"),
+                            "symbol": p.get("symbol"),
+                            "type": p.get("type"),
+                            "volume": p.get("volume"),
+                            "price_open": p.get("price_open"),
+                            "sl": p.get("sl"),
+                            "tp": p.get("tp"),
+                            "profit": p.get("profit"),
+                            "magic": p.get("magic", getattr(config, "MAGIC_NUMBER", 20260625)),
                         })
-                except Exception:
+                except Exception as e:
                     _, metrics = _build_metrics()
                     trades = metrics.get("trades", [])
                     positions = [t for t in trades if t.get("status") == "open"]

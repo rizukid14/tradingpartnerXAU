@@ -77,9 +77,16 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
+# --- TELEGRAM & BOT API CONFIG ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8765")
+API_TOKEN = os.getenv("API_TOKEN", "")
+
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+
 
 # --- MODEL NAMES & FALLBACKS ---
 # Claude Model & Fallback (Anthropic)
