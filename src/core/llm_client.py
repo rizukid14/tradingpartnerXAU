@@ -14,6 +14,19 @@ if config.OPENAI_API_KEY:
         base_url=config.OPENAI_API_BASE
     )
 
+# DeepSeek is OpenAI-compatible — same SDK, different base URL. Used when
+# CLAUDE_MODEL starts with "deepseek/" (cheap default; switch back to Claude
+# by setting CLAUDE_MODEL to "claude-...").
+deepseek_client = None
+if config.DEEPSEEK_API_KEY:
+    try:
+        deepseek_client = OpenAI(
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url=config.DEEPSEEK_API_BASE
+        )
+    except Exception as e:
+        print(f"[LLM WARNING] Gagal init DeepSeek client: {e}")
+
 claude_client = None
 if config.ANTHROPIC_API_KEY:
     try:
@@ -78,8 +91,17 @@ def query_primary_model(prompt, search_grounding=False):
         except Exception as e:
             print(f"[PRIMARY MODEL ERROR - GEMINI] {e}")
 
-    # 3. Try Claude (Anthropic)
-    if claude_client and config.ANTHROPIC_API_KEY:
+    # 3. Try Claude slot (Anthropic, or DeepSeek if CLAUDE_MODEL is deepseek/)
+    if config.CLAUDE_MODEL.startswith("deepseek/"):
+        if deepseek_client and config.DEEPSEEK_API_KEY:
+            try:
+                res = _execute_deepseek_single(config.CLAUDE_MODEL, prompt, 30)
+                if isinstance(res, str):
+                    return res.strip()
+                return json.dumps(res)
+            except Exception as e:
+                print(f"[PRIMARY MODEL ERROR - DEEPSEEK] {e}")
+    elif claude_client and config.ANTHROPIC_API_KEY:
         try:
             response = claude_client.messages.create(
                 model=config.CLAUDE_MODEL,
@@ -667,21 +689,49 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
-def query_claude(prompt):
-    """Queries Claude API with timeout and fallback model support."""
-    if not claude_client:
-        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Claude API Key tidak diset."}
+def _execute_deepseek_single(model_name, prompt, timeout_sec):
+    """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
+    'deepseek/' prefix (e.g. 'deepseek-v4-flash')."""
+    try:
+        response = deepseek_client.chat.completions.create(
+            model=model_name.split("/", 1)[1] if "/" in model_name else model_name,
+            messages=[
+                {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            timeout=timeout_sec
+        )
+        return clean_json_response(response.choices[0].message.content)
+    except Exception as e:
+        raise e
 
+
+def query_claude(prompt):
+    """Queries the 'Claude slot' model with timeout and fallback support.
+    Routes automatically: model starting with 'deepseek/' -> DeepSeek API
+    (OpenAI-compatible, much cheaper); 'claude-...' -> Anthropic.
+    Config: config.CLAUDE_MODEL / config.CLAUDE_FALLBACK_MODEL."""
     primary_model = config.CLAUDE_MODEL
     fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
+
+    is_deepseek = primary_model.startswith("deepseek/")
 
     try:
+        if is_deepseek:
+            if not deepseek_client:
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
+            return _execute_deepseek_single(primary_model, prompt, timeout_sec)
+        if not claude_client:
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Claude API Key tidak diset."}
         return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
             print(f"⚠️ [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
+                if fallback_model.startswith("deepseek/"):
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
                 return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[CLAUDE FALLBACK ERROR] {fb_err}")

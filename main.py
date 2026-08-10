@@ -56,6 +56,8 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--quant", choices=["on", "off"], help="Quant analysis (Hurst/Monte Carlo) on/off")
     p.add_argument("--dynamic", choices=["on", "off"],
                    help="Dynamic self-tuning config on/off (win-rate adaptive consensus threshold)")
+    p.add_argument("--claude-model", type=str,
+                   help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -89,6 +91,9 @@ def parse_cli_overrides(argv=None):
     if args.risk_percent_btc is not None:
         config.RISK_PERCENT_BTC = args.risk_percent_btc
         applied.append(f"RISK_PERCENT_BTC={args.risk_percent_btc}")
+    if args.claude_model is not None:
+        config.CLAUDE_MODEL = args.claude_model
+        applied.append(f"CLAUDE_MODEL={args.claude_model}")
     if args.risk_percent_xau is not None:
         config.RISK_PERCENT_XAU = args.risk_percent_xau
         applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
@@ -157,6 +162,7 @@ def interactive_setup():
         ("LIMIT & FILTER", "Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
+        ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
@@ -241,6 +247,9 @@ def interactive_setup():
                         setattr(config, attr.split(".")[1], new_val.lower() in ("1", "true", "yes", "on"))
                     elif "THRESHOLD" in attr or "RISK" in attr or "LOSS" in attr or "SPREAD" in attr:
                         setattr(config, attr.split(".")[1], float(new_val))
+                    elif "MODEL" in attr:
+                        # String model name — masukkan mentah, routing di llm_client
+                        setattr(config, attr.split(".")[1], new_val)
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
                     # refresh tampilan
