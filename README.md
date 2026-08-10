@@ -9,35 +9,14 @@ Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT
 
 ---
 
-## 🤖 Bot Binance Spot (Terpisah, `binance_bot/`)
+## 🤖 Bot Binance Spot (Branch `binance`)
 
-Bot **kedua** untuk trading **Binance spot** (BTC/ETH/SOL) — berdiri sendiri di `binance_bot/`, tidak menyentuh bot MT5. Dibuat untuk **modal kecil** (tes ~$12 / Rp 200rb) dan **deploy Linux** (VPS, tanpa aplikasi tambahan — murni API).
+Bot **kedua** untuk trading **Binance spot** (BTC/ETH/SOL) — **tidak ada di branch `dev`/`main`**. Kode-nya dipisah ke branch `binance` (arch: 2 proposer + 1 approver, OCO SL/TP, dry-run realistis, risk 1.5%, trading 24/7).
 
-**Perbedaan utama vs bot MT5:**
-- **Arsitektur 2 proposer + 1 approver**: GPT + Gemini vote, **Claude approver independen** (analisis candle/struktur sendiri, bukan cuma setuju/tidak dengan proposer — hanya dipanggil saat 2/2 sepakat atau HOLD-streak aktif).
-- **Spot, tanpa margin/futures**: tidak bisa short (hanya BUY), nol risiko liquidation/hutang.
-- **SL/TP via OCO order** di sisi exchange (spot tidak punya SL/TP broker).
-- **Timeframe M5** (default) — spread TokoCrypto tipis. Untuk profit bersih (fee 0.2% round-trip) sebaiknya **M15/M30** via `BINANCE_TIMEFRAME=15m`.
-- **Position tracking lokal** — spot tidak simpan entry price, bot track sendiri di `risk_state.json`.
-- **HOLD-streak** — kalau N cycle berturut-turut HOLD (default 5), cukup **1 BUY kuat (conf ≥ 0.60)** untuk lanjut ke approver (mencegah satu proposer konservatif memblokir selamanya).
-- **Sizing: risk-based (1.5%) ATAU alokasi modal langsung** (`POSITION_ALLOCATION_PCT`, mis. 50 = setengah equity per posisi — cocok spot). Notional di-clamp ke saldo free (tidak bisa "beli" > saldo).
-- **Dry-run realistis** — simulasi fill + slippage + fee (bukan cuma log).
-- **REST API** (`/api/v3/*`) + HMAC API key. Catatan: `/api/v1/*` sudah retire; testnet block user-agent `Python-urllib` (wajib User-Agent browser); `REST_BASE` tanpa `/api`.
-- **Risk 1.5%** per trade dari equity USDT, daily loss limit ketat ($3 untuk modal $12), trading 24/7.
-
-**Cara pakai:**
 ```bash
-cd binance_bot
-cp .env.example .env        # isi BINANCE_API_KEY, BINANCE_SECRET, LLM keys
-python main.py              # TESTNET=True + DRY_RUN=True default (aman)
+git checkout binance   # branch ini berisi binance_bot/ lengkap
 ```
-- **Testnet dulu** (`TESTNET=True`) → uang virtual $10k, sudah verified terkoneksi.
-- **Dry-run** (`DRY_RUN=True`) → sinyal dihitung, order tidak dikirim.
-- **Live** (`TESTNET=False`, `DRY_RUN=False`) → order beneran. Jangan ubah tanpa diskusi.
-- **Timeframe**: default M5, bisa ganti via env `BINANCE_TIMEFRAME=15m/30m/1h`.
-- Deploy Linux: `pip install -r binance_bot/requirements.txt` + systemd service (`Restart=always`).
 
-**Status:** connector (ccxt TokoCrypto) + risk + consensus (2 proposer + approver independen + HOLD-streak) + main loop + position tracking + dry-run verified. **Validasi sinyal di M5/M15 dry-run jalan (6 koin: PUMP, CRV, PYTH, TAO, UNI, AAVE).** Fase 2: Telegram alert, dashboard, post-mortem lessons.
 
 ---
 
