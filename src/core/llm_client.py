@@ -224,9 +224,7 @@ The "recent outcomes" note, if present, is win/loss history for your risk awaren
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A concrete invalidation condition for that thesis
-- SL placed beyond the invalidation level, and roughly within 1.5-2x current ATR (in points) unless the invalidation logic clearly justifies otherwise
-- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker
-- TP that gives at least 1.5R relative to SL (TP distance >= 1.5x SL distance)
+{{SLTP_RULES_BLOCK}}
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
 
@@ -258,6 +256,40 @@ BUY or SELL:
 CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
 
 
+def _build_sltp_rules_block(symbol, timeframe):
+    """
+    Build the SL/TP constraint lines for the system prompt based on
+    config.TP_SL_RULES:
+      "ATR-Based": SL roughly 1.5-2x ATR, TP >= 1.5x SL (guardrail mode).
+      "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
+      rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
+      SL/TP model di-average di consensus.py (outlier dibuang), lot size
+      dikalkulasi dari SL di main.py.
+    """
+    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    is_btc = config.is_crypto(symbol)
+    
+    if mode == "LLM":
+        if is_btc:
+            range_note = "typically 20000 to 60000 points ($200-$600)"
+            noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
+        else:
+            range_note = "typically 100 to 350 points ($1.00-$3.50)"
+            noise_note = "avoid M1-style hyper-scalping stops (e.g., under 80 points) as spread and execution noise will erode your edge"
+
+        return (
+            f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
+            f"- SL distance is YOUR choice (no ATR floor): set it exactly where the invalidation logic puts it. However, align it with the {timeframe} structure ({range_note}) and {noise_note}\n"
+            f"- TP is YOUR choice (no forced 1.5R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
+        )
+        
+    return (
+        "- SL placed beyond the invalidation level, and roughly within 1.5-2x current ATR (in points) unless the invalidation logic clearly justifies otherwise\n"
+        "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
+        "- TP that gives at least 1.5R relative to SL (TP distance >= 1.5x SL distance)\n"
+    )
+
+
 def build_system_prompt(symbol, timeframe, asset_description):
     """
     Static per-bot 'constitution'. Build once per bot instance (e.g. once
@@ -270,6 +302,7 @@ def build_system_prompt(symbol, timeframe, asset_description):
         .replace("{{SYMBOL}}", symbol)
         .replace("{{TIMEFRAME}}", timeframe)
         .replace("{{ASSET_DESC}}", asset_description)
+        .replace("{{SLTP_RULES_BLOCK}}", _build_sltp_rules_block(symbol, timeframe))
     )
 
 
@@ -508,9 +541,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
             "For EACH open position above, make an explicit decision:\n" +
-            "- 'CLOSE' if the trade thesis is broken (price rejected the forecast target, trend reversed, or the position is stale with no momentum) or if a hard risk limit is at risk.\n" +
-            "- 'HOLD' if the thesis remains intact and the position is progressing toward target.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected target with RSI diverging', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
+            "- 'CLOSE' ONLY if the trade thesis is genuinely broken (e.g., the invalidation level is breached, a clear counter-trend structure has formed on M5, or a fundamental shift has occurred). Do NOT recommend CLOSE for minor or normal pullbacks within the expected M5 volatility.\n" +
+            "- 'HOLD' if the thesis remains intact, the position is within normal price fluctuations, or progressing toward target.\n" +
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: price broke invalidation level at 4350.8', or 'HOLD: price holding above support, within normal pullback'). Never leave a ticket without an action.\n"
         )
 
     # Explicitly separate the two decisions so the LLM does not mix them:

@@ -18,6 +18,68 @@ import config
 
 WIB = ZoneInfo("Asia/Jakarta")
 
+# =============================================================================
+# Cache query MT5 (hot path = loop utama 5 detik)
+# -----------------------------------------------------------------------------
+# Masalah: tiap loop, sync_closed_positions() -> get_closed_positions_today()
+# manggil history_deals_get 2x, termasuk window 7 HARI (query paling berat di
+# MT5, bisa 0.5-2 detik). Itu bikin tiap iterasi loop makan waktu ekstra.
+# Solusi: cache hasil yang jarang berubah, invalidate saat order/close sukses.
+# =============================================================================
+
+# bot_opened (window 7 hari) cuma berubah saat ada posisi baru DIBUKA bot.
+# Aman di-cache 60 detik + invalidate saat order sukses.
+_bot_opened_cache = {"ts": 0.0, "value": None}
+_BOT_OPENED_CACHE_TTL = 60.0
+
+# get_closed_positions_today: berubah saat ada deal baru (close). TTL pendek
+# (4 detik) supaya deteksi close real-time tetap jalan, tapi query 1-hari
+# tidak diulang tiap 3 detik loop.
+_closed_today_cache = {"ts": 0.0, "key": None, "value": None}
+_CLOSED_TODAY_CACHE_TTL = 4.0
+
+_broker_offset_cache = {"ts": 0.0, "value": 0.0}
+
+def get_broker_offset_seconds(symbol="XAUUSD-ECNc"):
+    """
+    Returns the broker's offset from UTC in seconds.
+    E.g. if broker is UTC+3 (GMT+3), returns 10800. Cached for 1 hour.
+    """
+    import time as _t
+    now = _t.time()
+    if now - _broker_offset_cache["ts"] < 3600 and _broker_offset_cache["value"] != 0.0:
+        return _broker_offset_cache["value"]
+        
+    from datetime import datetime, timezone
+    
+    # 1. Current UTC time
+    now_utc = datetime.now(timezone.utc)
+    
+    # 2. Current MT5 tick time
+    tick = mt5.symbol_info_tick(symbol)
+    if not tick:
+        # If terminal not connected or symbol invalid, return 0 (no offset adjustment)
+        return 0.0
+        
+    tick_time_utc = datetime.fromtimestamp(tick.time, timezone.utc)
+    
+    # Broker offset from UTC (e.g. +3 hours)
+    broker_offset = tick_time_utc - now_utc
+    val = broker_offset.total_seconds()
+    _broker_offset_cache["ts"] = now
+    _broker_offset_cache["value"] = val
+    return val
+
+# get_all_open_positions: dipanggil tiap loop untuk status line CLI.
+_open_positions_cache = {"ts": 0.0, "value": None}
+_OPEN_POSITIONS_CACHE_TTL = 3.0
+
+
+def invalidate_deals_cache():
+    """Panggil saat order sukses dikirim / posisi ditutup — data deals berubah."""
+    _bot_opened_cache["ts"] = 0.0
+    _closed_today_cache["ts"] = 0.0
+
 
 def server_utc_offset_hours():
     """
@@ -186,10 +248,14 @@ def get_open_positions(symbol):
 
 def get_all_open_positions():
     """Returns ALL open bot-managed positions across every symbol."""
+    import time as _t
+    now = _t.time()
+    if now - _open_positions_cache["ts"] < _OPEN_POSITIONS_CACHE_TTL:
+        return _open_positions_cache["value"]
     positions = mt5.positions_get()
     if positions is None:
         return []
-    return [
+    out = [
         {
             "ticket": p.ticket,
             "symbol": p.symbol,
@@ -205,25 +271,39 @@ def get_all_open_positions():
         for p in positions
         if p.magic == config.MAGIC_NUMBER
     ]
+    _open_positions_cache["ts"] = now
+    _open_positions_cache["value"] = out
+    return out
 
-def get_closed_positions_today(symbol=None):
+def get_closed_positions_today(symbol=None, lookback_hours=0):
     """
     Returns deals that closed (entry OUT) positions opened by this bot today.
     Used for daily P/L, consecutive-loss tracking, and recovery mode.
     Pass symbol= to count only one instrument (per-symbol loss streak);
     omit it to aggregate across all symbols (daily loss cap).
+    lookback_hours: include deals closed up to lookback_hours before today_start
+    to prevent time-boundary gaps (e.g. at midnight) and sync missed offline closes.
     """
+    import time as _t
+    cache_key = (symbol, lookback_hours)
+    now = _t.time()
+    if _closed_today_cache["key"] == cache_key and (now - _closed_today_cache["ts"]) < _CLOSED_TODAY_CACHE_TTL:
+        return _closed_today_cache["value"]
+
+    # Calculate broker timezone offset from UTC
+    broker_offset = get_broker_offset_seconds(symbol or config.SYMBOL)
+
     # history_deals_get(from, to) takes datetimes in the MT5 terminal's local
     # wall-clock time. We use a WIB-midnight -> next-midnight window so "today"
     # means the current trading day (bot's own closes), not a rolling 24h that
     # would drag in the previous day's P/L. Epochs are passed as ints so the
     # boundaries match exactly what datetime.now() produced.
     from datetime import datetime, timedelta
-    now = datetime.now()
-    today_start = datetime(now.year, now.month, now.day)
+    now_dt = datetime.now()
+    today_start = datetime(now_dt.year, now_dt.month, now_dt.day)
     tomorrow = today_start + timedelta(days=1)
-    from_epoch = int(today_start.timestamp())
-    to_epoch = int(tomorrow.timestamp())
+    from_epoch = int((today_start - timedelta(hours=lookback_hours)).timestamp() + broker_offset)
+    to_epoch = int(tomorrow.timestamp() + broker_offset)
 
     deals = mt5.history_deals_get(from_epoch, to_epoch)
     if deals is None:
@@ -236,14 +316,21 @@ def get_closed_positions_today(symbol=None):
     # IMPORTANT: query a WIDE window (7 days) for bot_opened — a position opened
     # yesterday (IN deal outside today's midnight-WIB window) closed manually
     # today would otherwise fail is_manual_of_bot and be silently dropped.
-    wide_from_epoch = int((today_start - timedelta(days=7)).timestamp())
-    wide_deals = mt5.history_deals_get(wide_from_epoch, to_epoch)
-    if wide_deals is None:
-        wide_deals = []
-    bot_opened = {
-        d.position_id for d in wide_deals
-        if d.magic == config.MAGIC_NUMBER and d.entry == mt5.DEAL_ENTRY_IN
-    }
+    # Cache 60 detik: set ini cuma berubah saat posisi baru DIBUKA, dan query
+    # 7-hari itu query termahal di MT5 (bikin loop 5 detik nge-blok).
+    if _bot_opened_cache["value"] is not None and (now - _bot_opened_cache["ts"]) < _BOT_OPENED_CACHE_TTL:
+        bot_opened = _bot_opened_cache["value"]
+    else:
+        wide_from_epoch = int((today_start - timedelta(days=7)).timestamp() + broker_offset)
+        wide_deals = mt5.history_deals_get(wide_from_epoch, to_epoch)
+        if wide_deals is None:
+            wide_deals = []
+        bot_opened = {
+            d.position_id for d in wide_deals
+            if d.magic == config.MAGIC_NUMBER and d.entry == mt5.DEAL_ENTRY_IN
+        }
+        _bot_opened_cache["ts"] = now
+        _bot_opened_cache["value"] = bot_opened
 
     closed = []
     for deal in deals:
@@ -287,8 +374,11 @@ def get_closed_positions_today(symbol=None):
             "reason": reason,
             "comment": getattr(deal, "comment", ""),
             "type": pos_type,
-            "time": deal.time,
+            "time": int(deal.time - broker_offset), # Convert to local epoch
         })
+    _closed_today_cache["ts"] = now
+    _closed_today_cache["key"] = cache_key
+    _closed_today_cache["value"] = closed
     return closed
 
 
@@ -324,9 +414,10 @@ def get_trade_details(ticket):
         volume = in_deal.volume
         symbol = in_deal.symbol
 
-        # Time formatting
-        t_in = datetime.fromtimestamp(in_deal.time)
-        t_out = datetime.fromtimestamp(out_deal.time)
+        # Time formatting (adjust broker time using offset to local WIB)
+        broker_offset = get_broker_offset_seconds(symbol)
+        t_in = datetime.fromtimestamp(in_deal.time - broker_offset)
+        t_out = datetime.fromtimestamp(out_deal.time - broker_offset)
         duration_sec = max(0, out_deal.time - in_deal.time)
         duration_min = round(duration_sec / 60.0, 1)
 
@@ -524,6 +615,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         return {"status": "ERROR", "comment": comment, "code": retcode}
 
     print(f"[MT5] Order BERHASIL! Ticket: {result.order}")
+    invalidate_deals_cache()  # posisi baru dibuka -> bot_opened & closed_today berubah
     return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
 
 
@@ -575,4 +667,5 @@ def close_position(ticket):
         print(f"[MT5 ERROR] Gagal menutup posisi: {comment}")
         return False
     print(f"[MT5] Posisi #{ticket} berhasil ditutup.")
+    invalidate_deals_cache()  # deal OUT baru -> closed_today berubah
     return True

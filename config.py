@@ -94,6 +94,16 @@ DEFAULT_TP_POINTS = 600
 SL_ATR_MULTIPLIER = 1.5   # Stop Loss = 1.5x ATR
 TP_ATR_MULTIPLIER = 3.0   # Take Profit = 3.0x ATR (Risk-to-Reward 1:2)
 
+# TP/SL Rules Mode:
+#   "ATR-Based" (default, aman): SL floor = max(2x spread, 1.2x ATR), TP >= 1.5x SL.
+#     Mencegah SL di dalam noise/volatilitas & TP terlalu dekat.
+#   "LLM": SL/TP sebebas-bebasnya sesuai konsensus model (misal model minta SL 80
+#     pts -> ya 80 pts; lot size dikalkulasi otomatis dari SL tsb via risk-based
+#     sizing). Cuma floor minimal 2x spread biar broker nggak nolak INVALID_STOPS.
+#     Agregasi: SL/TP di-average dari model yang sepakat; nilai yang "beda
+#     sendiri" (outlier, <50% atau >200% dari median) dibuang dulu.
+TP_SL_RULES = "ATR-Based"  # pilihan: "ATR-Based" / "LLM"
+
 # Per-symbol defaults (fallback when LLM gives no SL/TP)
 DEFAULT_SL_POINTS_XAU = DEFAULT_SL_POINTS
 DEFAULT_TP_POINTS_XAU = DEFAULT_TP_POINTS
