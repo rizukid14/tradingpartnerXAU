@@ -104,6 +104,11 @@ DRY_RUN = False
 # Minimum number of models that must agree (e.g., 2 out of 3)
 CONSENSUS_THRESHOLD = 2
 
+# Dynamic self-tuning config — OFF untuk sekarang (fitur belum dibutuhkan).
+# Kalau OFF, consensus selalu pakai threshold statis per-symbol (XAU 1.0 / BTC 1.2,
+# 2/3 model) tanpa adaptasi win-rate ke mode defensif 3/3.
+DYNAMIC_CONFIG_ENABLED = False
+
 # Weighted-confidence consensus: a BUY/SELL signal wins when the SUM of
 # confidence from models voting that direction meets the per-symbol threshold
 # AND at least 2 models voted that direction (prevents one strong model
@@ -230,8 +235,8 @@ PARTIAL_CLOSE_TP1_POINTS_BTC = 44500
 
 # --- DAILY RISK LIMITS (from xaubot-ai smart_risk_manager.py) ---
 MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today
-MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
-PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
+MAX_CONSECUTIVE_LOSSES = 5         # Pause trading after 5 consecutive losses
+PAUSE_AFTER_LOSSES_MINUTES = 15    # Pause duration after consecutive losses
 MAX_OPEN_POSITIONS = 6             # Max simultaneous positions (fits 3x layering cycles of 2 positions)
 
 # --- BREAK-EVEN PROFIT TOLERANCE ---

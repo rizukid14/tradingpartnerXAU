@@ -54,6 +54,8 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--memory", choices=["on", "off"],
                    help="Memory context (lessons/decision memory/forecast) on/off — OFF = LLM independen")
     p.add_argument("--quant", choices=["on", "off"], help="Quant analysis (Hurst/Monte Carlo) on/off")
+    p.add_argument("--dynamic", choices=["on", "off"],
+                   help="Dynamic self-tuning config on/off (win-rate adaptive consensus threshold)")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -123,6 +125,9 @@ def parse_cli_overrides(argv=None):
     if getattr(args, "quant", None):
         config.QUANT_ANALYSIS_ENABLED = (args.quant == "on")
         applied.append(f"QUANT_ANALYSIS_ENABLED={config.QUANT_ANALYSIS_ENABLED}")
+    if getattr(args, "dynamic", None):
+        config.DYNAMIC_CONFIG_ENABLED = (args.dynamic == "on")
+        applied.append(f"DYNAMIC_CONFIG_ENABLED={config.DYNAMIC_CONFIG_ENABLED}")
 
     return applied, getattr(args, "yes", False)
 
@@ -339,7 +344,8 @@ def run_trading_cycle():
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
-        dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
+        if getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
+            dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
 
         # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
