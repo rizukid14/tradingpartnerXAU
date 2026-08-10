@@ -29,6 +29,16 @@ _THEME_KEYWORDS = {
     "psychology": ["patience", "fear", "greed", "discipline", "revenge", "fomo", "hesitation", "hold"],
 }
 
+def _safe_print(text):
+    """Prints text safely without throwing UnicodeEncodeError on Windows terminals."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        try:
+            print(text.encode("ascii", "replace").decode("ascii"))
+        except Exception:
+            pass
+
 
 def _extract_theme(lesson_text):
     """
@@ -239,11 +249,11 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
 
             # Generate post-mortem lesson via LLM with rich execution context
             pos_type_label = trade_details.get("type", "")
-            print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
+            _safe_print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
             lesson = self._analyze_trade_with_llm(ticket, profit, deal_symbol, trade_details)
             if lesson:
                 theme = _extract_theme(lesson)
-                print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
+                _safe_print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
                 mem["lessons"].append({"symbol": deal_symbol, "lesson": lesson, "theme": theme})
                 
                 if len(mem["lessons"]) >= MAX_LESSONS:
