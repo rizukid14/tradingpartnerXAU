@@ -116,11 +116,11 @@ LLM_TIMEOUT_SECONDS = 24.0
 
 
 # --- TRADING PARAMETERS ---
-# Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
+# Symbol: 100% focused on XAUUSD-ECNc (Gold M5 scalping)
 WEEKDAY_SYMBOL = "XAUUSD-ECNc"
-WEEKEND_SYMBOL = "BTCUSD.c"
-CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
-SYMBOL = WEEKDAY_SYMBOL            # active symbol; updated at runtime by refresh_active_symbol()
+WEEKEND_SYMBOL = "XAUUSD-ECNc"
+CRYPTO_SYMBOLS = set()
+SYMBOL = WEEKDAY_SYMBOL            # active symbol: always XAUUSD-ECNc
 
 # Timeframe for Scalping: 5 Minutes (XAU)
 TIMEFRAME = mt5.TIMEFRAME_M5
@@ -464,18 +464,7 @@ def is_crypto(symbol):
 
 
 def get_active_symbol(now=None):
-    """
-    Returns the symbol that should be traded right now:
-    - Friday >= 22:00 WIB or Saturday/Sunday -> WEEKEND_SYMBOL (BTCUSD)
-    - Otherwise -> WEEKDAY_SYMBOL (XAUUSD)
-    """
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    WIB = ZoneInfo("Asia/Jakarta")
-    now = now or datetime.now(WIB)
-    if (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6):
-        return WEEKEND_SYMBOL
+    """Returns the active trading symbol (100% focused on XAUUSD-ECNc)."""
     return WEEKDAY_SYMBOL
 
 
