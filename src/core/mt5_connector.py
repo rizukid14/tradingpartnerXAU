@@ -456,6 +456,36 @@ def set_position_sltp(symbol, ticket, sl, tp):
         return False
 
 
+def get_valid_trade_symbol(symbol):
+    """
+    Returns the exact tradeable symbol name on the connected MT5 broker.
+    Handles broker suffix variations (e.g. XAUUSD-ECN -> XAUUSD-ECNc, BTCUSD -> BTCUSD.c).
+    """
+    if not symbol:
+        return symbol
+    info = mt5.symbol_info(symbol)
+    if info is not None and getattr(info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
+        return symbol
+
+    # Try common broker symbol suffix variations
+    candidates = [
+        symbol + "c",
+        symbol + ".c",
+        symbol + ".ecn",
+        symbol + "c.ecn",
+        symbol[:-1] if symbol.endswith("c") else symbol,
+    ]
+    for cand in candidates:
+        if cand == symbol:
+            continue
+        cand_info = mt5.symbol_info(cand)
+        if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
+            print(f"[MT5 AUTO-CORRECT] Simbol '{symbol}' disesuaikan ke simbol aktif broker: '{cand}'")
+            return cand
+
+    return symbol
+
+
 def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     """
     Sends a buy/sell trade order to MT5.
@@ -466,6 +496,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         print(f"[DRY RUN] Simulasi {action} order untuk {symbol} sebanyak {lot} lot (SL: {sl_points} pts, TP: {tp_points} pts).")
         return {"status": "SUCCESS", "comment": "Dry Run Mode Active", "ticket": 0}
 
+    symbol = get_valid_trade_symbol(symbol)
     mt5.symbol_select(symbol, True)
 
     tick = mt5.symbol_info_tick(symbol)
