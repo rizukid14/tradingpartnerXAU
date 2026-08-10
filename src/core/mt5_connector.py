@@ -466,6 +466,8 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         print(f"[DRY RUN] Simulasi {action} order untuk {symbol} sebanyak {lot} lot (SL: {sl_points} pts, TP: {tp_points} pts).")
         return {"status": "SUCCESS", "comment": "Dry Run Mode Active", "ticket": 0}
 
+    mt5.symbol_select(symbol, True)
+
     tick = mt5.symbol_info_tick(symbol)
     symbol_info = mt5.symbol_info(symbol)
 
@@ -575,6 +577,30 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
             result = alt_res
 
+    # Fallback 3: Combined 2-Step Execution + Price 0.0 (No SL/TP + Market Price 0.0)
+    if result is None or getattr(result, "retcode", None) == 10013:
+        print(f"[MT5] Retcode 10013 terdeteksi. Mencoba 2-Step Market Zero Execution (No SL/TP + price = 0.0)...")
+        def _build_no_sltp_price_zero(deviation, fill_policy):
+            return {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": float(lot),
+                "type": order_type,
+                "price": 0.0,
+                "sl": 0.0,
+                "tp": 0.0,
+                "deviation": int(deviation),
+                "magic": int(config.MAGIC_NUMBER),
+                "comment": "Multi-LLM Bot",
+                "type_filling": fill_policy,
+            }
+        alt_res = _send_with_retry(_build_no_sltp_price_zero, symbol, f"Order {action} {symbol} (No SL/TP, Price=0)")
+        if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+            result = alt_res
+            order_ticket = getattr(result, "order", 0)
+            if order_ticket > 0 and (sl or tp):
+                set_position_sltp(symbol, order_ticket, sl, tp)
+
     if result is None or result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
         getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
@@ -587,14 +613,15 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         
         # Detailed non-ambiguous diagnostic block
         req_sent = _build(config.DEVIATION, get_filling_policy(symbol))
+        exec_mode = getattr(symbol_info, 'trade_execution_mode', getattr(symbol_info, 'execution_mode', 'N/A'))
         print(f"\n==================== [MT5 ORDER ERROR DIAGNOSTICS] ====================")
         print(f"❌ Retcode: {retcode} | Message: {comment}")
         print(f"📋 Request Sent: {req_sent}")
         if symbol_info:
             print(f"📊 Symbol Info ({symbol}):")
             print(f"   - Name: {symbol_info.name}")
-            print(f"   - Execution Mode: {getattr(symbol_info, 'execution_mode', 'N/A')} (0=Request, 1=Instant, 2=Market, 3=Exchange)")
-            print(f"   - Filling Mode: {getattr(symbol_info, 'filling_mode', 'N/A')}")
+            print(f"   - Execution Mode: {exec_mode} (0=Request, 1=Instant, 2=Market, 3=Exchange)")
+            print(f"   - Filling Mode: {getattr(symbol_info, 'filling_mode', 'N/A')} (1=FOK, 2=IOC, 4=RETURN)")
             print(f"   - Trade Mode: {getattr(symbol_info, 'trade_mode', 'N/A')} (0=Disabled, 1=LongOnly, 2=ShortOnly, 3=CloseOnly, 4=Full)")
             print(f"   - Min Volume: {getattr(symbol_info, 'volume_min', 'N/A')}")
             print(f"   - Max Volume: {getattr(symbol_info, 'volume_max', 'N/A')}")
