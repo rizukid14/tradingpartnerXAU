@@ -268,8 +268,9 @@ def get_trade_details(ticket):
     Returns a dict with entry_price, exit_price, pos_type, volume, entry_time, exit_time,
     duration_min, profit, reason, and points_pnl.
     """
-    if not is_connected():
-        if not connect():
+    terminal_info = mt5.terminal_info()
+    if terminal_info is None or not getattr(terminal_info, "connected", False):
+        if not initialize_mt5():
             return None
     try:
         deals = mt5.history_deals_get(position=ticket)
