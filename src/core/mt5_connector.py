@@ -78,6 +78,32 @@ def get_market_data(symbol, timeframe, num_candles=50):
     
     return df
 
+def get_current_tick(symbol):
+    """
+    Fetches current Ask, Bid, Spread, Point, Digits for a symbol.
+    Returns a dict or None if unavailable.
+    """
+    symbol = get_valid_trade_symbol(symbol)
+    tick = mt5.symbol_info_tick(symbol)
+    symbol_info = mt5.symbol_info(symbol)
+
+    if tick is None or symbol_info is None:
+        return None
+
+    spread = int(round((tick.ask - tick.bid) / symbol_info.point)) if symbol_info.point > 0 else 0
+
+    return {
+        "ask": tick.ask,
+        "bid": tick.bid,
+        "last": getattr(tick, "last", tick.ask),
+        "volume": getattr(tick, "volume", 0),
+        "time": server_to_wib(tick.time),
+        "spread": spread,
+        "point": symbol_info.point,
+        "digits": symbol_info.digits
+    }
+
+
 def get_last_m1_candles(symbol, num_candles=3):
     """
     Fetches the last N M1 candles for micro-momentum analysis.
