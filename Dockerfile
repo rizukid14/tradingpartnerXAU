@@ -18,9 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY . .
 
-# Ensure data directory exists
-RUN mkdir -p /app/data
+# Ensure data directory exists and make entrypoint script executable
+RUN mkdir -p /app/data && chmod +x /app/entrypoint.sh
 
-# Run main trading bot loop in non-interactive mode
-CMD ["python", "main.py", "--yes"]
+# Expose API & Dashboard server port
+EXPOSE 8765
 
+# Run entrypoint script (starts API server in background + trading bot in foreground)
+CMD ["/app/entrypoint.sh"]
