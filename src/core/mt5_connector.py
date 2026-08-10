@@ -329,11 +329,19 @@ def _send_with_retry(build_request, symbol, label):
         req = build_request(widen, policy)
         result = _safe_order_send(req)
 
-    # Fall back to RETURN ONLY if original filling policy was not RETURN, and broker complains about invalid filling mode (10030)
-    if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
-        print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
-        req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
-        result = _safe_order_send(req)
+    # Fall back to alternative filling policies if broker returns 10013 (Invalid Request) or 10030 (Invalid Fill)
+    invalid_retcodes = {10013, getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030)}
+    if result and result.retcode in invalid_retcodes:
+        alt_policies = [mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN]
+        for alt_p in alt_policies:
+            if alt_p == policy:
+                continue
+            print(f"[MT5] {label} fallback policy {alt_p} (retcode was {result.retcode})")
+            req = build_request(config.DEVIATION, alt_p)
+            alt_res = _safe_order_send(req)
+            if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+                return alt_res
+            result = alt_res
 
     return result
 
@@ -395,13 +403,13 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
-            "volume": lot,
+            "volume": float(lot),
             "type": order_type,
-            "price": live_price,
-            "sl": round(live_sl, symbol_info.digits),
-            "tp": round(live_tp, symbol_info.digits),
-            "deviation": deviation,
-            "magic": config.MAGIC_NUMBER,  # Unique ID for our bot trades
+            "price": round(live_price, symbol_info.digits),
+            "sl": round(live_sl, symbol_info.digits) if live_sl else 0.0,
+            "tp": round(live_tp, symbol_info.digits) if live_tp else 0.0,
+            "deviation": int(deviation),
+            "magic": int(config.MAGIC_NUMBER),  # Unique ID for our bot trades
             "comment": "Multi-LLM Bot",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
@@ -452,12 +460,12 @@ def close_position(ticket):
         return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
-            "volume": lot,
+            "volume": float(lot),
             "type": order_type,
             "position": ticket,
-            "price": price,
-            "deviation": deviation,
-            "magic": config.MAGIC_NUMBER,
+            "price": round(price, symbol_info.digits),
+            "deviation": int(deviation),
+            "magic": int(config.MAGIC_NUMBER),
             "comment": "Close Position",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
