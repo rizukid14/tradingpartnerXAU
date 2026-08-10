@@ -456,6 +456,16 @@ def set_position_sltp(symbol, ticket, sl, tp):
         return False
 
 
+def _get_exec_mode(info):
+    if not info:
+        return "N/A"
+    for attr in ("trade_exemode", "trade_execution_mode", "execution_mode", "exemode"):
+        val = getattr(info, attr, None)
+        if val is not None:
+            return val
+    return "N/A"
+
+
 def get_valid_trade_symbol(symbol):
     """
     Returns the exact tradeable symbol name on the connected MT5 broker.
@@ -640,11 +650,9 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
         comment = getattr(result, "comment", None) if result else None
         if not comment:
             last_err = mt5.last_error()
-            comment = f"No result (last_error: {last_err})"
-        
         # Detailed non-ambiguous diagnostic block
         req_sent = _build(config.DEVIATION, get_filling_policy(symbol))
-        exec_mode = getattr(symbol_info, 'trade_execution_mode', getattr(symbol_info, 'execution_mode', 'N/A'))
+        exec_mode = _get_exec_mode(symbol_info)
         print(f"\n==================== [MT5 ORDER ERROR DIAGNOSTICS] ====================")
         print(f"❌ Retcode: {retcode} | Message: {comment}")
         print(f"📋 Request Sent: {req_sent}")
