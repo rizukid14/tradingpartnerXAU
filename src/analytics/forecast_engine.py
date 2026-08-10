@@ -172,7 +172,7 @@ Generate a JSON object strictly matching this schema:
             futures = {
                 executor.submit(_get_single, llm.query_openai): "OpenAI",
                 executor.submit(_get_single, llm.query_gemini): "Gemini",
-                executor.submit(_get_single, llm.query_claude): "Claude"
+                executor.submit(_get_single, llm.query_claude): llm.claude_slot_label()
             }
             for fut in concurrent.futures.as_completed(futures):
                 m_name = futures[fut]
