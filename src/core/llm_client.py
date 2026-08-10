@@ -594,11 +594,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
     # ================================================================
     # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
-    print(f"[LLM PROMPT PREVIEW] symbol={symbol} tf={tf_label} bid={current_tick['bid']} ask={current_tick['ask']} spread={current_tick['spread']}pt point={current_tick['point']}")
-    print(f"[LLM PROMPT PREVIEW] close={latest['close']} rsi={latest['rsi_14']:.2f} ema20={latest['ema_20']:.2f} ema50={latest['ema_50']:.2f} atr={latest['atr_14']:.2f} atr_points={atr_points}")
-    print(f"[LLM PROMPT PREVIEW] fib382={fib_382:.2f} fib500={fib_500:.2f} fib618={fib_618:.2f} swing_high={swing_high:.2f} swing_low={swing_low:.2f}")
-    print(f"[LLM PROMPT PREVIEW] recent_candles=7 micro_candles={'yes' if micro_candles_str else 'no'} forecast={'yes' if forecast_str else 'no'} positions={'yes' if positions_str else 'no'}")
-
     market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
