@@ -346,6 +346,28 @@ def _send_with_retry(build_request, symbol, label):
     return result
 
 
+def set_position_sltp(symbol, ticket, sl, tp):
+    """Sets SL and TP on an open position via TRADE_ACTION_SLTP."""
+    symbol_info = mt5.symbol_info(symbol)
+    digits = symbol_info.digits if symbol_info else 5
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "symbol": symbol,
+        "position": ticket,
+        "sl": round(sl, digits) if sl else 0.0,
+        "tp": round(tp, digits) if tp else 0.0,
+    }
+    print(f"[MT5] Memasang SL ({round(sl, digits)}) & TP ({round(tp, digits)}) pada posisi #{ticket}...")
+    res = _safe_order_send(req)
+    if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+        print(f"[MT5] SL/TP berhasil dipasang pada posisi #{ticket}.")
+        return True
+    else:
+        err = getattr(res, "comment", "Unknown error") if res else "No response"
+        print(f"[MT5 WARNING] Gagal memasang SL/TP pada posisi #{ticket}: {err}")
+        return False
+
+
 def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     """
     Sends a buy/sell trade order to MT5.
@@ -411,12 +433,41 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
             "deviation": int(deviation),
             "magic": int(config.MAGIC_NUMBER),  # Unique ID for our bot trades
             "comment": "Multi-LLM Bot",
-            "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
 
     print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
+
+    # Fallback for ECN accounts: If 1-step order send with SL/TP fails with 10013 (Invalid Request),
+    # attempt 2-Step Execution (Open order without SL/TP first, then attach SL/TP via TRADE_ACTION_SLTP)
+    if (result is None or getattr(result, "retcode", None) == 10013) and (sl or tp):
+        print(f"[MT5] Retcode 10013 terdeteksi. Mencoba 2-Step Execution (Order tanpa SL/TP + Attach SL/TP)...")
+        def _build_no_sltp(deviation, fill_policy):
+            live_tick = mt5.symbol_info_tick(symbol)
+            if live_tick is not None:
+                live_price = live_tick.ask if action == "BUY" else live_tick.bid
+            else:
+                live_price = price
+            return {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": float(lot),
+                "type": order_type,
+                "price": round(live_price, symbol_info.digits),
+                "sl": 0.0,
+                "tp": 0.0,
+                "deviation": int(deviation),
+                "magic": int(config.MAGIC_NUMBER),
+                "comment": "Multi-LLM Bot",
+                "type_filling": fill_policy,
+            }
+        alt_res = _send_with_retry(_build_no_sltp, symbol, f"Order {action} {symbol} (No SL/TP)")
+        if alt_res and alt_res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+            result = alt_res
+            order_ticket = getattr(result, "order", 0)
+            if order_ticket > 0:
+                set_position_sltp(symbol, order_ticket, sl, tp)
 
     if result is None or result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
@@ -467,7 +518,6 @@ def close_position(ticket):
             "deviation": int(deviation),
             "magic": int(config.MAGIC_NUMBER),
             "comment": "Close Position",
-            "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
 
