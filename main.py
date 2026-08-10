@@ -40,8 +40,8 @@ def parse_cli_overrides(argv=None):
     p = argparse.ArgumentParser(description="Trading bot MT5 — override config via CLI (sesi saja).")
     p.add_argument("--dry-run", action="store_true", help="Mode dry-run (sinyal saja, tanpa order)")
     p.add_argument("--live", action="store_true", help="Mode live (kirim order beneran)")
-    p.add_argument("--risk-percent-btc", type=float, help="Risk % equity per trade BTC (mis. 1.5)")
-    p.add_argument("--risk-percent-xau", type=float, help="Risk % equity per trade XAU (mis. 0.5)")
+    p.add_argument("--risk-percent-btc", type=float, help="Risk pct equity per trade BTC (mis. 1.5)")
+    p.add_argument("--risk-percent-xau", type=float, help="Risk pct equity per trade XAU (mis. 0.5)")
     p.add_argument("--max-daily-loss", type=float, help="Batas kerugian harian USD (mis. 50)")
     p.add_argument("--max-positions", type=int, help="Max posisi open (mis. 6)")
     p.add_argument("--weekend-trading", choices=["on", "off"], help="Trading di weekend on/off")
@@ -553,6 +553,12 @@ def main():
     print(f"   Cooldown:        {config.TRADE_COOLDOWN_SECONDS}s antar trade")
     print(f"   Spread Filter:   {config.max_spread_points_for(config.SYMBOL)} pts maks ({config.SYMBOL})")
     print(f"   Session Filter:  {'ON' if config.SESSION_FILTER_ENABLED else 'OFF'} (WIB)")
+    if config.SESSION_FILTER_ENABLED:
+        for s in config.ALLOWED_SESSIONS_WIB:
+            start = f"{s['start'][0]:02d}:{s['start'][1]:02d}"
+            end = f"{s['end'][0]:02d}:{s['end'][1]:02d}"
+            mult = s.get("lot_multiplier", 1.0)
+            print(f"                    • {s['name']}: {start}–{end} WIB (lot x{mult})")
     print(f"   Weekend Close:   {'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}")
     print(f"   Telegram:        {'ON' if config.TELEGRAM_ENABLED else 'OFF'}")
     print("=" * 60)
