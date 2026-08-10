@@ -340,10 +340,10 @@ if MT5_LOGIN:
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = True
 # Dict of timeframe labels to MT5 timeframe constants
-# XAU (M5 scalper): analyze M30 and H1 context
+# XAU (M5 scalper): analyze M15 and M30 context (short-term only, no H1 trend)
 HIGHER_TIMEFRAMES = {
-    "M30": mt5.TIMEFRAME_M30,
-    "H1": mt5.TIMEFRAME_H1
+    "M15": mt5.TIMEFRAME_M15,
+    "M30": mt5.TIMEFRAME_M30
 }
 # BTC (M30 intraday trader): analyze H1 and H4 context
 HIGHER_TIMEFRAMES_CRYPTO = {

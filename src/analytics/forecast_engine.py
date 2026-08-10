@@ -1,7 +1,8 @@
 """
 Multi-Horizon Forecasting Engine & Conditional Execution Guard.
 
-Generates multi-horizon price projections (T+15m, T+60m, invalidation boundary)
+Generates multi-horizon price projections (per-symbol: XAU T+15m/T+30m,
+BTC T+30m/T+1h/T+4h, plus invalidation boundary)
 using the primary LLM (Gemini) and enforces strict conditional trigger rules
 ("Jika X dan Y sesuai prediksi maka execute") before order submission.
 """
@@ -110,15 +111,15 @@ class ForecastEngine:
             new_forecast["timestamp"] = now
             self._forecast = new_forecast
             self._save_cache()
-            print(f"✅ [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+60m')} Target: {new_forecast.get('target_t1h' if config.is_crypto(symbol) else 'target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
+            print(f"✅ [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+30m/T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+30m')} Target: {new_forecast.get('target_t1h' if config.is_crypto(symbol) else 'target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
         """Queries OpenAI, Gemini, and Claude in parallel to form a Multi-LLM Consensus Forecast."""
         latest = df.iloc[-1]
 
-        # Per-symbol forecast horizon: XAU scalps on M5 (5m/15m/60m ahead);
-        # BTC trades on M30 (next 30m / 1h / 4h — T+30m/T+1h/T+4h).
+        # Per-symbol forecast horizon: XAU scalps on M5 (15m/30m ahead — no
+        # long-term trend capture); BTC trades on M30 (next 30m / 1h / 4h).
         if config.is_crypto(symbol):
             tf_label = "M30"
             horizon_5m = "next 30 minutes (T+30m)"
@@ -129,12 +130,20 @@ class ForecastEngine:
             horizon_long_key = "target_t4h"
         else:
             tf_label = "M5"
-            horizon_5m = "next 5 minutes (T+5m)"
-            horizon_short = "next 15 minutes (T+15m)"
-            horizon_long = "next 60 minutes (T+60m)"
-            horizon_5m_key = "target_t5m"
-            horizon_short_key = "target_t15m"
-            horizon_long_key = "target_t60m"
+            horizon_5m = "next 15 minutes (T+15m)"
+            horizon_short = "next 30 minutes (T+30m)"
+            horizon_long = "next 30 minutes (T+30m)"
+            horizon_5m_key = "target_t15m"
+            horizon_short_key = "target_t30m"
+            horizon_long_key = "target_t30m"
+
+        # Schema JSON: hindari key duplikat (XAU punya 2 horizon saja)
+        targets_schema = (
+            f'    "{horizon_5m_key}": <numeric price target for {horizon_5m}>,\n'
+            f'    "{horizon_short_key}": <numeric price target for {horizon_short}>,\n'
+        )
+        if horizon_long_key != horizon_short_key:
+            targets_schema += f'    "{horizon_long_key}": <numeric price target for {horizon_long}>,\n'
 
         prompt = f"""
 You are a quantitative financial forecasting engine specializing in multi-horizon price projections for {symbol}.
@@ -150,10 +159,7 @@ Analyze the price action structure, momentum, and timeframe indicators to projec
 Generate a JSON object strictly matching this schema:
 {{
     "forecast_bias": "BULLISH" | "BEARISH" | "NEUTRAL",
-    "{horizon_5m_key}": <numeric price target for {horizon_5m}>,
-    "{horizon_short_key}": <numeric price target for {horizon_short}>,
-    "{horizon_long_key}": <numeric price target for {horizon_long}>,
-    "invalidation_level": <numeric price boundary where forecast becomes completely invalid>,
+{targets_schema}    "invalidation_level": <numeric price boundary where forecast becomes completely invalid>,
     "optimal_entry_min": <numeric minimum price boundary for optimal entry zone>,
     "optimal_entry_max": <numeric maximum price boundary for optimal entry zone>,
     "forecast_reasoning": "<concise 1-sentence explanation of predicted price trajectory>"
@@ -201,9 +207,8 @@ Generate a JSON object strictly matching this schema:
                 }
             return {
                 "forecast_bias": "NEUTRAL",
-                "target_t5m": round(curr + (0.5 * atr), 2),
-                "target_t15m": round(curr + atr, 2),
-                "target_t60m": round(curr + (2 * atr), 2),
+                "target_t15m": round(curr + (0.5 * atr), 2),
+                "target_t30m": round(curr + atr, 2),
                 "invalidation_level": round(curr - (1.5 * atr), 2),
                 "optimal_entry_min": round(curr - (0.5 * atr), 2),
                 "optimal_entry_max": round(curr + (0.5 * atr), 2),
@@ -229,7 +234,7 @@ Generate a JSON object strictly matching this schema:
         if not matching_models:
             matching_models = list(results.values())
 
-        # Per-symbol target keys
+        # Per-symbol target keys: XAU horizon = T+15m/T+30m, BTC = T+30m/T+1h/T+4h
         def _avg(key, alt_keys=()):
             vals = []
             for m in matching_models:
@@ -259,11 +264,13 @@ Generate a JSON object strictly matching this schema:
             "optimal_entry_min": round(avg_emin, 2),
             "optimal_entry_max": round(avg_emax, 2),
             "forecast_reasoning": f"Multi-LLM Consensus ({models_summary})",
-            "horizon_label": "T+30m/T+1h/T+4h" if config.is_crypto(symbol) else "T+5m/T+15m/T+60m",
+            "horizon_label": "T+30m/T+1h/T+4h" if config.is_crypto(symbol) else "T+15m/T+30m",
         }
         out[horizon_5m_key] = round(avg_5m, 2)
         out[horizon_short_key] = round(avg_short, 2)
-        out[horizon_long_key] = round(avg_long, 2)
+        if horizon_long_key != horizon_short_key:
+            out[horizon_long_key] = round(avg_long, 2)
+        # Legacy aliases (XAU: t5m/t60m tetap diisi tapi tidak dipakai lagi)
         out["target_t5m"] = round(avg_5m, 2)
         out["target_t15m"] = round(avg_short, 2)
         out["target_t60m"] = round(avg_long, 2)
@@ -284,7 +291,9 @@ Generate a JSON object strictly matching this schema:
         # Ensure active forecast is loaded
         forecast = self.get_active_forecast(symbol, df, current_tick)
         bias = forecast.get("forecast_bias", "NEUTRAL")
-        target_short = float(forecast.get("target_t15m", 0.0))  # legacy key holds short-horizon target
+        # Short-horizon target per-symbol: XAU = T+15m, BTC = T+30m
+        short_key = "target_t15m" if not config.is_crypto(symbol) else "target_t30m"
+        target_short = float(forecast.get(short_key, 0.0))
         invalidation = float(forecast.get("invalidation_level", 0.0))
         entry_min = float(forecast.get("optimal_entry_min", 0.0))
         entry_max = float(forecast.get("optimal_entry_max", 0.0))
@@ -328,19 +337,27 @@ Generate a JSON object strictly matching this schema:
             return ""
 
         f = self._forecast
-        horizon = f.get("horizon_label", "T+5m/T+15m/T+60m")
-        t5m_val = f.get("target_t5m") or f.get("target_t30m")
-        t5m_label = "T+30m" if "T+30m" in horizon else "T+5m (next candle)"
-        short_target = f.get("target_t15m", f.get("target_t1h"))
-        long_target = f.get("target_t60m", f.get("target_t4h"))
+        horizon = f.get("horizon_label", "T+15m/T+30m")
+        # Map horizon label -> forecast dict key (per-symbol: XAU T+15m/T+30m, BTC T+30m/T+1h/T+4h)
+        label_key_map = {
+            "T+15m": "target_t15m",
+            "T+30m": "target_t30m",
+            "T+1h": "target_t1h",
+            "T+4h": "target_t4h",
+            "T+60m": "target_t60m",
+        }
+        target_lines = []
+        for label in [lbl.strip() for lbl in horizon.split("/")]:
+            key = label_key_map.get(label)
+            if key and f.get(key) is not None:
+                target_lines.append(f"- Target {label}: {f.get(key)}\n")
+        if not target_lines:
+            target_lines = [f"- Target T+15m: {f.get('target_t15m')}\n"]
 
-        t5m_str = f"- Target {t5m_label}: {t5m_val}\n" if t5m_val is not None else ""
         return (
             f"\n### MULTI-HORIZON PRICE FORECAST MATRIX\n"
             f"- Predicted Bias: {f.get('forecast_bias')}\n"
-            + t5m_str +
-            f"- Target T+15m: {short_target}\n"
-            f"- Target T+60m: {long_target}\n"
+            + "".join(target_lines) +
             f"- Invalidation Boundary: {f.get('invalidation_level')}\n"
             f"- Optimal Entry Zone: {f.get('optimal_entry_min')} - {f.get('optimal_entry_max')}\n"
             f"- Rationale: {f.get('forecast_reasoning')}\n"
