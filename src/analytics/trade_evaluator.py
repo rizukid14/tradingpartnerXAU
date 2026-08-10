@@ -162,19 +162,19 @@ class TradeEvaluator:
 
     def _summarize_and_reset(self, symbol, lessons, evaluated_tickets):
         """
-        When lessons reach MAX_LESSONS, ask gpt-5.4-mini to condense ALL lessons
-        into one summary, store it, and reset lessons to empty.
+        When lessons reach MAX_LESSONS, ask primary LLM to synthesize the existing summary
+        (if any) plus ALL 15 new lessons into an updated master summary, store it, and reset raw lessons to empty.
         """
-        # Group lessons by theme (default "entry" if missing for legacy entries)
+        mem = self._load_memory(symbol)
+        existing_summary = mem.get("lessons_summary", "")
+
+        # Group lessons by theme
         by_theme = {}
         for l in lessons:
             theme = l.get("theme") if isinstance(l, dict) else None
             lesson_text = l.get("lesson", "") if isinstance(l, dict) else str(l)
             theme = theme or _extract_theme(lesson_text)
             by_theme.setdefault(theme, []).append(lesson_text)
-
-        theme_summary = ", ".join(f"{t}:{len(items)}" for t, items in by_theme.items())
-        _safe_print(f"📚 [LESSONS COMPOSITION] {len(lessons)} entries across themes for {symbol} - {theme_summary}")
 
         # Build a balanced prompt
         theme_blocks = []
@@ -183,18 +183,22 @@ class TradeEvaluator:
             theme_blocks.append(f"## {theme.upper()}\n{bullets}")
 
         lessons_text = "\n\n".join(theme_blocks)
+        existing_block = f"## EXISTING WISDOM SUMMARY (from prior trades):\n{existing_summary}\n\n" if existing_summary else ""
+
         prompt = f"""
-You are an expert trading post-mortem analyst. Below are the last {len(lessons)} lessons learned from scalping trades on {symbol} ({asset_desc(symbol)}), grouped by theme.
+You are an expert trading post-mortem analyst evaluating scalping performance on {symbol} ({asset_desc(symbol)}).
+
+{existing_block}Below are {len(lessons)} NEW lessons learned from recent trades, grouped by theme:
 
 {lessons_text}
 
-Task: Summarize ALL of these into ONE concise, actionable block of trading wisdom (maximum 60 words). Preserve coverage of EACH theme (entries, risk, timing, psychology) when applicable — do not let one theme dominate. Output ONLY the summary text — no intro, no bullets numbering.
+Task: Synthesize both the existing wisdom (if provided above) and all {len(lessons)} new lessons into ONE updated, cohesive master block of trading wisdom (maximum 60-70 words). Preserve coverage of key themes (entries, risk, timing, psychology) — do not let one theme dominate. Output ONLY the summary text — no intro, no bullet numbering.
 """
         try:
             summary = llm.query_primary_model(prompt)
             if summary:
                 summary = summary.strip()
-                _safe_print(f"📋 [LESSONS SUMMARY FOR {symbol}] {summary}")
+                _safe_print(f"📋 [LESSONS SUMMARY UPDATED FOR {symbol}] {summary}")
                 self._save_memory(symbol, [], summary, evaluated_tickets)
         except Exception as e:
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
@@ -232,10 +236,6 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
             mem["evaluated_tickets"].add(ticket)
             self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
 
-            # NOTE: Telegram alert for closed trades is now sent in real time by
-            # the main loop (risk.sync_closed_positions, every 5s) — not here.
-            # This method only does the post-mortem lesson generation.
-
             # Fetch rich trade details from MT5 (entry/exit prices, duration, reason closed, points)
             trade_details = connector.get_trade_details(ticket)
             if not trade_details:
@@ -247,12 +247,12 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
                     "reason": deal.get("reason", "unknown"),
                 }
 
-            # Generate post-mortem lesson via LLM with rich execution context
+            # Generate post-mortem lesson via LLM with rich execution context & auto theme tagging
             pos_type_label = trade_details.get("type", "")
             _safe_print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
-            lesson = self._analyze_trade_with_llm(ticket, profit, deal_symbol, trade_details)
+            lesson, theme = self._analyze_trade_with_llm(ticket, profit, deal_symbol, trade_details)
             if lesson:
-                theme = _extract_theme(lesson)
+                theme = theme or _extract_theme(lesson)
                 _safe_print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
                 mem["lessons"].append({"symbol": deal_symbol, "lesson": lesson, "theme": theme})
                 
@@ -264,7 +264,7 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
                     self._save_memory(deal_symbol, mem["lessons"], mem["lessons_summary"], mem["evaluated_tickets"])
 
     def _analyze_trade_with_llm(self, ticket, profit, trade_symbol=None, trade_details=None):
-        """Asks the primary LLM (Gemini/OpenAI) to evaluate the trade outcome with rich context."""
+        """Asks the primary LLM (Gemini/OpenAI) to evaluate trade outcome & return JSON (lesson + theme)."""
         outcome_str = f"PROFIT (+${profit:.2f})" if profit >= 0 else f"LOSS (-${abs(profit):.2f})"
         trade_symbol = trade_symbol or config.SYMBOL
         tf_str = "30-minute intraday" if config.is_crypto(trade_symbol) else "5-minute scalping"
@@ -304,23 +304,35 @@ You are an expert trading post-mortem analyst evaluating a closed position on {t
 {exec_context}
 
 Task:
-Analyze this exact trade result in the context of {tf_str} rules on {asset_desc(trade_symbol)}.
-Examine WHY the trade entered at {trade_details.get('entry_price', 'entry') if trade_details else 'entry'} resulted in {outcome_str} when exiting at {trade_details.get('exit_price', 'exit') if trade_details else 'exit'} via {trade_details.get('reason', 'close trigger') if trade_details else 'trigger'}.
-Provide ONE single, highly actionable, concise lesson learned (maximum 25 words).
-The lesson MUST start with '[LESSON]' and provide a concrete rule for future setups (e.g., avoiding buys directly into overhead resistance, enforcing pullbacks near EMA, or adjusting SL buffer).
+1. Analyze this exact trade result in the context of {tf_str} rules on {asset_desc(trade_symbol)}.
+2. Examine WHY the trade entered at {trade_details.get('entry_price', 'entry') if trade_details else 'entry'} resulted in {outcome_str} when exiting at {trade_details.get('exit_price', 'exit') if trade_details else 'exit'} via {trade_details.get('reason', 'close trigger') if trade_details else 'trigger'}.
+3. Provide ONE concise, highly actionable lesson learned (maximum 25 words) starting with '[LESSON]'.
+4. Categorize the lesson into EXACTLY ONE primary theme: "entry", "risk", "timing", or "psychology".
 
-Respond with the lesson text ONLY. Do not include introductory conversational filler.
+Respond with a valid JSON object ONLY:
+{{
+  "lesson": "[LESSON] <your 1-sentence actionable lesson>",
+  "theme": "entry" | "risk" | "timing" | "psychology"
+}}
 """
         try:
             response_text = llm.query_primary_model(prompt)
             if response_text:
-                clean_lesson = response_text.strip()
-                if not clean_lesson.startswith("[LESSON]"):
-                    clean_lesson = f"[LESSON] {clean_lesson}"
-                return clean_lesson
+                parsed = llm.clean_json_response(response_text)
+                lesson_val = parsed.get("lesson") or response_text.strip()
+                theme_val = str(parsed.get("theme", "")).lower()
+
+                if not lesson_val.startswith("[LESSON]"):
+                    lesson_val = f"[LESSON] {lesson_val}"
+
+                valid_themes = {"entry", "risk", "timing", "psychology"}
+                if theme_val not in valid_themes:
+                    theme_val = _extract_theme(lesson_val)
+
+                return lesson_val, theme_val
         except Exception as e:
             print(f"[POST-MORTEM ERROR] Gagal mengevaluasi trade: {e}")
-        return None
+        return None, "entry"
 
     def get_lessons_context(self):
         """Returns formatted lessons markdown block for prompt injection.
