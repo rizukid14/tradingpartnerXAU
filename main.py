@@ -184,7 +184,7 @@ def interactive_setup():
                 for name, p in presets.items():
                     print(f"     [{name}] {p.get('label', name)}")
             print("-" * 60)
-        try:
+            print("  Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
             choice = input("  > ").strip().lower()
         except EOFError:
             print("🤖 [NON-INTERACTIVE] Terminal non-interaktif terdeteksi (Docker/Daemon). Memulai bot dengan setting default...")
@@ -192,6 +192,7 @@ def interactive_setup():
         except KeyboardInterrupt:
             print("\n👋 Dibatalkan. Bot tidak dijalankan.")
             sys.exit(0)
+
 
 
         if choice in ("q", "quit", "exit"):
