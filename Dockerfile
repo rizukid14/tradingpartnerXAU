@@ -21,5 +21,6 @@ COPY . .
 # Ensure data directory exists
 RUN mkdir -p /app/data
 
-# Run main trading bot loop
-CMD ["python", "main.py"]
+# Run main trading bot loop in non-interactive mode
+CMD ["python", "main.py", "--yes"]
+

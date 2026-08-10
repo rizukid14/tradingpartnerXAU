@@ -184,11 +184,15 @@ def interactive_setup():
                 for name, p in presets.items():
                     print(f"     [{name}] {p.get('label', name)}")
             print("-" * 60)
-            print("  Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
+        try:
             choice = input("  > ").strip().lower()
+        except EOFError:
+            print("🤖 [NON-INTERACTIVE] Terminal non-interaktif terdeteksi (Docker/Daemon). Memulai bot dengan setting default...")
+            break
         except KeyboardInterrupt:
             print("\n👋 Dibatalkan. Bot tidak dijalankan.")
             sys.exit(0)
+
 
         if choice in ("q", "quit", "exit"):
             print("👋 Dibatalkan. Bot tidak dijalankan.")
@@ -523,9 +527,10 @@ def main():
         print("⚙️  [CLI OVERRIDE] " + " | ".join(cli_applied))
         print("-" * 60)
 
-    # Prompt interaktif setting — kecuali --yes (langsung jalan)
-    if not skip_prompt:
+    # Prompt interaktif setting — kecuali --yes atau non-TTY / Docker mode (langsung jalan)
+    if not skip_prompt and sys.stdin.isatty():
         interactive_setup()
+
 
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
