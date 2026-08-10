@@ -9,6 +9,19 @@ from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 
+# Windows console cp1252 default: emoji di print bisa bikin UnicodeEncodeError.
+# Set errors="replace" biar log/print tetap jalan di console lama (emoji tetap tampil di terminal modern).
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(errors="replace")
+    except Exception:
+        pass
+
 WIB = ZoneInfo("Asia/Jakarta")
 
 
@@ -383,15 +396,14 @@ def get_filling_policy(symbol):
 def _safe_order_send(request):
     """
     Sends order request to MT5 safely supporting both native MetaTrader5 and mt5linux RPC bridges.
-    mt5linux RPC bridge requires keyword argument `request=request` to prevent 'Unnamed arguments not allowed'.
+    - Native MetaTrader5 module (Windows): MUST use positional call — keyword call (`request=request`)
+      corrupts the request and gets rejected with retcode 10013 "Invalid request" (verified A/B test 5x).
+    - mt5linux RPC bridge (Linux): requires keyword argument `request=request` to prevent
+      'Unnamed arguments not allowed'.
     """
-    try:
-        res = mt5.order_send(request=request)
-        if res is not None:
-            return res
-    except Exception:
-        pass
-    return mt5.order_send(request)
+    if sys.platform == "win32":
+        return mt5.order_send(request)           # native module: positional WAJIB
+    return mt5.order_send(request=request)       # Linux mt5linux: keyword WAJIB
 
 
 def _send_with_retry(build_request, symbol, label):
@@ -566,6 +578,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
             "deviation": int(deviation),
             "magic": int(config.MAGIC_NUMBER),  # Unique ID for our bot trades
             "comment": "Multi-LLM Bot",
+            "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
 
@@ -592,6 +605,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
                 "deviation": int(deviation),
                 "magic": int(config.MAGIC_NUMBER),
                 "comment": "Multi-LLM Bot",
+                "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": fill_policy,
             }
         alt_res = _send_with_retry(_build_no_sltp, symbol, f"Order {action} {symbol} (No SL/TP)")
@@ -623,6 +637,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
                 "deviation": int(deviation),
                 "magic": int(config.MAGIC_NUMBER),
                 "comment": "Multi-LLM Bot",
+                "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": fill_policy,
             }
         alt_res = _send_with_retry(_build_no_sltp_price_zero, symbol, f"Order {action} {symbol} (No SL/TP, Price=0)")
@@ -707,6 +722,7 @@ def close_position(ticket):
             "deviation": int(deviation),
             "magic": int(config.MAGIC_NUMBER),
             "comment": "Close Position",
+            "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
 
