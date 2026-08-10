@@ -37,6 +37,19 @@ def init_mt5():
 
     print(f"[MT5] Connecting to MT5 Terminal for symbol {config.SYMBOL}...")
     
+    # Initialize MT5 connection first!
+    if hasattr(mt5, "initialize") and callable(mt5.initialize):
+        if not mt5.initialize():
+            last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
+            print(f"[MT5 ERROR] Could not initialize MetaTrader 5 terminal: {last_err}")
+            return False
+
+    if config.MT5_LOGIN and config.MT5_PASSWORD:
+        if not mt5.login(int(config.MT5_LOGIN), password=str(config.MT5_PASSWORD), server=str(config.MT5_SERVER)):
+            last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
+            print(f"[MT5 ERROR] Could not login to MT5 account #{config.MT5_LOGIN} on server {config.MT5_SERVER}: {last_err}")
+            return False
+
     # Refresh symbol to ensure valid active symbol
     config.SYMBOL = get_valid_trade_symbol(config.SYMBOL)
     symbol_info = mt5.symbol_info(config.SYMBOL)
