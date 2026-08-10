@@ -28,13 +28,18 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
 
 # --- MODEL NAMES & FALLBACKS ---
 # Claude Model & Fallback (Anthropic)
-CLAUDE_MODEL = "claude-sonnet-4-6"
+# Default: DeepSeek V4 Flash — jauh lebih murah dari sonnet, cukup buat
+# decision & forecast JSON. Mau balik ke Claude nanti: set "claude-sonnet-4-6".
+# "deepseek/..." -> DeepSeek API (OpenAI-compatible); "claude-..." -> Anthropic.
+CLAUDE_MODEL = "deepseek/deepseek-v4-flash"
 CLAUDE_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
