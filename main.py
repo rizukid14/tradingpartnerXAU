@@ -427,12 +427,12 @@ def run_trading_cycle():
         if lessons_ctx:
             print("💡 Menyertakan Lesson Learned & Memori Trading untuk LLM...")
 
-    # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
-    # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
-    # will receive the (possibly stale) cache now and the next cycle gets the new one.
+    # Pre-warm forecast: synchronous refresh ONLY if cache is stale (15 min XAU /
+    # 30 min BTC). Kalau cache masih fresh, langsung return tanpa nge-block.
+    # Hasil forecast di-print SEBELUM "Mengirim data..." biar urutan log rapi.
     if getattr(config, "FORECAST_ENABLED", True):
         try:
-            forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
+            forecast_engine.forecaster.refresh_if_stale(config.SYMBOL, df, tick, macro_context)
         except Exception as e:
             print(f"[FORECAST WARNING] {e}")
 

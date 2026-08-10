@@ -82,6 +82,23 @@ class ForecastEngine:
         self._kick_background_refresh(symbol, df, current_tick, macro_context)
         return self._forecast
 
+    def refresh_if_stale(self, symbol, df, current_tick, macro_context=None):
+        """
+        Synchronous refresh ONLY if cache is stale/missing. Returns the forecast
+        dict. Used by main.py pre-warm so the prompt gets fresh data and log
+        order stays correct (forecast result prints BEFORE 'Mengirim data').
+        Refresh is rare (15 min XAU / 30 min BTC), so blocking here is fine.
+        """
+        now = time.time()
+        last_time = float(self._forecast.get("timestamp", 0))
+        cache_valid = (
+            self._forecast.get("symbol") == symbol
+            and (now - last_time) < _cache_duration_seconds(symbol)
+        )
+        if cache_valid:
+            return self._forecast
+        return self._do_refresh(symbol, df, current_tick, macro_context)
+
     def _kick_background_refresh(self, symbol, df, current_tick, macro_context):
         """Spawn a daemon thread to refresh the forecast without blocking the caller."""
         with self._refresh_lock:
