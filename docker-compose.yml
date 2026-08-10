@@ -14,5 +14,5 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-      - ./trading_bot.log:/app/trading_bot.log
+
 

@@ -389,7 +389,7 @@ FUNDAMENTAL_ANALYSIS_ENABLED = False
 PRIMARY_ANALYSIS_MODEL = "gpt-5.4-mini"
 
 # --- LOGGING SETTINGS ---
-LOG_FILE = "trading_bot.log"
+LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
 
 
 # ============================================================================
