@@ -443,13 +443,18 @@ function renderLessons() {
 
 function renderTrades() {
   const trades = getFilteredTrades();
+  trades.sort((a, b) => {
+    if (a.status === 'open' && b.status !== 'open') return -1;
+    if (a.status !== 'open' && b.status === 'open') return 1;
+    return (b.ts || 0) - (a.ts || 0);
+  });
   $('trades-tbody').innerHTML = trades.map(t =>
     `<tr data-era="${esc(t.era||'')}" data-symbol="${esc(t.symbol)}" data-ts="${t.ts||0}">` +
     `<td>${t.ticket||'—'}</td><td><b style="color:var(--blue);">${esc(t.symbol)}</b></td>` +
     `<td><b class="${t.side==='BUY'?'green':'red'}">${t.side}</b></td><td>${t.lot||'—'}</td>` +
     `<td>${t.entry||'—'}</td><td>${t.sl||'—'}</td><td>${t.tp||'—'}</td>` +
     `<td class="${t.pnl>0?'green':t.pnl<0?'red':''}"><b>${fmtMoney(t.pnl)}</b></td>` +
-    `<td>${fmtTs(t.ts)}</td><td><span class="theme-tag">${t.status}</span></td></tr>`
+    `<td>${fmtTs(t.ts)}</td><td><span class="theme-tag" style="${t.status==='open'?'background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,0.3);':''}">${t.status}</span></td></tr>`
   ).join('') || '<tr><td colspan="10" class="muted empty-hint">Tidak ada trade sesuai filter.</td></tr>';
 }
 
