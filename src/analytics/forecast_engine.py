@@ -117,18 +117,22 @@ class ForecastEngine:
         """Queries OpenAI, Gemini, and Claude in parallel to form a Multi-LLM Consensus Forecast."""
         latest = df.iloc[-1]
 
-        # Per-symbol forecast horizon: XAU scalps on M5 (15m/60m ahead);
-        # BTC trades on M30 (next 1 hour / next 4 hours — T+1h/T+4h).
+        # Per-symbol forecast horizon: XAU scalps on M5 (5m/15m/60m ahead);
+        # BTC trades on M30 (next 30m / 1h / 4h — T+30m/T+1h/T+4h).
         if config.is_crypto(symbol):
             tf_label = "M30"
+            horizon_5m = "next 30 minutes (T+30m)"
             horizon_short = "next 1 hour (T+1h)"
             horizon_long = "next 4 hours (T+4h)"
+            horizon_5m_key = "target_t30m"
             horizon_short_key = "target_t1h"
             horizon_long_key = "target_t4h"
         else:
             tf_label = "M5"
+            horizon_5m = "next 5 minutes (T+5m)"
             horizon_short = "next 15 minutes (T+15m)"
             horizon_long = "next 60 minutes (T+60m)"
+            horizon_5m_key = "target_t5m"
             horizon_short_key = "target_t15m"
             horizon_long_key = "target_t60m"
 
@@ -146,6 +150,7 @@ Analyze the price action structure, momentum, and timeframe indicators to projec
 Generate a JSON object strictly matching this schema:
 {{
     "forecast_bias": "BULLISH" | "BEARISH" | "NEUTRAL",
+    "{horizon_5m_key}": <numeric price target for {horizon_5m}>,
     "{horizon_short_key}": <numeric price target for {horizon_short}>,
     "{horizon_long_key}": <numeric price target for {horizon_long}>,
     "invalidation_level": <numeric price boundary where forecast becomes completely invalid>,
@@ -184,9 +189,9 @@ Generate a JSON object strictly matching this schema:
             curr = current_tick['bid']
             atr = latest['atr_14']
             if config.is_crypto(symbol):
-                # M30: scale fallback targets by 1h / 4h of M30 ATR
                 return {
                     "forecast_bias": "NEUTRAL",
+                    "target_t30m": round(curr + (0.5 * atr), 2),
                     "target_t1h": round(curr + atr, 2),
                     "target_t4h": round(curr + (2 * atr), 2),
                     "invalidation_level": round(curr - (1.5 * atr), 2),
@@ -196,6 +201,7 @@ Generate a JSON object strictly matching this schema:
                 }
             return {
                 "forecast_bias": "NEUTRAL",
+                "target_t5m": round(curr + (0.5 * atr), 2),
                 "target_t15m": round(curr + atr, 2),
                 "target_t60m": round(curr + (2 * atr), 2),
                 "invalidation_level": round(curr - (1.5 * atr), 2),
@@ -223,9 +229,7 @@ Generate a JSON object strictly matching this schema:
         if not matching_models:
             matching_models = list(results.values())
 
-        # Per-symbol target keys (fallback: tolerate both old & new keys)
-        short_key = horizon_short_key
-        long_key = horizon_long_key
+        # Per-symbol target keys
         def _avg(key, alt_keys=()):
             vals = []
             for m in matching_models:
@@ -239,8 +243,9 @@ Generate a JSON object strictly matching this schema:
                     vals.append(float(v))
             return sum(vals) / len(vals) if vals else 0.0
 
-        avg_short = _avg(short_key, ("target_t15m", "target_t60m"))
-        avg_long = _avg(long_key, ("target_t15m", "target_t60m"))
+        avg_5m = _avg(horizon_5m_key, ("target_t5m", "target_t30m"))
+        avg_short = _avg(horizon_short_key, ("target_t15m", "target_t1h"))
+        avg_long = _avg(horizon_long_key, ("target_t60m", "target_t4h"))
         avg_inv = _avg("invalidation_level")
         avg_emin = _avg("optimal_entry_min")
         avg_emax = _avg("optimal_entry_max")
@@ -254,11 +259,12 @@ Generate a JSON object strictly matching this schema:
             "optimal_entry_min": round(avg_emin, 2),
             "optimal_entry_max": round(avg_emax, 2),
             "forecast_reasoning": f"Multi-LLM Consensus ({models_summary})",
-            "horizon_label": "T+1h/T+4h" if config.is_crypto(symbol) else "T+15m/T+60m",
+            "horizon_label": "T+30m/T+1h/T+4h" if config.is_crypto(symbol) else "T+5m/T+15m/T+60m",
         }
-        out[short_key] = round(avg_short, 2)
-        out[long_key] = round(avg_long, 2)
-        # Keep legacy keys too so consumers reading target_t15m still work
+        out[horizon_5m_key] = round(avg_5m, 2)
+        out[horizon_short_key] = round(avg_short, 2)
+        out[horizon_long_key] = round(avg_long, 2)
+        out["target_t5m"] = round(avg_5m, 2)
         out["target_t15m"] = round(avg_short, 2)
         out["target_t60m"] = round(avg_long, 2)
         return out
@@ -322,15 +328,19 @@ Generate a JSON object strictly matching this schema:
             return ""
 
         f = self._forecast
-        horizon = f.get("horizon_label", "T+15m/T+60m")
-        short_label, long_label = horizon.split("/") if "/" in horizon else (horizon, horizon)
-        short_target = f.get("target_t15m", f.get("target_t4h"))
-        long_target = f.get("target_t60m", f.get("target_t1d"))
+        horizon = f.get("horizon_label", "T+5m/T+15m/T+60m")
+        t5m_val = f.get("target_t5m") or f.get("target_t30m")
+        t5m_label = "T+30m" if "T+30m" in horizon else "T+5m (next candle)"
+        short_target = f.get("target_t15m", f.get("target_t1h"))
+        long_target = f.get("target_t60m", f.get("target_t4h"))
+
+        t5m_str = f"- Target {t5m_label}: {t5m_val}\n" if t5m_val is not None else ""
         return (
             f"\n### MULTI-HORIZON PRICE FORECAST MATRIX\n"
             f"- Predicted Bias: {f.get('forecast_bias')}\n"
-            f"- Target {short_label}: {short_target}\n"
-            f"- Target {long_label}: {long_target}\n"
+            + t5m_str +
+            f"- Target T+15m: {short_target}\n"
+            f"- Target T+60m: {long_target}\n"
             f"- Invalidation Boundary: {f.get('invalidation_level')}\n"
             f"- Optimal Entry Zone: {f.get('optimal_entry_min')} - {f.get('optimal_entry_max')}\n"
             f"- Rationale: {f.get('forecast_reasoning')}\n"
