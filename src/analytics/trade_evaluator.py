@@ -174,7 +174,7 @@ class TradeEvaluator:
             by_theme.setdefault(theme, []).append(lesson_text)
 
         theme_summary = ", ".join(f"{t}:{len(items)}" for t, items in by_theme.items())
-        print(f"📚 [LESSONS COMPOSITION] {len(lessons)} entries across themes for {symbol} — {theme_summary}")
+        _safe_print(f"📚 [LESSONS COMPOSITION] {len(lessons)} entries across themes for {symbol} - {theme_summary}")
 
         # Build a balanced prompt
         theme_blocks = []
@@ -194,7 +194,7 @@ Task: Summarize ALL of these into ONE concise, actionable block of trading wisdo
             summary = llm.query_primary_model(prompt)
             if summary:
                 summary = summary.strip()
-                print(f"📋 [LESSONS SUMMARY FOR {symbol}] {summary}")
+                _safe_print(f"📋 [LESSONS SUMMARY FOR {symbol}] {summary}")
                 self._save_memory(symbol, [], summary, evaluated_tickets)
         except Exception as e:
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
