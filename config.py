@@ -19,18 +19,54 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 MT5_HOST = os.getenv("MT5_HOST", "localhost")
 MT5_PORT = int(os.getenv("MT5_PORT", "18812"))
 
+class DummyMT5:
+    """Fallback MT5 object when MT5 is not available or disconnected."""
+    TIMEFRAME_M1 = 1
+    TIMEFRAME_M5 = 5
+    TIMEFRAME_M15 = 15
+    TIMEFRAME_M30 = 30
+    TIMEFRAME_H1 = 16385
+    TIMEFRAME_H4 = 16388
+    TIMEFRAME_D1 = 16408
+
+    def initialize(self, *args, **kwargs):
+        return False
+
+    def shutdown(self):
+        pass
+
+    def symbol_info_tick(self, *args, **kwargs):
+        return None
+
+    def symbol_info(self, *args, **kwargs):
+        return None
+
+    def copy_rates_from_pos(self, *args, **kwargs):
+        return None
+
+    def last_error(self):
+        return (-1, "MT5 not connected")
+
 if sys.platform == 'win32':
-    import MetaTrader5 as mt5
-else:
     try:
-        from mt5linux import MetaTrader5
-        mt5 = MetaTrader5(host=MT5_HOST, port=MT5_PORT)
-    except Exception as e:
-        print(f"[CONFIG WARNING] Could not initialize mt5linux connection: {e}")
+        import MetaTrader5 as mt5
+    except ImportError:
+        mt5 = DummyMT5()
+else:
+    mt5_obj = None
+    try:
+        import rpyc
+        conn = rpyc.classic.connect(MT5_HOST, MT5_PORT)
+        mt5_obj = conn.modules.MetaTrader5
+    except Exception as e1:
         try:
-            import MetaTrader5 as mt5
-        except ModuleNotFoundError:
-            mt5 = None
+            from mt5linux import MetaTrader5
+            mt5_obj = MetaTrader5(host=MT5_HOST, port=MT5_PORT)
+        except Exception as e2:
+            print(f"[CONFIG WARNING] Could not initialize remote MT5 connection ({e1}; {e2})")
+    
+    mt5 = mt5_obj if mt5_obj is not None else DummyMT5()
+
 
 
 
