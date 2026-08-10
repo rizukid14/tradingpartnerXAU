@@ -158,6 +158,7 @@ def interactive_setup():
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
+        ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Memory (lessons/dec)", "config.MEMORY_CONTEXT_ENABLED", "ON" if config.MEMORY_CONTEXT_ENABLED else "OFF"),
