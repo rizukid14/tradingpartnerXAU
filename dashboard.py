@@ -788,6 +788,11 @@ def serve(host="0.0.0.0", port=8765):
                     if hasattr(config, k):
                         setattr(config, k, v)
                         updated.append(k)
+                if updated and hasattr(config, "save_config_to_env"):
+                    try:
+                        config.save_config_to_env({k: getattr(config, k) for k in updated})
+                    except Exception:
+                        pass
                 _send_json(self, {
                     "status": "success",
                     "message": f"Updated {len(updated)} config parameters",
