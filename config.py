@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from dotenv import load_dotenv
 
 # --- PATH & DIRECTORY SETUP ---
@@ -406,6 +407,60 @@ def risk_percent_for(symbol):
     XAU (M5 scalping, up to 6 concurrent): 0.5% — aggregate ~3% max.
     """
     return RISK_PERCENT_BTC if is_crypto(symbol) else RISK_PERCENT_XAU
+
+
+TRIGGER_FLAG_FILE = os.path.join(DATA_DIR, "trigger_cycle.flag")
+
+def trigger_manual_cycle():
+    """Sets trigger flag file on disk so separate processes (main.py) pick it up immediately."""
+    global TRIGGER_CYCLE_REQUESTED
+    TRIGGER_CYCLE_REQUESTED = True
+    try:
+        with open(TRIGGER_FLAG_FILE, "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
+
+def check_and_clear_trigger_flag() -> bool:
+    """Checks if a manual cycle trigger was requested via file flag or memory, and clears it."""
+    global TRIGGER_CYCLE_REQUESTED
+    requested = TRIGGER_CYCLE_REQUESTED or os.path.exists(TRIGGER_FLAG_FILE)
+    TRIGGER_CYCLE_REQUESTED = False
+    if os.path.exists(TRIGGER_FLAG_FILE):
+        try:
+            os.remove(TRIGGER_FLAG_FILE)
+        except Exception:
+            pass
+    return requested
+
+
+def reload_config():
+    """Reloads config values from .env into memory so separate processes stay in sync."""
+    env_path = os.path.join(BASE_DIR, ".env")
+    if not os.path.exists(env_path):
+        return
+    load_dotenv(env_path, override=True)
+
+    global DRY_RUN, TRADING_PAUSED, MAX_DAILY_LOSS_USD, RISK_PERCENT_XAU, RISK_PERCENT_BTC
+    global CONFIDENCE_CONSENSUS_THRESHOLD_XAU, CONFIDENCE_CONSENSUS_THRESHOLD_BTC
+    global CLAUDE_MODEL, GEMINI_MODEL, OPENAI_MODEL, TP_SL_RULES
+    global TRAILING_STOP_ENABLED, BREAK_EVEN_ENABLED, WEEKEND_TRADING_ENABLED
+
+    DRY_RUN = _getenv_bool("DRY_RUN", DRY_RUN)
+    TRADING_PAUSED = _getenv_bool("TRADING_PAUSED", TRADING_PAUSED)
+    MAX_DAILY_LOSS_USD = _getenv_float("MAX_DAILY_LOSS_USD", MAX_DAILY_LOSS_USD)
+    RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", RISK_PERCENT_XAU)
+    RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", RISK_PERCENT_BTC)
+    CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_XAU", CONFIDENCE_CONSENSUS_THRESHOLD_XAU)
+    CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_BTC", CONFIDENCE_CONSENSUS_THRESHOLD_BTC)
+    CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", CLAUDE_MODEL)
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", GEMINI_MODEL)
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", OPENAI_MODEL)
+    TP_SL_RULES = os.getenv("TP_SL_RULES", TP_SL_RULES)
+    TRAILING_STOP_ENABLED = _getenv_bool("TRAILING_STOP_ENABLED", TRAILING_STOP_ENABLED)
+    BREAK_EVEN_ENABLED = _getenv_bool("BREAK_EVEN_ENABLED", BREAK_EVEN_ENABLED)
+    WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", WEEKEND_TRADING_ENABLED)
 
 
 def save_config_to_env(updates: dict) -> list:
