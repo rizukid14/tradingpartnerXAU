@@ -125,11 +125,26 @@ FORECAST_FALLBACK_MODEL = os.getenv("FORECAST_FALLBACK_MODEL", "gemini-3.5-flash
 
 # --- TRADING PARAMETERS ---
 # Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
+# Default = nama broker LIVE (suffix -ECNc). Auto-correct cuma arah demo (XAUUSD-ECNc -> XAUUSD-ECN).
 WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "XAUUSD-ECNc")
 WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", "BTCUSD.c")
 CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
 ENABLE_BTC_ROTATION = _getenv_bool("ENABLE_BTC_ROTATION", False)
 SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
+
+# --- TRADING MODE: "xau" (default, XAU only) | "xau_pairs" (XAU + FX cross pairs, parallel scan per candle) ---
+# FX cross pairs (non-USD => low correlation with XAUUSD). Default = nama broker LIVE
+# (suffix -ECNc). Auto-correct cuma arah demo (live -> -ECNc, demo -> -ECN).
+TRADING_MODE = os.getenv("TRADING_MODE", "xau").strip().lower()
+FX_PAIR_SYMBOLS = [
+    s.strip()
+    for s in os.getenv(
+        "FX_PAIR_SYMBOLS",
+        "EURGBP-ECNc,EURJPY-ECNc,EURCAD-ECNc,GBPJPY-ECNc",
+    ).split(",")
+    if s.strip()
+]
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 5)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M5").upper()
 TIMEFRAME_MAP = {
@@ -223,7 +238,7 @@ FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
 QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
 MONTE_CARLO_ENABLED = _getenv_bool("MONTE_CARLO_ENABLED", False)
 FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", False)
-MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", True)
+MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: lesson learned & recent outcomes TIDAK di-inject ke prompt LLM (lesson M5-scalp toxic, bikin HOLD terus). Kode tetap ada, tinggal set True kalau mau aktif lagi.
 
 # --- TRAILING STOP ---
 TRAILING_STOP_ENABLED = _getenv_bool("TRAILING_STOP_ENABLED", True)
@@ -341,6 +356,7 @@ refresh_mt5_credentials()
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = _getenv_bool("MTF_ANALYSIS_ENABLED", True)
 HIGHER_TIMEFRAMES = {
+    "M15": mt5.TIMEFRAME_M15,
     "M30": mt5.TIMEFRAME_M30
 }
 HIGHER_TIMEFRAMES_CRYPTO = {
@@ -367,35 +383,59 @@ def is_crypto(symbol):
     return symbol in CRYPTO_SYMBOLS
 
 
-def get_active_symbol(now=None):
-    """Returns the symbol that should be traded right now:
-    If ENABLE_BTC_ROTATION is True:
-      - Friday >= 22:00 WIB or Saturday/Sunday -> WEEKEND_SYMBOL (BTCUSD)
-      - Otherwise -> WEEKDAY_SYMBOL (XAUUSD)
-    If ENABLE_BTC_ROTATION is False (default):
-      - Always returns WEEKDAY_SYMBOL (XAUUSD)
+def get_rotation_pool(now=None):
     """
-    if not getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
-        return WEEKDAY_SYMBOL
+    Returns the ordered list of symbols currently in the rotation pool:
+    - TRADING_MODE == "xau" (default): [WEEKDAY_SYMBOL] (weekend -> WEEKEND if ENABLE_BTC_ROTATION)
+    - TRADING_MODE == "xau_pairs": [WEEKDAY_SYMBOL] + FX_PAIR_SYMBOLS, truncated to MAX_ROTATION_SYMBOLS.
+      Weekend: FX pairs market closed -> falls back to XAU (or BTC if ENABLE_BTC_ROTATION).
+    """
     from datetime import datetime
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
-    if (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6):
-        return WEEKEND_SYMBOL
-    return WEEKDAY_SYMBOL
+    is_weekend = (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6)
+    if is_weekend:
+        # FX pairs market closed on weekend -> XAU or BTC only
+        if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
+            return [WEEKEND_SYMBOL]
+        return [WEEKDAY_SYMBOL]
+    if TRADING_MODE == "xau_pairs":
+        pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL]
+        return pool[:MAX_ROTATION_SYMBOLS]
+    return [WEEKDAY_SYMBOL]
+
+
+_rotation_index = {"i": 0}
+
+
+def get_active_symbol(now=None):
+    """Returns the symbol that should be traded right now (respects rotation index)."""
+    pool = get_rotation_pool(now)
+    return pool[_rotation_index["i"] % len(pool)]
 
 
 _last_symbol = {"value": SYMBOL}
 
 
-def refresh_active_symbol(now=None):
+def refresh_active_symbol(now=None, advance=False):
     """
     Updates config.SYMBOL to the symbol that should be active now.
     Returns (new_symbol, changed: bool) — changed=True when the symbol just rotated.
+    advance=True -> move rotation index forward (called once per new candle).
     """
     global SYMBOL
+    if advance:
+        pool = get_rotation_pool(now)
+        _rotation_index["i"] = (_rotation_index["i"] + 1) % len(pool)
     target = get_active_symbol(now)
+    # Auto-correct suffix ke nama broker valid (XAUUSD-ECN -> XAUUSD-ECNc di LIVE).
+    # Lazy import untuk hindari circular (mt5_connector import config).
+    try:
+        from src.core.mt5_connector import get_valid_trade_symbol
+        target = get_valid_trade_symbol(target)
+    except Exception:
+        pass
     changed = (target != _last_symbol["value"])
     SYMBOL = target
     _last_symbol["value"] = target

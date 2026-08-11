@@ -226,6 +226,11 @@ tr:hover { background: var(--panel-hover); }
       <option value="7d">7 Hari</option>
       <option value="30d">30 Hari</option>
     </select></label>
+    <label>Mode Trading: <select id="f-trading-mode" title="Pilih mode simbol yang di-scan bot (perlu dashboard mode serve)">
+      <option value="xau">🎯 XAU Only</option>
+      <option value="xau_pairs">🔄 XAU + Pairs</option>
+    </select></label>
+    <span id="mode-save-status" class="sub" style="font-size:11px;"></span>
   </div>
 </div>
 
@@ -244,7 +249,7 @@ tr:hover { background: var(--panel-hover); }
   </div>
 
   <div class="bento-box col-4">
-    <div class="bento-title">Symbol Focus <span>XAUUSD-ECNc (Gold M5)</span></div>
+    <div class="bento-title">Symbol Focus <span>XAUUSD-ECN (Gold M5)</span></div>
     <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
   </div>
 
@@ -362,7 +367,51 @@ async function loadData() {
     if (r.ok) { DATA = await r.json(); LIVE = true; }
   } catch (e) { /* static mode */ }
   if (!DATA) DATA = window.__INITIAL_DATA__ || {meta:{}, summary:{}, trades:[], equity_curve:[], model_stats:{}, per_symbol:{}, sl_buckets:{}, rr_buckets:{}, lessons:[], agreement:{}, latency:{}, position_manager:{}, sltp_floor:{}, forecast_bias:{}};
+  await loadTradingMode();
   renderAll();
+}
+
+async function loadTradingMode() {
+  const sel = $('f-trading-mode');
+  if (!sel) return;
+  let mode = null;
+  try {
+    const r = await fetch('/api/config', {cache:'no-store'});
+    if (r.ok) {
+      const cfg = await r.json();
+      mode = cfg.TRADING_MODE || null;
+      const pairs = cfg.FX_PAIR_SYMBOLS || [];
+      if (pairs.length && cfg.TRADING_MODE === 'xau_pairs') {
+        sel.title = 'Pool: ' + (cfg.WEEKDAY_SYMBOL || 'XAU') + ' → ' + pairs.join(', ');
+      }
+    }
+  } catch (e) { /* static mode — keep default */ }
+  if (mode && [...sel.options].some(o => o.value === mode)) sel.value = mode;
+}
+
+async function saveTradingMode() {
+  const sel = $('f-trading-mode');
+  const st = $('mode-save-status');
+  if (!sel || !st) return;
+  const mode = sel.value;
+  st.textContent = 'menyimpan…';
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({TRADING_MODE: mode})
+    });
+    if (r.ok) {
+      st.textContent = '✅ mode ' + (mode === 'xau_pairs' ? 'XAU + Pairs' : 'XAU Only') + ' tersimpan (restart bot untuk apply)';
+      st.style.color = '#4ade80';
+    } else {
+      st.textContent = '⚠️ gagal simpan (HTTP ' + r.status + ') — mode ini aktif di bot setelah restart + config reload';
+      st.style.color = '#f87171';
+    }
+  } catch (e) {
+    st.textContent = '⚠️ dashboard static — mode hanya tampilan. Set TRADING_MODE di .env/config lalu restart bot.';
+    st.style.color = '#f59e0b';
+  }
 }
 
 function getFilteredTrades() {
@@ -721,6 +770,8 @@ function initDashboard() {
 }
 
 ['f-era','f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderAll));
+const _modeSel = $('f-trading-mode');
+if (_modeSel) _modeSel.addEventListener('change', saveTradingMode);
 
 document.querySelectorAll('#trades-table th').forEach(th => {
   th.addEventListener('click', () => {

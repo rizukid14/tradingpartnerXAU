@@ -1,0 +1,275 @@
+================================================================================
+  CONFIG TUTORIAL — Multi-LLM Consensus Trading Bot (MT5)
+================================================================================
+File ini menjelaskan SEMUA pengaturan bot: cara ganti mode, daftar pair,
+parameter risk, dan cara set via .env / menu setup / dashboard.
+
+Semua timestamp pakai WIB (Asia/Jakarta). Akun LIVE: VTMarkets-Live 3
+(login 27556325), magic number 20260625.
+
+--------------------------------------------------------------------------------
+1. CARA CEPAT MENGUBAH PENGATURAN (3 cara)
+--------------------------------------------------------------------------------
+a) FILE .ENV (permanen, dibaca saat bot start)
+     Buka file .env di folder root, ubah nilainya, simpan, restart bot.
+
+b) MENU SETUP INTERAKTIF (sesi ini saja — hilang setelah bot restart)
+     Jalankan `python main.py` -> menu muncul -> ketik nomor -> isi nilai.
+     Contoh: ketik 3 (Scan Mode) -> ketik 2 (XAU + Pairs) -> enter.
+
+c) DASHBOARD WEB (sebagian setting, persist ke .env)
+     `python dashboard.py --serve --port 8765` -> buka http://127.0.0.1:8765/
+     Dropdown "Mode Trading" (XAU Only / XAU + Pairs) otomatis persist ke .env
+     (efektif setelah bot restart).
+
+
+--------------------------------------------------------------------------------
+2. MODE SCAN: XAU ONLY vs XAU + PAIRS  ← PALING PENTING
+--------------------------------------------------------------------------------
+TRADING_MODE = xau            # default — cuma trading XAUUSD
+TRADING_MODE = xau_pairs      # XAU + 4 pair FX cross (multi-scan)
+
+Di mode xau_pairs, TIAP CANDLE M5 bot scan SEMUA simbol dalam pool sekaligus
+(parallel scan, bukan giliran). Masing-masing simbol 1x LLM call:
+=> 5 simbol = 5x LLM call per candle M5.
+
+POOL SIMBOL (default):
+    [XAUUSD-ECN, EURGBP-ECN, EURJPY-ECN, EURCAD-ECN, GBPJPY-ECN]
+      (1)            (2)         (3)         (4)         (5)
+
+DETAIL TIAP PAIR:
+--------------------------------------------------------------------------------
+ Simbol base    Live (suffix)   Demo (suffix)   Timeframe   Spread hasil scan
+--------------------------------------------------------------------------------
+ XAUUSD-ECN     XAUUSD-ECNc     XAUUSD-ECN      M5          ~10 pts (≈3% ATR)
+ EURGBP-ECN     EURGBP-ECNc     EURGBP-ECN      M5          ~0 pts
+ EURJPY-ECN     EURJPY-ECNc     EURJPY-ECN      M5          ~0-1 pts
+ EURCAD-ECN     EURCAD-ECNc     EURCAD-ECN      M5          ~4-5 pts
+ GBPJPY-ECN     GBPJPY-ECNc     GBPJPY-ECN      M5          ~11 pts
+--------------------------------------------------------------------------------
+Catatan suffix: tulis nama BASE (tanpa c). Bot auto-correct otomatis:
+akun live -> -ECNc, akun demo -> -ECN. Satu config jalan di dua-duanya.
+
+KENAPA 4 PAIR ITU?
+- Semua CROSS NON-USD => korelasi rendah dengan XAUUSD.
+- Pair yang mengandung USD (EURUSD, GBPUSD, dll) DIBUANG karena gerakannya
+  didominasi USD => gerak bersama XAU, tidak ada diversifikasi.
+- Spread sehat semua (0-11 pts, < 25% ATR).
+
+CARA GANTI DAFTAR PAIR (env, dipisah koma):
+    FX_PAIR_SYMBOLS = EURGBP-ECN,EURJPY-ECN,EURCAD-ECN,GBPJPY-ECN
+
+BATAS JUMLAH SIMBOL:
+    MAX_ROTATION_SYMBOLS = 5     # pool dipotong ke N simbol pertama
+
+PERILAKU WEEKEND:
+    FX market tutup Sabtu-Minggu -> pool otomatis jatuh ke [XAUUSD-ECN]
+    (atau [BTCUSD.c] kalau ENABLE_BTC_ROTATION = True).
+
+RISK AGGREGATE (penting!):
+    Max posisi (MAX_OPEN_POSITIONS=6) & daily loss ($50) dihitung LINTAS
+    SEMUA simbol (magic filter), bukan per-simbol. 6 posisi bisa tersebar
+    misal 2 XAU + 1 EURGBP + 1 EURJPY + 1 EURCAD + 1 GBPJPY.
+
+
+--------------------------------------------------------------------------------
+3. SIMBOL & TIMEFRAME
+--------------------------------------------------------------------------------
+WEEKDAY_SYMBOL = XAUUSD-ECN       # weekday (Senin-Jumat)
+WEEKEND_SYMBOL = BTCUSD.c         # weekend (Sabtu-Minggu) kalau BTC aktif
+ENABLE_BTC_ROTATION = False       # DEFAULT: False = bot 24/5 (XAU+FX saja, weekend
+                                  #   istirahat — XAU & FX tutup Sabtu-Minggu).
+                                  # True = weekend ganti ke BTCUSD.c (24/7).
+                                  # (Kode BTC sengaja dipertahankan, tinggal nyalakan)
+SYMBOL = XAUUSD-ECN               # override simbol (jarang dipakai)
+TIMEFRAME = M5                    # timeframe trading utama (XAU = M5, BTC = M30)
+                                  # BTC selalu M30 (intraday, hindari swap overnight)
+
+PER-SYMBOL SETTINGS (otomatis oleh helper):
+    get_timeframe(symbol)          -> crypto: M30, lainnya: TIMEFRAME
+    get_higher_timeframes(symbol)  -> crypto: H1/H4, lainnya: M15/M30
+    max_spread_points_for(symbol)  -> crypto: 2400, lainnya: 50
+    confidence_threshold_for(symbol)-> crypto: 1.2, lainnya: 1.0
+
+
+--------------------------------------------------------------------------------
+4. RISK & LOT SIZING
+--------------------------------------------------------------------------------
+DRY_RUN = False                   # True = sinyal saja, TIDAK kirim order
+RISK_PERCENT_XAU = 0.5            # risk per trade XAU: 0.5% equity
+RISK_PERCENT_BTC = 1.5            # risk per trade BTC: 1.5% equity
+LOT_SIZE = 0.01                   # fallback lot kalau SL tidak diketahui
+MAX_DAILY_LOSS_USD = 50.0         # stop trading kalau loss harian > $50
+MAX_CONSECUTIVE_LOSSES = 5        # pause kalau loss beruntun 5x
+PAUSE_AFTER_LOSSES_MINUTES = 15   # lama pause setelah loss beruntun
+MAX_OPEN_POSITIONS = 6            # max posisi terbuka (semua simbol)
+MAX_OPEN_POSITIONS_RECOVERY = 4   # max posisi saat recovery mode
+BREAK_EVEN_TOLERANCE_USD = 0.04   # |profit| <= $0.04 dianggap BEP (tidak
+                                  #   nambah loss streak & excluded dari win rate)
+TRADE_COOLDOWN_SECONDS = 0        # jeda antar trade (0 = mati)
+
+LOT SIZE DIHITUNG OTOMATIS dari equity & SL:
+    lot = risk_usd / (SL pts x usd_per_point)
+    Urutan: risk-based -> recovery (x0.5) / session (x1.2) multiplier
+            -> clamp+round ke volume_step broker
+            -> margin safety net (lot turun kalau margin > 50% free)
+
+
+--------------------------------------------------------------------------------
+5. SPREAD FILTER & SESSION
+--------------------------------------------------------------------------------
+MAX_SPREAD_POINTS_XAU = 50        # XAU: tolak trade kalau spread > 50 pts
+MAX_SPREAD_POINTS_BTC = 2400      # BTC: tolak kalau spread > 2400 pts
+SESSION_FILTER_ENABLED = True     # aktifkan filter sesi
+ALLOWED_SESSIONS_WIB = [...]      # sesi aktif (Asia Dawn/Tokyo/London/NY)
+DANGER_ZONES_WIB = []             # jam dilarang trading (KOSONG = 24 jam aktif)
+WEEKEND_CLOSE_ENABLED = True      # tutup posisi sebelum weekend
+WEEKEND_TRADING_ENABLED = False   # trading saat weekend (XAU/FX tutup)
+
+CATATAN 11 Agustus 2026: danger zone DIMATIKAN ([]) + session XAU diperluas
+(London 15:00-23:59 x1.0, London-NY 20:00-23:59 x1.2, NY 20:00-05:00 x1.0).
+Tidak ada jam yang diblokir.
+
+
+--------------------------------------------------------------------------------
+6. SL/TP RULES (PENTING — 2 MODE)
+--------------------------------------------------------------------------------
+TP_SL_RULES = ATR-Based           # default (safe)
+  - SL/TP dari AI dipakai apa adanya, TAPI trade DITOLAK otomatis kalau:
+      SL < max(2x spread, 1.25x ATR)  atau  TP < max(2x spread, 2.5x ATR)
+  - R:R 2:1 terhadap volatilitas. Bukan dinaikkan — cari setup yang
+    secara alamiah 2R.
+
+TP_SL_RULES = LLM                 # bebas
+  - SL/TP sesuai thesis model, satu-satunya floor: SL >= 2x spread
+    (anti INVALID_STOPS). Lot dihitung dari SL tsb.
+  - Prompt diarahkan: SL 100-350 pts (Gold M5) / 20000-60000 pts (BTC M30),
+    larang stop hyper-scalping M1.
+
+Nilai lain:
+    DEFAULT_SL_POINTS_XAU = 300     # fallback SL (ATR-Based)
+    DEFAULT_TP_POINTS_XAU = 600
+    DEFAULT_SL_POINTS_BTC = 50000
+    DEFAULT_TP_POINTS_BTC = 100000
+    SL_ATR_MULTIPLIER = 1.5         # ATR-Based gate
+    TP_ATR_MULTIPLIER = 3.0
+
+
+--------------------------------------------------------------------------------
+7. KONSENSUS & AI MODE
+--------------------------------------------------------------------------------
+CONFIDENCE_CONSENSUS_THRESHOLD_XAU = 1.0    # weighted score minimum XAU
+CONFIDENCE_CONSENSUS_THRESHOLD_BTC = 1.2    # weighted score minimum BTC
+MIN_CONSENSUS_MODELS = 2                    # min model searah
+DYNAMIC_CONFIG_ENABLED = False              # adaptasi win-rate (OFF)
+
+AI_MODE_POLICY = schedule           # schedule | fixed
+AI_FIXED_MODE = triple              # dipakai kalau policy = fixed
+AI_MODE_SCHEDULE =                  # jadwal WIB (policy = schedule):
+    00:01-08:59  single   (OpenAI saja)
+    09:00-13:00  dual     (OpenAI + DeepSeek)
+    13:01-18:59  single   (OpenAI saja)
+    19:00-23:00  triple   (OpenAI + Gemini + DeepSeek)
+    23:01-00:00  single   (fallback)
+
+MODEL AI:
+    OPENAI_MODEL = gpt-5.4-mini
+    GEMINI_MODEL = gemini-3.1-flash-lite
+    CLAUDE_MODEL = deepseek/deepseek-v4-flash   # slot-3 default (murah)
+    CLAUDE_FALLBACK_MODEL = claude-haiku-4-5-20251001
+    LLM_TIMEOUT_SECONDS = 24.0
+
+API KEY (.env): OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY,
+                ANTHROPIC_API_KEY (hanya kalau slot-3 pindah ke Claude)
+
+
+--------------------------------------------------------------------------------
+8. TRAILING STOP / BREAK-EVEN / PARTIAL CLOSE
+--------------------------------------------------------------------------------
+TRAILING_STOP_ENABLED = True
+TRAILING_ACTIVATION_ATR_MULT_XAU = 1.0   # activation = min(1.0x ATR, cap)
+TRAILING_DISTANCE_ATR_MULT_XAU = 0.5     # distance = 0.5x ATR
+TRAILING_ACTIVATION_MAX_POINTS_XAU = 500 # cap activation XAU
+TRAILING_ACTIVATION_MAX_POINTS_BTC = 40000
+BREAK_EVEN_ENABLED = True
+PARTIAL_CLOSE_ENABLED = True
+PARTIAL_CLOSE_PERCENT = 50.0             # close 50% saat profit
+
+SL di-trail dari harga EKSTREM sejak entry (bukan harga terakhir) — pullback
+tidak bisa narik SL mundur. Partial close di-skip di lot 0.01.
+
+
+--------------------------------------------------------------------------------
+9. FITUR LAIN
+--------------------------------------------------------------------------------
+MTF_ANALYSIS_ENABLED = True       # konteks multi-timeframe (M15/M30, H1/H4)
+FUNDAMENTAL_ANALYSIS_ENABLED = False
+FORECAST_ENABLED = False          # forecast engine (informational only)
+QUANT_ANALYSIS_ENABLED = False
+MONTE_CARLO_ENABLED = False
+MEMORY_CONTEXT_ENABLED = False    # inject lessons ke prompt (OFF by default)
+TELEGRAM_ENABLED = False
+MAGIC_NUMBER = 20260625           # bot hanya kelola posisi dgn magic ini
+
+STATE & MEMORY (folder data/):
+    memory_lessons.json           # lessons post-mortem (reset utk mulai bersih)
+    decision_memory.json          # 6 keputusan terakhir per simbol
+    risk_state.json               # loss streak / pause / recovery / known_closed
+    dynamic_rules.json            # adaptasi win-rate
+    position_manager_state.json   # trailing/BE/partial state
+    analysis_cache.json / forecast_cache.json   # cache (auto-refresh)
+
+Reset memory & PnL ke kondisi baru setelah deposit:
+    Hapus isi / reset file di atas (struktur wajib dipertahankan, jangan
+    hapus filenya) lalu RESTART bot. Detail ada di AGENTS.md.
+
+
+--------------------------------------------------------------------------------
+10. CONTOH .ENV LENGKAP
+--------------------------------------------------------------------------------
+# --- AKUN & MODE ---
+DRY_RUN=False
+TRADING_MODE=xau_pairs            # xau | xau_pairs
+FX_PAIR_SYMBOLS=EURGBP-ECN,EURJPY-ECN,EURCAD-ECN,GBPJPY-ECN
+MAX_ROTATION_SYMBOLS=5
+ENABLE_BTC_ROTATION=False          # False = 24/5 (XAU+FX, weekend istirahat).
+                                   # True  = weekend ganti ke BTCUSD.c (24/7).
+
+# --- RISK ---
+RISK_PERCENT_XAU=0.5
+RISK_PERCENT_BTC=1.5
+MAX_DAILY_LOSS_USD=50.0
+MAX_CONSECUTIVE_LOSSES=5
+PAUSE_AFTER_LOSSES_MINUTES=15
+MAX_OPEN_POSITIONS=6
+
+# --- FILTER & SESSION ---
+MAX_SPREAD_POINTS_XAU=50
+MAX_SPREAD_POINTS_BTC=2400
+DANGER_ZONES_WIB=
+
+# --- KONSENSUS & AI ---
+CONFIDENCE_CONSENSUS_THRESHOLD_XAU=1.0
+CONFIDENCE_CONSENSUS_THRESHOLD_BTC=1.2
+AI_MODE_POLICY=schedule
+CLAUDE_MODEL=deepseek/deepseek-v4-flash
+
+# --- SL/TP ---
+TP_SL_RULES=ATR-Based            # ATR-Based | LLM
+
+# --- API KEYS ---
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AIza...
+DEEPSEEK_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# --- MT5 (opsional, kosong = pakai terminal aktif) ---
+MT5_LOGIN=
+MT5_PASSWORD=
+MT5_SERVER=
+
+
+================================================================================
+DISCLAIMER: Trading forex/gold/crypto berisiko tinggi. Bot ini alat bantu —
+bukan saran finansial. Selalu uji di akun demo sebelum live.
+================================================================================

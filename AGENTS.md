@@ -5,8 +5,9 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.
-- **XAUUSD-ECNc** (Gold): scalping **M5**, weekday, MTF context M15/M30
+- **XAUUSD-ECN** (Gold): scalping **M5**, weekday, MTF context M15/M30. Config default `WEEKDAY_SYMBOL = "XAUUSD-ECN"` (base name tanpa suffix) — `get_valid_trade_symbol` auto-correct saat connect: live → `XAUUSD-ECNc`, demo → `XAUUSD-ECN`. Satu config jalan di dua-duanya.
 - **BTCUSD.c** (Bitcoin): intraday **M30**, weekend + setelah jam 22:00 Jumat WIB (rotasi otomatis, `config.get_active_symbol`). **MTF context H1/H4, forecast horizon T+4h/T+D1 (bebas swap overnight).**
+- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (**parallel scan**: SEMUA simbol di-scan pada SETIAP candle M5 — 5× LLM call per candle, 1 call per pair). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `EURGBP-ECN, EURJPY-ECN, EURCAD-ECN, GBPJPY-ECN` — semua cross non-USD, korelasi rendah dengan XAU; spread hasil scan: EURGBP 0, EURJPY ~0-1, EURCAD ~4-5, GBPJPY ~11 pts), dipotong `MAX_ROTATION_SYMBOLS` (5). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol). Implementasi: `run_trading_cycle()` → loop `for sym in pool: config.SYMBOL = sym; _run_cycle_for_current_symbol()` (post-mortem 1× aggregate per candle, macro/MTF per-symbol di-populate di dalam loop).
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`) — jangan pernah test sembarangan tanpa konfirmasi
 - Balance awal $1000, sekarang ~$1065
 - Waktu semua pakai **WIB** (Asia/Jakarta)
@@ -17,6 +18,7 @@ Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **M
 python main.py
 ```
 - `config.DRY_RUN = False` → **LIVE trading** (order beneran dikirim). Jangan ubah tanpa bilang user.
+- **Ganti mode trading**: `.env` `TRADING_MODE=xau` / `TRADING_MODE=xau_pairs`, atau via UI dashboard (dropdown Mode Trading → POST `/api/config`, di-persist ke `.env`) → **restart bot** biar apply (dashboard serve = proses terpisah dari bot).
 - Log: `trading_bot.log` (auto-rotate 2MB, keep 5000 baris). **Log ini CAMPUR sesi demo + live** — akun demo lama `1157958` (ticket `568xxx`/`569xxx`), akun live `27556325` (ticket `1159xxx`). Jangan hitung profit dari log tanpa pisahin sesi — query MT5 langsung lebih akurat.
 
 ## Arsitektur file
@@ -101,14 +103,15 @@ python main.py
 
 21. **Fibonacci retracement di prompt** (sudah di main `744ad0a`): `prepare_prompt` hitung Swing High/Low dari 50 candle + Fib 38.2/50/61.8 → di-inject ke "CURRENT INDICATORS & FIBONACCI SUMMARY". Tujuannya: bot bisa lihat potensi SELL koreksi di tren bullish (target Fib) tanpa panik — LLM tidak lagi buta soal level retracement.
 21b. **Key levels + candle M5 25 / M1 10** (11 Agustus): `prepare_prompt` inject **KEY LEVELS** (PDH/PDL dari D1, Today Open, nearest round number, active WIB session) — di-cache 5 menit (D1 berubah sekali sehari), 1 query D1 murah. Candle M5 naik dari 7 → **25** (cukup baca pola swing tanpa boros token), M1 5 → **10** (konfirmasi entry). Sumber: saran Claude soal top-down MTF (H4/H1/M15 tetap diringkas jadi teks bias di macro_analyst — bukan candle mentah).
+21c. **Candle M5 25 → 50 (OHLC-only) + MTF XAU tambah M15** (11 Agustus, review prompt Claude): sebelumnya prompt kirim 25 candle M5 tapi klaim "50-Bar Swing High/Low" → LLM gak bisa verifikasi swing. Sekarang kirim **50 candle OHLC-only** (volume dibuang, window penuh sama dengan swing/Fib) + header "RECENT CANDLES (Last 50 candles, OHLC only — full swing window)". Plus `HIGHER_TIMEFRAMES` XAU tambah **M15** (sebelumnya cuma M30, AGENTS.md bilang M15/M30 — sekarang sesuai). Token naik ~1.1k chars per prompt, sepadan dengan konteks struktur yang bisa diverifikasi.
 22. **Prompt template baru `docs/prompt_claude.md`** (hanya di `dev`, commit `ab42c17`): ganti static block kaku (STRATEGY/DECISION ORDER/counter-trend rules) dengan:
     - **ANALYSIS FREEDOM**: LLM bebas pilih interpretasi (trend/momentum/breakout/pullback/mean-reversion/reversal/exhaustion) — tidak dipaksa ke satu template strategi. Indikator (RSI/EMA/Fib/ATR/forecast) adalah **input untuk judgment, bukan trigger/block wajib**.
-    - **DATA INTEGRITY**: jangan invent indikator yang tidak diberikan; macro/HTF note = background only (kalau generik/stale → abaikan); forecast = informational only (NEUTRAL ≠ wajib HOLD); recent outcomes = win/loss history, bukan sinyal arah.
+    - **DATA INTEGRITY**: jangan invent indikator yang tidak diberikan; MTF analysis = dihitung dari candle HTF asli (EMA/RSI/ATR/swing) → faktual, pakai untuk struktur besar (pullback vs reversal); news/fundamental = advisory only (kalau generik/stale → abaikan); forecast = informational only (NEUTRAL ≠ wajib HOLD); recent outcomes = win/loss history, bukan sinyal arah.
     - **RISK CONSTRAINTS** (satu-satunya yang non-negotiable): thesis konkret + invalidation jelas, SL beyond invalidation & ~1.25× ATR & ≥ 2× spread, TP ≥ 2× SL (R:R 2:1, ~2.5× ATR), spread tidak makan SL.
     - **Output schema baru**: `setup` (label bebas), `edge` (1-2 kalimat), `invalidation` (1 kalimat) + `sl_points`/`tp_points`/`reasoning`. Field baru opsional — HOLD tetap valid, consensus tetap jalan.
     - `build_system_prompt(symbol, timeframe, asset_desc)` = statis per bot (cache-friendly, ≥1024 token); `prepare_prompt` gabung statis + dinamis.
 23. **Anti-anchor: `summarize_recent_outcomes`** (di `dev`): ganti inject narasi decision history dengan ringkasan outcome-only ("3 trade taken, 2 hit SL, 3 HOLD"). Sebelumnya decision_memory_str inject keputusan lama lengkap → LLM ke-anchor ke bias bullish basi berjam-jam. Sekarang cuma win/loss counts.
-24. **Macro & forecast diberi label advisory** (di `dev`): macro_str → "background only — disregard if generic/stale"; forecast_str → "informational only — NEUTRAL tidak wajib HOLD, aligned tidak otomatis trade".
+24. **Macro & forecast framing** (di `dev`): macro_str → MTF analysis di-framing **faktual** ("COMPUTED from actual higher-timeframe candles — pullback vs reversal"), news/fundamental → "advisory only — disregard if generic or stale"; forecast_str → "informational only — NEUTRAL tidak wajib HOLD, aligned tidak otomatis trade". (Update 11 Agustus: sebelumnya MTF ikut di-frame "advisory/background only" → LLM cenderung buang konteks HTF yang faktual; sekarang dipisah tegas.)
 25. **Strip emoji dari prompt LLM** (di `dev`, commit `06159f6`): `_EMOJI_PATTERN` + `_strip_emoji()` diterapkan ke prompt final sebelum dikirim. **Requirement user: prompt LLM HARUS bebas emoji** (UI/CLI/log boleh pakai emoji). Sumber emoji bisa dari macro/forecast/lessons/calendar — strip di prompt final menangani semua.
 26. **Unicode safety**: `≈` diganti `approx` di prompt (UnicodeEncodeError saat print di console cp1252 Windows).
 27. **`scratch/prompt_preview_test.py`**: test file untuk preview prompt LLM dengan data MT5 asli (XAUUSD-ECNc — bukan XAUUSD, broker pakai suffix `-ECNc`). Pakai `config.get_timeframe()`; fallback ke `XAUUSD` kalau simbol utama gagal.

@@ -182,10 +182,26 @@ def interactive_setup():
         server = config.MT5_SERVER or "?"
         return f"{mode} ({login} @ {server})"
 
+    def _fmt_val(attr, v):
+        if attr == "config.DRY_RUN":
+            return "LIVE (kirim order)" if v else "DRY RUN (sinyal saja)"
+        if attr == "config.TRADING_MODE":
+            return "XAU + Pairs (5 simbol)" if v == "xau_pairs" else "XAU Only"
+        if v is True:
+            return "ON"
+        if v is False:
+            return "OFF"
+        s = str(v)
+        if attr == "config.TP_SL_RULES":
+            s += " (floor SL 1.25x ATR + TP 2.5x ATR)" if v == "ATR-Based" else " (bebas, 2x spread)" if v == "LLM" else ""
+        return s
+
+
     # (grup, label, attr, val) — dikelompokkan biar enak dibaca
     settings = [
         ("MODE & RISK", "Akun MT5", "config.MT5_ACCOUNT_MODE", _account_label()),
         ("MODE & RISK", "Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
+        ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", "XAU + Pairs (5 simbol)" if config.TRADING_MODE == "xau_pairs" else "XAU Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
         ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
@@ -264,15 +280,8 @@ def interactive_setup():
                     setattr(config, attr, val)
             # refresh tampilan
             for i, (group, label, attr, _) in enumerate(settings):
-                key = attr.split(".")[1]
-                v = getattr(config, key, None)
-                settings[i] = (group, label, attr,
-                               "DRY RUN" if (attr == "config.DRY_RUN" and v is True)
-                               else ("LIVE" if attr == "config.DRY_RUN" else
-                                     ("ON" if v is True else ("OFF" if v is False else
-                                      (str(v) + (" (floor SL 1.25x ATR + TP 2.5x ATR)" if attr == "config.TP_SL_RULES" and v == "ATR-Based"
-                                                 else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and v == "LLM"
-                                                 else ""))))))
+                v = getattr(config, attr.split(".")[1], None)
+                settings[i] = (group, label, attr, _fmt_val(attr, v))
             print("  ✅ Preset diterapkan.")
             continue
 
@@ -319,6 +328,16 @@ def interactive_setup():
                             print("  ❌ Pilih 'ATR-Based' (1) atau 'LLM' (2).")
                             continue
                         setattr(config, attr.split(".")[1], new_val)
+                    elif "TRADING_MODE" in attr:
+                        v = new_val.strip().lower()
+                        if v in ("1", "xau", "only", "xau-only", "gold"):
+                            new_val = "xau"
+                        elif v in ("2", "pairs", "xau_pairs", "xau-pairs", "all"):
+                            new_val = "xau_pairs"
+                        else:
+                            print("  ❌ Pilih 'xau' (1) atau 'xau_pairs' (2).")
+                            continue
+                        setattr(config, attr.split(".")[1], new_val)
                     elif "AI_MODE_POLICY" in attr:
                         v = new_val.strip().lower()
                         if v in ("schedule", "jadwal", "auto", "1"):
@@ -332,15 +351,8 @@ def interactive_setup():
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
                     # refresh tampilan
-                    settings[idx] = (group, label, attr,
-                                     "DRY RUN" if (attr == "config.DRY_RUN" and config.DRY_RUN)
-                                     else ("LIVE" if attr == "config.DRY_RUN" else
-                                           ("ON" if (config.__dict__.get(attr.split('.')[1]) is True) else
-                                            ("OFF" if config.__dict__.get(attr.split('.')[1]) is False else
-                                             (str(config.__dict__.get(attr.split('.')[1])) +
-                                              (" (floor SL 1.25x ATR + TP 2.5x ATR)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "ATR-Based"
-                                               else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "LLM"
-                                               else ""))))))
+                    v = getattr(config, attr.split('.')[1], None)
+                    settings[idx] = (group, label, attr, _fmt_val(attr, v))
                     print(f"  ✅ {label} diubah.")
                 except ValueError:
                     print("  ❌ Nilai tidak valid.")
@@ -394,7 +406,11 @@ class TeeLogger(object):
 
 
 def run_trading_cycle():
-    """Performs one full cycle of fetching data, querying LLMs, and checking consensus."""
+    """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
+    per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
+    = [XAU, EURGBP, EURJPY, EURCAD, GBPJPY] — all symbols scanned on EVERY M5 candle
+    (5x LLM call per candle, one per pair).
+    """
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
@@ -443,6 +459,36 @@ def run_trading_cycle():
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
 
+    # ── Multi-symbol parallel scan ──────────────────────────────────────────────
+    # Mode "xau": pool = [XAU] (1 cycle per candle, seperti sebelumnya).
+    # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS — semua simbol di-scan
+    # pada SETIAP candle M5 (5x LLM call per candle, 1 call per pair).
+    pool = config.get_rotation_pool()
+    # Resolve base names -> nama broker valid (auto-correct suffix, mis. XAUUSD-ECN -> XAUUSD-ECNc)
+    # + symbol_select biar tick/rates tersedia untuk semua pair di pool (FX pair baru sering belum visible)
+    valid_pool = []
+    for sym in pool:
+        vsym = connector.get_valid_trade_symbol(sym)
+        if vsym != sym:
+            print(f"[MT5 AUTO-CORRECT] Pool '{sym}' -> '{vsym}' (broker live)")
+        mt5.symbol_select(vsym, True)
+        valid_pool.append(vsym)
+    for sym in valid_pool:
+        config.SYMBOL = sym
+        try:
+            _run_cycle_for_current_symbol()
+        except Exception as e:
+            print(f"⚠️ [CYCLE ERROR {sym}] {e}")
+    # Restore ke simbol utama pool (valid, sudah auto-correct) — biar status line
+    # & candle check berikutnya konsisten memakai simbol utama, bukan yang terakhir.
+    config.SYMBOL = valid_pool[0] if valid_pool else config.SYMBOL
+    return True
+
+
+def _run_cycle_for_current_symbol():
+    """Full cycle untuk satu simbol aktif (config.SYMBOL): risk gate → data → LLM
+    → consensus → eksekusi. Dipanggil per simbol dalam pool (mode xau_pairs).
+    """
     # 0. Risk gate — check all conditions before trading
     can_trade, reason = risk.can_trade()
     if not can_trade:
@@ -499,9 +545,18 @@ def run_trading_cycle():
 
     # 4. Query AI models in parallel (including active open_positions for 5-min AI re-evaluation!)
 
+    # MTF/fundamental analysis per-symbol — cache di macro_analyst per-symbol,
+    # jadi simbol non-aktif (EURGBP, EURJPY, dst.) di-populate di sini juga,
+    # bukan cuma XAU dari loop utama.
+    if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
+        try:
+            macro.check_and_update_analysis()
+        except Exception as e:
+            print(f"[MACRO UPDATE ERROR {config.SYMBOL}] {e}")
+
     macro_context = macro.get_macro_context()
     if macro_context:
-        print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
+        print(f"📊 Menyertakan analisa Multi-Timeframe & Fundamental ({config.SYMBOL}) untuk LLM...")
 
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
@@ -654,6 +709,12 @@ def main():
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
     tf_name = "M30" if config.is_crypto(config.SYMBOL) else "M5"
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
+    if config.TRADING_MODE == "xau_pairs":
+        pool = config.get_rotation_pool()
+        print(f"🔄 Trading Mode: XAU + PAIRS | Scan Pool ({len(pool)} simbol): {' → '.join(pool)}")
+        print(f"   Semua simbol di-scan SETIAP candle M5 ({len(pool)}x LLM call per candle)")
+    else:
+        print(f"🎯 Trading Mode: XAU ONLY")
     print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
     if config.AI_MODE_POLICY == "schedule":
         desc = " | ".join([f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} {mode.upper()}" for sh, sm, eh, em, mode in config.AI_MODE_SCHEDULE])
