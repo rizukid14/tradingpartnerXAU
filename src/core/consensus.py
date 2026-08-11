@@ -13,16 +13,20 @@ def _effective_consensus_threshold():
         return config.CONSENSUS_THRESHOLD
 
 
-def _apply_sltp_floors(sl_points, tp_points):
+def _apply_sltp_rules(sl_points, tp_points):
     """
-    Enforce SL/TP floors according to config.TP_SL_RULES:
-      "ATR-Based" (default): min SL = max(2x spread, 1.25x ATR), min TP = max(2.5x ATR, 2x SL).
-        R:R minimal 2:1 (TP 2.5x ATR / SL 1.25x ATR = 2). Mencegah SL di dalam
-        noise/volatilitas — model (DeepSeek/OpenAI) sering kasih SL cuma 6-7% ATR;
-        1.25x ATR kompromi biar tetap scalping-friendly tapi nggak kepotong noise.
+    SL/TP final sesuai config.TP_SL_RULES:
+      "ATR-Based" (default): GATE — proposal AI DIPAKAI apa adanya (setelah
+        outlier filter + average), tapi trade HANYA dieksekusi kalau:
+          SL >= max(2x spread, 1.25x ATR) DAN TP >= max(2x spread, 2.5x ATR)
+        Kalau jarak proposal kurang dari itu -> trade DIBATALKAN (return
+        ok=False), BUKAN dinaikkan. Filosofi: cari setup yang secara alamiah
+        bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
+        invalidation model = mengubah setup tanpa persetujuan model.
       "LLM": SL/TP sebebas-bebasnya sesuai konsensus — cuma floor 2x spread
         (biar broker nggak nolak INVALID_STOPS). Lot size dikalkulasi dari SL
         tsb via risk-based sizing, jadi SL kecil = lot gede (risk tetap sama).
+    Returns: (sl_points, tp_points, ok: bool, reason: str)
     """
     if not sl_points or sl_points <= 0:
         sl_points = config.default_sl_points_for(config.SYMBOL)
@@ -63,19 +67,26 @@ def _apply_sltp_floors(sl_points, tp_points):
             tp_points = config.default_tp_points_for(config.SYMBOL)
         if tp_points < sl_points:
             tp_points = sl_points
-        return sl_points, tp_points
+        return sl_points, tp_points, True, ""
 
-    # ATR-Based: SL floor = max(2x spread, 1.25x ATR); TP floor = max(2.5x ATR, 2x SL)
-    # -> R:R minimal 2:1 (TP 2.5x ATR / SL 1.25x ATR = 2). Never inside spread/noise.
-    min_sl = max(spread_pts * 2, int(atr_points * 1.25))
-    if sl_points < min_sl:
-        sl_points = min_sl
+    # ATR-Based: GATE layak/tidak. Proposal AI dipakai kalau lolos.
+    if atr_points > 0:
+        min_sl = max(spread_pts * 2, int(atr_points * 1.25))
+        min_tp = max(spread_pts * 2, int(atr_points * 2.5))
+        if sl_points < min_sl or tp_points < min_tp:
+            return sl_points, tp_points, False, (
+                f"SL {sl_points} < 1.25x ATR ({min_sl}) atau "
+                f"TP {tp_points} < 2.5x ATR ({min_tp}) (ATR {atr_points} pts)"
+            )
+        return sl_points, tp_points, True, ""
 
-    min_tp = max(int(atr_points * 2.5), int(sl_points * 2))
-    if tp_points < min_tp:
-        tp_points = min_tp
-
-    return sl_points, tp_points
+    # ATR gagal dihitung: fallback ke floor 2x spread, tetap izinkan (jangan
+    # stop trading karena data hiccup).
+    if sl_points < spread_pts * 2:
+        sl_points = spread_pts * 2
+    if tp_points < sl_points:
+        tp_points = sl_points
+    return sl_points, tp_points, True, "ATR unavailable, fallback 2x spread"
 
 
 def _drop_standalone_outlier(values, label):
@@ -300,8 +311,26 @@ def calculate_consensus(decisions):
     final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
     final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
 
-    # Enforce minimum SL/TP (2x spread floor, never inside spread)
-    final_sl, final_tp = _apply_sltp_floors(final_sl, final_tp)
+    # Apply SL/TP rules (mode-aware):
+    #   ATR-Based -> GATE: trade hanya layak kalau SL >= 1.25x ATR DAN TP >= 2.5x ATR.
+    #                Kalau jarak proposal kurang -> trade DIBATALKAN (bukan dinaikkan).
+    #   LLM       -> bebas, cuma floor 2x spread.
+    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+
+    if not sltp_ok:
+        print(f"🚫 [TRADE DIBATALKAN] Sinyal {consensus_signal} tidak dieksekusi: {sltp_reason}")
+        print("   Model sepakat arah, tapi SL/TP proposal tidak memenuhi rules ATR "
+              "(R:R 2:1 terhadap volatilitas). Cari setup lain.")
+        print("=" * 50 + "\n")
+        return {
+            "signal": "HOLD",
+            "confidence": 0.0,
+            "sl_points": final_sl,
+            "tp_points": final_tp,
+            "agreeing_count": len(agreeing_models),
+            "tickets_to_close": tickets_to_close,
+            "details": f"SL/TP gate ATR gagal: {sltp_reason}"
+        }
 
     print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal} "
           f"(skor {best_score:.2f} >= threshold {threshold})")

@@ -207,7 +207,7 @@ You are NOT required to follow a single predefined trading strategy. You may use
 
 Pick the interpretation you believe currently has the strongest expected edge. State what creates that edge and what would invalidate it. Do not force a trade into a fixed template just to produce a signal.
 
-Do not treat any single indicator (RSI, EMA, Fibonacci, ATR, or the forecast matrix below) as a mandatory trigger or a mandatory block. They are inputs for your own judgment, not rules you must obey.
+Do not treat any single indicator (RSI, EMA, Fibonacci, ATR) as a mandatory trigger or a mandatory block. They are inputs for your own judgment, not rules you must obey.
 
 Reassess the market from scratch using only the data in THIS prompt. Do not assume your (or the bot's) previous cycle's directional view is still valid -- conditions can shift within minutes; a prior bullish or bearish read is not evidence for the current one.
 
@@ -215,8 +215,6 @@ Reassess the market from scratch using only the data in THIS prompt. Do not assu
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
 
 Any "macro/HTF context" note is background only, not a ground-truth signal -- if it reads as generic, stale, or inconsistent with the actual candles/indicators shown, disregard it in favor of the concrete data.
-
-The forecast matrix comes from a separate model and is informational only, not a rule. A NEUTRAL or disagreeing forecast does not by itself require HOLD; an aligned forecast does not by itself justify a trade.
 
 The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
 
@@ -301,7 +299,11 @@ def _build_sltp_rules_block(symbol, timeframe):
     """
     Build the SL/TP constraint lines for the system prompt based on
     config.TP_SL_RULES:
-      "ATR-Based": SL ~1.25x ATR, TP ~2.5x ATR (R:R 2:1) (guardrail mode).
+      "ATR-Based": SL >= 1.25x ATR, TP >= 2.5x ATR (R:R 2:1) — HARD GATE.
+        Trade yang SL/TP-nya di bawah requirement DITOLAK bot (bukan
+        dinaikkan), jadi prompt ini harus tegas biar AI gak buang cycle.
+        Angka minimum konkret (dalam points) di-inject dinamis di market
+        data block (atr_gate_str).
       "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
       rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
@@ -325,10 +327,82 @@ def _build_sltp_rules_block(symbol, timeframe):
         )
         
     return (
-        "- SL placed beyond the invalidation level, and roughly at 1.25x current ATR (in points) unless the invalidation logic clearly justifies otherwise\n"
+        "- HARD GATE (non-negotiable, enforced by the bot): if your SL < 1.25x current ATR or your TP < 2.5x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
         "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        "- TP that gives at least 2R relative to SL (TP distance >= 2x SL distance; i.e. SL ~1.25x ATR -> TP ~2.5x ATR)\n"
+        "- These minimums guarantee R:R 2:1 (SL 1.25x ATR -> TP 2.5x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
     )
+
+
+_key_levels_cache = {}  # symbol -> (timestamp, str)
+
+
+def _get_key_levels_str(symbol, current_bid):
+    """
+    Key levels from D1 (previous day high/low, today open) + nearest round
+    number + current WIB session. Cached 5 minutes (D1 only changes once/day,
+    session label changes slowly). Falls back to empty string on any error.
+    """
+    import time as _time
+    now = _time.time()
+    cached = _key_levels_cache.get(symbol)
+    if cached and now - cached[0] < 300:
+        return cached[1]
+
+    try:
+        from src.core import mt5_connector
+        # Fetch raw D1 rates directly -- key levels only need OHLC. Avoid
+        # get_market_data() here: it computes indicators with window=14+ and
+        # crashes (ATR) when given fewer candles (e.g. num_candles=3).
+        rates = mt5_connector.mt5.copy_rates_from_pos(
+            mt5_connector.get_valid_trade_symbol(symbol), config.mt5.TIMEFRAME_D1, 0, 3
+        )
+        if rates is None or len(rates) < 2:
+            return ""
+        prev = rates[-2]  # previous day
+        today = rates[-1]  # today
+        pdh = float(prev['high'])
+        pdl = float(prev['low'])
+        today_open = float(today['open'])
+
+        # Round number: nearest 1.00 for XAU, nearest 1000 for BTC
+        if current_bid and current_bid > 10000:
+            round_num = round(current_bid / 1000.0) * 1000
+        elif current_bid:
+            round_num = round(current_bid)
+        else:
+            round_num = None
+        round_str = f"{round_num:,.2f}" if round_num is not None else "n/a"
+
+        # Active WIB session label from config.ALLOWED_SESSIONS_WIB
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+        cur_min = wib_now.hour * 60 + wib_now.minute
+        session_names = []
+        for s in getattr(config, "ALLOWED_SESSIONS_WIB", []):
+            sh, sm = s["start"]; eh, em = s["end"]
+            start_min = sh * 60 + sm
+            end_min = eh * 60 + em
+            if start_min <= end_min:
+                active = start_min <= cur_min <= end_min
+            else:  # overnight session (e.g. NY 20:00 -> 05:00)
+                active = cur_min >= start_min or cur_min <= end_min
+            if active:
+                session_names.append(s["name"])
+        session_str = ", ".join(session_names) if session_names else "no session"
+
+        out = (
+            f"### KEY LEVELS\n"
+            f"- Previous Day High: {pdh:.2f} | Previous Day Low: {pdl:.2f}\n"
+            f"- Today Open: {today_open:.2f}\n"
+            f"- Nearest Psychological Round Number: {round_str}\n"
+            f"- Active Session (WIB): {session_str}\n"
+        )
+        _key_levels_cache[symbol] = (now, out)
+        return out
+    except Exception as exc:
+        print(f"[KEY LEVELS ERROR] {exc}")
+        return ""
 
 
 def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
@@ -419,8 +493,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
 
-    # Create recent candles string (last 7 candles)
-    recent_candles = df.tail(7)
+    # Create recent candles string (last 25 candles = ~2 jam M5 / ~12 jam M30,
+    # cukup buat baca pola swing HH/HL, double top/bottom, tanpa boros token)
+    recent_candles = df.tail(25)
     candles_str = ""
     for idx, row in recent_candles.iterrows():
         time_str = row['time'].strftime('%H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
@@ -433,15 +508,15 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         is_crypto_asset = config.is_crypto(symbol)
         micro_tf = mt5_connector.mt5.TIMEFRAME_M5 if is_crypto_asset else mt5_connector.mt5.TIMEFRAME_M1
         micro_tf_name = "M5" if is_crypto_asset else "M1"
-        # Fetch 20 candles so ATR(14) indicator in get_market_data doesn't raise IndexError
-        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=20)
+        # Fetch 30 candles so ATR(14) indicator in get_market_data doesn't raise IndexError
+        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=30)
         if micro_df is not None and len(micro_df) > 0:
-            micro_tail = micro_df.tail(5)
+            micro_tail = micro_df.tail(10)
             micro_lines = []
             for _, r in micro_tail.iterrows():
                 t_s = r['time'].strftime('%H:%M') if hasattr(r['time'], 'strftime') else str(r['time'])
                 micro_lines.append(f"- [{t_s}] O:{r['open']}, H:{r['high']}, L:{r['low']}, C:{r['close']}, Vol:{r['tick_volume']}")
-            micro_candles_str = f"\n### LAST 5 {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
+            micro_candles_str = f"\n### LAST 10 {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
     except Exception as e:
         pass
 
@@ -481,16 +556,22 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
     # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the
-    # scalping scale. No flooring here — the LLM picks SL/TP from this range
-    # and consensus only enforces a 2x-spread safety floor.
+    # scalping scale.
 
-    # ATR-based SL/TP range: no longer hard-coded into the static prompt
-    # (the new template from docs/prompt_claude.md lets the LLM set SL/TP
-    # from its own thesis; consensus.py still enforces the 2x-spread floor,
-    # SL ~1.25x ATR and TP ~2.5x ATR in ATR-Based mode). atr_points is still
-    # shown in market data.
-    min_sl = int(atr_points * 1.25)
-    max_sl = int(atr_points * 2.5)
+    # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
+    # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
+    # jelek di aritmetika). Kalau proposal SL/TP di bawah angka ini,
+    # consensus.py MENOLAK trade (bukan dinaikkan) — jadi prompt harus jelas
+    # biar AI gak buang cycle buat sinyal yang pasti ditolak.
+    atr_gate_str = ""
+    if atr_points > 0:
+        min_sl_pts = int(atr_points * 1.25)
+        min_tp_pts = int(atr_points * 2.5)
+        atr_gate_str = (
+            f"ATR HARD GATE (non-negotiable): minimum SL = {min_sl_pts} pts (1.25x ATR) "
+            f"and minimum TP = {min_tp_pts} pts (2.5x ATR). "
+            f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
+        )
 
     # USD value of 1 point for the default bot lot — tells the LLM the real
     # money scale of the SL/TP distances it proposes (critical for BTC, where
@@ -541,7 +622,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             pass
 
     forecast_str = ""
-    if getattr(config, "FORECAST_ENABLED", True) and getattr(config, "MEMORY_CONTEXT_ENABLED", True):
+    if getattr(config, "FORECAST_ENABLED", False) and getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
             from src.analytics import forecast_engine
             forecast_str = forecast_engine.forecaster.get_forecast_context()
@@ -629,6 +710,10 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         f"- Fibonacci Retracement Levels: Fib 38.2%: {fib_382:.2f} | Fib 50.0%: {fib_500:.2f} | Fib 61.8%: {fib_618:.2f}"
     )
 
+    # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
+    # Cached 5 min (D1 berubah sekali sehari) — murah, nggak nambah lag cycle.
+    key_levels_str = _get_key_levels_str(symbol, current_tick.get('bid'))
+
     # ================================================================
     # PROMPT — 2 blok:
     #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
@@ -644,8 +729,8 @@ Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
-
-### RECENT CANDLES (Last 7 candles, {tf_label}):
+{key_levels_str}
+### RECENT CANDLES (Last 25 candles, {tf_label}):
 {candles_str}
 {micro_candles_str}
 ### CURRENT INDICATORS & FIBONACCI SUMMARY
@@ -654,7 +739,7 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{fib_str}
+{atr_gate_str}{fib_str}
 {randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 

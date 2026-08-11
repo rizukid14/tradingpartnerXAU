@@ -169,7 +169,13 @@ def get_market_data(symbol, timeframe, num_candles=50):
     df['ema_20'] = EMAIndicator(close=df['close'], window=20).ema_indicator()
     df['ema_50'] = EMAIndicator(close=df['close'], window=50).ema_indicator()
     df['rsi_14'] = RSIIndicator(close=df['close'], window=14).rsi()
-    df['atr_14'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+    # ATR (unlike EMA/RSI in the `ta` version used) hard-crashes when the
+    # input is shorter than its window (atr[window-1] on a smaller array).
+    # Guard so short data requests (e.g. D1 key levels) degrade to NaN.
+    if len(df) >= 14:
+        df['atr_14'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+    else:
+        df['atr_14'] = float('nan')
     
     return df
 
