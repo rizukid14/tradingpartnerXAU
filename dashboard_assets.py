@@ -333,7 +333,32 @@ function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").re
 
 async function loadData() {
   try {
-    const r = await fetch('/api/data', {cache:'no-store'});
+    const urlParams = new URLSearchParams(window.location.search);
+    let token = urlParams.get('token');
+    if (token) {
+      localStorage.setItem('API_TOKEN', token);
+    } else {
+      token = localStorage.getItem('API_TOKEN');
+    }
+
+    const fetchHeaders = {};
+    if (token) {
+      fetchHeaders['Authorization'] = 'Bearer ' + token;
+      fetchHeaders['X-API-Token'] = token;
+    }
+
+    const apiUrl = token ? '/api/data?token=' + encodeURIComponent(token) : '/api/data';
+    const r = await fetch(apiUrl, { headers: fetchHeaders, cache: 'no-store' });
+
+    if (r.status === 401) {
+      const userToken = prompt("Dashboard terproteksi. Masukkan API_TOKEN dari file .env Anda:");
+      if (userToken && userToken.trim()) {
+        localStorage.setItem('API_TOKEN', userToken.trim());
+        location.reload();
+        return;
+      }
+    }
+
     if (r.ok) { DATA = await r.json(); LIVE = true; }
   } catch (e) { /* static mode */ }
   if (!DATA) DATA = window.__INITIAL_DATA__ || {meta:{}, summary:{}, trades:[], equity_curve:[], model_stats:{}, per_symbol:{}, sl_buckets:{}, rr_buckets:{}, lessons:[], agreement:{}, latency:{}, position_manager:{}, sltp_floor:{}, forecast_bias:{}};
