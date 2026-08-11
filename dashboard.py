@@ -13,6 +13,7 @@ Usage:
 Read-only terhadap file bot. Tidak menyentuh main.py / MT5.
 """
 import argparse
+import base64
 import json
 import math
 import os
@@ -646,9 +647,51 @@ def serve(host="0.0.0.0", port=8765):
         def do_OPTIONS(self):
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Token")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
+
+        def _check_auth(self):
+            expected = getattr(config, "API_TOKEN", "").strip()
+            if not expected:
+                return True
+
+            auth_header = self.headers.get("Authorization", "")
+            token = ""
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+            elif auth_header.startswith("Basic "):
+                try:
+                    b64_creds = auth_header[6:].strip()
+                    decoded = base64.b64decode(b64_creds).decode("utf-8")
+                    if ":" in decoded:
+                        token = decoded.split(":", 1)[1]
+                    else:
+                        token = decoded
+                except Exception:
+                    token = ""
+            elif "X-API-Token" in self.headers:
+                token = self.headers.get("X-API-Token", "").strip()
+            else:
+                parsed = urlparse(self.path)
+                params = parse_qs(parsed.query)
+                if "token" in params:
+                    token = params["token"][0]
+
+            if token == expected:
+                return True
+
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path.rstrip("/")
+            if path in ("", "/", "/index.html", "/dashboard.html"):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="Trading Bot Dashboard"')
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"<h1>401 Unauthorized</h1><p>Access Denied: Invalid or missing API_TOKEN.</p>")
+            else:
+                _send_json(self, {"status": "error", "message": "Unauthorized: Invalid or missing API Token"}, status_code=401)
+            return False
 
         def do_GET(self):
             parsed_url = urlparse(self.path)
@@ -656,6 +699,10 @@ def serve(host="0.0.0.0", port=8765):
             if path == "":
                 path = "/"
             query_params = parse_qs(parsed_url.query)
+
+            if path in ("/", "/index.html", "/dashboard.html") or path.startswith("/api/"):
+                if not self._check_auth():
+                    return
 
             if path in ("/", "/index.html", "/dashboard.html"):
                 _, metrics = _build_metrics()
@@ -745,19 +792,44 @@ def serve(host="0.0.0.0", port=8765):
                     "CLAUDE_MODEL": getattr(config, "CLAUDE_MODEL", "deepseek/deepseek-v4-flash"),
                     "GEMINI_MODEL": getattr(config, "GEMINI_MODEL", "gemini-3.1-flash-lite"),
                     "OPENAI_MODEL": getattr(config, "OPENAI_MODEL", "gpt-5.4-mini"),
+                    "FORECAST_MODEL": getattr(config, "FORECAST_MODEL", "gpt-5.4"),
                     "RISK_PERCENT_BTC": getattr(config, "RISK_PERCENT_BTC", 1.5),
                     "RISK_PERCENT_XAU": getattr(config, "RISK_PERCENT_XAU", 0.5),
-                    "MAX_DAILY_LOSS_USD": getattr(config, "MAX_DAILY_LOSS_USD", 50),
+                    "LOT_SIZE_XAU": getattr(config, "LOT_SIZE_XAU", 0.01),
+                    "LOT_SIZE_BTC": getattr(config, "LOT_SIZE_BTC", 0.01),
+                    "MAX_DAILY_LOSS_USD": getattr(config, "MAX_DAILY_LOSS_USD", 50.0),
+                    "MAX_CONSECUTIVE_LOSSES": getattr(config, "MAX_CONSECUTIVE_LOSSES", 5),
                     "MAX_OPEN_POSITIONS": getattr(config, "MAX_OPEN_POSITIONS", 6),
+                    "MAX_OPEN_POSITIONS_RECOVERY": getattr(config, "MAX_OPEN_POSITIONS_RECOVERY", 4),
                     "TRADE_COOLDOWN_SECONDS": getattr(config, "TRADE_COOLDOWN_SECONDS", 0),
                     "MAX_SPREAD_POINTS_BTC": getattr(config, "MAX_SPREAD_POINTS_BTC", 2400),
                     "MAX_SPREAD_POINTS_XAU": getattr(config, "MAX_SPREAD_POINTS_XAU", 50),
                     "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": getattr(config, "CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2),
                     "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": getattr(config, "CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.0),
+                    "CONSENSUS_THRESHOLD": getattr(config, "CONSENSUS_THRESHOLD", 2),
+                    "MIN_CONSENSUS_MODELS": getattr(config, "MIN_CONSENSUS_MODELS", 2),
+                    "TP_SL_RULES": getattr(config, "TP_SL_RULES", "ATR-Based"),
+                    "DEFAULT_SL_POINTS_XAU": getattr(config, "DEFAULT_SL_POINTS_XAU", 300),
+                    "DEFAULT_TP_POINTS_XAU": getattr(config, "DEFAULT_TP_POINTS_XAU", 600),
+                    "DEFAULT_SL_POINTS_BTC": getattr(config, "DEFAULT_SL_POINTS_BTC", 50000),
+                    "DEFAULT_TP_POINTS_BTC": getattr(config, "DEFAULT_TP_POINTS_BTC", 100000),
+                    "SL_ATR_MULTIPLIER": getattr(config, "SL_ATR_MULTIPLIER", 1.5),
+                    "TP_ATR_MULTIPLIER": getattr(config, "TP_ATR_MULTIPLIER", 3.0),
                     "TRAILING_STOP_ENABLED": getattr(config, "TRAILING_STOP_ENABLED", True),
                     "BREAK_EVEN_ENABLED": getattr(config, "BREAK_EVEN_ENABLED", True),
+                    "PARTIAL_CLOSE_ENABLED": getattr(config, "PARTIAL_CLOSE_ENABLED", True),
                     "RECOVERY_MODE_ENABLED": getattr(config, "RECOVERY_MODE_ENABLED", True),
+                    "DYNAMIC_CONFIG_ENABLED": getattr(config, "DYNAMIC_CONFIG_ENABLED", False),
+                    "FORCE_ACTIVE_ENTRY": getattr(config, "FORCE_ACTIVE_ENTRY", False),
+                    "DEBATE_ENABLED": getattr(config, "DEBATE_ENABLED", False),
+                    "QUANT_ANALYSIS_ENABLED": getattr(config, "QUANT_ANALYSIS_ENABLED", False),
+                    "MONTE_CARLO_ENABLED": getattr(config, "MONTE_CARLO_ENABLED", False),
+                    "FORECAST_ENABLED": getattr(config, "FORECAST_ENABLED", True),
+                    "MEMORY_CONTEXT_ENABLED": getattr(config, "MEMORY_CONTEXT_ENABLED", True),
+                    "SESSION_FILTER_ENABLED": getattr(config, "SESSION_FILTER_ENABLED", True),
+                    "WEEKEND_CLOSE_ENABLED": getattr(config, "WEEKEND_CLOSE_ENABLED", True),
                     "WEEKEND_TRADING_ENABLED": getattr(config, "WEEKEND_TRADING_ENABLED", False),
+                    "ENABLE_BTC_ROTATION": getattr(config, "ENABLE_BTC_ROTATION", False),
                     "available_presets": list(getattr(config, "ERA_PRESETS", {}).keys()),
                 }
                 _send_json(self, {"status": "success", "config": config_data})
@@ -779,6 +851,10 @@ def serve(host="0.0.0.0", port=8765):
         def do_POST(self):
             parsed_url = urlparse(self.path)
             path = parsed_url.path.rstrip("/")
+
+            if path.startswith("/api/") or True:
+                if not self._check_auth():
+                    return
 
             content_length = int(self.headers.get("Content-Length", 0))
             raw_body = self.rfile.read(content_length) if content_length > 0 else b""
