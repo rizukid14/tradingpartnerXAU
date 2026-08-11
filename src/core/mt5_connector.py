@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 import pandas as pd
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
@@ -8,24 +9,8 @@ from ta.volatility import AverageTrueRange
 import config
 from config import mt5
 
-# Server Broker Timezone configuration (VT Markets = EET / UTC+2 standard, UTC+3 DST)
-# Indonesian Western Standard Time (WIB) = UTC+7
-WIB_OFFSET = timedelta(hours=7)
-
-def server_to_wib(dt_or_ts):
-    """Converts a server timestamp or naive datetime to a timezone-aware WIB datetime."""
-    if isinstance(dt_or_ts, (int, float)):
-        utc_dt = datetime.fromtimestamp(dt_or_ts, tz=timezone.utc)
-    elif isinstance(dt_or_ts, datetime):
-        if dt_or_ts.tzinfo is None:
-            utc_dt = dt_or_ts.replace(tzinfo=timezone.utc)
-        else:
-            utc_dt = dt_or_ts.astimezone(timezone.utc)
-    else:
-        return dt_or_ts
-
-    wib_tz = timezone(WIB_OFFSET)
-    return utc_dt.astimezone(wib_tz)
+# Indonesian Western Standard Time (WIB) = UTC+7 (Asia/Jakarta)
+WIB = ZoneInfo("Asia/Jakarta")
 
 # =============================================================================
 # Cache query MT5 (hot path = loop utama 5 detik)
@@ -102,12 +87,24 @@ def server_utc_offset_hours():
     return 3
 
 
-def server_to_wib(server_ts):
+def server_to_wib(dt_or_ts):
     """
-    Converts an MT5 server epoch timestamp to an aware WIB datetime.
+    Converts an MT5 server epoch timestamp or datetime to an aware WIB (Asia/Jakarta) datetime.
     MT5 timestamps are in the broker server timezone (e.g. GMT+3); this
     shifts them into Asia/Jakarta so candle times match wall-clock WIB.
     """
+    if isinstance(dt_or_ts, (int, float)):
+        server_ts = float(dt_or_ts)
+    elif isinstance(dt_or_ts, datetime):
+        if dt_or_ts.tzinfo is not None:
+            return dt_or_ts.astimezone(WIB)
+        server_ts = dt_or_ts.timestamp()
+    else:
+        try:
+            server_ts = float(dt_or_ts)
+        except (ValueError, TypeError):
+            return dt_or_ts
+
     offset_hours = server_utc_offset_hours()
     # Convert server epoch to UTC epoch by subtracting the server's offset
     utc_ts = int(server_ts) - (offset_hours * 3600)
@@ -250,59 +247,68 @@ def get_current_tick(symbol):
         "usd_per_point": usd_per_pt,
     }
 
-def get_open_positions(symbol):
-    """Checks if there are any open positions for the symbol (bot-managed only)."""
-    positions = mt5.positions_get(symbol=symbol)
+def get_open_positions(symbol=None, magic=None):
+    """
+    Fetches currently open positions for the given symbol and magic number.
+    Returns a list of dicts.
+    """
+    if config.DRY_RUN:
+        return []
+        
+    if symbol:
+        symbol = get_valid_trade_symbol(symbol)
+        positions = mt5.positions_get(symbol=symbol)
+    else:
+        positions = mt5.positions_get()
+
     if positions is None:
         return []
-    return [
-        {
+        
+    res = []
+    target_magic = magic if magic is not None else getattr(config, "MAGIC_NUMBER", None)
+    for p in positions:
+        if target_magic is not None and getattr(p, "magic", None) != target_magic:
+            continue
+        res.append({
             "ticket": p.ticket,
             "symbol": p.symbol,
+            "direction": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
             "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
             "volume": p.volume,
+            "entry_price": p.price_open,
             "price_open": p.price_open,
+            "current_price": getattr(p, "price_current", p.price_open),
             "sl": p.sl,
             "tp": p.tp,
+            "pnl": p.profit,
             "profit": p.profit,
-            "swap": p.swap,
+            "swap": getattr(p, "swap", 0.0),
+            "magic": p.magic,
             "time": p.time
-        }
-        for p in positions
-        if p.magic == config.MAGIC_NUMBER
-    ]
+        })
+    return res
 
 
-def get_all_open_positions():
+def get_all_open_positions(magic=None):
     """Returns ALL open bot-managed positions across every symbol."""
     import time as _t
     now = _t.time()
-    if now - _open_positions_cache["ts"] < _OPEN_POSITIONS_CACHE_TTL:
-        return _open_positions_cache["value"]
-    positions = mt5.positions_get()
-    if positions is None:
-        return []
-    out = [
-        {
-            "ticket": p.ticket,
-            "symbol": p.symbol,
-            "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
-            "volume": p.volume,
-            "price_open": p.price_open,
-            "sl": p.sl,
-            "tp": p.tp,
-            "profit": p.profit,
-            "swap": p.swap,
-            "time": p.time
-        }
-        for p in positions
-        if p.magic == config.MAGIC_NUMBER
-    ]
-    _open_positions_cache["ts"] = now
-    _open_positions_cache["value"] = out
-    return out
+    target_magic = magic if magic is not None else getattr(config, "MAGIC_NUMBER", None)
 
-def get_closed_positions_today(symbol=None, lookback_hours=0):
+    if magic is None and (now - _open_positions_cache["ts"] < _OPEN_POSITIONS_CACHE_TTL):
+        if _open_positions_cache["value"] is not None:
+            return _open_positions_cache["value"]
+
+    positions = get_open_positions(symbol=None, magic=target_magic)
+
+    if magic is None:
+        _open_positions_cache["ts"] = now
+        _open_positions_cache["value"] = positions
+
+    return positions
+
+
+def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
     """
     Returns deals that closed (entry OUT) positions opened by this bot today.
     Used for daily P/L, consecutive-loss tracking, and recovery mode.
@@ -311,8 +317,12 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
     lookback_hours: include deals closed up to lookback_hours before today_start
     to prevent time-boundary gaps (e.g. at midnight) and sync missed offline closes.
     """
+    if config.DRY_RUN:
+        return []
+
     import time as _t
-    cache_key = (symbol, lookback_hours)
+    target_magic = magic if magic is not None else getattr(config, "MAGIC_NUMBER", None)
+    cache_key = (symbol, lookback_hours, target_magic)
     now = _t.time()
     if _closed_today_cache["key"] == cache_key and (now - _closed_today_cache["ts"]) < _CLOSED_TODAY_CACHE_TTL:
         return _closed_today_cache["value"]
@@ -320,11 +330,6 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
     # Calculate broker timezone offset from UTC
     broker_offset = get_broker_offset_seconds(symbol or config.SYMBOL)
 
-    # history_deals_get(from, to) takes datetimes in the MT5 terminal's local
-    # wall-clock time. We use a WIB-midnight -> next-midnight window so "today"
-    # means the current trading day (bot's own closes), not a rolling 24h that
-    # would drag in the previous day's P/L. Epochs are passed as ints so the
-    # boundaries match exactly what datetime.now() produced.
     from datetime import datetime, timedelta
     now_dt = datetime.now()
     today_start = datetime(now_dt.year, now_dt.month, now_dt.day)
@@ -336,15 +341,6 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
     if deals is None:
         return []
 
-    # Positions opened by THIS bot (entry IN with bot magic) in the window.
-    # Used to accept manual closes: MT5 mobile/web manual close of a bot position
-    # produces an OUT deal with magic=0 (magic is not forwarded), so filtering
-    # strictly on magic would silently drop those closes.
-    # IMPORTANT: query a WIDE window (7 days) for bot_opened — a position opened
-    # yesterday (IN deal outside today's midnight-WIB window) closed manually
-    # today would otherwise fail is_manual_of_bot and be silently dropped.
-    # Cache 60 detik: set ini cuma berubah saat posisi baru DIBUKA, dan query
-    # 7-hari itu query termahal di MT5 (bikin loop 5 detik nge-blok).
     if _bot_opened_cache["value"] is not None and (now - _bot_opened_cache["ts"]) < _BOT_OPENED_CACHE_TTL:
         bot_opened = _bot_opened_cache["value"]
     else:
@@ -354,7 +350,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
             wide_deals = []
         bot_opened = {
             d.position_id for d in wide_deals
-            if d.magic == config.MAGIC_NUMBER and d.entry == mt5.DEAL_ENTRY_IN
+            if (target_magic is None or d.magic == target_magic) and d.entry == mt5.DEAL_ENTRY_IN
         }
         _bot_opened_cache["ts"] = now
         _bot_opened_cache["value"] = bot_opened
@@ -365,18 +361,12 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
             continue
         if symbol is not None and deal.symbol != symbol:
             continue
-        # Accept bot-magic closes; also accept magic=0 (external manual close)
-        # but only for positions this bot actually opened.
-        is_bot_close = deal.magic == config.MAGIC_NUMBER
+        is_bot_close = target_magic is None or deal.magic == target_magic
         is_manual_of_bot = deal.magic == 0 and deal.position_id in bot_opened
         if not (is_bot_close or is_manual_of_bot):
             continue
-        # DEAL_ENTRY_OUT: deal.type == 0 (BUY deal) closes a SELL position, deal.type == 1 (SELL deal) closes a BUY position
         pos_type = "SELL" if deal.type == 0 else "BUY"
 
-        # Reason label. MT5 mobile manual close often leaves deal.reason empty
-        # (or magic=0), so infer "manual" from magic=0 on a bot-opened position
-        # instead of showing "unknown".
         deal_reason = getattr(deal, "reason", None)
         if is_manual_of_bot or not deal_reason:
             reason = "manual"
@@ -397,6 +387,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
         closed.append({
             "ticket": deal.position_id,
             "symbol": deal.symbol,
+            "direction": pos_type,
             "profit": deal.profit + deal.swap + deal.commission,
             "reason": reason,
             "comment": getattr(deal, "comment", ""),
@@ -407,6 +398,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0):
     _closed_today_cache["key"] = cache_key
     _closed_today_cache["value"] = closed
     return closed
+
 
 def get_account_info():
     """
@@ -436,105 +428,6 @@ def get_account_info():
         "leverage": acc.leverage,
         "profit": acc.profit
     }
-
-def get_open_positions(symbol=None, magic=None):
-    """
-    Fetches currently open positions for the given symbol and magic number.
-    Returns a list of dicts.
-    """
-    if config.DRY_RUN:
-        return []
-        
-    if symbol:
-        symbol = get_valid_trade_symbol(symbol)
-        positions = mt5.positions_get(symbol=symbol)
-    else:
-        positions = mt5.positions_get()
-
-    if positions is None:
-        return []
-        
-    res = []
-    target_magic = magic if magic is not None else getattr(config, "MAGIC_NUMBER", None)
-    for p in positions:
-        if target_magic is not None and getattr(p, "magic", None) != target_magic:
-            continue
-        res.append({
-            "ticket": p.ticket,
-            "symbol": p.symbol,
-            "direction": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
-            "type": p.type,
-            "volume": p.volume,
-            "entry_price": p.price_open,
-            "price_open": p.price_open,
-            "current_price": p.price_current,
-            "sl": p.sl,
-            "tp": p.tp,
-            "pnl": p.profit,
-            "profit": p.profit,
-            "magic": p.magic,
-            "time": p.time
-        })
-    return res
-
-def get_all_open_positions(magic=None):
-    """Fetches all open positions managed by this bot across ALL symbols."""
-    return get_open_positions(symbol=None, magic=magic)
-
-def get_closed_positions_today(magic=None, symbol=None):
-    """
-    Fetches closed positions for today (midnight WIB to now).
-    Returns list of dicts with ticket, symbol, direction, profit, etc.
-    """
-    if config.DRY_RUN:
-        return []
-
-    wib_tz = timezone(WIB_OFFSET)
-    now_wib = datetime.now(wib_tz)
-    start_wib = now_wib.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    from_date = datetime.fromtimestamp(start_wib.timestamp(), tz=timezone.utc)
-    to_date = datetime.now(timezone.utc) + timedelta(minutes=5)
-    
-    deals = mt5.history_deals_get(from_date, to_date)
-    if deals is None or len(deals) == 0:
-        return []
-
-    target_magic = magic if magic is not None else getattr(config, "MAGIC_NUMBER", None)
-    
-    bot_tickets = set()
-    for d in deals:
-        if d.entry == mt5.DEAL_ENTRY_IN:
-            if target_magic is None or d.magic == target_magic:
-                bot_tickets.add(d.position_id)
-
-    closed_trades = []
-    for d in deals:
-        if d.entry != mt5.DEAL_ENTRY_OUT:
-            continue
-        
-        if d.position_id not in bot_tickets:
-            continue
-            
-        if symbol and d.symbol != symbol:
-            continue
-
-        direction = "BUY" if d.type == mt5.DEAL_TYPE_SELL else "SELL"
-        closed_trades.append({
-            "ticket": d.position_id,
-            "deal_id": d.ticket,
-            "symbol": d.symbol,
-            "direction": direction,
-            "volume": d.volume,
-            "price": d.price,
-            "profit": d.profit + d.commission + d.swap,
-            "raw_profit": d.profit,
-            "comment": d.comment,
-            "time": server_to_wib(d.time),
-            "reason": d.reason
-        })
-        
-    return closed_trades
 
 def get_trade_details(ticket):
     """
