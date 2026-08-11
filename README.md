@@ -3,7 +3,7 @@
 Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT5)** dengan tiga slot model LLM via API: **OpenAI**, **Google Gemini**, dan **slot ketiga (default DeepSeek V4 Flash, bisa di-switch ke Claude)**.
 
 - **Weekday**: `XAUUSD-ECNc` (Gold) — scalping **M5** — **Weekend**: `BTCUSD.c` (Bitcoin) — intraday **M30** (rotasi otomatis via `config.get_active_symbol`)
-- **Multi-scan (opsional, mode `xau_pairs`)**: tiap candle M5 bot scan **SEMUA simbol dalam pool sekaligus** (bukan rotasi) — XAU + 4 pair FX cross non-USD, 1 LLM call per pair (5 call/candle)
+- **Multi-scan (opsional, mode `xau_pairs`)**: tiap candle M5 bot scan **SEMUA simbol dalam pool sekaligus** (bukan rotasi) — XAU + 2 pair FX cross non-USD, 1 LLM call per pair (3 call/candle)
 - Bot memanggil AI sesuai **time-based mode** (single/dual/triple — lihat jadwal WIB), menghitung **weighted-confidence consensus**, lalu mengeksekusi order ke MT5.
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic number `20260625`.
 - Semua timestamp internal pakai **WIB** (Asia/Jakarta).
@@ -15,15 +15,13 @@ Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + P
 | # | Simbol (base) | Live / Demo | Timeframe | Spread (hasil scan) |
 |---|---|---|---|---|
 | 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M5 | ~10 pts (≈3% ATR) |
-| 2 | `EURGBP-ECN` | `EURGBP-ECNc` / `EURGBP-ECN` | M5 | ~0 pts |
-| 3 | `EURJPY-ECN` | `EURJPY-ECNc` / `EURJPY-ECN` | M5 | ~0-1 pts |
-| 4 | `EURCAD-ECN` | `EURCAD-ECNc` / `EURCAD-ECN` | M5 | ~4-5 pts |
-| 5 | `GBPJPY-ECN` | `GBPJPY-ECNc` / `GBPJPY-ECN` | M5 | ~11 pts |
+| 2 | `EURJPY-ECN` | `EURJPY-ECNc` / `EURJPY-ECN` | M5 | ~0-1 pts |
+| 3 | `GBPCHF-ECN` | `GBPCHF-ECNc` / `GBPCHF-ECN` | M5 | ~0 pts |
 
-**Kenapa pair-nya gitu?** Semua **cross non-USD** — korelasi rendah dengan XAUUSD (pair yang mengandung USD dibuang karena geraknya didominasi USD). Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo) — satu config jalan di dua-duanya.
+**Kenapa pair-nya gitu?** Semua **cross non-USD** — korelasi rendah dengan XAUUSD (pair yang mengandung USD dibuang karena geraknya didominasi USD). Pool sengaja **3 simbol** (bukan 5): hemat biaya LLM per candle, dan `GBPCHF` (spread 0, tick value ~2× EURJPY) menggantikan pair EUR/JPY lainnya yang saling berkorelasi. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo) — satu config jalan di dua-duanya.
 
 **Cara kerja per candle (M5):**
-1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 5)
+1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 3)
 2. Post-mortem trade tertutup dijalankan **1× aggregate** (bukan per-simbol)
 3. Loop `for sym in pool:` → `config.SYMBOL = sym` → cycle penuh per-simbol: risk gate → data MT5 → macro/MTF per-simbol → 1× LLM call → weighted consensus → eksekusi
 4. **Weekend**: XAU + FX market tutup Sabtu–Minggu → **bot istirahat (mode 24/5)**. Pool jatuh ke `[XAUUSD-ECN]` yang tutup (risk gate menolak semua, tidak ada LLM call). Opsional: set `ENABLE_BTC_ROTATION=True` → weekend ganti ke `[BTCUSD.c]` (24/7) — kode BTC sengaja dipertahankan, tinggal dinyalakan.

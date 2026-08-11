@@ -139,16 +139,18 @@ SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 # --- TRADING MODE: "xau" (default, XAU only) | "xau_pairs" (XAU + FX cross pairs, parallel scan per candle) ---
 # FX cross pairs (non-USD => low correlation with XAUUSD). Default = nama broker LIVE
 # (suffix -ECNc). Auto-correct cuma arah demo (live -> -ECNc, demo -> -ECN).
+# Pool 3 simbol: XAUUSD + EURJPY + GBPCHF (GBPCHF spread 0, tick value 2x EURJPY,
+# bebas korelasi EUR/JPY — hasil kurasi user, 5x cycle kemahalan).
 TRADING_MODE = os.getenv("TRADING_MODE", "xau").strip().lower()
 FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        "EURGBP-ECNc,EURJPY-ECNc,EURCAD-ECNc,GBPJPY-ECNc",
+        "EURJPY-ECNc,GBPCHF-ECNc",
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 5)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 3)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M5").upper()
 TIMEFRAME_MAP = {

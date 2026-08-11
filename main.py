@@ -408,8 +408,8 @@ class TeeLogger(object):
 def run_trading_cycle():
     """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
     per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
-    = [XAU, EURGBP, EURJPY, EURCAD, GBPJPY] — all symbols scanned on EVERY M5 candle
-    (5x LLM call per candle, one per pair).
+    = [XAU, EURJPY, GBPCHF] — all symbols scanned on EVERY M5 candle
+    (3x LLM call per candle, one per pair).
     """
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     
@@ -547,7 +547,7 @@ def _run_cycle_for_current_symbol():
     # 4. Query AI models in parallel (including active open_positions for 5-min AI re-evaluation!)
 
     # MTF/fundamental analysis per-symbol — cache di macro_analyst per-symbol,
-    # jadi simbol non-aktif (EURGBP, EURJPY, dst.) di-populate di sini juga,
+    # jadi simbol non-aktif (EURJPY, GBPCHF, dst.) di-populate di sini juga,
     # bukan cuma XAU dari loop utama.
     if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
         try:
