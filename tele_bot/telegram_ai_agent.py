@@ -39,7 +39,7 @@ logging.basicConfig(
 )
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
-MODEL = os.getenv("TELEGRAM_AI_MODEL", "gpt-5.6-luna")
+MODEL = os.getenv("TELEGRAM_AI_MODEL", "gpt-5.4-mini")
 
 API_BASE_URL = getattr(config, "API_BASE_URL", "http://localhost:8765").rstrip("/")
 API_TOKEN = getattr(config, "API_TOKEN", "")
