@@ -69,6 +69,8 @@ Any BUY or SELL must satisfy all of the following:
 
 If any of these can't be honestly satisfied, return HOLD. HOLD is a normal, often correct output -- do not force a trade to avoid it.
 
+{{POINTS_EXPLANATION}}
+
 ### OUTPUT FORMAT
 Respond with a single valid JSON object ONLY -- no text before or after it.
 
@@ -85,8 +87,8 @@ BUY or SELL:
   "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
   "edge": "1-2 sentences: what specifically creates the edge here.",
   "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "sl_points": number,
-  "tp_points": number,
+  "sl_points": number, // Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
+  "tp_points": number, // Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
   "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
 }
 
@@ -96,18 +98,59 @@ If open positions are listed in the market data below, also include:
 CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
 
 
-def build_system_prompt(symbol: str, timeframe: str, asset_description: str) -> str:
+def _build_points_explanation(symbol: str, point_size: float) -> str:
+    """
+    Generate a highly explicit explanation of broker points vs pips/price-units
+    to avoid LLMs mixing them up (e.g. OpenAI/DeepSeek outputting pips instead of points).
+    """
+    is_btc = symbol.startswith("BTC")  # simple check for documentation script
+    pt_str = f"{point_size:.4f}" if point_size else "0.01"
+    
+    if is_btc:
+        return (
+            f"### CRITICAL UNIT DEFINITION: POINTS vs USD MOVEMENT\n"
+            f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT USD price, NOT percentages.\n"
+            f"For {symbol} (with broker point size = {pt_str}):\n"
+            f"- 1 point = ${pt_str} USD price change.\n"
+            f"- 100 points = $1.00 USD price change (e.g., BTC moving from 60000.00 to 60001.00)\n"
+            f"- 10,000 points = $100.00 USD price change (e.g., BTC moving from 60000.00 to 60100.00)\n"
+            f"- 50,000 points = $500.00 USD price change (e.g., BTC moving from 60000.00 to 60500.00)\n"
+            f"- Typical Stop Loss distance is 20000 to 60000 points ($200.00 to $600.00 USD price change).\n\n"
+            f"CRITICAL WARNING:\n"
+            f"Double-check your numbers. If you want a Stop Loss of $400 USD of BTC price movement, you MUST return 40000. "
+            f"If you return 400, it sets a Stop Loss of just 400 points ($4.00 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
+        )
+    else:
+        # Gold / Forex
+        pt_str = f"{point_size:.2f}" if point_size else "0.01"
+        return (
+            f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs USD MOVEMENT\n"
+            f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
+            f"For {symbol} (with broker point size = {pt_str}):\n"
+            f"- 1 point = ${pt_str} USD price change.\n"
+            f"- 10 points = 1 pip = $0.10 USD price change.\n"
+            f"- 100 points = 10 pips = $1.00 USD price change (e.g., Gold moving from 2400.00 to 2401.00)\n"
+            f"- Typical Stop Loss distance is 100 to 350 points (10 to 35 pips / $1.00 to $3.50 USD gold movement).\n\n"
+            f"CRITICAL WARNING:\n"
+            f"Double-check your numbers. If you want a Stop Loss of 20 pips (which is $2.00 USD of price movement), you MUST return 200. "
+            f"If you return 20, it sets a Stop Loss of just 20 points (2 pips / $0.20 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
+        )
+
+
+def build_system_prompt(symbol: str, timeframe: str, asset_description: str, point_size: float = 0.01) -> str:
     """
     Static per-bot 'constitution'. Build once per bot instance (e.g. once
     for XAU M5, once for BTC H1) and reuse unchanged across cycles -- this
     is the part that benefits from provider-side prompt/context caching,
     since only the dynamic market data below changes every call.
     """
+    points_explanation = _build_points_explanation(symbol, point_size)
     return (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("{{SYMBOL}}", symbol)
         .replace("{{TIMEFRAME}}", timeframe)
         .replace("{{ASSET_DESC}}", asset_description)
+        .replace("{{POINTS_EXPLANATION}}", points_explanation)
     )
 
 

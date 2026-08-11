@@ -53,9 +53,8 @@ def _apply_sltp_floors(sl_points, tp_points):
 
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
     if mode == "LLM":
-        # Bebas sesuai konsensus, tapi dibatasi floor max(2x spread, 0.5x ATR)
-        # agar lot size tidak membengkak ekstrem (aman untuk M5 scalping).
-        min_sl = max(spread_pts * 2, int(atr_points * 0.5))
+        # Bebas sesuai konsensus, cuma dibatasi floor 2x spread (biar broker nggak nolak)
+        min_sl = spread_pts * 2
         if sl_points < min_sl:
             sl_points = min_sl
         # TP minimal harus default, dan dipaksa minimal sama dengan SL (TP >= 1.0x SL) untuk mencegah R:R negatif
