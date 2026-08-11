@@ -375,23 +375,19 @@ function renderFilters() {
   const eraSel = $('f-era'), symSel = $('f-symbol');
   const prevEra = eraSel.value, prevSym = symSel.value;
   eraSel.innerHTML = '<option value="">Semua Era</option>';
-  symSel.innerHTML = '<option value="XAUUSD-ECNc">XAUUSD-ECNc (Gold - Default)</option>';
-  const oAll = document.createElement('option'); oAll.value = ''; oAll.text = 'Semua Simbol (XAU + BTC)';
-  symSel.appendChild(oAll);
+  symSel.innerHTML = '<option value="">Semua Simbol (XAU + BTC)</option>';
 
   (DATA.meta.eras || []).forEach(e => {
     const o = document.createElement('option'); o.value = e; o.text = e; eraSel.appendChild(o);
   });
 
   (DATA.meta.symbols || []).forEach(s => {
-    if (s !== 'XAUUSD-ECNc') {
-      const o = document.createElement('option'); o.value = s; o.text = s; symSel.appendChild(o);
-    }
+    const o = document.createElement('option'); o.value = s; o.text = s; symSel.appendChild(o);
   });
 
   if (prevEra && [...eraSel.options].some(o=>o.value===prevEra)) eraSel.value = prevEra;
   if (prevSym && [...symSel.options].some(o=>o.value===prevSym)) symSel.value = prevSym;
-  else symSel.value = 'XAUUSD-ECNc';
+  else symSel.value = '';
 }
 
 function renderKpi() {
@@ -432,14 +428,14 @@ function renderKpi() {
 function renderSym() {
   const ps = DATA.per_symbol || {};
   const selectedSym = $('f-symbol').value;
-  const keys = Object.keys(ps).filter(k => selectedSym ? k === selectedSym : !k.toLowerCase().includes('btc'));
+  const keys = Object.keys(ps).filter(k => selectedSym ? k === selectedSym : true);
   
   $('sym-cards').innerHTML = keys.length ? keys.map(sym => {
     const st = ps[sym];
     return `<div class="sym-card"><div class="sym-name">${esc(sym)}</div>` +
       `<div><b>${st.n} Trade</b>: ${st.win}W-${st.loss}L (WR ${fmtPct(st.win_rate)})</div>` +
       `<div style="margin-top:2px;">P/L: <b class="${(st.pnl||0)>=0?'green':'red'}">${fmtMoney(st.pnl)}</b></div></div>`;
-  }).join('') : '<div class="muted empty-hint">Belum ada trade XAUUSD tertutup.</div>';
+  }).join('') : '<div class="muted empty-hint">Belum ada trade tertutup.</div>';
 }
 
 function renderModelTable() {
