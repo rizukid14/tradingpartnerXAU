@@ -102,6 +102,9 @@ def parse_log(path=LOG_PATH):
     current_symbol = None
     pending_order = None
 
+    if not os.path.exists(path):
+        return events
+
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
 
@@ -502,6 +505,22 @@ def compute_metrics(events, state=None):
         if f.get("bias"):
             fbias[f["bias"]] = fbias.get(f["bias"], 0) + 1
 
+    daily_pnl = {}
+    for t in closed:
+        if not t.get("ts"):
+            continue
+        dt_str = datetime.fromtimestamp(t["ts"]).strftime("%Y-%m-%d")
+        d = daily_pnl.setdefault(dt_str, {"pnl": 0.0, "count": 0, "win": 0, "loss": 0, "bep": 0})
+        pnl = t["pnl"]
+        d["pnl"] += pnl
+        d["count"] += 1
+        if pnl > BEP_TOLERANCE_USD:
+            d["win"] += 1
+        elif pnl < -BEP_TOLERANCE_USD:
+            d["loss"] += 1
+        else:
+            d["bep"] += 1
+
     lessons_list = []
     for sym, mem in lessons_mem.items():
         for les in mem.get("lessons", []):
@@ -540,6 +559,7 @@ def compute_metrics(events, state=None):
             "bep_count": n_bep,
         },
         "trades": trades,
+        "daily_pnl": daily_pnl,
         "equity_curve": equity,
         "per_symbol": sym_stats,
         "sl_buckets": {str(k): v for k, v in sorted(sl_buckets.items())},

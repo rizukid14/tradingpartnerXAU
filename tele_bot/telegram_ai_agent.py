@@ -188,7 +188,12 @@ Be concise — this is a phone chat, not a report. Use bullet points only for ac
 positions or trade history).
 
 If the user's request is ambiguous (e.g. "make it safer" without specifics), ask ONE clarifying
-question rather than guessing at config values — an unwanted change to a live # ---------------------------------------------------------------------------
+question rather than guessing at config values — an unwanted change to a live trading bot can cost
+real money.
+"""
+
+
+# ---------------------------------------------------------------------------
 # 4. AGENT LOOP
 # ---------------------------------------------------------------------------
 
