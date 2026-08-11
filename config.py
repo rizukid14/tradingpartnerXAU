@@ -129,21 +129,22 @@ FORECAST_FALLBACK_MODEL = os.getenv("FORECAST_FALLBACK_MODEL", "gemini-3.5-flash
 
 # --- TRADING PARAMETERS ---
 # Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
-WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "XAUUSD-ECN")  # base name; get_valid_trade_symbol auto-corrects suffix (live -> XAUUSD-ECNc, demo -> XAUUSD-ECN)
+# Default = nama broker LIVE (suffix -ECNc). Auto-correct cuma arah demo (XAUUSD-ECNc -> XAUUSD-ECN).
+WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "XAUUSD-ECNc")
 WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", "BTCUSD.c")
 CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
 ENABLE_BTC_ROTATION = _getenv_bool("ENABLE_BTC_ROTATION", False)
 SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 
-# --- TRADING MODE: "xau" (default, XAU only) | "xau_pairs" (XAU + FX cross pairs, round-robin per candle) ---
-# FX cross pairs (non-USD => low correlation with XAUUSD). Base names — get_valid_trade_symbol
-# auto-corrects broker suffix at runtime (live -> -ECNc, demo -> -ECN).
+# --- TRADING MODE: "xau" (default, XAU only) | "xau_pairs" (XAU + FX cross pairs, parallel scan per candle) ---
+# FX cross pairs (non-USD => low correlation with XAUUSD). Default = nama broker LIVE
+# (suffix -ECNc). Auto-correct cuma arah demo (live -> -ECNc, demo -> -ECN).
 TRADING_MODE = os.getenv("TRADING_MODE", "xau").strip().lower()
 FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        "EURGBP-ECN,EURJPY-ECN,EURCAD-ECN,GBPJPY-ECN",
+        "EURGBP-ECNc,EURJPY-ECNc,EURCAD-ECNc,GBPJPY-ECNc",
     ).split(",")
     if s.strip()
 ]

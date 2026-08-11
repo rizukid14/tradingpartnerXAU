@@ -118,7 +118,10 @@ def init_mt5():
         return True
 
     print(f"[MT5] Connecting to MT5 Terminal for symbol {config.SYMBOL}...")
-    
+
+    # Reset cache nama simbol - koneksi baru = broker/akun baru, suffix bisa beda.
+    _valid_symbol_cache.clear()
+
     if hasattr(mt5, "initialize") and callable(mt5.initialize):
         if not mt5.initialize():
             last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
@@ -510,15 +513,21 @@ def _get_exec_mode(info):
             return val
     return "N/A"
 
+_valid_symbol_cache = {}
+
 def get_valid_trade_symbol(symbol):
     """
     Returns the exact tradeable symbol name on the connected MT5 broker.
     Handles broker suffix variations (e.g. XAUUSD-ECN -> XAUUSD-ECNc, BTCUSD -> BTCUSD.c).
+    Result di-cache per sesi — resolve & print auto-correct CUKUP SEKALI (bukan tiap dipanggil).
     """
     if not symbol:
         return symbol
+    if symbol in _valid_symbol_cache:
+        return _valid_symbol_cache[symbol]
     info = mt5.symbol_info(symbol)
     if info is not None and getattr(info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
+        _valid_symbol_cache[symbol] = symbol
         return symbol
 
     candidates = [
@@ -534,8 +543,10 @@ def get_valid_trade_symbol(symbol):
         cand_info = mt5.symbol_info(cand)
         if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
             print(f"[MT5 AUTO-CORRECT] Symbol '{symbol}' auto-corrected to broker symbol: '{cand}'")
+            _valid_symbol_cache[symbol] = cand
             return cand
 
+    _valid_symbol_cache[symbol] = symbol
     return symbol
 
 def get_filling_policy(symbol):
