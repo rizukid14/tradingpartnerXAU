@@ -22,6 +22,17 @@ risk = RiskEngine()
 macro = MacroAnalyst()
 
 
+def _tpsl_rules_arg(value):
+    """Parser argparse untuk --tpsl-rules: terima 'ATR-Based'/'LLM' (case-insensitive)."""
+    v = value.strip().lower()
+    if v in ("atr-based", "atr", "default", "safe"):
+        return "ATR-Based"
+    if v in ("llm", "free", "bebas"):
+        return "LLM"
+    # argparse menangkap ValueError dari type function jadi pesan error
+    raise ValueError("pilih 'ATR-Based' atau 'LLM'")
+
+
 def parse_cli_overrides(argv=None):
     """
     Parse CLI flags untuk override config sebelum bot jalan (sesi saja, tidak disimpan).
@@ -54,6 +65,8 @@ def parse_cli_overrides(argv=None):
                    help="Dynamic self-tuning config on/off (win-rate adaptive consensus threshold)")
     p.add_argument("--claude-model", type=str,
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
+    p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
+                   help="Aturan SL/TP: 'ATR-Based' (floor 1.2x ATR + TP>=1.5x SL) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -98,6 +111,9 @@ def parse_cli_overrides(argv=None):
         else:
             config.CLAUDE_MODEL = args.claude_model
         applied.append(f"CLAUDE_MODEL={config.CLAUDE_MODEL}")
+    if args.tpsl_rules is not None:
+        config.TP_SL_RULES = args.tpsl_rules
+        applied.append(f"TP_SL_RULES={config.TP_SL_RULES}")
     if args.risk_percent_xau is not None:
         config.RISK_PERCENT_XAU = args.risk_percent_xau
         applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
@@ -167,6 +183,8 @@ def interactive_setup():
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
+        ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
+         str(config.TP_SL_RULES) + (" (floor 1.2x ATR)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
@@ -238,7 +256,10 @@ def interactive_setup():
                 settings[i] = (group, label, attr,
                                "DRY RUN" if (attr == "config.DRY_RUN" and v is True)
                                else ("LIVE" if attr == "config.DRY_RUN" else
-                                     ("ON" if v is True else ("OFF" if v is False else str(v)))))
+                                     ("ON" if v is True else ("OFF" if v is False else
+                                      (str(v) + (" (floor 1.2x ATR)" if attr == "config.TP_SL_RULES" and v == "ATR-Based"
+                                                 else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and v == "LLM"
+                                                 else ""))))))
             print("  ✅ Preset diterapkan.")
             continue
 
@@ -265,6 +286,16 @@ def interactive_setup():
                         elif v in ("haiku", "3"):
                             new_val = "claude-haiku-4-5-20251001"
                         setattr(config, attr.split(".")[1], new_val)
+                    elif "RULES" in attr:
+                        v = new_val.strip().lower()
+                        if v in ("1", "atr", "atr-based", "default", "safe"):
+                            new_val = "ATR-Based"
+                        elif v in ("2", "llm", "free", "bebas"):
+                            new_val = "LLM"
+                        else:
+                            print("  ❌ Pilih 'ATR-Based' (1) atau 'LLM' (2).")
+                            continue
+                        setattr(config, attr.split(".")[1], new_val)
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
                     # refresh tampilan
@@ -273,7 +304,10 @@ def interactive_setup():
                                      else ("LIVE" if attr == "config.DRY_RUN" else
                                            ("ON" if (config.__dict__.get(attr.split('.')[1]) is True) else
                                             ("OFF" if config.__dict__.get(attr.split('.')[1]) is False else
-                                             str(config.__dict__.get(attr.split('.')[1]))))))
+                                             (str(config.__dict__.get(attr.split('.')[1])) +
+                                              (" (floor 1.2x ATR)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "ATR-Based"
+                                               else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "LLM"
+                                               else ""))))))
                     print(f"  ✅ {label} diubah.")
                 except ValueError:
                     print("  ❌ Nilai tidak valid.")
@@ -318,6 +352,52 @@ def run_trading_cycle():
     """Performs one full cycle of fetching data, querying LLMs, and checking consensus."""
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     
+    # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
+    try:
+        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
+        closed_deals = connector.get_closed_positions_today()
+        if getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
+            dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
+
+        # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
+        if closed_deals and len(closed_deals) > 0:
+            # Break-even trades (|profit| within tolerance) are excluded from win-rate
+            tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
+            dec = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
+            bep_n = len(closed_deals) - len(dec)
+            total_t = len(dec)
+            wins_t = sum(1 for d in dec if d.get("profit", 0) > 0)
+            loss_t = total_t - wins_t
+            wr = (wins_t / total_t) * 100.0 if total_t else 0.0
+            pnl_t = sum(d.get("profit", 0) for d in closed_deals)
+            bep_str = f" | {bep_n} BEP" if bep_n else ""
+            print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%){bep_str} | Net PnL: ${pnl_t:+.2f} USD")
+
+            # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
+            by_symbol = {}
+            for d in closed_deals:
+                sym = d.get("symbol", "UNKNOWN")
+                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0, "bep": 0})
+                bucket["n"] += 1
+                bucket["pnl"] += d.get("profit", 0)
+                if abs(d.get("profit", 0)) <= tol:
+                    bucket["bep"] += 1
+                elif d.get("profit", 0) > 0:
+                    bucket["wins"] += 1
+            if len(by_symbol) > 1:
+                parts = []
+                for sym, b in sorted(by_symbol.items()):
+                    sym_t = b["n"] - b["bep"]
+                    sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
+                    sym_loss = sym_t - b["wins"]
+                    bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
+                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} ${b['pnl']:+.2f}")
+                print(f"📊 [PERFORMA PER SIMBOL] " + " | ".join(parts))
+        else:
+            print("📊 [PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
+    except Exception as e:
+        print(f"[EVALUATOR WARNING] {e}")
+
     # 0. Risk gate — check all conditions before trading
     can_trade, reason = risk.can_trade()
     if not can_trade:
@@ -365,51 +445,7 @@ def run_trading_cycle():
         except Exception as e:
             print(f"⚠️ [QUANT PROB ERROR] {e}")
     
-    # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary
-    try:
-        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
-        closed_deals = connector.get_closed_positions_today()
-        if getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
-            dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
 
-        # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
-        if closed_deals and len(closed_deals) > 0:
-            # Break-even trades (|profit| within tolerance) are excluded from win-rate
-            tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
-            dec = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
-            bep_n = len(closed_deals) - len(dec)
-            total_t = len(dec)
-            wins_t = sum(1 for d in dec if d.get("profit", 0) > 0)
-            loss_t = total_t - wins_t
-            wr = (wins_t / total_t) * 100.0 if total_t else 0.0
-            pnl_t = sum(d.get("profit", 0) for d in closed_deals)
-            bep_str = f" | {bep_n} BEP" if bep_n else ""
-            print(f"📊 [PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%){bep_str} | Net PnL: ${pnl_t:+.2f} USD")
-
-            # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
-            by_symbol = {}
-            for d in closed_deals:
-                sym = d.get("symbol", "UNKNOWN")
-                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0, "bep": 0})
-                bucket["n"] += 1
-                bucket["pnl"] += d.get("profit", 0)
-                if abs(d.get("profit", 0)) <= tol:
-                    bucket["bep"] += 1
-                elif d.get("profit", 0) > 0:
-                    bucket["wins"] += 1
-            if len(by_symbol) > 1:
-                parts = []
-                for sym, b in sorted(by_symbol.items()):
-                    sym_t = b["n"] - b["bep"]
-                    sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
-                    sym_loss = sym_t - b["wins"]
-                    bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
-                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} ${b['pnl']:+.2f}")
-                print(f"📊 [PERFORMA PER SIMBOL] " + " | ".join(parts))
-        else:
-            print("📊 [PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
-    except Exception as e:
-        print(f"[EVALUATOR WARNING] {e}")
 
 
     # 3. Check for existing open positions
@@ -427,12 +463,12 @@ def run_trading_cycle():
         if lessons_ctx:
             print("💡 Menyertakan Lesson Learned & Memori Trading untuk LLM...")
 
-    # Pre-warm forecast: ensure cache is fresh for the active symbol before LLM call.
-    # Non-blocking — if cache is stale, a background thread refreshes it; the prompt
-    # will receive the (possibly stale) cache now and the next cycle gets the new one.
+    # Pre-warm forecast: synchronous refresh ONLY if cache is stale (15 min XAU /
+    # 30 min BTC). Kalau cache masih fresh, langsung return tanpa nge-block.
+    # Hasil forecast di-print SEBELUM "Mengirim data..." biar urutan log rapi.
     if getattr(config, "FORECAST_ENABLED", True):
         try:
-            forecast_engine.forecaster.get_active_forecast(config.SYMBOL, df, tick, macro_context)
+            forecast_engine.forecaster.refresh_if_stale(config.SYMBOL, df, tick, macro_context)
         except Exception as e:
             print(f"[FORECAST WARNING] {e}")
 
@@ -462,15 +498,9 @@ def run_trading_cycle():
             print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
             risk.record_position_closed(t_ticket, pre_profit)
 
-    # 5.5 Multi-Horizon Forecast Context (Informational Only)
-    if getattr(config, "FORECAST_ENABLED", True):
-        try:
-            is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
-                config.SYMBOL, tick, result, df
-            )
-            print(f"🔮 [FORECAST INFO] {f_reason}")
-        except Exception as e:
-            print(f"[FORECAST INFO WARNING] {e}")
+    # 5.5 Multi-Horizon Forecast Context — INFORMATIONAL ONLY (tidak memblokir eksekusi).
+    # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
+    # counter-trend di sini. Konsensus LLM yang menentukan entry.
 
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
     max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
@@ -491,13 +521,15 @@ def run_trading_cycle():
         tp_points = result["tp_points"]
         agreeing_count = result.get("agreeing_count", 0)
         
-        # Get effective lot size from risk-based sizing (uses floored SL)
-        effective_lot = risk.get_effective_lot_size(sl_points)
-        
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
         remaining_slots = max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
+
+        # Get effective lot size from risk-based sizing (uses floored SL).
+        # split_count: kalau 3/3 unanimous buka 2 posisi, lot per posisi dibagi
+        # 2 supaya TOTAL risk per sinyal tetap risk_pct (bukan 2x lipat).
+        effective_lot = risk.get_effective_lot_size(sl_points, split_count=num_positions)
 
         if num_positions > 1:
             print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka {num_positions} posisi sekaligus (Sisa slot: {remaining_slots})...")
@@ -617,6 +649,14 @@ def main():
         sys.exit(1)
         
     print("\n✅ Terhubung ke MT5 dengan sukses!")
+    
+    # One-time startup check to evaluate any trades closed while offline
+    try:
+        print("🔍 [STARTUP] Memeriksa tiket terlewat untuk evaluasi post-mortem...")
+        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
+    except Exception as e:
+        print(f"⚠️ [STARTUP EVALUATOR WARNING] {e}")
+        
     print("🤖 Bot berjalan... Menunggu penutupan candle berikutnya.\n")
     
     # Send startup alert
@@ -774,7 +814,7 @@ def main():
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks
-            time.sleep(5)
+            time.sleep(3)  # loop utama — cache query MT5 sudah kurangi beban, 3 detik aman
 
             
     except KeyboardInterrupt:

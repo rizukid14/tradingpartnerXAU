@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import config
 
 WIB = ZoneInfo("Asia/Jakarta")
+config.ENABLE_BTC_ROTATION = True
 
 
 def test_active_symbol():

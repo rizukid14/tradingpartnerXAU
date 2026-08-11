@@ -175,49 +175,6 @@ def query_primary_model(prompt, search_grounding=False):
     return None
 
 
-def analyze_timeframe(symbol, timeframe_name, df):
-    """
-    Queries the primary model to analyze structural bias, trend, 
-    and support/resistance for a higher timeframe.
-    """
-    # Take the last 10 candles for context
-    recent_candles = df.tail(10).to_dict(orient="records")
-    candles_str = ""
-    for c in recent_candles:
-        candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
-
-    latest = df.iloc[-1]
-
-    execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
-    
-    prompt = f"""
-You are an expert financial market analyst.
-Analyze the following market data for {symbol} on timeframe {timeframe_name} to identify the structural bias and key levels.
-
-### MARKET DATA CONTEXT
-Symbol: {symbol}
-Timeframe: {timeframe_name}
-
-### RECENT CANDLES (Last 10 candles):
-{candles_str}
-
-### CURRENT INDICATORS SUMMARY
-- Close: {latest['close']}
-- RSI (14): {latest['rsi_14']:.2f}
-- EMA (20): {latest['ema_20']:.2f}
-- EMA (50): {latest['ema_50']:.2f}
-- ATR (14): {latest['atr_14']:.2f}
-
-Provide a concise structural market analysis. Include:
-1. Overall Trend (Bullish / Bearish / Range) and structural strength.
-2. Key Support and Resistance zones.
-3. Relevant price action patterns or signals.
-
-Your response must be extremely brief (maximum 2-3 sentences) as it will be used as background context for a {execution_style} execution model.
-"""
-    return query_primary_model(prompt, search_grounding=False)
-
-
 def analyze_fundamentals(symbol):
     """
     Queries Gemini using Google Search Grounding to summarize the latest
@@ -267,9 +224,7 @@ The "recent outcomes" note, if present, is win/loss history for your risk awaren
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A concrete invalidation condition for that thesis
-- SL placed beyond the invalidation level, and roughly within 1.5-2x current ATR (in points) unless the invalidation logic clearly justifies otherwise
-- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker
-- TP that gives at least 1.5R relative to SL (TP distance >= 1.5x SL distance)
+{{SLTP_RULES_BLOCK}}
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
 
@@ -301,6 +256,40 @@ BUY or SELL:
 CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
 
 
+def _build_sltp_rules_block(symbol, timeframe):
+    """
+    Build the SL/TP constraint lines for the system prompt based on
+    config.TP_SL_RULES:
+      "ATR-Based": SL roughly 1.5-2x ATR, TP >= 1.5x SL (guardrail mode).
+      "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
+      rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
+      SL/TP model di-average di consensus.py (outlier dibuang), lot size
+      dikalkulasi dari SL di main.py.
+    """
+    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    is_btc = config.is_crypto(symbol)
+    
+    if mode == "LLM":
+        if is_btc:
+            range_note = "typically 20000 to 60000 points ($200-$600)"
+            noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
+        else:
+            range_note = "typically 100 to 350 points ($1.00-$3.50)"
+            noise_note = "avoid M1-style hyper-scalping stops (e.g., under 80 points) as spread and execution noise will erode your edge"
+
+        return (
+            f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
+            f"- SL distance is YOUR choice (no ATR floor): set it exactly where the invalidation logic puts it. However, align it with the {timeframe} structure ({range_note}) and {noise_note}\n"
+            f"- TP is YOUR choice (no forced 1.5R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
+        )
+        
+    return (
+        "- SL placed beyond the invalidation level, and roughly within 1.5-2x current ATR (in points) unless the invalidation logic clearly justifies otherwise\n"
+        "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
+        "- TP that gives at least 1.5R relative to SL (TP distance >= 1.5x SL distance)\n"
+    )
+
+
 def build_system_prompt(symbol, timeframe, asset_description):
     """
     Static per-bot 'constitution'. Build once per bot instance (e.g. once
@@ -313,6 +302,7 @@ def build_system_prompt(symbol, timeframe, asset_description):
         .replace("{{SYMBOL}}", symbol)
         .replace("{{TIMEFRAME}}", timeframe)
         .replace("{{ASSET_DESC}}", asset_description)
+        .replace("{{SLTP_RULES_BLOCK}}", _build_sltp_rules_block(symbol, timeframe))
     )
 
 
@@ -446,7 +436,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # (the new template from docs/prompt_claude.md lets the LLM set SL/TP
     # from its own thesis; consensus.py still enforces the 2x-spread floor
     # and 1.5x SL->TP minimum). atr_points is still shown in market data.
-    min_sl = int(atr_points * 1.5)
+    min_sl = int(atr_points * 1.2)
     max_sl = int(atr_points * 2.0)
 
     # USD value of 1 point for the default bot lot — tells the LLM the real
@@ -551,9 +541,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
             "For EACH open position above, make an explicit decision:\n" +
-            "- 'CLOSE' if the trade thesis is broken (price rejected the forecast target, trend reversed, or the position is stale with no momentum) or if a hard risk limit is at risk.\n" +
-            "- 'HOLD' if the thesis remains intact and the position is progressing toward target.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: price rejected target with RSI diverging', or 'HOLD: price still above EMA20, +1.5R to target'). Never leave a ticket without an action.\n"
+            "- 'CLOSE' ONLY if the trade thesis is genuinely broken (e.g., the invalidation level is breached, a clear counter-trend structure has formed on M5, or a fundamental shift has occurred). Do NOT recommend CLOSE for minor or normal pullbacks within the expected M5 volatility.\n" +
+            "- 'HOLD' if the thesis remains intact, the position is within normal price fluctuations, or progressing toward target.\n" +
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: price broke invalidation level at 4350.8', or 'HOLD: price holding above support, within normal pullback'). Never leave a ticket without an action.\n"
         )
 
     # Explicitly separate the two decisions so the LLM does not mix them:
@@ -594,17 +584,13 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
     # ================================================================
     # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
-    print(f"[LLM PROMPT PREVIEW] symbol={symbol} tf={tf_label} bid={current_tick['bid']} ask={current_tick['ask']} spread={current_tick['spread']}pt point={current_tick['point']}")
-    print(f"[LLM PROMPT PREVIEW] close={latest['close']} rsi={latest['rsi_14']:.2f} ema20={latest['ema_20']:.2f} ema50={latest['ema_50']:.2f} atr={latest['atr_14']:.2f} atr_points={atr_points}")
-    print(f"[LLM PROMPT PREVIEW] fib382={fib_382:.2f} fib500={fib_500:.2f} fib618={fib_618:.2f} swing_high={swing_high:.2f} swing_low={swing_low:.2f}")
-    print(f"[LLM PROMPT PREVIEW] recent_candles=7 micro_candles={'yes' if micro_candles_str else 'no'} forecast={'yes' if forecast_str else 'no'} positions={'yes' if positions_str else 'no'}")
-
     market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
 Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
+Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
 
 ### RECENT CANDLES (Last 7 candles, {tf_label}):
 {candles_str}
@@ -715,6 +701,42 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         )
     content = response.choices[0].message.content
     return clean_json_response(content)
+
+
+def query_forecast(prompt):
+    """Queries forecast engine with 1 AI: gpt-5.4 (bukan mini) primary,
+    fallback gemini-3.5-flash (bukan lite). Returns parsed JSON dict or None."""
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    primary_model = getattr(config, "FORECAST_MODEL", None) or config.OPENAI_MODEL
+    fallback_model = getattr(config, "FORECAST_FALLBACK_MODEL", None) or config.GEMINI_MODEL
+
+    # 1. Primary: OpenAI gpt-5.4
+    if openai_client:
+        try:
+            res = _execute_openai_single(primary_model, prompt, timeout_sec)
+            if isinstance(res, dict) and "forecast_bias" in res:
+                return res
+            print(f"[FORECAST WARNING] Response {primary_model} tidak punya forecast_bias: {str(res)[:120]}")
+        except Exception as e:
+            print(f"⚠️ [FORECAST FALLBACK] {primary_model} error ({e}). Switching ke {fallback_model}...")
+
+    # 2. Fallback: Gemini gemini-3.5-flash
+    if gemini_client:
+        try:
+            from google.genai import types
+            res = gemini_client.models.generate_content(
+                model=fallback_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if res and res.text:
+                parsed = clean_json_response(res.text)
+                if isinstance(parsed, dict) and "forecast_bias" in parsed:
+                    return parsed
+        except Exception as e:
+            print(f"[FORECAST FALLBACK ERROR] {e}")
+
+    return None
 
 
 def query_openai(prompt):

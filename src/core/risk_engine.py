@@ -19,6 +19,7 @@ Checks before every trade cycle:
 import time
 import os
 import json
+import math
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import config
@@ -92,8 +93,9 @@ class RiskEngine:
         Updates loss streak / daily P/L / recovery mode in real time.
         Called at startup, every can_trade(), and every 5s in the main loop.
         """
-        symbol = config.SYMBOL
-        closed = connector.get_closed_positions_today(symbol=symbol)
+        # Use a 24-hour lookback to cover time-boundary gaps (e.g. midnight WIB)
+        # and self-heal any deals closed while the bot was offline.
+        closed = connector.get_closed_positions_today(symbol=None, lookback_hours=24)
         if not closed:
             return []
 
@@ -138,9 +140,6 @@ class RiskEngine:
 
         # 0. Detect trades closed by MT5 since last check (SL/TP/manual)
         self.sync_closed_positions()
-
-
-
         # 1. Check if we're in a pause cooldown (consecutive losses)
         if time.time() < self._paused_until:
             remaining = int(self._paused_until - time.time())
@@ -240,16 +239,22 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None):
+    def get_effective_lot_size(self, sl_points=None, split_count=1):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
 
+        split_count: kalau sinyal membuka N posisi sekaligus (misal 3/3
+        unanimous -> 2 posisi), risk dibagi N supaya TOTAL risk per sinyal
+        tetap risk_pct, bukan N x risk_pct.
+
         Order of operations (important):
-          1. Compute risk-based lot from the (already floored) SL distance.
+          1. Compute risk-based lot from the (already floored) SL distance,
+             dibagi split_count.
           2. Apply risk multipliers (recovery x0.5, session x1.0/1.2).
-          3. Clamp to broker volume_min/max and round to volume_step LAST,
-             so multipliers are not distorted by rounding.
+          3. Clamp to broker volume_min/max and round DOWN to volume_step
+             LAST (floor, bukan round - round() bisa naikkan lot MELEBIHI
+             risk target), so multipliers are not distorted by rounding.
         Falls back to config.lot_size_for() when SL is unknown.
         """
         symbol = config.SYMBOL
@@ -272,26 +277,31 @@ class RiskEngine:
             lot = config.lot_size_for(symbol)
             return self._apply_lot_multipliers(lot, symbol)
 
-        risk_usd = equity * risk_pct / 100.0
+        split_count = max(1, int(split_count))
+        risk_usd_total = equity * risk_pct / 100.0
+        risk_usd = risk_usd_total / split_count  # per posisi
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
-        print(f"📐 [SIZING] {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd:.2f}, "
-              f"SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
+        print(f"📐 [SIZING] {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd_total:.2f}"
+              + (f" ({split_count} posisi -> ${risk_usd:.2f}/posisi)" if split_count > 1 else "")
+              + f", SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
 
         # Apply recovery/session multipliers BEFORE clamping so rounding cannot
         # erase the intended reduction.
         lot = self._apply_lot_multipliers(lot_raw, symbol)
 
-        # Clamp to broker volume bounds and round to step
+        # Clamp to broker volume bounds and round DOWN to step (floor - jangan
+        # pakai round(), itu bisa NAIKKAN lot di atas risk target).
         volume_min = getattr(si, "volume_min", 0.01)
         volume_max = getattr(si, "volume_max", 100.0)
         volume_step = getattr(si, "volume_step", 0.01)
         lot = max(volume_min, min(volume_max, lot))
-        lot = round(lot / volume_step) * volume_step
+        lot = math.floor(lot / volume_step + 1e-9) * volume_step
+        lot = max(volume_min, lot)  # jangan jatuh di bawah volume_min broker
         lot = round(lot, 2)
 
         # Margin safety net: never let the order exceed available free margin

@@ -122,6 +122,10 @@ OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini")
 
 LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 24.0)
 
+# Forecast Engine: primary & fallback models
+FORECAST_MODEL = os.getenv("FORECAST_MODEL", "gpt-5.4")
+FORECAST_FALLBACK_MODEL = os.getenv("FORECAST_FALLBACK_MODEL", "gemini-3.5-flash")
+
 
 # --- TRADING PARAMETERS ---
 # Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
@@ -154,6 +158,8 @@ RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 0.5)
 
 DEVIATION = _getenv_int("DEVIATION", 20)
+
+TP_SL_RULES = os.getenv("TP_SL_RULES", "ATR-Based")
 
 DEFAULT_SL_POINTS = _getenv_int("DEFAULT_SL_POINTS", 300)
 DEFAULT_TP_POINTS = _getenv_int("DEFAULT_TP_POINTS", 600)
@@ -305,8 +311,7 @@ if MT5_LOGIN:
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = _getenv_bool("MTF_ANALYSIS_ENABLED", True)
 HIGHER_TIMEFRAMES = {
-    "M30": mt5.TIMEFRAME_M30,
-    "H1": mt5.TIMEFRAME_H1
+    "M30": mt5.TIMEFRAME_M30
 }
 HIGHER_TIMEFRAMES_CRYPTO = {
     "H1": mt5.TIMEFRAME_H1,

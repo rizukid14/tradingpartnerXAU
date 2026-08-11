@@ -15,10 +15,13 @@ def _effective_consensus_threshold():
 
 def _apply_sltp_floors(sl_points, tp_points):
     """
-    Enforce a minimum SL so the LLM cannot propose stops inside the spread
-    (which the broker would reject with INVALID_STOPS) or smaller than the
-    instrument's real volatility (1x ATR) — averaging two models where one
-    gave a tiny SL can otherwise land the stop inside normal noise.
+    Enforce SL/TP floors according to config.TP_SL_RULES:
+      "ATR-Based" (default): min SL = max(2x spread, 1.2x ATR), TP >= 1.5x SL.
+        Mencegah SL di dalam noise/volatilitas — model (DeepSeek/OpenAI) sering
+        kasih SL cuma 6-7% ATR; 1.2x ATR kompromi biar tetap scalping-friendly.
+      "LLM": SL/TP sebebas-bebasnya sesuai konsensus — cuma floor 2x spread
+        (biar broker nggak nolak INVALID_STOPS). Lot size dikalkulasi dari SL
+        tsb via risk-based sizing, jadi SL kecil = lot gede (risk tetap sama).
     """
     if not sl_points or sl_points <= 0:
         sl_points = config.default_sl_points_for(config.SYMBOL)
@@ -48,8 +51,22 @@ def _apply_sltp_floors(sl_points, tp_points):
     except Exception:
         pass
 
-    # Floor = max(2x spread, 1x ATR) — never inside spread, never inside noise
-    min_sl = max(spread_pts * 2, atr_points)
+    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    if mode == "LLM":
+        # Bebas sesuai konsensus, tapi dibatasi floor max(2x spread, 0.5x ATR)
+        # agar lot size tidak membengkak ekstrem (aman untuk M5 scalping).
+        min_sl = max(spread_pts * 2, int(atr_points * 0.5))
+        if sl_points < min_sl:
+            sl_points = min_sl
+        # TP minimal harus default, dan dipaksa minimal sama dengan SL (TP >= 1.0x SL) untuk mencegah R:R negatif
+        if tp_points <= 0:
+            tp_points = config.default_tp_points_for(config.SYMBOL)
+        if tp_points < sl_points:
+            tp_points = sl_points
+        return sl_points, tp_points
+
+    # ATR-Based: Floor = max(2x spread, 1.2x ATR) — never inside spread/noise
+    min_sl = max(spread_pts * 2, int(atr_points * 1.2))
     if sl_points < min_sl:
         sl_points = min_sl
 
@@ -57,6 +74,46 @@ def _apply_sltp_floors(sl_points, tp_points):
         tp_points = int(sl_points * 1.5)
 
     return sl_points, tp_points
+
+
+def _drop_standalone_outlier(values, label):
+    """
+    Buang nilai yang "beda sendiri" sebelum di-average, sesuai aturan user:
+      - 2/3 model sepakat -> nilai yang nggak sepakat (<50% atau >200% dari
+        median) dibuang, 2 yang sepakat di-average.
+      - 3/3 model beda semua -> yang paling jauh dari median dibuang (1 aja),
+        2 sisanya di-average.
+      - Semua nilai dalam band 0.5x-2x median -> nggak ada yang dibuang,
+        semua di-average.
+    Median lebih robust daripada mean buat deteksi anomali. Maksimal 1 nilai
+    yang dibuang — nggak pernah buang semua.
+    """
+    if len(values) <= 2:
+        return values
+    s = sorted(values)
+    n = len(s)
+    median = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+    low = [v for v in s if v < 0.5 * median]
+    high = [v for v in s if v > 2.0 * median]
+    dropped = []
+    if low and high:
+        # Dua sisi anomali sekaligus — buang yang paling jauh dari median
+        if median - min(low) >= max(high) - median:
+            dropped = [min(low)]
+        else:
+            dropped = [max(high)]
+    elif low:
+        dropped = [min(low)]
+    elif high:
+        dropped = [max(high)]
+
+    keep = [v for v in values if v not in dropped]
+    if not keep:
+        return values  # jangan buang semua kalau median-nya sendiri anomali
+    if dropped:
+        print(f"   [!] Outlier {label} dibuang (median {median:.0f}): "
+              f"{', '.join(str(int(d)) for d in dropped)}")
+    return keep
 
 
 def calculate_consensus(decisions):
@@ -215,27 +272,16 @@ def calculate_consensus(decisions):
         if isinstance(tp_val, (int, float)) and tp_val > 0:
             tp_list.append(tp_val)
 
-    # Filter outlier SL/TP: buang nilai yang < 50% dari median model lain.
+    # Filter outlier SL/TP: buang nilai yang "beda sendiri" sebelum di-average.
+    # Aturan user (mode LLM):
+    #   - 2/3 model sepakat -> yang nggak sepakat dibuang, 2 yang sepakat di-average
+    #   - 3/3 model beda semua -> yang paling jauh dari median dibuang (1 aja),
+    #     2 sisanya di-average
     # Contoh: OpenAI kasih SL 30 pts saat Gemini 400 & DeepSeek 305 — SL 30
     # cuma 10% ATR, menyeret rata-rata ke bawah & bikin lot membengkak.
     # Median lebih robust daripada mean untuk deteksi anomali.
-    def _reject_low_outliers(values, label):
-        if len(values) <= 2:
-            return values
-        s = sorted(values)
-        n = len(s)
-        median = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
-        keep = [v for v in values if v >= 0.5 * median]
-        dropped = [v for v in values if v < 0.5 * median]
-        if not keep:
-            return values  # jangan buang semua kalau median-nya sendiri anomali
-        if dropped:
-            print(f"   ⚠️ Outlier {label} dibuang (median {median:.0f}): "
-                  f"{', '.join(str(int(d)) for d in dropped)}")
-        return keep
-
-    sl_list = _reject_low_outliers(sl_list, "SL")
-    tp_list = _reject_low_outliers(tp_list, "TP")
+    sl_list = _drop_standalone_outlier(sl_list, "SL")
+    tp_list = _drop_standalone_outlier(tp_list, "TP")
 
     avg_confidence = float(sum(conf_list) / len(conf_list))
     final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
