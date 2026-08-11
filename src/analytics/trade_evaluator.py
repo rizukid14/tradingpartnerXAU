@@ -71,94 +71,112 @@ def _extract_theme(lesson_text):
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "entry"
 
+import shutil
+import threading
+
 class TradeEvaluator:
     def __init__(self):
         self._evaluated_tickets = set()
         self._lessons = []
         self._lessons_summary = ""
+        self._file_lock = threading.Lock()
 
     def _load_memory(self, symbol):
         """Loads memory from memory_lessons.json and returns a dict for the specific symbol."""
-        try:
-            if os.path.exists(MEMORY_FILE):
-                with open(MEMORY_FILE, "r") as f:
-                    data = json.load(f)
-                
-                # Check for legacy format (lessons directly at the root)
-                if "lessons" in data:
-                    print("🔄 [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
-                    legacy_lessons = data.get("lessons", [])
-                    legacy_summary = data.get("lessons_summary", "")
-                    legacy_tickets = list(data.get("evaluated_tickets", []))
+        with self._file_lock:
+            try:
+                if os.path.exists(MEMORY_FILE):
+                    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
                     
-                    migrated_lessons = {}
-                    for item in legacy_lessons:
-                        sym = item.get("symbol", "XAUUSD-ECNc") if isinstance(item, dict) else "XAUUSD-ECNc"
-                        # Normalise string lessons to dict format
-                        if isinstance(item, str):
-                            item = {"symbol": "XAUUSD-ECNc", "lesson": item, "theme": _extract_theme(item)}
-                        migrated_lessons.setdefault(sym, []).append(item)
+                    # Check for legacy format (lessons directly at the root)
+                    if "lessons" in data:
+                        print("🔄 [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
+                        legacy_lessons = data.get("lessons", [])
+                        legacy_summary = data.get("lessons_summary", "")
+                        legacy_tickets = list(data.get("evaluated_tickets", []))
                         
-                    data = {
-                        "XAUUSD-ECNc": {
-                            "lessons": migrated_lessons.get("XAUUSD-ECNc", []),
-                            "lessons_summary": legacy_summary,
-                            "evaluated_tickets": legacy_tickets
-                        },
-                        "BTCUSD.c": {
-                            "lessons": migrated_lessons.get("BTCUSD.c", []),
-                            "lessons_summary": "",
-                            "evaluated_tickets": legacy_tickets
+                        migrated_lessons = {}
+                        for item in legacy_lessons:
+                            sym = item.get("symbol", "XAUUSD-ECNc") if isinstance(item, dict) else "XAUUSD-ECNc"
+                            # Normalise string lessons to dict format
+                            if isinstance(item, str):
+                                item = {"symbol": "XAUUSD-ECNc", "lesson": item, "theme": _extract_theme(item)}
+                            migrated_lessons.setdefault(sym, []).append(item)
+                            
+                        data = {
+                            "XAUUSD-ECNc": {
+                                "lessons": migrated_lessons.get("XAUUSD-ECNc", []),
+                                "lessons_summary": legacy_summary,
+                                "evaluated_tickets": legacy_tickets
+                            },
+                            "BTCUSD.c": {
+                                "lessons": migrated_lessons.get("BTCUSD.c", []),
+                                "lessons_summary": "",
+                                "evaluated_tickets": legacy_tickets
+                            }
                         }
+                        # Save migrated structure back immediately
+                        tmp_path = MEMORY_FILE + ".tmp"
+                        with open(tmp_path, "w", encoding="utf-8") as fw:
+                            json.dump(data, fw, indent=4)
+                        os.replace(tmp_path, MEMORY_FILE)
+                    
+                    # Retrieve symbol data, initialize if missing
+                    if symbol not in data:
+                        data[symbol] = {
+                            "lessons": [],
+                            "lessons_summary": "",
+                            "evaluated_tickets": []
+                        }
+                    
+                    return {
+                        "lessons": data[symbol].get("lessons", []),
+                        "lessons_summary": data[symbol].get("lessons_summary", ""),
+                        "evaluated_tickets": set(data[symbol].get("evaluated_tickets", []))
                     }
-                    # Save migrated structure back immediately
-                    with open(MEMORY_FILE, "w") as fw:
-                        json.dump(data, fw, indent=4)
+            except json.JSONDecodeError as e:
+                print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json (JSON corrupt: {e}) — backing up & reset.")
+                try:
+                    shutil.copy(MEMORY_FILE, MEMORY_FILE + ".bak")
+                    if os.path.exists(MEMORY_FILE):
+                        os.remove(MEMORY_FILE)
+                except Exception as ex:
+                    print(f"[EVALUATOR WARNING] Gagal backup file corrupt: {ex}")
+            except Exception as e:
+                print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json: {e}")
                 
-                # Retrieve symbol data, initialize if missing
-                if symbol not in data:
-                    data[symbol] = {
-                        "lessons": [],
-                        "lessons_summary": "",
-                        "evaluated_tickets": []
-                    }
-                
-                return {
-                    "lessons": data[symbol].get("lessons", []),
-                    "lessons_summary": data[symbol].get("lessons_summary", ""),
-                    "evaluated_tickets": set(data[symbol].get("evaluated_tickets", []))
-                }
-        except Exception as e:
-            print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json: {e}")
-            
-        return {"lessons": [], "lessons_summary": "", "evaluated_tickets": set()}
+            return {"lessons": [], "lessons_summary": "", "evaluated_tickets": set()}
 
     def _save_memory(self, symbol, lessons, summary, evaluated_tickets):
         """Save lessons, summary, and evaluated tickets for a specific symbol to memory_lessons.json."""
-        try:
-            data = {}
-            if os.path.exists(MEMORY_FILE):
-                with open(MEMORY_FILE, "r") as f:
+        with self._file_lock:
+            try:
+                data = {}
+                if os.path.exists(MEMORY_FILE):
                     try:
-                        data = json.load(f)
-                        # If legacy file is loaded, force it to dict before updating
-                        if "lessons" in data:
-                            data = {}
+                        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            # If legacy file is loaded, force it to dict before updating
+                            if "lessons" in data:
+                                data = {}
                     except Exception:
                         data = {}
-            
-            # Update symbol data
-            data[symbol] = {
-                "lessons": lessons[-MAX_LESSONS:],
-                "lessons_summary": summary,
-                "evaluated_tickets": list(evaluated_tickets)
-            }
-            
-            # Save back to disk
-            with open(MEMORY_FILE, "w") as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            print(f"[EVALUATOR WARNING] Gagal menyimpan memory_lessons.json: {e}")
+                
+                # Update symbol data
+                data[symbol] = {
+                    "lessons": lessons[-MAX_LESSONS:],
+                    "lessons_summary": summary,
+                    "evaluated_tickets": list(evaluated_tickets)
+                }
+                
+                # Atomic write to save back to disk
+                tmp_path = MEMORY_FILE + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
+                os.replace(tmp_path, MEMORY_FILE)
+            except Exception as e:
+                print(f"[EVALUATOR WARNING] Gagal menyimpan memory_lessons.json: {e}")
 
     def _summarize_and_reset(self, symbol, lessons, evaluated_tickets):
         """
