@@ -231,6 +231,8 @@ def calculate_consensus(decisions):
     # (2-model regime keeps the base; 3-model defensive regime -> *1.5 = 1.8 BTC)
     min_models = getattr(config, "MIN_CONSENSUS_MODELS", 2)
     base_threshold = config.confidence_threshold_for(config.SYMBOL)
+    if getattr(config, "FORCE_ACTIVE_ENTRY", False):
+        base_threshold *= 0.7
     eff_count = _effective_consensus_threshold()
     threshold = base_threshold * (eff_count / min_models)
 

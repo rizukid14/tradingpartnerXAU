@@ -297,13 +297,22 @@ def build_system_prompt(symbol, timeframe, asset_description):
     is the part that benefits from provider-side prompt/context caching,
     since only the dynamic market data below changes every call.
     """
-    return (
+    prompt = (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("{{SYMBOL}}", symbol)
         .replace("{{TIMEFRAME}}", timeframe)
         .replace("{{ASSET_DESC}}", asset_description)
         .replace("{{SLTP_RULES_BLOCK}}", _build_sltp_rules_block(symbol, timeframe))
     )
+
+    if getattr(config, "FORCE_ACTIVE_ENTRY", False):
+        prompt += (
+            "\n\n### FORCE ACTIVE ENTRY MODE (ACTIVE)\n"
+            "CRITICAL DIRECTIVE: You are explicitly required to identify and take an active directional trading position (BUY or SELL) based on the strongest available edge in current price action and technical indicators. "
+            "Do NOT default to HOLD unless market data is completely corrupt or unreadable. Actively weigh BUY vs SELL and select the direction with higher probability edge!"
+        )
+
+    return prompt
 
 
 def format_candles(candles):
