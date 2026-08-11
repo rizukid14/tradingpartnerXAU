@@ -14,10 +14,12 @@ system prompt itself, as a safety net:
 
   1. The old "macro context" line was sometimes a static/stale string
      (e.g. "Bullish macro context sample") that could anchor the model to
-     a wrong bias for hours. The model is now told explicitly to disregard
-     that note if it looks generic or inconsistent with the real data.
-     Still fix the upstream data source in your pipeline -- this prompt-level
-     instruction is a safety net, not a substitute for that.
+     a wrong bias for hours. That dummy string is gone; macro context is now
+     generated from real MT5 data (MTF analysis EMA/RSI/ATR/swing), and the
+     model is told the MULTI-TIMEFRAME ANALYSIS section is computed from
+     actual HTF candles while news/fundamental notes are advisory only.
+     (Historical safety-net note: the prompt-level instruction to disregard
+     generic/stale notes remains as a fallback, not a substitute for real data.)
 
   2. The old "recent decisions" block echoed past directional calls back
      into every new prompt, which can anchor the model to its own prior
@@ -51,7 +53,7 @@ Reassess the market from scratch using only the data in THIS prompt. Do not assu
 ### DATA INTEGRITY
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
 
-Any "macro/HTF context" note is background only, not a ground-truth signal -- if it reads as generic, stale, or inconsistent with the actual candles/indicators shown, disregard it in favor of the concrete data.
+The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) -- use it to judge whether the current move is a pullback within a larger trend or a reversal. If its numbers conflict with the visible candles, prefer the visible candles. Any news/fundamental note is advisory only -- disregard if generic or stale.
 
 The forecast matrix comes from a separate model and is informational only, not a rule. A NEUTRAL or disagreeing forecast does not by itself require HOLD; an aligned forecast does not by itself justify a trade.
 
@@ -295,7 +297,12 @@ if __name__ == "__main__":
         fib_382=4353.33,
         fib_500=4350.64,
         fib_618=4347.95,
-        macro_context="Bullish macro context sample.",  # <- fix this upstream, see docstring
+        macro_context=(
+            "### MULTI-TIMEFRAME ANALYSIS (Struktur Trend)\n"
+            "- **M30 Timeframe**: trend DOWNTREND | close 4354.77, EMA20 4354.13, "
+            "EMA50 4345.23 (gap EMA 8.90), RSI 55.1 (netral), ATR 5.03 | swing "
+            "30-candle: high 4364.77, low 4316.76"
+        ),
         forecast={
             "bias": "NEUTRAL", "t5": 4340.83, "t15": 4340.47, "t60": 4348.47,
             "invalidation": 4330.87, "entry_low": 4338.57, "entry_high": 4341.5,

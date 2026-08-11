@@ -214,7 +214,7 @@ Reassess the market from scratch using only the data in THIS prompt. Do not assu
 ### DATA INTEGRITY
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
 
-Any "macro/HTF context" note is background only, not a ground-truth signal -- if it reads as generic, stale, or inconsistent with the actual candles/indicators shown, disregard it in favor of the concrete data.
+The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) -- use it to judge whether the current move is a pullback within a larger trend or a reversal. If its numbers conflict with the visible candles, prefer the visible candles. Any news/fundamental note is advisory only -- disregard if generic or stale.
 
 The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
 
@@ -493,13 +493,15 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
 
-    # Create recent candles string (last 25 candles = ~2 jam M5 / ~12 jam M30,
-    # cukup buat baca pola swing HH/HL, double top/bottom, tanpa boros token)
-    recent_candles = df.tail(25)
+    # Create recent candles string — FULL 50 candles (~4 jam M5 / ~25 jam M30),
+    # OHLC only (drop volume) supaya window 50-Bar Swing High/Low & Fib bisa
+    # diverifikasi LLM (sebelumnya cuma 25 candle tapi diklaim "50-Bar Swing" —
+    # LLM gak bisa verifikasi).
+    recent_candles = df.tail(50)
     candles_str = ""
     for idx, row in recent_candles.iterrows():
         time_str = row['time'].strftime('%H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
-        candles_str += f"- [{time_str}] O:{row['open']}, H:{row['high']}, L:{row['low']}, C:{row['close']}, V:{row['tick_volume']}\n"
+        candles_str += f"- [{time_str}] O:{row['open']}, H:{row['high']}, L:{row['low']}, C:{row['close']}\n"
 
     # Micro price action: last 5 M30 candles (BTC M30) or last 5 M1 candles (XAU M5)
     micro_candles_str = ""
@@ -593,10 +595,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     macro_str = ""
     if macro_context:
         macro_str = (
-            "\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT (background only)\n"
+            "\n### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT\n"
             f"{macro_context}\n"
-            "(Advisory only — if this reads generic/stale or conflicts with the "
-            "actual candles/indicators, disregard it in favor of the concrete data.)\n"
+            "(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe "
+            "candles (EMA20/50, RSI, ATR, swing levels) — use it to determine whether the "
+            "current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL "
+            "ANALYSIS section is news sentiment only — advisory, disregard if generic or stale.)\n"
         )
 
     lessons_str = ""
@@ -730,7 +734,7 @@ Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
 {key_levels_str}
-### RECENT CANDLES (Last 25 candles, {tf_label}):
+### RECENT CANDLES (Last 50 candles, {tf_label}, OHLC only — full swing window):
 {candles_str}
 {micro_candles_str}
 ### CURRENT INDICATORS & FIBONACCI SUMMARY

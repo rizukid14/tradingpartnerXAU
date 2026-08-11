@@ -28,7 +28,7 @@ Reassess the market from scratch using only the data in THIS prompt. Do not assu
 ### DATA INTEGRITY
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
 
-Any "macro/HTF context" note is background only, not a ground-truth signal -- if it reads as generic, stale, or inconsistent with the actual candles/indicators shown, disregard it in favor of the concrete data.
+The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) -- use it to judge whether the current move is a pullback within a larger trend or a reversal. If its numbers conflict with the visible candles, prefer the visible candles. Any news/fundamental note is advisory only -- disregard if generic or stale.
 
 The forecast matrix comes from a separate model and is informational only, not a rule. A NEUTRAL or disagreeing forecast does not by itself require HOLD; an aligned forecast does not by itself justify a trade.
 
@@ -106,9 +106,10 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max 50 pts fo
 - 50-Bar Swing High: 4364.77 | Swing Low: 4316.76
 - Fibonacci Retracement Levels: Fib 38.2%: 4346.43 | Fib 50.0%: 4340.77 | Fib 61.8%: 4335.10
 
-### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT (background only)
-Bullish macro context sample.
-(Advisory only — if this reads generic/stale or conflicts with the actual candles/indicators, disregard it in favor of the concrete data.)
+### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT
+### MULTI-TIMEFRAME ANALYSIS (Struktur Trend)
+- **M30 Timeframe**: trend DOWNTREND | close 4354.77, EMA20 4354.13, EMA50 4345.23 (gap EMA 8.90), RSI 55.1 (netral), ATR 5.03 | swing 30-candle: high 4364.77, low 4316.76
+(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) — use it to determine whether the current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL ANALYSIS section is news sentiment only — advisory, disregard if generic or stale.)
 
 ### XAUUSD-ECNc LESSONS LEARNED (SUMMARY)
 On 5m XAUUSD scalps, trade only with confirmed momentum and spread-aware edge: shorts need bearish rejection/lower-high below VWAP/EMA or resistance, longs need pullback/retest, higher-low, and reclaim. Never chase or enter early; wait for immediate confirmation and avoid tiny 1–2 point edges that fees/slippage can erase. Place stops beyond the swing with buffer, verify SL/TP direction, and take quick profits into the first opposing level.
