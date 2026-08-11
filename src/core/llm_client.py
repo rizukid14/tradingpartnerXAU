@@ -299,7 +299,11 @@ def _build_sltp_rules_block(symbol, timeframe):
     """
     Build the SL/TP constraint lines for the system prompt based on
     config.TP_SL_RULES:
-      "ATR-Based": SL ~1.25x ATR, TP ~2.5x ATR (R:R 2:1) (guardrail mode).
+      "ATR-Based": SL >= 1.25x ATR, TP >= 2.5x ATR (R:R 2:1) — HARD GATE.
+        Trade yang SL/TP-nya di bawah requirement DITOLAK bot (bukan
+        dinaikkan), jadi prompt ini harus tegas biar AI gak buang cycle.
+        Angka minimum konkret (dalam points) di-inject dinamis di market
+        data block (atr_gate_str).
       "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
       rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
@@ -323,9 +327,9 @@ def _build_sltp_rules_block(symbol, timeframe):
         )
         
     return (
-        "- SL placed beyond the invalidation level, and roughly at 1.25x current ATR (in points) unless the invalidation logic clearly justifies otherwise\n"
+        "- HARD GATE (non-negotiable, enforced by the bot): if your SL < 1.25x current ATR or your TP < 2.5x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
         "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        "- TP that gives at least 2R relative to SL (TP distance >= 2x SL distance; i.e. SL ~1.25x ATR -> TP ~2.5x ATR)\n"
+        "- These minimums guarantee R:R 2:1 (SL 1.25x ATR -> TP 2.5x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
     )
 
 
@@ -552,16 +556,22 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
     # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the
-    # scalping scale. No flooring here — the LLM picks SL/TP from this range
-    # and consensus only enforces a 2x-spread safety floor.
+    # scalping scale.
 
-    # ATR-based SL/TP range: no longer hard-coded into the static prompt
-    # (the new template from docs/prompt_claude.md lets the LLM set SL/TP
-    # from its own thesis; consensus.py still enforces the 2x-spread floor,
-    # SL ~1.25x ATR and TP ~2.5x ATR in ATR-Based mode). atr_points is still
-    # shown in market data.
-    min_sl = int(atr_points * 1.25)
-    max_sl = int(atr_points * 2.5)
+    # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
+    # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
+    # jelek di aritmetika). Kalau proposal SL/TP di bawah angka ini,
+    # consensus.py MENOLAK trade (bukan dinaikkan) — jadi prompt harus jelas
+    # biar AI gak buang cycle buat sinyal yang pasti ditolak.
+    atr_gate_str = ""
+    if atr_points > 0:
+        min_sl_pts = int(atr_points * 1.25)
+        min_tp_pts = int(atr_points * 2.5)
+        atr_gate_str = (
+            f"ATR HARD GATE (non-negotiable): minimum SL = {min_sl_pts} pts (1.25x ATR) "
+            f"and minimum TP = {min_tp_pts} pts (2.5x ATR). "
+            f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
+        )
 
     # USD value of 1 point for the default bot lot — tells the LLM the real
     # money scale of the SL/TP distances it proposes (critical for BTC, where
@@ -729,7 +739,7 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{fib_str}
+{atr_gate_str}{fib_str}
 {randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 

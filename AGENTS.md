@@ -26,7 +26,7 @@ python main.py
 | `main.py` | Loop utama: manage posisi tiap 5 detik, full cycle tiap candle (M5 utk XAU / M30 utk BTC) |
 | `config.py` | Semua parameter + helper per-symbol (`get_timeframe`, `get_higher_timeframes`, `lot_size_for`, `risk_percent_for`, `default_sl/tp`, `max_spread_points`, `confidence_threshold_for`) |
 | `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call LLM paralel sesuai **time-based AI mode** (single→OpenAI, dual→OpenAI+DeepSeek, triple→OpenAI+Gemini+DeepSeek) |
-| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP floor mode-aware (`config.TP_SL_RULES`: ATR-Based → max(2× spread, 1.25× ATR) + TP ≥ max(2.5× ATR, 2× SL) = **R:R 2:1**; LLM → cuma 2× spread) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
+| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware (`config.TP_SL_RULES`: ATR-Based → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < 1.25× ATR atau TP < 2.5× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); LLM → bebas, cuma floor 2× spread) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
 | `src/core/risk_engine.py` | Gate: spread, sesi, danger zone, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** |
 | `src/core/mt5_connector.py` | Order send/close (retry + fill policy dinamis), history deals, market data, magic filter |
 | `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+30m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
@@ -51,7 +51,7 @@ python main.py
 ## Gate eksekusi yang SEBENERNYA (hard)
 
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
-- SL/TP di-floor per mode (`config.TP_SL_RULES`): **ATR-Based** → SL ≥ max(2× spread, 1.25× ATR), TP ≥ max(2.5× ATR, 2× SL) (**R:R 2:1**); **LLM** → SL ≥ 2× spread aja, TP bebas
+- SL/TP per mode (`config.TP_SL_RULES`): **ATR-Based** → **GATE**: proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < 1.25× ATR atau TP < 2.5× ATR (**R:R 2:1 terhadap volatilitas** — bukan dinaikkan, filosofinya: cari setup yang alamiah 2R); **LLM** → SL ≥ 2× spread aja, TP bebas sesuai thesis
 - Spread ≤ 50 pts (XAU) / 2400 pts (BTC)
 - Session London/NY WIB + bukan danger zone (kecuali crypto)
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)
@@ -113,7 +113,7 @@ python main.py
 26. **Unicode safety**: `≈` diganti `approx` di prompt (UnicodeEncodeError saat print di console cp1252 Windows).
 27. **`scratch/prompt_preview_test.py`**: test file untuk preview prompt LLM dengan data MT5 asli (XAUUSD-ECNc — bukan XAUUSD, broker pakai suffix `-ECNc`). Pakai `config.get_timeframe()`; fallback ke `XAUUSD` kalau simbol utama gagal.
 28. **`config.TP_SL_RULES` — 2 mode SL/TP** (default `"ATR-Based"`, configurable via config):
-    - **ATR-Based** (safe): SL ≥ max(2× spread, 1.25× ATR), TP ≥ max(2.5× ATR, 2× SL) (**R:R 2:1**). Prompt minta SL ~1.25× ATR & TP ~2.5× ATR.
+    - **ATR-Based** (safe): **GATE layak/tidak** — proposal SL/TP AI dipakai apa adanya (setelah outlier filter), tapi trade **DITOLAK otomatis** kalau SL < max(2× spread, 1.25× ATR) atau TP < max(2× spread, 2.5× ATR). Bukan dinaikkan: memaksa SL/TP lebih jauh dari invalidation model = mengubah setup tanpa persetujuan. **Prompt di-enhance** (blok HARD GATE statis + `atr_gate_str` dinamis di market data dengan angka minimum konkret) biar AI gak usul SL/TP di bawah requirement (yang ujung-ujungnya ditolak gate).
     - **LLM** (bebas): SL/TP sesuai thesis model. Batasan minimal murni hanya **2× spread** (menghindari INVALID_STOPS), membebaskan model mengajukan stop loss ketat/lebar dan menghitung lot size berbasis resiko murni. **Prompt di-enhance** untuk mengarahkan model ke struktur stop-loss yang sesuai timeframe (100-350 pts untuk Gold M5, 20000-60000 pts untuk BTC M30) dan melarang model mengambil stop M1 hyper-scalping (di bawah 80 pts untuk Gold / 10000 pts untuk BTC) agar terhindar dari noise eksekusi dan spread, sementara lot size tetap dihitung otomatis berbasis resiko dari hasil SL tersebut di main.py.
     - **Agregasi SL/TP**: nilai dari model yang sepakat di-average; outlier dibuang dengan `_drop_standalone_outlier`.
     - **Cara ganti mode**: `config.TP_SL_RULES`, menu setup interaktif, atau flag CLI `--tpsl-rules {ATR-Based|LLM|atr|llm}`.
