@@ -431,6 +431,13 @@ def refresh_active_symbol(now=None, advance=False):
         pool = get_rotation_pool(now)
         _rotation_index["i"] = (_rotation_index["i"] + 1) % len(pool)
     target = get_active_symbol(now)
+    # Auto-correct suffix ke nama broker valid (XAUUSD-ECN -> XAUUSD-ECNc di LIVE).
+    # Lazy import untuk hindari circular (mt5_connector import config).
+    try:
+        from src.core.mt5_connector import get_valid_trade_symbol
+        target = get_valid_trade_symbol(target)
+    except Exception:
+        pass
     changed = (target != _last_symbol["value"])
     SYMBOL = target
     _last_symbol["value"] = target

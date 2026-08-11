@@ -464,12 +464,24 @@ def run_trading_cycle():
     # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS — semua simbol di-scan
     # pada SETIAP candle M5 (5x LLM call per candle, 1 call per pair).
     pool = config.get_rotation_pool()
+    # Resolve base names -> nama broker valid (auto-correct suffix, mis. XAUUSD-ECN -> XAUUSD-ECNc)
+    # + symbol_select biar tick/rates tersedia untuk semua pair di pool (FX pair baru sering belum visible)
+    valid_pool = []
     for sym in pool:
+        vsym = connector.get_valid_trade_symbol(sym)
+        if vsym != sym:
+            print(f"[MT5 AUTO-CORRECT] Pool '{sym}' -> '{vsym}' (broker live)")
+        mt5.symbol_select(vsym, True)
+        valid_pool.append(vsym)
+    for sym in valid_pool:
         config.SYMBOL = sym
         try:
             _run_cycle_for_current_symbol()
         except Exception as e:
             print(f"⚠️ [CYCLE ERROR {sym}] {e}")
+    # Restore ke simbol utama pool (valid, sudah auto-correct) — biar status line
+    # & candle check berikutnya konsisten memakai simbol utama, bukan yang terakhir.
+    config.SYMBOL = valid_pool[0] if valid_pool else config.SYMBOL
     return True
 
 
