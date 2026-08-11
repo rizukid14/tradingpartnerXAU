@@ -745,6 +745,14 @@ def serve(host="0.0.0.0", port=8765):
                 }
                 _send_json(self, {"status": "success", "config": config_data})
 
+            elif path in ("/api/retrigger_cycle", "/api/trigger_cycle"):
+                config.TRIGGER_CYCLE_REQUESTED = True
+                _send_json(self, {
+                    "status": "success",
+                    "message": "Trading cycle retrigger requested successfully",
+                    "trigger_requested": True
+                })
+
             else:
                 _send_json(self, {"status": "error", "message": "Endpoint not found"}, status_code=404)
 
@@ -813,6 +821,14 @@ def serve(host="0.0.0.0", port=8765):
                     "trading_paused": False
                 })
 
+            elif path in ("/api/retrigger_cycle", "/api/trigger_cycle"):
+                config.TRIGGER_CYCLE_REQUESTED = True
+                _send_json(self, {
+                    "status": "success",
+                    "message": "Trading cycle retrigger requested successfully",
+                    "trigger_requested": True
+                })
+
             else:
                 _send_json(self, {"status": "error", "message": "Endpoint not found"}, status_code=404)
 
@@ -821,7 +837,7 @@ def serve(host="0.0.0.0", port=8765):
 
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"🚀 API & Dashboard Server aktif di http://{host}:{port}/")
-    print("   Endpoint REST API aktif: /api/summary, /api/open-positions, /api/recent-trades, /api/config, /api/pause, /api/resume, /api/preset")
+    print("   Endpoint REST API aktif: /api/summary, /api/open-positions, /api/recent-trades, /api/config, /api/pause, /api/resume, /api/preset, /api/retrigger_cycle")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

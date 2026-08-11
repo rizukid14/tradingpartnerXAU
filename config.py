@@ -170,6 +170,7 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # --- CONSENSUS SETTINGS ---
 DRY_RUN = _getenv_bool("DRY_RUN", False)
 TRADING_PAUSED = _getenv_bool("TRADING_PAUSED", False)
+TRIGGER_CYCLE_REQUESTED = False
 
 ERA_PRESETS = {
     "v1": {
