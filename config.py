@@ -245,6 +245,12 @@ MONTE_CARLO_ENABLED = _getenv_bool("MONTE_CARLO_ENABLED", False)
 FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", False)
 MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: lesson learned & recent outcomes TIDAK di-inject ke prompt LLM (lesson M5-scalp toxic, bikin HOLD terus). Kode tetap ada, tinggal set True kalau mau aktif lagi.
 
+# POST_MORTEM_ENABLED = False (default): mesin post-mortem (trade_evaluator) DIMATIKAN.
+# Hasilnya (lessons) sudah tidak dipakai karena MEMORY_CONTEXT_ENABLED=False, tapi
+# mesinnya masih manggil LLM per trade close = buang biaya + nulis lesson toxic/salah
+# simbol. Kode tetap ada, tinggal set True kalau mau aktif lagi.
+POST_MORTEM_ENABLED = _getenv_bool("POST_MORTEM_ENABLED", False)
+
 # --- TRAILING STOP ---
 TRAILING_STOP_ENABLED = _getenv_bool("TRAILING_STOP_ENABLED", True)
 TRAILING_ACTIVATION_POINTS = _getenv_int("TRAILING_ACTIVATION_POINTS", 200)

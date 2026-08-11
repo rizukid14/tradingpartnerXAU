@@ -222,14 +222,15 @@ Task: Synthesize both the existing wisdom (if provided above) and all {len(lesso
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
 
     def check_and_evaluate_closed_trades(self, deals=None):
+        """Evaluates closed positions that haven't been processed yet.
+
+        OFF by default (config.POST_MORTEM_ENABLED = False): hasil post-mortem
+        (lessons) sudah tidak di-inject ke prompt (MEMORY_CONTEXT_ENABLED=False),
+        jadi manggil LLM di sini cuma buang biaya + nulis lesson toxic/salah simbol.
+        Kode tetap ada — set POST_MORTEM_ENABLED=True kalau mau aktif lagi.
         """
-        Evaluates closed positions that haven't been processed yet.
-        Pass `deals` (list of newly-closed deals from risk.sync_closed_positions)
-        to evaluate immediately on close; otherwise fetches today's closed
-        positions from MT5 deal history (used at candle cycle for stragglers).
-        Re-evaluation after a restart is prevented by the persisted
-        evaluated_tickets set in memory_lessons.json.
-        """
+        if not getattr(config, "POST_MORTEM_ENABLED", False):
+            return
         closed_deals = deals if deals is not None else connector.get_closed_positions_today()
         if not closed_deals:
             return
@@ -353,9 +354,13 @@ Respond with a valid JSON object ONLY:
         return None, "entry"
 
     def get_lessons_context(self):
-        """Returns formatted lessons markdown block for prompt injection.
-        Uses the condensed SUMMARY when available (token-light), plus the most
-        recent raw lessons until the next summary reset. Per-symbol isolated."""
+        """Returns summarized lessons learned context for LLM prompts.
+
+        OFF by default (MEMORY_CONTEXT_ENABLED=False di llm_client): lessons
+        M5-scalp toxic bikin HOLD terus. Guard ganda di sini biar aman.
+        """
+        if not getattr(config, "POST_MORTEM_ENABLED", False):
+            return ""
         symbol = config.SYMBOL
         mem = self._load_memory(symbol)
         
