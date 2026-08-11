@@ -351,7 +351,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
         return []
 
     if _bot_opened_cache["value"] is not None and (now - _bot_opened_cache["ts"]) < _BOT_OPENED_CACHE_TTL:
-        bot_opened = _bot_opened_cache["value"]
+        bot_opened, comm_by_pos = _bot_opened_cache["value"]
     else:
         wide_from_epoch = int((today_start - timedelta(days=7)).timestamp() + broker_offset)
         wide_deals = mt5.history_deals_get(wide_from_epoch, to_epoch)
@@ -361,8 +361,15 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             d.position_id for d in wide_deals
             if (target_magic is None or d.magic == target_magic) and d.entry == mt5.DEAL_ENTRY_IN
         }
+        # Komisi per posisi = IN + OUT (komisi di-charge di deal IN saat buka & deal OUT saat tutup).
+        # position.profit dari MT5 TIDAK termasuk komisi — net profit harus dikurangi comm total.
+        comm_by_pos = {}
+        for d in wide_deals:
+            c = getattr(d, "commission", 0.0) or 0.0
+            if c != 0.0:
+                comm_by_pos[d.position_id] = comm_by_pos.get(d.position_id, 0.0) + c
         _bot_opened_cache["ts"] = now
-        _bot_opened_cache["value"] = bot_opened
+        _bot_opened_cache["value"] = (bot_opened, comm_by_pos)
 
     closed = []
     for deal in deals:
@@ -393,11 +400,14 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
                 mt5.DEAL_REASON_SPLIT: "split",
             }.get(deal_reason, f"code-{deal_reason}")
 
+        # Net profit REAL = profit + swap - komisi total (IN + OUT).
+        # comm_by_pos berisi nilai NEGATIF (komisi di-charge) → ditambahkan langsung.
+        net_comm = comm_by_pos.get(deal.position_id, 0.0) or 0.0
         closed.append({
             "ticket": deal.position_id,
             "symbol": deal.symbol,
             "direction": pos_type,
-            "profit": deal.profit + deal.swap + deal.commission,
+            "profit": round(deal.profit + deal.swap + net_comm, 2),
             "reason": reason,
             "comment": getattr(deal, "comment", ""),
             "type": pos_type,
@@ -438,6 +448,37 @@ def get_account_info():
         "profit": acc.profit
     }
 
+def get_position_net_profit(position_id):
+    """
+    Net profit real untuk posisi yang sudah CLOSE — termasuk komisi IN & OUT.
+    MT5 position.profit TIDAK termasuk komisi; komisi di-charge di deal IN (buka)
+    dan deal OUT (tutup), masing-masing. Profit bersih = profit + swap + comm_IN + comm_OUT.
+    Returns None kalau posisi belum punya deal OUT (masih terbuka / data belum sync).
+    """
+    if config.DRY_RUN:
+        return 0.0
+    try:
+        deals = mt5.history_deals_get(position=position_id)
+        if not deals:
+            return None
+        total_profit = 0.0
+        total_swap = 0.0
+        total_comm = 0.0
+        has_out = False
+        for d in deals:
+            if d.entry == mt5.DEAL_ENTRY_OUT:
+                has_out = True
+            total_profit += getattr(d, "profit", 0.0) or 0.0
+            total_swap += getattr(d, "swap", 0.0) or 0.0
+            total_comm += getattr(d, "commission", 0.0) or 0.0
+        if not has_out:
+            return None
+        return round(total_profit + total_swap + total_comm, 2)
+    except Exception as e:
+        print(f"[MT5 CONNECTOR WARNING] get_position_net_profit #{position_id}: {e}")
+        return None
+
+
 def get_trade_details(ticket):
     """
     Fetches entry price, exit price, volume, duration, and profit for a closed trade ticket.
@@ -473,7 +514,10 @@ def get_trade_details(ticket):
         t_out = datetime.fromtimestamp(out_deal.time - broker_offset)
         duration_sec = max(0, out_deal.time - in_deal.time)
 
-        profit = out_deal.profit + out_deal.commission + out_deal.swap
+        # Net profit REAL = profit + swap + komisi IN + komisi OUT.
+        # Deal IN punya commission (komisi buka), deal OUT punya commission (komisi tutup).
+        total_comm = sum((getattr(d, "commission", 0.0) or 0.0) for d in deals)
+        profit = out_deal.profit + out_deal.swap + total_comm
 
         return {
             "ticket": ticket,

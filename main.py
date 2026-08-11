@@ -587,7 +587,9 @@ def _run_cycle_for_current_symbol():
         t_reason = close_req["reason"]
         t_models = close_req.get("models", "AI Consensus")
         print(f"⚡ [AI RE-EVALUATOR] {t_models} sepakat CLOSE order #{t_ticket}: {t_reason}")
-        # Capture pre-close profit so daily P/L + loss streak stay accurate
+        # Capture pre-close profit so daily P/L + loss streak stay accurate.
+        # Net profit = profit + swap + komisi IN+OUT (query deals lengkap, bukan position.profit
+        # yang TIDAK include komisi — akun ECN charge $3/sisi, XAU 0.01 lot = -$0.06 round-trip).
         pre_profit = 0.0
         try:
             pos_pre = mt5.positions_get(ticket=t_ticket)
@@ -597,6 +599,10 @@ def _run_cycle_for_current_symbol():
             pass
         close_res = connector.close_position(t_ticket)
         if close_res:
+            # Setelah close, deal OUT sudah ada di history — hitung netto komisi IN+OUT.
+            net_profit = connector.get_position_net_profit(t_ticket)
+            if net_profit is not None:
+                pre_profit = net_profit
             print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
             risk.record_position_closed(t_ticket, pre_profit)
 
@@ -863,6 +869,10 @@ def main():
                     success = connector.close_position(ticket)
                     if success:
                         print(f"✅ Posisi #{ticket} ditutup untuk weekend.")
+                        # Net profit REAL = profit + swap + komisi IN+OUT (query deals lengkap).
+                        net_profit = connector.get_position_net_profit(ticket)
+                        if net_profit is not None:
+                            profit = net_profit
                         risk.record_position_closed(ticket, profit)
                         tg.alert_weekend_close(ticket, profit, reason)
 
