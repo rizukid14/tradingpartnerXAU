@@ -3,9 +3,32 @@
 Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT5)** dengan tiga slot model LLM via API: **OpenAI**, **Google Gemini**, dan **slot ketiga (default DeepSeek V4 Flash, bisa di-switch ke Claude)**.
 
 - **Weekday**: `XAUUSD-ECNc` (Gold) — scalping **M5** — **Weekend**: `BTCUSD.c` (Bitcoin) — intraday **M30** (rotasi otomatis via `config.get_active_symbol`)
-- Bot memanggil ketiga AI secara paralel, menghitung **weighted-confidence consensus**, lalu mengeksekusi order ke MT5.
+- **Multi-scan (opsional, mode `xau_pairs`)**: tiap candle M5 bot scan **SEMUA simbol dalam pool sekaligus** (bukan rotasi) — XAU + 4 pair FX cross non-USD, 1 LLM call per pair (5 call/candle)
+- Bot memanggil AI sesuai **time-based mode** (single/dual/triple — lihat jadwal WIB), menghitung **weighted-confidence consensus**, lalu mengeksekusi order ke MT5.
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic number `20260625`.
 - Semua timestamp internal pakai **WIB** (Asia/Jakarta).
+
+## 🎯 Multi-Symbol Scan (Mode `xau_pairs`)
+
+Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + Pairs** (`TRADING_MODE=xau_pairs`) — di mode ini tiap candle M5 bot **scan semua simbol sekaligus** (parallel scan, bukan round-robin), masing-masing 1× LLM call:
+
+| # | Simbol (base) | Live / Demo | Timeframe | Spread (hasil scan) |
+|---|---|---|---|---|
+| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M5 | ~10 pts (≈3% ATR) |
+| 2 | `EURGBP-ECN` | `EURGBP-ECNc` / `EURGBP-ECN` | M5 | ~0 pts |
+| 3 | `EURJPY-ECN` | `EURJPY-ECNc` / `EURJPY-ECN` | M5 | ~0-1 pts |
+| 4 | `EURCAD-ECN` | `EURCAD-ECNc` / `EURCAD-ECN` | M5 | ~4-5 pts |
+| 5 | `GBPJPY-ECN` | `GBPJPY-ECNc` / `GBPJPY-ECN` | M5 | ~11 pts |
+
+**Kenapa pair-nya gitu?** Semua **cross non-USD** — korelasi rendah dengan XAUUSD (pair yang mengandung USD dibuang karena geraknya didominasi USD). Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo) — satu config jalan di dua-duanya.
+
+**Cara kerja per candle (M5):**
+1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 5)
+2. Post-mortem trade tertutup dijalankan **1× aggregate** (bukan per-simbol)
+3. Loop `for sym in pool:` → `config.SYMBOL = sym` → cycle penuh per-simbol: risk gate → data MT5 → macro/MTF per-simbol → 1× LLM call → weighted consensus → eksekusi
+4. **Weekend**: XAU + FX market tutup Sabtu–Minggu → **bot istirahat (mode 24/5)**. Pool jatuh ke `[XAUUSD-ECN]` yang tutup (risk gate menolak semua, tidak ada LLM call). Opsional: set `ENABLE_BTC_ROTATION=True` → weekend ganti ke `[BTCUSD.c]` (24/7) — kode BTC sengaja dipertahankan, tinggal dinyalakan.
+
+**Risk tetap aggregate**: max posisi (6) & daily loss ($50) dihitung **lintas semua simbol** (magic filter `20260625`), bukan per-simbol. Ganti mode: `.env` (`TRADING_MODE=...`), menu setup (item "Scan Mode"), atau dropdown dashboard (persist ke `.env`).
 
 ---
 
@@ -67,10 +90,11 @@ graph TD
 Jumlah model AI yang dipanggil per cycle mengikuti jam WIB — hemat token tanpa buang safety di jam aktif:
 - **00:01–08:59 → single** (OpenAI saja)
 - **09:00–13:00 → dual** (OpenAI + DeepSeek slot-3)
-- **13:01–18:00 → single** (OpenAI saja)
-- **18:01–24:00 → triple** (OpenAI + Gemini + DeepSeek)
+- **13:01–18:59 → single** (OpenAI saja)
+- **19:00–23:00 → triple** (OpenAI + Gemini + DeepSeek)
+- **23:01–00:00 → single** (fallback, di luar jadwal eksplisit)
 
-Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Konsensus adaptif: single → 1 model + threshold ×0.6; dual → 2/2 searah; triple → normal (defensif ×1.5).
+Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Konsensus adaptif: single → 1 model + threshold ×0.6; dual → 2/2 searah; triple → normal (defensif ×1.5). Gemini cuma kepanggil di mode triple (hemat token).
 
 ---
 
@@ -170,7 +194,10 @@ Pastikan aplikasi MT5 Anda terbuka dan terhubung ke internet, lalu jalankan:
 ```bash
 python main.py
 ```
+- Saat start muncul **menu setup interaktif** — nomor 3 (`Scan Mode`) untuk ganti XAU Only / XAU + Pairs, preset `[v1]/[v2]/[v3]` untuk pakai preset cepat.
 - Log: `trading_bot.log` (auto-rotate 2MB, keep 5000 baris). **Log bisa campur sesi demo + live** — untuk profit akurat, query MT5 langsung (`scratch/` script, hapus setelah dipakai).
+
+> 📘 **Panduan lengkap semua setting** (env var, pair list, risk, SL/TP rules, contoh `.env`) ada di **`CONFIG_TUTORIAL.txt`** di folder root.
 
 ### 6. Dashboard Analisis (Opsional)
 Menampilkan kualitas trade, kualitas sinyal LLM, dan statistik standar dari log. Dua mode:

@@ -182,10 +182,26 @@ def interactive_setup():
         server = config.MT5_SERVER or "?"
         return f"{mode} ({login} @ {server})"
 
+    def _fmt_val(attr, v):
+        if attr == "config.DRY_RUN":
+            return "LIVE (kirim order)" if v else "DRY RUN (sinyal saja)"
+        if attr == "config.TRADING_MODE":
+            return "XAU + Pairs (5 simbol)" if v == "xau_pairs" else "XAU Only"
+        if v is True:
+            return "ON"
+        if v is False:
+            return "OFF"
+        s = str(v)
+        if attr == "config.TP_SL_RULES":
+            s += " (floor SL 1.25x ATR + TP 2.5x ATR)" if v == "ATR-Based" else " (bebas, 2x spread)" if v == "LLM" else ""
+        return s
+
+
     # (grup, label, attr, val) — dikelompokkan biar enak dibaca
     settings = [
         ("MODE & RISK", "Akun MT5", "config.MT5_ACCOUNT_MODE", _account_label()),
         ("MODE & RISK", "Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
+        ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", "XAU + Pairs (5 simbol)" if config.TRADING_MODE == "xau_pairs" else "XAU Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
         ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
@@ -264,15 +280,8 @@ def interactive_setup():
                     setattr(config, attr, val)
             # refresh tampilan
             for i, (group, label, attr, _) in enumerate(settings):
-                key = attr.split(".")[1]
-                v = getattr(config, key, None)
-                settings[i] = (group, label, attr,
-                               "DRY RUN" if (attr == "config.DRY_RUN" and v is True)
-                               else ("LIVE" if attr == "config.DRY_RUN" else
-                                     ("ON" if v is True else ("OFF" if v is False else
-                                      (str(v) + (" (floor SL 1.25x ATR + TP 2.5x ATR)" if attr == "config.TP_SL_RULES" and v == "ATR-Based"
-                                                 else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and v == "LLM"
-                                                 else ""))))))
+                v = getattr(config, attr.split(".")[1], None)
+                settings[i] = (group, label, attr, _fmt_val(attr, v))
             print("  ✅ Preset diterapkan.")
             continue
 
@@ -319,6 +328,16 @@ def interactive_setup():
                             print("  ❌ Pilih 'ATR-Based' (1) atau 'LLM' (2).")
                             continue
                         setattr(config, attr.split(".")[1], new_val)
+                    elif "TRADING_MODE" in attr:
+                        v = new_val.strip().lower()
+                        if v in ("1", "xau", "only", "xau-only", "gold"):
+                            new_val = "xau"
+                        elif v in ("2", "pairs", "xau_pairs", "xau-pairs", "all"):
+                            new_val = "xau_pairs"
+                        else:
+                            print("  ❌ Pilih 'xau' (1) atau 'xau_pairs' (2).")
+                            continue
+                        setattr(config, attr.split(".")[1], new_val)
                     elif "AI_MODE_POLICY" in attr:
                         v = new_val.strip().lower()
                         if v in ("schedule", "jadwal", "auto", "1"):
@@ -332,15 +351,8 @@ def interactive_setup():
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
                     # refresh tampilan
-                    settings[idx] = (group, label, attr,
-                                     "DRY RUN" if (attr == "config.DRY_RUN" and config.DRY_RUN)
-                                     else ("LIVE" if attr == "config.DRY_RUN" else
-                                           ("ON" if (config.__dict__.get(attr.split('.')[1]) is True) else
-                                            ("OFF" if config.__dict__.get(attr.split('.')[1]) is False else
-                                             (str(config.__dict__.get(attr.split('.')[1])) +
-                                              (" (floor SL 1.25x ATR + TP 2.5x ATR)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "ATR-Based"
-                                               else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "LLM"
-                                               else ""))))))
+                    v = getattr(config, attr.split('.')[1], None)
+                    settings[idx] = (group, label, attr, _fmt_val(attr, v))
                     print(f"  ✅ {label} diubah.")
                 except ValueError:
                     print("  ❌ Nilai tidak valid.")
