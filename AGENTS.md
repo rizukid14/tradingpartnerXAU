@@ -27,7 +27,7 @@ python main.py
 | `config.py` | Semua parameter + helper per-symbol (`get_timeframe`, `get_higher_timeframes`, `lot_size_for`, `risk_percent_for`, `default_sl/tp`, `max_spread_points`, `confidence_threshold_for`) |
 | `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call LLM paralel sesuai **time-based AI mode** (single→OpenAI, dual→OpenAI+DeepSeek, triple→OpenAI+Gemini+DeepSeek) |
 | `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware (`config.TP_SL_RULES`: ATR-Based → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < 1.25× ATR atau TP < 2.5× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); LLM → bebas, cuma floor 2× spread) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
-| `src/core/risk_engine.py` | Gate: spread, sesi, danger zone, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** |
+| `src/core/risk_engine.py` | Gate: spread, sesi, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** (danger zone dimatikan — full 24 jam) |
 | `src/core/mt5_connector.py` | Order send/close (retry + fill policy dinamis), history deals, market data, magic filter |
 | `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+30m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
 | `src/analytics/macro_analyst.py` | Fundamental + MTF context (per-symbol: XAU M15/M30, BTC H1/H4), cache per symbol |
@@ -39,7 +39,7 @@ python main.py
 ## Alur cycle (main.py → run_trading_cycle)
 
 0. **Time-Based AI Mode** (WIB): 00:01–08:59 = **single** (OpenAI), 09:00–13:00 = **dual** (OpenAI+DeepSeek), 13:01–18:00 = **single**, 18:01–24:00 = **triple** (OpenAI+Gemini+DeepSeek). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Gemini cuma kepanggil di triple (hemat token — user pakai Gemini di tempat lain).
-1. `risk.can_trade()` — spread/sesi/danger zone/daily loss gate. Gagal → skip (nggak ada biaya LLM)
+1. `risk.can_trade()` — spread/sesi/daily loss gate. Gagal → skip (nggak ada biaya LLM)
 2. Ambil 50 candle timeframe aktif (M5 XAU / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
 4. **Panggil LLM paralel sesuai time-based AI mode** (single: 1 model / dual: 2 / triple: 3 — lihat jadwal WIB di bawah)
@@ -53,7 +53,7 @@ python main.py
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
 - SL/TP per mode (`config.TP_SL_RULES`): **ATR-Based** → **GATE**: proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < 1.25× ATR atau TP < 2.5× ATR (**R:R 2:1 terhadap volatilitas** — bukan dinaikkan, filosofinya: cari setup yang alamiah 2R); **LLM** → SL ≥ 2× spread aja, TP bebas sesuai thesis
 - Spread ≤ 50 pts (XAU) / 2400 pts (BTC)
-- Session London/NY WIB + bukan danger zone (kecuali crypto)
+- **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)
 - **TIDAK ada** gate confidence minimum numerik tambahan di luar weighted score
 - **TIDAK ada** gate entry zone numerik — `optimal_entry_min/max` di-load tapi nggak dipakai

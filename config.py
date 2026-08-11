@@ -285,16 +285,18 @@ MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 # --- SESSION FILTER ---
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
+    {"name": "Asia Dawn",      "start": (5, 0),  "end": (7, 0),   "lot_multiplier": 0.7},
     {"name": "Tokyo",          "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",         "start": (15, 0), "end": (23, 59), "lot_multiplier": 1.0},
     {"name": "London-NY (🔥)", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
     {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
 ]
 
-DANGER_ZONES_WIB = [
-    {"name": "Rollover",  "start": (4, 0), "end": (6, 0), "reason": "Spread melebar saat rollover"},
-    {"name": "Dead Zone", "start": (0, 0), "end": (4, 0), "reason": "Likuiditas rendah"},
-]
+# Danger zones DINONAKTIFKAN (permintaan user 11-08: full trade 24 jam,
+# tengah malam-pagi juga trade). Kalau mau aktifkan lagi, isi list-nya:
+#   {"name": "Rollover",  "start": (4, 0), "end": (6, 0), "reason": "Spread melebar saat rollover"},
+#   {"name": "Dead Zone", "start": (0, 0), "end": (4, 0), "reason": "Likuiditas rendah"},
+DANGER_ZONES_WIB = []
 
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
