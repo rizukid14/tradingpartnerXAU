@@ -76,7 +76,7 @@ graph TD
 15. **Post-Mortem Langsung saat Close**: Post-mortem + lesson dipicu **saat itu juga** saat close di-detect (loop 5 detik, background thread) — bukan nunggu candle berikutnya. `evaluated_tickets` persist di `memory_lessons.json` mencegah re-evaluasi tiket lama saat restart.
 16. **Trailing Stop ATR-Adaptif (work bener)**: Activation `min(1.0×ATR, cap)` (XAU 500 pts / BTC 40000 pts), distance `0.5×ATR`. SL di-trail dari **harga ekstrem** sejak entry (tracked per-ticket di state file) — pullback tidak bisa narik SL mundur. Partial close di-`skip` di lot 0.01 (50% dari 0.01 = 0, gabisa dipecah).
 17. **Fibonacci Retracement di Prompt**: `prepare_prompt` menghitung Swing High/Low dari 50 candle terakhir + level Fib 38.2%/50.0%/61.8% → di-inject ke blok "CURRENT INDICATORS & FIBONACCI SUMMARY". Bot bisa membaca potensi SELL koreksi / pullback di tren bullish dengan target Fib — tidak lagi buta soal level retracement.
-18. **Prompt Template "ANALYSIS FREEDOM" (branch `dev` — `docs/prompt_claude.md`)**: static block diganti jadi konstitusi yang memberi LLM kebebasan memilih interpretasi (trend/momentum/breakout/pullback/mean-reversion/reversal). Indikator = input untuk judgment, bukan trigger/block wajib. Output schema bertambah: `setup`, `edge`, `invalidation` (opsional — HOLD tetap valid). Yang non-negotiable hanya **RISK CONSTRAINTS** (SL ≥ 2× spread & ~1.25× ATR, TP ≥ 2× SL = R:R 2:1, thesis + invalidation jelas).
+18. **Prompt Template "ANALYSIS FREEDOM" (branch `dev` — `docs/prompt_claude.md`)**: static block diganti jadi konstitusi yang memberi LLM kebebasan memilih interpretasi (trend/momentum/breakout/pullback/mean-reversion/reversal). Indikator = input untuk judgment, bukan trigger/block wajib. Output schema bertambah: `setup`, `edge`, `invalidation` (opsional — HOLD tetap valid). Yang non-negotiable hanya **RISK CONSTRAINTS** (SL ≥ 2× spread & ~SL_MULT× ATR, TP ≥ 2× SL = R:R 2:1, thesis + invalidation jelas). **Multiplier per AI mode (11 Agustus): single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×**.
 19. **Anti-Anchoring: Outcome-Only Decision History (branch `dev`)**: keputusan lama tidak lagi di-inject sebagai narasi arah — diganti ringkasan win/loss saja ("3 trade taken, 2 hit SL, 3 HOLD"). Mencegah LLM ke-anchor ke bias bullish/bearish basi berjam-jam. Macro & forecast diberi label advisory/informational-only.
 20. **Prompt LLM Bebas Emoji (branch `dev`)**: `_strip_emoji()` diterapkan ke prompt final — emoji dari sumber mana pun (macro/forecast/lessons/calendar) dihilangkan sebelum dikirim ke LLM. UI/CLI/log tetap boleh pakai emoji.
 
@@ -232,7 +232,7 @@ Dashboard read-only — tidak menyentuh bot/MT5. Opsi: `-o out.html` (output sta
 Yang **sebenarnya** memblokir eksekusi, urut:
 1. **Risk gate** (`risk.can_trade`): spread ≤ 50 pts (XAU) / 2400 pts (BTC), sesi London/NY WIB + bukan danger zone (kecuali crypto), max daily loss $50, max 5 consecutive loss, max 6 posisi (4 saat recovery).
 2. **Weighted consensus** ≥ 2 model searah dengan skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; defensif 3/3 = ×1.5).
-3. **SL/TP floor**: SL ≥ max(2× spread, 1.25× ATR), TP ≥ max(2.5× ATR, 2× SL) (**R:R 2:1**).
+3. **SL/TP floor**: SL ≥ max(2× spread, SL_MULT× ATR), TP ≥ max(2× spread, TP_MULT× ATR) (**R:R 2:1**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×.
 4. **Risk-based lot sizing**: lot dihitung dari equity & SL (BTC 1.5% / XAU 0.5%), clamp ke volume broker + margin safety net.
 5. **Max open positions** tercapai → skip.
 

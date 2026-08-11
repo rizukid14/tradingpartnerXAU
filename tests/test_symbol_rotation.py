@@ -31,10 +31,21 @@ def test_active_symbol():
 
 def test_per_symbol_helpers():
     failed = 0
-    # XAU helpers
+    # XAU helpers (default naik ke 400/800 — ATR M5 XAU ~300 pts, gate
+    # butuh SL >= 1.25x ATR ~375+)
     assert config.lot_size_for("XAUUSD-ECNc") == 0.01
-    assert config.default_sl_points_for("XAUUSD-ECNc") == 300
+    assert config.default_sl_points_for("XAUUSD-ECNc") == 400
+    assert config.default_tp_points_for("XAUUSD-ECNc") == 800
     assert config.max_spread_points_for("XAUUSD-ECNc") == 50
+    # FX pairs: default per-pair (EURJPY 50/100 = 5/10 pips, GBPCHF 40/80 = 4/8 pips)
+    assert config.default_sl_points_for("EURJPY-ECNc") == config.DEFAULT_SL_POINTS_EURJPY
+    assert config.default_tp_points_for("EURJPY-ECNc") == config.DEFAULT_TP_POINTS_EURJPY
+    assert config.default_sl_points_for("GBPCHF-ECNc") == config.DEFAULT_SL_POINTS_GBPCHF
+    assert config.default_tp_points_for("GBPCHF-ECNc") == config.DEFAULT_TP_POINTS_GBPCHF
+    assert config.default_sl_points_for("EURJPY-ECNc") == 50
+    assert config.default_tp_points_for("EURJPY-ECNc") == 100
+    assert config.default_sl_points_for("GBPCHF-ECNc") == 40
+    assert config.default_tp_points_for("GBPCHF-ECNc") == 80
     # BTC helpers (scaled for BTC point size — see config comments)
     assert config.lot_size_for("BTCUSD.c") == 0.01
     assert config.default_sl_points_for("BTCUSD.c") == config.DEFAULT_SL_POINTS_BTC

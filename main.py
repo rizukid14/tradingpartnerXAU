@@ -66,7 +66,7 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--claude-model", type=str,
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
-                   help="Aturan SL/TP: 'ATR-Based' (floor SL 1.25x ATR + TP 2.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
+                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -186,22 +186,36 @@ def interactive_setup():
         if attr == "config.DRY_RUN":
             return "LIVE (kirim order)" if v else "DRY RUN (sinyal saja)"
         if attr == "config.TRADING_MODE":
-            return "XAU + Pairs (5 simbol)" if v == "xau_pairs" else "XAU Only"
+            return _scan_mode_label() if v == "xau_pairs" else "XAU Only"
         if v is True:
             return "ON"
         if v is False:
             return "OFF"
         s = str(v)
         if attr == "config.TP_SL_RULES":
-            s += " (floor SL 1.25x ATR + TP 2.5x ATR)" if v == "ATR-Based" else " (bebas, 2x spread)" if v == "LLM" else ""
+            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else " (bebas, 2x spread)" if v == "LLM" else "")
         return s
+
+
+    def _scan_mode_label():
+        """Label dinamis scan pool — ikut get_rotation_pool() biar jumlah
+        simbol selalu akurat (3 simbol: XAU+EURJPY+GBPCHF; weekend: FX tutup
+        -> pool jatuh ke XAU/BTC saja)."""
+        try:
+            pool = config.get_rotation_pool()
+            if len(pool) <= 1:
+                base = f"XAU + Pairs -> {pool[0]} (weekend/FX tutup)" if pool else "XAU Only"
+                return base
+            return f"XAU + Pairs ({len(pool)} simbol)"
+        except Exception:
+            return "XAU + Pairs"
 
 
     # (grup, label, attr, val) — dikelompokkan biar enak dibaca
     settings = [
         ("MODE & RISK", "Akun MT5", "config.MT5_ACCOUNT_MODE", _account_label()),
         ("MODE & RISK", "Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
-        ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", "XAU + Pairs (5 simbol)" if config.TRADING_MODE == "xau_pairs" else "XAU Only"),
+        ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", _scan_mode_label() if config.TRADING_MODE == "xau_pairs" else "XAU Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
         ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
@@ -213,7 +227,7 @@ def interactive_setup():
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         str(config.TP_SL_RULES) + (" (floor SL 1.25x ATR + TP 2.5x ATR)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
+         str(config.TP_SL_RULES) + (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
@@ -650,6 +664,7 @@ def _run_cycle_for_current_symbol():
             print(f"🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka 1 posisi (Dibatasi sisa slot max: {remaining_slots})...")
 
 
+        order_executed = False  # flag: ada order yang sukses cycle ini (untuk decision memory)
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend
             pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
@@ -676,6 +691,7 @@ def _run_cycle_for_current_symbol():
                 comment=order_comment
             )
             if order_res["status"] == "SUCCESS":
+                order_executed = True
                 print(f"🎉 Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
                 risk.record_trade_opened()
                 tg.alert_trade_opened(
@@ -690,12 +706,15 @@ def _run_cycle_for_current_symbol():
 
     # Record this cycle's final decision for Recent Decision Memory
     # (so the LLM next cycle can see if it has been HOLDing too long).
+    # result: "OPEN" kalau trade dieksekusi cycle ini (hasil di-set pas close),
+    #         "N/A" kalau HOLD / gagal gate.
     try:
         decision_memory.memory.record(
             config.SYMBOL,
             signal=result.get("signal", "HOLD"),
             confidence=result.get("confidence", 0.0),
             reasoning=result.get("details", ""),
+            result="OPEN" if (result.get("signal") in ("BUY", "SELL") and order_executed) else "N/A",
         )
     except Exception as e:
         print(f"[DECISION MEMORY WARNING] {e}")
@@ -855,6 +874,17 @@ def main():
                             )
                         except Exception as e:
                             print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
+                        # Update decision memory dengan hasil trade (biar
+                        # summarize_recent_outcomes punya count win/loss AKURAT).
+                        try:
+                            decision_memory.memory.update_result(
+                                d_symbol,
+                                result=d_reason or "N/A",
+                                profit=d_profit,
+                                commission=deal.get("commission", 0.0),
+                            )
+                        except Exception as e:
+                            print(f"[DECISION MEMORY WARNING] update_result: {e}")
 
                     # Post-mortem langsung untuk tiket yang baru saja ditutup,
                     # jalan di background thread biar loop 5 detik nggak ke-block

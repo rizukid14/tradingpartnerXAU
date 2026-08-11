@@ -18,7 +18,9 @@ def _apply_sltp_rules(sl_points, tp_points):
     SL/TP final sesuai config.TP_SL_RULES:
       "ATR-Based" (default): GATE — proposal AI DIPAKAI apa adanya (setelah
         outlier filter + average), tapi trade HANYA dieksekusi kalau:
-          SL >= max(2x spread, 1.25x ATR) DAN TP >= max(2x spread, 2.5x ATR)
+          SL >= max(2x spread, SL_MULTx ATR) DAN TP >= max(2x spread, TP_MULTx ATR)
+        SL_MULT/TP_MULT dinamis per AI mode (R:R 2:1 selalu):
+        single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5.
         Kalau jarak proposal kurang dari itu -> trade DIBATALKAN (return
         ok=False), BUKAN dinaikkan. Filosofi: cari setup yang secara alamiah
         bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
@@ -70,13 +72,18 @@ def _apply_sltp_rules(sl_points, tp_points):
         return sl_points, tp_points, True, ""
 
     # ATR-Based: GATE layak/tidak. Proposal AI dipakai kalau lolos.
+    # Multiplier per AI mode (config.atr_sl_multiplier / atr_tp_multiplier):
+    # single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 (R:R 2:1 selalu).
     if atr_points > 0:
-        min_sl = max(spread_pts * 2, int(atr_points * 1.25))
-        min_tp = max(spread_pts * 2, int(atr_points * 2.5))
+        ai_mode = config.get_ai_mode()
+        sl_mult = config.atr_sl_multiplier()
+        tp_mult = config.atr_tp_multiplier()
+        min_sl = max(spread_pts * 2, int(atr_points * sl_mult))
+        min_tp = max(spread_pts * 2, int(atr_points * tp_mult))
         if sl_points < min_sl or tp_points < min_tp:
             return sl_points, tp_points, False, (
-                f"SL {sl_points} < 1.25x ATR ({min_sl}) atau "
-                f"TP {tp_points} < 2.5x ATR ({min_tp}) (ATR {atr_points} pts)"
+                f"SL {sl_points} < {sl_mult}x ATR ({min_sl}) atau "
+                f"TP {tp_points} < {tp_mult}x ATR ({min_tp}) (ATR {atr_points} pts, mode {ai_mode})"
             )
         return sl_points, tp_points, True, ""
 
@@ -313,7 +320,9 @@ def calculate_consensus(decisions):
     final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
 
     # Apply SL/TP rules (mode-aware):
-    #   ATR-Based -> GATE: trade hanya layak kalau SL >= 1.25x ATR DAN TP >= 2.5x ATR.
+    #   ATR-Based -> GATE: trade hanya layak kalau SL >= SL_MULTx ATR DAN
+    #                TP >= TP_MULTx ATR. Multiplier dinamis per AI mode
+    #                (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
     #                Kalau jarak proposal kurang -> trade DIBATALKAN (bukan dinaikkan).
     #   LLM       -> bebas, cuma floor 2x spread.
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)

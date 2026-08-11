@@ -256,6 +256,11 @@ BUY or SELL:
 CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
 
 
+def _fmt_price(x):
+    """Format harga/point ke string desimal bersih (0.01, 0.001, 0.00001)."""
+    return f"{x:.10f}".rstrip("0").rstrip(".")
+
+
 def _build_points_explanation(symbol, point_size):
     """
     Generate a highly explicit explanation of broker points vs pips/price-units
@@ -279,19 +284,38 @@ def _build_points_explanation(symbol, point_size):
             f"If you return 400, it sets a Stop Loss of just 400 points ($4.00 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
         )
     else:
-        # Gold / Forex
-        pt_str = f"{point_size:.2f}" if point_size else "0.01"
+        # Gold / Forex — konversi dihitung dari point_size aktual per symbol
+        # (bukan hardcode asumsi XAU). Semua pair ini 1 pip = 10 points:
+        # XAU (0.01 -> pip 0.10), EURJPY (0.001 -> pip 0.01), GBPCHF (0.00001 -> 0.0001).
+        pt_str = _fmt_price(point_size) if point_size else "0.01"
+        pip_str = _fmt_price(point_size * 10) if point_size else "0.10"
+        # Typical SL range dari default per-symbol (XAU 400/800, EURJPY 50/100,
+        # GBPCHF 40/80) — dijadikan range SL yang wajar (0.5x-1.5x default SL).
+        d_sl = config.default_sl_points_for(symbol)
+        lo_pts = max(10, int(d_sl * 0.5))
+        hi_pts = max(20, int(d_sl * 1.5))
+        is_gold = "XAU" in (symbol or "").upper()
+        if is_gold:
+            typical_note = (
+                f"${round(lo_pts * (point_size or 0.01), 2)} to "
+                f"${round(hi_pts * (point_size or 0.01), 2)} price move"
+            )
+        else:
+            typical_note = "price units"
         return (
-            f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs USD MOVEMENT\n"
+            f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs PRICE MOVEMENT\n"
             f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
             f"For {symbol} (with broker point size = {pt_str}):\n"
-            f"- 1 point = ${pt_str} USD price change.\n"
-            f"- 10 points = 1 pip = $0.10 USD price change.\n"
-            f"- 100 points = 10 pips = $1.00 USD price change (e.g., Gold moving from 2400.00 to 2401.00)\n"
-            f"- Typical Stop Loss distance is 250 to 500 points (25 to 50 pips / $2.50 to $5.00 USD gold movement).\n\n"
+            f"- 1 point = {pt_str} price units.\n"
+            f"- 10 points = 1 pip = {pip_str} price movement.\n"
+            f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
+            f"- Typical Stop Loss distance for {symbol} is {lo_pts} to {hi_pts} points "
+            f"({lo_pts // 10} to {hi_pts // 10} pips / {typical_note}).\n\n"
             f"CRITICAL WARNING:\n"
-            f"Double-check your numbers. If you want a Stop Loss of 20 pips (which is $2.00 USD of price movement), you MUST return 200. "
-            f"If you return 20, it sets a Stop Loss of just 20 points (2 pips / $0.20 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
+            f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
+            f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
+            f"({max(1, lo_pts // 100)} pip / {_fmt_price((lo_pts // 10) * (point_size or 0.01))} price movement), "
+            f"which is inside the spread and will cause an instant loss or broker rejection!"
         )
 
 
@@ -299,11 +323,13 @@ def _build_sltp_rules_block(symbol, timeframe):
     """
     Build the SL/TP constraint lines for the system prompt based on
     config.TP_SL_RULES:
-      "ATR-Based": SL >= 1.25x ATR, TP >= 2.5x ATR (R:R 2:1) — HARD GATE.
+      "ATR-Based": SL >= SL_MULTx ATR, TP >= TP_MULTx ATR (R:R 2:1) — HARD GATE.
+        Multiplier dinamis per AI mode (config.atr_sl_multiplier/atr_tp_multiplier):
+        single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5.
         Trade yang SL/TP-nya di bawah requirement DITOLAK bot (bukan
         dinaikkan), jadi prompt ini harus tegas biar AI gak buang cycle.
         Angka minimum konkret (dalam points) di-inject dinamis di market
-        data block (atr_gate_str).
+        data block (atr_gate_str) — sinkron dengan consensus gate.
       "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
       rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
@@ -311,14 +337,19 @@ def _build_sltp_rules_block(symbol, timeframe):
     """
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
     is_btc = config.is_crypto(symbol)
+    # Typical SL range per-symbol dari default config (XAU 400, EURJPY 50,
+    # GBPCHF 40) — biar guidance LLM ikut skala pair, bukan asumsi Gold.
+    d_sl = config.default_sl_points_for(symbol)
+    lo_pts = max(10, int(d_sl * 0.5))
+    hi_pts = max(20, int(d_sl * 1.5))
     
     if mode == "LLM":
         if is_btc:
             range_note = "typically 20000 to 60000 points ($200-$600)"
             noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
         else:
-            range_note = "typically 250 to 500 points ($2.50-$5.00)"
-            noise_note = "avoid M1-style hyper-scalping stops (e.g., under 200 points) as spread and execution noise will erode your edge"
+            range_note = f"typically {lo_pts} to {hi_pts} points ({lo_pts // 10} to {hi_pts // 10} pips for {symbol})"
+            noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points for {symbol}) as spread and execution noise will erode your edge"
 
         return (
             f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
@@ -326,10 +357,15 @@ def _build_sltp_rules_block(symbol, timeframe):
             f"- TP is YOUR choice (no forced 2R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
         )
         
+    # ATR-Based: multiplier dinamis per AI mode (single 1.25/2.5, dual 1.5/3.0,
+    # triple 1.75/3.5) — sinkron dengan config.atr_sl/tp_multiplier dan
+    # atr_gate_str di market data block. R:R 2:1 selalu terjaga.
+    sl_mult = config.atr_sl_multiplier()
+    tp_mult = config.atr_tp_multiplier()
     return (
-        "- HARD GATE (non-negotiable, enforced by the bot): if your SL < 1.25x current ATR or your TP < 2.5x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
+        f"- HARD GATE (non-negotiable, enforced by the bot): if your SL < {sl_mult}x current ATR or your TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
         "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        "- These minimums guarantee R:R 2:1 (SL 1.25x ATR -> TP 2.5x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
+        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
     )
 
 
@@ -464,26 +500,52 @@ def summarize_recent_outcomes(decisions, n=6):
     holding a stale bullish read for hours during a correction).
 
     decisions: list of dicts, most recent last, e.g.
-        {"signal": "BUY", "result": "TP" | "SL" | "OPEN" | "N/A"}
+        {"signal": "BUY", "result": "TP" | "SL" | "SL-BEP" | "SL-trailing" | "OPEN" | "N/A",
+         "profit": float (NET, sudah termasuk komisi) | None, "commission": float}
+    Klasifikasi win/loss pakai PROFIT NET kalau ada (paling akurat — BEP
+    tolerance dinamis dari komisi aktual), fallback ke label result.
     """
     recent = decisions[-n:]
     if not recent:
         return "No recent decision history for this symbol."
 
     hold_count = sum(1 for d in recent if d["signal"] == "HOLD")
-    tp_count = sum(1 for d in recent if d.get("result") == "TP")
-    sl_count = sum(1 for d in recent if d.get("result") == "SL")
     trade_count = len(recent) - hold_count
+    win_count = 0
+    loss_count = 0
+    bep_count = 0
+    open_count = 0
+    for d in recent:
+        if d["signal"] == "HOLD":
+            continue
+        result = d.get("result", "N/A")
+        if result == "OPEN":
+            open_count += 1
+            continue
+        profit = d.get("profit")
+        if profit is not None:
+            tol = config.bep_tolerance_for({"commission": d.get("commission", 0.0)})
+            if profit > tol:
+                win_count += 1
+            elif profit < -tol:
+                loss_count += 1
+            else:
+                bep_count += 1
+        else:
+            # Fallback label (tanpa profit): SL-trailing = profit terkunci = win
+            if result in ("TP", "SL-trailing"):
+                win_count += 1
+            elif result == "SL":
+                loss_count += 1
+            else:  # SL-BEP, manual, N/A
+                bep_count += 1
 
-    if tp_count or sl_count:
-        return (
-            f"Recent outcomes ({len(recent)} cycles): {trade_count} trade(s) taken "
-            f"({tp_count} hit TP, {sl_count} hit SL), {hold_count} HOLD. "
-            f"(Outcome only -- not a directional signal for this cycle.)"
-        )
+    stats = f"{trade_count} trade(s) taken ({win_count} win, {loss_count} loss, {bep_count} BEP)"
+    if open_count:
+        stats += f", {open_count} still open"
     return (
-        f"Recent outcomes ({len(recent)} cycles): {trade_count} trade(s) taken, "
-        f"{hold_count} HOLD. (Outcome only -- not a directional signal for this cycle.)"
+        f"Recent outcomes ({len(recent)} cycles): {stats}, {hold_count} HOLD. "
+        f"(Outcome only -- not a directional signal for this cycle.)"
     )
 
 
@@ -567,11 +629,14 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
     if atr_points > 0:
-        min_sl_pts = int(atr_points * 1.25)
-        min_tp_pts = int(atr_points * 2.5)
+        ai_mode = config.get_ai_mode()
+        sl_mult = config.atr_sl_multiplier()
+        tp_mult = config.atr_tp_multiplier()
+        min_sl_pts = int(atr_points * sl_mult)
+        min_tp_pts = int(atr_points * tp_mult)
         atr_gate_str = (
-            f"ATR HARD GATE (non-negotiable): minimum SL = {min_sl_pts} pts (1.25x ATR) "
-            f"and minimum TP = {min_tp_pts} pts (2.5x ATR). "
+            f"ATR HARD GATE (non-negotiable, AI mode: {ai_mode}): minimum SL = {min_sl_pts} pts "
+            f"({sl_mult}x ATR) and minimum TP = {min_tp_pts} pts ({tp_mult}x ATR). "
             f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
         )
 
@@ -615,10 +680,17 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
             from src.analytics import decision_memory
-            # Convert stored decisions (signal/confidence/reasoning, no result
-            # field yet) into {signal, result} for summarize_recent_outcomes.
+            # Convert stored decisions into {signal, result, profit, commission}
+            # for summarize_recent_outcomes. result di-set pas close (TP/SL/
+            # SL-BEP/SL-trailing/manual), profit NET (sudah termasuk komisi) —
+            # biar win/loss count AKURAT, bukan selalu "N/A".
             entries = decision_memory.memory._decisions.get(symbol, [])
-            decisions = [{"signal": e.get("signal", "HOLD"), "result": "N/A"} for e in entries]
+            decisions = [{
+                "signal": e.get("signal", "HOLD"),
+                "result": e.get("result", "N/A"),
+                "profit": e.get("profit"),
+                "commission": e.get("commission", 0.0),
+            } for e in entries]
             recent_outcomes_str = summarize_recent_outcomes(decisions)
             if recent_outcomes_str:
                 recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"

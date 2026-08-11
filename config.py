@@ -183,10 +183,17 @@ DEFAULT_TP_POINTS = _getenv_int("DEFAULT_TP_POINTS", 600)
 SL_ATR_MULTIPLIER = _getenv_float("SL_ATR_MULTIPLIER", 1.5)
 TP_ATR_MULTIPLIER = _getenv_float("TP_ATR_MULTIPLIER", 3.0)
 
-DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", DEFAULT_SL_POINTS)
-DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", DEFAULT_TP_POINTS)
+DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", 400)
+DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 800)
 DEFAULT_SL_POINTS_BTC = _getenv_int("DEFAULT_SL_POINTS_BTC", 50000)
 DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
+# Default SL/TP per FX pair (11 Agustus): XAU 300/600 jatuh ke pair yang
+# point-nya beda skala (EURJPY 300 pts = 30 pips = 12x ATR M5, GBPCHF 17x).
+# Sekarang fallback per-pair: EURJPY 50/100 (5/10 pips), GBPCHF 40/80 (4/8 pips).
+DEFAULT_SL_POINTS_EURJPY = _getenv_int("DEFAULT_SL_POINTS_EURJPY", 50)
+DEFAULT_TP_POINTS_EURJPY = _getenv_int("DEFAULT_TP_POINTS_EURJPY", 100)
+DEFAULT_SL_POINTS_GBPCHF = _getenv_int("DEFAULT_SL_POINTS_GBPCHF", 40)
+DEFAULT_TP_POINTS_GBPCHF = _getenv_int("DEFAULT_TP_POINTS_GBPCHF", 80)
 
 
 # --- CONSENSUS SETTINGS ---
@@ -496,11 +503,30 @@ def get_timeframe(symbol):
     return mt5.TIMEFRAME_M30 if is_crypto(symbol) else TIMEFRAME
 
 
+def _fx_pair_name(symbol):
+    """Return the base FX pair name (e.g. 'EURJPY-ECNc' -> 'EURJPY'), else None."""
+    upper = (symbol or "").upper()
+    for name in ("EURJPY", "GBPCHF"):
+        if name in upper:
+            return name
+    return None
+
+
 def default_sl_points_for(symbol):
+    pair = _fx_pair_name(symbol)
+    if pair == "EURJPY":
+        return DEFAULT_SL_POINTS_EURJPY
+    if pair == "GBPCHF":
+        return DEFAULT_SL_POINTS_GBPCHF
     return DEFAULT_SL_POINTS_BTC if is_crypto(symbol) else DEFAULT_SL_POINTS_XAU
 
 
 def default_tp_points_for(symbol):
+    pair = _fx_pair_name(symbol)
+    if pair == "EURJPY":
+        return DEFAULT_TP_POINTS_EURJPY
+    if pair == "GBPCHF":
+        return DEFAULT_TP_POINTS_GBPCHF
     return DEFAULT_TP_POINTS_BTC if is_crypto(symbol) else DEFAULT_TP_POINTS_XAU
 
 
@@ -538,6 +564,22 @@ def get_ai_mode(now=None):
         if start <= total_minutes <= end:
             return mode
     return "single"
+
+
+def atr_sl_multiplier(now=None):
+    """SL floor multiplier per AI mode (R:R 2:1 dijaga):
+    single 1.25x, dual 1.5x, triple 1.75x — makin banyak model setuju,
+    makin yakin setupnya, SL/TP makin lebar (target lebih jauh).
+    Dipakai di consensus gate ATR + prompt atr_gate_str — harus sinkron.
+    """
+    return {"single": 1.25, "dual": 1.5, "triple": 1.75}.get(get_ai_mode(now), 1.25)
+
+
+def atr_tp_multiplier(now=None):
+    """TP floor multiplier per AI mode = 2x SL multiplier (R:R 2:1 selalu):
+    single 2.5x, dual 3.0x, triple 3.5x.
+    """
+    return {"single": 2.5, "dual": 3.0, "triple": 3.5}.get(get_ai_mode(now), 2.5)
 
 
 def claude_slot_label():
