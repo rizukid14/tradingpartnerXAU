@@ -513,7 +513,9 @@ def get_valid_trade_symbol(symbol):
         return symbol
     info = mt5.symbol_info(symbol)
     if info is not None and getattr(info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
-        return symbol
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is not None and getattr(tick, "ask", 0) > 0:
+            return symbol
 
     candidates = [
         symbol + "c",
@@ -527,8 +529,10 @@ def get_valid_trade_symbol(symbol):
             continue
         cand_info = mt5.symbol_info(cand)
         if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
-            print(f"[MT5 AUTO-CORRECT] Symbol '{symbol}' auto-corrected to broker symbol: '{cand}'")
-            return cand
+            cand_tick = mt5.symbol_info_tick(cand)
+            if cand_tick is not None and getattr(cand_tick, "ask", 0) > 0:
+                print(f"[MT5 AUTO-CORRECT] Symbol '{symbol}' auto-corrected to broker symbol: '{cand}'")
+                return cand
 
     return symbol
 
@@ -580,10 +584,17 @@ def _send_with_retry(build_request, symbol, label):
         req = build_request(widen, policy)
         result = _safe_order_send(req)
 
-    if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
-        print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
-        req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
-        result = _safe_order_send(req)
+    # Robust fallback for filling modes if rejected with 10013 (Invalid Request) or 10030 (Invalid Fill)
+    if result and result.retcode in (10013, getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
+        for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_FOK):
+            if alt_policy == policy:
+                continue
+            print(f"[MT5] {label} fallback trying filling policy {alt_policy} (retcode was {result.retcode})")
+            req = build_request(config.DEVIATION, alt_policy)
+            res_alt = _safe_order_send(req)
+            if res_alt and res_alt.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+                print(f"[MT5] {label} fallback filling policy {alt_policy} SUCCEEDED!")
+                return res_alt
 
     return result
 
@@ -651,7 +662,6 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
             "deviation": deviation,
             "magic": config.MAGIC_NUMBER,
             "comment": "Multi-LLM Bot",
-            "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
 
@@ -704,7 +714,6 @@ def close_position(ticket):
             "deviation": deviation,
             "magic": config.MAGIC_NUMBER,
             "comment": "Close Position",
-            "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
 
