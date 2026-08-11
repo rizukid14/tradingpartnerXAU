@@ -66,11 +66,13 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--claude-model", type=str,
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
-                   help="Aturan SL/TP: 'ATR-Based' (floor 1.2x ATR + TP>=1.5x SL) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
+                   help="Aturan SL/TP: 'ATR-Based' (floor SL 1.25x ATR + TP 2.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
                    help="Pakai preset era (v1 / v2 / v3)")
+    p.add_argument("--account", choices=["live", "demo"],
+                   help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
     args = p.parse_args(argv)
 
     applied = []
@@ -153,6 +155,10 @@ def parse_cli_overrides(argv=None):
     if getattr(args, "dynamic", None):
         config.DYNAMIC_CONFIG_ENABLED = (args.dynamic == "on")
         applied.append(f"DYNAMIC_CONFIG_ENABLED={config.DYNAMIC_CONFIG_ENABLED}")
+    if getattr(args, "account", None):
+        config.MT5_ACCOUNT_MODE = args.account
+        config.refresh_mt5_credentials()
+        applied.append(f"MT5_ACCOUNT_MODE={config.MT5_ACCOUNT_MODE}")
 
     return applied, getattr(args, "yes", False)
 
@@ -170,8 +176,15 @@ def interactive_setup():
     print("  ⚙️  SETTING BOT SEBELUM JALAN (sesi ini saja)")
     print("=" * 60)
 
+    def _account_label():
+        mode = config.MT5_ACCOUNT_MODE.upper()
+        login = config.MT5_LOGIN or "?"
+        server = config.MT5_SERVER or "?"
+        return f"{mode} ({login} @ {server})"
+
     # (grup, label, attr, val) — dikelompokkan biar enak dibaca
     settings = [
+        ("MODE & RISK", "Akun MT5", "config.MT5_ACCOUNT_MODE", _account_label()),
         ("MODE & RISK", "Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
@@ -184,11 +197,11 @@ def interactive_setup():
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         str(config.TP_SL_RULES) + (" (floor 1.2x ATR)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
+         str(config.TP_SL_RULES) + (" (floor SL 1.25x ATR + TP 2.5x ATR)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
-        ("KONSENSUS & AI", "Debate Round 2", "config.DEBATE_ENABLED", "ON" if config.DEBATE_ENABLED else "OFF"),
+        ("KONSENSUS & AI", "AI Mode Policy", "config.AI_MODE_POLICY", str(config.AI_MODE_POLICY)),
         ("KONSENSUS & AI", "Memory (lessons/dec)", "config.MEMORY_CONTEXT_ENABLED", "ON" if config.MEMORY_CONTEXT_ENABLED else "OFF"),
         ("PROTEKSI", "Trailing Stop", "config.TRAILING_STOP_ENABLED", "ON" if config.TRAILING_STOP_ENABLED else "OFF"),
         ("PROTEKSI", "Break-Even", "config.BREAK_EVEN_ENABLED", "ON" if config.BREAK_EVEN_ENABLED else "OFF"),
@@ -257,7 +270,7 @@ def interactive_setup():
                                "DRY RUN" if (attr == "config.DRY_RUN" and v is True)
                                else ("LIVE" if attr == "config.DRY_RUN" else
                                      ("ON" if v is True else ("OFF" if v is False else
-                                      (str(v) + (" (floor 1.2x ATR)" if attr == "config.TP_SL_RULES" and v == "ATR-Based"
+                                      (str(v) + (" (floor SL 1.25x ATR + TP 2.5x ATR)" if attr == "config.TP_SL_RULES" and v == "ATR-Based"
                                                  else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and v == "LLM"
                                                  else ""))))))
             print("  ✅ Preset diterapkan.")
@@ -271,7 +284,17 @@ def interactive_setup():
                 if not new_val:
                     continue
                 try:
-                    if "DRY_RUN" in attr:
+                    if "MT5_ACCOUNT_MODE" in attr:
+                        v = new_val.strip().lower()
+                        if v not in ("live", "demo"):
+                            print("  ❌ Pilih 'live' atau 'demo'.")
+                            continue
+                        config.MT5_ACCOUNT_MODE = v
+                        config.refresh_mt5_credentials()
+                        settings[idx] = (group, label, attr, _account_label())
+                        print(f"  ✅ Akun MT5 diubah ke {v.upper()} (login: {config.MT5_LOGIN} @ {config.MT5_SERVER}).")
+                        continue
+                    elif "DRY_RUN" in attr:
                         config.DRY_RUN = new_val.lower() in ("1", "true", "yes", "live", "on")
                     elif "ENABLED" in attr:
                         setattr(config, attr.split(".")[1], new_val.lower() in ("1", "true", "yes", "on"))
@@ -296,6 +319,16 @@ def interactive_setup():
                             print("  ❌ Pilih 'ATR-Based' (1) atau 'LLM' (2).")
                             continue
                         setattr(config, attr.split(".")[1], new_val)
+                    elif "AI_MODE_POLICY" in attr:
+                        v = new_val.strip().lower()
+                        if v in ("schedule", "jadwal", "auto", "1"):
+                            new_val = "schedule"
+                        elif v in ("fixed", "paksa", "manual", "2"):
+                            new_val = "fixed"
+                        else:
+                            print("  ❌ Pilih 'schedule' (1) atau 'fixed' (2).")
+                            continue
+                        setattr(config, attr.split(".")[1], new_val)
                     else:
                         setattr(config, attr.split(".")[1], int(new_val))
                     # refresh tampilan
@@ -305,7 +338,7 @@ def interactive_setup():
                                            ("ON" if (config.__dict__.get(attr.split('.')[1]) is True) else
                                             ("OFF" if config.__dict__.get(attr.split('.')[1]) is False else
                                              (str(config.__dict__.get(attr.split('.')[1])) +
-                                              (" (floor 1.2x ATR)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "ATR-Based"
+                                              (" (floor SL 1.25x ATR + TP 2.5x ATR)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "ATR-Based"
                                                else " (bebas, 2x spread)" if attr == "config.TP_SL_RULES" and config.TP_SL_RULES == "LLM"
                                                else ""))))))
                     print(f"  ✅ {label} diubah.")
@@ -339,6 +372,18 @@ class TeeLogger(object):
         self.terminal.write(message)
         # Skip carriage return live clock lines from spamming log file
         if "\r" not in message:
+            # Filter verbose noise patterns to save space and focus the logs
+            skip_patterns = (
+                "Menyertakan analisa Multi-Timeframe",
+                "Menyertakan Lesson Learned",
+                "Mengirim data ke OpenAI",
+                "[LATENSI MODEL",
+                "ANALISIS KONSENSUS MULTI-LLM",
+                "==================================================",
+                "--------------------------------------------------"
+            )
+            if any(p in message for p in skip_patterns):
+                return
             self.log.write(message)
             self.log.flush()
 
@@ -472,7 +517,9 @@ def run_trading_cycle():
         except Exception as e:
             print(f"[FORECAST WARNING] {e}")
 
-    print(f"🧠 Mengirim data ke OpenAI, Gemini, dan {llm.claude_slot_label()}...")
+    ai_mode = config.get_ai_mode()
+    active_models = config.active_ai_model_names()
+    print(f"🧠 [AI MODE {ai_mode.upper()}] Mengirim data ke {', '.join(active_models)}...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
     
     # 5. Calculate consensus
@@ -608,6 +655,11 @@ def main():
     tf_name = "M30" if config.is_crypto(config.SYMBOL) else "M5"
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
     print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
+    if config.AI_MODE_POLICY == "schedule":
+        desc = " | ".join([f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} {mode.upper()}" for sh, sm, eh, em, mode in config.AI_MODE_SCHEDULE])
+        print(f"   AI Mode Schedule: {desc} (WIB)")
+    else:
+        print(f"   AI Mode: FIXED = {config.AI_FIXED_MODE.upper()}")
     print("-" * 60)
     print("🛡️ PROTEKSI AKTIF:")
     print(f"   Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
