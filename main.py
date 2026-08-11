@@ -809,7 +809,13 @@ def main():
                 print(f"[POS MANAGER ERROR] {e}")
             
             # =================================================================
-            #  ON NEW CANDLE: Run full trading cycle
+            # Reload runtime config from .env on every loop so process stays in sync
+            if hasattr(config, "reload_config"):
+                try:
+                    config.reload_config()
+                except Exception:
+                    pass
+
             # Check and update multi-timeframe and macro analysis
             if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
                 try:
@@ -821,11 +827,12 @@ def main():
             if rates is not None and len(rates) > 0:
                 current_candle_time = rates[-1]['time']
                 
-                trigger_requested = getattr(config, "TRIGGER_CYCLE_REQUESTED", False)
+                trigger_requested = config.check_and_clear_trigger_flag() if hasattr(config, "check_and_clear_trigger_flag") else getattr(config, "TRIGGER_CYCLE_REQUESTED", False)
                 if startup_run or trigger_requested or (last_candle_time is not None and current_candle_time > last_candle_time):
                     if trigger_requested:
                         print("\n⚡ [MANUAL RETRIGGER] Memulai siklus analisa pasar sesuai permintaan...")
-                        config.TRIGGER_CYCLE_REQUESTED = False
+                        if hasattr(config, "TRIGGER_CYCLE_REQUESTED"):
+                            config.TRIGGER_CYCLE_REQUESTED = False
                     elif startup_run:
                         print("▶️ Menjalankan siklus analisa pertama saat startup...")
                         startup_run = False

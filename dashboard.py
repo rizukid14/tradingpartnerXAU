@@ -28,10 +28,12 @@ from datetime import datetime
 from dashboard_assets import TEMPLATE
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-LOG_PATH = os.path.join(ROOT, "trading_bot.log")
+DATA_DIR = os.path.join(ROOT, "data")
+LOG_PATH = os.path.join(DATA_DIR, "trading_bot.log")
+if not os.path.exists(LOG_PATH):
+    LOG_PATH = os.path.join(ROOT, "trading_bot.log")
 if not os.path.exists(LOG_PATH):
     LOG_PATH = os.path.join(ROOT, "logs", "trading_bot.log")
-DATA_DIR = os.path.join(ROOT, "data")
 OUT_HTML = os.path.join(ROOT, "dashboard.html")
 
 BEP_TOLERANCE_USD = 0.04
@@ -761,7 +763,10 @@ def serve(host="0.0.0.0", port=8765):
                 _send_json(self, {"status": "success", "config": config_data})
 
             elif path in ("/api/retrigger_cycle", "/api/trigger_cycle"):
-                config.TRIGGER_CYCLE_REQUESTED = True
+                if hasattr(config, "trigger_manual_cycle"):
+                    config.trigger_manual_cycle()
+                else:
+                    config.TRIGGER_CYCLE_REQUESTED = True
                 _send_json(self, {
                     "status": "success",
                     "message": "Trading cycle retrigger requested successfully",
@@ -842,7 +847,10 @@ def serve(host="0.0.0.0", port=8765):
                 })
 
             elif path in ("/api/retrigger_cycle", "/api/trigger_cycle"):
-                config.TRIGGER_CYCLE_REQUESTED = True
+                if hasattr(config, "trigger_manual_cycle"):
+                    config.trigger_manual_cycle()
+                else:
+                    config.TRIGGER_CYCLE_REQUESTED = True
                 _send_json(self, {
                     "status": "success",
                     "message": "Trading cycle retrigger requested successfully",
