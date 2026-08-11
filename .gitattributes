@@ -1,0 +1,3 @@
+# Enforce Unix LF line endings for shell scripts in Linux Docker
+*.sh text eol=lf
+entrypoint.sh text eol=lf
