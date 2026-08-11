@@ -183,6 +183,26 @@ tr:hover { background: var(--panel-hover); }
 
 .empty-hint { text-align: center; padding: 30px; color: var(--muted); font-size: 12px; }
 
+/* Calendar Widget */
+.cal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+.cal-nav { display: flex; align-items: center; gap: 8px; }
+.cal-btn { background: var(--panel-hover); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+.cal-btn:hover { border-color: var(--blue); color: var(--blue); }
+.cal-month-title { font-size: 14px; font-weight: 700; color: #fff; font-family: 'Inter', sans-serif; min-width: 130px; text-align: center; }
+.cal-summary-pill { display: flex; gap: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; width: 100%; }
+.cal-weekday { text-align: center; font-size: 11px; font-weight: 600; color: var(--muted-light); padding: 4px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+.cal-day { background: rgba(255,255,255,0.015); border: 1px solid var(--border); border-radius: 8px; min-height: 72px; padding: 6px 8px; display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease; position: relative; }
+.cal-day:hover { transform: translateY(-2px); border-color: var(--border-light); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.cal-day.empty { background: transparent; border: none; min-height: 0; }
+.cal-day.today { border-color: var(--blue) !important; box-shadow: 0 0 8px rgba(59, 130, 246, 0.3); }
+.cal-day-num { font-size: 11px; font-weight: 600; color: var(--muted-light); font-family: 'JetBrains Mono', monospace; }
+.cal-day.win { background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.3); }
+.cal-day.loss { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); }
+.cal-day.bep { background: rgba(100, 116, 139, 0.12); border: 1px solid rgba(100, 116, 139, 0.3); }
+.cal-day-pnl { font-size: 12px; font-weight: 700; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+.cal-day-sub { font-size: 10px; color: var(--muted); font-family: 'Inter', sans-serif; margin-top: auto; }
+
 /* Scrollbar Customization */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: var(--panel); }
@@ -226,6 +246,21 @@ tr:hover { background: var(--panel-hover); }
   <div class="bento-box col-4">
     <div class="bento-title">Symbol Focus <span>XAUUSD-ECNc (Gold M5)</span></div>
     <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
+  </div>
+
+  <!-- Row 3: Daily P/L Calendar (Full 12 cols) -->
+  <div class="bento-box col-12">
+    <div class="bento-title">Kalender P/L Harian <span>Daily Performance &amp; Heatmap</span></div>
+    <div class="cal-header">
+      <div class="cal-nav">
+        <button class="cal-btn" id="cal-prev" type="button">&lt; Prev</button>
+        <div class="cal-month-title" id="cal-month-label">—</div>
+        <button class="cal-btn" id="cal-next" type="button">Next &gt;</button>
+        <button class="cal-btn" id="cal-today" type="button" style="background:var(--blue-bg);color:var(--blue);border-color:rgba(59,130,246,0.3);">Bulan Ini</button>
+      </div>
+      <div class="cal-summary-pill" id="cal-month-summary"></div>
+    </div>
+    <div class="cal-grid" id="cal-grid-container"></div>
   </div>
 
   <!-- Row 3: Model Decision Distribution (6 cols) + Latency & LLM Accuracy (6 cols) -->
@@ -522,6 +557,108 @@ function renderCharts() {
   });
 }
 
+let calCurrentDate = new Date();
+let calUserSelectedMonth = false;
+
+function renderCalendar() {
+  const closed = getFilteredTrades().filter(t => t.status === 'closed' && t.pnl !== null);
+  
+  if (!calUserSelectedMonth && closed.length > 0) {
+    let maxTs = 0;
+    closed.forEach(t => { if (t.ts && t.ts > maxTs) maxTs = t.ts; });
+    if (maxTs > 0) {
+      calCurrentDate = new Date(maxTs * 1000);
+    }
+  }
+
+  const dailyMap = {};
+  closed.forEach(t => {
+    if (!t.ts) return;
+    const d = new Date(t.ts * 1000);
+    const dateStr = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    if (!dailyMap[dateStr]) dailyMap[dateStr] = { pnl: 0, count: 0, win: 0, loss: 0, bep: 0 };
+    dailyMap[dateStr].pnl += t.pnl;
+    dailyMap[dateStr].count += 1;
+    if (t.pnl > 0.04) dailyMap[dateStr].win += 1;
+    else if (t.pnl < -0.04) dailyMap[dateStr].loss += 1;
+    else dailyMap[dateStr].bep += 1;
+  });
+
+  const year = calCurrentDate.getFullYear();
+  const month = calCurrentDate.getMonth();
+  const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+  if ($('cal-month-label')) $('cal-month-label').textContent = monthNames[month] + " " + year;
+
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const numDays = lastDay.getDate();
+  
+  let startDay = firstDay.getDay() - 1;
+  if (startDay < 0) startDay = 6;
+
+  let monthPnl = 0, monthCount = 0, monthWins = 0, monthLosses = 0, tradingDays = 0;
+  for (let day = 1; day <= numDays; day++) {
+    const dStr = year + '-' + String(month+1).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+    if (dailyMap[dStr]) {
+      monthPnl += dailyMap[dStr].pnl;
+      monthCount += dailyMap[dStr].count;
+      monthWins += dailyMap[dStr].win;
+      monthLosses += dailyMap[dStr].loss;
+      tradingDays += 1;
+    }
+  }
+
+  const monthWr = (monthWins + monthLosses) > 0 ? (monthWins / (monthWins + monthLosses) * 100).toFixed(1) + "%" : "—";
+  if ($('cal-month-summary')) {
+    $('cal-month-summary').innerHTML =
+      `<span>Tot P/L: <b class="${monthPnl>=0?'green':'red'}">${fmtMoney(monthPnl)}</b></span>` +
+      `<span>Hari Trading: <b>${tradingDays} hari</b> (${monthCount} trade)</span>` +
+      `<span>Win Rate: <b>${monthWr}</b></span>`;
+  }
+
+  const weekdays = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+  let html = weekdays.map(w => `<div class="cal-weekday">${w}</div>`).join('');
+
+  for (let i = 0; i < startDay; i++) {
+    html += `<div class="cal-day empty"></div>`;
+  }
+
+  const today = new Date();
+  const isThisMonthToday = today.getFullYear() === year && today.getMonth() === month;
+  const todayDateNum = today.getDate();
+
+  for (let day = 1; day <= numDays; day++) {
+    const dStr = year + '-' + String(month+1).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+    const data = dailyMap[dStr];
+    const isToday = isThisMonthToday && day === todayDateNum;
+    
+    let cls = "cal-day";
+    if (isToday) cls += " today";
+
+    if (data) {
+      if (data.pnl > 0.04) cls += " win";
+      else if (data.pnl < -0.04) cls += " loss";
+      else cls += " bep";
+
+      const pnlStr = (data.pnl >= 0 ? "+" : "") + "$" + data.pnl.toFixed(2);
+      const subStr = `${data.count}T (${data.win}W-${data.loss}L)`;
+
+      html += `<div class="${cls}">` +
+        `<div class="cal-day-num">${day}</div>` +
+        `<div class="cal-day-pnl ${data.pnl>=0?'green':'red'}">${pnlStr}</div>` +
+        `<div class="cal-day-sub">${subStr}</div>` +
+        `</div>`;
+    } else {
+      html += `<div class="${cls}">` +
+        `<div class="cal-day-num">${day}</div>` +
+        `<div class="cal-day-sub muted">—</div>` +
+        `</div>`;
+    }
+  }
+
+  if ($('cal-grid-container')) $('cal-grid-container').innerHTML = html;
+}
+
 function renderAll() {
   renderSub();
   renderKpi();
@@ -530,6 +667,7 @@ function renderAll() {
   renderSltp();
   renderLessons();
   renderCharts();
+  renderCalendar();
   renderTrades();
 }
 
@@ -537,6 +675,28 @@ function initDashboard() {
   renderSub();
   renderFilters();
   renderAll();
+
+  if ($('cal-prev')) {
+    $('cal-prev').addEventListener('click', () => {
+      calUserSelectedMonth = true;
+      calCurrentDate.setMonth(calCurrentDate.getMonth() - 1);
+      renderCalendar();
+    });
+  }
+  if ($('cal-next')) {
+    $('cal-next').addEventListener('click', () => {
+      calUserSelectedMonth = true;
+      calCurrentDate.setMonth(calCurrentDate.getMonth() + 1);
+      renderCalendar();
+    });
+  }
+  if ($('cal-today')) {
+    $('cal-today').addEventListener('click', () => {
+      calUserSelectedMonth = true;
+      calCurrentDate = new Date();
+      renderCalendar();
+    });
+  }
 }
 
 ['f-era','f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderAll));
