@@ -358,12 +358,13 @@ class RiskEngine:
             return True, ""
 
     def _check_max_positions(self):
-        """Check if max open positions (of this bot) reached."""
-        positions = mt5.positions_get(symbol=config.SYMBOL)
+        """Check if max open positions (of this bot) reached — aggregated across ALL
+        symbols (XAU + FX pairs + BTC), since rotation mode trades multiple symbols."""
+        positions = mt5.positions_get()
         bot_positions = [p for p in (positions or []) if p.magic == config.MAGIC_NUMBER]
         max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if self._in_recovery_mode else config.MAX_OPEN_POSITIONS
         if len(bot_positions) >= max_positions:
-            return False, f"📊 [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions}."
+            return False, f"📊 [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions} (semua simbol)."
         return True, ""
 
     def _check_cooldown(self):

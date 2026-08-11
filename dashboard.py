@@ -601,6 +601,25 @@ def _print_summary(events, metrics):
         print(f"   Net P/L: ${metrics['summary']['net_pnl']:+.2f} | Win rate: {wr*100:.1f}%")
 
 
+def _persist_env(key, value):
+    """Persist a key=value pair into .env (creates or updates the line)."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith(key + "="):
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}")
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def _send_json(handler, data, status_code=200):
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     handler.send_response(status_code)
@@ -653,7 +672,7 @@ def serve(host="0.0.0.0", port=8765):
                 _, metrics = _build_metrics()
                 summary = dict(metrics.get("summary", {}))
                 summary.update({
-                    "active_symbol": getattr(config, "SYMBOL", "XAUUSD-ECNc"),
+                    "active_symbol": getattr(config, "SYMBOL", "XAUUSD-ECN"),
                     "dry_run": getattr(config, "DRY_RUN", False),
                     "trading_paused": getattr(config, "TRADING_PAUSED", False),
                     "starting_balance": getattr(config, "STARTING_BALANCE", 1000.0),
@@ -702,9 +721,12 @@ def serve(host="0.0.0.0", port=8765):
                 config_data = {
                     "DRY_RUN": getattr(config, "DRY_RUN", False),
                     "TRADING_PAUSED": getattr(config, "TRADING_PAUSED", False),
-                    "SYMBOL": getattr(config, "SYMBOL", "XAUUSD-ECNc"),
-                    "WEEKDAY_SYMBOL": getattr(config, "WEEKDAY_SYMBOL", "XAUUSD-ECNc"),
-                    "WEEKEND_SYMBOL": getattr(config, "WEEKEND_SYMBOL", "XAUUSD-ECNc"),
+                    "SYMBOL": getattr(config, "SYMBOL", "XAUUSD-ECN"),
+                    "WEEKDAY_SYMBOL": getattr(config, "WEEKDAY_SYMBOL", "XAUUSD-ECN"),
+                    "WEEKEND_SYMBOL": getattr(config, "WEEKEND_SYMBOL", "XAUUSD-ECN"),
+                    "TRADING_MODE": getattr(config, "TRADING_MODE", "xau"),
+                    "FX_PAIR_SYMBOLS": list(getattr(config, "FX_PAIR_SYMBOLS", [])),
+                    "MAX_ROTATION_SYMBOLS": getattr(config, "MAX_ROTATION_SYMBOLS", 5),
                     "CLAUDE_MODEL": getattr(config, "CLAUDE_MODEL", "deepseek/deepseek-v4-flash"),
                     "GEMINI_MODEL": getattr(config, "GEMINI_MODEL", "gemini-3.1-flash-lite"),
                     "OPENAI_MODEL": getattr(config, "OPENAI_MODEL", "gpt-5.4-mini"),
@@ -745,9 +767,15 @@ def serve(host="0.0.0.0", port=8765):
                     if hasattr(config, k):
                         setattr(config, k, v)
                         updated.append(k)
+                        # Persist mode trading ke .env biar bot yang berjalan (proses terpisah)
+                        # tetap dapat mode ini setelah restart. Dashboard serve != proses bot.
+                        if k == "TRADING_MODE" and v in ("xau", "xau_pairs"):
+                            _persist_env("TRADING_MODE", v)
                 _send_json(self, {
                     "status": "success",
-                    "message": f"Updated {len(updated)} config parameters",
+                    "message": f"Updated {len(updated)} config parameters" + (
+                        " (TRADING_MODE persisted ke .env — restart bot untuk apply)" if "TRADING_MODE" in updated else ""
+                    ),
                     "updated_keys": updated
                 })
 

@@ -654,6 +654,11 @@ def main():
     print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
     tf_name = "M30" if config.is_crypto(config.SYMBOL) else "M5"
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
+    if config.TRADING_MODE == "xau_pairs":
+        pool = config.get_rotation_pool()
+        print(f"🔄 Trading Mode: XAU + PAIRS | Rotation Pool ({len(pool)}): {' → '.join(pool)}")
+    else:
+        print(f"🎯 Trading Mode: XAU ONLY | Rotasi: {config.TRADING_MODE}")
     print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
     if config.AI_MODE_POLICY == "schedule":
         desc = " | ".join([f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} {mode.upper()}" for sh, sm, eh, em, mode in config.AI_MODE_SCHEDULE])
@@ -828,6 +833,18 @@ def main():
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
                         print(f"\n🆕 Candle baru terdeteksi! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                        # Multi-symbol rotation (mode xau_pairs): move to the next symbol in the pool
+                        # once per new candle. Startup cycle always scans the default (XAU) first.
+                        active_symbol, rotated = config.refresh_active_symbol(advance=True)
+                        if rotated:
+                            print(f"🔄 Rotasi simbol -> {active_symbol}")
+                            # Re-anchor candle time to the NEW symbol so the next candle
+                            # detection is aligned (avoids double-rotation on tick drift).
+                            rates_new = mt5.copy_rates_from_pos(
+                                config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2
+                            )
+                            if rates_new is not None and len(rates_new) > 0:
+                                current_candle_time = rates_new[-1]['time']
                     
                     last_candle_time = current_candle_time
                     

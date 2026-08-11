@@ -5,8 +5,9 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.
-- **XAUUSD-ECNc** (Gold): scalping **M5**, weekday, MTF context M15/M30
+- **XAUUSD-ECN** (Gold): scalping **M5**, weekday, MTF context M15/M30. Config default `WEEKDAY_SYMBOL = "XAUUSD-ECN"` (base name tanpa suffix) — `get_valid_trade_symbol` auto-correct saat connect: live → `XAUUSD-ECNc`, demo → `XAUUSD-ECN`. Satu config jalan di dua-duanya.
 - **BTCUSD.c** (Bitcoin): intraday **M30**, weekend + setelah jam 22:00 Jumat WIB (rotasi otomatis, `config.get_active_symbol`). **MTF context H1/H4, forecast horizon T+4h/T+D1 (bebas swap overnight).**
+- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (XAU + FX cross pairs, rotasi round-robin tiap candle M5). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `EURGBP-ECN, EURJPY-ECN, EURCAD-ECN, GBPJPY-ECN` — semua cross non-USD, korelasi rendah dengan XAU; spread hasil scan: EURGBP 0, EURJPY ~0-1, EURCAD ~4-5, GBPJPY ~11 pts), dipotong `MAX_ROTATION_SYMBOLS` (5). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol).
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`) — jangan pernah test sembarangan tanpa konfirmasi
 - Balance awal $1000, sekarang ~$1065
 - Waktu semua pakai **WIB** (Asia/Jakarta)
@@ -17,6 +18,7 @@ Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **M
 python main.py
 ```
 - `config.DRY_RUN = False` → **LIVE trading** (order beneran dikirim). Jangan ubah tanpa bilang user.
+- **Ganti mode trading**: `.env` `TRADING_MODE=xau` / `TRADING_MODE=xau_pairs`, atau via UI dashboard (dropdown Mode Trading → POST `/api/config`, di-persist ke `.env`) → **restart bot** biar apply (dashboard serve = proses terpisah dari bot).
 - Log: `trading_bot.log` (auto-rotate 2MB, keep 5000 baris). **Log ini CAMPUR sesi demo + live** — akun demo lama `1157958` (ticket `568xxx`/`569xxx`), akun live `27556325` (ticket `1159xxx`). Jangan hitung profit dari log tanpa pisahin sesi — query MT5 langsung lebih akurat.
 
 ## Arsitektur file

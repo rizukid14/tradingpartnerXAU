@@ -23,7 +23,7 @@ _CLOSED_TODAY_CACHE_TTL = 4.0
 
 _broker_offset_cache = {"ts": 0.0, "value": 0.0}
 
-def get_broker_offset_seconds(symbol="XAUUSD-ECNc"):
+def get_broker_offset_seconds(symbol="XAUUSD-ECN"):
     """
     Returns the broker's offset from UTC in seconds.
     E.g. if broker is UTC+3 (GMT+3), returns 10800. Cached for 1 hour.
