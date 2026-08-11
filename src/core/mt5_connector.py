@@ -539,22 +539,32 @@ def get_valid_trade_symbol(symbol):
 def get_filling_policy(symbol):
     """
     Determines the supported filling policy for a symbol dynamically.
-    Returns mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, or mt5.ORDER_FILLING_RETURN.
+    Prefers IOC / RETURN for ECN Market Execution accounts.
     """
     info = mt5.symbol_info(symbol)
     if info is None:
+        return mt5.ORDER_FILLING_IOC
+
+    fm = getattr(info, "filling_mode", 0)
+    exemode = getattr(info, "trade_exemode", getattr(info, "execution_mode", 0))
+
+    if exemode == 2 or exemode == getattr(mt5, "SYMBOL_TRADE_EXECUTION_MARKET", 2):
+        if fm & 2:
+            return mt5.ORDER_FILLING_IOC
+        if fm & 4:
+            return mt5.ORDER_FILLING_RETURN
+        if fm & 1:
+            return mt5.ORDER_FILLING_FOK
+        return mt5.ORDER_FILLING_IOC
+
+    if fm & 2:
+        return mt5.ORDER_FILLING_IOC
+    elif fm & 4:
+        return mt5.ORDER_FILLING_RETURN
+    elif fm & 1:
         return mt5.ORDER_FILLING_FOK
 
-    # Bitmask of filling modes:
-    # 1: SYMBOL_FILLING_FOK
-    # 2: SYMBOL_FILLING_IOC
-    fm = getattr(info, "filling_mode", 0)
-    if fm & 1:
-        return mt5.ORDER_FILLING_FOK
-    elif fm & 2:
-        return mt5.ORDER_FILLING_IOC
-    else:
-        return mt5.ORDER_FILLING_RETURN
+    return mt5.ORDER_FILLING_IOC
 
 def _safe_order_send(request):
     """Sends order request safely supporting both native MT5 and mt5linux RPC bridge."""
@@ -667,6 +677,53 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
 
     print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
+
+    # Fallback for Market Execution accounts that disallow SL/TP on initial deal (Retcode 10013 / Invalid Request)
+    if result is None or result.retcode not in (
+        mt5.TRADE_RETCODE_DONE,
+        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+    ):
+        print(f"[MT5 MARKET EXECUTION FALLBACK] Retrying deal without initial SL/TP for {symbol}...")
+        def _build_no_sltp(deviation, fill_policy):
+            live_tick = mt5.symbol_info_tick(symbol)
+            live_price = (live_tick.ask if action == "BUY" else live_tick.bid) if live_tick else price
+            return {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": lot,
+                "type": order_type,
+                "price": live_price,
+                "sl": 0.0,
+                "tp": 0.0,
+                "deviation": deviation,
+                "magic": config.MAGIC_NUMBER,
+                "comment": "Multi-LLM Bot",
+                "type_filling": fill_policy,
+            }
+        result = _send_with_retry(_build_no_sltp, symbol, f"Order Market Deal {action} {symbol}")
+
+        if result and result.retcode in (
+            mt5.TRADE_RETCODE_DONE,
+            getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+        ):
+            order_ticket = getattr(result, "order", 0) or getattr(result, "deal", 0)
+            print(f"[MT5] Deal Market Tanpa SL/TP BERHASIL! Ticket: {order_ticket}. Menyetel SL/TP via TRADE_ACTION_SLTP...")
+            sltp_req = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "symbol": symbol,
+                "position": order_ticket,
+                "sl": round(sl, symbol_info.digits) if sl else 0.0,
+                "tp": round(tp, symbol_info.digits) if tp else 0.0,
+            }
+            sltp_res = _safe_order_send(sltp_req)
+            if sltp_res and sltp_res.retcode in (
+                mt5.TRADE_RETCODE_DONE,
+                getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+            ):
+                print(f"[MT5] SL/TP berhasil dipasang pada posisi #{order_ticket}!")
+            else:
+                s_err = getattr(sltp_res, "comment", "N/A") if sltp_res else "N/A"
+                print(f"[MT5 WARNING] Posisi #{order_ticket} terbuka, tetapi gagal memasang SL/TP: {s_err}")
 
     if result is None or result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
