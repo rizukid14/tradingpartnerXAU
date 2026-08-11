@@ -361,13 +361,15 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             d.position_id for d in wide_deals
             if (target_magic is None or d.magic == target_magic) and d.entry == mt5.DEAL_ENTRY_IN
         }
-        # Komisi per posisi = IN + OUT (komisi di-charge di deal IN saat buka & deal OUT saat tutup).
-        # position.profit dari MT5 TIDAK termasuk komisi — net profit harus dikurangi comm total.
+        # Biaya per posisi = komisi (IN + OUT) + admin fee swap-free.
+        # position.profit dari MT5 TIDAK include komisi/fee — net profit dikurangi semua biaya.
         comm_by_pos = {}
         for d in wide_deals:
             c = getattr(d, "commission", 0.0) or 0.0
-            if c != 0.0:
-                comm_by_pos[d.position_id] = comm_by_pos.get(d.position_id, 0.0) + c
+            f = getattr(d, "fee", 0.0) or 0.0
+            total_cost = c + f
+            if total_cost != 0.0:
+                comm_by_pos[d.position_id] = comm_by_pos.get(d.position_id, 0.0) + total_cost
         _bot_opened_cache["ts"] = now
         _bot_opened_cache["value"] = (bot_opened, comm_by_pos)
 
@@ -450,9 +452,11 @@ def get_account_info():
 
 def get_position_net_profit(position_id):
     """
-    Net profit real untuk posisi yang sudah CLOSE — termasuk komisi IN & OUT.
+    Net profit real untuk posisi yang sudah CLOSE — termasuk komisi IN & OUT + admin fee (swap-free).
     MT5 position.profit TIDAK termasuk komisi; komisi di-charge di deal IN (buka)
-    dan deal OUT (tutup), masing-masing. Profit bersih = profit + swap + comm_IN + comm_OUT.
+    dan deal OUT (tutup), masing-masing. Akun swap-free: swap = 0, tapi broker
+    charge ADMIN FEE di field `fee` kalau posisi di-hold lewat rollover.
+    Profit bersih = profit + swap + comm_IN + comm_OUT + fee.
     Returns None kalau posisi belum punya deal OUT (masih terbuka / data belum sync).
     """
     if config.DRY_RUN:
@@ -464,6 +468,7 @@ def get_position_net_profit(position_id):
         total_profit = 0.0
         total_swap = 0.0
         total_comm = 0.0
+        total_fee = 0.0
         has_out = False
         for d in deals:
             if d.entry == mt5.DEAL_ENTRY_OUT:
@@ -471,9 +476,10 @@ def get_position_net_profit(position_id):
             total_profit += getattr(d, "profit", 0.0) or 0.0
             total_swap += getattr(d, "swap", 0.0) or 0.0
             total_comm += getattr(d, "commission", 0.0) or 0.0
+            total_fee += getattr(d, "fee", 0.0) or 0.0
         if not has_out:
             return None
-        return round(total_profit + total_swap + total_comm, 2)
+        return round(total_profit + total_swap + total_comm + total_fee, 2)
     except Exception as e:
         print(f"[MT5 CONNECTOR WARNING] get_position_net_profit #{position_id}: {e}")
         return None
@@ -514,9 +520,13 @@ def get_trade_details(ticket):
         t_out = datetime.fromtimestamp(out_deal.time - broker_offset)
         duration_sec = max(0, out_deal.time - in_deal.time)
 
-        # Net profit REAL = profit + swap + komisi IN + komisi OUT.
-        # Deal IN punya commission (komisi buka), deal OUT punya commission (komisi tutup).
-        total_comm = sum((getattr(d, "commission", 0.0) or 0.0) for d in deals)
+        # Net profit REAL = profit + swap + komisi IN + OUT + admin fee (swap-free).
+        # Deal IN punya commission (komisi buka), deal OUT punya commission (komisi tutup),
+        # admin fee muncul di field `fee` kalau posisi di-hold lewat rollover.
+        total_comm = sum(
+            (getattr(d, "commission", 0.0) or 0.0) + (getattr(d, "fee", 0.0) or 0.0)
+            for d in deals
+        )
         profit = out_deal.profit + out_deal.swap + total_comm
 
         return {
