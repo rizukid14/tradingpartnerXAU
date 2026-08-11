@@ -114,6 +114,11 @@ def resume_trading() -> dict:
     return _api_post("/api/resume")
 
 
+def retrigger_cycle() -> dict:
+    """POST /api/retrigger_cycle — Force/retrigger an immediate market analysis cycle."""
+    return _api_post("/api/retrigger_cycle")
+
+
 TOOL_FUNCTIONS = {
     "get_summary": get_summary,
     "get_open_positions": get_open_positions,
@@ -123,6 +128,7 @@ TOOL_FUNCTIONS = {
     "set_strategy_preset": set_strategy_preset,
     "pause_trading": pause_trading,
     "resume_trading": resume_trading,
+    "retrigger_cycle": retrigger_cycle,
 }
 
 # ---------------------------------------------------------------------------
@@ -168,6 +174,7 @@ TOOLS = [
     ),
     _tool("pause_trading", "Pause the bot — stop opening new trades. Existing open positions are untouched."),
     _tool("resume_trading", "Resume the bot — allow new trades to open again."),
+    _tool("retrigger_cycle", "Force or retrigger an immediate market analysis cycle (run LLM consensus & risk check now without waiting for next candle)."),
 ]
 
 SYSTEM_PROMPT = """You are the AI assistant for a multi-LLM consensus trading bot (BTC and XAU/gold).
@@ -180,9 +187,11 @@ Before calling update_config, if you're not certain of the exact config key name
 value, call get_config first to check — field names must match exactly or the change will be
 rejected by the bot.
 
-For any change (config, preset, pause/resume), confirm clearly and briefly what you changed after
+For any change (config, preset, pause/resume, retrigger cycle), confirm clearly and briefly what you changed or executed after
 the tool call succeeds — mention the old and new value if you have them. If a tool call returns an
 error, tell the user plainly what failed; don't pretend it worked.
+
+If the user asks to run analysis now, retrigger a cycle, or check the market immediately ("analisa sekarang", "cek market", "retrigger cycle"), call retrigger_cycle to start a market analysis cycle right away.
 
 Be concise — this is a phone chat, not a report. Use bullet points only for actual lists (like open
 positions or trade history).

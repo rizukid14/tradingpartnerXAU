@@ -821,8 +821,12 @@ def main():
             if rates is not None and len(rates) > 0:
                 current_candle_time = rates[-1]['time']
                 
-                if startup_run or (last_candle_time is not None and current_candle_time > last_candle_time):
-                    if startup_run:
+                trigger_requested = getattr(config, "TRIGGER_CYCLE_REQUESTED", False)
+                if startup_run or trigger_requested or (last_candle_time is not None and current_candle_time > last_candle_time):
+                    if trigger_requested:
+                        print("\n⚡ [MANUAL RETRIGGER] Memulai siklus analisa pasar sesuai permintaan...")
+                        config.TRIGGER_CYCLE_REQUESTED = False
+                    elif startup_run:
                         print("▶️ Menjalankan siklus analisa pertama saat startup...")
                         startup_run = False
                     else:
