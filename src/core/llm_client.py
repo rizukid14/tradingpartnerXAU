@@ -73,9 +73,9 @@ def asset_desc(symbol):
 
 
 def claude_slot_label():
-    """Display label for the 'Claude slot' model. Shows DeepSeek when the
-    configured model is deepseek/..., otherwise Claude."""
-    return "DeepSeek" if config.CLAUDE_MODEL.startswith("deepseek/") else "Claude"
+    """Display label for the 'Claude slot' model. Delegates to config
+    (single source of truth)."""
+    return config.claude_slot_label()
 
 
 def query_primary_model(prompt, search_grounding=False):
@@ -290,7 +290,7 @@ def _build_points_explanation(symbol, point_size):
             f"- 1 point = ${pt_str} USD price change.\n"
             f"- 10 points = 1 pip = $0.10 USD price change.\n"
             f"- 100 points = 10 pips = $1.00 USD price change (e.g., Gold moving from 2400.00 to 2401.00)\n"
-            f"- Typical Stop Loss distance is 100 to 350 points (10 to 35 pips / $1.00 to $3.50 USD gold movement).\n\n"
+            f"- Typical Stop Loss distance is 250 to 500 points (25 to 50 pips / $2.50 to $5.00 USD gold movement).\n\n"
             f"CRITICAL WARNING:\n"
             f"Double-check your numbers. If you want a Stop Loss of 20 pips (which is $2.00 USD of price movement), you MUST return 200. "
             f"If you return 20, it sets a Stop Loss of just 20 points (2 pips / $0.20 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
@@ -301,7 +301,7 @@ def _build_sltp_rules_block(symbol, timeframe):
     """
     Build the SL/TP constraint lines for the system prompt based on
     config.TP_SL_RULES:
-      "ATR-Based": SL roughly 1.5-2x ATR, TP >= 1.5x SL (guardrail mode).
+      "ATR-Based": SL ~1.25x ATR, TP ~2.5x ATR (R:R 2:1) (guardrail mode).
       "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
       rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
@@ -315,19 +315,19 @@ def _build_sltp_rules_block(symbol, timeframe):
             range_note = "typically 20000 to 60000 points ($200-$600)"
             noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
         else:
-            range_note = "typically 100 to 350 points ($1.00-$3.50)"
-            noise_note = "avoid M1-style hyper-scalping stops (e.g., under 80 points) as spread and execution noise will erode your edge"
+            range_note = "typically 250 to 500 points ($2.50-$5.00)"
+            noise_note = "avoid M1-style hyper-scalping stops (e.g., under 200 points) as spread and execution noise will erode your edge"
 
         return (
             f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
             f"- SL distance is YOUR choice (no ATR floor): set it exactly where the invalidation logic puts it. However, align it with the {timeframe} structure ({range_note}) and {noise_note}\n"
-            f"- TP is YOUR choice (no forced 1.5R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
+            f"- TP is YOUR choice (no forced 2R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
         )
         
     return (
-        "- SL placed beyond the invalidation level, and roughly within 1.5-2x current ATR (in points) unless the invalidation logic clearly justifies otherwise\n"
+        "- SL placed beyond the invalidation level, and roughly at 1.25x current ATR (in points) unless the invalidation logic clearly justifies otherwise\n"
         "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        "- TP that gives at least 1.5R relative to SL (TP distance >= 1.5x SL distance)\n"
+        "- TP that gives at least 2R relative to SL (TP distance >= 2x SL distance; i.e. SL ~1.25x ATR -> TP ~2.5x ATR)\n"
     )
 
 
@@ -486,10 +486,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # ATR-based SL/TP range: no longer hard-coded into the static prompt
     # (the new template from docs/prompt_claude.md lets the LLM set SL/TP
-    # from its own thesis; consensus.py still enforces the 2x-spread floor
-    # and 1.5x SL->TP minimum). atr_points is still shown in market data.
-    min_sl = int(atr_points * 1.2)
-    max_sl = int(atr_points * 2.0)
+    # from its own thesis; consensus.py still enforces the 2x-spread floor,
+    # SL ~1.25x ATR and TP ~2.5x ATR in ATR-Based mode). atr_points is still
+    # shown in market data.
+    min_sl = int(atr_points * 1.25)
+    max_sl = int(atr_points * 2.5)
 
     # USD value of 1 point for the default bot lot — tells the LLM the real
     # money scale of the SL/TP distances it proposes (critical for BTC, where
@@ -977,58 +978,41 @@ def query_claude(prompt):
 
 
 
-def prepare_debate_prompt(symbol, base_prompt, round1_results):
-    """Constructs the Round 2 debate prompt showcasing all initial model decisions."""
-    summary_lines = []
-    for model_name, res in round1_results.items():
-        sig = res.get("signal", "HOLD")
-        conf = res.get("confidence", 0.0)
-        reason = res.get("reasoning", "")
-        summary_lines.append(f"- **{model_name}**: Decision = `{sig}` (Conf: {conf*100:.0f}%), Reasoning: \"{reason}\"")
-
-    debate_context = "\n".join(summary_lines)
-
-    debate_prompt = f"""{base_prompt}
-
-### MULTI-AGENT DEBATE ROUND 2
-In Round 1, the 3 AI models evaluated the market and produced conflicting decisions:
-{debate_context}
-
-Carefully review and critique the counter-arguments provided by the other models.
-Consider if their observations regarding technical indicators, dynamic EMAs, support/resistance, or macro risk alter your assessment.
-Re-evaluate your position and cast your REVISED final decision for Round 2.
-"""
-    return debate_prompt
-
-
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
-    Sends the prompt to OpenAI, Gemini, and Claude in parallel threads
-    to minimize latency. If Round 1 lacks consensus, triggers Multi-Agent Debate Round 2.
-    Also evaluates active open positions for early close recommendations.
+    Query only the AI slots active for the current WIB time window.
+    mode = single -> OpenAI only
+    mode = dual   -> OpenAI + DeepSeek (slot-3)
+    mode = triple -> OpenAI + Gemini + DeepSeek (slot-3)
     """
     prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
 
-    
+    active_models = config.active_ai_model_names()
+    slot_label = claude_slot_label()
+    model_fns = {
+        "OpenAI": query_openai,
+        "Gemini": query_gemini,
+        slot_label: query_claude,
+    }
+    selected = {name: model_fns[name] for name in active_models if name in model_fns}
+
     results = {}
     latencies = {}
     start_total = time.time()
-    
+
     def _query_timed(query_fn, p):
         t0 = time.time()
         res = query_fn(p)
         elapsed = time.time() - t0
         return res, elapsed
 
-    # Run in parallel using thread pool
-    slot_label = claude_slot_label()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    # Run in parallel using thread pool (sized to active model count)
+    max_workers = max(1, len(selected))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_model = {
-            executor.submit(_query_timed, query_openai, prompt): "OpenAI",
-            executor.submit(_query_timed, query_gemini, prompt): "Gemini",
-            executor.submit(_query_timed, query_claude, prompt): slot_label
+            executor.submit(_query_timed, fn, prompt): name for name, fn in selected.items()
         }
-        
+
         for future in concurrent.futures.as_completed(future_to_model):
             model_name = future_to_model[future]
             try:
@@ -1041,46 +1025,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                 latencies[model_name] = 0.0
 
     total_elapsed = time.time() - start_total
-    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", slot_label] if m in latencies])
-    print(f"⏱️ [LATENSI MODEL (Ronde 1)] {lat_str} (Total: {total_elapsed:.2f}s)")
-    
-    # Check consensus from Round 1
-    signals_count = {"BUY": 0, "SELL": 0, "HOLD": 0}
-    for m, res in results.items():
-        sig = res.get("signal", "HOLD")
-        signals_count[sig] = signals_count.get(sig, 0) + 1
-
-    consensus_target = getattr(config, "CONSENSUS_THRESHOLD", 2)
-    has_consensus = signals_count["BUY"] >= consensus_target or signals_count["SELL"] >= consensus_target
-
-    debate_enabled = getattr(config, "DEBATE_ENABLED", True)
-    if not has_consensus and debate_enabled:
-        print("\n💬 [DEBATE TRIGGERED] Ronde 1 tidak mencapai konsensus. Memulai diskusi Multi-Agent Debate...")
-        debate_prompt = prepare_debate_prompt(symbol, prompt, results)
-        
-        round2_results = {}
-        round2_latencies = {}
-        start_d = time.time()
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_model = {
-                executor.submit(_query_timed, query_openai, debate_prompt): "OpenAI",
-                executor.submit(_query_timed, query_gemini, debate_prompt): "Gemini",
-                executor.submit(_query_timed, query_claude, debate_prompt): slot_label
-            }
-            for future in concurrent.futures.as_completed(future_to_model):
-                model_name = future_to_model[future]
-                try:
-                    data, elapsed = future.result()
-                    round2_results[model_name] = data
-                    round2_latencies[model_name] = elapsed
-                except Exception as exc:
-                    round2_results[model_name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": str(exc)}
-                    round2_latencies[model_name] = 0.0
-                    
-        total_d = time.time() - start_d
-        d_str = " | ".join([f"{m}: {round2_latencies.get(m, 0.0):.2f}s" for m in ["OpenAI", "Gemini", slot_label] if m in round2_latencies])
-        print(f"💬 [DEBATE SELESAI] {d_str} (Total Debate: {total_d:.2f}s)")
-        return round2_results
-
+    mode = config.get_ai_mode()
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in active_models if m in latencies])
+    print(f"⏱️ [LATENSI MODEL] mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results

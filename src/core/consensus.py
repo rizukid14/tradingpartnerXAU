@@ -16,9 +16,10 @@ def _effective_consensus_threshold():
 def _apply_sltp_floors(sl_points, tp_points):
     """
     Enforce SL/TP floors according to config.TP_SL_RULES:
-      "ATR-Based" (default): min SL = max(2x spread, 1.2x ATR), TP >= 1.5x SL.
-        Mencegah SL di dalam noise/volatilitas — model (DeepSeek/OpenAI) sering
-        kasih SL cuma 6-7% ATR; 1.2x ATR kompromi biar tetap scalping-friendly.
+      "ATR-Based" (default): min SL = max(2x spread, 1.25x ATR), min TP = max(2.5x ATR, 2x SL).
+        R:R minimal 2:1 (TP 2.5x ATR / SL 1.25x ATR = 2). Mencegah SL di dalam
+        noise/volatilitas — model (DeepSeek/OpenAI) sering kasih SL cuma 6-7% ATR;
+        1.25x ATR kompromi biar tetap scalping-friendly tapi nggak kepotong noise.
       "LLM": SL/TP sebebas-bebasnya sesuai konsensus — cuma floor 2x spread
         (biar broker nggak nolak INVALID_STOPS). Lot size dikalkulasi dari SL
         tsb via risk-based sizing, jadi SL kecil = lot gede (risk tetap sama).
@@ -64,13 +65,15 @@ def _apply_sltp_floors(sl_points, tp_points):
             tp_points = sl_points
         return sl_points, tp_points
 
-    # ATR-Based: Floor = max(2x spread, 1.2x ATR) — never inside spread/noise
-    min_sl = max(spread_pts * 2, int(atr_points * 1.2))
+    # ATR-Based: SL floor = max(2x spread, 1.25x ATR); TP floor = max(2.5x ATR, 2x SL)
+    # -> R:R minimal 2:1 (TP 2.5x ATR / SL 1.25x ATR = 2). Never inside spread/noise.
+    min_sl = max(spread_pts * 2, int(atr_points * 1.25))
     if sl_points < min_sl:
         sl_points = min_sl
 
-    if tp_points < sl_points * 1.5:
-        tp_points = int(sl_points * 1.5)
+    min_tp = max(int(atr_points * 2.5), int(sl_points * 2))
+    if tp_points < min_tp:
+        tp_points = min_tp
 
     return sl_points, tp_points
 
@@ -141,9 +144,6 @@ def calculate_consensus(decisions):
     print("           ANALISIS KONSENSUS MULTI-LLM           ")
     print("="*50)
     
-    signals_count = {"BUY": 0, "SELL": 0, "HOLD": 0}
-    agreeing_models = []
-    
     # Print details for each model
     for model_name, dec in decisions.items():
         sig = dec.get("signal") or "HOLD"
@@ -152,7 +152,6 @@ def calculate_consensus(decisions):
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
         
-        signals_count[sig] = signals_count.get(sig, 0) + 1
         print(f"🤖 [{model_name}] Decision: {sig} (Conf: {conf*100:.1f}%)")
         print(f"   SL: {sl} pts, TP: {tp} pts")
         print(f"   Reason: {reason}")
@@ -189,9 +188,12 @@ def calculate_consensus(decisions):
 
     tickets_to_close = []
     consensus_threshold = _effective_consensus_threshold()
+    n_models = len(decisions)
+    # CLOSE votes adaptif: single-AI cukup 1 vote, dual 2/2, triple 2-3/3
+    close_threshold = min(consensus_threshold, n_models)
     closed_ticket_ids = set()
     for ticket, votes in close_votes.items():
-        if len(votes) >= consensus_threshold:
+        if len(votes) >= close_threshold:
             models_str = ", ".join([v[0] for v in votes])
             reason_sample = votes[0][1]
             tickets_to_close.append({
@@ -200,7 +202,7 @@ def calculate_consensus(decisions):
                 "reason": reason_sample
             })
             closed_ticket_ids.add(ticket)
-            print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/3 AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
+            print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/{n_models} AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
 
     for ticket in sorted(all_evaluated_tickets):
         if ticket not in closed_ticket_ids:
@@ -214,9 +216,11 @@ def calculate_consensus(decisions):
 
     # Dynamic weighted-confidence consensus: each model's confidence weights
     # its vote. A direction wins when BOTH:
-    #   - at least MIN_CONSENSUS_MODELS (2) models voted that direction, and
+    #   - at least min_models models voted that direction, and
     #   - the SUM of their confidence clears the per-symbol threshold
     #     (XAU 1.0, BTC 1.2, tightened to 1.8 in the 3/3 defensive regime).
+    # Mode AI adaptif (time-based): single -> 1 model cukup (threshold diturunkan
+    # karena skor max 1.0), dual -> 2/2, triple -> 2-3/3 seperti biasa.
     direction_scores = {"BUY": 0.0, "SELL": 0.0}
     direction_models = {"BUY": [], "SELL": []}
     for model_name, dec in decisions.items():
@@ -232,8 +236,16 @@ def calculate_consensus(decisions):
     base_threshold = config.confidence_threshold_for(config.SYMBOL)
     if getattr(config, "FORCE_ACTIVE_ENTRY", False):
         base_threshold *= 0.7
-    eff_count = _effective_consensus_threshold()
-    threshold = base_threshold * (eff_count / min_models)
+
+    ai_mode = getattr(config, "get_ai_mode", lambda: "triple")()
+    if ai_mode == "single":
+        # 1 model saja: skor max 1.0 -> threshold diturunkan (misal XAU 0.6 / BTC 0.72)
+        min_models = 1
+        threshold = base_threshold * 0.6
+    else:
+        min_models = min(min_models, len(decisions))
+        eff_count = min(_effective_consensus_threshold(), len(decisions))
+        threshold = base_threshold * (eff_count / min_models)
 
     # Pick the direction with the highest weighted score that clears threshold
     consensus_signal = "HOLD"

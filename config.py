@@ -207,11 +207,22 @@ CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHO
 CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
+# --- TIME-BASED AI MODE SCHEDULE (WIB) ---
+# Format: (start_hour, start_minute, end_hour, end_minute, mode)
+# Mode values: "single" | "dual" | "triple"
+AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
+AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
+AI_MODE_SCHEDULE = [
+    (0, 1, 8, 59, "single"),
+    (9, 0, 13, 0, "dual"),
+    (13, 1, 18, 0, "single"),
+    (18, 1, 23, 59, "triple"),
+]
+
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
-DEBATE_ENABLED = _getenv_bool("DEBATE_ENABLED", False)
 QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
 MONTE_CARLO_ENABLED = _getenv_bool("MONTE_CARLO_ENABLED", False)
-FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", True)
+FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", False)
 MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", True)
 
 # --- TRAILING STOP ---
@@ -298,13 +309,32 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
 
 # --- MT5 CONNECTION ---
-MT5_LOGIN = os.getenv("MT5_LOGIN", "")
-MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER = os.getenv("MT5_SERVER", "")
+MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "live").lower()  # "live" | "demo"
+MT5_LOGIN = ""
+MT5_PASSWORD = ""
+MT5_SERVER = ""
 MAGIC_NUMBER = _getenv_int("MAGIC_NUMBER", 20260625)
 
-if MT5_LOGIN:
-    MT5_LOGIN = int(MT5_LOGIN)
+def refresh_mt5_credentials():
+    """Reloads MT5 login credentials from current MT5_ACCOUNT_MODE."""
+    global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+    if MT5_ACCOUNT_MODE == "demo":
+        MT5_LOGIN = os.getenv("MT5_DEMO_LOGIN", "")
+        MT5_PASSWORD = os.getenv("MT5_DEMO_PASSWORD", "")
+        MT5_SERVER = os.getenv("MT5_DEMO_SERVER", "")
+    else:
+        MT5_LOGIN = os.getenv("MT5_LIVE_LOGIN", os.getenv("MT5_LOGIN", ""))
+        MT5_PASSWORD = os.getenv("MT5_LIVE_PASSWORD", os.getenv("MT5_PASSWORD", ""))
+        MT5_SERVER = os.getenv("MT5_LIVE_SERVER", os.getenv("MT5_SERVER", ""))
+    
+    if MT5_LOGIN:
+        try:
+            MT5_LOGIN = int(MT5_LOGIN)
+        except ValueError:
+            pass
+
+# Initialize credentials
+refresh_mt5_credentials()
 
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = _getenv_bool("MTF_ANALYSIS_ENABLED", True)
@@ -399,6 +429,48 @@ def confidence_threshold_for(symbol):
     BTC (M30, moderate entries) needs higher conviction than XAU (M5, frequent).
     """
     return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
+
+
+def get_ai_mode(now=None):
+    """Return active AI mode for WIB time.
+    - schedule policy: use AI_MODE_SCHEDULE
+    - fixed policy: use AI_FIXED_MODE
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+
+    policy = getattr(sys.modules[__name__], "AI_MODE_POLICY", "schedule")
+    if policy == "fixed":
+        fixed = getattr(sys.modules[__name__], "AI_FIXED_MODE", "triple")
+        return fixed if fixed in ("single", "dual", "triple") else "triple"
+
+    total_minutes = now.hour * 60 + now.minute
+    for sh, sm, eh, em, mode in AI_MODE_SCHEDULE:
+        start = sh * 60 + sm
+        end = eh * 60 + em
+        if start <= total_minutes <= end:
+            return mode
+    return "single"
+
+
+def claude_slot_label():
+    """Display label for the 'Claude slot' model. Shows DeepSeek when the
+    configured model is deepseek/..., otherwise Claude. Single source of truth."""
+    return "DeepSeek" if CLAUDE_MODEL.startswith("deepseek/") else "Claude"
+
+
+def active_ai_model_names(now=None):
+    """Return the model slots to query for the active AI mode."""
+    mode = get_ai_mode(now)
+    slot3 = claude_slot_label()
+    if mode == "single":
+        return ["OpenAI"]
+    if mode == "dual":
+        return ["OpenAI", slot3]
+    return ["OpenAI", "Gemini", slot3]
 
 
 def risk_percent_for(symbol):
