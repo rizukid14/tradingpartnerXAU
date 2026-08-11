@@ -653,13 +653,27 @@ def _run_cycle_for_current_symbol():
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend
             pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
-            
+
+            # Comment transaksi = jenis LLM yang sepakat (bukan "Multi-LLM Bot").
+            # Contoh: "GPT" / "GPT+Gemini" / "GPT+Gemini+DeepSeek".
+            model_labels = {
+                "OpenAI": "GPT",
+                "Gemini": "Gemini",
+                "DeepSeek": "DeepSeek",
+                "Claude": "Claude",
+            }
+            agree_models = result.get("agreeing_models") or []
+            order_comment = "+".join(
+                model_labels.get(m, m) for m in agree_models
+            ) or "Multi-LLM Bot"
+
             order_res = connector.send_trade_order(
                 symbol=config.SYMBOL,
                 action=trade_signal,
                 lot=effective_lot,
                 sl_points=sl_points,
-                tp_points=pos_tp
+                tp_points=pos_tp,
+                comment=order_comment
             )
             if order_res["status"] == "SUCCESS":
                 print(f"🎉 Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")

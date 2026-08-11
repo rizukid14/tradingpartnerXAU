@@ -278,6 +278,7 @@ def calculate_consensus(decisions):
             "sl_points": config.default_sl_points_for(config.SYMBOL),
             "tp_points": config.default_tp_points_for(config.SYMBOL),
             "agreeing_count": 0,
+            "agreeing_models": [],
             "tickets_to_close": tickets_to_close,
             "details": f"Consensus failed (BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f})"
         }
@@ -328,6 +329,7 @@ def calculate_consensus(decisions):
             "sl_points": final_sl,
             "tp_points": final_tp,
             "agreeing_count": len(agreeing_models),
+            "agreeing_models": list(agreeing_models),
             "tickets_to_close": tickets_to_close,
             "details": f"SL/TP gate ATR gagal: {sltp_reason}"
         }
@@ -345,6 +347,7 @@ def calculate_consensus(decisions):
         "sl_points": final_sl,
         "tp_points": final_tp,
         "agreeing_count": len(agreeing_models),
+        "agreeing_models": list(agreeing_models),  # nama model yang sepakat (buat comment order)
         "tickets_to_close": tickets_to_close,
         "details": f"Consensus by: {agreeing_models}"
     }

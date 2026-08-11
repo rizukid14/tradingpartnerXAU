@@ -21,6 +21,9 @@ _BOT_OPENED_CACHE_TTL = 60.0
 _closed_today_cache = {"ts": 0.0, "key": None, "value": None}
 _CLOSED_TODAY_CACHE_TTL = 4.0
 
+# point per symbol buat klasifikasi SL (trailing/BEP) — cache ringan per-symbol
+_point_cache = {}
+
 _broker_offset_cache = {"ts": 0.0, "value": 0.0}
 
 def get_broker_offset_seconds(symbol="XAUUSD-ECN"):
@@ -351,7 +354,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
         return []
 
     if _bot_opened_cache["value"] is not None and (now - _bot_opened_cache["ts"]) < _BOT_OPENED_CACHE_TTL:
-        bot_opened, comm_by_pos = _bot_opened_cache["value"]
+        bot_opened, comm_by_pos, entry_price_by_pos = _bot_opened_cache["value"]
     else:
         wide_from_epoch = int((today_start - timedelta(days=7)).timestamp() + broker_offset)
         wide_deals = mt5.history_deals_get(wide_from_epoch, to_epoch)
@@ -361,6 +364,13 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             d.position_id for d in wide_deals
             if (target_magic is None or d.magic == target_magic) and d.entry == mt5.DEAL_ENTRY_IN
         }
+        # Harga entry per posisi (dari deal IN) — dipakai buat bedain SL awal vs
+        # trailing/BEP: kalau harga SL yang kena > entry (BUY), berarti SL sudah
+        # digeser melewati entry = trailing stop / break-even, bukan SL awal.
+        entry_price_by_pos = {}
+        for d in wide_deals:
+            if d.entry == mt5.DEAL_ENTRY_IN:
+                entry_price_by_pos.setdefault(d.position_id, d.price)
         # Biaya per posisi = komisi (IN + OUT) + admin fee swap-free.
         # position.profit dari MT5 TIDAK include komisi/fee — net profit dikurangi semua biaya.
         comm_by_pos = {}
@@ -371,7 +381,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             if total_cost != 0.0:
                 comm_by_pos[d.position_id] = comm_by_pos.get(d.position_id, 0.0) + total_cost
         _bot_opened_cache["ts"] = now
-        _bot_opened_cache["value"] = (bot_opened, comm_by_pos)
+        _bot_opened_cache["value"] = (bot_opened, comm_by_pos, entry_price_by_pos)
 
     closed = []
     for deal in deals:
@@ -401,6 +411,29 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
                 mt5.DEAL_REASON_VMARGIN: "margin",
                 mt5.DEAL_REASON_SPLIT: "split",
             }.get(deal_reason, f"code-{deal_reason}")
+
+            # Bedakan SL awal vs trailing-stop vs break-even dari HARGA SL yang
+            # ke-trigger (deal.price = harga eksekusi) vs harga entry:
+            #   - BUY:  SL > entry  -> SL sudah digeser ke atas = trailing/BEP
+            #   - SELL: SL < entry  -> SL sudah digeser ke bawah = trailing/BEP
+            # Klasifikasi "SL-BEP" (hampir pas di entry, cuma selisih spread) vs
+            # "SL-trailing" (jauh melewati entry, profit terkunci).
+            if reason == "SL":
+                entry_px = entry_price_by_pos.get(deal.position_id)
+                if entry_px is not None:
+                    exit_px = deal.price
+                    point = _point_cache.get(deal.symbol)
+                    if point is None:
+                        si = mt5.symbol_info(deal.symbol)
+                        point = si.point if si else 0.0
+                        _point_cache[deal.symbol] = point
+                    bep_tol_px = max(5 * point, point)  # tolerance ~5 pts (spread/slippage)
+                    if pos_type == "BUY":
+                        if exit_px > entry_px:
+                            reason = "SL-BEP" if exit_px - entry_px <= bep_tol_px else "SL-trailing"
+                    else:  # SELL
+                        if exit_px < entry_px:
+                            reason = "SL-BEP" if entry_px - exit_px <= bep_tol_px else "SL-trailing"
 
         # Net profit REAL = profit + swap - komisi total (IN + OUT).
         # comm_by_pos berisi nilai NEGATIF (komisi di-charge) → ditambahkan langsung.
@@ -554,6 +587,38 @@ def get_trade_details(ticket):
         )
         profit = out_deal.profit + out_deal.swap + total_comm
 
+        # Reason close yang terbaca (SL/TP/manual/bot/dll) — konsisten dengan
+        # get_closed_positions_today. SL dibedakan lagi:
+        #   - SL           : SL awal kena (harga SL di sisi loss dari entry)
+        #   - SL-BEP       : SL digeser ke break-even (≈ entry, selisih spread)
+        #   - SL-trailing  : SL digeser melewati entry (profit terkunci)
+        deal_reason = getattr(out_deal, "reason", None)
+        reason_label = {
+            mt5.DEAL_REASON_SL: "SL",
+            mt5.DEAL_REASON_TP: "TP",
+            mt5.DEAL_REASON_MOBILE: "manual (mobile)",
+            mt5.DEAL_REASON_WEB: "manual (web)",
+            mt5.DEAL_REASON_CLIENT: "manual",
+            mt5.DEAL_REASON_EXPERT: "bot",
+            mt5.DEAL_REASON_ROLLOVER: "rollover",
+            mt5.DEAL_REASON_SO: "stop-out",
+            mt5.DEAL_REASON_VMARGIN: "margin",
+            mt5.DEAL_REASON_SPLIT: "split",
+        }.get(deal_reason, f"code-{deal_reason}" if deal_reason else "manual")
+        if reason_label == "SL":
+            point = _point_cache.get(symbol)
+            if point is None:
+                si = mt5.symbol_info(symbol)
+                point = si.point if si else 0.0
+                _point_cache[symbol] = point
+            bep_tol_px = max(5 * point, point)
+            if pos_type == "BUY":
+                if exit_price > entry_price:
+                    reason_label = "SL-BEP" if exit_price - entry_price <= bep_tol_px else "SL-trailing"
+            else:  # SELL
+                if exit_price < entry_price:
+                    reason_label = "SL-BEP" if entry_price - exit_price <= bep_tol_px else "SL-trailing"
+
         return {
             "ticket": ticket,
             "symbol": symbol,
@@ -567,7 +632,7 @@ def get_trade_details(ticket):
             "profit": profit,
             "raw_profit": out_deal.profit,
             "comment": out_deal.comment,
-            "reason": out_deal.reason,
+            "reason": reason_label,
         }
     except Exception as e:
         print(f"[MT5 CONNECTOR WARNING] Could not fetch trade details #{ticket}: {e}")
@@ -683,11 +748,13 @@ def _send_with_retry(build_request, symbol, label):
 
     return result
 
-def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
+def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, comment=None):
     """
     Sends a buy/sell trade order to MT5.
     action: "BUY" or "SELL"
     sl_points / tp_points: distance in points for Stop Loss and Take Profit
+    comment: label transaksi (default "Multi-LLM Bot"; caller bisa kirim
+             per-jenis-LLM, misal "GPT+DeepSeek" / "GPT+Gemini+DeepSeek")
     """
     if config.DRY_RUN:
         print(f"[DRY RUN] Simulasi {action} order untuk {symbol} sebanyak {lot} lot (SL: {sl_points} pts, TP: {tp_points} pts).")
@@ -746,7 +813,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
             "tp": round(live_tp, symbol_info.digits),
             "deviation": deviation,
             "magic": config.MAGIC_NUMBER,
-            "comment": "Multi-LLM Bot",
+            "comment": comment or "Multi-LLM Bot",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }

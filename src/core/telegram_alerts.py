@@ -104,12 +104,21 @@ def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos
     # Classify exit type (reason can be MT5 numeric code OR our string label)
     reason_str = str(reason_code).lower() if reason_code is not None else ""
     is_tp = reason_code == 5 or reason_str == "tp"
-    is_sl = reason_code == 4 or reason_str in ("sl", "stop-out", "margin", "rollover", "split")
+    # "sl", "sl-bep", "sl-trailing", "stop-out", dll — semua varian SL
+    is_sl = reason_code == 4 or reason_str in ("sl", "sl-bep", "sl-trailing", "stop-out", "margin", "rollover", "split") or reason_str.startswith("sl")
     if is_tp or "[tp" in comment_lower:
         title = "🎯 *Trade Selesai: TAKE PROFIT (TP)*"
         status = "Target TP Max Tercapai! 🎯"
     elif is_sl or "[sl" in comment_lower:
-        if profit > tol:
+        # Reason sudah dipisah: SL-BEP = break-even, SL-trailing = profit terkunci
+        if reason_str in ("sl-trailing", "sl-bep"):
+            if reason_str == "sl-trailing":
+                title = "🛡️ *Trade Selesai: TRAILING STOP HIT*"
+                status = "Trailing SL Hit (Profit Terkunci) 🛡️"
+            else:
+                title = "⚖️ *Trade Selesai: BREAK-EVEN (BE)*"
+                status = "Break-Even Hit ⚖️"
+        elif profit > tol:
             title = "🛡️ *Trade Selesai: STOP LOSS IN PROFIT (SL+)*"
             status = "Trailing SL / Break-Even Hit (Profit Terkunci) 🛡️"
         elif abs(profit) <= tol:
