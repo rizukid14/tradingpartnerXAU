@@ -18,6 +18,7 @@ is just the natural-language front end that translates chat into HTTP calls.
 
 import os
 import sys
+import logging
 from pathlib import Path
 
 # Ensure project root directory is in sys.path
@@ -31,6 +32,11 @@ import config
 from openai import OpenAI
 from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
+
+logging.basicConfig(
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    level=logging.INFO
+)
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 MODEL = "gpt-5.6-luna"  # balanced cost/intelligence
@@ -234,8 +240,10 @@ def run_agent_turn(user_text: str, history: list) -> str:
             func = TOOL_FUNCTIONS.get(tool_call.function.name)
             try:
                 args = json.loads(tool_call.function.arguments or "{}")
+                print(f"🛠️ [TELEGRAM TOOL] Executing tool {tool_call.function.name}({args})...")
                 result = func(**args) if func else {"error": f"Unknown tool {tool_call.function.name}"}
             except Exception as e:
+                print(f"❌ [TELEGRAM TOOL ERROR] {tool_call.function.name}: {e}")
                 result = {"error": str(e)}
             messages.append({
                 "role": "tool",
@@ -251,22 +259,48 @@ CONVERSATION_HISTORY = []
 
 
 def is_authorized(update: Update) -> bool:
+    if not config.TELEGRAM_CHAT_ID:
+        return True  # If no TELEGRAM_CHAT_ID restricted, allow chat
     return str(update.effective_chat.id) == str(config.TELEGRAM_CHAT_ID)
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_name = update.effective_user.username or update.effective_user.first_name if update.effective_user else "Unknown"
+    chat_id = update.effective_chat.id
+    text = update.message.text or ""
+    print(f"📩 [TELEGRAM RECV] Chat #{chat_id} (@{user_name}): '{text}'")
+
     if not is_authorized(update):
+        print(f"🚫 [TELEGRAM UNAUTHORIZED] Chat #{chat_id} (@{user_name}) is not authorized! Allowed: {config.TELEGRAM_CHAT_ID}")
+        await update.message.reply_text("⛔ Anda tidak memiliki akses ke Telegram AI Agent ini.")
         return
+
     await update.message.chat.send_action("typing")
     try:
-        reply = run_agent_turn(update.message.text, CONVERSATION_HISTORY)
+        reply = run_agent_turn(text, CONVERSATION_HISTORY)
     except Exception as e:
+        print(f"❌ [TELEGRAM AGENT ERROR] {e}")
         reply = f"⚠️ Error: {e}"
+
+    print(f"📤 [TELEGRAM SENT] Reply to Chat #{chat_id}: '{reply[:80]}...'")
     await update.message.reply_text(reply)
 
 
 def run_ai_agent():
-    app = Application.builder().token(config.TELEGRAM_TOKEN).build()
+    token = getattr(config, "TELEGRAM_TOKEN", None) or os.getenv("TELEGRAM_BOT_TOKEN", "") or os.getenv("TELEGRAM_TOKEN", "")
+    if not token:
+        print("❌ [TELEGRAM ERROR] TELEGRAM_TOKEN or TELEGRAM_BOT_TOKEN is missing in environment/.env!")
+        print("   Please set TELEGRAM_BOT_TOKEN=your_token in your .env file to enable Telegram AI Agent.")
+        return
+
+    chat_id = getattr(config, "TELEGRAM_CHAT_ID", "")
+    print("=" * 60)
+    print(f"🤖 Starting Telegram AI Agent (Target API: {API_BASE_URL})...")
+    print(f"🔒 Authorized Chat ID: {chat_id if chat_id else 'ANY (Unrestricted)'}")
+    print("⚡ Polling for Telegram messages...")
+    print("=" * 60)
+
+    app = Application.builder().token(token).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.run_polling()
 
