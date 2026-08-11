@@ -286,6 +286,32 @@ MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
 
+
+def bep_tolerance_for(deal):
+    """
+    BEP tolerance DINAMIS per trade (bukan statis 0.04).
+
+    Trade di akun ECN kena komisi per lot: $6/lot round-trip →
+    0.01 lot = -0.06, 0.10 lot = -0.60, 0.26 lot = -1.56. Kalau tolerance
+    statis 0.04, trade kecil yang cuma "kalah sebesar komisi" malah dihitung
+    loss (nambah streak / nurunin win rate), padahal secara arah dia BEP —
+    rugi cuma dari biaya, bukan dari pergerakan harga.
+
+    Aturan: tolerance = max(BREAK_EVEN_TOLERANCE_USD, komisi aktual trade).
+    Trade dengan |net profit| <= tolerance dianggap BEP.
+
+    `deal` menerima dict hasil `get_closed_positions_today` (punya field
+    "commission" = komisi+fee netto, negatif) atau dict sederhana
+    {"commission": X}. Kalau field tidak ada → fallback ke tolerance statis.
+    """
+    tol = BREAK_EVEN_TOLERANCE_USD
+    comm = 0.0
+    if isinstance(deal, dict):
+        comm = abs(float(deal.get("commission", 0.0) or 0.0))
+    else:
+        comm = abs(float(getattr(deal, "commission", 0.0) or 0.0))
+    return max(tol, comm)
+
 # --- RECOVERY MODE ---
 RECOVERY_MODE_ENABLED = _getenv_bool("RECOVERY_MODE_ENABLED", True)
 RECOVERY_LOT_MULTIPLIER = _getenv_float("RECOVERY_LOT_MULTIPLIER", 0.5)

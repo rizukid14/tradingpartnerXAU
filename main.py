@@ -422,9 +422,10 @@ def run_trading_cycle():
 
         # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
-            # Break-even trades (|profit| within tolerance) are excluded from win-rate
-            tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
-            dec = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
+            # Break-even trades excluded from win-rate. Tolerance DINAMIS per trade:
+            # minimal BREAK_EVEN_TOLERANCE_USD, tapi naik mengikuti komisi aktual
+            # trade (0.01 lot = 0.06, 0.10 lot = 0.60, 0.26 lot = 1.56 USD).
+            dec = [d for d in closed_deals if abs(d.get("profit", 0)) > config.bep_tolerance_for(d)]
             bep_n = len(closed_deals) - len(dec)
             total_t = len(dec)
             wins_t = sum(1 for d in dec if d.get("profit", 0) > 0)
@@ -441,7 +442,7 @@ def run_trading_cycle():
                 bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "pnl": 0.0, "bep": 0})
                 bucket["n"] += 1
                 bucket["pnl"] += d.get("profit", 0)
-                if abs(d.get("profit", 0)) <= tol:
+                if abs(d.get("profit", 0)) <= config.bep_tolerance_for(d):
                     bucket["bep"] += 1
                 elif d.get("profit", 0) > 0:
                     bucket["wins"] += 1
@@ -604,7 +605,11 @@ def _run_cycle_for_current_symbol():
             if net_profit is not None:
                 pre_profit = net_profit
             print(f"✅ Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
-            risk.record_position_closed(t_ticket, pre_profit)
+            # Komisi aktual trade (IN+OUT) buat BEP tolerance dinamis — trade yang
+            # kalah cuma sebesar komisi (0.06 utk 0.01 lot, 0.60 utk 0.10 lot)
+            # dianggap BEP, bukan loss.
+            trade_cost = connector.get_position_total_cost(t_ticket)
+            risk.record_position_closed(t_ticket, pre_profit, trade_cost)
 
     # 5.5 Multi-Horizon Forecast Context — INFORMATIONAL ONLY (tidak memblokir eksekusi).
     # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
@@ -832,6 +837,7 @@ def main():
                                 reason_code=d_reason,
                                 comment=d_comment,
                                 pos_type=d_type,
+                                commission=deal.get("commission", 0.0),
                             )
                         except Exception as e:
                             print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
@@ -873,7 +879,9 @@ def main():
                         net_profit = connector.get_position_net_profit(ticket)
                         if net_profit is not None:
                             profit = net_profit
-                        risk.record_position_closed(ticket, profit)
+                        # Komisi aktual trade buat BEP tolerance dinamis (lihat di atas).
+                        trade_cost = connector.get_position_total_cost(ticket)
+                        risk.record_position_closed(ticket, profit, trade_cost)
                         tg.alert_weekend_close(ticket, profit, reason)
 
             except Exception as e:

@@ -410,6 +410,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             "symbol": deal.symbol,
             "direction": pos_type,
             "profit": round(deal.profit + deal.swap + net_comm, 2),
+            "commission": round(net_comm, 2),  # NEGATIF; dipakai BEP tolerance dinamis
             "reason": reason,
             "comment": getattr(deal, "comment", ""),
             "type": pos_type,
@@ -483,6 +484,30 @@ def get_position_net_profit(position_id):
     except Exception as e:
         print(f"[MT5 CONNECTOR WARNING] get_position_net_profit #{position_id}: {e}")
         return None
+
+
+def get_position_total_cost(position_id):
+    """
+    Total BIAYA (komisi IN+OUT + admin fee) untuk satu posisi — nilai ABSOLUT positif.
+    Dipakai buat BEP tolerance dinamis: trade 0.01 lot kena komisi 0.06,
+    0.10 lot kena 0.60, 0.26 lot kena 1.56 → tolerance BEP trade itu harus
+    lebih besar dari biaya aktualnya (bukan statis 0.04).
+    Returns 0.0 kalau tidak ada data (safe fallback → tolerance statis).
+    """
+    if config.DRY_RUN:
+        return 0.0
+    try:
+        deals = mt5.history_deals_get(position=position_id)
+        if not deals:
+            return 0.0
+        total_cost = 0.0
+        for d in deals:
+            total_cost += abs(getattr(d, "commission", 0.0) or 0.0)
+            total_cost += abs(getattr(d, "fee", 0.0) or 0.0)
+        return round(total_cost, 2)
+    except Exception as e:
+        print(f"[MT5 CONNECTOR WARNING] get_position_total_cost #{position_id}: {e}")
+        return 0.0
 
 
 def get_trade_details(ticket):

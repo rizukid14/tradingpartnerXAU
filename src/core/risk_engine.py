@@ -106,7 +106,9 @@ class RiskEngine:
                 self._known_closed.add(c["ticket"])
             losses = 0
             for c in reversed(closed):
-                if c["profit"] < 0:
+                # BEP tolerance dinamis: kalah cuma sebesar komisi ≠ loss.
+                tol = config.bep_tolerance_for(c)
+                if c["profit"] < -tol:
                     losses += 1
                 else:
                     break
@@ -119,7 +121,7 @@ class RiskEngine:
             if c["ticket"] in self._known_closed:
                 continue
             self._known_closed.add(c["ticket"])
-            self._record_result(c["profit"])
+            self._record_result(c["profit"], c.get("commission", 0.0))
             new_deals.append(c)
 
         if new_deals:
@@ -185,28 +187,31 @@ class RiskEngine:
     # =========================================================================
     #  TRADE RESULT TRACKING
     # =========================================================================
-    def record_trade_result(self, profit):
+    def record_trade_result(self, profit, commission=0.0):
         """Call after a trade closes to track consecutive losses and recovery mode."""
-        self._record_result(profit)
+        self._record_result(profit, commission)
         self._save_state()
 
-    def record_position_closed(self, ticket, profit):
+    def record_position_closed(self, ticket, profit, commission=0.0):
         """
         Call when the bot itself closes a position (e.g., weekend close).
         Records the result AND marks the ticket so the deal-history sync
         does not double-count it.
         """
         self._known_closed.add(ticket)
-        self.record_trade_result(profit)
+        self.record_trade_result(profit, commission)
 
-    def _record_result(self, profit):
+    def _record_result(self, profit, commission=0.0):
         """Update loss streak / recovery mode from a single realized result."""
         self._last_trade_time = time.time()
 
-        # Break-even tolerance: |profit| within tolerance does not extend the
-        # loss streak, but also does not reset it or exit recovery mode.
-        if abs(profit) <= config.BREAK_EVEN_TOLERANCE_USD:
-            print(f"⚖️ [RISK] Trade BEP ({profit:+.2f} USD). Streak dipertahankan ({self._consecutive_losses}).")
+        # BEP tolerance DINAMIS per trade: minimal BREAK_EVEN_TOLERANCE_USD
+        # (0.04), tapi naik mengikuti komisi aktual trade — 0.01 lot kena 0.06,
+        # 0.10 lot kena 0.60, 0.26 lot kena 1.56. Trade yang kalah cuma
+        # sebesar biaya komisi (arahnya BEP) tidak boleh nambah loss streak.
+        tol = config.bep_tolerance_for({"commission": commission})
+        if abs(profit) <= tol:
+            print(f"⚖️ [RISK] Trade BEP ({profit:+.2f} USD, tol {tol:.2f} USD). Streak dipertahankan ({self._consecutive_losses}).")
             return
 
         if profit < 0:

@@ -94,9 +94,11 @@ def alert_partial_close(ticket, closed_lot, remaining_lot, profit_points):
     send_message(text)
 
 
-def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos_type=None):
+def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos_type=None, commission=0.0):
     """Send trade close notification (TP, SL+, SL, BE, or AI/Manual exit)."""
-    tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.50)
+    # BEP tolerance dinamis: minimal BREAK_EVEN_TOLERANCE_USD, tapi naik
+    # mengikuti komisi aktual trade (0.01 lot = 0.06, 0.10 lot = 0.60 USD).
+    tol = config.bep_tolerance_for({"commission": commission})
     comment_lower = (comment or "").lower()
 
     # Classify exit type (reason can be MT5 numeric code OR our string label)
