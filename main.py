@@ -394,7 +394,11 @@ class TeeLogger(object):
 
 
 def run_trading_cycle():
-    """Performs one full cycle of fetching data, querying LLMs, and checking consensus."""
+    """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
+    per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
+    = [XAU, EURGBP, EURJPY, EURCAD, GBPJPY] — all symbols scanned on EVERY M5 candle
+    (5x LLM call per candle, one per pair).
+    """
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
@@ -443,6 +447,24 @@ def run_trading_cycle():
     except Exception as e:
         print(f"[EVALUATOR WARNING] {e}")
 
+    # ── Multi-symbol parallel scan ──────────────────────────────────────────────
+    # Mode "xau": pool = [XAU] (1 cycle per candle, seperti sebelumnya).
+    # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS — semua simbol di-scan
+    # pada SETIAP candle M5 (5x LLM call per candle, 1 call per pair).
+    pool = config.get_rotation_pool()
+    for sym in pool:
+        config.SYMBOL = sym
+        try:
+            _run_cycle_for_current_symbol()
+        except Exception as e:
+            print(f"⚠️ [CYCLE ERROR {sym}] {e}")
+    return True
+
+
+def _run_cycle_for_current_symbol():
+    """Full cycle untuk satu simbol aktif (config.SYMBOL): risk gate → data → LLM
+    → consensus → eksekusi. Dipanggil per simbol dalam pool (mode xau_pairs).
+    """
     # 0. Risk gate — check all conditions before trading
     can_trade, reason = risk.can_trade()
     if not can_trade:
@@ -499,9 +521,18 @@ def run_trading_cycle():
 
     # 4. Query AI models in parallel (including active open_positions for 5-min AI re-evaluation!)
 
+    # MTF/fundamental analysis per-symbol — cache di macro_analyst per-symbol,
+    # jadi simbol non-aktif (EURGBP, EURJPY, dst.) di-populate di sini juga,
+    # bukan cuma XAU dari loop utama.
+    if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
+        try:
+            macro.check_and_update_analysis()
+        except Exception as e:
+            print(f"[MACRO UPDATE ERROR {config.SYMBOL}] {e}")
+
     macro_context = macro.get_macro_context()
     if macro_context:
-        print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
+        print(f"📊 Menyertakan analisa Multi-Timeframe & Fundamental ({config.SYMBOL}) untuk LLM...")
 
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
@@ -656,9 +687,10 @@ def main():
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
-        print(f"🔄 Trading Mode: XAU + PAIRS | Rotation Pool ({len(pool)}): {' → '.join(pool)}")
+        print(f"🔄 Trading Mode: XAU + PAIRS | Scan Pool ({len(pool)} simbol): {' → '.join(pool)}")
+        print(f"   Semua simbol di-scan SETIAP candle M5 ({len(pool)}x LLM call per candle)")
     else:
-        print(f"🎯 Trading Mode: XAU ONLY | Rotasi: {config.TRADING_MODE}")
+        print(f"🎯 Trading Mode: XAU ONLY")
     print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
     if config.AI_MODE_POLICY == "schedule":
         desc = " | ".join([f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} {mode.upper()}" for sh, sm, eh, em, mode in config.AI_MODE_SCHEDULE])
@@ -833,18 +865,6 @@ def main():
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
                         print(f"\n🆕 Candle baru terdeteksi! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
-                        # Multi-symbol rotation (mode xau_pairs): move to the next symbol in the pool
-                        # once per new candle. Startup cycle always scans the default (XAU) first.
-                        active_symbol, rotated = config.refresh_active_symbol(advance=True)
-                        if rotated:
-                            print(f"🔄 Rotasi simbol -> {active_symbol}")
-                            # Re-anchor candle time to the NEW symbol so the next candle
-                            # detection is aligned (avoids double-rotation on tick drift).
-                            rates_new = mt5.copy_rates_from_pos(
-                                config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2
-                            )
-                            if rates_new is not None and len(rates_new) > 0:
-                                current_candle_time = rates_new[-1]['time']
                     
                     last_candle_time = current_candle_time
                     
