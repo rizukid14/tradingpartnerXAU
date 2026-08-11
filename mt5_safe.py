@@ -30,7 +30,7 @@ access on returned objects, etc.) stays exactly the same.
 """
 
 from types import SimpleNamespace
-from mt5linux import MetaTrader5
+import rpyc
 
 
 def _to_namespace(d):
@@ -43,36 +43,25 @@ def _to_namespace(d):
 
 class SafeMT5:
     """
-    Wraps a real mt5linux MetaTrader5 instance. Methods known to return
-    problematic custom objects are overridden to fetch plain dicts via
-    remote eval instead. Everything else is forwarded untouched via
-    __getattr__.
+    Connects directly via raw RPyC to the remote MetaTrader 5 server (skipping
+    mt5linux ContainerManager / Docker CLI dependency), wrapping MT5 calls to
+    flatten custom remote objects on the remote side into plain dicts/SimpleNamespace.
     """
 
-    # Methods that return a SINGLE object with attributes (need ._asdict())
-    _SINGLE_OBJECT_METHODS = {
-        "symbol_info_tick": "symbol",
-        "symbol_info": "symbol",
-        "account_info": None,
-        "terminal_info": None,
-        "order_check": "request",
-    }
-
-    # Methods that return a LIST of objects with attributes
-    _LIST_METHODS = {
-        "positions_get": None,   # accepts kwargs like symbol=, ticket=, group=
-        "orders_get": None,
-        "history_deals_get": None,
-        "history_orders_get": None,
-    }
-
-    def __init__(self, *args, **kwargs):
-        self._mt5 = MetaTrader5(*args, **kwargs)
+    def __init__(self, host="localhost", port=18812):
+        self._host = host
+        self._port = port
+        self._conn = rpyc.classic.connect(host, port)
+        try:
+            self._conn.eval("import MetaTrader5 as mt5")
+        except Exception:
+            pass
+        self._mt5 = self._conn.modules.MetaTrader5
 
     def __getattr__(self, name):
         # Anything not explicitly overridden below just forwards to the
-        # real mt5linux instance (initialize, login, shutdown, symbol_select,
-        # order_send, copy_rates_from_pos, constants like TRADE_ACTION_DEAL...)
+        # remote mt5 module (initialize, login, shutdown, symbol_select,
+        # copy_rates_from_pos, constants like TRADE_ACTION_DEAL...)
         return getattr(self._mt5, name)
 
     # Single expression that converts an arbitrary MT5 object (and, one level
@@ -100,7 +89,7 @@ class SafeMT5:
             "if not k.startswith('_') and not callable(getattr(_r, k))}"
             "))(" + expr + ")"
         )
-        result = self._mt5._container.eval(code)
+        result = self._conn.eval(code)
         return _to_namespace(result)
 
     def _eval_list(self, expr):
@@ -115,7 +104,7 @@ class SafeMT5:
             "for x in _r"
             "])(" + expr + ")"
         )
-        result = self._mt5._container.eval(code)
+        result = self._conn.eval(code)
         return _to_namespace(result)
 
     def _fmt_args(self, args, kwargs):

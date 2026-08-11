@@ -86,19 +86,6 @@ else:
         print(f"[CONFIG WARNING] Could not initialize remote MT5 connection ({e})")
 
     mt5 = mt5_obj if mt5_obj is not None else DummyMT5()
-    # mt5_obj = None
-    # try:
-    #     import rpyc
-    #     conn = rpyc.classic.connect(MT5_HOST, MT5_PORT)
-    #     mt5_obj = conn.modules.MetaTrader5
-    # except Exception as e1:
-    #     try:
-    #         from mt5linux import MetaTrader5
-    #         mt5_obj = MetaTrader5(host=MT5_HOST, port=MT5_PORT)
-    #     except Exception as e2:
-    #         print(f"[CONFIG WARNING] Could not initialize remote MT5 connection ({e1}; {e2})")
-    
-    # mt5 = mt5_obj if mt5_obj is not None else DummyMT5()
 
 
 # --- API KEYS ---
