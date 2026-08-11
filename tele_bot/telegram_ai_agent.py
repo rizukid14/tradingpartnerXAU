@@ -191,7 +191,7 @@ For any change (config, preset, pause/resume, retrigger cycle), confirm clearly 
 the tool call succeeds — mention the old and new value if you have them. If a tool call returns an
 error, tell the user plainly what failed; don't pretend it worked.
 
-If the user asks to start or run an analysis cycle, trigger or retrigger a cycle, or check the market immediately (e.g. "start cycle", "start", "mulai cycle", "jalankan cycle", "analisa sekarang", "cek market", "retrigger cycle"), ALWAYS call retrigger_cycle to start a market analysis cycle right away.
+If the user asks to start or run an analysis cycle, trigger or retrigger a cycle, or check the market immediately (e.g. "/start", "/trigger", "/retrigger", "/cycle", "start cycle", "start", "mulai cycle", "jalankan cycle", "analisa sekarang", "cek market"), ALWAYS call retrigger_cycle to start a market analysis cycle right away.
 
 Be concise — this is a phone chat, not a report. Use bullet points only for actual lists (like open
 positions or trade history).
@@ -341,7 +341,7 @@ def run_ai_agent():
     print("=" * 60)
 
     app = Application.builder().token(token).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    app.add_handler(MessageHandler(filters.TEXT, on_message))
     app.run_polling()
 
 
