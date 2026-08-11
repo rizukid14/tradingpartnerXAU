@@ -188,18 +188,31 @@ Be concise — this is a phone chat, not a report. Use bullet points only for ac
 positions or trade history).
 
 If the user's request is ambiguous (e.g. "make it safer" without specifics), ask ONE clarifying
-question rather than guessing at config values — an unwanted change to a live trading bot can cost
-real money.
-"""
-
-# ---------------------------------------------------------------------------
+question rather than guessing at config values — an unwanted change to a live # ---------------------------------------------------------------------------
 # 4. AGENT LOOP
 # ---------------------------------------------------------------------------
 
+def _sanitize_history(history: list) -> list:
+    """
+    Sanitizes conversation history to prevent OpenAI API 400 Invalid Parameter errors.
+    Ensures that only clean user-assistant dialog text turns are stored in long-term
+    history, filtering out intermediate tool calls that might lose their matching pairs.
+    """
+    sanitized = []
+    for msg in history:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role in ("user", "assistant"):
+            content = msg.get("content")
+            if content and isinstance(content, str) and not msg.get("tool_calls"):
+                sanitized.append({"role": role, "content": content})
+    return sanitized[-20:]  # Keep last 20 clean dialog turns
+
+
 def run_agent_turn(user_text: str, history: list) -> str:
-    if not history:
-        history.append({"role": "system", "content": SYSTEM_PROMPT})
-    messages = history + [{"role": "user", "content": user_text}]
+    clean_history = _sanitize_history(history)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + clean_history + [{"role": "user", "content": user_text}]
 
     while True:
         try:
@@ -227,13 +240,17 @@ def run_agent_turn(user_text: str, history: list) -> str:
                     )
             else:
                 raise e
+
         msg = response.choices[0].message
 
         if not msg.tool_calls:
-            messages.append({"role": "assistant", "content": msg.content})
+            final_reply = (msg.content or "").strip() or "(tidak ada respon)"
+            # Persist clean user prompt and final assistant response in history
             history.clear()
-            history.extend(messages[-20:])
-            return (msg.content or "").strip() or "(tidak ada respon)"
+            history.extend(clean_history)
+            history.append({"role": "user", "content": user_text})
+            history.append({"role": "assistant", "content": final_reply})
+            return final_reply
 
         messages.append({"role": "assistant", "content": msg.content, "tool_calls": msg.tool_calls})
         for tool_call in msg.tool_calls:
@@ -251,6 +268,7 @@ def run_agent_turn(user_text: str, history: list) -> str:
                 "content": json.dumps(result, default=str),
             })
 
+
 # ---------------------------------------------------------------------------
 # 5. TELEGRAM WIRING
 # ---------------------------------------------------------------------------
@@ -267,7 +285,14 @@ def is_authorized(update: Update) -> bool:
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.username or update.effective_user.first_name if update.effective_user else "Unknown"
     chat_id = update.effective_chat.id
-    text = update.message.text or ""
+    text = (update.message.text or "").strip()
+
+    if text.lower() in ("/reset", "/clear", "reset", "clear"):
+        CONVERSATION_HISTORY.clear()
+        print(f"🧹 [TELEGRAM RESET] Chat #{chat_id} reset conversation history.")
+        await update.message.reply_text("🧹 Riwayat percakapan telah direset. Silakan kirim pesan baru!")
+        return
+
     print(f"📩 [TELEGRAM RECV] Chat #{chat_id} (@{user_name}): '{text}'")
 
     if not is_authorized(update):
@@ -280,7 +305,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = run_agent_turn(text, CONVERSATION_HISTORY)
     except Exception as e:
         print(f"❌ [TELEGRAM AGENT ERROR] {e}")
-        reply = f"⚠️ Error: {e}"
+        CONVERSATION_HISTORY.clear()  # Auto-clear broken state on error
+        reply = f"⚠️ Terjadi kesalahan: {e}\n\n*(Riwayat percakapan telah direset otomatis agar bot dapat membalas kembali)*"
 
     print(f"📤 [TELEGRAM SENT] Reply to Chat #{chat_id}: '{reply[:80]}...'")
     await update.message.reply_text(reply)
