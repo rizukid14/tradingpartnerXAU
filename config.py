@@ -480,3 +480,43 @@ def risk_percent_for(symbol):
     XAU (M5 scalping, up to 6 concurrent): 0.5% — aggregate ~3% max.
     """
     return RISK_PERCENT_BTC if is_crypto(symbol) else RISK_PERCENT_XAU
+
+
+def save_config_to_env(updates: dict) -> list:
+    """
+    Saves/updates key-value pairs into local .env file.
+    Does NOT touch .env.example (which is the git template).
+    """
+    env_path = os.path.join(BASE_DIR, ".env")
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+    str_updates = {k: str(v) if not isinstance(v, bool) else ("true" if v else "false") for k, v in updates.items()}
+    new_lines = []
+    found_keys = set()
+    updated_keys = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in line:
+            key = line.split("=", 1)[0].strip()
+            if key in str_updates:
+                new_lines.append(f"{key}={str_updates[key]}\n")
+                found_keys.add(key)
+                updated_keys.append(key)
+                continue
+        new_lines.append(line)
+
+    for k, v in str_updates.items():
+        if k not in found_keys:
+            if new_lines and not new_lines[-1].endswith("\n"):
+                new_lines.append("\n")
+            new_lines.append(f"{k}={v}\n")
+            updated_keys.append(k)
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    return updated_keys
