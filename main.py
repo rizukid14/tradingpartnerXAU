@@ -823,11 +823,13 @@ def main():
                 except Exception as e:
                     print(f"[MACRO UPDATE ERROR] {e}")
 
+            # Check manual trigger flag from Telegram / API before candle rates
+            trigger_requested = config.check_and_clear_trigger_flag() if hasattr(config, "check_and_clear_trigger_flag") else getattr(config, "TRIGGER_CYCLE_REQUESTED", False)
+
             rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
             if rates is not None and len(rates) > 0:
                 current_candle_time = rates[-1]['time']
                 
-                trigger_requested = config.check_and_clear_trigger_flag() if hasattr(config, "check_and_clear_trigger_flag") else getattr(config, "TRIGGER_CYCLE_REQUESTED", False)
                 if startup_run or trigger_requested or (last_candle_time is not None and current_candle_time > last_candle_time):
                     if trigger_requested:
                         print("\n⚡ [MANUAL RETRIGGER] Memulai siklus analisa pasar sesuai permintaan...")
@@ -853,6 +855,10 @@ def main():
                     # Run trading cycle
                     run_trading_cycle()
             else:
+                if trigger_requested:
+                    # Put trigger flag back if rates failed so it is retried on next iteration
+                    if hasattr(config, "trigger_manual_cycle"):
+                        config.trigger_manual_cycle()
                 print("⚠️ Gagal mengecek status candle di MT5. Mencoba kembali...")
             
             # Show live status clock line in CLI every loop iteration

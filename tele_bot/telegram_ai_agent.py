@@ -39,7 +39,7 @@ logging.basicConfig(
 )
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
-MODEL = "gpt-5.6-luna"  # balanced cost/intelligence
+MODEL = os.getenv("TELEGRAM_AI_MODEL", "gpt-5.6-luna")
 
 API_BASE_URL = getattr(config, "API_BASE_URL", "http://localhost:8765").rstrip("/")
 API_TOKEN = getattr(config, "API_TOKEN", "")
@@ -191,7 +191,7 @@ For any change (config, preset, pause/resume, retrigger cycle), confirm clearly 
 the tool call succeeds — mention the old and new value if you have them. If a tool call returns an
 error, tell the user plainly what failed; don't pretend it worked.
 
-If the user asks to run analysis now, retrigger a cycle, or check the market immediately ("analisa sekarang", "cek market", "retrigger cycle"), call retrigger_cycle to start a market analysis cycle right away.
+If the user asks to start or run an analysis cycle, trigger or retrigger a cycle, or check the market immediately (e.g. "start cycle", "start", "mulai cycle", "jalankan cycle", "analisa sekarang", "cek market", "retrigger cycle"), ALWAYS call retrigger_cycle to start a market analysis cycle right away.
 
 Be concise — this is a phone chat, not a report. Use bullet points only for actual lists (like open
 positions or trade history).
