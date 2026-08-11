@@ -169,9 +169,9 @@ AI_FIXED_MODE = triple              # dipakai kalau policy = fixed
 AI_MODE_SCHEDULE =                  # jadwal WIB (policy = schedule):
     00:01-08:59  single   (OpenAI saja)
     09:00-13:00  dual     (OpenAI + DeepSeek)
-    13:01-18:59  single   (OpenAI saja)
-    19:00-23:00  triple   (OpenAI + Gemini + DeepSeek)
-    23:01-00:00  single   (fallback)
+    13:01-19:29  single   (OpenAI saja)
+    19:30-21:30  triple   (OpenAI + Gemini + DeepSeek)  # London-NY overlap aja
+    21:31-23:59  single   (OpenAI saja)                 # malam Asia diperpanjang
 
 MODEL AI:
     OPENAI_MODEL = gpt-5.4-mini

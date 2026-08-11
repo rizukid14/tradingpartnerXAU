@@ -89,7 +89,7 @@ Jumlah model AI yang dipanggil per cycle mengikuti jam WIB — hemat token tanpa
 - **00:01–08:59 → single** (OpenAI saja)
 - **09:00–13:00 → dual** (OpenAI + DeepSeek slot-3)
 - **13:01–18:59 → single** (OpenAI saja)
-- **19:00–23:00 → triple** (OpenAI + Gemini + DeepSeek)
+- **19:30–21:30 → triple** (OpenAI + Gemini + DeepSeek — London-NY overlap aja)
 - **23:01–00:00 → single** (fallback, di luar jadwal eksplisit)
 
 Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Konsensus adaptif: single → 1 model + threshold ×0.6; dual → 2/2 searah; triple → normal (defensif ×1.5). Gemini cuma kepanggil di mode triple (hemat token).

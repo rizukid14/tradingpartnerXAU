@@ -232,11 +232,16 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 # Mode values: "single" | "dual" | "triple"
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
+# Jadwal WIB (11 Agustus, hemat biaya):
+#   - triple (3 model) HANYA 19:30-21:30 WIB (London-NY overlap, volatilitas tertinggi)
+#   - sisanya single/dual; blok single malam diperpanjang 21:30 -> 08:59 (Asia Dawn
+#     & Tokyo pagi cukup 1 model — hemat token, dulu triple 19:00-23:00 kemahalan)
 AI_MODE_SCHEDULE = [
     (0, 1, 8, 59, "single"),
     (9, 0, 13, 0, "dual"),
-    (13, 1, 18, 59, "single"),
-    (19, 0, 23, 0, "triple"),
+    (13, 1, 19, 29, "single"),
+    (19, 30, 21, 30, "triple"),
+    (21, 31, 23, 59, "single"),
 ]
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)

@@ -40,7 +40,7 @@ python main.py
 
 ## Alur cycle (main.py → run_trading_cycle)
 
-0. **Time-Based AI Mode** (WIB): 00:01–08:59 = **single** (OpenAI), 09:00–13:00 = **dual** (OpenAI+DeepSeek), 13:01–18:59 = **single**, 19:00–23:00 = **triple** (OpenAI+Gemini+DeepSeek), 23:01–00:00 = **single** (fallback). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Gemini cuma kepanggil di triple (hemat token — user pakai Gemini di tempat lain). Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
+0. **Time-Based AI Mode** (WIB, 11 Agustus — hemat biaya): 00:01–08:59 = **single** (OpenAI), 09:00–13:00 = **dual** (OpenAI+DeepSeek), 13:01–19:29 = **single**, **19:30–21:30 = triple** (OpenAI+Gemini+DeepSeek — HANYA di London-NY overlap, volatilitas tertinggi), 21:31–23:59 = **single** (malam Asia diperpanjang, dulu triple 19:00–23:00 kemahalan). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Gemini cuma kepanggil di triple (hemat token — user pakai Gemini di tempat lain). Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
 1. `risk.can_trade()` — spread/sesi/daily loss gate. Gagal → skip (nggak ada biaya LLM)
 2. Ambil 50 candle timeframe aktif (M5 XAU / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
