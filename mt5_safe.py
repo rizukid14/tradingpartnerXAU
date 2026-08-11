@@ -52,11 +52,15 @@ class SafeMT5:
         self._host = host
         self._port = port
         self._conn = rpyc.classic.connect(host, port)
+        self._mt5 = self._conn.modules.MetaTrader5
         try:
-            self._conn.eval("import MetaTrader5 as mt5")
+            self._conn.modules.builtins.mt5 = self._mt5
         except Exception:
             pass
-        self._mt5 = self._conn.modules.MetaTrader5
+        try:
+            self._conn.execute("import builtins; builtins.mt5 = __import__('MetaTrader5')")
+        except Exception:
+            pass
 
     def __getattr__(self, name):
         # Anything not explicitly overridden below just forwards to the
