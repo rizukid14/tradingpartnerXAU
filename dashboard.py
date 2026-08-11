@@ -680,6 +680,21 @@ def serve(host="0.0.0.0", port=8765):
                     "recovery_mode": metrics.get("risk_state", {}).get("recovery_mode", False),
                     "consecutive_losses": metrics.get("risk_state", {}).get("consecutive_losses", 0),
                 })
+                try:
+                    import MetaTrader5 as mt5
+                    if mt5.initialize():
+                        acc = mt5.account_info()
+                        if acc:
+                            summary["balance"] = acc.balance
+                            summary["equity"] = acc.equity
+                            summary["floating_pnl"] = acc.profit
+                            summary["margin_free"] = acc.margin_free
+                            summary["login"] = acc.login
+                            if summary.get("final_balance") is None:
+                                summary["final_balance"] = acc.balance
+                        mt5.shutdown()
+                except Exception:
+                    pass
                 _send_json(self, {"status": "success", "summary": summary})
 
             elif path in ("/api/open-positions", "/api/get_open_positions"):
