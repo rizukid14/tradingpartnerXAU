@@ -215,8 +215,8 @@ AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
 AI_MODE_SCHEDULE = [
     (0, 1, 8, 59, "single"),
     (9, 0, 13, 0, "dual"),
-    (13, 1, 18, 0, "single"),
-    (18, 1, 23, 59, "triple"),
+    (13, 1, 18, 59, "single"),
+    (19, 0, 23, 0, "triple"),
 ]
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
