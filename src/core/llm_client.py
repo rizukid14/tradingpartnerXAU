@@ -1086,10 +1086,13 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
 
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec):
-    """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
-    'deepseek/' prefix (e.g. 'deepseek-v4-flash'). Explicitly disables thinking/reasoning
-    mode for super-fast ~1.2s latency."""
-    raw_model = model_name.split("/", 1)[1] if "/" in model_name else model_name
+    """Query DeepSeek or OpenAI-compatible router API (e.g. 9router / OpenRouter).
+    Strips internal 'deepseek/' routing prefix if present while preserving provider prefixes
+    like 'oc/mimo-v2.5-free' or custom router model IDs."""
+    if model_name.startswith("deepseek/"):
+        raw_model = model_name[len("deepseek/"):]
+    else:
+        raw_model = model_name
     try:
         try:
             # Explicitly disable thinking/reasoning mode for super-fast execution (~1.2s)
@@ -1122,14 +1125,14 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec):
 
 def query_claude(prompt):
     """Queries the 'Claude slot' model with timeout and fallback support.
-    Routes automatically: model starting with 'deepseek/' -> DeepSeek API
-    (OpenAI-compatible, much cheaper); 'claude-...' -> Anthropic.
+    Routes automatically: model starting with 'deepseek/' or non-claude models -> DeepSeek/Router API
+    (OpenAI-compatible); 'claude-...' -> Anthropic.
     Config: config.CLAUDE_MODEL / config.CLAUDE_FALLBACK_MODEL."""
     primary_model = config.CLAUDE_MODEL
     fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
-    is_deepseek = primary_model.startswith("deepseek/")
+    is_deepseek = primary_model.startswith("deepseek/") or not primary_model.startswith("claude-")
 
     try:
         if is_deepseek:
@@ -1143,7 +1146,7 @@ def query_claude(prompt):
         if fallback_model and fallback_model != primary_model:
             print(f" [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                if fallback_model.startswith("deepseek/"):
+                if fallback_model.startswith("deepseek/") or not fallback_model.startswith("claude-"):
                     return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
                 return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
