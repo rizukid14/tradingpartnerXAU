@@ -31,7 +31,7 @@ def test_active_symbol():
 
 def test_per_symbol_helpers():
     failed = 0
-    # XAU helpers (default naik ke 400/800 — ATR M5 XAU ~300 pts, gate
+    # XAU helpers (default naik ke 400/800 - ATR M5 XAU ~300 pts, gate
     # butuh SL >= 1.25x ATR ~375+)
     assert config.lot_size_for("XAUUSD-ECNc") == 0.01
     assert config.default_sl_points_for("XAUUSD-ECNc") == 400
@@ -41,7 +41,7 @@ def test_per_symbol_helpers():
     for sym in ["EURJPY-ECNc", "GBPCHF-ECNc", "GBPNZD-ECNc", "EURCHF-ECNc", "GBPUSD-ECNc", "EURAUD-ECNc"]:
         assert config.default_sl_points_for(sym) == 100
         assert config.default_tp_points_for(sym) == 200
-    # BTC helpers (scaled for BTC point size — see config comments)
+    # BTC helpers (scaled for BTC point size - see config comments)
     assert config.lot_size_for("BTCUSD.c") == 0.01
     assert config.default_sl_points_for("BTCUSD.c") == config.DEFAULT_SL_POINTS_BTC
     assert config.default_tp_points_for("BTCUSD.c") == config.DEFAULT_TP_POINTS_BTC
@@ -100,5 +100,5 @@ if __name__ == "__main__":
     total += test_per_symbol_helpers()
     total += test_rotation_pool()
     total += test_refresh_symbol()
-    print(f"\n{'PASS' if total == 0 else 'FAIL'} — {total} failures")
+    print(f"\n{'PASS' if total == 0 else 'FAIL'} - {total} failures")
     sys.exit(1 if total else 0)

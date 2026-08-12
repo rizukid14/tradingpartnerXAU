@@ -140,7 +140,7 @@ SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 # FX cross pairs (non-USD => low correlation with XAUUSD). Default = nama broker LIVE
 # (suffix -ECNc). Auto-correct cuma arah demo (live -> -ECNc, demo -> -ECN).
 # Pool 3 simbol: XAUUSD + EURJPY + GBPCHF (GBPCHF spread 0, tick value 2x EURJPY,
-# bebas korelasi EUR/JPY — hasil kurasi user, 5x cycle kemahalan).
+# bebas korelasi EUR/JPY - hasil kurasi user, 5x cycle kemahalan).
 TRADING_MODE = os.getenv("TRADING_MODE", "xau").strip().lower()
 FX_PAIR_SYMBOLS = [
     s.strip()
@@ -187,9 +187,10 @@ DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", 400)
 DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 800)
 DEFAULT_SL_POINTS_BTC = _getenv_int("DEFAULT_SL_POINTS_BTC", 50000)
 DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
-# Default SL/TP per FX pair (11 Agustus): XAU 300/600 jatuh ke pair yang
-# point-nya beda skala (EURJPY 300 pts = 30 pips = 12x ATR M5, GBPCHF 17x).
-# Sekarang fallback per-pair: EURJPY 50/100 (5/10 pips), GBPCHF 40/80 (4/8 pips).
+# Default SL/TP FX (12 Agustus, FASE 1): FX trading H1 swing - default flat 100/200 pts
+# (10/20 pips EURJPY scale). Dulu per-pair 50/100 & 40/80 waktu FX masih M5 scalping;
+# sejak pindah H1, ATR H1 jauh lebih besar jadi 100/200 lebih pas. Gate ATR-Based tetap
+# menolak otomatis kalau proposal SL/TP < multiplier x ATR (lihat atr_sl_multiplier).
 
 
 
@@ -199,7 +200,7 @@ TRADING_PAUSED = _getenv_bool("TRADING_PAUSED", False)
 
 ERA_PRESETS = {
     "v1": {
-        "label": "V1 — era profit 100% (legacy)",
+        "label": "V1 - era profit 100% (legacy)",
         "DRY_RUN": True,
         "RISK_PERCENT_XAU": 0.5,
         "RISK_PERCENT_BTC": 1.0,
@@ -207,7 +208,7 @@ ERA_PRESETS = {
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     },
     "v2": {
-        "label": "V2 — legacy-2 (= v1 + state)",
+        "label": "V2 - legacy-2 (= v1 + state)",
         "DRY_RUN": True,
         "RISK_PERCENT_XAU": 0.5,
         "RISK_PERCENT_BTC": 1.0,
@@ -215,7 +216,7 @@ ERA_PRESETS = {
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     },
     "v3": {
-        "label": "V3 — modern (Claude + quant, sekarang)",
+        "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
         "RISK_PERCENT_XAU": 0.5,
         "RISK_PERCENT_BTC": 1.5,
@@ -239,7 +240,7 @@ AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
 # Jadwal WIB (11 Agustus, hemat biaya):
 #   - triple (3 model) HANYA 19:30-21:30 WIB (London-NY overlap, volatilitas tertinggi)
 #   - sisanya single/dual; blok single malam diperpanjang 21:30 -> 08:59 (Asia Dawn
-#     & Tokyo pagi cukup 1 model — hemat token, dulu triple 19:00-23:00 kemahalan)
+#     & Tokyo pagi cukup 1 model - hemat token, dulu triple 19:00-23:00 kemahalan)
 AI_MODE_SCHEDULE = [
     (0, 1, 8, 59, "single"),
     (9, 0, 13, 0, "dual"),
@@ -308,10 +309,10 @@ def bep_tolerance_for(deal):
     """
     BEP tolerance DINAMIS per trade (bukan statis 0.04).
 
-    Trade di akun ECN kena komisi per lot: $6/lot round-trip →
+    Trade di akun ECN kena komisi per lot: $6/lot round-trip ->
     0.01 lot = -0.06, 0.10 lot = -0.60, 0.26 lot = -1.56. Kalau tolerance
     statis 0.04, trade kecil yang cuma "kalah sebesar komisi" malah dihitung
-    loss (nambah streak / nurunin win rate), padahal secara arah dia BEP —
+    loss (nambah streak / nurunin win rate), padahal secara arah dia BEP -
     rugi cuma dari biaya, bukan dari pergerakan harga.
 
     Aturan: tolerance = max(BREAK_EVEN_TOLERANCE_USD, komisi aktual trade).
@@ -319,7 +320,7 @@ def bep_tolerance_for(deal):
 
     `deal` menerima dict hasil `get_closed_positions_today` (punya field
     "commission" = komisi+fee netto, negatif) atau dict sederhana
-    {"commission": X}. Kalau field tidak ada → fallback ke tolerance statis.
+    {"commission": X}. Kalau field tidak ada -> fallback ke tolerance statis.
     """
     tol = BREAK_EVEN_TOLERANCE_USD
     comm = 0.0
@@ -346,7 +347,7 @@ ALLOWED_SESSIONS_WIB = [
     {"name": "Asia Dawn",      "start": (5, 0),  "end": (7, 0),   "lot_multiplier": 0.7},
     {"name": "Tokyo",          "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",         "start": (15, 0), "end": (23, 59), "lot_multiplier": 1.0},
-    {"name": "London-NY (🔥)", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
+    {"name": "London-NY ()", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
     {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
 ]
 
@@ -475,7 +476,7 @@ _last_symbol = {"value": SYMBOL}
 def refresh_active_symbol(now=None, advance=False):
     """
     Updates config.SYMBOL to the symbol that should be active now.
-    Returns (new_symbol, changed: bool) — changed=True when the symbol just rotated.
+    Returns (new_symbol, changed: bool) - changed=True when the symbol just rotated.
     advance=True -> move rotation index forward (called once per new candle).
     """
     global SYMBOL
@@ -560,9 +561,9 @@ def get_ai_mode(now=None):
 
 def atr_sl_multiplier(now=None):
     """SL floor multiplier per AI mode (R:R 2:1 dijaga):
-    single 1.25x, dual 1.5x, triple 1.75x — makin banyak model setuju,
+    single 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
     makin yakin setupnya, SL/TP makin lebar (target lebih jauh).
-    Dipakai di consensus gate ATR + prompt atr_gate_str — harus sinkron.
+    Dipakai di consensus gate ATR + prompt atr_gate_str - harus sinkron.
     """
     return {"single": 1.25, "dual": 1.5, "triple": 1.75}.get(get_ai_mode(now), 1.25)
 
@@ -595,7 +596,7 @@ def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
     FX (H1): 1.0%.
-    XAU (M5 scalping, up to 6 concurrent): 0.5% — aggregate ~3% max.
+    XAU (M5 scalping, up to 6 concurrent): 0.5% - aggregate ~3% max.
     """
     if is_crypto(symbol): return RISK_PERCENT_BTC
     if "XAU" not in symbol.upper(): return 1.0

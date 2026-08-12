@@ -21,7 +21,7 @@ _BOT_OPENED_CACHE_TTL = 60.0
 _closed_today_cache = {"ts": 0.0, "key": None, "value": None}
 _CLOSED_TODAY_CACHE_TTL = 4.0
 
-# point per symbol buat klasifikasi SL (trailing/BEP) — cache ringan per-symbol
+# point per symbol buat klasifikasi SL (trailing/BEP) - cache ringan per-symbol
 _point_cache = {}
 
 _broker_offset_cache = {"ts": 0.0, "value": 0.0}
@@ -62,7 +62,7 @@ _OPEN_POSITIONS_CACHE_TTL = 3.0
 
 
 def invalidate_deals_cache():
-    """Panggil saat order sukses dikirim / posisi ditutup — data deals berubah."""
+    """Panggil saat order sukses dikirim / posisi ditutup - data deals berubah."""
     _bot_opened_cache["ts"] = 0.0
     _closed_today_cache["ts"] = 0.0
 
@@ -364,7 +364,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             d.position_id for d in wide_deals
             if (target_magic is None or d.magic == target_magic) and d.entry == mt5.DEAL_ENTRY_IN
         }
-        # Harga entry per posisi (dari deal IN) — dipakai buat bedain SL awal vs
+        # Harga entry per posisi (dari deal IN) - dipakai buat bedain SL awal vs
         # trailing/BEP: kalau harga SL yang kena > entry (BUY), berarti SL sudah
         # digeser melewati entry = trailing stop / break-even, bukan SL awal.
         entry_price_by_pos = {}
@@ -372,7 +372,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             if d.entry == mt5.DEAL_ENTRY_IN:
                 entry_price_by_pos.setdefault(d.position_id, d.price)
         # Biaya per posisi = komisi (IN + OUT) + admin fee swap-free.
-        # position.profit dari MT5 TIDAK include komisi/fee — net profit dikurangi semua biaya.
+        # position.profit dari MT5 TIDAK include komisi/fee - net profit dikurangi semua biaya.
         comm_by_pos = {}
         for d in wide_deals:
             c = getattr(d, "commission", 0.0) or 0.0
@@ -436,7 +436,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
                             reason = "SL-BEP" if entry_px - exit_px <= bep_tol_px else "SL-trailing"
 
         # Net profit REAL = profit + swap - komisi total (IN + OUT).
-        # comm_by_pos berisi nilai NEGATIF (komisi di-charge) → ditambahkan langsung.
+        # comm_by_pos berisi nilai NEGATIF (komisi di-charge) -> ditambahkan langsung.
         net_comm = comm_by_pos.get(deal.position_id, 0.0) or 0.0
         closed.append({
             "ticket": deal.position_id,
@@ -486,7 +486,7 @@ def get_account_info():
 
 def get_position_net_profit(position_id):
     """
-    Net profit real untuk posisi yang sudah CLOSE — termasuk komisi IN & OUT + admin fee (swap-free).
+    Net profit real untuk posisi yang sudah CLOSE - termasuk komisi IN & OUT + admin fee (swap-free).
     MT5 position.profit TIDAK termasuk komisi; komisi di-charge di deal IN (buka)
     dan deal OUT (tutup), masing-masing. Akun swap-free: swap = 0, tapi broker
     charge ADMIN FEE di field `fee` kalau posisi di-hold lewat rollover.
@@ -521,11 +521,11 @@ def get_position_net_profit(position_id):
 
 def get_position_total_cost(position_id):
     """
-    Total BIAYA (komisi IN+OUT + admin fee) untuk satu posisi — nilai ABSOLUT positif.
+    Total BIAYA (komisi IN+OUT + admin fee) untuk satu posisi - nilai ABSOLUT positif.
     Dipakai buat BEP tolerance dinamis: trade 0.01 lot kena komisi 0.06,
-    0.10 lot kena 0.60, 0.26 lot kena 1.56 → tolerance BEP trade itu harus
+    0.10 lot kena 0.60, 0.26 lot kena 1.56 -> tolerance BEP trade itu harus
     lebih besar dari biaya aktualnya (bukan statis 0.04).
-    Returns 0.0 kalau tidak ada data (safe fallback → tolerance statis).
+    Returns 0.0 kalau tidak ada data (safe fallback -> tolerance statis).
     """
     if config.DRY_RUN:
         return 0.0
@@ -587,10 +587,10 @@ def get_trade_details(ticket):
         )
         profit = out_deal.profit + out_deal.swap + total_comm
 
-        # Reason close yang terbaca (SL/TP/manual/bot/dll) — konsisten dengan
+        # Reason close yang terbaca (SL/TP/manual/bot/dll) - konsisten dengan
         # get_closed_positions_today. SL dibedakan lagi:
         #   - SL           : SL awal kena (harga SL di sisi loss dari entry)
-        #   - SL-BEP       : SL digeser ke break-even (≈ entry, selisih spread)
+        #   - SL-BEP       : SL digeser ke break-even (approx entry, selisih spread)
         #   - SL-trailing  : SL digeser melewati entry (profit terkunci)
         deal_reason = getattr(out_deal, "reason", None)
         reason_label = {
@@ -638,7 +638,7 @@ def get_trade_details(ticket):
         print(f"[MT5 CONNECTOR WARNING] Could not fetch trade details #{ticket}: {e}")
         return None
 
-# Retcodes that mean "broker wants a fresh price/wider deviation" — worth a retry.
+# Retcodes that mean "broker wants a fresh price/wider deviation" - worth a retry.
 _RETRYABLE_RETCODES = {
     getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
     getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10021),
@@ -663,7 +663,7 @@ def get_valid_trade_symbol(symbol):
     """
     Returns the exact tradeable symbol name on the connected MT5 broker.
     Handles broker suffix variations (e.g. XAUUSD-ECN -> XAUUSD-ECNc, BTCUSD -> BTCUSD.c).
-    Result di-cache per sesi — resolve & print auto-correct CUKUP SEKALI (bukan tiap dipanggil).
+    Result di-cache per sesi - resolve & print auto-correct CUKUP SEKALI (bukan tiap dipanggil).
     """
     if not symbol:
         return symbol

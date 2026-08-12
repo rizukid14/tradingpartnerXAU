@@ -3,28 +3,34 @@
 Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT5)** dengan tiga slot model LLM via API: **OpenAI**, **Google Gemini**, dan **slot ketiga (default DeepSeek V4 Flash, bisa di-switch ke Claude)**.
 
 - **Weekday**: `XAUUSD-ECNc` (Gold) — scalping **M5** — **Weekend**: `BTCUSD.c` (Bitcoin) — intraday **M30** (rotasi otomatis via `config.get_active_symbol`)
-- **Multi-scan (opsional, mode `xau_pairs`)**: tiap candle M5 bot scan **SEMUA simbol dalam pool sekaligus** (bukan rotasi) — XAU + 2 pair FX cross non-USD, 1 LLM call per pair (3 call/candle)
+- **Multi-scan (opsional, mode `xau_pairs`)**: bot melakukan scan **7 simbol dalam pool sekaligus**: XAUUSD M5 (scalp) + 6 FX cross non-USD H1 (swing).
+- **Smart Timeframe Rotation**: LLM call hanya dipicu ketika candle timeframe spesifik aset tersebut berganti (XAU tiap 5 menit, FX tiap 1 jam, BTC tiap 30 menit). Menghemat ~90% biaya API LLM!
 - Bot memanggil AI sesuai **time-based mode** (single/dual/triple — lihat jadwal WIB), menghitung **weighted-confidence consensus**, lalu mengeksekusi order ke MT5.
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic number `20260625`.
 - Semua timestamp internal pakai **WIB** (Asia/Jakarta).
 
 ## 🎯 Multi-Symbol Scan (Mode `xau_pairs`)
 
-Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + Pairs** (`TRADING_MODE=xau_pairs`) — di mode ini tiap candle M5 bot **scan semua simbol sekaligus** (parallel scan, bukan round-robin), masing-masing 1× LLM call:
+Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + Pairs** (`TRADING_MODE=xau_pairs`) — di mode ini bot memantau 7 simbol dengan timeframe berbeda. AI dipicu hanya saat pergantian candle masing-masing simbol:
 
-| # | Simbol (base) | Live / Demo | Timeframe | Spread (hasil scan) |
+| # | Simbol (base) | Live / Demo | Timeframe | Arah / Gaya |
 |---|---|---|---|---|
-| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M5 | ~10 pts (≈3% ATR) |
-| 2 | `EURJPY-ECN` | `EURJPY-ECNc` / `EURJPY-ECN` | M5 | ~0-1 pts |
-| 3 | `GBPCHF-ECN` | `GBPCHF-ECNc` / `GBPCHF-ECN` | M5 | ~0 pts |
+| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M5 | Scalping (0.5% risk) |
+| 2 | `GBPCHF-ECN` | `GBPCHF-ECNc` / `GBPCHF-ECN` | H1 | Swing (1.0% risk) |
+| 3 | `EURCHF-ECN` | `EURCHF-ECNc` / `EURCHF-ECN` | H1 | Swing (1.0% risk) |
+| 4 | `GBPNZD-ECN` | `GBPNZD-ECNc` / `GBPNZD-ECN` | H1 | Swing (1.0% risk) |
+| 5 | `EURJPY-ECN` | `EURJPY-ECNc` / `EURJPY-ECN` | H1 | Swing (1.0% risk) |
+| 6 | `GBPUSD-ECN` | `GBPUSD-ECNc` / `GBPUSD-ECN` | H1 | Swing (1.0% risk) |
+| 7 | `EURAUD-ECN` | `EURAUD-ECNc` / `EURAUD-ECN` | H1 | Swing (1.0% risk) |
 
-**Kenapa pair-nya gitu?** Semua **cross non-USD** — korelasi rendah dengan XAUUSD (pair yang mengandung USD dibuang karena geraknya didominasi USD). Pool sengaja **3 simbol** (bukan 5): hemat biaya LLM per candle, dan `GBPCHF` (spread 0, tick value ~2× EURJPY) menggantikan pair EUR/JPY lainnya yang saling berkorelasi. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo) — satu config jalan di dua-duanya.
+**Kenapa pair-nya gitu?** Semua **cross non-USD** (dan GBPUSD) yang memiliki korelasi rendah dengan XAUUSD. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo).
 
-**Cara kerja per candle (M5):**
-1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 3)
+**Cara kerja per cycle:**
+1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 7)
 2. Post-mortem trade tertutup dijalankan **1× aggregate** (bukan per-simbol)
-3. Loop `for sym in pool:` → `config.SYMBOL = sym` → cycle penuh per-simbol: risk gate → data MT5 → macro/MTF per-simbol → 1× LLM call → weighted consensus → eksekusi
-4. **Weekend**: XAU + FX market tutup Sabtu–Minggu → **bot istirahat (mode 24/5)**. Pool jatuh ke `[XAUUSD-ECN]` yang tutup (risk gate menolak semua, tidak ada LLM call). Opsional: set `ENABLE_BTC_ROTATION=True` → weekend ganti ke `[BTCUSD.c]` (24/7) — kode BTC sengaja dipertahankan, tinggal dinyalakan.
+3. Loop `for sym in pool:` → `config.SYMBOL = sym` → Cek apakah candle timeframe asli simbol tersebut sudah berganti (`_symbol_last_candle`).
+4. Jika candle baru terbentuk: jalankan cycle penuh per-simbol (risk gate → data MT5 → macro/MTF per-simbol → LLM call → weighted consensus → eksekusi). Jika belum berganti, skip LLM call untuk menghemat token.
+5. **Weekend**: XAU + FX market tutup Sabtu–Minggu → **bot istirahat (mode 24/5)**. Pool jatuh ke `[XAUUSD-ECN]` yang tutup (risk gate menolak semua, tidak ada LLM call). Opsional: set `ENABLE_BTC_ROTATION=True` → weekend ganti ke `[BTCUSD.c]` M30 (24/7).
 
 **Risk tetap aggregate**: max posisi (6) & daily loss ($50) dihitung **lintas semua simbol** (magic filter `20260625`), bukan per-simbol. Ganti mode: `.env` (`TRADING_MODE=...`), menu setup (item "Scan Mode"), atau dropdown dashboard (persist ke `.env`).
 

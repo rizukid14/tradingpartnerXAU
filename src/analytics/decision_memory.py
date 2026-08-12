@@ -70,12 +70,12 @@ class DecisionMemory:
         OPEN/N-A untuk symbol ini, plus profit NET (sudah termasuk komisi) biar
         summarize_recent_outcomes bisa hitung win/loss yang AKURAT.
 
-        Dipanggil dari loop close detection — update entry trade yang baru ditutup.
+        Dipanggil dari loop close detection - update entry trade yang baru ditutup.
         """
         if not symbol:
             return False
         entries = self._decisions.get(symbol, [])
-        # Cari entry PALING TUA yang masih "OPEN"/"N/A" dengan signal != HOLD —
+        # Cari entry PALING TUA yang masih "OPEN"/"N/A" dengan signal != HOLD -
         # posisi yang dibuka lebih dulu biasanya kena SL/TP lebih dulu.
         for e in entries:
             if e.get("signal") == "HOLD":
@@ -96,7 +96,7 @@ class DecisionMemory:
         if not entries:
             return ""
 
-        # Count consecutive HOLD at the tail — useful cue for the LLM.
+        # Count consecutive HOLD at the tail - useful cue for the LLM.
         consecutive_hold = 0
         for e in reversed(entries):
             if e.get("signal") == "HOLD":
@@ -109,12 +109,12 @@ class DecisionMemory:
             conf = e.get("confidence")
             conf_str = f" (conf {conf * 100:.0f}%)" if conf is not None else ""
             excerpt = e.get("reasoning_excerpt") or ""
-            lines.append(f"{i}. {e.get('signal')}{conf_str} — {excerpt}")
+            lines.append(f"{i}. {e.get('signal')}{conf_str} - {excerpt}")
 
         hold_note = ""
         if consecutive_hold >= 3:
             hold_note = (
-                f"\nNote: last {consecutive_hold} cycles were HOLD for this symbol — "
+                f"\nNote: last {consecutive_hold} cycles were HOLD for this symbol - "
                 f"re-examine whether the threshold for entry is now too strict, "
                 f"or whether price action genuinely lacks a setup."
             )

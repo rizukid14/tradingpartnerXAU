@@ -54,14 +54,14 @@ _partial_closed_tickets, _break_even_tickets, _trailing_extremes = _load_state()
 
 def manage_all_positions():
     """
-    Iterates ALL open bot positions (any symbol — XAU or BTC) and applies:
+    Iterates ALL open bot positions (any symbol - XAU or BTC) and applies:
     1. Partial close at TP1 (close 50% of position at first target)
     2. Break-even (move SL to entry once threshold hit)
     3. Trailing stop (continuously advance SL behind price)
 
     Call this every tick cycle (every 5 seconds).
     Manages every symbol so a leftover position is still protected, but skips
-    symbols whose market is closed (no fresh tick within the last N seconds —
+    symbols whose market is closed (no fresh tick within the last N seconds -
     e.g. XAU over the weekend). BTC ticks 24/7 so it keeps being managed
     across weekday/weekend rotation.
     """
@@ -171,8 +171,8 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
         _partial_closed_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         remaining = round(pos.volume - close_volume, 2)
-        print(f"💰 [PARTIAL CLOSE] Ticket #{pos.ticket} ({symbol}): Ditutup {close_volume} lot "
-              f"(profit {profit_points:.0f} pts). Sisa: {remaining} lot — trailing sisanya.")
+        print(f" [PARTIAL CLOSE] Ticket #{pos.ticket} ({symbol}): Ditutup {close_volume} lot "
+              f"(profit {profit_points:.0f} pts). Sisa: {remaining} lot - trailing sisanya.")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[PARTIAL CLOSE ERROR] Gagal menutup sebagian #{pos.ticket}: {comment}")
@@ -187,7 +187,7 @@ def _get_entry_fill_price(pos, symbol):
     """
     Returns the ACTUAL fill price of the entry deal for a position.
     `positions_get().price_open` can differ from the real fill by slippage
-    (order request price vs executed deal price) — using it for break-even
+    (order request price vs executed deal price) - using it for break-even
     puts the SL slightly inside the losing side and gets stopped out for a
     tiny loss instead of a true break-even. The deal history is the source
     of truth for the executed price.
@@ -245,7 +245,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _break_even_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
-        print(f"🔒 [BREAK-EVEN] Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
+        print(f" [BREAK-EVEN] Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
@@ -368,9 +368,9 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         if config.is_crypto(symbol):
-            print(f"📈 [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
+            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
         else:
-            print(f"📈 [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x ATR)")
+            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x ATR)")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

@@ -91,7 +91,7 @@ class TradeEvaluator:
                     
                     # Check for legacy format (lessons directly at the root)
                     if "lessons" in data:
-                        print("🔄 [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
+                        print(" [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
                         legacy_lessons = data.get("lessons", [])
                         legacy_summary = data.get("lessons_summary", "")
                         legacy_tickets = list(data.get("evaluated_tickets", []))
@@ -136,7 +136,7 @@ class TradeEvaluator:
                         "evaluated_tickets": set(data[symbol].get("evaluated_tickets", []))
                     }
             except json.JSONDecodeError as e:
-                print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json (JSON corrupt: {e}) — backing up & reset.")
+                print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json (JSON corrupt: {e}) - backing up & reset.")
                 try:
                     shutil.copy(MEMORY_FILE, MEMORY_FILE + ".bak")
                     if os.path.exists(MEMORY_FILE):
@@ -210,13 +210,13 @@ You are an expert trading post-mortem analyst evaluating scalping performance on
 
 {lessons_text}
 
-Task: Synthesize both the existing wisdom (if provided above) and all {len(lessons)} new lessons into ONE updated, cohesive master block of trading wisdom (maximum 60-70 words). Preserve coverage of key themes (entries, risk, timing, psychology) — do not let one theme dominate. Output ONLY the summary text — no intro, no bullet numbering.
+Task: Synthesize both the existing wisdom (if provided above) and all {len(lessons)} new lessons into ONE updated, cohesive master block of trading wisdom (maximum 60-70 words). Preserve coverage of key themes (entries, risk, timing, psychology) - do not let one theme dominate. Output ONLY the summary text - no intro, no bullet numbering.
 """
         try:
             summary = llm.query_primary_model(prompt)
             if summary:
                 summary = summary.strip()
-                _safe_print(f"📋 [LESSONS SUMMARY UPDATED FOR {symbol}] {summary}")
+                _safe_print(f" [LESSONS SUMMARY UPDATED FOR {symbol}] {summary}")
                 self._save_memory(symbol, [], summary, evaluated_tickets)
         except Exception as e:
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
@@ -227,7 +227,7 @@ Task: Synthesize both the existing wisdom (if provided above) and all {len(lesso
         OFF by default (config.POST_MORTEM_ENABLED = False): hasil post-mortem
         (lessons) sudah tidak di-inject ke prompt (MEMORY_CONTEXT_ENABLED=False),
         jadi manggil LLM di sini cuma buang biaya + nulis lesson toxic/salah simbol.
-        Kode tetap ada — set POST_MORTEM_ENABLED=True kalau mau aktif lagi.
+        Kode tetap ada - set POST_MORTEM_ENABLED=True kalau mau aktif lagi.
         """
         if not getattr(config, "POST_MORTEM_ENABLED", False):
             return
@@ -268,11 +268,11 @@ Task: Synthesize both the existing wisdom (if provided above) and all {len(lesso
 
             # Generate post-mortem lesson via LLM with rich execution context & auto theme tagging
             pos_type_label = trade_details.get("type", "")
-            _safe_print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
+            _safe_print(f"\n [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
             lesson, theme = self._analyze_trade_with_llm(ticket, profit, deal_symbol, trade_details)
             if lesson:
                 theme = theme or _extract_theme(lesson)
-                _safe_print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
+                _safe_print(f" [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
                 mem["lessons"].append({"symbol": deal_symbol, "lesson": lesson, "theme": theme})
                 
                 if len(mem["lessons"]) >= MAX_LESSONS:

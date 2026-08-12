@@ -16,7 +16,7 @@ def _effective_consensus_threshold():
 def _apply_sltp_rules(sl_points, tp_points):
     """
     SL/TP final sesuai config.TP_SL_RULES:
-      "ATR-Based" (default): GATE — proposal AI DIPAKAI apa adanya (setelah
+      "ATR-Based" (default): GATE - proposal AI DIPAKAI apa adanya (setelah
         outlier filter + average), tapi trade HANYA dieksekusi kalau:
           SL >= max(2x spread, SL_MULTx ATR) DAN TP >= max(2x spread, TP_MULTx ATR)
         SL_MULT/TP_MULT dinamis per AI mode (R:R 2:1 selalu):
@@ -25,7 +25,7 @@ def _apply_sltp_rules(sl_points, tp_points):
         ok=False), BUKAN dinaikkan. Filosofi: cari setup yang secara alamiah
         bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
         invalidation model = mengubah setup tanpa persetujuan model.
-      "LLM": SL/TP sebebas-bebasnya sesuai konsensus — cuma floor 2x spread
+      "LLM": SL/TP sebebas-bebasnya sesuai konsensus - cuma floor 2x spread
         (biar broker nggak nolak INVALID_STOPS). Lot size dikalkulasi dari SL
         tsb via risk-based sizing, jadi SL kecil = lot gede (risk tetap sama).
     Returns: (sl_points, tp_points, ok: bool, reason: str)
@@ -45,7 +45,7 @@ def _apply_sltp_rules(sl_points, tp_points):
         si = mt5.symbol_info(config.SYMBOL)
         if tick is not None and si is not None and si.point:
             spread_pts = int(round((tick.ask - tick.bid) / si.point))
-            # ATR from the active timeframe (M30 for BTC) — volatility floor
+            # ATR from the active timeframe (M30 for BTC) - volatility floor
             rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
@@ -106,7 +106,7 @@ def _drop_standalone_outlier(values, label):
       - Semua nilai dalam band 0.5x-2x median -> nggak ada yang dibuang,
         semua di-average.
     Median lebih robust daripada mean buat deteksi anomali. Maksimal 1 nilai
-    yang dibuang — nggak pernah buang semua.
+    yang dibuang - nggak pernah buang semua.
     """
     if len(values) <= 2:
         return values
@@ -117,7 +117,7 @@ def _drop_standalone_outlier(values, label):
     high = [v for v in s if v > 2.0 * median]
     dropped = []
     if low and high:
-        # Dua sisi anomali sekaligus — buang yang paling jauh dari median
+        # Dua sisi anomali sekaligus - buang yang paling jauh dari median
         if median - min(low) >= max(high) - median:
             dropped = [min(low)]
         else:
@@ -170,7 +170,7 @@ def calculate_consensus(decisions):
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
         
-        print(f"🤖 [{model_name}] Decision: {sig} (Conf: {conf*100:.1f}%)")
+        print(f" [{model_name}] Decision: {sig} (Conf: {conf*100:.1f}%)")
         print(f"   SL: {sl} pts, TP: {tp} pts")
         print(f"   Reason: {reason}")
         print("-" * 50)
@@ -220,7 +220,7 @@ def calculate_consensus(decisions):
                 "reason": reason_sample
             })
             closed_ticket_ids.add(ticket)
-            print(f"⚡ [AI RE-EVALUATOR] {len(votes)}/{n_models} AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
+            print(f" [AI RE-EVALUATOR] {len(votes)}/{n_models} AI ({models_str}) sepakat CLOSE order #{ticket}: {reason_sample}")
 
     for ticket in sorted(all_evaluated_tickets):
         if ticket not in closed_ticket_ids:
@@ -228,9 +228,9 @@ def calculate_consensus(decisions):
             if reasons_list:
                 m_str = ", ".join([r[0] for r in reasons_list])
                 r_sample = reasons_list[0][1]
-                print(f"🛡️ [AI RE-EVALUATOR] Order #{ticket} dipertahankan (HOLD oleh {m_str}): {r_sample}")
+                print(f" [AI RE-EVALUATOR] Order #{ticket} dipertahankan (HOLD oleh {m_str}): {r_sample}")
             else:
-                print(f"🛡️ [AI RE-EVALUATOR] Order #{ticket} dipertahankan (HOLD) oleh konsensus AI.")
+                print(f" [AI RE-EVALUATOR] Order #{ticket} dipertahankan (HOLD) oleh konsensus AI.")
 
     # Dynamic weighted-confidence consensus: each model's confidence weights
     # its vote. A direction wins when BOTH:
@@ -276,7 +276,7 @@ def calculate_consensus(decisions):
             best_score = direction_scores[sig]
 
     if consensus_signal == "HOLD":
-        print(f"🚨 [KONSENSUS GAGAL] Skor arah: BUY={direction_scores['BUY']:.2f}, "
+        print(f" [KONSENSUS GAGAL] Skor arah: BUY={direction_scores['BUY']:.2f}, "
               f"SELL={direction_scores['SELL']:.2f} (threshold {threshold}). Posisi: HOLD.")
         print("=" * 50 + "\n")
         return {
@@ -309,7 +309,7 @@ def calculate_consensus(decisions):
     #   - 2/3 model sepakat -> yang nggak sepakat dibuang, 2 yang sepakat di-average
     #   - 3/3 model beda semua -> yang paling jauh dari median dibuang (1 aja),
     #     2 sisanya di-average
-    # Contoh: OpenAI kasih SL 30 pts saat Gemini 400 & DeepSeek 305 — SL 30
+    # Contoh: OpenAI kasih SL 30 pts saat Gemini 400 & DeepSeek 305 - SL 30
     # cuma 10% ATR, menyeret rata-rata ke bawah & bikin lot membengkak.
     # Median lebih robust daripada mean untuk deteksi anomali.
     sl_list = _drop_standalone_outlier(sl_list, "SL")
@@ -328,7 +328,7 @@ def calculate_consensus(decisions):
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
 
     if not sltp_ok:
-        print(f"🚫 [TRADE DIBATALKAN] Sinyal {consensus_signal} tidak dieksekusi: {sltp_reason}")
+        print(f" [TRADE DIBATALKAN] Sinyal {consensus_signal} tidak dieksekusi: {sltp_reason}")
         print("   Model sepakat arah, tapi SL/TP proposal tidak memenuhi rules ATR "
               "(R:R 2:1 terhadap volatilitas). Cari setup lain.")
         print("=" * 50 + "\n")
@@ -343,7 +343,7 @@ def calculate_consensus(decisions):
             "details": f"SL/TP gate ATR gagal: {sltp_reason}"
         }
 
-    print(f"🚀 [KONSENSUS DISETUJUI] Sinyal: {consensus_signal} "
+    print(f" [KONSENSUS DISETUJUI] Sinyal: {consensus_signal} "
           f"(skor {best_score:.2f} >= threshold {threshold})")
     print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
     print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")

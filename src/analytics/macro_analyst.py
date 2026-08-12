@@ -100,7 +100,7 @@ class MacroAnalyst:
                 "fundamental_outlook": "",
                 "timeframe_analysis": {}
             }
-            print(f"🔄 [MACRO] Menginisialisasi cache analisa untuk simbol {sym}.")
+            print(f" [MACRO] Menginisialisasi cache analisa untuk simbol {sym}.")
             force = True
 
         sym_cache = self.cache[sym]
@@ -117,7 +117,7 @@ class MacroAnalyst:
                     cached_candle_time = sym_cache["timeframe_analysis"].get(tf_name, {}).get("last_candle_time", 0)
 
                     if force or current_candle_time > cached_candle_time:
-                        print(f"🔄 [MTF] Menjalankan analisa struktur untuk timeframe {tf_name} ({sym})...")
+                        print(f" [MTF] Menjalankan analisa struktur untuk timeframe {tf_name} ({sym})...")
                         analysis = self._run_timeframe_analysis(tf_name, tf_const)
                         if analysis:
                             sym_cache["timeframe_analysis"][tf_name] = {
@@ -127,7 +127,7 @@ class MacroAnalyst:
                             }
                             updated = True
                 else:
-                    print(f"⚠️ [MTF WARNING] Gagal membaca data MT5 untuk timeframe {tf_name} ({sym}).")
+                    print(f" [MTF WARNING] Gagal membaca data MT5 untuk timeframe {tf_name} ({sym}).")
 
         # 2. Check Fundamental Analysis
         if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):
@@ -136,7 +136,7 @@ class MacroAnalyst:
 
             # Trigger if session changes and is valid, or if force run
             if force or (current_session != "None" and current_session != cached_session):
-                print(f"🔄 [FUNDAMENTAL] Menjalankan analisa fundamental untuk sesi '{current_session}' ({sym})...")
+                print(f" [FUNDAMENTAL] Menjalankan analisa fundamental untuk sesi '{current_session}' ({sym})...")
                 outlook = self._run_fundamental_analysis()
                 if outlook:
                     sym_cache["last_fundamental_session"] = current_session
@@ -146,11 +146,11 @@ class MacroAnalyst:
 
         if updated:
             self._save_cache()
-            print(f"💾 [MACRO] Analisa cache diperbarui dan disimpan ({sym}).")
+            print(f" [MACRO] Analisa cache diperbarui dan disimpan ({sym}).")
 
     def _run_timeframe_analysis(self, tf_name, tf_const):
         """
-        Computes higher-timeframe trend structure DIRECTLY from MT5 indicators —
+        Computes higher-timeframe trend structure DIRECTLY from MT5 indicators -
         NO LLM call. EMA20/50, RSI, ATR dan swing high/low dihitung dari df M30
         (XAU) / H1-H4 (BTC). Output teks faktual, bukan opini LLM.
         """
@@ -170,7 +170,7 @@ class MacroAnalyst:
         fetch_candles = max(50, window_size + 20)
         df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=fetch_candles)
         if df is None or len(df) < 30:
-            print(f"❌ [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
+            print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
             return None
 
         latest = df.iloc[-1]
