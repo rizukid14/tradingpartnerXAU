@@ -472,6 +472,21 @@ _symbol_last_candle_seeded = False
 _STARTUP_SCAN_MODE = "timeframe"  # FASE 6: "all" (scan semua sekarang) | "timeframe" (default, tunggu candle close)
 
 
+def _resolve_valid_pool():
+    """FASE 6 - Resolve base names -> nama broker valid (auto-correct suffix, mis. XAUUSD-ECN -> XAUUSD-ECNc)
+    + symbol_select biar tick/rates tersedia untuk semua pair di pool (FX pair baru sering belum visible).
+    """
+    pool = config.get_rotation_pool()
+    valid_pool = []
+    for sym in pool:
+        vsym = connector.get_valid_trade_symbol(sym)
+        if vsym != sym:
+            print(f"[MT5 AUTO-CORRECT] Pool '{sym}' -> '{vsym}' (broker live)")
+        mt5.symbol_select(vsym, True)
+        valid_pool.append(vsym)
+    return valid_pool
+
+
 def _seed_startup_scan(valid_pool):
     """FASE 6 - startup scan mode:
     - "all": biarkan _symbol_last_candle kosong -> semua simbol langsung di-scan di cycle pertama.
@@ -595,19 +610,11 @@ def run_trading_cycle():
     # -- Multi-symbol parallel scan ----------------------------------------------
     # Mode "xau": pool = [XAU] (1 cycle per candle, seperti sebelumnya).
     # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS.
-    pool = config.get_rotation_pool()
-    # Resolve base names -> nama broker valid (auto-correct suffix, mis. XAUUSD-ECN -> XAUUSD-ECNc)
-    # + symbol_select biar tick/rates tersedia untuk semua pair di pool (FX pair baru sering belum visible)
-    valid_pool = []
-    for sym in pool:
-        vsym = connector.get_valid_trade_symbol(sym)
-        if vsym != sym:
-            print(f"[MT5 AUTO-CORRECT] Pool '{sym}' -> '{vsym}' (broker live)")
-        mt5.symbol_select(vsym, True)
-        valid_pool.append(vsym)
-        
     global _symbol_last_candle
-    _seed_startup_scan(valid_pool)
+    valid_pool = _resolve_valid_pool()
+    # NOTE: seed startup scan TIDAK di sini - sudah dilakukan di main loop startup
+    # (lihat blok startup_run). Kalau seed di sini, cycle pertama yang trigger
+    # candle baru close -> closed_time == seeded_time -> SEMUA symbol ke-skip.
     for sym in valid_pool:
         config.SYMBOL = sym
         
@@ -1106,7 +1113,15 @@ def main():
                     if startup_run:
                         startup_run = False
                         if _STARTUP_SCAN_MODE == "timeframe":
-                            # Seed dulu: scan pertama menyusul pas candle close BERIKUTNYA
+                            # Seed SEKARANG (di startup): _symbol_last_candle[sym] = open-time
+                            # candle terakhir yang SUDAH close. Cycle pertama menyusul pas candle
+                            # close BERIKUTNYA (closed_time > seeded_time -> LOLOS).
+                            # JANGAN seed di dalam run_trading_cycle: cycle pertama yang trigger
+                            # candle baru close -> closed_time == seeded_time -> SEMUA symbol skip.
+                            try:
+                                _seed_startup_scan(_resolve_valid_pool())
+                            except Exception as e:
+                                print(f"[SEED WARNING] {e}")
                             skip_cycle = True
                             print("Startup scan mode: sesuai timeframe - menunggu candle close berikutnya...")
                         else:
