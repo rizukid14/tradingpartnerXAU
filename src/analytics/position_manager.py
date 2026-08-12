@@ -279,6 +279,14 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     """Trail stop loss behind price using dynamic ATR multipliers (or static fallback)."""
     atr_points = _get_dynamic_atr_points(symbol, point)
 
+    # Hitung jarak target TP posisi (jika ada) untuk aktivasi adaptif & progress calculation
+    tp_points = 0
+    if pos.tp:
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            tp_points = (pos.tp - pos.price_open) / point
+        else:
+            tp_points = (pos.price_open - pos.tp) / point
+
     if config.is_crypto(symbol):
         act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0)
         dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
@@ -286,11 +294,11 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         fallback_dist = config.TRAILING_DISTANCE_POINTS_BTC
         act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
     else:
-        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_XAU", 1.0)
-        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
+        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_XAU", 1.2)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.6)
         fallback_act = config.TRAILING_ACTIVATION_POINTS_XAU
         fallback_dist = config.TRAILING_DISTANCE_POINTS_XAU
-        act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_XAU", 500)
+        act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
 
     if atr_points > 0:
         activation = min(int(atr_points * act_mult), act_cap)
@@ -298,6 +306,14 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     else:
         activation = fallback_act
         distance = fallback_dist
+
+    # TP-Adaptive Activation (% Jarak Target):
+    # Jika posisi memiliki target TP yang terdefinisi (non-crypto), aktivasi menyala saat profit >= 60% TP.
+    # Batas minimum 150 pts (agar tidak aktif saat baru lari dikit) dan maksimum dibatasi 'activation' ATR.
+    if tp_points > 0 and not config.is_crypto(symbol):
+        tp_adaptive_act = int(tp_points * 0.60)
+        if tp_adaptive_act > 0:
+            activation = max(150, min(activation, tp_adaptive_act))
 
     # Track the extreme price seen since entry. The SL trails behind this
     # extreme, never behind the current price, so a pullback cannot drag the
@@ -324,17 +340,10 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if config.is_crypto(symbol):
         trail_distance = distance * point
     else:
-        start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.0)
-        end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.3)
-        min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.2)
+        start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.2)
+        end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
+        min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
 
-        # Seberapa dekat profit ke TP (0.0 = baru aktivasi, 1.0 = di TP)
-        tp_points = 0
-        if pos.tp:
-            if pos.type == mt5.ORDER_TYPE_BUY:
-                tp_points = (pos.tp - pos.price_open) / point
-            else:
-                tp_points = (pos.price_open - pos.tp) / point
         progress_ref = max(tp_points, activation * 2) if tp_points > 0 else activation * 2
         progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
 

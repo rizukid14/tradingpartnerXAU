@@ -1,5 +1,6 @@
 import config
 from src.analytics import dynamic_config
+from src.core.cli_theme import UI
 
 
 def _effective_consensus_threshold():
@@ -158,9 +159,7 @@ def calculate_consensus(decisions):
         "details": str
       }
     """
-    print("\n" + "="*50)
-    print("          ANALISIS KONSENSUS MULTI-LLM           ")
-    print("="*50)
+    print(f"\n{UI.CYAN}+-- [ANALISIS KONSENSUS MULTI-LLM] --------------------------------+{UI.RST}")
     
     # Print details for each model
     for model_name, dec in decisions.items():
@@ -169,11 +168,17 @@ def calculate_consensus(decisions):
         reason = dec.get("reasoning") or "Tidak ada alasan."
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
+        setup_label = dec.get("setup")
         
-        print(f" [{model_name}] Decision: {sig} (Conf: {conf*100:.1f}%)")
-        print(f"   SL: {sl} pts, TP: {tp} pts")
-        print(f"   Reason: {reason}")
-        print("-" * 50)
+        badge = UI.badge_signal(sig)
+        bar = UI.make_bar(conf, 1.0, width=8)
+        sltp_info = f"SL: {sl} pts, TP: {tp} pts" if sig in ("BUY", "SELL") else "SL/TP: -"
+        
+        print(f"| {UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
+        if setup_label:
+            print(f"|   {UI.CYAN}Setup :{UI.RST} {setup_label}")
+        print(f"|   {UI.GRAY}Reason:{UI.RST} {reason}")
+        print(f"{UI.DIM}+------------------------------------------------------------------+{UI.RST}")
         
     # Check if we have a consensus for BUY or SELL
     consensus_signal = "HOLD"
@@ -276,9 +281,9 @@ def calculate_consensus(decisions):
             best_score = direction_scores[sig]
 
     if consensus_signal == "HOLD":
-        print(f" [KONSENSUS GAGAL] Skor arah: BUY={direction_scores['BUY']:.2f}, "
-              f"SELL={direction_scores['SELL']:.2f} (threshold {threshold}). Posisi: HOLD.")
-        print("=" * 50 + "\n")
+        print(f"| {UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")
+        print(f"|   {UI.DIM}Skor Arah: BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f} (Threshold: {threshold:.2f}){UI.RST}")
+        print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}\n")
         return {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -305,13 +310,6 @@ def calculate_consensus(decisions):
             tp_list.append(tp_val)
 
     # Filter outlier SL/TP: buang nilai yang "beda sendiri" sebelum di-average.
-    # Aturan user (mode LLM):
-    #   - 2/3 model sepakat -> yang nggak sepakat dibuang, 2 yang sepakat di-average
-    #   - 3/3 model beda semua -> yang paling jauh dari median dibuang (1 aja),
-    #     2 sisanya di-average
-    # Contoh: OpenAI kasih SL 30 pts saat Gemini 400 & DeepSeek 305 - SL 30
-    # cuma 10% ATR, menyeret rata-rata ke bawah & bikin lot membengkak.
-    # Median lebih robust daripada mean untuk deteksi anomali.
     sl_list = _drop_standalone_outlier(sl_list, "SL")
     tp_list = _drop_standalone_outlier(tp_list, "TP")
 
@@ -320,18 +318,12 @@ def calculate_consensus(decisions):
     final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
 
     # Apply SL/TP rules (mode-aware):
-    #   ATR-Based -> GATE: trade hanya layak kalau SL >= SL_MULTx ATR DAN
-    #                TP >= TP_MULTx ATR. Multiplier dinamis per AI mode
-    #                (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
-    #                Kalau jarak proposal kurang -> trade DIBATALKAN (bukan dinaikkan).
-    #   LLM       -> bebas, cuma floor 2x spread.
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
 
     if not sltp_ok:
-        print(f" [TRADE DIBATALKAN] Sinyal {consensus_signal} tidak dieksekusi: {sltp_reason}")
-        print("  Model sepakat arah, tapi SL/TP proposal tidak memenuhi rules ATR "
-              "(R:R 2:1 terhadap volatilitas). Cari setup lain.")
-        print("=" * 50 + "\n")
+        print(f"| {UI.RED}[-] HASIL: TRADE DIBATALKAN OLEH GATE ATR{UI.RST}")
+        print(f"|   {UI.RED}{sltp_reason}{UI.RST}")
+        print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}\n")
         return {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -343,12 +335,30 @@ def calculate_consensus(decisions):
             "details": f"SL/TP gate ATR gagal: {sltp_reason}"
         }
 
-    print(f" [KONSENSUS DISETUJUI] Sinyal: {consensus_signal} "
-          f"(skor {best_score:.2f} >= threshold {threshold})")
-    print(f"   Model yang sepakat: {', '.join(agreeing_models)}")
-    print(f"   Rata-rata Keyakinan: {avg_confidence*100:.1f}%")
-    print(f"   Final SL: {final_sl} points | Final TP: {final_tp} points")
-    print("=" * 50 + "\n")
+    # Extract best open reason/setup from agreeing models for MT5 comment & logging
+    best_reason = ""
+    sorted_agreeing = sorted(
+        agreeing_models,
+        key=lambda m: decisions.get(m, {}).get("confidence", 0.0),
+        reverse=True
+    )
+    for m in sorted_agreeing:
+        dec = decisions.get(m, {})
+        candidate = (dec.get("setup") or "").strip()
+        if not candidate:
+            candidate = (dec.get("reasoning") or dec.get("edge") or "").strip()
+        if candidate:
+            candidate = " ".join(candidate.replace("\n", " ").replace("\r", " ").split())
+            best_reason = candidate
+            break
+
+    badge = UI.badge_signal(consensus_signal)
+    print(f"| {UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(Skor {best_score:.2f} >= {threshold:.2f}){UI.RST}")
+    print(f"|   {UI.BOLD}Model Sepakat :{UI.RST} {', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)")
+    if best_reason:
+        print(f"|   {UI.CYAN}Setup / Reason:{UI.RST} {best_reason}")
+    print(f"|   {UI.BOLD}Final SL / TP :{UI.RST} {UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}")
+    print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}\n")
 
     return {
         "signal": consensus_signal,
@@ -356,7 +366,8 @@ def calculate_consensus(decisions):
         "sl_points": final_sl,
         "tp_points": final_tp,
         "agreeing_count": len(agreeing_models),
-        "agreeing_models": list(agreeing_models),  # nama model yang sepakat (buat comment order)
+        "agreeing_models": list(agreeing_models),  # nama model yang sepakat
+        "reason": best_reason,                     # reason/setup untuk MT5 comment
         "tickets_to_close": tickets_to_close,
         "details": f"Consensus by: {agreeing_models}"
     }

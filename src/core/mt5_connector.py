@@ -813,7 +813,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             "tp": round(live_tp, symbol_info.digits),
             "deviation": deviation,
             "magic": config.MAGIC_NUMBER,
-            "comment": comment or "Multi-LLM Bot",
+            "comment": (str(comment)[:31].strip() if comment else "Multi-LLM Bot"),
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
