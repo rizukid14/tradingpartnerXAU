@@ -129,7 +129,23 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     if pos.volume <= symbol_info.volume_min:
         return
 
-    tp1_points = config.PARTIAL_CLOSE_TP1_POINTS_BTC if config.is_crypto(symbol) else config.PARTIAL_CLOSE_TP1_POINTS_XAU
+    # Calculate actual TP distance if set (dynamic LLM/ATR target)
+    tp_points = 0
+    if pos.tp:
+        point = symbol_info.point
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            tp_points = (pos.tp - pos.price_open) / point
+        else:
+            tp_points = (pos.price_open - pos.tp) / point
+
+    # TP-Adaptive Partial Close (60% of actual TP target if exists, otherwise fallback)
+    if tp_points > 0:
+        tp1_points = int(tp_points * 0.60)
+        min_tp1 = 40 if config.is_fx(symbol) else 120
+        tp1_points = max(min_tp1, tp1_points)
+    else:
+        tp1_points = config.partial_close_tp1_for(symbol)
+
     if profit_points < tp1_points:
         return
 
@@ -209,8 +225,23 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if pos.ticket in _break_even_tickets:
         return  # Already at break-even
 
-    be_trigger = config.BREAK_EVEN_TRIGGER_POINTS_BTC if config.is_crypto(symbol) else config.BREAK_EVEN_TRIGGER_POINTS_XAU
-    be_padding = config.BREAK_EVEN_PADDING_POINTS_BTC if config.is_crypto(symbol) else config.BREAK_EVEN_PADDING_POINTS_XAU
+    # Calculate actual TP distance if set (dynamic LLM/ATR target)
+    tp_points = 0
+    if pos.tp:
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            tp_points = (pos.tp - pos.price_open) / point
+        else:
+            tp_points = (pos.price_open - pos.tp) / point
+
+    # TP-Adaptive Break-Even (50% of actual TP target if exists, otherwise fallback)
+    if tp_points > 0:
+        be_trigger = int(tp_points * 0.50)
+        min_trigger = 30 if config.is_fx(symbol) else 100
+        be_trigger = max(min_trigger, be_trigger)
+    else:
+        be_trigger = config.break_even_trigger_for(symbol)
+
+    be_padding = config.break_even_padding_for(symbol)
     if profit_points < be_trigger:
         return
 
@@ -287,18 +318,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    if config.is_crypto(symbol):
-        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0)
-        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
-        fallback_act = config.TRAILING_ACTIVATION_POINTS_BTC
-        fallback_dist = config.TRAILING_DISTANCE_POINTS_BTC
-        act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
-    else:
-        act_mult = getattr(config, "TRAILING_ACTIVATION_ATR_MULT_XAU", 1.2)
-        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.6)
-        fallback_act = config.TRAILING_ACTIVATION_POINTS_XAU
-        fallback_dist = config.TRAILING_DISTANCE_POINTS_XAU
-        act_cap = getattr(config, "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
+    act_mult, dist_mult, fallback_act, fallback_dist, act_cap = config.trailing_activation_params_for(symbol)
 
     if atr_points > 0:
         activation = min(int(atr_points * act_mult), act_cap)
@@ -309,11 +329,12 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     # TP-Adaptive Activation (% Jarak Target):
     # Jika posisi memiliki target TP yang terdefinisi (non-crypto), aktivasi menyala saat profit >= 60% TP.
-    # Batas minimum 150 pts (agar tidak aktif saat baru lari dikit) dan maksimum dibatasi 'activation' ATR.
+    # Batas minimum (50 pts untuk FX, 150 pts untuk XAU) dan maksimum dibatasi 'activation' ATR.
     if tp_points > 0 and not config.is_crypto(symbol):
         tp_adaptive_act = int(tp_points * 0.60)
         if tp_adaptive_act > 0:
-            activation = max(150, min(activation, tp_adaptive_act))
+            min_floor = 50 if config.is_fx(symbol) else 150
+            activation = max(min_floor, min(activation, tp_adaptive_act))
 
     # Track the extreme price seen since entry. The SL trails behind this
     # extreme, never behind the current price, so a pullback cannot drag the

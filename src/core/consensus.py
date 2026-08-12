@@ -61,11 +61,15 @@ def _apply_sltp_rules(sl_points, tp_points):
 
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
     if mode == "LLM":
-        # Bebas sesuai konsensus, cuma dibatasi floor 2x spread (biar broker nggak nolak)
-        min_sl = spread_pts * 2
+        # Enforce a safety floor (at least 2x spread or 50% of the default SL)
+        # to prevent rogue/hallucinated stops that result in bloated lots.
+        d_sl = config.default_sl_points_for(config.SYMBOL)
+        min_sl = max(spread_pts * 2, int(d_sl * 0.5))
         if sl_points < min_sl:
+            print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
             sl_points = min_sl
-        # TP minimal harus default, dan dipaksa minimal sama dengan SL (TP >= 1.0x SL) untuk mencegah R:R negatif
+        
+        # TP minimal dipaksa minimal sama dengan SL (TP >= 1.0x SL) untuk mencegah R:R negatif
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
         if tp_points < sl_points:
@@ -310,13 +314,23 @@ def calculate_consensus(decisions):
             "details": f"Consensus failed (BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f})"
         }
 
-    # Calculate average SL, TP and Confidence of agreeing models
+    # Calculate average SL, TP, Confidence and absolute prices of agreeing models
+    inv_list = []
+    tgt_list = []
     sl_list = []
     tp_list = []
     conf_list = []
     for name in agreeing_models:
         dec = decisions[name]
         conf_list.append(dec.get("confidence", 0.5))
+        
+        inv_val = dec.get("invalidation_price")
+        if isinstance(inv_val, (int, float)) and inv_val > 0:
+            inv_list.append(inv_val)
+        tgt_val = dec.get("target_price")
+        if isinstance(tgt_val, (int, float)) and tgt_val > 0:
+            tgt_list.append(tgt_val)
+            
         sl_val = dec.get("sl_points")
         if isinstance(sl_val, (int, float)) and sl_val > 0:
             sl_list.append(sl_val)
@@ -324,16 +338,57 @@ def calculate_consensus(decisions):
         if isinstance(tp_val, (int, float)) and tp_val > 0:
             tp_list.append(tp_val)
 
-    # Filter outlier SL/TP: buang nilai yang "beda sendiri" sebelum di-average.
-    sl_list = _drop_standalone_outlier(sl_list, "SL")
-    tp_list = _drop_standalone_outlier(tp_list, "TP")
+    # Filter outliers: buang nilai yang "beda sendiri" sebelum di-average.
+    inv_list = _drop_standalone_outlier(inv_list, "Invalidation Price")
+    tgt_list = _drop_standalone_outlier(tgt_list, "Target Price")
+    sl_list = _drop_standalone_outlier(sl_list, "SL Points")
+    tp_list = _drop_standalone_outlier(tp_list, "TP Points")
 
-    avg_confidence = float(sum(conf_list) / len(conf_list))
-    final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
-    final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
+    avg_confidence = float(sum(conf_list) / len(conf_list)) if conf_list else 0.0
+    final_inv = sum(inv_list) / len(inv_list) if inv_list else None
+    final_tgt = sum(tgt_list) / len(tgt_list) if tgt_list else None
 
-    # Apply SL/TP rules (mode-aware):
+    # Resolve points from absolute price levels if available, using the current tick
+    resolved_sl_from_price = None
+    resolved_tp_from_price = None
+
+    try:
+        from config import mt5
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        si = mt5.symbol_info(config.SYMBOL)
+        point = si.point if si else 0.00001
+    except Exception:
+        tick, si, point = None, None, 0.00001
+
+    if tick and si and point:
+        entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
+        if entry_price > 0:
+            if final_inv:
+                resolved_sl_from_price = int(round(abs(entry_price - final_inv) / point))
+            if final_tgt:
+                resolved_tp_from_price = int(round(abs(final_tgt - entry_price) / point))
+
+    # Determine final points (prefer resolved prices, fallback to point list/defaults)
+    final_sl = resolved_sl_from_price if resolved_sl_from_price is not None else (
+        int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
+    )
+    final_tp = resolved_tp_from_price if resolved_tp_from_price is not None else (
+        int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
+    )
+
+    # Apply SL/TP rules (mode-aware ATR/spread gates)
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+
+    # Sync absolute price levels with final clamped points to guarantee consistency
+    if tick and si and point:
+        entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
+        if entry_price > 0:
+            if consensus_signal == "BUY":
+                final_inv = entry_price - (final_sl * point)
+                final_tgt = entry_price + (final_tp * point)
+            else:
+                final_inv = entry_price + (final_sl * point)
+                final_tgt = entry_price - (final_tp * point)
 
     if not sltp_ok:
         print(f"| {UI.RED}[-] HASIL: TRADE DIBATALKAN OLEH GATE ATR{UI.RST}")
@@ -344,6 +399,8 @@ def calculate_consensus(decisions):
             "confidence": 0.0,
             "sl_points": final_sl,
             "tp_points": final_tp,
+            "invalidation_price": final_inv,
+            "target_price": final_tgt,
             "agreeing_count": len(agreeing_models),
             "agreeing_models": list(agreeing_models),
             "tickets_to_close": tickets_to_close,
@@ -377,7 +434,8 @@ def calculate_consensus(decisions):
     print(f"|   {UI.BOLD}Model Sepakat :{UI.RST} {', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)")
     if best_reason:
         print(f"|   {UI.CYAN}Setup / Reason:{UI.RST} {best_reason}")
-    print(f"|   {UI.BOLD}Final SL / TP :{UI.RST} {UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}")
+    price_info = f" | Price SL {final_inv:.2f} / TP {final_tgt:.2f}" if final_inv else ""
+    print(f"|   {UI.BOLD}Final SL / TP :{UI.RST} {UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}")
     print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}\n")
 
     return {
@@ -385,6 +443,8 @@ def calculate_consensus(decisions):
         "confidence": avg_confidence,
         "sl_points": final_sl,
         "tp_points": final_tp,
+        "invalidation_price": final_inv,
+        "target_price": final_tgt,
         "agreeing_count": len(agreeing_models),
         "agreeing_models": list(agreeing_models),  # nama model yang sepakat
         "reason": best_reason,                     # reason/setup untuk MT5 comment

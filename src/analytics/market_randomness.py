@@ -123,7 +123,7 @@ def analyze_market_randomness(df, symbol=None):
     prices = df['close'].values
     hurst = calculate_hurst_exponent(prices)
 
-    # Micro-structure Fat-Tail check (M30 for BTC M30 swing, M5 for XAU M5 scalp)
+    # Micro-structure Fat-Tail check (M30 for BTC M30, M15 for XAU M15, H1 for FX H1)
     fat_tail_prices = prices
     micro_label = "main"
     if symbol:
@@ -131,15 +131,15 @@ def analyze_market_randomness(df, symbol=None):
             import config
             from src.core import mt5_connector as connector
             if sys_mt5 := getattr(connector, "mt5", None):
-                is_cr = config.is_crypto(symbol)
-                # BTC M30 swing -> M30 (24 candles = 12 jam)
-                # XAU M5 scalp -> M5 (48 candles = 4 jam)
-                micro_tf = sys_mt5.TIMEFRAME_M30 if is_cr else sys_mt5.TIMEFRAME_M5
-                num_micro_candles = 24 if is_cr else 48  
+                tf_val = config.get_timeframe(symbol)
+                tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
+                tf_name = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
+                micro_tf = tf_val
+                num_micro_candles = 48
                 micro_df = connector.get_market_data(symbol, micro_tf, num_candles=num_micro_candles)
                 if micro_df is not None and len(micro_df) >= 15:
                     fat_tail_prices = micro_df['close'].values
-                    micro_label = "M30 12h" if is_cr else "M5 4h"
+                    micro_label = f"{tf_name} 48-Bar"
         except Exception:
             pass
 

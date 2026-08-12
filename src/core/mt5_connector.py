@@ -748,16 +748,19 @@ def _send_with_retry(build_request, symbol, label):
 
     return result
 
-def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, comment=None):
+def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, comment=None, sl_price=None, tp_price=None):
     """
     Sends a buy/sell trade order to MT5.
     action: "BUY" or "SELL"
     sl_points / tp_points: distance in points for Stop Loss and Take Profit
     comment: label transaksi (default "Multi-LLM Bot"; caller bisa kirim
              per-jenis-LLM, misal "GPT+DeepSeek" / "GPT+Gemini+DeepSeek")
+    sl_price / tp_price: absolute price levels for Stop Loss and Take Profit (preferred over points)
     """
     if config.DRY_RUN:
-        print(f"[DRY RUN] Simulasi {action} order untuk {symbol} sebanyak {lot} lot (SL: {sl_points} pts, TP: {tp_points} pts).")
+        sl_info = f"{sl_price:.2f}" if sl_price else (f"{sl_points} pts" if sl_points else "none")
+        tp_info = f"{tp_price:.2f}" if tp_price else (f"{tp_points} pts" if tp_points else "none")
+        print(f"[DRY RUN] Simulasi {action} order untuk {symbol} sebanyak {lot} lot (SL: {sl_info}, TP: {tp_info}).")
         return {"status": "SUCCESS", "comment": "Dry Run Mode Active", "ticket": 0}
 
     symbol = get_valid_trade_symbol(symbol)
@@ -774,13 +777,13 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     if action == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
         price = tick.ask
-        sl = price - (sl_points * point) if sl_points else 0.0
-        tp = price + (tp_points * point) if tp_points else 0.0
+        sl = sl_price if sl_price else (price - (sl_points * point) if sl_points else 0.0)
+        tp = tp_price if tp_price else (price + (tp_points * point) if tp_points else 0.0)
     elif action == "SELL":
         order_type = mt5.ORDER_TYPE_SELL
         price = tick.bid
-        sl = price + (sl_points * point) if sl_points else 0.0
-        tp = price - (tp_points * point) if tp_points else 0.0
+        sl = sl_price if sl_price else (price + (sl_points * point) if sl_points else 0.0)
+        tp = tp_price if tp_price else (price - (tp_points * point) if tp_points else 0.0)
     else:
         return {"status": "ERROR", "comment": "Invalid action type"}
 
@@ -798,11 +801,11 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
         else:
             live_price = price
         if action == "BUY":
-            live_sl = live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0)
-            live_tp = live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0)
+            live_sl = sl_price if sl_price else (live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0))
+            live_tp = tp_price if tp_price else (live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0))
         else:
-            live_sl = live_price + (sl_points * point) if sl_points else (live_price + (default_sl * point) if default_sl else 0.0)
-            live_tp = live_price - (tp_points * point) if tp_points else (live_price - (default_tp * point) if default_tp else 0.0)
+            live_sl = sl_price if sl_price else (live_price + (sl_points * point) if sl_points else (live_price + (default_sl * point) if default_sl else 0.0))
+            live_tp = tp_price if tp_price else (live_price - (tp_points * point) if tp_points else (live_price - (default_tp * point) if default_tp else 0.0))
         return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,

@@ -152,7 +152,7 @@ FX_PAIR_SYMBOLS = [
 ]
 MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 7)  # max symbols in the rotation pool
 
-TIMEFRAME_STR = os.getenv("TIMEFRAME", "M5").upper()
+TIMEFRAME_STR = os.getenv("TIMEFRAME", "M15").upper()
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,
     "M5": mt5.TIMEFRAME_M5,
@@ -162,7 +162,7 @@ TIMEFRAME_MAP = {
     "H4": mt5.TIMEFRAME_H4,
     "D1": mt5.TIMEFRAME_D1,
 }
-TIMEFRAME = TIMEFRAME_MAP.get(TIMEFRAME_STR, mt5.TIMEFRAME_M5)
+TIMEFRAME = TIMEFRAME_MAP.get(TIMEFRAME_STR, mt5.TIMEFRAME_M15)
 H1_TIMEFRAME = mt5.TIMEFRAME_H1
 
 STARTING_BALANCE = _getenv_float("STARTING_BALANCE", 1000.0)
@@ -183,8 +183,8 @@ DEFAULT_TP_POINTS = _getenv_int("DEFAULT_TP_POINTS", 600)
 SL_ATR_MULTIPLIER = _getenv_float("SL_ATR_MULTIPLIER", 1.5)
 TP_ATR_MULTIPLIER = _getenv_float("TP_ATR_MULTIPLIER", 3.0)
 
-DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", 400)
-DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 800)
+DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", 500)
+DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 1000)
 DEFAULT_SL_POINTS_BTC = _getenv_int("DEFAULT_SL_POINTS_BTC", 50000)
 DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # Default SL/TP FX (12 Agustus, FASE 1): FX trading H1 swing - default flat 100/200 pts
@@ -237,14 +237,16 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 # Mode values: "single" | "dual" | "triple"
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
-# Jadwal WIB (11 Agustus, hemat biaya):
-#   - triple (3 model) HANYA 19:30-21:30 WIB (London-NY overlap, volatilitas tertinggi)
-#   - sisanya single/dual; blok single malam diperpanjang 21:30 -> 08:59 (Asia Dawn
-#     & Tokyo pagi cukup 1 model - hemat token, dulu triple 19:00-23:00 kemahalan)
+# Jadwal WIB (12 Agustus):
+#   - single (OpenAI): 00:01–09:59 (Asia pagi & awal London)
+#   - dual (OpenAI + Gemini): 10:00–15:00 (Asia siang & pre-London)
+#   - single (OpenAI): 15:01–19:29 (London session)
+#   - triple (OpenAI + Gemini + DeepSeek): 19:30–21:30 (London-NY overlap, volatilitas tertinggi)
+#   - single (OpenAI): 21:31–23:59 (Late NY & Tokyo)
 AI_MODE_SCHEDULE = [
-    (0, 1, 8, 59, "single"),
-    (9, 0, 13, 0, "dual"),
-    (13, 1, 19, 29, "single"),
+    (0, 1, 9, 59, "single"),
+    (10, 0, 15, 0, "dual"),
+    (15, 1, 19, 29, "single"),
     (19, 30, 21, 30, "triple"),
     (21, 31, 23, 59, "single"),
 ]
@@ -292,7 +294,7 @@ BREAK_EVEN_TRIGGER_POINTS_BTC = _getenv_int("BREAK_EVEN_TRIGGER_POINTS_BTC", 335
 BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 1000)
 
 # --- PARTIAL CLOSE ---
-PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
+PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", False)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
@@ -407,8 +409,8 @@ refresh_mt5_credentials()
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = _getenv_bool("MTF_ANALYSIS_ENABLED", True)
 HIGHER_TIMEFRAMES = {
-    "M15": mt5.TIMEFRAME_M15,
-    "M30": mt5.TIMEFRAME_M30
+    "M30": mt5.TIMEFRAME_M30,
+    "H1": mt5.TIMEFRAME_H1
 }
 HIGHER_TIMEFRAMES_CRYPTO = {
     "H1": mt5.TIMEFRAME_H1,
@@ -508,11 +510,11 @@ def lot_size_for(symbol):
 def get_timeframe(symbol):
     """Returns the trading timeframe for a symbol.
     BTC/crypto trades on M30 (30-minute intraday) to avoid overnight swap charges.
-    FX crosses on H1, XAU keeps M5 scalping.
+    FX crosses on H1, XAU trades on M15 (short-term intraday swing).
     """
     if is_crypto(symbol): return mt5.TIMEFRAME_M30
     if "XAU" not in symbol.upper(): return mt5.TIMEFRAME_H1
-    return TIMEFRAME
+    return mt5.TIMEFRAME_M15
 
 
 def default_sl_points_for(symbol):
@@ -533,7 +535,7 @@ def max_spread_points_for(symbol):
 
 def confidence_threshold_for(symbol):
     """Weighted-confidence consensus threshold per symbol.
-    BTC (M30, moderate entries) needs higher conviction than XAU (M5, frequent).
+    BTC (M30, moderate entries) needs higher conviction than XAU (M15, frequent).
     """
     return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 
@@ -586,13 +588,17 @@ def claude_slot_label():
 
 
 def active_ai_model_names(now=None):
-    """Return the model slots to query for the active AI mode."""
+    """Return the model slots to query for the active AI mode.
+    - single: OpenAI
+    - dual: OpenAI + Gemini
+    - triple: OpenAI + Gemini + DeepSeek (Claude slot)
+    """
     mode = get_ai_mode(now)
     slot3 = claude_slot_label()
     if mode == "single":
         return ["OpenAI"]
     if mode == "dual":
-        return ["OpenAI", slot3]
+        return ["OpenAI", "Gemini"]
     return ["OpenAI", "Gemini", slot3]
 
 
@@ -600,8 +606,67 @@ def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
     FX (H1): 1.0%.
-    XAU (M5 scalping, up to 6 concurrent): 0.5% - aggregate ~3% max.
+    XAU (M15 swing, up to 6 concurrent): 0.5% - aggregate ~3% max.
     """
     if is_crypto(symbol): return RISK_PERCENT_BTC
     if "XAU" not in symbol.upper(): return 1.0
     return RISK_PERCENT_XAU
+
+
+def is_fx(symbol):
+    """True if the given symbol is a Forex currency pair."""
+    upper = symbol.upper()
+    return not is_crypto(symbol) and "XAU" not in upper
+
+
+def break_even_trigger_for(symbol):
+    """Returns break-even trigger point threshold per symbol."""
+    if is_crypto(symbol):
+        return BREAK_EVEN_TRIGGER_POINTS_BTC
+    if is_fx(symbol):
+        # FX H1: trigger BEP pada 100 pts (10 pips) - 50% dari default TP 200 pts
+        return 100
+    return BREAK_EVEN_TRIGGER_POINTS_XAU  # XAU (M15): 300 pts
+
+
+def break_even_padding_for(symbol):
+    """Returns break-even padding points per symbol."""
+    if is_crypto(symbol):
+        return BREAK_EVEN_PADDING_POINTS_BTC
+    if is_fx(symbol):
+        return 10  # 1 pip padding
+    return BREAK_EVEN_PADDING_POINTS_XAU
+
+
+def partial_close_tp1_for(symbol):
+    """Returns TP1 partial close threshold points per symbol."""
+    if is_crypto(symbol):
+        return PARTIAL_CLOSE_TP1_POINTS_BTC
+    if is_fx(symbol):
+        # FX H1: partial close pada 120 pts (12 pips)
+        return 120
+    return PARTIAL_CLOSE_TP1_POINTS_XAU  # XAU (M15): 400 pts
+
+
+def trailing_activation_params_for(symbol):
+    """Returns (act_mult, dist_mult, fallback_act, fallback_dist, act_cap) per symbol."""
+    if is_crypto(symbol):
+        return (
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_POINTS_BTC", 17000),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_BTC", 12500),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
+        )
+    elif is_fx(symbol):
+        # FX H1: 1.0x ATR activation, 0.5x ATR distance, fallback 100/50 pts, cap 250 pts
+        return (1.0, 0.5, 100, 50, 250)
+    else:
+        # XAU (M15)
+        return (
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_ATR_MULT_XAU", 1.2),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_ATR_MULT_XAU", 0.6),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_POINTS_XAU", 200),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_XAU", 150),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
+        )

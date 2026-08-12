@@ -524,7 +524,7 @@ def _prompt_startup_scan_mode():
         return
     print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
     print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 7 Simbol Sekarang (Immediate Full Market Scan)            |")
-    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M5 / H1 / M30 - Default)       |")
+    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M15 / H1 / M30 - Default)      |")
     print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
     sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
     sys.stdout.flush()
@@ -628,7 +628,7 @@ def run_trading_cycle():
             # Log indikator candle baru untuk pair selain pair utama
             if last_time is not None and sym != valid_pool[0]:
                 candle_wib = connector.server_to_wib(closed_time)
-                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else "M5")
+                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else ("M15" if tf == mt5.TIMEFRAME_M15 else "M5"))
                 print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Waktu: {candle_wib.strftime('%H:%M:%S')} WIB")
                 
             try:
@@ -652,7 +652,7 @@ def _run_cycle_for_current_symbol():
         print(f" {UI.YELLOW}[RISK GATE]{UI.RST} {reason}")
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M5 XAU / H1 FX / M30 BTC)
+    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
     df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=51)
     if df is None or len(df) == 0:
         print(f" {UI.RED}[DATA ERROR] Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.{UI.RST}")
@@ -670,7 +670,7 @@ def _run_cycle_for_current_symbol():
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
     print(f"\n{UI.CYAN}[SCAN ASSET: {UI.BOLD}{config.SYMBOL}{UI.RST}{UI.CYAN} ({tf_name})]{UI.RST} Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst M30/M5, Kurtosis M30/M1)
+    # 2.1 Calculate Market Randomness & Micro Fat Tails
     if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
         try:
             from src.analytics import market_randomness
@@ -688,7 +688,7 @@ def _run_cycle_for_current_symbol():
     if getattr(config, "MONTE_CARLO_ENABLED", False):
         try:
             from src.analytics import quant_probability
-            tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+            tf_mins = 30 if config.is_crypto(config.SYMBOL) else (60 if "XAU" not in config.SYMBOL.upper() else 15)
             q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
             print(f"[QUANT PROB] Monte Carlo (1000 paths): "
                   f" UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
@@ -792,16 +792,50 @@ def _run_cycle_for_current_symbol():
     if trade_signal in ["BUY", "SELL"]:
         sl_points = result["sl_points"]
         tp_points = result["tp_points"]
+        invalidation_price = result.get("invalidation_price")
+        target_price = result.get("target_price")
         agreeing_count = result.get("agreeing_count", 0)
-        
+
+        # Obtain latest execution tick to size lot and get absolute SL/TP prices dynamically
+        tick_live = connector.get_current_tick(config.SYMBOL)
+        sl_price = invalidation_price
+        tp_price = target_price
+        tp_price_2 = None
+
+        if tick_live and invalidation_price:
+            point = tick_live["point"]
+            execution_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
+            if execution_price > 0 and point > 0:
+                # Calculate SL points based on actual execution price
+                sl_points = int(round(abs(execution_price - invalidation_price) / point))
+                sl_points = max(tick_live["spread"] * 2, sl_points)
+                
+                # Re-sync sl_price with execution price if floored by spread gate
+                if trade_signal == "BUY":
+                    sl_price = execution_price - (sl_points * point)
+                else:
+                    sl_price = execution_price + (sl_points * point)
+
+                if target_price:
+                    # Calculate TP points based on actual execution price
+                    tp_points = int(round(abs(target_price - execution_price) / point))
+                    tp_points = max(tick_live["spread"] * 2, tp_points)
+                    
+                    # Position 2 gets 1.2x TP for extended trend capture
+                    tp_points_2 = int(tp_points * 1.2)
+                    if trade_signal == "BUY":
+                        tp_price = execution_price + (tp_points * point)
+                        tp_price_2 = execution_price + (tp_points_2 * point)
+                    else:
+                        tp_price = execution_price - (tp_points * point)
+                        tp_price_2 = execution_price - (tp_points_2 * point)
+
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
         remaining_slots = max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
-        # Get effective lot size from risk-based sizing (uses floored SL).
-        # split_count: kalau 3/3 unanimous buka 2 posisi, lot per posisi dibagi
-        # 2 supaya TOTAL risk per sinyal tetap risk_pct (bukan 2x lipat).
+        # Get effective lot size from risk-based sizing (uses execution SL points)
         effective_lot = risk.get_effective_lot_size(sl_points, split_count=num_positions)
 
         if num_positions > 1:
@@ -809,11 +843,11 @@ def _run_cycle_for_current_symbol():
         elif num_positions == 1 and desired_positions > 1:
             print(f"[UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka 1 posisi (Dibatasi sisa slot max: {remaining_slots})...")
 
-
         order_executed = False  # flag: ada order yang sukses cycle ini (untuk decision memory)
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend
             pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
+            pos_tp_price = tp_price_2 if (i == 1 and tp_price_2) else tp_price
 
             # Comment transaksi: prioritaskan reason/setup analisa AI (maks 31 karakter MT5)
             open_reason = (result.get("reason") or "").strip()
@@ -839,7 +873,9 @@ def _run_cycle_for_current_symbol():
                 lot=effective_lot,
                 sl_points=sl_points,
                 tp_points=pos_tp,
-                comment=order_comment
+                comment=order_comment,
+                sl_price=sl_price,
+                tp_price=pos_tp_price
             )
             if order_res["status"] == "SUCCESS":
                 order_executed = True
@@ -912,9 +948,9 @@ def main():
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
         print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M5) | FX Cross (H1) | BTC (M30) - Smart Rotation")
+        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M15) | FX Cross (H1) | BTC (M30) - Smart Rotation")
     else:
-        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M5 Scalping)")
+        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
 
     print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
     print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {config.TP_SL_RULES} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD}")
