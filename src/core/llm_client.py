@@ -564,22 +564,38 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         time_str = row['time'].strftime('%H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
         candles_str += f"- [{time_str}] O:{row['open']}, H:{row['high']}, L:{row['low']}, C:{row['close']}\n"
 
-    # Micro price action: last 5 M30 candles (BTC M30) or last 5 M1 candles (XAU M5)
+    # Micro price action: dynamic timeframe & count based on main timeframe (XAU M1 x15, BTC M5 x12, FX M5 x24)
     micro_candles_str = ""
     try:
         from src.core import mt5_connector
         is_crypto_asset = config.is_crypto(symbol)
-        micro_tf = mt5_connector.mt5.TIMEFRAME_M5 if is_crypto_asset else mt5_connector.mt5.TIMEFRAME_M1
-        micro_tf_name = "M5" if is_crypto_asset else "M1"
-        # Fetch 30 candles so ATR(14) indicator in get_market_data doesn't raise IndexError
-        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=30)
+        
+        if is_crypto_asset:
+            # BTC main is M30 -> micro is M5, 12 candles (60 minutes / 1 hour total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+            micro_tf_name = "M5"
+            num_micro_send = 12
+        elif "XAU" in symbol.upper():
+            # XAU main is M5 -> micro is M1, 15 candles (15 minutes total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M1
+            micro_tf_name = "M1"
+            num_micro_send = 15
+        else:
+            # FX main is H1 -> micro is M5, 24 candles (120 minutes / 2 hours total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+            micro_tf_name = "M5"
+            num_micro_send = 24
+
+        # Fetch enough candles so ta.volatility.AverageTrueRange (window 14) doesn't raise IndexError
+        num_fetch = max(35, num_micro_send + 15)
+        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
         if micro_df is not None and len(micro_df) > 0:
-            micro_tail = micro_df.tail(10)
+            micro_tail = micro_df.tail(num_micro_send)
             micro_lines = []
             for _, r in micro_tail.iterrows():
                 t_s = r['time'].strftime('%H:%M') if hasattr(r['time'], 'strftime') else str(r['time'])
                 micro_lines.append(f"- [{t_s}] O:{r['open']}, H:{r['high']}, L:{r['low']}, C:{r['close']}, Vol:{r['tick_volume']}")
-            micro_candles_str = f"\n### LAST 10 {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
+            micro_candles_str = f"\n### LAST {num_micro_send} {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
     except Exception as e:
         pass
 
