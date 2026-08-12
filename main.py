@@ -900,7 +900,7 @@ def main():
 
     print(f"Mode: {' DRY RUN (Hanya Sinyal)' if config.DRY_RUN else ' LIVE EXECUTION (Duit Asli/Demo)'}")
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
-    tf_name = _tf_map.get(config.get_timeframe(), "?")
+    tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
     print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
