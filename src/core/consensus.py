@@ -284,6 +284,16 @@ def calculate_consensus(decisions):
         print(f"| {UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")
         print(f"|   {UI.DIM}Skor Arah: BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f} (Threshold: {threshold:.2f}){UI.RST}")
         print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}\n")
+        
+        # Klasifikasi tipe HOLD untuk smart close-call alert
+        any_trade_intent = any(dec.get("signal") in ("BUY", "SELL") for dec in decisions.values())
+        if not any_trade_intent:
+            hold_type = "pure_hold"
+        elif ai_mode == "single":
+            hold_type = "low_confidence"
+        else:
+            hold_type = "split_vote"
+
         return {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -292,6 +302,11 @@ def calculate_consensus(decisions):
             "agreeing_count": 0,
             "agreeing_models": [],
             "tickets_to_close": tickets_to_close,
+            "hold_type": hold_type,
+            "threshold": threshold,
+            "direction_scores": direction_scores,
+            "decisions": decisions,
+            "ai_mode": ai_mode,
             "details": f"Consensus failed (BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f})"
         }
 
@@ -332,6 +347,11 @@ def calculate_consensus(decisions):
             "agreeing_count": len(agreeing_models),
             "agreeing_models": list(agreeing_models),
             "tickets_to_close": tickets_to_close,
+            "hold_type": "atr_gate",
+            "candidate_signal": consensus_signal,
+            "sltp_reason": sltp_reason,
+            "decisions": decisions,
+            "ai_mode": ai_mode,
             "details": f"SL/TP gate ATR gagal: {sltp_reason}"
         }
 

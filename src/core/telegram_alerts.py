@@ -217,3 +217,81 @@ def alert_daily_summary(pnl, trades_count, risk_status=None):
             f"- Loss Berturut: `{risk_status.get('consecutive_losses', 0)}`"
         )
     send_message(text)
+
+
+def alert_consensus_hold(result, symbol=None):
+    """
+    Send smart 'Close Call' HOLD alert to Telegram.
+    - Suppresses 'pure_hold' (all models agree on HOLD / sideways) to prevent spam.
+    - Sends alerts for 'atr_gate' (trade rejected by ATR volatility gate),
+      'low_confidence' (single AI proposed entry but confidence < threshold),
+      or 'split_vote' (multi-AI proposed entry but couldn't reach consensus).
+    """
+    if not config.TELEGRAM_ENABLED:
+        return False
+
+    if not getattr(config, "TELEGRAM_NOTIFY_HOLD", True):
+        return False
+
+    hold_type = result.get("hold_type")
+    if not hold_type or hold_type == "pure_hold":
+        return False
+
+    sym = symbol or config.SYMBOL
+    decisions = result.get("decisions", {})
+
+    if hold_type == "atr_gate":
+        cand_sig = result.get("candidate_signal", "ENTRY")
+        models_str = ", ".join(result.get("agreeing_models", [])) or "AI"
+        reason = result.get("sltp_reason", result.get("details", ""))
+        text = (
+            f"⚠️ *Trade Dibatalkan (Gate ATR)*\n"
+            f"- Symbol: `{sym}`\n"
+            f"- Sinyal: `{cand_sig}` (Sepakat: `{models_str}`)\n"
+            f"- Alasan: {reason}\n"
+            f"- Catatan: Menjaga R:R 2:1 & menghindari noise pasar."
+        )
+        return send_message(text)
+
+    elif hold_type == "low_confidence":
+        for m_name, dec in decisions.items():
+            sig = dec.get("signal")
+            if sig in ("BUY", "SELL"):
+                conf = (dec.get("confidence") or 0.0) * 100
+                thresh = (result.get("threshold") or 0.6) * 100
+                setup = (dec.get("setup") or dec.get("reasoning") or "Sinyal nanggung").strip()
+                text = (
+                    f"⏸️ *Konsensus HOLD (Low Confidence)*\n"
+                    f"- Symbol: `{sym}`\n"
+                    f"- Model: `{m_name}` usul *{sig}*\n"
+                    f"- Keyakinan: `{conf:.1f}%` (Batas minimal `{thresh:.1f}%`)\n"
+                    f"- Setup: _{setup}_\n"
+                    f"- Status: Menunggu konfirmasi setup yang lebih solid."
+                )
+                return send_message(text)
+        return False
+
+    elif hold_type == "split_vote":
+        lines = []
+        for m_name, dec in decisions.items():
+            sig = dec.get("signal") or "HOLD"
+            conf = (dec.get("confidence") or 0.0) * 100
+            lines.append(f"  • {m_name}: *{sig}* ({conf:.0f}%)")
+        votes_str = "\n".join(lines)
+
+        scores = result.get("direction_scores", {})
+        buy_score = scores.get("BUY", 0.0)
+        sell_score = scores.get("SELL", 0.0)
+        thresh = result.get("threshold", 1.0)
+
+        text = (
+            f"⏸️ *Konsensus HOLD (Split Decision)*\n"
+            f"- Symbol: `{sym}`\n"
+            f"- Hasil Analisa AI:\n{votes_str}\n"
+            f"- Skor: BUY `{buy_score:.2f}` | SELL `{sell_score:.2f}` (Min `{thresh:.2f}`)\n"
+            f"- Status: Konsensus tidak tercapai, menunggu setup searah."
+        )
+        return send_message(text)
+
+    return False
+

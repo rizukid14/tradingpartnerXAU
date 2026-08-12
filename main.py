@@ -854,6 +854,7 @@ def _run_cycle_for_current_symbol():
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
     else:
         print("Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
+        tg.alert_consensus_hold(result, symbol=config.SYMBOL)
 
     # Record this cycle's final decision for Recent Decision Memory
     # (so the LLM next cycle can see if it has been HOLDing too long).
