@@ -91,7 +91,7 @@ class TradeEvaluator:
                     
                     # Check for legacy format (lessons directly at the root)
                     if "lessons" in data:
-                        print("🔄 [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
+                        print("[MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
                         legacy_lessons = data.get("lessons", [])
                         legacy_summary = data.get("lessons_summary", "")
                         legacy_tickets = list(data.get("evaluated_tickets", []))
@@ -136,7 +136,7 @@ class TradeEvaluator:
                         "evaluated_tickets": set(data[symbol].get("evaluated_tickets", []))
                     }
             except json.JSONDecodeError as e:
-                print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json (JSON corrupt: {e}) — backing up & reset.")
+                print(f"[EVALUATOR WARNING] Gagal memuat memory_lessons.json (JSON corrupt: {e}) - backing up & reset.")
                 try:
                     shutil.copy(MEMORY_FILE, MEMORY_FILE + ".bak")
                     if os.path.exists(MEMORY_FILE):
@@ -210,26 +210,27 @@ You are an expert trading post-mortem analyst evaluating scalping performance on
 
 {lessons_text}
 
-Task: Synthesize both the existing wisdom (if provided above) and all {len(lessons)} new lessons into ONE updated, cohesive master block of trading wisdom (maximum 60-70 words). Preserve coverage of key themes (entries, risk, timing, psychology) — do not let one theme dominate. Output ONLY the summary text — no intro, no bullet numbering.
+Task: Synthesize both the existing wisdom (if provided above) and all {len(lessons)} new lessons into ONE updated, cohesive master block of trading wisdom (maximum 60-70 words). Preserve coverage of key themes (entries, risk, timing, psychology) - do not let one theme dominate. Output ONLY the summary text - no intro, no bullet numbering.
 """
         try:
             summary = llm.query_primary_model(prompt)
             if summary:
                 summary = summary.strip()
-                _safe_print(f"📋 [LESSONS SUMMARY UPDATED FOR {symbol}] {summary}")
+                _safe_print(f" [LESSONS SUMMARY UPDATED FOR {symbol}] {summary}")
                 self._save_memory(symbol, [], summary, evaluated_tickets)
         except Exception as e:
             print(f"[LESSONS SUMMARY ERROR] Gagal meringkas lessons untuk {symbol}: {e}")
 
     def check_and_evaluate_closed_trades(self, deals=None):
+        """Evaluates closed positions that haven't been processed yet.
+
+        OFF by default (config.POST_MORTEM_ENABLED = False): hasil post-mortem
+        (lessons) sudah tidak di-inject ke prompt (MEMORY_CONTEXT_ENABLED=False),
+        jadi manggil LLM di sini cuma buang biaya + nulis lesson toxic/salah simbol.
+        Kode tetap ada - set POST_MORTEM_ENABLED=True kalau mau aktif lagi.
         """
-        Evaluates closed positions that haven't been processed yet.
-        Pass `deals` (list of newly-closed deals from risk.sync_closed_positions)
-        to evaluate immediately on close; otherwise fetches today's closed
-        positions from MT5 deal history (used at candle cycle for stragglers).
-        Re-evaluation after a restart is prevented by the persisted
-        evaluated_tickets set in memory_lessons.json.
-        """
+        if not getattr(config, "POST_MORTEM_ENABLED", False):
+            return
         closed_deals = deals if deals is not None else connector.get_closed_positions_today()
         if not closed_deals:
             return
@@ -267,11 +268,11 @@ Task: Synthesize both the existing wisdom (if provided above) and all {len(lesso
 
             # Generate post-mortem lesson via LLM with rich execution context & auto theme tagging
             pos_type_label = trade_details.get("type", "")
-            _safe_print(f"\n🔍 [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
+            _safe_print(f"\n [POST-MORTEM] Menganalisis hasil trade tiket #{ticket} ({deal_symbol}, {pos_type_label}, P/L: ${profit:.2f})...")
             lesson, theme = self._analyze_trade_with_llm(ticket, profit, deal_symbol, trade_details)
             if lesson:
                 theme = theme or _extract_theme(lesson)
-                _safe_print(f"💡 [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
+                _safe_print(f" [PELAJARAN BARU DITERIMA] [{theme}] {lesson}")
                 mem["lessons"].append({"symbol": deal_symbol, "lesson": lesson, "theme": theme})
                 
                 if len(mem["lessons"]) >= MAX_LESSONS:
@@ -353,9 +354,13 @@ Respond with a valid JSON object ONLY:
         return None, "entry"
 
     def get_lessons_context(self):
-        """Returns formatted lessons markdown block for prompt injection.
-        Uses the condensed SUMMARY when available (token-light), plus the most
-        recent raw lessons until the next summary reset. Per-symbol isolated."""
+        """Returns summarized lessons learned context for LLM prompts.
+
+        OFF by default (MEMORY_CONTEXT_ENABLED=False di llm_client): lessons
+        M5-scalp toxic bikin HOLD terus. Guard ganda di sini biar aman.
+        """
+        if not getattr(config, "POST_MORTEM_ENABLED", False):
+            return ""
         symbol = config.SYMBOL
         mem = self._load_memory(symbol)
         

@@ -63,9 +63,9 @@ The "recent outcomes" note, if present, is win/loss history for your risk awaren
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A concrete invalidation condition for that thesis
-- SL placed beyond the invalidation level, and roughly at 1.25x current ATR (in points) unless the invalidation logic clearly justifies otherwise
+- SL placed beyond the invalidation level, and at least SL_MULTx current ATR (in points; multiplier depends on the AI mode listed in the prompt -- single 1.25x, dual 1.5x, triple 1.75x) unless the invalidation logic clearly justifies otherwise
 - SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker
-- TP that gives at least 2R relative to SL (TP distance >= 2x SL distance; i.e. SL ~1.25x ATR -> TP ~2.5x ATR)
+- TP that gives at least 2R relative to SL (TP distance >= 2x SL distance; i.e. TP = TP_MULTx ATR with TP_MULT = 2x SL_MULT: single 2.5x, dual 3.0x, triple 3.5x)
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
 

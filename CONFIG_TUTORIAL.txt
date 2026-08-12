@@ -31,36 +31,37 @@ TRADING_MODE = xau_pairs      # XAU + 4 pair FX cross (multi-scan)
 
 Di mode xau_pairs, TIAP CANDLE M5 bot scan SEMUA simbol dalam pool sekaligus
 (parallel scan, bukan giliran). Masing-masing simbol 1x LLM call:
-=> 5 simbol = 5x LLM call per candle M5.
+=> 3 simbol = 3x LLM call per candle M5 (hemat biaya — dulu 5x).
 
 POOL SIMBOL (default):
-    [XAUUSD-ECN, EURGBP-ECN, EURJPY-ECN, EURCAD-ECN, GBPJPY-ECN]
-      (1)            (2)         (3)         (4)         (5)
+    [XAUUSD-ECN, EURJPY-ECN, GBPCHF-ECN]
+      (1)            (2)         (3)
 
 DETAIL TIAP PAIR:
 --------------------------------------------------------------------------------
  Simbol base    Live (suffix)   Demo (suffix)   Timeframe   Spread hasil scan
 --------------------------------------------------------------------------------
  XAUUSD-ECN     XAUUSD-ECNc     XAUUSD-ECN      M5          ~10 pts (≈3% ATR)
- EURGBP-ECN     EURGBP-ECNc     EURGBP-ECN      M5          ~0 pts
  EURJPY-ECN     EURJPY-ECNc     EURJPY-ECN      M5          ~0-1 pts
- EURCAD-ECN     EURCAD-ECNc     EURCAD-ECN      M5          ~4-5 pts
- GBPJPY-ECN     GBPJPY-ECNc     GBPJPY-ECN      M5          ~11 pts
+ GBPCHF-ECN     GBPCHF-ECNc     GBPCHF-ECN      M5          ~0 pts
 --------------------------------------------------------------------------------
 Catatan suffix: tulis nama BASE (tanpa c). Bot auto-correct otomatis:
 akun live -> -ECNc, akun demo -> -ECN. Satu config jalan di dua-duanya.
 
-KENAPA 4 PAIR ITU?
+KENAPA 2 PAIR ITU?
 - Semua CROSS NON-USD => korelasi rendah dengan XAUUSD.
 - Pair yang mengandung USD (EURUSD, GBPUSD, dll) DIBUANG karena gerakannya
   didominasi USD => gerak bersama XAU, tidak ada diversifikasi.
-- Spread sehat semua (0-11 pts, < 25% ATR).
+- EURJPY (cross JPY) + GBPCHF (spread 0, tick value ~2x EURJPY) dipilih
+  supaya tidak ada dua pair yang saling berkorelasi (dulu 4 pair, 2 di
+  antaranya sama-sama bergerak karena EUR/JPY). Pool 3 = 3x LLM call/candle.
+- Spread sehat semua (0-1 pts, < 25% ATR).
 
 CARA GANTI DAFTAR PAIR (env, dipisah koma):
-    FX_PAIR_SYMBOLS = EURGBP-ECN,EURJPY-ECN,EURCAD-ECN,GBPJPY-ECN
+    FX_PAIR_SYMBOLS = EURJPY-ECN,GBPCHF-ECN
 
 BATAS JUMLAH SIMBOL:
-    MAX_ROTATION_SYMBOLS = 5     # pool dipotong ke N simbol pertama
+    MAX_ROTATION_SYMBOLS = 3     # pool dipotong ke N simbol pertama
 
 PERILAKU WEEKEND:
     FX market tutup Sabtu-Minggu -> pool otomatis jatuh ke [XAUUSD-ECN]
@@ -69,7 +70,7 @@ PERILAKU WEEKEND:
 RISK AGGREGATE (penting!):
     Max posisi (MAX_OPEN_POSITIONS=6) & daily loss ($50) dihitung LINTAS
     SEMUA simbol (magic filter), bukan per-simbol. 6 posisi bisa tersebar
-    misal 2 XAU + 1 EURGBP + 1 EURJPY + 1 EURCAD + 1 GBPJPY.
+    misal 2 XAU + 2 EURJPY + 2 GBPCHF.
 
 
 --------------------------------------------------------------------------------
@@ -168,9 +169,9 @@ AI_FIXED_MODE = triple              # dipakai kalau policy = fixed
 AI_MODE_SCHEDULE =                  # jadwal WIB (policy = schedule):
     00:01-08:59  single   (OpenAI saja)
     09:00-13:00  dual     (OpenAI + DeepSeek)
-    13:01-18:59  single   (OpenAI saja)
-    19:00-23:00  triple   (OpenAI + Gemini + DeepSeek)
-    23:01-00:00  single   (fallback)
+    13:01-19:29  single   (OpenAI saja)
+    19:30-21:30  triple   (OpenAI + Gemini + DeepSeek)  # London-NY overlap aja
+    21:31-23:59  single   (OpenAI saja)                 # malam Asia diperpanjang
 
 MODEL AI:
     OPENAI_MODEL = gpt-5.4-mini
@@ -230,8 +231,8 @@ Reset memory & PnL ke kondisi baru setelah deposit:
 # --- AKUN & MODE ---
 DRY_RUN=False
 TRADING_MODE=xau_pairs            # xau | xau_pairs
-FX_PAIR_SYMBOLS=EURGBP-ECN,EURJPY-ECN,EURCAD-ECN,GBPJPY-ECN
-MAX_ROTATION_SYMBOLS=5
+FX_PAIR_SYMBOLS=EURJPY-ECN,GBPCHF-ECN
+MAX_ROTATION_SYMBOLS=3
 ENABLE_BTC_ROTATION=False          # False = 24/5 (XAU+FX, weekend istirahat).
                                    # True  = weekend ganti ke BTCUSD.c (24/7).
 

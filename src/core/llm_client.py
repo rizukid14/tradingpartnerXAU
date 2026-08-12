@@ -39,7 +39,7 @@ if config.OPENAI_API_KEY:
         base_url=config.OPENAI_API_BASE
     )
 
-# DeepSeek is OpenAI-compatible — same SDK, different base URL. Used when
+# DeepSeek is OpenAI-compatible - same SDK, different base URL. Used when
 # CLAUDE_MODEL starts with "deepseek/" (cheap default; switch back to Claude
 # by setting CLAUDE_MODEL to "claude-...").
 deepseek_client = None
@@ -68,8 +68,8 @@ if config.GEMINI_API_KEY:
 def asset_desc(symbol):
     """Human-readable asset description for prompts (Gold vs Bitcoin)."""
     if config.is_crypto(symbol):
-        return "Bitcoin (BTCUSD) — crypto, trades 24/7 including weekends"
-    return "Gold (XAUUSD) — Forex/commodity"
+        return "Bitcoin (BTCUSD) - crypto, trades 24/7 including weekends"
+    return "Gold (XAUUSD) - Forex/commodity"
 
 
 def claude_slot_label():
@@ -85,7 +85,7 @@ def query_primary_model(prompt, search_grounding=False):
     Claude. Search grounding (Google Search) is only supported on Gemini,
     so it forces the Gemini branch when enabled.
     """
-    # 1. Try OpenAI (primary — gpt-5.4-mini, free tier)
+    # 1. Try OpenAI (primary - gpt-5.4-mini, free tier)
     if openai_client and config.OPENAI_API_KEY and not search_grounding:
         try:
             response = openai_client.chat.completions.create(
@@ -179,7 +179,7 @@ def analyze_fundamentals(symbol):
     """
     Queries Gemini using Google Search Grounding to summarize the latest
     macroeconomic SENTIMENT affecting the asset (news, outlook, positioning).
-    Event SCHEDULING is handled deterministically by economic_calendar.py —
+    Event SCHEDULING is handled deterministically by economic_calendar.py -
     search grounding is only a qualitative complement, never the schedule source.
     """
     execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
@@ -196,7 +196,7 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
 # ================================================================
 # SYSTEM PROMPT TEMPLATE (docs/prompt_claude.md)
 # "We set guardrails, the LLM sets strategy."
-# Static per-bot constitution — build once per instance, reuse across
+# Static per-bot constitution - build once per instance, reuse across
 # cycles so provider-side prompt/context caching stays effective.
 # ================================================================
 _SYSTEM_PROMPT_TEMPLATE = """### ROLE
@@ -256,6 +256,11 @@ BUY or SELL:
 CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
 
 
+def _fmt_price(x):
+    """Format harga/point ke string desimal bersih (0.01, 0.001, 0.00001)."""
+    return f"{x:.10f}".rstrip("0").rstrip(".")
+
+
 def _build_points_explanation(symbol, point_size):
     """
     Generate a highly explicit explanation of broker points vs pips/price-units
@@ -279,19 +284,37 @@ def _build_points_explanation(symbol, point_size):
             f"If you return 400, it sets a Stop Loss of just 400 points ($4.00 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
         )
     else:
-        # Gold / Forex
-        pt_str = f"{point_size:.2f}" if point_size else "0.01"
+        # Gold / Forex - konversi dihitung dari point_size aktual per symbol
+        # (bukan hardcode asumsi XAU). Semua pair ini 1 pip = 10 points:
+        # XAU (0.01 -> pip 0.10), EURJPY (0.001 -> pip 0.01), GBPCHF (0.00001 -> 0.0001).
+        pt_str = _fmt_price(point_size) if point_size else "0.01"
+        pip_str = _fmt_price(point_size * 10) if point_size else "0.10"
+        # Typical SL range dari default per-symbol (XAU 400/800, EURJPY 50/100,
+        # GBPCHF 40/80) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
+        d_sl = config.default_sl_points_for(symbol)
+        lo_pts = max(10, int(d_sl * 0.5))
+        hi_pts = max(20, int(d_sl * 1.5))
+        is_gold = "XAU" in (symbol or "").upper()
+        if is_gold:
+            typical_note = (
+                f"${round(lo_pts * (point_size or 0.01), 2)} to "
+                f"${round(hi_pts * (point_size or 0.01), 2)} price move"
+            )
+        else:
+            typical_note = "price units"
         return (
-            f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs USD MOVEMENT\n"
+            f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs PRICE MOVEMENT\n"
             f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
             f"For {symbol} (with broker point size = {pt_str}):\n"
-            f"- 1 point = ${pt_str} USD price change.\n"
-            f"- 10 points = 1 pip = $0.10 USD price change.\n"
-            f"- 100 points = 10 pips = $1.00 USD price change (e.g., Gold moving from 2400.00 to 2401.00)\n"
-            f"- Typical Stop Loss distance is 250 to 500 points (25 to 50 pips / $2.50 to $5.00 USD gold movement).\n\n"
+            f"- 1 point = {pt_str} price units.\n"
+            f"- 10 points = 1 pip = {pip_str} price movement.\n"
+            f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
+            f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points, BUT ALWAYS check the 'ATR HARD GATE' in the Market Data context below for the exact dynamic minimum required for this specific trade.\n\n"
             f"CRITICAL WARNING:\n"
-            f"Double-check your numbers. If you want a Stop Loss of 20 pips (which is $2.00 USD of price movement), you MUST return 200. "
-            f"If you return 20, it sets a Stop Loss of just 20 points (2 pips / $0.20 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
+            f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
+            f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
+            f"({max(1, lo_pts // 100)} pip / {_fmt_price((lo_pts // 10) * (point_size or 0.01))} price movement), "
+            f"which is inside the spread and will cause an instant loss or broker rejection!"
         )
 
 
@@ -299,26 +322,33 @@ def _build_sltp_rules_block(symbol, timeframe):
     """
     Build the SL/TP constraint lines for the system prompt based on
     config.TP_SL_RULES:
-      "ATR-Based": SL >= 1.25x ATR, TP >= 2.5x ATR (R:R 2:1) — HARD GATE.
+      "ATR-Based": SL >= SL_MULTx ATR, TP >= TP_MULTx ATR (R:R 2:1) - HARD GATE.
+        Multiplier dinamis per AI mode (config.atr_sl_multiplier/atr_tp_multiplier):
+        single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5.
         Trade yang SL/TP-nya di bawah requirement DITOLAK bot (bukan
         dinaikkan), jadi prompt ini harus tegas biar AI gak buang cycle.
         Angka minimum konkret (dalam points) di-inject dinamis di market
-        data block (atr_gate_str).
+        data block (atr_gate_str) - sinkron dengan consensus gate.
       "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
-      rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini —
+      rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini -
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
       dikalkulasi dari SL di main.py.
     """
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
     is_btc = config.is_crypto(symbol)
+    # Typical SL range per-symbol dari default config (XAU 400, EURJPY 50,
+    # GBPCHF 40) - biar guidance LLM ikut skala pair, bukan asumsi Gold.
+    d_sl = config.default_sl_points_for(symbol)
+    lo_pts = max(10, int(d_sl * 0.5))
+    hi_pts = max(20, int(d_sl * 1.5))
     
     if mode == "LLM":
         if is_btc:
             range_note = "typically 20000 to 60000 points ($200-$600)"
             noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
         else:
-            range_note = "typically 250 to 500 points ($2.50-$5.00)"
-            noise_note = "avoid M1-style hyper-scalping stops (e.g., under 200 points) as spread and execution noise will erode your edge"
+            range_note = f"typically {lo_pts} to {hi_pts} points"
+            noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points) as spread and execution noise will erode your edge"
 
         return (
             f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
@@ -326,10 +356,15 @@ def _build_sltp_rules_block(symbol, timeframe):
             f"- TP is YOUR choice (no forced 2R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
         )
         
+    # ATR-Based: multiplier dinamis per AI mode (single 1.25/2.5, dual 1.5/3.0,
+    # triple 1.75/3.5) - sinkron dengan config.atr_sl/tp_multiplier dan
+    # atr_gate_str di market data block. R:R 2:1 selalu terjaga.
+    sl_mult = config.atr_sl_multiplier()
+    tp_mult = config.atr_tp_multiplier()
     return (
-        "- HARD GATE (non-negotiable, enforced by the bot): if your SL < 1.25x current ATR or your TP < 2.5x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
+        f"- HARD GATE (non-negotiable, enforced by the bot): if your SL < {sl_mult}x current ATR or your TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
         "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        "- These minimums guarantee R:R 2:1 (SL 1.25x ATR -> TP 2.5x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
+        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
     )
 
 
@@ -464,26 +499,52 @@ def summarize_recent_outcomes(decisions, n=6):
     holding a stale bullish read for hours during a correction).
 
     decisions: list of dicts, most recent last, e.g.
-        {"signal": "BUY", "result": "TP" | "SL" | "OPEN" | "N/A"}
+        {"signal": "BUY", "result": "TP" | "SL" | "SL-BEP" | "SL-trailing" | "OPEN" | "N/A",
+         "profit": float (NET, sudah termasuk komisi) | None, "commission": float}
+    Klasifikasi win/loss pakai PROFIT NET kalau ada (paling akurat - BEP
+    tolerance dinamis dari komisi aktual), fallback ke label result.
     """
     recent = decisions[-n:]
     if not recent:
         return "No recent decision history for this symbol."
 
     hold_count = sum(1 for d in recent if d["signal"] == "HOLD")
-    tp_count = sum(1 for d in recent if d.get("result") == "TP")
-    sl_count = sum(1 for d in recent if d.get("result") == "SL")
     trade_count = len(recent) - hold_count
+    win_count = 0
+    loss_count = 0
+    bep_count = 0
+    open_count = 0
+    for d in recent:
+        if d["signal"] == "HOLD":
+            continue
+        result = d.get("result", "N/A")
+        if result == "OPEN":
+            open_count += 1
+            continue
+        profit = d.get("profit")
+        if profit is not None:
+            tol = config.bep_tolerance_for({"commission": d.get("commission", 0.0)})
+            if profit > tol:
+                win_count += 1
+            elif profit < -tol:
+                loss_count += 1
+            else:
+                bep_count += 1
+        else:
+            # Fallback label (tanpa profit): SL-trailing = profit terkunci = win
+            if result in ("TP", "SL-trailing"):
+                win_count += 1
+            elif result == "SL":
+                loss_count += 1
+            else:  # SL-BEP, manual, N/A
+                bep_count += 1
 
-    if tp_count or sl_count:
-        return (
-            f"Recent outcomes ({len(recent)} cycles): {trade_count} trade(s) taken "
-            f"({tp_count} hit TP, {sl_count} hit SL), {hold_count} HOLD. "
-            f"(Outcome only -- not a directional signal for this cycle.)"
-        )
+    stats = f"{trade_count} trade(s) taken ({win_count} win, {loss_count} loss, {bep_count} BEP)"
+    if open_count:
+        stats += f", {open_count} still open"
     return (
-        f"Recent outcomes ({len(recent)} cycles): {trade_count} trade(s) taken, "
-        f"{hold_count} HOLD. (Outcome only -- not a directional signal for this cycle.)"
+        f"Recent outcomes ({len(recent)} cycles): {stats}, {hold_count} HOLD. "
+        f"(Outcome only -- not a directional signal for this cycle.)"
     )
 
 
@@ -493,9 +554,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
 
-    # Create recent candles string — FULL 50 candles (~4 jam M5 / ~25 jam M30),
+    # Create recent candles string - FULL 50 candles (~4 jam M5 / ~25 jam M30),
     # OHLC only (drop volume) supaya window 50-Bar Swing High/Low & Fib bisa
-    # diverifikasi LLM (sebelumnya cuma 25 candle tapi diklaim "50-Bar Swing" —
+    # diverifikasi LLM (sebelumnya cuma 25 candle tapi diklaim "50-Bar Swing" -
     # LLM gak bisa verifikasi).
     recent_candles = df.tail(50)
     candles_str = ""
@@ -503,22 +564,38 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         time_str = row['time'].strftime('%H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
         candles_str += f"- [{time_str}] O:{row['open']}, H:{row['high']}, L:{row['low']}, C:{row['close']}\n"
 
-    # Micro price action: last 5 M30 candles (BTC M30) or last 5 M1 candles (XAU M5)
+    # Micro price action: dynamic timeframe & count based on main timeframe (XAU M1 x15, BTC M5 x12, FX M5 x24)
     micro_candles_str = ""
     try:
         from src.core import mt5_connector
         is_crypto_asset = config.is_crypto(symbol)
-        micro_tf = mt5_connector.mt5.TIMEFRAME_M5 if is_crypto_asset else mt5_connector.mt5.TIMEFRAME_M1
-        micro_tf_name = "M5" if is_crypto_asset else "M1"
-        # Fetch 30 candles so ATR(14) indicator in get_market_data doesn't raise IndexError
-        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=30)
+        
+        if is_crypto_asset:
+            # BTC main is M30 -> micro is M5, 12 candles (60 minutes / 1 hour total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+            micro_tf_name = "M5"
+            num_micro_send = 12
+        elif "XAU" in symbol.upper():
+            # XAU main is M5 -> micro is M1, 15 candles (15 minutes total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M1
+            micro_tf_name = "M1"
+            num_micro_send = 15
+        else:
+            # FX main is H1 -> micro is M5, 24 candles (120 minutes / 2 hours total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+            micro_tf_name = "M5"
+            num_micro_send = 24
+
+        # Fetch enough candles so ta.volatility.AverageTrueRange (window 14) doesn't raise IndexError
+        num_fetch = max(35, num_micro_send + 15)
+        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
         if micro_df is not None and len(micro_df) > 0:
-            micro_tail = micro_df.tail(10)
+            micro_tail = micro_df.tail(num_micro_send)
             micro_lines = []
             for _, r in micro_tail.iterrows():
                 t_s = r['time'].strftime('%H:%M') if hasattr(r['time'], 'strftime') else str(r['time'])
                 micro_lines.append(f"- [{t_s}] O:{r['open']}, H:{r['high']}, L:{r['low']}, C:{r['close']}, Vol:{r['tick_volume']}")
-            micro_candles_str = f"\n### LAST 10 {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
+            micro_candles_str = f"\n### LAST {num_micro_send} {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
     except Exception as e:
         pass
 
@@ -563,19 +640,23 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
     # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
     # jelek di aritmetika). Kalau proposal SL/TP di bawah angka ini,
-    # consensus.py MENOLAK trade (bukan dinaikkan) — jadi prompt harus jelas
+    # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
-    if atr_points > 0:
-        min_sl_pts = int(atr_points * 1.25)
-        min_tp_pts = int(atr_points * 2.5)
+    # Inject ATR Gate information ONLY if config.TP_SL_RULES is "ATR-Based"
+    if atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
+        ai_mode = config.get_ai_mode()
+        sl_mult = config.atr_sl_multiplier()
+        tp_mult = config.atr_tp_multiplier()
+        min_sl_pts = int(atr_points * sl_mult)
+        min_tp_pts = int(atr_points * tp_mult)
         atr_gate_str = (
-            f"ATR HARD GATE (non-negotiable): minimum SL = {min_sl_pts} pts (1.25x ATR) "
-            f"and minimum TP = {min_tp_pts} pts (2.5x ATR). "
+            f"ATR HARD GATE (non-negotiable, AI mode: {ai_mode}): minimum SL = {min_sl_pts} pts "
+            f"({sl_mult}x ATR) and minimum TP = {min_tp_pts} pts ({tp_mult}x ATR). "
             f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
         )
 
-    # USD value of 1 point for the default bot lot — tells the LLM the real
+    # USD value of 1 point for the default bot lot - tells the LLM the real
     # money scale of the SL/TP distances it proposes (critical for BTC, where
     # 1 pt = $0.0001 and the LLM otherwise proposes absurdly tight stops).
     usd_per_point = current_tick.get("usd_per_point", 0.0)
@@ -586,7 +667,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             f"{config.lot_size_for(symbol)} lot. So {int(pts_per_usd * 10)} pts = ~$10, "
             f"{int(pts_per_usd * 5)} pts = ~$5, and 100000 pts = ~${100000 * usd_per_point:.2f}.\n"
             f"Current spread is {current_tick.get('spread', '?')} pts "
-            f"(approx ${current_tick.get('spread_usd', 0.0):.2f} USD) — NEVER set SL closer than "
+            f"(approx ${current_tick.get('spread_usd', 0.0):.2f} USD) - NEVER set SL closer than "
             f"{int(current_tick.get('spread', 0) * 2)} pts (2x spread); the broker will reject it.\n"
         )
     else:
@@ -598,9 +679,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT\n"
             f"{macro_context}\n"
             "(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe "
-            "candles (EMA20/50, RSI, ATR, swing levels) — use it to determine whether the "
+            "candles (EMA20/50, RSI, ATR, swing levels) - use it to determine whether the "
             "current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL "
-            "ANALYSIS section is news sentiment only — advisory, disregard if generic or stale.)\n"
+            "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)\n"
         )
 
     lessons_str = ""
@@ -615,10 +696,17 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
             from src.analytics import decision_memory
-            # Convert stored decisions (signal/confidence/reasoning, no result
-            # field yet) into {signal, result} for summarize_recent_outcomes.
+            # Convert stored decisions into {signal, result, profit, commission}
+            # for summarize_recent_outcomes. result di-set pas close (TP/SL/
+            # SL-BEP/SL-trailing/manual), profit NET (sudah termasuk komisi) -
+            # biar win/loss count AKURAT, bukan selalu "N/A".
             entries = decision_memory.memory._decisions.get(symbol, [])
-            decisions = [{"signal": e.get("signal", "HOLD"), "result": "N/A"} for e in entries]
+            decisions = [{
+                "signal": e.get("signal", "HOLD"),
+                "result": e.get("result", "N/A"),
+                "profit": e.get("profit"),
+                "commission": e.get("commission", 0.0),
+            } for e in entries]
             recent_outcomes_str = summarize_recent_outcomes(decisions)
             if recent_outcomes_str:
                 recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"
@@ -634,7 +722,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             pass
     if forecast_str:
         forecast_str = (
-            "\n### MULTI-HORIZON FORECAST (separate model — informational only, not a rule)\n"
+            "\n### MULTI-HORIZON FORECAST (separate model - informational only, not a rule)\n"
             f"{forecast_str}\n"
             "(NEUTRAL or disagreeing forecast does not require HOLD; aligned forecast "
             "does not by itself justify a trade.)\n"
@@ -688,7 +776,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
     if open_positions and len(open_positions) > 0:
         separation_note = (
-            "\nIMPORTANT — TWO SEPARATE DECISIONS:\n"
+            "\nIMPORTANT - TWO SEPARATE DECISIONS:\n"
             "1. The 'signal' field above is ONLY about opening a NEW trade. "
             "It must be BUY/SELL/HOLD based purely on whether a NEW entry is attractive now.\n"
             "2. The 'position_actions' list is ONLY about the EXISTING positions listed above. "
@@ -715,11 +803,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     )
 
     # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
-    # Cached 5 min (D1 berubah sekali sehari) — murah, nggak nambah lag cycle.
+    # Cached 5 min (D1 berubah sekali sehari) - murah, nggak nambah lag cycle.
     key_levels_str = _get_key_levels_str(symbol, current_tick.get('bid'))
 
     # ================================================================
-    # PROMPT — 2 blok:
+    # PROMPT - 2 blok:
     #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
     #     cache_control (lihat _execute_claude_single). Harus >= 1024
     #     token biar Anthropic benar-benar meng-cache.
@@ -734,7 +822,7 @@ Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
 {key_levels_str}
-### RECENT CANDLES (Last 50 candles, {tf_label}, OHLC only — full swing window):
+### RECENT CANDLES (Last 50 candles, {tf_label}, OHLC only - full swing window):
 {candles_str}
 {micro_candles_str}
 ### CURRENT INDICATORS & FIBONACCI SUMMARY
@@ -788,7 +876,7 @@ def clean_json_response(text):
                         parsed[key] = json.loads(val)
                     except json.JSONDecodeError:
                         parsed[key] = val.strip('"')
-        # Validate keys (setup/edge/invalidation are optional new fields —
+        # Validate keys (setup/edge/invalidation are optional new fields -
         # model may omit them; HOLD responses won't have them)
         for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning", "setup", "edge", "invalidation"]:
             if key not in parsed:
@@ -805,7 +893,7 @@ def clean_json_response(text):
             if parsed.get("confidence") is None:
                 parsed["confidence"] = 0.0
             if parsed.get("reasoning") is None:
-                parsed["reasoning"] = "HOLD — No entry setup"
+                parsed["reasoning"] = "HOLD - No entry setup"
 
         return parsed
     except Exception as e:
@@ -860,7 +948,7 @@ def query_forecast(prompt):
                 return res
             print(f"[FORECAST WARNING] Response {primary_model} tidak punya forecast_bias: {str(res)[:120]}")
         except Exception as e:
-            print(f"⚠️ [FORECAST FALLBACK] {primary_model} error ({e}). Switching ke {fallback_model}...")
+            print(f" [FORECAST FALLBACK] {primary_model} error ({e}). Switching ke {fallback_model}...")
 
     # 2. Fallback: Gemini gemini-3.5-flash
     if gemini_client:
@@ -894,7 +982,7 @@ def query_openai(prompt):
         return _execute_openai_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f"⚠️ [OPENAI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [OPENAI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 return _execute_openai_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
@@ -929,7 +1017,7 @@ def query_gemini(prompt):
             return fut.result(timeout=timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f"⚠️ [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     fut = ex.submit(_call, fallback_model)
@@ -949,7 +1037,7 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
     )
     # Prompt caching: pecah prompt jadi blok statis (instruksi, DI DEPAN) +
     # dinamis (data pasar, DI BELAKANG). cache_control ditaruh di AKHIR blok
-    # statis — prefix yang identik antar request. System terlalu pendek
+    # statis - prefix yang identik antar request. System terlalu pendek
     # (< 1024 token) untuk di-cache, jadi breakpoint di user block.
     split_marker = "### MARKET DATA CONTEXT"
     if split_marker in prompt:
@@ -961,7 +1049,7 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
             {"type": "text", "text": dynamic_part},
         ]
     else:
-        # Tidak ketemu marker — fallback: cache seluruh prompt (kalau statis)
+        # Tidak ketemu marker - fallback: cache seluruh prompt (kalau statis)
         user_blocks = [{"type": "text", "text": prompt,
                         "cache_control": {"type": "ephemeral"}}]
     # Enable Anthropic Prompt Caching via cache_control and prompt-caching header
@@ -1053,7 +1141,7 @@ def query_claude(prompt):
         return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f"⚠️ [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if fallback_model.startswith("deepseek/"):
                     return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
@@ -1116,5 +1204,5 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
     total_elapsed = time.time() - start_total
     mode = config.get_ai_mode()
     lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in active_models if m in latencies])
-    print(f"⏱️ [LATENSI MODEL] mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
+    print(f" [LATENSI MODEL] mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results

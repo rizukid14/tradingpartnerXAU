@@ -103,7 +103,7 @@ class ForecastEngine:
         """Spawn a daemon thread to refresh the forecast without blocking the caller."""
         with self._refresh_lock:
             if self._refresh_in_progress:
-                return  # already running — don't stack threads
+                return  # already running - don't stack threads
             self._refresh_in_progress = True
 
         def _runner():
@@ -121,21 +121,21 @@ class ForecastEngine:
     def _do_refresh(self, symbol, df, current_tick, macro_context):
         """Actual refresh logic (synchronous). Updates cache + disk."""
         now = time.time()
-        print(f"🔮 [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
+        print(f" [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
         new_forecast = self._generate_forecast_with_llm(symbol, df, current_tick, macro_context)
         if new_forecast:
             new_forecast["symbol"] = symbol
             new_forecast["timestamp"] = now
             self._forecast = new_forecast
             self._save_cache()
-            print(f"✅ [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+30m/T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+30m')} Target: {new_forecast.get('target_t1h' if config.is_crypto(symbol) else 'target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
+            print(f" [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+30m/T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+30m')} Target: {new_forecast.get('target_t1h' if config.is_crypto(symbol) else 'target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
         """Queries OpenAI, Gemini, and Claude in parallel to form a Multi-LLM Consensus Forecast."""
         latest = df.iloc[-1]
 
-        # Per-symbol forecast horizon: XAU scalps on M5 (15m/30m ahead — no
+        # Per-symbol forecast horizon: XAU scalps on M5 (15m/30m ahead - no
         # long-term trend capture); BTC trades on M30 (next 30m / 1h / 4h).
         if config.is_crypto(symbol):
             tf_label = "M30"
@@ -254,7 +254,7 @@ Generate a JSON object strictly matching this schema:
         avg_emax = _avg("optimal_entry_max")
 
         models_summary = ", ".join([f"{m}: {d.get('forecast_bias')}" for m, d in results.items()])
-        print(f"🔮 [FORECAST] Bias: {consensus_bias} ({models_summary})")
+        print(f" [FORECAST] Bias: {consensus_bias} ({models_summary})")
 
         out = {
             "forecast_bias": consensus_bias,

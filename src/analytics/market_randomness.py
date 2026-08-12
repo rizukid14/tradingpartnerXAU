@@ -56,7 +56,7 @@ def calculate_fat_tail_metrics(prices):
     Interpretation:
       Excess Kurtosis (K):
         K ~ 0: Normal / Gaussian distribution (thin tails)
-        K > 1.5: High Fat-Tails (Heavy Tail Risk — extreme spikes happen more often!)
+        K > 1.5: High Fat-Tails (Heavy Tail Risk - extreme spikes happen more often!)
       Skewness (S):
         S < -0.5: Negative Skew (Fat Left Tail / Crash Risk)
         S > +0.5: Positive Skew (Fat Right Tail / Spike Risk)

@@ -64,13 +64,14 @@ class DynamicConfig:
             return
 
         # Break-even trades (|profit| within tolerance) are excluded from the
-        # win-rate math — they are neither wins nor losses.
-        tol = getattr(config, "BREAK_EVEN_TOLERANCE_USD", 0.04)
-        trades = [d for d in closed_deals if abs(d.get("profit", 0)) > tol]
+        # win-rate math - they are neither wins nor losses. Tolerance DINAMIS
+        # per trade: minimal BREAK_EVEN_TOLERANCE_USD, tapi naik mengikuti
+        # komisi aktual trade (0.01 lot = 0.06, 0.10 lot = 0.60, dst).
+        trades = [d for d in closed_deals if abs(d.get("profit", 0)) > config.bep_tolerance_for(d)]
         if not trades:
             return
 
-        wins = sum(1 for d in trades if d.get("profit", 0) > tol)
+        wins = sum(1 for d in trades if d.get("profit", 0) > 0)
         total = len(trades)
         win_rate = (wins / total) * 100.0
 
@@ -78,23 +79,23 @@ class DynamicConfig:
             # Low win rate regime -> Tighten risk (require 3/3 consensus)
             self.consensus_threshold = 3
             self.sl_multiplier = 1.2
-            self.status_message = f"🛡️ Defensif (Win Rate {win_rate:.0f}%: Membutuhkan Konsensus 3/3)"
+            self.status_message = f" Defensif (Win Rate {win_rate:.0f}%: Membutuhkan Konsensus 3/3)"
         elif win_rate > 65.0:
             # High win rate regime -> Standard optimal parameters
             self.consensus_threshold = 2
             self.sl_multiplier = 1.5
-            self.status_message = f"🚀 Optimal (Win Rate {win_rate:.1f}%: Standar 2/3 Konsensus)"
+            self.status_message = f" Optimal (Win Rate {win_rate:.1f}%: Standar 2/3 Konsensus)"
         else:
             self.consensus_threshold = 2
             self.sl_multiplier = 1.5
-            self.status_message = f"⚖️ Stabil (Win Rate {win_rate:.1f}%)"
+            self.status_message = f" Stabil (Win Rate {win_rate:.1f}%)"
 
         # Apply strict safety bounds
         self.consensus_threshold = max(MIN_CONSENSUS_THRESHOLD, min(MAX_CONSENSUS_THRESHOLD, self.consensus_threshold))
         self.sl_multiplier = max(MIN_SL_MULTIPLIER, min(MAX_SL_MULTIPLIER, self.sl_multiplier))
 
         self._save_rules()
-        print(f"⚙️ [DYNAMIC CONFIG] Adaptasi Parameter: {self.status_message}")
+        print(f" [DYNAMIC CONFIG] Adaptasi Parameter: {self.status_message}")
 
 # Singleton instance
 dynamic_rules = DynamicConfig()

@@ -44,8 +44,12 @@ class DecisionMemory:
         except Exception as e:
             print(f"[DECISION MEMORY WARNING] Gagal menyimpan decision_memory.json: {e}")
 
-    def record(self, symbol, signal, confidence=None, reasoning=None):
-        """Append one decision for the given symbol. Keeps last WINDOW_SIZE entries."""
+    def record(self, symbol, signal, confidence=None, reasoning=None, result="N/A"):
+        """Append one decision for the given symbol. Keeps last WINDOW_SIZE entries.
+
+        result: "OPEN" saat trade dieksekusi (belum close), "N/A" saat HOLD.
+        Hasil akhir (TP/SL/BEP) di-set belakangan via update_result() pas posisi close.
+        """
         if not symbol:
             return
         entries = self._decisions.setdefault(symbol, [])
@@ -53,6 +57,7 @@ class DecisionMemory:
             "signal": signal,
             "confidence": float(confidence) if confidence is not None else None,
             "reasoning_excerpt": (reasoning or "")[:120],
+            "result": result,
             "timestamp": time.time(),
         })
         # Trim per-symbol window
@@ -60,13 +65,38 @@ class DecisionMemory:
             self._decisions[symbol] = entries[-WINDOW_SIZE:]
         self._save()
 
+    def update_result(self, symbol, result, profit=None, commission=0.0):
+        """Set hasil trade (TP/SL/SL-BEP/manual) pada entry terakhir yang masih
+        OPEN/N-A untuk symbol ini, plus profit NET (sudah termasuk komisi) biar
+        summarize_recent_outcomes bisa hitung win/loss yang AKURAT.
+
+        Dipanggil dari loop close detection - update entry trade yang baru ditutup.
+        """
+        if not symbol:
+            return False
+        entries = self._decisions.get(symbol, [])
+        # Cari entry PALING TUA yang masih "OPEN"/"N/A" dengan signal != HOLD -
+        # posisi yang dibuka lebih dulu biasanya kena SL/TP lebih dulu.
+        for e in entries:
+            if e.get("signal") == "HOLD":
+                continue
+            if e.get("result") in ("OPEN", "N/A", None):
+                e["result"] = result or "N/A"
+                if profit is not None:
+                    e["profit"] = round(float(profit), 2)
+                if commission:
+                    e["commission"] = round(float(commission), 2)
+                self._save()
+                return True
+        return False
+
     def get_context(self, symbol):
         """Return markdown block of recent decisions for prompt injection."""
         entries = self._decisions.get(symbol, [])
         if not entries:
             return ""
 
-        # Count consecutive HOLD at the tail — useful cue for the LLM.
+        # Count consecutive HOLD at the tail - useful cue for the LLM.
         consecutive_hold = 0
         for e in reversed(entries):
             if e.get("signal") == "HOLD":
@@ -79,12 +109,12 @@ class DecisionMemory:
             conf = e.get("confidence")
             conf_str = f" (conf {conf * 100:.0f}%)" if conf is not None else ""
             excerpt = e.get("reasoning_excerpt") or ""
-            lines.append(f"{i}. {e.get('signal')}{conf_str} — {excerpt}")
+            lines.append(f"{i}. {e.get('signal')}{conf_str} - {excerpt}")
 
         hold_note = ""
         if consecutive_hold >= 3:
             hold_note = (
-                f"\nNote: last {consecutive_hold} cycles were HOLD for this symbol — "
+                f"\nNote: last {consecutive_hold} cycles were HOLD for this symbol - "
                 f"re-examine whether the threshold for entry is now too strict, "
                 f"or whether price action genuinely lacks a setup."
             )

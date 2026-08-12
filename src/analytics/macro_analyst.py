@@ -30,23 +30,14 @@ class MacroAnalyst:
             if os.path.exists(CACHE_FILE):
                 with open(CACHE_FILE, "r", encoding="utf-8") as f:
                     self.cache = json.load(f)
+                if "symbol" in self.cache:
+                    # Migrate old flat cache format
+                    self.cache = {}
             else:
-                self.cache = {
-                    "symbol": config.SYMBOL,
-                    "last_fundamental_session": "",
-                    "last_fundamental_time": 0.0,
-                    "fundamental_outlook": "",
-                    "timeframe_analysis": {}
-                }
+                self.cache = {}
         except Exception as e:
             print(f"[MACRO WARNING] Gagal memuat analisa cache: {e}")
-            self.cache = {
-                "symbol": config.SYMBOL,
-                "last_fundamental_session": "",
-                "last_fundamental_time": 0.0,
-                "fundamental_outlook": "",
-                "timeframe_analysis": {}
-            }
+            self.cache = {}
 
     def _save_cache(self):
         """Saves the current cache state to a local JSON file."""
@@ -100,73 +91,86 @@ class MacroAnalyst:
         If force=True, runs analysis immediately regardless of last candle/session times.
         """
         updated = False
+        sym = config.SYMBOL
 
-        # Cache is per-symbol: if the active symbol changed (XAUUSD -> BTCUSD),
-        # reset the cached analyses so stale gold data is never injected into BTC prompts.
-        cached_symbol = self.cache.get("symbol", "")
-        if cached_symbol != config.SYMBOL:
-            self.cache = {
-                "symbol": config.SYMBOL,
+        if sym not in self.cache:
+            self.cache[sym] = {
                 "last_fundamental_session": "",
                 "last_fundamental_time": 0.0,
                 "fundamental_outlook": "",
                 "timeframe_analysis": {}
             }
-            print(f"🔄 [MACRO] Simbol berubah ({cached_symbol or 'none'} -> {config.SYMBOL}). Cache analisa direset.")
+            print(f" [MACRO] Menginisialisasi cache analisa untuk simbol {sym}.")
             force = True
+
+        sym_cache = self.cache[sym]
 
         # 1. Check Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
-            if "timeframe_analysis" not in self.cache:
-                self.cache["timeframe_analysis"] = {}
+            if "timeframe_analysis" not in sym_cache:
+                sym_cache["timeframe_analysis"] = {}
 
-            for tf_name, tf_const in config.get_higher_timeframes(config.SYMBOL).items():
-                rates = mt5.copy_rates_from_pos(config.SYMBOL, tf_const, 0, 2)
+            for tf_name, tf_const in config.get_higher_timeframes(sym).items():
+                rates = mt5.copy_rates_from_pos(sym, tf_const, 0, 2)
                 if rates is not None and len(rates) > 0:
                     current_candle_time = int(rates[-1]['time'])
-                    cached_candle_time = self.cache["timeframe_analysis"].get(tf_name, {}).get("last_candle_time", 0)
+                    cached_candle_time = sym_cache["timeframe_analysis"].get(tf_name, {}).get("last_candle_time", 0)
 
                     if force or current_candle_time > cached_candle_time:
-                        print(f"🔄 [MTF] Menjalankan analisa struktur untuk timeframe {tf_name}...")
+                        print(f" [MTF] Menjalankan analisa struktur untuk timeframe {tf_name} ({sym})...")
                         analysis = self._run_timeframe_analysis(tf_name, tf_const)
                         if analysis:
-                            self.cache["timeframe_analysis"][tf_name] = {
+                            sym_cache["timeframe_analysis"][tf_name] = {
                                 "last_candle_time": current_candle_time,
                                 "analysis": analysis,
                                 "updated_at": time.time()
                             }
                             updated = True
                 else:
-                    print(f"⚠️ [MTF WARNING] Gagal membaca data MT5 untuk timeframe {tf_name}.")
+                    print(f" [MTF WARNING] Gagal membaca data MT5 untuk timeframe {tf_name} ({sym}).")
 
         # 2. Check Fundamental Analysis
         if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):
             current_session = self.get_current_session()
-            cached_session = self.cache.get("last_fundamental_session", "")
+            cached_session = sym_cache.get("last_fundamental_session", "")
 
             # Trigger if session changes and is valid, or if force run
             if force or (current_session != "None" and current_session != cached_session):
-                print(f"🔄 [FUNDAMENTAL] Menjalankan analisa fundamental untuk sesi '{current_session}'...")
+                print(f" [FUNDAMENTAL] Menjalankan analisa fundamental untuk sesi '{current_session}' ({sym})...")
                 outlook = self._run_fundamental_analysis()
                 if outlook:
-                    self.cache["last_fundamental_session"] = current_session
-                    self.cache["last_fundamental_time"] = time.time()
-                    self.cache["fundamental_outlook"] = outlook
+                    sym_cache["last_fundamental_session"] = current_session
+                    sym_cache["last_fundamental_time"] = time.time()
+                    sym_cache["fundamental_outlook"] = outlook
                     updated = True
 
         if updated:
             self._save_cache()
-            print("💾 [MACRO] Analisa cache diperbarui dan disimpan.")
+            print(f" [MACRO] Analisa cache diperbarui dan disimpan ({sym}).")
 
     def _run_timeframe_analysis(self, tf_name, tf_const):
         """
-        Computes higher-timeframe trend structure DIRECTLY from MT5 indicators —
+        Computes higher-timeframe trend structure DIRECTLY from MT5 indicators -
         NO LLM call. EMA20/50, RSI, ATR dan swing high/low dihitung dari df M30
         (XAU) / H1-H4 (BTC). Output teks faktual, bukan opini LLM.
         """
-        df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=50)
+        if tf_name == "M15":
+            window_size = 48
+        elif tf_name == "M30":
+            window_size = 72
+        elif tf_name == "H1":
+            window_size = 72
+        elif tf_name == "H4":
+            window_size = 30
+        elif tf_name == "D1":
+            window_size = 30
+        else:
+            window_size = 30
+
+        fetch_candles = max(50, window_size + 20)
+        df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=fetch_candles)
         if df is None or len(df) < 30:
-            print(f"❌ [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
+            print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
             return None
 
         latest = df.iloc[-1]
@@ -188,8 +192,8 @@ class MacroAnalyst:
         else:
             trend = "RANGING"
 
-        # Swing high/low dari 30 candle terakhir (level support/resistance)
-        window = df.tail(30)
+        # Swing high/low dari window_size candle terakhir (level support/resistance)
+        window = df.tail(window_size)
         swing_high = float(window["high"].max())
         swing_low = float(window["low"].min())
         swing_high_dist = (swing_high - close) / (atr if atr > 0 else 1.0)
@@ -210,7 +214,7 @@ class MacroAnalyst:
         return (
             f"trend {trend} | close {close:.2f}, EMA20 {ema20:.2f}, EMA50 {ema50:.2f} "
             f"(gap EMA {abs(ema20 - ema50):.2f}), RSI {rsi:.1f} ({rsi_label}), ATR {atr:.2f} | "
-            f"swing 30-candle: high {swing_high:.2f} ({resistance_line}), low {swing_low:.2f} ({support_line})"
+            f"swing {window_size}-candle: high {swing_high:.2f} ({resistance_line}), low {swing_low:.2f} ({support_line})"
         )
 
     def _run_fundamental_analysis(self):
@@ -220,12 +224,14 @@ class MacroAnalyst:
     def get_macro_context(self):
         """Formats the cached macro & MTF analyses into a unified context block."""
         context = []
+        sym = config.SYMBOL
+        sym_cache = self.cache.get(sym, {})
 
         # 1. Add Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
             tf_analyses = []
-            tf_cache = self.cache.get("timeframe_analysis", {})
-            for tf_name in config.get_higher_timeframes(config.SYMBOL).keys():
+            tf_cache = sym_cache.get("timeframe_analysis", {})
+            for tf_name in config.get_higher_timeframes(sym).keys():
                 tf_data = tf_cache.get(tf_name)
                 if tf_data and tf_data.get("analysis"):
                     tf_analyses.append(f"- **{tf_name} Timeframe**: {tf_data['analysis']}")
@@ -234,13 +240,11 @@ class MacroAnalyst:
 
         # 2. Add Fundamental Analysis (only if enabled AND there's cached content)
         if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):
-            fund_outlook = self.cache.get("fundamental_outlook", "")
-            if fund_outlook and fund_outlook.strip():
-                session = self.cache.get("last_fundamental_session", "")
-                header = "### FUNDAMENTAL ANALYSIS (Macro Sentiment)"
-                if session:
-                    header += f" - diambil saat sesi {session}"
-                context.append(header + "\n" + fund_outlook)
+            outlook = sym_cache.get("fundamental_outlook")
+            if outlook:
+                # Tambah session label ke context text
+                sess = sym_cache.get("last_fundamental_session", "Unknown")
+                context.append(f"### FUNDAMENTAL ANALYSIS & SENTIMENT ({sess} Session)\n{outlook}")
 
         if not context:
             return ""
