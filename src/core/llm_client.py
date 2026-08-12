@@ -309,8 +309,7 @@ def _build_points_explanation(symbol, point_size):
             f"- 1 point = {pt_str} price units.\n"
             f"- 10 points = 1 pip = {pip_str} price movement.\n"
             f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
-            f"- Typical Stop Loss distance for {symbol} is {lo_pts} to {hi_pts} points "
-            f"({lo_pts // 10} to {hi_pts // 10} pips / {typical_note}).\n\n"
+            f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points, BUT ALWAYS check the 'ATR HARD GATE' in the Market Data context below for the exact dynamic minimum required for this specific trade.\n\n"
             f"CRITICAL WARNING:\n"
             f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
             f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
@@ -348,8 +347,8 @@ def _build_sltp_rules_block(symbol, timeframe):
             range_note = "typically 20000 to 60000 points ($200-$600)"
             noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
         else:
-            range_note = f"typically {lo_pts} to {hi_pts} points ({lo_pts // 10} to {hi_pts // 10} pips for {symbol})"
-            noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points for {symbol}) as spread and execution noise will erode your edge"
+            range_note = f"typically {lo_pts} to {hi_pts} points, but respect the ATR HARD GATE minimums"
+            noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points or below ATR minimum) as spread and execution noise will erode your edge"
 
         return (
             f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"

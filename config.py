@@ -146,11 +146,11 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        "EURJPY-ECNc,GBPCHF-ECNc",
+        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,EURJPY-ECNc,GBPUSD-ECNc,EURAUD-ECNc",
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 3)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 7)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M5").upper()
 TIMEFRAME_MAP = {
@@ -190,10 +190,7 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # Default SL/TP per FX pair (11 Agustus): XAU 300/600 jatuh ke pair yang
 # point-nya beda skala (EURJPY 300 pts = 30 pips = 12x ATR M5, GBPCHF 17x).
 # Sekarang fallback per-pair: EURJPY 50/100 (5/10 pips), GBPCHF 40/80 (4/8 pips).
-DEFAULT_SL_POINTS_EURJPY = _getenv_int("DEFAULT_SL_POINTS_EURJPY", 50)
-DEFAULT_TP_POINTS_EURJPY = _getenv_int("DEFAULT_TP_POINTS_EURJPY", 100)
-DEFAULT_SL_POINTS_GBPCHF = _getenv_int("DEFAULT_SL_POINTS_GBPCHF", 40)
-DEFAULT_TP_POINTS_GBPCHF = _getenv_int("DEFAULT_TP_POINTS_GBPCHF", 80)
+
 
 
 # --- CONSENSUS SETTINGS ---
@@ -412,10 +409,18 @@ HIGHER_TIMEFRAMES_CRYPTO = {
     "H1": mt5.TIMEFRAME_H1,
     "H4": mt5.TIMEFRAME_H4
 }
+HIGHER_TIMEFRAMES_FX = {
+    "H4": mt5.TIMEFRAME_H4,
+    "D1": mt5.TIMEFRAME_D1
+}
 
 def get_higher_timeframes(symbol):
     """Returns the MTF context timeframes for a symbol (crypto -> H1/H4)."""
-    return HIGHER_TIMEFRAMES_CRYPTO if is_crypto(symbol) else HIGHER_TIMEFRAMES
+    if is_crypto(symbol):
+        return HIGHER_TIMEFRAMES_CRYPTO
+    if "XAU" not in symbol.upper():
+        return HIGHER_TIMEFRAMES_FX
+    return HIGHER_TIMEFRAMES
 
 FUNDAMENTAL_ANALYSIS_ENABLED = _getenv_bool("FUNDAMENTAL_ANALYSIS_ENABLED", False)
 PRIMARY_ANALYSIS_MODEL = os.getenv("PRIMARY_ANALYSIS_MODEL", "gpt-5.4-mini")
@@ -498,36 +503,23 @@ def lot_size_for(symbol):
 def get_timeframe(symbol):
     """Returns the trading timeframe for a symbol.
     BTC/crypto trades on M30 (30-minute intraday) to avoid overnight swap charges.
-    XAU keeps M5 scalping.
+    FX crosses on H1, XAU keeps M5 scalping.
     """
-    return mt5.TIMEFRAME_M30 if is_crypto(symbol) else TIMEFRAME
-
-
-def _fx_pair_name(symbol):
-    """Return the base FX pair name (e.g. 'EURJPY-ECNc' -> 'EURJPY'), else None."""
-    upper = (symbol or "").upper()
-    for name in ("EURJPY", "GBPCHF"):
-        if name in upper:
-            return name
-    return None
+    if is_crypto(symbol): return mt5.TIMEFRAME_M30
+    if "XAU" not in symbol.upper(): return mt5.TIMEFRAME_H1
+    return TIMEFRAME
 
 
 def default_sl_points_for(symbol):
-    pair = _fx_pair_name(symbol)
-    if pair == "EURJPY":
-        return DEFAULT_SL_POINTS_EURJPY
-    if pair == "GBPCHF":
-        return DEFAULT_SL_POINTS_GBPCHF
-    return DEFAULT_SL_POINTS_BTC if is_crypto(symbol) else DEFAULT_SL_POINTS_XAU
+    if is_crypto(symbol): return DEFAULT_SL_POINTS_BTC
+    if "XAU" not in symbol.upper(): return 100
+    return DEFAULT_SL_POINTS_XAU
 
 
 def default_tp_points_for(symbol):
-    pair = _fx_pair_name(symbol)
-    if pair == "EURJPY":
-        return DEFAULT_TP_POINTS_EURJPY
-    if pair == "GBPCHF":
-        return DEFAULT_TP_POINTS_GBPCHF
-    return DEFAULT_TP_POINTS_BTC if is_crypto(symbol) else DEFAULT_TP_POINTS_XAU
+    if is_crypto(symbol): return DEFAULT_TP_POINTS_BTC
+    if "XAU" not in symbol.upper(): return 200
+    return DEFAULT_TP_POINTS_XAU
 
 
 def max_spread_points_for(symbol):
@@ -602,6 +594,9 @@ def active_ai_model_names(now=None):
 def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
+    FX (H1): 1.0%.
     XAU (M5 scalping, up to 6 concurrent): 0.5% — aggregate ~3% max.
     """
-    return RISK_PERCENT_BTC if is_crypto(symbol) else RISK_PERCENT_XAU
+    if is_crypto(symbol): return RISK_PERCENT_BTC
+    if "XAU" not in symbol.upper(): return 1.0
+    return RISK_PERCENT_XAU

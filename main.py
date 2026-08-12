@@ -13,6 +13,55 @@ from src.core.risk_engine import RiskEngine
 from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
 
+import shutil
+import unicodedata
+
+# --- Status line terminal (Windows) ---
+_VT_OK = False
+
+
+def _enable_windows_vt():
+    """Aktifkan ANSI/VT processing di Windows 10+ supaya \x1b[2K (erase line) jalan."""
+    global _VT_OK
+    if os.name != "nt":
+        _VT_OK = True  # POSIX terminal dukung ANSI native
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        h = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(h, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            _VT_OK = True
+    except Exception:
+        _VT_OK = False
+
+
+_enable_windows_vt()
+
+
+def _disp_width(s):
+    """Lebar tampilan karakter di terminal: emoji/wide char = 2 kolom, sisanya 1."""
+    return sum(
+        2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        for ch in s
+    )
+
+
+def _truncate_disp(s, max_w):
+    """Potong string agar lebar tampilan <= max_w (cegah wrap yang merusak refresh)."""
+    if _disp_width(s) <= max_w:
+        return s
+    out, w = [], 0
+    for ch in s:
+        cw = 2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if w + cw > max_w - 3:
+            out.append("...")
+            break
+        out.append(ch)
+        w += cw
+    return "".join(out)
 
 
 # Initialize risk engine
@@ -418,12 +467,13 @@ class TeeLogger(object):
         self.log.flush()
 
 
+_symbol_last_candle = {}
 
 def run_trading_cycle():
     """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
     per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
-    = [XAU, EURJPY, GBPCHF] — all symbols scanned on EVERY M5 candle
-    (3x LLM call per candle, one per pair).
+    = [XAU, EURJPY, GBPCHF] — all symbols scanned ONLY when their specific timeframe
+    forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour).
     """
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     
@@ -476,8 +526,7 @@ def run_trading_cycle():
 
     # ── Multi-symbol parallel scan ──────────────────────────────────────────────
     # Mode "xau": pool = [XAU] (1 cycle per candle, seperti sebelumnya).
-    # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS — semua simbol di-scan
-    # pada SETIAP candle M5 (5x LLM call per candle, 1 call per pair).
+    # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS.
     pool = config.get_rotation_pool()
     # Resolve base names -> nama broker valid (auto-correct suffix, mis. XAUUSD-ECN -> XAUUSD-ECNc)
     # + symbol_select biar tick/rates tersedia untuk semua pair di pool (FX pair baru sering belum visible)
@@ -488,12 +537,38 @@ def run_trading_cycle():
             print(f"[MT5 AUTO-CORRECT] Pool '{sym}' -> '{vsym}' (broker live)")
         mt5.symbol_select(vsym, True)
         valid_pool.append(vsym)
+        
+    global _symbol_last_candle
     for sym in valid_pool:
         config.SYMBOL = sym
-        try:
-            _run_cycle_for_current_symbol()
-        except Exception as e:
-            print(f"⚠️ [CYCLE ERROR {sym}] {e}")
+        
+        # Smart Timeframe Rotation: Hanya memanggil AI jika candle untuk timeframe pair INI sudah berganti
+        tf = config.get_timeframe(sym)
+        rates = mt5.copy_rates_from_pos(sym, tf, 0, 2)
+        if rates is None or len(rates) == 0:
+            continue
+            
+        current_time = rates[-1]['time']
+        last_time = _symbol_last_candle.get(sym)
+        
+        # Eksekusi siklus LLM jika belum pernah di-scan (startup) ATAU candle baru telah terbentuk
+        if last_time is None or current_time > last_time:
+            _symbol_last_candle[sym] = current_time
+            
+            # Log indikator candle baru untuk pair selain pair utama (yang log-nya sudah ada di main loop)
+            if last_time is not None and sym != valid_pool[0]:
+                candle_wib = connector.server_to_wib(int(current_time))
+                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else "M5")
+                print(f"\n🆕 Candle baru terdeteksi untuk {sym} ({tf_label})! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                
+            try:
+                _run_cycle_for_current_symbol()
+            except Exception as e:
+                print(f"⚠️ [CYCLE ERROR {sym}] {e}")
+        else:
+            # Candle H1 belum berganti (masih di dalam rentang 1 jam yang sama), skip LLM call untuk pair ini
+            pass
+            
     # Restore ke simbol utama pool (valid, sudah auto-correct) — biar status line
     # & candle check berikutnya konsisten memakai simbol utama, bukan yang terakhir.
     config.SYMBOL = valid_pool[0] if valid_pool else config.SYMBOL
@@ -971,7 +1046,6 @@ def main():
             now_str = time.strftime('%H:%M:%S')
             remaining_pause = risk.get_remaining_pause()
             pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
-            tf_label = "M30" if config.is_crypto(config.SYMBOL) else "M5"
             # Show any running (open) bot positions across ALL symbols
             open_pos = connector.get_all_open_positions()
             if open_pos:
@@ -985,7 +1059,21 @@ def main():
                 pos_str = " | " + " | ".join(pos_parts)
             else:
                 pos_str = ""
-            sys.stdout.write(f"\r🕒 [{config.SYMBOL} | {now_str}] ⏳ Waiting for next tick / {tf_label} candle...{pause_str}{pos_str}")
+            status_line = f"🕒 [{config.SYMBOL} | {now_str}]{pause_str}{pos_str}"
+            # Potong berdasarkan LEBAR TAMPILAN terminal aktual (emoji = 2 kolom), bukan
+            # jumlah karakter — kalau baris wrap, \r tidak balik ke awal baris dan status
+            # jadi nge-print ke bawah (bukan refresh). Sisakan margin 4 kolom biar aman.
+            try:
+                cols = shutil.get_terminal_size((120, 24)).columns
+            except Exception:
+                cols = 120
+            max_w = max(60, cols - 4)
+            status_line = _truncate_disp(status_line, max_w)
+            if _VT_OK:
+                # Hapus isi baris dulu biar sisa status sebelumnya (yang lebih panjang) hilang
+                sys.stdout.write(f"\x1b[2K\r{status_line}")
+            else:
+                sys.stdout.write(f"\r{status_line:<{max_w}}")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks
