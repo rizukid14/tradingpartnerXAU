@@ -20,10 +20,10 @@ def main():
     
     # Initialize connection to MT5
     if not connector.initialize_mt5():
-        print("❌ Gagal terhubung ke MetaTrader 5 terminal.")
+        print("[X]  Gagal terhubung ke MetaTrader 5 terminal.")
         sys.exit(1)
         
-    print("✅ Terhubung ke MT5.")
+    print("[OK]  Terhubung ke MT5.")
     
     try:
         # Instantiate MacroAnalyst
@@ -46,23 +46,23 @@ def main():
             
         print("\n--- 4. Formatted Macro Context String for M5 Execution ---")
         context_str = analyst.get_macro_context()
-        print(context_str if context_str else "⚠️ Macro context is empty!")
+        print(context_str if context_str else "[WARN]  Macro context is empty!")
         
         print("\n--- 5. Verify caching persistency on disk ---")
         cache_path = os.path.join(config.DATA_DIR, "analysis_cache.json")
 
         if os.path.exists(cache_path):
-            print(f"✅ Cache file successfully written to disk at: {cache_path}")
+            print(f"[OK]  Cache file successfully written to disk at: {cache_path}")
             print(f"Cache file size: {os.path.getsize(cache_path)} bytes")
         else:
-            print("❌ Cache file not found on disk!")
+            print("[X]  Cache file not found on disk!")
             
     except Exception as e:
-        print(f"❌ Terjadi error selama pengujian: {e}")
+        print(f"[X]  Terjadi error selama pengujian: {e}")
         
     finally:
         mt5.shutdown()
-        print("\n🔌 MT5 connection shutdown.")
+        print("\n[PLUG]  MT5 connection shutdown.")
         print("=" * 60)
 
 if __name__ == "__main__":

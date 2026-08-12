@@ -45,7 +45,7 @@ MODEL_ORDER = ["OpenAI", "Gemini", "Claude", "DeepSeek"]
 RE_BANNER_MODELS = re.compile(r"Models:\s*(.+)")
 RE_LOGIN = re.compile(r"\[MT5\] Mencoba masuk ke akun (\d+)")
 RE_CYCLE = re.compile(r"\[CYCLE START\] Memulai analisa market pada (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
-RE_PRICE = re.compile(r"📈 Harga saat ini (\S+) - Bid: ([\d.]+), Ask: ([\d.]+), Spread: ([\d.]+) pts")
+RE_PRICE = re.compile(r"[PRICE]  Harga saat ini (\S+) - Bid: ([\d.]+), Ask: ([\d.]+), Spread: ([\d.]+) pts")
 RE_QUANT_MATH = re.compile(r"\[QUANT MATH\]")
 RE_QUANT_PROB = re.compile(r"\[QUANT PROB\]")
 RE_DYNAMIC = re.compile(r"\[DYNAMIC CONFIG\]")
@@ -774,7 +774,7 @@ def serve(host="0.0.0.0", port=8765):
                 _send_json(self, {
                     "status": "success",
                     "message": f"Updated {len(updated)} config parameters" + (
-                        " (TRADING_MODE persisted ke .env — restart bot untuk apply)" if "TRADING_MODE" in updated else ""
+                        " (TRADING_MODE persisted ke .env - restart bot untuk apply)" if "TRADING_MODE" in updated else ""
                     ),
                     "updated_keys": updated
                 })
@@ -828,12 +828,12 @@ def serve(host="0.0.0.0", port=8765):
             pass
 
     srv = ThreadingHTTPServer((host, port), Handler)
-    print(f"🚀 API & Dashboard Server aktif di http://{host}:{port}/")
+    print(f"[START]  API & Dashboard Server aktif di http://{host}:{port}/")
     print("   Endpoint REST API aktif: /api/summary, /api/open-positions, /api/recent-trades, /api/config, /api/pause, /api/resume, /api/preset")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\n🛑 Server dihentikan.")
+        print("\n[STOP]  Server dihentikan.")
     finally:
         srv.server_close()
 
@@ -857,7 +857,7 @@ def main():
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print(f"✅ Dashboard generated: {args.output}")
+    print(f"[OK]  Dashboard generated: {args.output}")
     _print_summary(events, metrics)
     return 0
 

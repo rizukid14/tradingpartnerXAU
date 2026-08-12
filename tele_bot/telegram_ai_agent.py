@@ -12,7 +12,7 @@ The model (GPT via OpenAI API) reads your message, decides whether it needs to
 call one of your bot's real HTTP endpoints to answer or make a change, calls it,
 then replies to you in natural language.
 
-All actual bot data and config live on YOUR bot's own API server — this file
+All actual bot data and config live on YOUR bot's own API server - this file
 is just the natural-language front end that translates chat into HTTP calls.
 """
 
@@ -40,7 +40,7 @@ API_TOKEN = getattr(config, "API_TOKEN", "")
 API_TIMEOUT = 8  # seconds
 
 # ---------------------------------------------------------------------------
-# 1. HTTP HELPERS — every tool goes through one of these, hitting YOUR bot's API
+# 1. HTTP HELPERS - every tool goes through one of these, hitting YOUR bot's API
 # ---------------------------------------------------------------------------
 
 def _headers():
@@ -65,46 +65,46 @@ def _api_post(path: str, body: dict = None):
         return {"error": f"POST {path} failed: {e}"}
 
 # ---------------------------------------------------------------------------
-# 2. TOOL IMPLEMENTATIONS — mapped 1:1 to your bot's real API
+# 2. TOOL IMPLEMENTATIONS - mapped 1:1 to your bot's real API
 # ---------------------------------------------------------------------------
 
 def get_summary() -> dict:
-    """GET /api/summary — P/L, win rate, total trades, balance, active symbol, recovery status, etc."""
+    """GET /api/summary - P/L, win rate, total trades, balance, active symbol, recovery status, etc."""
     return _api_get("/api/summary")
 
 
 def get_open_positions() -> dict:
-    """GET /api/open-positions — ticket, symbol, type, volume, SL/TP, floating P/L."""
+    """GET /api/open-positions - ticket, symbol, type, volume, SL/TP, floating P/L."""
     return _api_get("/api/open-positions")
 
 
 def get_recent_trades(limit: int = 10) -> dict:
-    """GET /api/recent-trades?limit=N — closed trade history."""
+    """GET /api/recent-trades?limit=N - closed trade history."""
     return _api_get("/api/recent-trades", params={"limit": limit})
 
 
 def get_config() -> dict:
-    """GET /api/config — active bot config (DRY_RUN, risk %, threshold, preset, etc.)."""
+    """GET /api/config - active bot config (DRY_RUN, risk %, threshold, preset, etc.)."""
     return _api_get("/api/config")
 
 
 def update_config(updates: dict) -> dict:
-    """POST /api/config — change one or more config fields, e.g. {'RISK_PERCENT_BTC': 2.0}."""
+    """POST /api/config - change one or more config fields, e.g. {'RISK_PERCENT_BTC': 2.0}."""
     return _api_post("/api/config", body=updates)
 
 
 def set_strategy_preset(preset: str) -> dict:
-    """POST /api/preset — {'preset': 'v3'}."""
+    """POST /api/preset - {'preset': 'v3'}."""
     return _api_post("/api/preset", body={"preset": preset})
 
 
 def pause_trading() -> dict:
-    """POST /api/pause — TRADING_PAUSED = True."""
+    """POST /api/pause - TRADING_PAUSED = True."""
     return _api_post("/api/pause")
 
 
 def resume_trading() -> dict:
-    """POST /api/resume — TRADING_PAUSED = False."""
+    """POST /api/resume - TRADING_PAUSED = False."""
     return _api_post("/api/resume")
 
 
@@ -146,7 +146,7 @@ TOOLS = [
         "update_config",
         "Change one or more config fields on the live bot. Pass only the fields being changed, "
         "e.g. {'RISK_PERCENT_BTC': 2.0, 'DRY_RUN': false}. Field names must match the bot's actual "
-        "config keys — call get_config first if unsure of exact key names or current values.",
+        "config keys - call get_config first if unsure of exact key names or current values.",
         {
             "updates": {
                 "type": "object",
@@ -160,29 +160,29 @@ TOOLS = [
         {"preset": {"type": "string", "description": "Preset name, e.g. 'v1', 'v2', 'v3'"}},
         required=["preset"],
     ),
-    _tool("pause_trading", "Pause the bot — stop opening new trades. Existing open positions are untouched."),
-    _tool("resume_trading", "Resume the bot — allow new trades to open again."),
+    _tool("pause_trading", "Pause the bot - stop opening new trades. Existing open positions are untouched."),
+    _tool("resume_trading", "Resume the bot - allow new trades to open again."),
 ]
 
 SYSTEM_PROMPT = """You are the AI assistant for a multi-LLM consensus trading bot (BTC and XAU/gold).
 You talk to the bot's owner over Telegram in whatever language they use (usually Indonesian).
 
 You can answer questions about performance, open positions, trade history, and config by calling
-the relevant tool — never guess numbers, always call a tool to get real data.
+the relevant tool - never guess numbers, always call a tool to get real data.
 
 Before calling update_config, if you're not certain of the exact config key name or its current
-value, call get_config first to check — field names must match exactly or the change will be
+value, call get_config first to check - field names must match exactly or the change will be
 rejected by the bot.
 
 For any change (config, preset, pause/resume), confirm clearly and briefly what you changed after
-the tool call succeeds — mention the old and new value if you have them. If a tool call returns an
+the tool call succeeds - mention the old and new value if you have them. If a tool call returns an
 error, tell the user plainly what failed; don't pretend it worked.
 
-Be concise — this is a phone chat, not a report. Use bullet points only for actual lists (like open
+Be concise - this is a phone chat, not a report. Use bullet points only for actual lists (like open
 positions or trade history).
 
 If the user's request is ambiguous (e.g. "make it safer" without specifics), ask ONE clarifying
-question rather than guessing at config values — an unwanted change to a live trading bot can cost
+question rather than guessing at config values - an unwanted change to a live trading bot can cost
 real money.
 """
 
@@ -261,7 +261,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         reply = run_agent_turn(update.message.text, CONVERSATION_HISTORY)
     except Exception as e:
-        reply = f"⚠️ Error: {e}"
+        reply = f"[WARN]  Error: {e}"
     await update.message.reply_text(reply)
 
 

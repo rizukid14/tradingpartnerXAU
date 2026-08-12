@@ -159,7 +159,7 @@ def calculate_consensus(decisions):
       }
     """
     print("\n" + "="*50)
-    print("           ANALISIS KONSENSUS MULTI-LLM           ")
+    print("          ANALISIS KONSENSUS MULTI-LLM           ")
     print("="*50)
     
     # Print details for each model
@@ -329,7 +329,7 @@ def calculate_consensus(decisions):
 
     if not sltp_ok:
         print(f" [TRADE DIBATALKAN] Sinyal {consensus_signal} tidak dieksekusi: {sltp_reason}")
-        print("   Model sepakat arah, tapi SL/TP proposal tidak memenuhi rules ATR "
+        print("  Model sepakat arah, tapi SL/TP proposal tidak memenuhi rules ATR "
               "(R:R 2:1 terhadap volatilitas). Cari setup lain.")
         print("=" * 50 + "\n")
         return {

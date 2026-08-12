@@ -91,7 +91,7 @@ class TradeEvaluator:
                     
                     # Check for legacy format (lessons directly at the root)
                     if "lessons" in data:
-                        print(" [MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
+                        print("[MIGRATION] Mengonversi memory_lessons.json ke format multi-simbol...")
                         legacy_lessons = data.get("lessons", [])
                         legacy_summary = data.get("lessons_summary", "")
                         legacy_tickets = list(data.get("evaluated_tickets", []))

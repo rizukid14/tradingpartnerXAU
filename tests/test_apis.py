@@ -20,10 +20,10 @@ def test_openai():
     model = config.OPENAI_MODEL 
     
     if not api_key:
-        print("❌ OpenAI: API Key tidak ditemukan di .env")
+        print("[X]  OpenAI: API Key tidak ditemukan di .env")
         return False
         
-    print(f"🔄 OpenAI: Mencoba memanggil {model}...")
+    print(f"[ROTATE]  OpenAI: Mencoba memanggil {model}...")
     try:
         client = OpenAI(api_key=api_key, base_url=base_url)
         response = client.chat.completions.create(
@@ -32,10 +32,10 @@ def test_openai():
             max_completion_tokens=128
         )
         result = response.choices[0].message.content.strip()
-        print(f"✅ OpenAI Sukses: '{result}'")
+        print(f"[OK]  OpenAI Sukses: '{result}'")
         return True
     except Exception as e:
-        print(f"❌ OpenAI Gagal: {e}")
+        print(f"[X]  OpenAI Gagal: {e}")
         return False
 
 def test_gemini():
@@ -43,10 +43,10 @@ def test_gemini():
     model = config.GEMINI_MODEL # use cheap model for testing
     
     if not api_key:
-        print("❌ Gemini: API Key tidak ditemukan di .env")
+        print("[X]  Gemini: API Key tidak ditemukan di .env")
         return False
         
-    print(f"🔄 Gemini: Mencoba memanggil {model}...")
+    print(f"[ROTATE]  Gemini: Mencoba memanggil {model}...")
     try:
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
@@ -54,10 +54,10 @@ def test_gemini():
             contents="Say 'Gemini OK' in one line."
         )
         result = response.text.strip()
-        print(f"✅ Gemini Sukses: '{result}'")
+        print(f"[OK]  Gemini Sukses: '{result}'")
         return True
     except Exception as e:
-        print(f"❌ Gemini Gagal: {e}")
+        print(f"[X]  Gemini Gagal: {e}")
         return False
 
 def test_claude():
@@ -66,9 +66,9 @@ def test_claude():
     if model.startswith("deepseek/"):
         api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
-            print("❌ DeepSeek: API Key tidak ditemukan di .env")
+            print("[X]  DeepSeek: API Key tidak ditemukan di .env")
             return False
-        print(f"🔄 DeepSeek: Mencoba memanggil {model}...")
+        print(f"[ROTATE]  DeepSeek: Mencoba memanggil {model}...")
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url=config.DEEPSEEK_API_BASE)
@@ -78,18 +78,18 @@ def test_claude():
                 messages=[{"role": "user", "content": "Say 'DeepSeek OK' in one line."}],
             )
             result = response.choices[0].message.content.strip()
-            print(f"✅ DeepSeek Sukses: '{result}'")
+            print(f"[OK]  DeepSeek Sukses: '{result}'")
             return True
         except Exception as e:
-            print(f"❌ DeepSeek Gagal: {e}")
+            print(f"[X]  DeepSeek Gagal: {e}")
             return False
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        print("❌ Claude: API Key tidak ditemukan di .env")
+        print("[X]  Claude: API Key tidak ditemukan di .env")
         return False
 
-    print(f"🔄 Claude: Mencoba memanggil {model}...")
+    print(f"[ROTATE]  Claude: Mencoba memanggil {model}...")
     try:
         from anthropic import Anthropic
         client = Anthropic(api_key=api_key)
@@ -99,10 +99,10 @@ def test_claude():
             messages=[{"role": "user", "content": "Say 'Claude OK' in one line."}],
         )
         result = "".join(b.text for b in response.content if b.type == "text").strip()
-        print(f"✅ Claude Sukses: '{result}'")
+        print(f"[OK]  Claude Sukses: '{result}'")
         return True
     except Exception as e:
-        print(f"❌ Claude Gagal: {e}")
+        print(f"[X]  Claude Gagal: {e}")
         return False
 
 if __name__ == "__main__":
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     print("="*60)
     
     if openai_ok and gemini_ok and claude_ok:
-        print("🎉 Semua API terhubung dengan sukses! Anda siap menjalankan bot.")
+        print("[DONE]  Semua API terhubung dengan sukses! Anda siap menjalankan bot.")
     else:
-        print("⚠️ Beberapa API gagal terhubung. Silakan periksa kunci API Anda di file .env")
+        print("[WARN]  Beberapa API gagal terhubung. Silakan periksa kunci API Anda di file .env")
     print("="*60)

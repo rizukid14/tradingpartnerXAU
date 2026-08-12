@@ -12,51 +12,51 @@ SAMPLE_LOG = """\
 ============================================================
     BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    
 ============================================================
-Mode: 🔥 LIVE EXECUTION (Duit Asli/Demo)
+Mode: [HOT]  LIVE EXECUTION (Duit Asli/Demo)
 Simbol: BTCUSD.c | Timeframe: M30 | Lot Size: 0.01
 Models: OpenAI (gpt-5.4-mini), Gemini (gemini-3.5-flash-lite), Claude (claude-sonnet-4-6)
 ------------------------------------------------------------
 [MT5] Mencoba masuk ke akun 27556325 pada server VTMarkets-Live 3...
 [MT5] Login berhasil!
-✅ Terhubung ke MT5 dengan sukses!
-⚡ [CYCLE START] Memulai analisa market pada 2026-08-09 13:50:33...
-📈 Harga saat ini BTCUSD.c - Bid: 64847.66, Ask: 64864.77, Spread: 1711.0 pts
-⏱️ [LATENSI MODEL (Ronde 1)] OpenAI: 1.87s | Gemini: 1.24s | Claude: 3.48s (Total: 3.49s)
-🤖 [Gemini] Decision: SELL (Conf: 72.0%)
+[OK]  Terhubung ke MT5 dengan sukses!
+[FAST]  [CYCLE START] Memulai analisa market pada 2026-08-09 13:50:33...
+[PRICE]  Harga saat ini BTCUSD.c - Bid: 64847.66, Ask: 64864.77, Spread: 1711.0 pts
+[LATENCY]  [LATENSI MODEL (Ronde 1)] OpenAI: 1.87s | Gemini: 1.24s | Claude: 3.48s (Total: 3.49s)
+[BOT]  [Gemini] Decision: SELL (Conf: 72.0%)
    SL: 8300 pts, TP: 13500 pts
    Reason: Bearish multi-horizon forecast aligns with H1 pressure.
-🤖 [OpenAI] Decision: SELL (Conf: 68.0%)
+[BOT]  [OpenAI] Decision: SELL (Conf: 68.0%)
    SL: 8200 pts, TP: 12300 pts
    Reason: M30 remains below EMA20.
-🤖 [Claude] Decision: SELL (Conf: 68.0%)
+[BOT]  [Claude] Decision: SELL (Conf: 68.0%)
    SL: 8000 pts, TP: 14000 pts
    Reason: Price within optimal entry zone.
-🚀 [KONSENSUS DISETUJUI] Sinyal: SELL (skor 2.08 >= threshold 1.8)
+[START]  [KONSENSUS DISETUJUI] Sinyal: SELL (skor 2.08 >= threshold 1.8)
    Model yang sepakat: Gemini, OpenAI, Claude
    Rata-rata Keyakinan: 69.3%
-🔥 [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat SELL! Membuka 2 posisi sekaligus (Sisa slot: 6)...
+[HOT]  [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat SELL! Membuka 2 posisi sekaligus (Sisa slot: 6)...
 [MT5] Mengirim order: SELL BTCUSD.c 0.19 lot pada harga 64847.58 (SL: 64929.24, TP: 64714.92)...
 [MT5] Order BERHASIL! Ticket: 1161839635
-🎉 Sukses menempatkan order #1: SELL (Ticket: 1161839635, Lot: 0.19)
+[DONE]  Sukses menempatkan order #1: SELL (Ticket: 1161839635, Lot: 0.19)
 [MT5] Mengirim order: SELL BTCUSD.c 0.19 lot pada harga 64847.04 (SL: 64928.7, TP: 64687.85)...
 [MT5] Order BERHASIL! Ticket: 1161839638
-🎉 Sukses menempatkan order #2: SELL (Ticket: 1161839638, Lot: 0.19)
-⚡ [CYCLE START] Memulai analisa market pada 2026-08-09 14:20:33...
-📈 Harga saat ini BTCUSD.c - Bid: 64800.0, Ask: 64817.0, Spread: 1700.0 pts
-⏱️ [LATENSI MODEL (Ronde 1)] OpenAI: 2.0s | Gemini: 1.5s | Claude: 3.0s (Total: 3.0s)
-🤖 [Gemini] Decision: HOLD (Conf: 55.0%)
+[DONE]  Sukses menempatkan order #2: SELL (Ticket: 1161839638, Lot: 0.19)
+[FAST]  [CYCLE START] Memulai analisa market pada 2026-08-09 14:20:33...
+[PRICE]  Harga saat ini BTCUSD.c - Bid: 64800.0, Ask: 64817.0, Spread: 1700.0 pts
+[LATENCY]  [LATENSI MODEL (Ronde 1)] OpenAI: 2.0s | Gemini: 1.5s | Claude: 3.0s (Total: 3.0s)
+[BOT]  [Gemini] Decision: HOLD (Conf: 55.0%)
    SL: 0 pts, TP: 0 pts
    Reason: Waiting.
-🤖 [OpenAI] Decision: HOLD (Conf: 60.0%)
+[BOT]  [OpenAI] Decision: HOLD (Conf: 60.0%)
    SL: 0 pts, TP: 0 pts
    Reason: Waiting.
-🤖 [Claude] Decision: HOLD (Conf: 65.0%)
+[BOT]  [Claude] Decision: HOLD (Conf: 65.0%)
    SL: 0 pts, TP: 0 pts
    Reason: Waiting.
-🚨 [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus (2 model). Posisi: HOLD.
-🔮 [FORECAST INFO] Bias: BEARISH | Proyeksi R:R (T+1h/T+4h): 0.79
+[ALERT]  [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus (2 model). Posisi: HOLD.
+[FORECAST]  [FORECAST INFO] Bias: BEARISH | Proyeksi R:R (T+1h/T+4h): 0.79
 [POST-MORTEM] Menganalisis hasil trade tiket #1161839635 (BTCUSD.c, P/L: -14.75)...
-💡 [PELAJARAN BARU DITERIMA] [entry] [LESSON] Avoid 5-minute BTC scalps when price is stretched.
+[IDEA]  [PELAJARAN BARU DITERIMA] [entry] [LESSON] Avoid 5-minute BTC scalps when price is stretched.
 """
 
 
@@ -208,7 +208,7 @@ def test_render():
 
 def test_load_json_defensive():
     failed = 0
-    # file tidak ada → None
+    # file tidak ada -> None
     if dashboard._load_json("__nonexistent__.json") is not None:
         print("FAIL load_json: nonexistent should be None")
         failed += 1
@@ -219,5 +219,5 @@ if __name__ == "__main__":
     total = 0
     for fn in (test_parser_events, test_metrics, test_render, test_load_json_defensive):
         total += fn()
-    print(f"\n{'✅ SEMUA TEST PASS' if total == 0 else f'❌ {total} TEST GAGAL'}")
+    print(f"\n{'[OK]  SEMUA TEST PASS' if total == 0 else f'[X]  {total} TEST GAGAL'}")
     sys.exit(1 if total else 0)

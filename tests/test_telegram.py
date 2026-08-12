@@ -21,15 +21,15 @@ def main():
     print("-" * 60)
     
     if not config.TELEGRAM_ENABLED:
-        print("⚠️ TELEGRAM_ENABLED=false di .env. Ubah menjadi TELEGRAM_ENABLED=true untuk menguji!")
+        print("[WARN]  TELEGRAM_ENABLED=false di .env. Ubah menjadi TELEGRAM_ENABLED=true untuk menguji!")
         return
 
-    print("🚀 Mengirim pesan uji coba ke Telegram...")
-    success = tg.send_message("🤖 *Bot Trading XAUUSD Connected!*\nNotifikasi Telegram berhasil terhubung dan siap digunakan! 🔥")
+    print("[START]  Mengirim pesan uji coba ke Telegram...")
+    success = tg.send_message("[BOT]  *Bot Trading XAUUSD Connected!*\nNotifikasi Telegram berhasil terhubung dan siap digunakan! [HOT] ")
     if success:
-        print("🎉 BERHASIL! Pesan uji coba telah terkirim ke Telegram Anda.")
+        print("[DONE]  BERHASIL! Pesan uji coba telah terkirim ke Telegram Anda.")
     else:
-        print("❌ GAGAL! Periksa TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID di file .env Anda.")
+        print("[X]  GAGAL! Periksa TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID di file .env Anda.")
 
 if __name__ == "__main__":
     main()

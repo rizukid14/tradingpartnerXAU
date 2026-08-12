@@ -131,7 +131,7 @@ class EconomicCalendar:
         """
         Returns a compact markdown block for prompt injection, but ONLY when
         a high-impact event is imminent (within EVENT_WINDOW_HOURS).
-        Returns "" (empty) otherwise — saves tokens on quiet candles and
+        Returns "" (empty) otherwise - saves tokens on quiet candles and
         avoids injecting far-future events the LLM doesn't need to act on.
         """
         now = now or datetime.now(WIB)
