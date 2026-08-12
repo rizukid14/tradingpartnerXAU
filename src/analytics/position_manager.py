@@ -361,9 +361,14 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if config.is_crypto(symbol):
         trail_distance = distance * point
     else:
-        start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.2)
-        end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
-        min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
+        if config.is_fx(symbol):
+            start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_FX", 0.8)
+            end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_FX", 0.3)
+            min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_FX", 0.2)
+        else:
+            start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.2)
+            end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
+            min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
 
         progress_ref = max(tp_points, activation * 2) if tp_points > 0 else activation * 2
         progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
