@@ -565,11 +565,11 @@ function renderStatusPanel() {
       </div>
       <div style="font-size:10px; line-height: 1.4; background: rgba(255,255,255,0.01); padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
         <b>WIB Time-based AI Mode:</b><br>
-        • 00:01-08:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
-        • 09:00-13:00: <span style="color:var(--muted-light);">Dual (OpenAI+DeepSeek)</span><br>
-        • 13:01-19:29: <span style="color:var(--muted-light);">Single</span><br>
-        • 19:30-21:30: <span style="color:var(--amber);">Triple (London-NY Overlap)</span><br>
-        • 21:31-23:59: <span style="color:var(--muted-light);">Single</span>
+        • 00:01-09:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
+        • 10:00-15:00: <span style="color:var(--muted-light);">Dual (OpenAI+Gemini)</span><br>
+        • 15:01-19:29: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
+        • 19:30-21:30: <span style="color:var(--amber);">Triple (OpenAI+Gemini+DeepSeek)</span><br>
+        • 21:31-23:59: <span style="color:var(--muted-light);">Single (OpenAI)</span>
       </div>
     </div>
   `;
