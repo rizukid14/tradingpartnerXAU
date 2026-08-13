@@ -344,41 +344,38 @@ def _build_sltp_rules_block(symbol, timeframe):
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
     is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
-    is_fx = not is_xau and not is_btc
 
-    # FX Pairs H1: Bebas mengikuti struktur harga (support/resistance/EMA/swing),
-    # tidak dipaksa batas ATR kaku atau R:R fixed, cukup letakkan SL di level invalidasi
-    # teknikal & TP di target struktur rasional (minimal > 2x spread).
-    if is_fx:
-        return (
-            f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
-            f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
-            f"- TP is placed at your realistic structural target. R:R is flexible (e.g. 1.2:1, 1.5:1, 2:1, 3:1) matching the natural market structure.\n"
-        )
-
-    # Typical SL range per-symbol dari default config (XAU 400, BTC 50000)
-    d_sl = config.default_sl_points_for(symbol)
-    lo_pts = max(10, int(d_sl * 0.5))
-    hi_pts = max(20, int(d_sl * 1.5))
-    
     if mode == "LLM":
-        if is_btc:
-            range_note = "typically 20000 to 60000 points ($200-$600)"
-            noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
-        else:
+        # Mode LLM: Bebas sesuai thesis/struktur pasar
+        if is_xau:
+            d_sl = config.default_sl_points_for(symbol)
+            lo_pts = max(10, int(d_sl * 0.5))
+            hi_pts = max(20, int(d_sl * 1.5))
             range_note = f"typically {lo_pts} to {hi_pts} points"
             noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points) as spread and execution noise will erode your edge"
+            return (
+                f"- Define absolute 'invalidation_price' and 'target_price' based on price structure. SL is placed exactly at the invalidation price level.\n"
+                f"- SL price must be beyond the invalidation level and NEVER tighter than 2x current spread (in points).\n"
+                f"- The distance between entry price and invalidation_price should align with the {timeframe} structure ({range_note}) and {noise_note}. Do NOT set stops too close (e.g. inside noise).\n"
+                f"- TP is placed exactly at the target_price.\n"
+            )
+        elif is_btc:
+            return (
+                f"- Define absolute 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600).\n"
+                f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
+                f"- TP is placed at your realistic structural target.\n"
+            )
+        else:
+            # FX Pairs H1: Bebas mengikuti struktur harga (support/resistance/EMA/swing),
+            # tidak dipaksa batas ATR kaku atau R:R fixed, cukup letakkan SL di level invalidasi
+            # teknikal & TP di target struktur rasional (minimal > 2x spread).
+            return (
+                f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
+                f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
+                f"- TP is placed at your realistic structural target. R:R is flexible (e.g. 1.2:1, 1.5:1, 2:1, 3:1) matching the natural market structure.\n"
+            )
 
-        return (
-            f"- Define absolute 'invalidation_price' and 'target_price' based on price structure. SL is placed exactly at the invalidation price level.\n"
-            f"- SL price must be beyond the invalidation level and the outer boundary of the supply/demand zone, and NEVER tighter than 2x current spread (in points).\n"
-            f"- The distance between entry price and invalidation_price should align with the {timeframe} structure ({range_note}) and {noise_note}. Do NOT set stops too close (e.g. inside noise).\n"
-            f"- TP is placed exactly at the target_price. TP distance must be at least equal to SL distance (TP distance >= SL distance) to prevent negative risk-to-reward ratios.\n"
-        )
-        
-    # ATR-Based: multiplier dinamis per AI mode (single 1.25/2.5, dual 1.5/3.0,
-    # triple 1.75/3.5) - sinkron dengan config.atr_sl/tp_multiplier dan
-    # atr_gate_str di market data block. R:R 2:1 selalu terjaga.
+    # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
     sl_mult = config.atr_sl_multiplier()
     tp_mult = config.atr_tp_multiplier()
     return (
@@ -664,11 +661,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
-    # Inject ATR Gate information ONLY for XAU/BTC if config.TP_SL_RULES is "ATR-Based"
-    # FX pairs have complete structural freedom without rigid ATR gate.
-    is_xau_sym = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
-    is_btc_sym = config.is_crypto(symbol)
-    if (is_xau_sym or is_btc_sym) and atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
+    # Inject ATR Gate information ONLY if config.TP_SL_RULES is "ATR-Based"
+    if atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
         ai_mode = config.get_ai_mode()
         sl_mult = config.atr_sl_multiplier()
         tp_mult = config.atr_tp_multiplier()

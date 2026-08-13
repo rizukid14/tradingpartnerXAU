@@ -59,40 +59,31 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
-    is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
-    is_btc = config.is_crypto(config.SYMBOL)
-    is_fx = not is_xau and not is_btc
-
-    if is_fx:
-        # FX Pairs H1: Bebas mengikuti struktur harga yang diajukan AI (tanpa aturan ATR kaku),
-        # cuma floor minimal 2x spread agar broker tidak menolak order.
-        min_sl = spread_pts * 2
-        if sl_points < min_sl:
-            sl_points = min_sl
-        if tp_points <= 0:
-            tp_points = config.default_tp_points_for(config.SYMBOL)
-        return sl_points, tp_points, True, ""
-
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+
     if mode == "LLM":
-        # Enforce a safety floor (at least 2x spread or 50% of the default SL)
-        # to prevent rogue/hallucinated stops that result in bloated lots.
-        d_sl = config.default_sl_points_for(config.SYMBOL)
-        min_sl = max(spread_pts * 2, int(d_sl * 0.5))
-        if sl_points < min_sl:
-            print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
-            sl_points = min_sl
-        
-        # TP minimal dipaksa minimal sama dengan SL (TP >= 1.0x SL) untuk mencegah R:R negatif
+        # Mode LLM (Bebas sesuai thesis struktur AI):
+        is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
+        if is_xau:
+            # Gold: safety floor (minimal 2x spread atau 50% default SL) untuk cegah stops super sempit
+            d_sl = config.default_sl_points_for(config.SYMBOL)
+            min_sl = max(spread_pts * 2, int(d_sl * 0.5))
+            if sl_points < min_sl:
+                print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
+                sl_points = min_sl
+        else:
+            # FX Pairs & BTC: Bebas sesuai struktur teknikal model, cuma floor 2x spread agar order tidak ditolak broker
+            min_sl = spread_pts * 2
+            if sl_points < min_sl:
+                sl_points = min_sl
+
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
-        if tp_points < sl_points:
-            tp_points = sl_points
         return sl_points, tp_points, True, ""
 
-    # ATR-Based: GATE layak/tidak. Proposal AI dipakai kalau lolos.
-    # Multiplier per AI mode (config.atr_sl_multiplier / atr_tp_multiplier):
-    # single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 (R:R 2:1 selalu).
+    # Mode ATR-Based: GATE LAYAK/TIDAK (Non-negotiable).
+    # Jika mode "ATR-Based" dipilih, ATR Hard Gate BERLAKU untuk semua aset.
+    # Proposal AI dipakai apa adanya kalau lolos, DITOLAK kalau kurang.
     if atr_points > 0:
         ai_mode = config.get_ai_mode()
         sl_mult = config.atr_sl_multiplier()
@@ -106,8 +97,7 @@ def _apply_sltp_rules(sl_points, tp_points):
             )
         return sl_points, tp_points, True, ""
 
-    # ATR gagal dihitung: fallback ke floor 2x spread, tetap izinkan (jangan
-    # stop trading karena data hiccup).
+    # ATR gagal dihitung: fallback ke floor 2x spread, tetap izinkan
     if sl_points < spread_pts * 2:
         sl_points = spread_pts * 2
     if tp_points < sl_points:
