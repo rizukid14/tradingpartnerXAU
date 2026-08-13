@@ -182,7 +182,12 @@ def analyze_fundamentals(symbol):
     Event SCHEDULING is handled deterministically by economic_calendar.py -
     search grounding is only a qualitative complement, never the schedule source.
     """
-    execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
+    if config.is_crypto(symbol):
+        execution_style = "30-minute intraday (M30) swing"
+    elif "XAU" not in symbol.upper():
+        execution_style = "1-hour (H1) swing"
+    else:
+        execution_style = "15-minute (M15) short-term swing"
     prompt = f"""
 What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
 Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
@@ -246,8 +251,10 @@ BUY or SELL:
   "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
   "edge": "1-2 sentences: what specifically creates the edge here.",
   "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "sl_points": number, // Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
+  "invalidation_price": number, // The exact price level where this trade setup becomes invalid (structure broken, e.g. 4422.50). MUST correspond to price structural data provided (swing high/low, Fibonacci retracements, PDH/PDL, EMA). Do NOT make up random points.
+  "target_price": number, // The exact price level representing your profit target (e.g. 4426.20). MUST correspond to price structural data provided.
+  "sl_points": number, // (Fallback) Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
+  "tp_points": number, // (Fallback) Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
   "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
 }
 
@@ -335,36 +342,47 @@ def _build_sltp_rules_block(symbol, timeframe):
       dikalkulasi dari SL di main.py.
     """
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
-    # Typical SL range per-symbol dari default config (XAU 400, EURJPY 50,
-    # GBPCHF 40) - biar guidance LLM ikut skala pair, bukan asumsi Gold.
-    d_sl = config.default_sl_points_for(symbol)
-    lo_pts = max(10, int(d_sl * 0.5))
-    hi_pts = max(20, int(d_sl * 1.5))
-    
+
     if mode == "LLM":
-        if is_btc:
-            range_note = "typically 20000 to 60000 points ($200-$600)"
-            noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
-        else:
+        # Mode LLM: Bebas sesuai thesis/struktur pasar
+        if is_xau:
+            d_sl = config.default_sl_points_for(symbol)
+            lo_pts = max(10, int(d_sl * 0.5))
+            hi_pts = max(20, int(d_sl * 1.5))
             range_note = f"typically {lo_pts} to {hi_pts} points"
             noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points) as spread and execution noise will erode your edge"
+            return (
+                f"- Define absolute 'invalidation_price' and 'target_price' based on price structure. SL is placed exactly at the invalidation price level.\n"
+                f"- SL price must be beyond the invalidation level and NEVER tighter than 2x current spread (in points).\n"
+                f"- The distance between entry price and invalidation_price should align with the {timeframe} structure ({range_note}) and {noise_note}. Do NOT set stops too close (e.g. inside noise).\n"
+                f"- TP is placed exactly at the target_price.\n"
+            )
+        elif is_btc:
+            return (
+                f"- Define absolute 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600).\n"
+                f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
+                f"- TP is placed at your realistic structural target.\n"
+            )
+        else:
+            # FX Pairs H1: Bebas mengikuti struktur harga (support/resistance/EMA/swing),
+            # tidak dipaksa batas ATR kaku atau R:R fixed, cukup letakkan SL di level invalidasi
+            # teknikal & TP di target struktur rasional (minimal > 2x spread).
+            return (
+                f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
+                f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
+                f"- TP is placed at your realistic structural target. R:R is flexible (e.g. 1.2:1, 1.5:1, 2:1, 3:1) matching the natural market structure.\n"
+            )
 
-        return (
-            f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-            f"- SL distance is YOUR choice (no ATR floor): set it exactly where the invalidation logic puts it. However, align it with the {timeframe} structure ({range_note}) and {noise_note}\n"
-            f"- TP is YOUR choice (no forced 2R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
-        )
-        
-    # ATR-Based: multiplier dinamis per AI mode (single 1.25/2.5, dual 1.5/3.0,
-    # triple 1.75/3.5) - sinkron dengan config.atr_sl/tp_multiplier dan
-    # atr_gate_str di market data block. R:R 2:1 selalu terjaga.
+    # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
     sl_mult = config.atr_sl_multiplier()
     tp_mult = config.atr_tp_multiplier()
     return (
-        f"- HARD GATE (non-negotiable, enforced by the bot): if your SL < {sl_mult}x current ATR or your TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
-        "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
+        f"- Define absolute 'invalidation_price' and 'target_price'. Bot calculates points dynamically at execution.\n"
+        f"- HARD GATE (non-negotiable, enforced by the bot): if the resulting SL < {sl_mult}x current ATR or TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent.\n"
+        f"- SL must be placed at the invalidation price level, no tighter than 2x current spread (in points) from the entry price.\n"
+        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimum price distances required for current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- choose invalidation_price/target_price that meet or exceed them.\n"
     )
 
 
@@ -576,10 +594,10 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             micro_tf_name = "M5"
             num_micro_send = 12
         elif "XAU" in symbol.upper():
-            # XAU main is M5 -> micro is M1, 15 candles (15 minutes total)
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M1
-            micro_tf_name = "M1"
-            num_micro_send = 15
+            # XAU main is M15 -> micro is M5, 12 candles (60 minutes / 1 hour total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+            micro_tf_name = "M5"
+            num_micro_send = 12
         else:
             # FX main is H1 -> micro is M5, 24 candles (120 minutes / 2 hours total)
             micro_tf = mt5_connector.mt5.TIMEFRAME_M5
@@ -767,7 +785,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
             "For EACH open position above, make an explicit decision:\n" +
-            "- 'CLOSE' ONLY if the trade thesis is genuinely broken (e.g., the invalidation level is breached, a clear counter-trend structure has formed on M5, or a fundamental shift has occurred). Do NOT recommend CLOSE for minor or normal pullbacks within the expected M5 volatility.\n" +
+            f"- 'CLOSE' ONLY if the trade thesis is genuinely broken (e.g., the invalidation level is breached, a clear counter-trend structure has formed on {tf_label}, or a fundamental shift has occurred). Do NOT recommend CLOSE for minor or normal pullbacks within the expected {tf_label} volatility.\n" +
             "- 'HOLD' if the thesis remains intact, the position is within normal price fluctuations, or progressing toward target.\n" +
             "Provide a concrete quantitative reason (e.g., 'CLOSE: price broke invalidation level at 4350.8', or 'HOLD: price holding above support, within normal pullback'). Never leave a ticket without an action.\n"
         )
@@ -786,9 +804,19 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     else:
         separation_note = ""
 
-    # Timeframe label per symbol: BTC trades M30 (intraday), XAU trades M5 (scalp)
-    is_crypto_sym = config.is_crypto(symbol)
-    tf_label = "M30" if is_crypto_sym else "M5"
+    # Dynamic timeframe label resolved from dataframe or fallback to config
+    tf_label = None
+    if len(df) >= 2:
+        try:
+            diff_sec = int(abs((df['time'].iloc[-1] - df['time'].iloc[-2]).total_seconds()))
+            sec_to_tf = {300: "M5", 900: "M15", 1800: "M30", 3600: "H1", 14400: "H4", 86400: "D1"}
+            tf_label = sec_to_tf.get(diff_sec)
+        except Exception:
+            pass
+    if not tf_label:
+        tf_val = config.get_timeframe(symbol)
+        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
+        tf_label = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
 
     # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
     swing_high = float(df['high'].max())
@@ -878,7 +906,7 @@ def clean_json_response(text):
                         parsed[key] = val.strip('"')
         # Validate keys (setup/edge/invalidation are optional new fields -
         # model may omit them; HOLD responses won't have them)
-        for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning", "setup", "edge", "invalidation"]:
+        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation"]:
             if key not in parsed:
                 parsed[key] = None
         # Ensure signal is upper case
@@ -903,6 +931,8 @@ def clean_json_response(text):
             "confidence": 0.0,
             "sl_points": None,
             "tp_points": None,
+            "invalidation_price": None,
+            "target_price": None,
             "reasoning": f"Gagal memparsing respon: {str(e)}"
         }
 

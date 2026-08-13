@@ -26,10 +26,15 @@ PRE_WARM_WINDOW_SECONDS = 60
 
 def _cache_duration_seconds(symbol):
     """Forecast cache validity per symbol:
-    XAU (M5 scalping): 15 minutes.
-    BTC (M30 intraday, H1/H4 context): 30 minutes (1800 seconds).
+    XAU (M15): 30 minutes (1800 seconds).
+    BTC (M30): 1 hour (3600 seconds).
+    FX (H1): 2 hours (7200 seconds).
     """
-    return 1800 if config.is_crypto(symbol) else CACHE_DURATION_SECONDS
+    if config.is_crypto(symbol):
+        return 3600
+    if "XAU" not in symbol.upper():
+        return 7200
+    return 1800
 
 class ForecastEngine:
     def __init__(self):
@@ -120,39 +125,59 @@ class ForecastEngine:
 
     def _do_refresh(self, symbol, df, current_tick, macro_context):
         """Actual refresh logic (synchronous). Updates cache + disk."""
-        now = time.time()
         print(f" [FORECAST ENGINE] Memperbarui proyeksi harga Multi-Horizon untuk {symbol}...")
+        now = time.time()
         new_forecast = self._generate_forecast_with_llm(symbol, df, current_tick, macro_context)
         if new_forecast:
             new_forecast["symbol"] = symbol
             new_forecast["timestamp"] = now
             self._forecast = new_forecast
             self._save_cache()
-            print(f" [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {new_forecast.get('horizon_label', 'T+30m/T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+30m')} Target: {new_forecast.get('target_t1h' if config.is_crypto(symbol) else 'target_t15m')} | Invalidation: {new_forecast.get('invalidation_level')}")
+            h_lbl = new_forecast.get('horizon_label', 'T+30m/T+1h/T+4h' if config.is_crypto(symbol) else 'T+15m/T+30m')
+            t_val = 'N/A'
+            for k in ['target_t1h', 'target_t30m', 'target_t15m', 'target_t45m', 'target_t4h', 'target_t2h', 'target_t12h']:
+                if k in new_forecast:
+                    t_val = f"{new_forecast[k]} ({k})"
+                    break
+            print(f" [FORECAST ENGINE] Proyeksi Baru: Bias {new_forecast.get('forecast_bias')} | {h_lbl} Target: {t_val} | Invalidation: {new_forecast.get('invalidation_level')}")
         return self._forecast
 
     def _generate_forecast_with_llm(self, symbol, df, current_tick, macro_context):
         """Queries OpenAI, Gemini, and Claude in parallel to form a Multi-LLM Consensus Forecast."""
         latest = df.iloc[-1]
 
-        # Per-symbol forecast horizon: XAU scalps on M5 (15m/30m ahead - no
-        # long-term trend capture); BTC trades on M30 (next 30m / 1h / 4h).
+        # Resolve dynamic timeframe label
+        tf_val = config.get_timeframe(symbol)
+        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
+        tf_label = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
+
         if config.is_crypto(symbol):
-            tf_label = "M30"
+            # BTC main is M30 -> M30 horizons
             horizon_5m = "next 30 minutes (T+30m)"
             horizon_short = "next 1 hour (T+1h)"
             horizon_long = "next 4 hours (T+4h)"
             horizon_5m_key = "target_t30m"
             horizon_short_key = "target_t1h"
             horizon_long_key = "target_t4h"
-        else:
-            tf_label = "M5"
+            horizon_label = "T+30m/T+1h/T+4h"
+        elif "XAU" in symbol.upper():
+            # XAU main is M15 -> M15 horizons
             horizon_5m = "next 15 minutes (T+15m)"
-            horizon_short = "next 30 minutes (T+30m)"
-            horizon_long = "next 30 minutes (T+30m)"
+            horizon_short = "next 45 minutes (T+45m)"
+            horizon_long = "next 2 hours (T+2h)"
             horizon_5m_key = "target_t15m"
-            horizon_short_key = "target_t30m"
-            horizon_long_key = "target_t30m"
+            horizon_short_key = "target_t45m"
+            horizon_long_key = "target_t2h"
+            horizon_label = "T+15m/T+45m/T+2h"
+        else:
+            # FX main is H1 -> H1 horizons
+            horizon_5m = "next 1 hour (T+1h)"
+            horizon_short = "next 4 hours (T+4h)"
+            horizon_long = "next 12 hours (T+12h)"
+            horizon_5m_key = "target_t1h"
+            horizon_short_key = "target_t4h"
+            horizon_long_key = "target_t12h"
+            horizon_label = "T+1h/T+4h/T+12h"
 
         # Schema JSON: hindari key duplikat (XAU punya 2 horizon saja)
         targets_schema = (
@@ -262,7 +287,7 @@ Generate a JSON object strictly matching this schema:
             "optimal_entry_min": round(avg_emin, 2),
             "optimal_entry_max": round(avg_emax, 2),
             "forecast_reasoning": f"Multi-LLM Consensus ({models_summary})",
-            "horizon_label": "T+30m/T+1h/T+4h" if config.is_crypto(symbol) else "T+15m/T+30m",
+            "horizon_label": horizon_label,
         }
         out[horizon_5m_key] = round(avg_5m, 2)
         out[horizon_short_key] = round(avg_short, 2)
@@ -281,12 +306,14 @@ Generate a JSON object strictly matching this schema:
 
         f = self._forecast
         horizon = f.get("horizon_label", "T+15m/T+30m")
-        # Map horizon label -> forecast dict key (per-symbol: XAU T+15m/T+30m, BTC T+30m/T+1h/T+4h)
         label_key_map = {
             "T+15m": "target_t15m",
             "T+30m": "target_t30m",
+            "T+45m": "target_t45m",
             "T+1h": "target_t1h",
+            "T+2h": "target_t2h",
             "T+4h": "target_t4h",
+            "T+12h": "target_t12h",
             "T+60m": "target_t60m",
         }
         target_lines = []

@@ -340,8 +340,12 @@ def run_ai_agent():
     print("⚡ Polling for Telegram messages...")
     print("=" * 60)
 
-    app = Application.builder().token(token).build()
-    app.add_handler(MessageHandler(filters.TEXT, on_message))
+    api_base = getattr(config, "TELEGRAM_API_BASE", "").rstrip("/")
+    builder = Application.builder().token(token)
+    if api_base and api_base != "https://api.telegram.org":
+        builder = builder.base_url(f"{api_base}/bot")
+    app = builder.build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.run_polling()
 
 

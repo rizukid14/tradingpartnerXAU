@@ -10,6 +10,7 @@ import config
 from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
+from src.core.cli_theme import UI, render_banner
 from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
 
@@ -521,12 +522,11 @@ def _prompt_startup_scan_mode():
         import msvcrt
     except ImportError:
         return
-    print("\n" + "=" * 58)
-    print(" STARTUP SCAN MODE")
-    print(" [1] Scan semua simbol sekarang (scan all now)")
-    print(" [2] Scan sesuai timeframe masing-masing (default)")
-    print("=" * 58)
-    sys.stdout.write("  Pilihan [2] (10 detik, Enter = default): ")
+    print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
+    print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 7 Simbol Sekarang (Immediate Full Market Scan)            |")
+    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M15 / H1 / M30 - Default)      |")
+    print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
+    sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
     sys.stdout.flush()
     buf = ""
     deadline = time.time() + 10
@@ -548,8 +548,8 @@ def _prompt_startup_scan_mode():
     sys.stdout.write("\n")
     sys.stdout.flush()
     _STARTUP_SCAN_MODE = "all" if buf.strip() == "1" else "timeframe"
-    mode_txt = "SCAN ALL NOW (semua simbol langsung)" if _STARTUP_SCAN_MODE == "all" else "SESUAI TIMEFRAME (tunggu candle close tiap aset)"
-    print(f" -> Scan mode: {mode_txt}\n")
+    mode_txt = "SCAN ALL 7 SYMBOLS NOW" if _STARTUP_SCAN_MODE == "all" else "SMART ROTATION (Tunggu Candle Close Tiap Aset)"
+    print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
 def run_trading_cycle():
@@ -558,7 +558,7 @@ def run_trading_cycle():
     = [XAU, EURJPY, GBPCHF] - all symbols scanned ONLY when their specific timeframe
     forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour).
     """
-    print(f"\n [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
+    print(f"\n{UI.CYAN}+-- [CYCLE START] {UI.WHITE}{time.strftime('%Y-%m-%d %H:%M:%S')} WIB {UI.CYAN}--------------------------------+{UI.RST}")
     
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
     try:
@@ -569,9 +569,6 @@ def run_trading_cycle():
 
         # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
-            # Break-even trades excluded from win-rate. Tolerance DINAMIS per trade:
-            # minimal BREAK_EVEN_TOLERANCE_USD, tapi naik mengikuti komisi aktual
-            # trade (0.01 lot = 0.06, 0.10 lot = 0.60, 0.26 lot = 1.56 USD).
             dec = [d for d in closed_deals if abs(d.get("profit", 0)) > config.bep_tolerance_for(d)]
             bep_n = len(closed_deals) - len(dec)
             total_t = len(dec)
@@ -580,9 +577,9 @@ def run_trading_cycle():
             wr = (wins_t / total_t) * 100.0 if total_t else 0.0
             pnl_t = sum(d.get("profit", 0) for d in closed_deals)
             bep_str = f" | {bep_n} BEP" if bep_n else ""
-            print(f"[PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%){bep_str} | Net PnL: ${pnl_t:+.2f} USD")
+            print(f"| {UI.BOLD}Performa Harian:{UI.RST} {total_t} Trade ({wins_t}W - {loss_t}L | WR {wr:.1f}%{bep_str}) | Net PnL: {UI.badge_pnl(pnl_t)}")
 
-            # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
+            # Per-symbol breakdown
             by_symbol = {}
             for d in closed_deals:
                 sym = d.get("symbol", "UNKNOWN")
@@ -600,21 +597,18 @@ def run_trading_cycle():
                     sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
                     sym_loss = sym_t - b["wins"]
                     bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
-                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} ${b['pnl']:+.2f}")
-                print(f"[PERFORMA PER SIMBOL] " + " | ".join(parts))
+                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} {UI.badge_pnl(b['pnl'])}")
+                print(f"| {UI.DIM}Per Simbol     :{UI.RST} " + " | ".join(parts))
         else:
-            print("[PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
+            print(f"| {UI.DIM}Performa Harian: Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%){UI.RST}")
     except Exception as e:
-        print(f"[EVALUATOR WARNING] {e}")
+        print(f"| {UI.YELLOW}[EVALUATOR WARNING] {e}{UI.RST}")
+
+    print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}")
 
     # -- Multi-symbol parallel scan ----------------------------------------------
-    # Mode "xau": pool = [XAU] (1 cycle per candle, seperti sebelumnya).
-    # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS.
     global _symbol_last_candle
     valid_pool = _resolve_valid_pool()
-    # NOTE: seed startup scan TIDAK di sini - sudah dilakukan di main loop startup
-    # (lihat blok startup_run). Kalau seed di sini, cycle pertama yang trigger
-    # candle baru close -> closed_time == seeded_time -> SEMUA symbol ke-skip.
     for sym in valid_pool:
         config.SYMBOL = sym
         
@@ -631,22 +625,19 @@ def run_trading_cycle():
         if last_time is None or closed_time > last_time:
             _symbol_last_candle[sym] = closed_time
             
-            # Log indikator candle baru untuk pair selain pair utama (yang log-nya sudah ada di main loop)
+            # Log indikator candle baru untuk pair selain pair utama
             if last_time is not None and sym != valid_pool[0]:
                 candle_wib = connector.server_to_wib(closed_time)
-                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else "M5")
-                print(f"\n Candle {tf_label} baru CLOSE untuk {sym}! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else ("M15" if tf == mt5.TIMEFRAME_M15 else "M5"))
+                print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Waktu: {candle_wib.strftime('%H:%M:%S')} WIB")
                 
             try:
                 _run_cycle_for_current_symbol()
             except Exception as e:
-                print(f"[CYCLE ERROR {sym}] {e}")
+                print(f" {UI.RED}[CYCLE ERROR {sym}] {e}{UI.RST}")
         else:
-            # Candle belum ada yang close baru (masih di rentang candle yang sama), skip LLM call untuk pair ini
             pass
             
-    # Restore ke simbol utama pool (valid, sudah auto-correct) - biar status line
-    # & candle check berikutnya konsisten memakai simbol utama, bukan yang terakhir.
     config.SYMBOL = valid_pool[0] if valid_pool else config.SYMBOL
     return True
 
@@ -658,28 +649,28 @@ def _run_cycle_for_current_symbol():
     # 0. Risk gate - check all conditions before trading
     can_trade, reason = risk.can_trade()
     if not can_trade:
-        print(reason)
+        print(f" {UI.YELLOW}[RISK GATE]{UI.RST} {reason}")
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M5 XAU / H1 FX / M30 BTC)
+    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
     df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=51)
     if df is None or len(df) == 0:
-        print("Gagal mendapatkan market data. Melewatkan siklus ini.")
+        print(f" {UI.RED}[DATA ERROR] Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.{UI.RST}")
         return False
     if len(df) > 50:
-        # Bar terakhir = candle aktif (masih berjalan, belum close). Buang -> LLM scan
-        # data candle yang SUDAH CLOSE (lengkap), bukan candle kosong yang baru terbentuk.
         df = df.iloc[-50:-1].reset_index(drop=True)
         
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
     if tick is None:
-        print("Gagal mendapatkan tick data terbaru. Melewatkan siklus ini.")
+        print(f" {UI.RED}[DATA ERROR] Gagal mendapatkan tick data {config.SYMBOL}. Melewatkan siklus.{UI.RST}")
         return False
         
-    print(f"Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
+    _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
+    tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
+    print(f"\n{UI.CYAN}[SCAN ASSET: {UI.BOLD}{config.SYMBOL}{UI.RST}{UI.CYAN} ({tf_name})]{UI.RST} Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst M30/M5, Kurtosis M30/M1)
+    # 2.1 Calculate Market Randomness & Micro Fat Tails
     if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
         try:
             from src.analytics import market_randomness
@@ -697,7 +688,7 @@ def _run_cycle_for_current_symbol():
     if getattr(config, "MONTE_CARLO_ENABLED", False):
         try:
             from src.analytics import quant_probability
-            tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+            tf_mins = 30 if config.is_crypto(config.SYMBOL) else (60 if "XAU" not in config.SYMBOL.upper() else 15)
             q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
             print(f"[QUANT PROB] Monte Carlo (1000 paths): "
                   f" UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
@@ -801,16 +792,50 @@ def _run_cycle_for_current_symbol():
     if trade_signal in ["BUY", "SELL"]:
         sl_points = result["sl_points"]
         tp_points = result["tp_points"]
+        invalidation_price = result.get("invalidation_price")
+        target_price = result.get("target_price")
         agreeing_count = result.get("agreeing_count", 0)
-        
+
+        # Obtain latest execution tick to size lot and get absolute SL/TP prices dynamically
+        tick_live = connector.get_current_tick(config.SYMBOL)
+        sl_price = invalidation_price
+        tp_price = target_price
+        tp_price_2 = None
+
+        if tick_live and invalidation_price:
+            point = tick_live["point"]
+            execution_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
+            if execution_price > 0 and point > 0:
+                # Calculate SL points based on actual execution price
+                sl_points = int(round(abs(execution_price - invalidation_price) / point))
+                sl_points = max(tick_live["spread"] * 2, sl_points)
+                
+                # Re-sync sl_price with execution price if floored by spread gate
+                if trade_signal == "BUY":
+                    sl_price = execution_price - (sl_points * point)
+                else:
+                    sl_price = execution_price + (sl_points * point)
+
+                if target_price:
+                    # Calculate TP points based on actual execution price
+                    tp_points = int(round(abs(target_price - execution_price) / point))
+                    tp_points = max(tick_live["spread"] * 2, tp_points)
+                    
+                    # Position 2 gets 1.2x TP for extended trend capture
+                    tp_points_2 = int(tp_points * 1.2)
+                    if trade_signal == "BUY":
+                        tp_price = execution_price + (tp_points * point)
+                        tp_price_2 = execution_price + (tp_points_2 * point)
+                    else:
+                        tp_price = execution_price - (tp_points * point)
+                        tp_price_2 = execution_price - (tp_points_2 * point)
+
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
         remaining_slots = max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
-        # Get effective lot size from risk-based sizing (uses floored SL).
-        # split_count: kalau 3/3 unanimous buka 2 posisi, lot per posisi dibagi
-        # 2 supaya TOTAL risk per sinyal tetap risk_pct (bukan 2x lipat).
+        # Get effective lot size from risk-based sizing (uses execution SL points)
         effective_lot = risk.get_effective_lot_size(sl_points, split_count=num_positions)
 
         if num_positions > 1:
@@ -818,24 +843,29 @@ def _run_cycle_for_current_symbol():
         elif num_positions == 1 and desired_positions > 1:
             print(f"[UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka 1 posisi (Dibatasi sisa slot max: {remaining_slots})...")
 
-
         order_executed = False  # flag: ada order yang sukses cycle ini (untuk decision memory)
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend
             pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
+            pos_tp_price = tp_price_2 if (i == 1 and tp_price_2) else tp_price
 
-            # Comment transaksi = jenis LLM yang sepakat (bukan "Multi-LLM Bot").
-            # Contoh: "GPT" / "GPT+Gemini" / "GPT+Gemini+DeepSeek".
-            model_labels = {
-                "OpenAI": "GPT",
-                "Gemini": "Gemini",
-                "DeepSeek": "DeepSeek",
-                "Claude": "Claude",
-            }
-            agree_models = result.get("agreeing_models") or []
-            order_comment = "+".join(
-                model_labels.get(m, m) for m in agree_models
-            ) or "Multi-LLM Bot"
+            # Comment transaksi: prioritaskan reason/setup analisa AI (maks 31 karakter MT5)
+            open_reason = (result.get("reason") or "").strip()
+            if not open_reason:
+                model_labels = {
+                    "OpenAI": "GPT",
+                    "Gemini": "Gemini",
+                    "DeepSeek": "DeepSeek",
+                    "Claude": "Claude",
+                }
+                agree_models = result.get("agreeing_models") or []
+                open_reason = "+".join(
+                    model_labels.get(m, m) for m in agree_models
+                ) or "Multi-LLM Bot"
+
+            # Bersihkan whitespace/karakter khusus dan potong maksimal 31 karakter
+            import re
+            order_comment = re.sub(r'[\r\n\t]+', ' ', open_reason).strip()[:31].strip()
 
             order_res = connector.send_trade_order(
                 symbol=config.SYMBOL,
@@ -843,7 +873,9 @@ def _run_cycle_for_current_symbol():
                 lot=effective_lot,
                 sl_points=sl_points,
                 tp_points=pos_tp,
-                comment=order_comment
+                comment=order_comment,
+                sl_price=sl_price,
+                tp_price=pos_tp_price
             )
             if order_res["status"] == "SUCCESS":
                 order_executed = True
@@ -858,6 +890,7 @@ def _run_cycle_for_current_symbol():
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
     else:
         print("Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
+        tg.alert_consensus_hold(result, symbol=config.SYMBOL)
 
     # Record this cycle's final decision for Recent Decision Memory
     # (so the LLM next cycle can see if it has been HOLDing too long).
@@ -888,62 +921,41 @@ def main():
         sys.stderr = tee_logger
         print(f"Logging aktif. Semua output akan disimpan di: {config.LOG_FILE}")
 
-    print("=" * 60)
-    print("   BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
-    print("=" * 60)
-
     # Tampilkan override CLI kalau ada
     if cli_applied:
-        print(" [CLI OVERRIDE] " + " | ".join(cli_applied))
-        print("-" * 60)
+        print(f" {UI.YELLOW}[CLI OVERRIDE]{UI.RST} " + " | ".join(cli_applied))
+        print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
     # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
     if not skip_prompt and sys.stdin.isatty():
         interactive_setup()
 
-
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
 
-    print(f"Mode: {'DRY RUN (Hanya Sinyal)' if config.DRY_RUN else 'LIVE EXECUTION (Duit Asli/Demo)'}")
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
-    print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
+
+    print(render_banner(
+        account_info=getattr(config, "MT5_LOGIN", None),
+        symbol=config.SYMBOL,
+        tf=tf_name,
+        mode=config.TRADING_MODE,
+        is_live=not config.DRY_RUN
+    ))
+
+    # Info Trading Mode
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
-        print(f"Trading Mode: XAU + PAIRS | Scan Pool ({len(pool)} simbol): {' -> '.join(pool)}")
-        print(f" Scan sesuai timeframe masing-masing (XAU M5 / FX H1 / BTC M30) - Smart Rotation (FASE 5)")
+        print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
+        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M15) | FX Cross (H1) | BTC (M30) - Smart Rotation")
     else:
-        print(f"Trading Mode: XAU ONLY")
-    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
-    if config.AI_MODE_POLICY == "schedule":
-        desc = " | ".join([f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} {mode.upper()}" for sh, sm, eh, em, mode in config.AI_MODE_SCHEDULE])
-        print(f" AI Mode Schedule: {desc} (WIB)")
-    else:
-        print(f" AI Mode: FIXED = {config.AI_FIXED_MODE.upper()}")
-    print("-" * 60)
-    print("PROTEKSI AKTIF:")
-    print(f"  Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
-          f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts, jarak {config.TRAILING_DISTANCE_POINTS} pts)")
-    print(f"  Break-Even:      {'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} "
-          f"(trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)")
-    print(f"  Partial Close:   {'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} "
-          f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)")
-    print(f"  Max Daily Loss:  ${config.MAX_DAILY_LOSS_USD}")
-    print(f"  Recovery Mode:   {'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'} "
-          f"(x{config.RECOVERY_LOT_MULTIPLIER} setelah {config.MAX_CONSECUTIVE_LOSSES} loss)")
-    print(f"  Cooldown:        {config.TRADE_COOLDOWN_SECONDS}s antar trade")
-    print(f"  Spread Filter:   {config.max_spread_points_for(config.SYMBOL)} pts maks ({config.SYMBOL})")
-    print(f"  Session Filter:  {'ON' if config.SESSION_FILTER_ENABLED else 'OFF'} (WIB)")
-    if config.SESSION_FILTER_ENABLED:
-        for s in config.ALLOWED_SESSIONS_WIB:
-            start = f"{s['start'][0]:02d}:{s['start'][1]:02d}"
-            end = f"{s['end'][0]:02d}:{s['end'][1]:02d}"
-            mult = s.get("lot_multiplier", 1.0)
-            print(f"                   - {s['name']}: {start}-{end} WIB (lot x{mult})")
-    print(f"  Weekend Close:   {'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}")
-    print(f"  Telegram:        {'ON' if config.TELEGRAM_ENABLED else 'OFF'}")
-    print("=" * 60)
+        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
+
+    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {config.TP_SL_RULES} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD}")
+    print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
+    print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
     # Validate API keys before connecting to MT5
     missing_keys = []
@@ -1141,16 +1153,16 @@ def main():
                             print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
-                        print(f"\n Candle baru terdeteksi! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
                     
                     last_candle_time = current_candle_time
                     
                     # Show daily P/L and risk status
                     daily_pnl = risk.get_daily_pnl()
                     status = risk.get_status_summary()
-                    print(f"P/L Hari Ini: ${daily_pnl:.2f} | "
+                    print(f" {UI.CYAN}[STATUS]{UI.RST} P/L Hari Ini: {UI.badge_pnl(daily_pnl)} | "
                           f"Loss Streak: {status['consecutive_losses']} | "
-                          f"Recovery: {' Ya' if status['recovery_mode'] else 'Tidak'} | "
+                          f"Recovery: {'Ya' if status['recovery_mode'] else 'Tidak'} | "
                           f"Session Lot: x{status['session_lot_multiplier']}")
                     
                     if not skip_cycle:
@@ -1163,10 +1175,13 @@ def main():
                         config.trigger_manual_cycle()
                 print("Gagal mengecek status candle di MT5. Mencoba kembali...")
             
-            # Show live status clock line in CLI every loop iteration
+            # Show live status clock line in CLI every loop iteration (clean ANSI, zero emojis)
             now_str = time.strftime('%H:%M:%S')
             remaining_pause = risk.get_remaining_pause()
-            pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
+            pause_str = f" {UI.RED}[PAUSED: {remaining_pause}s]{UI.RST}" if remaining_pause > 0 else ""
+            daily_pnl = risk.get_daily_pnl()
+            pnl_str = UI.badge_pnl(daily_pnl)
+            
             # Show any running (open) bot positions across ALL symbols
             open_pos = connector.get_all_open_positions()
             if open_pos:
@@ -1176,11 +1191,11 @@ def main():
                 pos_parts = []
                 for sym, plist in sorted(by_sym.items()):
                     float_s = sum(x.get("profit", 0.0) for x in plist)
-                    pos_parts.append(f"{sym}: {len(plist)} pos ${float_s:+.2f}")
+                    pos_parts.append(f"{sym}: {len(plist)} pos ({UI.badge_pnl(float_s)})")
                 pos_str = " | " + " | ".join(pos_parts)
             else:
-                pos_str = ""
-            status_line = f"[{config.SYMBOL} | {now_str}]{pause_str}{pos_str}"
+                pos_str = f" | {UI.GRAY}No active pos{UI.RST}"
+            status_line = f"[{UI.BOLD}{config.SYMBOL}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}{pos_str}"
             # Potong berdasarkan LEBAR TAMPILAN terminal aktual (emoji = 2 kolom), bukan
             # jumlah karakter - kalau baris wrap, \r tidak balik ke awal baris dan status
             # jadi nge-print ke bawah (bukan refresh). Sisakan margin 4 kolom biar aman.

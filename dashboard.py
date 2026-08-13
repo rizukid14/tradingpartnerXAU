@@ -316,12 +316,6 @@ def compute_metrics(events, state=None):
         ]
 
     sessions = [e for e in events if e["type"] == "session"]
-    eras = []
-    for e in sessions:
-        era = e.get("era")
-        if era and era not in eras:
-            eras.append(era)
-    active_era = eras[-1] if eras else None
 
     cycles = [e for e in events if e["type"] == "cycle"]
     orders = [e for e in events if e["type"] == "order"]
@@ -537,8 +531,6 @@ def compute_metrics(events, state=None):
         "meta": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "log_path": LOG_PATH,
-            "active_era": active_era,
-            "eras": eras,
             "first_ts": first_ts,
             "last_ts": last_ts,
             "accounts": sorted({e.get("account") for e in sessions if e.get("account")}),
@@ -572,7 +564,6 @@ def compute_metrics(events, state=None):
         "agreement": agree_stats,
         "latency": lat_stats,
         "forecast_bias": fbias,
-        "lessons": lessons_list,
         "position_manager": {
             "break_even": len(bes),
             "trailing": len(trails),
@@ -978,7 +969,6 @@ def serve(host="0.0.0.0", port=8765):
 def main():
     parser = argparse.ArgumentParser(description="Trading dashboard (generate static atau serve live).")
     parser.add_argument("-o", "--output", default=OUT_HTML, help="Output HTML path (mode generate)")
-    parser.add_argument("--all-eras", action="store_true", help="Include all eras in default view")
     parser.add_argument("--serve", action="store_true", help="Jalankan server lokal (live)")
     parser.add_argument("--port", type=int, default=8765, help="Port untuk --serve (default 8765)")
     args = parser.parse_args()

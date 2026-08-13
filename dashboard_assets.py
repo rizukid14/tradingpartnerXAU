@@ -20,21 +20,21 @@ TEMPLATE = r"""<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root {
-  --bg: #090d16;
-  --panel: #111622;
-  --panel-hover: #161c2b;
-  --border: #1e2638;
-  --border-light: #2a354d;
-  --text: #e2e8f0;
-  --muted: #64748b;
-  --muted-light: #94a3b8;
-  --green: #22c55e;
-  --green-bg: rgba(34, 197, 94, 0.1);
-  --red: #ef4444;
-  --red-bg: rgba(239, 68, 68, 0.1);
-  --blue: #3b82f6;
-  --blue-bg: rgba(59, 130, 246, 0.1);
-  --amber: #f59e0b;
+  --bg: #141413;
+  --panel: #1e1e1d;
+  --panel-hover: #262625;
+  --border: #2d2d2b;
+  --border-light: #3f3f3d;
+  --text: #e6e6e3;
+  --muted: #8a8a85;
+  --muted-light: #b5b5b0;
+  --green: #4ade80;
+  --green-bg: rgba(74, 222, 128, 0.08);
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.08);
+  --blue: #a3a3a3;
+  --blue-bg: rgba(163, 163, 163, 0.08);
+  --amber: #cc7a5c;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -92,7 +92,7 @@ body {
   cursor: pointer;
   transition: border-color 0.15s;
 }
-.filters select:hover, .filters select:focus { border-color: var(--blue); }
+.filters select:hover, .filters select:focus { border-color: var(--amber); }
 
 /* Bento Box Grid System */
 .bento-grid {
@@ -169,17 +169,17 @@ body {
 table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
 th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted-light); font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); z-index: 2; }
-th:hover { color: var(--blue); }
+th:hover { color: var(--amber); }
 tr:hover { background: var(--panel-hover); }
 
 /* Cards & Badges */
 .sym-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .sym-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-.sym-name { font-weight: 700; color: var(--blue); font-size: 13px; margin-bottom: 4px; }
+.sym-name { font-weight: 700; color: var(--amber); font-size: 13px; margin-bottom: 4px; }
 
 .lesson-item { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 12px; }
 .theme-tag { display: inline-block; background: rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 6px; font-size: 10px; color: var(--muted-light); margin-right: 6px; text-transform: uppercase; }
-.sym-tag { color: var(--blue); font-weight: 600; margin-right: 6px; }
+.sym-tag { color: var(--amber); font-weight: 600; margin-right: 6px; }
 
 .empty-hint { text-align: center; padding: 30px; color: var(--muted); font-size: 12px; }
 
@@ -214,12 +214,11 @@ tr:hover { background: var(--panel-hover); }
 
 <div class="header">
   <div class="brand">
-    <h1>🏆 GOLD (XAUUSD) DASHBOARD</h1>
+    <h1>🏛️ CONSENSUS TRADING DASHBOARD</h1>
     <div id="live-badge-wrap"></div>
   </div>
   <div class="sub" id="sub-line">Memuat data...</div>
   <div class="filters">
-    <label>Era: <select id="f-era"></select></label>
     <label>Simbol: <select id="f-symbol"></select></label>
     <label>Rentang: <select id="f-range">
       <option value="all">Semua Waktu</option>
@@ -244,12 +243,12 @@ tr:hover { background: var(--panel-hover); }
 
   <!-- Row 2: Equity Curve (8 cols) + Per-Symbol Breakdown (4 cols) -->
   <div class="bento-box col-8">
-    <div class="bento-title">Equity Curve &amp; Growth (XAUUSD) <span id="eq-hint"></span></div>
+    <div class="bento-title">Equity Curve &amp; Growth <span id="eq-hint"></span></div>
     <div class="chart-container"><canvas id="chart-equity"></canvas></div>
   </div>
 
   <div class="bento-box col-4">
-    <div class="bento-title">Symbol Focus <span>XAUUSD-ECN (Gold M5)</span></div>
+    <div class="bento-title">Per-Symbol Performance</div>
     <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
   </div>
 
@@ -312,8 +311,8 @@ tr:hover { background: var(--panel-hover); }
   </div>
 
   <div class="bento-box col-5">
-    <div class="bento-title">Trade Lessons &amp; Memory</div>
-    <div id="lessons-div" style="overflow-y: auto; max-height: 280px;"></div>
+    <div class="bento-title">Bot Status &amp; Risk Engine</div>
+    <div id="status-panel-div" style="overflow-y: auto; max-height: 280px;"></div>
   </div>
 
 </div>
@@ -327,6 +326,7 @@ tr:hover { background: var(--panel-hover); }
 <script>
 "use strict";
 let DATA = window.__INITIAL_DATA__ || null;
+let CONFIG_DATA = null;
 let LIVE = false;
 const charts = {};
 const $ = id => document.getElementById(id);
@@ -366,7 +366,7 @@ async function loadData() {
 
     if (r.ok) { DATA = await r.json(); LIVE = true; }
   } catch (e) { /* static mode */ }
-  if (!DATA) DATA = window.__INITIAL_DATA__ || {meta:{}, summary:{}, trades:[], equity_curve:[], model_stats:{}, per_symbol:{}, sl_buckets:{}, rr_buckets:{}, lessons:[], agreement:{}, latency:{}, position_manager:{}, sltp_floor:{}, forecast_bias:{}};
+  if (!DATA) DATA = window.__INITIAL_DATA__ || {meta:{}, summary:{}, trades:[], equity_curve:[], model_stats:{}, per_symbol:{}, sl_buckets:{}, rr_buckets:{}, agreement:{}, latency:{}, position_manager:{}, sltp_floor:{}, forecast_bias:{}};
   await loadTradingMode();
   renderAll();
 }
@@ -378,11 +378,14 @@ async function loadTradingMode() {
   try {
     const r = await fetch('/api/config', {cache:'no-store'});
     if (r.ok) {
-      const cfg = await r.json();
-      mode = cfg.TRADING_MODE || null;
-      const pairs = cfg.FX_PAIR_SYMBOLS || [];
-      if (pairs.length && cfg.TRADING_MODE === 'xau_pairs') {
-        sel.title = 'Pool: ' + (cfg.WEEKDAY_SYMBOL || 'XAU') + ' → ' + pairs.join(', ');
+      const res = await r.json();
+      CONFIG_DATA = res.config || null;
+      if (CONFIG_DATA) {
+        mode = CONFIG_DATA.TRADING_MODE || null;
+        const pairs = CONFIG_DATA.FX_PAIR_SYMBOLS || [];
+        if (pairs.length && CONFIG_DATA.TRADING_MODE === 'xau_pairs') {
+          sel.title = 'Pool: ' + (CONFIG_DATA.WEEKDAY_SYMBOL || 'XAU') + ' → ' + pairs.join(', ');
+        }
       }
     }
   } catch (e) { /* static mode — keep default */ }
@@ -415,13 +418,11 @@ async function saveTradingMode() {
 }
 
 function getFilteredTrades() {
-  const era = $('f-era').value;
   const sym = $('f-symbol').value;
   const range = $('f-range').value;
   const now = Date.now() / 1000;
 
   return (DATA.trades || []).filter(t => {
-    if (era && t.era !== era) return false;
     if (sym && t.symbol !== sym) return false;
     if (range !== 'all') {
       const days = range === '7d' ? 7 : 30;
@@ -433,15 +434,16 @@ function getFilteredTrades() {
 
 function renderSub() {
   const meta = DATA.meta || {};
-  let s = 'Era: <b>' + esc(meta.active_era || '?') + '</b>';
-  if (meta.accounts && meta.accounts.length) s += ' &nbsp;|&nbsp; Akun: ' + esc(meta.accounts.join(', '));
-  s += ' &nbsp;|&nbsp; Update: ' + esc(meta.generated_at || '');
+  let s = "";
+  if (meta.accounts && meta.accounts.length) s += 'Akun: <b>' + esc(meta.accounts.join(', ')) + '</b>';
+  if (s) s += ' &nbsp;|&nbsp; ';
+  s += 'Update: <b>' + esc(meta.generated_at || '') + '</b>';
   $('sub-line').innerHTML = s;
 
   if (LIVE) {
     $('live-badge-wrap').innerHTML = '<div class="badge-live"><div class="badge-dot"></div> LIVE (5s)</div>';
   } else {
-    $('live-badge-wrap').innerHTML = '<div class="badge-live" style="background:rgba(245,158,11,0.1);color:#f59e0b;border-color:rgba(245,158,11,0.2);">STATIC</div>';
+    $('live-badge-wrap').innerHTML = '<div class="badge-live" style="background:rgba(204,122,92,0.1);color:var(--amber);border-color:rgba(204,122,92,0.2);">STATIC</div>';
   }
 }
 
@@ -502,7 +504,7 @@ function renderKpi() {
 function renderSym() {
   const ps = DATA.per_symbol || {};
   const selectedSym = $('f-symbol').value;
-  const keys = Object.keys(ps).filter(k => selectedSym ? k === selectedSym : true);
+  const keys = Object.keys(ps).filter(k => !selectedSym || k === selectedSym);
   
   $('sym-cards').innerHTML = keys.length ? keys.map(sym => {
     const st = ps[sym];
@@ -536,14 +538,85 @@ function renderSltp() {
     `BEP: ${pm.break_even||0}× | Trailing: ${pm.trailing||0}× | Partial: ${pm.partial_close||0}× | SL Floor OK: ${fl.above_floor||0}`;
 }
 
-function renderLessons() {
-  const ls = (DATA.lessons || []).filter(l => {
-    const sym = $('f-symbol').value;
-    return !sym || l.symbol === sym || l.symbol.includes('XAU');
-  });
-  $('lessons-div').innerHTML = ls.length ? ls.map(l =>
-    `<div class="lesson-item"><span class="theme-tag">${esc(l.theme)}</span><span class="sym-tag">${esc(l.symbol)}</span>${esc(l.lesson)}</div>`
-  ).join('') : '<div class="empty-hint">Belum ada lesson terdaftar.</div>';
+function renderStatusPanel() {
+  const div = $('status-panel-div');
+  if (!div) return;
+
+  const dyn = DATA.dynamic_rules || {};
+  const risk = DATA.risk_state || {};
+  
+  // Status dari Live API
+  let isPaused = CONFIG_DATA ? CONFIG_DATA.TRADING_PAUSED : false;
+  let isDry = CONFIG_DATA ? CONFIG_DATA.DRY_RUN : true; // default true for safety in static
+  let mode = CONFIG_DATA ? CONFIG_DATA.TRADING_MODE : "xau";
+  let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.4-mini";
+  let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
+  let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";
+
+  let connectionStatus = LIVE ? '<span class="green" style="font-weight: 700;">● CONNECTED (LIVE)</span>' : '<span class="muted" style="font-weight: 700;">○ STATIC MODE (Offline)</span>';
+
+  let html = `
+    <div style="margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border);">
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>API Connection:</span>
+        <b>${connectionStatus}</b>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>Trading Status:</span>
+        <b class="${isPaused ? 'red' : 'green'}">${isPaused ? '🛑 PAUSED' : '🟢 ACTIVE'}</b>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>Execution Mode:</span>
+        <b class="${isDry ? 'muted' : 'red'}">${isDry ? '🔍 DRY RUN (Simulated)' : '⚠️ LIVE TRADING (Real Money!)'}</b>
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <span>Rotation Mode:</span>
+        <b style="color:var(--amber);">${mode === 'xau_pairs' ? '🔄 XAU + FX Pairs' : '🎯 XAUUSD Only'}</b>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border);">
+      <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🛡️ Risk Engine & self-Tuning</div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>Recovery Mode:</span>
+        <b class="${risk.recovery_mode ? 'red' : 'muted'}">${risk.recovery_mode ? '🚨 ACTIVE' : 'NORMAL'}</b>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>Consecutive Losses:</span>
+        <b class="${(risk.consecutive_losses || 0) > 0 ? 'red' : ''}">${risk.consecutive_losses || 0} / 3</b>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>Required Consensus:</span>
+        <b>${dyn.consensus_threshold || 2} / 3 Models</b>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>ATR Multiplier (SL/TP):</span>
+        <b>${(dyn.sl_multiplier || 1.5).toFixed(2)}x / ${(dyn.tp_multiplier || 3.0).toFixed(2)}x</b>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:10px;">
+        <span>Tuning Status:</span>
+        <span style="color:var(--muted-light);">${esc(dyn.status_message || '—')}</span>
+      </div>
+    </div>
+
+    <div>
+      <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🤖 Active AI Models & Scheduling</div>
+      <div style="margin-bottom:6px; font-size:10px; color:var(--muted); line-height: 1.5;">
+        Slot 1 (OpenAI): <b>${esc(oaiModel)}</b><br>
+        Slot 2 (Gemini): <b>${esc(gemModel)}</b><br>
+        Slot 3 (Claude Slot): <b>${esc(cldModel)}</b>
+      </div>
+      <div style="font-size:10px; line-height: 1.4; background: rgba(255,255,255,0.01); padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
+        <b>WIB Time-based AI Mode:</b><br>
+        • 00:01-08:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
+        • 09:00-13:00: <span style="color:var(--muted-light);">Dual (OpenAI+DeepSeek)</span><br>
+        • 13:01-19:29: <span style="color:var(--muted-light);">Single</span><br>
+        • 19:30-21:30: <span style="color:var(--amber);">Triple (London-NY Overlap)</span><br>
+        • 21:31-23:59: <span style="color:var(--muted-light);">Single</span>
+      </div>
+    </div>
+  `;
+  div.innerHTML = html;
 }
 
 function renderTrades() {
@@ -555,7 +628,7 @@ function renderTrades() {
   });
   $('trades-tbody').innerHTML = trades.map(t =>
     `<tr data-era="${esc(t.era||'')}" data-symbol="${esc(t.symbol)}" data-ts="${t.ts||0}">` +
-    `<td>${t.ticket||'—'}</td><td><b style="color:var(--blue);">${esc(t.symbol)}</b></td>` +
+    `<td>${t.ticket||'—'}</td><td><b style="color:var(--amber);">${esc(t.symbol)}</b></td>` +
     `<td><b class="${t.side==='BUY'?'green':'red'}">${t.side}</b></td><td>${t.lot||'—'}</td>` +
     `<td>${t.entry||'—'}</td><td>${t.sl||'—'}</td><td>${t.tp||'—'}</td>` +
     `<td class="${t.pnl>0?'green':t.pnl<0?'red':''}"><b>${fmtMoney(t.pnl)}</b></td>` +
@@ -571,8 +644,8 @@ function mkChart(id, cfg) {
 }
 
 function renderCharts() {
-  Chart.defaults.color = '#94a3b8';
-  Chart.defaults.borderColor = '#1e2638';
+  Chart.defaults.color = '#8a8a85';
+  Chart.defaults.borderColor = '#2d2d2b';
   Chart.defaults.font.family = "'Inter', sans-serif";
 
   const trades = getFilteredTrades().filter(t => t.status === 'closed' && t.pnl !== null);
@@ -586,7 +659,7 @@ function renderCharts() {
     $('eq-hint').textContent = '';
     mkChart('chart-equity', {
       type:'line',
-      data:{ labels: eqData.map(p => fmtTs(p.ts)), datasets:[{ label:'Balance ($)', data: eqData.map(p=>p.balance), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.08)', fill:true, tension:.3, pointRadius:3 }] },
+      data:{ labels: eqData.map(p => fmtTs(p.ts)), datasets:[{ label:'Balance ($)', data: eqData.map(p=>p.balance), borderColor:'#cc7a5c', backgroundColor:'rgba(204, 122, 92, 0.04)', fill:true, tension:.3, pointRadius:3 }] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ y:{ ticks:{ callback:v=>'$'+v.toFixed(0) } } } }
     });
   } else {
@@ -598,9 +671,9 @@ function renderCharts() {
   mkChart('chart-decisions', {
     type:'bar',
     data:{ labels: models, datasets:[
-      {label:'BUY', data:models.map(m=>DATA.model_stats[m].BUY), backgroundColor:'#22c55e'},
-      {label:'SELL', data:models.map(m=>DATA.model_stats[m].SELL), backgroundColor:'#ef4444'},
-      {label:'HOLD', data:models.map(m=>DATA.model_stats[m].HOLD), backgroundColor:'#64748b'}
+      {label:'BUY', data:models.map(m=>DATA.model_stats[m].BUY), backgroundColor:'#4ade80'},
+      {label:'SELL', data:models.map(m=>DATA.model_stats[m].SELL), backgroundColor:'#f87171'},
+      {label:'HOLD', data:models.map(m=>DATA.model_stats[m].HOLD), backgroundColor:'#737373'}
     ]},
     options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{stacked:true}, y:{stacked:true} } }
   });
@@ -608,21 +681,21 @@ function renderCharts() {
   const latModels = Object.keys(DATA.latency||{});
   mkChart('chart-latency', {
     type:'bar',
-    data:{ labels: latModels, datasets:[{ label:'Avg Latency (s)', data:latModels.map(m=>DATA.latency[m].avg), backgroundColor:'#3b82f6', borderRadius:4 }] },
+    data:{ labels: latModels, datasets:[{ label:'Avg Latency (s)', data:latModels.map(m=>DATA.latency[m].avg), backgroundColor:'#8a8a85', borderRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} } }
   });
 
   const slKeys = Object.keys(DATA.sl_buckets||{});
   mkChart('chart-sl', {
     type:'bar',
-    data:{ labels: slKeys, datasets:[{ label:'SL Points', data:slKeys.map(k=>DATA.sl_buckets[k].n), backgroundColor:'#3b82f6', borderRadius:4 }] },
+    data:{ labels: slKeys, datasets:[{ label:'SL Points', data:slKeys.map(k=>DATA.sl_buckets[k].n), backgroundColor:'#8a8a85', borderRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} } }
   });
 
   const rrKeys = Object.keys(DATA.rr_buckets||{});
   mkChart('chart-rr', {
     type:'bar',
-    data:{ labels: rrKeys, datasets:[{ label:'R:R Ratio', data:rrKeys.map(k=>DATA.rr_buckets[k]), backgroundColor:'#f59e0b', borderRadius:4 }] },
+    data:{ labels: rrKeys, datasets:[{ label:'R:R Ratio', data:rrKeys.map(k=>DATA.rr_buckets[k]), backgroundColor:'#cc7a5c', borderRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} } }
   });
 }
@@ -735,7 +808,7 @@ function renderAll() {
   renderSym();
   renderModelTable();
   renderSltp();
-  renderLessons();
+  renderStatusPanel();
   renderCharts();
   renderCalendar();
   renderTrades();
@@ -769,7 +842,7 @@ function initDashboard() {
   }
 }
 
-['f-era','f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderAll));
+['f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderAll));
 const _modeSel = $('f-trading-mode');
 if (_modeSel) _modeSel.addEventListener('change', saveTradingMode);
 
