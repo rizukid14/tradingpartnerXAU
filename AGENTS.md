@@ -150,7 +150,7 @@ python main.py
 
 **Perubahan (mode LLM = position management pindah ke basis SL posisi, thesis-relative, ATR-free):**
 1. **Default `TP_SL_RULES` diganti `"LLM"`** (sebelumnya `"ATR-Based"`). Mode ATR-Based tetap ada via `.env`/menu/`--tpsl-rules` — di mode itu BEP/trailing tetap ATR-based (konsisten karena SL/TP-nya juga turunan ATR).
-2. **BEP trigger** (mode LLM): `1× SL original` (bukan 50% TP) — `BREAK_EVEN_TRIGGER_SL_MULT = 1.0`. Harga udah gerak 1 risiko penuh ke arah kita → layak di-lock ke entry. Bonus BTC: trigger sebesar SL otomatis > stop_level broker → modifikasi gak ditolak MT5.
+2. **BEP trigger** (mode LLM): `min(1× SL original, 50% TP)` — `BREAK_EVEN_TRIGGER_SL_MULT = 1.0`. R:R 2:1 → 1×SL = 50% TP (sama dengan aturan lama); R:R tinggi → lebih awal (1×SL); R:R ≤ 1 → tetap 50% TP (fire, bukan 100%+ TP yang gak pernah kesampean). Bonus BTC: trigger sebesar SL otomatis > stop_level broker → modifikasi gak ditolak MT5.
 3. **Trailing activation** (mode LLM): `max(1.5× SL, fallback_act)`, di-cap `60% TP` kalau TP ada (`TRAILING_ACTIVATION_SL_MULT = 1.5`). Untuk R:R 2:1 tetap setara 60% TP; R:R tinggi dapat proteksi lebih awal.
 4. **Trailing distance** (mode LLM): SL-based progressive `0.8 → 0.3× SL` (floor `0.2`) — bukan ATR. Berlaku semua simbol (termasuk BTC, yang tadinya statis).
 5. **Fix bug progress_ref**: `progress_ref = tp_points` (bukan `max(tp, 2× activation)` yang selalu 1.2×TP) → distance **beneran mencapai end_mult tepat di TP** (sebelumnya cuma 2/3 jalan).

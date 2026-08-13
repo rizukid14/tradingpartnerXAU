@@ -266,10 +266,16 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     #   sebesar SL otomatis > stop_level broker -> modifikasi SL gak ditolak MT5.
     # - ATR-Based mode: 50% TP aktual (di mode ini TP = 2x SL, jadi 50% TP = 1x SL).
     if config.TP_SL_RULES == "LLM" and pos.sl:
-        # Referensi = SL ORIGINAL (sebelum BE/trailing geser) biar stabil
+        # Referensi = SL ORIGINAL (sebelum BE/trailing geser) biar stabil.
+        # Trigger = min(1x SL, 50% TP):
+        # - R:R 2:1 -> 1x SL = 50% TP (sama)
+        # - R:R tinggi (3:1+) -> 1x SL, proteksi lebih awal
+        # - R:R <= 1 -> 50% TP, tetap fire (bukan 1x SL yang = 100%+ TP, gak pernah kesampean)
         sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
         if sl_points > 0:
             be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
+            if tp_points > 0:
+                be_trigger = min(be_trigger, int(tp_points * 0.50))
         else:
             be_trigger = config.break_even_trigger_for(symbol)
     elif tp_points > 0:

@@ -295,7 +295,7 @@ TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MUL
 # sama struktur LLM) dan BUKAN ke % TP (yang bisa jauh & gak kesampean -> proteksi gak pernah
 # aktif). Mode ATR-Based tetap pakai konstanta ATR di atas (konsisten karena SL/TP-nya juga
 # turunan ATR).
-BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # BEP aktif saat profit >= 1x SL
+BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # BEP aktif saat profit >= min(1x SL, 50% TP)
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.5)  # trailing aktif saat profit >= 1.5x SL
 TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 0.8)  # longgar saat baru aktif
 TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.3)  # ketat mendekati TP
