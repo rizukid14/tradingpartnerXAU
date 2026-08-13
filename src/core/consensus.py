@@ -62,23 +62,29 @@ def _apply_sltp_rules(sl_points, tp_points):
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
 
     if mode == "LLM":
-        # Mode LLM (Bebas sesuai thesis struktur AI):
+        # Mode LLM (Bebas sesuai thesis struktur AI, tapi dengan safety floor dan R:R gate)
         is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
+        d_sl = config.default_sl_points_for(config.SYMBOL)
+        
         if is_xau:
-            # Gold: safety floor (minimal 2x spread atau 50% default SL) untuk cegah stops super sempit
-            d_sl = config.default_sl_points_for(config.SYMBOL)
-            min_sl = max(spread_pts * 2, int(d_sl * 0.5))
-            if sl_points < min_sl:
-                print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
-                sl_points = min_sl
+            # Gold: safety floor minimal 400 pts untuk mencegah SL super sempit
+            min_sl = max(spread_pts * 2, 400)
         else:
-            # FX Pairs & BTC: Bebas sesuai struktur teknikal model, cuma floor 2x spread agar order tidak ditolak broker
-            min_sl = spread_pts * 2
-            if sl_points < min_sl:
-                sl_points = min_sl
+            # FX & BTC: safety floor 50% dari default SL
+            min_sl = max(spread_pts * 2, int(d_sl * 0.5))
+            
+        if sl_points < min_sl:
+            print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
+            sl_points = min_sl
 
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
+
+        # Enforce minimum R:R of 1:1.25 (TP must be at least 1.25x SL)
+        min_rr = 1.25
+        if sl_points > 0 and (tp_points / sl_points) < min_rr:
+            return sl_points, tp_points, False, f"R:R ratio {(tp_points / sl_points):.2f} < {min_rr}x (SL {sl_points} pts -> TP {tp_points} pts)"
+
         return sl_points, tp_points, True, ""
 
     # Mode ATR-Based: GATE LAYAK/TIDAK (Non-negotiable).

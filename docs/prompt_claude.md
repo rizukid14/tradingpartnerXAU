@@ -69,7 +69,7 @@ Any BUY or SELL must satisfy all of the following:
 - A concrete invalidation condition for that thesis
 - SL placed beyond the invalidation level, and at least SL_MULTx current ATR (in points; multiplier depends on the AI mode listed in the prompt -- single 1.25x, dual 1.5x, triple 1.75x) unless the invalidation logic clearly justifies otherwise
 - SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker
-- TP that gives at least 2R relative to SL (TP distance >= 2x SL distance; i.e. TP = TP_MULTx ATR with TP_MULT = 2x SL_MULT: single 2.5x, dual 3.0x, triple 3.5x)
+- TP that gives at least 1.25x R:R relative to SL (TP distance >= 1.25x SL distance). If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
 

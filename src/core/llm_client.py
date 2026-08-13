@@ -352,21 +352,21 @@ def _build_sltp_rules_block(symbol, timeframe):
     if mode == "LLM":
         # Mode LLM: Bebas sesuai thesis/struktur pasar
         if is_xau:
-            d_sl = config.default_sl_points_for(symbol)
-            lo_pts = max(10, int(d_sl * 0.5))
-            hi_pts = max(20, int(d_sl * 1.5))
+            lo_pts = 400
+            hi_pts = 1200
             range_note = f"typically {lo_pts} to {hi_pts} points"
-            noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points) as spread and execution noise will erode your edge"
+            noise_note = f"avoid tight/unsafe stops (under {lo_pts} points / $4.00) as normal market noise will easily trigger them before your thesis plays out"
             return (
-                f"- Define absolute 'invalidation_price' and 'target_price' based on price structure. SL is placed exactly at the invalidation price level.\n"
-                f"- SL price must be beyond the invalidation level and NEVER tighter than 2x current spread (in points).\n"
-                f"- The distance between entry price and invalidation_price should align with the {timeframe} structure ({range_note}) and {noise_note}. Do NOT set stops too close (e.g. inside noise).\n"
+                f"- Define absolute 'invalidation_price' and 'target_price' based on major {timeframe} structure. SL is placed exactly at the invalidation price level.\n"
+                f"- The distance between entry price and invalidation_price MUST be at least {lo_pts} points (aligning with {range_note}) and {noise_note}.\n"
+                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1.25. The Take Profit distance (TP) must be at least 1.25x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.\n"
                 f"- TP is placed exactly at the target_price.\n"
             )
         elif is_btc:
             return (
                 f"- Define absolute 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600).\n"
                 f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
+                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1.25. The Take Profit distance (TP) must be at least 1.25x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.\n"
                 f"- TP is placed at your realistic structural target.\n"
             )
         else:
@@ -376,7 +376,8 @@ def _build_sltp_rules_block(symbol, timeframe):
             return (
                 f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
                 f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
-                f"- TP is placed at your realistic structural target. R:R is flexible (e.g. 1.2:1, 1.5:1, 2:1, 3:1) matching the natural market structure.\n"
+                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1.25. The Take Profit distance (TP) must be at least 1.25x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.\n"
+                f"- TP is placed at your realistic structural target.\n"
             )
 
     # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
