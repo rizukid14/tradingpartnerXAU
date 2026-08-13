@@ -289,7 +289,7 @@ def _build_points_explanation(symbol, point_size):
             f"- 100 points = $1.00 USD price change (e.g., BTC moving from 60000.00 to 60001.00)\n"
             f"- 10,000 points = $100.00 USD price change (e.g., BTC moving from 60000.00 to 60100.00)\n"
             f"- 50,000 points = $500.00 USD price change (e.g., BTC moving from 60000.00 to 60500.00)\n"
-            f"- Typical Stop Loss distance is 20000 to 60000 points ($200.00 to $600.00 USD price change).\n\n"
+            f"- Typical Stop Loss distance is 20000 to 60000 points ($200.00 to $600.00 USD price change), and ALWAYS check the 'ATR HARD GATE' in the Market Data context below for the exact dynamic minimum required for this specific trade.\n\n"
             f"CRITICAL WARNING:\n"
             f"Double-check your numbers. If you want a Stop Loss of $400 USD of BTC price movement, you MUST return 40000. "
             f"If you return 400, it sets a Stop Loss of just 400 points ($4.00 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
@@ -300,12 +300,17 @@ def _build_points_explanation(symbol, point_size):
         # XAU (0.01 -> pip 0.10), EURJPY (0.001 -> pip 0.01), GBPCHF (0.00001 -> 0.0001).
         pt_str = _fmt_price(point_size) if point_size else "0.01"
         pip_str = _fmt_price(point_size * 10) if point_size else "0.10"
-        # Typical SL range dari default per-symbol (XAU 400/800, EURJPY 50/100,
-        # GBPCHF 40/80) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
+        # Typical SL range dari default per-symbol (XAU 500/1000, FX 300 ->
+        # 150-450) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
+        # Khusus XAU mode LLM: di-sinkronkan ke 400-1000 biar konsisten dengan
+        # SL/TP rules block (sebelumnya unit block bilang 250-750, SL/TP block
+        # bilang 400-1000 -> dua range beda dalam satu prompt, fix 13 Agustus).
         d_sl = config.default_sl_points_for(symbol)
         lo_pts = max(10, int(d_sl * 0.5))
         hi_pts = max(20, int(d_sl * 1.5))
         is_gold = "XAU" in (symbol or "").upper()
+        if is_gold and config.sltp_mode_for(symbol) == "LLM":
+            lo_pts, hi_pts = 400, 1000
         if is_gold:
             typical_note = (
                 f"${round(lo_pts * (point_size or 0.01), 2)} to "
@@ -313,6 +318,16 @@ def _build_points_explanation(symbol, point_size):
             )
         else:
             typical_note = "price units"
+        # Referensi "ATR HARD GATE" cuma relevan kalau mode ATR-Based (BTC /
+        # force override) - section itu cuma ada di Market Data kalau mode
+        # ATR-Based. Mode LLM (XAU/FX) nggak punya section itu -> referensi
+        # gantung (dangling) bikin bingung (fix 13 Agustus).
+        if config.sltp_mode_for(symbol) == "ATR-Based":
+            gate_note = (", and ALWAYS check the 'ATR HARD GATE' in the Market Data "
+                         "context below for the exact dynamic minimum required for this specific trade")
+        else:
+            gate_note = (" -- for the exact floor relevant to this symbol, see the SL/TP "
+                         "rules in the RISK CONSTRAINTS section below")
         return (
             f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs PRICE MOVEMENT\n"
             f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
@@ -320,7 +335,7 @@ def _build_points_explanation(symbol, point_size):
             f"- 1 point = {pt_str} price units.\n"
             f"- 10 points = 1 pip = {pip_str} price movement.\n"
             f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
-            f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points, BUT ALWAYS check the 'ATR HARD GATE' in the Market Data context below for the exact dynamic minimum required for this specific trade.\n\n"
+            f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points{gate_note}.\n\n"
             f"CRITICAL WARNING:\n"
             f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
             f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
