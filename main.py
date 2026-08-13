@@ -14,11 +14,14 @@ from src.core.cli_theme import UI, render_banner
 from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
 
+import re
 import shutil
 import unicodedata
 
 # --- Status line terminal (Windows) ---
 _VT_OK = False
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+_ANSI_TOKEN_RE = re.compile(r'(\x1b\[[0-9;]*[a-zA-Z])')
 
 
 def _enable_windows_vt():
@@ -43,25 +46,36 @@ _enable_windows_vt()
 
 
 def _disp_width(s):
-    """Lebar tampilan karakter di terminal: emoji/wide char = 2 kolom, sisanya 1."""
+    """Lebar tampilan visual di terminal tanpa menghitung kode ANSI: emoji/wide char = 2 kolom, sisanya 1."""
+    plain = _ANSI_RE.sub('', s)
     return sum(
         2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        for ch in s
+        for ch in plain
     )
 
 
 def _truncate_disp(s, max_w):
-    """Potong string agar lebar tampilan <= max_w (cegah wrap yang merusak refresh)."""
+    """Potong string agar lebar visual <= max_w tanpa merusak sequence ANSI / memotong di tengah kode warna."""
     if _disp_width(s) <= max_w:
         return s
-    out, w = [], 0
-    for ch in s:
-        cw = 2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if w + cw > max_w - 3:
-            out.append("...")
-            break
-        out.append(ch)
-        w += cw
+    tokens = _ANSI_TOKEN_RE.split(s)
+    out = []
+    w = 0
+    target_w = max_w - 3  # sisakan ruang untuk '...'
+    for token in tokens:
+        if not token:
+            continue
+        if _ANSI_RE.fullmatch(token):
+            out.append(token)
+        else:
+            for ch in token:
+                cw = 2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
+                if w + cw > target_w:
+                    out.append(f"...{UI.RST}")
+                    return "".join(out)
+                out.append(ch)
+                w += cw
+    out.append(UI.RST)
     return "".join(out)
 
 
@@ -1192,7 +1206,8 @@ def main():
                 # Hapus isi baris dulu biar sisa status sebelumnya (yang lebih panjang) hilang
                 sys.stdout.write(f"\x1b[2K\r{status_line}")
             else:
-                sys.stdout.write(f"\r{status_line:<{max_w}}")
+                pad = " " * max(0, max_w - _disp_width(status_line))
+                sys.stdout.write(f"\r{status_line}{pad}")
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks
