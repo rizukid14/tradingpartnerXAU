@@ -268,8 +268,10 @@ CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, 
 
 
 def _fmt_price(x):
-    """Format harga/point ke string desimal bersih (0.01, 0.001, 0.00001)."""
-    return f"{x:.10f}".rstrip("0").rstrip(".")
+    """Format harga/point ke string desimal bersih (0.01, 0.001, 0.00001).
+    6 desimal cukup untuk semua harga (max GBPCHF 5 desimal) dan memotong
+    noise float-artifact dari nilai ATR komputasi (fix 13 Agustus)."""
+    return f"{x:.6f}".rstrip("0").rstrip(".")
 
 
 def _build_points_explanation(symbol, point_size):
@@ -421,12 +423,16 @@ def _get_key_levels_str(symbol, current_bid):
     Key levels from D1 (previous day high/low, today open) + nearest round
     number + current WIB session. Cached 5 minutes (D1 only changes once/day,
     session label changes slowly). Falls back to empty string on any error.
+    Returns tuple: (str, pdh, pdl, today_open) — data D1 dipakai ulang buat
+    Position Map & Narrative biar nggak ada query D1 duplikat (fix 13 Agustus).
     """
     import time as _time
     now = _time.time()
     cached = _key_levels_cache.get(symbol)
     if cached and now - cached[0] < 300:
-        return cached[1]
+        if len(cached) >= 5:
+            return cached[1], cached[2], cached[3], cached[4]
+        return cached[1], 0.0, 0.0, 0.0
 
     try:
         from src.core import mt5_connector
@@ -437,7 +443,7 @@ def _get_key_levels_str(symbol, current_bid):
             mt5_connector.get_valid_trade_symbol(symbol), config.mt5.TIMEFRAME_D1, 0, 3
         )
         if rates is None or len(rates) < 2:
-            return ""
+            return "", 0.0, 0.0, 0.0
         prev = rates[-2]  # previous day
         today = rates[-1]  # today
         pdh = float(prev['high'])
@@ -478,11 +484,247 @@ def _get_key_levels_str(symbol, current_bid):
             f"- Nearest Psychological Round Number: {round_str}\n"
             f"- Active Session (WIB): {session_str}\n"
         )
-        _key_levels_cache[symbol] = (now, out)
-        return out
+        _key_levels_cache[symbol] = (now, out, pdh, pdl, today_open)
+        return out, pdh, pdl, today_open
     except Exception as exc:
         print(f"[KEY LEVELS ERROR] {exc}")
+        return "", 0.0, 0.0, 0.0
+
+
+def _lvl_fmt(v, point_size):
+    """Format nilai level/indikator (EMA/ATR/jarak) dengan presisi sesuai point_size,
+    tanpa noise float komputasi: EMA 4392.25315 -> '4392.25' (XAU point 0.01),
+    1.0943215 -> '1.09432' (GBPCHF point 0.00001). Fix 13 Agustus."""
+    try:
+        dec = len(f"{max(point_size, 1e-9):.10f}".rstrip('0').rstrip('.').split('.')[-1])
+        return f"{round(v, dec):.{dec}f}"
+    except Exception:
+        return f"{v:.2f}"
+
+
+def _compute_atr_regime(df, lookback=5, point_size=0.01):
+    """
+    Computes ATR change over N candles (pure factual change, no strategy hint).
+    """
+    if df is None or len(df) < lookback + 1:
         return ""
+    try:
+        current_atr = float(df.iloc[-1]['atr_14'])
+        past_atr = float(df.iloc[-(lookback + 1)]['atr_14'])
+        if past_atr <= 0:
+            return ""
+        change_pct = ((current_atr - past_atr) / past_atr) * 100
+        return f"- ATR Regime: ATR {lookback} candles ago: {_lvl_fmt(past_atr, point_size)} -> now: {_lvl_fmt(current_atr, point_size)} ({change_pct:+.1f}%)\n"
+    except Exception:
+        return ""
+
+
+def _compute_volume_context(df):
+    """
+    Computes relative volume ratio for the last 2 candles vs 20-period average (pure factual data).
+    """
+    if df is None or len(df) < 20 or 'tick_volume' not in df.columns:
+        return ""
+    try:
+        volumes = df['tick_volume'].astype(float)
+        avg_20 = volumes.tail(20).mean()
+        if avg_20 <= 0:
+            return ""
+        last_vol = volumes.iloc[-1]
+        prev_vol = volumes.iloc[-2]
+        last_ratio = last_vol / avg_20
+        prev_ratio = prev_vol / avg_20
+        return (
+            "\n### VOLUME CONTEXT\n"
+            f"- Last candle volume: {int(last_vol):,} ticks (20-period avg: {int(avg_20):,}, ratio: {last_ratio:.2f}x)\n"
+            f"- Previous candle volume: {int(prev_vol):,} ticks (ratio: {prev_ratio:.2f}x)\n"
+        )
+    except Exception:
+        return ""
+
+
+def _compute_position_map(price, ema20, ema50, fib_382, fib_500, fib_618, pdh, pdl, swing_high, swing_low, today_open, atr, point_size):
+    """
+    Computes price distance to key levels in price points and ATR multiples (pure arithmetic).
+    Zero interpretative labels or strategy playbooks.
+    """
+    if atr <= 0 or point_size <= 0:
+        return ""
+    try:
+        levels = [
+            (ema20, "EMA20"),
+            (ema50, "EMA50"),
+            (fib_382, "Fib 38.2%"),
+            (fib_500, "Fib 50.0%"),
+            (fib_618, "Fib 61.8%"),
+            (swing_high, "50-Bar Swing High"),
+            (swing_low, "50-Bar Swing Low"),
+        ]
+        if pdh and pdh > 0:
+            levels.append((pdh, "PDH"))
+        if pdl and pdl > 0:
+            levels.append((pdl, "PDL"))
+        if today_open and today_open > 0:
+            levels.append((today_open, "Today Open"))
+
+        levels.sort(key=lambda x: abs(price - x[0]))
+
+        supports = [(p, n) for p, n in levels if p < price]
+        resistances = [(p, n) for p, n in levels if p > price]
+        nearest_sup = supports[0] if supports else None
+        nearest_res = resistances[0] if resistances else None
+
+        lines = [
+            "\n### PRICE POSITION MAP",
+            f"Current price: {_lvl_fmt(price, point_size)}",
+        ]
+        for lvl_price, lvl_name in levels:
+            diff = price - lvl_price
+            pts = int(round(abs(diff) / point_size))  # round, bukan int() — int() truncation kena float-artifact (39.9999 -> 39, fix 13 Agustus)
+            atr_mult = abs(diff) / atr
+            direction = "ABOVE" if diff > 0 else "BELOW"
+            lines.append(f"  - vs {lvl_name} ({_lvl_fmt(lvl_price, point_size)}): {_lvl_fmt(diff, point_size)} ({pts} pts, {atr_mult:.1f}x ATR) {direction}")
+
+        if nearest_sup:
+            lines.append(f"  - Nearest support: {nearest_sup[1]} at {_lvl_fmt(nearest_sup[0], point_size)}")
+        if nearest_res:
+            lines.append(f"  - Nearest resistance: {nearest_res[1]} at {_lvl_fmt(nearest_res[0], point_size)}")
+
+        if swing_high > swing_low:
+            range_total = swing_high - swing_low
+            pos_pct = int(((price - swing_low) / range_total) * 100)
+            lines.append(f"  - Range position: {pos_pct}% from 50-bar low")
+
+        return "\n".join(lines) + "\n"
+    except Exception:
+        return ""
+
+
+def _compute_price_narrative(df, today_open, point_size):
+    """
+    Summarizes today's major swing moves and net price change (100% factual).
+    No interpretative labels (e.g. no "sharp sell-off" or "weak recovery").
+    """
+    if df is None or len(df) < 5 or point_size <= 0:
+        return ""
+    try:
+        candles = df.tail(50)
+        times = candles['time'].tolist()
+        highs = candles['high'].astype(float).tolist()
+        lows = candles['low'].astype(float).tolist()
+        closes = candles['close'].astype(float).tolist()
+
+        swings = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] >= highs[i-1] and highs[i] >= highs[i+1]:
+                swings.append((i, highs[i], 'H', times[i]))
+            if lows[i] <= lows[i-1] and lows[i] <= lows[i+1]:
+                swings.append((i, lows[i], 'L', times[i]))
+
+        filtered = []
+        for s in sorted(swings, key=lambda x: x[0]):
+            if not filtered or filtered[-1][2] != s[2]:
+                filtered.append(s)
+            else:
+                if s[2] == 'H' and s[1] > filtered[-1][1]:
+                    filtered[-1] = s
+                elif s[2] == 'L' and s[1] < filtered[-1][1]:
+                    filtered[-1] = s
+
+        moves = []
+        for i in range(1, len(filtered)):
+            prev = filtered[i-1]
+            curr = filtered[i]
+            direction = "rallied" if curr[1] > prev[1] else "dropped"
+            pts = int(round(abs(curr[1] - prev[1]) / point_size))  # round, bukan int() (fix float-artifact)
+            candle_count = curr[0] - prev[0]
+            t_start = prev[3].strftime('%H:%M') if hasattr(prev[3], 'strftime') else str(prev[3])
+            t_end = curr[3].strftime('%H:%M') if hasattr(curr[3], 'strftime') else str(curr[3])
+            moves.append(f"  - {direction} {_fmt_price(prev[1])} -> {_fmt_price(curr[1])} ({pts} pts, {candle_count} candles, {t_start}-{t_end})")
+
+        day_high = max(highs)
+        day_low = min(lows)
+        range_pts = int(round((day_high - day_low) / point_size))
+
+        lines = [
+            "\n### TODAY'S PRICE NARRATIVE",
+            f"- 50-bar range: high {_fmt_price(day_high)}, low {_fmt_price(day_low)} (range: {range_pts} pts)",
+        ]
+        if moves:
+            lines.append("- Major swing-to-swing moves:")
+            lines.extend(moves[-4:])
+
+        if today_open and today_open > 0:
+            net_change = closes[-1] - today_open
+            net_pts = int(round(abs(net_change) / point_size))
+            dir_str = "ABOVE" if net_change > 0 else "BELOW"
+            lines.append(f"- Change from Today Open ({_fmt_price(today_open)}): {_fmt_price(net_change)} ({net_pts} pts) {dir_str}")
+
+        return "\n".join(lines) + "\n"
+    except Exception:
+        return ""
+
+
+def _compute_swing_structure(df, point_size=0.01):
+    """
+    Detects HH/HL/LH/LL sequence from 50 candles — ground truth of trend (100% factual).
+    Zero strategy advice or invalidation hints.
+    """
+    if df is None or len(df) < 10:
+        return ""
+    try:
+        candles = df.tail(50)
+        highs = candles['high'].astype(float).tolist()
+        lows = candles['low'].astype(float).tolist()
+        times = candles['time'].tolist()
+
+        swing_highs = []
+        swing_lows = []
+        for i in range(2, len(highs) - 2):
+            if highs[i] >= highs[i-1] and highs[i] >= highs[i-2] and highs[i] >= highs[i+1] and highs[i] >= highs[i+2]:
+                t = times[i].strftime('%H:%M') if hasattr(times[i], 'strftime') else str(times[i])
+                swing_highs.append((highs[i], t))
+            if lows[i] <= lows[i-1] and lows[i] <= lows[i-2] and lows[i] <= lows[i+1] and lows[i] <= lows[i+2]:
+                t = times[i].strftime('%H:%M') if hasattr(times[i], 'strftime') else str(times[i])
+                swing_lows.append((lows[i], t))
+
+        if len(swing_highs) < 2 and len(swing_lows) < 2:
+            return ""
+
+        lines = ["\n### SWING STRUCTURE (from 50-candle window)"]
+
+        hh_pattern = None
+        hl_pattern = None
+
+        if len(swing_highs) >= 2:
+            # Tampilkan SEMUA swing (bukan cuma last-4) — high terbesar hari ini
+            # (mis. 4449.76 pagi) sering ke-cut kalau dipotong, padahal itu
+            # konteks struktur paling penting (fix 13 Agustus).
+            sh_str = " -> ".join([f"{_lvl_fmt(p, point_size)} [{t}]" for p, t in swing_highs])
+            lines.append(f"- Swing Highs: {sh_str}")
+            hh_pattern = "HIGHER HIGHS" if swing_highs[-1][0] > swing_highs[-2][0] else "LOWER HIGHS"
+            lines.append(f"  - Highs Pattern: {hh_pattern}")
+
+        if len(swing_lows) >= 2:
+            sl_str = " -> ".join([f"{_lvl_fmt(p, point_size)} [{t}]" for p, t in swing_lows])
+            lines.append(f"- Swing Lows: {sl_str}")
+            hl_pattern = "HIGHER LOWS" if swing_lows[-1][0] > swing_lows[-2][0] else "LOWER LOWS"
+            lines.append(f"  - Lows Pattern: {hl_pattern}")
+
+        if hh_pattern and hl_pattern:
+            if hh_pattern == "HIGHER HIGHS" and hl_pattern == "HIGHER LOWS":
+                overall = "UPTREND (HH + HL)"
+            elif hh_pattern == "LOWER HIGHS" and hl_pattern == "LOWER LOWS":
+                overall = "DOWNTREND (LH + LL)"
+            else:
+                overall = "TRANSITIONAL (mixed swing pattern)"
+            lines.append(f"  - Overall Swing Structure: {overall}")
+
+        return "\n".join(lines) + "\n"
+    except Exception:
+        return ""
+
+
 
 
 def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
@@ -858,7 +1100,21 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
     # Cached 5 min (D1 berubah sekali sehari) - murah, nggak nambah lag cycle.
-    key_levels_str = _get_key_levels_str(symbol, current_tick.get('bid'))
+    # Return tuple (str, pdh, pdl, today_open) — data D1 dipakai ulang buat
+    # Position Map & Narrative, nggak ada query D1 duplikat (fix 13 Agustus).
+    key_levels_str, pdh, pdl, today_open = _get_key_levels_str(symbol, current_tick.get('bid'))
+
+    # Batch 1 Quant Enhancements (pure facts, zero strategy hints)
+    atr_regime_str = _compute_atr_regime(df, point_size=point_size)
+    volume_str = _compute_volume_context(df)
+    position_map_str = _compute_position_map(
+        latest['close'], latest['ema_20'], latest['ema_50'],
+        fib_382, fib_500, fib_618,
+        pdh, pdl, swing_high, swing_low, today_open,
+        latest['atr_14'], point_size
+    )
+    narrative_str = _compute_price_narrative(df, today_open, point_size)
+    swing_struct_str = _compute_swing_structure(df, point_size)
 
     # ================================================================
     # PROMPT - 2 blok:
@@ -885,8 +1141,8 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{atr_gate_str}{fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{atr_regime_str}{atr_gate_str}{fib_str}
+{volume_str}{position_map_str}{narrative_str}{swing_struct_str}{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).

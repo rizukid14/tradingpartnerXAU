@@ -189,9 +189,29 @@ python main.py
 
 **Konsekuensi:** XAU di balance ~$1079 punya sweet spot SL 539-1079 pts (risk 0.5-1.0% di lot 0.01). SL < 539 → risk < 0.5% (kurang efisien tapi aman). SL > 1079 → ditolak gate (nggak akan pernah over-risk diam-diam lagi).
 
+### Perubahan 13 Agustus (malam) — Prompt Enhancement Blocks: "Pre-digest facts, judgment ke LLM" (branch `dev-quant`)
+
+**Filosofi:** LLM bagus di judgment/synthesis tapi buruk di komputasi & pattern recognition dari angka mentah (50 baris OHLC, hitung jarak ke level, deteksi pola). Enhancement blok ini **pre-compute fakta** yang bisa di-compute (zero API cost, pure Python dari df yang udah ada) dan **sisakan judgment ke LLM**. Aturan emas: **hitung FAKTA, jangan hitung INTERPRETASI** — semua blok harus bisa diverifikasi dari candle mentah yang tetap ada di prompt.
+
+**5 blok baru di `prepare_prompt` (`llm_client.py`) — batch 1 + setengah batch 2 (13 Agustus):**
+1. **PRICE POSITION MAP** (`_compute_position_map`): harga sekarang vs EMA20/50, Fib 38.2/50/61.8, PDH/PDL, Today Open, 50-Bar Swing — masing-masing dengan jarak **pts + ×ATR** + arah (ABOVE/BELOW) + Nearest support/resistance + posisi di range (%). Membunuh weakness terbesar LLM: hitung jarak sendiri.
+2. **ATR REGIME** (`_compute_atr_regime`): ATR sekarang vs 5 candle lalu + % change — konteks volatilitas (expanding/contracting) **tanpa** saran strategi ("favor mean-reversion" dihapus — kontradiksi ANALYSIS FREEDOM).
+3. **VOLUME CONTEXT** (`_compute_volume_context`): volume candle terakhir + 2 candle sebelum vs 20-period avg (ratio) — pakai `tick_volume` dari df (volume cuma di-strip pas format 50 candle, datanya masih ada).
+4. **TODAY'S PRICE NARRATIVE** (`_compute_price_narrative`): segmentasi swing-to-swing dari 50 candle (rally/drop + pts + jumlah candle + rentang jam) + 50-bar range + net dari Today Open. Anti-recency bias — LLM langsung dapat "story" sebelum baca angka.
+5. **SWING STRUCTURE** (`_compute_swing_structure`): **SEMUA** swing highs & lows (dengan jam) + pola HH/HL/LH/LL per deret + kesimpulan trend. Ini ground truth trend (bukan EMA lagging) di **timeframe aktif** — beda dari MTF di macro_analyst yang cuma max/min statis per window HTF.
+
+**Yang DI-SKIP (sengaja):** #3 Candle Character (LLM cukup pinter baca 3 candle terakhir dari data mentah + label threshold heuristik berisiko mislabel), #5 RSI Direction (info hilang tapi dampak sedang — sub-bagian divergence fakta-only sudah masuk lewat blok lain), #6 Multi-Scenario & #11 Counter-Argument (butuh perubahan schema output + parser, nyusul), #8 Session folklore (pseudo-fact), #12 Zone playbook (inject bias — kontradiksi ANALYSIS FREEDOM), #10 Confidence Calibration (sample size < 50 per direction).
+
+**Fix teknis yang ikut (13 Agustus):**
+- **Duplikasi query D1 dihapus**: `_get_key_levels_str` sekarang return `(str, pdh, pdl, today_open)` — data D1 yang udah di-cache 5 menit dipakai ulang buat Position Map & Narrative (sebelumnya `prepare_prompt` fetch `copy_rates_from_pos(D1)` lagi tiap cycle).
+- **Presisi adaptif** (`_lvl_fmt(v, point_size)`): level/indikator komputasi (EMA/ATR) di-round ke desimal point (XAU 2, EURJPY 3, GBPCHF 5). Sebelumnya `:.2f` bikin pair 5-desimal nampilin kontradiksi "diff +0.00 tapi pts 12", dan EMA noise float ("4392.25315").
+- **`int(round(...))` bukan `int(...)`** buat konversi diff→pts — truncation kena float-artifact (39.9999 → 39 padahal 40 pts).
+- **Swing structure tampil SEMUA** (bukan `[-4:]`) — high terbesar hari ini (mis. 4449.76 jam 07:30) sering ke-cut padahal itu konteks paling penting.
+- `_fmt_price` 10→6 desimal (potong noise float ATR komputasi).
+
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
-- Git branch: **`dev` = branch utama** (prompt baru + FASE 1-5 multi-symbol H1), **`main` = prompt lama** (terakhir `744ad0a`). **Sengaja split — jangan merge dev → main tanpa konfirmasi user.** FASE 1-5 sudah di-commit di `40c7288` (sebelumnya `284ec76` = outcome tracking akurat + default per-symbol + multiplier ATR per AI mode).
+- Git branch: **`dev` = branch utama** (prompt baru + FASE 1-5 multi-symbol H1), **`main` = prompt lama** (terakhir `744ad0a`). **Sengaja split — jangan merge dev → main tanpa konfirmasi user.** FASE 1-5 sudah di-commit di `40c7288` (sebelumnya `284ec76` = outcome tracking akurat + default per-symbol + multiplier ATR per AI mode). **`dev-quant` = branch eksperimen prompt enhancement blocks** (Position Map, Narrative, Swing Structure — 13 Agustus malam); hasil verified baru di-merge ke `dev`.
 - **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.4-mini; fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
 - **`data/` dan `scratch/` sudah di-`.gitignore`** (untrack via `git rm --cached`, file tetap ada di disk). `git status` sekarang bersih dari runtime state — cuma source file + `docs/` yang muncul.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
