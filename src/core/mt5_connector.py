@@ -639,14 +639,21 @@ def get_trade_details(ticket):
         return None
 
 # Retcodes that mean "broker wants a fresh price/wider deviation" - worth a retry.
+# 10013 (TRADE_RETCODE_INVALID) dimasukkan karena broker ECN (VTMarkets) kadang
+# membalas 10013 transien saat market bergerak cepat (bukan requote 10004) -
+# request yang sama persis sukses beberapa detik kemudian (terbukti via
+# mt5.order_check). Retry dibatasi (_MAX_RETRIES) & build_request selalu refetch
+# tick fresh, jadi aman & tidak menutupi bug request yang beneran invalid.
 _RETRYABLE_RETCODES = {
     getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
     getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10021),
     getattr(mt5, "TRADE_RETCODE_REQUOTE", 10004),
-    getattr(mt5, "TRADE_RETCODE_REJECT", 10013),
+    getattr(mt5, "TRADE_RETCODE_REJECT", 10006),
+    getattr(mt5, "TRADE_RETCODE_INVALID", 10013),
 }
 
 _MAX_RETRIES = 2
+_RETRY_SLEEP_SECONDS = 0.4
 
 def _get_exec_mode(info):
     if not info:
@@ -738,6 +745,7 @@ def _send_with_retry(build_request, symbol, label):
             break
         widen = config.DEVIATION + (5 * (attempt + 1))
         print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, widening deviation to {widen} pts")
+        time.sleep(_RETRY_SLEEP_SECONDS)  # jeda singkat biar broker settle (transient 10013/requote)
         req = build_request(widen, policy)
         result = _safe_order_send(req)
 
