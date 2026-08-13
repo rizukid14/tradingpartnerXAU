@@ -359,14 +359,14 @@ def _build_sltp_rules_block(symbol, timeframe):
             return (
                 f"- Define absolute 'invalidation_price' and 'target_price' based on major {timeframe} structure. SL is placed exactly at the invalidation price level.\n"
                 f"- The distance between entry price and invalidation_price MUST be at least {lo_pts} points (aligning with {range_note}) and {noise_note}.\n"
-                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1.25. The Take Profit distance (TP) must be at least 1.25x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.\n"
+                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
                 f"- TP is placed exactly at the target_price.\n"
             )
         elif is_btc:
             return (
                 f"- Define absolute 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600).\n"
                 f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
-                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1.25. The Take Profit distance (TP) must be at least 1.25x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.\n"
+                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
                 f"- TP is placed at your realistic structural target.\n"
             )
         else:
@@ -376,7 +376,7 @@ def _build_sltp_rules_block(symbol, timeframe):
             return (
                 f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
                 f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
-                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1.25. The Take Profit distance (TP) must be at least 1.25x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1.25 R:R at current levels, output HOLD.\n"
+                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
                 f"- TP is placed at your realistic structural target.\n"
             )
 

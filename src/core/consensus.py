@@ -80,8 +80,8 @@ def _apply_sltp_rules(sl_points, tp_points):
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
 
-        # Enforce minimum R:R of 1:1.25 (TP must be at least 1.25x SL)
-        min_rr = 1.25
+        # Enforce minimum R:R of 1:1 (TP must be at least 1x SL)
+        min_rr = 1.0
         if sl_points > 0 and (tp_points / sl_points) < min_rr:
             return sl_points, tp_points, False, f"R:R ratio {(tp_points / sl_points):.2f} < {min_rr}x (SL {sl_points} pts -> TP {tp_points} pts)"
 

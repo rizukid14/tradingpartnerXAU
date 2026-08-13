@@ -807,7 +807,7 @@ def _run_cycle_for_current_symbol():
                 # RE-CHECK gate SL/TP dengan harga eksekusi aktual: SL/TP di sini
                 # dihitung ulang dari harga absolut (invalidation/target) pakai tick
                 # terkini, jadi jarak & R:R bisa bergeser dari nilai saat konsensus.
-                # Kalau hasil re-kalkulasi gagal gate (mis. R:R < 1.25 karena harga
+                # Kalau hasil re-kalkulasi gagal gate (mis. R:R < 1.0 karena harga
                 # bergeser) -> batalkan trade, jangan kirim order.
                 sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
                 if not sltp_ok:
