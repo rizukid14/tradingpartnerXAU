@@ -45,6 +45,28 @@ def _enable_windows_vt():
 _enable_windows_vt()
 
 
+def _tf_to_seconds(tf):
+    """Konversi timeframe MT5 -> detik (buat label range candle open-close)."""
+    mapping = {
+        mt5.TIMEFRAME_M1: 60,
+        mt5.TIMEFRAME_M5: 300,
+        mt5.TIMEFRAME_M15: 900,
+        mt5.TIMEFRAME_M30: 1800,
+        mt5.TIMEFRAME_H1: 3600,
+        mt5.TIMEFRAME_H4: 14400,
+        mt5.TIMEFRAME_D1: 86400,
+    }
+    return mapping.get(tf, 3600)
+
+
+def _candle_range_label(open_ts, tf):
+    """Label candle non-ambigu: '15:00-16:00 WIB' (open-close). open_ts = open-time candle."""
+    from datetime import timedelta
+    open_wib = connector.server_to_wib(int(open_ts))
+    close_wib = open_wib + timedelta(seconds=_tf_to_seconds(tf))
+    return f"{open_wib.strftime('%H:%M')}-{close_wib.strftime('%H:%M')} WIB"
+
+
 def _disp_width(s):
     """Lebar tampilan visual di terminal tanpa menghitung kode ANSI: emoji/wide char = 2 kolom, sisanya 1."""
     plain = _ANSI_RE.sub('', s)
@@ -276,7 +298,7 @@ def interactive_setup():
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         "XAU/BTC: ATR-Based (fix) | FX: LLM" if config.TP_SL_RULES == "LLM"
+         "XAU: LLM (soft floor 400-1000, max lot 0.01) | BTC: ATR-Based (fix) | FX: LLM" if config.TP_SL_RULES == "LLM"
          else str(config.TP_SL_RULES) + " (force semua, gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)"),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
@@ -601,9 +623,8 @@ def run_trading_cycle():
             
             # Log indikator candle baru untuk pair selain pair utama
             if last_time is not None and sym != valid_pool[0]:
-                candle_wib = connector.server_to_wib(closed_time)
                 tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else ("M15" if tf == mt5.TIMEFRAME_M15 else "M5"))
-                print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Waktu: {candle_wib.strftime('%H:%M:%S')} WIB")
+                print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Range: {_candle_range_label(closed_time, tf)}")
                 
             try:
                 _run_cycle_for_current_symbol()
@@ -950,7 +971,7 @@ def main():
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
 
     print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'ATR-Based (XAU/BTC fix), LLM (FX)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD}")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (max lot 0.01) | BTC: ATR-Based (fix) | FX: LLM' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD}")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
@@ -1137,7 +1158,8 @@ def main():
                             print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
-                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                        tf_main = config.get_timeframe(config.SYMBOL)
+                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Range: {_candle_range_label(current_candle_time, tf_main)}")
                     
                     last_candle_time = current_candle_time
                     

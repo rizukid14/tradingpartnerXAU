@@ -15,7 +15,7 @@ Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + P
 
 | # | Simbol (base) | Live / Demo | Timeframe | Arah / Gaya |
 |---|---|---|---|---|
-| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M15 | Swing (0.5% risk) |
+| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M15 | Swing (1.0% risk) |
 | 2 | `GBPCHF-ECN` | `GBPCHF-ECNc` / `GBPCHF-ECN` | H1 | Swing (1.0% risk) |
 | 3 | `EURCHF-ECN` | `EURCHF-ECNc` / `EURCHF-ECN` | H1 | Swing (1.0% risk) |
 | 4 | `GBPNZD-ECN` | `GBPNZD-ECNc` / `GBPNZD-ECN` | H1 | Swing (1.0% risk) |
@@ -76,7 +76,7 @@ graph TD
 9. **Per-Symbol Daily Breakdown**: Agregat + breakdown per-symbol (`XAUUSD-ECNc` vs `BTCUSD.c`) — BEP dipisah eksplisit dari loss.
 10. **Order Retry & Fill-Policy Fallback**: `send_trade_order` & `close_position` retry sampai 2× pada retcode PRICE_OFF/PRICE_CHANGED/REQUOTE/REJECT (deviation melebar), fallback ke fill mode yang didukung broker (`get_filling_policy`).
 11. **Position Manager State Persistence + Multi-Symbol + Tick Freshness**: `_partial_closed_tickets` & `_break_even_tickets` di-persist ke `data/position_manager_state.json`. Manage semua posisi bot (XAU + BTC), skip symbol yang market-nya tutup (tick stale — XAU weekend).
-12. **Risk-Based Lot Sizing**: Lot dihitung dari equity & SL — **BTC 1.5%**, **XAU 0.5%** per trade (`RISK_PERCENT_BTC/XAU`). Urutan: risk-based → recovery (×0.5) / session (×1.2) multiplier → clamp+round ke `volume_step`. Margin safety net (lot diturunkan kalau margin > 50% free). Fallback 0.01 kalau SL tidak diketahui.
+12. **Risk-Based Lot Sizing**: Lot dihitung dari equity & SL — **BTC 1.5%**, **XAU 1.0%** per trade (`RISK_PERCENT_BTC/XAU`; XAU naik dari 0.5% di 13 Agustus karena min lot 0.01 gak bisa mewakili risk 0.5% dengan SL struktur lebar). Urutan: risk-based → recovery (×0.5) / session (×1.2) multiplier → clamp+round ke `volume_step`. Margin safety net (lot diturunkan kalau margin > 50% free). Fallback 0.01 kalau SL tidak diketahui.
 13. **Model Slot Configurable + Routing Otomatis**: Slot ke-3 default **DeepSeek V4 Flash** (`deepseek/deepseek-v4-flash` — jauh lebih murah dari Claude sonnet, cukup untuk decision & forecast JSON) dengan fallback `claude-haiku-4-5-20251001`. Routing otomatis di `query_claude()`: `deepseek/...` → DeepSeek API (OpenAI-compatible), `claude-...` → Anthropic. Ganti model via **menu setup** (item "Model Claude Slot") atau **CLI flag** `--claude-model`. Log label otomatis ("DeepSeek" vs "Claude").
 14. **Deteksi Close Manual (magic=0)**: `get_closed_positions_today` menerima OUT deal dengan `magic=0` (manual close dari MT5 mobile — magic tidak diteruskan) **hanya jika posisinya dibuka bot** (ada IN magic bot). Posisi yang dibuka manual user tidak ikut kehitung. Window P/L pakai tengah malam WIB → next-midnight (loss hari kemarin tidak masuk "hari ini"). **Reason close di-label jelas** ("manual" untuk magic=0, "SL"/"TP"/"stop-out" dst. dari kode MT5) — bukan "unknown".
 15. **Post-Mortem Langsung saat Close**: Post-mortem + lesson dipicu **saat itu juga** saat close di-detect (loop 5 detik, background thread) — bukan nunggu candle berikutnya. `evaluated_tickets` persist di `memory_lessons.json` mencegah re-evaluasi tiket lama saat restart.
@@ -240,8 +240,8 @@ Dashboard read-only — tidak menyentuh bot/MT5. Opsi: `-o out.html` (output sta
 Yang **sebenarnya** memblokir eksekusi, urut:
 1. **Risk gate** (`risk.can_trade`): spread ≤ 50 pts (XAU) / 2400 pts (BTC), sesi London/NY WIB + bukan danger zone (kecuali crypto), max daily loss $50, max 5 consecutive loss, max 6 posisi (4 saat recovery).
 2. **Weighted consensus** ≥ 2 model searah dengan skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; defensif 3/3 = ×1.5).
-3. **SL/TP mode per kategori (13 Agustus, `config.sltp_mode_for(symbol)`)**: **XAUUSD & BTC = fix ATR-Based** — SL ≥ max(2× spread, SL_MULT× ATR), TP ≥ max(2× spread, TP_MULT× ATR) (**R:R 2:1**, multiplier per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×) — anti-scalping (ATR M15 XAU ~819 pts, floor 400 cuma 0.49× ATR). **FX pairs = LLM** — SL/TP bebas struktur (`invalidation_price`/`target_price`), Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** (TP ≥ SL). Force semua ke ATR-Based via `.env` `TP_SL_RULES=ATR-Based`, menu setup, atau `--tpsl-rules {ATR-Based|LLM|atr|llm}`.
-4. **Risk-based lot sizing**: lot dihitung dari equity & SL (BTC 1.5% / XAU 0.5% / FX 1.0%), clamp ke volume broker + margin safety net.
+3. **SL/TP mode per kategori (13 Agustus, `config.sltp_mode_for(symbol)`)**: **XAU = LLM (13 Agustus sore)** — SL/TP bebas struktur (`invalidation_price`/`target_price`), Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** + soft guidance SL 400-1000 pts + **GATE OVER-RISK** (SL > max budget risk di min lot → ditolak). **BTC = fix ATR-Based** — SL ≥ max(2× spread, SL_MULT× ATR), TP ≥ max(2× spread, TP_MULT× ATR) (**R:R 2:1**, multiplier per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×) — anti-scalping. **FX pairs = LLM** — bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** (TP ≥ SL). Force semua ke ATR-Based via `.env` `TP_SL_RULES=ATR-Based`, menu setup, atau `--tpsl-rules {ATR-Based|LLM|atr|llm}`.
+4. **Risk-based lot sizing**: lot dihitung dari equity & SL (BTC 1.5% / XAU 1.0% / FX 1.0%), clamp ke volume broker + margin safety net. **XAU di-cap max lot 0.01** (`config.max_lot_for`) — risk 1.0% = max SL ~1079 pts di equity ~$1079, cap 0.01 mencegah over-risk diam-diam.
 5. **Max open positions** tercapai → skip.
 
 Yang **TIDAK** memblokir (hanya soft hint di prompt / print):

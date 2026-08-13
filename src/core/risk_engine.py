@@ -304,6 +304,10 @@ class RiskEngine:
         volume_min = getattr(si, "volume_min", 0.01)
         volume_max = getattr(si, "volume_max", 100.0)
         volume_step = getattr(si, "volume_step", 0.01)
+        # Cap tambahan per kategori aset (XAU = 0.01) - 13 Agustus
+        extra_max = config.max_lot_for(symbol)
+        if extra_max is not None:
+            volume_max = min(volume_max, extra_max)
         lot = max(volume_min, min(volume_max, lot))
         lot = math.floor(lot / volume_step + 1e-9) * volume_step
         lot = max(volume_min, lot)  # jangan jatuh di bawah volume_min broker

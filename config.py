@@ -172,7 +172,7 @@ LOT_SIZE_XAU = _getenv_float("LOT_SIZE_XAU", LOT_SIZE)
 LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
-RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 0.5)
+RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
 
 DEVIATION = _getenv_int("DEVIATION", 20)
 
@@ -181,7 +181,8 @@ DEVIATION = _getenv_int("DEVIATION", 20)
 # via .env/menu/--tpsl-rules - gate ATR R:R 2:1 (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
 #
 # PER-KATEGORI (13 Agustus, pisah logic biar enak debug):
-# - XAUUSD & BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
+# - XAUUSD: LLM (13 Agustus - soft floor 400-1000, max lot 0.01, gate over-risk).
+# - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
 #   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
 #   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
 # - FX pairs: LLM (bebas struktur, safety floor, R:R 1:1) - cocok utk H1 swing.
@@ -213,7 +214,7 @@ ERA_PRESETS = {
     "v1": {
         "label": "V1 - era profit 100% (legacy)",
         "DRY_RUN": True,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -221,7 +222,7 @@ ERA_PRESETS = {
     "v2": {
         "label": "V2 - legacy-2 (= v1 + state)",
         "DRY_RUN": True,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -229,7 +230,7 @@ ERA_PRESETS = {
     "v3": {
         "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.5,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -474,15 +475,20 @@ def is_crypto(symbol):
 def sltp_mode_for(symbol):
     """
     SL/TP mode per kategori aset (13 Agustus - pisah logic per simbol biar enak debug):
-    - XAU & BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
-      Floor 400 pts cuma 0.49x ATR M15 (~819 pts) -> terlalu sempit utk swing M15,
-      makanya gold/crypto gak ikut mode LLM (yang bebas SL/TP).
+    - XAU: "LLM" (13 Agustus sore - pindah dari ATR-Based fix). Alasan: gate ATR
+      (SL >= 1.25x ATR M15 ~1024 pts) bikin SL lebar yang TIDAK MUAT di min lot 0.01
+      dengan risk 0.5% (over-risk 3.2x). Mode LLM + risk 1.0% + max lot 0.01 =
+      sweet spot SL ~539-1079 pts. Tetap ada gate tolak kalau SL > max budget
+      (risk > 1.25% dengan min lot) di consensus/main.
+    - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
     - FX pairs: "LLM" (bebas struktur, safety floor max(2x spread, 0.5x default_sl), R:R 1:1).
       Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
     """
     s = (symbol or "").upper()
-    if "XAU" in s or "GOLD" in s or is_crypto(symbol):
-        return "ATR-Based"  # fix, tidak bisa di-override ke LLM
+    if "XAU" in s or "GOLD" in s:
+        return "LLM"  # 13 Agustus: XAU ikut LLM mode (bukan ATR-Based lagi)
+    if is_crypto(symbol):
+        return "ATR-Based"  # BTC fix, tidak bisa di-override ke LLM
     # FX pairs: default LLM, bisa di-force ATR-Based via config.TP_SL_RULES
     if TP_SL_RULES == "ATR-Based":
         return "ATR-Based"
@@ -519,6 +525,19 @@ def get_active_symbol(now=None):
     """Returns the symbol that should be traded right now (respects rotation index)."""
     pool = get_rotation_pool(now)
     return pool[_rotation_index["i"] % len(pool)]
+
+
+def max_lot_for(symbol):
+    """Max lot cap per kategori aset (13 Agustus):
+    - XAU: 0.01 (cap keras). Alasan: risk 1.0% di equity ~$1079 = max SL ~1079 pts;
+      lot 0.02 bisa over-risk diam-diam kalau SL lebar. Cap 0.01 -> risk max
+      terkontrol di 0.01 x SL x $1/pt (SL 539 pts -> 0.5%, SL 1079 -> 1.0%).
+    - Lainnya (FX/BTC): None = pakai volume_max broker (tanpa cap tambahan).
+    """
+    s = (symbol or "").upper()
+    if "XAU" in s or "GOLD" in s:
+        return 0.01
+    return None  # no extra cap - broker volume_max berlaku
 
 
 _last_symbol = {"value": SYMBOL}
@@ -651,7 +670,9 @@ def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
     FX (H1): 1.0%.
-    XAU (M15 swing, up to 6 concurrent): 0.5% - aggregate ~3% max.
+    XAU (M15 swing, up to 6 concurrent): 1.0% (13 Agustus - dinaikkan dari 0.5%
+    karena min lot 0.01 broker tidak bisa mewakili risk 0.5% dengan SL ATR/struktur
+    yang lebar; 1.0% = max SL ~1079 pts di equity ~$1079, muat sweet spot).
     """
     if is_crypto(symbol): return RISK_PERCENT_BTC
     if "XAU" not in symbol.upper(): return 1.0

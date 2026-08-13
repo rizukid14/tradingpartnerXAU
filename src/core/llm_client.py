@@ -205,7 +205,7 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
 # cycles so provider-side prompt/context caching stays effective.
 # ================================================================
 _SYSTEM_PROMPT_TEMPLATE = """### ROLE
-You are an independent {{TIMEFRAME}} scalping analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+You are an independent {{TIMEFRAME}} short-term swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
 
 ### EXECUTION CONTEXT
 Any BUY or SELL signal you output will be executed immediately at the current market price (Market Order). The bot does not support pending orders. 
@@ -345,7 +345,7 @@ def _build_sltp_rules_block(symbol, timeframe):
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
       dikalkulasi dari SL di main.py.
     """
-    mode = config.sltp_mode_for(symbol)  # per-kategori: XAU/BTC ATR-Based, FX LLM
+    mode = config.sltp_mode_for(symbol)  # per-kategori: XAU LLM, BTC ATR-Based, FX LLM
     is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
 
@@ -353,12 +353,16 @@ def _build_sltp_rules_block(symbol, timeframe):
         # Mode LLM: Bebas sesuai thesis/struktur pasar
         if is_xau:
             lo_pts = 400
-            hi_pts = 1200
+            hi_pts = 1000
             range_note = f"typically {lo_pts} to {hi_pts} points"
             noise_note = f"avoid tight/unsafe stops (under {lo_pts} points / $4.00) as normal market noise will easily trigger them before your thesis plays out"
+            # 13 Agustus: catatan soft soal max SL biar risk 1.0% (min lot 0.01)
+            # gak meledak. Bukan gate keras - cuma guidance; gate OVER-RISK ada di
+            # consensus (SL > budget risk -> trade ditolak otomatis).
             return (
                 f"- Define absolute 'invalidation_price' and 'target_price' based on major {timeframe} structure. SL is placed exactly at the invalidation price level.\n"
                 f"- The distance between entry price and invalidation_price MUST be at least {lo_pts} points (aligning with {range_note}) and {noise_note}.\n"
+                f"- SOFT GUIDANCE (not a hard rule): for optimal risk sizing with the minimum lot (0.01), an SL around {lo_pts}-{hi_pts} points is ideal. An SL much wider than ~{hi_pts} points (e.g. >1100 points) makes the risk exceed the 1.0% per-trade budget at min lot, and the bot may reject the trade. Prefer structural levels that keep SL within {lo_pts}-{hi_pts} points.\n"
                 f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
                 f"- IMPORTANT: R:R 1:1 is the MINIMUM threshold verified by the bot, not a reason to HOLD. Always provide invalidation_price and target_price based on price structure (swing/support/resistance/EMA). The bot calculates the distances and verifies the R:R. Only output HOLD if there is genuinely no structural trade available.\n"
                 f"- TP is placed exactly at the target_price.\n"
@@ -469,7 +473,7 @@ def _get_key_levels_str(symbol, current_bid):
 def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
     """
     Static per-bot 'constitution'. Build once per bot instance (e.g. once
-    for XAU M5, once for BTC M30) and reuse unchanged across cycles -- this
+    for XAU M15, once for BTC M30) and reuse unchanged across cycles -- this
     is the part that benefits from provider-side prompt/context caching,
     since only the dynamic market data below changes every call.
     """
@@ -674,8 +678,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             pass
 
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
-    # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the
-    # scalping scale.
+    # reflects real 30-minute volatility. XAU df is M15 (swing) - ATR M15 ~819 pts.
 
     # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
     # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
@@ -684,7 +687,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
     # Inject ATR Gate information ONLY if the symbol's mode is ATR-Based
-    # (XAU/BTC fix ATR-Based; FX ikut mode LLM kecuali TP_SL_RULES di-force ATR-Based)
+    # (BTC fix ATR-Based; XAU/FX ikut mode LLM kecuali TP_SL_RULES di-force ATR-Based)
     if atr_points > 0 and config.sltp_mode_for(symbol) == "ATR-Based":
         ai_mode = config.get_ai_mode()
         sl_mult = config.atr_sl_multiplier()

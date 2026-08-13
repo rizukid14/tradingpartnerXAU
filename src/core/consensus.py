@@ -59,7 +59,7 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
-    mode = config.sltp_mode_for(config.SYMBOL)  # per-kategori: XAU/BTC ATR-Based, FX LLM
+    mode = config.sltp_mode_for(config.SYMBOL)  # per-kategori: XAU LLM, BTC ATR-Based, FX LLM
 
     if mode == "LLM":
         # Mode LLM (Bebas sesuai thesis struktur AI, tapi dengan safety floor dan R:R gate)
@@ -84,6 +84,35 @@ def _apply_sltp_rules(sl_points, tp_points):
         min_rr = 1.0
         if sl_points > 0 and (tp_points / sl_points) < min_rr:
             return sl_points, tp_points, False, f"R:R ratio {(tp_points / sl_points):.2f} < {min_rr}x (SL {sl_points} pts -> TP {tp_points} pts)"
+
+        # GATE OVER-RISK (13 Agustus): kalau risk minimum yang bisa diwakili
+        # (volume_min x SL) sudah MELEBIHI budget risk -> trade DITOLAK.
+        # Contoh XAU: equity $1079, risk 1.0% = $10.79, min lot 0.01, usd/pt $1
+        #   -> max SL = 1079 pts. SL 1736 pts -> risk aktual $17.36 (1.6%) -> TOLAK.
+        try:
+            account = mt5.account_info() if 'mt5' in dir() else None
+            if account is None:
+                from config import mt5 as _mt5
+                account = _mt5.account_info()
+            equity = float(account.equity) if account else 0.0
+            si = mt5.symbol_info(config.SYMBOL) if 'mt5' in dir() else None
+            if si is None:
+                from config import mt5 as _mt5
+                si = _mt5.symbol_info(config.SYMBOL)
+            vol_min = getattr(si, "volume_min", 0.01) if si else 0.01
+            usd_pt = (si.trade_tick_value * (si.point / si.trade_tick_size)) if si and si.trade_tick_size else 0.0
+            risk_pct = config.risk_percent_for(config.SYMBOL)
+            if equity > 0 and usd_pt > 0 and vol_min > 0:
+                max_sl = (equity * risk_pct / 100.0) / (vol_min * usd_pt)
+                if sl_points > max_sl:
+                    risk_actual = sl_points * vol_min * usd_pt
+                    return sl_points, tp_points, False, (
+                        f"OVER-RISK: SL {sl_points} pts > max {max_sl:.0f} pts "
+                        f"(risk {risk_pct}% = ${equity*risk_pct/100:.2f} gak muat di min lot {vol_min}: "
+                        f"risk aktual ${risk_actual:.2f} = {risk_actual/equity*100:.2f}%)"
+                    )
+        except Exception:
+            pass
 
         return sl_points, tp_points, True, ""
 
