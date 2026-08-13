@@ -228,7 +228,15 @@ tr:hover { background: var(--panel-hover); }
   </div>
 
   <div class="bento-box col-4">
-    <div class="bento-title">Per-Symbol Performance</div>
+    <div class="bento-title" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>Per-Symbol Performance</span>
+      <select id="sort-sym" style="font-size:11px; padding:2px 4px; background:#1e1e1e; color:#ccc; border:1px solid #444; border-radius:3px; outline:none; cursor:pointer;" onchange="renderSym()">
+        <option value="default">Default</option>
+        <option value="az">A-Z</option>
+        <option value="profit-desc">Profit Tertinggi</option>
+        <option value="profit-asc">Profit Terendah</option>
+      </select>
+    </div>
     <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
   </div>
 
@@ -444,7 +452,16 @@ function renderKpi() {
 function renderSym() {
   const ps = DATA.per_symbol || {};
   const selectedSym = $('f-symbol').value;
-  const keys = Object.keys(ps).filter(k => !selectedSym || k === selectedSym);
+  let keys = Object.keys(ps).filter(k => !selectedSym || k === selectedSym);
+  
+  const sortMode = $('sort-sym') ? $('sort-sym').value : 'default';
+  if (sortMode === 'az') {
+    keys.sort();
+  } else if (sortMode === 'profit-desc') {
+    keys.sort((a, b) => (ps[b].pnl || 0) - (ps[a].pnl || 0));
+  } else if (sortMode === 'profit-asc') {
+    keys.sort((a, b) => (ps[a].pnl || 0) - (ps[b].pnl || 0));
+  }
   
   $('sym-cards').innerHTML = keys.length ? keys.map(sym => {
     const st = ps[sym];
