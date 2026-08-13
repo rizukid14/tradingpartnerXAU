@@ -190,21 +190,37 @@ Dengan **Smart Timeframe Rotation (FASE 5)**, LLM dipanggil per simbol hanya ket
   * OpenAI: **48 call/hari**, Gemini: **14 call/hari**, DeepSeek: **4 call/hari**.
   * **Total Call:** 66 call/hari.
 
-### 2. Estimasi Biaya per Hari (USD & IDR)
-* **Asumsi Tarif Model Utama:**
-  * OpenAI mini (`gpt-5.4-mini` / `gpt-4o-mini`): **GRATIS $0.00** (Dalam batas free tier 2.5 juta token per hari. Konsumsi maksimal kita di mode XAU + Pairs hanyalah ~840k token/hari).
-  * Gemini Lite: Input $0.075/1M, Output $0.30/1M => ~$0.0003 / call
-  * DeepSeek: Input $0.14/1M, Output $0.28/1M => ~$0.0005 / call
-* **Total Biaya Harian (XAU Only):**
-  * OpenAI: $0.0000 (Free) | Gemini: $0.0084 | DeepSeek: $0.0040
-  * **Total:** **~$0.012 / hari (± Rp 190,- / hari)**
-* **Total Biaya Harian (XAU + Pairs):**
-  * OpenAI: $0.0000 (Free) | Gemini: $0.0210 | DeepSeek: $0.0100
-  * **Total:** **~$0.031 / hari (± Rp 480,- / hari)**
-* **Total Biaya Harian (BTC Weekend):**
-  * **Total:** **~$0.005 / hari (± Rp 80,- / hari)**
+### 2. Estimasi Biaya per Hari & Bulanan (USD & IDR)
 
-*Catatan: Jika Slot 3 diganti ke Claude Sonnet 3.5 (Input $3.00/1M, Output $15.00/1M), biaya Slot 3 naik ~20x lipat (menjadi ~$0.012 / call, atau tambahan ~$0.10 s/d $0.25 per hari).*
+Asumsi nilai tukar: **1 USD = Rp 15.500,-**
+
+* **Asumsi Tarif Model Utama:**
+  * OpenAI mini (`gpt-5.4-mini` / `gpt-4o-mini`): **GRATIS $0.00** (Dalam batas free tier 2.5 juta token per hari).
+  * Gemini Lite (`gemini-3.1-flash-lite`): Input $0.075/1M, Output $0.30/1M => **~$0.0003 per call**
+  * DeepSeek (`deepseek-v4-flash` / V3): Input $0.14/1M, Output $0.28/1M => **~$0.0005 per call**
+  * Claude Sonnet (`claude-3-5-sonnet`): Input $3.00/1M, Output $15.00/1M => **~$0.0128 per call**
+
+#### OPSI A: Menggunakan DeepSeek di Slot 3 (DEFAULT - Sangat Hemat)
+* **Mode XAU Only (`TRADING_MODE = "xau"`)**
+  * Biaya Harian: OpenAI: $0.00 | Gemini: $0.0084 | DeepSeek: $0.0040 = **~$0.0124 / hari (± Rp 190,- / hari)**
+  * Biaya Bulanan (30 Hari): **~$0.37 / bulan (± Rp 5.700,- / bulan)**
+* **Mode XAU + Pairs (`TRADING_MODE = "xau_pairs"`)**
+  * Biaya Harian: OpenAI: $0.00 | Gemini: $0.0210 | DeepSeek: $0.0100 = **~$0.0310 / hari (± Rp 480,- / hari)**
+  * Biaya Bulanan (30 Hari): **~$0.93 / bulan (± Rp 14.400,- / bulan)**
+* **Mode BTC Only (Weekend/Rotasi)**
+  * Biaya Harian: OpenAI: $0.00 | Gemini: $0.0042 | DeepSeek: $0.0020 = **~$0.0062 / hari (± Rp 96,- / hari)**
+  * Biaya Bulanan (30 Hari): **~$0.19 / bulan (± Rp 2.900,- / bulan)**
+
+#### OPSI B: Menggunakan Claude Sonnet 3.5 di Slot 3 (Analisis Lebih Tajam tapi Premium)
+* **Mode XAU Only (`TRADING_MODE = "xau"`)**
+  * Biaya Harian: OpenAI: $0.00 | Gemini: $0.0084 | Claude Sonnet (8 call): $0.1024 = **~$0.1108 / hari (± Rp 1.710,- / hari)**
+  * Biaya Bulanan (30 Hari): **~$3.32 / bulan (± Rp 51.500,- / bulan)**
+* **Mode XAU + Pairs (`TRADING_MODE = "xau_pairs"`)**
+  * Biaya Harian: OpenAI: $0.00 | Gemini: $0.0210 | Claude Sonnet (20 call): $0.2560 = **~$0.2770 / hari (± Rp 4.290,- / hari)**
+  * Biaya Bulanan (30 Hari): **~$8.31 / bulan (± Rp 128.800,- / bulan)**
+* **Mode BTC Only (Weekend/Rotasi)**
+  * Biaya Harian: OpenAI: $0.00 | Gemini: $0.0042 | Claude Sonnet (4 call): $0.0512 = **~$0.0554 / hari (± Rp 860,- / hari)**
+  * Biaya Bulanan (30 Hari): **~$1.66 / bulan (± Rp 25.700,- / bulan)**
 
 ## Konvensi & hal yang perlu diingat
 
