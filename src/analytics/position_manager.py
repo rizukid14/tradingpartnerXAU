@@ -21,7 +21,7 @@ STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
 
 
 def _load_state():
-    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes)."""
+    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl)."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
@@ -29,27 +29,31 @@ def _load_state():
             partial = set(int(t) for t in data.get("partial_closed_tickets", []))
             be = set(int(t) for t in data.get("break_even_tickets", []))
             extremes = {int(k): float(v) for k, v in data.get("trailing_extremes", {}).items()}
-            return partial, be, extremes
+            original_sl = {int(k): float(v) for k, v in data.get("original_sl_points", {}).items()}
+            return partial, be, extremes, original_sl
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal memuat position_manager_state.json: {e}")
-    return set(), set(), {}
+    return set(), set(), {}, {}
 
 
-def _save_state(partial_set, be_set, extremes):
+def _save_state(partial_set, be_set, extremes, original_sl=None):
     """Persist tickets to disk so restart can recover state."""
+    if original_sl is None:
+        original_sl = _original_sl  # module global, di-resolve saat dipanggil
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({
                 "partial_closed_tickets": sorted(int(t) for t in partial_set),
                 "break_even_tickets": sorted(int(t) for t in be_set),
                 "trailing_extremes": {str(k): v for k, v in extremes.items()},
+                "original_sl_points": {str(k): v for k, v in original_sl.items()},
             }, f)
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal menyimpan position_manager_state.json: {e}")
 
 
 # Module-level state, loaded once at import (survives within a process)
-_partial_closed_tickets, _break_even_tickets, _trailing_extremes = _load_state()
+_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl = _load_state()
 
 
 def manage_all_positions():
@@ -93,6 +97,12 @@ def manage_all_positions():
 
         point = symbol_info.point
 
+        # Rekam jarak SL ORIGINAL saat posisi pertama kali terlihat (sebelum
+        # BE/trailing menggesernya). Dipakai sebagai referensi BEP/trailing
+        # SL-based di mode LLM biar stabil - tidak ikut mengecil tiap SL digeser.
+        if pos.ticket not in _original_sl and pos.sl:
+            _original_sl[pos.ticket] = abs(pos.sl - pos.price_open) / point
+
         # Calculate current profit in points
         if pos.type == mt5.ORDER_TYPE_BUY:
             current_price = tick.bid
@@ -112,6 +122,20 @@ def manage_all_positions():
         # --- TRAILING STOP CHECK ---
         if config.TRAILING_STOP_ENABLED:
             _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
+
+    # Bersihkan state posisi yang sudah tidak open (biar dict gak numpuk)
+    open_tickets = {p.ticket for p in positions}
+    changed = False
+    for k in list(_trailing_extremes):
+        if k not in open_tickets:
+            del _trailing_extremes[k]
+            changed = True
+    for k in list(_original_sl):
+        if k not in open_tickets:
+            del _original_sl[k]
+            changed = True
+    if changed:
+        _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
 
 
 # =============================================================================
@@ -233,11 +257,29 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    # TP-Adaptive Break-Even (50% of actual TP target if exists, otherwise fallback)
-    if tp_points > 0:
-        be_trigger = int(tp_points * 0.50)
-        min_trigger = 30 if config.is_fx(symbol) else 100
-        be_trigger = max(min_trigger, be_trigger)
+    min_trigger = 30 if config.is_fx(symbol) else 100
+
+    # Break-even trigger (mode-aware, 13 Agustus):
+    # - LLM mode: 1x jarak SL posisi (thesis-relative). TP LLM bisa jauh/asimetris
+    #   (bahkan < SL), jadi % TP gak reliable; 1x SL = harga udah gerak 1 risiko
+    #   penuh ke arah kita -> layak di-lock ke entry. Bonus buat BTC: trigger
+    #   sebesar SL otomatis > stop_level broker -> modifikasi SL gak ditolak MT5.
+    # - ATR-Based mode: 50% TP aktual (di mode ini TP = 2x SL, jadi 50% TP = 1x SL).
+    if config.TP_SL_RULES == "LLM" and pos.sl:
+        # Referensi = SL ORIGINAL (sebelum BE/trailing geser) biar stabil.
+        # Trigger = min(1x SL, 50% TP):
+        # - R:R 2:1 -> 1x SL = 50% TP (sama)
+        # - R:R tinggi (3:1+) -> 1x SL, proteksi lebih awal
+        # - R:R <= 1 -> 50% TP, tetap fire (bukan 1x SL yang = 100%+ TP, gak pernah kesampean)
+        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+        if sl_points > 0:
+            be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
+            if tp_points > 0:
+                be_trigger = min(be_trigger, int(tp_points * 0.50))
+        else:
+            be_trigger = config.break_even_trigger_for(symbol)
+    elif tp_points > 0:
+        be_trigger = max(min_trigger, int(tp_points * 0.50))
     else:
         be_trigger = config.break_even_trigger_for(symbol)
 
@@ -307,7 +349,12 @@ def _get_dynamic_atr_points(symbol, point):
 #  TRAILING STOP (from XAU-60 trade_executor.py)
 # =============================================================================
 def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info):
-    """Trail stop loss behind price using dynamic ATR multipliers (or static fallback)."""
+    """Trail stop loss behind price using dynamic mode-aware multipliers.
+
+    Referensi multiplier (13 Agustus):
+    - LLM mode: jarak SL posisi (thesis-relative, nyambung sama struktur SL LLM)
+    - ATR-Based mode: ATR (konsisten, karena SL/TP ATR mode juga turunan ATR)
+    """
     atr_points = _get_dynamic_atr_points(symbol, point)
 
     # Hitung jarak target TP posisi (jika ada) untuk aktivasi adaptif & progress calculation
@@ -318,6 +365,13 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
+    # Jarak SL posisi (struktur LLM di mode LLM, atau hasil gate ATR di mode ATR-Based).
+    # Mode LLM: pakai SL ORIGINAL (sebelum BE/trailing geser) biar referensi stabil.
+    if pos.sl:
+        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+    else:
+        sl_points = 0
+
     act_mult, dist_mult, fallback_act, fallback_dist, act_cap = config.trailing_activation_params_for(symbol)
 
     if atr_points > 0:
@@ -327,10 +381,17 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         activation = fallback_act
         distance = fallback_dist
 
-    # TP-Adaptive Activation (Murni 60% dari Jarak Target TP):
-    # Jika posisi memiliki target TP terdefinisi, trailing stop HANYA aktif saat profit >= 60% TP.
-    # ATR fallback hanya digunakan jika posisi tidak memiliki target TP.
-    if tp_points > 0 and not config.is_crypto(symbol):
+    # Mode-aware activation (13 Agustus):
+    # - LLM mode: berbasis struktur SL LLM (1.5x SL), di-cap 60% TP kalau TP ada.
+    #   TP LLM bisa jauh/asimetris, jadi % TP doang gak reliable; 1.5x SL = harga
+    #   udah gerak 1.5 risiko penuh -> trailing layak aktif.
+    # - ATR-Based mode: TP-adaptive 60% TP (di mode ini TP = 2.5-3.5x ATR, jadi
+    #   activation otomatis konsisten dengan volatilitas ATR).
+    if config.TP_SL_RULES == "LLM" and sl_points > 0:
+        activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), fallback_act)
+        if tp_points > 0:
+            activation = min(activation, int(tp_points * 0.60))
+    elif tp_points > 0 and not config.is_crypto(symbol):
         activation = int(tp_points * 0.60)
 
     # Track the extreme price seen since entry. The SL trails behind this
@@ -351,11 +412,28 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if profit_points < activation:
         return
 
-    # ---- Progressive distance (XAU only) ----
+    # ---- Progressive distance ----
     # Distance mengecil linear dari START (longgar saat baru aktivasi) ke END
     # (ketat saat mendekati TP). Progress dihitung dari posisi profit terhadap
-    # TP posisi (atau fallback: 2x activation). BTC tetap pakai distance statis.
-    if config.is_crypto(symbol):
+    # TP posisi (atau fallback: 2x activation).
+    # Referensi multiplier (13 Agustus):
+    # - LLM mode: SL posisi (thesis-relative, nyambung sama struktur LLM)
+    # - ATR-Based mode: ATR (konsisten dengan SL/TP ATR mode)
+    # Fix bug progress_ref: pakai tp_points langsung (bukan max(tp, 2x activation)
+    # yang selalu 1.2x TP) supaya distance beneran mencapai end_mult tepat di TP.
+    llm_mode = config.TP_SL_RULES == "LLM"
+
+    if llm_mode and sl_points > 0:
+        # LLM mode: interpolasi 0.8 -> 0.3 x SL (floor 0.2). Selalu progressive
+        # (termasuk BTC) karena struktur SL LLM memang thesis-based.
+        start_mult = config.TRAILING_DISTANCE_START_SL_MULT
+        end_mult = config.TRAILING_DISTANCE_END_SL_MULT
+        min_mult = config.TRAILING_DISTANCE_MIN_SL_MULT
+        progress_ref = tp_points if tp_points > 0 else activation * 2
+        progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
+        dynamic_mult = max(start_mult - (start_mult - end_mult) * progress, min_mult)
+        trail_distance = sl_points * dynamic_mult * point
+    elif config.is_crypto(symbol):
         trail_distance = distance * point
     else:
         if config.is_fx(symbol):
@@ -367,7 +445,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
             end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
             min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
 
-        progress_ref = max(tp_points, activation * 2) if tp_points > 0 else activation * 2
+        progress_ref = tp_points if tp_points > 0 else activation * 2
         progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
 
         # Interpolasi linear start_mult -> end_mult, lalu floor ke min_mult
@@ -399,10 +477,11 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-        if config.is_crypto(symbol):
+        if config.is_crypto(symbol) and not (config.TP_SL_RULES == "LLM" and sl_points > 0):
             print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
         else:
-            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x ATR)")
+            ref_label = "SL" if (config.TP_SL_RULES == "LLM" and sl_points > 0) else "ATR"
+            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

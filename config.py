@@ -172,7 +172,10 @@ RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 0.5)
 
 DEVIATION = _getenv_int("DEVIATION", 20)
 
-TP_SL_RULES = os.getenv("TP_SL_RULES", "ATR-Based")
+# TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
+# price), safety floor max(2x spread, 0.5x default_sl). Mode "ATR-Based" tetap tersedia
+# via .env/menu/--tpsl-rules - gate ATR R:R 2:1 (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
+TP_SL_RULES = os.getenv("TP_SL_RULES", "LLM")
 
 DEFAULT_SL_POINTS = _getenv_int("DEFAULT_SL_POINTS", 300)
 DEFAULT_TP_POINTS = _getenv_int("DEFAULT_TP_POINTS", 600)
@@ -282,6 +285,18 @@ TRAILING_DISTANCE_MIN_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MU
 TRAILING_DISTANCE_START_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_START_ATR_MULT_FX", 0.8)
 TRAILING_DISTANCE_END_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_END_ATR_MULT_FX", 0.3)
 TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MULT_FX", 0.2)
+
+# --- SL-BASED TRAILING & BEP (mode LLM, 13 Agustus) ---
+# Di mode LLM, SL/TP murni struktur LLM (R:R bisa asimetris, TP bisa jauh, bahkan TP < SL).
+# Trailing/BEP di-scale ke jarak SL posisi (thesis-relative), BUKAN ke ATR (yang gak nyambung
+# sama struktur LLM) dan BUKAN ke % TP (yang bisa jauh & gak kesampean -> proteksi gak pernah
+# aktif). Mode ATR-Based tetap pakai konstanta ATR di atas (konsisten karena SL/TP-nya juga
+# turunan ATR).
+BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # BEP aktif saat profit >= min(1x SL, 50% TP)
+TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.5)  # trailing aktif saat profit >= 1.5x SL
+TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 0.8)  # longgar saat baru aktif
+TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.3)  # ketat mendekati TP
+TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.2)  # floor
 
 
 # --- BREAK-EVEN ---

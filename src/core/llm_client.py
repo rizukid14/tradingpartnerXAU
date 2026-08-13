@@ -572,6 +572,20 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
     """
 
+    # Dynamic timeframe label resolved from dataframe or fallback to config
+    tf_label = None
+    if len(df) >= 2:
+        try:
+            diff_sec = int(abs((df['time'].iloc[-1] - df['time'].iloc[-2]).total_seconds()))
+            sec_to_tf = {300: "M5", 900: "M15", 1800: "M30", 3600: "H1", 14400: "H4", 86400: "D1"}
+            tf_label = sec_to_tf.get(diff_sec)
+        except Exception:
+            pass
+    if not tf_label:
+        tf_val = config.get_timeframe(symbol)
+        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
+        tf_label = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
+
     # Create recent candles string - FULL 50 candles (~4 jam M5 / ~25 jam M30),
     # OHLC only (drop volume) supaya window 50-Bar Swing High/Low & Fib bisa
     # diverifikasi LLM (sebelumnya cuma 25 candle tapi diklaim "50-Bar Swing" -
@@ -792,6 +806,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # Explicitly separate the two decisions so the LLM does not mix them:
     # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
+    separation_note = ""
     if open_positions and len(open_positions) > 0:
         separation_note = (
             "\nIMPORTANT - TWO SEPARATE DECISIONS:\n"
@@ -801,22 +816,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "Do NOT let your opinion about existing positions change your 'signal', and do NOT "
             "let your entry bias change your position_actions. Evaluate each independently.\n"
         )
-    else:
-        separation_note = ""
-
-    # Dynamic timeframe label resolved from dataframe or fallback to config
-    tf_label = None
-    if len(df) >= 2:
-        try:
-            diff_sec = int(abs((df['time'].iloc[-1] - df['time'].iloc[-2]).total_seconds()))
-            sec_to_tf = {300: "M5", 900: "M15", 1800: "M30", 3600: "H1", 14400: "H4", 86400: "D1"}
-            tf_label = sec_to_tf.get(diff_sec)
-        except Exception:
-            pass
-    if not tf_label:
-        tf_val = config.get_timeframe(symbol)
-        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
-        tf_label = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
 
     # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
     swing_high = float(df['high'].max())

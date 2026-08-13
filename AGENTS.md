@@ -54,10 +54,8 @@ python main.py
 
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
 - SL/TP per mode (`config.TP_SL_RULES`):
-  - **Mode ATR-Based (default)**: **GATE LAYAK/TIDAK (Non-negotiable)** berlaku untuk SEMUA simbol — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×.
-  - **Mode LLM (bebas struktur)**:
-    - **FX Pairs (H1)**: Bebas 100% mengikuti struktur teknikal chart (support/resistance/swing/EMA) tanpa batasan ATR kaku atau fixed R:R (cukup floor minimal 2× spread). AI bebas menentukan SL/TP sesuai setup alamiah pasar.
-    - **XAUUSD & BTCUSD**: Bebas sesuai thesis model, namun dibatasi oleh **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (Gold minimal 200–250 pts) agar terhindar dari stop-loss super sempit yang membengkakkan lot resiko. Jarak SL/TP dihitung dinamis dari harga eksekusi aktual ke `invalidation_price` dan `target_price`.
+  - **Mode LLM (DEFAULT sejak 13 Agustus, bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (XAU 200–250 pts, FX 50 pts, BTC 25000 pts) agar terhindar dari stop-loss super sempit yang membengkakkan lot resiko. **Position management (BEP/trailing) juga pindah ke basis SL posisi (bukan ATR/%-TP)** — lihat entri 13 Agustus di bawah.
+  - **Mode ATR-Based (opsional, bukan default)**: **GATE LAYAK/TIDAK (Non-negotiable)** berlaku untuk SEMUA simbol — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based.
 - Spread ≤ 50 pts (XAU & FX) / 2400 pts (BTC)
 - **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)
@@ -96,7 +94,7 @@ python main.py
 17. **Gemini ganti ke `gemini-3.1-flash-lite`** (fallback `gemini-3.5-flash-lite`): benchmark 5 model Gemini (10 iterasi, prompt produksi, sesi bearish) — 3.5-flash-lite dominan HOLD (8/10), 2.5-flash-lite parah (10/10 HOLD conf 36%), **3.1-flash-lite paling konsisten ngikutin sinyal (10/10 SELL, conf 65%, latency 1.1s)**. 3.6-flash juga bagus (9/10, conf 69%) tapi 7.5s latency. Catatan: Gemini return confidence skala 0-1 (bukan 0-100), di-×100 di consensus.
 18. **Deteksi close manual (magic=0)**: manual close dari MT5 mobile menghasilkan OUT deal `magic=0` (magic tidak diteruskan). `get_closed_positions_today` menerima OUT magic=0 **hanya jika posisi dibuka bot** (ada IN magic bot) — posisi manual user tidak ikut kehitung. Window P/L = tengah malam WIB → next-midnight (bukan rolling 24h, biar loss kemarin tidak masuk "hari ini"). **Jangan diubah ke rolling 24h** — itu bikin daily loss cap ke-trip dari loss hari sebelumnya. **Reason close di-label** ("manual" untuk magic=0, SL/TP/stop-out dari kode MT5) — bukan "unknown".
 19. **Post-mortem langsung saat close**: dipicu di loop 5 detik pas `sync_closed_positions` return `new_deals` (background thread biar nggak nge-block), bukan nunggu candle. `check_and_evaluate_closed_trades(deals)` nerima deals langsung. **Jangan seed `evaluated_tickets` dari `known_closed` tiap cycle** — itu nge-block tiket baru (bug yang udah diperbaiki); re-evaluation dicegah oleh `evaluated_tickets` persist di `memory_lessons.json`.
-20. **Trailing stop ATR-adaptif**: activation `min(0.85×ATR, cap)` (XAU 500 / BTC 40000 pts), distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
+20. **Trailing stop (mode-aware, update 13 Agustus)**: activation `min(0.85×ATR, cap)` (XAU 500 / BTC 40000 pts) — **mode LLM: activation `max(1.5×SL original, fallback)`, cap 60% TP; distance SL-based `0.8→0.3×SL`** (lihat entri 13 Agustus). Distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
 
 ### Perubahan 11 Agustus (sesi ini — PENTING: branch split!)
 
@@ -119,7 +117,7 @@ python main.py
 25. **Strip emoji dari prompt LLM** (di `dev`, commit `06159f6`): `_EMOJI_PATTERN` + `_strip_emoji()` diterapkan ke prompt final sebelum dikirim. **Requirement user: prompt LLM HARUS bebas emoji** (UI/CLI/log boleh pakai emoji). Sumber emoji bisa dari macro/forecast/lessons/calendar — strip di prompt final menangani semua.
 26. **Unicode safety**: `≈` diganti `approx` di prompt (UnicodeEncodeError saat print di console cp1252 Windows).
 27. **`scratch/prompt_preview_test.py`**: test file untuk preview prompt LLM dengan data MT5 asli (XAUUSD-ECNc — bukan XAUUSD, broker pakai suffix `-ECNc`). Pakai `config.get_timeframe()`; fallback ke `XAUUSD` kalau simbol utama gagal.
-28. **`config.TP_SL_RULES` — 2 mode SL/TP** (default `"ATR-Based"`, configurable via config):
+28. **`config.TP_SL_RULES` — 2 mode SL/TP** (default `"LLM"` sejak 13 Agustus, configurable via config):
     - **ATR-Based** (safe): **GATE layak/tidak** — proposal SL/TP AI dipakai apa adanya (setelah outlier filter), tapi trade **DITOLAK otomatis** kalau SL < max(2× spread, SL_MULT× ATR) atau TP < max(2× spread, TP_MULT× ATR). Bukan dinaikkan: memaksa SL/TP lebih jauh dari invalidation model = mengubah setup tanpa persetujuan. **Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×** (R:R 2:1 selalu). **Prompt di-enhance** (blok HARD GATE + `atr_gate_str` dinamis di market data dengan angka minimum konkret per mode) biar AI gak usul SL/TP di bawah requirement (yang ujung-ujungnya ditolak gate).
     - **LLM** (bebas): SL/TP sesuai thesis model. Batasan minimal murni didasarkan pada **Safety Floor** `max(2x spread, 0.5x default_sl_points)` untuk menghindari stops yang terlalu sempit yang membengkakkan lot resiko. Model mengajukan Stop Loss dan Target menggunakan tingkat harga mutlak (`invalidation_price` & `target_price`). Jarak poin dihitung dinamis saat eksekusi di main.py, dan SL dipasang presisi di MT5 sesuai harga mutlak tersebut.
     - **Agregasi SL/TP**: nilai harga desimal dari model yang sepakat di-average; outlier dibuang dengan `_drop_standalone_outlier`.
@@ -142,6 +140,24 @@ python main.py
 5. **FASE 5 — Smart Timeframe Rotation**: sebelumnya LLM dipanggil untuk pair H1 (EURJPY dst) tiap 5 menit (ikut candle M5 XAU) — boros kuota API. `_symbol_last_candle` dict di main.py mengunci pemanggilan AI **per-timeframe aset**: FX H1 cuma memicu LLM call 1 jam sekali (tepat pas pergantian candle H1), XAU tetap tiap 5 menit, BTC tiap 30 menit. Hemat LLM call ~90% untuk pair FX.
 6. **FASE 6 — Prompt Sync LLM Mode**: jika `TP_SL_RULES` disetel ke `"LLM"`, bot menyembunyikan baris `ATR HARD GATE` dari data pasar dan menghapus petunjuk *"respect ATR HARD GATE"* di system prompt. Ini menyelaraskan prompt agar AI secara psikologis bebas mengajukan Stop Loss tipis sesuai analisis teknisnya tanpa merasa dibatasi aturan ATR.
 7. **FASE 7 — Dynamic Micro Candles**: timeframe & jumlah candle mikro intra-period yang dikirim ke LLM disesuaikan dinamis agar tidak ada *blind spot* pada candle berjalan: Gold M5 main -> 15 M1 candles (15m), BTC M30 main -> 12 M5 candles (60m / 1h), FX H1 main -> 24 M5 candles (120m / 2h). 24 candle M5 untuk H1 mencakup seluruh pergerakan candle berjalan saat ini dan candle sebelumnya secara penuh.
+
+### Perubahan 13 Agustus — TP_SL_RULES default LLM + Position Management SL-based (bug fix trailing)
+
+**Latar belakang bug (ditemukan dari analisis log):** di mode LLM, BEP/trailing sebelumnya pakai aturan `% TP` (BEP 50% TP, activation 60% TP) + distance **ATR-based**. Masalahnya:
+- TP LLM bisa jauh/asimetris (bahkan < SL) → 50%/60% TP jarang kesampean → BEP & trailing nyaris gak pernah aktif (log: trailing XAU cuma jalan lewat fallback posisi tanpa TP)
+- Distance ATR (1.2×ATR ≈ 1416 pts XAU) gak nyambung sama struktur SL LLM (400–2000 pts) → longgar total, nol proteksi
+- BTC: distance `0.5×ATR` ≈ $20–40 **jauh di bawah stop_level broker** (~$100–200) → semua modifikasi SL ditolak MT5 `Invalid stops` → 300+ error storm di log (tiket 1160983088 dkk), BTC **tidak pernah dapat trailing protection**
+
+**Perubahan (mode LLM = position management pindah ke basis SL posisi, thesis-relative, ATR-free):**
+1. **Default `TP_SL_RULES` diganti `"LLM"`** (sebelumnya `"ATR-Based"`). Mode ATR-Based tetap ada via `.env`/menu/`--tpsl-rules` — di mode itu BEP/trailing tetap ATR-based (konsisten karena SL/TP-nya juga turunan ATR).
+2. **BEP trigger** (mode LLM): `min(1× SL original, 50% TP)` — `BREAK_EVEN_TRIGGER_SL_MULT = 1.0`. R:R 2:1 → 1×SL = 50% TP (sama dengan aturan lama); R:R tinggi → lebih awal (1×SL); R:R ≤ 1 → tetap 50% TP (fire, bukan 100%+ TP yang gak pernah kesampean). Bonus BTC: trigger sebesar SL otomatis > stop_level broker → modifikasi gak ditolak MT5.
+3. **Trailing activation** (mode LLM): `max(1.5× SL, fallback_act)`, di-cap `60% TP` kalau TP ada (`TRAILING_ACTIVATION_SL_MULT = 1.5`). Untuk R:R 2:1 tetap setara 60% TP; R:R tinggi dapat proteksi lebih awal.
+4. **Trailing distance** (mode LLM): SL-based progressive `0.8 → 0.3× SL` (floor `0.2`) — bukan ATR. Berlaku semua simbol (termasuk BTC, yang tadinya statis).
+5. **Fix bug progress_ref**: `progress_ref = tp_points` (bukan `max(tp, 2× activation)` yang selalu 1.2×TP) → distance **beneran mencapai end_mult tepat di TP** (sebelumnya cuma 2/3 jalan).
+6. **Referensi SL original**: state baru `original_sl_points` di `position_manager_state.json` — SL reference di-rekam saat posisi pertama kali terlihat (sebelum BE/trailing geser SL), biar `sl_points` gak mengecil ke padding setelah BE. State dict dibersihkan otomatis saat posisi close.
+7. **Konstanta baru di config**: `BREAK_EVEN_TRIGGER_SL_MULT`, `TRAILING_ACTIVATION_SL_MULT`, `TRAILING_DISTANCE_START/END/MIN_SL_MULT` (env-configurable).
+
+**Catatan**: fix `progress_ref` juga diterapkan di mode ATR-Based (bug yang sama). Clamp ke `trade_stops_level` broker (fix permanen error "Invalid stops") belum diimplementasikan — masih rekomendasi lanjutan.
 
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
