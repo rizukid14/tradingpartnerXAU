@@ -53,7 +53,11 @@ python main.py
 ## Gate eksekusi yang SEBENERNYA (hard)
 
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
-- SL/TP per mode (`config.TP_SL_RULES`): **ATR-Based** → **GATE**: proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 terhadap volatilitas** — bukan dinaikkan, filosofinya: cari setup yang alamiah 2R). **Multiplier dinamis per AI mode (11 Agustus): single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×** — makin banyak model setuju, makin lebar jarak (keyakinan tinggi → target lebih jauh), R:R tetap 2:1; **LLM** → bebas sesuai thesis model, namun dibatasi oleh **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (untuk Gold M15 minimal 250 pts) agar terhindar dari stop-loss super ketat akibat rogue model yang membuat lot size membengkak secara tidak rasional. Jarak SL/TP dihitung dinamis dari harga eksekusi aktual ke `invalidation_price` dan `target_price`.
+- SL/TP per mode (`config.TP_SL_RULES`):
+  - **FX Pairs (H1)**: Bebas 100% mengikuti struktur teknikal chart (support/resistance/swing/EMA) tanpa batasan ATR kaku atau R:R fixed (cukup floor minimal 2× spread). AI bebas menentukan SL/TP sesuai setup alamiah pasar.
+  - **XAUUSD & BTCUSD**:
+    - **ATR-Based** → **GATE**: proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 terhadap volatilitas** — bukan dinaikkan). **Multiplier dinamis per AI mode (11 Agustus): single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×**.
+    - **LLM** → bebas sesuai thesis model, namun dibatasi oleh **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (untuk Gold M15 minimal 200–250 pts) agar terhindar dari stop-loss super ketat akibat rogue model yang membuat lot size membengkak secara tidak rasional. Jarak SL/TP dihitung dinamis dari harga eksekusi aktual ke `invalidation_price` dan `target_price`.
 - Spread ≤ 50 pts (XAU & FX) / 2400 pts (BTC)
 - **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)

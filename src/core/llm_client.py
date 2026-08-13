@@ -342,9 +342,21 @@ def _build_sltp_rules_block(symbol, timeframe):
       dikalkulasi dari SL di main.py.
     """
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
-    # Typical SL range per-symbol dari default config (XAU 400, EURJPY 50,
-    # GBPCHF 40) - biar guidance LLM ikut skala pair, bukan asumsi Gold.
+    is_fx = not is_xau and not is_btc
+
+    # FX Pairs H1: Bebas mengikuti struktur harga (support/resistance/EMA/swing),
+    # tidak dipaksa batas ATR kaku atau R:R fixed, cukup letakkan SL di level invalidasi
+    # teknikal & TP di target struktur rasional (minimal > 2x spread).
+    if is_fx:
+        return (
+            f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
+            f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
+            f"- TP is placed at your realistic structural target. R:R is flexible (e.g. 1.2:1, 1.5:1, 2:1, 3:1) matching the natural market structure.\n"
+        )
+
+    # Typical SL range per-symbol dari default config (XAU 400, BTC 50000)
     d_sl = config.default_sl_points_for(symbol)
     lo_pts = max(10, int(d_sl * 0.5))
     hi_pts = max(20, int(d_sl * 1.5))
@@ -652,8 +664,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
-    # Inject ATR Gate information ONLY if config.TP_SL_RULES is "ATR-Based"
-    if atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
+    # Inject ATR Gate information ONLY for XAU/BTC if config.TP_SL_RULES is "ATR-Based"
+    # FX pairs have complete structural freedom without rigid ATR gate.
+    is_xau_sym = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
+    is_btc_sym = config.is_crypto(symbol)
+    if (is_xau_sym or is_btc_sym) and atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
         ai_mode = config.get_ai_mode()
         sl_mult = config.atr_sl_multiplier()
         tp_mult = config.atr_tp_multiplier()

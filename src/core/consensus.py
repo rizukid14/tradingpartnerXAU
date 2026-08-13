@@ -59,6 +59,20 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
+    is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
+    is_btc = config.is_crypto(config.SYMBOL)
+    is_fx = not is_xau and not is_btc
+
+    if is_fx:
+        # FX Pairs H1: Bebas mengikuti struktur harga yang diajukan AI (tanpa aturan ATR kaku),
+        # cuma floor minimal 2x spread agar broker tidak menolak order.
+        min_sl = spread_pts * 2
+        if sl_points < min_sl:
+            sl_points = min_sl
+        if tp_points <= 0:
+            tp_points = config.default_tp_points_for(config.SYMBOL)
+        return sl_points, tp_points, True, ""
+
     mode = getattr(config, "TP_SL_RULES", "ATR-Based")
     if mode == "LLM":
         # Enforce a safety floor (at least 2x spread or 50% of the default SL)
