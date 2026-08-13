@@ -502,6 +502,57 @@ def _lvl_fmt(v, point_size):
         return f"{v:.2f}"
 
 
+def _compute_rsi_analysis(df, lookback=5, point_size=0.01):
+    """
+    RSI direction (RISING/FALLING/FLAT over N candles) + divergence FACTS.
+
+    Fakta-only: hubungan price vs RSI di swing extremes dilaporkan apa adanya
+    (harga + nilai RSI), TANPA label "DIVERGENCE" — label dari bot rawan false
+    positive (local-low sederhana di window 20 close) dan LLM cenderung anchor
+    ke label-nya (kasus EURAUD di A/B test yang echo flag bot). Biar LLM yang
+    simpulin. Fix 13 Agustus.
+    """
+    if df is None or len(df) < max(lookback + 2, 20) or 'rsi_14' not in df.columns:
+        return ""
+    lines = []
+    try:
+        # 1) RSI Direction
+        cur = float(df.iloc[-1]['rsi_14'])
+        past = float(df.iloc[-(lookback + 1)]['rsi_14'])
+        diff = cur - past
+        if diff > 1.0:
+            label = "RISING"
+        elif diff < -1.0:
+            label = "FALLING"
+        else:
+            label = "FLAT"
+        lines.append(f"- RSI Direction: {label} ({lookback} candles ago: {past:.1f} -> now: {cur:.1f}, {diff:+.1f})")
+
+        # 2) Divergence facts (tanpa label) — 2 local lows/highs terakhir di window 20
+        window = df.tail(20)
+        closes = window['close'].astype(float).tolist()
+        rsis = window['rsi_14'].astype(float).tolist()
+
+        lows_idx = [i for i in range(1, len(closes) - 1)
+                    if closes[i] < closes[i - 1] and closes[i] < closes[i + 1]]
+        if len(lows_idx) >= 2:
+            i1, i2 = lows_idx[-2], lows_idx[-1]
+            if closes[i2] < closes[i1] and rsis[i2] > rsis[i1]:
+                lines.append(f"  Note: price made LOWER LOW ({_lvl_fmt(closes[i2], point_size)} vs {_lvl_fmt(closes[i1], point_size)}) "
+                             f"while RSI made HIGHER LOW ({rsis[i2]:.1f} vs {rsis[i1]:.1f}) - momentum diverging from price")
+
+        highs_idx = [i for i in range(1, len(closes) - 1)
+                     if closes[i] > closes[i - 1] and closes[i] > closes[i + 1]]
+        if len(highs_idx) >= 2:
+            i1, i2 = highs_idx[-2], highs_idx[-1]
+            if closes[i2] > closes[i1] and rsis[i2] < rsis[i1]:
+                lines.append(f"  Note: price made HIGHER HIGH ({_lvl_fmt(closes[i2], point_size)} vs {_lvl_fmt(closes[i1], point_size)}) "
+                             f"while RSI made LOWER HIGH ({rsis[i2]:.1f} vs {rsis[i1]:.1f}) - momentum diverging from price")
+    except Exception:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
 def _compute_atr_regime(df, lookback=5, point_size=0.01):
     """
     Computes ATR change over N candles (pure factual change, no strategy hint).
@@ -1106,6 +1157,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     # Batch 1 Quant Enhancements (pure facts, zero strategy hints)
     atr_regime_str = _compute_atr_regime(df, point_size=point_size)
+    rsi_dir_str = _compute_rsi_analysis(df, point_size=point_size)
     volume_str = _compute_volume_context(df)
     position_map_str = _compute_position_map(
         latest['close'], latest['ema_20'], latest['ema_50'],
@@ -1138,6 +1190,7 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 ### CURRENT INDICATORS & FIBONACCI SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
+{rsi_dir_str}
 - EMA (20): {latest['ema_20']:.2f}
 - EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
