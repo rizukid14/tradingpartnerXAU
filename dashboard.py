@@ -70,6 +70,7 @@ RE_ORDER = re.compile(
 RE_ORDER_OK = re.compile(r"\[MT5\] Order BERHASIL! Ticket: (\d+)")
 RE_POSTMORTEM = re.compile(r"\[POST-MORTEM\]\s*Menganalisis hasil trade tiket #(\d+)\s*\((\S+),\s*P/L:\s*\$?([+-]?[\d.]+)\)")
 RE_POSTMORTEM_ALT = re.compile(r"\[POST-MORTEM\].*?tiket #(\d+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
+RE_CLOSE_DETECTED = re.compile(r"\[CLOSE DETECTED\]\s*#(\d+)\s+(\S+)\s+(BUY|SELL)?\s*ditutup\s*\(P/L:\s*([+-]?[\d.]+)", re.IGNORECASE)
 RE_LESSON = re.compile(r"\[PELAJARAN BARU DITERIMA\]")
 RE_BE = re.compile(r"\[BREAK-EVEN\]")
 RE_TRAIL = re.compile(r"\[TRAILING\]")
@@ -252,6 +253,11 @@ def parse_log(path=LOG_PATH):
         if m:
             events.append({"type": "trade_close", "ticket": int(m.group(1)),
                            "symbol": current_symbol, "pnl": float(m.group(2))})
+            continue
+        m = RE_CLOSE_DETECTED.search(line)
+        if m:
+            events.append({"type": "trade_close", "ticket": int(m.group(1)),
+                           "symbol": m.group(2), "pnl": float(m.group(4))})
             continue
 
         if RE_LESSON.search(line):
