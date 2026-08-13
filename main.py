@@ -774,6 +774,7 @@ def _run_cycle_for_current_symbol():
         sl_price = invalidation_price
         tp_price = target_price
         tp_price_2 = None
+        gate_blocked = False  # re-check SL/TP eksekusi gagal -> trade dibatalkan
 
         if tick_live and invalidation_price:
             point = tick_live["point"]
@@ -803,8 +804,30 @@ def _run_cycle_for_current_symbol():
                         tp_price = execution_price - (tp_points * point)
                         tp_price_2 = execution_price - (tp_points_2 * point)
 
+                # RE-CHECK gate SL/TP dengan harga eksekusi aktual: SL/TP di sini
+                # dihitung ulang dari harga absolut (invalidation/target) pakai tick
+                # terkini, jadi jarak & R:R bisa bergeser dari nilai saat konsensus.
+                # Kalau hasil re-kalkulasi gagal gate (mis. R:R < 1.25 karena harga
+                # bergeser) -> batalkan trade, jangan kirim order.
+                sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
+                if not sltp_ok:
+                    gate_blocked = True
+                    print(f"   [!] TRADE DIBATALKAN (re-check SL/TP eksekusi): {sltp_reason}")
+                else:
+                    # Re-sync harga absolut setelah gate (safety floor bisa menaikkan SL)
+                    tp_points_2 = int(tp_points * 1.2)
+                    if trade_signal == "BUY":
+                        sl_price = execution_price - (sl_points * point)
+                        tp_price = execution_price + (tp_points * point)
+                        tp_price_2 = execution_price + (tp_points_2 * point)
+                    else:
+                        sl_price = execution_price + (sl_points * point)
+                        tp_price = execution_price - (tp_points * point)
+                        tp_price_2 = execution_price - (tp_points_2 * point)
+
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
-        remaining_slots = max(0, max_positions - len(open_positions))
+        # gate_blocked = re-check SL/TP eksekusi gagal -> tidak ada slot, trade batal
+        remaining_slots = 0 if gate_blocked else max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
