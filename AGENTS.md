@@ -171,6 +171,41 @@ python main.py
 
 > Bot kedua untuk **Binance spot** (BTC/ETH/SOL), modal kecil, deploy Linux. **TIDAK ada di branch `dev`/`main`** — kode lengkap ada di branch `binance` (`git checkout binance`). Arsitektur: 2 proposer + 1 approver, OCO SL/TP, dry-run realistis, HOLD-streak, risk 1.5%, trading 24/7. Detail lengkap ada di AGENTS.md branch binance.
 
+## Estimasi Frekuensi & Biaya Call LLM Harian
+
+Dengan **Smart Timeframe Rotation (FASE 5)**, LLM dipanggil per simbol hanya ketika lilin timeframe-nya ditutup (XAU M15 = 15 menit, BTC M30 = 30 menit, FX H1 = 60 menit). Biaya dihitung menggunakan asumsi ukuran input prompt ~3.5k tokens dan output ~150 tokens.
+
+### 1. Estimasi Call per Hari (24 Jam)
+* **Mode XAU Only (`TRADING_MODE = "xau"`)**: 96 siklus/hari.
+  * OpenAI (`gpt-5.4-mini` / `gpt-4o-mini`): **96 call/hari**
+  * Gemini (`gemini-3.1-flash-lite`): **28 call/hari** (di sesi Dual & Triple)
+  * DeepSeek (`deepseek-v4-flash`): **8 call/hari** (di sesi Triple)
+  * **Total Call:** 132 call/hari.
+* **Mode XAU + Pairs (`TRADING_MODE = "xau_pairs"`)**: 240 siklus/hari (96 XAU M15 + 6 FX H1).
+  * OpenAI: **240 call/hari**
+  * Gemini: **70 call/hari**
+  * DeepSeek: **20 call/hari**
+  * **Total Call:** 330 call/hari.
+* **Mode BTC Only (Weekend/Rotasi)**: 48 siklus/hari.
+  * OpenAI: **48 call/hari**, Gemini: **14 call/hari**, DeepSeek: **4 call/hari**.
+  * **Total Call:** 66 call/hari.
+
+### 2. Estimasi Biaya per Hari (USD & IDR)
+* **Asumsi Tarif Model Utama:**
+  * OpenAI mini: Input $0.15/1M, Output $0.60/1M => ~$0.0006 / call
+  * Gemini Lite: Input $0.075/1M, Output $0.30/1M => ~$0.0003 / call
+  * DeepSeek: Input $0.14/1M, Output $0.28/1M => ~$0.0005 / call
+* **Total Biaya Harian (XAU Only):**
+  * OpenAI: $0.0576 | Gemini: $0.0084 | DeepSeek: $0.0040
+  * **Total:** **~$0.07 / hari (± Rp 1.100,- / hari)**
+* **Total Biaya Harian (XAU + Pairs):**
+  * OpenAI: $0.1440 | Gemini: $0.0210 | DeepSeek: $0.0100
+  * **Total:** **~$0.175 / hari (± Rp 2.800,- / hari)**
+* **Total Biaya Harian (BTC Weekend):**
+  * **Total:** **~$0.035 / hari (± Rp 550,- / hari)**
+
+*Catatan: Jika Slot 3 diganti ke Claude Sonnet 3.5 (Input $3.00/1M, Output $15.00/1M), biaya Slot 3 naik ~20x lipat (menjadi ~$0.012 / call, atau tambahan ~$0.10 s/d $0.25 per hari).*
+
 ## Konvensi & hal yang perlu diingat
 
 - User komunikasi dalam **Bahasa Indonesia** (santai).
