@@ -192,17 +192,17 @@ Dengan **Smart Timeframe Rotation (FASE 5)**, LLM dipanggil per simbol hanya ket
 
 ### 2. Estimasi Biaya per Hari (USD & IDR)
 * **Asumsi Tarif Model Utama:**
-  * OpenAI mini: Input $0.15/1M, Output $0.60/1M => ~$0.0006 / call
+  * OpenAI mini (`gpt-5.4-mini` / `gpt-4o-mini`): **GRATIS $0.00** (Dalam batas free tier 2.5 juta token per hari. Konsumsi maksimal kita di mode XAU + Pairs hanyalah ~840k token/hari).
   * Gemini Lite: Input $0.075/1M, Output $0.30/1M => ~$0.0003 / call
   * DeepSeek: Input $0.14/1M, Output $0.28/1M => ~$0.0005 / call
 * **Total Biaya Harian (XAU Only):**
-  * OpenAI: $0.0576 | Gemini: $0.0084 | DeepSeek: $0.0040
-  * **Total:** **~$0.07 / hari (± Rp 1.100,- / hari)**
+  * OpenAI: $0.0000 (Free) | Gemini: $0.0084 | DeepSeek: $0.0040
+  * **Total:** **~$0.012 / hari (± Rp 190,- / hari)**
 * **Total Biaya Harian (XAU + Pairs):**
-  * OpenAI: $0.1440 | Gemini: $0.0210 | DeepSeek: $0.0100
-  * **Total:** **~$0.175 / hari (± Rp 2.800,- / hari)**
+  * OpenAI: $0.0000 (Free) | Gemini: $0.0210 | DeepSeek: $0.0100
+  * **Total:** **~$0.031 / hari (± Rp 480,- / hari)**
 * **Total Biaya Harian (BTC Weekend):**
-  * **Total:** **~$0.035 / hari (± Rp 550,- / hari)**
+  * **Total:** **~$0.005 / hari (± Rp 80,- / hari)**
 
 *Catatan: Jika Slot 3 diganti ke Claude Sonnet 3.5 (Input $3.00/1M, Output $15.00/1M), biaya Slot 3 naik ~20x lipat (menjadi ~$0.012 / call, atau tambahan ~$0.10 s/d $0.25 per hari).*
 
