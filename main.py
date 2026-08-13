@@ -133,8 +133,6 @@ def parse_cli_overrides(argv=None):
                    help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
-    p.add_argument("--yes", "-y", action="store_true",
-                   help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     args = p.parse_args(argv)
 
     applied = []

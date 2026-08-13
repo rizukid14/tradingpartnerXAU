@@ -28,10 +28,12 @@ from datetime import datetime
 from dashboard_assets import TEMPLATE
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-LOG_PATH = os.path.join(ROOT, "trading_bot.log")
+DATA_DIR = os.path.join(ROOT, "data")
+LOG_PATH = os.path.join(DATA_DIR, "trading_bot.log")
+if not os.path.exists(LOG_PATH):
+    LOG_PATH = os.path.join(ROOT, "trading_bot.log")
 if not os.path.exists(LOG_PATH):
     LOG_PATH = os.path.join(ROOT, "logs", "trading_bot.log")
-DATA_DIR = os.path.join(ROOT, "data")
 OUT_HTML = os.path.join(ROOT, "dashboard.html")
 
 BEP_TOLERANCE_USD = 0.04
