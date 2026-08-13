@@ -179,6 +179,14 @@ DEVIATION = _getenv_int("DEVIATION", 20)
 # TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
 # price), safety floor max(2x spread, 0.5x default_sl). Mode "ATR-Based" tetap tersedia
 # via .env/menu/--tpsl-rules - gate ATR R:R 2:1 (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
+#
+# PER-KATEGORI (13 Agustus, pisah logic biar enak debug):
+# - XAUUSD & BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
+#   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
+#   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
+# - FX pairs: LLM (bebas struktur, safety floor, R:R 1:1) - cocok utk H1 swing.
+# - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
+#   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
 TP_SL_RULES = os.getenv("TP_SL_RULES", "LLM")
 
 DEFAULT_SL_POINTS = _getenv_int("DEFAULT_SL_POINTS", 300)
@@ -461,6 +469,24 @@ LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
 def is_crypto(symbol):
     """True if the given symbol is a crypto pair (weekend trading)."""
     return symbol in CRYPTO_SYMBOLS
+
+
+def sltp_mode_for(symbol):
+    """
+    SL/TP mode per kategori aset (13 Agustus - pisah logic per simbol biar enak debug):
+    - XAU & BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
+      Floor 400 pts cuma 0.49x ATR M15 (~819 pts) -> terlalu sempit utk swing M15,
+      makanya gold/crypto gak ikut mode LLM (yang bebas SL/TP).
+    - FX pairs: "LLM" (bebas struktur, safety floor max(2x spread, 0.5x default_sl), R:R 1:1).
+      Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
+    """
+    s = (symbol or "").upper()
+    if "XAU" in s or "GOLD" in s or is_crypto(symbol):
+        return "ATR-Based"  # fix, tidak bisa di-override ke LLM
+    # FX pairs: default LLM, bisa di-force ATR-Based via config.TP_SL_RULES
+    if TP_SL_RULES == "ATR-Based":
+        return "ATR-Based"
+    return "LLM"
 
 
 def get_rotation_pool(now=None):

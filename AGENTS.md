@@ -28,7 +28,7 @@ python main.py
 | `main.py` | Loop utama: manage posisi tiap 3 detik, full cycle tiap candle per-symbol (M15 XAU / H1 FX / M30 BTC) dengan **Smart Timeframe Rotation** (`_symbol_last_candle`) |
 | `config.py` | Semua parameter + helper per-symbol (`get_timeframe`, `get_higher_timeframes`, `lot_size_for`, `risk_percent_for`, `default_sl/tp`, `max_spread_points`, `confidence_threshold_for`) |
 | `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call LLM paralel sesuai **time-based AI mode** (single→OpenAI, dual→OpenAI+Gemini, triple→OpenAI+Gemini+DeepSeek) |
-| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware (`config.TP_SL_RULES`: ATR-Based → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); **multiplier dinamis per AI mode: single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 — R:R 2:1 selalu**; LLM → bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** (TP ≥ SL)) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
+| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware **per-kategori** (`config.sltp_mode_for(symbol)`, 13 Agustus): **XAU & BTC = fix ATR-Based** → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); **multiplier dinamis per AI mode: single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 — R:R 2:1 selalu**; **FX = LLM** → bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** (TP ≥ SL)) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
 | `src/core/risk_engine.py` | Gate: spread, sesi, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** (danger zone dimatikan — full 24 jam) |
 | `src/core/mt5_connector.py` | Order send/close (retry + fill policy dinamis), history deals, market data, magic filter |
 | `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+30m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
@@ -53,9 +53,10 @@ python main.py
 ## Gate eksekusi yang SEBENERNYA (hard)
 
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
-- SL/TP per mode (`config.TP_SL_RULES`):
-  - **Mode LLM (DEFAULT sejak 13 Agustus, bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (XAU 200–250 pts, FX 50 pts, BTC 25000 pts) agar terhindar dari stop-loss super sempit yang membengkakkan lot resiko. **Position management (BEP/trailing) juga pindah ke basis SL posisi (bukan ATR/%-TP)** — lihat entri 13 Agustus di bawah.
-  - **Mode ATR-Based (opsional, bukan default)**: **GATE LAYAK/TIDAK (Non-negotiable)** berlaku untuk SEMUA simbol — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based.
+- SL/TP per kategori (`config.sltp_mode_for(symbol)` — **13 Agustus, pisah logic per-simbol biar enak debug**):
+  - **XAUUSD & BTC = fix ATR-Based (SELALU, tidak bisa di-override ke LLM)**: **GATE LAYAK/TIDAK (Non-negotiable)** — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based. Alasan: floor 400 pts cuma 0.49× ATR M15 (~819 pts) — terlalu scalping utk swing M15.
+  - **FX pairs = LLM (bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (FX 50 pts) + **gate R:R minimum 1:1** (TP ≥ SL). **Position management (BEP/trailing) pindah ke basis SL posisi (bukan ATR/%-TP)** — lihat entri 13 Agustus di bawah.
+  - **Force override**: kalau `config.TP_SL_RULES` di-set eksplisit "ATR-Based" via CLI/`--tpsl-rules`/`.env`, SEMUA kategori (termasuk FX) ikut ATR-Based. Default "LLM" = aturan per-kategori di atas.
 - Spread ≤ 50 pts (XAU & FX) / 2400 pts (BTC)
 - **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)
@@ -158,6 +159,21 @@ python main.py
 7. **Konstanta baru di config**: `BREAK_EVEN_TRIGGER_SL_MULT`, `TRAILING_ACTIVATION_SL_MULT`, `TRAILING_DISTANCE_START/END/MIN_SL_MULT` (env-configurable).
 
 **Catatan**: fix `progress_ref` juga diterapkan di mode ATR-Based (bug yang sama). Clamp ke `trade_stops_level` broker (fix permanen error "Invalid stops") belum diimplementasikan — masih rekomendasi lanjutan.
+
+### Perubahan 13 Agustus (lanjutan) — Split SL/TP mode per kategori: XAU/BTC fix ATR-Based, FX LLM
+
+**Latar belakang:** mode LLM global bikin XAU jadi scalping — OpenAI sering kasih SL 83-400 pts padahal ATR M15 XAU ~819 pts (floor 400 cuma 0.49× ATR), dan OpenAI jadi over-restrictive (HOLD terus: "no clean 400+ point invalidation"). Gemini yang kasih setup valid (R:R 1.22-1.65) selalu diblokir konsensus karena OpenAI HOLD.
+
+**Perubahan (arsitektur baru — logic & config dipisah per kategori biar enak debug):**
+1. **`config.sltp_mode_for(symbol)`** — single source of truth mode SL/TP per simbol:
+   - **XAUUSD & BTC → `"ATR-Based"` (fix, SELALU)** — gate ATR R:R 2:1, anti-scalping. Prompt XAU/BTC inject ATR HARD GATE lagi (`atr_gate_str` dengan angka minimum konkret per AI mode).
+   - **FX pairs → `"LLM"`** — bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl)`, gate R:R minimal 1:1.
+   - **Force override**: `config.TP_SL_RULES == "ATR-Based"` (CLI `--tpsl-rules` / `.env`) → FX ikut ATR-Based juga. Default "LLM" = aturan per-kategori.
+2. **`consensus.py`**: `_apply_sltp_rules` pakai `config.sltp_mode_for(config.SYMBOL)` (bukan global `TP_SL_RULES`).
+3. **`llm_client.py`**: blok SL/TP rules & `atr_gate_str` resolve per-symbol via `sltp_mode_for(symbol)`.
+4. **`position_manager.py`**: BEP/trailing mode di-resolve per-posisi (`sltp_mode_for(pos.symbol)`) — XAU/BTC pakai ATR-based, FX pakai SL-based (perubahan 13 Agustus sebelumnya).
+5. **R:R minimum 1:1** (dari 1.25, commit `ffaf700`): berlaku di mode LLM (FX) + re-check eksekusi main.py. Prompt klarifikasi (commit `09981e4`): R:R 1:1 itu gate minimal yang diverifikasi bot, bukan alasan HOLD — model wajib kasih `invalidation_price`/`target_price` dari struktur teknis, bot yang hitung & verifikasi.
+6. **Re-check gate saat eksekusi** (commit `16644ba`): main.py re-kalkulasi SL/TP dari harga absolut pakai tick fresh, lalu `_apply_sltp_rules` dipanggil lagi — kalau R:R < 1:1 / gagal gate → trade dibatalkan (`gate_blocked → slots 0`).
 
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).

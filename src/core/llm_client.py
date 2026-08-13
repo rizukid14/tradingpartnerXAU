@@ -345,7 +345,7 @@ def _build_sltp_rules_block(symbol, timeframe):
       SL/TP model di-average di consensus.py (outlier dibuang), lot size
       dikalkulasi dari SL di main.py.
     """
-    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    mode = config.sltp_mode_for(symbol)  # per-kategori: XAU/BTC ATR-Based, FX LLM
     is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
 
@@ -683,8 +683,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
-    # Inject ATR Gate information ONLY if config.TP_SL_RULES is "ATR-Based"
-    if atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
+    # Inject ATR Gate information ONLY if the symbol's mode is ATR-Based
+    # (XAU/BTC fix ATR-Based; FX ikut mode LLM kecuali TP_SL_RULES di-force ATR-Based)
+    if atr_points > 0 and config.sltp_mode_for(symbol) == "ATR-Based":
         ai_mode = config.get_ai_mode()
         sl_mult = config.atr_sl_multiplier()
         tp_mult = config.atr_tp_multiplier()

@@ -265,7 +265,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     #   penuh ke arah kita -> layak di-lock ke entry. Bonus buat BTC: trigger
     #   sebesar SL otomatis > stop_level broker -> modifikasi SL gak ditolak MT5.
     # - ATR-Based mode: 50% TP aktual (di mode ini TP = 2x SL, jadi 50% TP = 1x SL).
-    if config.TP_SL_RULES == "LLM" and pos.sl:
+    if config.sltp_mode_for(symbol) == "LLM" and pos.sl:
         # Referensi = SL ORIGINAL (sebelum BE/trailing geser) biar stabil.
         # Trigger = min(1x SL, 50% TP):
         # - R:R 2:1 -> 1x SL = 50% TP (sama)
@@ -387,7 +387,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     #   udah gerak 1.5 risiko penuh -> trailing layak aktif.
     # - ATR-Based mode: TP-adaptive 60% TP (di mode ini TP = 2.5-3.5x ATR, jadi
     #   activation otomatis konsisten dengan volatilitas ATR).
-    if config.TP_SL_RULES == "LLM" and sl_points > 0:
+    if config.sltp_mode_for(symbol) == "LLM" and sl_points > 0:
         activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), fallback_act)
         if tp_points > 0:
             activation = min(activation, int(tp_points * 0.60))
@@ -421,7 +421,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     # - ATR-Based mode: ATR (konsisten dengan SL/TP ATR mode)
     # Fix bug progress_ref: pakai tp_points langsung (bukan max(tp, 2x activation)
     # yang selalu 1.2x TP) supaya distance beneran mencapai end_mult tepat di TP.
-    llm_mode = config.TP_SL_RULES == "LLM"
+    llm_mode = config.sltp_mode_for(symbol) == "LLM"
 
     if llm_mode and sl_points > 0:
         # LLM mode: interpolasi 0.8 -> 0.3 x SL (floor 0.2). Selalu progressive
@@ -477,10 +477,10 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-        if config.is_crypto(symbol) and not (config.TP_SL_RULES == "LLM" and sl_points > 0):
+        if config.is_crypto(symbol) and not (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0):
             print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
         else:
-            ref_label = "SL" if (config.TP_SL_RULES == "LLM" and sl_points > 0) else "ATR"
+            ref_label = "SL" if (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0) else "ATR"
             print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
     else:
         comment = result.comment if result else "Unknown error"

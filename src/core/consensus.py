@@ -59,7 +59,7 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
-    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    mode = config.sltp_mode_for(config.SYMBOL)  # per-kategori: XAU/BTC ATR-Based, FX LLM
 
     if mode == "LLM":
         # Mode LLM (Bebas sesuai thesis struktur AI, tapi dengan safety floor dan R:R gate)
