@@ -327,14 +327,11 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         activation = fallback_act
         distance = fallback_dist
 
-    # TP-Adaptive Activation (% Jarak Target):
-    # Jika posisi memiliki target TP yang terdefinisi (non-crypto), aktivasi menyala saat profit >= 60% TP.
-    # Batas minimum (50 pts untuk FX, 150 pts untuk XAU) dan maksimum dibatasi 'activation' ATR.
+    # TP-Adaptive Activation (Murni 60% dari Jarak Target TP):
+    # Jika posisi memiliki target TP terdefinisi, trailing stop HANYA aktif saat profit >= 60% TP.
+    # ATR fallback hanya digunakan jika posisi tidak memiliki target TP.
     if tp_points > 0 and not config.is_crypto(symbol):
-        tp_adaptive_act = int(tp_points * 0.60)
-        if tp_adaptive_act > 0:
-            min_floor = 50 if config.is_fx(symbol) else 150
-            activation = max(min_floor, min(activation, tp_adaptive_act))
+        activation = int(tp_points * 0.60)
 
     # Track the extreme price seen since entry. The SL trails behind this
     # extreme, never behind the current price, so a pullback cannot drag the
