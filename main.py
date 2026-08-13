@@ -131,10 +131,6 @@ def parse_cli_overrides(argv=None):
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
                    help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
-    p.add_argument("--yes", "-y", action="store_true",
-                   help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
-    p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
-                   help="Pakai preset era (v1 / v2 / v3)")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
     args = p.parse_args(argv)
@@ -144,17 +140,6 @@ def parse_cli_overrides(argv=None):
     if args.dry_run and args.live:
         print("[CLI] Tidak bisa --dry-run dan --live bersamaan.")
         sys.exit(1)
-
-    # Preset era dulu (paling awal), lalu flag eksplisit menimpa
-    if getattr(args, "era", None):
-        preset = getattr(config, "ERA_PRESETS", {}).get(args.era)
-        if preset:
-            for attr, val in preset.items():
-                if attr == "label":
-                    continue
-                if hasattr(config, attr):
-                    setattr(config, attr, val)
-            applied.append(f"ERA={args.era}")
 
     if args.dry_run:
         config.DRY_RUN = True
@@ -312,9 +297,6 @@ def interactive_setup():
         ("ANALISIS & NOTIF", "Telegram", "config.TELEGRAM_ENABLED", "ON" if config.TELEGRAM_ENABLED else "OFF"),
     ]
 
-    # Daftar preset era (dari config.ERA_PRESETS)
-    presets = getattr(config, "ERA_PRESETS", {})
-
     while True:
         try:
             print("-" * 60)
@@ -324,13 +306,8 @@ def interactive_setup():
                     print(f" -- {group} --")
                     last_group = group
                 print(f" {i:2d}. {label:<26} : {val}")
-            if presets:
-                print("-" * 60)
-                print(" PRESET ERA:")
-                for name, p in presets.items():
-                    print(f"    [{name}] {p.get('label', name)}")
             print("-" * 60)
-            print(" Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
+            print(" Ketik nomor utk ubah | 'start'/Enter = mulai | 'q' = batal")
             choice = input("  > ").strip().lower()
         except EOFError:
             print("[NON-INTERACTIVE] Terminal non-interaktif terdeteksi (Docker/Daemon). Memulai bot dengan setting default...")
@@ -339,29 +316,11 @@ def interactive_setup():
             print("\n Dibatalkan. Bot tidak dijalankan.")
             sys.exit(0)
 
-
-
         if choice in ("q", "quit", "exit"):
             print("Dibatalkan. Bot tidak dijalankan.")
             sys.exit(0)
         if choice in ("", "start", "s", "y"):
             break
-
-        # Preset era
-        if presets and choice in presets:
-            preset = presets[choice]
-            print(f"   Menerapkan preset '{choice}' ({preset.get('label', '')})...")
-            for attr, val in preset.items():
-                if attr == "label":
-                    continue
-                if hasattr(config, attr):
-                    setattr(config, attr, val)
-            # refresh tampilan
-            for i, (group, label, attr, _) in enumerate(settings):
-                v = getattr(config, attr.split(".")[1], None)
-                settings[i] = (group, label, attr, _fmt_val(attr, v))
-            print("  Preset diterapkan.")
-            continue
 
         if choice.isdigit():
             idx = int(choice) - 1
