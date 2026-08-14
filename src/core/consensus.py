@@ -26,9 +26,11 @@ def _apply_sltp_rules(sl_points, tp_points):
         ok=False), BUKAN dinaikkan. Filosofi: cari setup yang secara alamiah
         bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
         invalidation model = mengubah setup tanpa persetujuan model.
-      "LLM": SL/TP sebebas-bebasnya sesuai konsensus - cuma floor 2x spread
-        (biar broker nggak nolak INVALID_STOPS). Lot size dikalkulasi dari SL
-        tsb via risk-based sizing, jadi SL kecil = lot gede (risk tetap sama).
+      "LLM": SL/TP bebas sesuai konsensus, dibatasi safety floor per-kategori
+        (14 Agustus: XAU 400 pts statis, FX berbasis ATR aktif max(2x spread,
+        1.5x ATR H1) dengan fallback 250 pts) + R:R minimum 1.25:1
+        (TP di-floor ke 1.25x SL kalau kurang - bukan tolak). Lot size
+        dikalkulasi dari SL tsb via risk-based sizing.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
     """
     if not sl_points or sl_points <= 0:
@@ -59,26 +61,69 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
-    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    mode = config.sltp_mode_for(config.SYMBOL)  # per-kategori: XAU LLM, BTC ATR-Based, FX LLM
 
     if mode == "LLM":
-        # Mode LLM (Bebas sesuai thesis struktur AI):
+        # Mode LLM (Bebas sesuai thesis struktur AI, tapi dengan safety floor dan R:R gate)
         is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
+
         if is_xau:
-            # Gold: safety floor (minimal 2x spread atau 50% default SL) untuk cegah stops super sempit
-            d_sl = config.default_sl_points_for(config.SYMBOL)
-            min_sl = max(spread_pts * 2, int(d_sl * 0.5))
-            if sl_points < min_sl:
-                print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
-                sl_points = min_sl
+            # Gold: safety floor minimal 400 pts untuk mencegah SL super sempit
+            # (0.4x ATR M15 XAU ~1000 pts - sudah proporsional, tetap statis)
+            min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
         else:
-            # FX Pairs & BTC: Bebas sesuai struktur teknikal model, cuma floor 2x spread agar order tidak ditolak broker
-            min_sl = spread_pts * 2
-            if sl_points < min_sl:
-                sl_points = min_sl
+            # FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1) supaya
+            # struktur asli model (SL 60-200 pts di ATR 90-100) tidak di-floor
+            # paksa ke 250 (2.5x ATR) yang bikin TP 312 (3.2x ATR) jarang kena.
+            # Fallback 250 kalau ATR tidak bisa dihitung (defensif).
+            if atr_points > 0:
+                min_sl = max(spread_pts * 2, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
+            else:
+                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
+            
+        if sl_points < min_sl:
+            print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
+            sl_points = min_sl
 
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
+
+        # R:R minimum 1.25:1 (14 Agustus) - TP dinaikkan ke minimal 1.25x SL
+        min_rr = config.LLM_MIN_RR_RATIO
+        min_tp = int(sl_points * min_rr)
+        if tp_points < min_tp:
+            print(f"   [!] TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
+            tp_points = min_tp
+
+        # GATE OVER-RISK (13 Agustus): kalau risk minimum yang bisa diwakili
+        # (volume_min x SL) sudah MELEBIHI budget risk -> trade DITOLAK.
+        # Contoh XAU: equity $1079, risk 1.0% = $10.79, min lot 0.01, usd/pt $1
+        #   -> max SL = 1079 pts. SL 1736 pts -> risk aktual $17.36 (1.6%) -> TOLAK.
+        try:
+            account = mt5.account_info() if 'mt5' in dir() else None
+            if account is None:
+                from config import mt5 as _mt5
+                account = _mt5.account_info()
+            equity = float(account.equity) if account else 0.0
+            si = mt5.symbol_info(config.SYMBOL) if 'mt5' in dir() else None
+            if si is None:
+                from config import mt5 as _mt5
+                si = _mt5.symbol_info(config.SYMBOL)
+            vol_min = getattr(si, "volume_min", 0.01) if si else 0.01
+            usd_pt = (si.trade_tick_value * (si.point / si.trade_tick_size)) if si and si.trade_tick_size else 0.0
+            risk_pct = config.risk_percent_for(config.SYMBOL)
+            if equity > 0 and usd_pt > 0 and vol_min > 0:
+                max_sl = (equity * risk_pct / 100.0) / (vol_min * usd_pt)
+                if sl_points > max_sl:
+                    risk_actual = sl_points * vol_min * usd_pt
+                    return sl_points, tp_points, False, (
+                        f"OVER-RISK: SL {sl_points} pts > max {max_sl:.0f} pts "
+                        f"(risk {risk_pct}% = ${equity*risk_pct/100:.2f} gak muat di min lot {vol_min}: "
+                        f"risk aktual ${risk_actual:.2f} = {risk_actual/equity*100:.2f}%)"
+                    )
+        except Exception:
+            pass
+
         return sl_points, tp_points, True, ""
 
     # Mode ATR-Based: GATE LAYAK/TIDAK (Non-negotiable).
@@ -352,10 +397,18 @@ def calculate_consensus(decisions):
     final_inv = sum(inv_list) / len(inv_list) if inv_list else None
     final_tgt = sum(tgt_list) / len(tgt_list) if tgt_list else None
 
-    # Resolve points from absolute price levels if available, using the current tick
-    resolved_sl_from_price = None
-    resolved_tp_from_price = None
+    # SL/TP murni dari sl_points/tp_points model (fix 14 Agustus): invalidation/
+    # target price TIDAK dipakai menghitung SL/TP lagi — hanya konteks probability
+    # (confidence & reasoning model). Final points = average model yang sepakat,
+    # outlier dibuang, lalu gate floor/R:R/over-risk di _apply_sltp_rules.
+    final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
+    final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
 
+    # Apply SL/TP rules (mode-aware ATR/spread gates)
+    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+
+    # Sync absolute price levels with final clamped points to guarantee consistency
+    # (hanya untuk display/log — SL/TP order pakai points, bukan harga absolut ini)
     try:
         from config import mt5
         tick = mt5.symbol_info_tick(config.SYMBOL)
@@ -364,26 +417,6 @@ def calculate_consensus(decisions):
     except Exception:
         tick, si, point = None, None, 0.00001
 
-    if tick and si and point:
-        entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
-        if entry_price > 0:
-            if final_inv:
-                resolved_sl_from_price = int(round(abs(entry_price - final_inv) / point))
-            if final_tgt:
-                resolved_tp_from_price = int(round(abs(final_tgt - entry_price) / point))
-
-    # Determine final points (prefer resolved prices, fallback to point list/defaults)
-    final_sl = resolved_sl_from_price if resolved_sl_from_price is not None else (
-        int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
-    )
-    final_tp = resolved_tp_from_price if resolved_tp_from_price is not None else (
-        int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
-    )
-
-    # Apply SL/TP rules (mode-aware ATR/spread gates)
-    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
-
-    # Sync absolute price levels with final clamped points to guarantee consistency
     if tick and si and point:
         entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
         if entry_price > 0:

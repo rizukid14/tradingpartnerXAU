@@ -639,14 +639,21 @@ def get_trade_details(ticket):
         return None
 
 # Retcodes that mean "broker wants a fresh price/wider deviation" - worth a retry.
+# 10013 (TRADE_RETCODE_INVALID) dimasukkan karena broker ECN (VTMarkets) kadang
+# membalas 10013 transien saat market bergerak cepat (bukan requote 10004) -
+# request yang sama persis sukses beberapa detik kemudian (terbukti via
+# mt5.order_check). Retry dibatasi (_MAX_RETRIES) & build_request selalu refetch
+# tick fresh, jadi aman & tidak menutupi bug request yang beneran invalid.
 _RETRYABLE_RETCODES = {
     getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
     getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10021),
     getattr(mt5, "TRADE_RETCODE_REQUOTE", 10004),
-    getattr(mt5, "TRADE_RETCODE_REJECT", 10013),
+    getattr(mt5, "TRADE_RETCODE_REJECT", 10006),
+    getattr(mt5, "TRADE_RETCODE_INVALID", 10013),
 }
 
 _MAX_RETRIES = 2
+_RETRY_SLEEP_SECONDS = 0.4
 
 def _get_exec_mode(info):
     if not info:
@@ -738,13 +745,21 @@ def _send_with_retry(build_request, symbol, label):
             break
         widen = config.DEVIATION + (5 * (attempt + 1))
         print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, widening deviation to {widen} pts")
+        time.sleep(_RETRY_SLEEP_SECONDS)  # jeda singkat biar broker settle (transient 10013/requote)
         req = build_request(widen, policy)
         result = _safe_order_send(req)
 
-    if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
-        print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
-        req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
-        result = _safe_order_send(req)
+    # If order failed with 10013 (Invalid request) or 10030 (Invalid fill), fallback to alt filling policies
+    if result and result.retcode in (getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
+        for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            if alt_policy == policy:
+                continue
+            print(f"[MT5] {label} fallback fill policy to {alt_policy} (retcode was {result.retcode})")
+            req = build_request(config.DEVIATION, alt_policy)
+            res_alt = _safe_order_send(req)
+            if res_alt and res_alt.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+                result = res_alt
+                break
 
     return result
 

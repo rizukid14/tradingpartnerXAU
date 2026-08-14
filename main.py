@@ -45,6 +45,28 @@ def _enable_windows_vt():
 _enable_windows_vt()
 
 
+def _tf_to_seconds(tf):
+    """Konversi timeframe MT5 -> detik (buat label range candle open-close)."""
+    mapping = {
+        mt5.TIMEFRAME_M1: 60,
+        mt5.TIMEFRAME_M5: 300,
+        mt5.TIMEFRAME_M15: 900,
+        mt5.TIMEFRAME_M30: 1800,
+        mt5.TIMEFRAME_H1: 3600,
+        mt5.TIMEFRAME_H4: 14400,
+        mt5.TIMEFRAME_D1: 86400,
+    }
+    return mapping.get(tf, 3600)
+
+
+def _candle_range_label(open_ts, tf):
+    """Label candle non-ambigu: '15:00-16:00 WIB' (open-close). open_ts = open-time candle."""
+    from datetime import timedelta
+    open_wib = connector.server_to_wib(int(open_ts))
+    close_wib = open_wib + timedelta(seconds=_tf_to_seconds(tf))
+    return f"{open_wib.strftime('%H:%M')}-{close_wib.strftime('%H:%M')} WIB"
+
+
 def _disp_width(s):
     """Lebar tampilan visual di terminal tanpa menghitung kode ANSI: emoji/wide char = 2 kolom, sisanya 1."""
     plain = _ANSI_RE.sub('', s)
@@ -130,11 +152,9 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--claude-model", type=str,
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
-                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
+                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, safety floor XAU 400 / FX 250 pts + R:R min 1.25:1)")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
-    p.add_argument("--yes", "-y", action="store_true",
-                   help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     args = p.parse_args(argv)
 
     applied = []
@@ -244,7 +264,7 @@ def interactive_setup():
             return "OFF"
         s = str(v)
         if attr == "config.TP_SL_RULES":
-            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else " (bebas, 2x spread)" if v == "LLM" else "")
+            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else " (bebas, floor XAU 400/FX 250 pts, R:R min 1.25)" if v == "LLM" else "")
         return s
 
 
@@ -278,7 +298,8 @@ def interactive_setup():
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         str(config.TP_SL_RULES) + (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
+         "XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1, R:R 1.25)" if config.TP_SL_RULES == "LLM"
+         else str(config.TP_SL_RULES) + " (force semua, gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)"),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
@@ -602,9 +623,8 @@ def run_trading_cycle():
             
             # Log indikator candle baru untuk pair selain pair utama
             if last_time is not None and sym != valid_pool[0]:
-                candle_wib = connector.server_to_wib(closed_time)
                 tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else ("M15" if tf == mt5.TIMEFRAME_M15 else "M5"))
-                print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Waktu: {candle_wib.strftime('%H:%M:%S')} WIB")
+                print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Range: {_candle_range_label(closed_time, tf)}")
                 
             try:
                 _run_cycle_for_current_symbol()
@@ -771,42 +791,51 @@ def _run_cycle_for_current_symbol():
         target_price = result.get("target_price")
         agreeing_count = result.get("agreeing_count", 0)
 
-        # Obtain latest execution tick to size lot and get absolute SL/TP prices dynamically
+        # Obtain latest execution tick to size lot and get absolute SL/TP prices
         tick_live = connector.get_current_tick(config.SYMBOL)
-        sl_price = invalidation_price
-        tp_price = target_price
+        sl_price = None
+        tp_price = None
         tp_price_2 = None
+        gate_blocked = False  # re-check SL/TP eksekusi gagal -> trade dibatalkan
 
-        if tick_live and invalidation_price:
+        if tick_live and sl_points and sl_points > 0:
             point = tick_live["point"]
             execution_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
             if execution_price > 0 and point > 0:
-                # Calculate SL points based on actual execution price
-                sl_points = int(round(abs(execution_price - invalidation_price) / point))
+                # SL/TP murni dari sl_points/tp_points model (sudah di-floor di
+                # consensus.py). invalidation_price/target_price TIDAK dipakai
+                # untuk SL/TP — cuma referensi probability (fix 14 Agustus).
                 sl_points = max(tick_live["spread"] * 2, sl_points)
-                
-                # Re-sync sl_price with execution price if floored by spread gate
-                if trade_signal == "BUY":
-                    sl_price = execution_price - (sl_points * point)
-                else:
-                    sl_price = execution_price + (sl_points * point)
 
-                if target_price:
-                    # Calculate TP points based on actual execution price
-                    tp_points = int(round(abs(target_price - execution_price) / point))
+                if tp_points and tp_points > 0:
                     tp_points = max(tick_live["spread"] * 2, tp_points)
-                    
                     # Position 2 gets 1.2x TP for extended trend capture
                     tp_points_2 = int(tp_points * 1.2)
+                else:
+                    tp_points_2 = None
+
+                # RE-CHECK gate SL/TP pakai tick terkini (spread/equity bisa
+                # geser antara consensus dan eksekusi). Kalau gagal gate (R:R <
+                # 1.25 / OVER-RISK) -> batalkan trade, jangan kirim order.
+                sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
+                if not sltp_ok:
+                    gate_blocked = True
+                    print(f"   [!] TRADE DIBATALKAN (re-check SL/TP eksekusi): {sltp_reason}")
+                else:
+                    # Re-sync harga absolut setelah gate (safety floor bisa menaikkan SL)
+                    tp_points_2 = int(tp_points * 1.2)
                     if trade_signal == "BUY":
+                        sl_price = execution_price - (sl_points * point)
                         tp_price = execution_price + (tp_points * point)
                         tp_price_2 = execution_price + (tp_points_2 * point)
                     else:
+                        sl_price = execution_price + (sl_points * point)
                         tp_price = execution_price - (tp_points * point)
                         tp_price_2 = execution_price - (tp_points_2 * point)
 
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
-        remaining_slots = max(0, max_positions - len(open_positions))
+        # gate_blocked = re-check SL/TP eksekusi gagal -> tidak ada slot, trade batal
+        remaining_slots = 0 if gate_blocked else max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
@@ -927,8 +956,8 @@ def main():
     else:
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
 
-    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {config.TP_SL_RULES} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD}")
+    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} {config.OPENAI_PRIMARY_WINDOW_WIB} WIB / {config.OPENAI_DEFAULT_MODEL} / err-fb {config.OPENAI_FALLBACK_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
@@ -1128,7 +1157,8 @@ def main():
                             print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
-                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                        tf_main = config.get_timeframe(config.SYMBOL)
+                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Range: {_candle_range_label(current_candle_time, tf_main)}")
                     
                     last_candle_time = current_candle_time
                     

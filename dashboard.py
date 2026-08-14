@@ -71,6 +71,7 @@ RE_ORDER = re.compile(
 RE_ORDER_OK = re.compile(r"\[MT5\] Order BERHASIL! Ticket: (\d+)")
 RE_POSTMORTEM = re.compile(r"\[POST-MORTEM\]\s*Menganalisis hasil trade tiket #(\d+)\s*\((\S+),\s*P/L:\s*\$?([+-]?[\d.]+)\)")
 RE_POSTMORTEM_ALT = re.compile(r"\[POST-MORTEM\].*?tiket #(\d+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
+RE_CLOSE_DETECTED = re.compile(r"\[CLOSE DETECTED\]\s*#(\d+)\s+(\S+)\s+(BUY|SELL)?\s*ditutup\s*\(P/L:\s*([+-]?[\d.]+)", re.IGNORECASE)
 RE_LESSON = re.compile(r"\[PELAJARAN BARU DITERIMA\]")
 RE_BE = re.compile(r"\[BREAK-EVEN\]")
 RE_TRAIL = re.compile(r"\[TRAILING\]")
@@ -256,6 +257,11 @@ def parse_log(path=LOG_PATH):
         if m:
             events.append({"type": "trade_close", "ticket": int(m.group(1)),
                            "symbol": current_symbol, "pnl": float(m.group(2))})
+            continue
+        m = RE_CLOSE_DETECTED.search(line)
+        if m:
+            events.append({"type": "trade_close", "ticket": int(m.group(1)),
+                           "symbol": m.group(2), "pnl": float(m.group(4))})
             continue
 
         if RE_LESSON.search(line):
@@ -804,7 +810,10 @@ def serve(host="0.0.0.0", port=8765):
                     "MAX_ROTATION_SYMBOLS": getattr(config, "MAX_ROTATION_SYMBOLS", 5),
                     "CLAUDE_MODEL": getattr(config, "CLAUDE_MODEL", "deepseek/deepseek-v4-flash"),
                     "GEMINI_MODEL": getattr(config, "GEMINI_MODEL", "gemini-3.1-flash-lite"),
-                    "OPENAI_MODEL": getattr(config, "OPENAI_MODEL", "gpt-5.4-mini"),
+                    "OPENAI_MODEL": getattr(config, "OPENAI_MODEL", "gpt-5.2"),
+                    "OPENAI_FALLBACK_MODEL": getattr(config, "OPENAI_FALLBACK_MODEL", "gpt-4o-mini"),
+                    "OPENAI_DEFAULT_MODEL": getattr(config, "OPENAI_DEFAULT_MODEL", "o3-mini"),
+                    "OPENAI_PRIMARY_WINDOW_WIB": getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"),
                     "FORECAST_MODEL": getattr(config, "FORECAST_MODEL", "gpt-5.4"),
                     "RISK_PERCENT_BTC": getattr(config, "RISK_PERCENT_BTC", 1.5),
                     "RISK_PERCENT_XAU": getattr(config, "RISK_PERCENT_XAU", 0.5),

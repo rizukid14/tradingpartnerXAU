@@ -248,7 +248,15 @@ tr:hover { background: var(--panel-hover); }
   </div>
 
   <div class="bento-box col-4">
-    <div class="bento-title">Per-Symbol Performance</div>
+    <div class="bento-title" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>Per-Symbol Performance</span>
+      <select id="sort-sym" style="font-size:11px; padding:2px 4px; background:#1e1e1e; color:#ccc; border:1px solid #444; border-radius:3px; outline:none; cursor:pointer;" onchange="renderSym()">
+        <option value="default">Default</option>
+        <option value="az">A-Z</option>
+        <option value="profit-desc">Profit Tertinggi</option>
+        <option value="profit-asc">Profit Terendah</option>
+      </select>
+    </div>
     <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
   </div>
 
@@ -504,7 +512,16 @@ function renderKpi() {
 function renderSym() {
   const ps = DATA.per_symbol || {};
   const selectedSym = $('f-symbol').value;
-  const keys = Object.keys(ps).filter(k => !selectedSym || k === selectedSym);
+  let keys = Object.keys(ps).filter(k => !selectedSym || k === selectedSym);
+  
+  const sortMode = $('sort-sym') ? $('sort-sym').value : 'default';
+  if (sortMode === 'az') {
+    keys.sort();
+  } else if (sortMode === 'profit-desc') {
+    keys.sort((a, b) => (ps[b].pnl || 0) - (ps[a].pnl || 0));
+  } else if (sortMode === 'profit-asc') {
+    keys.sort((a, b) => (ps[a].pnl || 0) - (ps[b].pnl || 0));
+  }
   
   $('sym-cards').innerHTML = keys.length ? keys.map(sym => {
     const st = ps[sym];
@@ -549,7 +566,10 @@ function renderStatusPanel() {
   let isPaused = CONFIG_DATA ? CONFIG_DATA.TRADING_PAUSED : false;
   let isDry = CONFIG_DATA ? CONFIG_DATA.DRY_RUN : true; // default true for safety in static
   let mode = CONFIG_DATA ? CONFIG_DATA.TRADING_MODE : "xau";
-  let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.4-mini";
+  let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.2";
+  let oaiDefaultModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_DEFAULT_MODEL || "o3-mini") : "o3-mini";
+  let oaiFallbackModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_FALLBACK_MODEL || "gpt-4o-mini") : "gpt-4o-mini";
+  let oaiWindow = CONFIG_DATA ? (CONFIG_DATA.OPENAI_PRIMARY_WINDOW_WIB || "15:00-19:30") : "15:00-19:30";
   let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
   let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";
 
@@ -602,17 +622,17 @@ function renderStatusPanel() {
     <div>
       <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🤖 Active AI Models & Scheduling</div>
       <div style="margin-bottom:6px; font-size:10px; color:var(--muted); line-height: 1.5;">
-        Slot 1 (OpenAI): <b>${esc(oaiModel)}</b><br>
+        Slot 1 (OpenAI): <b>${esc(oaiModel)}</b> <span style="color:var(--accent);">(${esc(oaiWindow)} WIB)</span> / default ${esc(oaiDefaultModel)} / err-fb ${esc(oaiFallbackModel)}<br>
         Slot 2 (Gemini): <b>${esc(gemModel)}</b><br>
         Slot 3 (Claude Slot): <b>${esc(cldModel)}</b>
       </div>
       <div style="font-size:10px; line-height: 1.4; background: rgba(255,255,255,0.01); padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
         <b>WIB Time-based AI Mode:</b><br>
-        • 00:01-08:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
-        • 09:00-13:00: <span style="color:var(--muted-light);">Dual (OpenAI+DeepSeek)</span><br>
-        • 13:01-19:29: <span style="color:var(--muted-light);">Single</span><br>
-        • 19:30-21:30: <span style="color:var(--amber);">Triple (London-NY Overlap)</span><br>
-        • 21:31-23:59: <span style="color:var(--muted-light);">Single</span>
+        • 00:01-09:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
+        • 10:00-15:00: <span style="color:var(--muted-light);">Dual (OpenAI+Gemini)</span><br>
+        • 15:01-19:29: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
+        • 19:30-21:30: <span style="color:var(--amber);">Triple (OpenAI+Gemini+DeepSeek)</span><br>
+        • 21:31-23:59: <span style="color:var(--muted-light);">Single (OpenAI)</span>
       </div>
     </div>
   `;

@@ -113,8 +113,31 @@ CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-202
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")  # dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB (15:00-19:30 WIB)
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")  # fallback error (lambat/timeout)
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o3-mini")  # model utama di luar window (SL struktural, 14 Agu)
+
+
+def _parse_windows_wib(raw):
+    """Parse "15:00-19:30" / "15:00-19:30,21:00-23:00" -> list[(start_min, end_min)]."""
+    out = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if ":" in part and "-" in part:
+            try:
+                s, e = part.split("-")
+                sh, sm = s.split(":")
+                eh, em = e.split(":")
+                out.append((int(sh) * 60 + int(sm), int(eh) * 60 + int(em)))
+            except Exception:
+                pass
+    return out
+
+
+# gpt-5.2 (free tier model besar 250k token/hari, SHARED semua model besar)
+# dipakai HANYA di window ini (WIB) biar kuota tidak cepet habis; di luar window
+# OpenAI langsung pakai fallback gpt-4o-mini (2.5M token/hari, cukup full day).
+OPENAI_PRIMARY_WINDOW_WIB = _parse_windows_wib(os.getenv("OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"))
 
 LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 24.0)
 
@@ -168,13 +191,25 @@ LOT_SIZE_XAU = _getenv_float("LOT_SIZE_XAU", LOT_SIZE)
 LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
-RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 0.5)
+RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
 
 DEVIATION = _getenv_int("DEVIATION", 20)
 
 # TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
-# price), safety floor max(2x spread, 0.5x default_sl). Mode "ATR-Based" tetap tersedia
-# via .env/menu/--tpsl-rules - gate ATR R:R 2:1 (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
+# price), safety floor per-kategori (14 Agustus: XAU 400 pts, FX 250 pts) + R:R min 1.25:1.
+# Mode "ATR-Based" tetap tersedia via .env/menu/--tpsl-rules - gate ATR R:R 2:1
+# (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
+#
+# PER-KATEGORI (13 Agustus, pisah logic biar enak debug):
+# - XAUUSD: LLM (13 Agustus - soft floor 400-1000, gate over-risk; max lot cap
+#   dihapus 14 Agustus - lot murni risk-based sesuai volume_max broker).
+# - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
+#   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
+#   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
+# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+#   via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts kalau ATR gagal; R:R min 1.25:1) - cocok utk H1 swing.
+# - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
+#   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
 TP_SL_RULES = os.getenv("TP_SL_RULES", "LLM")
 
 DEFAULT_SL_POINTS = _getenv_int("DEFAULT_SL_POINTS", 300)
@@ -191,6 +226,22 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # sejak pindah H1, ATR H1 jauh lebih besar jadi 100/200 lebih pas. Gate ATR-Based tetap
 # menolak otomatis kalau proposal SL/TP < multiplier x ATR (lihat atr_sl_multiplier).
 
+# --- LLM MODE SAFETY FLOOR & R:R GATE (14 Agustus) ---
+# Mode LLM (XAU & FX): SL/TP bebas struktur LLM, tapi dibatasi safety floor minimal
+# (mencegah SL mikro 5 pips yang membengkakkan lot) + gate R:R minimum.
+# Safety floor SL/TP mode LLM (14 Agustus):
+#   - FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
+#     Fallback statis 250 pts (25 pips) dipakai kalau ATR gagal dihitung.
+#     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
+#     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
+#     TP 312 (3.2x ATR) jarang kesampean. ATR-based menyesuaikan volatilitas.
+#   - XAUUSD:   SL minimal 400 pts statis (0.4x ATR M15, sudah proporsional)
+#   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
+LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.5)
+LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)
+LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
+
 
 
 # --- CONSENSUS SETTINGS ---
@@ -202,7 +253,7 @@ ERA_PRESETS = {
     "v1": {
         "label": "V1 - era profit 100% (legacy)",
         "DRY_RUN": True,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -210,7 +261,7 @@ ERA_PRESETS = {
     "v2": {
         "label": "V2 - legacy-2 (= v1 + state)",
         "DRY_RUN": True,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -218,7 +269,7 @@ ERA_PRESETS = {
     "v3": {
         "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.5,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -324,6 +375,11 @@ PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
 MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
+# --- DAILY PROFIT TARGET (14 Agustus) ---
+# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
+# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
+# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
+DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
 
 
 def bep_tolerance_for(deal):
@@ -372,11 +428,14 @@ ALLOWED_SESSIONS_WIB = [
     {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones DINONAKTIFKAN (permintaan user 11-08: full trade 24 jam,
-# tengah malam-pagi juga trade). Kalau mau aktifkan lagi, isi list-nya:
-#   {"name": "Rollover",  "start": (4, 0), "end": (6, 0), "reason": "Spread melebar saat rollover"},
-#   {"name": "Dead Zone", "start": (0, 0), "end": (4, 0), "reason": "Likuiditas rendah"},
-DANGER_ZONES_WIB = []
+# Danger zones: SEBELUMNYA DINONAKTIFKAN (11-08: full trade 24 jam). 14 Agustus user
+# minta Dead Zone subuh aktif lagi: blokir TOTAL pembukaan posisi baru 02:00-06:00 WIB
+# (mencegah profit tergerus saat pasar sepi/whipsaw subuh). Berlaku untuk XAU & FX
+# (crypto/BTC di-skip otomatis di risk_engine._check_danger_zones - BTC tetap 24/7).
+DANGER_ZONES_WIB = [
+    {"name": "Overnight Dead Zone (02:00 - 06:00 WIB)", "start": (2, 0), "end": (6, 0),
+     "reason": "Dead Zone - pergerakan tipis & lonjakan spread subuh"},
+]
 
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
@@ -458,6 +517,31 @@ LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
 def is_crypto(symbol):
     """True if the given symbol is a crypto pair (weekend trading)."""
     return symbol in CRYPTO_SYMBOLS
+
+
+def sltp_mode_for(symbol):
+    """
+    SL/TP mode per kategori aset (13 Agustus - pisah logic per simbol biar enak debug):
+    - XAU: "LLM" (13 Agustus sore - pindah dari ATR-Based fix). Alasan: gate ATR
+      (SL >= 1.25x ATR M15 ~1024 pts) bikin SL lebar yang TIDAK MUAT di min lot 0.01
+      dengan risk 0.5% (over-risk 3.2x). Mode LLM + risk 1.0% = sweet spot SL ~539-1079
+      pts di min lot. Tetap ada gate tolak kalau SL > max budget (risk > 1.25% dengan
+      min lot) di consensus/main. Max lot cap (0.01) dihapus 14 Agustus - lot murni
+      risk-based, volume_max broker yang membatasi.
+    - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
+    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+      via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts / 25 pips kalau ATR gagal; R:R min 1.25:1).
+      Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
+    """
+    s = (symbol or "").upper()
+    if "XAU" in s or "GOLD" in s:
+        return "LLM"  # 13 Agustus: XAU ikut LLM mode (bukan ATR-Based lagi)
+    if is_crypto(symbol):
+        return "ATR-Based"  # BTC fix, tidak bisa di-override ke LLM
+    # FX pairs: default LLM, bisa di-force ATR-Based via config.TP_SL_RULES
+    if TP_SL_RULES == "ATR-Based":
+        return "ATR-Based"
+    return "LLM"
 
 
 def get_rotation_pool(now=None):
@@ -622,7 +706,9 @@ def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
     FX (H1): 1.0%.
-    XAU (M15 swing, up to 6 concurrent): 0.5% - aggregate ~3% max.
+    XAU (M15 swing, up to 6 concurrent): 1.0% (13 Agustus - dinaikkan dari 0.5%
+    karena min lot 0.01 broker tidak bisa mewakili risk 0.5% dengan SL ATR/struktur
+    yang lebar; 1.0% = max SL ~1079 pts di equity ~$1079, muat sweet spot).
     """
     if is_crypto(symbol): return RISK_PERCENT_BTC
     if "XAU" not in symbol.upper(): return 1.0

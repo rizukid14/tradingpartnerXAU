@@ -7,7 +7,7 @@
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.
 - **XAUUSD-ECNc** (Gold): short-term intraday swing **M15**, weekday, MTF context M30/H1. Config default `WEEKDAY_SYMBOL = "XAUUSD-ECNc"` (langsung nama broker live — FASE 1; `get_valid_trade_symbol` tetap auto-correct kalau suffix beda, mis. demo).
 - **BTCUSD.c** (Bitcoin): intraday **M30**, weekend + setelah jam 22:00 Jumat WIB (rotasi otomatis, `config.get_active_symbol`). **MTF context H1/H4, forecast horizon T+4h/T+D1 (bebas swap overnight).**
-- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (**parallel scan pool 7 simbol**: XAU + 6 FX cross, FASE 1). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `GBPCHF-ECNc, EURCHF-ECNc, GBPNZD-ECNc, EURJPY-ECNc, GBPUSD-ECNc, EURAUD-ECNc`), dipotong `MAX_ROTATION_SYMBOLS` (7). **Timeframe per aset: XAU M15 (swing pendek), FX H1 (swing), BTC M30** — risk per trade XAU 0.5% / FX 1.0% / BTC 1.5%. **Smart Timeframe Rotation (FASE 5)**: LLM call per simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di main.py) — XAU tiap 15 menit, FX tiap 1 jam, BTC tiap 30 menit (hemat token drastis). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol). Implementasi: `run_trading_cycle()` → loop `for sym in pool: config.SYMBOL = sym; _run_cycle_for_current_symbol()` (post-mortem 1× aggregate per candle, macro/MTF per-symbol di-populate di dalam loop).
+- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (**parallel scan pool 7 simbol**: XAU + 6 FX cross, FASE 1). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `GBPCHF-ECNc, EURCHF-ECNc, GBPNZD-ECNc, EURJPY-ECNc, GBPUSD-ECNc, EURAUD-ECNc`), dipotong `MAX_ROTATION_SYMBOLS` (7). **Timeframe per aset: XAU M15 (swing pendek), FX H1 (swing), BTC M30** — risk per trade XAU 1.0% / FX 1.0% / BTC 1.5% (XAU naik dari 0.5% pada 13 Agustus: min lot 0.01 broker gak bisa mewakili risk 0.5% dengan SL struktur lebar). **Smart Timeframe Rotation (FASE 5)**: LLM call per simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di main.py) — XAU tiap 15 menit, FX tiap 1 jam, BTC tiap 30 menit (hemat token drastis). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol). Implementasi: `run_trading_cycle()` → loop `for sym in pool: config.SYMBOL = sym; _run_cycle_for_current_symbol()` (post-mortem 1× aggregate per candle, macro/MTF per-symbol di-populate di dalam loop).
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`) — jangan pernah test sembarangan tanpa konfirmasi
 - Balance awal $1000, sekarang ~$1065
 - Waktu semua pakai **WIB** (Asia/Jakarta)
@@ -28,7 +28,7 @@ python main.py
 | `main.py` | Loop utama: manage posisi tiap 3 detik, full cycle tiap candle per-symbol (M15 XAU / H1 FX / M30 BTC) dengan **Smart Timeframe Rotation** (`_symbol_last_candle`) |
 | `config.py` | Semua parameter + helper per-symbol (`get_timeframe`, `get_higher_timeframes`, `lot_size_for`, `risk_percent_for`, `default_sl/tp`, `max_spread_points`, `confidence_threshold_for`) |
 | `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call LLM paralel sesuai **time-based AI mode** (single→OpenAI, dual→OpenAI+Gemini, triple→OpenAI+Gemini+DeepSeek) |
-| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware (`config.TP_SL_RULES`: ATR-Based → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); **multiplier dinamis per AI mode: single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 — R:R 2:1 selalu**; LLM → bebas, cuma floor 2× spread) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
+| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware **per-kategori** (`config.sltp_mode_for(symbol)`, 13 Agustus): **XAU & BTC = fix ATR-Based** → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); **multiplier dinamis per AI mode: single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 — R:R 2:1 selalu**; **FX = LLM** → bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** (TP ≥ SL)) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
 | `src/core/risk_engine.py` | Gate: spread, sesi, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** (danger zone dimatikan — full 24 jam) |
 | `src/core/mt5_connector.py` | Order send/close (retry + fill policy dinamis), history deals, market data, magic filter |
 | `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+30m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
@@ -47,15 +47,16 @@ python main.py
 4. **Panggil LLM paralel sesuai time-based AI mode** (single: 1 model / dual: 2 / triple: 3 — lihat jadwal WIB di bawah)
 5. **Weighted consensus**: skor BUY/SELL = Σ confidence model searah; menang kalau ≥ min_models searah & skor > threshold (XAU 1.0, BTC 1.2, defensif ×1.5; **single mode: 1 model + threshold ×0.6**). Plus AI re-evaluator CLOSE posisi
 6. Forecast context (bias/target/entry zone) **murni informational** — di-inject ke prompt LLM, TIDAK memblokir eksekusi (tidak ada gate counter-trend; `validate_forecast_trigger` sudah dihapus)
-7. **Risk-based lot sizing** — lot dihitung dari equity & SL (BTC 1.5%, XAU 0.5%, FX 1.0%), bukan statis
+7. **Risk-based lot sizing** — lot dihitung dari equity & SL (BTC 1.5%, XAU 1.0%, FX 1.0%), bukan statis
 8. Cek max posisi, eksekusi order (2 posisi kalau 3/3 sepakat)
 
 ## Gate eksekusi yang SEBENERNYA (hard)
 
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
-- SL/TP per mode (`config.TP_SL_RULES`):
-  - **Mode LLM (DEFAULT sejak 13 Agustus, bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (XAU 200–250 pts, FX 50 pts, BTC 25000 pts) agar terhindar dari stop-loss super sempit yang membengkakkan lot resiko. **Position management (BEP/trailing) juga pindah ke basis SL posisi (bukan ATR/%-TP)** — lihat entri 13 Agustus di bawah.
-  - **Mode ATR-Based (opsional, bukan default)**: **GATE LAYAK/TIDAK (Non-negotiable)** berlaku untuk SEMUA simbol — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based.
+- SL/TP per kategori (`config.sltp_mode_for(symbol)` — **13 Agustus, pisah logic per-simbol biar enak debug**):
+  - **XAUUSD & BTC = fix ATR-Based (SELALU, tidak bisa di-override ke LLM)**: **GATE LAYAK/TIDAK (Non-negotiable)** — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based. Alasan: floor 400 pts cuma 0.49× ATR M15 (~819 pts) — terlalu scalping utk swing M15.
+  - **FX pairs = LLM (bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (FX 50 pts) + **gate R:R minimum 1:1** (TP ≥ SL). **Position management (BEP/trailing) pindah ke basis SL posisi (bukan ATR/%-TP)** — lihat entri 13 Agustus di bawah.
+  - **Force override**: kalau `config.TP_SL_RULES` di-set eksplisit "ATR-Based" via CLI/`--tpsl-rules`/`.env`, SEMUA kategori (termasuk FX) ikut ATR-Based. Default "LLM" = aturan per-kategori di atas.
 - Spread ≤ 50 pts (XAU & FX) / 2400 pts (BTC)
 - **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
 - Max daily loss $50, max 3 consecutive loss, max 6 posisi (4 recovery)
@@ -87,7 +88,7 @@ python main.py
 10. **Recovery exit threshold**: win < $0.10 tidak exit recovery mode (`RECOVERY_EXIT_PROFIT_USD`).
 11. **Per-symbol breakdown** di log harian: `BTCUSD.c: 4T 0W-4L WR 0% | 4 BEP $-1.73`.
 12. **Banner dinamis**: "Simbol: BTCUSD.c | Timeframe: M30 | Spread Filter: 2400 pts maks (BTCUSD.c)".
-13. **Risk-based lot sizing** (`get_effective_lot_size(sl_points)`): lot = risk_usd / (SL pts × usd_per_point). Per-symbol risk: **BTC 1.5%** equity, **XAU 0.5%**, **FX 1.0%** (FASE 1 — FX swing H1 pakai risk lebih besar dari XAU scalping). Urutan: risk-based → recovery/session multiplier → clamp+round ke volume_step. Margin safety net (lot diturunkan kalau margin > 50% free). Fallback 0.01 kalau SL tidak diketahui.
+13. **Risk-based lot sizing** (`get_effective_lot_size(sl_points)`): lot = risk_usd / (SL pts × usd_per_point). Per-symbol risk: **BTC 1.5%** equity, **XAU 1.0%** (naik dari 0.5% — min lot 0.01 gak bisa mewakili risk 0.5% dengan SL lebar), **FX 1.0%**. Urutan: risk-based → recovery/session multiplier → clamp+round ke volume_step. Margin safety net (lot diturunkan kalau margin > 50% free). Fallback 0.01 kalau SL tidak diketahui.
 14. **Forecast horizon per-symbol**: XAU T+15m/T+30m, **BTC T+4h/T+D1** (15 menit itu noise untuk M30 swing + spread $17; XAU M5 cukup horizon pendek — nggak nangkep trend jangka panjang). Cache refresh: XAU 15 menit, **BTC 1 jam**. `horizon_label` di forecast dict.
 15. **Slot ke-3 = DeepSeek V4 Flash (default, configurable)**: `CLAUDE_MODEL = "deepseek/deepseek-v4-flash"` — jauh lebih murah dari `claude-sonnet-4-6` (buat akun cent, ~$2/hari Claude itu mahal vs risk per trade puluhan sen). Routing otomatis di `query_claude()`: `deepseek/...` → DeepSeek API (OpenAI-compatible, base `https://api.deepseek.com/v1`), `claude-...` → Anthropic. Fallback `claude-haiku-4-5-20251001` (cuma kepanggil kalau DeepSeek error). Ganti model via menu setup / `--claude-model`. Log label otomatis ("DeepSeek" vs "Claude"). **Catatan lama (historis):** era sonnet-4-6 = model paling analitis (sadar R:R vs spread); DeepSeek konservatif (HOLD/SELL dominan).
 16. **Pemisahan entry vs position management di prompt**: `signal` = murni entry baru, `position_actions` = posisi existing, dinilai independen (cegah LLM campur "existing BUY masih bagus" sebagai alasan HOLD entry). **Pullback Tolerance**: Prompt Re-Evaluator di-enhance untuk melarang keras aksi CLOSE dini pada koreksi/pullback M15 normal (hanya boleh CLOSE jika level invalidasi teknis rusak nyata atau terjadi reversal terkonfirmasi).
@@ -95,6 +96,31 @@ python main.py
 18. **Deteksi close manual (magic=0)**: manual close dari MT5 mobile menghasilkan OUT deal `magic=0` (magic tidak diteruskan). `get_closed_positions_today` menerima OUT magic=0 **hanya jika posisi dibuka bot** (ada IN magic bot) — posisi manual user tidak ikut kehitung. Window P/L = tengah malam WIB → next-midnight (bukan rolling 24h, biar loss kemarin tidak masuk "hari ini"). **Jangan diubah ke rolling 24h** — itu bikin daily loss cap ke-trip dari loss hari sebelumnya. **Reason close di-label** ("manual" untuk magic=0, SL/TP/stop-out dari kode MT5) — bukan "unknown".
 19. **Post-mortem langsung saat close**: dipicu di loop 5 detik pas `sync_closed_positions` return `new_deals` (background thread biar nggak nge-block), bukan nunggu candle. `check_and_evaluate_closed_trades(deals)` nerima deals langsung. **Jangan seed `evaluated_tickets` dari `known_closed` tiap cycle** — itu nge-block tiket baru (bug yang udah diperbaiki); re-evaluation dicegah oleh `evaluated_tickets` persist di `memory_lessons.json`.
 20. **Trailing stop (mode-aware, update 13 Agustus)**: activation `min(0.85×ATR, cap)` (XAU 500 / BTC 40000 pts) — **mode LLM: activation `max(1.5×SL original, fallback)`, cap 60% TP; distance SL-based `0.8→0.3×SL`** (lihat entri 13 Agustus). Distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
+
+### Perubahan 14 Agustus — LLM Rules baru (Daily Profit Target 6%, Dead Zone subuh, Safety Floor/R:R 1.25)
+
+**Latar belakang:** prompt dev-quant (6 enhancement blocks) diuji ~13 jam → 14 trade, 4W-10L, −$94.83 (didominasi FX −$77.90, semua SL penuh, nol TP hit). Sample terlalu kecil utk menyimpulkan; user balik ke `dev` (prompt bersih) dan minta aturan risk baru alih-alih ngutak-atik prompt.
+
+**Perubahan (config + risk_engine + consensus + prompt sync):**
+1. **Daily Profit Target 6%** (`DAILY_PROFIT_TARGET_PERCENT`, default 6.0): begitu net profit harian (window WIB-midnight via `get_closed_positions_today`) ≥ 6% balance MT5 → `can_trade()` nolak semua posisi baru sampai tengah malam WIB berikutnya (reset otomatis). Implementasi: `_check_daily_profit_target()` di risk_engine (dipanggil setelah `_check_daily_loss`). **Pakai `c["profit"]` saja** — profit dari connector SUDAH net (termasuk swap+komisi); jangan tambah `c["commission"]` lagi (double-count). Balance ≤ 0 (MT5 disconnect) → skip (jangan blokir).
+2. **Dead Zone 02:00–06:00 WIB** (`DANGER_ZONES_WIB` diisi lagi, sebelumnya `[]`): blokir TOTAL posisi baru jam 02:00-06:00 WIB utk XAU & FX (crypto/BTC otomatis di-skip di `_check_danger_zones` — BTC tetap 24/7). Sesi lain tetap bebas.
+3. **Safety Floor Mode LLM per-kategori** (config): `LLM_SAFETY_FLOOR_FX_PTS = 250` (25 pips, ganti dari `0.5×default_sl` = 50 pts), `LLM_SAFETY_FLOOR_XAU_PTS = 400` (tetap). Di `_apply_sltp_rules` mode LLM: SL di-floor ke minimal tsb (max dgn 2×spread).
+4. **R:R minimum 1.25:1** (`LLM_MIN_RR_RATIO = 1.25`, ganti dari 1.0): **TP di-NAIKKAN ke minimal 1.25×SL** (bukan tolak trade) — `tp_points = max(tp_points, int(sl_points*1.25))`. Konsisten dgn filosofi floor (SL juga di-floor, bukan ditolak).
+5. **Prompt sync** (`llm_client._build_sltp_rules_block`): teks "R:R at least 1:1" diganti `{min_rr}:1` (1.25) utk XAU/BTC/FX; FX tambah "SL ≥ 250 pts (25 pips)"; docstring/CLI help ikut di-update.
+6. **Lot sizing murni risk-based** — `config.max_lot_for()` DIHAPUS 14 Agustus (XAU cap 0.01 tidak ada lagi); lot = risk_usd / (SL pts × usd_per_point), clamp ke volume_min/max broker + margin safety net. Gate OVER-RISK di consensus tetap melindungi (SL > max budget risk di min lot → tolak).
+7. **Test**: `scratch/test_llm_rules_and_risk.py` — 16 PASS (floor FX 50→250 & TP→312, XAU 300→400 & TP→500, SL wajar 600/900 tak diubah, daily target +$65 → tolak & +$20 → boleh, dead zone 03:00 tolak & 01:00/07:00 boleh & BTC bebas).
+8. **Fix kontradiksi prompt "exactly at" + format harga FX** (llm_client + macro_analyst): 
+   - Teks lama "SL is placed **exactly at** the invalidation price level / TP at target_price" dihapus (teknisnya salah: bot geser SL pas floor aktif) → diganti **"at or slightly beyond"** + pernyataan eksplisit **"bot enforces floors automatically — kamu tidak perlu stretch level"** + HOLD message digabung jadi satu. Berlaku di static RISK CONSTRAINTS + blok XAU/BTC/FX (LLM) + blok ATR-Based.
+   - RISK CONSTRAINTS ditambah 3 hal: (a) instruksi proses **"read data first → form thesis → validate against constraints"** (anti force-fit); (b) definisi invalidation eksplisit: **nearest opposing swing structure di belakang entry** (BUY → swing low terakhir di bawah; SELL → swing high terakhir di atas) — *bukan* extreme latest candle, *bukan* swing terjauh window; (c) **ATR(14) sanity check lunak**: SL << 0.5×ATR = noise-level, prefer ~0.5-1×ATR kalau struktur ngizinin.
+   - **Format harga FX 5-desimal** (fix kritis, ketahuan pas print prompt GBPCHF): `.2f` meratakan ATR 0.00091 → "0.00", EMA 1.096 → "1.10", Fib semua "1.10" → LLM buta struktur. Sekarang pakai `_fmt_price()` (10-desimal strip trailing zero) di indikator summary, Fib (round 6-desimal dulu), PDH/PDL/Today Open, MTF macro (`_fmt()` di macro_analyst). EURJPY 3-desimal juga ikut kebener otomatis.
+   - **Typical SL FX di unit definition** disinkronkan ke floor: 50-150 → **250-625 pts** (mode LLM, pola sama XAU 400-1000) — sebelumnya kontradiksi "typical 50-150" vs floor 250.
+   - **Nearest Round Number FX**: `round(1.09815)` = 1 → "1.00" (9% jauh) → sekarang `round(bid, 2)` → 1.10 untuk harga < 100; BTC/XAU tetap kelipatan 1000/integer.
+   - Preview prompt produksi: `scratch/preview_full_prompt.py` (XAU) + `scratch/preview_fx_prompt.py` (FX H1, build_system_prompt dipanggil dgn point_size dari tick) → hasil print di `testmd.md` / `testmdfx.md` (UTF-8 bersih via Python redirect, bukan PowerShell).
+9. **ROLLBACK SL/TP: points-based lagi, invalidation cuma referensi probability** (fix 14 Agustus): model yang ngasih `invalidation_price`/`target_price` harga absolut ternyata SERING kontradiksi sama `sl_points`/`tp_points` (contoh: sl_points 610 tapi invalidation 147 pts dari entry) → bot pakai harga absolut → SL jadi 147 → di-floor 400, display "SL: 610" menyesatkan. Sekarang **`sl_points`/`tp_points` = REQUIRED & satu-satunya yang dipakai bot untuk order** (average + outlier filter di consensus, lalu floor/R:R/over-risk gate). `invalidation_price`/`target_price` = **OPTIONAL, cuma konteks thesis/probability model — TIDAK dipakai bot untuk SL/TP** (di prompt + OUTPUT FORMAT dipertegas). Main.py: tidak re-calc dari harga absolut lagi; hitung sl_price/tp_price dari points + tick live, spread gate tetap (`max(spread*2, sl)`), re-check `_apply_sltp_rules` tetap (batal kalau gagal). Display "Price SL/TP" di consensus = di-sync dari points final (bukan harga absolut model).
+10. **OpenAI primary → `gpt-5.2`, fallback `gpt-4o-mini`** + **floor FX berbasis ATR** (fix 14 Agustus, hasil benchmark multi-sampel): `_execute_openai_single` diuji 13 model × real data (XAU + 5 FX, `scratch/compare_sltp_models.py` + `compare_sltp_multi.py`): gpt-5.2 = 4/6 trade, 4 SL natural, cepat 4.4s (vs gpt-5.4-mini/DeepSeek HOLD 6/6 — "nearest invalidation di bawah floor, no clean setup" = akar masalah bot jarang trade; gpt-5 = 50s (lewati timeout), gpt-4o-mini = SL generik 250/625 "main aman ke floor"). **Floor FX `LLM_SAFETY_FLOOR_FX_PTS=250` statis → dinamis `max(2x spread, 1.5x ATR H1)`** (`LLM_FX_FLOOR_ATR_MULT=1.5`, fallback 250 kalau ATR gagal) — floor statis 250 = 2.5-2.8×ATR H1 FX (~90-100 pts) bikin SL struktural asli (60-200) di-floor paksa + TP 312 (3.2×ATR) jarang kesampean (diduga penyebab performa FX merah). Efek: GBPCHF SL 63→136 (bukan 250), TP 170 (bukan 312), gpt-5.4-mini mulai trade di EURAUD (147/183). Implementasi: `consensus._apply_sltp_rules` (atr_points sudah dihitung di sana, `LLM_FX_FLOOR_ATR_MULT` di config), prompt FX sinkron via `_fx_atr_h1_points()` (cache 60s) di blok rules + typical range (contoh: "~142 pts = 1.5x ATR H1"). XAU tetap 400 statis (0.4×ATR M15, sudah proporsional). **Catatan benchmark 14 Agustus**: hasil multi-sampel itu diambil PAS floor FX masih statis 250 — semua SL "250" di hasil (termasuk o3-mini) kemungkinan floor-copying, BUKAN struktur asli. o3-mini SL struktural aslinya 155 (EURAUD) & 73 (GBPCHF) malah di-widen paksa ke 250 — korban floor yang sama. Keputusan fallback o3-mini vs 4o-mini BELUM final, perlu re-run benchmark dengan floor ATR baru.
+11. **Window scheduling OpenAI primary (14 Agustus)**: `OPENAI_PRIMARY_WINDOW_WIB` (default `"15:00-19:30"` WIB, London open) — di dalam window pakai `OPENAI_MODEL` (gpt-5.2), di luar langsung `OPENAI_DEFAULT_MODEL` (**o3-mini**, main sejak 14 Agustus — SL struktural, reason spesifik, confidence bervariasi vs 4o-mini yang generik: "momentum continuation" copy-paste + SL/TP/confidence template 75% flat di semua pair), error/timeout → `OPENAI_FALLBACK_MODEL` (**gpt-4o-mini**). Alasan: gpt-5.2 free tier cuma 250k token/hari (SHARED antar model besar) vs 4o-mini 2.5M/hari; estimasi konsumsi ~6k token/call (prompt ~21.6k chars ≈ 5.7k input + ~250 output) → mode xau 96 cycle ≈ 576k token/hari, xau_pairs 240 ≈ 1.44M/hari → gpt-5.2 cuma tahan ~41 call (~4-10 jam) → dipakai pas volatilitas tertinggi aja (London-NY), sisanya 4o-mini. Implementasi: `_resolve_openai_primary()` di `query_openai` (llm_client.py) + `_parse_windows_wib()` di config. Usage API gratis (400/0) tidak expose → estimasi matematis. `FORECAST_MODEL` default gpt-5.4 (terpisah, forecast engine).
+
+**Catatan**: prompt dev-quant (commit `a8192ad` + `4050517`) TIDAK ikut ke dev — enhancement blocks/RSI Direction eksperimen tetap di branch dev-quant. AGENTS.md/README yang menyebut 6 enhancement blocks hanya berlaku di dev-quant.
 
 ### Perubahan 11 Agustus (sesi ini — PENTING: branch split!)
 
@@ -159,10 +185,39 @@ python main.py
 
 **Catatan**: fix `progress_ref` juga diterapkan di mode ATR-Based (bug yang sama). Clamp ke `trade_stops_level` broker (fix permanen error "Invalid stops") belum diimplementasikan — masih rekomendasi lanjutan.
 
+### Perubahan 13 Agustus (lanjutan) — Split SL/TP mode per kategori: XAU/BTC fix ATR-Based, FX LLM
+
+**Latar belakang:** mode LLM global bikin XAU jadi scalping — OpenAI sering kasih SL 83-400 pts padahal ATR M15 XAU ~819 pts (floor 400 cuma 0.49× ATR), dan OpenAI jadi over-restrictive (HOLD terus: "no clean 400+ point invalidation"). Gemini yang kasih setup valid (R:R 1.22-1.65) selalu diblokir konsensus karena OpenAI HOLD.
+
+**Perubahan (arsitektur baru — logic & config dipisah per kategori biar enak debug):**
+1. **`config.sltp_mode_for(symbol)`** — single source of truth mode SL/TP per simbol:
+   - **XAUUSD & BTC → `"ATR-Based"` (fix, SELALU)** — gate ATR R:R 2:1, anti-scalping. Prompt XAU/BTC inject ATR HARD GATE lagi (`atr_gate_str` dengan angka minimum konkret per AI mode).
+   - **FX pairs → `"LLM"`** — bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl)`, gate R:R minimal 1:1.
+   - **Force override**: `config.TP_SL_RULES == "ATR-Based"` (CLI `--tpsl-rules` / `.env`) → FX ikut ATR-Based juga. Default "LLM" = aturan per-kategori.
+2. **`consensus.py`**: `_apply_sltp_rules` pakai `config.sltp_mode_for(config.SYMBOL)` (bukan global `TP_SL_RULES`).
+3. **`llm_client.py`**: blok SL/TP rules & `atr_gate_str` resolve per-symbol via `sltp_mode_for(symbol)`.
+4. **`position_manager.py`**: BEP/trailing mode di-resolve per-posisi (`sltp_mode_for(pos.symbol)`) — XAU/BTC pakai ATR-based, FX pakai SL-based (perubahan 13 Agustus sebelumnya).
+5. **R:R minimum 1:1** (dari 1.25, commit `ffaf700`): berlaku di mode LLM (FX) + re-check eksekusi main.py. Prompt klarifikasi (commit `09981e4`): R:R 1:1 itu gate minimal yang diverifikasi bot, bukan alasan HOLD — model wajib kasih `invalidation_price`/`target_price` dari struktur teknis, bot yang hitung & verifikasi.
+6. **Re-check gate saat eksekusi** (commit `16644ba`): main.py re-kalkulasi SL/TP dari harga absolut pakai tick fresh, lalu `_apply_sltp_rules` dipanggil lagi — kalau R:R < 1:1 / gagal gate → trade dibatalkan (`gate_blocked → slots 0`).
+
+### Perubahan 13 Agustus (sore) — XAU pindah ke LLM mode + risk 1.0% + max lot 0.01 + GATE OVER-RISK
+
+**Latar belakang:** gate ATR-Based untuk XAU (SL ≥ 1.25×ATR M15 ≈ 1024 pts) bikin SL lebar yang **TIDAK MUAT di min lot 0.01 broker** dengan risk 0.5% — risk aktual meledak 3.2× (0.0031 lot raw di-clamp naik ke 0.01 → risk $17.36 = 1.6%). Simulasi 5 iterasi full prompt live: OpenAI kasih SL 300 pts konsisten (R:R 5:1) kalau nggak di-gate ATR. Keputusan user: XAU ikut mode LLM (bebas struktur), risk dinaikkan ke 1.0% (max SL ~1079 pts di equity $1079 muat sweet spot). **14 Agustus: max lot cap 0.01 DIHAPUS** — lot murni risk-based, volume_max broker yang membatasi (gate OVER-RISK tetap jaga).
+
+**Perubahan:**
+1. **`config.sltp_mode_for(symbol)`**: XAU → `"LLM"` (bukan ATR-Based fix lagi; soft floor 400-1000 + gate over-risk). BTC tetap `"ATR-Based"` (fix). FX tetap `"LLM"`.
+2. **`config.risk_percent_for()`**: XAU 0.5% → **1.0%** (docstring + DEFAULT_CONFIG v1/v2/v3 ikut).
+3. ~~**`config.max_lot_for(symbol)`** (XAU → 0.01 cap keras)~~ — **DIHAPUS 14 Agustus** (user: "aturan max lot hapus aja"). Tidak ada cap per-kategori; `get_effective_lot_size` clamp ke volume_min/max broker saja.
+4. **`consensus._apply_sltp_rules` — GATE OVER-RISK (baru, semua mode)**: setelah R:R 1:1 check, hitung `max_sl = (equity × risk_pct) / (volume_min × usd_per_pt_1lot)` — kalau SL resolved > max_sl → **trade DITOLAK** dengan reason "OVER-RISK: SL X pts > max Y pts (risk Z% gak muat di min lot)". Ini menangkap anomali kayak SL 1736 pts (OpenAI tulis sl_points 927 tapi invalidation_price 1736 pts jauh → resolved 1736) yang sebelumnya lolos diam-diam.
+5. **`llm_client.py` prompt XAU LLM**: soft guidance (bukan gate): "SL ~400-1000 pts ideal, >1100 pts → risk > 1.0% budget, bot mungkin tolak; prefer structural level yang jaga SL di 400-1000".
+6. **Banner/status**: "XAU: LLM (soft floor 400-1000) | BTC: ATR-Based (fix) | FX: LLM" (max lot cap dihapus 14 Agustus).
+
+**Konsekuensi (update 14 Agustus):** dengan max lot cap dihapus, lot sizing XAU murni risk-based: lot = risk 1.0% / (SL pts × usd_per_point), di-clamp ke volume_step broker. SL 400 pts di equity $1079 → lot 0.013 → risk ~$10.8 (1.0%). Gate OVER-RISK tetap tolak kalau SL > budget min lot.
+
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
 - Git branch: **`dev` = branch utama** (prompt baru + FASE 1-5 multi-symbol H1), **`main` = prompt lama** (terakhir `744ad0a`). **Sengaja split — jangan merge dev → main tanpa konfirmasi user.** FASE 1-5 sudah di-commit di `40c7288` (sebelumnya `284ec76` = outcome tracking akurat + default per-symbol + multiplier ATR per AI mode).
-- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.4-mini; fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
+- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.2 (window 15:00-19:30 WIB) / o3-mini (default di luar window, 14 Agu) / gpt-4o-mini (fallback error); fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
 - **`data/` dan `scratch/` sudah di-`.gitignore`** (untrack via `git rm --cached`, file tetap ada di disk). `git status` sekarang bersih dari runtime state — cuma source file + `docs/` yang muncul.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
 - **Status display live** menampilkan posisi terbuka semua symbol + floating P/L tiap 3 detik (`get_all_open_positions`). Status line pendek & refresh di tempat (FASE 3).
@@ -171,10 +226,67 @@ python main.py
 
 > Bot kedua untuk **Binance spot** (BTC/ETH/SOL), modal kecil, deploy Linux. **TIDAK ada di branch `dev`/`main`** — kode lengkap ada di branch `binance` (`git checkout binance`). Arsitektur: 2 proposer + 1 approver, OCO SL/TP, dry-run realistis, HOLD-streak, risk 1.5%, trading 24/7. Detail lengkap ada di AGENTS.md branch binance.
 
+## Estimasi Frekuensi & Biaya Call LLM Harian
+
+Dengan **Smart Timeframe Rotation (FASE 5)**, LLM dipanggil per simbol hanya ketika lilin timeframe-nya ditutup (XAU M15 = 15 menit, BTC M30 = 30 menit, FX H1 = 60 menit). Biaya dihitung menggunakan asumsi ukuran input prompt ~3.5k tokens dan output ~150 tokens.
+
+### 1. Estimasi Call per Hari (24 Jam)
+* **Mode XAU Only (`TRADING_MODE = "xau"`)**: 96 siklus/hari.
+  * OpenAI (`gpt-5.2` window / `gpt-4o-mini` luar window): **96 call/hari**
+  * Gemini (`gemini-3.1-flash-lite`): **28 call/hari** (di sesi Dual & Triple)
+  * DeepSeek (`deepseek-v4-flash`): **8 call/hari** (di sesi Triple)
+  * **Total Call:** 132 call/hari.
+* **Mode XAU + Pairs (`TRADING_MODE = "xau_pairs"`)**: 240 siklus/hari (96 XAU M15 + 6 FX H1).
+  * OpenAI: **240 call/hari**
+  * Gemini: **70 call/hari**
+  * DeepSeek: **20 call/hari**
+  * **Total Call:** 330 call/hari.
+* **Mode BTC Only (Weekend/Rotasi)**: 48 siklus/hari.
+  * OpenAI: **48 call/hari**, Gemini: **14 call/hari**, DeepSeek: **4 call/hari**.
+  * **Total Call:** 66 call/hari.
+
+### 2. Estimasi Biaya per Hari & Bulanan (USD & IDR)
+
+Asumsi nilai tukar: **1 USD = Rp 15.500,-**
+
+* **Asumsi Tarif Model Utama:**
+  * OpenAI mini (`gpt-5.2` / `gpt-4o-mini`): **GRATIS $0.00** (Dalam batas free tier 2.5 juta token per hari). *[Jika berbayar: Input $0.15/1M, Output $0.60/1M => ~$0.0006 per call]*
+  * Gemini Lite (`gemini-3.1-flash-lite`): Input $0.075/1M, Output $0.30/1M => **~$0.0003 per call**
+  * DeepSeek (`deepseek-v4-flash` / V3): Input $0.14/1M, Output $0.28/1M => **~$0.0005 per call**
+  * Claude Sonnet (`claude-3-5-sonnet`): Input $3.00/1M, Output $15.00/1M => **~$0.0128 per call**
+
+#### OPSI A: Menggunakan DeepSeek di Slot 3 (DEFAULT - Sangat Hemat)
+* **Mode XAU Only (`TRADING_MODE = "xau"`)**
+  * Biaya Harian: OpenAI: $0.00 ($0.0576 jika berbayar) | Gemini: $0.0084 | DeepSeek: $0.0040
+  * **Total Harian:** **~$0.0124 / hari (± Rp 190,-)** — *[Jika OpenAI berbayar: ~$0.0700 / hari (± Rp 1.100,-)]*
+  * **Total Bulanan (30 Hari):** **~$0.37 / bulan (± Rp 5.700,-)** — *[Jika OpenAI berbayar: ~$2.10 / bulan (± Rp 32.500,-)]*
+* **Mode XAU + Pairs (`TRADING_MODE = "xau_pairs"`)**
+  * Biaya Harian: OpenAI: $0.00 ($0.1440 jika berbayar) | Gemini: $0.0210 | DeepSeek: $0.0100
+  * **Total Harian:** **~$0.0310 / hari (± Rp 480,-)** — *[Jika OpenAI berbayar: ~$0.1750 / hari (± Rp 2.800,-)]*
+  * **Total Bulanan (30 Hari):** **~$0.93 / bulan (± Rp 14.400,-)** — *[Jika OpenAI berbayar: ~$5.25 / bulan (± Rp 81.370,-)]*
+* **Mode BTC Only (Weekend/Rotasi)**
+  * Biaya Harian: OpenAI: $0.00 ($0.0288 jika berbayar) | Gemini: $0.0042 | DeepSeek: $0.0020
+  * **Total Harian:** **~$0.0062 / hari (± Rp 96,-)** — *[Jika OpenAI berbayar: ~$0.0350 / hari (± Rp 550,-)]*
+  * **Total Bulanan (30 Hari):** **~$0.19 / bulan (± Rp 2.900,-)** — *[Jika OpenAI berbayar: ~$1.05 / bulan (± Rp 16.275,-)]*
+
+#### OPSI B: Menggunakan Claude Sonnet 3.5 di Slot 3 (Analisis Lebih Tajam tapi Premium)
+* **Mode XAU Only (`TRADING_MODE = "xau"`)**
+  * Biaya Harian: OpenAI: $0.00 ($0.0576 jika berbayar) | Gemini: $0.0084 | Claude Sonnet (8 call): $0.1024
+  * **Total Harian:** **~$0.1108 / hari (± Rp 1.710,-)** — *[Jika OpenAI berbayar: ~$0.1684 / hari (± Rp 2.610,-)]*
+  * **Total Bulanan (30 Hari):** **~$3.32 / bulan (± Rp 51.500,-)** — *[Jika OpenAI berbayar: ~$5.05 / bulan (± Rp 78.300,-)]*
+* **Mode XAU + Pairs (`TRADING_MODE = "xau_pairs"`)**
+  * Biaya Harian: OpenAI: $0.00 ($0.1440 jika berbayar) | Gemini: $0.0210 | Claude Sonnet (20 call): $0.2560
+  * **Total Harian:** **~$0.2770 / hari (± Rp 4.290,-)** — *[Jika OpenAI berbayar: ~$0.4210 / hari (± Rp 6.520,-)]*
+  * **Total Bulanan (30 Hari):** **~$8.31 / bulan (± Rp 128.800,-)** — *[Jika OpenAI berbayar: ~$12.63 / bulan (± Rp 195.700,-)]*
+* **Mode BTC Only (Weekend/Rotasi)**
+  * Biaya Harian: OpenAI: $0.00 ($0.0288 jika berbayar) | Gemini: $0.0042 | Claude Sonnet (4 call): $0.0512
+  * **Total Harian:** **~$0.0554 / hari (± Rp 860,-)** — *[Jika OpenAI berbayar: ~$0.0842 / hari (± Rp 1.300,-)]*
+  * **Total Bulanan (30 Hari):** **~$1.66 / bulan (± Rp 25.700,-)** — *[Jika OpenAI berbayar: ~$2.52 / bulan (± Rp 39.000,-)]*
+
 ## Konvensi & hal yang perlu diingat
 
 - User komunikasi dalam **Bahasa Indonesia** (santai).
-- **Risk-averse**: risk per trade terkontrol (BTC 1.5% / XAU 0.5% / FX 1.0% equity), jangan longgarkan daily loss. Kalau mau eksperimen agresif → demo dulu, bukan live.
+- **Risk-averse**: risk per trade terkontrol (BTC 1.5% / XAU 1.0% / FX 1.0% equity), jangan longgarkan daily loss. Kalau mau eksperimen agresif → demo dulu, bukan live.
 - Perubahan prompt = diskusi dulu sebelum apply (user minta bahas dulu).
 - User suka angka dari sumber kebenaran: profit = query MT5 langsung, bukan log campuran.
 - Kalau bikin skrip analisis sementara → taruh di `scratch/`, lalu HAPUS setelah dipakai (user minta dibersihin).
