@@ -296,6 +296,7 @@ def interactive_setup():
         ("LIMIT & FILTER", "Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
+        ("KONSENSUS & AI", "OpenAI Model (24/7)", "config.OPENAI_MODEL", str(config.OPENAI_MODEL) + " (Full 24/7 All Sessions)"),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
          "XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1, R:R 1.25)" if config.TP_SL_RULES == "LLM"
@@ -956,7 +957,7 @@ def main():
     else:
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
 
-    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} {config.OPENAI_PRIMARY_WINDOW_WIB} WIB / {config.OPENAI_DEFAULT_MODEL} / err-fb {config.OPENAI_FALLBACK_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
+    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} {config.OPENAI_PRIMARY_WINDOW_WIB} WIB / {config.OPENAI_DEFAULT_MODEL} / err-fb {config.OPENAI_FALLBACK_MODEL}), Dual slot: {config.AI_DUAL_SECOND_MODEL}{' (reasoning ' + config.DEEPSEEK_REASONING_EFFORT + ')' if config.AI_DUAL_SECOND_MODEL.strip().lower() in ('deepseek', 'ds') else ''}, Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
     print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")

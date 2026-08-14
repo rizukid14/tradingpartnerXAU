@@ -725,6 +725,8 @@ def serve(host="0.0.0.0", port=8765):
                     "OPENAI_FALLBACK_MODEL": getattr(config, "OPENAI_FALLBACK_MODEL", "gpt-4o-mini"),
                     "OPENAI_DEFAULT_MODEL": getattr(config, "OPENAI_DEFAULT_MODEL", "o3-mini"),
                     "OPENAI_PRIMARY_WINDOW_WIB": getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"),
+                    "AI_DUAL_SECOND_MODEL": getattr(config, "AI_DUAL_SECOND_MODEL", "DeepSeek"),
+                    "DEEPSEEK_REASONING_EFFORT": getattr(config, "DEEPSEEK_REASONING_EFFORT", "low"),
                     "RISK_PERCENT_BTC": getattr(config, "RISK_PERCENT_BTC", 1.5),
                     "RISK_PERCENT_XAU": getattr(config, "RISK_PERCENT_XAU", 0.5),
                     "MAX_DAILY_LOSS_USD": getattr(config, "MAX_DAILY_LOSS_USD", 50),

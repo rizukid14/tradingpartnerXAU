@@ -114,12 +114,16 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "deepseek/deepseek-v4-flash")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
 
+# DeepSeek reasoning effort: "high" | "medium" | "low" (14 Agustus - user minta "low"
+# biar lebih responsif & murah; Gemini sering abstain HOLD di dual mode).
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
+
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")  # dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB (15:00-19:30 WIB)
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "o4-mini")  # 100% o4-mini (ultra-defensive, 14 Agu)
 OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")  # fallback error (lambat/timeout)
-OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o3-mini")  # model utama di luar window (SL struktural, 14 Agu)
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o4-mini")  # 100% o4-mini (ultra-defensive, 14 Agu)
 
 
 def _parse_windows_wib(raw):
@@ -288,22 +292,28 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
 # Format: (start_hour, start_minute, end_hour, end_minute, mode)
-# Mode values: "single" | "dual" | "triple"
+# Mode values: "single" | "single_gemini" | "dual" | "triple"
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
-# Jadwal WIB (12 Agustus):
-#   - single (OpenAI): 00:01–09:59 (Asia pagi & awal London)
-#   - dual (OpenAI + Gemini): 10:00–15:00 (Asia siang & pre-London)
-#   - single (OpenAI): 15:01–19:29 (London session)
+# Jadwal WIB (14 Agustus update):
+#   - single (OpenAI o4-mini): 00:01–09:59 (Asia pagi & awal London)
+#   - single_gemini (Gemini 3.1-flash-lite): 10:00–15:00 (Asia siang & pre-London: Gemini Only)
+#   - single (OpenAI o4-mini): 15:01–19:29 (London session)
 #   - triple (OpenAI + Gemini + DeepSeek): 19:30–21:30 (London-NY overlap, volatilitas tertinggi)
-#   - single (OpenAI): 21:31–23:59 (Late NY & Tokyo)
+#   - single (OpenAI o4-mini): 21:31–23:59 (Late NY & Tokyo)
 AI_MODE_SCHEDULE = [
     (0, 1, 9, 59, "single"),
-    (10, 0, 15, 0, "dual"),
+    (10, 0, 15, 0, "single_gemini"),
     (15, 1, 19, 29, "single"),
     (19, 30, 21, 30, "triple"),
     (21, 31, 23, 59, "single"),
 ]
+
+# Model pengisi slot kedua di mode "dual". Default "Gemini" (14 Agustus sore - DeepSeek
+# lagi lemot/unreliable: 3/7 call timeout 24s, latency asli 36s+ > timeout bot; pas
+# API-nya normal bisa coba lagi via env AI_DUAL_SECOND_MODEL=DeepSeek).
+# "triple" tetap OpenAI+Gemini+DeepSeek.
+AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
 QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
@@ -657,7 +667,7 @@ def get_ai_mode(now=None):
     policy = getattr(sys.modules[__name__], "AI_MODE_POLICY", "schedule")
     if policy == "fixed":
         fixed = getattr(sys.modules[__name__], "AI_FIXED_MODE", "triple")
-        return fixed if fixed in ("single", "dual", "triple") else "triple"
+        return fixed if fixed in ("single", "single_gemini", "dual", "triple") else "triple"
 
     total_minutes = now.hour * 60 + now.minute
     for sh, sm, eh, em, mode in AI_MODE_SCHEDULE:
@@ -670,18 +680,28 @@ def get_ai_mode(now=None):
 
 def atr_sl_multiplier(now=None):
     """SL floor multiplier per AI mode (R:R 2:1 dijaga):
-    single 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
+    single / single_gemini 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
     makin yakin setupnya, SL/TP makin lebar (target lebih jauh).
     Dipakai di consensus gate ATR + prompt atr_gate_str - harus sinkron.
     """
-    return {"single": 1.25, "dual": 1.5, "triple": 1.75}.get(get_ai_mode(now), 1.25)
+    mode = get_ai_mode(now)
+    if mode in ("single", "single_gemini"):
+        return 1.25
+    if mode == "dual":
+        return 1.5
+    return 1.75
 
 
 def atr_tp_multiplier(now=None):
     """TP floor multiplier per AI mode = 2x SL multiplier (R:R 2:1 selalu):
-    single 2.5x, dual 3.0x, triple 3.5x.
+    single / single_gemini 2.5x, dual 3.0x, triple 3.5x.
     """
-    return {"single": 2.5, "dual": 3.0, "triple": 3.5}.get(get_ai_mode(now), 2.5)
+    mode = get_ai_mode(now)
+    if mode in ("single", "single_gemini"):
+        return 2.5
+    if mode == "dual":
+        return 3.0
+    return 3.5
 
 
 def claude_slot_label():
@@ -692,15 +712,21 @@ def claude_slot_label():
 
 def active_ai_model_names(now=None):
     """Return the model slots to query for the active AI mode.
-    - single: OpenAI
-    - dual: OpenAI + Gemini
+    - single: OpenAI (o4-mini)
+    - single_gemini: Gemini (gemini-3.1-flash-lite)
+    - dual: OpenAI + Gemini (legacy/fallback)
     - triple: OpenAI + Gemini + DeepSeek (Claude slot)
     """
     mode = get_ai_mode(now)
     slot3 = claude_slot_label()
+    if mode == "single_gemini":
+        return ["Gemini"]
     if mode == "single":
         return ["OpenAI"]
     if mode == "dual":
+        second = AI_DUAL_SECOND_MODEL.strip().lower()
+        if second in ("deepseek", "ds"):
+            return ["OpenAI", slot3]
         return ["OpenAI", "Gemini"]
     return ["OpenAI", "Gemini", slot3]
 

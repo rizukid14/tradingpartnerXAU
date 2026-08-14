@@ -40,7 +40,7 @@ python main.py
 
 ## Alur cycle (main.py → run_trading_cycle)
 
-0. **Time-Based AI Mode** (WIB, 12 Agustus): 00:01–09:59 = **single** (OpenAI), 10:00–15:00 = **dual** (OpenAI+Gemini), 15:01–19:29 = **single** (OpenAI), **19:30–21:30 = triple** (OpenAI+Gemini+DeepSeek — London-NY overlap, volatilitas tertinggi), 21:31–23:59 = **single** (OpenAI). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
+0. **Time-Based AI Mode** (WIB, 14 Agustus update): 00:01–09:59 = **single** (OpenAI o4-mini), 10:00–15:00 = **single_gemini** (Gemini 3.1-flash-lite Only), 15:01–19:29 = **single** (OpenAI o4-mini), **19:30–21:30 = triple** (OpenAI+Gemini+DeepSeek — London-NY overlap, volatilitas tertinggi), 21:31–23:59 = **single** (OpenAI o4-mini). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
 1. `risk.can_trade()` — spread/sesi/daily loss gate. Gagal → skip (nggak ada biaya LLM)
 2. Ambil 50 candle timeframe aktif (M15 XAU / H1 FX / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
@@ -217,7 +217,7 @@ python main.py
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
 - Git branch: **`dev` = branch utama** (prompt baru + FASE 1-5 multi-symbol H1), **`main` = prompt lama** (terakhir `744ad0a`). **Sengaja split — jangan merge dev → main tanpa konfirmasi user.** FASE 1-5 sudah di-commit di `40c7288` (sebelumnya `284ec76` = outcome tracking akurat + default per-symbol + multiplier ATR per AI mode).
-- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.2 (window 15:00-19:30 WIB) / o3-mini (default di luar window, 14 Agu) / gpt-4o-mini (fallback error); fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
+- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.2 (window 15:00-19:30 WIB) / o4-mini (default di luar window via .env, 14 Agu — ultra-defensive 100% natural SL) / o3-mini / gpt-4o-mini (fallback error); fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
 - **`data/` dan `scratch/` sudah di-`.gitignore`** (untrack via `git rm --cached`, file tetap ada di disk). `git status` sekarang bersih dari runtime state — cuma source file + `docs/` yang muncul.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
 - **Status display live** menampilkan posisi terbuka semua symbol + floating P/L tiap 3 detik (`get_all_open_positions`). Status line pendek & refresh di tempat (FASE 3).

@@ -789,6 +789,16 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
 
     point = symbol_info.point
 
+    # Re-check spread SESAT sebelum kirim order. Gate spread di awal cycle bisa
+    # kelewatan karena LLM call makan 10-60 detik -> spread bisa melebar drastis
+    # (quote burst) dan order_send gagal retcode 10013 (SL nyangkut di dalam spread).
+    # Kalau spread > gate, batalkan bersih (trade dievaluasi ulang candle berikutnya).
+    spread_now = (tick.ask - tick.bid) / point if point else 0.0
+    max_spread = config.max_spread_points_for(symbol)
+    if spread_now > max_spread:
+        return {"status": "ERROR", "comment": (f"Spread spike: {spread_now:.0f} pts > maks {max_spread} pts "
+                                               f"— order dibatalkan (hindari entry pas quote burst)")}
+
     if action == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
         price = tick.ask
@@ -816,11 +826,35 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
         else:
             live_price = price
         if action == "BUY":
-            live_sl = sl_price if sl_price else (live_price - (sl_points * point) if sl_points else (live_price - (default_sl * point) if default_sl else 0.0))
-            live_tp = tp_price if tp_price else (live_price + (tp_points * point) if tp_points else (live_price + (default_tp * point) if default_tp else 0.0))
+            live_sl = (live_price - (sl_points * point)) if (sl_points and sl_points > 0) else (sl_price if sl_price else (live_price - (default_sl * point) if default_sl else 0.0))
+            live_tp = (live_price + (tp_points * point)) if (tp_points and tp_points > 0) else (tp_price if tp_price else (live_price + (default_tp * point) if default_tp else 0.0))
         else:
-            live_sl = sl_price if sl_price else (live_price + (sl_points * point) if sl_points else (live_price + (default_sl * point) if default_sl else 0.0))
-            live_tp = tp_price if tp_price else (live_price - (tp_points * point) if tp_points else (live_price - (default_tp * point) if default_tp else 0.0))
+            live_sl = (live_price + (sl_points * point)) if (sl_points and sl_points > 0) else (sl_price if sl_price else (live_price + (default_sl * point) if default_sl else 0.0))
+            live_tp = (live_price - (tp_points * point)) if (tp_points and tp_points > 0) else (tp_price if tp_price else (live_price - (default_tp * point) if default_tp else 0.0))
+
+        # Validate SL/TP safety distances (anti-10013):
+        # - spread dihitung dari ask-bid (atribut live_tick.spread TIDAK ADA di build MT5 ini,
+        #   hasattr selalu False -> 2x spread nggak pernah kehitung sebelumnya)
+        # - sisi acuan yang benar: SELL ditutup via BUY (trigger di ASK), jadi
+        #   SELL: SL >= ask + min_dist, TP <= bid - min_dist
+        #   BUY : SL <= bid - min_dist, TP >= ask + min_dist
+        spread_pts = ((live_tick.ask - live_tick.bid) / point) if (live_tick and point) else 0.0
+        stops_level_pts = getattr(symbol_info, "trade_stops_level", 0) or 0
+        min_dist_pts = max(2 * spread_pts, 20, stops_level_pts)
+        min_dist = min_dist_pts * point
+        ask = live_tick.ask if live_tick else live_price
+        bid = live_tick.bid if live_tick else live_price
+        if action == "BUY":
+            if live_sl > 0 and live_sl >= (bid - min_dist):
+                live_sl = bid - min_dist
+            if live_tp > 0 and live_tp <= (ask + min_dist):
+                live_tp = ask + min_dist
+        else:
+            if live_sl > 0 and live_sl <= (ask + min_dist):
+                live_sl = ask + min_dist
+            if live_tp > 0 and live_tp >= (bid - min_dist):
+                live_tp = bid - min_dist
+
         return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,

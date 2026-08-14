@@ -1215,25 +1215,29 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec):
     """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
-    'deepseek/' prefix (e.g. 'deepseek-v4-flash'). Explicitly disables thinking/reasoning
-    mode for super-fast ~1.2s latency."""
+    'deepseek/' prefix (e.g. 'deepseek-v4-flash'). Uses config.DEEPSEEK_REASONING_EFFORT:
+    "low"/"medium"/"high" -> thinking mode (lebih lambat, 4-60s);
+    kosong/None -> fast mode TANPA reasoning_effort (deepseek-chat biasa, 2-5s).
+    Default "low" sejak 14 Agustus - biar lebih responsif daripada "medium"."""
     raw_model = model_name.split("/", 1)[1] if "/" in model_name else model_name
+    reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "low") or "").strip()
     try:
         try:
-            # Explicitly disable thinking/reasoning mode for super-fast execution (~1.2s)
-            response = deepseek_client.chat.completions.create(
+            kwargs = dict(
                 model=raw_model,
                 messages=[
                     {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
-                reasoning_effort="none",
-                extra_body={"thinking": {"type": "disabled"}},
-                timeout=timeout_sec
+                timeout=timeout_sec,
             )
+            if reasoning_effort:
+                # reasoning_effort kosong/None = fast mode (skip param, deepseek-chat biasa)
+                kwargs["reasoning_effort"] = reasoning_effort
+            response = deepseek_client.chat.completions.create(**kwargs)
         except Exception:
-            # Fallback to standard call if API endpoint does not recognize reasoning params
+            # Fallback to standard call if API endpoint does not recognize reasoning_effort param
             response = deepseek_client.chat.completions.create(
                 model=raw_model,
                 messages=[
@@ -1286,9 +1290,10 @@ def query_claude(prompt):
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
     Query only the AI slots active for the current WIB time window.
-    mode = single -> OpenAI only
-    mode = dual   -> OpenAI + DeepSeek (slot-3)
-    mode = triple -> OpenAI + Gemini + DeepSeek (slot-3)
+    mode = single        -> OpenAI only (00:01-09:59 / 15:01-19:29 / 21:31-23:59)
+    mode = single_gemini -> Gemini only (10:00-15:00, Asia/Pre-London - hemat & disiplin)
+    mode = triple        -> OpenAI + Gemini + DeepSeek (19:30-21:30, London-NY overlap)
+    mode = dual          -> legacy (OpenAI + AI_DUAL_SECOND_MODEL), masih didukung via AI_FIXED_MODE
     """
     prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
 

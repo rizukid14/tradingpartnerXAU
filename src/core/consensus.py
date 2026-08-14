@@ -314,7 +314,7 @@ def calculate_consensus(decisions):
         base_threshold *= 0.7
 
     ai_mode = getattr(config, "get_ai_mode", lambda: "triple")()
-    if ai_mode == "single":
+    if ai_mode in ("single", "single_gemini") or n_models == 1:
         # 1 model saja: skor max 1.0 -> threshold diturunkan (misal XAU 0.6 / BTC 0.72)
         min_models = 1
         threshold = base_threshold * 0.6
@@ -342,7 +342,7 @@ def calculate_consensus(decisions):
         any_trade_intent = any(dec.get("signal") in ("BUY", "SELL") for dec in decisions.values())
         if not any_trade_intent:
             hold_type = "pure_hold"
-        elif ai_mode == "single":
+        elif ai_mode in ("single", "single_gemini"):
             hold_type = "low_confidence"
         else:
             hold_type = "split_vote"
