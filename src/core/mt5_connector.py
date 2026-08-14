@@ -795,16 +795,21 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
 
     point = symbol_info.point
 
-    # Quote-health check (14 Agustus malam - akar masalah 10013 EURJPY/GBPCHF/EURAUD):
-    # liquidity tipis (Jumat sore/malam) -> spread 0 (bid==ask) / quote beku -> server
-    # tolak order_send dgn retcode 10013. Deteksi & abort bersih, jangan spam retry.
+    # Quote-health check (update 15 Agustus): spread 0 (bid==ask) itu NORMAL di akun
+    # ECN - order tetap valid & bisa dieksekusi (harga bid==ask saat itu). Yang beneran
+    # berbahaya: tick None (quote hilang), tick stale (feed beku - harga basi), spread
+    # spike (quote burst). 14 Agustus malam sempat nge-block spread 0 karena salah
+    # attribusi 10013 EURJPY -> ternyata EURAUD juga spread 0 tapi BISA buka (user).
     if tick is None:
         return {"status": "ERROR", "comment": "Tidak ada quote (tick None) — order dibatalkan"}
     spread_now = (tick.ask - tick.bid) / point if point else 0.0
-    if spread_now <= 0:
-        return {"status": "ERROR", "comment": (f"Quote degenerate: spread {spread_now:.0f} pts (bid==ask) "
-                                               f"— order dibatalkan (liquidity tipis/feed beku)")}
-    tick_age = (time.time() - tick.time) if getattr(tick, "time", 0) else -1
+    tick_age = -1
+    if getattr(tick, "time", 0):
+        # tick.time itu SERVER time (GMT+3), time.time() = UTC -> kompensasi offset
+        # broker dulu (bug 15 Agustus: tanpa ini tick_age selalu -3 jam, stale check
+        # nggak pernah trigger - feed beku 3 jam malah ke-deteksi sebagai 'spread 0')
+        broker_offset = get_broker_offset_seconds(symbol)
+        tick_age = time.time() - (tick.time - broker_offset)
     if tick_age > 10:
         return {"status": "ERROR", "comment": f"Tick stale {tick_age:.0f}s — order dibatalkan"}
     max_spread = config.max_spread_points_for(symbol)
@@ -838,10 +843,9 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             live_price = live_tick.ask if action == "BUY" else live_tick.bid
         else:
             live_price = price
-        # Guard per-attempt: quote degenerate (spread 0) -> skip (jangan spam 10013)
+        # Guard per-attempt: tick None -> skip retry (feed hilang total). Spread 0
+        # TIDAK di-block (normal di akun ECN, order tetap valid - 15 Agustus).
         if live_tick is None:
-            return None
-        if point and (live_tick.ask - live_tick.bid) / point <= 0:
             return None
         if action == "BUY":
             live_sl = (live_price - (sl_points * point)) if (sl_points and sl_points > 0) else (sl_price if sl_price else (live_price - (default_sl * point) if default_sl else 0.0))
@@ -892,8 +896,8 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
 
     if result is None:
-        # _build return None = quote degenerate/stale saat kirim (spread 0 / tick beku)
-        return {"status": "ERROR", "comment": "Quote degenerate/stale saat kirim — order dibatalkan"}
+        # _build return None = tick None saat kirim (feed hilang total)
+        return {"status": "ERROR", "comment": "Tick hilang saat kirim (feed off) — order dibatalkan"}
 
     if result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
