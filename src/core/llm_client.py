@@ -248,7 +248,7 @@ Respond with a single valid JSON object ONLY -- no text before or after it.
 HOLD:
 {
   "signal": "HOLD",
-  "reasoning": "MAX 25 WORDS (1 short sentence): why no valid setup exists right now. Be extremely concise!"
+  "reasoning": "2-3 concise sentences (MAX 45 WORDS): state the specific technical drivers (e.g. RSI/EMA/structure) why no valid setup exists right now."
 }
 
 BUY or SELL:
@@ -262,7 +262,7 @@ BUY or SELL:
   "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
   "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
   "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
-  "reasoning": "MAX 25 WORDS (1-2 short sentences max), on the NEW ENTRY decision only. Be extremely concise!"
+  "reasoning": "2-3 concise sentences (MAX 45 WORDS), on the NEW ENTRY decision only: state the core technical thesis and risk drivers clearly."
 }
 
 "position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
