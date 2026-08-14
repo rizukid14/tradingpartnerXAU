@@ -333,11 +333,16 @@ def calculate_consensus(decisions):
         threshold = base_threshold * (eff_count / min_models)
 
     # Pick the direction with the highest weighted score that clears threshold
+    # 15 Agustus: `>=` (bukan strict `>`) - threshold = ambang minimal, skor yang
+    # PERSIS sama threshold (mis. 0.60 vs 0.60) harus LOLOS. Strict `>` bikin setup
+    # valid di garis batas dibuang sia-sia (OpenAI nge-clamp confidence di 0.60
+    # karena "moderate reasonable" - padahal 0.60 == threshold = lolos). Display
+    # line 479 juga udah bilang ">=", logika `>` cuma bikin display bohong.
     consensus_signal = "HOLD"
     agreeing_models = []
-    best_score = threshold  # must strictly beat this
+    best_score = threshold
     for sig in ["BUY", "SELL"]:
-        if len(direction_models[sig]) >= min_models and direction_scores[sig] > best_score:
+        if len(direction_models[sig]) >= min_models and direction_scores[sig] >= best_score:
             consensus_signal = sig
             agreeing_models = direction_models[sig]
             best_score = direction_scores[sig]
