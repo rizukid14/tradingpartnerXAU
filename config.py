@@ -111,8 +111,9 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"
 
 
 # --- MODEL NAMES & FALLBACKS ---
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "deepseek/deepseek-v4-flash")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
+
 
 # DeepSeek reasoning effort: "high" | "medium" | "low" (14 Agustus - user minta "low"
 # biar lebih responsif & murah; Gemini sering abstain HOLD di dual mode).
