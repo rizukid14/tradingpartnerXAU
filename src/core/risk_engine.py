@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 import config
 from config import mt5
 from src.core import mt5_connector as connector
+from src.core.cli_theme import UI
 
 
 WIB = ZoneInfo("Asia/Jakarta")
@@ -303,7 +304,7 @@ class RiskEngine:
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
-        print(f" [SIZING] {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd_total:.2f}"
+        print(f" {UI.tag('SIZING', UI.CYAN)} {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd_total:.2f}"
               + (f" ({split_count} posisi -> ${risk_usd:.2f}/posisi)" if split_count > 1 else "")
               + f", SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
 
@@ -328,7 +329,7 @@ class RiskEngine:
                 margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot, tick.ask)
                 free_margin = float(account.margin_free) if account else 0.0
                 if margin and margin > free_margin * 0.5:  # keep 50% buffer
-                    print(f" [SIZING] Margin {margin:.2f} > 50% free ({free_margin:.2f}). Lot diturunkan.")
+                    print(f" {UI.tag('SIZING', UI.YELLOW)} Margin {margin:.2f} > 50% free ({free_margin:.2f}). Lot diturunkan.")
                     # Halve until it fits
                     while lot > volume_min and margin > free_margin * 0.5:
                         lot = round((lot - volume_step), 2)
@@ -344,9 +345,10 @@ class RiskEngine:
         """Apply recovery (x0.5) and session (x1.0/1.2) lot multipliers."""
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
             lot *= config.RECOVERY_LOT_MULTIPLIER
-            print(f" [RECOVERY] Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
+            print(f" {UI.tag('RECOVERY', UI.YELLOW)} Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
         lot *= self._session_lot_multiplier
         return lot
+
 
     @property
     def is_recovery_mode(self):

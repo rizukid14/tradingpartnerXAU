@@ -87,17 +87,152 @@ class UI:
         else:
             return f"{cls.GRAY}{bar}{cls.RST} {pct}"
 
+    @classmethod
+    def clear_line(cls):
+        """ANSI sequence to clear line and return cursor to column 0."""
+        return "\x1b[2K\r"
+
+    @classmethod
+    def tag(cls, name, color=CYAN):
+        """Format consistent bracket tag e.g. [RISK] [MT5] [SIZING]."""
+        return f"{color}[{name}]{cls.RST}"
+
+
+    @classmethod
+    def disp_width(cls, s):
+        """Visual display width of string in terminal without ANSI codes."""
+        import re
+        import unicodedata
+        plain = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', str(s))
+        return sum(
+            2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
+            for ch in plain
+        )
+
+    @classmethod
+    def pad_line(cls, s, target_w):
+        """Pads string `s` to visual width `target_w` cleanly without breaking ANSI codes."""
+        import re
+        import unicodedata
+        w = cls.disp_width(s)
+        if w < target_w:
+            return str(s) + " " * (target_w - w)
+        elif w > target_w:
+            ansi_re = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+            tokens = re.split(r'(\x1b\[[0-9;]*[a-zA-Z])', str(s))
+            out = []
+            cur_w = 0
+            limit = max(1, target_w - 3)
+            for token in tokens:
+                if not token:
+                    continue
+                if ansi_re.fullmatch(token):
+                    out.append(token)
+                else:
+                    for ch in token:
+                        cw = 2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
+                        if cur_w + cw > limit:
+                            out.append(f"...{cls.RST}")
+                            w_final = cls.disp_width("".join(out))
+                            if w_final < target_w:
+                                out.append(" " * (target_w - w_final))
+                            return "".join(out)
+                        out.append(ch)
+                        cur_w += cw
+            out.append(cls.RST)
+            w_final = cls.disp_width("".join(out))
+            if w_final < target_w:
+                out.append(" " * (target_w - w_final))
+            return "".join(out)
+        return str(s)
+
+    @classmethod
+    def wrap_text_line(cls, label, text, target_w):
+        """Wraps labelled text into multiple lines if visual width exceeds target_w."""
+        prefix_w = cls.disp_width(label)
+        avail_w = target_w - prefix_w
+        if avail_w <= 15:
+            prefix_w = 4
+            avail_w = max(20, target_w - 4)
+            
+        words = str(text).split()
+        lines = []
+        cur_line = []
+        cur_w = 0
+        
+        for w in words:
+            ww = cls.disp_width(w)
+            if cur_w + (1 if cur_line else 0) + ww <= avail_w:
+                cur_line.append(w)
+                cur_w += (1 if len(cur_line) > 1 else 0) + ww
+            else:
+                if cur_line:
+                    lines.append(" ".join(cur_line))
+                cur_line = [w]
+                cur_w = ww
+        if cur_line:
+            lines.append(" ".join(cur_line))
+            
+        res = []
+        for i, line_str in enumerate(lines):
+            if i == 0:
+                res.append(f"{label}{line_str}")
+            else:
+                res.append(f"{' ' * prefix_w}{line_str}")
+        return res
+
+    @classmethod
+    def make_box(cls, title, items, width=74, border_color=CYAN):
+        """Builds a perfectly aligned, ANSI-safe ASCII box panel.
+        
+        `items` can contain:
+          - string: single line inside panel
+          - tuple (label, text): auto-wrapped line with indented second line if long
+          - "---": divider line inside panel
+        """
+        inner_w = max(20, width - 4)
+        out = []
+        
+        # Top border
+        if title:
+            prefix = f"+-- [ {cls.BOLD}{cls.WHITE}{title}{cls.RST}{border_color} ] "
+            title_plain = f"+-- [ {title} ] "
+            dashes = max(0, width - cls.disp_width(title_plain) - 1)
+            out.append(f"{border_color}{prefix}{'-' * dashes}+{cls.RST}")
+        else:
+            out.append(f"{border_color}+{'-' * (width - 2)}+{cls.RST}")
+            
+        # Body
+        for item in items:
+            if item == "---":
+                out.append(f"{border_color}+{'-' * (width - 2)}+{cls.RST}")
+            elif isinstance(item, tuple) and len(item) == 2:
+                label, text = item
+                wrapped_lines = cls.wrap_text_line(label, text, inner_w)
+                for wl in wrapped_lines:
+                    padded = cls.pad_line(wl, inner_w)
+                    out.append(f"{border_color}|{cls.RST} {padded} {border_color}|{cls.RST}")
+            else:
+                padded = cls.pad_line(str(item), inner_w)
+                out.append(f"{border_color}|{cls.RST} {padded} {border_color}|{cls.RST}")
+                
+        # Bottom border
+        out.append(f"{border_color}+{'-' * (width - 2)}+{cls.RST}")
+        return "\n".join(out)
+
 
 def render_banner(account_info=None, symbol="XAUUSD-ECNc", tf="M5", mode="xau", is_live=True):
     """Renders a modern clean ASCII banner without any emojis."""
     badge_mode = UI.badge_live() if is_live else UI.badge_dry()
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
-    out = [
-        f"{UI.CYAN}========================================================================{UI.RST}",
-        f"{UI.CYAN}|{UI.RST}  {UI.BOLD}{UI.WHITE}RIZUKID MULTI LLM CONSENSUS TRADING BOT{UI.RST} {UI.YELLOW}PRO MAX{UI.RST}                    {UI.CYAN}|{UI.RST}",
-        f"{UI.CYAN}========================================================================{UI.RST}",
-        f"  {UI.BOLD}Status:{UI.RST} {badge_mode} | {UI.BOLD}Terminal:{UI.RST} {UI.WHITE}{acc_text}{UI.RST} | {UI.BOLD}Symbol:{UI.RST} {UI.YELLOW}{symbol} ({tf}){UI.RST}",
-        f"{UI.DIM}------------------------------------------------------------------------{UI.RST}"
+    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID MULTI LLM CONSENSUS TRADING BOT{UI.RST} {UI.YELLOW}PRO MAX{UI.RST}"
+    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Symbol: {UI.YELLOW}{symbol} ({tf}){UI.RST} | Mode: {UI.CYAN}{mode.upper()}{UI.RST}"
+    
+    items = [
+        title_line,
+        "---",
+        status_line
     ]
-    return "\n".join(out)
+    return UI.make_box("TRADING TERMINAL", items, width=74, border_color=UI.CYAN)
+

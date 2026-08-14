@@ -5,6 +5,7 @@ import concurrent.futures
 from openai import OpenAI
 from google import genai
 import config
+from src.core.cli_theme import UI
 
 # Regex untuk menghapus emoji dari prompt yang dikirim ke LLM.
 # User requirement: prompt LLM harus bebas emoji (UI/CLI boleh).
@@ -1361,5 +1362,6 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
     total_elapsed = time.time() - start_total
     mode = config.get_ai_mode()
     lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in active_models if m in latencies])
-    print(f" [LATENSI MODEL] mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
+    print(f" {UI.tag('AI LATENCY', UI.CYAN)} mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results
+

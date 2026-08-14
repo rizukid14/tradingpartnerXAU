@@ -15,6 +15,7 @@ import json
 import time
 import config
 from config import mt5
+from src.core.cli_theme import UI
 
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
@@ -316,10 +317,11 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         _break_even_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
-        print(f" [BREAK-EVEN] Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
+        print(f"{UI.clear_line()} {UI.tag('BREAK-EVEN', UI.GREEN)} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
+        print(f"{UI.clear_line()} [BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
+
 
 
 def _get_dynamic_atr_points(symbol, point):
@@ -483,10 +485,11 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     result = mt5.order_send(request)
     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
         if config.is_crypto(symbol) and not (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0):
-            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
+            print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
         else:
             ref_label = "SL" if (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0) else "ATR"
-            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
+            print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
+        print(f"{UI.clear_line()} [TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
+

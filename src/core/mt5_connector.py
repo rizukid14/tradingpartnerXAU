@@ -8,6 +8,7 @@ from ta.volatility import AverageTrueRange
 
 import config
 from config import mt5
+from src.core.cli_theme import UI
 
 # Indonesian Western Standard Time (WIB) = UTC+7 (Asia/Jakarta)
 WIB = ZoneInfo("Asia/Jakarta")
@@ -892,7 +893,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             "type_filling": fill_policy,
         }
 
-    print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
+    print(f" {UI.tag('MT5', UI.BLUE)} Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
 
     if result is None:
@@ -905,10 +906,10 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     ):
         retcode = getattr(result, "retcode", "N/A") if result else "N/A"
         comment = getattr(result, "comment", "No result") if result else "No result"
-        print(f"[MT5 ERROR] Order gagal! Retcode: {retcode}, Pesan: {comment}")
+        print(f" {UI.tag('MT5 ERROR', UI.RED)} Order gagal! Retcode: {retcode}, Pesan: {comment}")
         return {"status": "ERROR", "comment": comment, "code": retcode}
 
-    print(f"[MT5] Order BERHASIL! Ticket: {result.order}")
+    print(f" {UI.tag('MT5', UI.GREEN)} Order BERHASIL! Ticket: {result.order}")
     invalidate_deals_cache()  # posisi baru dibuka -> bot_opened & closed_today berubah
     return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
 
@@ -949,7 +950,7 @@ def close_position(ticket):
             "type_filling": fill_policy,
         }
 
-    print(f"[MT5] Menutup posisi #{ticket}...")
+    print(f" {UI.tag('MT5', UI.BLUE)} Menutup posisi #{ticket}...")
     result = _send_with_retry(_build, symbol, f"Close #{ticket}")
 
     if result is None or result.retcode not in (
@@ -957,8 +958,8 @@ def close_position(ticket):
         getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
     ):
         comment = getattr(result, "comment", "No result") if result else "No result"
-        print(f"[MT5 ERROR] Gagal menutup posisi: {comment}")
+        print(f" {UI.tag('MT5 ERROR', UI.RED)} Gagal menutup posisi: {comment}")
         return False
-    print(f"[MT5] Posisi #{ticket} berhasil ditutup.")
+    print(f" {UI.tag('MT5', UI.GREEN)} Posisi #{ticket} berhasil ditutup.")
     invalidate_deals_cache()  # deal OUT baru -> closed_today berubah
     return True

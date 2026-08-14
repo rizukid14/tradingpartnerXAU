@@ -103,54 +103,58 @@ def _truncate_disp(s, max_w):
 
 def _wrap_positions(parts, max_w, indent):
     """Wrap daftar posisi (string ANSI) ke beberapa baris — tiap baris di-indent, TIDAK ada posisi yang dipotong.
-
-    Return list baris (string ANSI, lebar visual <= max_w). Semua posisi SELALU tampil
-    (max posisi bot 6-7, jadi paling banter ~9 baris — aman buat terminal).
+    Diisi maks 3 posisi per baris dengan pemisah ' | ', baris berikutnya rata sejajar.
     """
     lines = []
-    cur = indent
-    cur_n = 0
+    first_indent = indent
+    subseq_indent = UI.GRAY + "       " + UI.RST
+    
+    cur_line = []
+    cur_w = _disp_width(first_indent)
+    cur_indent = first_indent
+    
     for part in parts:
         pw = _disp_width(part)
-        if cur_n > 0 and _disp_width(cur) + 1 + pw > max_w:
-            lines.append(cur)
-            cur = indent
-            cur_n = 0
-        cur = cur + (" " if cur_n > 0 else "") + part
-        cur_n += 1
-    if cur.strip():
-        lines.append(cur)
+        sep_w = 3 if cur_line else 0
+        if cur_line and (cur_w + sep_w + pw > max_w or len(cur_line) >= 3):
+            lines.append(cur_indent + " | ".join(cur_line))
+            cur_line = [part]
+            cur_indent = subseq_indent
+            cur_w = _disp_width(subseq_indent) + pw
+        else:
+            cur_line.append(part)
+            cur_w += sep_w + pw
+            
+    if cur_line:
+        lines.append(cur_indent + " | ".join(cur_line))
+        
     return lines
 
 
 _last_status_lines = 1  # jumlah baris status yang terakhir ditulis (default 1 baris)
 
 
+def _reset_status_lines():
+    global _last_status_lines
+    _last_status_lines = 1
+
+
 def _render_status(status_line, pos_lines, max_w, vt_ok):
     """Bangun blok status multi-baris + sequence ANSI buat refresh in-place.
-
-    - 1 baris: sama seperti dulu (tidak ada perubahan perilaku).
-    - 2+ baris: pakai cursor-up (\\x1b[{n}A) + clear per baris (\\x1b[2K) biar blok
-      status di-refresh di tempat tanpa numpuk ke bawah — SEMUA posisi kelihatan.
+    Setiap baris diawali \\x1b[2K\\r untuk menghapus baris lama dan reset kursor ke kolom 0.
     """
     global _last_status_lines
     n_lines = 1 + len(pos_lines)
     lines = [status_line] + pos_lines
-    if n_lines == 1:
-        _last_status_lines = 1
-        if vt_ok:
-            return f"\x1b[2K\r{status_line}"
-        return f"\r{status_line}" + " " * max(0, max_w - _disp_width(status_line))
     if vt_ok:
-        up = f"\x1b[{n_lines - 1}A" if _last_status_lines > 1 else ""
-        block = "\n".join(f"\x1b[2K{ln}" for ln in lines)
+        up = f"\x1b[{_last_status_lines - 1}A" if _last_status_lines > 1 else ""
+        block = "\n".join(f"\x1b[2K\r{ln}" for ln in lines)
         _last_status_lines = n_lines
-        return f"{up}{block}"
-    # Tanpa VT: cursor-up ANSI tidak berfungsi -> tulis baris2 apa adanya (numpuk ke bawah
-    # seperti log line biasa). Lebih baik daripada nulis escape mentah yang jadi sampah.
+        return f"\r{up}{block}"
     block = "\n".join(lines)
     _last_status_lines = 1
     return f"{block}\n"
+
 
 
 # Initialize risk engine
@@ -607,8 +611,10 @@ def run_trading_cycle():
     = [XAU, EURJPY, GBPCHF] - all symbols scanned ONLY when their specific timeframe
     forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour).
     """
+    _reset_status_lines()
     sys.stdout.write(UI.clear_line())
     sys.stdout.flush()
+
 
     box_items = []
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
@@ -1217,12 +1223,15 @@ def main():
                             except Exception as e:
                                 print(f"[SEED WARNING] {e}")
                             skip_cycle = True
+                            _reset_status_lines()
                             print("Startup scan mode: sesuai timeframe - menunggu candle close berikutnya...")
                         else:
+                            _reset_status_lines()
                             print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
                         tf_main = config.get_timeframe(config.SYMBOL)
+                        _reset_status_lines()
                         print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Range: {_candle_range_label(current_candle_time, tf_main)}")
                     
                     last_candle_time = current_candle_time
@@ -1230,6 +1239,7 @@ def main():
                     # Show daily P/L and risk status
                     daily_pnl = risk.get_daily_pnl()
                     status = risk.get_status_summary()
+                    _reset_status_lines()
                     print(f" {UI.CYAN}[STATUS]{UI.RST} P/L Hari Ini: {UI.badge_pnl(daily_pnl)} | "
                           f"Loss Streak: {status['consecutive_losses']} | "
                           f"Recovery: {'Ya' if status['recovery_mode'] else 'Tidak'} | "
