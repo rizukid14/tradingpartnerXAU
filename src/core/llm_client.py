@@ -257,10 +257,10 @@ BUY or SELL:
   "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
   "edge": "1-2 sentences: what specifically creates the edge here.",
   "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "invalidation_price": number, // The exact price level where this trade setup becomes invalid (structure broken, e.g. 4422.50). MUST correspond to price structural data provided (swing high/low, Fibonacci retracements, PDH/PDL, EMA). Do NOT make up random points.
-  "target_price": number, // The exact price level representing your profit target (e.g. 4426.20). MUST correspond to price structural data provided.
-  "sl_points": number, // (Fallback) Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // (Fallback) Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
+  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer) from the current price, measured to your invalidation level. Read the CRITICAL UNIT DEFINITION below!
+  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
+  "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
+  "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
   "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
 }
 
@@ -313,11 +313,15 @@ def _build_points_explanation(symbol, point_size):
         is_gold = "XAU" in (symbol or "").upper()
         if is_gold and config.sltp_mode_for(symbol) == "LLM":
             lo_pts, hi_pts = 400, 1000
-        # FX mode LLM: sinkronkan ke Safety Floor (pola sama kayak XAU 400-1000)
-        # supaya unit definition tidak kontradiksi dengan floor 250 pts di blok
-        # SL/TP rules (fix 14 Agustus: sebelumnya "50 to 150" vs floor 250).
+        # FX mode LLM: sinkronkan ke floor ATR aktif (1.5x ATR H1) supaya unit
+        # definition tidak kontradiksi dengan floor di blok SL/TP rules
+        # (fix 14 Agustus lanjutan: floor statis 250 -> ATR-based, fallback 250).
         if not is_gold and not is_btc and config.sltp_mode_for(symbol) == "LLM":
-            fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
+            atr_pts_fx = _fx_atr_h1_points(symbol)
+            if atr_pts_fx and atr_pts_fx > 0:
+                fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
+            else:
+                fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
             lo_pts = max(lo_pts, fx_floor)
             hi_pts = max(hi_pts, int(fx_floor * 2.5))
         if is_gold:
@@ -353,6 +357,34 @@ def _build_points_explanation(symbol, point_size):
         )
 
 
+_fx_atr_cache = {}  # symbol -> (timestamp, atr_h1_points)
+
+
+def _fx_atr_h1_points(symbol):
+    """ATR(14) H1 FX dalam poin broker (query MT5, cache 60s) — dipakai untuk
+    floor dinamis & typical SL range di prompt. Return None kalau gagal."""
+    import time as _t
+    now = _t.time()
+    hit = _fx_atr_cache.get(symbol)
+    if hit and now - hit[0] < 60:
+        return hit[1]
+    try:
+        import MetaTrader5 as _mt5
+        si = _mt5.symbol_info(symbol)
+        point = si.point if si else None
+        if not point:
+            return None
+        rates = _mt5.copy_rates_from_pos(symbol, _mt5.TIMEFRAME_H1, 0, 15)
+        if rates is None or len(rates) == 0:
+            return None
+        atr = float((rates['high'] - rates['low']).mean())
+        out = max(1, int(round(atr / point)))
+        _fx_atr_cache[symbol] = (now, out)
+        return out
+    except Exception:
+        return None
+
+
 def _build_sltp_rules_block(symbol, timeframe):
     """
     Build the SL/TP constraint lines for the system prompt based on
@@ -365,9 +397,10 @@ def _build_sltp_rules_block(symbol, timeframe):
         Angka minimum konkret (dalam points) di-inject dinamis di market
         data block (atr_gate_str) - sinkron dengan consensus gate.
       "LLM": SL/TP bebas sesuai thesis LLM; dibatasi safety floor per-kategori
-      (XAU 400 pts / FX 250 pts) + R:R minimum 1.25:1 (config.LLM_*). Bot TIDAK
-      ngomongin sizing/ATR di prompt mode ini - SL/TP model di-average di
-      consensus.py (outlier dibuang), lot size dikalkulasi dari SL di main.py.
+      (XAU 400 pts statis / FX berbasis ATR aktif 1.5x ATR H1, fallback 250)
+      + R:R minimum 1.25:1 (config.LLM_*). Bot TIDAK ngomongin sizing/ATR di
+      prompt mode ini - SL/TP model di-average di consensus.py (outlier dibuang),
+      lot size dikalkulasi dari SL di main.py.
     """
     mode = config.sltp_mode_for(symbol)  # per-kategori: XAU LLM, BTC ATR-Based, FX LLM
     is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
@@ -387,34 +420,39 @@ def _build_sltp_rules_block(symbol, timeframe):
             # gak meledak. Bukan gate keras - cuma guidance; gate OVER-RISK ada di
             # consensus (SL > budget risk -> trade ditolak otomatis).
             return (
-                f"- Define 'invalidation_price' and 'target_price' based on major {timeframe} structure (swing levels, Fibonacci, PDH/PDL, EMA): the level where your thesis breaks (SL) and where it reaches target (TP).\n"
-                f"- SL is placed at or slightly beyond the invalidation level -- a small buffer past the level is fine; never inside your own level. TP is placed at your structural target level.\n"
-                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts and TP >= {min_rr}x SL. If your honest structural levels are tighter than these floors, the bot widens them -- you do NOT need to stretch your levels to arbitrary numbers. Give your real structural levels; the bot handles the floors.\n"
+                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
+                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
                 f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. An SL much wider than ~{hi_pts} pts may exceed the per-trade risk budget at current equity and be rejected by the OVER-RISK gate -- prefer structural levels in that range when available.\n"
             )
         elif is_btc:
             return (
-                f"- Define 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600): the level where your thesis breaks (SL) and where it reaches target (TP).\n"
-                f"- SL is placed at or slightly beyond the invalidation level (at least 2x current spread). TP is placed at your structural target level.\n"
-                f"- The bot enforces minimum floors automatically: TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
+                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS (typically 20000 to 60000 points / $200-$600), measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure), tp_points = distance to your structural target. These are what the bot actually uses for the order.\n"
+                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
+                f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
             )
         else:
-            # FX Pairs H1: Bebas mengikuti struktur harga (support/resistance/EMA/swing),
-            # tapi SL minimal 250 pts (25 pips) - floor safety mode LLM (14 Agustus),
-            # mencegah SL mikro 5 pips yang membengkakkan lot sizing.
-            fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS   # 250 pts = 25 pips
+            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL berbasis
+            # ATR aktif: max(2x spread, 1.5x ATR H1) — fallback 250 kalau ATR gagal.
+            # (14 Agustus lanjutan: floor statis 250 = 2.5x ATR H1 FX yang cuma
+            # 90-100 pts -> SL struktural asli 60-200 di-floor paksa & TP 312 jarang
+            # kesampean; ATR-based menyesuaikan volatilitas aktual per pair.)
+            fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
+            atr_pts_fx = _fx_atr_h1_points(symbol)
+            if atr_pts_fx and atr_pts_fx > 0:
+                fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
             return (
-                f"- Define 'invalidation_price' and 'target_price' based on {timeframe} price structure (swing high/low, support/resistance, EMA): the level where your thesis breaks (SL) and where it reaches target (TP).\n"
-                f"- SL is placed at or slightly beyond the invalidation level -- a small buffer past the level is fine; never inside your own level. TP is placed at your structural target level.\n"
-                f"- The bot enforces minimum floors automatically: SL >= {fx_floor} pts (25 pips) and TP >= {min_rr}x SL. If your honest structural levels are tighter than these floors, the bot widens them -- you do NOT need to stretch your levels. Give your real structural levels; the bot handles the floors.\n"
+                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.\n"
+                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
+                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = 1.5x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
             )
 
     # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
     sl_mult = config.atr_sl_multiplier()
     tp_mult = config.atr_tp_multiplier()
     return (
-        f"- Define absolute 'invalidation_price' and 'target_price' from real price structure. Bot calculates points dynamically at execution.\n"
-        f"- SL is placed at or slightly beyond the invalidation level (a small buffer past the level is fine; never inside your own level), and no tighter than 2x current spread (in points) from the entry price.\n"
+        f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (nearest opposing swing), tp_points = distance to your structural target. These are what the bot actually uses for the order.\n"
+        f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP.\n"
         f"- HARD GATE (non-negotiable, enforced by the bot): if the resulting SL < {sl_mult}x current ATR or TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Give your real structural levels; if they cannot meet the gate, HOLD is the correct call.\n"
         f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimum price distances required for current ATR are listed in the MARKET DATA section (ATR HARD GATE line).\n"
     )
@@ -1039,12 +1077,31 @@ def query_forecast(prompt):
     return None
 
 
+def _resolve_openai_primary():
+    """gpt-5.2 (kuota free 250k/hari) dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB
+    (default 15:00-19:30 WIB, London session single mode); di luar window langsung
+    fallback gpt-4o-mini biar kuota besar tidak habis di jam sepi (14 Agustus)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    cur_min = wib_now.hour * 60 + wib_now.minute
+    windows = getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", []) or []
+    for start_min, end_min in windows:
+        if start_min <= end_min:
+            if start_min <= cur_min < end_min:
+                return config.OPENAI_MODEL
+        else:  # window lintas tengah malam (mis. 21:00-02:00)
+            if cur_min >= start_min or cur_min < end_min:
+                return config.OPENAI_MODEL
+    return config.OPENAI_FALLBACK_MODEL
+
+
 def query_openai(prompt):
     """Queries OpenAI API with timeout and fallback model support."""
     if not openai_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
 
-    primary_model = config.OPENAI_MODEL
+    primary_model = _resolve_openai_primary()
     fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
 

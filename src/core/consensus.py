@@ -27,7 +27,8 @@ def _apply_sltp_rules(sl_points, tp_points):
         bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
         invalidation model = mengubah setup tanpa persetujuan model.
       "LLM": SL/TP bebas sesuai konsensus, dibatasi safety floor per-kategori
-        (14 Agustus: XAU 400 pts, FX 250 pts / 25 pips) + R:R minimum 1.25:1
+        (14 Agustus: XAU 400 pts statis, FX berbasis ATR aktif max(2x spread,
+        1.5x ATR H1) dengan fallback 250 pts) + R:R minimum 1.25:1
         (TP di-floor ke 1.25x SL kalau kurang - bukan tolak). Lot size
         dikalkulasi dari SL tsb via risk-based sizing.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
@@ -68,10 +69,17 @@ def _apply_sltp_rules(sl_points, tp_points):
 
         if is_xau:
             # Gold: safety floor minimal 400 pts untuk mencegah SL super sempit
+            # (0.4x ATR M15 XAU ~1000 pts - sudah proporsional, tetap statis)
             min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
         else:
-            # FX pairs: floor minimal 250 pts (25 pips) - mencegah SL mikro 5 pips
-            min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
+            # FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1) supaya
+            # struktur asli model (SL 60-200 pts di ATR 90-100) tidak di-floor
+            # paksa ke 250 (2.5x ATR) yang bikin TP 312 (3.2x ATR) jarang kena.
+            # Fallback 250 kalau ATR tidak bisa dihitung (defensif).
+            if atr_points > 0:
+                min_sl = max(spread_pts * 2, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
+            else:
+                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
             
         if sl_points < min_sl:
             print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
@@ -389,10 +397,18 @@ def calculate_consensus(decisions):
     final_inv = sum(inv_list) / len(inv_list) if inv_list else None
     final_tgt = sum(tgt_list) / len(tgt_list) if tgt_list else None
 
-    # Resolve points from absolute price levels if available, using the current tick
-    resolved_sl_from_price = None
-    resolved_tp_from_price = None
+    # SL/TP murni dari sl_points/tp_points model (fix 14 Agustus): invalidation/
+    # target price TIDAK dipakai menghitung SL/TP lagi — hanya konteks probability
+    # (confidence & reasoning model). Final points = average model yang sepakat,
+    # outlier dibuang, lalu gate floor/R:R/over-risk di _apply_sltp_rules.
+    final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
+    final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
 
+    # Apply SL/TP rules (mode-aware ATR/spread gates)
+    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+
+    # Sync absolute price levels with final clamped points to guarantee consistency
+    # (hanya untuk display/log — SL/TP order pakai points, bukan harga absolut ini)
     try:
         from config import mt5
         tick = mt5.symbol_info_tick(config.SYMBOL)
@@ -401,26 +417,6 @@ def calculate_consensus(decisions):
     except Exception:
         tick, si, point = None, None, 0.00001
 
-    if tick and si and point:
-        entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
-        if entry_price > 0:
-            if final_inv:
-                resolved_sl_from_price = int(round(abs(entry_price - final_inv) / point))
-            if final_tgt:
-                resolved_tp_from_price = int(round(abs(final_tgt - entry_price) / point))
-
-    # Determine final points (prefer resolved prices, fallback to point list/defaults)
-    final_sl = resolved_sl_from_price if resolved_sl_from_price is not None else (
-        int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
-    )
-    final_tp = resolved_tp_from_price if resolved_tp_from_price is not None else (
-        int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
-    )
-
-    # Apply SL/TP rules (mode-aware ATR/spread gates)
-    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
-
-    # Sync absolute price levels with final clamped points to guarantee consistency
     if tick and si and point:
         entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
         if entry_price > 0:

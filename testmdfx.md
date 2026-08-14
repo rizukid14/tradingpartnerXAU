@@ -32,9 +32,9 @@ Read the market data first and form your thesis from structure. Then validate th
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
-- Define 'invalidation_price' and 'target_price' based on H1 price structure (swing high/low, support/resistance, EMA): the level where your thesis breaks (SL) and where it reaches target (TP).
-- SL is placed at or slightly beyond the invalidation level -- a small buffer past the level is fine; never inside your own level. TP is placed at your structural target level.
-- The bot enforces minimum floors automatically: SL >= 250 pts (25 pips) and TP >= 1.25x SL. If your honest structural levels are tighter than these floors, the bot widens them -- you do NOT need to stretch your levels. Give your real structural levels; the bot handles the floors.
+- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.
+- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.
+- The bot enforces minimum floors automatically: SL >= max(2x spread, ~142 pts = 1.5x ATR H1) and TP >= 1.25x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.
 
 - Use ATR(14) as a volatility sanity check: a structural SL much smaller than roughly 0.5x ATR is likely noise-level on the active timeframe -- prefer invalidation levels at least around half an ATR away when structure allows.
 - Spread must not consume a large share of the SL distance
@@ -48,10 +48,10 @@ For GBPCHF-ECNc (with broker point size = 0.00001):
 - 1 point = 0.00001 price units.
 - 10 points = 1 pip = 0.0001 price movement.
 - 100 points = 10 pips = 0.001 price movement.
-- Typical Stop Loss distance for GBPCHF-ECNc is usually 250 to 625 points -- for the exact floor relevant to this symbol, see the SL/TP rules in the RISK CONSTRAINTS section below.
+- Typical Stop Loss distance for GBPCHF-ECNc is usually 142 to 355 points -- for the exact floor relevant to this symbol, see the SL/TP rules in the RISK CONSTRAINTS section below.
 
 CRITICAL WARNING:
-Double-check your numbers. If you want a Stop Loss of 25 pips, you MUST return 250 points. If you return 25, it sets a Stop Loss of just 25 points (2 pip / 0.00025 price movement), which is inside the spread and will cause an instant loss or broker rejection!
+Double-check your numbers. If you want a Stop Loss of 14 pips, you MUST return 142 points. If you return 14, it sets a Stop Loss of just 14 points (1 pip / 0.00014 price movement), which is inside the spread and will cause an instant loss or broker rejection!
 
 ### OUTPUT FORMAT
 Respond with a single valid JSON object ONLY -- no text before or after it.
@@ -69,10 +69,10 @@ BUY or SELL:
   "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
   "edge": "1-2 sentences: what specifically creates the edge here.",
   "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "invalidation_price": number, // The exact price level where this trade setup becomes invalid (structure broken, e.g. 4422.50). MUST correspond to price structural data provided (swing high/low, Fibonacci retracements, PDH/PDL, EMA). Do NOT make up random points.
-  "target_price": number, // The exact price level representing your profit target (e.g. 4426.20). MUST correspond to price structural data provided.
-  "sl_points": number, // (Fallback) Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // (Fallback) Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
+  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer) from the current price, measured to your invalidation level. Read the CRITICAL UNIT DEFINITION below!
+  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
+  "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
+  "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
   "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
 }
 
@@ -83,8 +83,8 @@ CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, 
 ### MARKET DATA CONTEXT
 Symbol: GBPCHF-ECNc
 Timeframe: H1
-Current Bid: 1.09808
-Current Ask: 1.09808
+Current Bid: 1.09818
+Current Ask: 1.09818
 Spread: 0.0 points (point size = 1e-05)
 Spread note: this spread has ALREADY passed the bot's spread gate (max 50 pts for GBPCHF-ECNc), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
 ### KEY LEVELS
@@ -143,19 +143,10 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max 50 pts fo
 - [06:00] O:1.0981, H:1.0984, L:1.098, C:1.09833
 - [07:00] O:1.09833, H:1.09848, L:1.09823, C:1.09835
 - [08:00] O:1.09837, H:1.09874, L:1.09819, C:1.09826
-- [09:00] O:1.09826, H:1.09829, L:1.09807, C:1.09808
+- [09:00] O:1.09826, H:1.09829, L:1.09802, C:1.09818
 
 
 ### LAST 24 M5 CANDLES (intra-period price action)
-- [07:15] O:1.0983, H:1.09832, L:1.09823, C:1.09827, Vol:304
-- [07:20] O:1.09826, H:1.09835, L:1.09824, C:1.09831, Vol:285
-- [07:25] O:1.0983, H:1.09843, L:1.09829, C:1.09837, Vol:334
-- [07:30] O:1.09838, H:1.0984, L:1.09825, C:1.09832, Vol:272
-- [07:35] O:1.09833, H:1.09842, L:1.0983, C:1.0984099999999999, Vol:259
-- [07:40] O:1.0984099999999999, H:1.09845, L:1.09836, C:1.09837, Vol:231
-- [07:45] O:1.09837, H:1.09848, L:1.09834, C:1.09846, Vol:219
-- [07:50] O:1.09845, H:1.09846, L:1.09836, C:1.0984099999999999, Vol:245
-- [07:55] O:1.0984099999999999, H:1.09848, L:1.09835, C:1.09835, Vol:310
 - [08:00] O:1.09837, H:1.09853, L:1.09836, C:1.09853, Vol:341
 - [08:05] O:1.09852, H:1.09857, L:1.09842, C:1.09847, Vol:274
 - [08:10] O:1.09847, H:1.0985800000000001, L:1.09844, C:1.09855, Vol:264
@@ -170,24 +161,33 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max 50 pts fo
 - [08:55] O:1.09833, H:1.09833, L:1.09819, C:1.09826, Vol:270
 - [09:00] O:1.09826, H:1.09829, L:1.09813, C:1.09815, Vol:308
 - [09:05] O:1.09815, H:1.0982, L:1.09809, C:1.0981, Vol:225
-- [09:10] O:1.09811, H:1.09812, L:1.09807, C:1.09808, Vol:32
+- [09:10] O:1.09811, H:1.09814, L:1.09805, C:1.0981, Vol:251
+- [09:15] O:1.09809, H:1.09812, L:1.09804, C:1.09808, Vol:183
+- [09:20] O:1.09807, H:1.09813, L:1.09805, C:1.09808, Vol:229
+- [09:25] O:1.09809, H:1.09809, L:1.09802, C:1.09809, Vol:210
+- [09:30] O:1.09809, H:1.09817, L:1.09808, C:1.09811, Vol:236
+- [09:35] O:1.0981, H:1.09818, L:1.09805, C:1.09808, Vol:242
+- [09:40] O:1.09807, H:1.0982, L:1.09802, C:1.09817, Vol:214
+- [09:45] O:1.09815, H:1.09823, L:1.09813, C:1.09815, Vol:212
+- [09:50] O:1.09815, H:1.0982, L:1.09812, C:1.09819, Vol:236
+- [09:55] O:1.09818, H:1.09823, L:1.09812, C:1.09818, Vol:165
 
 ### CURRENT INDICATORS & FIBONACCI SUMMARY
-- Current Close: 1.09808
-- RSI (14): 55.53
-- EMA (20): 1.0975710825
-- EMA (50): 1.0971524717
-- ATR (14): 0.000917274 (which is 91 points)
+- Current Close: 1.09818
+- RSI (14): 56.43
+- EMA (20): 1.0975806063
+- EMA (50): 1.0971563933
+- ATR (14): 0.0009208455 (which is 92 points)
 - 50-Bar Swing High: 1.09878 | Swing Low: 1.09328
 - Fibonacci Retracement Levels: Fib 38.2%: 1.096679 | Fib 50.0%: 1.09603 | Fib 61.8%: 1.095381
 
 ### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT
 ### MULTI-TIMEFRAME ANALYSIS (Struktur Trend)
-- **H4 Timeframe**: trend UPTREND | close 1.09808, EMA20 1.0962354869, EMA50 1.0935676357 (gap EMA 0.0026678512), RSI 61.3 (netral), ATR 0.0020266905 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.3x ATR di atas)), low 1.08688 (support jauh 1.08688 (~5.5x ATR))
-- **D1 Timeframe**: trend UPTREND | close 1.09808, EMA20 1.0906531882, EMA50 1.0829133787 (gap EMA 0.0077398096), RSI 68.3 (netral), ATR 0.0054433846 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.1x ATR di atas)), low 1.07055 (support jauh 1.07055 (~5.1x ATR))
+- **H4 Timeframe**: trend UPTREND | close 1.09818, EMA20 1.0962450107, EMA50 1.0935715573 (gap EMA 0.0026734534), RSI 61.8 (netral), ATR 0.0020302619 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.3x ATR di atas)), low 1.08688 (support jauh 1.08688 (~5.6x ATR))
+- **D1 Timeframe**: trend UPTREND | close 1.09818, EMA20 1.0906627121, EMA50 1.0829173003 (gap EMA 0.0077454118), RSI 68.4 (netral), ATR 0.0054433846 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.1x ATR di atas)), low 1.07055 (support jauh 1.07055 (~5.1x ATR))
 (The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) - use it to determine whether the current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)
 
-Money scale: 1 point = $0.0123 USD with the default 0.01 lot. So 813 pts = ~$10, 406 pts = ~$5, and 100000 pts = ~$1228.64.
+Money scale: 1 point = $0.0123 USD with the default 0.01 lot. So 814 pts = ~$10, 407 pts = ~$5, and 100000 pts = ~$1228.31.
 Current spread is 0.0 pts (approx $0.00 USD) - NEVER set SL closer than 0 pts (2x spread); the broker will reject it.
 
 
@@ -196,8 +196,8 @@ Current spread is 0.0 pts (approx $0.00 USD) - NEVER set SL closer than 0 pts (2
 MACRO CONTEXT (raw, yang di-inject ke prompt)
 ================================================================================
 ### MULTI-TIMEFRAME ANALYSIS (Struktur Trend)
-- **H4 Timeframe**: trend UPTREND | close 1.09808, EMA20 1.0962354869, EMA50 1.0935676357 (gap EMA 0.0026678512), RSI 61.3 (netral), ATR 0.0020266905 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.3x ATR di atas)), low 1.08688 (support jauh 1.08688 (~5.5x ATR))
-- **D1 Timeframe**: trend UPTREND | close 1.09808, EMA20 1.0906531882, EMA50 1.0829133787 (gap EMA 0.0077398096), RSI 68.3 (netral), ATR 0.0054433846 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.1x ATR di atas)), low 1.07055 (support jauh 1.07055 (~5.1x ATR))
+- **H4 Timeframe**: trend UPTREND | close 1.09818, EMA20 1.0962450107, EMA50 1.0935715573 (gap EMA 0.0026734534), RSI 61.8 (netral), ATR 0.0020302619 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.3x ATR di atas)), low 1.08688 (support jauh 1.08688 (~5.6x ATR))
+- **D1 Timeframe**: trend UPTREND | close 1.09818, EMA20 1.0906627121, EMA50 1.0829173003 (gap EMA 0.0077454118), RSI 68.4 (netral), ATR 0.0054433846 | swing 30-candle: high 1.09878 (resistance terdekat 1.09878 (~0.1x ATR di atas)), low 1.07055 (support jauh 1.07055 (~5.1x ATR))
 
 ================================================================================
 STATIC SYSTEM PROMPT (build_system_prompt)
@@ -230,9 +230,9 @@ Read the market data first and form your thesis from structure. Then validate th
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
-- Define 'invalidation_price' and 'target_price' based on H1 price structure (swing high/low, support/resistance, EMA): the level where your thesis breaks (SL) and where it reaches target (TP).
-- SL is placed at or slightly beyond the invalidation level -- a small buffer past the level is fine; never inside your own level. TP is placed at your structural target level.
-- The bot enforces minimum floors automatically: SL >= 250 pts (25 pips) and TP >= 1.25x SL. If your honest structural levels are tighter than these floors, the bot widens them -- you do NOT need to stretch your levels. Give your real structural levels; the bot handles the floors.
+- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.
+- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.
+- The bot enforces minimum floors automatically: SL >= max(2x spread, ~142 pts = 1.5x ATR H1) and TP >= 1.25x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.
 
 - Use ATR(14) as a volatility sanity check: a structural SL much smaller than roughly 0.5x ATR is likely noise-level on the active timeframe -- prefer invalidation levels at least around half an ATR away when structure allows.
 - Spread must not consume a large share of the SL distance
@@ -246,10 +246,10 @@ For GBPCHF-ECNc (with broker point size = 0.00001):
 - 1 point = 0.00001 price units.
 - 10 points = 1 pip = 0.0001 price movement.
 - 100 points = 10 pips = 0.001 price movement.
-- Typical Stop Loss distance for GBPCHF-ECNc is usually 250 to 625 points -- for the exact floor relevant to this symbol, see the SL/TP rules in the RISK CONSTRAINTS section below.
+- Typical Stop Loss distance for GBPCHF-ECNc is usually 142 to 355 points -- for the exact floor relevant to this symbol, see the SL/TP rules in the RISK CONSTRAINTS section below.
 
 CRITICAL WARNING:
-Double-check your numbers. If you want a Stop Loss of 25 pips, you MUST return 250 points. If you return 25, it sets a Stop Loss of just 25 points (2 pip / 0.00025 price movement), which is inside the spread and will cause an instant loss or broker rejection!
+Double-check your numbers. If you want a Stop Loss of 14 pips, you MUST return 142 points. If you return 14, it sets a Stop Loss of just 14 points (1 pip / 0.00014 price movement), which is inside the spread and will cause an instant loss or broker rejection!
 
 ### OUTPUT FORMAT
 Respond with a single valid JSON object ONLY -- no text before or after it.
@@ -267,10 +267,10 @@ BUY or SELL:
   "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
   "edge": "1-2 sentences: what specifically creates the edge here.",
   "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "invalidation_price": number, // The exact price level where this trade setup becomes invalid (structure broken, e.g. 4422.50). MUST correspond to price structural data provided (swing high/low, Fibonacci retracements, PDH/PDL, EMA). Do NOT make up random points.
-  "target_price": number, // The exact price level representing your profit target (e.g. 4426.20). MUST correspond to price structural data provided.
-  "sl_points": number, // (Fallback) Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // (Fallback) Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
+  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer) from the current price, measured to your invalidation level. Read the CRITICAL UNIT DEFINITION below!
+  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
+  "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
+  "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
   "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
 }
 

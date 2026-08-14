@@ -791,46 +791,32 @@ def _run_cycle_for_current_symbol():
         target_price = result.get("target_price")
         agreeing_count = result.get("agreeing_count", 0)
 
-        # Obtain latest execution tick to size lot and get absolute SL/TP prices dynamically
+        # Obtain latest execution tick to size lot and get absolute SL/TP prices
         tick_live = connector.get_current_tick(config.SYMBOL)
-        sl_price = invalidation_price
-        tp_price = target_price
+        sl_price = None
+        tp_price = None
         tp_price_2 = None
         gate_blocked = False  # re-check SL/TP eksekusi gagal -> trade dibatalkan
 
-        if tick_live and invalidation_price:
+        if tick_live and sl_points and sl_points > 0:
             point = tick_live["point"]
             execution_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
             if execution_price > 0 and point > 0:
-                # Calculate SL points based on actual execution price
-                sl_points = int(round(abs(execution_price - invalidation_price) / point))
+                # SL/TP murni dari sl_points/tp_points model (sudah di-floor di
+                # consensus.py). invalidation_price/target_price TIDAK dipakai
+                # untuk SL/TP — cuma referensi probability (fix 14 Agustus).
                 sl_points = max(tick_live["spread"] * 2, sl_points)
-                
-                # Re-sync sl_price with execution price if floored by spread gate
-                if trade_signal == "BUY":
-                    sl_price = execution_price - (sl_points * point)
-                else:
-                    sl_price = execution_price + (sl_points * point)
 
-                if target_price:
-                    # Calculate TP points based on actual execution price
-                    tp_points = int(round(abs(target_price - execution_price) / point))
+                if tp_points and tp_points > 0:
                     tp_points = max(tick_live["spread"] * 2, tp_points)
-                    
                     # Position 2 gets 1.2x TP for extended trend capture
                     tp_points_2 = int(tp_points * 1.2)
-                    if trade_signal == "BUY":
-                        tp_price = execution_price + (tp_points * point)
-                        tp_price_2 = execution_price + (tp_points_2 * point)
-                    else:
-                        tp_price = execution_price - (tp_points * point)
-                        tp_price_2 = execution_price - (tp_points_2 * point)
+                else:
+                    tp_points_2 = None
 
-                # RE-CHECK gate SL/TP dengan harga eksekusi aktual: SL/TP di sini
-                # dihitung ulang dari harga absolut (invalidation/target) pakai tick
-                # terkini, jadi jarak & R:R bisa bergeser dari nilai saat konsensus.
-                # Kalau hasil re-kalkulasi gagal gate (mis. R:R < 1.25 / OVER-RISK karena
-                # harga bergeser) -> batalkan trade, jangan kirim order.
+                # RE-CHECK gate SL/TP pakai tick terkini (spread/equity bisa
+                # geser antara consensus dan eksekusi). Kalau gagal gate (R:R <
+                # 1.25 / OVER-RISK) -> batalkan trade, jangan kirim order.
                 sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
                 if not sltp_ok:
                     gate_blocked = True

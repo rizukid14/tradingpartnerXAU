@@ -117,8 +117,30 @@ CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-202
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+
+
+def _parse_windows_wib(raw):
+    """Parse "15:00-19:30" / "15:00-19:30,21:00-23:00" -> list[(start_min, end_min)]."""
+    out = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if ":" in part and "-" in part:
+            try:
+                s, e = part.split("-")
+                sh, sm = s.split(":")
+                eh, em = e.split(":")
+                out.append((int(sh) * 60 + int(sm), int(eh) * 60 + int(em)))
+            except Exception:
+                pass
+    return out
+
+
+# gpt-5.2 (free tier model besar 250k token/hari, SHARED semua model besar)
+# dipakai HANYA di window ini (WIB) biar kuota tidak cepet habis; di luar window
+# OpenAI langsung pakai fallback gpt-4o-mini (2.5M token/hari, cukup full day).
+OPENAI_PRIMARY_WINDOW_WIB = _parse_windows_wib(os.getenv("OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"))
 
 LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 24.0)
 
@@ -209,10 +231,16 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # --- LLM MODE SAFETY FLOOR & R:R GATE (14 Agustus) ---
 # Mode LLM (XAU & FX): SL/TP bebas struktur LLM, tapi dibatasi safety floor minimal
 # (mencegah SL mikro 5 pips yang membengkakkan lot) + gate R:R minimum.
-#   - FX pairs: SL minimal 250 pts (25 pips)
-#   - XAUUSD:   SL minimal 400 pts (4 pips / $4.00 per 0.01 lot)
+# Safety floor SL/TP mode LLM (14 Agustus):
+#   - FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
+#     Fallback statis 250 pts (25 pips) dipakai kalau ATR gagal dihitung.
+#     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
+#     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
+#     TP 312 (3.2x ATR) jarang kesampean. ATR-based menyesuaikan volatilitas.
+#   - XAUUSD:   SL minimal 400 pts statis (0.4x ATR M15, sudah proporsional)
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
-LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)
+LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.5)
+LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 
