@@ -101,6 +101,58 @@ def _truncate_disp(s, max_w):
     return "".join(out)
 
 
+def _wrap_positions(parts, max_w, indent):
+    """Wrap daftar posisi (string ANSI) ke beberapa baris — tiap baris di-indent, TIDAK ada posisi yang dipotong.
+
+    Return list baris (string ANSI, lebar visual <= max_w). Semua posisi SELALU tampil
+    (max posisi bot 6-7, jadi paling banter ~9 baris — aman buat terminal).
+    """
+    lines = []
+    cur = indent
+    cur_n = 0
+    for part in parts:
+        pw = _disp_width(part)
+        if cur_n > 0 and _disp_width(cur) + 1 + pw > max_w:
+            lines.append(cur)
+            cur = indent
+            cur_n = 0
+        cur = cur + (" " if cur_n > 0 else "") + part
+        cur_n += 1
+    if cur.strip():
+        lines.append(cur)
+    return lines
+
+
+_last_status_lines = 1  # jumlah baris status yang terakhir ditulis (default 1 baris)
+
+
+def _render_status(status_line, pos_lines, max_w, vt_ok):
+    """Bangun blok status multi-baris + sequence ANSI buat refresh in-place.
+
+    - 1 baris: sama seperti dulu (tidak ada perubahan perilaku).
+    - 2+ baris: pakai cursor-up (\\x1b[{n}A) + clear per baris (\\x1b[2K) biar blok
+      status di-refresh di tempat tanpa numpuk ke bawah — SEMUA posisi kelihatan.
+    """
+    global _last_status_lines
+    n_lines = 1 + len(pos_lines)
+    lines = [status_line] + pos_lines
+    if n_lines == 1:
+        _last_status_lines = 1
+        if vt_ok:
+            return f"\x1b[2K\r{status_line}"
+        return f"\r{status_line}" + " " * max(0, max_w - _disp_width(status_line))
+    if vt_ok:
+        up = f"\x1b[{n_lines - 1}A" if _last_status_lines > 1 else ""
+        block = "\n".join(f"\x1b[2K{ln}" for ln in lines)
+        _last_status_lines = n_lines
+        return f"{up}{block}"
+    # Tanpa VT: cursor-up ANSI tidak berfungsi -> tulis baris2 apa adanya (numpuk ke bawah
+    # seperti log line biasa). Lebih baik daripada nulis escape mentah yang jadi sampah.
+    block = "\n".join(lines)
+    _last_status_lines = 1
+    return f"{block}\n"
+
+
 # Initialize risk engine
 risk = RiskEngine()
 
@@ -1171,20 +1223,18 @@ def main():
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
             
-            # Show any running (open) bot positions across ALL symbols
+            # Show any running (open) bot positions across ALL symbols — baris terpisah
+            # (multi-line) kalau posisi banyak, biar SEMUA kelihatan (tidak di-truncate).
             open_pos = connector.get_all_open_positions()
+            pos_parts = []
             if open_pos:
                 by_sym = {}
                 for p in open_pos:
                     by_sym.setdefault(p.get("symbol", "?"), []).append(p)
-                pos_parts = []
                 for sym, plist in sorted(by_sym.items()):
                     float_s = sum(x.get("profit", 0.0) for x in plist)
                     pos_parts.append(f"{sym}: {len(plist)} pos ({UI.badge_pnl(float_s)})")
-                pos_str = " | " + " | ".join(pos_parts)
-            else:
-                pos_str = f" | {UI.GRAY}No active pos{UI.RST}"
-            status_line = f"[{UI.BOLD}{config.SYMBOL}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}{pos_str}"
+            status_line = f"[{UI.BOLD}{config.SYMBOL}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             # Potong berdasarkan LEBAR TAMPILAN terminal aktual (emoji = 2 kolom), bukan
             # jumlah karakter - kalau baris wrap, \r tidak balik ke awal baris dan status
             # jadi nge-print ke bawah (bukan refresh). Sisakan margin 4 kolom biar aman.
@@ -1194,12 +1244,11 @@ def main():
                 cols = 120
             max_w = max(60, cols - 4)
             status_line = _truncate_disp(status_line, max_w)
-            if _VT_OK:
-                # Hapus isi baris dulu biar sisa status sebelumnya (yang lebih panjang) hilang
-                sys.stdout.write(f"\x1b[2K\r{status_line}")
+            if pos_parts:
+                pos_lines = _wrap_positions(pos_parts, max_w, indent=UI.GRAY + "  pos: " + UI.RST)
             else:
-                pad = " " * max(0, max_w - _disp_width(status_line))
-                sys.stdout.write(f"\r{status_line}{pad}")
+                pos_lines = [UI.GRAY + "  pos: No active pos" + UI.RST]
+            sys.stdout.write(_render_status(status_line, pos_lines, max_w, _VT_OK))
             sys.stdout.flush()
 
             # Sleep 5 seconds between checks
