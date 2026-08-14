@@ -96,9 +96,12 @@ def _apply_sltp_rules(sl_points, tp_points):
             tp_points = min_tp
 
         # GATE OVER-RISK (13 Agustus): kalau risk minimum yang bisa diwakili
-        # (volume_min x SL) sudah MELEBIHI budget risk -> trade DITOLAK.
-        # Contoh XAU: equity $1079, risk 1.0% = $10.79, min lot 0.01, usd/pt $1
-        #   -> max SL = 1079 pts. SL 1736 pts -> risk aktual $17.36 (1.6%) -> TOLAK.
+        # (volume_min x SL) sudah MELEBIHI budget risk per-trade -> trade DITOLAK.
+        # Ceiling gate = config.OVER_RISK_MAX_PERCENT (default 2.0%, 14 Agustus malam:
+        # user minta SL >1000 pts tetap boleh asal risk aktual di min lot <= 2%).
+        # Contoh XAU: equity $967, gate 2.0% = $19.34, min lot 0.01, usd/pt $1
+        #   -> max SL = 1934 pts. SL 1000 pts -> risk $10 (1.03%) -> LULUS.
+        #   SL 1950 pts -> risk $19.50 (2.02%) -> TOLAK.
         try:
             account = mt5.account_info() if 'mt5' in dir() else None
             if account is None:
@@ -112,14 +115,15 @@ def _apply_sltp_rules(sl_points, tp_points):
             vol_min = getattr(si, "volume_min", 0.01) if si else 0.01
             usd_pt = (si.trade_tick_value * (si.point / si.trade_tick_size)) if si and si.trade_tick_size else 0.0
             risk_pct = config.risk_percent_for(config.SYMBOL)
+            gate_pct = max(risk_pct, float(config.OVER_RISK_MAX_PERCENT))
             if equity > 0 and usd_pt > 0 and vol_min > 0:
-                max_sl = (equity * risk_pct / 100.0) / (vol_min * usd_pt)
+                max_sl = (equity * gate_pct / 100.0) / (vol_min * usd_pt)
                 if sl_points > max_sl:
                     risk_actual = sl_points * vol_min * usd_pt
                     return sl_points, tp_points, False, (
                         f"OVER-RISK: SL {sl_points} pts > max {max_sl:.0f} pts "
                         f"(risk {risk_pct}% = ${equity*risk_pct/100:.2f} gak muat di min lot {vol_min}: "
-                        f"risk aktual ${risk_actual:.2f} = {risk_actual/equity*100:.2f}%)"
+                        f"risk aktual ${risk_actual:.2f} = {risk_actual/equity*100:.2f}% > gate {gate_pct}%)"
                     )
         except Exception:
             pass

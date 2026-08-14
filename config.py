@@ -250,6 +250,12 @@ LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallba
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 
+# Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
+# per-trade) TIDAK otomatis ditolak di risk_pct — masih diterima selama risk aktual
+# di min lot <= OVER_RISK_MAX_PERCENT (14 Agustus malam: user minta SL >1000 pts
+# boleh jalan asal gate maks 2%; lot tetap risk-based 1%, cuma gate ceiling-nya ini).
+OVER_RISK_MAX_PERCENT = _getenv_float("OVER_RISK_MAX_PERCENT", 2.0)
+
 
 
 # --- CONSENSUS SETTINGS ---

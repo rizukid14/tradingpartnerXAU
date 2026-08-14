@@ -416,14 +416,14 @@ def _build_sltp_rules_block(symbol, timeframe):
         if is_xau:
             lo_pts = config.LLM_SAFETY_FLOOR_XAU_PTS   # 400 pts
             hi_pts = 1000
-            # 13 Agustus: catatan soft soal max SL biar risk 1.0% (min lot 0.01)
-            # gak meledak. Bukan gate keras - cuma guidance; gate OVER-RISK ada di
-            # consensus (SL > budget risk -> trade ditolak otomatis).
+            # 14 Agustus malam: gate OVER-RISK dilonggarkan ke 2% (config
+            # OVER_RISK_MAX_PERCENT) - SL >1000 pts TETAP BISA diterima selama risk
+            # aktual di min lot <= 2%. Guidance ini cuma preferensi, bukan batas keras.
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
                 f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
-                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. An SL much wider than ~{hi_pts} pts may exceed the per-trade risk budget at current equity and be rejected by the OVER-RISK gate -- prefer structural levels in that range when available.\n"
+                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. Wider SLs (e.g. 1000-1900 pts) are still ACCEPTED as long as actual risk at min lot stays within the OVER-RISK gate (max ~2% of equity at current balance) -- prefer structural levels in the ~{lo_pts}-{hi_pts} range when available, but give your real structural invalidation either way.\n"
             )
         elif is_btc:
             return (
