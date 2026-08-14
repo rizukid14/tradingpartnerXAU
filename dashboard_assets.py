@@ -506,7 +506,10 @@ function renderStatusPanel() {
   let isPaused = CONFIG_DATA ? CONFIG_DATA.TRADING_PAUSED : false;
   let isDry = CONFIG_DATA ? CONFIG_DATA.DRY_RUN : true; // default true for safety in static
   let mode = CONFIG_DATA ? CONFIG_DATA.TRADING_MODE : "xau";
-  let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.4-mini";
+  let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.2";
+  let oaiDefaultModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_DEFAULT_MODEL || "gpt-4o-mini") : "gpt-4o-mini";
+  let oaiFallbackModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_FALLBACK_MODEL || "o3-mini") : "o3-mini";
+  let oaiWindow = CONFIG_DATA ? (CONFIG_DATA.OPENAI_PRIMARY_WINDOW_WIB || "15:00-19:30") : "15:00-19:30";
   let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
   let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";
 
@@ -559,7 +562,7 @@ function renderStatusPanel() {
     <div>
       <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🤖 Active AI Models & Scheduling</div>
       <div style="margin-bottom:6px; font-size:10px; color:var(--muted); line-height: 1.5;">
-        Slot 1 (OpenAI): <b>${esc(oaiModel)}</b><br>
+        Slot 1 (OpenAI): <b>${esc(oaiModel)}</b> <span style="color:var(--accent);">(${esc(oaiWindow)} WIB)</span> / default ${esc(oaiDefaultModel)} / err-fb ${esc(oaiFallbackModel)}<br>
         Slot 2 (Gemini): <b>${esc(gemModel)}</b><br>
         Slot 3 (Claude Slot): <b>${esc(cldModel)}</b>
       </div>

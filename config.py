@@ -117,8 +117,9 @@ CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-202
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")  # dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB (15:00-19:30 WIB)
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "o3-mini")  # fallback error (lambat/timeout)
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")  # model utama di luar window
 
 
 def _parse_windows_wib(raw):
@@ -209,7 +210,8 @@ DEVIATION = _getenv_int("DEVIATION", 20)
 # - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
 #   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
 #   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
-# - FX pairs: LLM (bebas struktur, safety floor 250 pts, R:R min 1.25:1) - cocok utk H1 swing.
+# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+#   via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts kalau ATR gagal; R:R min 1.25:1) - cocok utk H1 swing.
 # - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
 #   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
 TP_SL_RULES = os.getenv("TP_SL_RULES", "LLM")
@@ -530,7 +532,8 @@ def sltp_mode_for(symbol):
       min lot) di consensus/main. Max lot cap (0.01) dihapus 14 Agustus - lot murni
       risk-based, volume_max broker yang membatasi.
     - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
-    - FX pairs: "LLM" (bebas struktur, safety floor 250 pts / 25 pips, R:R min 1.25:1).
+    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+      via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts / 25 pips kalau ATR gagal; R:R min 1.25:1).
       Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
     """
     s = (symbol or "").upper()

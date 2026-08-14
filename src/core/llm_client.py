@@ -1079,8 +1079,9 @@ def query_forecast(prompt):
 
 def _resolve_openai_primary():
     """gpt-5.2 (kuota free 250k/hari) dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB
-    (default 15:00-19:30 WIB, London session single mode); di luar window langsung
-    fallback gpt-4o-mini biar kuota besar tidak habis di jam sepi (14 Agustus)."""
+    (default 15:00-19:30 WIB, London session single mode); di luar window pakai
+    OPENAI_DEFAULT_MODEL (gpt-4o-mini) biar kuota besar tidak habis di jam sepi
+    (14 Agustus). OPENAI_FALLBACK_MODEL (o3-mini) = fallback error, dipisah."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
@@ -1093,7 +1094,7 @@ def _resolve_openai_primary():
         else:  # window lintas tengah malam (mis. 21:00-02:00)
             if cur_min >= start_min or cur_min < end_min:
                 return config.OPENAI_MODEL
-    return config.OPENAI_FALLBACK_MODEL
+    return config.OPENAI_DEFAULT_MODEL
 
 
 def query_openai(prompt):
@@ -1102,7 +1103,7 @@ def query_openai(prompt):
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
 
     primary_model = _resolve_openai_primary()
-    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)
+    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)  # o3-mini (fallback error)
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
 
     try:
