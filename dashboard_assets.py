@@ -507,8 +507,8 @@ function renderStatusPanel() {
   let isDry = CONFIG_DATA ? CONFIG_DATA.DRY_RUN : true; // default true for safety in static
   let mode = CONFIG_DATA ? CONFIG_DATA.TRADING_MODE : "xau";
   let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.2";
-  let oaiDefaultModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_DEFAULT_MODEL || "gpt-4o-mini") : "gpt-4o-mini";
-  let oaiFallbackModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_FALLBACK_MODEL || "o3-mini") : "o3-mini";
+  let oaiDefaultModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_DEFAULT_MODEL || "o3-mini") : "o3-mini";
+  let oaiFallbackModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_FALLBACK_MODEL || "gpt-4o-mini") : "gpt-4o-mini";
   let oaiWindow = CONFIG_DATA ? (CONFIG_DATA.OPENAI_PRIMARY_WINDOW_WIB || "15:00-19:30") : "15:00-19:30";
   let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
   let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";

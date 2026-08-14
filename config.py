@@ -118,8 +118,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")  # dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB (15:00-19:30 WIB)
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "o3-mini")  # fallback error (lambat/timeout)
-OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")  # model utama di luar window
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")  # fallback error (lambat/timeout)
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o3-mini")  # model utama di luar window (SL struktural, 14 Agu)
 
 
 def _parse_windows_wib(raw):
