@@ -607,8 +607,10 @@ def run_trading_cycle():
     = [XAU, EURJPY, GBPCHF] - all symbols scanned ONLY when their specific timeframe
     forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour).
     """
-    print(f"\n{UI.CYAN}+-- [CYCLE START] {UI.WHITE}{time.strftime('%Y-%m-%d %H:%M:%S')} WIB {UI.CYAN}--------------------------------+{UI.RST}")
-    
+    sys.stdout.write(UI.clear_line())
+    sys.stdout.flush()
+
+    box_items = []
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
@@ -626,7 +628,7 @@ def run_trading_cycle():
             wr = (wins_t / total_t) * 100.0 if total_t else 0.0
             pnl_t = sum(d.get("profit", 0) for d in closed_deals)
             bep_str = f" | {bep_n} BEP" if bep_n else ""
-            print(f"| {UI.BOLD}Performa Harian:{UI.RST} {total_t} Trade ({wins_t}W - {loss_t}L | WR {wr:.1f}%{bep_str}) | Net PnL: {UI.badge_pnl(pnl_t)}")
+            box_items.append((f"{UI.BOLD}Performa Harian:{UI.RST} ", f"{total_t} Trade ({wins_t}W - {loss_t}L | WR {wr:.1f}%{bep_str}) | Net PnL: {UI.badge_pnl(pnl_t)}"))
 
             # Per-symbol breakdown
             by_symbol = {}
@@ -640,20 +642,21 @@ def run_trading_cycle():
                 elif d.get("profit", 0) > 0:
                     bucket["wins"] += 1
             if len(by_symbol) > 1:
-                parts = []
+                box_items.append("---")
+                box_items.append(f"{UI.DIM}Breakdown Per Simbol:{UI.RST}")
                 for sym, b in sorted(by_symbol.items()):
                     sym_t = b["n"] - b["bep"]
                     sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
                     sym_loss = sym_t - b["wins"]
                     bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
-                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} {UI.badge_pnl(b['pnl'])}")
-                print(f"| {UI.DIM}Per Simbol     :{UI.RST} " + " | ".join(parts))
+                    box_items.append(f"  • {UI.BOLD}{sym:<13}{UI.RST}: {sym_t}T ({b['wins']}W - {sym_loss}L | WR {sym_wr:.0f}%{bep_note}) Net: {UI.badge_pnl(b['pnl'])}")
         else:
-            print(f"| {UI.DIM}Performa Harian: Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%){UI.RST}")
+            box_items.append(f"{UI.DIM}Performa Harian: Belum ada trade tertutup hari ini (0 Trade | WR: 0.0%){UI.RST}")
     except Exception as e:
-        print(f"| {UI.YELLOW}[EVALUATOR WARNING] {e}{UI.RST}")
+        box_items.append(f"{UI.YELLOW}[EVALUATOR WARNING] {e}{UI.RST}")
 
-    print(f"{UI.CYAN}+------------------------------------------------------------------+{UI.RST}")
+    title_str = f"CYCLE START - {time.strftime('%Y-%m-%d %H:%M:%S')} WIB"
+    print("\n" + UI.make_box(title_str, box_items, width=74, border_color=UI.CYAN))
 
     # -- Multi-symbol parallel scan ----------------------------------------------
     global _symbol_last_candle
@@ -696,14 +699,31 @@ def _run_cycle_for_current_symbol():
     """
     # 0. Risk gate - check all conditions before trading
     can_trade, reason = risk.can_trade()
+    entry_blocked = False  # True = posisi sudah max: re-evaluator tetap jalan, entry ditahan
     if not can_trade:
-        print(f" {UI.YELLOW}[RISK GATE]{UI.RST} {reason}")
-        return True  # Not an error, just skipping
+        # Kasus khusus: posisi sudah MAX (aggregate semua simbol). Jangan skip cycle —
+        # lanjut ambil data + LLM + consensus + AI RE-EVALUATOR (bisa rekomendasi CLOSE
+        # posisi lemah buat buka slot). Hanya entry baru yang ditahan (entry_blocked).
+        # Simbol yang TIDAK punya posisi terbuka di-skip: re-evaluator gak ada kerjaan,
+        # entry juga diblokir -> LLM call sia-sia.
+        max_pos_now = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+        if len(connector.get_all_open_positions()) >= max_pos_now:
+            if not connector.get_open_positions(config.SYMBOL):
+                print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai & {config.SYMBOL} tanpa posisi terbuka — skip (re-evaluator kosong).")
+                return True
+            entry_blocked = True
+            print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai — lanjut AI re-evaluator utk {config.SYMBOL} (entry ditahan).")
+        else:
+            clean_reason = reason.strip()
+            if clean_reason.startswith("[RISK]"):
+                clean_reason = clean_reason[6:].strip()
+            print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
+            return True  # Not an error, just skipping
     
     # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
     df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=51)
     if df is None or len(df) == 0:
-        print(f" {UI.RED}[DATA ERROR] Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.{UI.RST}")
+        print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.")
         return False
     if len(df) > 50:
         df = df.iloc[-50:-1].reset_index(drop=True)
@@ -711,12 +731,13 @@ def _run_cycle_for_current_symbol():
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
     if tick is None:
-        print(f" {UI.RED}[DATA ERROR] Gagal mendapatkan tick data {config.SYMBOL}. Melewatkan siklus.{UI.RST}")
+        print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan tick data {config.SYMBOL}. Melewatkan siklus.")
         return False
         
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
-    print(f"\n{UI.CYAN}[SCAN ASSET: {UI.BOLD}{config.SYMBOL}{UI.RST}{UI.CYAN} ({tf_name})]{UI.RST} Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
+    print(f"\n{UI.tag('SCAN ASSET', UI.CYAN)} {UI.BOLD}{config.SYMBOL}{UI.RST} ({tf_name}) | Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
+
 
     # 2.1 Calculate Market Randomness & Micro Fat Tails
     if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
@@ -783,8 +804,9 @@ def _run_cycle_for_current_symbol():
 
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
-    print(f"[AI MODE {ai_mode.upper()}] Mengirim data ke {', '.join(active_models)}...")
+    print(f" {UI.tag('AI', UI.CYAN)} Mode {ai_mode.upper()} ({len(active_models)} model: {', '.join(active_models)}) | Mengirim data ke LLM...")
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
+
     
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
@@ -825,11 +847,14 @@ def _run_cycle_for_current_symbol():
 
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
     max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
-    if len(open_positions) >= max_positions:
-        print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
-        for pos in open_positions:
-            print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-        print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
+    if entry_blocked or len(open_positions) >= max_positions:
+        if entry_blocked:
+            print(f"-> Entry ditahan: posisi bot sudah {max_positions} (aggregate semua simbol). Re-evaluator tetap jalan.")
+        else:
+            print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
+            for pos in open_positions:
+                print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
+            print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
         return True
 
 
