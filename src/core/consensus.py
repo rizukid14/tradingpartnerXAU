@@ -168,6 +168,8 @@ def calculate_consensus(decisions):
         sig = dec.get("signal") or "HOLD"
         conf = dec.get("confidence") if dec.get("confidence") is not None else 0.0
         reason = dec.get("reasoning") or "Tidak ada alasan."
+        if len(reason) > 280:
+            reason = reason[:277] + "..."
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
         setup_label = dec.get("setup")
@@ -180,6 +182,7 @@ def calculate_consensus(decisions):
         if setup_label:
             box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
         box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
+
         
     # Evaluate consensus for active position early-close actions
     close_votes = {}
