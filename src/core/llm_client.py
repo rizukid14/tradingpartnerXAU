@@ -1016,7 +1016,7 @@ def clean_json_response(text):
 
 
 def _execute_openai_single(model_name, prompt, timeout_sec):
-    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower()
+    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower() or "o4" in model_name.lower()
     if is_reasoning:
         response = openai_client.chat.completions.create(
             model=model_name,
