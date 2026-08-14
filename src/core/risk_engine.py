@@ -231,6 +231,13 @@ class RiskEngine:
             if self._consecutive_losses > 0:
                 print(f" [RISK] Win setelah {self._consecutive_losses} loss. Streak direset.")
             self._consecutive_losses = 0
+            # Batalkan pause kalau masih aktif - alasan pause (5 loss beruntun)
+            # sudah tidak berlaku karena ada win yang menandakan market recovery.
+            # Sebelumnya pause tetap jalan sampai timer habis + pesan "5 loss
+            # berturut-turut" terus muncul padahal streak sudah nol (bug 15 Agustus).
+            if time.time() < self._paused_until:
+                self._paused_until = 0
+                print(" [RISK] Pause dibatalkan setelah win (streak sudah reset).")
             # Exit recovery mode only after a win that clears the minimum
             # profit threshold - a tiny win should not instantly reset the
             # reduced-lot protection after a losing streak.

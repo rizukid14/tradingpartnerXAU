@@ -243,11 +243,14 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
 #     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
 #     TP 312 (3.2x ATR) jarang kesampean. ATR-based menyesuaikan volatilitas.
-#   - XAUUSD:   SL minimal 400 pts statis (0.4x ATR M15, sudah proporsional)
+#   - XAUUSD:   floor berbasis ATR aktif (default 1.2x ATR M15, `LLM_XAU_FLOOR_ATR_MULT`,
+#     15 Agustus - user minta "floor 1x atr secara lunak", final 1.2x; SL tipis 0.8x ATR
+#     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
 LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.5)
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
-LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 
 # Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
@@ -362,11 +365,22 @@ TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MUL
 # sama struktur LLM) dan BUKAN ke % TP (yang bisa jauh & gak kesampean -> proteksi gak pernah
 # aktif). Mode ATR-Based tetap pakai konstanta ATR di atas (konsisten karena SL/TP-nya juga
 # turunan ATR).
-BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # BEP aktif saat profit >= min(1x SL, 50% TP)
-TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.5)  # trailing aktif saat profit >= 1.5x SL
-TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 0.8)  # longgar saat baru aktif
-TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.3)  # ketat mendekati TP
-TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.2)  # floor
+#
+# UPDATE 15 Agustus - BEP/trailing pindah ke PURE % TP (default 65%/80%):
+# SL-based (1x SL BEP, 1.5x SL activation) ternyata cacat di dua ujung untuk trade
+# R:R rendah (1.25-1.5, hasil gate R:R min 1.25):
+#   - Tanpa cap TP: activation 1.5x SL > TP 1.25x SL -> trailing TIDAK PERNAH nyala
+#   - Dengan cap 60% TP: activation jadi 0.75x SL -> kecepetan (sebelum 1x SL)
+# Pure % TP selalu proporsional ke target: R:R 2:1 -> BEP 1.3x SL, activation 1.6x SL
+# (ruang napas); R:R 1.25 -> BEP 0.81x SL, activation 1.0x SL (tetap nyala, pas).
+# Konstanta SL_MULT di bawah tetap dipakai sebagai FALLBACK untuk posisi tanpa TP.
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.65)  # BEP aktif saat profit >= 65% TP
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.80)  # trailing aktif saat profit >= 80% TP
+BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # fallback tanpa TP: BEP di 1x SL
+TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.5)  # fallback tanpa TP: activation 1.5x SL
+TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 1.2)  # longgar saat baru aktif (15 Agu: 0.8->1.2)
+TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.4)  # ketat mendekati TP (15 Agu: 0.3->0.4)
+TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.3)  # floor (15 Agu: 0.2->0.3)
 
 
 # --- BREAK-EVEN ---

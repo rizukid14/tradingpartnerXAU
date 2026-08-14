@@ -304,15 +304,22 @@ def _build_points_explanation(symbol, point_size):
         pip_str = _fmt_price(point_size * 10) if point_size else "0.10"
         # Typical SL range dari default per-symbol (XAU 500/1000, FX 300 ->
         # 150-450) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
-        # Khusus XAU mode LLM: di-sinkronkan ke 400-1000 biar konsisten dengan
-        # SL/TP rules block (sebelumnya unit block bilang 250-750, SL/TP block
-        # bilang 400-1000 -> dua range beda dalam satu prompt, fix 13 Agustus).
+        # Khusus XAU mode LLM: di-sinkronkan ke floor ATR aktif (1.2x ATR M15,
+        # 15 Agustus) biar konsisten dengan SL/TP rules block (sebelumnya 400-1000
+        # statis, sekarang dinamis - SL tipis 0.8x ATR dari o4-mini di-floor ke
+        # 1.2x ATR; fix konsistensi range 13 Agustus tetap berlaku).
         d_sl = config.default_sl_points_for(symbol)
         lo_pts = max(10, int(d_sl * 0.5))
         hi_pts = max(20, int(d_sl * 1.5))
         is_gold = "XAU" in (symbol or "").upper()
         if is_gold and config.sltp_mode_for(symbol) == "LLM":
-            lo_pts, hi_pts = 400, 1000
+            atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
+            if atr_pts_xau and atr_pts_xau > 0:
+                xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
+            else:
+                xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
+            lo_pts = max(lo_pts, xau_floor)
+            hi_pts = max(hi_pts, int(xau_floor * 2.5))
         # FX mode LLM: sinkronkan ke floor ATR aktif (1.5x ATR H1) supaya unit
         # definition tidak kontradiksi dengan floor di blok SL/TP rules
         # (fix 14 Agustus lanjutan: floor statis 250 -> ATR-based, fallback 250).
@@ -357,15 +364,18 @@ def _build_points_explanation(symbol, point_size):
         )
 
 
-_fx_atr_cache = {}  # symbol -> (timestamp, atr_h1_points)
+_fx_atr_cache = {}  # (symbol, timeframe) -> (timestamp, atr_points)
 
 
-def _fx_atr_h1_points(symbol):
-    """ATR(14) H1 FX dalam poin broker (query MT5, cache 60s) — dipakai untuk
-    floor dinamis & typical SL range di prompt. Return None kalau gagal."""
+def _atr_points_for(symbol, timeframe):
+    """ATR(14) dari timeframe tertentu dalam poin broker (cache 60s per
+    (symbol, timeframe)) — dipakai untuk floor dinamis & typical SL range di
+    prompt. Return None kalau gagal. 15 Agustus: digeneralisasi dari helper
+    FX-only supaya XAU (M15) bisa pakai floor ATR juga."""
     import time as _t
+    key = (symbol, timeframe)
     now = _t.time()
-    hit = _fx_atr_cache.get(symbol)
+    hit = _fx_atr_cache.get(key)
     if hit and now - hit[0] < 60:
         return hit[1]
     try:
@@ -374,15 +384,22 @@ def _fx_atr_h1_points(symbol):
         point = si.point if si else None
         if not point:
             return None
-        rates = _mt5.copy_rates_from_pos(symbol, _mt5.TIMEFRAME_H1, 0, 15)
+        rates = _mt5.copy_rates_from_pos(symbol, timeframe, 0, 15)
         if rates is None or len(rates) == 0:
             return None
         atr = float((rates['high'] - rates['low']).mean())
         out = max(1, int(round(atr / point)))
-        _fx_atr_cache[symbol] = (now, out)
+        _fx_atr_cache[key] = (now, out)
         return out
     except Exception:
         return None
+
+
+def _fx_atr_h1_points(symbol):
+    """ATR(14) H1 FX dalam poin broker (cache 60s) — dipakai untuk
+    floor dinamis & typical SL range di prompt. Return None kalau gagal."""
+    import MetaTrader5 as _mt5
+    return _atr_points_for(symbol, _mt5.TIMEFRAME_H1)
 
 
 def _build_sltp_rules_block(symbol, timeframe):
@@ -414,15 +431,22 @@ def _build_sltp_rules_block(symbol, timeframe):
         # 1.25x SL). Model TIDAK perlu stretch level ke angka tertentu - itu justru
         # bikin model HOLD terus ("no clean 400+ invalidation").
         if is_xau:
-            lo_pts = config.LLM_SAFETY_FLOOR_XAU_PTS   # 400 pts
-            hi_pts = 1000
+            # 15 Agustus: floor XAU dinamis = 1.2x ATR M15 (LLM_XAU_FLOOR_ATR_MULT),
+            # fallback 400 statis kalau ATR gagal. SL tipis 0.8x ATR (o4-mini) di-floor
+            # otomatis ke 1.2x ATR supaya swing M15 gak kena noise duluan.
+            xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
+            atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
+            if atr_pts_xau and atr_pts_xau > 0:
+                xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
+            lo_pts = xau_floor
+            hi_pts = max(1000, int(lo_pts * 2.5))
             # 14 Agustus malam: gate OVER-RISK dilonggarkan ke 2% (config
             # OVER_RISK_MAX_PERCENT) - SL >1000 pts TETAP BISA diterima selama risk
             # aktual di min lot <= 2%. Guidance ini cuma preferensi, bukan batas keras.
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (approx {config.LLM_XAU_FLOOR_ATR_MULT}x ATR M15) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
                 f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. Wider SLs (e.g. 1000-1900 pts) are still ACCEPTED as long as actual risk at min lot stays within the OVER-RISK gate (max ~2% of equity at current balance) -- prefer structural levels in the ~{lo_pts}-{hi_pts} range when available, but give your real structural invalidation either way.\n"
             )
         elif is_btc:

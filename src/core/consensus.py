@@ -27,8 +27,9 @@ def _apply_sltp_rules(sl_points, tp_points):
         bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
         invalidation model = mengubah setup tanpa persetujuan model.
       "LLM": SL/TP bebas sesuai konsensus, dibatasi safety floor per-kategori
-        (14 Agustus: XAU 400 pts statis, FX berbasis ATR aktif max(2x spread,
-        1.5x ATR H1) dengan fallback 250 pts) + R:R minimum 1.25:1
+        (15 Agustus: XAU berbasis ATR aktif max(2x spread, 1.2x ATR M15)
+        fallback 400 pts; FX berbasis ATR aktif max(2x spread, 1.5x ATR H1)
+        fallback 250 pts) + R:R minimum 1.25:1
         (TP di-floor ke 1.25x SL kalau kurang - bukan tolak). Lot size
         dikalkulasi dari SL tsb via risk-based sizing.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
@@ -68,9 +69,13 @@ def _apply_sltp_rules(sl_points, tp_points):
         is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
 
         if is_xau:
-            # Gold: safety floor minimal 400 pts untuk mencegah SL super sempit
-            # (0.4x ATR M15 XAU ~1000 pts - sudah proporsional, tetap statis)
-            min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
+            # Gold: floor berbasis ATR aktif (default 1.2x ATR M15, 15 Agustus).
+            # SL tipis (0.8x ATR, contoh o4-mini 588 vs ATR 711) di-floor ke 1.2x ATR
+            # supaya swing M15 gak kena noise dulu. Fallback 400 statis kalau ATR gagal.
+            if atr_points > 0:
+                min_sl = max(spread_pts * 2, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_points))
+            else:
+                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
         else:
             # FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1) supaya
             # struktur asli model (SL 60-200 pts di ATR 90-100) tidak di-floor
