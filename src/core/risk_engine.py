@@ -152,6 +152,11 @@ class RiskEngine:
         if not daily_ok:
             return False, daily_msg
 
+        # 2b. Check daily profit target (stop trade setelah profit harian tercapai)
+        profit_ok, profit_msg = self._check_daily_profit_target()
+        if not profit_ok:
+            return False, profit_msg
+
         # 3. Check max open positions
         pos_ok, pos_msg = self._check_max_positions()
         if not pos_ok:
@@ -304,10 +309,6 @@ class RiskEngine:
         volume_min = getattr(si, "volume_min", 0.01)
         volume_max = getattr(si, "volume_max", 100.0)
         volume_step = getattr(si, "volume_step", 0.01)
-        # Cap tambahan per kategori aset (XAU = 0.01) - 13 Agustus
-        extra_max = config.max_lot_for(symbol)
-        if extra_max is not None:
-            volume_max = min(volume_max, extra_max)
         lot = max(volume_min, min(volume_max, lot))
         lot = math.floor(lot / volume_step + 1e-9) * volume_step
         lot = max(volume_min, lot)  # jangan jatuh di bawah volume_min broker
@@ -364,6 +365,40 @@ class RiskEngine:
 
         except Exception as e:
             print(f"[RISK WARNING] Gagal memeriksa P/L harian: {e}")
+            return True, ""
+
+    def _check_daily_profit_target(self):
+        """
+        Daily profit target (14 Agustus): begitu net profit harian (WIB-midnight,
+        dari get_closed_positions_today) mencapai DAILY_PROFIT_TARGET_PERCENT % dari
+        balance MT5, bot BERHENTI membuka posisi baru sampai tengah malam WIB
+        berikutnya (reset otomatis karena window P/L harian = midnight WIB).
+        Nilai 0.0 / negatif = fitur dimatikan.
+        """
+        try:
+            target_pct = getattr(config, "DAILY_PROFIT_TARGET_PERCENT", 0.0)
+            if target_pct <= 0:
+                return True, ""  # fitur dimatikan
+
+            closed = connector.get_closed_positions_today()
+            daily_pnl = sum(c["profit"] for c in closed)  # profit sudah NET (termasuk swap+komisi)
+
+            account = mt5.account_info()
+            balance = float(account.balance) if account else 0.0
+            # Kalau balance tidak terbaca (MT5 disconnected / None), jangan blokir
+            # trade karena target tidak bisa dihitung - biarkan gate lain yang kerja.
+            if balance <= 0:
+                return True, ""
+            target_usd = balance * target_pct / 100.0
+
+            if daily_pnl >= target_usd:
+                return False, (f" [RISK] Target Profit Harian Tercapai! P/L: +${daily_pnl:.2f} "
+                               f"(Target: +{target_pct:.1f}% / +${target_usd:.2f}). "
+                               f"Trading dihentikan sampai besok!")
+            return True, ""
+
+        except Exception as e:
+            print(f"[RISK WARNING] Gagal memeriksa target profit harian: {e}")
             return True, ""
 
     def _check_max_positions(self):

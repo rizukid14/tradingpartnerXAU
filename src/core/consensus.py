@@ -26,9 +26,10 @@ def _apply_sltp_rules(sl_points, tp_points):
         ok=False), BUKAN dinaikkan. Filosofi: cari setup yang secara alamiah
         bisa kasih R:R 2:1 terhadap volatilitas; memaksa SL/TP lebih jauh dari
         invalidation model = mengubah setup tanpa persetujuan model.
-      "LLM": SL/TP sebebas-bebasnya sesuai konsensus - cuma floor 2x spread
-        (biar broker nggak nolak INVALID_STOPS). Lot size dikalkulasi dari SL
-        tsb via risk-based sizing, jadi SL kecil = lot gede (risk tetap sama).
+      "LLM": SL/TP bebas sesuai konsensus, dibatasi safety floor per-kategori
+        (14 Agustus: XAU 400 pts, FX 250 pts / 25 pips) + R:R minimum 1.25:1
+        (TP di-floor ke 1.25x SL kalau kurang - bukan tolak). Lot size
+        dikalkulasi dari SL tsb via risk-based sizing.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
     """
     if not sl_points or sl_points <= 0:
@@ -64,14 +65,13 @@ def _apply_sltp_rules(sl_points, tp_points):
     if mode == "LLM":
         # Mode LLM (Bebas sesuai thesis struktur AI, tapi dengan safety floor dan R:R gate)
         is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
-        d_sl = config.default_sl_points_for(config.SYMBOL)
-        
+
         if is_xau:
             # Gold: safety floor minimal 400 pts untuk mencegah SL super sempit
-            min_sl = max(spread_pts * 2, 400)
+            min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
         else:
-            # FX & BTC: safety floor 50% dari default SL
-            min_sl = max(spread_pts * 2, int(d_sl * 0.5))
+            # FX pairs: floor minimal 250 pts (25 pips) - mencegah SL mikro 5 pips
+            min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
             
         if sl_points < min_sl:
             print(f"   [!] SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
@@ -80,10 +80,12 @@ def _apply_sltp_rules(sl_points, tp_points):
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
 
-        # Enforce minimum R:R of 1:1 (TP must be at least 1x SL)
-        min_rr = 1.0
-        if sl_points > 0 and (tp_points / sl_points) < min_rr:
-            return sl_points, tp_points, False, f"R:R ratio {(tp_points / sl_points):.2f} < {min_rr}x (SL {sl_points} pts -> TP {tp_points} pts)"
+        # R:R minimum 1.25:1 (14 Agustus) - TP dinaikkan ke minimal 1.25x SL
+        min_rr = config.LLM_MIN_RR_RATIO
+        min_tp = int(sl_points * min_rr)
+        if tp_points < min_tp:
+            print(f"   [!] TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
+            tp_points = min_tp
 
         # GATE OVER-RISK (13 Agustus): kalau risk minimum yang bisa diwakili
         # (volume_min x SL) sudah MELEBIHI budget risk -> trade DITOLAK.

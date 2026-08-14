@@ -15,6 +15,12 @@ from src.core.risk_engine import WIB
 CACHE_FILE = os.path.join(config.DATA_DIR, "analysis_cache.json")
 
 
+def _fmt(x):
+    """Format harga ke desimal bersih (1.09815, 151.234, 4318.15) - fix 14
+    Agustus: `.2f` meratakan harga FX 5-desimal jadi 1.10 / 0.00."""
+    return f"{x:.10f}".rstrip("0").rstrip(".")
+
+
 class MacroAnalyst:
     """
     Manages background multi-timeframe (MTF) analysis and fundamental macro analysis.
@@ -208,13 +214,13 @@ class MacroAnalyst:
             rsi_label = "netral"
 
         # Jarak harga ke swing (dalam satuan ATR) biar LLM tahu seberapa dekat level
-        support_line = f"support terdekat {swing_low:.2f} (~{swing_low_dist:.1f}x ATR di bawah)" if swing_low_dist <= 2.0 else f"support jauh {swing_low:.2f} (~{swing_low_dist:.1f}x ATR)"
-        resistance_line = f"resistance terdekat {swing_high:.2f} (~{swing_high_dist:.1f}x ATR di atas)" if swing_high_dist <= 2.0 else f"resistance jauh {swing_high:.2f} (~{swing_high_dist:.1f}x ATR)"
+        support_line = f"support terdekat {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR di bawah)" if swing_low_dist <= 2.0 else f"support jauh {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR)"
+        resistance_line = f"resistance terdekat {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR di atas)" if swing_high_dist <= 2.0 else f"resistance jauh {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR)"
 
         return (
-            f"trend {trend} | close {close:.2f}, EMA20 {ema20:.2f}, EMA50 {ema50:.2f} "
-            f"(gap EMA {abs(ema20 - ema50):.2f}), RSI {rsi:.1f} ({rsi_label}), ATR {atr:.2f} | "
-            f"swing {window_size}-candle: high {swing_high:.2f} ({resistance_line}), low {swing_low:.2f} ({support_line})"
+            f"trend {trend} | close {_fmt(close)}, EMA20 {_fmt(ema20)}, EMA50 {_fmt(ema50)} "
+            f"(gap EMA {_fmt(abs(ema20 - ema50))}), RSI {rsi:.1f} ({rsi_label}), ATR {_fmt(atr)} | "
+            f"swing {window_size}-candle: high {_fmt(swing_high)} ({resistance_line}), low {_fmt(swing_low)} ({support_line})"
         )
 
     def _run_fundamental_analysis(self):

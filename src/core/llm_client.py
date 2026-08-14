@@ -228,14 +228,16 @@ The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candl
 The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
 
 ### RISK CONSTRAINTS (apply regardless of chosen strategy)
+Read the market data first and form your thesis from structure. Then validate that thesis against the constraints below -- do not start from the constraints and reverse-engineer a thesis to fit them.
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
-- A concrete invalidation condition for that thesis
+- A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
 {{SLTP_RULES_BLOCK}}
+- Use ATR(14) as a volatility sanity check: a structural SL much smaller than roughly 0.5x ATR is likely noise-level on the active timeframe -- prefer invalidation levels at least around half an ATR away when structure allows.
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
 
-If any of these can't be honestly satisfied, return HOLD. HOLD is a normal, often correct output -- do not force a trade to avoid it.
+HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
 
 {{POINTS_EXPLANATION}}
 
@@ -311,6 +313,13 @@ def _build_points_explanation(symbol, point_size):
         is_gold = "XAU" in (symbol or "").upper()
         if is_gold and config.sltp_mode_for(symbol) == "LLM":
             lo_pts, hi_pts = 400, 1000
+        # FX mode LLM: sinkronkan ke Safety Floor (pola sama kayak XAU 400-1000)
+        # supaya unit definition tidak kontradiksi dengan floor 250 pts di blok
+        # SL/TP rules (fix 14 Agustus: sebelumnya "50 to 150" vs floor 250).
+        if not is_gold and not is_btc and config.sltp_mode_for(symbol) == "LLM":
+            fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
+            lo_pts = max(lo_pts, fx_floor)
+            hi_pts = max(hi_pts, int(fx_floor * 2.5))
         if is_gold:
             typical_note = (
                 f"${round(lo_pts * (point_size or 0.01), 2)} to "
@@ -355,61 +364,59 @@ def _build_sltp_rules_block(symbol, timeframe):
         dinaikkan), jadi prompt ini harus tegas biar AI gak buang cycle.
         Angka minimum konkret (dalam points) di-inject dinamis di market
         data block (atr_gate_str) - sinkron dengan consensus gate.
-      "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
-      rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini -
-      SL/TP model di-average di consensus.py (outlier dibuang), lot size
-      dikalkulasi dari SL di main.py.
+      "LLM": SL/TP bebas sesuai thesis LLM; dibatasi safety floor per-kategori
+      (XAU 400 pts / FX 250 pts) + R:R minimum 1.25:1 (config.LLM_*). Bot TIDAK
+      ngomongin sizing/ATR di prompt mode ini - SL/TP model di-average di
+      consensus.py (outlier dibuang), lot size dikalkulasi dari SL di main.py.
     """
     mode = config.sltp_mode_for(symbol)  # per-kategori: XAU LLM, BTC ATR-Based, FX LLM
     is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
+    min_rr = config.LLM_MIN_RR_RATIO
 
     if mode == "LLM":
-        # Mode LLM: Bebas sesuai thesis/struktur pasar
+        # Mode LLM: Bebas sesuai thesis/struktur pasar, tapi bot yang enforce floor.
+        # Filosofi (14 Agustus): model kasih level struktural JUJUR (berapa pun
+        # jaraknya); bot yang menaikkan SL/TP ke floor minimum (SL >= floor, TP >=
+        # 1.25x SL). Model TIDAK perlu stretch level ke angka tertentu - itu justru
+        # bikin model HOLD terus ("no clean 400+ invalidation").
         if is_xau:
-            lo_pts = 400
+            lo_pts = config.LLM_SAFETY_FLOOR_XAU_PTS   # 400 pts
             hi_pts = 1000
-            range_note = f"typically {lo_pts} to {hi_pts} points"
-            noise_note = f"avoid tight/unsafe stops (under {lo_pts} points / $4.00) as normal market noise will easily trigger them before your thesis plays out"
             # 13 Agustus: catatan soft soal max SL biar risk 1.0% (min lot 0.01)
             # gak meledak. Bukan gate keras - cuma guidance; gate OVER-RISK ada di
             # consensus (SL > budget risk -> trade ditolak otomatis).
             return (
-                f"- Define absolute 'invalidation_price' and 'target_price' based on major {timeframe} structure. SL is placed exactly at the invalidation price level.\n"
-                f"- The distance between entry price and invalidation_price MUST be at least {lo_pts} points (aligning with {range_note}) and {noise_note}.\n"
-                f"- SOFT GUIDANCE (not a hard rule): for optimal risk sizing with the minimum lot (0.01), an SL around {lo_pts}-{hi_pts} points is ideal. An SL much wider than ~{hi_pts} points (e.g. >1100 points) makes the risk exceed the 1.0% per-trade budget at min lot, and the bot may reject the trade. Prefer structural levels that keep SL within {lo_pts}-{hi_pts} points.\n"
-                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
-                f"- IMPORTANT: R:R 1:1 is the MINIMUM threshold verified by the bot, not a reason to HOLD. Always provide invalidation_price and target_price based on price structure (swing/support/resistance/EMA). The bot calculates the distances and verifies the R:R. Only output HOLD if there is genuinely no structural trade available.\n"
-                f"- TP is placed exactly at the target_price.\n"
+                f"- Define 'invalidation_price' and 'target_price' based on major {timeframe} structure (swing levels, Fibonacci, PDH/PDL, EMA): the level where your thesis breaks (SL) and where it reaches target (TP).\n"
+                f"- SL is placed at or slightly beyond the invalidation level -- a small buffer past the level is fine; never inside your own level. TP is placed at your structural target level.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts and TP >= {min_rr}x SL. If your honest structural levels are tighter than these floors, the bot widens them -- you do NOT need to stretch your levels to arbitrary numbers. Give your real structural levels; the bot handles the floors.\n"
+                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. An SL much wider than ~{hi_pts} pts may exceed the per-trade risk budget at current equity and be rejected by the OVER-RISK gate -- prefer structural levels in that range when available.\n"
             )
         elif is_btc:
             return (
-                f"- Define absolute 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600).\n"
-                f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
-                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
-                f"- IMPORTANT: R:R 1:1 is the MINIMUM threshold verified by the bot, not a reason to HOLD. Always provide invalidation_price and target_price based on price structure (swing/support/resistance/EMA). The bot calculates the distances and verifies the R:R. Only output HOLD if there is genuinely no structural trade available.\n"
-                f"- TP is placed at your realistic structural target.\n"
+                f"- Define 'invalidation_price' and 'target_price' based on price structure (typically 20000 to 60000 points / $200-$600): the level where your thesis breaks (SL) and where it reaches target (TP).\n"
+                f"- SL is placed at or slightly beyond the invalidation level (at least 2x current spread). TP is placed at your structural target level.\n"
+                f"- The bot enforces minimum floors automatically: TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
             )
         else:
             # FX Pairs H1: Bebas mengikuti struktur harga (support/resistance/EMA/swing),
-            # tidak dipaksa batas ATR kaku atau R:R fixed, cukup letakkan SL di level invalidasi
-            # teknikal & TP di target struktur rasional (minimal > 2x spread).
+            # tapi SL minimal 250 pts (25 pips) - floor safety mode LLM (14 Agustus),
+            # mencegah SL mikro 5 pips yang membengkakkan lot sizing.
+            fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS   # 250 pts = 25 pips
             return (
-                f"- Define absolute 'invalidation_price' and 'target_price' purely based on the {timeframe} price structure (e.g. key swing high/low, support/resistance, EMA, or supply/demand levels).\n"
-                f"- SL is placed at the invalidation level (must be at least 2x current spread).\n"
-                f"- Your target_price MUST provide a Risk-to-Reward ratio (R:R) of at least 1:1. The Take Profit distance (TP) must be at least 1x the Stop Loss distance (SL) from your entry. If the market structure does not support at least 1:1 R:R at current levels, output HOLD.\n"
-                f"- IMPORTANT: R:R 1:1 is the MINIMUM threshold verified by the bot, not a reason to HOLD. Always provide invalidation_price and target_price based on price structure (swing/support/resistance/EMA). The bot calculates the distances and verifies the R:R. Only output HOLD if there is genuinely no structural trade available.\n"
-                f"- TP is placed at your realistic structural target.\n"
+                f"- Define 'invalidation_price' and 'target_price' based on {timeframe} price structure (swing high/low, support/resistance, EMA): the level where your thesis breaks (SL) and where it reaches target (TP).\n"
+                f"- SL is placed at or slightly beyond the invalidation level -- a small buffer past the level is fine; never inside your own level. TP is placed at your structural target level.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {fx_floor} pts (25 pips) and TP >= {min_rr}x SL. If your honest structural levels are tighter than these floors, the bot widens them -- you do NOT need to stretch your levels. Give your real structural levels; the bot handles the floors.\n"
             )
 
     # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
     sl_mult = config.atr_sl_multiplier()
     tp_mult = config.atr_tp_multiplier()
     return (
-        f"- Define absolute 'invalidation_price' and 'target_price'. Bot calculates points dynamically at execution.\n"
-        f"- HARD GATE (non-negotiable, enforced by the bot): if the resulting SL < {sl_mult}x current ATR or TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent.\n"
-        f"- SL must be placed at the invalidation price level, no tighter than 2x current spread (in points) from the entry price.\n"
-        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimum price distances required for current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- choose invalidation_price/target_price that meet or exceed them.\n"
+        f"- Define absolute 'invalidation_price' and 'target_price' from real price structure. Bot calculates points dynamically at execution.\n"
+        f"- SL is placed at or slightly beyond the invalidation level (a small buffer past the level is fine; never inside your own level), and no tighter than 2x current spread (in points) from the entry price.\n"
+        f"- HARD GATE (non-negotiable, enforced by the bot): if the resulting SL < {sl_mult}x current ATR or TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Give your real structural levels; if they cannot meet the gate, HOLD is the correct call.\n"
+        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimum price distances required for current ATR are listed in the MARKET DATA section (ATR HARD GATE line).\n"
     )
 
 
@@ -444,9 +451,14 @@ def _get_key_levels_str(symbol, current_bid):
         pdl = float(prev['low'])
         today_open = float(today['open'])
 
-        # Round number: nearest 1.00 for XAU, nearest 1000 for BTC
+        # Round number: nearest 1000 untuk BTC, nearest 2-desimal (pip-level)
+        # untuk FX (harga < 100, mis. EURJPY 151.23 / GBPCHF 1.10), nearest
+        # integer untuk XAU (harga ~1000-5000). Fix 14 Agustus: FX 5-desimal
+        # sebelumnya di-round ke 1 (round(1.09815) = 1) -> "1.00" yang nyasar.
         if current_bid and current_bid > 10000:
             round_num = round(current_bid / 1000.0) * 1000
+        elif current_bid and current_bid < 100:
+            round_num = round(current_bid, 2)
         elif current_bid:
             round_num = round(current_bid)
         else:
@@ -473,8 +485,8 @@ def _get_key_levels_str(symbol, current_bid):
 
         out = (
             f"### KEY LEVELS\n"
-            f"- Previous Day High: {pdh:.2f} | Previous Day Low: {pdl:.2f}\n"
-            f"- Today Open: {today_open:.2f}\n"
+            f"- Previous Day High: {_fmt_price(pdh)} | Previous Day Low: {_fmt_price(pdl)}\n"
+            f"- Today Open: {_fmt_price(today_open)}\n"
             f"- Nearest Psychological Round Number: {round_str}\n"
             f"- Active Session (WIB): {session_str}\n"
         )
@@ -848,12 +860,14 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     swing_high = float(df['high'].max())
     swing_low = float(df['low'].min())
     diff = swing_high - swing_low
-    fib_382 = round(swing_high - 0.382 * diff, 2)
-    fib_500 = round(swing_high - 0.500 * diff, 2)
-    fib_618 = round(swing_high - 0.618 * diff, 2)
+    # Round 6 desimal: buang noise float, biar _fmt_price yang format bersih
+    # (sebelumnya round ke 2 desimal bikin fib FX 5-desimal jadi flat 1.10)
+    fib_382 = round(swing_high - 0.382 * diff, 6)
+    fib_500 = round(swing_high - 0.500 * diff, 6)
+    fib_618 = round(swing_high - 0.618 * diff, 6)
     fib_str = (
-        f"- 50-Bar Swing High: {swing_high:.2f} | Swing Low: {swing_low:.2f}\n"
-        f"- Fibonacci Retracement Levels: Fib 38.2%: {fib_382:.2f} | Fib 50.0%: {fib_500:.2f} | Fib 61.8%: {fib_618:.2f}"
+        f"- 50-Bar Swing High: {_fmt_price(swing_high)} | Swing Low: {_fmt_price(swing_low)}\n"
+        f"- Fibonacci Retracement Levels: Fib 38.2%: {_fmt_price(fib_382)} | Fib 50.0%: {_fmt_price(fib_500)} | Fib 61.8%: {_fmt_price(fib_618)}"
     )
 
     # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
@@ -882,9 +896,9 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 ### CURRENT INDICATORS & FIBONACCI SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
-- EMA (20): {latest['ema_20']:.2f}
-- EMA (50): {latest['ema_50']:.2f}
-- ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
+- EMA (20): {_fmt_price(latest['ema_20'])}
+- EMA (50): {_fmt_price(latest['ema_50'])}
+- ATR (14): {_fmt_price(latest['atr_14'])} (which is {atr_points} points)
 {atr_gate_str}{fib_str}
 {randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""

@@ -177,15 +177,17 @@ RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
 DEVIATION = _getenv_int("DEVIATION", 20)
 
 # TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
-# price), safety floor max(2x spread, 0.5x default_sl). Mode "ATR-Based" tetap tersedia
-# via .env/menu/--tpsl-rules - gate ATR R:R 2:1 (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
+# price), safety floor per-kategori (14 Agustus: XAU 400 pts, FX 250 pts) + R:R min 1.25:1.
+# Mode "ATR-Based" tetap tersedia via .env/menu/--tpsl-rules - gate ATR R:R 2:1
+# (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
 #
 # PER-KATEGORI (13 Agustus, pisah logic biar enak debug):
-# - XAUUSD: LLM (13 Agustus - soft floor 400-1000, max lot 0.01, gate over-risk).
+# - XAUUSD: LLM (13 Agustus - soft floor 400-1000, gate over-risk; max lot cap
+#   dihapus 14 Agustus - lot murni risk-based sesuai volume_max broker).
 # - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
 #   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
 #   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
-# - FX pairs: LLM (bebas struktur, safety floor, R:R 1:1) - cocok utk H1 swing.
+# - FX pairs: LLM (bebas struktur, safety floor 250 pts, R:R min 1.25:1) - cocok utk H1 swing.
 # - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
 #   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
 TP_SL_RULES = os.getenv("TP_SL_RULES", "LLM")
@@ -203,6 +205,16 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # (10/20 pips EURJPY scale). Dulu per-pair 50/100 & 40/80 waktu FX masih M5 scalping;
 # sejak pindah H1, ATR H1 jauh lebih besar jadi 100/200 lebih pas. Gate ATR-Based tetap
 # menolak otomatis kalau proposal SL/TP < multiplier x ATR (lihat atr_sl_multiplier).
+
+# --- LLM MODE SAFETY FLOOR & R:R GATE (14 Agustus) ---
+# Mode LLM (XAU & FX): SL/TP bebas struktur LLM, tapi dibatasi safety floor minimal
+# (mencegah SL mikro 5 pips yang membengkakkan lot) + gate R:R minimum.
+#   - FX pairs: SL minimal 250 pts (25 pips)
+#   - XAUUSD:   SL minimal 400 pts (4 pips / $4.00 per 0.01 lot)
+#   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
+LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)
+LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 
 
 
@@ -336,6 +348,11 @@ PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
 MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
+# --- DAILY PROFIT TARGET (14 Agustus) ---
+# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
+# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
+# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
+DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
 
 
 def bep_tolerance_for(deal):
@@ -384,11 +401,14 @@ ALLOWED_SESSIONS_WIB = [
     {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones DINONAKTIFKAN (permintaan user 11-08: full trade 24 jam,
-# tengah malam-pagi juga trade). Kalau mau aktifkan lagi, isi list-nya:
-#   {"name": "Rollover",  "start": (4, 0), "end": (6, 0), "reason": "Spread melebar saat rollover"},
-#   {"name": "Dead Zone", "start": (0, 0), "end": (4, 0), "reason": "Likuiditas rendah"},
-DANGER_ZONES_WIB = []
+# Danger zones: SEBELUMNYA DINONAKTIFKAN (11-08: full trade 24 jam). 14 Agustus user
+# minta Dead Zone subuh aktif lagi: blokir TOTAL pembukaan posisi baru 02:00-06:00 WIB
+# (mencegah profit tergerus saat pasar sepi/whipsaw subuh). Berlaku untuk XAU & FX
+# (crypto/BTC di-skip otomatis di risk_engine._check_danger_zones - BTC tetap 24/7).
+DANGER_ZONES_WIB = [
+    {"name": "Overnight Dead Zone (02:00 - 06:00 WIB)", "start": (2, 0), "end": (6, 0),
+     "reason": "Dead Zone - pergerakan tipis & lonjakan spread subuh"},
+]
 
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
@@ -477,11 +497,12 @@ def sltp_mode_for(symbol):
     SL/TP mode per kategori aset (13 Agustus - pisah logic per simbol biar enak debug):
     - XAU: "LLM" (13 Agustus sore - pindah dari ATR-Based fix). Alasan: gate ATR
       (SL >= 1.25x ATR M15 ~1024 pts) bikin SL lebar yang TIDAK MUAT di min lot 0.01
-      dengan risk 0.5% (over-risk 3.2x). Mode LLM + risk 1.0% + max lot 0.01 =
-      sweet spot SL ~539-1079 pts. Tetap ada gate tolak kalau SL > max budget
-      (risk > 1.25% dengan min lot) di consensus/main.
+      dengan risk 0.5% (over-risk 3.2x). Mode LLM + risk 1.0% = sweet spot SL ~539-1079
+      pts di min lot. Tetap ada gate tolak kalau SL > max budget (risk > 1.25% dengan
+      min lot) di consensus/main. Max lot cap (0.01) dihapus 14 Agustus - lot murni
+      risk-based, volume_max broker yang membatasi.
     - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
-    - FX pairs: "LLM" (bebas struktur, safety floor max(2x spread, 0.5x default_sl), R:R 1:1).
+    - FX pairs: "LLM" (bebas struktur, safety floor 250 pts / 25 pips, R:R min 1.25:1).
       Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
     """
     s = (symbol or "").upper()
@@ -525,19 +546,6 @@ def get_active_symbol(now=None):
     """Returns the symbol that should be traded right now (respects rotation index)."""
     pool = get_rotation_pool(now)
     return pool[_rotation_index["i"] % len(pool)]
-
-
-def max_lot_for(symbol):
-    """Max lot cap per kategori aset (13 Agustus):
-    - XAU: 0.01 (cap keras). Alasan: risk 1.0% di equity ~$1079 = max SL ~1079 pts;
-      lot 0.02 bisa over-risk diam-diam kalau SL lebar. Cap 0.01 -> risk max
-      terkontrol di 0.01 x SL x $1/pt (SL 539 pts -> 0.5%, SL 1079 -> 1.0%).
-    - Lainnya (FX/BTC): None = pakai volume_max broker (tanpa cap tambahan).
-    """
-    s = (symbol or "").upper()
-    if "XAU" in s or "GOLD" in s:
-        return 0.01
-    return None  # no extra cap - broker volume_max berlaku
 
 
 _last_symbol = {"value": SYMBOL}

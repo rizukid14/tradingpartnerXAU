@@ -97,6 +97,28 @@ python main.py
 19. **Post-mortem langsung saat close**: dipicu di loop 5 detik pas `sync_closed_positions` return `new_deals` (background thread biar nggak nge-block), bukan nunggu candle. `check_and_evaluate_closed_trades(deals)` nerima deals langsung. **Jangan seed `evaluated_tickets` dari `known_closed` tiap cycle** — itu nge-block tiket baru (bug yang udah diperbaiki); re-evaluation dicegah oleh `evaluated_tickets` persist di `memory_lessons.json`.
 20. **Trailing stop (mode-aware, update 13 Agustus)**: activation `min(0.85×ATR, cap)` (XAU 500 / BTC 40000 pts) — **mode LLM: activation `max(1.5×SL original, fallback)`, cap 60% TP; distance SL-based `0.8→0.3×SL`** (lihat entri 13 Agustus). Distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
 
+### Perubahan 14 Agustus — LLM Rules baru (Daily Profit Target 6%, Dead Zone subuh, Safety Floor/R:R 1.25)
+
+**Latar belakang:** prompt dev-quant (6 enhancement blocks) diuji ~13 jam → 14 trade, 4W-10L, −$94.83 (didominasi FX −$77.90, semua SL penuh, nol TP hit). Sample terlalu kecil utk menyimpulkan; user balik ke `dev` (prompt bersih) dan minta aturan risk baru alih-alih ngutak-atik prompt.
+
+**Perubahan (config + risk_engine + consensus + prompt sync):**
+1. **Daily Profit Target 6%** (`DAILY_PROFIT_TARGET_PERCENT`, default 6.0): begitu net profit harian (window WIB-midnight via `get_closed_positions_today`) ≥ 6% balance MT5 → `can_trade()` nolak semua posisi baru sampai tengah malam WIB berikutnya (reset otomatis). Implementasi: `_check_daily_profit_target()` di risk_engine (dipanggil setelah `_check_daily_loss`). **Pakai `c["profit"]` saja** — profit dari connector SUDAH net (termasuk swap+komisi); jangan tambah `c["commission"]` lagi (double-count). Balance ≤ 0 (MT5 disconnect) → skip (jangan blokir).
+2. **Dead Zone 02:00–06:00 WIB** (`DANGER_ZONES_WIB` diisi lagi, sebelumnya `[]`): blokir TOTAL posisi baru jam 02:00-06:00 WIB utk XAU & FX (crypto/BTC otomatis di-skip di `_check_danger_zones` — BTC tetap 24/7). Sesi lain tetap bebas.
+3. **Safety Floor Mode LLM per-kategori** (config): `LLM_SAFETY_FLOOR_FX_PTS = 250` (25 pips, ganti dari `0.5×default_sl` = 50 pts), `LLM_SAFETY_FLOOR_XAU_PTS = 400` (tetap). Di `_apply_sltp_rules` mode LLM: SL di-floor ke minimal tsb (max dgn 2×spread).
+4. **R:R minimum 1.25:1** (`LLM_MIN_RR_RATIO = 1.25`, ganti dari 1.0): **TP di-NAIKKAN ke minimal 1.25×SL** (bukan tolak trade) — `tp_points = max(tp_points, int(sl_points*1.25))`. Konsisten dgn filosofi floor (SL juga di-floor, bukan ditolak).
+5. **Prompt sync** (`llm_client._build_sltp_rules_block`): teks "R:R at least 1:1" diganti `{min_rr}:1` (1.25) utk XAU/BTC/FX; FX tambah "SL ≥ 250 pts (25 pips)"; docstring/CLI help ikut di-update.
+6. **Lot sizing murni risk-based** — `config.max_lot_for()` DIHAPUS 14 Agustus (XAU cap 0.01 tidak ada lagi); lot = risk_usd / (SL pts × usd_per_point), clamp ke volume_min/max broker + margin safety net. Gate OVER-RISK di consensus tetap melindungi (SL > max budget risk di min lot → tolak).
+7. **Test**: `scratch/test_llm_rules_and_risk.py` — 16 PASS (floor FX 50→250 & TP→312, XAU 300→400 & TP→500, SL wajar 600/900 tak diubah, daily target +$65 → tolak & +$20 → boleh, dead zone 03:00 tolak & 01:00/07:00 boleh & BTC bebas).
+8. **Fix kontradiksi prompt "exactly at" + format harga FX** (llm_client + macro_analyst): 
+   - Teks lama "SL is placed **exactly at** the invalidation price level / TP at target_price" dihapus (teknisnya salah: bot geser SL pas floor aktif) → diganti **"at or slightly beyond"** + pernyataan eksplisit **"bot enforces floors automatically — kamu tidak perlu stretch level"** + HOLD message digabung jadi satu. Berlaku di static RISK CONSTRAINTS + blok XAU/BTC/FX (LLM) + blok ATR-Based.
+   - RISK CONSTRAINTS ditambah 3 hal: (a) instruksi proses **"read data first → form thesis → validate against constraints"** (anti force-fit); (b) definisi invalidation eksplisit: **nearest opposing swing structure di belakang entry** (BUY → swing low terakhir di bawah; SELL → swing high terakhir di atas) — *bukan* extreme latest candle, *bukan* swing terjauh window; (c) **ATR(14) sanity check lunak**: SL << 0.5×ATR = noise-level, prefer ~0.5-1×ATR kalau struktur ngizinin.
+   - **Format harga FX 5-desimal** (fix kritis, ketahuan pas print prompt GBPCHF): `.2f` meratakan ATR 0.00091 → "0.00", EMA 1.096 → "1.10", Fib semua "1.10" → LLM buta struktur. Sekarang pakai `_fmt_price()` (10-desimal strip trailing zero) di indikator summary, Fib (round 6-desimal dulu), PDH/PDL/Today Open, MTF macro (`_fmt()` di macro_analyst). EURJPY 3-desimal juga ikut kebener otomatis.
+   - **Typical SL FX di unit definition** disinkronkan ke floor: 50-150 → **250-625 pts** (mode LLM, pola sama XAU 400-1000) — sebelumnya kontradiksi "typical 50-150" vs floor 250.
+   - **Nearest Round Number FX**: `round(1.09815)` = 1 → "1.00" (9% jauh) → sekarang `round(bid, 2)` → 1.10 untuk harga < 100; BTC/XAU tetap kelipatan 1000/integer.
+   - Preview prompt produksi: `scratch/preview_full_prompt.py` (XAU) + `scratch/preview_fx_prompt.py` (FX H1, build_system_prompt dipanggil dgn point_size dari tick) → hasil print di `testmd.md` / `testmdfx.md` (UTF-8 bersih via Python redirect, bukan PowerShell).
+
+**Catatan**: prompt dev-quant (commit `a8192ad` + `4050517`) TIDAK ikut ke dev — enhancement blocks/RSI Direction eksperimen tetap di branch dev-quant. AGENTS.md/README yang menyebut 6 enhancement blocks hanya berlaku di dev-quant.
+
 ### Perubahan 11 Agustus (sesi ini — PENTING: branch split!)
 
 **Sekarang ada DUA versi prompt yang berbeda antara branch:**
@@ -177,17 +199,17 @@ python main.py
 
 ### Perubahan 13 Agustus (sore) — XAU pindah ke LLM mode + risk 1.0% + max lot 0.01 + GATE OVER-RISK
 
-**Latar belakang:** gate ATR-Based untuk XAU (SL ≥ 1.25×ATR M15 ≈ 1024 pts) bikin SL lebar yang **TIDAK MUAT di min lot 0.01 broker** dengan risk 0.5% — risk aktual meledak 3.2× (0.0031 lot raw di-clamp naik ke 0.01 → risk $17.36 = 1.6%). Simulasi 5 iterasi full prompt live: OpenAI kasih SL 300 pts konsisten (R:R 5:1) kalau nggak di-gate ATR. Keputusan user: XAU ikut mode LLM (bebas struktur), risk dinaikkan ke 1.0% (max SL ~1079 pts di equity $1079 muat sweet spot), lot di-cap 0.01.
+**Latar belakang:** gate ATR-Based untuk XAU (SL ≥ 1.25×ATR M15 ≈ 1024 pts) bikin SL lebar yang **TIDAK MUAT di min lot 0.01 broker** dengan risk 0.5% — risk aktual meledak 3.2× (0.0031 lot raw di-clamp naik ke 0.01 → risk $17.36 = 1.6%). Simulasi 5 iterasi full prompt live: OpenAI kasih SL 300 pts konsisten (R:R 5:1) kalau nggak di-gate ATR. Keputusan user: XAU ikut mode LLM (bebas struktur), risk dinaikkan ke 1.0% (max SL ~1079 pts di equity $1079 muat sweet spot). **14 Agustus: max lot cap 0.01 DIHAPUS** — lot murni risk-based, volume_max broker yang membatasi (gate OVER-RISK tetap jaga).
 
 **Perubahan:**
 1. **`config.sltp_mode_for(symbol)`**: XAU → `"LLM"` (bukan ATR-Based fix lagi; soft floor 400-1000 + gate over-risk). BTC tetap `"ATR-Based"` (fix). FX tetap `"LLM"`.
 2. **`config.risk_percent_for()`**: XAU 0.5% → **1.0%** (docstring + DEFAULT_CONFIG v1/v2/v3 ikut).
-3. **`config.max_lot_for(symbol)`** (baru): XAU → **0.01 cap keras** (0.02 masih bisa over-risk diam-diam di SL lebar); lainnya None = broker volume_max. Dipakai di `risk_engine.get_effective_lot_size` (volume_max = min(broker, cap)).
+3. ~~**`config.max_lot_for(symbol)`** (XAU → 0.01 cap keras)~~ — **DIHAPUS 14 Agustus** (user: "aturan max lot hapus aja"). Tidak ada cap per-kategori; `get_effective_lot_size` clamp ke volume_min/max broker saja.
 4. **`consensus._apply_sltp_rules` — GATE OVER-RISK (baru, semua mode)**: setelah R:R 1:1 check, hitung `max_sl = (equity × risk_pct) / (volume_min × usd_per_pt_1lot)` — kalau SL resolved > max_sl → **trade DITOLAK** dengan reason "OVER-RISK: SL X pts > max Y pts (risk Z% gak muat di min lot)". Ini menangkap anomali kayak SL 1736 pts (OpenAI tulis sl_points 927 tapi invalidation_price 1736 pts jauh → resolved 1736) yang sebelumnya lolos diam-diam.
 5. **`llm_client.py` prompt XAU LLM**: soft guidance (bukan gate): "SL ~400-1000 pts ideal, >1100 pts → risk > 1.0% budget, bot mungkin tolak; prefer structural level yang jaga SL di 400-1000".
-6. **Banner/status**: "XAU: LLM (soft floor 400-1000, max lot 0.01) | BTC: ATR-Based (fix) | FX: LLM".
+6. **Banner/status**: "XAU: LLM (soft floor 400-1000) | BTC: ATR-Based (fix) | FX: LLM" (max lot cap dihapus 14 Agustus).
 
-**Konsekuensi:** XAU di balance ~$1079 punya sweet spot SL 539-1079 pts (risk 0.5-1.0% di lot 0.01). SL < 539 → risk < 0.5% (kurang efisien tapi aman). SL > 1079 → ditolak gate (nggak akan pernah over-risk diam-diam lagi).
+**Konsekuensi (update 14 Agustus):** dengan max lot cap dihapus, lot sizing XAU murni risk-based: lot = risk 1.0% / (SL pts × usd_per_point), di-clamp ke volume_step broker. SL 400 pts di equity $1079 → lot 0.013 → risk ~$10.8 (1.0%). Gate OVER-RISK tetap tolak kalau SL > budget min lot.
 
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).

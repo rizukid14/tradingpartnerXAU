@@ -749,10 +749,17 @@ def _send_with_retry(build_request, symbol, label):
         req = build_request(widen, policy)
         result = _safe_order_send(req)
 
-    if result and result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030) and policy != mt5.ORDER_FILLING_RETURN:
-        print(f"[MT5] {label} fallback to ORDER_FILLING_RETURN (retcode was {result.retcode})")
-        req = build_request(config.DEVIATION, mt5.ORDER_FILLING_RETURN)
-        result = _safe_order_send(req)
+    # If order failed with 10013 (Invalid request) or 10030 (Invalid fill), fallback to alt filling policies
+    if result and result.retcode in (getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
+        for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            if alt_policy == policy:
+                continue
+            print(f"[MT5] {label} fallback fill policy to {alt_policy} (retcode was {result.retcode})")
+            req = build_request(config.DEVIATION, alt_policy)
+            res_alt = _safe_order_send(req)
+            if res_alt and res_alt.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+                result = res_alt
+                break
 
     return result
 
