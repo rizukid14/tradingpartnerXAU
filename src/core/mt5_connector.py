@@ -738,6 +738,8 @@ def _send_with_retry(build_request, symbol, label):
     policy = get_filling_policy(symbol)
 
     req = build_request(config.DEVIATION, policy)
+    if req is None:
+        return None  # quote degenerate/stale — dibatalkan bersih (bukan spam retry 10013)
     result = _safe_order_send(req)
 
     for attempt in range(_MAX_RETRIES):
@@ -747,6 +749,8 @@ def _send_with_retry(build_request, symbol, label):
         print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, widening deviation to {widen} pts")
         time.sleep(_RETRY_SLEEP_SECONDS)  # jeda singkat biar broker settle (transient 10013/requote)
         req = build_request(widen, policy)
+        if req is None:
+            return None
         result = _safe_order_send(req)
 
     # If order failed with 10013 (Invalid request) or 10030 (Invalid fill), fallback to alt filling policies
@@ -756,6 +760,8 @@ def _send_with_retry(build_request, symbol, label):
                 continue
             print(f"[MT5] {label} fallback fill policy to {alt_policy} (retcode was {result.retcode})")
             req = build_request(config.DEVIATION, alt_policy)
+            if req is None:
+                continue
             res_alt = _safe_order_send(req)
             if res_alt and res_alt.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
                 result = res_alt
@@ -789,11 +795,18 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
 
     point = symbol_info.point
 
-    # Re-check spread SESAT sebelum kirim order. Gate spread di awal cycle bisa
-    # kelewatan karena LLM call makan 10-60 detik -> spread bisa melebar drastis
-    # (quote burst) dan order_send gagal retcode 10013 (SL nyangkut di dalam spread).
-    # Kalau spread > gate, batalkan bersih (trade dievaluasi ulang candle berikutnya).
+    # Quote-health check (14 Agustus malam - akar masalah 10013 EURJPY/GBPCHF/EURAUD):
+    # liquidity tipis (Jumat sore/malam) -> spread 0 (bid==ask) / quote beku -> server
+    # tolak order_send dgn retcode 10013. Deteksi & abort bersih, jangan spam retry.
+    if tick is None:
+        return {"status": "ERROR", "comment": "Tidak ada quote (tick None) — order dibatalkan"}
     spread_now = (tick.ask - tick.bid) / point if point else 0.0
+    if spread_now <= 0:
+        return {"status": "ERROR", "comment": (f"Quote degenerate: spread {spread_now:.0f} pts (bid==ask) "
+                                               f"— order dibatalkan (liquidity tipis/feed beku)")}
+    tick_age = (time.time() - tick.time) if getattr(tick, "time", 0) else -1
+    if tick_age > 10:
+        return {"status": "ERROR", "comment": f"Tick stale {tick_age:.0f}s — order dibatalkan"}
     max_spread = config.max_spread_points_for(symbol)
     if spread_now > max_spread:
         return {"status": "ERROR", "comment": (f"Spread spike: {spread_now:.0f} pts > maks {max_spread} pts "
@@ -825,6 +838,11 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             live_price = live_tick.ask if action == "BUY" else live_tick.bid
         else:
             live_price = price
+        # Guard per-attempt: quote degenerate (spread 0) -> skip (jangan spam 10013)
+        if live_tick is None:
+            return None
+        if point and (live_tick.ask - live_tick.bid) / point <= 0:
+            return None
         if action == "BUY":
             live_sl = (live_price - (sl_points * point)) if (sl_points and sl_points > 0) else (sl_price if sl_price else (live_price - (default_sl * point) if default_sl else 0.0))
             live_tp = (live_price + (tp_points * point)) if (tp_points and tp_points > 0) else (tp_price if tp_price else (live_price + (default_tp * point) if default_tp else 0.0))
@@ -873,7 +891,11 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
 
-    if result is None or result.retcode not in (
+    if result is None:
+        # _build return None = quote degenerate/stale saat kirim (spread 0 / tick beku)
+        return {"status": "ERROR", "comment": "Quote degenerate/stale saat kirim — order dibatalkan"}
+
+    if result.retcode not in (
         mt5.TRADE_RETCODE_DONE,
         getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
     ):
