@@ -668,10 +668,12 @@ def summarize_recent_outcomes(decisions, n=6):
     )
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None,
+                   whisper_str=None):
     """
     Constructs a rich prompt for LLM models containing price action,
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
+    whisper_str: optional pattern research stats (validated edge) — informational only.
     """
 
     # Dynamic timeframe label resolved from dataframe or fallback to config
@@ -818,6 +820,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)\n"
         )
 
+    whisper_str = whisper_str or ""
+
     lessons_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
@@ -963,7 +967,7 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 - EMA (50): {_fmt_price(latest['ema_50'])}
 - ATR (14): {_fmt_price(latest['atr_14'])} (which is {atr_points} points)
 {atr_gate_str}{fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{macro_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1323,7 +1327,8 @@ def query_claude(prompt):
 
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
+                            whisper_str=None):
     """
     Query only the AI slots active for the current WIB time window.
     mode = single        -> OpenAI only (00:01-09:59 / 15:01-19:29 / 21:31-23:59)
@@ -1331,7 +1336,7 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
     mode = triple        -> OpenAI + Gemini + DeepSeek (19:30-21:30, London-NY overlap)
     mode = dual          -> legacy (OpenAI + AI_DUAL_SECOND_MODEL), masih didukung via AI_FIXED_MODE
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions, whisper_str)
 
     active_models = config.active_ai_model_names()
     slot_label = claude_slot_label()

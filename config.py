@@ -485,6 +485,11 @@ WEEKEND_CLOSE_HOURS_BEFORE = _getenv_float("WEEKEND_CLOSE_HOURS_BEFORE", 2.0)
 WEEKEND_MAX_LOSS_TO_HOLD_USD = _getenv_float("WEEKEND_MAX_LOSS_TO_HOLD_USD", 20.0)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 
+# --- PATTERN EDGE WHISPER (16 Agustus, dev-backtest) ---
+# Inject statistik pola tervalidasi (dari riset pattern_research.py) ke prompt LLM
+# kalau pola di candle terakhir match registry EDGE. Informational only.
+PATTERN_WHISPER_ENABLED = _getenv_bool("PATTERN_WHISPER_ENABLED", True)
+
 POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_AGE_SECONDS", 300)
 
 # --- TELEGRAM ALERTS ---

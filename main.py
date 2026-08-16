@@ -794,6 +794,19 @@ def _run_cycle_for_current_symbol():
     if macro_context:
         print(f"Menyertakan analisa Multi-Timeframe & Fundamental ({config.SYMBOL}) untuk LLM...")
 
+    # Pattern edge whisper: deteksi pola di candle terakhir & inject statistik
+    # tervalidasi kalau match registry (informational only, bukan directive).
+    whisper_str = None
+    if getattr(config, "PATTERN_WHISPER_ENABLED", True):
+        try:
+            from src.analytics.pattern_detector import detect_and_whisper
+            whisper_str = detect_and_whisper(df, config.SYMBOL)
+            if whisper_str:
+                first_line = whisper_str.strip().split("\n")[0]
+                print(f" {UI.tag('WHISPER', UI.MAGENTA)} {first_line}")
+        except Exception as e:
+            print(f"[WHISPER ERROR {config.SYMBOL}] {e}")
+
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
         if lessons_ctx:
@@ -811,7 +824,8 @@ def _run_cycle_for_current_symbol():
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
     print(f" {UI.tag('AI', UI.CYAN)} Mode {ai_mode.upper()} ({len(active_models)} model: {', '.join(active_models)}) | Mengirim data ke LLM...")
-    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
+    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions,
+                                            whisper_str)
 
     
     # 5. Calculate consensus
