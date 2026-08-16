@@ -1042,15 +1042,26 @@ def clean_json_response(text):
 
 def _execute_openai_single(model_name, prompt, timeout_sec):
     is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower() or "o4" in model_name.lower()
+    effort = (getattr(config, "OPENAI_REASONING_EFFORT", "low") or "").strip().lower()
     if is_reasoning:
-        response = openai_client.chat.completions.create(
-            model=model_name,
-            messages=[
+        kwargs = {
+            "model": model_name,
+            "messages": [
                 {"role": "user", "content": "System: You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences).\n\n" + prompt}
             ],
-            response_format={"type": "json_object"},
-            timeout=timeout_sec
-        )
+            "response_format": {"type": "json_object"},
+            "timeout": timeout_sec
+        }
+        if effort and effort != "none":
+            try:
+                response = openai_client.chat.completions.create(reasoning_effort=effort, **kwargs)
+            except Exception as e_re:
+                if "reasoning_effort" in str(e_re) or "unrecognized" in str(e_re).lower() or "unsupported" in str(e_re).lower():
+                    response = openai_client.chat.completions.create(**kwargs)
+                else:
+                    raise e_re
+        else:
+            response = openai_client.chat.completions.create(**kwargs)
     else:
         response = openai_client.chat.completions.create(
             model=model_name,

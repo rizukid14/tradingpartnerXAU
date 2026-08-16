@@ -119,12 +119,15 @@ CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-202
 # biar lebih responsif & murah; Gemini sering abstain HOLD di dual mode).
 DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
 
+# OpenAI reasoning effort: "high" | "medium" | "low" | "none" (default "low" for speed & low latency)
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")
+
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "o4-mini")  # 100% o4-mini (ultra-defensive, 14 Agu)
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")  # fallback error (lambat/timeout)
-OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o4-mini")  # 100% o4-mini (ultra-defensive, 14 Agu)
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.4-mini")
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "o4-mini")  # fallback error (lambat/timeout)
 
 
 def _parse_windows_wib(raw):
