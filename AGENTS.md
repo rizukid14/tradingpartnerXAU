@@ -307,6 +307,75 @@ Asumsi nilai tukar: **1 USD = Rp 15.500,-**
   * **Total Harian:** **~$0.0554 / hari (± Rp 860,-)** — *[Jika OpenAI berbayar: ~$0.0842 / hari (± Rp 1.300,-)]*
   * **Total Bulanan (30 Hari):** **~$1.66 / bulan (± Rp 25.700,-)** — *[Jika OpenAI berbayar: ~$2.52 / bulan (± Rp 39.000,-)]*
 
+## Hasil Riset Kuantitatif Bebas Bias & Temuan Edge (16 Agustus 2026)
+
+Berdasarkan pengujian statistik bebas bias (*lookahead-bias-free*) selama 3 tahun terakhir pada data historis broker VTMarkets, berikut adalah rangkuman temuan edge kuantitatif yang tervalidasi ($n \ge 100$, $p < 0.05$, Interval Kepercayaan $95\%$ batas bawah $> 0$):
+
+### 1. Pola dengan Edge Signifikan (EDGE - whispers_valid.csv)
+Seluruh pola candlestick yang terbukti memiliki keunggulan statistik riil adalah **pola Bearish (Sell) yang tereksekusi pada sesi New York (WIB malam)**:
+*   **GBPCHF-ECNc (4 EDGE):**
+    *   `Bearish Sweep` (R:R 1:2) | Win Rate **55.5%** | EV **+0.65** ($n=254$, $p=0.039$) — *Paling Sakti!*
+    *   `Bearish Engulfing` (R:R 1:1.5) | Win Rate **59.4%** | EV **+0.47** ($n=475$)
+    *   `Inside Bar Bearish` (R:R 1:1.5) | Win Rate **58.8%** | EV **+0.46** ($n=447$)
+    *   `Bearish Pin Bar` (R:R 1:1.5) | Win Rate **55.0%** | EV **+0.36** ($n=444$)
+*   **EURCHF-ECNc (4 EDGE):**
+    *   `Inside Bar Bearish` (R:R 1:1.5) | Win Rate **59.2%** | EV **+0.46** ($n=417$)
+    *   `Bearish Engulfing` (R:R 1:1.5) | Win Rate **57.0%** | EV **+0.41** ($n=528$)
+    *   `Bearish Sweep` (R:R 1:1.5) | Win Rate **55.9%** | EV **+0.38** ($n=272$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **60.6%** | EV **+0.19** ($n=439$)
+*   **GBPNZD-ECNc (4 EDGE):**
+    *   `Inside Bar Bearish` (R:R 1:1) | Win Rate **63.6%** | EV **+0.27** ($n=385$)
+    *   `Bearish Engulfing` (R:R 1:1) | Win Rate **61.6%** | EV **+0.23** ($n=485$)
+    *   `Bearish Sweep` (R:R 1:1) | Win Rate **60.5%** | EV **+0.20** ($n=339$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **57.9%** | EV **+0.15** ($n=451$)
+*   **EURAUD-ECNc (3 EDGE):**
+    *   `Bearish Pin Bar` (regime=range, R:R 1:1) | Win Rate **64.0%** | EV **+0.27** ($n=175$)
+    *   `Inside Bar Bearish` (session=ny, R:R 1:1) | Win Rate **63.5%** | EV **+0.26** ($n=452$)
+    *   `Bearish Engulfing` (session=ny, R:R 1:1) | Win Rate **55.7%** | EV **+0.11** ($n=515$)
+*   **EURJPY-ECNc (2 EDGE):**
+    *   `Bearish Sweep` (R:R 1:1) | Win Rate **58.8%** | EV **+0.17** ($n=374$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **55.6%** | EV **+0.10** ($n=423$)
+*   **GBPAUD-ECNc (Lolos Menggantikan AUDJPY):**
+    *   Memiliki **15+ EDGE** valid dengan performa yang sangat konsisten di R:R 1:1 (EV +0.22 s/d +0.31). 
+    *   `Inside Bar Bearish` (session=ny, R:R 1:1): Win Rate **65.6%** | EV **+0.31** ($n=459$).
+    *   `Bearish Engulfing` (session=ny, R:R 1:1): Win Rate **61.2%** | EV **+0.22** ($n=516$).
+
+### 2. Pola Klasik & Emas (XAUUSD-ECNc M15)
+*   Emas **tidak memiliki edge** untuk pola candlestick mentah.
+*   Satu-satunya pola dengan edge tervalidasi adalah **Double Bottom (CANDIDATE)**:
+    *   `Double Bottom` (volume=low, R:R 1:1): Win Rate **75.8%** | EV **+0.49** ($n=33$, $p=0.002$)
+    *   `Double Bottom` (secara umum / ALL, R:R 1:1): Win Rate **64.6%** | EV **+0.28** ($n=82$, $p=0.004$)
+
+### 3. Hasil Eliminasi Pola Harmonik (NO-EDGE)
+*   Pengujian mandiri DeepSeek terhadap **1.068 kombinasi pola Harmonik** (Gartley, Bat, Butterfly, Crab) menghasilkan **1.067 NO-EDGE** dan hanya 1 CANDIDATE.
+*   Pola Harmonik resmi **dibuang total dari rencana bisikan** karena performa tinggi di masa lalu terbukti sebagai ilusi *Small Sample Bias* ($n < 30$).
+
+### 4. Kesimpulan Riset & Perankingan Komprehensif Pair Forex (DeepSeek)
+Berdasarkan kelimpahan, kualitas, dan konsistensi *EDGE* tervalidasi dari riset statistik tanding terhadap 11 pair Forex (H1) dan Emas (M15), berikut adalah peringkat kelayakan trading:
+
+🏆 **Top 3 Pair Terkuat (Edge Paling Banyak & Konsisten):**
+1.  **`GBPCHF-ECNc` (Juara Mutlak):** 36 EDGE, 17 di antaranya memiliki EV > 0.20. Sangat dominan di sesi New York (9 EDGE). Pola terbaik: `Bearish Sweep` sesi NY R:R 1:2 (EV **+0.65**, $n=254$).
+2.  **`EURCHF-ECNc` (Total Edge Terbanyak):** 37 EDGE, 12 di antaranya memiliki EV > 0.20. Dominan di sesi NY & London. Pola terbaik: `Inside Bar Bearish` sesi NY R:R 1:1.5 (EV **+0.46**).
+3.  **`CADCHF-ECNc` (Paling Terdiversifikasi):** 27 EDGE, 8 di antaranya memiliki EV > 0.20. Konsisten meloloskan edge di 5 pola berbeda. Pola terbaik: `Bearish Sweep` sesi NY R:R 1:1.5 (EV **+0.43**).
+
+🥈 **Kandidat Kuat Berikutnya (Pair Backup & Pengganti):**
+4.  **`AUDCHF-ECNc` (Peringkat 4):** 24 EDGE, 6 di antaranya memiliki EV > 0.20. Pola terbaik: `Inside Bar Bearish` sesi NY WR 70% (EV **+0.38 s/d +0.41**).
+5.  **`GBPNZD-ECNc` (Peringkat 5 - Aktif di Bot):** 17 EDGE, 4 di antaranya memiliki EV > 0.20. Edge merata di 4 pola berbeda.
+6.  **`GBPAUD-ECNc` (Peringkat 6 - Lolos Menggantikan AUDJPY di Bot):** 19 EDGE, 3 di antaranya memiliki EV > 0.20. Memiliki performa yang jauh lebih aktif dan menguntungkan dibanding AUDJPY (yang hanya memiliki 1 edge).
+
+*(Catatan Kuantitatif: Seluruh 4 peringkat teratas dikuasai oleh cross CHF. Hal ini membuktikan karakteristik Swiss Franc (safe haven) yang memiliki pergerakan harga bersih, stabil, dan patuh tinggi pada pembalikan arah/mean-reversion di sesi NY).*
+
+### 5. Temuan Confluence & Mitos HTF Alignment Terbongkar (16 Agustus 2026)
+Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuahkan beberapa kesimpulan revolusioner bagi logika trading bot:
+*   **Mitos "HTF Trend Alignment" Terbongkar:** Mengharuskan pola searah dengan tren HTF (EMA 50 vs 200) terbukti **tidak memiliki edge statistik yang kuat** (hanya meloloskan 2 EDGE lemah). 
+*   **Kekuatan Counter-Trend di Resistance:** Sebaliknya, mengambil pola bearish (Sell) saat HTF sedang naik (*counter-trend*) **di dekat area Resistance** (jarak ≤ 0.5 ATR) terbukti menghasilkan edge yang sangat superior (contoh: EURCHF Inside Bar Bearish saat HTF sedang naik menghasilkan EV **+0.44**). Hal ini karena area resistance memberikan batas Stop Loss yang sangat tipis dengan ruang Take Profit yang sangat lebar (R:R sangat tinggi).
+*   **Near Resistance (Penambah Edge Terkuat Baru):** Pola bearish yang dipadukan dengan lokasi dekat resistance adalah filter terkuat:
+    *   `Bearish Pin Bar` GBPCHF dekat resistance (volatility-adjusted): Win Rate **69.0%** | EV **+0.37** ($n=145$).
+*   **Sesi NY Tetap Juara:** Meloloskan 48 EDGE di semua 12 simbol trading. Sesi New York (WIB malam) adalah filter waktu terbaik.
+*   **Multi-Pattern (2+ Pola Searah):** Hanya berguna sebagai konfirmasi pendukung (EV kecil +0.08 s/d +0.20, n besar 600-800), bukan edge mandiri yang kuat.
+
+---
+
 ## Konvensi & hal yang perlu diingat
 
 - User komunikasi dalam **Bahasa Indonesia** (santai).

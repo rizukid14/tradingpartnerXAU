@@ -177,7 +177,9 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,EURJPY-ECNc,GBPUSD-ECNc,EURAUD-ECNc",
+        # 16 Agustus (user): EURJPY -> CADCHF. Hasil riset edge: CADCHF #3 (27 EDGE,
+        # 8 kuat, EV +0.43 Bearish Sweep NY), EURJPY paling lemah (#11, 4 EDGE, 0 kuat).
+        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,CADCHF-ECNc,GBPAUD-ECNc,EURAUD-ECNc",
     ).split(",")
     if s.strip()
 ]
@@ -456,21 +458,23 @@ MAX_SPREAD_POINTS_XAU = _getenv_int("MAX_SPREAD_POINTS_XAU", MAX_SPREAD_POINTS)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 
 # --- SESSION FILTER ---
+# 16 Agustus (user): blokir total 03:00-11:00 WIB (pelebaran spread subuh-pagi +
+# Asia pagi gapuna edge). Di luar itu tetap trading: Tokyo sore 11:00-16:00 (×0.7,
+# LLM tetap dipanggil — bebas, cuma dibisiki pattern edge kalau ada), London,
+# London-NY, dan NY dipotong sampai 03:00 (bukan 05:00 lagi).
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Asia Dawn",      "start": (5, 0),  "end": (7, 0),   "lot_multiplier": 0.7},
-    {"name": "Tokyo",          "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "Tokyo",          "start": (11, 0), "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",         "start": (15, 0), "end": (23, 59), "lot_multiplier": 1.0},
     {"name": "London-NY ()", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
-    {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
+    {"name": "NY",             "start": (20, 0), "end": (3, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones: SEBELUMNYA DINONAKTIFKAN (11-08: full trade 24 jam). 14 Agustus user
-# minta Dead Zone subuh aktif lagi: blokir TOTAL pembukaan posisi baru 02:00-06:00 WIB
-# (mencegah profit tergerus saat pasar sepi/whipsaw subuh). Berlaku untuk XAU & FX
-# (crypto/BTC di-skip otomatis di risk_engine._check_danger_zones - BTC tetap 24/7).
+# Danger zones: 16 Agustus disesuaikan ke 03:00-06:00 WIB (dulu 02:00-06:00) —
+# karena session filter sudah blokir 03:00-11:00, zone ini jadi pengaman tambahan
+# (tetap aktif walau SESSION_FILTER_ENABLED=False). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Dead Zone (02:00 - 06:00 WIB)", "start": (2, 0), "end": (6, 0),
+    {"name": "Overnight Dead Zone (03:00 - 06:00 WIB)", "start": (3, 0), "end": (6, 0),
      "reason": "Dead Zone - pergerakan tipis & lonjakan spread subuh"},
 ]
 
