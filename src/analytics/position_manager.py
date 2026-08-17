@@ -15,6 +15,8 @@ import json
 import time
 import config
 from config import mt5
+from src.core.cli_theme import UI
+from src.core.mt5_connector import is_order_success
 
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
@@ -207,7 +209,7 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     }
 
     result = mt5.order_send(request)
-    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+    if is_order_success(result):
         _partial_closed_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         remaining = round(pos.volume - close_volume, 2)
@@ -259,25 +261,23 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 
     min_trigger = 30 if config.is_fx(symbol) else 100
 
-    # Break-even trigger (mode-aware, 13 Agustus):
-    # - LLM mode: 1x jarak SL posisi (thesis-relative). TP LLM bisa jauh/asimetris
-    #   (bahkan < SL), jadi % TP gak reliable; 1x SL = harga udah gerak 1 risiko
-    #   penuh ke arah kita -> layak di-lock ke entry. Bonus buat BTC: trigger
-    #   sebesar SL otomatis > stop_level broker -> modifikasi SL gak ditolak MT5.
+    # Break-even trigger (mode-aware, 15 Agustus - pindah ke PURE % TP):
+    # - LLM mode: BEP aktif saat profit >= 65% TP (BREAK_EVEN_TRIGGER_TP_PCT).
+    #   Alasan pindah dari SL-based (1x SL): SL-based cacat di dua ujung untuk trade
+    #   R:R rendah (1.25-1.5, gate R:R min 1.25) - 1x SL untuk R:R 1.25 = 80% TP
+    #   (kecepetan) dan cap 50% TP untuk R:R 3:1 = 1.5x SL (telat). Pure % TP selalu
+    #   proporsional: R:R 2:1 -> 1.3x SL, R:R 1.25 -> 0.81x SL (pas, bukan kecepetan).
+    #   Posisi tanpa TP -> fallback SL-based (1x SL) biar tetap ada proteksi.
     # - ATR-Based mode: 50% TP aktual (di mode ini TP = 2x SL, jadi 50% TP = 1x SL).
-    if config.sltp_mode_for(symbol) == "LLM" and pos.sl:
-        # Referensi = SL ORIGINAL (sebelum BE/trailing geser) biar stabil.
-        # Trigger = min(1x SL, 50% TP):
-        # - R:R 2:1 -> 1x SL = 50% TP (sama)
-        # - R:R tinggi (3:1+) -> 1x SL, proteksi lebih awal
-        # - R:R <= 1 -> 50% TP, tetap fire (bukan 1x SL yang = 100%+ TP, gak pernah kesampean)
-        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
-        if sl_points > 0:
-            be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
-            if tp_points > 0:
-                be_trigger = min(be_trigger, int(tp_points * 0.50))
+    if config.sltp_mode_for(symbol) == "LLM":
+        if tp_points > 0:
+            be_trigger = max(min_trigger, int(tp_points * config.BREAK_EVEN_TRIGGER_TP_PCT))
         else:
-            be_trigger = config.break_even_trigger_for(symbol)
+            sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+            if sl_points > 0:
+                be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
+            else:
+                be_trigger = config.break_even_trigger_for(symbol)
     elif tp_points > 0:
         be_trigger = max(min_trigger, int(tp_points * 0.50))
     else:
@@ -315,13 +315,14 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     }
 
     result = mt5.order_send(request)
-    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+    if is_order_success(result):
         _break_even_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
-        print(f" [BREAK-EVEN] Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
+        print(f"{UI.clear_line()} {UI.tag('BREAK-EVEN', UI.GREEN)} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
+        print(f"{UI.clear_line()} [BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
+
 
 
 def _get_dynamic_atr_points(symbol, point):
@@ -381,16 +382,21 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         activation = fallback_act
         distance = fallback_dist
 
-    # Mode-aware activation (13 Agustus):
-    # - LLM mode: berbasis struktur SL LLM (1.5x SL), di-cap 60% TP kalau TP ada.
-    #   TP LLM bisa jauh/asimetris, jadi % TP doang gak reliable; 1.5x SL = harga
-    #   udah gerak 1.5 risiko penuh -> trailing layak aktif.
+    # Mode-aware activation (15 Agustus - LLM pindah ke PURE % TP):
+    # - LLM mode: trailing aktif saat profit >= 80% TP (TRAILING_ACTIVATION_TP_PCT).
+    #   Alasan pindah dari SL-based (1.5x SL): cacat di dua ujung untuk trade R:R
+    #   rendah (1.25-1.5) - tanpa cap, 1.5x SL > TP 1.25x SL -> trailing TIDAK
+    #   PERNAH nyala; dengan cap 60% TP, activation jadi 0.75x SL -> kecepetan
+    #   (sebelum 1x SL). Pure % TP selalu proporsional: R:R 2:1 -> 1.6x SL (ruang
+    #   napas), R:R 1.25 -> 1.0x SL (tetap nyala, pas). Posisi tanpa TP -> fallback
+    #   SL-based (1.5x SL) biar tetap ada proteksi.
     # - ATR-Based mode: TP-adaptive 60% TP (di mode ini TP = 2.5-3.5x ATR, jadi
     #   activation otomatis konsisten dengan volatilitas ATR).
-    if config.sltp_mode_for(symbol) == "LLM" and sl_points > 0:
-        activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), fallback_act)
+    if config.sltp_mode_for(symbol) == "LLM":
         if tp_points > 0:
-            activation = min(activation, int(tp_points * 0.60))
+            activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), fallback_act)
+        elif sl_points > 0:
+            activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), fallback_act)
     elif tp_points > 0 and not config.is_crypto(symbol):
         activation = int(tp_points * 0.60)
 
@@ -424,8 +430,10 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     llm_mode = config.sltp_mode_for(symbol) == "LLM"
 
     if llm_mode and sl_points > 0:
-        # LLM mode: interpolasi 0.8 -> 0.3 x SL (floor 0.2). Selalu progressive
-        # (termasuk BTC) karena struktur SL LLM memang thesis-based.
+        # LLM mode: interpolasi 1.2 -> 0.4 x SL (floor 0.3). Selalu progressive
+        # (termasuk BTC) karena struktur SL LLM memang thesis-based. Dilonggarkan
+        # 15 Agustus (dari 0.8 -> 0.3): distance awal 1.2x SL bikin pullback normal
+        # gak langsung kena trailing; baru ketat mendekati TP.
         start_mult = config.TRAILING_DISTANCE_START_SL_MULT
         end_mult = config.TRAILING_DISTANCE_END_SL_MULT
         min_mult = config.TRAILING_DISTANCE_MIN_SL_MULT
@@ -476,12 +484,13 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     }
 
     result = mt5.order_send(request)
-    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+    if is_order_success(result):
         if config.is_crypto(symbol) and not (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0):
-            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
+            print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
         else:
             ref_label = "SL" if (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0) else "ATR"
-            print(f" [TRAILING] Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
+            print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
+        print(f"{UI.clear_line()} [TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
+

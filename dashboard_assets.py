@@ -572,6 +572,8 @@ function renderStatusPanel() {
   let oaiWindow = CONFIG_DATA ? (CONFIG_DATA.OPENAI_PRIMARY_WINDOW_WIB || "15:00-19:30") : "15:00-19:30";
   let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
   let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";
+  let dualSecond = CONFIG_DATA ? (CONFIG_DATA.AI_DUAL_SECOND_MODEL || "DeepSeek") : "DeepSeek";
+  let dsReasoning = CONFIG_DATA ? (CONFIG_DATA.DEEPSEEK_REASONING_EFFORT || "low") : "low";
 
   let connectionStatus = LIVE ? '<span class="green" style="font-weight: 700;">● CONNECTED (LIVE)</span>' : '<span class="muted" style="font-weight: 700;">○ STATIC MODE (Offline)</span>';
 
@@ -623,13 +625,13 @@ function renderStatusPanel() {
       <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🤖 Active AI Models & Scheduling</div>
       <div style="margin-bottom:6px; font-size:10px; color:var(--muted); line-height: 1.5;">
         Slot 1 (OpenAI): <b>${esc(oaiModel)}</b> <span style="color:var(--accent);">(${esc(oaiWindow)} WIB)</span> / default ${esc(oaiDefaultModel)} / err-fb ${esc(oaiFallbackModel)}<br>
-        Slot 2 (Gemini): <b>${esc(gemModel)}</b><br>
+        Slot 2 (Gemini, legacy dual): <b>${esc(gemModel)}</b><br>
         Slot 3 (Claude Slot): <b>${esc(cldModel)}</b>
       </div>
       <div style="font-size:10px; line-height: 1.4; background: rgba(255,255,255,0.01); padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
         <b>WIB Time-based AI Mode:</b><br>
         • 00:01-09:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
-        • 10:00-15:00: <span style="color:var(--muted-light);">Dual (OpenAI+Gemini)</span><br>
+        • 10:00-15:00: <span style="color:var(--amber);">Single (Gemini Only)</span><br>
         • 15:01-19:29: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
         • 19:30-21:30: <span style="color:var(--amber);">Triple (OpenAI+Gemini+DeepSeek)</span><br>
         • 21:31-23:59: <span style="color:var(--muted-light);">Single (OpenAI)</span>

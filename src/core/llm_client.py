@@ -5,6 +5,7 @@ import concurrent.futures
 from openai import OpenAI
 from google import genai
 import config
+from src.core.cli_theme import UI
 
 # Regex untuk menghapus emoji dari prompt yang dikirim ke LLM.
 # User requirement: prompt LLM harus bebas emoji (UI/CLI boleh).
@@ -247,7 +248,7 @@ Respond with a single valid JSON object ONLY -- no text before or after it.
 HOLD:
 {
   "signal": "HOLD",
-  "reasoning": "One short sentence: why no valid setup exists right now."
+  "reasoning": "2-3 concise sentences (MAX 45 WORDS): state the specific technical drivers (e.g. RSI/EMA/structure) why no valid setup exists right now."
 }
 
 BUY or SELL:
@@ -261,7 +262,7 @@ BUY or SELL:
   "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
   "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
   "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
-  "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
+  "reasoning": "2-3 concise sentences (MAX 45 WORDS), on the NEW ENTRY decision only: state the core technical thesis and risk drivers clearly."
 }
 
 "position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
@@ -304,15 +305,22 @@ def _build_points_explanation(symbol, point_size):
         pip_str = _fmt_price(point_size * 10) if point_size else "0.10"
         # Typical SL range dari default per-symbol (XAU 500/1000, FX 300 ->
         # 150-450) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
-        # Khusus XAU mode LLM: di-sinkronkan ke 400-1000 biar konsisten dengan
-        # SL/TP rules block (sebelumnya unit block bilang 250-750, SL/TP block
-        # bilang 400-1000 -> dua range beda dalam satu prompt, fix 13 Agustus).
+        # Khusus XAU mode LLM: di-sinkronkan ke floor ATR aktif (1.2x ATR M15,
+        # 15 Agustus) biar konsisten dengan SL/TP rules block (sebelumnya 400-1000
+        # statis, sekarang dinamis - SL tipis 0.8x ATR dari o4-mini di-floor ke
+        # 1.2x ATR; fix konsistensi range 13 Agustus tetap berlaku).
         d_sl = config.default_sl_points_for(symbol)
         lo_pts = max(10, int(d_sl * 0.5))
         hi_pts = max(20, int(d_sl * 1.5))
         is_gold = "XAU" in (symbol or "").upper()
         if is_gold and config.sltp_mode_for(symbol) == "LLM":
-            lo_pts, hi_pts = 400, 1000
+            atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
+            if atr_pts_xau and atr_pts_xau > 0:
+                xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
+            else:
+                xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
+            lo_pts = max(lo_pts, xau_floor)
+            hi_pts = max(hi_pts, int(xau_floor * 2.5))
         # FX mode LLM: sinkronkan ke floor ATR aktif (1.5x ATR H1) supaya unit
         # definition tidak kontradiksi dengan floor di blok SL/TP rules
         # (fix 14 Agustus lanjutan: floor statis 250 -> ATR-based, fallback 250).
@@ -357,15 +365,18 @@ def _build_points_explanation(symbol, point_size):
         )
 
 
-_fx_atr_cache = {}  # symbol -> (timestamp, atr_h1_points)
+_fx_atr_cache = {}  # (symbol, timeframe) -> (timestamp, atr_points)
 
 
-def _fx_atr_h1_points(symbol):
-    """ATR(14) H1 FX dalam poin broker (query MT5, cache 60s) — dipakai untuk
-    floor dinamis & typical SL range di prompt. Return None kalau gagal."""
+def _atr_points_for(symbol, timeframe):
+    """ATR(14) dari timeframe tertentu dalam poin broker (cache 60s per
+    (symbol, timeframe)) — dipakai untuk floor dinamis & typical SL range di
+    prompt. Return None kalau gagal. 15 Agustus: digeneralisasi dari helper
+    FX-only supaya XAU (M15) bisa pakai floor ATR juga."""
     import time as _t
+    key = (symbol, timeframe)
     now = _t.time()
-    hit = _fx_atr_cache.get(symbol)
+    hit = _fx_atr_cache.get(key)
     if hit and now - hit[0] < 60:
         return hit[1]
     try:
@@ -374,15 +385,22 @@ def _fx_atr_h1_points(symbol):
         point = si.point if si else None
         if not point:
             return None
-        rates = _mt5.copy_rates_from_pos(symbol, _mt5.TIMEFRAME_H1, 0, 15)
+        rates = _mt5.copy_rates_from_pos(symbol, timeframe, 0, 15)
         if rates is None or len(rates) == 0:
             return None
         atr = float((rates['high'] - rates['low']).mean())
         out = max(1, int(round(atr / point)))
-        _fx_atr_cache[symbol] = (now, out)
+        _fx_atr_cache[key] = (now, out)
         return out
     except Exception:
         return None
+
+
+def _fx_atr_h1_points(symbol):
+    """ATR(14) H1 FX dalam poin broker (cache 60s) — dipakai untuk
+    floor dinamis & typical SL range di prompt. Return None kalau gagal."""
+    import MetaTrader5 as _mt5
+    return _atr_points_for(symbol, _mt5.TIMEFRAME_H1)
 
 
 def _build_sltp_rules_block(symbol, timeframe):
@@ -414,16 +432,23 @@ def _build_sltp_rules_block(symbol, timeframe):
         # 1.25x SL). Model TIDAK perlu stretch level ke angka tertentu - itu justru
         # bikin model HOLD terus ("no clean 400+ invalidation").
         if is_xau:
-            lo_pts = config.LLM_SAFETY_FLOOR_XAU_PTS   # 400 pts
-            hi_pts = 1000
-            # 13 Agustus: catatan soft soal max SL biar risk 1.0% (min lot 0.01)
-            # gak meledak. Bukan gate keras - cuma guidance; gate OVER-RISK ada di
-            # consensus (SL > budget risk -> trade ditolak otomatis).
+            # 15 Agustus: floor XAU dinamis = 1.2x ATR M15 (LLM_XAU_FLOOR_ATR_MULT),
+            # fallback 400 statis kalau ATR gagal. SL tipis 0.8x ATR (o4-mini) di-floor
+            # otomatis ke 1.2x ATR supaya swing M15 gak kena noise duluan.
+            xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
+            atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
+            if atr_pts_xau and atr_pts_xau > 0:
+                xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
+            lo_pts = xau_floor
+            hi_pts = max(1000, int(lo_pts * 2.5))
+            # 14 Agustus malam: gate OVER-RISK dilonggarkan ke 2% (config
+            # OVER_RISK_MAX_PERCENT) - SL >1000 pts TETAP BISA diterima selama risk
+            # aktual di min lot <= 2%. Guidance ini cuma preferensi, bukan batas keras.
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
-                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. An SL much wider than ~{hi_pts} pts may exceed the per-trade risk budget at current equity and be rejected by the OVER-RISK gate -- prefer structural levels in that range when available.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (approx {config.LLM_XAU_FLOOR_ATR_MULT}x ATR M15) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. Wider SLs (e.g. 1000-1900 pts) are still ACCEPTED as long as actual risk at min lot stays within the OVER-RISK gate (max ~2% of equity at current balance) -- prefer structural levels in the ~{lo_pts}-{hi_pts} range when available, but give your real structural invalidation either way.\n"
             )
         elif is_btc:
             return (
@@ -643,10 +668,12 @@ def summarize_recent_outcomes(decisions, n=6):
     )
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None,
+                   whisper_str=None):
     """
     Constructs a rich prompt for LLM models containing price action,
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
+    whisper_str: optional pattern research stats (validated edge) — informational only.
     """
 
     # Dynamic timeframe label resolved from dataframe or fallback to config
@@ -793,6 +820,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)\n"
         )
 
+    whisper_str = whisper_str or ""
+
     lessons_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
@@ -938,7 +967,7 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 - EMA (50): {_fmt_price(latest['ema_50'])}
 - ATR (14): {_fmt_price(latest['atr_14'])} (which is {atr_points} points)
 {atr_gate_str}{fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{macro_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1016,16 +1045,27 @@ def clean_json_response(text):
 
 
 def _execute_openai_single(model_name, prompt, timeout_sec):
-    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower()
+    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower() or "o4" in model_name.lower()
+    effort = (getattr(config, "OPENAI_REASONING_EFFORT", "low") or "").strip().lower()
     if is_reasoning:
-        response = openai_client.chat.completions.create(
-            model=model_name,
-            messages=[
+        kwargs = {
+            "model": model_name,
+            "messages": [
                 {"role": "user", "content": "System: You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences).\n\n" + prompt}
             ],
-            response_format={"type": "json_object"},
-            timeout=timeout_sec
-        )
+            "response_format": {"type": "json_object"},
+            "timeout": timeout_sec
+        }
+        if effort and effort != "none":
+            try:
+                response = openai_client.chat.completions.create(reasoning_effort=effort, **kwargs)
+            except Exception as e_re:
+                if "reasoning_effort" in str(e_re) or "unrecognized" in str(e_re).lower() or "unsupported" in str(e_re).lower():
+                    response = openai_client.chat.completions.create(**kwargs)
+                else:
+                    raise e_re
+        else:
+            response = openai_client.chat.completions.create(**kwargs)
     else:
         response = openai_client.chat.completions.create(
             model=model_name,
@@ -1216,27 +1256,29 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
 def _execute_deepseek_single(model_name, prompt, timeout_sec):
     """Query DeepSeek or OpenAI-compatible router API (e.g. 9router / OpenRouter).
     Strips internal 'deepseek/' routing prefix if present while preserving provider prefixes
-    like 'oc/mimo-v2.5-free' or custom router model IDs."""
+    like 'oc/mimo-v2.5-free' or custom router model IDs. Uses config.DEEPSEEK_REASONING_EFFORT."""
     if model_name.startswith("deepseek/"):
         raw_model = model_name[len("deepseek/"):]
     else:
         raw_model = model_name
+    reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "low") or "").strip()
     try:
         try:
-            # Explicitly disable thinking/reasoning mode for super-fast execution (~1.2s)
-            response = deepseek_client.chat.completions.create(
+            kwargs = dict(
                 model=raw_model,
                 messages=[
                     {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
-                reasoning_effort="none",
-                extra_body={"thinking": {"type": "disabled"}},
-                timeout=timeout_sec
+                timeout=timeout_sec,
             )
+            if reasoning_effort:
+                # reasoning_effort kosong/None = fast mode (skip param, deepseek-chat biasa)
+                kwargs["reasoning_effort"] = reasoning_effort
+            response = deepseek_client.chat.completions.create(**kwargs)
         except Exception:
-            # Fallback to standard call if API endpoint does not recognize reasoning params
+            # Fallback to standard call if API endpoint does not recognize reasoning_effort param
             response = deepseek_client.chat.completions.create(
                 model=raw_model,
                 messages=[
@@ -1286,14 +1328,16 @@ def query_claude(prompt):
 
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
+                            whisper_str=None):
     """
     Query only the AI slots active for the current WIB time window.
-    mode = single -> OpenAI only
-    mode = dual   -> OpenAI + DeepSeek (slot-3)
-    mode = triple -> OpenAI + Gemini + DeepSeek (slot-3)
+    mode = single        -> OpenAI only (00:01-09:59 / 15:01-19:29 / 21:31-23:59)
+    mode = single_gemini -> Gemini only (10:00-15:00, Asia/Pre-London - hemat & disiplin)
+    mode = triple        -> OpenAI + Gemini + DeepSeek (19:30-21:30, London-NY overlap)
+    mode = dual          -> legacy (OpenAI + AI_DUAL_SECOND_MODEL), masih didukung via AI_FIXED_MODE
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions, whisper_str)
 
     active_models = config.active_ai_model_names()
     slot_label = claude_slot_label()
@@ -1335,5 +1379,6 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
     total_elapsed = time.time() - start_total
     mode = config.get_ai_mode()
     lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in active_models if m in latencies])
-    print(f" [LATENSI MODEL] mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
+    print(f" {UI.tag('AI LATENCY', UI.CYAN)} mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results
+

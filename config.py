@@ -107,15 +107,23 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"
 
 
 # --- MODEL NAMES & FALLBACKS ---
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "deepseek/deepseek-v4-flash")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
+
+
+# DeepSeek reasoning effort: "high" | "medium" | "low" (14 Agustus - user minta "low"
+# biar lebih responsif & murah; Gemini sering abstain HOLD di dual mode).
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
+
+# OpenAI reasoning effort: "high" | "medium" | "low" | "none" (default "low" for speed & low latency)
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")  # dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB (15:00-19:30 WIB)
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")  # fallback error (lambat/timeout)
-OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o3-mini")  # model utama di luar window (SL struktural, 14 Agu)
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.4-mini")
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "o4-mini")  # fallback error (lambat/timeout)
 
 
 def _parse_windows_wib(raw):
@@ -165,7 +173,9 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,EURJPY-ECNc,GBPUSD-ECNc,EURAUD-ECNc",
+        # 16 Agustus (user): EURJPY -> CADCHF. Hasil riset edge: CADCHF #3 (27 EDGE,
+        # 8 kuat, EV +0.43 Bearish Sweep NY), EURJPY paling lemah (#11, 4 EDGE, 0 kuat).
+        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,CADCHF-ECNc,GBPAUD-ECNc,EURAUD-ECNc",
     ).split(",")
     if s.strip()
 ]
@@ -192,8 +202,22 @@ LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
+DEVIATION = _getenv_int("DEVIATION", 30)
+DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
+DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
 
-DEVIATION = _getenv_int("DEVIATION", 20)
+
+def deviation_for(symbol):
+    """Slippage deviation tolerance in points per asset category.
+    XAU: 60 pts ($0.60) - sweet spot 50-75 pts.
+    BTC: 1000 pts ($10.00).
+    FX: 30 pts (3 pips).
+    """
+    if is_crypto(symbol):
+        return DEVIATION_BTC
+    if "XAU" in (symbol or "").upper() or "GOLD" in (symbol or "").upper():
+        return DEVIATION_XAU
+    return DEVIATION
 
 # TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
 # price), safety floor per-kategori (14 Agustus: XAU 400 pts, FX 250 pts) + R:R min 1.25:1.
@@ -235,12 +259,21 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
 #     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
 #     TP 312 (3.2x ATR) jarang kesampean. ATR-based menyesuaikan volatilitas.
-#   - XAUUSD:   SL minimal 400 pts statis (0.4x ATR M15, sudah proporsional)
+#   - XAUUSD:   floor berbasis ATR aktif (default 1.2x ATR M15, `LLM_XAU_FLOOR_ATR_MULT`,
+#     15 Agustus - user minta "floor 1x atr secara lunak", final 1.2x; SL tipis 0.8x ATR
+#     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
 LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.5)
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
-LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
+
+# Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
+# per-trade) TIDAK otomatis ditolak di risk_pct — masih diterima selama risk aktual
+# di min lot <= OVER_RISK_MAX_PERCENT (14 Agustus malam: user minta SL >1000 pts
+# boleh jalan asal gate maks 2%; lot tetap risk-based 1%, cuma gate ceiling-nya ini).
+OVER_RISK_MAX_PERCENT = _getenv_float("OVER_RISK_MAX_PERCENT", 2.0)
 
 
 
@@ -285,22 +318,24 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
 # Format: (start_hour, start_minute, end_hour, end_minute, mode)
-# Mode values: "single" | "dual" | "triple"
+# Mode values: "single" | "single_gemini" | "dual" | "triple"
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
-# Jadwal WIB (12 Agustus):
-#   - single (OpenAI): 00:01–09:59 (Asia pagi & awal London)
-#   - dual (OpenAI + Gemini): 10:00–15:00 (Asia siang & pre-London)
-#   - single (OpenAI): 15:01–19:29 (London session)
-#   - triple (OpenAI + Gemini + DeepSeek): 19:30–21:30 (London-NY overlap, volatilitas tertinggi)
-#   - single (OpenAI): 21:31–23:59 (Late NY & Tokyo)
+# Jadwal WIB:
+#   - single (OpenAI gpt-5.4-mini low reasoning): 00:00–19:29 (termasuk Trade Zone 11:00–19:29)
+#   - triple (OpenAI + Gemini + Claude Sonnet 4.6): 19:30–21:30 (London-NY overlap, volatilitas tertinggi)
+#   - single (OpenAI gpt-5.4-mini low reasoning): 21:31–23:59 (Late NY)
 AI_MODE_SCHEDULE = [
-    (0, 1, 9, 59, "single"),
-    (10, 0, 15, 0, "dual"),
-    (15, 1, 19, 29, "single"),
+    (0, 0, 19, 29, "single"),
     (19, 30, 21, 30, "triple"),
     (21, 31, 23, 59, "single"),
 ]
+
+# Model pengisi slot kedua di mode "dual". Default "Gemini" (14 Agustus sore - DeepSeek
+# lagi lemot/unreliable: 3/7 call timeout 24s, latency asli 36s+ > timeout bot; pas
+# API-nya normal bisa coba lagi via env AI_DUAL_SECOND_MODEL=DeepSeek).
+# "triple" tetap OpenAI+Gemini+DeepSeek.
+AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
 QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
@@ -343,11 +378,22 @@ TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MUL
 # sama struktur LLM) dan BUKAN ke % TP (yang bisa jauh & gak kesampean -> proteksi gak pernah
 # aktif). Mode ATR-Based tetap pakai konstanta ATR di atas (konsisten karena SL/TP-nya juga
 # turunan ATR).
-BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # BEP aktif saat profit >= min(1x SL, 50% TP)
-TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.5)  # trailing aktif saat profit >= 1.5x SL
-TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 0.8)  # longgar saat baru aktif
-TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.3)  # ketat mendekati TP
-TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.2)  # floor
+#
+# UPDATE 15 Agustus - BEP/trailing pindah ke PURE % TP (default 65%/80%):
+# SL-based (1x SL BEP, 1.5x SL activation) ternyata cacat di dua ujung untuk trade
+# R:R rendah (1.25-1.5, hasil gate R:R min 1.25):
+#   - Tanpa cap TP: activation 1.5x SL > TP 1.25x SL -> trailing TIDAK PERNAH nyala
+#   - Dengan cap 60% TP: activation jadi 0.75x SL -> kecepetan (sebelum 1x SL)
+# Pure % TP selalu proporsional ke target: R:R 2:1 -> BEP 1.3x SL, activation 1.6x SL
+# (ruang napas); R:R 1.25 -> BEP 0.81x SL, activation 1.0x SL (tetap nyala, pas).
+# Konstanta SL_MULT di bawah tetap dipakai sebagai FALLBACK untuk posisi tanpa TP.
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.65)  # BEP aktif saat profit >= 65% TP
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.80)  # trailing aktif saat profit >= 80% TP
+BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 1.0)  # fallback tanpa TP: BEP di 1x SL
+TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.5)  # fallback tanpa TP: activation 1.5x SL
+TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 1.2)  # longgar saat baru aktif (15 Agu: 0.8->1.2)
+TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.4)  # ketat mendekati TP (15 Agu: 0.3->0.4)
+TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.3)  # floor (15 Agu: 0.2->0.3)
 
 
 # --- BREAK-EVEN ---
@@ -375,6 +421,34 @@ PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
 MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
+MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
+
+
+def get_max_open_positions(in_recovery_mode=False, now=None):
+    """Maksimum open posisi agregat (semua simbol):
+    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
+    - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (4)
+    - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
+      (kalau recovery mode aktif di jam late NY, tetap min(2, 4) = 2).
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    cur_min = now.hour * 60 + now.minute
+
+    # 23:00 s.d. 02:00 WIB
+    is_late_ny = (cur_min >= 23 * 60) or (cur_min < 2 * 60)
+    if is_late_ny:
+        base = MAX_OPEN_POSITIONS_LATE_NY
+    elif in_recovery_mode:
+        base = MAX_OPEN_POSITIONS_RECOVERY
+    else:
+        base = MAX_OPEN_POSITIONS
+
+    if in_recovery_mode:
+        return min(base, MAX_OPEN_POSITIONS_RECOVERY)
+    return base
 # --- DAILY PROFIT TARGET (14 Agustus) ---
 # Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
@@ -419,22 +493,19 @@ MAX_SPREAD_POINTS_XAU = _getenv_int("MAX_SPREAD_POINTS_XAU", MAX_SPREAD_POINTS)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 
 # --- SESSION FILTER ---
+# Trade Zone: 11:00 - 02:00 WIB (02:00 - 11:00 WIB Dead Zone)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Asia Dawn",      "start": (5, 0),  "end": (7, 0),   "lot_multiplier": 0.7},
-    {"name": "Tokyo",          "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
-    {"name": "London",         "start": (15, 0), "end": (23, 59), "lot_multiplier": 1.0},
-    {"name": "London-NY ()", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
-    {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
+    {"name": "Asia/Tokyo Sore",  "start": (11, 0), "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "London",           "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
+    {"name": "London-NY Overlap","start": (19, 30), "end": (21, 30), "lot_multiplier": 1.2},
+    {"name": "New York",         "start": (20, 0), "end": (2, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones: SEBELUMNYA DINONAKTIFKAN (11-08: full trade 24 jam). 14 Agustus user
-# minta Dead Zone subuh aktif lagi: blokir TOTAL pembukaan posisi baru 02:00-06:00 WIB
-# (mencegah profit tergerus saat pasar sepi/whipsaw subuh). Berlaku untuk XAU & FX
-# (crypto/BTC di-skip otomatis di risk_engine._check_danger_zones - BTC tetap 24/7).
+# Danger zones (Dead Zone subuh & Asia pagi 02:00 - 11:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Dead Zone (02:00 - 06:00 WIB)", "start": (2, 0), "end": (6, 0),
-     "reason": "Dead Zone - pergerakan tipis & lonjakan spread subuh"},
+    {"name": "Overnight Dead Zone (02:00 - 11:00 WIB)", "start": (2, 0), "end": (11, 0),
+     "reason": "Dead Zone subuh & Asia pagi (02:00 - 11:00 WIB)"},
 ]
 
 # --- WEEKEND PROTECTION ---
@@ -443,6 +514,11 @@ WEEKEND_CLOSE_PROFIT_MIN_USD = _getenv_float("WEEKEND_CLOSE_PROFIT_MIN_USD", 1.0
 WEEKEND_CLOSE_HOURS_BEFORE = _getenv_float("WEEKEND_CLOSE_HOURS_BEFORE", 2.0)
 WEEKEND_MAX_LOSS_TO_HOLD_USD = _getenv_float("WEEKEND_MAX_LOSS_TO_HOLD_USD", 20.0)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
+
+# --- PATTERN EDGE WHISPER (16 Agustus, dev-backtest) ---
+# Inject statistik pola tervalidasi (dari riset pattern_research.py) ke prompt LLM
+# kalau pola di candle terakhir match registry EDGE. Informational only.
+PATTERN_WHISPER_ENABLED = _getenv_bool("PATTERN_WHISPER_ENABLED", True)
 
 POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_AGE_SECONDS", 300)
 
@@ -654,7 +730,7 @@ def get_ai_mode(now=None):
     policy = getattr(sys.modules[__name__], "AI_MODE_POLICY", "schedule")
     if policy == "fixed":
         fixed = getattr(sys.modules[__name__], "AI_FIXED_MODE", "triple")
-        return fixed if fixed in ("single", "dual", "triple") else "triple"
+        return fixed if fixed in ("single", "single_gemini", "dual", "triple") else "triple"
 
     total_minutes = now.hour * 60 + now.minute
     for sh, sm, eh, em, mode in AI_MODE_SCHEDULE:
@@ -667,18 +743,28 @@ def get_ai_mode(now=None):
 
 def atr_sl_multiplier(now=None):
     """SL floor multiplier per AI mode (R:R 2:1 dijaga):
-    single 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
+    single / single_gemini 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
     makin yakin setupnya, SL/TP makin lebar (target lebih jauh).
     Dipakai di consensus gate ATR + prompt atr_gate_str - harus sinkron.
     """
-    return {"single": 1.25, "dual": 1.5, "triple": 1.75}.get(get_ai_mode(now), 1.25)
+    mode = get_ai_mode(now)
+    if mode in ("single", "single_gemini"):
+        return 1.25
+    if mode == "dual":
+        return 1.5
+    return 1.75
 
 
 def atr_tp_multiplier(now=None):
     """TP floor multiplier per AI mode = 2x SL multiplier (R:R 2:1 selalu):
-    single 2.5x, dual 3.0x, triple 3.5x.
+    single / single_gemini 2.5x, dual 3.0x, triple 3.5x.
     """
-    return {"single": 2.5, "dual": 3.0, "triple": 3.5}.get(get_ai_mode(now), 2.5)
+    mode = get_ai_mode(now)
+    if mode in ("single", "single_gemini"):
+        return 2.5
+    if mode == "dual":
+        return 3.0
+    return 3.5
 
 
 def claude_slot_label():
@@ -689,15 +775,21 @@ def claude_slot_label():
 
 def active_ai_model_names(now=None):
     """Return the model slots to query for the active AI mode.
-    - single: OpenAI
-    - dual: OpenAI + Gemini
+    - single: OpenAI (o4-mini)
+    - single_gemini: Gemini (gemini-3.1-flash-lite)
+    - dual: OpenAI + Gemini (legacy/fallback)
     - triple: OpenAI + Gemini + DeepSeek (Claude slot)
     """
     mode = get_ai_mode(now)
     slot3 = claude_slot_label()
+    if mode == "single_gemini":
+        return ["Gemini"]
     if mode == "single":
         return ["OpenAI"]
     if mode == "dual":
+        second = AI_DUAL_SECOND_MODEL.strip().lower()
+        if second in ("deepseek", "ds"):
+            return ["OpenAI", slot3]
         return ["OpenAI", "Gemini"]
     return ["OpenAI", "Gemini", slot3]
 

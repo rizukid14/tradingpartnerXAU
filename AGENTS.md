@@ -40,7 +40,7 @@ python main.py
 
 ## Alur cycle (main.py → run_trading_cycle)
 
-0. **Time-Based AI Mode** (WIB, 12 Agustus): 00:01–09:59 = **single** (OpenAI), 10:00–15:00 = **dual** (OpenAI+Gemini), 15:01–19:29 = **single** (OpenAI), **19:30–21:30 = triple** (OpenAI+Gemini+DeepSeek — London-NY overlap, volatilitas tertinggi), 21:31–23:59 = **single** (OpenAI). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
+0. **Time-Based AI Mode** (WIB, 14 Agustus update): 00:01–09:59 = **single** (OpenAI o4-mini), 10:00–15:00 = **single_gemini** (Gemini 3.1-flash-lite Only), 15:01–19:29 = **single** (OpenAI o4-mini), **19:30–21:30 = triple** (OpenAI+Gemini+DeepSeek — London-NY overlap, volatilitas tertinggi), 21:31–23:59 = **single** (OpenAI o4-mini). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
 1. `risk.can_trade()` — spread/sesi/daily loss gate. Gagal → skip (nggak ada biaya LLM)
 2. Ambil 50 candle timeframe aktif (M15 XAU / H1 FX / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
@@ -55,7 +55,7 @@ python main.py
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
 - SL/TP per kategori (`config.sltp_mode_for(symbol)` — **13 Agustus, pisah logic per-simbol biar enak debug**):
   - **XAUUSD & BTC = fix ATR-Based (SELALU, tidak bisa di-override ke LLM)**: **GATE LAYAK/TIDAK (Non-negotiable)** — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based. Alasan: floor 400 pts cuma 0.49× ATR M15 (~819 pts) — terlalu scalping utk swing M15.
-  - **FX pairs = LLM (bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (FX 50 pts) + **gate R:R minimum 1:1** (TP ≥ SL). **Position management (BEP/trailing) pindah ke basis SL posisi (bukan ATR/%-TP)** — lihat entri 13 Agustus di bawah.
+  - **FX pairs = LLM (bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (FX 50 pts) + **gate R:R minimum 1:1** (TP ≥ SL). **Position management (BEP/trailing) = pure % TP (15 Agustus: 65%/80% TP)** — lihat entri 15 Agustus di bawah.
   - **Force override**: kalau `config.TP_SL_RULES` di-set eksplisit "ATR-Based" via CLI/`--tpsl-rules`/`.env`, SEMUA kategori (termasuk FX) ikut ATR-Based. Default "LLM" = aturan per-kategori di atas.
 - Spread ≤ 50 pts (XAU & FX) / 2400 pts (BTC)
 - **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
@@ -95,7 +95,7 @@ python main.py
 17. **Gemini ganti ke `gemini-3.1-flash-lite`** (fallback `gemini-3.5-flash-lite`): benchmark 5 model Gemini (10 iterasi, prompt produksi, sesi bearish) — 3.5-flash-lite dominan HOLD (8/10), 2.5-flash-lite parah (10/10 HOLD conf 36%), **3.1-flash-lite paling konsisten ngikutin sinyal (10/10 SELL, conf 65%, latency 1.1s)**. 3.6-flash juga bagus (9/10, conf 69%) tapi 7.5s latency. Catatan: Gemini return confidence skala 0-1 (bukan 0-100), di-×100 di consensus.
 18. **Deteksi close manual (magic=0)**: manual close dari MT5 mobile menghasilkan OUT deal `magic=0` (magic tidak diteruskan). `get_closed_positions_today` menerima OUT magic=0 **hanya jika posisi dibuka bot** (ada IN magic bot) — posisi manual user tidak ikut kehitung. Window P/L = tengah malam WIB → next-midnight (bukan rolling 24h, biar loss kemarin tidak masuk "hari ini"). **Jangan diubah ke rolling 24h** — itu bikin daily loss cap ke-trip dari loss hari sebelumnya. **Reason close di-label** ("manual" untuk magic=0, SL/TP/stop-out dari kode MT5) — bukan "unknown".
 19. **Post-mortem langsung saat close**: dipicu di loop 5 detik pas `sync_closed_positions` return `new_deals` (background thread biar nggak nge-block), bukan nunggu candle. `check_and_evaluate_closed_trades(deals)` nerima deals langsung. **Jangan seed `evaluated_tickets` dari `known_closed` tiap cycle** — itu nge-block tiket baru (bug yang udah diperbaiki); re-evaluation dicegah oleh `evaluated_tickets` persist di `memory_lessons.json`.
-20. **Trailing stop (mode-aware, update 13 Agustus)**: activation `min(0.85×ATR, cap)` (XAU 500 / BTC 40000 pts) — **mode LLM: activation `max(1.5×SL original, fallback)`, cap 60% TP; distance SL-based `0.8→0.3×SL`** (lihat entri 13 Agustus). Distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
+20. **Trailing stop (mode-aware, update 15 Agustus)**: activation `min(0.85×ATR, cap)` (XAU 500 / BTC 40000 pts) — **mode LLM: activation PURE % TP `80% TP` (`TRAILING_ACTIVATION_TP_PCT`, fallback SL-based 1.5×SL untuk posisi tanpa TP); distance SL-based `1.2→0.4×SL` (floor 0.3)** (lihat entri 15 Agustus). Distance `0.5×ATR` (dulu 2.0×/1.5× yang bikin trailing nggak pernah aktif — activation 760+ pts jauh di atas TP M5). SL di-trail dari **harga ekstrem** sejak entry (`trailing_extremes` di `position_manager_state.json`) — pullback nggak narik SL mundur. **Partial close di-skip di lot 0.01** (`volume <= volume_min`) karena gabisa dipecah.
 
 ### Perubahan 14 Agustus — LLM Rules baru (Daily Profit Target 6%, Dead Zone subuh, Safety Floor/R:R 1.25)
 
@@ -107,7 +107,7 @@ python main.py
 3. **Safety Floor Mode LLM per-kategori** (config): `LLM_SAFETY_FLOOR_FX_PTS = 250` (25 pips, ganti dari `0.5×default_sl` = 50 pts), `LLM_SAFETY_FLOOR_XAU_PTS = 400` (tetap). Di `_apply_sltp_rules` mode LLM: SL di-floor ke minimal tsb (max dgn 2×spread).
 4. **R:R minimum 1.25:1** (`LLM_MIN_RR_RATIO = 1.25`, ganti dari 1.0): **TP di-NAIKKAN ke minimal 1.25×SL** (bukan tolak trade) — `tp_points = max(tp_points, int(sl_points*1.25))`. Konsisten dgn filosofi floor (SL juga di-floor, bukan ditolak).
 5. **Prompt sync** (`llm_client._build_sltp_rules_block`): teks "R:R at least 1:1" diganti `{min_rr}:1` (1.25) utk XAU/BTC/FX; FX tambah "SL ≥ 250 pts (25 pips)"; docstring/CLI help ikut di-update.
-6. **Lot sizing murni risk-based** — `config.max_lot_for()` DIHAPUS 14 Agustus (XAU cap 0.01 tidak ada lagi); lot = risk_usd / (SL pts × usd_per_point), clamp ke volume_min/max broker + margin safety net. Gate OVER-RISK di consensus tetap melindungi (SL > max budget risk di min lot → tolak).
+6. **Lot sizing murni risk-based** — `config.max_lot_for()` DIHAPUS 14 Agustus (XAU cap 0.01 tidak ada lagi); lot = risk_usd / (SL pts × usd_per_point), clamp ke volume_min/max broker + margin safety net. Gate OVER-RISK di consensus tetap melindungi (SL > max budget min lot → tolak; ceiling `OVER_RISK_MAX_PERCENT` default 2%, lihat entri 13 Agustus).
 7. **Test**: `scratch/test_llm_rules_and_risk.py` — 16 PASS (floor FX 50→250 & TP→312, XAU 300→400 & TP→500, SL wajar 600/900 tak diubah, daily target +$65 → tolak & +$20 → boleh, dead zone 03:00 tolak & 01:00/07:00 boleh & BTC bebas).
 8. **Fix kontradiksi prompt "exactly at" + format harga FX** (llm_client + macro_analyst): 
    - Teks lama "SL is placed **exactly at** the invalidation price level / TP at target_price" dihapus (teknisnya salah: bot geser SL pas floor aktif) → diganti **"at or slightly beyond"** + pernyataan eksplisit **"bot enforces floors automatically — kamu tidak perlu stretch level"** + HOLD message digabung jadi satu. Berlaku di static RISK CONSTRAINTS + blok XAU/BTC/FX (LLM) + blok ATR-Based.
@@ -208,16 +208,40 @@ python main.py
 1. **`config.sltp_mode_for(symbol)`**: XAU → `"LLM"` (bukan ATR-Based fix lagi; soft floor 400-1000 + gate over-risk). BTC tetap `"ATR-Based"` (fix). FX tetap `"LLM"`.
 2. **`config.risk_percent_for()`**: XAU 0.5% → **1.0%** (docstring + DEFAULT_CONFIG v1/v2/v3 ikut).
 3. ~~**`config.max_lot_for(symbol)`** (XAU → 0.01 cap keras)~~ — **DIHAPUS 14 Agustus** (user: "aturan max lot hapus aja"). Tidak ada cap per-kategori; `get_effective_lot_size` clamp ke volume_min/max broker saja.
-4. **`consensus._apply_sltp_rules` — GATE OVER-RISK (baru, semua mode)**: setelah R:R 1:1 check, hitung `max_sl = (equity × risk_pct) / (volume_min × usd_per_pt_1lot)` — kalau SL resolved > max_sl → **trade DITOLAK** dengan reason "OVER-RISK: SL X pts > max Y pts (risk Z% gak muat di min lot)". Ini menangkap anomali kayak SL 1736 pts (OpenAI tulis sl_points 927 tapi invalidation_price 1736 pts jauh → resolved 1736) yang sebelumnya lolos diam-diam.
-5. **`llm_client.py` prompt XAU LLM**: soft guidance (bukan gate): "SL ~400-1000 pts ideal, >1100 pts → risk > 1.0% budget, bot mungkin tolak; prefer structural level yang jaga SL di 400-1000".
+4. **`consensus._apply_sltp_rules` — GATE OVER-RISK (baru, semua mode)**: setelah R:R 1:1 check, hitung `max_sl = (equity × gate_pct) / (volume_min × usd_per_pt_1lot)` — kalau SL resolved > max_sl → **trade DITOLAK** dengan reason "OVER-RISK: SL X pts > max Y pts (risk aktual Z% > gate W%)". **Ceiling gate = `config.OVER_RISK_MAX_PERCENT` (default 2.0% sejak 14 Agustus malam — user minta SL >1000 pts tetap boleh asal risk aktual di min lot ≤ 2%; sebelumnya pakai risk_pct 1.0% yang nolak SL 1000 pts di equity ~$967)**. Lot sizing tetap risk-based (1%), cuma ceiling gate-nya yang dilonggarkan. Ini menangkap anomali kayak SL 1736 pts (OpenAI tulis sl_points 927 tapi invalidation_price 1736 pts jauh → resolved 1736) yang sebelumnya lolos diam-diam.
+5. **`llm_client.py` prompt XAU LLM**: soft guidance (bukan gate): "SL ~400-1000 pts ideal; SL lebih lebar (1000-1900 pts) tetap DITERIMA asal risk aktual ≤ 2% (gate OVER_RISK_MAX_PERCENT) — prefer structural level 400-1000 kalau ada".
 6. **Banner/status**: "XAU: LLM (soft floor 400-1000) | BTC: ATR-Based (fix) | FX: LLM" (max lot cap dihapus 14 Agustus).
 
-**Konsekuensi (update 14 Agustus):** dengan max lot cap dihapus, lot sizing XAU murni risk-based: lot = risk 1.0% / (SL pts × usd_per_point), di-clamp ke volume_step broker. SL 400 pts di equity $1079 → lot 0.013 → risk ~$10.8 (1.0%). Gate OVER-RISK tetap tolak kalau SL > budget min lot.
+**Konsekuensi (update 14 Agustus):** dengan max lot cap dihapus, lot sizing XAU murni risk-based: lot = risk 1.0% / (SL pts × usd_per_point), di-clamp ke volume_step broker. SL 400 pts di equity $1079 → lot 0.013 → risk ~$10.8 (1.0%). Gate OVER-RISK (ceiling 2%, `OVER_RISK_MAX_PERCENT`) tolak kalau SL > max budget min lot — contoh equity $967: SL 1000 pts risk $10 (1.03%) → LULUS, SL 1950 pts risk $19.50 (2.02%) → TOLAK.
+
+### Perubahan 15 Agustus — BEP/trailing pindah ke PURE % TP (65%/80%) + floor XAU 1.2× ATR + fix pause & anti-hedge
+
+**Latar belakang (BEP/trailing):** SL-based (BEP 1×SL, activation 1.5×SL cap 60% TP) ternyata **cacat di dua ujung untuk trade R:R rendah** (1.25-1.5, hasil gate R:R min 1.25):
+- **Tanpa cap TP**: activation 1.5×SL > TP 1.25×SL → trailing **TIDAK PERNAH nyala** (profit gak akan nyampe 1.5×SL)
+- **Dengan cap 60% TP**: activation jadi 0.75×SL → **kecepetan** (aktif sebelum 1×SL, lock profit kecil — log 14 Agustus: semua close SL-BEP/SL-trailing profit kecil $0.06-6.05, **nol yang nyampe TP**)
+
+**Perubahan (`config.py` + `position_manager.py`):**
+1. **BEP trigger (mode LLM)** → PURE % TP: `BREAK_EVEN_TRIGGER_TP_PCT = 0.65` (BEP aktif saat profit ≥ 65% TP). R:R 2:1 → 1.3×SL (ruang napas), R:R 1.25 → 0.81×SL (pas, bukan kecepetan). Posisi **tanpa TP** → fallback SL-based (1×SL, `BREAK_EVEN_TRIGGER_SL_MULT`).
+2. **Trailing activation (mode LLM)** → PURE % TP: `TRAILING_ACTIVATION_TP_PCT = 0.80` (trailing aktif saat profit ≥ 80% TP). R:R 2:1 → 1.57×SL, R:R 1.25 → 1.0×SL (tetap NYALA — dulu mati). Tanpa TP → fallback SL-based (1.5×SL).
+3. **Trailing distance (mode LLM)** dilonggarkan: `0.8→0.3×SL` jadi `1.2→0.4×SL` (floor `0.3`) — SL awal ditaruh 1.2×SL di belakang extreme (longgar, pullback normal gak kena), baru ketat mendekati TP.
+4. **`config.py`**: konstanta baru `BREAK_EVEN_TRIGGER_TP_PCT`, `TRAILING_ACTIVATION_TP_PCT`; konstanta SL_MULT lama tetap ada sebagai fallback posisi tanpa TP (env-configurable semua).
+5. **Fix pause tidak batal setelah win (bug)**: di `risk_engine._record_result`, sebelumnya win cuma reset streak + recovery, tapi `_paused_until` tetap jalan sampai timer habis → pesan "Pause setelah 5 loss berturut-turut" terus muncul padahal streak sudah 0. Sekarang win → `_paused_until = 0` ("Pause dibatalkan setelah win").
+6. **Fix quote-health 10013 (commit `40e7644`, 15 Agustus)**: spread 0 (bid==ask) / tick stale >10s / tick None → abort bersih, 0 request terkirim (sebelumnya spam retry 10013 di EURJPY/GBPCHF/EURAUD saat liquidity tipis). 4 lapis: quote-health check di `send_trade_order`, guard di `_build`, handle `req is None` di `_send_with_retry`, post-call `result is None`.
+7. **Floor XAU → berbasis ATR aktif**: `LLM_XAU_FLOOR_ATR_MULT = 1.2` (15 Agustus, user minta "floor 1x atr secara lunak" → final 1.2×). `consensus._apply_sltp_rules`: XAU SL di-floor ke `max(2x spread, 1.2×ATR M15)` (fallback `LLM_SAFETY_FLOOR_XAU_PTS`=400 kalau ATR gagal). Prompt XAU sinkron: typical SL range dinamis (~1.2×ATR sampai 2.5× floor), teks bilang "bot widens SL ke 1.2x ATR M15 otomatis". Helper `_fx_atr_h1_points` digeneralisasi jadi `_atr_points_for(symbol, timeframe)` (share cache FX+XAU). Alasan: o4-mini konsisten kasih SL ~0.8×ATR (588 vs ATR 711) → gampang kena noise sebelum arah jalan; TP jarang kesampean.
+
+8. **CLI status multi-baris (15 Agustus)**: status line 1 baris di-truncate paksa → posisi ke-6+ hilang dari layar. Sekarang `_wrap_positions` nge-wrap daftar posisi ke baris terpisah (indent `pos:`), **SEMUA posisi selalu tampil**; `_render_status` refresh in-place blok multi-baris via cursor-up + `\x1b[2K` per baris (fallback non-VT: print numpuk seperti log line). Header: `[SYM | jam] | P/L Today` — posisi di bawahnya.
+9. **AI re-evaluator tetap jalan saat posisi MAX (15 Agustus)**: sebelumnya `can_trade()` gagal di gate max posisi (aggregate) → cycle langsung return sebelum LLM → re-evaluator (yang bisa rekomendasi CLOSE posisi lemah buat buka slot) MATI total pas slot penuh 6/6 — yang jalan cuma position manager mekanis. Sekarang: kalau can_trade gagal HANYA karena max posisi → tetap lanjut data + LLM + consensus + re-evaluator, entry ditahan (`entry_blocked`). **Simbol tanpa posisi terbuka di-skip** (re-evaluator gak ada kerjaan, entry diblokir → hemat LLM call). Jumlah model per cycle tetap ngikutin AI mode (single/dual/triple) — total call pas posisi penuh ≈ hari normal (240 cycle xau_pairs + re-eval ≈ 330/hari). Implementasi di `_run_cycle_for_current_symbol()`: flag `entry_blocked` + gate entry line 834-841.
+
+### Perubahan 15 Agustus (lanjutan) — anti-hedge gate (opsional, belum diimplementasi)
+
+**Masalah:** bot bisa buka posisi berlawanan arah di simbol yang sama (BUY open + konsensus SELL → hedge). Log: BUY #1184912103 masih open, konsensus SELL 65% → bot buka SELL #1185109331 → BUY+SELL bareng di XAU (user tutup manual kedua posisi). Akar: `main.py` cuma cek `len(open_positions) >= max_positions` (total 6), **tidak cek arah per-simbol**.
+
+**Opsi (belum diputuskan user):** A) skip entry kalau arah berlawanan dengan posisi open di simbol sama; B) skip + close posisi lama dulu; C) biarkan hedge. User setuju ini bug behavioral, belum pilih opsi.
 
 ### Catatan akun & operasional
 - LIVE `VTMarkets-Live 3` login `27556325`, balance ~$1065. Profit verifikasi = query MT5 langsung (`scratch/` script, hapus setelah dipakai).
 - Git branch: **`dev` = branch utama** (prompt baru + FASE 1-5 multi-symbol H1), **`main` = prompt lama** (terakhir `744ad0a`). **Sengaja split — jangan merge dev → main tanpa konfirmasi user.** FASE 1-5 sudah di-commit di `40c7288` (sebelumnya `284ec76` = outcome tracking akurat + default per-symbol + multiplier ATR per AI mode).
-- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.2 (window 15:00-19:30 WIB) / o3-mini (default di luar window, 14 Agu) / gpt-4o-mini (fallback error); fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
+- **Slot-3 DeepSeek V4 Flash** (default, configurable via menu/`--claude-model`); Gemini 3.1-flash-lite (primary) + 3.5-flash-lite (fallback); OpenAI gpt-5.2 (window 15:00-19:30 WIB) / o4-mini (default di luar window via .env, 14 Agu — ultra-defensive 100% natural SL) / o3-mini / gpt-4o-mini (fallback error); fallback slot-3 `claude-haiku-4-5-20251001`. Dynamic config ambang optimal **>65%** (bukan 70%). Threshold XAU 1.0 / BTC 1.2 (defensif 3/3 = ×1.5).
 - **`data/` dan `scratch/` sudah di-`.gitignore`** (untrack via `git rm --cached`, file tetap ada di disk). `git status` sekarang bersih dari runtime state — cuma source file + `docs/` yang muncul.
 - Lessons BTC pernah bikin bot HOLD terus (8 lesson "avoid 5-minute BTC scalps" dari era M5 yang gagal) — sudah di-clear. Kalau bot mulai HOLD terus lagi, cek `memory_lessons.json` dulu.
 - **Status display live** menampilkan posisi terbuka semua symbol + floating P/L tiap 3 detik (`get_all_open_positions`). Status line pendek & refresh di tempat (FASE 3).
@@ -282,6 +306,75 @@ Asumsi nilai tukar: **1 USD = Rp 15.500,-**
   * Biaya Harian: OpenAI: $0.00 ($0.0288 jika berbayar) | Gemini: $0.0042 | Claude Sonnet (4 call): $0.0512
   * **Total Harian:** **~$0.0554 / hari (± Rp 860,-)** — *[Jika OpenAI berbayar: ~$0.0842 / hari (± Rp 1.300,-)]*
   * **Total Bulanan (30 Hari):** **~$1.66 / bulan (± Rp 25.700,-)** — *[Jika OpenAI berbayar: ~$2.52 / bulan (± Rp 39.000,-)]*
+
+## Hasil Riset Kuantitatif Bebas Bias & Temuan Edge (16 Agustus 2026)
+
+Berdasarkan pengujian statistik bebas bias (*lookahead-bias-free*) selama 3 tahun terakhir pada data historis broker VTMarkets, berikut adalah rangkuman temuan edge kuantitatif yang tervalidasi ($n \ge 100$, $p < 0.05$, Interval Kepercayaan $95\%$ batas bawah $> 0$):
+
+### 1. Pola dengan Edge Signifikan (EDGE - whispers_valid.csv)
+Seluruh pola candlestick yang terbukti memiliki keunggulan statistik riil adalah **pola Bearish (Sell) yang tereksekusi pada sesi New York (WIB malam)**:
+*   **GBPCHF-ECNc (4 EDGE):**
+    *   `Bearish Sweep` (R:R 1:2) | Win Rate **55.5%** | EV **+0.65** ($n=254$, $p=0.039$) — *Paling Sakti!*
+    *   `Bearish Engulfing` (R:R 1:1.5) | Win Rate **59.4%** | EV **+0.47** ($n=475$)
+    *   `Inside Bar Bearish` (R:R 1:1.5) | Win Rate **58.8%** | EV **+0.46** ($n=447$)
+    *   `Bearish Pin Bar` (R:R 1:1.5) | Win Rate **55.0%** | EV **+0.36** ($n=444$)
+*   **EURCHF-ECNc (4 EDGE):**
+    *   `Inside Bar Bearish` (R:R 1:1.5) | Win Rate **59.2%** | EV **+0.46** ($n=417$)
+    *   `Bearish Engulfing` (R:R 1:1.5) | Win Rate **57.0%** | EV **+0.41** ($n=528$)
+    *   `Bearish Sweep` (R:R 1:1.5) | Win Rate **55.9%** | EV **+0.38** ($n=272$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **60.6%** | EV **+0.19** ($n=439$)
+*   **GBPNZD-ECNc (4 EDGE):**
+    *   `Inside Bar Bearish` (R:R 1:1) | Win Rate **63.6%** | EV **+0.27** ($n=385$)
+    *   `Bearish Engulfing` (R:R 1:1) | Win Rate **61.6%** | EV **+0.23** ($n=485$)
+    *   `Bearish Sweep` (R:R 1:1) | Win Rate **60.5%** | EV **+0.20** ($n=339$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **57.9%** | EV **+0.15** ($n=451$)
+*   **EURAUD-ECNc (3 EDGE):**
+    *   `Bearish Pin Bar` (regime=range, R:R 1:1) | Win Rate **64.0%** | EV **+0.27** ($n=175$)
+    *   `Inside Bar Bearish` (session=ny, R:R 1:1) | Win Rate **63.5%** | EV **+0.26** ($n=452$)
+    *   `Bearish Engulfing` (session=ny, R:R 1:1) | Win Rate **55.7%** | EV **+0.11** ($n=515$)
+*   **EURJPY-ECNc (2 EDGE):**
+    *   `Bearish Sweep` (R:R 1:1) | Win Rate **58.8%** | EV **+0.17** ($n=374$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **55.6%** | EV **+0.10** ($n=423$)
+*   **GBPAUD-ECNc (Lolos Menggantikan AUDJPY):**
+    *   Memiliki **15+ EDGE** valid dengan performa yang sangat konsisten di R:R 1:1 (EV +0.22 s/d +0.31). 
+    *   `Inside Bar Bearish` (session=ny, R:R 1:1): Win Rate **65.6%** | EV **+0.31** ($n=459$).
+    *   `Bearish Engulfing` (session=ny, R:R 1:1): Win Rate **61.2%** | EV **+0.22** ($n=516$).
+
+### 2. Pola Klasik & Emas (XAUUSD-ECNc M15)
+*   Emas **tidak memiliki edge** untuk pola candlestick mentah.
+*   Satu-satunya pola dengan edge tervalidasi adalah **Double Bottom (CANDIDATE)**:
+    *   `Double Bottom` (volume=low, R:R 1:1): Win Rate **75.8%** | EV **+0.49** ($n=33$, $p=0.002$)
+    *   `Double Bottom` (secara umum / ALL, R:R 1:1): Win Rate **64.6%** | EV **+0.28** ($n=82$, $p=0.004$)
+
+### 3. Hasil Eliminasi Pola Harmonik (NO-EDGE)
+*   Pengujian mandiri DeepSeek terhadap **1.068 kombinasi pola Harmonik** (Gartley, Bat, Butterfly, Crab) menghasilkan **1.067 NO-EDGE** dan hanya 1 CANDIDATE.
+*   Pola Harmonik resmi **dibuang total dari rencana bisikan** karena performa tinggi di masa lalu terbukti sebagai ilusi *Small Sample Bias* ($n < 30$).
+
+### 4. Kesimpulan Riset & Perankingan Komprehensif Pair Forex (DeepSeek)
+Berdasarkan kelimpahan, kualitas, dan konsistensi *EDGE* tervalidasi dari riset statistik tanding terhadap 11 pair Forex (H1) dan Emas (M15), berikut adalah peringkat kelayakan trading:
+
+🏆 **Top 3 Pair Terkuat (Edge Paling Banyak & Konsisten):**
+1.  **`GBPCHF-ECNc` (Juara Mutlak):** 36 EDGE, 17 di antaranya memiliki EV > 0.20. Sangat dominan di sesi New York (9 EDGE). Pola terbaik: `Bearish Sweep` sesi NY R:R 1:2 (EV **+0.65**, $n=254$).
+2.  **`EURCHF-ECNc` (Total Edge Terbanyak):** 37 EDGE, 12 di antaranya memiliki EV > 0.20. Dominan di sesi NY & London. Pola terbaik: `Inside Bar Bearish` sesi NY R:R 1:1.5 (EV **+0.46**).
+3.  **`CADCHF-ECNc` (Paling Terdiversifikasi):** 27 EDGE, 8 di antaranya memiliki EV > 0.20. Konsisten meloloskan edge di 5 pola berbeda. Pola terbaik: `Bearish Sweep` sesi NY R:R 1:1.5 (EV **+0.43**).
+
+🥈 **Kandidat Kuat Berikutnya (Pair Backup & Pengganti):**
+4.  **`AUDCHF-ECNc` (Peringkat 4):** 24 EDGE, 6 di antaranya memiliki EV > 0.20. Pola terbaik: `Inside Bar Bearish` sesi NY WR 70% (EV **+0.38 s/d +0.41**).
+5.  **`GBPNZD-ECNc` (Peringkat 5 - Aktif di Bot):** 17 EDGE, 4 di antaranya memiliki EV > 0.20. Edge merata di 4 pola berbeda.
+6.  **`GBPAUD-ECNc` (Peringkat 6 - Lolos Menggantikan AUDJPY di Bot):** 19 EDGE, 3 di antaranya memiliki EV > 0.20. Memiliki performa yang jauh lebih aktif dan menguntungkan dibanding AUDJPY (yang hanya memiliki 1 edge).
+
+*(Catatan Kuantitatif: Seluruh 4 peringkat teratas dikuasai oleh cross CHF. Hal ini membuktikan karakteristik Swiss Franc (safe haven) yang memiliki pergerakan harga bersih, stabil, dan patuh tinggi pada pembalikan arah/mean-reversion di sesi NY).*
+
+### 5. Temuan Confluence & Mitos HTF Alignment Terbongkar (16 Agustus 2026)
+Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuahkan beberapa kesimpulan revolusioner bagi logika trading bot:
+*   **Mitos "HTF Trend Alignment" Terbongkar:** Mengharuskan pola searah dengan tren HTF (EMA 50 vs 200) terbukti **tidak memiliki edge statistik yang kuat** (hanya meloloskan 2 EDGE lemah). 
+*   **Kekuatan Counter-Trend di Resistance:** Sebaliknya, mengambil pola bearish (Sell) saat HTF sedang naik (*counter-trend*) **di dekat area Resistance** (jarak ≤ 0.5 ATR) terbukti menghasilkan edge yang sangat superior (contoh: EURCHF Inside Bar Bearish saat HTF sedang naik menghasilkan EV **+0.44**). Hal ini karena area resistance memberikan batas Stop Loss yang sangat tipis dengan ruang Take Profit yang sangat lebar (R:R sangat tinggi).
+*   **Near Resistance (Penambah Edge Terkuat Baru):** Pola bearish yang dipadukan dengan lokasi dekat resistance adalah filter terkuat:
+    *   `Bearish Pin Bar` GBPCHF dekat resistance (volatility-adjusted): Win Rate **69.0%** | EV **+0.37** ($n=145$).
+*   **Sesi NY Tetap Juara:** Meloloskan 48 EDGE di semua 12 simbol trading. Sesi New York (WIB malam) adalah filter waktu terbaik.
+*   **Multi-Pattern (2+ Pola Searah):** Hanya berguna sebagai konfirmasi pendukung (EV kecil +0.08 s/d +0.20, n besar 600-800), bukan edge mandiri yang kuat.
+
+---
 
 ## Konvensi & hal yang perlu diingat
 
