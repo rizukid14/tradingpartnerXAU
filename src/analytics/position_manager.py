@@ -283,7 +283,38 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     else:
         be_trigger = config.break_even_trigger_for(symbol)
 
-    be_padding = config.break_even_padding_for(symbol)
+    # Hitung padding dinamis yang menutupi komisi round-trip broker (deal IN + deal OUT)
+    # agar saat terkena BEP, net profit setelah dikurangi komisi broker benar-benar >= +$0.00 USD.
+    comm_pad_pts = 0
+    try:
+        deals = mt5.history_deals_get(position=pos.ticket)
+        total_comm = 0.0
+        if deals:
+            for d in deals:
+                if d.entry == mt5.DEAL_ENTRY_IN:
+                    # Ambil komisi deal IN lalu kalikan 2 untuk estimasi total round-trip
+                    total_comm = abs(getattr(d, "commission", 0.0) or 0.0) * 2.0
+                    break
+        if total_comm <= 0.0:
+            total_comm = 6.0 * pos.volume  # Fallback standar ECN: $6/lot round-trip
+
+        # Buffer cuan tambahan di atas komisi (Pocket Profit agar BEP tetap menghasilkan untung hijau)
+        if config.is_crypto(symbol):
+            extra_cuan_pts = 800
+        elif config.is_fx(symbol):
+            extra_cuan_pts = 15  # ~1.5 pips cuan bersih di atas komisi
+        else:
+            extra_cuan_pts = 35  # ~35 pts ($0.35) cuan bersih di XAU
+
+        if usd_per_pt > 0:
+            import math
+            comm_pad_pts = int(math.ceil(total_comm / usd_per_pt)) + extra_cuan_pts
+        else:
+            comm_pad_pts = extra_cuan_pts
+    except Exception:
+        comm_pad_pts = 15
+
+    be_padding = max(config.break_even_padding_for(symbol), comm_pad_pts)
     if profit_points < be_trigger:
         return
 
@@ -344,6 +375,38 @@ def _get_dynamic_atr_points(symbol, point):
     except Exception:
         pass
     return 0
+
+
+def _calculate_progressive_tp_lock_points(profit_points, tp_points):
+    """
+    Progressive Dynamic Trailing Stop Lock Curve:
+    - 50% TP profit -> kunci 20% TP
+    - 60% TP profit -> kunci 30% TP
+    - 70% TP profit -> kunci 50% TP
+    - 80% TP profit -> kunci 65% TP
+    - >=90% TP profit -> kunci 80% TP (ketat mendekati TP)
+    Interpolasi mulus antar tingkat.
+    """
+    if tp_points <= 0 or profit_points < (tp_points * 0.50):
+        return 0.0
+
+    ratio = profit_points / tp_points
+    if ratio >= 0.90:
+        lock_pct = 0.80 + min(ratio - 0.90, 0.08)  # 90% profit -> 80% lock, 95% -> 85% lock
+    elif ratio >= 0.80:
+        # Interpolasi 65% -> 80% saat profit 80% -> 90%
+        lock_pct = 0.65 + ((ratio - 0.80) / 0.10) * 0.15
+    elif ratio >= 0.70:
+        # Interpolasi 50% -> 65% saat profit 70% -> 80%
+        lock_pct = 0.50 + ((ratio - 0.70) / 0.10) * 0.15
+    elif ratio >= 0.60:
+        # Interpolasi 30% -> 50% saat profit 60% -> 70%
+        lock_pct = 0.30 + ((ratio - 0.60) / 0.10) * 0.20
+    else:  # 0.50 <= ratio < 0.60
+        # Interpolasi 20% -> 30% saat profit 50% -> 60%
+        lock_pct = 0.20 + ((ratio - 0.50) / 0.10) * 0.10
+
+    return lock_pct * tp_points
 
 
 # =============================================================================
@@ -459,16 +522,26 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         # Interpolasi linear start_mult -> end_mult, lalu floor ke min_mult
         dynamic_mult = start_mult - (start_mult - end_mult) * progress
         dynamic_mult = max(dynamic_mult, min_mult)
-        trail_distance = int(atr_points * dynamic_mult) * point if atr_points > 0 else distance * point
-
     if pos.type == mt5.ORDER_TYPE_BUY:
         new_sl = trail_ref - trail_distance
+        # Progressive TP-lock: pastikan SL setidaknya mengunci target % TP sesuai progress
+        if tp_points > 0:
+            tp_locked_pts = _calculate_progressive_tp_lock_points(profit_points, tp_points)
+            if tp_locked_pts > 0:
+                tp_lock_sl = pos.price_open + (tp_locked_pts * point)
+                new_sl = max(new_sl, tp_lock_sl)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL up, never down
         if pos.sl >= new_sl:
             return
     else:  # SELL
         new_sl = trail_ref + trail_distance
+        # Progressive TP-lock: pastikan SL setidaknya mengunci target % TP sesuai progress
+        if tp_points > 0:
+            tp_locked_pts = _calculate_progressive_tp_lock_points(profit_points, tp_points)
+            if tp_locked_pts > 0:
+                tp_lock_sl = pos.price_open - (tp_locked_pts * point)
+                new_sl = min(new_sl, tp_lock_sl)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL down, never up
         if pos.sl != 0 and pos.sl <= new_sl:

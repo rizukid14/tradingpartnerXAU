@@ -579,7 +579,7 @@ def _prompt_startup_scan_mode(skip_prompt=False):
         return
     print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
     print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 7 Simbol Sekarang (Immediate Full Market Scan)            |")
-    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M15 / H1 / M30 - Default)      |")
+    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M30 / H1 / M30 - Default)      |")
     print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
     sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
     sys.stdout.flush()
@@ -826,8 +826,9 @@ def _run_cycle_for_current_symbol():
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
     print(f" {UI.tag('AI', UI.CYAN)} Mode {ai_mode.upper()} ({len(active_models)} model: {', '.join(active_models)}) | Mengirim data ke LLM...")
+    all_open_positions = connector.get_all_open_positions()
     decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions,
-                                            whisper_str)
+                                            whisper_str, all_open_positions=all_open_positions)
 
     
     # 5. Calculate consensus
@@ -1052,11 +1053,11 @@ def main():
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
         print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M15) | FX Cross (H1) | BTC (M30) - Smart Rotation")
+        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M30) | FX Cross (H1) | BTC (M30) - Smart Rotation")
     else:
-        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
+        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M30 Swing)")
 
-    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}] / err-fb {config.OPENAI_FALLBACK_MODEL}), Dual slot: {config.AI_DUAL_SECOND_MODEL}{' (reasoning ' + config.DEEPSEEK_REASONING_EFFORT + ')' if config.AI_DUAL_SECOND_MODEL.strip().lower() in ('deepseek', 'ds') else ''}, Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
+    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}]), DeepSeek ({config.DEEPSEEK_MODEL} [reasoning {config.DEEPSEEK_REASONING_EFFORT}]), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
     print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")

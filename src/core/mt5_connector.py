@@ -732,22 +732,23 @@ def get_valid_trade_symbol(symbol):
 def get_filling_policy(symbol):
     """
     Determines the supported filling policy for a symbol dynamically.
-    Returns mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, or mt5.ORDER_FILLING_RETURN.
+    Returns mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK, or mt5.ORDER_FILLING_RETURN.
     """
+    symbol = get_valid_trade_symbol(symbol)
     info = mt5.symbol_info(symbol)
     if info is None:
-        return mt5.ORDER_FILLING_FOK
+        return mt5.ORDER_FILLING_IOC
 
     # Bitmask of filling modes:
     # 1: SYMBOL_FILLING_FOK
     # 2: SYMBOL_FILLING_IOC
     fm = getattr(info, "filling_mode", 0)
-    if fm & 1:
-        return mt5.ORDER_FILLING_FOK
-    elif fm & 2:
+    if fm & 2:
         return mt5.ORDER_FILLING_IOC
+    elif fm & 1:
+        return mt5.ORDER_FILLING_FOK
     else:
-        return mt5.ORDER_FILLING_RETURN
+        return mt5.ORDER_FILLING_IOC
 
 def _safe_order_send(request):
     """Sends order request safely supporting both native MT5 and mt5linux RPC bridge."""
@@ -786,7 +787,7 @@ def _send_with_retry(build_request, symbol, label):
 
     # If order failed with 10013 (Invalid request) or 10030 (Invalid fill), fallback to alt filling policies
     if result and not _is_order_success(result) and result.retcode in (getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
-        for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+        for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_RETURN):
             if alt_policy == policy:
                 continue
             print(f"[MT5] {label} fallback fill policy to {alt_policy} (retcode was {result.retcode})")
@@ -913,7 +914,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             "symbol": symbol,
             "volume": lot,
             "type": order_type,
-            "price": live_price,
+            "price": round(live_price, symbol_info.digits),
             "sl": round(live_sl, symbol_info.digits),
             "tp": round(live_tp, symbol_info.digits),
             "deviation": deviation,
@@ -923,7 +924,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             "type_filling": fill_policy,
         }
 
-    print(f" {UI.tag('MT5', UI.BLUE)} Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
+    print(f" {UI.tag('MT5', UI.BLUE)} Mengirim order: {action} {symbol} {lot} lot pada harga {round(price, symbol_info.digits)} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
 
     if result is None:
