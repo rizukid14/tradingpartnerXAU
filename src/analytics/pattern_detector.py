@@ -29,9 +29,23 @@ ATR_PERIOD = 14
 PROXIMITY_ATR_MULT = 0.5   # dekat S/R = jarak <= 0.5 ATR
 MULTI_PATTERN_BARS = 3     # 2+ pola searah dalam 3 bar
 
-# Kondisi sesi WIB (sama dengan riset pattern_research.py: ny menang di 20-24
-# karena di-set terakhir setelah london)
 def _session_wib(ts) -> str:
+    if isinstance(ts, (int, float)):
+        if ts > 1_000_000:
+            try:
+                ts = datetime.fromtimestamp(ts, tz=WIB)
+            except Exception:
+                ts = datetime.now(WIB)
+        else:
+            ts = datetime.now(WIB)
+    elif isinstance(ts, str):
+        try:
+            ts = pd.to_datetime(ts)
+        except Exception:
+            ts = datetime.now(WIB)
+    elif not hasattr(ts, "hour"):
+        ts = datetime.now(WIB)
+
     hour = ts.hour
     if hour >= 20 or hour < 5:
         return "ny"
@@ -152,7 +166,13 @@ def detect_and_whisper(df: pd.DataFrame, symbol: str) -> str | None:
     if pd.isna(atr) or atr <= 0:
         return None
 
-    ts = d.index[-1]
+    if "time" in d.columns:
+        ts = d["time"].iloc[-1]
+    elif isinstance(d.index, pd.DatetimeIndex):
+        ts = d.index[-1]
+    else:
+        ts = datetime.now(WIB)
+
     session = _session_wib(ts)
     near_res = abs(last["close"] - last["swing_high_20"]) <= PROXIMITY_ATR_MULT * atr if not pd.isna(last["swing_high_20"]) else False
     near_sup = abs(last["close"] - last["swing_low_20"]) <= PROXIMITY_ATR_MULT * atr if not pd.isna(last["swing_low_20"]) else False

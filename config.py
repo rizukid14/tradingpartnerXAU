@@ -111,7 +111,7 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"
 
 
 # --- MODEL NAMES & FALLBACKS ---
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
 
 
@@ -206,8 +206,22 @@ LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
+DEVIATION = _getenv_int("DEVIATION", 30)
+DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
+DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
 
-DEVIATION = _getenv_int("DEVIATION", 20)
+
+def deviation_for(symbol):
+    """Slippage deviation tolerance in points per asset category.
+    XAU: 60 pts ($0.60) - sweet spot 50-75 pts.
+    BTC: 1000 pts ($10.00).
+    FX: 30 pts (3 pips).
+    """
+    if is_crypto(symbol):
+        return DEVIATION_BTC
+    if "XAU" in (symbol or "").upper() or "GOLD" in (symbol or "").upper():
+        return DEVIATION_XAU
+    return DEVIATION
 
 # TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
 # price), safety floor per-kategori (14 Agustus: XAU 400 pts, FX 250 pts) + R:R min 1.25:1.
@@ -310,16 +324,12 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 # Mode values: "single" | "single_gemini" | "dual" | "triple"
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
-# Jadwal WIB (14 Agustus update):
-#   - single (OpenAI o4-mini): 00:01–09:59 (Asia pagi & awal London)
-#   - single_gemini (Gemini 3.1-flash-lite): 10:00–15:00 (Asia siang & pre-London: Gemini Only)
-#   - single (OpenAI o4-mini): 15:01–19:29 (London session)
-#   - triple (OpenAI + Gemini + DeepSeek): 19:30–21:30 (London-NY overlap, volatilitas tertinggi)
-#   - single (OpenAI o4-mini): 21:31–23:59 (Late NY & Tokyo)
+# Jadwal WIB:
+#   - single (OpenAI gpt-5.4-mini low reasoning): 00:00–19:29 (termasuk Trade Zone 11:00–19:29)
+#   - triple (OpenAI + Gemini + Claude Sonnet 4.6): 19:30–21:30 (London-NY overlap, volatilitas tertinggi)
+#   - single (OpenAI gpt-5.4-mini low reasoning): 21:31–23:59 (Late NY)
 AI_MODE_SCHEDULE = [
-    (0, 1, 9, 59, "single"),
-    (10, 0, 15, 0, "single_gemini"),
-    (15, 1, 19, 29, "single"),
+    (0, 0, 19, 29, "single"),
     (19, 30, 21, 30, "triple"),
     (21, 31, 23, 59, "single"),
 ]
@@ -414,6 +424,34 @@ PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
 MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
+MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
+
+
+def get_max_open_positions(in_recovery_mode=False, now=None):
+    """Maksimum open posisi agregat (semua simbol):
+    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
+    - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (4)
+    - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
+      (kalau recovery mode aktif di jam late NY, tetap min(2, 4) = 2).
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    cur_min = now.hour * 60 + now.minute
+
+    # 23:00 s.d. 02:00 WIB
+    is_late_ny = (cur_min >= 23 * 60) or (cur_min < 2 * 60)
+    if is_late_ny:
+        base = MAX_OPEN_POSITIONS_LATE_NY
+    elif in_recovery_mode:
+        base = MAX_OPEN_POSITIONS_RECOVERY
+    else:
+        base = MAX_OPEN_POSITIONS
+
+    if in_recovery_mode:
+        return min(base, MAX_OPEN_POSITIONS_RECOVERY)
+    return base
 # --- DAILY PROFIT TARGET (14 Agustus) ---
 # Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
@@ -458,24 +496,19 @@ MAX_SPREAD_POINTS_XAU = _getenv_int("MAX_SPREAD_POINTS_XAU", MAX_SPREAD_POINTS)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 
 # --- SESSION FILTER ---
-# 16 Agustus (user): blokir total 03:00-11:00 WIB (pelebaran spread subuh-pagi +
-# Asia pagi gapuna edge). Di luar itu tetap trading: Tokyo sore 11:00-16:00 (×0.7,
-# LLM tetap dipanggil — bebas, cuma dibisiki pattern edge kalau ada), London,
-# London-NY, dan NY dipotong sampai 03:00 (bukan 05:00 lagi).
+# Trade Zone: 11:00 - 02:00 WIB (02:00 - 11:00 WIB Dead Zone)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo",          "start": (11, 0), "end": (16, 0),  "lot_multiplier": 0.7},
-    {"name": "London",         "start": (15, 0), "end": (23, 59), "lot_multiplier": 1.0},
-    {"name": "London-NY ()", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
-    {"name": "NY",             "start": (20, 0), "end": (3, 0),   "lot_multiplier": 1.0},
+    {"name": "Asia/Tokyo Sore",  "start": (11, 0), "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "London",           "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
+    {"name": "London-NY Overlap","start": (19, 30), "end": (21, 30), "lot_multiplier": 1.2},
+    {"name": "New York",         "start": (20, 0), "end": (2, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones: 16 Agustus disesuaikan ke 03:00-06:00 WIB (dulu 02:00-06:00) —
-# karena session filter sudah blokir 03:00-11:00, zone ini jadi pengaman tambahan
-# (tetap aktif walau SESSION_FILTER_ENABLED=False). Berlaku XAU & FX; BTC 24/7.
+# Danger zones (Dead Zone subuh & Asia pagi 02:00 - 11:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Dead Zone (03:00 - 06:00 WIB)", "start": (3, 0), "end": (6, 0),
-     "reason": "Dead Zone - pergerakan tipis & lonjakan spread subuh"},
+    {"name": "Overnight Dead Zone (02:00 - 11:00 WIB)", "start": (2, 0), "end": (11, 0),
+     "reason": "Dead Zone subuh & Asia pagi (02:00 - 11:00 WIB)"},
 ]
 
 # --- WEEKEND PROTECTION ---

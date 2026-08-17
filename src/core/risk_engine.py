@@ -415,7 +415,7 @@ class RiskEngine:
         symbols (XAU + FX pairs + BTC), since rotation mode trades multiple symbols."""
         positions = mt5.positions_get()
         bot_positions = [p for p in (positions or []) if p.magic == config.MAGIC_NUMBER]
-        max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if self._in_recovery_mode else config.MAX_OPEN_POSITIONS
+        max_positions = config.get_max_open_positions(self._in_recovery_mode)
         if len(bot_positions) >= max_positions:
             return False, f" [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions} (semua simbol)."
         return True, ""
@@ -444,19 +444,23 @@ class RiskEngine:
                            f"(Maks: {max_spread} pts). Menunggu...")
         return True, ""
 
-    def _check_danger_zones(self):
-        """Check if current time is in a danger zone (rollover/dead zone)."""
-        # Crypto (BTCUSD) trades 24/7 - no FX-style danger zones
+    def _check_danger_zones(self, now_wib=None):
+        """Check if current time falls in any predefined danger zones."""
+        # Crypto (BTCUSD) trades 24/7 - no FX danger zones
         if config.is_crypto(config.SYMBOL):
             return True, ""
 
-        now_wib = datetime.now(WIB)
+        now_wib = now_wib or datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
         for zone in config.DANGER_ZONES_WIB:
             start = zone["start"][0] * 60 + zone["start"][1]
             end = zone["end"][0] * 60 + zone["end"][1]
-            if start <= current_minutes < end:
+            if start > end:
+                in_zone = current_minutes >= start or current_minutes < end
+            else:
+                in_zone = start <= current_minutes < end
+            if in_zone:
                 return False, f" [RISK] Zona bahaya '{zone['name']}': {zone['reason']}"
         return True, ""
 
@@ -473,14 +477,12 @@ class RiskEngine:
             return True, ""
         now_wib = datetime.now(WIB)
         if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
-            return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
-        if now_wib.weekday() == 5:  # Saturday
-            return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
-        if now_wib.weekday() == 6:  # Sunday
+            return False, " [RISK] Weekend entry blocked: Jumat >= 22:00 WIB. Menunggu Senin 00:00 WIB."
+        if now_wib.weekday() in (5, 6):  # Saturday or Sunday
             return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         return True, ""
 
-    def _check_session(self):
+    def _check_session(self, now_wib=None):
         """Check if current time falls within allowed trading sessions. Sets lot multiplier."""
         # Crypto (BTCUSD) trades 24/7 - no FX session windows
         if config.is_crypto(config.SYMBOL):
@@ -491,7 +493,7 @@ class RiskEngine:
             self._session_lot_multiplier = 1.0
             return True, ""
 
-        now_wib = datetime.now(WIB)
+        now_wib = now_wib or datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
         # Pick the HIGHEST multiplier among all matching sessions so overlapping

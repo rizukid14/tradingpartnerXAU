@@ -211,6 +211,8 @@ def parse_cli_overrides(argv=None):
                    help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, safety floor XAU 400 / FX 250 pts + R:R min 1.25:1)")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Lewati prompt interaktif saat startup (cocok untuk Docker/non-interactive)")
     args = p.parse_args(argv)
 
     applied = []
@@ -562,14 +564,14 @@ def _seed_startup_scan(valid_pool):
             _symbol_last_candle[sym] = int(r[-2]['time'])
 
 
-def _prompt_startup_scan_mode():
+def _prompt_startup_scan_mode(skip_prompt=False):
     """FASE 6 - CLI prompt mode scan startup:
     [1] Scan semua simbol sekarang (scan all now)
     [2] Scan sesuai timeframe masing-masing (default) - tunggu candle close tiap aset
     Non-interactive / timeout 10 detik -> default "timeframe".
     """
     global _STARTUP_SCAN_MODE
-    if not sys.stdin.isatty():
+    if skip_prompt or not sys.stdin.isatty():
         return  # non-interactive (scheduler/redirect) -> default
     try:
         import msvcrt
@@ -712,7 +714,7 @@ def _run_cycle_for_current_symbol():
         # posisi lemah buat buka slot). Hanya entry baru yang ditahan (entry_blocked).
         # Simbol yang TIDAK punya posisi terbuka di-skip: re-evaluator gak ada kerjaan,
         # entry juga diblokir -> LLM call sia-sia.
-        max_pos_now = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+        max_pos_now = config.get_max_open_positions(risk.is_recovery_mode)
         if len(connector.get_all_open_positions()) >= max_pos_now:
             if not connector.get_open_positions(config.SYMBOL):
                 print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai & {config.SYMBOL} tanpa posisi terbuka — skip (re-evaluator kosong).")
@@ -865,8 +867,8 @@ def _run_cycle_for_current_symbol():
     # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
     # counter-trend di sini. Konsensus LLM yang menentukan entry.
 
-    # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
-    max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+    # Check if max open positions reached for NEW trades (recovery mode: tighter cap; late NY: max 2)
+    max_positions = config.get_max_open_positions(risk.is_recovery_mode)
     if entry_blocked or len(open_positions) >= max_positions:
         if entry_blocked:
             print(f"-> Entry ditahan: posisi bot sudah {max_positions} (aggregate semua simbol). Re-evaluator tetap jalan.")
@@ -1085,7 +1087,7 @@ def main():
         print(f"[STARTUP EVALUATOR WARNING] {e}")
         
     # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
-    _prompt_startup_scan_mode()
+    _prompt_startup_scan_mode(skip_prompt)
 
     print("Bot berjalan... Menunggu penutupan candle berikutnya.\n")
     

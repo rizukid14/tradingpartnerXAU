@@ -16,6 +16,7 @@ import time
 import config
 from config import mt5
 from src.core.cli_theme import UI
+from src.core.mt5_connector import is_order_success
 
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
@@ -208,7 +209,7 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     }
 
     result = mt5.order_send(request)
-    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+    if is_order_success(result):
         _partial_closed_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         remaining = round(pos.volume - close_volume, 2)
@@ -314,7 +315,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     }
 
     result = mt5.order_send(request)
-    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+    if is_order_success(result):
         _break_even_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         print(f"{UI.clear_line()} {UI.tag('BREAK-EVEN', UI.GREEN)} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
@@ -483,7 +484,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     }
 
     result = mt5.order_send(request)
-    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+    if is_order_success(result):
         if config.is_crypto(symbol) and not (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0):
             print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
         else:

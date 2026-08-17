@@ -151,12 +151,18 @@ def init_mt5():
             print(f"[MT5 ERROR] Could not select symbol {config.SYMBOL}")
             mt5.shutdown()
             return False
-            
+
+    # Verifikasi apakah tombol Algo Trading di MT5 aktif
+    if hasattr(mt5, "terminal_info"):
+        term_info = mt5.terminal_info()
+        if term_info is not None and hasattr(term_info, "trade_allowed") and not term_info.trade_allowed:
+            print(f" {UI.tag('MT5 WARNING', UI.YELLOW)} ⚠️ Algo Trading dinonaktifkan di MetaTrader 5!")
+            print("                Aktifkan tombol 'Algo Trading' di toolbar MT5 agar order dapat dieksekusi.")
+
     return True
 
 initialize_mt5 = init_mt5
 
-initialize_mt5 = init_mt5
 
 def get_market_data(symbol, timeframe, num_candles=50):
     """
@@ -653,6 +659,28 @@ _RETRYABLE_RETCODES = {
     getattr(mt5, "TRADE_RETCODE_INVALID", 10013),
 }
 
+_SUCCESS_RETCODES = {
+    getattr(mt5, "TRADE_RETCODE_DONE", 10009),
+    getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+    getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010),
+    0,  # Retcode 0 = Standard MT5 OK / Done
+    1,  # RES_S_OK
+}
+
+def _is_order_success(result):
+    """Checks if an order_send result represents successful placement/execution."""
+    if result is None:
+        return False
+    retcode = getattr(result, "retcode", None)
+    if retcode in _SUCCESS_RETCODES:
+        return True
+    comment = str(getattr(result, "comment", "")).strip().lower()
+    if comment in ("done", "request executed", "order placed", "success", "placed"):
+        return True
+    return False
+
+is_order_success = _is_order_success
+
 _MAX_RETRIES = 2
 _RETRY_SLEEP_SECONDS = 0.4
 
@@ -737,16 +765,18 @@ def _safe_order_send(request):
 def _send_with_retry(build_request, symbol, label):
     """Send a request via mt5.order_send with retries and fill-policy fallback."""
     policy = get_filling_policy(symbol)
+    base_dev = getattr(config, "deviation_for", lambda s: config.DEVIATION)(symbol)
 
-    req = build_request(config.DEVIATION, policy)
+    req = build_request(base_dev, policy)
     if req is None:
         return None  # quote degenerate/stale — dibatalkan bersih (bukan spam retry 10013)
     result = _safe_order_send(req)
 
     for attempt in range(_MAX_RETRIES):
-        if not result or result.retcode not in _RETRYABLE_RETCODES:
+        if _is_order_success(result) or not result or result.retcode not in _RETRYABLE_RETCODES:
             break
-        widen = config.DEVIATION + (5 * (attempt + 1))
+        widen_step = 15 if "XAU" in (symbol or "").upper() else 5
+        widen = base_dev + (widen_step * (attempt + 1))
         print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, widening deviation to {widen} pts")
         time.sleep(_RETRY_SLEEP_SECONDS)  # jeda singkat biar broker settle (transient 10013/requote)
         req = build_request(widen, policy)
@@ -755,16 +785,16 @@ def _send_with_retry(build_request, symbol, label):
         result = _safe_order_send(req)
 
     # If order failed with 10013 (Invalid request) or 10030 (Invalid fill), fallback to alt filling policies
-    if result and result.retcode in (getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
+    if result and not _is_order_success(result) and result.retcode in (getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
         for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
             if alt_policy == policy:
                 continue
             print(f"[MT5] {label} fallback fill policy to {alt_policy} (retcode was {result.retcode})")
-            req = build_request(config.DEVIATION, alt_policy)
+            req = build_request(base_dev, alt_policy)
             if req is None:
                 continue
             res_alt = _safe_order_send(req)
-            if res_alt and res_alt.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+            if _is_order_success(res_alt):
                 result = res_alt
                 break
 
@@ -900,18 +930,18 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
         # _build return None = tick None saat kirim (feed hilang total)
         return {"status": "ERROR", "comment": "Tick hilang saat kirim (feed off) — order dibatalkan"}
 
-    if result.retcode not in (
-        mt5.TRADE_RETCODE_DONE,
-        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
-    ):
+    if not _is_order_success(result):
         retcode = getattr(result, "retcode", "N/A") if result else "N/A"
         comment = getattr(result, "comment", "No result") if result else "No result"
         print(f" {UI.tag('MT5 ERROR', UI.RED)} Order gagal! Retcode: {retcode}, Pesan: {comment}")
+        if retcode == 10027:
+            print("                 💡 Solusi: Aktifkan tombol 'Algo Trading' (icon play/robot) di toolbar atas MetaTrader 5.")
         return {"status": "ERROR", "comment": comment, "code": retcode}
 
-    print(f" {UI.tag('MT5', UI.GREEN)} Order BERHASIL! Ticket: {result.order}")
+    ticket_no = getattr(result, "order", 0) or getattr(result, "deal", 0)
+    print(f" {UI.tag('MT5', UI.GREEN)} Order BERHASIL! Ticket: {ticket_no}")
     invalidate_deals_cache()  # posisi baru dibuka -> bot_opened & closed_today berubah
-    return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
+    return {"status": "SUCCESS", "ticket": ticket_no, "comment": result.comment}
 
 def close_position(ticket):
     """Closes an open position by its ticket number."""
@@ -953,10 +983,7 @@ def close_position(ticket):
     print(f" {UI.tag('MT5', UI.BLUE)} Menutup posisi #{ticket}...")
     result = _send_with_retry(_build, symbol, f"Close #{ticket}")
 
-    if result is None or result.retcode not in (
-        mt5.TRADE_RETCODE_DONE,
-        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
-    ):
+    if not _is_order_success(result):
         comment = getattr(result, "comment", "No result") if result else "No result"
         print(f" {UI.tag('MT5 ERROR', UI.RED)} Gagal menutup posisi: {comment}")
         return False
