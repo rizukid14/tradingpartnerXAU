@@ -1,6 +1,7 @@
 import os
 import time
 import sys
+import json
 import threading
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
@@ -57,6 +58,266 @@ def _tf_to_seconds(tf):
         mt5.TIMEFRAME_D1: 86400,
     }
     return mapping.get(tf, 3600)
+
+
+# --- PENDING ORDER LIFECYCLE ---
+_pending_state_cache = None
+_pending_state_mtime = 0
+
+# Buffer recap HOLD per cycle (18 Agu): HOLD tidak dikirim per-symbol,
+# dikumpulkan & dikirim SATU pesan gabungan di akhir run_trading_cycle.
+_hold_recap_lines = []
+
+
+def _load_pending_state():
+    """Load riwayat pending order dari file JSON (persist antar restart)."""
+    global _pending_state_cache, _pending_state_mtime
+    path = config.PENDING_ORDERS_STATE_FILE
+    try:
+        mtime = os.path.getmtime(path)
+        if _pending_state_cache is not None and mtime == _pending_state_mtime:
+            return _pending_state_cache
+        with open(path, "r", encoding="utf-8") as f:
+            _pending_state_cache = json.load(f)
+        _pending_state_mtime = mtime
+    except FileNotFoundError:
+        _pending_state_cache = {"pending": []}
+        _pending_state_mtime = 0
+    except Exception:
+        if _pending_state_cache is None:
+            _pending_state_cache = {"pending": []}
+    return _pending_state_cache
+
+
+def _save_pending_state(state):
+    """Simpan riwayat pending order ke file JSON."""
+    global _pending_state_cache, _pending_state_mtime
+    _pending_state_cache = state
+    try:
+        with open(config.PENDING_ORDERS_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        _pending_state_mtime = os.path.getmtime(config.PENDING_ORDERS_STATE_FILE)
+    except Exception as e:
+        print(f"[PENDING STATE ERROR] {e}")
+
+
+def _record_pending_event(event):
+    """Catat event pending (placed/filled/expired/cancelled) ke state file."""
+    state = _load_pending_state()
+    state.setdefault("pending", []).append(event)
+    # Simpan maks 500 event terakhir biar file tidak membengkak
+    state["pending"] = state["pending"][-500:]
+    _save_pending_state(state)
+
+
+def _manage_pending_orders():
+    """
+    Lifecycle pending order tiap cycle:
+    1. Hapus pending yang sudah expired (MT5 biasanya auto-hapus, tapi catat)
+    2. Cancel pending yang arahnya kontra dengan konsensus baru (tesis mati)
+    3. Cap maks pending aktif
+    Dipanggil di awal _run_cycle_for_current_symbol (setelah risk gate).
+    """
+    if not getattr(config, "PENDING_ORDERS_ENABLED", False):
+        return
+    try:
+        pendings = connector.get_pending_orders()
+        if not pendings:
+            return
+        now_server = int(time.time())  # pending expiration pakai server time offset
+        # 1. Expired / hampir expired
+        for p in pendings:
+            if p.get("expiration") and p["expiration"] > 0 and p["expiration"] < now_server + 30:
+                connector.cancel_pending_order(p["ticket"])
+                _record_pending_event({
+                    "event": "expired",
+                    "ticket": p["ticket"],
+                    "symbol": p["symbol"],
+                    "type": p.get("type_str"),
+                    "price": p.get("price"),
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+        # 2. Cap: kalau masih lebih dari max, cancel yang paling lama (expiration terkecil)
+        pendings = connector.get_pending_orders()
+        max_active = getattr(config, "PENDING_ORDER_MAX_ACTIVE", 3)
+        if len(pendings) > max_active:
+            pendings_sorted = sorted(pendings, key=lambda p: p.get("expiration") or 0)
+            for p in pendings_sorted[: len(pendings) - max_active]:
+                connector.cancel_pending_order(p["ticket"])
+                _record_pending_event({
+                    "event": "cancelled_cap",
+                    "ticket": p["ticket"],
+                    "symbol": p["symbol"],
+                    "type": p.get("type_str"),
+                    "price": p.get("price"),
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+    except Exception as e:
+        print(f"[PENDING MANAGE ERROR] {e}")
+
+
+def _detect_filled_pending():
+    """
+    Deteksi pending order yang sudah ter-fill -> jadi posisi. Dicatat sebagai
+    event 'filled' di state (AI proven: level entry tercapai). Dipanggil tiap
+    cycle dari run_trading_cycle.
+
+    Cara deteksi yang BENAR (fix 18 Agustus): di MT5, ticket pending order
+    (order id) BEDA dengan ticket posisi saat ter-fill. Saat pending ter-fill,
+    broker buat deal IN (entry) dengan field `order` = ticket pending asal dan
+    `position_id` = ticket posisi baru. Jadi cocokkan lewat HISTORY DEALS:
+    cari deal IN dengan order == ticket pending -> posisi baru terisi.
+    (Sebelumnya: cocokkan ticket pending == ticket posisi -> TIDAK PERNAH cocok,
+    jadi status filled tidak pernah terdeteksi walau posisi sudah kebuka.)
+    """
+    if not getattr(config, "PENDING_ORDERS_ENABLED", False):
+        return
+    try:
+        state = _load_pending_state()
+        events = state.get("pending", [])
+        if not events:
+            return
+        # Pending yang tercatat 'placed' dan belum punya status terminal
+        # (filled/expired/cancelled) - fix 18 Agustus: filter tiket yang sudah
+        # punya event terminal biar tidak terdeteksi filled BERULANG tiap cycle.
+        terminal_tickets = {
+            e.get("ticket") for e in events
+            if e.get("event") in ("filled", "expired", "cancelled_cap", "cancelled_contra") and e.get("ticket")
+        }
+        active_placed = {}
+        for e in events:
+            if e.get("event") == "placed" and e.get("ticket") and e["ticket"] not in terminal_tickets:
+                active_placed[e["ticket"]] = e
+        if not active_placed:
+            return
+        # Pending yang masih hidup di broker
+        pendings = connector.get_pending_orders()
+        live_tickets = {p["ticket"] for p in pendings}
+
+        # Cari deal IN (entry) dalam 7 hari terakhir yang order-nya == pending ticket.
+        # Pakai history_deals_get(range) biar dapat field `order` (ticket pending asal).
+        from datetime import datetime, timedelta
+        now_dt = datetime.now()
+        from_epoch = int((now_dt - timedelta(days=7)).timestamp())
+        to_epoch = int(now_dt.timestamp()) + 86400
+        deals = mt5.history_deals_get(from_epoch, to_epoch) or []
+        deal_order_to_pos = {}
+        for d in deals:
+            # deal IN dari pending order: entry == IN, dan field order != 0
+            if d.entry == mt5.DEAL_ENTRY_IN and getattr(d, "order", 0):
+                deal_order_to_pos.setdefault(d.order, d.position_id)
+
+        changed = False
+        for ticket, ev in list(active_placed.items()):
+            if ticket in live_tickets:
+                continue  # masih pending
+            pos_id = deal_order_to_pos.get(ticket)
+            if pos_id:
+                # Pending hilang + ada deal IN dengan order == ticket -> FILLED
+                ev2 = dict(ev)
+                ev2["event"] = "filled"
+                ev2["position_id"] = pos_id
+                ev2["fill_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                events.append(ev2)
+                changed = True
+                print(f" {UI.tag('PENDING', UI.GREEN)} Pending #{ticket} {ev.get('type')} {ev.get('symbol')} "
+                      f"@ {ev.get('price')} TER-FILL -> posisi #{pos_id}. (AI proven: level entry tercapai)")
+            # kalau pending hilang tapi tidak ada deal IN = expired/cancelled manual
+            # (sudah dicatat oleh MT5/expired handler, skip)
+        if changed:
+            state["pending"] = events[-500:]
+            _save_pending_state(state)
+    except Exception as e:
+        print(f"[PENDING FILL DETECT ERROR] {e}")
+
+
+def _cancel_pending_contra(new_signal):
+    """
+    Cancel semua pending order yang arahnya berlawanan dengan sinyal baru.
+    Konsensus baru = tesis lama sudah mati -> pending kontra tidak relevan.
+    """
+    if not getattr(config, "PENDING_ORDERS_ENABLED", False):
+        return
+    try:
+        pendings = connector.get_pending_orders()
+        if not pendings or new_signal not in ("BUY", "SELL"):
+            return
+        for p in pendings:
+            ptype = p.get("type_str", "")
+            is_buy_pending = ptype in ("buy_stop", "buy_limit")
+            is_sell_pending = ptype in ("sell_stop", "sell_limit")
+            if (new_signal == "BUY" and is_sell_pending) or (new_signal == "SELL" and is_buy_pending):
+                connector.cancel_pending_order(p["ticket"])
+                _record_pending_event({
+                    "event": "cancelled_contra",
+                    "ticket": p["ticket"],
+                    "symbol": p["symbol"],
+                    "type": ptype,
+                    "price": p.get("price"),
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+    except Exception as e:
+        print(f"[PENDING CONTRA ERROR] {e}")
+
+
+def _report_pending_stats():
+    """Print ringkasan statistik pending order (AI proven) ke CLI."""
+    if not getattr(config, "PENDING_ORDERS_ENABLED", False):
+        return
+    try:
+        state = _load_pending_state()
+        events = state.get("pending", [])
+        if not events:
+            return
+        placed = [e for e in events if e.get("event") in ("placed",)]
+        filled = [e for e in events if e.get("event") == "filled"]
+        expired = [e for e in events if e.get("event") == "expired"]
+        cancelled = [e for e in events if e.get("event") == "cancelled_contra"]
+        print(f" {UI.tag('PENDING STATS', UI.MAGENTA)} placed={len(placed)} filled={len(filled)} "
+              f"expired={len(expired)} cancelled={len(cancelled)}")
+    except Exception as e:
+        print(f"[PENDING STATS ERROR] {e}")
+
+
+def _hold_recap_line(result):
+    """Buat 1 baris ringkasan HOLD untuk 1 simbol (buat recap Telegram).
+    Return None kalau pure_hold (semua model HOLD) — tidak perlu direkap.
+    """
+    hold_type = result.get("hold_type")
+    if not hold_type or hold_type == "pure_hold":
+        return None
+    sym = config.SYMBOL
+    decisions = result.get("decisions", {})
+    # Ringkas: model + arah + confidence (buat yang bukan HOLD)
+    parts = []
+    for m_name, dec in decisions.items():
+        sig = dec.get("signal") or "HOLD"
+        if sig in ("BUY", "SELL"):
+            conf = (dec.get("confidence") or 0.0) * 100
+            parts.append(f"{m_name} {sig} {conf:.0f}%")
+        else:
+            parts.append(f"{m_name} HOLD")
+    vote_str = ", ".join(parts)
+    if hold_type == "atr_gate":
+        reason = (result.get("sltp_reason") or result.get("details") or "").strip()
+        return f"• `{sym}`: Trade batal (gate ATR) — {reason[:60]}"
+    if hold_type == "low_confidence":
+        return f"• `{sym}`: HOLD (conf rendah) — {vote_str}"
+    if hold_type == "split_vote":
+        return f"• `{sym}`: Beda pendapat — {vote_str}"
+    return None
+
+
+def _send_hold_recap():
+    """Kirim recap HOLD gabungan (satu pesan) kalau ada isi. Reset buffer."""
+    global _hold_recap_lines
+    if not _hold_recap_lines:
+        return
+    try:
+        tg.alert_hold_recap(list(_hold_recap_lines))
+    except Exception as e:
+        print(f"[HOLD RECAP ERROR] {e}")
+    _hold_recap_lines = []
 
 
 def _candle_range_label(open_ts, tf):
@@ -234,7 +495,9 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--claude-model", type=str,
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
-                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, safety floor XAU 400 / FX 250 pts + R:R min 1.25:1)")
+                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor XAU/FX berbasis ATR: 1.1x/1.3x + R:R min 1.25)")
+    p.add_argument("--pending-orders", choices=["on", "off"],
+                   help="Pending order (LIMIT/STOP dari AI) on/off - default dari .env PENDING_ORDERS_ENABLED")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
     p.add_argument("--yes", "-y", action="store_true",
@@ -271,6 +534,9 @@ def parse_cli_overrides(argv=None):
     if args.tpsl_rules is not None:
         config.TP_SL_RULES = args.tpsl_rules
         applied.append(f"TP_SL_RULES={config.TP_SL_RULES}")
+    if args.pending_orders is not None:
+        config.PENDING_ORDERS_ENABLED = (args.pending_orders == "on")
+        applied.append(f"PENDING_ORDERS_ENABLED={config.PENDING_ORDERS_ENABLED}")
     if args.risk_percent_xau is not None:
         config.RISK_PERCENT_XAU = args.risk_percent_xau
         applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
@@ -348,7 +614,7 @@ def interactive_setup():
             return "OFF"
         s = str(v)
         if attr == "config.TP_SL_RULES":
-            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else " (bebas, floor XAU 400/FX 250 pts, R:R min 1.25)" if v == "LLM" else "")
+            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else f" (bebas, floor XAU {config.LLM_XAU_FLOOR_ATR_MULT}xATR / FX {config.LLM_FX_FLOOR_ATR_MULT}xATR H1, R:R min {config.LLM_MIN_RR_RATIO})" if v == "LLM" else "")
         return s
 
 
@@ -373,6 +639,7 @@ def interactive_setup():
         ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", _scan_mode_label() if config.TRADING_MODE == "xau_pairs" else "XAU Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
+        ("MODE & RISK", "Risk FX (% equity)", "config.RISK_PERCENT_FX", str(config.RISK_PERCENT_FX)),
         ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
         ("LIMIT & FILTER", "Max Posisi", "config.MAX_OPEN_POSITIONS", str(config.MAX_OPEN_POSITIONS)),
         ("LIMIT & FILTER", "Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
@@ -383,13 +650,14 @@ def interactive_setup():
         ("KONSENSUS & AI", "OpenAI Model (24/7)", "config.OPENAI_MODEL", str(config.OPENAI_MODEL) + " (Full 24/7 All Sessions)"),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         "XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1, R:R 1.25)" if config.TP_SL_RULES == "LLM"
+         f"XAU: LLM (floor {config.LLM_XAU_FLOOR_ATR_MULT}xATR) | BTC: ATR-Based (fix) | FX: LLM (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1, R:R {config.LLM_MIN_RR_RATIO})" if config.TP_SL_RULES == "LLM"
          else str(config.TP_SL_RULES) + " (force semua, gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)"),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
         ("KONSENSUS & AI", "AI Mode Policy", "config.AI_MODE_POLICY", str(config.AI_MODE_POLICY)),
         ("KONSENSUS & AI", "Memory (lessons/dec)", "config.MEMORY_CONTEXT_ENABLED", "ON" if config.MEMORY_CONTEXT_ENABLED else "OFF"),
+        ("KONSENSUS & AI", "Pending Order (AI)", "config.PENDING_ORDERS_ENABLED", "ON" if config.PENDING_ORDERS_ENABLED else "OFF"),
         ("PROTEKSI", "Trailing Stop", "config.TRAILING_STOP_ENABLED", "ON" if config.TRAILING_STOP_ENABLED else "OFF"),
         ("PROTEKSI", "Break-Even", "config.BREAK_EVEN_ENABLED", "ON" if config.BREAK_EVEN_ENABLED else "OFF"),
         ("PROTEKSI", "Partial Close", "config.PARTIAL_CLOSE_ENABLED", "ON" if config.PARTIAL_CLOSE_ENABLED else "OFF"),
@@ -724,6 +992,12 @@ def run_trading_cycle():
             pass
             
     config.SYMBOL = valid_pool[0] if valid_pool else config.SYMBOL
+
+    # Statistik pending order (AI proven) - tampil tiap cycle kalau enabled
+    _detect_filled_pending()
+    _report_pending_stats()
+    # Recap HOLD gabungan (satu pesan Telegram untuk semua simbol cycle ini)
+    _send_hold_recap()
     return True
 
 
@@ -754,6 +1028,8 @@ def _run_cycle_for_current_symbol():
             print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
             return True  # Not an error, just skipping
     
+    # 0.5 Pending order lifecycle: expired/cap/contra cleanup (hanya kalau enabled)
+    _manage_pending_orders()    
     # 1. Fetch market data (53 bar, buang bar aktif -> 52 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
     df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=53)
     if df is None or len(df) == 0:
@@ -969,6 +1245,70 @@ def _run_cycle_for_current_symbol():
         # Get effective lot size from risk-based sizing (uses execution SL points)
         effective_lot = risk.get_effective_lot_size(sl_points, split_count=num_positions)
 
+        # PENDING ORDER: kalau consensus memilih entry_type non-market dan
+        # pending order diaktifkan -> pasang pending order (bukan market order).
+        # Tereksekusi -> posisi normal (SL/TP + BEP + trailing).
+        entry_type = result.get("entry_type") or "market"
+        entry_price = result.get("entry_price")
+        if (getattr(config, "PENDING_ORDERS_ENABLED", False)
+                and entry_type != "market"
+                and entry_price is not None
+                and not gate_blocked
+                and num_positions > 0):
+            try:
+                pendings_now = connector.get_pending_orders()
+                pendings_same_symbol = [p for p in pendings_now if p.get("symbol") == config.SYMBOL]
+                max_active = getattr(config, "PENDING_ORDER_MAX_ACTIVE", 3)
+                if len(pendings_now) >= max_active:
+                    print(f" {UI.tag('PENDING', UI.YELLOW)} Cap pending {max_active} tercapai — skip pasang pending baru untuk {config.SYMBOL}.")
+                elif pendings_same_symbol:
+                    print(f" {UI.tag('PENDING', UI.YELLOW)} Sudah ada pending untuk {config.SYMBOL} — skip duplikat.")
+                else:
+                    # Cancel pending kontra dulu (tesis baru = arah baru)
+                    _cancel_pending_contra(trade_signal)
+                    # SL/TP absolute dihitung relatif ke entry_price pending
+                    p_point = tick_live["point"] if tick_live else 0.01
+                    p_sl_price = None
+                    p_tp_price = None
+                    if sl_points and sl_points > 0:
+                        if entry_type in ("buy_stop", "buy_limit"):
+                            p_sl_price = entry_price - (sl_points * p_point)
+                            p_tp_price = (entry_price + (tp_points * p_point)) if tp_points else None
+                        else:
+                            p_sl_price = entry_price + (sl_points * p_point)
+                            p_tp_price = (entry_price - (tp_points * p_point)) if tp_points else None
+                    order_comment_pending = (result.get("reason") or "").strip()[:31] or f"PEND {entry_type}"
+                    pending_res = connector.send_pending_order(
+                        symbol=config.SYMBOL,
+                        entry_type=entry_type,
+                        entry_price=entry_price,
+                        lot=effective_lot,
+                        sl_points=sl_points,
+                        tp_points=tp_points,
+                        comment=order_comment_pending,
+                        sl_price=p_sl_price,
+                        tp_price=p_tp_price,
+                        expiration_minutes=config.PENDING_ORDER_EXPIRY_MINUTES,
+                    )
+                    if pending_res["status"] == "SUCCESS":
+                        _record_pending_event({
+                            "event": "placed",
+                            "ticket": pending_res["ticket"],
+                            "symbol": config.SYMBOL,
+                            "type": entry_type,
+                            "price": entry_price,
+                            "sl_points": sl_points,
+                            "tp_points": tp_points,
+                            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        })
+                        print(f" {UI.tag('PENDING', UI.GREEN)} Pending {entry_type} @ {entry_price} terpasang (ticket {pending_res['ticket']}).")
+                    else:
+                        print(f" {UI.tag('PENDING', UI.RED)} Gagal pasang pending: {pending_res.get('comment')}")
+                    return True  # pending sudah dipasang, tidak lanjut ke market order
+            except Exception as e:
+                print(f"[PENDING EXEC ERROR] {e}")
+            # kalau gagal/exception -> fall through ke market order
+
         if num_positions > 1:
             print(f"[UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka {num_positions} posisi sekaligus (Sisa slot: {remaining_slots})...")
         elif num_positions == 1 and desired_positions > 1:
@@ -1022,7 +1362,12 @@ def _run_cycle_for_current_symbol():
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
     else:
         print("Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
-        tg.alert_consensus_hold(result, symbol=config.SYMBOL)
+        # HOLD: kumpulkan ke buffer recap (bukan kirim per-symbol) — dikirim
+        # SATU pesan gabungan di akhir run_trading_cycle via _send_hold_recap().
+        global _hold_recap_lines
+        line = _hold_recap_line(result)
+        if line:
+            _hold_recap_lines.append(line)
 
     # Record this cycle's final decision for Recent Decision Memory
     # (so the LLM next cycle can see if it has been HOLDing too long).
@@ -1085,7 +1430,7 @@ def main():
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M30 Swing)")
 
     print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}]), DeepSeek ({config.DEEPSEEK_MODEL} [reasoning {config.DEEPSEEK_REASONING_EFFORT}]), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {f'XAU: LLM (floor {config.LLM_XAU_FLOOR_ATR_MULT}xATR) | BTC: ATR-Based (fix) | FX: LLM (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
@@ -1134,6 +1479,7 @@ def main():
     last_candle_time = None
     startup_run = True
     last_symbol = config.SYMBOL
+    _last_day = None  # deteksi ganti hari (WIB) -> kirim ringkasan harian otomatis
 
     try:
         while True:
@@ -1141,6 +1487,29 @@ def main():
             #  EVERY TICK (5s): Manage open positions + weekend check
             # =================================================================
             try:
+                # Day-change detection: kalau tanggal WIB berubah, kirim ringkasan
+                # harian (rich) sebelum reset, biar laporan tiap hari lengkap.
+                try:
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+                    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+                    today_str = wib_now.strftime("%Y-%m-%d")
+                    if _last_day is None:
+                        _last_day = today_str
+                    elif today_str != _last_day:
+                        print(f"\n[DAY CHANGE] {_last_day} -> {today_str}. Kirim ringkasan harian...")
+                        daily_pnl = risk.get_daily_pnl()
+                        closed_deals = connector.get_closed_positions_today()
+                        open_pos = connector.get_all_open_positions()
+                        tg.alert_daily_summary(
+                            daily_pnl, len(closed_deals), risk.get_status_summary(),
+                            closed_deals=closed_deals, open_positions=open_pos,
+                            reason="Ganti Hari",
+                        )
+                        _last_day = today_str
+                except Exception as e:
+                    print(f"[DAY CHANGE ERROR] {e}")
+
                 # Symbol rotation: XAUUSD weekdays, BTCUSD weekends
                 active_symbol, changed = config.refresh_active_symbol()
                 if changed:
@@ -1344,9 +1713,16 @@ def main():
     except KeyboardInterrupt:
         print("\n Bot dimatikan secara manual oleh user.")
     finally:
-        # Send daily summary before shutdown
+        # Send rich daily summary before shutdown (P/L, breakdown per simbol,
+        # win/loss, posisi terbuka)
         daily_pnl = risk.get_daily_pnl()
-        tg.alert_daily_summary(daily_pnl, 0, risk.get_status_summary())
+        closed_deals = connector.get_closed_positions_today()
+        open_pos = connector.get_all_open_positions()
+        tg.alert_daily_summary(
+            daily_pnl, len(closed_deals), risk.get_status_summary(),
+            closed_deals=closed_deals, open_positions=open_pos,
+            reason="Bot Mati",
+        )
         mt5.shutdown()
         print("Koneksi MT5 diputus. Sampai jumpa!")
 

@@ -242,14 +242,80 @@ def alert_bot_started():
     send_message(text)
 
 
-def alert_daily_summary(pnl, trades_count, risk_status=None):
-    """Send end-of-day summary with risk status."""
-    emoji = "" if pnl >= 0 else ""
+def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, open_positions=None, reason="Harian"):
+    """Send rich end-of-day / shutdown / day-change summary to Telegram.
+    - pnl: net P/L hari ini (realized)
+    - trades_count: jumlah trade tertutup hari ini
+    - closed_deals: list dict dari get_closed_positions_today (untuk breakdown
+      per simbol, win/loss/BEP, dsb) - kalau None, diambil otomatis di sini
+    - open_positions: daftar posisi masih terbuka (opsional)
+    - reason: label konteks ("Harian", "Bot Mati", "Ganti Hari")
+    """
+    emoji = "🟢" if pnl >= 0 else "🔴"
     text = (
-        f"{emoji} *Ringkasan Harian*\n"
+        f"{emoji} *Ringkasan {reason}*\n"
         f"- P/L Hari Ini: `${pnl:.2f}`\n"
-        f"- Jumlah Trade: `{trades_count}`"
+        f"- Trade Tertutup: `{trades_count}`"
     )
+
+    # Breakdown per simbol + win/loss/BEP (dari closed deals)
+    try:
+        if closed_deals is None:
+            from src.core import mt5_connector
+            closed_deals = mt5_connector.get_closed_positions_today()
+        if closed_deals:
+            by_symbol = {}
+            total_win = total_loss = total_bep = 0
+            for d in closed_deals:
+                sym = d.get("symbol", "UNKNOWN")
+                profit = d.get("profit", 0.0)
+                bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "losses": 0, "bep": 0, "pnl": 0.0})
+                bucket["n"] += 1
+                bucket["pnl"] += profit
+                # BEP tolerance dinamis dari komisi
+                tol = config.bep_tolerance_for(d) if hasattr(config, "bep_tolerance_for") else 0.04
+                if abs(profit) <= tol:
+                    bucket["bep"] += 1
+                    total_bep += 1
+                elif profit > 0:
+                    bucket["wins"] += 1
+                    total_win += 1
+                else:
+                    bucket["losses"] += 1
+                    total_loss += 1
+
+            text += f"\n- Win/Loss: `{total_win}W - {total_loss}L`"
+            if total_bep:
+                text += f" (+`{total_bep}` BEP)"
+
+            lines = []
+            for sym, b in sorted(by_symbol.items(), key=lambda kv: -abs(kv[1]["pnl"])):
+                wr = (b["wins"] / (b["n"] - b["bep"])) * 100 if (b["n"] - b["bep"]) > 0 else 0.0
+                lines.append(
+                    f"  • `{sym}`: {b['n']}T ({b['wins']}W-{b['losses']}L"
+                    + (f", {b['bep']}BEP" if b["bep"] else "")
+                    + f" | WR {wr:.0f}%) Net `${b['pnl']:+.2f}`"
+                )
+            text += "\n" + "\n".join(lines)
+    except Exception:
+        pass
+
+    # Posisi masih terbuka (floating)
+    if open_positions:
+        try:
+            total_float = sum(p.get("profit", 0.0) for p in open_positions)
+            lines = [f"  • `{p.get('symbol')}` {p.get('type')} {p.get('volume')} lot "
+                     f"${p.get('profit', 0.0):+.2f}" for p in open_positions[:8]]
+            text += (
+                f"\n-----------------\n"
+                f"📌 *Posisi Terbuka ({len(open_positions)}):*\n"
+                + "\n".join(lines)
+                + f"\n  Floating P/L: `${total_float:+.2f}`"
+            )
+        except Exception:
+            pass
+
+    # Risk status
     if risk_status:
         text += (
             f"\n-----------------\n"
@@ -266,6 +332,10 @@ def alert_consensus_hold(result, symbol=None):
     - Sends alerts for 'atr_gate' (trade rejected by ATR volatility gate),
       'low_confidence' (single AI proposed entry but confidence < threshold),
       or 'split_vote' (multi-AI proposed entry but couldn't reach consensus).
+
+    NOTE (18 Agu): fungsi ini TIDAK lagi dipanggil langsung per-symbol dari
+    main.py. HOLD sekarang di-recap jadi SATU pesan per cycle via alert_hold_recap().
+    Fungsi ini dipertahankan untuk kompatibilitas / pemanggil lain.
     """
     if not config.TELEGRAM_ENABLED:
         return False
@@ -334,4 +404,31 @@ def alert_consensus_hold(result, symbol=None):
         return send_message(text)
 
     return False
+
+
+def alert_hold_recap(hold_lines):
+    """
+    Kirim SATU pesan recap HOLD untuk semua simbol dalam satu cycle.
+    hold_lines: list str, tiap baris = ringkasan 1 simbol (misal
+    "GBPCHF: HOLD (OpenAI SELL 60%, Gemini HOLD)").
+    Dipanggil dari main.py di akhir run_trading_cycle — HOLD tidak lagi
+    dikirim per-symbol (anti-spam, 18 Agu).
+    """
+    if not config.TELEGRAM_ENABLED:
+        return False
+    if not getattr(config, "TELEGRAM_NOTIFY_HOLD", True):
+        return False
+    if not hold_lines:
+        return False
+
+    # Batasi panjang: max 12 simbol per pesan
+    body = "\n".join(hold_lines[:12])
+    if len(hold_lines) > 12:
+        body += f"\n  ... dan {len(hold_lines) - 12} simbol lainnya"
+    text = (
+        f"⏸️ *Recap HOLD ({len(hold_lines)} simbol)*\n"
+        f"{body}\n"
+        f"_Tidak ada entry baru — menunggu setup searah._"
+    )
+    return send_message(text)
 

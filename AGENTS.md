@@ -374,6 +374,42 @@ Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuah
 *   **Sesi NY Tetap Juara:** Meloloskan 48 EDGE di semua 12 simbol trading. Sesi New York (WIB malam) adalah filter waktu terbaik.
 *   **Multi-Pattern (2+ Pola Searah):** Hanya berguna sebagai konfirmasi pendukung (EV kecil +0.08 s/d +0.20, n besar 600-800), bukan edge mandiri yang kuat.
 
+## Riset Pair CAD-EUR-GBP (18 Agustus 2026 — 3 tahun H1)
+
+**Latar belakang:** user mau ganti GBPNZD (spread suka ngelebar 22 pts) dan kurangi konsentrasi CHF di pool. Riset pair cross CAD-EUR-GBP dengan pipeline identik `pattern_research.py` (14 pola × 18 kondisi × 4 R:R, n≥100, p<0.05, EV>0 CI>0). Skrip: `scratch/cad_eur_gbp_research.py`, hasil: `scratch/results/cad_eur_gbp_results.csv` + `cad_eur_gbp_report.md`.
+
+**Spread real (sample 5× dari broker live):** NZDCAD 2.2 pts (termurah) | AUDCAD 3.4 | EURCAD 4.6 | EURNZD 5.2 | GBPCAD 7.4 (termahal).
+
+**Hasil edge (semua bearish R:R 1:1, konsisten temuan 16 Agustus):**
+- **NZDCAD-ECNc (JUARA):** 27 EDGE. Terbaik: `Bearish Engulfing` htf=up WR 63.2% EV +0.24 (n=190), `Inside Bar Bearish` London WR 62.3% EV +0.23, `Bearish Engulfing` NY WR 61.1% EV +0.20.
+- **EURNZD-ECNc (KUAT):** 22 EDGE. Terbaik: `Bearish Pin Bar` range WR 63.0% EV +0.23, NY WR 62.9% EV +0.22, `Inside Bar Bearish` NY WR 62.0% EV +0.21.
+- **AUDCAD-ECNc (SOLID):** 5 EDGE. Terbaik: `Bearish Engulfing` NY WR 62.1% EV +0.21.
+- **EURCAD-ECNc:** 0 EDGE — gugur (user sempat kira bagus, data bilang tidak).
+- **GBPCAD-ECNc:** 0 EDGE + spread termahal 7.4 — gugur.
+- **Kesimpulan:** NZDCAD & EURNZD = kandidat terkuat, sekaligus mengurangi konsentrasi CHF (non-CHF).
+
+## Riset Pair JPY (18 Agustus 2026 — 4 tahun H1)
+
+**Latar belakang:** retest pair JPY dengan data 4 tahun (lebih panjang dari riset 16 Agustus yang 3 tahun). Skrip: `scratch/jpy_research.py`, hasil: `scratch/results/jpy_results.csv` + `jpy_report.md`.
+
+**Spread real:** EURJPY 0.6 pts (termurah) | CADJPY 4.8 | NZDJPY 5.8 | CHFJPY 7.0 | AUDJPY 7.0 | GBPJPY 10.4 (termahal).
+
+**Hasil edge:**
+- **CHFJPY-ECNc (TERKUAT):** 4 EDGE + 3 CANDIDATE. `Inside Bar Bearish` NY WR 62.1% EV +0.20, `Bearish Sweep` NY EV +0.14, CANDIDATE near_resistance R:R 1:2 EV +0.89-0.91 (n=37).
+- **AUDJPY-ECNc (KUAT):** 4 EDGE + 4 CANDIDATE. `Inside Bar Bearish` NY WR 63.6% EV +0.22 (terbaik), CANDIDATE near_resistance EV +0.39-0.58.
+- **NZDJPY-ECNc:** 7 EDGE (WR 55-59%, EV +0.06-0.13).
+- **EURJPY-ECNc:** 2 EDGE (`Bearish Sweep` NY EV +0.17, `Bullish Engulfing` London EV +0.14) + Double Bottom CANDIDATE — membaik dari ranking #11 di riset 3th (4 tahun lebih akurat).
+- **CADJPY-ECNc:** 2 EDGE tipis (EV +0.12-0.18).
+- **GBPJPY-ECNc:** 1 EDGE lemah (EV +0.10) + spread 10.4 — gugur (mirip kasus GBPNZD).
+- **Kesimpulan:** CHFJPY & AUDJPY kandidat kuat tapi spread 7.0; EURJPY layak dipertimbangkan ulang (spread termurah).
+
+## Keputusan pool 18 Agustus 2026
+
+- **GBPNZD → AUDCHF** (spread GBPNZD ngelebar; AUDCHF peringkat 4 riset: 24 EDGE, 6 kuat).
+- **EURAUD → NZDCAD** (EURAUD edge paling lemah di pool: 3 EDGE 0 kuat; performa 1 hari bukan bukti. NZDCAD juara riset CAD-EUR-GBP: 27 EDGE, spread 2.2).
+- **Pool FX final:** `GBPCHF, EURCHF, AUDCHF, CADCHF, GBPAUD, NZDCAD`.
+- **Whisper registry** (`src/analytics/whisper_registry.json`) bertambah 42 entries (70 → 112): NZDCAD 14, EURNZD 10, CHFJPY 4, AUDJPY 3, AUDCAD 2, EURJPY 2, CADJPY 2, NZDJPY 4, GBPJPY 1, dst. Hanya kondisi yang matchable runtime (session/near_SR/multi/ALL).
+
 ## Riset XAU M30 (17 Agustus 2026 — Backtest Khusus XAU, branch dev-backtest)
 
 **Latar belakang:** XAU sudah pindah ke M30 (intraday swing). User minta backtest khusus XAU M30 5 tahun ke belakang untuk cari strategi terbaik (fallback 5->4->3->2->1 thn kalau broker tidak simpan data panjang).

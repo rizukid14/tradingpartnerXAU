@@ -192,9 +192,9 @@ class MacroAnalyst:
         elif close < ema20 < ema50:
             trend = "DOWNTREND"
         elif close > ema20:
-            trend = "BULLISH BIAS (harga di atas EMA20, EMA50 masih mendatar)"
+            trend = "BULLISH BIAS (price above EMA20, EMA50 still flat)"
         elif close < ema20:
-            trend = "BEARISH BIAS (harga di bawah EMA20, EMA50 masih mendatar)"
+            trend = "BEARISH BIAS (price below EMA20, EMA50 still flat)"
         else:
             trend = "RANGING"
 
@@ -207,15 +207,15 @@ class MacroAnalyst:
 
         # RSI label
         if rsi >= 70:
-            rsi_label = "overbought (potensi pullback)"
+            rsi_label = "overbought (potential pullback)"
         elif rsi <= 30:
-            rsi_label = "oversold (potensi rebound)"
+            rsi_label = "oversold (potential rebound)"
         else:
-            rsi_label = "netral"
+            rsi_label = "neutral"
 
         # Jarak harga ke swing (dalam satuan ATR) biar LLM tahu seberapa dekat level
-        support_line = f"support terdekat {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR di bawah)" if swing_low_dist <= 2.0 else f"support jauh {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR)"
-        resistance_line = f"resistance terdekat {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR di atas)" if swing_high_dist <= 2.0 else f"resistance jauh {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR)"
+        support_line = f"nearest support {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR below)" if swing_low_dist <= 2.0 else f"support far {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR)"
+        resistance_line = f"nearest resistance {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR above)" if swing_high_dist <= 2.0 else f"resistance far {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR)"
 
         return (
             f"trend {trend} | close {_fmt(close)}, EMA20 {_fmt(ema20)}, EMA50 {_fmt(ema50)} "
@@ -242,7 +242,7 @@ class MacroAnalyst:
                 if tf_data and tf_data.get("analysis"):
                     tf_analyses.append(f"- **{tf_name} Timeframe**: {tf_data['analysis']}")
             if tf_analyses:
-                context.append("### MULTI-TIMEFRAME ANALYSIS (Struktur Trend)\n" + "\n".join(tf_analyses))
+                context.append("### MULTI-TIMEFRAME ANALYSIS (Trend Structure)\n" + "\n".join(tf_analyses))
 
         # 2. Add Fundamental Analysis (only if enabled AND there's cached content)
         if getattr(config, "FUNDAMENTAL_ANALYSIS_ENABLED", True):

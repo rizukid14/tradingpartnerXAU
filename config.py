@@ -111,7 +111,9 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 
 
 # --- MODEL NAMES & FALLBACKS ---
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
+# NOTE (18 Agu): claude-3-5-haiku-20241022 sudah dihapus dari API Anthropic (404).
+# Default = haiku-4-5 (valid). Kalau mau DeepSeek di slot ini, set "deepseek/deepseek-v4-flash".
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
 
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
@@ -181,7 +183,12 @@ FX_PAIR_SYMBOLS = [
         "FX_PAIR_SYMBOLS",
         # 16 Agustus (user): EURJPY -> CADCHF. Hasil riset edge: CADCHF #3 (27 EDGE,
         # 8 kuat, EV +0.43 Bearish Sweep NY), EURJPY paling lemah (#11, 4 EDGE, 0 kuat).
-        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,CADCHF-ECNc,GBPAUD-ECNc,EURAUD-ECNc",
+        # 18 Agustus (user): GBPNZD -> AUDCHF. GBPNZD spread suka ngelebar (22 pts);
+        # AUDCHF peringkat 4 riset (24 EDGE, 6 kuat, Inside Bar Bearish NY WR 70%).
+        # 18 Agustus (user, riset baru): EURAUD -> NZDCAD. EURAUD edge paling lemah
+        # di pool (3 EDGE, 0 kuat). Riset CAD-EUR-GBP 3th: NZDCAD juara (27 EDGE,
+        # spread 2.2 pts, Bearish Engulfing htf=up WR 63% EV +0.24).
+        "GBPCHF-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc,GBPAUD-ECNc,NZDCAD-ECNc",
     ).split(",")
     if s.strip()
 ]
@@ -208,6 +215,7 @@ LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
+RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.5)
 DEVIATION = _getenv_int("DEVIATION", 30)
 DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
 DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
@@ -269,7 +277,7 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     15 Agustus - user minta "floor 1x atr secara lunak", final 1.2x; SL tipis 0.8x ATR
 #     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
-LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.5)
+LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.3)
 LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
@@ -420,18 +428,18 @@ PARTIAL_CLOSE_TP1_POINTS_BTC = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_BTC", 44500
 MAX_DAILY_LOSS_USD = _getenv_float("MAX_DAILY_LOSS_USD", 50.0)
 MAX_CONSECUTIVE_LOSSES = _getenv_int("MAX_CONSECUTIVE_LOSSES", 5)
 PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
-MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
+MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 5)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
-MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
+MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
 
 
 def get_max_open_positions(in_recovery_mode=False, now=None):
     """Maksimum open posisi agregat (semua simbol):
-    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
-    - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (4)
+    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (5)
+    - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (3)
     - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
-      (kalau recovery mode aktif di jam late NY, tetap min(2, 4) = 2).
+      (kalau recovery mode aktif di jam late NY, tetap min(2, 3) = 2).
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -524,12 +532,26 @@ PATTERN_WHISPER_ENABLED = _getenv_bool("PATTERN_WHISPER_ENABLED", True)
 
 POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_AGE_SECONDS", 300)
 
+# --- PENDING ORDER (LIMIT/STOP) ---
+# Default OFF - fitur baru, JANGAN nyalakan di akun LIVE sebelum tervalidasi
+# di demo/dry-run. Saat aktif, LLM boleh kasih entry_type (market/buy_stop/
+# sell_stop/buy_limit/sell_limit) + entry_price. Pending punya expiration,
+# tereksekusi -> posisi normal (SL/TP + BEP + trailing).
+PENDING_ORDERS_ENABLED = _getenv_bool("PENDING_ORDERS_ENABLED", False)
+PENDING_ORDER_EXPIRY_MINUTES = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES", 120)
+PENDING_ORDER_MAX_ACTIVE = _getenv_int("PENDING_ORDER_MAX_ACTIVE", 3)
+# Jarak entry pending dari harga sekarang: minimal 2x spread, maksimal 1.5x ATR
+PENDING_ENTRY_MIN_SPREAD_MULT = _getenv_float("PENDING_ENTRY_MIN_SPREAD_MULT", 2.0)
+PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
+# File statistik "AI proven" - riwayat pending order + outcome (persist)
+PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")
+
 # --- TELEGRAM ALERTS ---
-TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", False)
+TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", True)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
-TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", True)
+TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", False)
 
 # --- MT5 CONNECTION ---
 MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "live").lower()  # "live" | "demo"
@@ -797,13 +819,15 @@ def active_ai_model_names(now=None):
 def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
-    FX (H1): 1.0%.
-    XAU (M15 swing, up to 6 concurrent): 1.0% (13 Agustus - dinaikkan dari 0.5%
+    FX (H1): 1.5% (18 Agustus - dinaikkan dari 1.0% karena lot terlalu kecil
+    dengan SL ATR H1 yang lebar; 1.5% = lot naik ~50%, masih aman di bawah
+    daily loss cap $50 & max posisi aggregate).
+    XAU (M30 swing, up to 6 concurrent): 1.0% (13 Agustus - dinaikkan dari 0.5%
     karena min lot 0.01 broker tidak bisa mewakili risk 0.5% dengan SL ATR/struktur
     yang lebar; 1.0% = max SL ~1079 pts di equity ~$1079, muat sweet spot).
     """
     if is_crypto(symbol): return RISK_PERCENT_BTC
-    if "XAU" not in symbol.upper(): return 1.0
+    if "XAU" not in symbol.upper(): return RISK_PERCENT_FX
     return RISK_PERCENT_XAU
 
 
