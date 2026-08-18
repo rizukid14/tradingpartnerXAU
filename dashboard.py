@@ -852,9 +852,30 @@ def serve(host="0.0.0.0", port=8765):
                     "WEEKEND_CLOSE_ENABLED": getattr(config, "WEEKEND_CLOSE_ENABLED", True),
                     "WEEKEND_TRADING_ENABLED": getattr(config, "WEEKEND_TRADING_ENABLED", False),
                     "ENABLE_BTC_ROTATION": getattr(config, "ENABLE_BTC_ROTATION", False),
+                    "MEME_SCANNER_ENABLED": getattr(config, "MEME_SCANNER_ENABLED", False),
+                    "MEME_SCAN_INTERVAL_MINUTES": getattr(config, "MEME_SCAN_INTERVAL_MINUTES", 30),
+                    "MEME_SCAN_LLM_ENABLED": getattr(config, "MEME_SCAN_LLM_ENABLED", False),
+                    "MEME_SCAN_TOP_N": getattr(config, "MEME_SCAN_TOP_N", 3),
                     "available_presets": list(getattr(config, "ERA_PRESETS", {}).keys()),
                 }
                 _send_json(self, {"status": "success", "config": config_data})
+
+            elif path in ("/api/meme-scan", "/api/get_meme_scan"):
+                try:
+                    from src.analytics import meme_scanner
+                    data = meme_scanner.get_latest_scan_results()
+                    _send_json(self, {"status": "success", "data": data})
+                except Exception as e:
+                    _send_json(self, {"status": "error", "message": str(e)})
+
+            elif path in ("/api/meme-scan/trigger", "/api/trigger_meme_scan"):
+                try:
+                    from src.analytics import meme_scanner
+                    import threading
+                    threading.Thread(target=meme_scanner.scan_and_rank, daemon=True).start()
+                    _send_json(self, {"status": "success", "message": "Meme scanner trigger requested"})
+                except Exception as e:
+                    _send_json(self, {"status": "error", "message": str(e)})
 
             elif path in ("/api/retrigger_cycle", "/api/trigger_cycle"):
                 if hasattr(config, "trigger_manual_cycle"):

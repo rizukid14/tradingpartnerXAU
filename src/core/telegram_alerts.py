@@ -217,3 +217,35 @@ def alert_daily_summary(pnl, trades_count, risk_status=None):
             f"- Loss Berturut: `{risk_status.get('consecutive_losses', 0)}`"
         )
     send_message(text)
+
+
+def alert_meme_scan_result(recommendations: list):
+    """Send meme coin & crypto scanner recommendations via Telegram."""
+    if not recommendations:
+        return
+    
+    lines = ["🤖 *HASIL SCAN KOIN MEME & CRYPTO*"]
+    for idx, rec in enumerate(recommendations, 1):
+        medal = "🥇" if idx == 1 else ("🥈" if idx == 2 else "🥉")
+        sym = rec.get("symbol", "UNKNOWN")
+        score = rec.get("score", 0.0)
+        atr_pct = rec.get("atr_pct", 0.0)
+        spread_ratio = rec.get("spread_atr_ratio_pct", 0.0)
+        trend = rec.get("trend", "SIDEWAYS")
+        vol = rec.get("vol_ratio", 1.0)
+        
+        line = (
+            f"\n{medal} *#{idx}: {sym}*\n"
+            f"- Skor: `{score}/100` | ATR: `{atr_pct:.2f}%` | Spread/ATR: `{spread_ratio:.1f}%`\n"
+            f"- Tren: `{trend}` | Vol Momentum: `x{vol:.2f}`"
+        )
+        if "ai_signal" in rec:
+            sig = rec["ai_signal"]
+            conf = rec.get("ai_confidence", 0.0)
+            line += f"\n- Sinyal AI: `{sig}` (Conf: `{conf:.1f}%`)"
+            if rec.get("ai_sl_points"):
+                line += f"\n- SL: `{rec['ai_sl_points']}` pts | TP: `{rec['ai_tp_points']}` pts"
+        lines.append(line)
+        
+    text = "\n".join(lines)
+    send_message(text)

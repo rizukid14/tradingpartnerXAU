@@ -1098,6 +1098,14 @@ def main():
                 except Exception:
                     pass
 
+            # Meme coin & crypto scanner trigger (runs asynchronously on interval)
+            if getattr(config, "MEME_SCANNER_ENABLED", False):
+                try:
+                    from src.analytics import meme_scanner
+                    meme_scanner.run_meme_scan_async()
+                except Exception as e:
+                    print(f"[MEME SCANNER TRIGGER ERROR] {e}")
+
             # Check and update multi-timeframe and macro analysis
             if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
                 try:

@@ -258,6 +258,16 @@ MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: l
 # simbol. Kode tetap ada, tinggal set True kalau mau aktif lagi.
 POST_MORTEM_ENABLED = _getenv_bool("POST_MORTEM_ENABLED", False)
 
+# --- MEME COIN SCANNER ---
+MEME_SCANNER_ENABLED = _getenv_bool("MEME_SCANNER_ENABLED", False)
+MEME_SCAN_INTERVAL_MINUTES = _getenv_int("MEME_SCAN_INTERVAL_MINUTES", 30)
+MEME_SCAN_LLM_ENABLED = _getenv_bool("MEME_SCAN_LLM_ENABLED", False)
+MEME_SCAN_AUTO_TRADE = _getenv_bool("MEME_SCAN_AUTO_TRADE", False)
+MEME_MAX_SPREAD_ATR_RATIO = _getenv_float("MEME_MAX_SPREAD_ATR_RATIO", 0.30)
+MEME_MIN_ATR_PERCENT = _getenv_float("MEME_MIN_ATR_PERCENT", 1.0)
+MEME_RISK_PERCENT = _getenv_float("MEME_RISK_PERCENT", 0.5)
+MEME_SCAN_TOP_N = _getenv_int("MEME_SCAN_TOP_N", 3)
+
 # --- TRAILING STOP ---
 TRAILING_STOP_ENABLED = _getenv_bool("TRAILING_STOP_ENABLED", True)
 TRAILING_ACTIVATION_POINTS = _getenv_int("TRAILING_ACTIVATION_POINTS", 200)
@@ -433,6 +443,15 @@ LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
 def is_crypto(symbol):
     """True if the given symbol is a crypto pair (weekend trading)."""
     return symbol in CRYPTO_SYMBOLS
+
+
+MEME_COIN_PATTERNS = {"DOGE", "SHIB", "PEPE", "WIF", "BONK", "FLOKI", "MEME", "TRUMP", "POPCAT", "MYRO", "MOG", "BRETT"}
+
+
+def is_meme_coin(symbol):
+    """True if symbol matches known meme coin patterns."""
+    upper = symbol.upper()
+    return any(pat in upper for pat in MEME_COIN_PATTERNS)
 
 
 def get_rotation_pool(now=None):
@@ -657,6 +676,9 @@ def reload_config():
     global FORECAST_ENABLED, MEMORY_CONTEXT_ENABLED, SESSION_FILTER_ENABLED
     global WEEKEND_CLOSE_ENABLED, WEEKEND_TRADING_ENABLED, ENABLE_BTC_ROTATION
     global WEEKDAY_SYMBOL, WEEKEND_SYMBOL
+    global MEME_SCANNER_ENABLED, MEME_SCAN_INTERVAL_MINUTES, MEME_SCAN_LLM_ENABLED
+    global MEME_SCAN_AUTO_TRADE, MEME_MAX_SPREAD_ATR_RATIO, MEME_MIN_ATR_PERCENT
+    global MEME_RISK_PERCENT, MEME_SCAN_TOP_N
 
     # Consensus & State
     DRY_RUN = _getenv_bool("DRY_RUN", DRY_RUN)
@@ -760,6 +782,16 @@ def reload_config():
     # Symbol Rotation
     WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", WEEKDAY_SYMBOL)
     WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", WEEKEND_SYMBOL)
+
+    # Meme Scanner
+    MEME_SCANNER_ENABLED = _getenv_bool("MEME_SCANNER_ENABLED", MEME_SCANNER_ENABLED)
+    MEME_SCAN_INTERVAL_MINUTES = _getenv_int("MEME_SCAN_INTERVAL_MINUTES", MEME_SCAN_INTERVAL_MINUTES)
+    MEME_SCAN_LLM_ENABLED = _getenv_bool("MEME_SCAN_LLM_ENABLED", MEME_SCAN_LLM_ENABLED)
+    MEME_SCAN_AUTO_TRADE = _getenv_bool("MEME_SCAN_AUTO_TRADE", MEME_SCAN_AUTO_TRADE)
+    MEME_MAX_SPREAD_ATR_RATIO = _getenv_float("MEME_MAX_SPREAD_ATR_RATIO", MEME_MAX_SPREAD_ATR_RATIO)
+    MEME_MIN_ATR_PERCENT = _getenv_float("MEME_MIN_ATR_PERCENT", MEME_MIN_ATR_PERCENT)
+    MEME_RISK_PERCENT = _getenv_float("MEME_RISK_PERCENT", MEME_RISK_PERCENT)
+    MEME_SCAN_TOP_N = _getenv_int("MEME_SCAN_TOP_N", MEME_SCAN_TOP_N)
 
 
 def save_config_to_env(updates: dict) -> list:

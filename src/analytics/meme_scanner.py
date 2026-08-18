@@ -1,0 +1,300 @@
+"""
+meme_scanner.py
+
+Automated Meme Coin & Crypto Scanner using a 2-Stage Approach:
+Stage 1: Pure Python Math Filter ($0 token cost) - Scores symbols on Spread/ATR ratio,
+         ATR volatility %, EMA trend slope, volume change, and RSI.
+Stage 2: (Optional) Multi-LLM Consensus evaluation for top 1-2 candidates.
+
+Generates recommendations saved to data/meme_scan_results.json, sent via Telegram alerts,
+and served to the Web Dashboard.
+"""
+
+import os
+import time
+import json
+import threading
+from datetime import datetime
+
+import pandas as pd
+import numpy as np
+
+import config
+from config import mt5
+from src.core import mt5_connector as connector
+
+RESULTS_FILE = os.path.join(config.DATA_DIR, "meme_scan_results.json")
+_scan_lock = threading.Lock()
+_last_scan_time = 0.0
+
+
+def discover_mt5_crypto_symbols():
+    """
+    Discovers all tradeable crypto and meme coin symbols available on MT5 terminal.
+    Filters symbols based on crypto patterns or MT5 symbol path/currency.
+    Returns a sorted list of symbol strings.
+    """
+    if not mt5:
+        return []
+
+    symbols = mt5.symbols_get()
+    if not symbols:
+        return []
+
+    crypto_symbols = set()
+    
+    # 1. Add symbols from config CRYPTO_SYMBOLS and default meme patterns
+    for sym in config.CRYPTO_SYMBOLS:
+        crypto_symbols.add(sym)
+
+    # 2. Scan MT5 symbol tree for crypto/meme matches
+    for s in symbols:
+        name = s.name
+        upper_name = name.upper()
+        path = getattr(s, "path", "").upper()
+        currency_margin = getattr(s, "currency_margin", "").upper()
+
+        is_crypto_pair = (
+            "CRYPTO" in path or 
+            "CRYPTO" in currency_margin or
+            any(pat in upper_name for pat in config.MEME_COIN_PATTERNS) or
+            any(coin in upper_name for coin in ["BTC", "ETH", "DOGE", "SHIB", "PEPE", "WIF", "BONK", "FLOKI", "SOL", "XRP", "ADA", "AVAX", "LINK", "DOT", "LTC", "NEAR", "SUI", "APT"])
+        )
+
+        # Exclude Forex cross pairs like EURUSD, GBPUSD that happen to contain 'USD'
+        if is_crypto_pair and not upper_name.startswith(("EUR", "GBP", "AUD", "NZD", "CAD", "CHF", "JPY", "XAU", "XAG")):
+            # Enable symbol in market watch if not visible
+            if not s.visible:
+                mt5.symbol_select(name, True)
+            crypto_symbols.add(name)
+
+    return sorted(list(crypto_symbols))
+
+
+def score_symbol(symbol, timeframe=mt5.TIMEFRAME_M30, num_candles=50):
+    """
+    Stage 1: Scores a crypto/meme coin symbol using pure Python technical math ($0 token cost).
+    
+    Filters & Scoring:
+    - Rejects if spread > MEME_MAX_SPREAD_ATR_RATIO * ATR (untradeable spread noise).
+    - Rejects if ATR % < MEME_MIN_ATR_PERCENT (dead market).
+    - Scores trend slope (EMA20 vs EMA50), volume ratio, and ATR expansion.
+
+    Returns dict with metrics and composite score (0-100), or None if rejected.
+    """
+    df, tick, info = connector.get_market_data(symbol, timeframe=timeframe, count=num_candles)
+    if df is None or len(df) < 20 or tick is None or info is None:
+        return None
+
+    current_price = float(df['close'].iloc[-1])
+    if current_price <= 0:
+        return None
+
+    point = info.point if info.point > 0 else 0.0001
+    spread_pts = (tick.ask - tick.bid) / point
+    spread_usd = tick.ask - tick.bid
+
+    atr = float(df['atr_14'].iloc[-1]) if 'atr_14' in df.columns else 0.0
+    if atr <= 0:
+        return None
+
+    atr_pts = atr / point
+    atr_pct = (atr / current_price) * 100.0
+    spread_atr_ratio = spread_pts / atr_pts if atr_pts > 0 else 999.0
+
+    # Gate 1: Spread-to-ATR check (Reject if spread eats > 30% of average candle movement)
+    max_allowed_ratio = getattr(config, "MEME_MAX_SPREAD_ATR_RATIO", 0.30)
+    if spread_atr_ratio > max_allowed_ratio:
+        return {
+            "symbol": symbol,
+            "price": current_price,
+            "status": "REJECTED",
+            "reason": f"Spread/ATR ratio {spread_atr_ratio*100:.1f}% > max {max_allowed_ratio*100:.0f}%",
+            "spread_pts": round(spread_pts, 1),
+            "atr_pts": round(atr_pts, 1),
+            "score": 0.0
+        }
+
+    # Gate 2: Minimum volatility check (Reject dead markets)
+    min_atr_pct = getattr(config, "MEME_MIN_ATR_PERCENT", 1.0)
+    if atr_pct < min_atr_pct:
+        return {
+            "symbol": symbol,
+            "price": current_price,
+            "status": "REJECTED",
+            "reason": f"ATR {atr_pct:.2f}% < min {min_atr_pct:.1f}%",
+            "spread_pts": round(spread_pts, 1),
+            "atr_pts": round(atr_pts, 1),
+            "score": 0.0
+        }
+
+    # --- Math Scoring Breakdown (0 to 100) ---
+    
+    # 1. Spread Efficiency Score (max 30 pts)
+    # Lower spread/ATR ratio = higher score
+    spread_efficiency_score = max(0.0, min(30.0, (1.0 - (spread_atr_ratio / max_allowed_ratio)) * 30.0))
+
+    # 2. Volatility Health Score (max 25 pts)
+    # Sweet spot: ATR 2.0% - 6.0%
+    if atr_pct < 2.0:
+        vol_score = (atr_pct / 2.0) * 15.0
+    elif atr_pct <= 6.0:
+        vol_score = 25.0
+    else:
+        vol_score = max(10.0, 25.0 - (atr_pct - 6.0) * 2.0)
+
+    # 3. Trend Alignment & Strength (max 25 pts)
+    ema20 = float(df['ema_20'].iloc[-1]) if 'ema_20' in df.columns else float(df['close'].iloc[-20:].mean())
+    ema50 = float(df['ema_50'].iloc[-1]) if 'ema_50' in df.columns else float(df['close'].iloc[-50:].mean())
+    trend_slope = ((ema20 - ema50) / ema50) * 100.0 if ema50 > 0 else 0.0
+
+    if ema20 > ema50:
+        trend_dir = "BULLISH"
+    elif ema20 < ema50:
+        trend_dir = "BEARISH"
+    else:
+        trend_dir = "SIDEWAYS"
+
+    trend_score = min(25.0, abs(trend_slope) * 10.0)
+
+    # 4. Volume Momentum Score (max 20 pts)
+    vol_col = 'real_volume' if 'real_volume' in df.columns and df['real_volume'].sum() > 0 else 'tick_volume'
+    recent_vol = float(df[vol_col].iloc[-5:].mean())
+    avg_vol = float(df[vol_col].iloc[-20:].mean())
+    vol_ratio = (recent_vol / avg_vol) if avg_vol > 0 else 1.0
+    volume_score = max(0.0, min(20.0, (vol_ratio - 0.5) * 15.0))
+
+    rsi = float(df['rsi_14'].iloc[-1]) if 'rsi_14' in df.columns else 50.0
+
+    composite_score = round(spread_efficiency_score + vol_score + trend_score + volume_score, 1)
+
+    return {
+        "symbol": symbol,
+        "price": current_price,
+        "score": composite_score,
+        "spread_pts": round(spread_pts, 1),
+        "spread_usd": round(spread_usd, 6),
+        "atr_pts": round(atr_pts, 1),
+        "atr_pct": round(atr_pct, 2),
+        "spread_atr_ratio_pct": round(spread_atr_ratio * 100.0, 1),
+        "trend": trend_dir,
+        "trend_slope": round(trend_slope, 2),
+        "rsi": round(rsi, 1),
+        "vol_ratio": round(vol_ratio, 2),
+        "is_meme": config.is_meme_coin(symbol),
+        "status": "QUALIFIED"
+    }
+
+
+def scan_and_rank(top_n=None):
+    """
+    Main scanner orchestration function.
+    Discovers symbols -> Stage 1 Math Scoring -> Stage 2 LLM (optional) -> Saves JSON.
+    Returns complete scan payload dictionary.
+    """
+    if top_n is None:
+        top_n = getattr(config, "MEME_SCAN_TOP_N", 3)
+
+    symbols = discover_mt5_crypto_symbols()
+    if not symbols:
+        return {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S WIB"),
+            "total_scanned": 0,
+            "top_picks": [],
+            "message": "Tidak ada simbol crypto/meme ditemukan di MT5 Market Watch."
+        }
+
+    scored_results = []
+    rejected_results = []
+
+    for sym in symbols:
+        res = score_symbol(sym)
+        if not res:
+            continue
+        if res["status"] == "QUALIFIED":
+            scored_results.append(res)
+        else:
+            rejected_results.append(res)
+
+    # Sort qualified candidates by composite score descending
+    scored_results.sort(key=lambda x: x["score"], reverse=True)
+    top_picks = scored_results[:top_n]
+
+    # --- Stage 2: Multi-LLM Consensus for Top Candidates (Optional) ---
+    if getattr(config, "MEME_SCAN_LLM_ENABLED", False) and top_picks:
+        for pick in top_picks:
+            try:
+                sym = pick["symbol"]
+                # Query LLMs using existing multi_llm pipeline
+                decisions, cons_result, latencies = llm.get_multi_llm_decisions(sym)
+                if cons_result:
+                    pick["ai_signal"] = cons_result.get("signal", "HOLD")
+                    pick["ai_confidence"] = cons_result.get("confidence", 0.0)
+                    pick["ai_sl_points"] = cons_result.get("sl_points", 0)
+                    pick["ai_tp_points"] = cons_result.get("tp_points", 0)
+                    pick["ai_reasoning"] = cons_result.get("details", "")
+            except Exception as e:
+                pick["ai_error"] = str(e)
+
+    payload = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S WIB"),
+        "total_scanned": len(symbols),
+        "qualified_count": len(scored_results),
+        "rejected_count": len(rejected_results),
+        "top_picks": top_picks,
+        "all_qualified": scored_results,
+        "rejected_samples": rejected_results[:5]
+    }
+
+    # Save payload to data/meme_scan_results.json
+    save_scan_results(payload)
+
+    return payload
+
+
+def save_scan_results(payload):
+    """Saves scan payload to JSON cache file."""
+    try:
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        with open(RESULTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"[MEME SCANNER WARNING] Gagal menyimpan hasil scan: {e}")
+
+
+def get_latest_scan_results():
+    """Reads and returns the latest cached scan payload from JSON file."""
+    if os.path.exists(RESULTS_FILE):
+        try:
+            with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def run_meme_scan_async():
+    """Triggers scan in a background thread so main trading loop is never blocked."""
+    global _last_scan_time
+    now = time.time()
+    
+    with _scan_lock:
+        interval_sec = getattr(config, "MEME_SCAN_INTERVAL_MINUTES", 30) * 60
+        if now - _last_scan_time < interval_sec:
+            return  # Cooldown not elapsed
+        _last_scan_time = now
+
+    def _worker():
+        try:
+            print("[MEME SCANNER] Memulai pemindaian koin meme & crypto...")
+            payload = scan_and_rank()
+            print(f"[MEME SCANNER] Scan selesai. Ditemukan {payload.get('qualified_count', 0)} koin layak dari {payload.get('total_scanned', 0)} simbol.")
+            
+            # Telegram notification
+            if getattr(config, "TELEGRAM_ENABLED", False):
+                from src.core import telegram_alerts
+                telegram_alerts.alert_meme_scan_result(payload.get("top_picks", []))
+        except Exception as e:
+            print(f"[MEME SCANNER ERROR] Thread scan gagal: {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
