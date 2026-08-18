@@ -698,14 +698,15 @@ def _is_order_success(result):
 
 is_order_success = _is_order_success
 
-_MAX_RETRIES = 2
+_MAX_RETRIES = 3
 _RETRY_SLEEP_SECONDS = 0.4
 # Jeda retry bertahap untuk 10013 transien (broker ECN VTMarkets tolak sesaat,
-# pulih dalam hitungan detik-menit - terbukti: request identik yang gagal 10013
-# sukses ~1 menit kemudian). Retry 10013 pertama tunggu 6s, kedua 15s; total
-# block maks ~21s (bounded, tidak menggantung loop - cycle sudah block 5-25s
-# buat call LLM, jadi konsisten). Retcode lain tetap jeda cepat 0.4s.
-_RETRY_SLEEP_10013 = (6.0, 15.0)
+# pulih dalam hitungan MENIT - terbukti: request identik yang gagal 10013 sukses
+# total beberapa menit kemudian, lot 0.01 & 0.04 dua-duanya jalan). Retry 10013:
+# 6s -> 15s -> 30s (total block ~51s, bounded). Kalau masih gagal setelah 3x,
+# skip bersih - sinyal bisa muncul lagi di cycle berikutnya. Retcode lain tetap
+# jeda cepat 0.4s.
+_RETRY_SLEEP_10013 = (6.0, 15.0, 30.0)
 
 def _get_exec_mode(info):
     if not info:
