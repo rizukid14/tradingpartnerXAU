@@ -97,9 +97,12 @@ def discover_mt5_crypto_symbols():
 
     crypto_symbols = set()
     
-    # 1. Add symbols from config CRYPTO_SYMBOLS and default meme patterns
+    # 1. Add symbols from config CRYPTO_SYMBOLS if valid on broker
     for sym in config.CRYPTO_SYMBOLS:
-        crypto_symbols.add(sym)
+        info = mt5.symbol_info(sym)
+        if info is not None:
+            mt5.symbol_select(sym, True)
+            crypto_symbols.add(sym)
 
     # 2. Scan MT5 symbol tree for crypto/meme matches
     for s in symbols:
@@ -245,39 +248,113 @@ def score_symbol(symbol, timeframe=mt5.TIMEFRAME_M30, num_candles=50):
     }
 
 
+def score_tokocrypto_fallback_symbols(top_n=5):
+    """
+    Fallback Scoring Engine: If meme coins are not available on MT5 broker,
+    this function scans 24h ticker price & volume data from Tokocrypto API ($0 cost).
+    Returns list of scored fallback candidate dicts.
+    """
+    try:
+        from src.core import tokocrypto_connector as toko
+        tickers = toko.get_ticker_24hr()
+        if not tickers:
+            return []
+
+        results = []
+        for t in tickers:
+            sym = t.get("symbol", "")
+            if not sym.endswith("_USDT"):
+                continue
+
+            base = sym.replace("_USDT", "").upper()
+            if not (config.is_meme_coin(base) or base in ["DOGE", "SHIB", "PEPE", "BONK", "FLOKI", "WIF", "SOL", "POPCAT", "MYRO", "MOG", "BRETT", "MEME", "TRUMP"]):
+                continue
+
+            try:
+                last_price = float(t.get("lastPrice", 0))
+                high_price = float(t.get("highPrice", 0))
+                low_price = float(t.get("lowPrice", 0))
+                vol_usdt = float(t.get("quoteVolume", 0))
+                price_chg_pct = float(t.get("priceChangePercent", 0))
+            except Exception:
+                continue
+
+            if last_price <= 0 or vol_usdt < 10000:  # Min $10k 24h volume
+                continue
+
+            range_pct = ((high_price - low_price) / last_price) * 100.0 if last_price > 0 else 0.0
+
+            # Score breakdown (0-100)
+            volatility_score = min(30.0, range_pct * 3.0)
+            momentum_score = min(40.0, abs(price_chg_pct) * 2.0)
+            volume_score = min(30.0, (vol_usdt / 100000.0) * 10.0)
+
+            composite_score = round(volatility_score + momentum_score + volume_score, 1)
+
+            results.append({
+                "symbol": f"{base}_USDT",
+                "price": last_price,
+                "score": composite_score,
+                "spread_pts": 0.0,
+                "spread_usd": 0.0,
+                "atr_pts": 0.0,
+                "atr_pct": round(range_pct, 2),
+                "spread_atr_ratio_pct": 0.0,
+                "trend": "BULLISH" if price_chg_pct > 0 else "BEARISH",
+                "trend_slope": round(price_chg_pct, 2),
+                "rsi": 50.0,
+                "vol_ratio": round(vol_usdt / 100000.0, 2),
+                "is_meme": True,
+                "status": "QUALIFIED (Tokocrypto Fallback)",
+                "source": "Tokocrypto Spot API",
+                "tokocrypto_symbol": sym,
+                "tokocrypto_available": True
+            })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_n]
+    except Exception as e:
+        print(f"[TOKOCRYPTO FALLBACK WARNING] Gagal menghitung skor fallback Tokocrypto: {e}")
+    return []
+
+
 def scan_and_rank(top_n=None):
     """
     Main scanner orchestration function.
-    Discovers symbols -> Stage 1 Math Scoring -> Stage 2 LLM (optional) -> Saves JSON.
+    Discovers symbols -> Stage 1 Math Scoring -> Tokocrypto Fallback -> Stage 2 LLM (optional) -> Saves JSON.
     Returns complete scan payload dictionary.
     """
     if top_n is None:
         top_n = getattr(config, "MEME_SCAN_TOP_N", 3)
 
     symbols = discover_mt5_crypto_symbols()
-    if not symbols:
-        return {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S WIB"),
-            "total_scanned": 0,
-            "top_picks": [],
-            "message": "Tidak ada simbol crypto/meme ditemukan di MT5 Market Watch."
-        }
-
     scored_results = []
     rejected_results = []
 
-    for sym in symbols:
-        res = score_symbol(sym)
-        if not res:
-            continue
-        if res["status"] == "QUALIFIED":
-            scored_results.append(res)
-        else:
-            rejected_results.append(res)
+    if symbols:
+        for sym in symbols:
+            res = score_symbol(sym)
+            if not res:
+                continue
+            if res["status"] == "QUALIFIED":
+                scored_results.append(res)
+            else:
+                rejected_results.append(res)
 
-    # Sort qualified candidates by composite score descending
+    # Sort MT5 qualified candidates by composite score descending
     scored_results.sort(key=lambda x: x["score"], reverse=True)
-    top_picks = scored_results[:top_n]
+    top_picks = list(scored_results[:top_n])
+
+    # --- Tokocrypto Fallback Pool ---
+    # If MT5 has fewer qualified meme picks than top_n, add Tokocrypto candidates
+    toko_fallback_picks = score_tokocrypto_fallback_symbols(top_n=top_n)
+    mt5_bases = {p["symbol"].upper().replace("-ECNC","").replace("-ECN","").replace(".C","").replace(".ECN","").replace("USD","").replace("USDT","") for p in top_picks}
+    
+    for tf_pick in toko_fallback_picks:
+        tf_base = tf_pick["symbol"].upper().replace("_USDT","").replace("USDT","")
+        if tf_base not in mt5_bases and len(top_picks) < top_n:
+            top_picks.append(tf_pick)
+            scored_results.append(tf_pick)
 
     # --- Tokocrypto Cross-Reference ---
     tokocrypto_map = discover_tokocrypto_symbols()
