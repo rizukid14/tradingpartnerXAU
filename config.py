@@ -115,10 +115,10 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
 
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-DEEPSEEK_FALLBACK_MODEL = os.getenv("DEEPSEEK_FALLBACK_MODEL", "deepseek-chat")
+DEEPSEEK_FALLBACK_MODEL = os.getenv("DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
 
-# DeepSeek reasoning effort: "high" | "medium" | "low" | "none" (default "none" for instant 2-3s response)
-DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "none")
+# DeepSeek reasoning effort: "high" | "medium" | "low" | "none" (default "low" for targeted CoT reasoning)
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
 
 # OpenAI reasoning effort: "high" | "medium" | "low" | "none" (default "low" for speed & low latency)
 OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")
@@ -153,7 +153,7 @@ def _parse_windows_wib(raw):
 # OpenAI langsung pakai fallback gpt-4o-mini (2.5M token/hari, cukup full day).
 OPENAI_PRIMARY_WINDOW_WIB = _parse_windows_wib(os.getenv("OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"))
 
-LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 25.0)
+LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 35.0)
 
 # Forecast Engine: primary & fallback models
 FORECAST_MODEL = os.getenv("FORECAST_MODEL", "gpt-5.4")
@@ -336,8 +336,8 @@ AI_MODE_SCHEDULE = [
     (21, 31, 23, 59, "dual"),
 ]
 
-# Model pengisi slot kedua di mode "dual". Default "DeepSeek" (o4-mini + deepseek-v4-flash).
-AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "DeepSeek")
+# Model pengisi slot kedua di mode "dual". Default "Gemini" (o4-mini + gemini-3.1-flash-lite).
+AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
 QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)

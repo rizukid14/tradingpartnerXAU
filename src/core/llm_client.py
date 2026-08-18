@@ -1185,6 +1185,30 @@ def query_openai(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"OpenAI Error: {str(e)}"}
 
 
+def _execute_gemini_single(model_name, prompt, timeout_sec, thinking_budget=None):
+    """Execute a single Gemini call with strict JSON and thinking budget."""
+    if not gemini_client:
+        raise RuntimeError("Gemini client is not initialized.")
+    from google.genai import types
+    if thinking_budget is None:
+        thinking_budget = getattr(config, "GEMINI_THINKING_BUDGET", 1024)
+    cfg_kwargs = dict(response_mime_type="application/json")
+    if thinking_budget and thinking_budget > 0:
+        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+    def _call(mod):
+        res = gemini_client.models.generate_content(
+            model=mod,
+            contents=prompt,
+            config=types.GenerateContentConfig(**cfg_kwargs)
+        )
+        return clean_json_response(res.text)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_call, model_name)
+        return fut.result(timeout=timeout_sec)
+
+
 def query_gemini(prompt):
     """Queries Gemini API with timeout and fallback model support."""
     if not gemini_client:
@@ -1194,30 +1218,13 @@ def query_gemini(prompt):
     fallback_model = getattr(config, "GEMINI_FALLBACK_MODEL", None)
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
-    def _call(mod):
-        from google.genai import types
-        budget = getattr(config, "GEMINI_THINKING_BUDGET", 1024)
-        cfg_kwargs = dict(response_mime_type="application/json")
-        if budget and budget > 0:
-            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
-        res = gemini_client.models.generate_content(
-            model=mod,
-            contents=prompt,
-            config=types.GenerateContentConfig(**cfg_kwargs)
-        )
-        return clean_json_response(res.text)
-
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_call, primary_model)
-            return fut.result(timeout=timeout_sec)
+        return _execute_gemini_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
             print(f" [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(_call, fallback_model)
-                    return fut.result(timeout=timeout_sec)
+                return _execute_gemini_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[GEMINI FALLBACK ERROR] {fb_err}")
                 return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(fb_err)}"}
@@ -1298,12 +1305,14 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
             {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.2,
+        response_format={"type": "json_object"},
         timeout=timeout_sec,
     )
     if reasoning_effort and reasoning_effort.lower() not in ("none", "off", "false", "", "disabled"):
         kwargs["reasoning_effort"] = reasoning_effort
+        kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
     else:
+        kwargs["temperature"] = 0.2
         # DeepSeek API format to completely disable reasoning thinking CoT
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
@@ -1312,24 +1321,29 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
 
 
 def query_deepseek(prompt):
-    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support."""
+    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support (e.g. Gemini 2.5 Flash Lite)."""
     primary_model = getattr(config, "DEEPSEEK_MODEL", "deepseek-v4-flash")
-    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", "deepseek-chat")
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
+    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
 
     if not deepseek_client:
+        if gemini_client and "gemini" in fallback_model.lower():
+            return _execute_gemini_single(fallback_model, prompt, timeout_sec)
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
 
     try:
         return _execute_deepseek_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model} reasoning: none)...")
+            print(f" [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="")
+                if "gemini" in fallback_model.lower():
+                    return _execute_gemini_single(fallback_model, prompt, timeout_sec, thinking_budget=1024)
+                else:
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="")
             except Exception as fb_err:
                 print(f"[DEEPSEEK FALLBACK ERROR] {fb_err}")
-                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(fb_err)}"}
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Fallback Error: {str(fb_err)}"}
         else:
             print(f"[DEEPSEEK ERROR] {e}")
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}

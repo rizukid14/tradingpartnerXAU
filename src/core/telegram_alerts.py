@@ -37,13 +37,14 @@ def send_message(text):
 
 
 
-def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0):
+def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None):
     """Send trade entry alert with full context."""
-    emoji = "" if signal == "BUY" else ""
+    emoji = "🟢" if signal == "BUY" else "🔴"
     mode_tag = " RECOVERY" if recovery_mode else (" DRY RUN" if config.DRY_RUN else " LIVE")
+    sym = symbol or config.SYMBOL
     text = (
         f"{emoji} *Trade {signal} Dibuka*\n"
-        f"- Symbol: `{config.SYMBOL}`\n"
+        f"- Symbol: `{sym}`\n"
         f"- Lot: `{lot}` (session x{session_multiplier})\n"
         f"- SL: `{sl_points}` pts | TP: `{tp_points}` pts\n"
         f"- Mode: `{mode_tag}`\n"
@@ -210,13 +211,23 @@ def alert_partial_close(ticket, symbol, closed_vol, remaining_vol, profit_points
 def alert_bot_started():
     """Send bot startup notification with full config."""
     mode = "DRY RUN" if config.DRY_RUN else " LIVE"
+    trading_mode = getattr(config, "TRADING_MODE", "xau")
+    if trading_mode == "xau_pairs" and hasattr(config, "get_rotation_pool"):
+        try:
+            pool_syms = config.get_rotation_pool()
+            sym_line = f"- Mode: `xau_pairs` (Pool: `{', '.join(pool_syms)}`)\n"
+        except Exception:
+            sym_line = f"- Symbol: `{config.SYMBOL}`\n"
+    else:
+        sym_line = f"- Symbol: `{config.SYMBOL}`\n"
+
     text = (
-        f" *Bot Trading Multi-LLM Dimulai*\n"
-        f"- Symbol: `{config.SYMBOL}`\n"
+        f"🚀 *Bot Trading Multi-LLM Dimulai*\n"
+        f"{sym_line}"
         f"- Lot: `{config.LOT_SIZE}`\n"
-        f"- Mode: `{mode}`\n"
+        f"- Mode Eksekusi: `{mode}`\n"
         f"-----------------\n"
-        f" *Proteksi Aktif:*\n"
+        f"🛡️ *Proteksi Aktif:*\n"
         f"- Trailing Stop: `{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}` "
         f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts)\n"
         f"- Break-Even: `{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}` "

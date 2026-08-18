@@ -131,22 +131,55 @@ def _wrap_positions(parts, max_w, indent):
     return lines
 
 
+_status_render_count = 0  # jumlah baris status live yang sedang tampil (di-update tiap render)
+
+
 def _reset_status_lines():
-    """Hapus baris status loop live sebelum mencetak event/log baru agar tidak bertumpuk."""
+    """Hapus SEMUA baris status loop live (bisa multi-baris) sebelum mencetak event/log baru
+    agar tidak bertumpuk. Cursor-up ke baris pertama status, lalu erase tiap baris ke bawah.
+    """
+    global _status_render_count
+    n = _status_render_count
+    _status_render_count = 0
+    if n <= 0:
+        sys.stdout.write("\r")
+        sys.stdout.flush()
+        return
     if _VT_OK:
-        sys.stdout.write("\r\x1b[2K")
+        if n > 1:
+            sys.stdout.write(f"\x1b[{n - 1}A")  # naik ke baris pertama status
+        for i in range(n):
+            sys.stdout.write("\x1b[2K")  # hapus isi baris
+            if i < n - 1:
+                sys.stdout.write("\x1b[B")  # turun ke baris berikutnya
+        sys.stdout.write("\r")
     else:
         sys.stdout.write("\r")
     sys.stdout.flush()
 
 
-def _render_status(line, vt_ok=True):
-    """Bangun single-line status live in-place refresh tanpa newline.
-    Setiap update diawali \r\x1b[2K untuk menghapus baris lama dan reset kursor ke awal.
+def _render_status_lines(lines, vt_ok=True):
+    """Tulis status live multi-baris: hapus baris lama (cursor-up + erase per baris) lalu
+    tulis yang baru, supaya auto-scroll terminal tidak merusak refresh in-place.
+    lines = daftar baris (masing-masing boleh berisi ANSI).
     """
-    if vt_ok:
-        return f"\r\x1b[2K{line}"
-    return f"\r{line}"
+    global _status_render_count
+    n_old = _status_render_count
+    n_new = len(lines)
+    _status_render_count = n_new
+    if not vt_ok:
+        return "\r" + lines[0] + "".join(f"\n{l}" for l in lines[1:])
+    out = ["\r"]
+    if n_old > 1:
+        out.append(f"\x1b[{n_old - 1}A")  # naik ke baris pertama status lama
+    max_rows = max(n_old, n_new)
+    for i in range(max_rows):
+        out.append("\x1b[2K")  # hapus isi baris (sisa lama atau baris baru)
+        if i < n_new:
+            out.append(lines[i])
+        if i < max_rows - 1:
+            out.append("\n")
+    return "".join(out)
 
 
 
@@ -982,7 +1015,8 @@ def _run_cycle_for_current_symbol():
                 tg.alert_trade_opened(
                     trade_signal, effective_lot, sl_points, pos_tp,
                     recovery_mode=risk.is_recovery_mode,
-                    session_multiplier=risk.session_lot_multiplier
+                    session_multiplier=risk.session_lot_multiplier,
+                    symbol=config.SYMBOL
                 )
             else:
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
@@ -1286,17 +1320,21 @@ def main():
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
 
             main_sym = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
-            status_line = f"[{UI.BOLD}{main_sym}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}{pos_str}"
+            header_part = f"[{UI.BOLD}{main_sym}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
-            # Potong ketat sesuai lebar terminal agar tidak terjadi auto-wrap yang merusak refresh in-place (\r)
+            # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)
+            # supaya auto-scroll terminal tidak merusak refresh in-place multi-baris.
             try:
                 cols = shutil.get_terminal_size((120, 24)).columns
             except Exception:
                 cols = 120
             max_w = max(40, cols - 2)
-            status_line = _truncate_disp(status_line, max_w)
+            if open_pos:
+                status_lines = _wrap_positions(pos_parts, max_w, indent=header_part + f" | {UI.GRAY}pos:{UI.RST} ")
+            else:
+                status_lines = [header_part + pos_str]
 
-            sys.stdout.write(_render_status(status_line, _VT_OK))
+            sys.stdout.write(_render_status_lines(status_lines, _VT_OK))
             sys.stdout.flush()
 
             # Sleep 3 seconds between checks
