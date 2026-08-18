@@ -118,6 +118,8 @@ def parse_cli_overrides(argv=None):
                    help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
     p.add_argument("--trading-mode", "--mode", choices=["xau", "xau_pairs"],
                    help="Mode scan trading: 'xau' (Gold saja) atau 'xau_pairs' (XAU + FX cross pairs pool 7 simbol)")
+    p.add_argument("--startup-scan", choices=["all", "timeframe"],
+                   help="Mode scan startup: 'all' (scan semua simbol langsung di awal) atau 'timeframe' (tunggu candle close)")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
@@ -170,6 +172,10 @@ def parse_cli_overrides(argv=None):
     if getattr(args, "trading_mode", None):
         config.TRADING_MODE = args.trading_mode
         applied.append(f"TRADING_MODE={config.TRADING_MODE}")
+    if getattr(args, "startup_scan", None):
+        global _STARTUP_SCAN_MODE
+        _STARTUP_SCAN_MODE = args.startup_scan
+        applied.append(f"STARTUP_SCAN_MODE={_STARTUP_SCAN_MODE}")
     if args.risk_percent_xau is not None:
         config.RISK_PERCENT_XAU = args.risk_percent_xau
         applied.append(f"RISK_PERCENT_XAU={args.risk_percent_xau}")
@@ -474,7 +480,7 @@ class TeeLogger(object):
 
 _symbol_last_candle = {}
 _symbol_last_candle_seeded = False
-_STARTUP_SCAN_MODE = "timeframe"  # FASE 6: "all" (scan semua sekarang) | "timeframe" (default, tunggu candle close)
+_STARTUP_SCAN_MODE = os.getenv("STARTUP_SCAN_MODE", "all").strip().lower()  # "all" (scan semua simbol sekarang di startup) | "timeframe" (tunggu candle close)
 
 
 def _resolve_valid_pool():

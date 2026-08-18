@@ -136,7 +136,7 @@ def score_symbol(symbol, timeframe=mt5.TIMEFRAME_M30, num_candles=50):
 
     Returns dict with metrics and composite score (0-100), or None if rejected.
     """
-    df, tick, info = connector.get_market_data(symbol, timeframe=timeframe, count=num_candles)
+    df, tick, info = connector.get_market_data(symbol, timeframe=timeframe, num_candles=num_candles)
     if df is None or len(df) < 20 or tick is None or info is None:
         return None
 
