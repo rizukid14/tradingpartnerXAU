@@ -24,7 +24,7 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dashboard_assets import TEMPLATE
 
@@ -350,7 +350,6 @@ def compute_metrics(events, state=None):
             mt5_open_tickets = {p.ticket for p in (positions or [])}
 
             # Fetch MT5 deal history to populate accurate P/L for closed tickets (last 7 days)
-            from datetime import datetime, timedelta
             from_dt = datetime.now() - timedelta(days=7)
             to_dt = datetime.now() + timedelta(days=1)
             deals = mt5.history_deals_get(from_dt, to_dt)
