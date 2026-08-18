@@ -344,13 +344,14 @@ def compute_metrics(events, state=None):
     mt5_open_tickets = None
     try:
         import MetaTrader5 as mt5
-        if mt5.initialize():
+        already_init = mt5.terminal_info() is not None
+        if already_init or mt5.initialize():
             positions = mt5.positions_get()
             mt5_open_tickets = {p.ticket for p in (positions or [])}
 
-            # Fetch MT5 deal history to populate accurate P/L for closed tickets
+            # Fetch MT5 deal history to populate accurate P/L for closed tickets (last 7 days)
             from datetime import datetime, timedelta
-            from_dt = datetime.now() - timedelta(days=30)
+            from_dt = datetime.now() - timedelta(days=7)
             to_dt = datetime.now() + timedelta(days=1)
             deals = mt5.history_deals_get(from_dt, to_dt)
             if deals:
@@ -372,7 +373,8 @@ def compute_metrics(events, state=None):
                     if pid not in close_by_ticket or close_by_ticket[pid].get("pnl") is None:
                         close_by_ticket[pid] = {"ticket": pid, "pnl": round(pnl_val, 2)}
 
-            mt5.shutdown()
+            if not already_init:
+                mt5.shutdown()
     except Exception:
         mt5_open_tickets = None
 
@@ -779,7 +781,8 @@ def serve(host="0.0.0.0", port=8765):
                 })
                 try:
                     import MetaTrader5 as mt5
-                    if mt5.initialize():
+                    already_init = mt5.terminal_info() is not None
+                    if already_init or mt5.initialize():
                         acc = mt5.account_info()
                         if acc:
                             summary["balance"] = acc.balance
@@ -789,7 +792,8 @@ def serve(host="0.0.0.0", port=8765):
                             summary["login"] = acc.login
                             if summary.get("final_balance") is None:
                                 summary["final_balance"] = acc.balance
-                        mt5.shutdown()
+                        if not already_init:
+                            mt5.shutdown()
                 except Exception:
                     pass
                 _send_json(self, {"status": "success", "summary": summary})

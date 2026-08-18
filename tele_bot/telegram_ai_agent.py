@@ -43,7 +43,7 @@ MODEL = os.getenv("TELEGRAM_AI_MODEL", "gpt-5.4-mini")
 
 API_BASE_URL = getattr(config, "API_BASE_URL", "http://localhost:8765").rstrip("/")
 API_TOKEN = getattr(config, "API_TOKEN", "")
-API_TIMEOUT = 8  # seconds
+API_TIMEOUT = 15  # seconds
 
 # ---------------------------------------------------------------------------
 # 1. HTTP HELPERS - every tool goes through one of these, hitting YOUR bot's API
@@ -54,12 +54,16 @@ def _headers():
 
 
 def _api_get(path: str, params: dict = None):
-    try:
-        resp = requests.get(f"{API_BASE_URL}{path}", headers=_headers(), params=params or {}, timeout=API_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.RequestException as e:
-        return {"error": f"GET {path} failed: {e}"}
+    for attempt in range(2):
+        try:
+            resp = requests.get(f"{API_BASE_URL}{path}", headers=_headers(), params=params or {}, timeout=API_TIMEOUT)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as e:
+            if attempt == 0:
+                time.sleep(0.5)
+                continue
+            return {"error": f"GET {path} failed: {e}"}
 
 
 def _api_post(path: str, body: dict = None):
