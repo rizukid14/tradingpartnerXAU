@@ -266,6 +266,23 @@ def get_current_tick(symbol):
         "usd_per_point": usd_per_pt,
     }
 
+
+def get_usd_per_point(symbol, volume=1.0):
+    """Menghitung nilai USD per 1 point untuk volume tertentu."""
+    try:
+        si = mt5.symbol_info(symbol)
+        if si and si.trade_tick_size and si.point and si.trade_tick_value:
+            return float(si.trade_tick_value * volume * (si.point / si.trade_tick_size))
+    except Exception:
+        pass
+    # Fallback kasar jika MT5 disconnected
+    if config.is_fx(symbol):
+        return 1.0 * volume
+    elif config.is_crypto(symbol):
+        return 0.01 * volume
+    return 1.0 * volume
+
+
 def get_open_positions(symbol=None, magic=None):
     """
     Fetches currently open positions for the given symbol and magic number.

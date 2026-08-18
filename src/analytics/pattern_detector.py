@@ -144,7 +144,57 @@ def get_registry() -> WhisperRegistry | None:
     return _registry
 
 
-# ---------------- Whisper builder ----------------
+def _check_xau_structural_breakout(df: pd.DataFrame, symbol: str) -> str | None:
+    """Deteksi Donchian Breakout BUY pada Gold (XAUUSD) berbasis riset backtest 4.2 tahun M30.
+
+    MIRROR PERSIS definisi riset (scratch/xau_m30_strategies.py + verify_xau_m30_edges.py):
+    - Sinyal: close > high.shift(1).rolling(N).max() — tanpa syarat candle bullish/EMA regime
+    - HANYA valid di session NY (20:00-05:00 WIB) — edge riset spesifik sesi ini
+    """
+    try:
+        # Butuh >= 50 bar: 50 bar utk window Donchian-50 (shift 1) + 1 bar sinyal
+        if len(df) < 51:
+            return None
+
+        last_close = float(df['close'].iloc[-1])
+
+        high_50 = float(df['high'].iloc[-51:-1].max())
+        high_20 = float(df['high'].iloc[-21:-1].max())
+
+        # Sesi NY (WIB) — syarat edge riset (20:00-05:00)
+        if "time" in df.columns:
+            ts = df["time"].iloc[-1]
+        elif isinstance(df.index, pd.DatetimeIndex):
+            ts = df.index[-1]
+        else:
+            ts = datetime.now(WIB)
+        if _session_wib(ts) != "ny":
+            return None
+
+        # 1. Donchian-50 Breakout (Edge: WR 58.5%, EV +0.158, session NY)
+        if last_close > high_50:
+            return (
+                f"### STRUCTURAL BREAKOUT RESEARCH (HISTORICAL BACKTEST DATA)\n"
+                f"Detected: XAUUSD M30 Donchian-50 Bullish Breakout (New 50-bar High Close) during New York session.\n"
+                f"Validated backtest (n=605, 4.2yr data): Win rate 58.5% at R:R 1:1, EV +0.158 (p=0.00001).\n"
+                f"Structural Edge: Gold exhibits bullish momentum continuation on new 50-bar high breakouts during NY session.\n"
+                f"(Historical probability context only -- NOT a directive, NOT a rule. The final decision is yours.)\n"
+            )
+
+        # 2. Donchian-20 Breakout (Edge Sekunder: WR 56.2%, EV +0.111, session NY)
+        if last_close > high_20:
+            return (
+                f"### STRUCTURAL BREAKOUT RESEARCH (HISTORICAL BACKTEST DATA)\n"
+                f"Detected: XAUUSD M30 Donchian-20 Bullish Breakout (New 20-bar High Close) during New York session.\n"
+                f"Validated backtest (n=786, 4.2yr data): Win rate 56.2% at R:R 1:1, EV +0.111 (p=0.0002).\n"
+                f"Structural Edge: Gold demonstrates continuation edge on new 20-bar high breakouts during NY session.\n"
+                f"(Historical probability context only -- NOT a directive, NOT a rule. The final decision is yours.)\n"
+            )
+
+    except Exception:
+        pass
+    return None
+
 
 def detect_and_whisper(df: pd.DataFrame, symbol: str) -> str | None:
     """Deteksi pola di candle terakhir & match registry. Return whisper_str atau None.
@@ -153,6 +203,12 @@ def detect_and_whisper(df: pd.DataFrame, symbol: str) -> str | None:
     """
     if df is None or len(df) < SWING_WINDOW + 5:
         return None
+
+    # Khusus Gold (XAUUSD): periksa Structural Donchian Breakout BUY
+    if "XAU" in symbol.upper():
+        xau_whisper = _check_xau_structural_breakout(df, symbol)
+        if xau_whisper:
+            return xau_whisper
 
     registry = get_registry()
     if registry is None or len(registry) == 0:

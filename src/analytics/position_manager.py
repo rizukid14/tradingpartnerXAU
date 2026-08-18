@@ -16,37 +16,42 @@ import time
 import config
 from config import mt5
 from src.core.cli_theme import UI
-from src.core.mt5_connector import is_order_success
+from src.core.mt5_connector import is_order_success, get_usd_per_point
+from src.core import telegram_alerts as tg
 
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
 
 
 def _load_state():
-    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl)."""
+    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl, trail_active)."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 data = json.load(f)
             partial = set(int(t) for t in data.get("partial_closed_tickets", []))
             be = set(int(t) for t in data.get("break_even_tickets", []))
+            trail_active = set(int(t) for t in data.get("trailing_active_tickets", []))
             extremes = {int(k): float(v) for k, v in data.get("trailing_extremes", {}).items()}
             original_sl = {int(k): float(v) for k, v in data.get("original_sl_points", {}).items()}
-            return partial, be, extremes, original_sl
+            return partial, be, extremes, original_sl, trail_active
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal memuat position_manager_state.json: {e}")
-    return set(), set(), {}, {}
+    return set(), set(), {}, {}, set()
 
 
-def _save_state(partial_set, be_set, extremes, original_sl=None):
+def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=None):
     """Persist tickets to disk so restart can recover state."""
     if original_sl is None:
         original_sl = _original_sl  # module global, di-resolve saat dipanggil
+    if trail_active is None:
+        trail_active = _trailing_active_tickets
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({
                 "partial_closed_tickets": sorted(int(t) for t in partial_set),
                 "break_even_tickets": sorted(int(t) for t in be_set),
+                "trailing_active_tickets": sorted(int(t) for t in trail_active),
                 "trailing_extremes": {str(k): v for k, v in extremes.items()},
                 "original_sl_points": {str(k): v for k, v in original_sl.items()},
             }, f)
@@ -55,7 +60,22 @@ def _save_state(partial_set, be_set, extremes, original_sl=None):
 
 
 # Module-level state, loaded once at import (survives within a process)
-_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl = _load_state()
+_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets = _load_state()
+
+
+def get_ticket_status_badge(ticket):
+    """Mengembalikan badge status manajemen posisi (BEP / TRAIL / PARTIAL) untuk display CLI."""
+    tags = []
+    t_int = int(ticket)
+    if t_int in _partial_closed_tickets:
+        tags.append(f"{UI.MAGENTA}PARTIAL{UI.RST}")
+    if t_int in _trailing_active_tickets:
+        tags.append(f"{UI.CYAN}TRAIL{UI.RST}")
+    elif t_int in _break_even_tickets:
+        tags.append(f"{UI.GREEN}BEP{UI.RST}")
+    if tags:
+        return f" [{'/'.join(tags)}]"
+    return ""
 
 
 def manage_all_positions():
@@ -125,7 +145,7 @@ def manage_all_positions():
         if config.TRAILING_STOP_ENABLED:
             _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
-    # Bersihkan state posisi yang sudah tidak open (biar dict gak numpuk)
+    # Bersihkan state posisi yang sudah tidak open (biar dict/set gak numpuk)
     open_tickets = {p.ticket for p in positions}
     changed = False
     for k in list(_trailing_extremes):
@@ -135,6 +155,10 @@ def manage_all_positions():
     for k in list(_original_sl):
         if k not in open_tickets:
             del _original_sl[k]
+            changed = True
+    for k in list(_trailing_active_tickets):
+        if k not in open_tickets:
+            _trailing_active_tickets.discard(k)
             changed = True
     if changed:
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
@@ -213,11 +237,15 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
         _partial_closed_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         remaining = round(pos.volume - close_volume, 2)
-        print(f" [PARTIAL CLOSE] Ticket #{pos.ticket} ({symbol}): Ditutup {close_volume} lot "
-              f"(profit {profit_points:.0f} pts). Sisa: {remaining} lot - trailing sisanya.")
+        print(f"\r\x1b[2K{UI.MAGENTA}[PARTIAL CLOSE]{UI.RST} Ticket #{pos.ticket} ({symbol}): Ditutup {close_volume} lot "
+              f"(profit +{profit_points:.0f} pts). Sisa: {remaining} lot - trailing sisanya.")
+        try:
+            tg.alert_partial_close(pos.ticket, symbol, close_volume, remaining, profit_points)
+        except Exception:
+            pass
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"[PARTIAL CLOSE ERROR] Gagal menutup sebagian #{pos.ticket}: {comment}")
+        print(f"\r\x1b[2K[PARTIAL CLOSE ERROR] Gagal menutup sebagian #{pos.ticket}: {comment}")
 
 
 # =============================================================================
@@ -287,6 +315,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     # agar saat terkena BEP, net profit setelah dikurangi komisi broker benar-benar >= +$0.00 USD.
     comm_pad_pts = 0
     try:
+        usd_per_pt = get_usd_per_point(symbol, pos.volume)
         deals = mt5.history_deals_get(position=pos.ticket)
         total_comm = 0.0
         if deals:
@@ -349,10 +378,14 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if is_order_success(result):
         _break_even_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
-        print(f"{UI.clear_line()} {UI.tag('BREAK-EVEN', UI.GREEN)} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price}")
+        print(f"\r\x1b[2K{UI.GREEN}[BREAK-EVEN]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price} (padding: +{be_padding} pts)")
+        try:
+            tg.alert_break_even(pos.ticket, symbol, be_price)
+        except Exception:
+            pass
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"{UI.clear_line()} [BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
+        print(f"\r\x1b[2K[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
 
 
 
@@ -380,11 +413,11 @@ def _get_dynamic_atr_points(symbol, point):
 def _calculate_progressive_tp_lock_points(profit_points, tp_points):
     """
     Progressive Dynamic Trailing Stop Lock Curve:
-    - 50% TP profit -> kunci 20% TP
-    - 60% TP profit -> kunci 30% TP
-    - 70% TP profit -> kunci 50% TP
-    - 80% TP profit -> kunci 65% TP
-    - >=90% TP profit -> kunci 80% TP (ketat mendekati TP)
+    - 50% TP profit -> kunci 25% TP (langsung melampaui level BEP)
+    - 60% TP profit -> kunci 40% TP
+    - 70% TP profit -> kunci 55% TP
+    - 80% TP profit -> kunci 70% TP
+    - >=90% TP profit -> kunci 85% TP (ketat mendekati TP)
     Interpolasi mulus antar tingkat.
     """
     if tp_points <= 0 or profit_points < (tp_points * 0.50):
@@ -392,19 +425,19 @@ def _calculate_progressive_tp_lock_points(profit_points, tp_points):
 
     ratio = profit_points / tp_points
     if ratio >= 0.90:
-        lock_pct = 0.80 + min(ratio - 0.90, 0.08)  # 90% profit -> 80% lock, 95% -> 85% lock
+        lock_pct = 0.85 + min(ratio - 0.90, 0.08)  # 90% profit -> 85% lock, 95% -> 90% lock
     elif ratio >= 0.80:
-        # Interpolasi 65% -> 80% saat profit 80% -> 90%
-        lock_pct = 0.65 + ((ratio - 0.80) / 0.10) * 0.15
+        # Interpolasi 70% -> 85% saat profit 80% -> 90%
+        lock_pct = 0.70 + ((ratio - 0.80) / 0.10) * 0.15
     elif ratio >= 0.70:
-        # Interpolasi 50% -> 65% saat profit 70% -> 80%
-        lock_pct = 0.50 + ((ratio - 0.70) / 0.10) * 0.15
+        # Interpolasi 55% -> 70% saat profit 70% -> 80%
+        lock_pct = 0.55 + ((ratio - 0.70) / 0.10) * 0.15
     elif ratio >= 0.60:
-        # Interpolasi 30% -> 50% saat profit 60% -> 70%
-        lock_pct = 0.30 + ((ratio - 0.60) / 0.10) * 0.20
+        # Interpolasi 40% -> 55% saat profit 60% -> 70%
+        lock_pct = 0.40 + ((ratio - 0.60) / 0.10) * 0.15
     else:  # 0.50 <= ratio < 0.60
-        # Interpolasi 20% -> 30% saat profit 50% -> 60%
-        lock_pct = 0.20 + ((ratio - 0.50) / 0.10) * 0.10
+        # Interpolasi 25% -> 40% saat profit 50% -> 60%
+        lock_pct = 0.25 + ((ratio - 0.50) / 0.10) * 0.15
 
     return lock_pct * tp_points
 
@@ -445,21 +478,16 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         activation = fallback_act
         distance = fallback_dist
 
-    # Mode-aware activation (15 Agustus - LLM pindah ke PURE % TP):
-    # - LLM mode: trailing aktif saat profit >= 80% TP (TRAILING_ACTIVATION_TP_PCT).
-    #   Alasan pindah dari SL-based (1.5x SL): cacat di dua ujung untuk trade R:R
-    #   rendah (1.25-1.5) - tanpa cap, 1.5x SL > TP 1.25x SL -> trailing TIDAK
-    #   PERNAH nyala; dengan cap 60% TP, activation jadi 0.75x SL -> kecepetan
-    #   (sebelum 1x SL). Pure % TP selalu proporsional: R:R 2:1 -> 1.6x SL (ruang
-    #   napas), R:R 1.25 -> 1.0x SL (tetap nyala, pas). Posisi tanpa TP -> fallback
-    #   SL-based (1.5x SL) biar tetap ada proteksi.
-    # - ATR-Based mode: TP-adaptive 60% TP (di mode ini TP = 2.5-3.5x ATR, jadi
-    #   activation otomatis konsisten dengan volatilitas ATR).
+    min_act = 30 if config.is_fx(symbol) else 100
+
+    # Mode-aware activation:
+    # - LLM mode: trailing aktif saat profit >= 50% TP (TRAILING_ACTIVATION_TP_PCT)
+    # - ATR-Based mode: TP-adaptive 60% TP
     if config.sltp_mode_for(symbol) == "LLM":
         if tp_points > 0:
-            activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), fallback_act)
+            activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), min_act)
         elif sl_points > 0:
-            activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), fallback_act)
+            activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), min_act)
     elif tp_points > 0 and not config.is_crypto(symbol):
         activation = int(tp_points * 0.60)
 
@@ -558,12 +586,15 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     result = mt5.order_send(request)
     if is_order_success(result):
+        _trailing_active_tickets.add(pos.ticket)
+        _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
+        dist_pts = int(trail_distance / point) if point > 0 else 0
         if config.is_crypto(symbol) and not (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0):
-            print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {distance} pts)")
+            print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {distance} pts)")
         else:
             ref_label = "SL" if (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0) else "ATR"
-            print(f"{UI.clear_line()} {UI.tag('TRAILING', UI.CYAN)} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: {profit_points:.0f} pts, dist {int(trail_distance/point)} pts, mult {dynamic_mult:.2f}x {ref_label})")
+            print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts, {dynamic_mult:.2f}x {ref_label})")
     else:
         comment = result.comment if result else "Unknown error"
-        print(f"{UI.clear_line()} [TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
+        print(f"\r\x1b[2K[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
 

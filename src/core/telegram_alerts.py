@@ -178,6 +178,35 @@ def alert_symbol_switch(from_symbol, to_symbol):
     send_message(text)
 
 
+def alert_trailing_stop(ticket, symbol, new_sl, profit_points, distance_pts=0):
+    """Trailing stop updates are suppressed from Telegram to prevent spam."""
+    return False
+
+
+def alert_break_even(ticket, symbol, be_price):
+    """Send notification when Break-Even moves SL to entry."""
+    text = (
+        f"🛡️ *Break-Even Activated*\n"
+        f"- Symbol: `{symbol}`\n"
+        f"- Ticket: `#{ticket}`\n"
+        f"- SL Baru: `{be_price}` (Entry + Padding Komisi)\n"
+        f"- Status: Risiko trade terkunci ke profit hijau/aman."
+    )
+    send_message(text)
+
+
+def alert_partial_close(ticket, symbol, closed_vol, remaining_vol, profit_points):
+    """Send notification when partial close locks profit at TP1."""
+    text = (
+        f"💰 *Partial Close (TP1)*\n"
+        f"- Symbol: `{symbol}`\n"
+        f"- Ticket: `#{ticket}`\n"
+        f"- Ditutup: `{closed_vol} lot` (+{profit_points:.0f} pts)\n"
+        f"- Sisa: `{remaining_vol} lot` (Trailing sisa posisi)"
+    )
+    send_message(text)
+
+
 def alert_bot_started():
     """Send bot startup notification with full config."""
     mode = "DRY RUN" if config.DRY_RUN else " LIVE"

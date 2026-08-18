@@ -131,29 +131,22 @@ def _wrap_positions(parts, max_w, indent):
     return lines
 
 
-_last_status_lines = 1  # jumlah baris status yang terakhir ditulis (default 1 baris)
-
-
 def _reset_status_lines():
-    global _last_status_lines
-    _last_status_lines = 1
+    """Hapus baris status loop live sebelum mencetak event/log baru agar tidak bertumpuk."""
+    if _VT_OK:
+        sys.stdout.write("\r\x1b[2K")
+    else:
+        sys.stdout.write("\r")
+    sys.stdout.flush()
 
 
-def _render_status(status_line, pos_lines, max_w, vt_ok):
-    """Bangun blok status multi-baris + sequence ANSI buat refresh in-place.
-    Setiap baris diawali \\x1b[2K\\r untuk menghapus baris lama dan reset kursor ke kolom 0.
+def _render_status(line, vt_ok=True):
+    """Bangun single-line status live in-place refresh tanpa newline.
+    Setiap update diawali \r\x1b[2K untuk menghapus baris lama dan reset kursor ke awal.
     """
-    global _last_status_lines
-    n_lines = 1 + len(pos_lines)
-    lines = [status_line] + pos_lines
     if vt_ok:
-        up = f"\x1b[{_last_status_lines - 1}A" if _last_status_lines > 1 else ""
-        block = "\n".join(f"\x1b[2K\r{ln}" for ln in lines)
-        _last_status_lines = n_lines
-        return f"\r{up}{block}"
-    block = "\n".join(lines)
-    _last_status_lines = 1
-    return f"{block}\n"
+        return f"\r\x1b[2K{line}"
+    return f"\r{line}"
 
 
 
@@ -728,13 +721,13 @@ def _run_cycle_for_current_symbol():
             print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
             return True  # Not an error, just skipping
     
-    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
-    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=51)
+    # 1. Fetch market data (53 bar, buang bar aktif -> 52 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
+    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=53)
     if df is None or len(df) == 0:
         print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.")
         return False
-    if len(df) > 50:
-        df = df.iloc[-50:-1].reset_index(drop=True)
+    if len(df) > 52:
+        df = df.iloc[-52:-1].reset_index(drop=True)
         
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
@@ -1275,8 +1268,7 @@ def main():
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
             
-            # Show any running (open) bot positions across ALL symbols — baris terpisah
-            # (multi-line) kalau posisi banyak, biar SEMUA kelihatan (tidak di-truncate).
+            # Show any running (open) bot positions across ALL symbols in a single line refresh
             open_pos = connector.get_all_open_positions()
             pos_parts = []
             if open_pos:
@@ -1285,25 +1277,29 @@ def main():
                     by_sym.setdefault(p.get("symbol", "?"), []).append(p)
                 for sym, plist in sorted(by_sym.items()):
                     float_s = sum(x.get("profit", 0.0) for x in plist)
-                    pos_parts.append(f"{sym}: {len(plist)} pos ({UI.badge_pnl(float_s)})")
-            status_line = f"[{UI.BOLD}{config.SYMBOL}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
-            # Potong berdasarkan LEBAR TAMPILAN terminal aktual (emoji = 2 kolom), bukan
-            # jumlah karakter - kalau baris wrap, \r tidak balik ke awal baris dan status
-            # jadi nge-print ke bawah (bukan refresh). Sisakan margin 4 kolom biar aman.
+                    sym_clean = sym.replace("-ECNc", "").replace(".c", "")
+                    count_str = f"({len(plist)})" if len(plist) > 1 else ""
+                    badges = "".join(position_manager.get_ticket_status_badge(x.get("ticket")) for x in plist)
+                    pos_parts.append(f"{sym_clean}{count_str}: {UI.badge_pnl(float_s)}{badges}")
+                pos_str = f" | {UI.GRAY}pos:{UI.RST} " + " | ".join(pos_parts)
+            else:
+                pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
+
+            main_sym = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
+            status_line = f"[{UI.BOLD}{main_sym}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}{pos_str}"
+            
+            # Potong ketat sesuai lebar terminal agar tidak terjadi auto-wrap yang merusak refresh in-place (\r)
             try:
                 cols = shutil.get_terminal_size((120, 24)).columns
             except Exception:
                 cols = 120
-            max_w = max(60, cols - 4)
+            max_w = max(40, cols - 2)
             status_line = _truncate_disp(status_line, max_w)
-            if pos_parts:
-                pos_lines = _wrap_positions(pos_parts, max_w, indent=UI.GRAY + "  pos: " + UI.RST)
-            else:
-                pos_lines = [UI.GRAY + "  pos: No active pos" + UI.RST]
-            sys.stdout.write(_render_status(status_line, pos_lines, max_w, _VT_OK))
+
+            sys.stdout.write(_render_status(status_line, _VT_OK))
             sys.stdout.flush()
 
-            # Sleep 5 seconds between checks
+            # Sleep 3 seconds between checks
             time.sleep(3)  # loop utama - cache query MT5 sudah kurangi beban, 3 detik aman
 
             

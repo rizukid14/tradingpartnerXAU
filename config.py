@@ -495,19 +495,19 @@ MAX_SPREAD_POINTS_XAU = _getenv_int("MAX_SPREAD_POINTS_XAU", MAX_SPREAD_POINTS)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 
 # --- SESSION FILTER ---
-# Trade Zone: 11:00 - 02:00 WIB (02:00 - 11:00 WIB Dead Zone)
+# Trade Zone: 07:00 - 02:00 WIB (02:00 - 07:00 WIB Dead Zone Rollover)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Asia/Tokyo Sore",  "start": (11, 0), "end": (16, 0),  "lot_multiplier": 0.7},
-    {"name": "London",           "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
-    {"name": "London-NY Overlap","start": (19, 30), "end": (21, 30), "lot_multiplier": 1.2},
-    {"name": "New York",         "start": (20, 0), "end": (2, 0),   "lot_multiplier": 1.0},
+    {"name": "Tokyo / Asia Pagi", "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
+    {"name": "London-NY Overlap", "start": (19, 30),"end": (21, 30), "lot_multiplier": 1.2},
+    {"name": "New York",          "start": (20, 0), "end": (2, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones (Dead Zone subuh & Asia pagi 02:00 - 11:00 WIB). Berlaku XAU & FX; BTC 24/7.
+# Danger zones (Dead Zone subuh rollover broker 02:00 - 07:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Dead Zone (02:00 - 11:00 WIB)", "start": (2, 0), "end": (11, 0),
-     "reason": "Dead Zone subuh & Asia pagi (02:00 - 11:00 WIB)"},
+    {"name": "Overnight Rollover Dead Zone (02:00 - 07:00 WIB)", "start": (2, 0), "end": (7, 0),
+     "reason": "Dead Zone subuh & spread rollover (02:00 - 07:00 WIB)"},
 ]
 
 # --- WEEKEND PROTECTION ---

@@ -374,6 +374,33 @@ Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuah
 *   **Sesi NY Tetap Juara:** Meloloskan 48 EDGE di semua 12 simbol trading. Sesi New York (WIB malam) adalah filter waktu terbaik.
 *   **Multi-Pattern (2+ Pola Searah):** Hanya berguna sebagai konfirmasi pendukung (EV kecil +0.08 s/d +0.20, n besar 600-800), bukan edge mandiri yang kuat.
 
+## Riset XAU M30 (17 Agustus 2026 — Backtest Khusus XAU, branch dev-backtest)
+
+**Latar belakang:** XAU sudah pindah ke M30 (intraday swing). User minta backtest khusus XAU M30 5 tahun ke belakang untuk cari strategi terbaik (fallback 5->4->3->2->1 thn kalau broker tidak simpan data panjang).
+
+**Data:** Broker VTMarkets cuma menyimpan M30 XAU sejak **Mei 2022** → maksimal **4.23 tahun (50.036 bar M30, 24 Mei 2022 s/d 17 Agu 2026)**. Fallback otomatis mengambil data terbanyak yang tersedia.
+
+**Hasil 1 — Pola candlestick (14 pola × 18 kondisi × 4 R:R = 848 kombinasi):**
+- **0 EDGE valid** — konsisten dengan riset M15 kemarin (XAU tidak punya edge pola candlestick).
+- 1 CANDIDATE: `Double Bottom` regime=up_trend R:R 1:1 (n=38, WR 68.4%, p=0.012, EV +0.35) — sampel kecil, belum layak pakai.
+
+**Hasil 2 — Strategi mekanis (Donchian/EMA/RSI × kondisi × R:R = 320 kombinasi) — TEMUAN EDGE:**
+- **Donchian50 Breakout BUY di sesi NY (20:00-05:00 WIB), R:R 1:1 → EDGE** (n=605, WR 58.5%, p=0.00001, EV +0.158, CI 95% [+0.085, +0.237]). Konsisten 4 tahun berturut-turut (2023-2026); 2022 negatif tapi cuma setengah tahun data.
+- **Donchian20 Breakout BUY di NY, R:R 1:1 → EDGE** (n=786, WR 56.2%, p=0.0002, EV +0.111).
+- Donchian50 BUY vol=high R:R 1:1 → EDGE tapi **TIDAK stabil** (semua profit numpuk di 2025, 2023-2024 datar) — red flag overfit, jangan dipakai.
+
+**Temuan struktural:**
+- **Asimetri arah**: SEMUA SELL Donchian negatif (WR 41-45%) — shorting breakout XAU kalah. Hanya **BUY** yang punya edge. Berlawanan dengan FX (yang justru bearish di NY).
+- **TP optimal = R:R 1:1 saja**: R:R 1.5/2/3 semua NO-EDGE (WR anjlok 45%→35%→23%). Edge tipis tapi sering: menang 58% profit 1R, kalah 42% loss 1R.
+- Spread XAU 10 pts sudah dipotong (spread_r ~0.012 = 1.2% dari SL).
+
+**Skrip (di `scratch/`, hasil di `scratch/results/`):**
+- `xau_m30_backtest.py` — backtest pola XAU M30 (fallback tahun otomatis 5→1). Output: `xau_m30_results.csv`, `xau_m30_report.md/.html`.
+- `xau_m30_strategies.py` — backtest strategi mekanis (Donchian20/50, EMA20/50 cross, RSI14). Output: `xau_m30_strategies.csv/.txt`.
+- `verify_xau_m30_edges.py` — stabilitas tahunan per EDGE (semua edge harus dicek begini sebelum dipakai).
+
+**Status:** Belum diintegrasikan ke bot. Kandidat integrasi = **whisper Donchian BUY NY** (opsi paling konservatif: LLM tetap pegang keputusan, cuma dikasih konteks "breakout Donchian valid, historis 58.5% win"). Belum diputuskan user — diskusi dulu sebelum implementasi.
+
 ---
 
 ## Konvensi & hal yang perlu diingat
