@@ -401,12 +401,14 @@ TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MUL
 # (ruang napas); R:R 1.25 -> BEP 0.81x SL, activation 1.0x SL (tetap nyala, pas).
 # Konstanta SL_MULT di bawah tetap dipakai sebagai FALLBACK untuk posisi tanpa TP.
 BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.35)  # BEP aktif saat profit >= 35% TP (responsif)
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.50)  # trailing aktif saat profit >= 50% TP
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.58)  # trailing aktif saat profit >= 58% TP
 BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
 TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 1.2)  # longgar saat baru aktif (15 Agu: 0.8->1.2)
 TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.4)  # ketat mendekati TP (15 Agu: 0.3->0.4)
 TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.3)  # floor (15 Agu: 0.2->0.3)
+TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 25)    # Floor absolut jarak trailing FX (pts) anti noise/spread
+TRAILING_DISTANCE_MIN_POINTS_XAU = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_XAU", 100)  # Floor absolut jarak trailing XAU (pts)
 
 
 # --- BREAK-EVEN ---
