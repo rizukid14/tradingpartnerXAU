@@ -188,7 +188,10 @@ FX_PAIR_SYMBOLS = [
         # 18 Agustus (user, riset baru): EURAUD -> NZDCAD. EURAUD edge paling lemah
         # di pool (3 EDGE, 0 kuat). Riset CAD-EUR-GBP 3th: NZDCAD juara (27 EDGE,
         # spread 2.2 pts, Bearish Engulfing htf=up WR 63% EV +0.24).
-        "GBPCHF-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc,GBPAUD-ECNc,NZDCAD-ECNc",
+        # 18 Agustus (user, malam): NZDCAD -> AUDCAD. NZDCAD spread suka gerak
+        # (2-3 pts) & order sering 10013 (likuiditas tipis). AUDCAD solid
+        # (5 EDGE, Bearish Engulfing NY WR 62% EV +0.21, spread 3.4 stabil).
+        "GBPCHF-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc,GBPAUD-ECNc,AUDCAD-ECNc",
     ).split(",")
     if s.strip()
 ]
@@ -215,7 +218,7 @@ LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
-RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.5)
+RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.25)
 DEVIATION = _getenv_int("DEVIATION", 30)
 DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
 DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
@@ -819,9 +822,9 @@ def active_ai_model_names(now=None):
 def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
-    FX (H1): 1.5% (18 Agustus - dinaikkan dari 1.0% karena lot terlalu kecil
-    dengan SL ATR H1 yang lebar; 1.5% = lot naik ~50%, masih aman di bawah
-    daily loss cap $50 & max posisi aggregate).
+    FX (H1): 1.25% (18 Agustus malam - diturunkan dari 1.5%: lot 0.18-0.22
+    terlalu besar utk pair sepi & SL ATR H1; 1.25% = kompromi antara lot lebih
+    besar vs risiko harian terkontrol).
     XAU (M30 swing, up to 6 concurrent): 1.0% (13 Agustus - dinaikkan dari 0.5%
     karena min lot 0.01 broker tidak bisa mewakili risk 0.5% dengan SL ATR/struktur
     yang lebar; 1.0% = max SL ~1079 pts di equity ~$1079, muat sweet spot).
