@@ -239,6 +239,12 @@ def alert_meme_scan_result(recommendations: list):
             f"- Skor: `{score}/100` | ATR: `{atr_pct:.2f}%` | Spread/ATR: `{spread_ratio:.1f}%`\n"
             f"- Tren: `{trend}` | Vol Momentum: `x{vol:.2f}`"
         )
+        if rec.get("tokocrypto_available"):
+            t_sym = rec.get("tokocrypto_symbol", "")
+            line += f"\n- Tokocrypto: `Tersedia ({t_sym})`"
+        else:
+            line += f"\n- Tokocrypto: `Belum Terdaftar`"
+
         if "ai_signal" in rec:
             sig = rec["ai_signal"]
             conf = rec.get("ai_confidence", 0.0)

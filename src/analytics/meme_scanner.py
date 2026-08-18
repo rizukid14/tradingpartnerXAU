@@ -58,6 +58,30 @@ def fetch_dexscreener_trending(limit=10):
     return []
 
 
+def discover_tokocrypto_symbols():
+    """
+    Fetches active trading pairs on Tokocrypto and maps base assets (e.g. PEPE, DOGE, SHIB)
+    to Tokocrypto symbol strings (e.g. PEPE_USDT, DOGE_USDT).
+    Returns dict {base_asset_upper: tokocrypto_symbol}.
+    """
+    try:
+        from src.core import tokocrypto_connector as toko
+        raw_list = toko.get_common_symbols()
+        result = {}
+        for item in raw_list:
+            sym = item.get("symbol", "")
+            base = item.get("baseAsset", "").upper()
+            quote = item.get("quoteAsset", "").upper()
+            if quote in ("USDT", "BIDR", "BUSD"):
+                # Prioritize USDT quote currency if available
+                if base not in result or quote == "USDT":
+                    result[base] = sym
+        return result
+    except Exception as e:
+        print(f"[TOKOCRYPTO DISCOVERY WARNING] Gagal mengambil simbol Tokocrypto: {e}")
+    return {}
+
+
 def discover_mt5_crypto_symbols():
     """
     Discovers all tradeable crypto and meme coin symbols available on MT5 terminal.
@@ -250,6 +274,25 @@ def scan_and_rank(top_n=None):
     scored_results.sort(key=lambda x: x["score"], reverse=True)
     top_picks = scored_results[:top_n]
 
+    # --- Tokocrypto Cross-Reference ---
+    tokocrypto_map = discover_tokocrypto_symbols()
+    for pick in top_picks:
+        sym_upper = pick["symbol"].upper()
+        # Extract base coin symbol (e.g. PEPEUSD.c -> PEPE, DOGEUSD -> DOGE)
+        clean = sym_upper.replace("-ECNC", "").replace("-ECN", "").replace(".C", "").replace(".ECN", "").replace(".PRO", "").replace(".M", "")
+        base = clean.replace("USD", "").replace("USDT", "")
+        
+        if base in tokocrypto_map:
+            pick["tokocrypto_symbol"] = tokocrypto_map[base]
+            pick["tokocrypto_available"] = True
+        else:
+            # Fallback check e.g. PEPE -> PEPE_USDT
+            if f"{base}_USDT" in tokocrypto_map.values():
+                pick["tokocrypto_symbol"] = f"{base}_USDT"
+                pick["tokocrypto_available"] = True
+            else:
+                pick["tokocrypto_available"] = False
+
     # --- Stage 2: Multi-LLM Consensus for Top Candidates (Optional) ---
     if getattr(config, "MEME_SCAN_LLM_ENABLED", False) and top_picks:
         for pick in top_picks:
@@ -263,6 +306,18 @@ def scan_and_rank(top_n=None):
                     pick["ai_sl_points"] = cons_result.get("sl_points", 0)
                     pick["ai_tp_points"] = cons_result.get("tp_points", 0)
                     pick["ai_reasoning"] = cons_result.get("details", "")
+
+                    # Auto-trade on Tokocrypto if enabled & BUY signal
+                    if getattr(config, "TOKOCRYPTO_ENABLED", False) and getattr(config, "MEME_SCAN_AUTO_TRADE", False):
+                        if pick.get("tokocrypto_available") and pick.get("ai_signal") == "BUY":
+                            try:
+                                from src.core import tokocrypto_connector as toko
+                                # Default quantity / trade size (e.g. 10 USDT equivalent)
+                                t_sym = pick.get("tokocrypto_symbol")
+                                order_res = toko.create_order(symbol=t_sym, side="BUY", order_type="MARKET", quantity=10)
+                                pick["tokocrypto_order_result"] = order_res
+                            except Exception as te:
+                                pick["tokocrypto_order_error"] = str(te)
             except Exception as e:
                 pick["ai_error"] = str(e)
 
