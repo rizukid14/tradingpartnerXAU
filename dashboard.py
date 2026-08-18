@@ -71,6 +71,8 @@ RE_ORDER = re.compile(
 RE_ORDER_OK = re.compile(r"\[MT5\] Order BERHASIL! Ticket: (\d+)")
 RE_POSTMORTEM = re.compile(r"\[POST-MORTEM\]\s*Menganalisis hasil trade tiket #(\d+)\s*\((\S+),\s*P/L:\s*\$?([+-]?[\d.]+)\)")
 RE_POSTMORTEM_ALT = re.compile(r"\[POST-MORTEM\].*?tiket #(\d+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
+RE_CLOSE_DETECTED = re.compile(r"\[CLOSE DETECTED\]\s*#(\d+)\s+(\S+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
+RE_TRADE_CLOSED = re.compile(r"\[TRADE CLOSED\]\s*#(\d+)\s+(\S+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
 RE_LESSON = re.compile(r"\[PELAJARAN BARU DITERIMA\]")
 RE_BE = re.compile(r"\[BREAK-EVEN\]")
 RE_TRAIL = re.compile(r"\[TRAILING\]")
@@ -257,6 +259,11 @@ def parse_log(path=LOG_PATH):
             events.append({"type": "trade_close", "ticket": int(m.group(1)),
                            "symbol": current_symbol, "pnl": float(m.group(2))})
             continue
+        m = RE_CLOSE_DETECTED.search(line) or RE_TRADE_CLOSED.search(line)
+        if m:
+            events.append({"type": "trade_close", "ticket": int(m.group(1)),
+                           "symbol": m.group(2), "pnl": float(m.group(3))})
+            continue
 
         if RE_LESSON.search(line):
             events.append({"type": "lesson", "ts": current_cycle_ts, "era": current_era})
@@ -385,7 +392,7 @@ def compute_metrics(events, state=None):
             status = "open" if tick in mt5_open_tickets else "closed"
         else:
             status = "closed" if (close is not None or tick in known_closed) else "open"
-        pnl = close["pnl"] if close else None
+        pnl = close["pnl"] if close else (0.0 if status == "closed" else None)
         trades.append({
             "ticket": tick, "symbol": o["symbol"], "side": o["side"], "lot": o.get("lot"),
             "entry": o.get("entry"), "sl": o.get("sl"), "tp": o.get("tp"),
