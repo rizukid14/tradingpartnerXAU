@@ -347,6 +347,31 @@ def compute_metrics(events, state=None):
         if mt5.initialize():
             positions = mt5.positions_get()
             mt5_open_tickets = {p.ticket for p in (positions or [])}
+
+            # Fetch MT5 deal history to populate accurate P/L for closed tickets
+            from datetime import datetime, timedelta
+            from_dt = datetime.now() - timedelta(days=30)
+            to_dt = datetime.now() + timedelta(days=1)
+            deals = mt5.history_deals_get(from_dt, to_dt)
+            if deals:
+                deals_by_pos = {}
+                for d in deals:
+                    pid = getattr(d, "position_id", None)
+                    if not pid:
+                        continue
+                    prof = getattr(d, "profit", 0.0) or 0.0
+                    comm = getattr(d, "commission", 0.0) or 0.0
+                    swap = getattr(d, "swap", 0.0) or 0.0
+                    fee = getattr(d, "fee", 0.0) or 0.0
+                    net_pnl = prof + comm + swap + fee
+
+                    if getattr(d, "entry", None) == mt5.DEAL_ENTRY_OUT:
+                        deals_by_pos[pid] = deals_by_pos.get(pid, 0.0) + net_pnl
+
+                for pid, pnl_val in deals_by_pos.items():
+                    if pid not in close_by_ticket or close_by_ticket[pid].get("pnl") is None:
+                        close_by_ticket[pid] = {"ticket": pid, "pnl": round(pnl_val, 2)}
+
             mt5.shutdown()
     except Exception:
         mt5_open_tickets = None
@@ -742,11 +767,15 @@ def serve(host="0.0.0.0", port=8765):
                 summary = dict(metrics.get("summary", {}))
                 summary.update({
                     "active_symbol": getattr(config, "SYMBOL", "XAUUSD-ECN"),
+                    "trading_mode": getattr(config, "TRADING_MODE", "xau"),
+                    "ai_mode": config.get_ai_mode() if hasattr(config, "get_ai_mode") else "single",
                     "dry_run": getattr(config, "DRY_RUN", False),
                     "trading_paused": getattr(config, "TRADING_PAUSED", False),
                     "starting_balance": getattr(config, "STARTING_BALANCE", 1000.0),
                     "recovery_mode": metrics.get("risk_state", {}).get("recovery_mode", False),
                     "consecutive_losses": metrics.get("risk_state", {}).get("consecutive_losses", 0),
+                    "per_symbol": metrics.get("per_symbol", {}),
+                    "open_positions_count": len([t for t in metrics.get("trades", []) if t.get("status") == "open"]),
                 })
                 try:
                     import MetaTrader5 as mt5
