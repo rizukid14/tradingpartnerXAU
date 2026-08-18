@@ -16,6 +16,7 @@ import json
 import threading
 from datetime import datetime
 
+import requests
 import pandas as pd
 import numpy as np
 
@@ -26,6 +27,35 @@ from src.core import mt5_connector as connector
 RESULTS_FILE = os.path.join(config.DATA_DIR, "meme_scan_results.json")
 _scan_lock = threading.Lock()
 _last_scan_time = 0.0
+
+
+def fetch_dexscreener_trending(limit=10):
+    """
+    Fetches top trending token boosts from DexScreener API ($0 cost, no API key required).
+    Returns list of dicts with token details.
+    """
+    try:
+        url = "https://api.dexscreener.com/token-boosts/top/v1"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            items = resp.json()
+            results = []
+            if isinstance(items, list):
+                for item in items[:limit]:
+                    results.append({
+                        "url": item.get("url", ""),
+                        "chainId": item.get("chainId", ""),
+                        "tokenAddress": item.get("tokenAddress", ""),
+                        "amount": item.get("amount", 0),
+                        "totalAmount": item.get("totalAmount", 0),
+                        "icon": item.get("icon", ""),
+                        "header": item.get("header", ""),
+                        "description": item.get("description", "")
+                    })
+            return results
+    except Exception as e:
+        print(f"[DEXSCREENER WARNING] Gagal mengambil data DexScreener: {e}")
+    return []
 
 
 def discover_mt5_crypto_symbols():
@@ -236,6 +266,9 @@ def scan_and_rank(top_n=None):
             except Exception as e:
                 pick["ai_error"] = str(e)
 
+    # Fetch global DEX trending tokens from DexScreener API ($0 cost)
+    dex_trending = fetch_dexscreener_trending()
+
     payload = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S WIB"),
         "total_scanned": len(symbols),
@@ -243,7 +276,8 @@ def scan_and_rank(top_n=None):
         "rejected_count": len(rejected_results),
         "top_picks": top_picks,
         "all_qualified": scored_results,
-        "rejected_samples": rejected_results[:5]
+        "rejected_samples": rejected_results[:5],
+        "dexscreener_trending": dex_trending
     }
 
     # Save payload to data/meme_scan_results.json
