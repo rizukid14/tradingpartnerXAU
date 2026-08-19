@@ -607,50 +607,45 @@ def interactive_setup():
         if attr == "config.DRY_RUN":
             return "LIVE (kirim order)" if v else "DRY RUN (sinyal saja)"
         if attr == "config.TRADING_MODE":
-            return _scan_mode_label() if v == "xau_pairs" else "XAU Only"
+            return _scan_mode_label() if v == "xau_pairs" else "FX Pairs Only"
         if v is True:
             return "ON"
         if v is False:
             return "OFF"
         s = str(v)
         if attr == "config.TP_SL_RULES":
-            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else f" (bebas, floor XAU {config.LLM_XAU_FLOOR_ATR_MULT}xATR / FX {config.LLM_FX_FLOOR_ATR_MULT}xATR H1, R:R min {config.LLM_MIN_RR_RATIO})" if v == "LLM" else "")
+            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else f" (bebas, floor FX {config.LLM_FX_FLOOR_ATR_MULT}xATR H1, R:R min {config.LLM_MIN_RR_RATIO})" if v == "LLM" else "")
         return s
 
 
     def _scan_mode_label():
-        """Label dinamis scan pool - ikut get_rotation_pool() biar jumlah
-        simbol selalu akurat (3 simbol: XAU+EURJPY+GBPCHF; weekend: FX tutup
-        -> pool jatuh ke XAU/BTC saja)."""
+        """Label dinamis scan pool (8 simbol FX pairs)."""
         try:
             pool = config.get_rotation_pool()
             if len(pool) <= 1:
-                base = f"XAU + Pairs -> {pool[0]} (weekend/FX tutup)" if pool else "XAU Only"
+                base = f"FX Pairs -> {pool[0]}" if pool else "FX Pairs Only"
                 return base
-            return f"XAU + Pairs ({len(pool)} simbol)"
+            return f"FX Pairs ({len(pool)} simbol)"
         except Exception:
-            return "XAU + Pairs"
+            return "FX Pairs (8 simbol)"
 
 
     # (grup, label, attr, val) - dikelompokkan biar enak dibaca
     settings = [
         ("MODE & RISK", "Akun MT5", "config.MT5_ACCOUNT_MODE", _account_label()),
         ("MODE & RISK", "Mode", "config.DRY_RUN", "DRY RUN (sinyal saja)" if config.DRY_RUN else "LIVE (kirim order)"),
-        ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", _scan_mode_label() if config.TRADING_MODE == "xau_pairs" else "XAU Only"),
+        ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", _scan_mode_label() if config.TRADING_MODE == "xau_pairs" else "FX Pairs Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
-        ("MODE & RISK", "Risk XAU (% equity)", "config.RISK_PERCENT_XAU", str(config.RISK_PERCENT_XAU)),
         ("MODE & RISK", "Risk FX (% equity)", "config.RISK_PERCENT_FX", str(config.RISK_PERCENT_FX)),
         ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
         ("LIMIT & FILTER", "Max Posisi", "config.MAX_OPEN_POSITIONS", str(config.MAX_OPEN_POSITIONS)),
         ("LIMIT & FILTER", "Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
         ("LIMIT & FILTER", "Spread Max BTC (pts)", "config.MAX_SPREAD_POINTS_BTC", str(config.MAX_SPREAD_POINTS_BTC)),
-        ("LIMIT & FILTER", "Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
-        ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
         ("KONSENSUS & AI", "OpenAI Model (24/7)", "config.OPENAI_MODEL", str(config.OPENAI_MODEL) + " (Full 24/7 All Sessions)"),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         f"XAU: LLM (floor {config.LLM_XAU_FLOOR_ATR_MULT}xATR) | BTC: ATR-Based (fix) | FX: LLM (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1, R:R {config.LLM_MIN_RR_RATIO})" if config.TP_SL_RULES == "LLM"
+         f"FX: LLM (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1, R:R {config.LLM_MIN_RR_RATIO}) | BTC: ATR-Based (fix)" if config.TP_SL_RULES == "LLM"
          else str(config.TP_SL_RULES) + " (force semua, gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)"),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
@@ -872,8 +867,8 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     except ImportError:
         return
     print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
-    print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 7 Simbol Sekarang (Immediate Full Market Scan)            |")
-    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M30 / H1 / M30 - Default)      |")
+    print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 8 Simbol Sekarang (Immediate Full Market Scan)            |")
+    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: H1 / M30 - Default)           |")
     print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
     sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
     sys.stdout.flush()
@@ -897,7 +892,7 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     sys.stdout.write("\n")
     sys.stdout.flush()
     _STARTUP_SCAN_MODE = "all" if buf.strip() == "1" else "timeframe"
-    mode_txt = "SCAN ALL 7 SYMBOLS NOW" if _STARTUP_SCAN_MODE == "all" else "SMART ROTATION (Tunggu Candle Close Tiap Aset)"
+    mode_txt = "SCAN ALL 8 SYMBOLS NOW" if _STARTUP_SCAN_MODE == "all" else "SMART ROTATION (Tunggu Candle Close Tiap Aset)"
     print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
