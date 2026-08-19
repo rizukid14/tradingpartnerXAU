@@ -181,13 +181,13 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        # 19 Agustus (user): XAUUSD diganti GBPUSD (Cable) + USDCAD (Loonie, trend following EV +0.20).
-        # Pool FX 7 simbol H1: GBPUSD, USDCAD, EURJPY, GBPAUD, AUDCAD, EURCHF, AUDCHF.
-        "GBPUSD-ECNc,USDCAD-ECNc,EURJPY-ECNc,GBPAUD-ECNc,AUDCAD-ECNc,EURCHF-ECNc,AUDCHF-ECNc",
+        # 19 Agustus (user): XAUUSD diganti GBPUSD + USDCAD (8 pair pool H1).
+        # Pool FX 8 simbol H1: GBPUSD, USDCAD, EURJPY, GBPAUD, AUDCAD, EURCHF, AUDCHF, CADCHF.
+        "GBPUSD-ECNc,USDCAD-ECNc,EURJPY-ECNc,GBPAUD-ECNc,AUDCAD-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc",
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 7)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 8)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M30").upper()
 TIMEFRAME_MAP = {
