@@ -51,22 +51,24 @@ TIMEFRAME = mt5.TIMEFRAME_M5
 LOT_SIZE = 0.01
 DEVIATION = 20
 
-# Risk Management: SL/TP settings (calculated dynamically in Python based on ATR)
-DEFAULT_SL_POINTS = 300
-DEFAULT_TP_POINTS = 600
-SL_ATR_MULTIPLIER = 1.5
-TP_ATR_MULTIPLIER = 3.0
+# Risk Management: Micro Scalping SL/TP settings (Tight SL -> Automatic Lot Jumbo)
+DEFAULT_SL_POINTS = 100
+DEFAULT_TP_POINTS = 180
+MIN_SL_POINTS = 80
+MAX_SL_POINTS = 150
+MIN_TP_POINTS = 120
+MAX_TP_POINTS = 250
 
 # --- CONSENSUS SETTINGS ---
 DRY_RUN = False
 CONSENSUS_THRESHOLD = 2
 DEBATE_ENABLED = False
 
-# --- TRAILING STOP ---
-TRAILING_STOP_ENABLED = True
-TRAILING_ACTIVATION_PERCENT_TP = 50 # Activate trailing after reaching 50% of target TP
-TRAILING_ACTIVATION_POINTS = 500    # Fallback activation points if no TP set
-TRAILING_DISTANCE_POINTS = 200      # Trail SL 200 pts behind current active price
+# --- TRAILING STOP (Disabled for Pure Fast TP/SL Execution) ---
+TRAILING_STOP_ENABLED = False
+TRAILING_ACTIVATION_PERCENT_TP = 50
+TRAILING_ACTIVATION_POINTS = 500
+TRAILING_DISTANCE_POINTS = 200
 
 # --- BREAK-EVEN ---
 BREAK_EVEN_ENABLED = True

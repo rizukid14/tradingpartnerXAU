@@ -51,11 +51,13 @@ def run_trading_cycle():
         print(reason)
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (50 candles of M5)
+    # 1. Fetch market data (50 candles of M5 + 20 candles of M1)
     df = connector.get_market_data(config.SYMBOL, config.TIMEFRAME, num_candles=50)
     if df is None or len(df) == 0:
         print("❌ Gagal mendapatkan market data. Melewatkan siklus ini.")
         return False
+
+    df_m1 = connector.get_market_data(config.SYMBOL, mt5.TIMEFRAME_M1, num_candles=20)
         
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
@@ -82,7 +84,7 @@ def run_trading_cycle():
     if macro_context:
         print("📊 Menyertakan analisa Multi-Timeframe & Fundamental untuk LLM...")
     print("🧠 Mengirim data ke OpenAI, Gemini, dan DeepSeek...")
-    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context)
+    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, df_m1=df_m1)
     
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)

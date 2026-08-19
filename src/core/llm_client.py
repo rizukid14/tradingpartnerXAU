@@ -144,24 +144,36 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
     return query_primary_model(prompt, search_grounding=True)
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None, df_m1=None):
     """
-    Constructs an Ultra-Lean M5 Scalper trading prompt with M5 50-bar range summary,
-    M15 macro structure, clear ATR risk bounds, and strict JSON format.
+    Constructs an Ultra-Lean M1 Micro Scalper prompt with M1 micro candles,
+    M5 50-bar range summary, tight SL (80-150 pts), tight TP (120-250 pts), and strict JSON format.
     """
-    # Take the last 10 M5 candles for detailed micro context
+    # Take the last 10 M5 candles for main context
     recent_candles = df.tail(10).to_dict(orient="records")
     candles_str = ""
     for c in recent_candles:
         candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
 
+    # Take last 10 M1 candles for micro entry context if provided
+    m1_str = ""
+    if df_m1 is not None and not df_m1.empty:
+        m1_candles = df_m1.tail(10).to_dict(orient="records")
+        m1_lines = []
+        for c in m1_candles:
+            rsi_val = f"{c['rsi_14']:.1f}" if 'rsi_14' in c and pd.notna(c['rsi_14']) else "N/A"
+            ema20_val = f"{c['ema_20']:.2f}" if 'ema_20' in c and pd.notna(c['ema_20']) else "N/A"
+            m1_lines.append(f"- M1 {c['time'][-5:]}: C {c['close']} | H {c['high']} | L {c['low']} | RSI {rsi_val} | EMA20 {ema20_val}")
+        m1_str = "### RECENT M1 MICRO CANDLES (Last 10 M1 Bars):\n" + "\n".join(m1_lines) + "\n"
+
     latest = df.iloc[-1]
     point_size = current_tick.get("point", 0.01)
-    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
-    min_sl = int(atr_points * 1.5)
-    max_sl = int(atr_points * 2.0)
-    min_tp = int(min_sl * 1.5)
-    max_tp = int(max_sl * 2.0)
+    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 250
+
+    min_sl = getattr(config, "MIN_SL_POINTS", 80)
+    max_sl = getattr(config, "MAX_SL_POINTS", 150)
+    min_tp = getattr(config, "MIN_TP_POINTS", 120)
+    max_tp = getattr(config, "MAX_TP_POINTS", 250)
 
     # 50-bar M5 Range Summary
     m5_high = float(df['high'].tail(50).max())
@@ -169,12 +181,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     m5_range = (m5_high - m5_low) if (m5_high > m5_low) else 1.0
     m5_pct = round(((latest['close'] - m5_low) / m5_range) * 100, 1)
 
-    # M15 Macro Structure (if available via macro_context or computed)
     m15_summary = f"- M5 50-Bar Range: High {m5_high:.2f} | Low {m5_low:.2f} (Price is at {m5_pct}% of range)"
 
     macro_str = ""
     if macro_context:
-        macro_str = f"\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT\n{macro_context}\n"
+        macro_str = f"\n### HIGHER-LEVEL MACRO CONTEXT\n{macro_context}\n"
 
     forecast_str = ""
     try:
@@ -190,29 +201,29 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             positions_str += f"- Ticket #{pos.get('ticket')}: {pos.get('type')} {pos.get('volume')} lot @ {pos.get('price_open')}, Current P/L: ${pos.get('profit', 0.0):.2f}\n"
         positions_str += "NOTE: The 'signal' field below is ONLY for opening a NEW entry. Evaluate entry independently from existing positions.\n"
 
-    prompt = f"""You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol}.
-Analyze the current market condition and determine the next trading decision.
+    prompt = f"""You are an expert algorithmic trading system specializing in M1/M5 micro scalping on {symbol}.
+Analyze the current market condition and determine the next fast trading decision.
 
 ### MARKET DATA CONTEXT
 Symbol: {symbol}
-Timeframe: M5 (5 Minutes)
+Timeframe: M5/M1 Micro Scalping
 Current Bid: {current_tick['bid']}
 Current Ask: {current_tick['ask']}
 Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 
 ### RECENT CANDLES (Last 10 candles, M5):
 {candles_str}
-### INDICATORS & STRUCTURE SUMMARY
+{m1_str}### INDICATORS & STRUCTURE SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f} | EMA (20): {latest['ema_20']:.2f} | EMA (50): {latest['ema_50']:.2f}
-- ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
+- ATR (14): {latest['atr_14']:.2f} ({atr_points} points)
 {m15_summary}
 {macro_str}{forecast_str}{positions_str}
-### STRATEGY CONSTRAINTS (M5 Scalping Execution)
-- Focus on M5 momentum breakouts or pullback rejections at M5/M15 Support/Resistance.
-- SL Placement: Place SL beyond the nearest structural Swing High/Low or S/R level. ATR bounds ({min_sl}-{max_sl} pts) define the valid risk envelope.
-- TP Requirement: TP must be at least 1.5x of SL ({min_tp}-{max_tp} pts).
-- STRICT NO-HOLD MANDATE: 'HOLD' is STRICTLY FORBIDDEN. You MUST choose an active direction: either 'BUY' or 'SELL'. Evaluate which side has higher probability based on price action and indicators.
+### STRATEGY CONSTRAINTS (Micro Scalping Execution)
+- Target fast micro momentum breakouts or instant pullback rejections.
+- TIGHT SL BOUNDS: Stop Loss MUST be between {min_sl} and {max_sl} points ($0.80-$1.50 Gold move).
+- FAST TP BOUNDS: Take Profit MUST be between {min_tp} and {max_tp} points ($1.20-$2.50 Gold move, R:R 1:1.5+).
+- STRICT NO-HOLD MANDATE: 'HOLD' is STRICTLY FORBIDDEN. You MUST choose an active direction: either 'BUY' or 'SELL'. Evaluate which side has higher micro probability.
 
 ### RESPONSE FORMAT
 Respond ONLY with a valid JSON object. Do not include any text before or after the JSON.
@@ -439,12 +450,12 @@ Re-evaluate your position and cast your REVISED final decision for Round 2.
     return debate_prompt
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, df_m1=None):
     """
     Sends the prompt to OpenAI, Gemini, and DeepSeek in parallel threads
-    to minimize latency. If Round 1 lacks consensus, triggers Multi-Agent Debate Round 2.
+    to minimize latency.
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, df_m1=df_m1)
     
     results = {}
     latencies = {}

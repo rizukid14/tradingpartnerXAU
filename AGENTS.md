@@ -52,10 +52,11 @@ Dokumen ini berisi panduan lokasi file aktif, tempat log, dan struktur branch un
 * **Max Open Positions**: Maksimal 6 posisi simultan (`MAX_OPEN_POSITIONS = 6`).
 * **Layering 3/3 Unanimous**: Jika ketiga AI sepakat (3/3), bot membuka **2 layer posisi sekaligus** (Posisi #1 TP Standar + Posisi #2 TP 1.2x) dengan total risk tetap 1.5%.
 
-### D. Eksekusi MT5 & Proteksi Pasca-Entry
+### D. Eksekusi MT5 & Proteksi M1 Micro Scalper
 * **Auto-Resolve Symbol**: Otomatis mendeteksi `XAUUSD-ECN` (Demo) vs `XAUUSD-ECNc` (Live).
 * **Order Guard**: Pembulatan harga SL/TP ke `symbol_info.digits` dan pemotongan string `comment` maksimal **25 karakter** (`[:25]`) untuk mencegah retcode MT5 `10013`.
-* **Trailing Stop Dinamis**: Aktif setelah profit mencapai **50% dari target TP posisi**, dengan jarak trailing **200 points** di belakang harga aktif.
+* **Tight SL/TP Bounds**: SL ketat 80–150 pts ($0.80–$1.50) & TP ketat 120–250 pts ($1.20–$2.50) untuk eksekusi kilat.
+* **Trailing Stop Disabled**: `TRAILING_STOP_ENABLED = False` (Ditinggalkan untuk eksekusi murni kilat murni hit TP atau SL tanpa pemotongan profit premature).
 * **Break-Even (BEP)**: Geser SL ke entry (+10 pts) setelah profit +300 pts.
 * **Partial Close**: Menutup 50% lot di TP1 (+400 pts).
 * **Post-Mortem Evaluator Disabled**: Evaluator trade ditutup dinonaktifkan di loop utama agar siklus tetap 100% cepat & independen.
