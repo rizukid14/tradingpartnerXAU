@@ -236,11 +236,6 @@ Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
 {{SLTP_RULES_BLOCK}}
-- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.
-- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum (e.g. 2+ consecutive same-direction H1 closes or expanding candle bodies) but has not closed beyond it yet, do not chase with an immediate market order. Instead:
-  (a) Use buy_stop/sell_stop placed ~0.2x ATR H1 beyond the key level to catch a genuine breakout wave.
-  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.
-  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 room remaining to your structural target.
 
 HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
 
@@ -545,19 +540,28 @@ def _build_sltp_rules_block(symbol, timeframe):
                 f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
             )
         else:
-            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL berbasis
-            # ATR aktif: max(2x spread, 1.5x ATR H1) — fallback 250 kalau ATR gagal.
-            # (14 Agustus lanjutan: floor statis 250 = 2.5x ATR H1 FX yang cuma
-            # 90-100 pts -> SL struktural asli 60-200 di-floor paksa & TP 312 jarang
-            # kesampean; ATR-based menyesuaikan volatilitas aktual per pair.)
+            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL & Proximity/Breakout
+            # berbasis ATR aktif H1 real-time.
             fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
             atr_pts_fx = _fx_atr_h1_points(symbol)
             if atr_pts_fx and atr_pts_fx > 0:
                 fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
+                prox_pts = int(0.5 * atr_pts_fx)
+                stop_pts = max(10, int(0.2 * atr_pts_fx))
+                room_pts = int(1.0 * atr_pts_fx)
+            else:
+                prox_pts = 45
+                stop_pts = 18
+                room_pts = 90
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
                 f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 (~{prox_pts} pts) below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 (~{prox_pts} pts) above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.\n"
+                f"- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum (e.g. 2+ consecutive same-direction H1 closes or expanding candle bodies) but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
+                f"  (a) Use buy_stop/sell_stop placed ~0.2x ATR H1 (~{stop_pts} pts) beyond the key level to catch a genuine breakout wave.\n"
+                f"  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.\n"
+                f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your structural target."
             )
 
     # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
