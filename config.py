@@ -51,13 +51,13 @@ TIMEFRAME = mt5.TIMEFRAME_M5
 LOT_SIZE = 0.01
 DEVIATION = 20
 
-# Risk Management: Micro Scalping SL/TP settings (Tight SL -> Automatic Lot Jumbo)
-DEFAULT_SL_POINTS = 100
-DEFAULT_TP_POINTS = 180
-MIN_SL_POINTS = 80
-MAX_SL_POINTS = 150
-MIN_TP_POINTS = 120
-MAX_TP_POINTS = 250
+# Risk Management: Ultra-Micro Scalping SL/TP settings (Super-Tight SL -> Mega Lot Jumbo)
+DEFAULT_SL_POINTS = 60
+DEFAULT_TP_POINTS = 100
+MIN_SL_POINTS = 50
+MAX_SL_POINTS = 90
+MIN_TP_POINTS = 80
+MAX_TP_POINTS = 150
 
 # --- CONSENSUS & FORECAST SETTINGS ---
 DRY_RUN = False
