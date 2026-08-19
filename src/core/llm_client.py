@@ -71,10 +71,13 @@ if config.GEMINI_API_KEY:
 
 
 def asset_desc(symbol):
-    """Human-readable asset description for prompts (Gold vs Bitcoin)."""
+    """Human-readable asset description for prompts (Gold vs Bitcoin vs FX)."""
     if config.is_crypto(symbol):
         return "Bitcoin (BTCUSD) - crypto, trades 24/7 including weekends"
-    return "Gold (XAUUSD) - Forex/commodity"
+    elif "XAU" in (symbol or "").upper():
+        return "Gold (XAUUSD) - spot metal / commodity"
+    else:
+        return f"Forex Currency Pair ({symbol})"
 
 
 def claude_slot_label():
@@ -1107,7 +1110,7 @@ Symbol: {symbol}
 Timeframe: {tf_label}
 Current Bid: {_fmt_price(current_tick['bid'], point_size)}
 Current Ask: {_fmt_price(current_tick['ask'], point_size)}
-Spread: {current_tick['spread']} points (point size = {current_tick['point']})
+Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
 {macro_str}
 {key_levels_str}
