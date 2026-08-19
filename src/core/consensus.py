@@ -451,7 +451,8 @@ def calculate_consensus(decisions):
     box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)"))
     if best_reason:
         box_items.append((f"  {UI.CYAN}Setup / Reason:{UI.RST} ", best_reason))
-    price_info = f" | Price SL {final_inv:.2f} / TP {final_tgt:.2f}" if final_inv else ""
+    price_decimals = 5 if (point and point < 0.001) else 2
+    price_info = f" | Price SL {final_inv:.{price_decimals}f} / TP {final_tgt:.{price_decimals}f}" if final_inv else ""
     box_items.append((f"  {UI.BOLD}Final SL / TP :{UI.RST} ", f"{UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}"))
 
     print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
