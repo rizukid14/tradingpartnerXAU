@@ -1503,7 +1503,7 @@ def query_deepseek(prompt):
 def query_claude(prompt):
     """Queries Anthropic Claude API (claude-sonnet-4-6) with timeout and fallback support."""
     primary_model = getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-6")
-    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
+    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", "deepseek/deepseek-v4-flash")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
     is_deepseek = primary_model.startswith("deepseek/")
@@ -1520,7 +1520,7 @@ def query_claude(prompt):
             print(f" [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if fallback_model.startswith("deepseek/"):
-                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="none")
                 return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[CLAUDE FALLBACK ERROR] {fb_err}")

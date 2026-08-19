@@ -2,6 +2,12 @@
 
 > Ringkasan cepat untuk sesi coding. Baca ini dulu sebelum ngapa-ngapain.
 
+## ⚠️ ATURAN WAJIB AI AGENT (MANDATORY AGENT RULES)
+ 
+1. **SELALU MINTA KONFIRMASI SEBELUM MENGUBAH KODE (ALWAYS ASK BEFORE EDITING CODE)**:
+   - Sebelum melakukan edit/perubahan file kode apa pun, AI WAJIB menjelaskan masalah dan menampilkan rencana/perubahan yang diusulkan.
+   - AI DILARANG mengeksekusi tool edit file (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) sebelum pengguna memberikan persetujuan/konfirmasi eksplisit.
+
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.
@@ -19,7 +25,7 @@ python main.py
 ```
 - `config.DRY_RUN = False` → **LIVE trading** (order beneran dikirim). Jangan ubah tanpa bilang user.
 - **Ganti mode trading**: `.env` `TRADING_MODE=xau` / `TRADING_MODE=xau_pairs`, atau via UI dashboard (dropdown Mode Trading → POST `/api/config`, di-persist ke `.env`) → **restart bot** biar apply (dashboard serve = proses terpisah dari bot).
-- Log: `trading_bot.log` (auto-rotate 2MB, keep 5000 baris). **Log ini CAMPUR sesi demo + live** — akun demo lama `1157958` (ticket `568xxx`/`569xxx`), akun live `27556325` (ticket `1159xxx`). Jangan hitung profit dari log tanpa pisahin sesi — query MT5 langsung lebih akurat.
+- Log: `data/trading_bot.log` (auto-rotate 2MB, keep 5000 baris). **Log ini CAMPUR sesi demo + live** — akun demo lama `1157958` (ticket `568xxx`/`569xxx`), akun live `27556325` (ticket `1159xxx`). Jangan hitung profit dari log tanpa pisahin sesi — query MT5 langsung lebih akurat.
 
 ## Arsitektur file
 
@@ -40,7 +46,7 @@ python main.py
 
 ## Alur cycle (main.py → run_trading_cycle)
 
-0. **Time-Based AI Mode** (WIB, 17 Agustus update — **SINGLE MODE DIHAPUS TOTAL**): **00:00–19:29 = dual** (OpenAI o4-mini + DeepSeek v4-flash low reasoning — Asia & London session; 02:00-06:00 Dead Zone auto-skip), **19:30–21:30 = triple** (OpenAI o4-mini + Gemini 3.1-flash-lite + Claude 3.5 Haiku — London-NY overlap, puncak volatilitas), **21:31–23:59 = dual** (OpenAI o4-mini + DeepSeek v4-flash — Late NY session). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
+0. **Time-Based AI Mode** (WIB, 17 Agustus update — **SINGLE MODE DIHAPUS TOTAL**): **00:00–19:29 = dual** (OpenAI o4-mini + Gemini 3.1-flash-lite — Asia & London session; 00:00-09:00 Dead Zone auto-skip), **19:30–21:30 = triple** (OpenAI o4-mini + Gemini 3.1-flash-lite + Claude 3.5 Haiku — London-NY overlap, puncak volatilitas), **21:31–23:59 = dual** (OpenAI o4-mini + Gemini 3.1-flash-lite — Late NY session). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
 1. `risk.can_trade()` — spread/sesi/daily loss gate. Gagal → skip (nggak ada biaya LLM)
 2. Ambil 50 candle timeframe aktif (M15 XAU / H1 FX / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)

@@ -1329,9 +1329,9 @@ def _run_cycle_for_current_symbol():
                     model_labels.get(m, m) for m in agree_models
                 ) or "Multi-LLM Bot"
 
-            # Bersihkan whitespace/karakter khusus dan potong maksimal 31 karakter
+            # Bersihkan whitespace/karakter khusus dan potong maksimal 25 karakter
             import re
-            order_comment = re.sub(r'[\r\n\t]+', ' ', open_reason).strip()[:31].strip()
+            order_comment = re.sub(r'[\r\n\t]+', ' ', open_reason).strip()[:25].strip()
 
             order_res = connector.send_trade_order(
                 symbol=config.SYMBOL,
@@ -1662,6 +1662,7 @@ def main():
                     if not skip_cycle:
                         # Run trading cycle
                         run_trading_cycle()
+                        tg.flush_failed_orders_recap()
             else:
                 print("Gagal mengecek status candle di MT5. Mencoba kembali...")
             

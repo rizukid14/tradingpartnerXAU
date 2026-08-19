@@ -114,7 +114,7 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 # NOTE (18 Agu): claude-3-5-haiku-20241022 sudah dihapus dari API Anthropic (404).
 # Default = haiku-4-5 (valid). Kalau mau DeepSeek di slot ini, set "deepseek/deepseek-v4-flash".
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "deepseek/deepseek-v4-flash")
 
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_FALLBACK_MODEL = os.getenv("DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
@@ -330,9 +330,9 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
 # Jadwal WIB (Single Mode DIHAPUS TOTAL demi keamanan - minimal 2 model sepakat):
-#   - dual   (OpenAI o4-mini + DeepSeek v4-flash): 00:00–19:29 (Asia & London session; 02:00-06:00 Dead Zone risk gate)
+#   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 00:00–19:29 (Asia & London session; 00:00-09:00 Dead Zone risk gate)
 #   - triple (OpenAI + Gemini + Claude 3.5 Haiku): 19:30–21:30 (London-NY overlap, puncak volatilitas)
-#   - dual   (OpenAI o4-mini + DeepSeek v4-flash): 21:31–23:59 (Late NY session)
+#   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 21:31–23:59 (Late NY session)
 AI_MODE_SCHEDULE = [
     (0, 0, 19, 29, "dual"),
     (19, 30, 21, 30, "triple"),
@@ -500,19 +500,19 @@ MAX_SPREAD_POINTS_XAU = _getenv_int("MAX_SPREAD_POINTS_XAU", MAX_SPREAD_POINTS)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 
 # --- SESSION FILTER ---
-# Trade Zone: 07:00 - 02:00 WIB (02:00 - 07:00 WIB Dead Zone Rollover)
+# Trade Zone: 09:00 - 00:00 WIB (00:00 - 09:00 WIB Dead Zone Rollover & Sepi Likuiditas)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo / Asia Pagi", "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "Tokyo / Asia Pagi", "start": (9, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
     {"name": "London-NY Overlap", "start": (19, 30),"end": (21, 30), "lot_multiplier": 1.2},
-    {"name": "New York",          "start": (20, 0), "end": (2, 0),   "lot_multiplier": 1.0},
+    {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones (Dead Zone subuh rollover broker 02:00 - 07:00 WIB). Berlaku XAU & FX; BTC 24/7.
+# Danger zones (Dead Zone subuh & rollover 00:00 - 09:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Rollover Dead Zone (02:00 - 07:00 WIB)", "start": (2, 0), "end": (7, 0),
-     "reason": "Dead Zone subuh & spread rollover (02:00 - 07:00 WIB)"},
+    {"name": "Overnight Rollover Dead Zone (00:00 - 09:00 WIB)", "start": (0, 0), "end": (9, 0),
+     "reason": "Dead Zone rollover & sepi likuiditas (00:00 - 09:00 WIB)"},
 ]
 
 # --- WEEKEND PROTECTION ---
