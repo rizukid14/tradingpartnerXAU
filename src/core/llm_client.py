@@ -247,20 +247,20 @@ Respond with a single valid JSON object ONLY -- no text before or after it.
 HOLD:
 {
   "signal": "HOLD",
-  "reasoning": "1 short sentence (MAX 20 WORDS) for HOLD: state the single key technical reason (level/RSI/structure) why no setup exists now. Do NOT enumerate everything."
+  "reasoning": "string (MAX 20 WORDS: single key technical reason why no setup exists)"
 }
 
 BUY or SELL:
 {
   "signal": "BUY" | "SELL",
-  "confidence": 0.5-1.0,
-  "setup": "Short label for setup type (e.g. 'momentum continuation', 'pullback retest')",
-  "reasoning": "1-2 sentences (MAX 40 WORDS): core entry thesis and why this trade has edge now",
-  "invalidation": "1 short sentence: key technical level/condition that breaks this thesis",
-  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer)
-  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer)
-  "invalidation_price": number, // OPTIONAL: reference price level for invalidation
-  "target_price": number, // OPTIONAL: reference price level for target
+  "confidence": float (0.50 to 1.00),
+  "setup": "string (short label for setup type)",
+  "reasoning": "string (MAX 40 WORDS: core entry thesis & edge for this new entry)",
+  "invalidation": "string (key technical condition that invalidates this thesis)",
+  "sl_points": integer (Stop Loss distance in broker POINTS from current price),
+  "tp_points": integer (Take Profit distance in broker POINTS from current price),
+  "invalidation_price": float (OPTIONAL: reference price level for invalidation),
+  "target_price": float (OPTIONAL: reference price level for target),
 {{PENDING_FIELDS}}
 }
 
@@ -680,8 +680,8 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
             "- If you are not confident the level will trigger, output \"market\" or HOLD instead."
         )
         pending_fields = (
-            '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit", // OPTIONAL, default "market"\n'
-            '  "entry_price": number // REQUIRED if entry_type != "market"'
+            '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",\n'
+            '  "entry_price": float (REQUIRED if entry_type != "market")'
         )
     else:
         execution_note = (
