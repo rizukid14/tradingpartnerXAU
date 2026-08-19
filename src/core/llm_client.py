@@ -1,10 +1,13 @@
 import json
 import re
 import time
+import sys
+import threading
 import concurrent.futures
 from openai import OpenAI
 from google import genai
 import config
+from src.core.cli_theme import UI
 
 # Regex untuk menghapus emoji dari prompt yang dikirim ke LLM.
 # User requirement: prompt LLM harus bebas emoji (UI/CLI boleh).
@@ -47,7 +50,9 @@ if config.DEEPSEEK_API_KEY:
     try:
         deepseek_client = OpenAI(
             api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_API_BASE
+            base_url=config.DEEPSEEK_API_BASE,
+            max_retries=0,
+            timeout=getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
         )
     except Exception as e:
         print(f"[LLM WARNING] Gagal init DeepSeek client: {e}")
@@ -182,7 +187,12 @@ def analyze_fundamentals(symbol):
     Event SCHEDULING is handled deterministically by economic_calendar.py -
     search grounding is only a qualitative complement, never the schedule source.
     """
-    execution_style = "30-minute intraday (M30) swing" if config.is_crypto(symbol) else "5-minute (M5) scalping"
+    if config.is_crypto(symbol):
+        execution_style = "30-minute intraday (M30) swing"
+    elif "XAU" not in symbol.upper():
+        execution_style = "1-hour (H1) swing"
+    else:
+        execution_style = "30-minute (M30) swing"
     prompt = f"""
 What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
 Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
@@ -200,7 +210,11 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
 # cycles so provider-side prompt/context caching stays effective.
 # ================================================================
 _SYSTEM_PROMPT_TEMPLATE = """### ROLE
-You are an independent {{TIMEFRAME}} scalping analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+You are an independent {{TIMEFRAME}} short-term swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+
+### EXECUTION CONTEXT
+Any BUY or SELL signal you output will be executed immediately at the current market price (Market Order). The bot does not support pending orders. 
+Please ensure your setup is actionable at the current price. If your thesis relies on a trigger that has not happened yet (e.g. waiting for a breakout), select HOLD to wait for that confirmation to print on the candles.
 
 ### ANALYSIS FREEDOM
 You are NOT required to follow a single predefined trading strategy. You may use any market interpretation you judge relevant, including but not limited to: trend following, momentum, breakout, pullback, mean reversion, reversal/exhaustion, support/resistance, price action, volatility, or indicator confluence -- alone or combined.
@@ -219,14 +233,17 @@ The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candl
 The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
 
 ### RISK CONSTRAINTS (apply regardless of chosen strategy)
+Read the market data first and form your thesis from structure. Then validate that thesis against the constraints below -- do not start from the constraints and reverse-engineer a thesis to fit them.
 Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
-- A concrete invalidation condition for that thesis
+- A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
 {{SLTP_RULES_BLOCK}}
+- Use ATR(14) as a volatility sanity check: a structural SL much smaller than roughly 0.5x ATR is likely noise-level on the active timeframe -- prefer invalidation levels at least around half an ATR away when structure allows.
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
+- PROXIMITY & TRAP AVOIDANCE: Do NOT initiate a BUY directly into immediate major resistance (e.g. 50-bar Swing High, PDH, or key HTF resistance) or a SELL directly into immediate major support (e.g. 50-bar Swing Low, PDL, or key HTF support) without a clear, confirmed breakout. Ensure there is sufficient room before the opposing structure to achieve your required target. Chasing extended green candles into resistance or red candles into support is strictly prohibited.
 
-If any of these can't be honestly satisfied, return HOLD. HOLD is a normal, often correct output -- do not force a trade to avoid it.
+HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
 
 {{POINTS_EXPLANATION}}
 
@@ -236,7 +253,7 @@ Respond with a single valid JSON object ONLY -- no text before or after it.
 HOLD:
 {
   "signal": "HOLD",
-  "reasoning": "One short sentence: why no valid setup exists right now."
+  "reasoning": "2-3 concise sentences (MAX 45 WORDS): state the specific technical drivers (e.g. RSI/EMA/structure) why no valid setup exists right now."
 }
 
 BUY or SELL:
@@ -246,9 +263,11 @@ BUY or SELL:
   "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
   "edge": "1-2 sentences: what specifically creates the edge here.",
   "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "sl_points": number, // Stop Loss distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // Take Profit distance in broker POINTS (integer). Read the CRITICAL UNIT DEFINITION below!
-  "reasoning": "1-2 sentences max, on the NEW ENTRY decision only -- not on existing positions."
+  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer) from the current price, measured to your invalidation level. Read the CRITICAL UNIT DEFINITION below!
+  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
+  "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
+  "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
+  "reasoning": "2-3 concise sentences (MAX 45 WORDS), on the NEW ENTRY decision only: state the core technical thesis and risk drivers clearly."
 }
 
 "position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
@@ -278,7 +297,7 @@ def _build_points_explanation(symbol, point_size):
             f"- 100 points = $1.00 USD price change (e.g., BTC moving from 60000.00 to 60001.00)\n"
             f"- 10,000 points = $100.00 USD price change (e.g., BTC moving from 60000.00 to 60100.00)\n"
             f"- 50,000 points = $500.00 USD price change (e.g., BTC moving from 60000.00 to 60500.00)\n"
-            f"- Typical Stop Loss distance is 20000 to 60000 points ($200.00 to $600.00 USD price change).\n\n"
+            f"- Typical Stop Loss distance is 20000 to 60000 points ($200.00 to $600.00 USD price change), and ALWAYS check the 'ATR HARD GATE' in the Market Data context below for the exact dynamic minimum required for this specific trade.\n\n"
             f"CRITICAL WARNING:\n"
             f"Double-check your numbers. If you want a Stop Loss of $400 USD of BTC price movement, you MUST return 40000. "
             f"If you return 400, it sets a Stop Loss of just 400 points ($4.00 USD price change), which is inside the spread and will cause an instant loss or broker rejection!"
@@ -289,12 +308,35 @@ def _build_points_explanation(symbol, point_size):
         # XAU (0.01 -> pip 0.10), EURJPY (0.001 -> pip 0.01), GBPCHF (0.00001 -> 0.0001).
         pt_str = _fmt_price(point_size) if point_size else "0.01"
         pip_str = _fmt_price(point_size * 10) if point_size else "0.10"
-        # Typical SL range dari default per-symbol (XAU 400/800, EURJPY 50/100,
-        # GBPCHF 40/80) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
+        # Typical SL range dari default per-symbol (XAU 500/1000, FX 300 ->
+        # 150-450) - dijadikan range SL yang wajar (0.5x-1.5x default SL).
+        # Khusus XAU mode LLM: di-sinkronkan ke floor ATR aktif (1.2x ATR M15,
+        # 15 Agustus) biar konsisten dengan SL/TP rules block (sebelumnya 400-1000
+        # statis, sekarang dinamis - SL tipis 0.8x ATR dari o4-mini di-floor ke
+        # 1.2x ATR; fix konsistensi range 13 Agustus tetap berlaku).
         d_sl = config.default_sl_points_for(symbol)
         lo_pts = max(10, int(d_sl * 0.5))
         hi_pts = max(20, int(d_sl * 1.5))
         is_gold = "XAU" in (symbol or "").upper()
+        if is_gold and config.sltp_mode_for(symbol) == "LLM":
+            atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
+            if atr_pts_xau and atr_pts_xau > 0:
+                xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
+            else:
+                xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
+            lo_pts = max(lo_pts, xau_floor)
+            hi_pts = max(hi_pts, int(xau_floor * 2.5))
+        # FX mode LLM: sinkronkan ke floor ATR aktif (1.5x ATR H1) supaya unit
+        # definition tidak kontradiksi dengan floor di blok SL/TP rules
+        # (fix 14 Agustus lanjutan: floor statis 250 -> ATR-based, fallback 250).
+        if not is_gold and not is_btc and config.sltp_mode_for(symbol) == "LLM":
+            atr_pts_fx = _fx_atr_h1_points(symbol)
+            if atr_pts_fx and atr_pts_fx > 0:
+                fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
+            else:
+                fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
+            lo_pts = max(lo_pts, fx_floor)
+            hi_pts = max(hi_pts, int(fx_floor * 2.5))
         if is_gold:
             typical_note = (
                 f"${round(lo_pts * (point_size or 0.01), 2)} to "
@@ -302,6 +344,16 @@ def _build_points_explanation(symbol, point_size):
             )
         else:
             typical_note = "price units"
+        # Referensi "ATR HARD GATE" cuma relevan kalau mode ATR-Based (BTC /
+        # force override) - section itu cuma ada di Market Data kalau mode
+        # ATR-Based. Mode LLM (XAU/FX) nggak punya section itu -> referensi
+        # gantung (dangling) bikin bingung (fix 13 Agustus).
+        if config.sltp_mode_for(symbol) == "ATR-Based":
+            gate_note = (", and ALWAYS check the 'ATR HARD GATE' in the Market Data "
+                         "context below for the exact dynamic minimum required for this specific trade")
+        else:
+            gate_note = (" -- for the exact floor relevant to this symbol, see the SL/TP "
+                         "rules in the RISK CONSTRAINTS section below")
         return (
             f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs PRICE MOVEMENT\n"
             f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
@@ -309,13 +361,51 @@ def _build_points_explanation(symbol, point_size):
             f"- 1 point = {pt_str} price units.\n"
             f"- 10 points = 1 pip = {pip_str} price movement.\n"
             f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
-            f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points, BUT ALWAYS check the 'ATR HARD GATE' in the Market Data context below for the exact dynamic minimum required for this specific trade.\n\n"
+            f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points{gate_note}.\n\n"
             f"CRITICAL WARNING:\n"
             f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
             f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
             f"({max(1, lo_pts // 100)} pip / {_fmt_price((lo_pts // 10) * (point_size or 0.01))} price movement), "
             f"which is inside the spread and will cause an instant loss or broker rejection!"
         )
+
+
+_fx_atr_cache = {}  # (symbol, timeframe) -> (timestamp, atr_points)
+
+
+def _atr_points_for(symbol, timeframe):
+    """ATR(14) dari timeframe tertentu dalam poin broker (cache 60s per
+    (symbol, timeframe)) — dipakai untuk floor dinamis & typical SL range di
+    prompt. Return None kalau gagal. 15 Agustus: digeneralisasi dari helper
+    FX-only supaya XAU (M15) bisa pakai floor ATR juga."""
+    import time as _t
+    key = (symbol, timeframe)
+    now = _t.time()
+    hit = _fx_atr_cache.get(key)
+    if hit and now - hit[0] < 60:
+        return hit[1]
+    try:
+        import MetaTrader5 as _mt5
+        si = _mt5.symbol_info(symbol)
+        point = si.point if si else None
+        if not point:
+            return None
+        rates = _mt5.copy_rates_from_pos(symbol, timeframe, 0, 15)
+        if rates is None or len(rates) == 0:
+            return None
+        atr = float((rates['high'] - rates['low']).mean())
+        out = max(1, int(round(atr / point)))
+        _fx_atr_cache[key] = (now, out)
+        return out
+    except Exception:
+        return None
+
+
+def _fx_atr_h1_points(symbol):
+    """ATR(14) H1 FX dalam poin broker (cache 60s) — dipakai untuk
+    floor dinamis & typical SL range di prompt. Return None kalau gagal."""
+    import MetaTrader5 as _mt5
+    return _atr_points_for(symbol, _mt5.TIMEFRAME_H1)
 
 
 def _build_sltp_rules_block(symbol, timeframe):
@@ -329,42 +419,72 @@ def _build_sltp_rules_block(symbol, timeframe):
         dinaikkan), jadi prompt ini harus tegas biar AI gak buang cycle.
         Angka minimum konkret (dalam points) di-inject dinamis di market
         data block (atr_gate_str) - sinkron dengan consensus gate.
-      "LLM": SL/TP bebas sesuai thesis LLM; cuma floor 2x spread (broker
-      rejection guard). Bot TIDAK ngomongin sizing/ATR di prompt mode ini -
-      SL/TP model di-average di consensus.py (outlier dibuang), lot size
-      dikalkulasi dari SL di main.py.
+      "LLM": SL/TP bebas sesuai thesis LLM; dibatasi safety floor per-kategori
+      (XAU 400 pts statis / FX berbasis ATR aktif 1.5x ATR H1, fallback 250)
+      + R:R minimum 1.25:1 (config.LLM_*). Bot TIDAK ngomongin sizing/ATR di
+      prompt mode ini - SL/TP model di-average di consensus.py (outlier dibuang),
+      lot size dikalkulasi dari SL di main.py.
     """
-    mode = getattr(config, "TP_SL_RULES", "ATR-Based")
+    mode = config.sltp_mode_for(symbol)  # per-kategori: XAU LLM, BTC ATR-Based, FX LLM
+    is_xau = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
     is_btc = config.is_crypto(symbol)
-    # Typical SL range per-symbol dari default config (XAU 400, EURJPY 50,
-    # GBPCHF 40) - biar guidance LLM ikut skala pair, bukan asumsi Gold.
-    d_sl = config.default_sl_points_for(symbol)
-    lo_pts = max(10, int(d_sl * 0.5))
-    hi_pts = max(20, int(d_sl * 1.5))
-    
-    if mode == "LLM":
-        if is_btc:
-            range_note = "typically 20000 to 60000 points ($200-$600)"
-            noise_note = "avoid M5-style hyper-scalping stops (e.g., under 10000 points) to prevent instant noise stop-outs"
-        else:
-            range_note = f"typically {lo_pts} to {hi_pts} points"
-            noise_note = f"avoid hyper-scalping stops (e.g., under {lo_pts} points) as spread and execution noise will erode your edge"
+    min_rr = config.LLM_MIN_RR_RATIO
 
-        return (
-            f"- SL placed beyond the invalidation level, and NEVER tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-            f"- SL distance is YOUR choice (no ATR floor): set it exactly where the invalidation logic puts it. However, align it with the {timeframe} structure ({range_note}) and {noise_note}\n"
-            f"- TP is YOUR choice (no forced 2R): set the target where your thesis says price goes. However, TP must be at least equal to SL (TP distance >= SL distance) to prevent negative risk-to-reward ratios\n"
-        )
-        
-    # ATR-Based: multiplier dinamis per AI mode (single 1.25/2.5, dual 1.5/3.0,
-    # triple 1.75/3.5) - sinkron dengan config.atr_sl/tp_multiplier dan
-    # atr_gate_str di market data block. R:R 2:1 selalu terjaga.
+    if mode == "LLM":
+        # Mode LLM: Bebas sesuai thesis/struktur pasar, tapi bot yang enforce floor.
+        # Filosofi (14 Agustus): model kasih level struktural JUJUR (berapa pun
+        # jaraknya); bot yang menaikkan SL/TP ke floor minimum (SL >= floor, TP >=
+        # 1.25x SL). Model TIDAK perlu stretch level ke angka tertentu - itu justru
+        # bikin model HOLD terus ("no clean 400+ invalidation").
+        if is_xau:
+            # 15 Agustus: floor XAU dinamis = 1.2x ATR M15 (LLM_XAU_FLOOR_ATR_MULT),
+            # fallback 400 statis kalau ATR gagal. SL tipis 0.8x ATR (o4-mini) di-floor
+            # otomatis ke 1.2x ATR supaya swing M15 gak kena noise duluan.
+            xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
+            atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
+            if atr_pts_xau and atr_pts_xau > 0:
+                xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
+            lo_pts = xau_floor
+            hi_pts = max(1000, int(lo_pts * 2.5))
+            # 14 Agustus malam: gate OVER-RISK dilonggarkan ke 2% (config
+            # OVER_RISK_MAX_PERCENT) - SL >1000 pts TETAP BISA diterima selama risk
+            # aktual di min lot <= 2%. Guidance ini cuma preferensi, bukan batas keras.
+            return (
+                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
+                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (approx {config.LLM_XAU_FLOOR_ATR_MULT}x ATR M30) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. Wider SLs (e.g. 1000-1900 pts) are still ACCEPTED as long as actual risk at min lot stays within the OVER-RISK gate (max ~2% of equity at current balance) -- prefer structural levels in the ~{lo_pts}-{hi_pts} range when available, but give your real structural invalidation either way.\n"
+            )
+        elif is_btc:
+            return (
+                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS (typically 20000 to 60000 points / $200-$600), measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure), tp_points = distance to your structural target. These are what the bot actually uses for the order.\n"
+                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
+                f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
+            )
+        else:
+            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL berbasis
+            # ATR aktif: max(2x spread, 1.5x ATR H1) — fallback 250 kalau ATR gagal.
+            # (14 Agustus lanjutan: floor statis 250 = 2.5x ATR H1 FX yang cuma
+            # 90-100 pts -> SL struktural asli 60-200 di-floor paksa & TP 312 jarang
+            # kesampean; ATR-based menyesuaikan volatilitas aktual per pair.)
+            fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
+            atr_pts_fx = _fx_atr_h1_points(symbol)
+            if atr_pts_fx and atr_pts_fx > 0:
+                fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
+            return (
+                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.\n"
+                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
+                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = 1.5x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+            )
+
+    # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
     sl_mult = config.atr_sl_multiplier()
     tp_mult = config.atr_tp_multiplier()
     return (
-        f"- HARD GATE (non-negotiable, enforced by the bot): if your SL < {sl_mult}x current ATR or your TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Only propose setups whose structure genuinely reaches these distances.\n"
-        "- SL no tighter than 2x current spread (in points) -- tighter will likely be rejected by the broker\n"
-        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimums in points for the current ATR are listed in the MARKET DATA section (ATR HARD GATE line) -- propose SL/TP at or above them.\n"
+        f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (nearest opposing swing), tp_points = distance to your structural target. These are what the bot actually uses for the order.\n"
+        f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP.\n"
+        f"- HARD GATE (non-negotiable, enforced by the bot): if the resulting SL < {sl_mult}x current ATR or TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Give your real structural levels; if they cannot meet the gate, HOLD is the correct call.\n"
+        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimum price distances required for current ATR are listed in the MARKET DATA section (ATR HARD GATE line).\n"
     )
 
 
@@ -399,9 +519,14 @@ def _get_key_levels_str(symbol, current_bid):
         pdl = float(prev['low'])
         today_open = float(today['open'])
 
-        # Round number: nearest 1.00 for XAU, nearest 1000 for BTC
+        # Round number: nearest 1000 untuk BTC, nearest 2-desimal (pip-level)
+        # untuk FX (harga < 100, mis. EURJPY 151.23 / GBPCHF 1.10), nearest
+        # integer untuk XAU (harga ~1000-5000). Fix 14 Agustus: FX 5-desimal
+        # sebelumnya di-round ke 1 (round(1.09815) = 1) -> "1.00" yang nyasar.
         if current_bid and current_bid > 10000:
             round_num = round(current_bid / 1000.0) * 1000
+        elif current_bid and current_bid < 100:
+            round_num = round(current_bid, 2)
         elif current_bid:
             round_num = round(current_bid)
         else:
@@ -428,8 +553,8 @@ def _get_key_levels_str(symbol, current_bid):
 
         out = (
             f"### KEY LEVELS\n"
-            f"- Previous Day High: {pdh:.2f} | Previous Day Low: {pdl:.2f}\n"
-            f"- Today Open: {today_open:.2f}\n"
+            f"- Previous Day High: {_fmt_price(pdh)} | Previous Day Low: {_fmt_price(pdl)}\n"
+            f"- Today Open: {_fmt_price(today_open)}\n"
             f"- Nearest Psychological Round Number: {round_str}\n"
             f"- Active Session (WIB): {session_str}\n"
         )
@@ -443,7 +568,7 @@ def _get_key_levels_str(symbol, current_bid):
 def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
     """
     Static per-bot 'constitution'. Build once per bot instance (e.g. once
-    for XAU M5, once for BTC M30) and reuse unchanged across cycles -- this
+    for XAU M15, once for BTC M30) and reuse unchanged across cycles -- this
     is the part that benefits from provider-side prompt/context caching,
     since only the dynamic market data below changes every call.
     """
@@ -548,11 +673,28 @@ def summarize_recent_outcomes(decisions, n=6):
     )
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None,
+                   whisper_str=None, all_open_positions=None):
     """
     Constructs a rich prompt for LLM models containing price action,
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
+    whisper_str: optional pattern research stats (validated edge) — informational only.
+    all_open_positions: all open bot positions across all symbols for cross-portfolio awareness.
     """
+
+    # Dynamic timeframe label resolved from dataframe or fallback to config
+    tf_label = None
+    if len(df) >= 2:
+        try:
+            diff_sec = int(abs((df['time'].iloc[-1] - df['time'].iloc[-2]).total_seconds()))
+            sec_to_tf = {300: "M5", 900: "M15", 1800: "M30", 3600: "H1", 14400: "H4", 86400: "D1"}
+            tf_label = sec_to_tf.get(diff_sec)
+        except Exception:
+            pass
+    if not tf_label:
+        tf_val = config.get_timeframe(symbol)
+        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
+        tf_label = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
 
     # Create recent candles string - FULL 50 candles (~4 jam M5 / ~25 jam M30),
     # OHLC only (drop volume) supaya window 50-Bar Swing High/Low & Fib bisa
@@ -576,10 +718,10 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             micro_tf_name = "M5"
             num_micro_send = 12
         elif "XAU" in symbol.upper():
-            # XAU main is M5 -> micro is M1, 15 candles (15 minutes total)
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M1
-            micro_tf_name = "M1"
-            num_micro_send = 15
+            # XAU main is M15 -> micro is M5, 12 candles (60 minutes / 1 hour total)
+            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+            micro_tf_name = "M5"
+            num_micro_send = 12
         else:
             # FX main is H1 -> micro is M5, 24 candles (120 minutes / 2 hours total)
             micro_tf = mt5_connector.mt5.TIMEFRAME_M5
@@ -634,8 +776,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             pass
 
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
-    # reflects real 30-minute volatility. XAU df is M5 and its ATR matches the
-    # scalping scale.
+    # reflects real 30-minute volatility. XAU df is M15 (swing) - ATR M15 ~819 pts.
 
     # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
     # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
@@ -643,8 +784,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
     # biar AI gak buang cycle buat sinyal yang pasti ditolak.
     atr_gate_str = ""
-    # Inject ATR Gate information ONLY if config.TP_SL_RULES is "ATR-Based"
-    if atr_points > 0 and getattr(config, "TP_SL_RULES", "ATR-Based") == "ATR-Based":
+    # Inject ATR Gate information ONLY if the symbol's mode is ATR-Based
+    # (BTC fix ATR-Based; XAU/FX ikut mode LLM kecuali TP_SL_RULES di-force ATR-Based)
+    if atr_points > 0 and config.sltp_mode_for(symbol) == "ATR-Based":
         ai_mode = config.get_ai_mode()
         sl_mult = config.atr_sl_multiplier()
         tp_mult = config.atr_tp_multiplier()
@@ -683,6 +825,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL "
             "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)\n"
         )
+
+    whisper_str = whisper_str or ""
 
     lessons_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
@@ -735,6 +879,21 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
+    # Global portfolio context across all symbols
+    global_portfolio_str = ""
+    if all_open_positions and len(all_open_positions) > 0:
+        gp_lines = []
+        total_pnl = sum(p.get('profit', 0.0) for p in all_open_positions)
+        for ap in all_open_positions:
+            s_name = ap.get('symbol', '?')
+            gp_lines.append(f"- {s_name}: {ap.get('type')} {ap.get('volume')} lot @ {ap.get('price_open')} (Floating P/L: ${ap.get('profit', 0.0):+.2f} USD)")
+        global_portfolio_str = (
+            "\n### GLOBAL PORTFOLIO CONTEXT (All active bot positions across symbols)\n"
+            f"Total Active Positions: {len(all_open_positions)} | Net Floating P/L: ${total_pnl:+.2f} USD\n"
+            + "\n".join(gp_lines) + "\n"
+            "(Use this cross-asset awareness to detect conflicting currency exposures -- e.g. opposing CHF/EUR/GBP trades -- and take profit or cut exposure accordingly.)\n"
+        )
+
     positions_str = ""
     if open_positions and len(open_positions) > 0:
         pos_lines = []
@@ -767,13 +926,17 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
             "For EACH open position above, make an explicit decision:\n" +
-            "- 'CLOSE' ONLY if the trade thesis is genuinely broken (e.g., the invalidation level is breached, a clear counter-trend structure has formed on M5, or a fundamental shift has occurred). Do NOT recommend CLOSE for minor or normal pullbacks within the expected M5 volatility.\n" +
-            "- 'HOLD' if the thesis remains intact, the position is within normal price fluctuations, or progressing toward target.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: price broke invalidation level at 4350.8', or 'HOLD: price holding above support, within normal pullback'). Never leave a ticket without an action.\n"
+            f"- 'CLOSE' if:\n" +
+            f"  (a) INVALIDATION / THESIS BROKEN: The technical invalidation level is breached, a clear counter-trend reversal structure formed on {tf_label}, or momentum is failing.\n" +
+            f"  (b) EARLY PROFIT TAKE / EXHAUSTION: The trade has captured substantial profit (e.g. >= 1R or near major opposing swing structure), is showing momentum exhaustion/divergence, OR conflicts with a stronger broad-market currency trend.\n" +
+            f"- 'HOLD' if the thesis remains intact, the move is within normal healthy {tf_label} fluctuations, and has clear room to reach the full target.\n" +
+            f"Do NOT recommend CLOSE for minor healthy pullbacks when the underlying trend structure is still fully intact.\n" +
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: Invalidation breached at 1.0965', 'CLOSE: Secure +$10 profit near H1 resistance with momentum divergence', or 'HOLD: Healthy pullback, thesis intact'). Never leave a ticket without an action.\n"
         )
 
     # Explicitly separate the two decisions so the LLM does not mix them:
     # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
+    separation_note = ""
     if open_positions and len(open_positions) > 0:
         separation_note = (
             "\nIMPORTANT - TWO SEPARATE DECISIONS:\n"
@@ -783,23 +946,19 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "Do NOT let your opinion about existing positions change your 'signal', and do NOT "
             "let your entry bias change your position_actions. Evaluate each independently.\n"
         )
-    else:
-        separation_note = ""
-
-    # Timeframe label per symbol: BTC trades M30 (intraday), XAU trades M5 (scalp)
-    is_crypto_sym = config.is_crypto(symbol)
-    tf_label = "M30" if is_crypto_sym else "M5"
 
     # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
     swing_high = float(df['high'].max())
     swing_low = float(df['low'].min())
     diff = swing_high - swing_low
-    fib_382 = round(swing_high - 0.382 * diff, 2)
-    fib_500 = round(swing_high - 0.500 * diff, 2)
-    fib_618 = round(swing_high - 0.618 * diff, 2)
+    # Round 6 desimal: buang noise float, biar _fmt_price yang format bersih
+    # (sebelumnya round ke 2 desimal bikin fib FX 5-desimal jadi flat 1.10)
+    fib_382 = round(swing_high - 0.382 * diff, 6)
+    fib_500 = round(swing_high - 0.500 * diff, 6)
+    fib_618 = round(swing_high - 0.618 * diff, 6)
     fib_str = (
-        f"- 50-Bar Swing High: {swing_high:.2f} | Swing Low: {swing_low:.2f}\n"
-        f"- Fibonacci Retracement Levels: Fib 38.2%: {fib_382:.2f} | Fib 50.0%: {fib_500:.2f} | Fib 61.8%: {fib_618:.2f}"
+        f"- 50-Bar Swing High: {_fmt_price(swing_high)} | Swing Low: {_fmt_price(swing_low)}\n"
+        f"- Fibonacci Retracement Levels: Fib 38.2%: {_fmt_price(fib_382)} | Fib 50.0%: {_fmt_price(fib_500)} | Fib 61.8%: {_fmt_price(fib_618)}"
     )
 
     # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
@@ -828,11 +987,11 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 ### CURRENT INDICATORS & FIBONACCI SUMMARY
 - Current Close: {latest['close']}
 - RSI (14): {latest['rsi_14']:.2f}
-- EMA (20): {latest['ema_20']:.2f}
-- EMA (50): {latest['ema_50']:.2f}
-- ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
+- EMA (20): {_fmt_price(latest['ema_20'])}
+- EMA (50): {_fmt_price(latest['ema_50'])}
+- ATR (14): {_fmt_price(latest['atr_14'])} (which is {atr_points} points)
 {atr_gate_str}{fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{macro_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -878,7 +1037,7 @@ def clean_json_response(text):
                         parsed[key] = val.strip('"')
         # Validate keys (setup/edge/invalidation are optional new fields -
         # model may omit them; HOLD responses won't have them)
-        for key in ["signal", "confidence", "sl_points", "tp_points", "reasoning", "setup", "edge", "invalidation"]:
+        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation"]:
             if key not in parsed:
                 parsed[key] = None
         # Ensure signal is upper case
@@ -903,21 +1062,34 @@ def clean_json_response(text):
             "confidence": 0.0,
             "sl_points": None,
             "tp_points": None,
+            "invalidation_price": None,
+            "target_price": None,
             "reasoning": f"Gagal memparsing respon: {str(e)}"
         }
 
 
 def _execute_openai_single(model_name, prompt, timeout_sec):
-    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower()
+    is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower() or "o4" in model_name.lower()
+    effort = (getattr(config, "OPENAI_REASONING_EFFORT", "low") or "").strip().lower()
     if is_reasoning:
-        response = openai_client.chat.completions.create(
-            model=model_name,
-            messages=[
+        kwargs = {
+            "model": model_name,
+            "messages": [
                 {"role": "user", "content": "System: You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences).\n\n" + prompt}
             ],
-            response_format={"type": "json_object"},
-            timeout=timeout_sec
-        )
+            "response_format": {"type": "json_object"},
+            "timeout": timeout_sec
+        }
+        if effort and effort != "none":
+            try:
+                response = openai_client.chat.completions.create(reasoning_effort=effort, **kwargs)
+            except Exception as e_re:
+                if "reasoning_effort" in str(e_re) or "unrecognized" in str(e_re).lower() or "unsupported" in str(e_re).lower():
+                    response = openai_client.chat.completions.create(**kwargs)
+                else:
+                    raise e_re
+        else:
+            response = openai_client.chat.completions.create(**kwargs)
     else:
         response = openai_client.chat.completions.create(
             model=model_name,
@@ -969,14 +1141,34 @@ def query_forecast(prompt):
     return None
 
 
+def _resolve_openai_primary():
+    """gpt-5.2 (kuota free 250k/hari) dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB
+    (default 15:00-19:30 WIB, London session single mode); di luar window pakai
+    OPENAI_DEFAULT_MODEL (gpt-4o-mini) biar kuota besar tidak habis di jam sepi
+    (14 Agustus). OPENAI_FALLBACK_MODEL (o3-mini) = fallback error, dipisah."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    cur_min = wib_now.hour * 60 + wib_now.minute
+    windows = getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", []) or []
+    for start_min, end_min in windows:
+        if start_min <= end_min:
+            if start_min <= cur_min < end_min:
+                return config.OPENAI_MODEL
+        else:  # window lintas tengah malam (mis. 21:00-02:00)
+            if cur_min >= start_min or cur_min < end_min:
+                return config.OPENAI_MODEL
+    return config.OPENAI_DEFAULT_MODEL
+
+
 def query_openai(prompt):
     """Queries OpenAI API with timeout and fallback model support."""
     if not openai_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
 
-    primary_model = config.OPENAI_MODEL
-    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    primary_model = _resolve_openai_primary()
+    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)  # o3-mini (fallback error)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
     try:
         return _execute_openai_single(primary_model, prompt, timeout_sec)
@@ -993,6 +1185,30 @@ def query_openai(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"OpenAI Error: {str(e)}"}
 
 
+def _execute_gemini_single(model_name, prompt, timeout_sec, thinking_budget=None):
+    """Execute a single Gemini call with strict JSON and thinking budget."""
+    if not gemini_client:
+        raise RuntimeError("Gemini client is not initialized.")
+    from google.genai import types
+    if thinking_budget is None:
+        thinking_budget = getattr(config, "GEMINI_THINKING_BUDGET", 1024)
+    cfg_kwargs = dict(response_mime_type="application/json")
+    if thinking_budget and thinking_budget > 0:
+        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+    def _call(mod):
+        res = gemini_client.models.generate_content(
+            model=mod,
+            contents=prompt,
+            config=types.GenerateContentConfig(**cfg_kwargs)
+        )
+        return clean_json_response(res.text)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_call, model_name)
+        return fut.result(timeout=timeout_sec)
+
+
 def query_gemini(prompt):
     """Queries Gemini API with timeout and fallback model support."""
     if not gemini_client:
@@ -1000,28 +1216,15 @@ def query_gemini(prompt):
 
     primary_model = config.GEMINI_MODEL
     fallback_model = getattr(config, "GEMINI_FALLBACK_MODEL", None)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
-
-    def _call(mod):
-        from google.genai import types
-        res = gemini_client.models.generate_content(
-            model=mod,
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        return clean_json_response(res.text)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_call, primary_model)
-            return fut.result(timeout=timeout_sec)
+        return _execute_gemini_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
             print(f" [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(_call, fallback_model)
-                    return fut.result(timeout=timeout_sec)
+                return _execute_gemini_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[GEMINI FALLBACK ERROR] {fb_err}")
                 return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(fb_err)}"}
@@ -1085,7 +1288,7 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
-def _execute_deepseek_single(model_name, prompt, timeout_sec):
+def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=None):
     """Query DeepSeek or OpenAI-compatible router API (e.g. 9router / OpenRouter).
     Strips internal 'deepseek/' routing prefix if present while preserving provider prefixes
     like 'oc/mimo-v2.5-free' or custom router model IDs."""
@@ -1093,34 +1296,60 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec):
         raw_model = model_name[len("deepseek/"):]
     else:
         raw_model = model_name
+
+    if reasoning_effort is None:
+        if "chat" in raw_model.lower():
+            reasoning_effort = ""
+        else:
+            reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "none") or "").strip()
+
+    kwargs = dict(
+        model=raw_model,
+        messages=[
+            {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
+            {"role": "user", "content": prompt}
+        ],
+        response_format={"type": "json_object"},
+        timeout=timeout_sec,
+    )
+    if reasoning_effort and reasoning_effort.lower() not in ("none", "off", "false", "", "disabled"):
+        kwargs["reasoning_effort"] = reasoning_effort
+        kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+    else:
+        kwargs["temperature"] = 0.2
+        # DeepSeek API format to completely disable reasoning thinking CoT
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+    response = deepseek_client.chat.completions.create(**kwargs)
+    return clean_json_response(response.choices[0].message.content)
+
+
+def query_deepseek(prompt):
+    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support (e.g. Gemini 2.5 Flash Lite)."""
+    primary_model = getattr(config, "DEEPSEEK_MODEL", "deepseek-v4-flash")
+    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
+
+    if not deepseek_client:
+        if gemini_client and "gemini" in fallback_model.lower():
+            return _execute_gemini_single(fallback_model, prompt, timeout_sec)
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
     try:
-        try:
-            # Explicitly disable thinking/reasoning mode for super-fast execution (~1.2s)
-            response = deepseek_client.chat.completions.create(
-                model=raw_model,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                reasoning_effort="none",
-                extra_body={"thinking": {"type": "disabled"}},
-                timeout=timeout_sec
-            )
-        except Exception:
-            # Fallback to standard call if API endpoint does not recognize reasoning params
-            response = deepseek_client.chat.completions.create(
-                model=raw_model,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                timeout=timeout_sec
-            )
-        return clean_json_response(response.choices[0].message.content)
+        return _execute_deepseek_single(primary_model, prompt, timeout_sec)
     except Exception as e:
-        raise e
+        if fallback_model and fallback_model != primary_model:
+            print(f" [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            try:
+                if "gemini" in fallback_model.lower():
+                    return _execute_gemini_single(fallback_model, prompt, timeout_sec, thinking_budget=1024)
+                else:
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="")
+            except Exception as fb_err:
+                print(f"[DEEPSEEK FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Fallback Error: {str(fb_err)}"}
+        else:
+            print(f"[DEEPSEEK ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}
 
 
 def query_claude(prompt):
@@ -1133,7 +1362,6 @@ def query_claude(prompt):
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
     is_deepseek = primary_model.startswith("deepseek/") or not primary_model.startswith("claude-")
-
     try:
         if is_deepseek:
             if not deepseek_client:
@@ -1158,27 +1386,47 @@ def query_claude(prompt):
 
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
+                            whisper_str=None, all_open_positions=None):
     """
     Query only the AI slots active for the current WIB time window.
-    mode = single -> OpenAI only
-    mode = dual   -> OpenAI + DeepSeek (slot-3)
-    mode = triple -> OpenAI + Gemini + DeepSeek (slot-3)
+    mode = single        -> OpenAI only (00:00-14:59 / 21:31-23:59)
+    mode = dual          -> OpenAI + DeepSeek (15:00-19:29, London Session)
+    mode = triple        -> OpenAI + Gemini + Claude (19:30-21:30, London-NY overlap)
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions, whisper_str, all_open_positions=all_open_positions)
 
     active_models = config.active_ai_model_names()
-    slot_label = claude_slot_label()
     model_fns = {
         "OpenAI": query_openai,
         "Gemini": query_gemini,
-        slot_label: query_claude,
+        "DeepSeek": query_deepseek,
+        "Claude": query_claude,
     }
     selected = {name: model_fns[name] for name in active_models if name in model_fns}
 
     results = {}
     latencies = {}
     start_total = time.time()
+    pending_models = set(selected.keys())
+    stop_spinner = threading.Event()
+
+    def _spinner_task():
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        idx = 0
+        while not stop_spinner.is_set():
+            elapsed = time.time() - start_total
+            waiting_for = ", ".join(sorted(pending_models)) if pending_models else "finalizing..."
+            spin = spinner_chars[idx % len(spinner_chars)]
+            sys.stdout.write(f"\r  {UI.CYAN}{spin}{UI.RST} {UI.DIM}Menunggu respon AI ({elapsed:.1f}s) -> [Menunggu: {waiting_for}]...{UI.RST}   ")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.1)
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+    spinner_thread = threading.Thread(target=_spinner_task, daemon=True)
+    spinner_thread.start()
 
     def _query_timed(query_fn, p):
         t0 = time.time()
@@ -1199,13 +1447,21 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                 data, elapsed = future.result()
                 results[model_name] = data
                 latencies[model_name] = elapsed
+                pending_models.discard(model_name)
+                sys.stdout.write(f"\r{UI.clear_line()}  {UI.GREEN}✓{UI.RST} {UI.BOLD}{model_name}{UI.RST} selesai dalam {elapsed:.2f}s\n")
+                sys.stdout.flush()
             except Exception as exc:
-                print(f"[LLM CLIENT ERROR] Model {model_name} generated an exception: {exc}")
+                print(f"\r{UI.clear_line()}[LLM CLIENT ERROR] Model {model_name} generated an exception: {exc}")
                 results[model_name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": str(exc)}
                 latencies[model_name] = 0.0
+                pending_models.discard(model_name)
+
+    stop_spinner.set()
+    spinner_thread.join(timeout=0.5)
 
     total_elapsed = time.time() - start_total
     mode = config.get_ai_mode()
     lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in active_models if m in latencies])
-    print(f" [LATENSI MODEL] mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
+    print(f" {UI.tag('AI LATENCY', UI.CYAN)} mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results
+

@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 import config
 from config import mt5
 from src.core import mt5_connector as connector
+from src.core.cli_theme import UI
 
 
 WIB = ZoneInfo("Asia/Jakarta")
@@ -152,6 +153,11 @@ class RiskEngine:
         if not daily_ok:
             return False, daily_msg
 
+        # 2b. Check daily profit target (stop trade setelah profit harian tercapai)
+        profit_ok, profit_msg = self._check_daily_profit_target()
+        if not profit_ok:
+            return False, profit_msg
+
         # 3. Check max open positions
         pos_ok, pos_msg = self._check_max_positions()
         if not pos_ok:
@@ -226,6 +232,13 @@ class RiskEngine:
             if self._consecutive_losses > 0:
                 print(f" [RISK] Win setelah {self._consecutive_losses} loss. Streak direset.")
             self._consecutive_losses = 0
+            # Batalkan pause kalau masih aktif - alasan pause (5 loss beruntun)
+            # sudah tidak berlaku karena ada win yang menandakan market recovery.
+            # Sebelumnya pause tetap jalan sampai timer habis + pesan "5 loss
+            # berturut-turut" terus muncul padahal streak sudah nol (bug 15 Agustus).
+            if time.time() < self._paused_until:
+                self._paused_until = 0
+                print(" [RISK] Pause dibatalkan setelah win (streak sudah reset).")
             # Exit recovery mode only after a win that clears the minimum
             # profit threshold - a tiny win should not instantly reset the
             # reduced-lot protection after a losing streak.
@@ -291,7 +304,7 @@ class RiskEngine:
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
-        print(f" [SIZING] {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd_total:.2f}"
+        print(f" {UI.tag('SIZING', UI.CYAN)} {symbol}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd_total:.2f}"
               + (f" ({split_count} posisi -> ${risk_usd:.2f}/posisi)" if split_count > 1 else "")
               + f", SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
 
@@ -316,7 +329,7 @@ class RiskEngine:
                 margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot, tick.ask)
                 free_margin = float(account.margin_free) if account else 0.0
                 if margin and margin > free_margin * 0.5:  # keep 50% buffer
-                    print(f" [SIZING] Margin {margin:.2f} > 50% free ({free_margin:.2f}). Lot diturunkan.")
+                    print(f" {UI.tag('SIZING', UI.YELLOW)} Margin {margin:.2f} > 50% free ({free_margin:.2f}). Lot diturunkan.")
                     # Halve until it fits
                     while lot > volume_min and margin > free_margin * 0.5:
                         lot = round((lot - volume_step), 2)
@@ -332,9 +345,10 @@ class RiskEngine:
         """Apply recovery (x0.5) and session (x1.0/1.2) lot multipliers."""
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
             lot *= config.RECOVERY_LOT_MULTIPLIER
-            print(f" [RECOVERY] Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
+            print(f" {UI.tag('RECOVERY', UI.YELLOW)} Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
         lot *= self._session_lot_multiplier
         return lot
+
 
     @property
     def is_recovery_mode(self):
@@ -362,12 +376,46 @@ class RiskEngine:
             print(f"[RISK WARNING] Gagal memeriksa P/L harian: {e}")
             return True, ""
 
+    def _check_daily_profit_target(self):
+        """
+        Daily profit target (14 Agustus): begitu net profit harian (WIB-midnight,
+        dari get_closed_positions_today) mencapai DAILY_PROFIT_TARGET_PERCENT % dari
+        balance MT5, bot BERHENTI membuka posisi baru sampai tengah malam WIB
+        berikutnya (reset otomatis karena window P/L harian = midnight WIB).
+        Nilai 0.0 / negatif = fitur dimatikan.
+        """
+        try:
+            target_pct = getattr(config, "DAILY_PROFIT_TARGET_PERCENT", 0.0)
+            if target_pct <= 0:
+                return True, ""  # fitur dimatikan
+
+            closed = connector.get_closed_positions_today()
+            daily_pnl = sum(c["profit"] for c in closed)  # profit sudah NET (termasuk swap+komisi)
+
+            account = mt5.account_info()
+            balance = float(account.balance) if account else 0.0
+            # Kalau balance tidak terbaca (MT5 disconnected / None), jangan blokir
+            # trade karena target tidak bisa dihitung - biarkan gate lain yang kerja.
+            if balance <= 0:
+                return True, ""
+            target_usd = balance * target_pct / 100.0
+
+            if daily_pnl >= target_usd:
+                return False, (f" [RISK] Target Profit Harian Tercapai! P/L: +${daily_pnl:.2f} "
+                               f"(Target: +{target_pct:.1f}% / +${target_usd:.2f}). "
+                               f"Trading dihentikan sampai besok!")
+            return True, ""
+
+        except Exception as e:
+            print(f"[RISK WARNING] Gagal memeriksa target profit harian: {e}")
+            return True, ""
+
     def _check_max_positions(self):
         """Check if max open positions (of this bot) reached - aggregated across ALL
         symbols (XAU + FX pairs + BTC), since rotation mode trades multiple symbols."""
         positions = mt5.positions_get()
         bot_positions = [p for p in (positions or []) if p.magic == config.MAGIC_NUMBER]
-        max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if self._in_recovery_mode else config.MAX_OPEN_POSITIONS
+        max_positions = config.get_max_open_positions(self._in_recovery_mode)
         if len(bot_positions) >= max_positions:
             return False, f" [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions} (semua simbol)."
         return True, ""
@@ -396,19 +444,23 @@ class RiskEngine:
                            f"(Maks: {max_spread} pts). Menunggu...")
         return True, ""
 
-    def _check_danger_zones(self):
-        """Check if current time is in a danger zone (rollover/dead zone)."""
-        # Crypto (BTCUSD) trades 24/7 - no FX-style danger zones
+    def _check_danger_zones(self, now_wib=None):
+        """Check if current time falls in any predefined danger zones."""
+        # Crypto (BTCUSD) trades 24/7 - no FX danger zones
         if config.is_crypto(config.SYMBOL):
             return True, ""
 
-        now_wib = datetime.now(WIB)
+        now_wib = now_wib or datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
         for zone in config.DANGER_ZONES_WIB:
             start = zone["start"][0] * 60 + zone["start"][1]
             end = zone["end"][0] * 60 + zone["end"][1]
-            if start <= current_minutes < end:
+            if start > end:
+                in_zone = current_minutes >= start or current_minutes < end
+            else:
+                in_zone = start <= current_minutes < end
+            if in_zone:
                 return False, f" [RISK] Zona bahaya '{zone['name']}': {zone['reason']}"
         return True, ""
 
@@ -425,14 +477,12 @@ class RiskEngine:
             return True, ""
         now_wib = datetime.now(WIB)
         if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
-            return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
-        if now_wib.weekday() == 5:  # Saturday
-            return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
-        if now_wib.weekday() == 6:  # Sunday
+            return False, " [RISK] Weekend entry blocked: Jumat >= 22:00 WIB. Menunggu Senin 00:00 WIB."
+        if now_wib.weekday() in (5, 6):  # Saturday or Sunday
             return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         return True, ""
 
-    def _check_session(self):
+    def _check_session(self, now_wib=None):
         """Check if current time falls within allowed trading sessions. Sets lot multiplier."""
         # Crypto (BTCUSD) trades 24/7 - no FX session windows
         if config.is_crypto(config.SYMBOL):
@@ -443,7 +493,7 @@ class RiskEngine:
             self._session_lot_multiplier = 1.0
             return True, ""
 
-        now_wib = datetime.now(WIB)
+        now_wib = now_wib or datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
         # Pick the HIGHEST multiplier among all matching sessions so overlapping

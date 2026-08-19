@@ -103,20 +103,53 @@ API_TOKEN = os.getenv("API_TOKEN", "")
 
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 
 
 # --- MODEL NAMES & FALLBACKS ---
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "deepseek/deepseek-v4-flash")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
 CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
+
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_FALLBACK_MODEL = os.getenv("DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+
+# DeepSeek reasoning effort: "high" | "medium" | "low" | "none" (default "low" for targeted CoT reasoning)
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
+
+# OpenAI reasoning effort: "high" | "medium" | "low" | "none" (default "low" for speed & low latency)
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
+GEMINI_THINKING_BUDGET = _getenv_int("GEMINI_THINKING_BUDGET", 1024)  # 1024 token thinking budget (respons ~2.3s)
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
-OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "o4-mini")
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "o4-mini")
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "o3-mini")  # fallback error (lambat/timeout)
 
-LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 24.0)
+
+def _parse_windows_wib(raw):
+    """Parse "15:00-19:30" / "15:00-19:30,21:00-23:00" -> list[(start_min, end_min)]."""
+    out = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if ":" in part and "-" in part:
+            try:
+                s, e = part.split("-")
+                sh, sm = s.split(":")
+                eh, em = e.split(":")
+                out.append((int(sh) * 60 + int(sm), int(eh) * 60 + int(em)))
+            except Exception:
+                pass
+    return out
+
+
+# gpt-5.2 (free tier model besar 250k token/hari, SHARED semua model besar)
+# dipakai HANYA di window ini (WIB) biar kuota tidak cepet habis; di luar window
+# OpenAI langsung pakai fallback gpt-4o-mini (2.5M token/hari, cukup full day).
+OPENAI_PRIMARY_WINDOW_WIB = _parse_windows_wib(os.getenv("OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"))
+
+LLM_TIMEOUT_SECONDS = _getenv_float("LLM_TIMEOUT_SECONDS", 35.0)
 
 # Forecast Engine: primary & fallback models
 FORECAST_MODEL = os.getenv("FORECAST_MODEL", "gpt-5.4")
@@ -142,13 +175,15 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,EURJPY-ECNc,GBPUSD-ECNc,EURAUD-ECNc",
+        # 16 Agustus (user): EURJPY -> CADCHF. Hasil riset edge: CADCHF #3 (27 EDGE,
+        # 8 kuat, EV +0.43 Bearish Sweep NY), EURJPY paling lemah (#11, 4 EDGE, 0 kuat).
+        "GBPCHF-ECNc,EURCHF-ECNc,GBPNZD-ECNc,CADCHF-ECNc,GBPAUD-ECNc,EURAUD-ECNc",
     ).split(",")
     if s.strip()
 ]
 MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 7)  # max symbols in the rotation pool
 
-TIMEFRAME_STR = os.getenv("TIMEFRAME", "M5").upper()
+TIMEFRAME_STR = os.getenv("TIMEFRAME", "M30").upper()
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,
     "M5": mt5.TIMEFRAME_M5,
@@ -158,7 +193,7 @@ TIMEFRAME_MAP = {
     "H4": mt5.TIMEFRAME_H4,
     "D1": mt5.TIMEFRAME_D1,
 }
-TIMEFRAME = TIMEFRAME_MAP.get(TIMEFRAME_STR, mt5.TIMEFRAME_M5)
+TIMEFRAME = TIMEFRAME_MAP.get(TIMEFRAME_STR, mt5.TIMEFRAME_M30)
 H1_TIMEFRAME = mt5.TIMEFRAME_H1
 
 STARTING_BALANCE = _getenv_float("STARTING_BALANCE", 1000.0)
@@ -168,25 +203,79 @@ LOT_SIZE_XAU = _getenv_float("LOT_SIZE_XAU", LOT_SIZE)
 LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
-RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 0.5)
+RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
+DEVIATION = _getenv_int("DEVIATION", 30)
+DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
+DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
 
-DEVIATION = _getenv_int("DEVIATION", 20)
 
-TP_SL_RULES = os.getenv("TP_SL_RULES", "ATR-Based")
+def deviation_for(symbol):
+    """Slippage deviation tolerance in points per asset category.
+    XAU: 60 pts ($0.60) - sweet spot 50-75 pts.
+    BTC: 1000 pts ($10.00).
+    FX: 30 pts (3 pips).
+    """
+    if is_crypto(symbol):
+        return DEVIATION_BTC
+    if "XAU" in (symbol or "").upper() or "GOLD" in (symbol or "").upper():
+        return DEVIATION_XAU
+    return DEVIATION
+
+# TP_SL_RULES default "LLM" (13 Agustus): SL/TP bebas sesuai thesis LLM (invalidation/target
+# price), safety floor per-kategori (14 Agustus: XAU 400 pts, FX 250 pts) + R:R min 1.25:1.
+# Mode "ATR-Based" tetap tersedia via .env/menu/--tpsl-rules - gate ATR R:R 2:1
+# (single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5).
+#
+# PER-KATEGORI (13 Agustus, pisah logic biar enak debug):
+# - XAUUSD: LLM (13 Agustus - soft floor 400-1000, gate over-risk; max lot cap
+#   dihapus 14 Agustus - lot murni risk-based sesuai volume_max broker).
+# - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
+#   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
+#   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
+# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+#   via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts kalau ATR gagal; R:R min 1.25:1) - cocok utk H1 swing.
+# - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
+#   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
+TP_SL_RULES = os.getenv("TP_SL_RULES", "LLM")
 
 DEFAULT_SL_POINTS = _getenv_int("DEFAULT_SL_POINTS", 300)
 DEFAULT_TP_POINTS = _getenv_int("DEFAULT_TP_POINTS", 600)
 SL_ATR_MULTIPLIER = _getenv_float("SL_ATR_MULTIPLIER", 1.5)
 TP_ATR_MULTIPLIER = _getenv_float("TP_ATR_MULTIPLIER", 3.0)
 
-DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", 400)
-DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 800)
+DEFAULT_SL_POINTS_XAU = _getenv_int("DEFAULT_SL_POINTS_XAU", 500)
+DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 1000)
 DEFAULT_SL_POINTS_BTC = _getenv_int("DEFAULT_SL_POINTS_BTC", 50000)
 DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # Default SL/TP FX (12 Agustus, FASE 1): FX trading H1 swing - default flat 100/200 pts
 # (10/20 pips EURJPY scale). Dulu per-pair 50/100 & 40/80 waktu FX masih M5 scalping;
 # sejak pindah H1, ATR H1 jauh lebih besar jadi 100/200 lebih pas. Gate ATR-Based tetap
 # menolak otomatis kalau proposal SL/TP < multiplier x ATR (lihat atr_sl_multiplier).
+
+# --- LLM MODE SAFETY FLOOR & R:R GATE (14 Agustus) ---
+# Mode LLM (XAU & FX): SL/TP bebas struktur LLM, tapi dibatasi safety floor minimal
+# (mencegah SL mikro 5 pips yang membengkakkan lot) + gate R:R minimum.
+# Safety floor SL/TP mode LLM (14 Agustus):
+#   - FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
+#     Fallback statis 250 pts (25 pips) dipakai kalau ATR gagal dihitung.
+#     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
+#     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
+#     TP 312 (3.2x ATR) jarang kesampean. ATR-based menyesuaikan volatilitas.
+#   - XAUUSD:   floor berbasis ATR aktif (default 1.2x ATR M15, `LLM_XAU_FLOOR_ATR_MULT`,
+#     15 Agustus - user minta "floor 1x atr secara lunak", final 1.2x; SL tipis 0.8x ATR
+#     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
+#   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
+LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.5)
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
+LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
+LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
+
+# Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
+# per-trade) TIDAK otomatis ditolak di risk_pct — masih diterima selama risk aktual
+# di min lot <= OVER_RISK_MAX_PERCENT (14 Agustus malam: user minta SL >1000 pts
+# boleh jalan asal gate maks 2%; lot tetap risk-based 1%, cuma gate ceiling-nya ini).
+OVER_RISK_MAX_PERCENT = _getenv_float("OVER_RISK_MAX_PERCENT", 2.0)
 
 
 
@@ -199,7 +288,7 @@ ERA_PRESETS = {
     "v1": {
         "label": "V1 - era profit 100% (legacy)",
         "DRY_RUN": True,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -207,7 +296,7 @@ ERA_PRESETS = {
     "v2": {
         "label": "V2 - legacy-2 (= v1 + state)",
         "DRY_RUN": True,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -215,7 +304,7 @@ ERA_PRESETS = {
     "v3": {
         "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
-        "RISK_PERCENT_XAU": 0.5,
+        "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.5,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
@@ -231,20 +320,21 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
 # Format: (start_hour, start_minute, end_hour, end_minute, mode)
-# Mode values: "single" | "dual" | "triple"
+# Mode values: "single" | "single_gemini" | "dual" | "triple"
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
-# Jadwal WIB (11 Agustus, hemat biaya):
-#   - triple (3 model) HANYA 19:30-21:30 WIB (London-NY overlap, volatilitas tertinggi)
-#   - sisanya single/dual; blok single malam diperpanjang 21:30 -> 08:59 (Asia Dawn
-#     & Tokyo pagi cukup 1 model - hemat token, dulu triple 19:00-23:00 kemahalan)
+# Jadwal WIB (Single Mode DIHAPUS TOTAL demi keamanan - minimal 2 model sepakat):
+#   - dual   (OpenAI o4-mini + DeepSeek v4-flash): 00:00–19:29 (Asia & London session; 02:00-06:00 Dead Zone risk gate)
+#   - triple (OpenAI + Gemini + Claude 3.5 Haiku): 19:30–21:30 (London-NY overlap, puncak volatilitas)
+#   - dual   (OpenAI o4-mini + DeepSeek v4-flash): 21:31–23:59 (Late NY session)
 AI_MODE_SCHEDULE = [
-    (0, 1, 8, 59, "single"),
-    (9, 0, 13, 0, "dual"),
-    (13, 1, 19, 29, "single"),
+    (0, 0, 19, 29, "dual"),
     (19, 30, 21, 30, "triple"),
-    (21, 31, 23, 59, "single"),
+    (21, 31, 23, 59, "dual"),
 ]
+
+# Model pengisi slot kedua di mode "dual". Default "Gemini" (o4-mini + gemini-3.1-flash-lite).
+AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
 QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
@@ -286,10 +376,40 @@ TRAILING_DISTANCE_POINTS_BTC = _getenv_int("TRAILING_DISTANCE_POINTS_BTC", 12500
 
 TRAILING_ACTIVATION_ATR_MULT_BTC = _getenv_float("TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0)
 TRAILING_DISTANCE_ATR_MULT_BTC = _getenv_float("TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
-TRAILING_ACTIVATION_ATR_MULT_XAU = _getenv_float("TRAILING_ACTIVATION_ATR_MULT_XAU", 1.0)
-TRAILING_DISTANCE_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
+TRAILING_ACTIVATION_ATR_MULT_XAU = _getenv_float("TRAILING_ACTIVATION_ATR_MULT_XAU", 1.2)
+TRAILING_DISTANCE_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_ATR_MULT_XAU", 0.6)
 TRAILING_ACTIVATION_MAX_POINTS_BTC = _getenv_int("TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
-TRAILING_ACTIVATION_MAX_POINTS_XAU = _getenv_int("TRAILING_ACTIVATION_MAX_POINTS_XAU", 500)
+TRAILING_ACTIVATION_MAX_POINTS_XAU = _getenv_int("TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
+TRAILING_DISTANCE_START_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.2)
+TRAILING_DISTANCE_END_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
+TRAILING_DISTANCE_MIN_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
+TRAILING_DISTANCE_START_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_START_ATR_MULT_FX", 0.8)
+TRAILING_DISTANCE_END_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_END_ATR_MULT_FX", 0.3)
+TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MULT_FX", 0.2)
+
+# --- SL-BASED TRAILING & BEP (mode LLM, 13 Agustus) ---
+# Di mode LLM, SL/TP murni struktur LLM (R:R bisa asimetris, TP bisa jauh, bahkan TP < SL).
+# Trailing/BEP di-scale ke jarak SL posisi (thesis-relative), BUKAN ke ATR (yang gak nyambung
+# sama struktur LLM) dan BUKAN ke % TP (yang bisa jauh & gak kesampean -> proteksi gak pernah
+# aktif). Mode ATR-Based tetap pakai konstanta ATR di atas (konsisten karena SL/TP-nya juga
+# turunan ATR).
+#
+# UPDATE 15 Agustus - BEP/trailing pindah ke PURE % TP (default 65%/80%):
+# SL-based (1x SL BEP, 1.5x SL activation) ternyata cacat di dua ujung untuk trade
+# R:R rendah (1.25-1.5, hasil gate R:R min 1.25):
+#   - Tanpa cap TP: activation 1.5x SL > TP 1.25x SL -> trailing TIDAK PERNAH nyala
+#   - Dengan cap 60% TP: activation jadi 0.75x SL -> kecepetan (sebelum 1x SL)
+# Pure % TP selalu proporsional ke target: R:R 2:1 -> BEP 1.3x SL, activation 1.6x SL
+# (ruang napas); R:R 1.25 -> BEP 0.81x SL, activation 1.0x SL (tetap nyala, pas).
+# Konstanta SL_MULT di bawah tetap dipakai sebagai FALLBACK untuk posisi tanpa TP.
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.35)  # BEP aktif saat profit >= 35% TP (responsif)
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.50)  # trailing aktif saat profit >= 50% TP
+BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
+TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
+TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 1.2)  # longgar saat baru aktif (15 Agu: 0.8->1.2)
+TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.4)  # ketat mendekati TP (15 Agu: 0.3->0.4)
+TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.3)  # floor (15 Agu: 0.2->0.3)
+
 
 # --- BREAK-EVEN ---
 BREAK_EVEN_ENABLED = _getenv_bool("BREAK_EVEN_ENABLED", True)
@@ -302,7 +422,7 @@ BREAK_EVEN_TRIGGER_POINTS_BTC = _getenv_int("BREAK_EVEN_TRIGGER_POINTS_BTC", 335
 BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 1000)
 
 # --- PARTIAL CLOSE ---
-PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
+PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", False)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
@@ -316,6 +436,39 @@ PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
 MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 4)
+MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
+
+
+def get_max_open_positions(in_recovery_mode=False, now=None):
+    """Maksimum open posisi agregat (semua simbol):
+    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
+    - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (4)
+    - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
+      (kalau recovery mode aktif di jam late NY, tetap min(2, 4) = 2).
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    cur_min = now.hour * 60 + now.minute
+
+    # 23:00 s.d. 02:00 WIB
+    is_late_ny = (cur_min >= 23 * 60) or (cur_min < 2 * 60)
+    if is_late_ny:
+        base = MAX_OPEN_POSITIONS_LATE_NY
+    elif in_recovery_mode:
+        base = MAX_OPEN_POSITIONS_RECOVERY
+    else:
+        base = MAX_OPEN_POSITIONS
+
+    if in_recovery_mode:
+        return min(base, MAX_OPEN_POSITIONS_RECOVERY)
+    return base
+# --- DAILY PROFIT TARGET (14 Agustus) ---
+# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
+# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
+# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
+DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
 
 
 def bep_tolerance_for(deal):
@@ -356,20 +509,20 @@ MAX_SPREAD_POINTS_FX = _getenv_int("MAX_SPREAD_POINTS_FX", 150)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 
 # --- SESSION FILTER ---
+# Trade Zone: 07:00 - 02:00 WIB (02:00 - 07:00 WIB Dead Zone Rollover)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Asia Dawn",      "start": (5, 0),  "end": (7, 0),   "lot_multiplier": 0.7},
-    {"name": "Tokyo",          "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
-    {"name": "London",         "start": (15, 0), "end": (23, 59), "lot_multiplier": 1.0},
-    {"name": "London-NY ()", "start": (20, 0), "end": (23, 59), "lot_multiplier": 1.2},
-    {"name": "NY",             "start": (20, 0), "end": (5, 0),   "lot_multiplier": 1.0},
+    {"name": "Tokyo / Asia Pagi", "start": (7, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
+    {"name": "London-NY Overlap", "start": (19, 30),"end": (21, 30), "lot_multiplier": 1.2},
+    {"name": "New York",          "start": (20, 0), "end": (2, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones DINONAKTIFKAN (permintaan user 11-08: full trade 24 jam,
-# tengah malam-pagi juga trade). Kalau mau aktifkan lagi, isi list-nya:
-#   {"name": "Rollover",  "start": (4, 0), "end": (6, 0), "reason": "Spread melebar saat rollover"},
-#   {"name": "Dead Zone", "start": (0, 0), "end": (4, 0), "reason": "Likuiditas rendah"},
-DANGER_ZONES_WIB = []
+# Danger zones (Dead Zone subuh rollover broker 02:00 - 07:00 WIB). Berlaku XAU & FX; BTC 24/7.
+DANGER_ZONES_WIB = [
+    {"name": "Overnight Rollover Dead Zone (02:00 - 07:00 WIB)", "start": (2, 0), "end": (7, 0),
+     "reason": "Dead Zone subuh & spread rollover (02:00 - 07:00 WIB)"},
+]
 
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
@@ -378,6 +531,11 @@ WEEKEND_CLOSE_HOURS_BEFORE = _getenv_float("WEEKEND_CLOSE_HOURS_BEFORE", 2.0)
 WEEKEND_MAX_LOSS_TO_HOLD_USD = _getenv_float("WEEKEND_MAX_LOSS_TO_HOLD_USD", 20.0)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 
+# --- PATTERN EDGE WHISPER (16 Agustus, dev-backtest) ---
+# Inject statistik pola tervalidasi (dari riset pattern_research.py) ke prompt LLM
+# kalau pola di candle terakhir match registry EDGE. Informational only.
+PATTERN_WHISPER_ENABLED = _getenv_bool("PATTERN_WHISPER_ENABLED", True)
+
 POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_AGE_SECONDS", 300)
 
 # --- TELEGRAM ALERTS ---
@@ -385,6 +543,7 @@ TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", False)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
+TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", True)
 
 # --- MT5 CONNECTION ---
 MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "live").lower()  # "live" | "demo"
@@ -417,8 +576,8 @@ refresh_mt5_credentials()
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = _getenv_bool("MTF_ANALYSIS_ENABLED", True)
 HIGHER_TIMEFRAMES = {
-    "M15": mt5.TIMEFRAME_M15,
-    "M30": mt5.TIMEFRAME_M30
+    "H1": mt5.TIMEFRAME_H1,
+    "H4": mt5.TIMEFRAME_H4
 }
 HIGHER_TIMEFRAMES_CRYPTO = {
     "H1": mt5.TIMEFRAME_H1,
@@ -430,7 +589,7 @@ HIGHER_TIMEFRAMES_FX = {
 }
 
 def get_higher_timeframes(symbol):
-    """Returns the MTF context timeframes for a symbol (crypto -> H1/H4)."""
+    """Returns the MTF context timeframes for a symbol (crypto/XAU -> H1/H4)."""
     if is_crypto(symbol):
         return HIGHER_TIMEFRAMES_CRYPTO
     if "XAU" not in symbol.upper():
@@ -438,7 +597,7 @@ def get_higher_timeframes(symbol):
     return HIGHER_TIMEFRAMES
 
 FUNDAMENTAL_ANALYSIS_ENABLED = _getenv_bool("FUNDAMENTAL_ANALYSIS_ENABLED", False)
-PRIMARY_ANALYSIS_MODEL = os.getenv("PRIMARY_ANALYSIS_MODEL", "gpt-5.4-mini")
+PRIMARY_ANALYSIS_MODEL = os.getenv("PRIMARY_ANALYSIS_MODEL", "o4-mini")
 
 # --- LOGGING SETTINGS ---
 LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
@@ -459,6 +618,31 @@ def is_meme_coin(symbol):
     """True if symbol matches known meme coin patterns."""
     upper = symbol.upper()
     return any(pat in upper for pat in MEME_COIN_PATTERNS)
+
+
+def sltp_mode_for(symbol):
+    """
+    SL/TP mode per kategori aset (13 Agustus - pisah logic per simbol biar enak debug):
+    - XAU: "LLM" (13 Agustus sore - pindah dari ATR-Based fix). Alasan: gate ATR
+      (SL >= 1.25x ATR M15 ~1024 pts) bikin SL lebar yang TIDAK MUAT di min lot 0.01
+      dengan risk 0.5% (over-risk 3.2x). Mode LLM + risk 1.0% = sweet spot SL ~539-1079
+      pts di min lot. Tetap ada gate tolak kalau SL > max budget (risk > 1.25% dengan
+      min lot) di consensus/main. Max lot cap (0.01) dihapus 14 Agustus - lot murni
+      risk-based, volume_max broker yang membatasi.
+    - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
+    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+      via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts / 25 pips kalau ATR gagal; R:R min 1.25:1).
+      Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
+    """
+    s = (symbol or "").upper()
+    if "XAU" in s or "GOLD" in s:
+        return "LLM"  # 13 Agustus: XAU ikut LLM mode (bukan ATR-Based lagi)
+    if is_crypto(symbol):
+        return "ATR-Based"  # BTC fix, tidak bisa di-override ke LLM
+    # FX pairs: default LLM, bisa di-force ATR-Based via config.TP_SL_RULES
+    if TP_SL_RULES == "ATR-Based":
+        return "ATR-Based"
+    return "LLM"
 
 
 def get_rotation_pool(now=None):
@@ -527,11 +711,11 @@ def lot_size_for(symbol):
 def get_timeframe(symbol):
     """Returns the trading timeframe for a symbol.
     BTC/crypto trades on M30 (30-minute intraday) to avoid overnight swap charges.
-    FX crosses on H1, XAU keeps M5 scalping.
+    FX crosses on H1, XAU trades on M30 (30-minute intraday swing).
     """
     if is_crypto(symbol): return mt5.TIMEFRAME_M30
     if "XAU" not in symbol.upper(): return mt5.TIMEFRAME_H1
-    return TIMEFRAME
+    return mt5.TIMEFRAME_M30
 
 
 def default_sl_points_for(symbol):
@@ -556,7 +740,7 @@ def max_spread_points_for(symbol):
 
 def confidence_threshold_for(symbol):
     """Weighted-confidence consensus threshold per symbol.
-    BTC (M30, moderate entries) needs higher conviction than XAU (M5, frequent).
+    BTC (M30, moderate entries) needs higher conviction than XAU (M15, frequent).
     """
     return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 
@@ -575,7 +759,7 @@ def get_ai_mode(now=None):
     policy = getattr(sys.modules[__name__], "AI_MODE_POLICY", "schedule")
     if policy == "fixed":
         fixed = getattr(sys.modules[__name__], "AI_FIXED_MODE", "triple")
-        return fixed if fixed in ("single", "dual", "triple") else "triple"
+        return fixed if fixed in ("single", "single_gemini", "dual", "triple") else "triple"
 
     total_minutes = now.hour * 60 + now.minute
     for sh, sm, eh, em, mode in AI_MODE_SCHEDULE:
@@ -588,42 +772,62 @@ def get_ai_mode(now=None):
 
 def atr_sl_multiplier(now=None):
     """SL floor multiplier per AI mode (R:R 2:1 dijaga):
-    single 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
+    single / single_gemini 1.25x, dual 1.5x, triple 1.75x - makin banyak model setuju,
     makin yakin setupnya, SL/TP makin lebar (target lebih jauh).
     Dipakai di consensus gate ATR + prompt atr_gate_str - harus sinkron.
     """
-    return {"single": 1.25, "dual": 1.5, "triple": 1.75}.get(get_ai_mode(now), 1.25)
+    mode = get_ai_mode(now)
+    if mode in ("single", "single_gemini"):
+        return 1.25
+    if mode == "dual":
+        return 1.5
+    return 1.75
 
 
 def atr_tp_multiplier(now=None):
     """TP floor multiplier per AI mode = 2x SL multiplier (R:R 2:1 selalu):
-    single 2.5x, dual 3.0x, triple 3.5x.
+    single / single_gemini 2.5x, dual 3.0x, triple 3.5x.
     """
-    return {"single": 2.5, "dual": 3.0, "triple": 3.5}.get(get_ai_mode(now), 2.5)
+    mode = get_ai_mode(now)
+    if mode in ("single", "single_gemini"):
+        return 2.5
+    if mode == "dual":
+        return 3.0
+    return 3.5
 
 
 def claude_slot_label():
-    """Display label for the 'Claude slot' model. Shows DeepSeek when the
-    configured model is deepseek/..., otherwise Claude. Single source of truth."""
-    return "DeepSeek" if CLAUDE_MODEL.startswith("deepseek/") else "Claude"
+    """Display label for Claude slot model."""
+    return "Claude"
 
 
 def active_ai_model_names(now=None):
-    """Return the model slots to query for the active AI mode."""
+    """Return the model slots to query for the active AI mode.
+    - single: OpenAI (o4-mini)
+    - single_gemini: Gemini (gemini-3.1-flash-lite)
+    - dual: OpenAI (o4-mini) + DeepSeek (deepseek-v4-flash)
+    - triple: OpenAI (o4-mini) + Gemini (gemini-3.1-flash-lite) + Claude (claude-sonnet-4-6)
+    """
     mode = get_ai_mode(now)
-    slot3 = claude_slot_label()
+    if mode == "single_gemini":
+        return ["Gemini"]
     if mode == "single":
         return ["OpenAI"]
     if mode == "dual":
-        return ["OpenAI", slot3]
-    return ["OpenAI", "Gemini", slot3]
+        second = AI_DUAL_SECOND_MODEL.strip().lower()
+        if second in ("gemini", "gem"):
+            return ["OpenAI", "Gemini"]
+        return ["OpenAI", "DeepSeek"]
+    return ["OpenAI", "Gemini", "Claude"]
 
 
 def risk_percent_for(symbol):
     """Risk per trade (% of balance) for risk-based lot sizing.
     BTC (M30 swing, few concurrent positions): 1.5%.
     FX (H1): 1.0%.
-    XAU (M5 scalping, up to 6 concurrent): 0.5% - aggregate ~3% max.
+    XAU (M15 swing, up to 6 concurrent): 1.0% (13 Agustus - dinaikkan dari 0.5%
+    karena min lot 0.01 broker tidak bisa mewakili risk 0.5% dengan SL ATR/struktur
+    yang lebar; 1.0% = max SL ~1079 pts di equity ~$1079, muat sweet spot).
     """
     if is_crypto(symbol): return RISK_PERCENT_BTC
     if "XAU" not in symbol.upper(): return 1.0
@@ -852,3 +1056,62 @@ def save_config_to_env(updates: dict) -> list:
         f.writelines(new_lines)
 
     return updated_keys
+
+
+def is_fx(symbol):
+    """True if the given symbol is a Forex currency pair."""
+    upper = symbol.upper()
+    return not is_crypto(symbol) and "XAU" not in upper
+
+
+def break_even_trigger_for(symbol):
+    """Returns break-even trigger point threshold per symbol."""
+    if is_crypto(symbol):
+        return BREAK_EVEN_TRIGGER_POINTS_BTC
+    if is_fx(symbol):
+        # FX H1: trigger BEP pada 100 pts (10 pips) - 50% dari default TP 200 pts
+        return 100
+    return BREAK_EVEN_TRIGGER_POINTS_XAU  # XAU (M15): 300 pts
+
+
+def break_even_padding_for(symbol):
+    """Returns break-even padding points per symbol."""
+    if is_crypto(symbol):
+        return BREAK_EVEN_PADDING_POINTS_BTC
+    if is_fx(symbol):
+        return 10  # 1 pip padding
+    return BREAK_EVEN_PADDING_POINTS_XAU
+
+
+def partial_close_tp1_for(symbol):
+    """Returns TP1 partial close threshold points per symbol."""
+    if is_crypto(symbol):
+        return PARTIAL_CLOSE_TP1_POINTS_BTC
+    if is_fx(symbol):
+        # FX H1: partial close pada 120 pts (12 pips)
+        return 120
+    return PARTIAL_CLOSE_TP1_POINTS_XAU  # XAU (M15): 400 pts
+
+
+def trailing_activation_params_for(symbol):
+    """Returns (act_mult, dist_mult, fallback_act, fallback_dist, act_cap) per symbol."""
+    if is_crypto(symbol):
+        return (
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_POINTS_BTC", 17000),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_BTC", 12500),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
+        )
+    elif is_fx(symbol):
+        # FX H1: 1.0x ATR activation, 0.5x ATR distance, fallback 100/50 pts, cap 250 pts
+        return (1.0, 0.5, 100, 50, 250)
+    else:
+        # XAU (M15)
+        return (
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_ATR_MULT_XAU", 1.2),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_ATR_MULT_XAU", 0.6),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_POINTS_XAU", 200),
+            getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_XAU", 150),
+            getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
+        )

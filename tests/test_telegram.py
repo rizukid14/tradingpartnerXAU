@@ -25,7 +25,7 @@ def main():
         return
 
     print("[START]  Mengirim pesan uji coba ke Telegram...")
-    success = tg.send_message("[BOT]  *Bot Trading XAUUSD Connected!*\nNotifikasi Telegram berhasil terhubung dan siap digunakan! [HOT] ")
+    success = tg.send_message(f"🚀 *Bot Trading {config.SYMBOL} Connected!*\nNotifikasi Telegram berhasil terhubung dan siap digunakan! 🔥")
     if success:
         print("[DONE]  BERHASIL! Pesan uji coba telah terkirim ke Telegram Anda.")
     else:

@@ -71,7 +71,7 @@ RE_ORDER = re.compile(
 RE_ORDER_OK = re.compile(r"\[MT5\] Order BERHASIL! Ticket: (\d+)")
 RE_POSTMORTEM = re.compile(r"\[POST-MORTEM\]\s*Menganalisis hasil trade tiket #(\d+)\s*\((\S+),\s*P/L:\s*\$?([+-]?[\d.]+)\)")
 RE_POSTMORTEM_ALT = re.compile(r"\[POST-MORTEM\].*?tiket #(\d+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
-RE_CLOSE_DETECTED = re.compile(r"\[CLOSE DETECTED\]\s*#(\d+)\s+(\S+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
+RE_CLOSE_DETECTED = re.compile(r"\[CLOSE DETECTED\]\s*#(\d+)\s+(\S+)\s+(BUY|SELL)?\s*ditutup\s*\(P/L:\s*([+-]?[\d.]+)", re.IGNORECASE)
 RE_TRADE_CLOSED = re.compile(r"\[TRADE CLOSED\]\s*#(\d+)\s+(\S+).*?P/L:\s*\$?([+-]?[\d.]+)", re.IGNORECASE)
 RE_LESSON = re.compile(r"\[PELAJARAN BARU DITERIMA\]")
 RE_BE = re.compile(r"\[BREAK-EVEN\]")
@@ -259,10 +259,15 @@ def parse_log(path=LOG_PATH):
             events.append({"type": "trade_close", "ticket": int(m.group(1)),
                            "symbol": current_symbol, "pnl": float(m.group(2))})
             continue
-        m = RE_CLOSE_DETECTED.search(line) or RE_TRADE_CLOSED.search(line)
+        m = RE_CLOSE_DETECTED.search(line)
         if m:
             events.append({"type": "trade_close", "ticket": int(m.group(1)),
-                           "symbol": m.group(2), "pnl": float(m.group(3))})
+                           "symbol": m.group(2), "pnl": float(m.group(4))})
+        else:
+            m = RE_TRADE_CLOSED.search(line)
+            if m:
+                events.append({"type": "trade_close", "ticket": int(m.group(1)),
+                               "symbol": m.group(2), "pnl": float(m.group(3))})
             continue
 
         if RE_LESSON.search(line):
@@ -323,12 +328,6 @@ def compute_metrics(events, state=None):
         ]
 
     sessions = [e for e in events if e["type"] == "session"]
-    eras = []
-    for e in sessions:
-        era = e.get("era")
-        if era and era not in eras:
-            eras.append(era)
-    active_era = eras[-1] if eras else None
 
     cycles = [e for e in events if e["type"] == "cycle"]
     orders = [e for e in events if e["type"] == "order"]
@@ -570,8 +569,6 @@ def compute_metrics(events, state=None):
         "meta": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "log_path": LOG_PATH,
-            "active_era": active_era,
-            "eras": eras,
             "first_ts": first_ts,
             "last_ts": last_ts,
             "accounts": sorted({e.get("account") for e in sessions if e.get("account")}),
@@ -605,7 +602,6 @@ def compute_metrics(events, state=None):
         "agreement": agree_stats,
         "latency": lat_stats,
         "forecast_bias": fbias,
-        "lessons": lessons_list,
         "position_manager": {
             "break_even": len(bes),
             "trailing": len(trails),
@@ -854,6 +850,12 @@ def serve(host="0.0.0.0", port=8765):
                     "GEMINI_MODEL": getattr(config, "GEMINI_MODEL", "gemini-3.1-flash-lite"),
                     "OPENAI_MODEL": getattr(config, "OPENAI_MODEL", "gpt-5.4-mini"),
                     "FORECAST_MODEL": getattr(config, "FORECAST_MODEL", "gpt-5.4"),
+                    "OPENAI_FALLBACK_MODEL": getattr(config, "OPENAI_FALLBACK_MODEL", "o4-mini"),
+                    "OPENAI_DEFAULT_MODEL": getattr(config, "OPENAI_DEFAULT_MODEL", "gpt-5.4-mini"),
+                    "OPENAI_PRIMARY_WINDOW_WIB": getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", "15:00-19:30"),
+                    "OPENAI_REASONING_EFFORT": getattr(config, "OPENAI_REASONING_EFFORT", "low"),
+                    "AI_DUAL_SECOND_MODEL": getattr(config, "AI_DUAL_SECOND_MODEL", "DeepSeek"),
+                    "DEEPSEEK_REASONING_EFFORT": getattr(config, "DEEPSEEK_REASONING_EFFORT", "low"),
                     "RISK_PERCENT_BTC": getattr(config, "RISK_PERCENT_BTC", 1.5),
                     "RISK_PERCENT_XAU": getattr(config, "RISK_PERCENT_XAU", 0.5),
                     "LOT_SIZE_XAU": getattr(config, "LOT_SIZE_XAU", 0.01),
@@ -1038,7 +1040,6 @@ def serve(host="0.0.0.0", port=8765):
 def main():
     parser = argparse.ArgumentParser(description="Trading dashboard (generate static atau serve live).")
     parser.add_argument("-o", "--output", default=OUT_HTML, help="Output HTML path (mode generate)")
-    parser.add_argument("--all-eras", action="store_true", help="Include all eras in default view")
     parser.add_argument("--serve", action="store_true", help="Jalankan server lokal (live)")
     parser.add_argument("--port", type=int, default=8765, help="Port untuk --serve (default 8765)")
     args = parser.parse_args()

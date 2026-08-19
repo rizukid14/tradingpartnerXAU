@@ -10,14 +10,18 @@ import config
 from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
+from src.core.cli_theme import UI, render_banner
 from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
 
+import re
 import shutil
 import unicodedata
 
 # --- Status line terminal (Windows) ---
 _VT_OK = False
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+_ANSI_TOKEN_RE = re.compile(r'(\x1b\[[0-9;]*[a-zA-Z])')
 
 
 def _enable_windows_vt():
@@ -41,27 +45,142 @@ def _enable_windows_vt():
 _enable_windows_vt()
 
 
+def _tf_to_seconds(tf):
+    """Konversi timeframe MT5 -> detik (buat label range candle open-close)."""
+    mapping = {
+        mt5.TIMEFRAME_M1: 60,
+        mt5.TIMEFRAME_M5: 300,
+        mt5.TIMEFRAME_M15: 900,
+        mt5.TIMEFRAME_M30: 1800,
+        mt5.TIMEFRAME_H1: 3600,
+        mt5.TIMEFRAME_H4: 14400,
+        mt5.TIMEFRAME_D1: 86400,
+    }
+    return mapping.get(tf, 3600)
+
+
+def _candle_range_label(open_ts, tf):
+    """Label candle non-ambigu: '15:00-16:00 WIB' (open-close). open_ts = open-time candle."""
+    from datetime import timedelta
+    open_wib = connector.server_to_wib(int(open_ts))
+    close_wib = open_wib + timedelta(seconds=_tf_to_seconds(tf))
+    return f"{open_wib.strftime('%H:%M')}-{close_wib.strftime('%H:%M')} WIB"
+
+
 def _disp_width(s):
-    """Lebar tampilan karakter di terminal: emoji/wide char = 2 kolom, sisanya 1."""
+    """Lebar tampilan visual di terminal tanpa menghitung kode ANSI: emoji/wide char = 2 kolom, sisanya 1."""
+    plain = _ANSI_RE.sub('', s)
     return sum(
         2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        for ch in s
+        for ch in plain
     )
 
 
 def _truncate_disp(s, max_w):
-    """Potong string agar lebar tampilan <= max_w (cegah wrap yang merusak refresh)."""
+    """Potong string agar lebar visual <= max_w tanpa merusak sequence ANSI / memotong di tengah kode warna."""
     if _disp_width(s) <= max_w:
         return s
-    out, w = [], 0
-    for ch in s:
-        cw = 2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if w + cw > max_w - 3:
-            out.append("...")
-            break
-        out.append(ch)
-        w += cw
+    tokens = _ANSI_TOKEN_RE.split(s)
+    out = []
+    w = 0
+    target_w = max_w - 3  # sisakan ruang untuk '...'
+    for token in tokens:
+        if not token:
+            continue
+        if _ANSI_RE.fullmatch(token):
+            out.append(token)
+        else:
+            for ch in token:
+                cw = 2 if ord(ch) > 0xFFFF or unicodedata.east_asian_width(ch) in ("W", "F") else 1
+                if w + cw > target_w:
+                    out.append(f"...{UI.RST}")
+                    return "".join(out)
+                out.append(ch)
+                w += cw
+    out.append(UI.RST)
     return "".join(out)
+
+
+def _wrap_positions(parts, max_w, indent):
+    """Wrap daftar posisi (string ANSI) ke beberapa baris — tiap baris di-indent, TIDAK ada posisi yang dipotong.
+    Diisi maks 3 posisi per baris dengan pemisah ' | ', baris berikutnya rata sejajar.
+    """
+    lines = []
+    first_indent = indent
+    subseq_indent = UI.GRAY + "       " + UI.RST
+    
+    cur_line = []
+    cur_w = _disp_width(first_indent)
+    cur_indent = first_indent
+    
+    for part in parts:
+        pw = _disp_width(part)
+        sep_w = 3 if cur_line else 0
+        if cur_line and (cur_w + sep_w + pw > max_w or len(cur_line) >= 3):
+            lines.append(cur_indent + " | ".join(cur_line))
+            cur_line = [part]
+            cur_indent = subseq_indent
+            cur_w = _disp_width(subseq_indent) + pw
+        else:
+            cur_line.append(part)
+            cur_w += sep_w + pw
+            
+    if cur_line:
+        lines.append(cur_indent + " | ".join(cur_line))
+        
+    return lines
+
+
+_status_render_count = 0  # jumlah baris status live yang sedang tampil (di-update tiap render)
+
+
+def _reset_status_lines():
+    """Hapus SEMUA baris status loop live (bisa multi-baris) sebelum mencetak event/log baru
+    agar tidak bertumpuk. Cursor-up ke baris pertama status, lalu erase tiap baris ke bawah.
+    """
+    global _status_render_count
+    n = _status_render_count
+    _status_render_count = 0
+    if n <= 0:
+        sys.stdout.write("\r")
+        sys.stdout.flush()
+        return
+    if _VT_OK:
+        if n > 1:
+            sys.stdout.write(f"\x1b[{n - 1}A")  # naik ke baris pertama status
+        for i in range(n):
+            sys.stdout.write("\x1b[2K")  # hapus isi baris
+            if i < n - 1:
+                sys.stdout.write("\x1b[B")  # turun ke baris berikutnya
+        sys.stdout.write("\r")
+    else:
+        sys.stdout.write("\r")
+    sys.stdout.flush()
+
+
+def _render_status_lines(lines, vt_ok=True):
+    """Tulis status live multi-baris: hapus baris lama (cursor-up + erase per baris) lalu
+    tulis yang baru, supaya auto-scroll terminal tidak merusak refresh in-place.
+    lines = daftar baris (masing-masing boleh berisi ANSI).
+    """
+    global _status_render_count
+    n_old = _status_render_count
+    n_new = len(lines)
+    _status_render_count = n_new
+    if not vt_ok:
+        return "\r" + lines[0] + "".join(f"\n{l}" for l in lines[1:])
+    out = ["\r"]
+    if n_old > 1:
+        out.append(f"\x1b[{n_old - 1}A")  # naik ke baris pertama status lama
+    max_rows = max(n_old, n_new)
+    for i in range(max_rows):
+        out.append("\x1b[2K")  # hapus isi baris (sisa lama atau baris baru)
+        if i < n_new:
+            out.append(lines[i])
+        if i < max_rows - 1:
+            out.append("\n")
+    return "".join(out)
+
 
 
 # Initialize risk engine
@@ -115,17 +234,17 @@ def parse_cli_overrides(argv=None):
     p.add_argument("--claude-model", type=str,
                    help="Model slot Claude: 'deepseek/deepseek-v4-flash' (murah) atau 'claude-sonnet-4-6'")
     p.add_argument("--tpsl-rules", type=_tpsl_rules_arg, metavar="{ATR-Based,LLM}",
-                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, floor 2x spread aja)")
+                   help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, safety floor XAU 400 / FX 250 pts + R:R min 1.25:1)")
     p.add_argument("--trading-mode", "--mode", choices=["xau", "xau_pairs"],
                    help="Mode scan trading: 'xau' (Gold saja) atau 'xau_pairs' (XAU + FX cross pairs pool 7 simbol)")
     p.add_argument("--startup-scan", choices=["all", "timeframe"],
                    help="Mode scan startup: 'all' (scan semua simbol langsung di awal) atau 'timeframe' (tunggu candle close)")
-    p.add_argument("--yes", "-y", action="store_true",
-                   help="Lewati konfirmasi interaktif (langsung jalan dengan setting saat ini)")
     p.add_argument("--era", choices=list(getattr(config, "ERA_PRESETS", {}).keys()),
                    help="Pakai preset era (v1 / v2 / v3)")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Lewati prompt interaktif saat startup (cocok untuk Docker/non-interactive)")
     args = p.parse_args(argv)
 
     applied = []
@@ -133,17 +252,6 @@ def parse_cli_overrides(argv=None):
     if args.dry_run and args.live:
         print("[CLI] Tidak bisa --dry-run dan --live bersamaan.")
         sys.exit(1)
-
-    # Preset era dulu (paling awal), lalu flag eksplisit menimpa
-    if getattr(args, "era", None):
-        preset = getattr(config, "ERA_PRESETS", {}).get(args.era)
-        if preset:
-            for attr, val in preset.items():
-                if attr == "label":
-                    continue
-                if hasattr(config, attr):
-                    setattr(config, attr, val)
-            applied.append(f"ERA={args.era}")
 
     if args.dry_run:
         config.DRY_RUN = True
@@ -253,7 +361,7 @@ def interactive_setup():
             return "OFF"
         s = str(v)
         if attr == "config.TP_SL_RULES":
-            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else " (bebas, 2x spread)" if v == "LLM" else "")
+            s += (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if v == "ATR-Based" else " (bebas, floor XAU 400/FX 250 pts, R:R min 1.25)" if v == "LLM" else "")
         return s
 
 
@@ -285,9 +393,11 @@ def interactive_setup():
         ("LIMIT & FILTER", "Spread Max XAU (pts)", "config.MAX_SPREAD_POINTS_XAU", str(config.MAX_SPREAD_POINTS_XAU)),
         ("KONSENSUS & AI", "Threshold BTC", "config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_BTC)),
         ("KONSENSUS & AI", "Threshold XAU", "config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU", str(config.CONFIDENCE_CONSENSUS_THRESHOLD_XAU)),
+        ("KONSENSUS & AI", "OpenAI Model (24/7)", "config.OPENAI_MODEL", str(config.OPENAI_MODEL) + " (Full 24/7 All Sessions)"),
         ("KONSENSUS & AI", "Model Claude Slot", "config.CLAUDE_MODEL", str(config.CLAUDE_MODEL)),
         ("KONSENSUS & AI", "TP/SL Rules", "config.TP_SL_RULES",
-         str(config.TP_SL_RULES) + (" (gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)" if config.TP_SL_RULES == "ATR-Based" else " (bebas, 2x spread)")),
+         "XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1, R:R 1.25)" if config.TP_SL_RULES == "LLM"
+         else str(config.TP_SL_RULES) + " (force semua, gate ATR per mode: 1.25/2.5, 1.5/3.0, 1.75/3.5)"),
         ("KONSENSUS & AI", "Quant (Hurst/MC)", "config.QUANT_ANALYSIS_ENABLED", "ON" if config.QUANT_ANALYSIS_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Dynamic Config", "config.DYNAMIC_CONFIG_ENABLED", "ON" if config.DYNAMIC_CONFIG_ENABLED else "OFF"),
         ("KONSENSUS & AI", "Forecast Engine", "config.FORECAST_ENABLED", "ON" if config.FORECAST_ENABLED else "OFF"),
@@ -308,9 +418,6 @@ def interactive_setup():
         ("ANALISIS & NOTIF", "Telegram", "config.TELEGRAM_ENABLED", "ON" if config.TELEGRAM_ENABLED else "OFF"),
     ]
 
-    # Daftar preset era (dari config.ERA_PRESETS)
-    presets = getattr(config, "ERA_PRESETS", {})
-
     while True:
         try:
             print("-" * 60)
@@ -320,13 +427,8 @@ def interactive_setup():
                     print(f" -- {group} --")
                     last_group = group
                 print(f" {i:2d}. {label:<26} : {val}")
-            if presets:
-                print("-" * 60)
-                print(" PRESET ERA:")
-                for name, p in presets.items():
-                    print(f"    [{name}] {p.get('label', name)}")
             print("-" * 60)
-            print(" Ketik nomor utk ubah | [nama-preset] utk pakai preset | 'start'/Enter = mulai | 'q' = batal")
+            print(" Ketik nomor utk ubah | 'start'/Enter = mulai | 'q' = batal")
             choice = input("  > ").strip().lower()
         except EOFError:
             print("[NON-INTERACTIVE] Terminal non-interaktif terdeteksi (Docker/Daemon). Memulai bot dengan setting default...")
@@ -335,29 +437,11 @@ def interactive_setup():
             print("\n Dibatalkan. Bot tidak dijalankan.")
             sys.exit(0)
 
-
-
         if choice in ("q", "quit", "exit"):
             print("Dibatalkan. Bot tidak dijalankan.")
             sys.exit(0)
         if choice in ("", "start", "s", "y"):
             break
-
-        # Preset era
-        if presets and choice in presets:
-            preset = presets[choice]
-            print(f"   Menerapkan preset '{choice}' ({preset.get('label', '')})...")
-            for attr, val in preset.items():
-                if attr == "label":
-                    continue
-                if hasattr(config, attr):
-                    setattr(config, attr, val)
-            # refresh tampilan
-            for i, (group, label, attr, _) in enumerate(settings):
-                v = getattr(config, attr.split(".")[1], None)
-                settings[i] = (group, label, attr, _fmt_val(attr, v))
-            print("  Preset diterapkan.")
-            continue
 
         if choice.isdigit():
             idx = int(choice) - 1
@@ -519,25 +603,24 @@ def _seed_startup_scan(valid_pool):
             _symbol_last_candle[sym] = int(r[-2]['time'])
 
 
-def _prompt_startup_scan_mode():
+def _prompt_startup_scan_mode(skip_prompt=False):
     """FASE 6 - CLI prompt mode scan startup:
     [1] Scan semua simbol sekarang (scan all now)
     [2] Scan sesuai timeframe masing-masing (default) - tunggu candle close tiap aset
     Non-interactive / timeout 10 detik -> default "timeframe".
     """
     global _STARTUP_SCAN_MODE
-    if not sys.stdin.isatty():
+    if skip_prompt or not sys.stdin.isatty():
         return  # non-interactive (scheduler/redirect) -> default
     try:
         import msvcrt
     except ImportError:
         return
-    print("\n" + "=" * 58)
-    print(" STARTUP SCAN MODE")
-    print(" [1] Scan semua simbol sekarang (scan all now)")
-    print(" [2] Scan sesuai timeframe masing-masing (default)")
-    print("=" * 58)
-    sys.stdout.write("  Pilihan [2] (10 detik, Enter = default): ")
+    print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
+    print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 7 Simbol Sekarang (Immediate Full Market Scan)            |")
+    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M30 / H1 / M30 - Default)      |")
+    print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
+    sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
     sys.stdout.flush()
     buf = ""
     deadline = time.time() + 10
@@ -559,8 +642,8 @@ def _prompt_startup_scan_mode():
     sys.stdout.write("\n")
     sys.stdout.flush()
     _STARTUP_SCAN_MODE = "all" if buf.strip() == "1" else "timeframe"
-    mode_txt = "SCAN ALL NOW (semua simbol langsung)" if _STARTUP_SCAN_MODE == "all" else "SESUAI TIMEFRAME (tunggu candle close tiap aset)"
-    print(f" -> Scan mode: {mode_txt}\n")
+    mode_txt = "SCAN ALL 7 SYMBOLS NOW" if _STARTUP_SCAN_MODE == "all" else "SMART ROTATION (Tunggu Candle Close Tiap Aset)"
+    print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
 def run_trading_cycle():
@@ -569,8 +652,12 @@ def run_trading_cycle():
     = [XAU, EURJPY, GBPCHF] - all symbols scanned ONLY when their specific timeframe
     forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour).
     """
-    print(f"\n [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
-    
+    _reset_status_lines()
+    sys.stdout.write(UI.clear_line())
+    sys.stdout.flush()
+
+
+    box_items = []
     # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
     try:
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
@@ -580,9 +667,6 @@ def run_trading_cycle():
 
         # Display Daily WinRate Summary Log (aggregate + per-symbol breakdown)
         if closed_deals and len(closed_deals) > 0:
-            # Break-even trades excluded from win-rate. Tolerance DINAMIS per trade:
-            # minimal BREAK_EVEN_TOLERANCE_USD, tapi naik mengikuti komisi aktual
-            # trade (0.01 lot = 0.06, 0.10 lot = 0.60, 0.26 lot = 1.56 USD).
             dec = [d for d in closed_deals if abs(d.get("profit", 0)) > config.bep_tolerance_for(d)]
             bep_n = len(closed_deals) - len(dec)
             total_t = len(dec)
@@ -591,9 +675,9 @@ def run_trading_cycle():
             wr = (wins_t / total_t) * 100.0 if total_t else 0.0
             pnl_t = sum(d.get("profit", 0) for d in closed_deals)
             bep_str = f" | {bep_n} BEP" if bep_n else ""
-            print(f"[PERFORMA HARIAN] {total_t} Trade | {wins_t} Win - {loss_t} Loss (WinRate: {wr:.1f}%){bep_str} | Net PnL: ${pnl_t:+.2f} USD")
+            box_items.append((f"{UI.BOLD}Performa Harian:{UI.RST} ", f"{total_t} Trade ({wins_t}W - {loss_t}L | WR {wr:.1f}%{bep_str}) | Net PnL: {UI.badge_pnl(pnl_t)}"))
 
-            # Per-symbol breakdown so weekend BTC P/L does not mask weekday XAU performance
+            # Per-symbol breakdown
             by_symbol = {}
             for d in closed_deals:
                 sym = d.get("symbol", "UNKNOWN")
@@ -605,27 +689,25 @@ def run_trading_cycle():
                 elif d.get("profit", 0) > 0:
                     bucket["wins"] += 1
             if len(by_symbol) > 1:
-                parts = []
+                box_items.append("---")
+                box_items.append(f"{UI.DIM}Breakdown Per Simbol:{UI.RST}")
                 for sym, b in sorted(by_symbol.items()):
                     sym_t = b["n"] - b["bep"]
                     sym_wr = (b["wins"] / sym_t) * 100.0 if sym_t else 0.0
                     sym_loss = sym_t - b["wins"]
                     bep_note = f" | {b['bep']} BEP" if b["bep"] else ""
-                    parts.append(f"{sym}: {sym_t}T {b['wins']}W-{sym_loss}L WR {sym_wr:.0f}%{bep_note} ${b['pnl']:+.2f}")
-                print(f"[PERFORMA PER SIMBOL] " + " | ".join(parts))
+                    box_items.append(f"  • {UI.BOLD}{sym:<13}{UI.RST}: {sym_t}T ({b['wins']}W - {sym_loss}L | WR {sym_wr:.0f}%{bep_note}) Net: {UI.badge_pnl(b['pnl'])}")
         else:
-            print("[PERFORMA HARIAN] Belum ada trade tertutup hari ini (0 Trade | WinRate: 0.0%).")
+            box_items.append(f"{UI.DIM}Performa Harian: Belum ada trade tertutup hari ini (0 Trade | WR: 0.0%){UI.RST}")
     except Exception as e:
-        print(f"[EVALUATOR WARNING] {e}")
+        box_items.append(f"{UI.YELLOW}[EVALUATOR WARNING] {e}{UI.RST}")
+
+    title_str = f"CYCLE START - {time.strftime('%Y-%m-%d %H:%M:%S')} WIB"
+    print("\n" + UI.make_box(title_str, box_items, width=74, border_color=UI.CYAN))
 
     # -- Multi-symbol parallel scan ----------------------------------------------
-    # Mode "xau": pool = [XAU] (1 cycle per candle, seperti sebelumnya).
-    # Mode "xau_pairs": pool = [XAU] + FX_PAIR_SYMBOLS.
     global _symbol_last_candle
     valid_pool = _resolve_valid_pool()
-    # NOTE: seed startup scan TIDAK di sini - sudah dilakukan di main loop startup
-    # (lihat blok startup_run). Kalau seed di sini, cycle pertama yang trigger
-    # candle baru close -> closed_time == seeded_time -> SEMUA symbol ke-skip.
     for sym in valid_pool:
         config.SYMBOL = sym
         
@@ -642,22 +724,18 @@ def run_trading_cycle():
         if last_time is None or closed_time > last_time:
             _symbol_last_candle[sym] = closed_time
             
-            # Log indikator candle baru untuk pair selain pair utama (yang log-nya sudah ada di main loop)
+            # Log indikator candle baru untuk pair selain pair utama
             if last_time is not None and sym != valid_pool[0]:
-                candle_wib = connector.server_to_wib(closed_time)
-                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else "M5")
-                print(f"\n Candle {tf_label} baru CLOSE untuk {sym}! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                tf_label = "H1" if tf == mt5.TIMEFRAME_H1 else ("M30" if tf == mt5.TIMEFRAME_M30 else ("M15" if tf == mt5.TIMEFRAME_M15 else "M5"))
+                print(f"\n {UI.GREEN}[+] Candle {tf_label} baru CLOSE untuk {sym}!{UI.RST} Range: {_candle_range_label(closed_time, tf)}")
                 
             try:
                 _run_cycle_for_current_symbol()
             except Exception as e:
-                print(f"[CYCLE ERROR {sym}] {e}")
+                print(f" {UI.RED}[CYCLE ERROR {sym}] {e}{UI.RST}")
         else:
-            # Candle belum ada yang close baru (masih di rentang candle yang sama), skip LLM call untuk pair ini
             pass
             
-    # Restore ke simbol utama pool (valid, sudah auto-correct) - biar status line
-    # & candle check berikutnya konsisten memakai simbol utama, bukan yang terakhir.
     config.SYMBOL = valid_pool[0] if valid_pool else config.SYMBOL
     return True
 
@@ -668,29 +746,47 @@ def _run_cycle_for_current_symbol():
     """
     # 0. Risk gate - check all conditions before trading
     can_trade, reason = risk.can_trade()
+    entry_blocked = False  # True = posisi sudah max: re-evaluator tetap jalan, entry ditahan
     if not can_trade:
-        print(reason)
-        return True  # Not an error, just skipping
+        # Kasus khusus: posisi sudah MAX (aggregate semua simbol). Jangan skip cycle —
+        # lanjut ambil data + LLM + consensus + AI RE-EVALUATOR (bisa rekomendasi CLOSE
+        # posisi lemah buat buka slot). Hanya entry baru yang ditahan (entry_blocked).
+        # Simbol yang TIDAK punya posisi terbuka di-skip: re-evaluator gak ada kerjaan,
+        # entry juga diblokir -> LLM call sia-sia.
+        max_pos_now = config.get_max_open_positions(risk.is_recovery_mode)
+        if len(connector.get_all_open_positions()) >= max_pos_now:
+            if not connector.get_open_positions(config.SYMBOL):
+                print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai & {config.SYMBOL} tanpa posisi terbuka — skip (re-evaluator kosong).")
+                return True
+            entry_blocked = True
+            print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai — lanjut AI re-evaluator utk {config.SYMBOL} (entry ditahan).")
+        else:
+            clean_reason = reason.strip()
+            if clean_reason.startswith("[RISK]"):
+                clean_reason = clean_reason[6:].strip()
+            print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
+            return True  # Not an error, just skipping
     
-    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M5 XAU / H1 FX / M30 BTC)
-    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=51)
+    # 1. Fetch market data (53 bar, buang bar aktif -> 52 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
+    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=53)
     if df is None or len(df) == 0:
-        print("Gagal mendapatkan market data. Melewatkan siklus ini.")
+        print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.")
         return False
-    if len(df) > 50:
-        # Bar terakhir = candle aktif (masih berjalan, belum close). Buang -> LLM scan
-        # data candle yang SUDAH CLOSE (lengkap), bukan candle kosong yang baru terbentuk.
-        df = df.iloc[-50:-1].reset_index(drop=True)
+    if len(df) > 52:
+        df = df.iloc[-52:-1].reset_index(drop=True)
         
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
     if tick is None:
-        print("Gagal mendapatkan tick data terbaru. Melewatkan siklus ini.")
+        print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan tick data {config.SYMBOL}. Melewatkan siklus.")
         return False
         
-    print(f"Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
+    _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
+    tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
+    print(f"\n{UI.tag('SCAN ASSET', UI.CYAN)} {UI.BOLD}{config.SYMBOL}{UI.RST} ({tf_name}) | Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails (Hurst M30/M5, Kurtosis M30/M1)
+
+    # 2.1 Calculate Market Randomness & Micro Fat Tails
     if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
         try:
             from src.analytics import market_randomness
@@ -708,7 +804,7 @@ def _run_cycle_for_current_symbol():
     if getattr(config, "MONTE_CARLO_ENABLED", False):
         try:
             from src.analytics import quant_probability
-            tf_mins = 60 if config.is_crypto(config.SYMBOL) else 5
+            tf_mins = 30 if config.is_crypto(config.SYMBOL) else (60 if "XAU" not in config.SYMBOL.upper() else 15)
             q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
             print(f"[QUANT PROB] Monte Carlo (1000 paths): "
                   f" UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
@@ -739,6 +835,19 @@ def _run_cycle_for_current_symbol():
     if macro_context:
         print(f"Menyertakan analisa Multi-Timeframe & Fundamental ({config.SYMBOL}) untuk LLM...")
 
+    # Pattern edge whisper: deteksi pola di candle terakhir & inject statistik
+    # tervalidasi kalau match registry (informational only, bukan directive).
+    whisper_str = None
+    if getattr(config, "PATTERN_WHISPER_ENABLED", True):
+        try:
+            from src.analytics.pattern_detector import detect_and_whisper
+            whisper_str = detect_and_whisper(df, config.SYMBOL)
+            if whisper_str:
+                first_line = whisper_str.strip().split("\n")[0]
+                print(f" {UI.tag('WHISPER', UI.MAGENTA)} {first_line}")
+        except Exception as e:
+            print(f"[WHISPER ERROR {config.SYMBOL}] {e}")
+
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
         if lessons_ctx:
@@ -755,8 +864,11 @@ def _run_cycle_for_current_symbol():
 
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
-    print(f"[AI MODE {ai_mode.upper()}] Mengirim data ke {', '.join(active_models)}...")
-    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
+    print(f" {UI.tag('AI', UI.CYAN)} Mode {ai_mode.upper()} ({len(active_models)} model: {', '.join(active_models)}) | Mengirim data ke LLM...")
+    all_open_positions = connector.get_all_open_positions()
+    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions,
+                                            whisper_str, all_open_positions=all_open_positions)
+
     
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
@@ -795,13 +907,16 @@ def _run_cycle_for_current_symbol():
     # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
     # counter-trend di sini. Konsensus LLM yang menentukan entry.
 
-    # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
-    max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
-    if len(open_positions) >= max_positions:
-        print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
-        for pos in open_positions:
-            print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-        print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
+    # Check if max open positions reached for NEW trades (recovery mode: tighter cap; late NY: max 2)
+    max_positions = config.get_max_open_positions(risk.is_recovery_mode)
+    if entry_blocked or len(open_positions) >= max_positions:
+        if entry_blocked:
+            print(f"-> Entry ditahan: posisi bot sudah {max_positions} (aggregate semua simbol). Re-evaluator tetap jalan.")
+        else:
+            print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
+            for pos in open_positions:
+                print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
+            print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
         return True
 
 
@@ -812,16 +927,59 @@ def _run_cycle_for_current_symbol():
     if trade_signal in ["BUY", "SELL"]:
         sl_points = result["sl_points"]
         tp_points = result["tp_points"]
+        invalidation_price = result.get("invalidation_price")
+        target_price = result.get("target_price")
         agreeing_count = result.get("agreeing_count", 0)
-        
+
+        # Obtain latest execution tick to size lot and get absolute SL/TP prices
+        tick_live = connector.get_current_tick(config.SYMBOL)
+        sl_price = None
+        tp_price = None
+        tp_price_2 = None
+        gate_blocked = False  # re-check SL/TP eksekusi gagal -> trade dibatalkan
+
+        if tick_live and sl_points and sl_points > 0:
+            point = tick_live["point"]
+            execution_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
+            if execution_price > 0 and point > 0:
+                # SL/TP murni dari sl_points/tp_points model (sudah di-floor di
+                # consensus.py). invalidation_price/target_price TIDAK dipakai
+                # untuk SL/TP — cuma referensi probability (fix 14 Agustus).
+                sl_points = max(tick_live["spread"] * 2, sl_points)
+
+                if tp_points and tp_points > 0:
+                    tp_points = max(tick_live["spread"] * 2, tp_points)
+                    # Position 2 gets 1.2x TP for extended trend capture
+                    tp_points_2 = int(tp_points * 1.2)
+                else:
+                    tp_points_2 = None
+
+                # RE-CHECK gate SL/TP pakai tick terkini (spread/equity bisa
+                # geser antara consensus dan eksekusi). Kalau gagal gate (R:R <
+                # 1.25 / OVER-RISK) -> batalkan trade, jangan kirim order.
+                sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
+                if not sltp_ok:
+                    gate_blocked = True
+                    print(f"   [!] TRADE DIBATALKAN (re-check SL/TP eksekusi): {sltp_reason}")
+                else:
+                    # Re-sync harga absolut setelah gate (safety floor bisa menaikkan SL)
+                    tp_points_2 = int(tp_points * 1.2)
+                    if trade_signal == "BUY":
+                        sl_price = execution_price - (sl_points * point)
+                        tp_price = execution_price + (tp_points * point)
+                        tp_price_2 = execution_price + (tp_points_2 * point)
+                    else:
+                        sl_price = execution_price + (sl_points * point)
+                        tp_price = execution_price - (tp_points * point)
+                        tp_price_2 = execution_price - (tp_points_2 * point)
+
         # Check remaining capacity slots before max positions (recovery mode: tighter cap)
-        remaining_slots = max(0, max_positions - len(open_positions))
+        # gate_blocked = re-check SL/TP eksekusi gagal -> tidak ada slot, trade batal
+        remaining_slots = 0 if gate_blocked else max(0, max_positions - len(open_positions))
         desired_positions = 2 if agreeing_count >= 3 else 1
         num_positions = min(desired_positions, remaining_slots)
 
-        # Get effective lot size from risk-based sizing (uses floored SL).
-        # split_count: kalau 3/3 unanimous buka 2 posisi, lot per posisi dibagi
-        # 2 supaya TOTAL risk per sinyal tetap risk_pct (bukan 2x lipat).
+        # Get effective lot size from risk-based sizing (uses execution SL points)
         effective_lot = risk.get_effective_lot_size(sl_points, split_count=num_positions)
 
         if num_positions > 1:
@@ -829,24 +987,29 @@ def _run_cycle_for_current_symbol():
         elif num_positions == 1 and desired_positions > 1:
             print(f"[UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat {trade_signal}! Membuka 1 posisi (Dibatasi sisa slot max: {remaining_slots})...")
 
-
         order_executed = False  # flag: ada order yang sukses cycle ini (untuk decision memory)
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend
             pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
+            pos_tp_price = tp_price_2 if (i == 1 and tp_price_2) else tp_price
 
-            # Comment transaksi = jenis LLM yang sepakat (bukan "Multi-LLM Bot").
-            # Contoh: "GPT" / "GPT+Gemini" / "GPT+Gemini+DeepSeek".
-            model_labels = {
-                "OpenAI": "GPT",
-                "Gemini": "Gemini",
-                "DeepSeek": "DeepSeek",
-                "Claude": "Claude",
-            }
-            agree_models = result.get("agreeing_models") or []
-            order_comment = "+".join(
-                model_labels.get(m, m) for m in agree_models
-            ) or "Multi-LLM Bot"
+            # Comment transaksi: prioritaskan reason/setup analisa AI (maks 31 karakter MT5)
+            open_reason = (result.get("reason") or "").strip()
+            if not open_reason:
+                model_labels = {
+                    "OpenAI": "GPT",
+                    "Gemini": "Gemini",
+                    "DeepSeek": "DeepSeek",
+                    "Claude": "Claude",
+                }
+                agree_models = result.get("agreeing_models") or []
+                open_reason = "+".join(
+                    model_labels.get(m, m) for m in agree_models
+                ) or "Multi-LLM Bot"
+
+            # Bersihkan whitespace/karakter khusus dan potong maksimal 31 karakter
+            import re
+            order_comment = re.sub(r'[\r\n\t]+', ' ', open_reason).strip()[:31].strip()
 
             order_res = connector.send_trade_order(
                 symbol=config.SYMBOL,
@@ -854,7 +1017,9 @@ def _run_cycle_for_current_symbol():
                 lot=effective_lot,
                 sl_points=sl_points,
                 tp_points=pos_tp,
-                comment=order_comment
+                comment=order_comment,
+                sl_price=sl_price,
+                tp_price=pos_tp_price
             )
             if order_res["status"] == "SUCCESS":
                 order_executed = True
@@ -863,12 +1028,14 @@ def _run_cycle_for_current_symbol():
                 tg.alert_trade_opened(
                     trade_signal, effective_lot, sl_points, pos_tp,
                     recovery_mode=risk.is_recovery_mode,
-                    session_multiplier=risk.session_lot_multiplier
+                    session_multiplier=risk.session_lot_multiplier,
+                    symbol=config.SYMBOL
                 )
             else:
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
     else:
         print("Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
+        tg.alert_consensus_hold(result, symbol=config.SYMBOL)
 
     # Record this cycle's final decision for Recent Decision Memory
     # (so the LLM next cycle can see if it has been HOLDing too long).
@@ -899,62 +1066,41 @@ def main():
         sys.stderr = tee_logger
         print(f"Logging aktif. Semua output akan disimpan di: {config.LOG_FILE}")
 
-    print("=" * 60)
-    print("   BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
-    print("=" * 60)
-
     # Tampilkan override CLI kalau ada
     if cli_applied:
-        print(" [CLI OVERRIDE] " + " | ".join(cli_applied))
-        print("-" * 60)
+        print(f" {UI.YELLOW}[CLI OVERRIDE]{UI.RST} " + " | ".join(cli_applied))
+        print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
     # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
     if not skip_prompt and sys.stdin.isatty():
         interactive_setup()
 
-
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
 
-    print(f"Mode: {'DRY RUN (Hanya Sinyal)' if config.DRY_RUN else 'LIVE EXECUTION (Duit Asli/Demo)'}")
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
-    print(f"Simbol: {config.SYMBOL} | Timeframe: {tf_name} | Lot Size: {config.lot_size_for(config.SYMBOL)}")
+
+    print(render_banner(
+        account_info=getattr(config, "MT5_LOGIN", None),
+        symbol=config.SYMBOL,
+        tf=tf_name,
+        mode=config.TRADING_MODE,
+        is_live=not config.DRY_RUN
+    ))
+
+    # Info Trading Mode
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
-        print(f"Trading Mode: XAU + PAIRS | Scan Pool ({len(pool)} simbol): {' -> '.join(pool)}")
-        print(f" Scan sesuai timeframe masing-masing (XAU M5 / FX H1 / BTC M30) - Smart Rotation (FASE 5)")
+        print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
+        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M30) | FX Cross (H1) | BTC (M30) - Smart Rotation")
     else:
-        print(f"Trading Mode: XAU ONLY")
-    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
-    if config.AI_MODE_POLICY == "schedule":
-        desc = " | ".join([f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} {mode.upper()}" for sh, sm, eh, em, mode in config.AI_MODE_SCHEDULE])
-        print(f" AI Mode Schedule: {desc} (WIB)")
-    else:
-        print(f" AI Mode: FIXED = {config.AI_FIXED_MODE.upper()}")
-    print("-" * 60)
-    print("PROTEKSI AKTIF:")
-    print(f"  Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
-          f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts, jarak {config.TRAILING_DISTANCE_POINTS} pts)")
-    print(f"  Break-Even:      {'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} "
-          f"(trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)")
-    print(f"  Partial Close:   {'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} "
-          f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)")
-    print(f"  Max Daily Loss:  ${config.MAX_DAILY_LOSS_USD}")
-    print(f"  Recovery Mode:   {'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'} "
-          f"(x{config.RECOVERY_LOT_MULTIPLIER} setelah {config.MAX_CONSECUTIVE_LOSSES} loss)")
-    print(f"  Cooldown:        {config.TRADE_COOLDOWN_SECONDS}s antar trade")
-    print(f"  Spread Filter:   {config.max_spread_points_for(config.SYMBOL)} pts maks ({config.SYMBOL})")
-    print(f"  Session Filter:  {'ON' if config.SESSION_FILTER_ENABLED else 'OFF'} (WIB)")
-    if config.SESSION_FILTER_ENABLED:
-        for s in config.ALLOWED_SESSIONS_WIB:
-            start = f"{s['start'][0]:02d}:{s['start'][1]:02d}"
-            end = f"{s['end'][0]:02d}:{s['end'][1]:02d}"
-            mult = s.get("lot_multiplier", 1.0)
-            print(f"                   - {s['name']}: {start}-{end} WIB (lot x{mult})")
-    print(f"  Weekend Close:   {'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}")
-    print(f"  Telegram:        {'ON' if config.TELEGRAM_ENABLED else 'OFF'}")
-    print("=" * 60)
+        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M30 Swing)")
+
+    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}]), DeepSeek ({config.DEEPSEEK_MODEL} [reasoning {config.DEEPSEEK_REASONING_EFFORT}]), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
+    print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
     # Validate API keys before connecting to MT5
     missing_keys = []
@@ -982,7 +1128,7 @@ def main():
         print(f"[STARTUP EVALUATOR WARNING] {e}")
         
     # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
-    _prompt_startup_scan_mode()
+    _prompt_startup_scan_mode(skip_prompt)
 
     print("Bot berjalan... Menunggu penutupan candle berikutnya.\n")
     
@@ -1155,21 +1301,26 @@ def main():
                             except Exception as e:
                                 print(f"[SEED WARNING] {e}")
                             skip_cycle = True
+                            _reset_status_lines()
                             print("Startup scan mode: sesuai timeframe - menunggu candle close berikutnya...")
                         else:
+                            _reset_status_lines()
                             print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
                     else:
                         candle_wib = connector.server_to_wib(int(current_candle_time))
-                        print(f"\n Candle baru terdeteksi! Waktu: {candle_wib.strftime('%Y-%m-%d %H:%M:%S')} WIB")
+                        tf_main = config.get_timeframe(config.SYMBOL)
+                        _reset_status_lines()
+                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Range: {_candle_range_label(current_candle_time, tf_main)}")
                     
                     last_candle_time = current_candle_time
                     
                     # Show daily P/L and risk status
                     daily_pnl = risk.get_daily_pnl()
                     status = risk.get_status_summary()
-                    print(f"P/L Hari Ini: ${daily_pnl:.2f} | "
+                    _reset_status_lines()
+                    print(f" {UI.CYAN}[STATUS]{UI.RST} P/L Hari Ini: {UI.badge_pnl(daily_pnl)} | "
                           f"Loss Streak: {status['consecutive_losses']} | "
-                          f"Recovery: {' Ya' if status['recovery_mode'] else 'Tidak'} | "
+                          f"Recovery: {'Ya' if status['recovery_mode'] else 'Tidak'} | "
                           f"Session Lot: x{status['session_lot_multiplier']}")
                     
                     if not skip_cycle:
@@ -1182,41 +1333,49 @@ def main():
                         config.trigger_manual_cycle()
                 print("Gagal mengecek status candle di MT5. Mencoba kembali...")
             
-            # Show live status clock line in CLI every loop iteration
+            # Show live status clock line in CLI every loop iteration (clean ANSI, zero emojis)
             now_str = time.strftime('%H:%M:%S')
             remaining_pause = risk.get_remaining_pause()
-            pause_str = f" (PAUSED: sisa {remaining_pause}s)" if remaining_pause > 0 else ""
-            # Show any running (open) bot positions across ALL symbols
+            pause_str = f" {UI.RED}[PAUSED: {remaining_pause}s]{UI.RST}" if remaining_pause > 0 else ""
+            daily_pnl = risk.get_daily_pnl()
+            pnl_str = UI.badge_pnl(daily_pnl)
+            
+            # Show any running (open) bot positions across ALL symbols in a single line refresh
             open_pos = connector.get_all_open_positions()
+            pos_parts = []
             if open_pos:
                 by_sym = {}
                 for p in open_pos:
                     by_sym.setdefault(p.get("symbol", "?"), []).append(p)
-                pos_parts = []
                 for sym, plist in sorted(by_sym.items()):
                     float_s = sum(x.get("profit", 0.0) for x in plist)
-                    pos_parts.append(f"{sym}: {len(plist)} pos ${float_s:+.2f}")
-                pos_str = " | " + " | ".join(pos_parts)
+                    sym_clean = sym.replace("-ECNc", "").replace(".c", "")
+                    count_str = f"({len(plist)})" if len(plist) > 1 else ""
+                    badges = "".join(position_manager.get_ticket_status_badge(x.get("ticket")) for x in plist)
+                    pos_parts.append(f"{sym_clean}{count_str}: {UI.badge_pnl(float_s)}{badges}")
+                pos_str = f" | {UI.GRAY}pos:{UI.RST} " + " | ".join(pos_parts)
             else:
-                pos_str = ""
-            status_line = f"[{config.SYMBOL} | {now_str}]{pause_str}{pos_str}"
-            # Potong berdasarkan LEBAR TAMPILAN terminal aktual (emoji = 2 kolom), bukan
-            # jumlah karakter - kalau baris wrap, \r tidak balik ke awal baris dan status
-            # jadi nge-print ke bawah (bukan refresh). Sisakan margin 4 kolom biar aman.
+                pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
+
+            main_sym = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
+            header_part = f"[{UI.BOLD}{main_sym}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
+            
+            # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)
+            # supaya auto-scroll terminal tidak merusak refresh in-place multi-baris.
             try:
                 cols = shutil.get_terminal_size((120, 24)).columns
             except Exception:
                 cols = 120
-            max_w = max(60, cols - 4)
-            status_line = _truncate_disp(status_line, max_w)
-            if _VT_OK:
-                # Hapus isi baris dulu biar sisa status sebelumnya (yang lebih panjang) hilang
-                sys.stdout.write(f"\x1b[2K\r{status_line}")
+            max_w = max(40, cols - 2)
+            if open_pos:
+                status_lines = _wrap_positions(pos_parts, max_w, indent=header_part + f" | {UI.GRAY}pos:{UI.RST} ")
             else:
-                sys.stdout.write(f"\r{status_line:<{max_w}}")
+                status_lines = [header_part + pos_str]
+
+            sys.stdout.write(_render_status_lines(status_lines, _VT_OK))
             sys.stdout.flush()
 
-            # Sleep 5 seconds between checks
+            # Sleep 3 seconds between checks
             time.sleep(3)  # loop utama - cache query MT5 sudah kurangi beban, 3 detik aman
 
             
