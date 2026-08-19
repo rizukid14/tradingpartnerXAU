@@ -161,6 +161,22 @@ def alert_trade_result(signal, ticket, comment):
     send_message(text)
 
 
+def alert_trade_closed(pos_type, ticket, profit_usd, comment=""):
+    """Send alert when a trade closes (Hit TP or Hit SL)."""
+    is_win = profit_usd >= 0
+    icon = "🎯 *[TAKE PROFIT HIT]*" if is_win else "🛑 *[STOP LOSS HIT]*"
+    profit_str = f"+${profit_usd:.2f} USD" if is_win else f"-${abs(profit_usd):.2f} USD"
+
+    text = (
+        f"{icon}\n"
+        f"• Ticket: `#{ticket}`\n"
+        f"• Tipe: `{pos_type}`\n"
+        f"• Profit/Loss: *{profit_str}*\n"
+        f"• Status: `{comment[:30] if comment else 'Closed'}`"
+    )
+    send_message(text)
+
+
 def alert_risk_halt(reason):
     """Send risk halt notification."""
     text = f"🚨 *Trading Dihentikan*\n{reason}"

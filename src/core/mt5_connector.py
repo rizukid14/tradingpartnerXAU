@@ -289,3 +289,28 @@ def close_position(ticket):
         return False
     print(f"[MT5] Posisi #{ticket} berhasil ditutup.")
     return True
+
+def get_closed_positions_today():
+    """Fetches deals executed today for history tracking and Telegram alerts."""
+    import datetime
+    now = datetime.datetime.now()
+    from_date = datetime.datetime(now.year, now.month, now.day)
+    to_date = now + datetime.timedelta(days=1)
+    
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        return []
+        
+    closed = []
+    for d in deals:
+        if d.magic == config.MAGIC_NUMBER and d.entry == 1:  # DEAL_ENTRY_OUT
+            closed.append({
+                "ticket": d.position_id,
+                "deal_id": d.ticket,
+                "symbol": d.symbol,
+                "type": "BUY" if d.type == mt5.ORDER_TYPE_SELL else "SELL",
+                "volume": d.volume,
+                "profit": d.profit + d.swap + d.commission,
+                "comment": d.comment
+            })
+    return closed

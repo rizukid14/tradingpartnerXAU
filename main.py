@@ -41,8 +41,47 @@ class TeeLogger(object):
         self.log.flush()
 
 
+_notified_closed_tickets = set()
+
+def check_and_notify_closed_trades():
+    """Checks for newly closed trades today, prints to CLI, and sends Telegram alert."""
+    try:
+        closed = connector.get_closed_positions_today()
+        if not closed:
+            return
+
+        for deal in closed:
+            t_id = deal.get("ticket")
+            if t_id and t_id not in _notified_closed_tickets:
+                _notified_closed_tickets.add(t_id)
+                profit_usd = deal.get("profit", 0.0)
+                pos_type = deal.get("type", "TRADE")
+                vol = deal.get("volume", 0.01)
+                comment = deal.get("comment", "")
+
+                is_win = profit_usd >= 0
+                icon = "🎯 [CLOSED WIN - TAKE PROFIT]" if is_win else "🛑 [CLOSED LOSS - STOP LOSS]"
+                pnl_str = f"+${profit_usd:.2f}" if is_win else f"-${abs(profit_usd):.2f}"
+
+                # CLI Print
+                print(f"{icon} Ticket #{t_id} ({pos_type} {vol} lot) | P/L: {pnl_str} USD | Info: {comment}")
+
+                # Telegram Alert
+                tg.alert_trade_closed(
+                    pos_type=pos_type,
+                    ticket=t_id,
+                    profit_usd=profit_usd,
+                    comment=comment
+                )
+    except Exception as e:
+        print(f"[CLOSED TRADE TRACKER ERROR] {e}")
+
+
 def run_trading_cycle():
     """Performs one full cycle of fetching data, querying LLMs, and checking consensus."""
+    # Always check for closed trades at cycle start
+    check_and_notify_closed_trades()
+
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     
     # 0. Risk gate — check all conditions before trading
