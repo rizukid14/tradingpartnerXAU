@@ -164,7 +164,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         for c in m1_candles:
             rsi_val = f"{c['rsi_14']:.1f}" if 'rsi_14' in c and pd.notna(c['rsi_14']) else "N/A"
             ema20_val = f"{c['ema_20']:.2f}" if 'ema_20' in c and pd.notna(c['ema_20']) else "N/A"
-            m1_lines.append(f"- M1 {c['time'][-5:]}: C {c['close']} | H {c['high']} | L {c['low']} | RSI {rsi_val} | EMA20 {ema20_val}")
+            t_str = c['time'].strftime('%H:%M') if hasattr(c['time'], 'strftime') else str(c['time'])[-5:]
+            m1_lines.append(f"- M1 {t_str}: C {c['close']} | H {c['high']} | L {c['low']} | RSI {rsi_val} | EMA20 {ema20_val}")
         m1_str = "### RECENT M1 MICRO CANDLES (Last 10 M1 Bars):\n" + "\n".join(m1_lines) + "\n"
 
     latest = df.iloc[-1]
