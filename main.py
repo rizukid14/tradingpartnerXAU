@@ -909,11 +909,12 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
-def run_trading_cycle():
+def run_trading_cycle(force=False):
     """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
     per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
     = [XAU, EURJPY, GBPCHF] - all symbols scanned ONLY when their specific timeframe
-    forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour).
+    forms a new candle (e.g., XAU every 5 mins, FX Pairs every 1 hour). Pass force=True
+    on manual retrigger to bypass candle-close gate.
     """
     _reset_status_lines()
     sys.stdout.write(UI.clear_line())
@@ -983,8 +984,8 @@ def run_trading_cycle():
         closed_time = int(rates[-2]['time'])
         last_time = _symbol_last_candle.get(sym)
         
-        # Eksekusi siklus LLM jika belum pernah di-scan (startup mode "all") ATAU candle baru sudah close
-        if last_time is None or closed_time > last_time:
+        # Eksekusi siklus LLM jika force=True, belum pernah di-scan, ATAU candle baru sudah close
+        if force or last_time is None or closed_time > last_time:
             _symbol_last_candle[sym] = closed_time
             
             # Log indikator candle baru untuk pair selain pair utama
@@ -1694,8 +1695,8 @@ def main():
                           f"Session Lot: x{status['session_lot_multiplier']}")
                     
                     if not skip_cycle:
-                        # Run trading cycle
-                        run_trading_cycle()
+                        # Run trading cycle (pass force=True if manual retrigger was requested)
+                        run_trading_cycle(force=trigger_requested)
             else:
                 if trigger_requested:
                     # Put trigger flag back if rates failed so it is retried on next iteration
