@@ -1,11 +1,9 @@
 """
-CLI Theme & Styling - Legacy Gold Branch Edition
+CLI Theme & Styling - Legacy Gold & Crisp White Edition
 
-Special Theme Color: GOLD / AMBER / YELLOW (Signature identifier for Legacy Gold M5 Scalper branch).
-Provides ANSI color constants, tags, badges, status clock rendering, and banner layout.
+Special Theme Palette: Premium Gold & Pure White (Branch Legacy Identifier)
 """
 import sys
-import shutil
 
 # ANSI Color Codes
 class UI:
@@ -13,21 +11,18 @@ class UI:
     BOLD = "\033[1m"
     DIM = "\033[2m"
 
-    # Core Theme Palette (Gold / Amber Theme for Legacy Branch)
-    GOLD = "\033[38;5;214m"       # Gold / Vivid Amber
-    AMBER = "\033[38;5;208m"      # Deep Gold/Orange
-    YELLOW = "\033[93m"           # Bright Yellow
-    CYAN = "\033[96m"             # Bright Cyan
-    BLUE = "\033[94m"             # Blue
-    GREEN = "\033[92m"            # Green
-    RED = "\033[91m"              # Red
-    MAGENTA = "\033[95m"          # Magenta
-    GRAY = "\033[90m"             # Dim Gray
+    # Core Theme Palette: Gold + Crisp White
+    GOLD = "\033[38;5;220m"        # Bright Vivid Gold
+    AMBER = "\033[38;5;214m"       # Deep Warm Gold
+    WHITE = "\033[97m"            # Crisp White
+    WHITE_BOLD = "\033[97m\033[1m" # Pure Bold White
+    GRAY = "\033[90m"             # Soft Gray
+    GREEN = "\033[92m"            # Emerald Green
+    RED = "\033[91m"              # Rose Red
 
-    # Backgrounds
-    BG_GOLD = "\033[48;5;214m\033[30m\033[1m"
-    BG_GREEN = "\033[42m\033[30m\033[1m"
-    BG_RED = "\033[41m\033[97m\033[1m"
+    # Background Badges
+    BG_GOLD = "\033[48;5;220m\033[30m\033[1m"
+    BG_WHITE = "\033[47m\033[30m\033[1m"
 
     @classmethod
     def tag(cls, label, color=None):
@@ -44,19 +39,20 @@ class UI:
             return f"{cls.GRAY}$0.00{cls.RST}"
 
 
-def render_banner(account_info=None, symbol="XAUUSD-ECNc", tf="M5", mode="xau", is_live=True):
-    """Renders a gold-themed banner identifying the Legacy Gold M5 Scalper branch."""
-    mode_str = f"{UI.RED}{UI.BOLD}LIVE EXECUTION{UI.RST}" if is_live else f"{UI.YELLOW}{UI.BOLD}DRY RUN{UI.RST}"
-    acc_str = f" | Account: {account_info}" if account_info else ""
+def render_banner(account_info=None, symbol="XAUUSD-ECN", tf="M5", mode="xau", is_live=True):
+    """Renders an elegant Gold & Pure White banner identifying the Legacy Gold M5 Scalper branch."""
+    mode_str = f"{UI.RED}{UI.BOLD}LIVE EXECUTION{UI.RST}" if is_live else f"{UI.GOLD}{UI.BOLD}DRY RUN{UI.RST}"
+    acc_str = f" {UI.GRAY}|{UI.RST} Account: {UI.WHITE_BOLD}{account_info}{UI.RST}" if account_info else ""
     
     banner = f"""
-{UI.GOLD}{UI.BOLD}========================================================================{UI.RST}
-{UI.GOLD}{UI.BOLD}   [GOLD] BOT TRADING MULTI-LLM - BRANCH LEGACY (GOLD M5 SCALPER)     {UI.RST}
-{UI.GOLD}{UI.BOLD}========================================================================{UI.RST}
- {UI.GOLD}> Branch:{UI.RST} {UI.BG_GOLD} LEGACY GOLD (M5) {UI.RST}{acc_str}
- {UI.GOLD}> Target Asset:{UI.RST} {UI.BOLD}{symbol}{UI.RST} ({tf} Scalping)
- {UI.GOLD}> Mode:{UI.RST} {mode_str}
- {UI.GOLD}> AI Models:{UI.RST} OpenAI (gpt-5.4-mini) | Gemini (2.5-flash-lite) | DeepSeek (v4-flash)
-{UI.GOLD}{UI.BOLD}------------------------------------------------------------------------{UI.RST}
+{UI.GOLD}========================================================================{UI.RST}
+{UI.GOLD}{UI.BOLD}   + BOT TRADING MULTI-LLM  --  BRANCH LEGACY (GOLD M5 SCALPER) +    {UI.RST}
+{UI.GOLD}========================================================================{UI.RST}
+ {UI.GOLD}> Branch:{UI.RST}       {UI.BG_GOLD} LEGACY GOLD M5 {UI.RST}{acc_str}
+ {UI.GOLD}> Target Asset:{UI.RST} {UI.WHITE_BOLD}{symbol}{UI.RST} {UI.GRAY}({tf} Ultra-Fast Scalping){UI.RST}
+ {UI.GOLD}> Execution:{UI.RST}    {mode_str} {UI.GRAY}(Dynamic 1.5% Equity Risk Sizing){UI.RST}
+ {UI.GOLD}> AI Models:{UI.RST}    {UI.WHITE}OpenAI{UI.RST} {UI.GRAY}(gpt-5.4-mini){UI.RST} {UI.GOLD}* {UI.WHITE}Gemini{UI.RST} {UI.GRAY}(2.5-flash-lite){UI.RST} {UI.GOLD}* {UI.WHITE}DeepSeek{UI.RST} {UI.GRAY}(v4-flash){UI.RST}
+ {UI.GOLD}> Speed Mode:{UI.RST}   {UI.WHITE_BOLD}Single-Pass Ultra-Fast (~1.0s){UI.RST} {UI.GRAY}[No Debates/MTF Delay]{UI.RST}
+{UI.GOLD}------------------------------------------------------------------------{UI.RST}
 """
     return banner
