@@ -272,12 +272,12 @@ CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, 
 
 
 def _fmt_price(x, point_size=None):
-    """Format harga/point ke string desimal bersih (0.01, 0.001, 0.00001).
-    Kalau point_size diberikan, round dulu ke kelipatan point size biar tidak
-    ada noise presisi (XAU 0.01 -> 2 desimal, FX 0.00001 -> 5 desimal)."""
+    """Format harga ke desimal presisi sesuai point_size (XAU 2 des, EURJPY 3 des, FX 5 des)."""
+    if x is None:
+        return ""
     if point_size and point_size > 0:
-        decimals = max(0, round(-__import__("math").log10(point_size)))
-        x = round(x, decimals)
+        decimals = max(0, int(round(-__import__("math").log10(point_size))))
+        return f"{x:.{decimals}f}"
     return f"{x:.10f}".rstrip("0").rstrip(".")
 
 
@@ -1086,8 +1086,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
-Current Bid: {current_tick['bid']}
-Current Ask: {current_tick['ask']}
+Current Bid: {_fmt_price(current_tick['bid'], point_size)}
+Current Ask: {_fmt_price(current_tick['ask'], point_size)}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
 {key_levels_str}
