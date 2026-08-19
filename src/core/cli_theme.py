@@ -40,17 +40,17 @@ class UI:
 
 
 def render_banner(account_info=None, symbol="XAUUSD-ECN", tf="M5", mode="xau", is_live=True):
-    """Renders an elegant Gold & Pure White banner identifying the Legacy Gold M5 Scalper branch."""
+    """Renders an elegant Gold & Pure White banner identifying the M1 Micro SuperScalper branch."""
     mode_str = f"{UI.RED}{UI.BOLD}LIVE EXECUTION{UI.RST}" if is_live else f"{UI.GOLD}{UI.BOLD}DRY RUN{UI.RST}"
     acc_str = f" {UI.GRAY}|{UI.RST} Account: {UI.WHITE_BOLD}{account_info}{UI.RST}" if account_info else ""
     
     banner = f"""
 {UI.GOLD}========================================================================{UI.RST}
-{UI.GOLD}{UI.BOLD}   + BOT TRADING MULTI-LLM  --  BRANCH LEGACY (GOLD M5 SCALPER) +    {UI.RST}
+{UI.GOLD}{UI.BOLD}   + BOT TRADING MULTI-LLM  --  M1 MICRO SUPERSCALPER +          {UI.RST}
 {UI.GOLD}========================================================================{UI.RST}
- {UI.GOLD}> Branch:{UI.RST}       {UI.BG_GOLD} LEGACY GOLD M5 {UI.RST}{acc_str}
- {UI.GOLD}> Target Asset:{UI.RST} {UI.WHITE_BOLD}{symbol}{UI.RST} {UI.GRAY}({tf} Ultra-Fast Scalping){UI.RST}
- {UI.GOLD}> Execution:{UI.RST}    {mode_str} {UI.GRAY}(Dynamic 1.5% Equity Risk Sizing){UI.RST}
+ {UI.GOLD}> Branch:{UI.RST}       {UI.BG_GOLD} M1 MICRO SUPERSCALPER {UI.RST}{acc_str}
+ {UI.GOLD}> Target Asset:{UI.RST} {UI.WHITE_BOLD}{symbol}{UI.RST} {UI.GRAY}({tf}/M1 Mega-Tight Scalping){UI.RST}
+ {UI.GOLD}> Execution:{UI.RST}    {mode_str} {UI.GRAY}(Dynamic 1.5% Equity Risk Sizing - Mega Lot Jumbo){UI.RST}
  {UI.GOLD}> AI Models:{UI.RST}    {UI.WHITE}OpenAI{UI.RST} {UI.GRAY}(gpt-5.4-mini){UI.RST} {UI.GOLD}* {UI.WHITE}Gemini{UI.RST} {UI.GRAY}(2.5-flash-lite){UI.RST} {UI.GOLD}* {UI.WHITE}DeepSeek{UI.RST} {UI.GRAY}(v4-flash){UI.RST}
  {UI.GOLD}> Speed Mode:{UI.RST}   {UI.WHITE_BOLD}Single-Pass Ultra-Fast (~1.0s){UI.RST} {UI.GRAY}[No Debates/MTF Delay]{UI.RST}
 {UI.GOLD}------------------------------------------------------------------------{UI.RST}

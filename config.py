@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 # --- PATH & DIRECTORY SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+LOG_FILE = os.path.join(DATA_DIR, "trading_bot_m1_scalper.log")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Add modular package search paths
@@ -156,4 +157,4 @@ FUNDAMENTAL_ANALYSIS_ENABLED = False
 PRIMARY_ANALYSIS_MODEL = GEMINI_MODEL
 
 # --- LOGGING SETTINGS ---
-LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
+LOG_FILE = os.path.join(DATA_DIR, "trading_bot_m1_scalper.log")
