@@ -34,17 +34,17 @@ DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 
 # --- MODEL NAMES & FALLBACKS ---
 # DeepSeek Model & Fallback (Official production endpoint)
-DEEPSEEK_MODEL = "deepseek-chat"
-DEEPSEEK_FALLBACK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_FALLBACK_MODEL = "deepseek-v4-flash"
 
 
 # Gemini Model & Fallback
-GEMINI_MODEL = "gemini-3.1-flash-lite"
-GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 
 # OpenAI Model & Fallback
-OPENAI_MODEL = "gpt-4o-mini"
-OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
+OPENAI_MODEL = "gpt-5.4-mini"
+OPENAI_FALLBACK_MODEL = "gpt-4o-mini"
 
 # Maximum time (seconds) per model before triggering fallback
 LLM_TIMEOUT_SECONDS = 24.0

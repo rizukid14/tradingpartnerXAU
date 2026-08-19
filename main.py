@@ -128,13 +128,15 @@ def run_trading_cycle():
         for i in range(num_positions):
             # Posisi 2 gets 1.2x TP for capturing extended trend
             pos_tp = int(tp_points * 1.2) if i == 1 else tp_points
+            open_reason = (result.get("reason") or "Multi-LLM Bot").strip()[:25]
             
             order_res = connector.send_trade_order(
                 symbol=config.SYMBOL,
                 action=trade_signal,
                 lot=effective_lot,
                 sl_points=sl_points,
-                tp_points=pos_tp
+                tp_points=pos_tp,
+                comment=open_reason
             )
             if order_res["status"] == "SUCCESS":
                 print(f"🎉 Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
@@ -149,7 +151,7 @@ def run_trading_cycle():
     else:
         print("☕ Tidak ada keputusan BUY/SELL yang disetujui. Menunggu candle berikutnya.")
 
-        
+    tg.flush_failed_orders_recap()
     return True
 
 
@@ -161,29 +163,14 @@ def main():
         sys.stderr = tee_logger
         print(f"📝 Logging aktif. Semua output akan disimpan di: {config.LOG_FILE}")
 
-    print("=" * 60)
-    print("    BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    ")
-    print("=" * 60)
-    print(f"Mode: {'⚠️ DRY RUN (Hanya Sinyal)' if config.DRY_RUN else '🔥 LIVE EXECUTION (Duit Asli/Demo)'}")
-    print(f"Simbol: {config.SYMBOL} | Timeframe: M5 (5 Menit) | Lot Size: {config.LOT_SIZE}")
-    print(f"Models: OpenAI ({config.OPENAI_MODEL}), Gemini ({config.GEMINI_MODEL}), DeepSeek ({config.DEEPSEEK_MODEL})")
-    print("-" * 60)
-    print("🛡️ PROTEKSI AKTIF:")
-    print(f"   Trailing Stop:   {'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} "
-          f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts, jarak {config.TRAILING_DISTANCE_POINTS} pts)")
-    print(f"   Break-Even:      {'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} "
-          f"(trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)")
-    print(f"   Partial Close:   {'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} "
-          f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)")
-    print(f"   Max Daily Loss:  ${config.MAX_DAILY_LOSS_USD}")
-    print(f"   Recovery Mode:   {'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'} "
-          f"(x{config.RECOVERY_LOT_MULTIPLIER} setelah {config.MAX_CONSECUTIVE_LOSSES} loss)")
-    print(f"   Cooldown:        {config.TRADE_COOLDOWN_SECONDS}s antar trade")
-    print(f"   Spread Filter:   {config.MAX_SPREAD_POINTS} pts maks")
-    print(f"   Session Filter:  {'ON' if config.SESSION_FILTER_ENABLED else 'OFF'} (WIB)")
-    print(f"   Weekend Close:   {'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}")
-    print(f"   Telegram:        {'ON' if config.TELEGRAM_ENABLED else 'OFF'}")
-    print("=" * 60)
+    from src.core.cli_theme import UI, render_banner
+    print(render_banner(
+        account_info=getattr(config, "MT5_LOGIN", None),
+        symbol=config.SYMBOL,
+        tf="M5",
+        mode="xau",
+        is_live=not config.DRY_RUN
+    ))
 
     # Validate API keys before connecting to MT5
     missing_keys = []

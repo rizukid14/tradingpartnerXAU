@@ -144,15 +144,13 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
     return query_primary_model(prompt, search_grounding=True)
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
     """
-    Constructs a highly structured trading prompt with market context
-    and requests a standard JSON response.
+    Constructs an Ultra-Lean M5 Scalper trading prompt with M5 50-bar range summary,
+    M15 macro structure, clear ATR risk bounds, and strict JSON format.
     """
-    # Take the last 10 candles for context
+    # Take the last 10 M5 candles for detailed micro context
     recent_candles = df.tail(10).to_dict(orient="records")
-    
-    # Format candle list for readability in prompt
     candles_str = ""
     for c in recent_candles:
         candles_str += f"- Time: {c['time']}, O: {c['open']}, H: {c['high']}, L: {c['low']}, C: {c['close']}, Vol: {c['tick_volume']}, RSI: {c['rsi_14']:.2f}, EMA20: {c['ema_20']:.2f}, EMA50: {c['ema_50']:.2f}\n"
@@ -165,16 +163,18 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
     min_tp = int(min_sl * 1.5)
     max_tp = int(max_sl * 2.0)
 
+    # 50-bar M5 Range Summary
+    m5_high = float(df['high'].tail(50).max())
+    m5_low = float(df['low'].tail(50).min())
+    m5_range = (m5_high - m5_low) if (m5_high > m5_low) else 1.0
+    m5_pct = round(((latest['close'] - m5_low) / m5_range) * 100, 1)
+
+    # M15 Macro Structure (if available via macro_context or computed)
+    m15_summary = f"- M5 50-Bar Range: High {m5_high:.2f} | Low {m5_low:.2f} (Price is at {m5_pct}% of range)"
+
     macro_str = ""
     if macro_context:
         macro_str = f"\n### HIGHER-LEVEL MACRO & TIMEFRAME CONTEXT\n{macro_context}\n"
-
-    lessons_str = ""
-    try:
-        from src.analytics import trade_evaluator
-        lessons_str = trade_evaluator.evaluator.get_lessons_context()
-    except Exception:
-        pass
 
     forecast_str = ""
     try:
@@ -183,9 +183,14 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None):
     except Exception:
         pass
 
+    positions_str = ""
+    if open_positions and len(open_positions) > 0:
+        positions_str = "\n### CURRENT OPEN POSITIONS\n"
+        for pos in open_positions:
+            positions_str += f"- Ticket #{pos.get('ticket')}: {pos.get('type')} {pos.get('volume')} lot @ {pos.get('price_open')}, Current P/L: ${pos.get('profit', 0.0):.2f}\n"
+        positions_str += "NOTE: The 'signal' field below is ONLY for opening a NEW entry. Evaluate entry independently from existing positions.\n"
 
-    prompt = f"""
-You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol} (Gold/Forex).
+    prompt = f"""You are an expert algorithmic trading system specializing in 5-minute (M5) scalping on {symbol}.
 Analyze the current market condition and determine the next trading decision.
 
 ### MARKET DATA CONTEXT
@@ -197,38 +202,36 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 
 ### RECENT CANDLES (Last 10 candles, M5):
 {candles_str}
-
-### CURRENT INDICATORS SUMMARY
+### INDICATORS & STRUCTURE SUMMARY
 - Current Close: {latest['close']}
-- RSI (14): {latest['rsi_14']:.2f}
-- EMA (20): {latest['ema_20']:.2f}
-- EMA (50): {latest['ema_50']:.2f}
+- RSI (14): {latest['rsi_14']:.2f} | EMA (20): {latest['ema_20']:.2f} | EMA (50): {latest['ema_50']:.2f}
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
-{macro_str}{lessons_str}{forecast_str}
-### STRATEGY CONSTRAINTS (5-minute Scalping)
-- Look for quick entries and exits.
-- Trades should be high probability. If market is sideways, unclear, or spread is too high relative to ATR, prefer 'HOLD'.
-- HIGH-IMPACT NEWS TIMING RULE: High-impact economic news (such as NFP, CPI, or FOMC) ONLY restricts trading during the 15-30 minutes IMMEDIATELY preceding or following the actual release time. If the news event is hours away in a future session (e.g. NFP in NY session while currently in Tokyo/London session), DO NOT hold back high-probability 5-minute scalping setups during current session!
-- OPTIMAL ENTRY RANGE & R:R RULE: If the current market price is heavily extended far away from Support/Invalidation Level (e.g., projection R:R T+15m < 0.50), DO NOT chase entries at extreme highs/lows! You MUST select 'HOLD' or provide lower confidence to wait for a healthy price pullback into the Optimal Entry Zone near Support/Resistance before issuing a BUY or SELL signal.
-
-
-
-- Suggested Stop Loss (SL) and Take Profit (TP) must be specified in POINTS (where 1 Gold point = 0.01 USD, e.g., 300 points = $3.00 movement).
-- Based on the current ATR of {atr_points} points:
-  - Your Stop Loss (SL) MUST be between {min_sl} and {max_sl} points (1.5x to 2x the ATR).
-  - Your Take Profit (TP) MUST be at least 1.5x of your suggested SL (e.g., between {min_tp} and {max_tp} points).
+{m15_summary}
+{macro_str}{forecast_str}{positions_str}
+### STRATEGY CONSTRAINTS (M5 Scalping)
+- Focus on high-probability M5 momentum breakouts or clean pullback rejections at M5/M15 Support/Resistance.
+- SL Placement: Place SL beyond the nearest structural Swing High/Low or S/R level. ATR bounds ({min_sl}-{max_sl} pts) define the valid risk envelope.
+- TP Requirement: TP must be at least 1.5x of SL ({min_tp}-{max_tp} pts).
+- Confidence Threshold: Confidence >= 0.50 required for BUY/SELL. If edge is weak or market is choppy/unclear, MUST output HOLD.
 
 ### RESPONSE FORMAT
-You MUST respond with a valid JSON object ONLY. Do not include any text before or after the JSON.
-JSON schema:
+Respond ONLY with a valid JSON object. Do not include any text before or after the JSON.
+
+If HOLD (Confidence < 0.50 or no clear edge):
 {{
-  "signal": "BUY" | "SELL" | "HOLD",
-  "confidence": 0.0 to 1.0,
-  "sl_points": number (distance in points for Stop Loss, e.g., {int((min_sl+max_sl)/2)}),
-  "tp_points": number (distance in points for Take Profit, e.g., {int((min_tp+max_tp)/2)}),
-  "reasoning": "A concise sentence explaining the decision based on RSI, EMAs, and price action."
+  "signal": "HOLD",
+  "confidence": 0.0,
+  "reasoning": "1 short sentence explaining why holding."
 }}
 
+If BUY or SELL (Confidence >= 0.50):
+{{
+  "signal": "BUY" | "SELL",
+  "confidence": 0.50 to 1.00,
+  "sl_points": number (exact SL distance in points, e.g. {int((min_sl+max_sl)/2)}),
+  "tp_points": number (exact TP distance in points, e.g. {int((min_tp+max_tp)/2)}),
+  "reasoning": "1 short sentence explaining entry trigger."
+}}
 """
     return prompt
 
@@ -279,16 +282,8 @@ def query_openai(prompt):
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
 def _execute_openai_single(model_name, prompt, timeout_sec):
     is_reasoning = "gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower()
-    if is_reasoning:
-        response = openai_client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "user", "content": "System: You are a professional financial trading assistant.\n\n" + prompt}
-            ],
-            response_format={"type": "json_object"},
-            timeout=timeout_sec
-        )
-    else:
+    extra = {"reasoning_effort": "none"} if is_reasoning else {}
+    try:
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
@@ -296,7 +291,19 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.2,
+            extra_body=extra if extra else None,
+            temperature=0.2 if not extra else None,
+            timeout=timeout_sec
+        )
+    except Exception:
+        # Fallback to standard request without extra_body if broker API rejects extra_body
+        response = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a professional financial trading assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
             timeout=timeout_sec
         )
     content = response.choices[0].message.content
@@ -365,16 +372,27 @@ def query_gemini(prompt):
 
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec):
-    response = deepseek_client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": "You are a professional financial trading assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.2,
-        timeout=timeout_sec
-    )
+    try:
+        response = deepseek_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a professional financial trading assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            extra_body={"reasoning_effort": "none"},
+            timeout=timeout_sec
+        )
+    except Exception:
+        response = deepseek_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a professional financial trading assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            timeout=timeout_sec
+        )
     content = response.choices[0].message.content
     return clean_json_response(content)
 

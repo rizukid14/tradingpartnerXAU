@@ -134,36 +134,38 @@ def get_closed_positions_today():
         })
     return closed
 
-def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
+def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, comment=None):
     """
     Sends a buy/sell trade order to MT5.
     action: "BUY" or "SELL"
     sl_points / tp_points: distance in points for Stop Loss and Take Profit
     """
+    from src.core import telegram_alerts
+
     if config.DRY_RUN:
         print(f"[DRY RUN] Simulasi {action} order untuk {symbol} sebanyak {lot} lot (SL: {sl_points} pts, TP: {tp_points} pts).")
         return {"status": "SUCCESS", "comment": "Dry Run Mode Active", "ticket": 0}
 
     tick = mt5.symbol_info_tick(symbol)
     symbol_info = mt5.symbol_info(symbol)
-    
+
     if tick is None or symbol_info is None:
+        telegram_alerts.alert_order_error(symbol, action, lot, sl_points, tp_points, "N/A", "Symbol info unavailable")
         return {"status": "ERROR", "comment": "Symbol info unavailable"}
 
     point = symbol_info.point
-    
+    digits = symbol_info.digits
+
     if action == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
-        price = tick.ask
-        # Calculate SL/TP
-        sl = price - (sl_points * point) if sl_points else 0.0
-        tp = price + (tp_points * point) if tp_points else 0.0
+        price = round(tick.ask, digits)
+        sl = (price - (sl_points * point)) if sl_points else 0.0
+        tp = (price + (tp_points * point)) if tp_points else 0.0
     elif action == "SELL":
         order_type = mt5.ORDER_TYPE_SELL
-        price = tick.bid
-        # Calculate SL/TP
-        sl = price + (sl_points * point) if sl_points else 0.0
-        tp = price - (tp_points * point) if tp_points else 0.0
+        price = round(tick.bid, digits)
+        sl = (price + (sl_points * point)) if sl_points else 0.0
+        tp = (price - (tp_points * point)) if tp_points else 0.0
     else:
         return {"status": "ERROR", "comment": "Invalid action type"}
 
@@ -173,28 +175,47 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None):
     if not tp and config.DEFAULT_TP_POINTS:
         tp = price + (config.DEFAULT_TP_POINTS * point) if action == "BUY" else price - (config.DEFAULT_TP_POINTS * point)
 
+    sl_price = round(sl, digits) if sl else 0.0
+    tp_price = round(tp, digits) if tp else 0.0
+    comm_str = (str(comment)[:25].strip() if comment else "Multi-LLM Bot")
+
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
         "volume": lot,
         "type": order_type,
         "price": price,
-        "sl": round(sl, symbol_info.digits),
-        "tp": round(tp, symbol_info.digits),
+        "sl": sl_price,
+        "tp": tp_price,
         "deviation": config.DEVIATION,
-        "magic": config.MAGIC_NUMBER,  # Unique ID for our bot trades
-        "comment": "Multi-LLM Bot",
+        "magic": config.MAGIC_NUMBER,
+        "comment": comm_str,
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
 
-    print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {request['sl']}, TP: {request['tp']})...")
+    print(f"[MT5] Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {sl_price}, TP: {tp_price})...")
     result = mt5.order_send(request)
-    
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"[MT5 ERROR] Order gagal! Retcode: {result.retcode}, Pesan: {result.comment}")
-        return {"status": "ERROR", "comment": result.comment, "code": result.retcode}
-        
+
+    if not result or result.retcode != mt5.TRADE_RETCODE_DONE:
+        retcode = getattr(result, "retcode", "N/A") if result else "N/A"
+        err_msg = getattr(result, "comment", "No result") if result else "No result"
+        print(f"[MT5 ERROR] Order gagal! Retcode: {retcode}, Pesan: {err_msg}")
+        telegram_alerts.alert_order_error(
+            symbol=symbol,
+            signal=action,
+            lot=lot,
+            sl_points=sl_points,
+            tp_points=tp_points,
+            retcode=retcode,
+            comment=err_msg,
+            price=price,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            thesis=comment or "Multi-LLM Bot",
+        )
+        return {"status": "ERROR", "comment": err_msg, "code": retcode}
+
     print(f"[MT5] Order BERHASIL! Ticket: {result.order}")
     return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
 

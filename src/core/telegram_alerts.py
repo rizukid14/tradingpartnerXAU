@@ -53,6 +53,103 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
     send_message(text)
 
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+WIB = ZoneInfo("Asia/Jakarta")
+_failed_orders_recap = []
+
+
+def buffer_failed_order(symbol, action, lot, sl_points, tp_points, sl_price=None, tp_price=None, req_price=None, retcode="N/A", comment="Unknown error", thesis="", entry_type=None):
+    """Buffer a failed order details entry for batch recap Telegram dispatch."""
+    _failed_orders_recap.append({
+        "symbol": symbol or config.SYMBOL,
+        "action": action,
+        "lot": lot,
+        "sl_points": sl_points,
+        "tp_points": tp_points,
+        "sl_price": sl_price,
+        "tp_price": tp_price,
+        "req_price": req_price,
+        "retcode": retcode,
+        "comment": comment,
+        "thesis": thesis,
+        "entry_type": entry_type or "market",
+        "timestamp": datetime.now(WIB).strftime("%H:%M:%S WIB")
+    })
+
+
+def alert_order_error(symbol, signal, lot, sl_points, tp_points, retcode, comment, price=None, entry_type=None, sl_price=None, tp_price=None, thesis=""):
+    """Buffer order error for cycle recap."""
+    buffer_failed_order(
+        symbol=symbol,
+        action=signal,
+        lot=lot,
+        sl_points=sl_points,
+        tp_points=tp_points,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        req_price=price,
+        retcode=retcode,
+        comment=comment,
+        thesis=thesis,
+        entry_type=entry_type,
+    )
+
+
+def flush_failed_orders_recap():
+    """Send a SINGLE combined recap message via Telegram for all failed orders in the cycle."""
+    global _failed_orders_recap
+    if not _failed_orders_recap:
+        return False
+
+    count = len(_failed_orders_recap)
+    lines = [f"⚠️ *REKAP KEGAGALAN EKSEKUSI BOT ({count} Order)*"]
+    lines.append("_Order gagal dieksekusi otomatis oleh MT5. Berikut detail parameter lengkap untuk order manual:_\n")
+
+    for i, item in enumerate(_failed_orders_recap, 1):
+        sym = item["symbol"]
+        act = item["action"]
+        lot = item["lot"]
+        sl_pts = item["sl_points"] or 0
+        tp_pts = item["tp_points"] or 0
+        sl_p = item["sl_price"]
+        tp_p = item["tp_price"]
+        req_p = item["req_price"]
+        code = item["retcode"]
+        err = item["comment"]
+        thesis = item["thesis"] or "Sinyal Consensus AI"
+        etype = item["entry_type"]
+        ts = item["timestamp"]
+
+        rr_ratio = (tp_pts / sl_pts) if (sl_pts and sl_pts > 0 and tp_pts) else 0.0
+        rr_str = f"{rr_ratio:.2f}:1" if rr_ratio > 0 else "N/A"
+
+        kind_str = f"Pending {etype.upper()}" if etype != "market" else f"Market {act}"
+        price_str = f"`{req_p}`" if req_p else "`Harga Market Live`"
+
+        sl_str = f"`{sl_p}` ({sl_pts} pts)" if sl_p else f"`{sl_pts} pts`"
+        tp_str = f"`{tp_p}` ({tp_pts} pts)" if tp_p else f"`{tp_pts} pts`"
+
+        lines.append(
+            f"*{i}. {sym} — {kind_str}*\n"
+            f"• *Entry Price*: {price_str}\n"
+            f"• *Lot Size*: `{lot} lot`\n"
+            f"• *Stop Loss (SL)*: {sl_str}\n"
+            f"• *Take Profit (TP)*: {tp_str} (R:R {rr_str})\n"
+            f"• *Penyebab Gagal*: `Code {code}: {err}`\n"
+            f"• *Tesis AI*: _{thesis}_\n"
+            f"• *Waktu*: `{ts}`"
+        )
+
+    lines.append("\n👉 *Gunakan parameter di atas untuk membuka posisi secara manual di MT5 jika setup teknikal masih valid.*")
+
+    msg_text = "\n\n".join(lines)
+    result = send_message(msg_text)
+    _failed_orders_recap.clear()
+    return result
+
+
 def alert_trade_result(signal, ticket, comment):
     """Send trade execution result."""
     text = (
