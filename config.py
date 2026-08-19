@@ -165,7 +165,7 @@ FORECAST_FALLBACK_MODEL = os.getenv("FORECAST_FALLBACK_MODEL", "gemini-3.5-flash
 # --- TRADING PARAMETERS ---
 # Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
 # Default = nama broker LIVE (suffix -ECNc). Auto-correct cuma arah demo (XAUUSD-ECNc -> XAUUSD-ECN).
-WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "XAUUSD-ECNc")
+WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "GBPUSD-ECNc")
 WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", "BTCUSD.c")
 CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
 ENABLE_BTC_ROTATION = _getenv_bool("ENABLE_BTC_ROTATION", False)
@@ -181,17 +181,9 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        # 16 Agustus (user): EURJPY -> CADCHF. Hasil riset edge: CADCHF #3 (27 EDGE,
-        # 8 kuat, EV +0.43 Bearish Sweep NY), EURJPY paling lemah (#11, 4 EDGE, 0 kuat).
-        # 18 Agustus (user): GBPNZD -> AUDCHF. GBPNZD spread suka ngelebar (22 pts);
-        # AUDCHF peringkat 4 riset (24 EDGE, 6 kuat, Inside Bar Bearish NY WR 70%).
-        # 18 Agustus (user, riset baru): EURAUD -> NZDCAD. EURAUD edge paling lemah
-        # di pool (3 EDGE, 0 kuat). Riset CAD-EUR-GBP 3th: NZDCAD juara (27 EDGE,
-        # spread 2.2 pts, Bearish Engulfing htf=up WR 63% EV +0.24).
-        # 18 Agustus (user, malam): NZDCAD -> AUDCAD. NZDCAD spread suka gerak
-        # (2-3 pts) & order sering 10013 (likuiditas tipis). AUDCAD solid
-        # (5 EDGE, Bearish Engulfing NY WR 62% EV +0.21, spread 3.4 stabil).
-        "GBPCHF-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc,GBPAUD-ECNc,AUDCAD-ECNc",
+        # 19 Agustus (user): XAUUSD diganti GBPUSD (Cable) + USDCAD (Loonie, trend following EV +0.20).
+        # Pool FX 7 simbol H1: GBPUSD, USDCAD, EURJPY, GBPAUD, AUDCAD, EURCHF, AUDCHF.
+        "GBPUSD-ECNc,USDCAD-ECNc,EURJPY-ECNc,GBPAUD-ECNc,AUDCAD-ECNc,EURCHF-ECNc,AUDCHF-ECNc",
     ).split(",")
     if s.strip()
 ]

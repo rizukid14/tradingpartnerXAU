@@ -787,6 +787,19 @@ def _safe_order_send(request):
     except Exception:
         return None
 
+def _safe_order_check(request):
+    """Pre-checks trade request using mt5.order_check before sending to trade server."""
+    try:
+        res = mt5.order_check(request)
+        if res is not None:
+            return res
+    except Exception:
+        pass
+    try:
+        return mt5.order_check(request=request)
+    except Exception:
+        return None
+
 def _send_with_retry(build_request, symbol, label):
     """Send a request via mt5.order_send with retries and fill-policy fallback."""
     policy = get_filling_policy(symbol)
@@ -795,6 +808,16 @@ def _send_with_retry(build_request, symbol, label):
     req = build_request(base_dev, policy)
     if req is None:
         return None  # quote degenerate/stale — dibatalkan bersih (bukan spam retry 10013)
+
+    # Pre-check via MT5 OrderCheck() untuk mendeteksi error margin/filling/autotrading lokal secara instan
+    check_res = _safe_order_check(req)
+    if check_res is not None:
+        check_code = getattr(check_res, "retcode", 0)
+        # Structural errors (no money, autotrading disabled, invalid volume, unsupported filling mode)
+        if check_code not in (0, getattr(mt5, "TRADE_RETCODE_DONE", 10009)) and check_code in (10019, 10027, 10014, 10030):
+            print(f" {UI.tag('MT5 CHECK ERROR', UI.RED)} OrderCheck ditolak terminal! Code {check_code}: {check_res.comment}")
+            return check_res
+
     result = _safe_order_send(req)
 
     for attempt in range(_MAX_RETRIES):
@@ -853,10 +876,11 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     # Quote-health check (update 15 Agustus): spread 0 (bid==ask) itu NORMAL di akun
     # ECN - order tetap valid & bisa dieksekusi (harga bid==ask saat itu). Yang beneran
     # berbahaya: tick None (quote hilang), tick stale (feed beku - harga basi), spread
-    # spike (quote burst). 14 Agustus malam sempat nge-block spread 0 karena salah
-    # attribusi 10013 EURJPY -> ternyata EURAUD juga spread 0 tapi BISA buka (user).
+    # spike (quote burst).
     if tick is None:
         return {"status": "ERROR", "comment": "Tidak ada quote (tick None) — order dibatalkan"}
+    if tick.ask <= 0 or tick.bid <= 0:
+        return {"status": "ERROR", "comment": "Quote tidak valid (ask/bid 0) — order dibatalkan"}
     spread_now = (tick.ask - tick.bid) / point if point else 0.0
     tick_age = -1
     if getattr(tick, "time", 0):
@@ -902,8 +926,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             live_price = live_tick.ask if action == "BUY" else live_tick.bid
         else:
             live_price = price
-        # Guard per-attempt: tick None -> skip retry (feed hilang total). Spread 0
-        # TIDAK di-block (normal di akun ECN, order tetap valid - 15 Agustus).
+        # Guard per-attempt: tick None -> skip retry (feed hilang total)
         if live_tick is None:
             return None
         if action == "BUY":
