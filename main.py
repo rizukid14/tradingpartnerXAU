@@ -42,14 +42,27 @@ class TeeLogger(object):
 
 
 _notified_closed_tickets = set()
+_closed_tickets_initialized = False
 
 def check_and_notify_closed_trades():
     """Checks for newly closed trades today, prints to CLI, and sends Telegram alert."""
+    global _closed_tickets_initialized
     try:
         closed = connector.get_closed_positions_today()
         if not closed:
+            _closed_tickets_initialized = True
             return
 
+        # On startup: register existing closed deals silently so we don't re-alert old trades
+        if not _closed_tickets_initialized:
+            for deal in closed:
+                t_id = deal.get("ticket")
+                if t_id:
+                    _notified_closed_tickets.add(t_id)
+            _closed_tickets_initialized = True
+            return
+
+        # Real-time check for new closed trades
         for deal in closed:
             t_id = deal.get("ticket")
             if t_id and t_id not in _notified_closed_tickets:
@@ -282,6 +295,9 @@ def main():
             try:
                 # Trailing stop + break-even + partial close
                 position_manager.manage_all_positions()
+                
+                # Real-time closed trade detection (Every 5 seconds!)
+                check_and_notify_closed_trades()
                 
                 # Weekend position management
                 weekend_actions = risk.check_weekend_positions()
