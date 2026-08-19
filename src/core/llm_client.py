@@ -217,7 +217,6 @@ You are an expert {{TIMEFRAME}} short-term intraday-swing analyst for {{SYMBOL}}
 
 ### EXECUTION CONTEXT
 {{EXECUTION_NOTE}}
-Please ensure your setup is actionable either at the current price (Market Order) OR at a specified trigger level (Pending Order: buy_stop/sell_stop/buy_limit/sell_limit with entry_price). If your thesis relies on a breakout or pullback trigger that has not triggered yet, use the appropriate pending order entry_type and entry_price, or select HOLD if conviction is low.
 
 ### ANALYSIS FREEDOM
 You are NOT required to follow a single predefined trading strategy. You may use any market interpretation you judge relevant, including but not limited to: trend following, momentum, breakout, pullback, mean reversion, reversal/exhaustion, support/resistance, price action, volatility, or indicator confluence -- alone or combined.
@@ -712,7 +711,12 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
             "Any BUY or SELL signal you output is executed either as a Market Order "
             "(immediate, at the current price) or as a PENDING order (buy_stop/sell_stop/"
             "buy_limit/sell_limit with entry_price) -- see the PENDING ORDER RULES below "
-            "for when to use each. The bot supports both."
+            "for when to use each. The bot supports both.\n"
+            "Please ensure your setup is actionable either at the current price (Market Order) "
+            "OR at a specified trigger level (Pending Order: buy_stop/sell_stop/buy_limit/sell_limit "
+            "with entry_price). If your thesis relies on a breakout or pullback trigger that has not "
+            "triggered yet, use the appropriate pending order entry_type and entry_price, or select "
+            "HOLD if conviction is low."
         )
         pending_rules_block = (
             "\n### PENDING ORDER RULES (the bot has pending orders enabled)\n"
@@ -732,7 +736,10 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
     else:
         execution_note = (
             "Any BUY or SELL signal you output will be executed immediately at the current "
-            "market price (Market Order). The bot does not support pending orders."
+            "market price (Market Order). The bot does not support pending orders.\n"
+            "Please ensure your setup is actionable at the current market price. If your thesis "
+            "relies on a trigger that has not happened yet (e.g. waiting for a breakout close), "
+            "select HOLD to wait for that confirmation."
         )
         pending_rules_block = ""
         pending_fields = ""
