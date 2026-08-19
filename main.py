@@ -1424,8 +1424,14 @@ def main():
     else:
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}FX PAIRS ONLY{UI.RST} (H1 Expert Intraday-Swing)")
 
-    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}]), DeepSeek ({config.DEEPSEEK_MODEL} [reasoning {config.DEEPSEEK_REASONING_EFFORT}]), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {f'FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1) | BTC: ATR-Based (fix) | XAU: LLM' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    if config.TP_SL_RULES != "LLM":
+        sltp_desc = f"{config.TP_SL_RULES} (force semua)"
+    elif config.TRADING_MODE == "xau_pairs":
+        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1) | BTC: ATR-Based (fix)"
+    else:
+        sltp_desc = f"XAU: LLM Structure (floor {config.LLM_SAFETY_FLOOR_XAU_PTS} pts) | BTC: ATR-Based (fix)"
+
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
