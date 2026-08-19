@@ -11,19 +11,20 @@ Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT
 
 ## 🎯 Multi-Symbol Scan (Mode `xau_pairs`)
 
-Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + Pairs** (`TRADING_MODE=xau_pairs`) — di mode ini bot memantau 7 simbol dengan timeframe berbeda. AI dipicu hanya saat pergantian candle masing-masing simbol:
+Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **FX Pairs Pool** (`TRADING_MODE=xau_pairs`) — di mode ini bot memantau **8 simbol FX Cross & Major** secara paralel dengan timeframe H1 expert intraday-swing:
 
-| # | Simbol (base) | Live / Demo | Timeframe | Arah / Gaya |
-|---|---|---|---|---|
-| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M30 | Intraday Swing (1.0% risk) |
-| 2 | `GBPCHF-ECN` | `GBPCHF-ECNc` / `GBPCHF-ECN` | H1 | Swing (1.0% risk) |
-| 3 | `EURCHF-ECN` | `EURCHF-ECNc` / `EURCHF-ECN` | H1 | Swing (1.0% risk) |
-| 4 | `GBPNZD-ECN` | `GBPNZD-ECNc` / `GBPNZD-ECN` | H1 | Swing (1.0% risk) |
-| 5 | `CADCHF-ECN` | `CADCHF-ECNc` / `CADCHF-ECN` | H1 | Swing (1.0% risk) |
-| 6 | `GBPAUD-ECN` | `GBPAUD-ECNc` / `GBPAUD-ECN` | H1 | Swing (1.0% risk) |
-| 7 | `EURAUD-ECN` | `EURAUD-ECNc` / `EURAUD-ECN` | H1 | Swing (1.0% risk) |
+| # | Simbol (base) | Live Suffix | Timeframe | Risk % | Gaya Trading |
+|---|---|---|---|---|---|
+| 1 | `GBPUSD` | `GBPUSD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 2 | `USDCAD` | `USDCAD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 3 | `EURJPY` | `EURJPY-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 4 | `GBPAUD` | `GBPAUD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 5 | `AUDCAD` | `AUDCAD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 6 | `EURCHF` | `EURCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 7 | `AUDCHF` | `AUDCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 8 | `CADCHF` | `CADCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
 
-**Kenapa pair-nya gitu?** Semua **cross non-USD** (dan GBPUSD) yang memiliki korelasi rendah dengan XAUUSD. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo).
+**Kenapa 8 pair ini?** Kombinasi Major (GBPUSD, USDCAD) dan FX Cross pilihan dengan korelasi seimbang. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo).
 
 **Cara kerja per cycle:**
 1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 7)

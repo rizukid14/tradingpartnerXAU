@@ -66,6 +66,29 @@ python main.py
 
 ## Status terkini (AGUSTUS 2026 — PENTING)
 
+### Perubahan 18–19 Agustus — FX Pairs 8-Symbol Pool, Trend-Aware Dual-Window Fibonacci (50/100-bar), Dynamic Pending Orders Prompt & Layout Refinement
+
+1. **FX Pairs 8-Symbol Pool**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 7 FX pairs (`USDCAD-ECNc`, `EURJPY-ECNc`, `GBPAUD-ECNc`, `AUDCAD-ECNc`, `EURCHF-ECNc`, `AUDCHF-ECNc`, `CADCHF-ECNc`). Total 8 simbol di-scan paralel. Timeframe FX H1 (expert intraday-swing, risk 1.25%), BTC M30 (risk 1.5%), XAU M30 (risk 1.0%).
+2. **Trend-Aware & Dual-Window Fibonacci (50-bar & 100-bar)**: Formula Fibonacci trend-aware (Downtrend Bounce: Low + 0.382/0.5/0.618 × diff; Uptrend Pullback: High - 0.382/0.5/0.618 × diff). `main.py` mengambil **103 candle closed** (di-trim 1 bar aktif → menyisakan 100 bar closed utuh) sehingga kedua window **50-bar Intraday** dan **100-bar Macro Multi-Day** terhitung sempurna.
+3. **Top-Down Prompt Hierarchy & Sub-Header Terpisah**: Reorder `MARKET DATA CONTEXT` mengikuti top-down attention flow: `Macro (H4/D1)` → `Key Levels` → `Intraday Structure (50-bar)` → `Macro Structure (100-bar)` → `Technical Indicators` → `Recent H1` → `Micro M5`. Sub-header dipisah eksplisit (`### INTRADAY STRUCTURE (50-bar Window)`, `### MACRO STRUCTURE (100-bar Window)`, `### TECHNICAL INDICATORS (Active Timeframe)`).
+4. **Dynamic Pending Orders Prompt Modularization**: Jika `PENDING_ORDERS_ENABLED = False`:
+   - Section `### PENDING ORDER RULES` **100% dihapus total**.
+   - Field JSON schema `entry_type` & `entry_price` **100% dihapus** (menghemat ~459 token / 15% ukuran prompt).
+   - Teks `EXECUTION CONTEXT` & `MOMENTUM & BREAKOUT EXECUTION` berubah otomatis ke instruksi murni Market Order (tunggu candle close / HOLD).
+5. **Consensus Engine Pending Order Safety Fallback**: Di `src/core/consensus.py` (L346): jika `final_entry_type != "market"` namun `final_entry_price` bernilai `None`/kosong, sistem otomatis jatuh kembali ke `"market"` untuk mencegah error order MT5.
+6. **Presisi Unit & Clarification**:
+   - Point Size dicetak dalam bentuk desimal bersih (`0.00001`).
+   - Format harga FX mempertahankan desimal eksak simbol (`_fmt_price`).
+   - `CRITICAL UNIT DEFINITION`: Perhitungan matematis presisi `10.9 pips (~109 points)` & rujukan diperbarui ke `section above`.
+   - `CONFIDENCE guide`: Disesuaikan 100% dengan batas skema `0.50` (`0.70 to 1.00 = strong`, `0.50 to 0.69 = moderate`, `below 0.50 = MUST select HOLD`).
+7. **Pembersihan Redundansi & Dynamic Banner**:
+   - Paragraf duplikat tentang Multi-Timeframe Analysis dihapus dari `DATA INTEGRITY` (hanya ada 1× di `HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT`).
+   - Format `Risk & Rules` pada banner startup `main.py` disesuaikan dinamis sesuai `TRADING_MODE` (menghapus catatan `XAU` saat di mode FX Pairs).
+8. **Parameter Proteksi Posisi Real-time (`.env`)**:
+   - **BEP Trigger (`BREAK_EVEN_TRIGGER_TP_PCT`)**: **`0.35` (35% Target TP)** dengan padding komisi round-trip + Pocket Profit 1.5 pips (`15 pts`).
+   - **Trailing Activation (`TRAILING_ACTIVATION_TP_PCT`)**: **`0.58` (58% Target TP)**.
+   - **Floor Absolut Trailing (`TRAILING_DISTANCE_MIN_POINTS_FX`)**: **`25 points` (2.5 pips)** dari harga ekstrem untuk mencegah spread squeeze.
+
 ### Optimasi kecepatan loop (11 Agustus — bersama fitur TP_SL_RULES)
 
 - **Cache query MT5 di hot path** (`mt5_connector.py`): sebelumnya tiap loop 5 detik manggil `history_deals_get` 2× — termasuk window 7 HARI (query termahal, bisa 0.5-2 detik) — itu bikin tiap iterasi loop nge-blok. Sekarang:
