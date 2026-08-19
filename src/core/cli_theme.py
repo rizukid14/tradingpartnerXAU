@@ -221,18 +221,18 @@ class UI:
         return "\n".join(out)
 
 
-def render_banner(account_info=None, symbol="XAUUSD-ECNc", tf="M5", mode="xau", is_live=True):
-    """Renders a modern clean ASCII banner without any emojis."""
+def render_banner(account_info=None, symbol="GBPUSD-ECNc", tf="H1", mode="xau_pairs", is_live=True):
+    """Renders a modern clean ASCII banner for FX Pairs Trading Terminal."""
     badge_mode = UI.badge_live() if is_live else UI.badge_dry()
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
-    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID MULTI LLM CONSENSUS TRADING BOT{UI.RST} {UI.YELLOW}PRO MAX{UI.RST}"
-    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Symbol: {UI.YELLOW}{symbol} ({tf}){UI.RST} | Mode: {UI.CYAN}{mode.upper()}{UI.RST}"
+    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID MULTI-LLM CONSENSUS TRADING BOT{UI.RST} {UI.CYAN}[FX PAIRS PRO]{UI.RST}"
+    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Active: {UI.YELLOW}{symbol} ({tf}){UI.RST} | Mode: {UI.CYAN}{mode.upper()}{UI.RST}"
     
     items = [
         title_line,
         "---",
         status_line
     ]
-    return UI.make_box("TRADING TERMINAL", items, width=74, border_color=UI.CYAN)
+    return UI.make_box("FX PAIRS TRADING TERMINAL PRO", items, width=74, border_color=UI.CYAN)
 

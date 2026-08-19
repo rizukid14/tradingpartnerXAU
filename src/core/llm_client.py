@@ -71,10 +71,13 @@ if config.GEMINI_API_KEY:
 
 
 def asset_desc(symbol):
-    """Human-readable asset description for prompts (Gold vs Bitcoin)."""
+    """Human-readable asset description for prompts (Gold vs Bitcoin vs FX)."""
     if config.is_crypto(symbol):
         return "Bitcoin (BTCUSD) - crypto, trades 24/7 including weekends"
-    return "Gold (XAUUSD) - Forex/commodity"
+    elif "XAU" in (symbol or "").upper():
+        return "Gold (XAUUSD) - spot metal / commodity"
+    else:
+        return f"Forex Currency Pair ({symbol})"
 
 
 def claude_slot_label():
@@ -210,11 +213,10 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
 # cycles so provider-side prompt/context caching stays effective.
 # ================================================================
 _SYSTEM_PROMPT_TEMPLATE = """### ROLE
-You are an independent {{TIMEFRAME}} short-term swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+You are an expert {{TIMEFRAME}} short-term intraday-swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
 
 ### EXECUTION CONTEXT
-Any BUY or SELL signal you output will be executed immediately at the current market price (Market Order). The bot does not support pending orders. 
-Please ensure your setup is actionable at the current price. If your thesis relies on a trigger that has not happened yet (e.g. waiting for a breakout), select HOLD to wait for that confirmation to print on the candles.
+{{EXECUTION_NOTE}}
 
 ### ANALYSIS FREEDOM
 You are NOT required to follow a single predefined trading strategy. You may use any market interpretation you judge relevant, including but not limited to: trend following, momentum, breakout, pullback, mean reversion, reversal/exhaustion, support/resistance, price action, volatility, or indicator confluence -- alone or combined.
@@ -223,12 +225,8 @@ Pick the interpretation you believe currently has the strongest expected edge. S
 
 Do not treat any single indicator (RSI, EMA, Fibonacci, ATR) as a mandatory trigger or a mandatory block. They are inputs for your own judgment, not rules you must obey.
 
-Reassess the market from scratch using only the data in THIS prompt. Do not assume your (or the bot's) previous cycle's directional view is still valid -- conditions can shift within minutes; a prior bullish or bearish read is not evidence for the current one.
-
 ### DATA INTEGRITY
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
-
-The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) -- use it to judge whether the current move is a pullback within a larger trend or a reversal. If its numbers conflict with the visible candles, prefer the visible candles. Any news/fundamental note is advisory only -- disregard if generic or stale.
 
 The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
 
@@ -238,10 +236,6 @@ Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
 {{SLTP_RULES_BLOCK}}
-- Use ATR(14) as a volatility sanity check: a structural SL much smaller than roughly 0.5x ATR is likely noise-level on the active timeframe -- prefer invalidation levels at least around half an ATR away when structure allows.
-- Spread must not consume a large share of the SL distance
-- Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
-- PROXIMITY & TRAP AVOIDANCE: Do NOT initiate a BUY directly into immediate major resistance (e.g. 50-bar Swing High, PDH, or key HTF resistance) or a SELL directly into immediate major support (e.g. 50-bar Swing Low, PDL, or key HTF support) without a clear, confirmed breakout. Ensure there is sufficient room before the opposing structure to achieve your required target. Chasing extended green candles into resistance or red candles into support is strictly prohibited.
 
 HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
 
@@ -253,31 +247,144 @@ Respond with a single valid JSON object ONLY -- no text before or after it.
 HOLD:
 {
   "signal": "HOLD",
-  "reasoning": "2-3 concise sentences (MAX 45 WORDS): state the specific technical drivers (e.g. RSI/EMA/structure) why no valid setup exists right now."
+  "reasoning": "string (MAX 20 WORDS: single key technical reason why no setup exists)"
 }
 
 BUY or SELL:
 {
   "signal": "BUY" | "SELL",
-  "confidence": 0.0-1.0,
-  "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
-  "edge": "1-2 sentences: what specifically creates the edge here.",
-  "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer) from the current price, measured to your invalidation level. Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
-  "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
-  "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
-  "reasoning": "2-3 concise sentences (MAX 45 WORDS), on the NEW ENTRY decision only: state the core technical thesis and risk drivers clearly."
+  "confidence": float (0.50 to 1.00),
+  "setup": "string (short label for setup type)",
+  "reasoning": "string (MAX 40 WORDS: core entry thesis & edge for this new entry)",
+  "invalidation": "string (key technical condition that invalidates this thesis)",
+  "sl_points": integer (Stop Loss distance in broker POINTS from current price),
+  "tp_points": integer (Take Profit distance in broker POINTS from current price),
+  "invalidation_price": float (OPTIONAL: reference price level for invalidation),
+  "target_price": float (OPTIONAL: reference price level for target),
+{{PENDING_FIELDS}}
 }
 
 "position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
 
-CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD."""
+CONFIDENCE guide for BUY/SELL: 0.70 to 1.00 = strong, well-supported thesis | 0.50 to 0.69 = moderate, reasonable thesis | below 0.50 = weak edge / low conviction -- MUST select HOLD (HOLD schema does not use confidence).
+
+{{PENDING_RULES_BLOCK}}"""
 
 
-def _fmt_price(x):
-    """Format harga/point ke string desimal bersih (0.01, 0.001, 0.00001)."""
+def _fmt_price(x, point_size=None):
+    """Format harga ke desimal presisi sesuai point_size (XAU 2 des, EURJPY 3 des, FX 5 des)."""
+    if x is None:
+        return ""
+    if point_size and point_size > 0:
+        decimals = max(0, int(round(-__import__("math").log10(point_size))))
+        return f"{x:.{decimals}f}"
     return f"{x:.10f}".rstrip("0").rstrip(".")
+
+
+def _delta_candle_lines(df, n=15, point_size=0.01):
+    """Format n candle terakhir sebagai OHLC HARGA ABSOLUT (semua angka nyata):
+    '- [HH:MM] O/H/L/C' (format harga sesuai point_size: XAU 2 des, FX 5 des).
+    LLM baca harga langsung tanpa kalkulasi/rekonstruksi (nol drift), dan bisa
+    verifikasi silang (H >= max(O,C), L <= min(O,C)). Tetap hemat token
+    karena cuma n baris pendek, bukan 50 baris OHLC penuh.
+    Fix 18 Agustus: delta-only berantai -> LLM harus jumlah kumulatif (rawan
+    drift); lalu C absolut + delta O/H/L (masih ada kalkulasi kecil); akhirnya
+    semua absolut (paling aman, selisih token kecil utk XAU/FX)."""
+    if df is None or len(df) == 0:
+        return []
+    if not point_size or point_size <= 0:
+        point_size = 0.01
+    tail = df.tail(n)
+    lines = []
+    for idx, row in tail.iterrows():
+        t_s = row["time"].strftime("%H:%M") if hasattr(row["time"], "strftime") else str(row["time"])
+        o = _fmt_price(float(row["open"]), point_size)
+        h = _fmt_price(float(row["high"]), point_size)
+        l = _fmt_price(float(row["low"]), point_size)
+        c = _fmt_price(float(row["close"]), point_size)
+        lines.append(f"- [{t_s}] {o}/{h}/{l}/{c}")
+    return lines
+
+
+def _structure_block(df, current_tick, atr_points=0):
+    """Ringkas struktur 50-bar (short-term) & 100-bar (macro) window:
+    swing/Fib (trend-aware)/posisi harga relatif level.
+    """
+    if df is None or len(df) == 0:
+        return ""
+
+    close = float(df["close"].iloc[-1])
+    point = current_tick.get("point", 0.01) if current_tick else 0.01
+    if not point or point <= 0:
+        point = 0.01
+
+    lines = []
+
+    # 1. 50-bar Short-Term Window
+    df_50 = df.tail(min(50, len(df)))
+    h50, l50 = float(df_50["high"].max()), float(df_50["low"].min())
+    diff50 = h50 - l50
+    is_down50 = float(df_50["close"].iloc[0]) > close
+    if is_down50:
+        f382_50 = round(l50 + 0.382 * diff50, 6)
+        f500_50 = round(l50 + 0.500 * diff50, 6)
+        f618_50 = round(l50 + 0.618 * diff50, 6)
+        label50 = "Downtrend Bounce"
+    else:
+        f382_50 = round(h50 - 0.382 * diff50, 6)
+        f500_50 = round(h50 - 0.500 * diff50, 6)
+        f618_50 = round(h50 - 0.618 * diff50, 6)
+        label50 = "Uptrend Pullback"
+
+    to_h50 = (h50 - close) / point
+    to_l50 = (close - l50) / point
+
+    lines.append("### INTRADAY STRUCTURE (50-bar Window)")
+    lines.append(f"- 50-bar Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
+    lines.append(f"- 50-bar Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
+    lines.append(f"- Close {_fmt_price(close, point)}: {int(to_l50)} pts above 50-bar low | {int(to_h50)} pts below 50-bar high")
+
+    # 2. 100-bar Macro Multi-Day Window
+    if len(df) >= 70:
+        h100, l100 = float(df["high"].max()), float(df["low"].min())
+        diff100 = h100 - l100
+        is_down100 = float(df["close"].iloc[0]) > close
+        if is_down100:
+            f382_100 = round(l100 + 0.382 * diff100, 6)
+            f500_100 = round(l100 + 0.500 * diff100, 6)
+            f618_100 = round(l100 + 0.618 * diff100, 6)
+            label100 = "Downtrend Bounce"
+        else:
+            f382_100 = round(h100 - 0.382 * diff100, 6)
+            f500_100 = round(h100 - 0.500 * diff100, 6)
+            f618_100 = round(h100 - 0.618 * diff100, 6)
+            label100 = "Uptrend Pullback"
+
+        lines.append("\n### MACRO STRUCTURE (100-bar Window)")
+        lines.append(f"- 100-bar Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
+        lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
+
+    # 3. Indicators
+    ind_lines = []
+    ema20 = float(df["ema_20"].iloc[-1]) if "ema_20" in df.columns else None
+    ema50 = float(df["ema_50"].iloc[-1]) if "ema_50" in df.columns else None
+    if ema20 is not None and ema50 is not None:
+        gap = (ema20 - ema50) / point
+        rel_ema20 = (close - ema20) / point
+        pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
+        ind_lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
+    if "rsi_14" in df.columns:
+        rsi = float(df["rsi_14"].iloc[-1])
+        ind_lines.append(f"- RSI14 {rsi:.2f}")
+    if atr_points and atr_points > 0:
+        ind_lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
+
+    if ind_lines:
+        lines.append("\n### TECHNICAL INDICATORS (Active Timeframe)")
+        lines.extend(ind_lines)
+
+    return "\n".join(lines)
+
 
 
 def _build_points_explanation(symbol, point_size):
@@ -353,7 +460,9 @@ def _build_points_explanation(symbol, point_size):
                          "context below for the exact dynamic minimum required for this specific trade")
         else:
             gate_note = (" -- for the exact floor relevant to this symbol, see the SL/TP "
-                         "rules in the RISK CONSTRAINTS section below")
+                         "rules in the RISK CONSTRAINTS section above")
+        pips_val = round(lo_pts / 10.0, 1)
+        pips_int = int(round(lo_pts / 10.0))
         return (
             f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs PRICE MOVEMENT\n"
             f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
@@ -363,9 +472,9 @@ def _build_points_explanation(symbol, point_size):
             f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
             f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points{gate_note}.\n\n"
             f"CRITICAL WARNING:\n"
-            f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
-            f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
-            f"({max(1, lo_pts // 100)} pip / {_fmt_price((lo_pts // 10) * (point_size or 0.01))} price movement), "
+            f"Double-check your units! If you want a Stop Loss of {pips_val} pips (~{lo_pts} points), you MUST return {lo_pts} points. "
+            f"If you accidentally return {pips_int}, it sets a Stop Loss of just {pips_int} points "
+            f"({pips_int/10:.1f} pips / {_fmt_price(pips_int * (point_size or 0.01))} price movement), "
             f"which is inside the spread and will cause an instant loss or broker rejection!"
         )
 
@@ -377,7 +486,11 @@ def _atr_points_for(symbol, timeframe):
     """ATR(14) dari timeframe tertentu dalam poin broker (cache 60s per
     (symbol, timeframe)) — dipakai untuk floor dinamis & typical SL range di
     prompt. Return None kalau gagal. 15 Agustus: digeneralisasi dari helper
-    FX-only supaya XAU (M15) bisa pakai floor ATR juga."""
+    FX-only supaya XAU (M15) bisa pakai floor ATR juga. 18 Agustus: pindah ke
+    ATR(14) true-range (ta.volatility.AverageTrueRange) supaya angka floor
+    KONSISTEN dengan ATR yang dikirim ke model di prompt (sebelumnya pakai
+    mean(high-low) yang menghasilkan angka beda -> prompt bilang 949, floor
+    bilang 1179, kontradiksi)."""
     import time as _t
     key = (symbol, timeframe)
     now = _t.time()
@@ -390,11 +503,17 @@ def _atr_points_for(symbol, timeframe):
         point = si.point if si else None
         if not point:
             return None
-        rates = _mt5.copy_rates_from_pos(symbol, timeframe, 0, 15)
+        rates = _mt5.copy_rates_from_pos(symbol, timeframe, 0, 50)
         if rates is None or len(rates) == 0:
             return None
-        atr = float((rates['high'] - rates['low']).mean())
-        out = max(1, int(round(atr / point)))
+        import pandas as _pd
+        from ta.volatility import AverageTrueRange
+        _df = _pd.DataFrame(rates)
+        _df['atr'] = AverageTrueRange(high=_df['high'], low=_df['low'], close=_df['close'], window=14).average_true_range()
+        atr_val = _df.iloc[-1]['atr']
+        if _pd.isna(atr_val):
+            return None
+        out = max(1, int(round(float(atr_val) / point)))
         _fx_atr_cache[key] = (now, out)
         return out
     except Exception:
@@ -462,19 +581,37 @@ def _build_sltp_rules_block(symbol, timeframe):
                 f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
             )
         else:
-            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL berbasis
-            # ATR aktif: max(2x spread, 1.5x ATR H1) — fallback 250 kalau ATR gagal.
-            # (14 Agustus lanjutan: floor statis 250 = 2.5x ATR H1 FX yang cuma
-            # 90-100 pts -> SL struktural asli 60-200 di-floor paksa & TP 312 jarang
-            # kesampean; ATR-based menyesuaikan volatilitas aktual per pair.)
+            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL & Proximity/Breakout
+            # berbasis ATR aktif H1 real-time.
             fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
             atr_pts_fx = _fx_atr_h1_points(symbol)
             if atr_pts_fx and atr_pts_fx > 0:
                 fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
+                prox_pts = int(0.5 * atr_pts_fx)
+                stop_pts = max(10, int(0.2 * atr_pts_fx))
+                room_pts = int(1.0 * atr_pts_fx)
+            else:
+                prox_pts = 45
+                stop_pts = 18
+                room_pts = 90
+            if getattr(config, "PENDING_ORDERS_ENABLED", False):
+                breakout_rule = (
+                    f"- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum (e.g. 2+ consecutive same-direction H1 closes or expanding candle bodies) but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
+                    f"  (a) Use buy_stop/sell_stop placed ~0.2x-0.3x ATR H1 (~{stop_pts}-{int(1.5*stop_pts)} pts) beyond the key level to filter false breaks and catch a genuine breakout wave.\n"
+                    f"  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.\n"
+                    f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your structural target."
+                )
+            else:
+                breakout_rule = (
+                    f"- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with a market order -- wait for a confirmed candle close beyond the level with at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your target, or select HOLD."
+                )
+
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = 1.5x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 (~{prox_pts} pts) below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 (~{prox_pts} pts) above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.\n"
+                f"{breakout_rule}"
             )
 
     # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
@@ -573,6 +710,45 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
     since only the dynamic market data below changes every call.
     """
     points_explanation = _build_points_explanation(symbol, point_size)
+    # EXECUTION NOTE dinamis: kalau pending order ON, bilang bot dukung pending
+    # (STOP/LIMIT + entry_price); kalau OFF, teks lama (market order only).
+    if getattr(config, "PENDING_ORDERS_ENABLED", False):
+        execution_note = (
+            "Any BUY or SELL signal you output is executed either as a Market Order "
+            "(immediate, at the current price) or as a PENDING order (buy_stop/sell_stop/"
+            "buy_limit/sell_limit with entry_price) -- see the PENDING ORDER RULES below "
+            "for when to use each. The bot supports both.\n"
+            "Please ensure your setup is actionable either at the current price (Market Order) "
+            "OR at a specified trigger level (Pending Order: buy_stop/sell_stop/buy_limit/sell_limit "
+            "with entry_price). If your thesis relies on a breakout or pullback trigger that has not "
+            "triggered yet, use the appropriate pending order entry_type and entry_price, or select "
+            "HOLD if conviction is low."
+        )
+        pending_rules_block = (
+            "\n### PENDING ORDER RULES (the bot has pending orders enabled)\n"
+            "Your thesis determines the entry type -- do not pick one arbitrarily:\n"
+            "- Thesis is a BREAKOUT / momentum continuation beyond a level: use buy_stop (BUY) or sell_stop (SELL). entry_price = the breakout level (beyond current price).\n"
+            "- Thesis is a RETEST / pullback to a level: use buy_limit (BUY) or sell_limit (SELL). entry_price = the retest level (below current price for BUY, above for SELL).\n"
+            "- Thesis is valid at the CURRENT price: use \"market\" (default) -- no entry_price needed.\n"
+            "- Direction consistency is mandatory: BUY -> buy_stop/buy_limit only; SELL -> sell_stop/sell_limit only.\n"
+            "- entry_price must be at least 2x current spread away from the current price, and no further than ~1.5x ATR from it. If your level is outside this band, the bot rejects the pending order (or falls back to market).\n"
+            "- An executed pending order becomes a normal position with your sl_points/tp_points -- same risk rules apply.\n"
+            "- If you are not confident the level will trigger, output \"market\" or HOLD instead."
+        )
+        pending_fields = (
+            '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",\n'
+            '  "entry_price": float (REQUIRED if entry_type != "market")'
+        )
+    else:
+        execution_note = (
+            "Any BUY or SELL signal you output will be executed immediately at the current "
+            "market price (Market Order). The bot does not support pending orders.\n"
+            "Please ensure your setup is actionable at the current market price. If your thesis "
+            "relies on a trigger that has not happened yet (e.g. waiting for a breakout close), "
+            "select HOLD to wait for that confirmation."
+        )
+        pending_rules_block = ""
+        pending_fields = ""
     prompt = (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("{{SYMBOL}}", symbol)
@@ -580,6 +756,9 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
         .replace("{{ASSET_DESC}}", asset_description)
         .replace("{{SLTP_RULES_BLOCK}}", _build_sltp_rules_block(symbol, timeframe))
         .replace("{{POINTS_EXPLANATION}}", points_explanation)
+        .replace("{{EXECUTION_NOTE}}", execution_note)
+        .replace("{{PENDING_RULES_BLOCK}}", pending_rules_block)
+        .replace("{{PENDING_FIELDS}}", pending_fields)
     )
 
     if getattr(config, "FORCE_ACTIVE_ENTRY", False):
@@ -696,34 +875,37 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
         tf_label = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
 
-    # Create recent candles string - FULL 50 candles (~4 jam M5 / ~25 jam M30),
-    # OHLC only (drop volume) supaya window 50-Bar Swing High/Low & Fib bisa
-    # diverifikasi LLM (sebelumnya cuma 25 candle tapi diklaim "50-Bar Swing" -
-    # LLM gak bisa verifikasi).
-    recent_candles = df.tail(50)
-    candles_str = ""
-    for idx, row in recent_candles.iterrows():
-        time_str = row['time'].strftime('%H:%M') if hasattr(row['time'], 'strftime') else str(row['time'])
-        candles_str += f"- [{time_str}] O:{row['open']}, H:{row['high']}, L:{row['low']}, C:{row['close']}\n"
+    # Compact price action: STRUCTURE block (level terhitung) + delta candles
+    # (shape). Ganti 50 candle OHLC mentah (~560 token) -> STRUCTURE + 15 delta
+    # (~200 token). Shape price action tetap kebaca (body/wick/urutan), semua
+    # level absolut tetap ada sebagai angka di STRUCTURE.
+    latest = df.iloc[-1]
+    point_size = current_tick.get("point", 0.01) or 0.01
+    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
 
-    # Micro price action: dynamic timeframe & count based on main timeframe (XAU M1 x15, BTC M5 x12, FX M5 x24)
+    structure_str = _structure_block(df, current_tick, atr_points)
+    delta_main = _delta_candle_lines(df, n=15, point_size=point_size)
+    delta_main_str = ""
+    if delta_main:
+        delta_main_str = (
+            f"\n### RECENT PRICE ACTION (last {len(delta_main)} {tf_label} candles, "
+            f"OHLC absolute prices)\n" + "\n".join(delta_main) + "\n"
+        )
+
+    # Micro price action: M5, delta juga. XAU/BTC 18 (1.5 jam), FX 24 (2 jam).
+    # Micro M5 adalah satu-satunya price action granular intra-period utk
+    # timeframe lambat (M30/H1) - TIDAK dihapus, cuma dikompres.
     micro_candles_str = ""
     try:
         from src.core import mt5_connector
         is_crypto_asset = config.is_crypto(symbol)
-        
-        if is_crypto_asset:
-            # BTC main is M30 -> micro is M5, 12 candles (60 minutes / 1 hour total)
+
+        if is_crypto_asset or "XAU" in symbol.upper():
             micro_tf = mt5_connector.mt5.TIMEFRAME_M5
             micro_tf_name = "M5"
-            num_micro_send = 12
-        elif "XAU" in symbol.upper():
-            # XAU main is M15 -> micro is M5, 12 candles (60 minutes / 1 hour total)
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-            micro_tf_name = "M5"
-            num_micro_send = 12
+            num_micro_send = 18
         else:
-            # FX main is H1 -> micro is M5, 24 candles (120 minutes / 2 hours total)
+            # FX main is H1 -> micro M5 24 (2 jam) intra-period
             micro_tf = mt5_connector.mt5.TIMEFRAME_M5
             micro_tf_name = "M5"
             num_micro_send = 24
@@ -732,17 +914,15 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         num_fetch = max(35, num_micro_send + 15)
         micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
         if micro_df is not None and len(micro_df) > 0:
-            micro_tail = micro_df.tail(num_micro_send)
-            micro_lines = []
-            for _, r in micro_tail.iterrows():
-                t_s = r['time'].strftime('%H:%M') if hasattr(r['time'], 'strftime') else str(r['time'])
-                micro_lines.append(f"- [{t_s}] O:{r['open']}, H:{r['high']}, L:{r['low']}, C:{r['close']}, Vol:{r['tick_volume']}")
-            micro_candles_str = f"\n### LAST {num_micro_send} {micro_tf_name} CANDLES (intra-period price action)\n" + "\n".join(micro_lines) + "\n"
+            micro_delta = _delta_candle_lines(micro_df, n=num_micro_send, point_size=point_size)
+            if micro_delta:
+                micro_candles_str = (
+                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period, "
+                    f"OHLC absolute prices)\n" + "\n".join(micro_delta) + "\n"
+                )
     except Exception as e:
         pass
 
-    latest = df.iloc[-1]
-    point_size = current_tick.get("point", 0.01)
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
 
     # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
@@ -798,22 +978,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
         )
 
-    # USD value of 1 point for the default bot lot - tells the LLM the real
-    # money scale of the SL/TP distances it proposes (critical for BTC, where
-    # 1 pt = $0.0001 and the LLM otherwise proposes absurdly tight stops).
-    usd_per_point = current_tick.get("usd_per_point", 0.0)
-    if usd_per_point > 0:
-        pts_per_usd = 1.0 / usd_per_point
-        usd_context = (
-            f"Money scale: 1 point = ${usd_per_point:.4f} USD with the default "
-            f"{config.lot_size_for(symbol)} lot. So {int(pts_per_usd * 10)} pts = ~$10, "
-            f"{int(pts_per_usd * 5)} pts = ~$5, and 100000 pts = ~${100000 * usd_per_point:.2f}.\n"
-            f"Current spread is {current_tick.get('spread', '?')} pts "
-            f"(approx ${current_tick.get('spread_usd', 0.0):.2f} USD) - NEVER set SL closer than "
-            f"{int(current_tick.get('spread', 0) * 2)} pts (2x spread); the broker will reject it.\n"
-        )
-    else:
-        usd_context = ""
+    usd_context = ""
 
     macro_str = ""
     if macro_context:
@@ -823,7 +988,10 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe "
             "candles (EMA20/50, RSI, ATR, swing levels) - use it to determine whether the "
             "current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL "
-            "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)\n"
+            "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale. "
+            "NOTE: HTF close/EMA values reflect the last CLOSED higher-timeframe bar (H1/H4) "
+            "and may lag the current price slightly -- the live Bid/Ask and the active-timeframe "
+            "candles are the current reference.)\n"
         )
 
     whisper_str = whisper_str or ""
@@ -947,20 +1115,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "let your entry bias change your position_actions. Evaluate each independently.\n"
         )
 
-    # 50-bar Swing High, Swing Low, and Fibonacci Retracement Levels
-    swing_high = float(df['high'].max())
-    swing_low = float(df['low'].min())
-    diff = swing_high - swing_low
-    # Round 6 desimal: buang noise float, biar _fmt_price yang format bersih
-    # (sebelumnya round ke 2 desimal bikin fib FX 5-desimal jadi flat 1.10)
-    fib_382 = round(swing_high - 0.382 * diff, 6)
-    fib_500 = round(swing_high - 0.500 * diff, 6)
-    fib_618 = round(swing_high - 0.618 * diff, 6)
-    fib_str = (
-        f"- 50-Bar Swing High: {_fmt_price(swing_high)} | Swing Low: {_fmt_price(swing_low)}\n"
-        f"- Fibonacci Retracement Levels: Fib 38.2%: {_fmt_price(fib_382)} | Fib 50.0%: {_fmt_price(fib_500)} | Fib 61.8%: {_fmt_price(fib_618)}"
-    )
-
     # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
     # Cached 5 min (D1 berubah sekali sehari) - murah, nggak nambah lag cycle.
     key_levels_str = _get_key_levels_str(symbol, current_tick.get('bid'))
@@ -976,22 +1130,17 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     market_data_block = f"""### MARKET DATA CONTEXT
 Symbol: {symbol}
 Timeframe: {tf_label}
-Current Bid: {current_tick['bid']}
-Current Ask: {current_tick['ask']}
-Spread: {current_tick['spread']} points (point size = {current_tick['point']})
+Current Bid: {_fmt_price(current_tick['bid'], point_size)}
+Current Ask: {_fmt_price(current_tick['ask'], point_size)}
+Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
+{macro_str}
 {key_levels_str}
-### RECENT CANDLES (Last 50 candles, {tf_label}, OHLC only - full swing window):
-{candles_str}
+{structure_str}
+{delta_main_str}
 {micro_candles_str}
-### CURRENT INDICATORS & FIBONACCI SUMMARY
-- Current Close: {latest['close']}
-- RSI (14): {latest['rsi_14']:.2f}
-- EMA (20): {_fmt_price(latest['ema_20'])}
-- EMA (50): {_fmt_price(latest['ema_50'])}
-- ATR (14): {_fmt_price(latest['atr_14'])} (which is {atr_points} points)
-{atr_gate_str}{fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
+{atr_gate_str}
+{randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1037,7 +1186,7 @@ def clean_json_response(text):
                         parsed[key] = val.strip('"')
         # Validate keys (setup/edge/invalidation are optional new fields -
         # model may omit them; HOLD responses won't have them)
-        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation"]:
+        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation", "entry_type", "entry_price"]:
             if key not in parsed:
                 parsed[key] = None
         # Ensure signal is upper case
@@ -1075,7 +1224,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         kwargs = {
             "model": model_name,
             "messages": [
-                {"role": "user", "content": "System: You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences).\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 1-2 sentences (max 40 words); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
             ],
             "response_format": {"type": "json_object"},
             "timeout": timeout_sec
@@ -1094,7 +1243,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant. Keep reasoning extremely concise (max 1-2 sentences)."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 1-2 sentences (max 40 words); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -1236,7 +1385,9 @@ def query_gemini(prompt):
 def _execute_claude_single(model_name, prompt, timeout_sec):
     system_text = (
         "You are a professional financial trading assistant. "
-        "Always respond with valid JSON only. Keep reasoning extremely concise (max 1-2 short sentences)."
+        "Always respond with valid JSON only. Reasoning: 1-2 sentences (max 40 words); "
+        "if HOLD, keep it to 1 short sentence (max 20 words) citing the single key "
+        "level/indicator. Never enumerate."
     )
     # Prompt caching: pecah prompt jadi blok statis (instruksi, DI DEPAN) +
     # dinamis (data pasar, DI BELAKANG). cache_control ditaruh di AKHIR blok

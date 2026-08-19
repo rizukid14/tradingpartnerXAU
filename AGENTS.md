@@ -11,9 +11,9 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.
-- **XAUUSD-ECNc** (Gold): intraday swing **M30**, weekday, MTF context H1/H4. Config default `WEEKDAY_SYMBOL = "XAUUSD-ECNc"` (langsung nama broker live — FASE 1; `get_valid_trade_symbol` tetap auto-correct kalau suffix beda, mis. demo).
+- **GBPUSD-ECNc** (Cable / FX Primary): intraday-swing **H1**, weekday, MTF context H4/D1. Config default `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` (langsung nama broker live).
 - **BTCUSD.c** (Bitcoin): intraday **M30**, weekend + setelah jam 22:00 Jumat WIB (rotasi otomatis, `config.get_active_symbol`). **MTF context H1/H4, forecast horizon T+4h/T+D1 (bebas swap overnight).**
-- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (**parallel scan pool 7 simbol**: XAU + 6 FX cross, FASE 1). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `GBPCHF-ECNc, EURCHF-ECNc, GBPNZD-ECNc, CADCHF-ECNc, GBPAUD-ECNc, EURAUD-ECNc`), dipotong `MAX_ROTATION_SYMBOLS` (7). **Timeframe per aset: XAU M30 (intraday swing), FX H1 (swing), BTC M30** — risk per trade XAU 1.0% / FX 1.0% / BTC 1.5%. **Smart Timeframe Rotation (FASE 5)**: LLM call per simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di main.py) — XAU tiap 30 menit, FX tiap 1 jam, BTC tiap 30 menit (hemat token drastis). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol). Implementasi: `run_trading_cycle()` → loop `for sym in pool: config.SYMBOL = sym; _run_cycle_for_current_symbol()` (post-mortem 1× aggregate per candle, macro/MTF per-symbol di-populate di dalam loop).
+- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` | `"xau_pairs"` (**parallel scan pool 8 simbol**: GBPUSD + 7 FX pairs). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `GBPUSD-ECNc, USDCAD-ECNc, EURJPY-ECNc, GBPAUD-ECNc, AUDCAD-ECNc, EURCHF-ECNc, AUDCHF-ECNc, CADCHF-ECNc`), dipotong `MAX_ROTATION_SYMBOLS` (8). **Timeframe per aset: FX H1 (expert intraday-swing), BTC M30** — risk per trade FX 1.25% / BTC 1.5%. **Smart Timeframe Rotation**: LLM call per simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di main.py) — FX tiap 1 jam, BTC tiap 30 menit (hemat token drastis). Weekend: FX tutup → pool jatuh ke BTC (kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol).
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`) — jangan pernah test sembarangan tanpa konfirmasi
 - Balance awal $1000, sekarang ~$1065
 - Waktu semua pakai **WIB** (Asia/Jakarta)
@@ -71,6 +71,29 @@ python main.py
 - Forecast bias/target/R:R cuma konteks buat LLM (informational) — **TIDAK ada gate counter-trend**
 
 ## Status terkini (AGUSTUS 2026 — PENTING)
+
+### Perubahan 18–19 Agustus — FX Pairs 8-Symbol Pool, Trend-Aware Dual-Window Fibonacci (50/100-bar), Dynamic Pending Orders Prompt & Layout Refinement
+
+1. **FX Pairs 8-Symbol Pool**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 7 FX pairs (`USDCAD-ECNc`, `EURJPY-ECNc`, `GBPAUD-ECNc`, `AUDCAD-ECNc`, `EURCHF-ECNc`, `AUDCHF-ECNc`, `CADCHF-ECNc`). Total 8 simbol di-scan paralel. Timeframe FX H1 (expert intraday-swing, risk 1.25%), BTC M30 (risk 1.5%), XAU M30 (risk 1.0%).
+2. **Trend-Aware & Dual-Window Fibonacci (50-bar & 100-bar)**: Formula Fibonacci trend-aware (Downtrend Bounce: Low + 0.382/0.5/0.618 × diff; Uptrend Pullback: High - 0.382/0.5/0.618 × diff). `main.py` mengambil **103 candle closed** (di-trim 1 bar aktif → menyisakan 100 bar closed utuh) sehingga kedua window **50-bar Intraday** dan **100-bar Macro Multi-Day** terhitung sempurna.
+3. **Top-Down Prompt Hierarchy & Sub-Header Terpisah**: Reorder `MARKET DATA CONTEXT` mengikuti top-down attention flow: `Macro (H4/D1)` → `Key Levels` → `Intraday Structure (50-bar)` → `Macro Structure (100-bar)` → `Technical Indicators` → `Recent H1` → `Micro M5`. Sub-header dipisah eksplisit (`### INTRADAY STRUCTURE (50-bar Window)`, `### MACRO STRUCTURE (100-bar Window)`, `### TECHNICAL INDICATORS (Active Timeframe)`).
+4. **Dynamic Pending Orders Prompt Modularization**: Jika `PENDING_ORDERS_ENABLED = False`:
+   - Section `### PENDING ORDER RULES` **100% dihapus total**.
+   - Field JSON schema `entry_type` & `entry_price` **100% dihapus** (menghemat ~459 token / 15% ukuran prompt).
+   - Teks `EXECUTION CONTEXT` & `MOMENTUM & BREAKOUT EXECUTION` berubah otomatis ke instruksi murni Market Order (tunggu candle close / HOLD).
+5. **Consensus Engine Pending Order Safety Fallback**: Di `src/core/consensus.py` (L346): jika `final_entry_type != "market"` namun `final_entry_price` bernilai `None`/kosong, sistem otomatis jatuh kembali ke `"market"` untuk mencegah error order MT5.
+6. **Presisi Unit & Clarification**:
+   - Point Size dicetak dalam bentuk desimal bersih (`0.00001`).
+   - Format harga FX mempertahankan desimal eksak simbol (`_fmt_price`).
+   - `CRITICAL UNIT DEFINITION`: Perhitungan matematis presisi `10.9 pips (~109 points)` & rujukan diperbarui ke `section above`.
+   - `CONFIDENCE guide`: Disesuaikan 100% dengan batas skema `0.50` (`0.70 to 1.00 = strong`, `0.50 to 0.69 = moderate`, `below 0.50 = MUST select HOLD`).
+7. **Pembersihan Redundansi & Dynamic Banner**:
+   - Paragraf duplikat tentang Multi-Timeframe Analysis dihapus dari `DATA INTEGRITY` (hanya ada 1× di `HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT`).
+   - Format `Risk & Rules` pada banner startup `main.py` disesuaikan dinamis sesuai `TRADING_MODE` (menghapus catatan `XAU` saat di mode FX Pairs).
+8. **Parameter Proteksi Posisi Real-time (`.env`)**:
+   - **BEP Trigger (`BREAK_EVEN_TRIGGER_TP_PCT`)**: **`0.35` (35% Target TP)** dengan padding komisi round-trip + Pocket Profit 1.5 pips (`15 pts`).
+   - **Trailing Activation (`TRAILING_ACTIVATION_TP_PCT`)**: **`0.58` (58% Target TP)**.
+   - **Floor Absolut Trailing (`TRAILING_DISTANCE_MIN_POINTS_FX`)**: **`25 points` (2.5 pips)** dari harga ekstrem untuk mencegah spread squeeze.
 
 ### Optimasi kecepatan loop (11 Agustus — bersama fitur TP_SL_RULES)
 
@@ -379,6 +402,42 @@ Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuah
     *   `Bearish Pin Bar` GBPCHF dekat resistance (volatility-adjusted): Win Rate **69.0%** | EV **+0.37** ($n=145$).
 *   **Sesi NY Tetap Juara:** Meloloskan 48 EDGE di semua 12 simbol trading. Sesi New York (WIB malam) adalah filter waktu terbaik.
 *   **Multi-Pattern (2+ Pola Searah):** Hanya berguna sebagai konfirmasi pendukung (EV kecil +0.08 s/d +0.20, n besar 600-800), bukan edge mandiri yang kuat.
+
+## Riset Pair CAD-EUR-GBP (18 Agustus 2026 — 3 tahun H1)
+
+**Latar belakang:** user mau ganti GBPNZD (spread suka ngelebar 22 pts) dan kurangi konsentrasi CHF di pool. Riset pair cross CAD-EUR-GBP dengan pipeline identik `pattern_research.py` (14 pola × 18 kondisi × 4 R:R, n≥100, p<0.05, EV>0 CI>0). Skrip: `scratch/cad_eur_gbp_research.py`, hasil: `scratch/results/cad_eur_gbp_results.csv` + `cad_eur_gbp_report.md`.
+
+**Spread real (sample 5× dari broker live):** NZDCAD 2.2 pts (termurah) | AUDCAD 3.4 | EURCAD 4.6 | EURNZD 5.2 | GBPCAD 7.4 (termahal).
+
+**Hasil edge (semua bearish R:R 1:1, konsisten temuan 16 Agustus):**
+- **NZDCAD-ECNc (JUARA):** 27 EDGE. Terbaik: `Bearish Engulfing` htf=up WR 63.2% EV +0.24 (n=190), `Inside Bar Bearish` London WR 62.3% EV +0.23, `Bearish Engulfing` NY WR 61.1% EV +0.20.
+- **EURNZD-ECNc (KUAT):** 22 EDGE. Terbaik: `Bearish Pin Bar` range WR 63.0% EV +0.23, NY WR 62.9% EV +0.22, `Inside Bar Bearish` NY WR 62.0% EV +0.21.
+- **AUDCAD-ECNc (SOLID):** 5 EDGE. Terbaik: `Bearish Engulfing` NY WR 62.1% EV +0.21.
+- **EURCAD-ECNc:** 0 EDGE — gugur (user sempat kira bagus, data bilang tidak).
+- **GBPCAD-ECNc:** 0 EDGE + spread termahal 7.4 — gugur.
+- **Kesimpulan:** NZDCAD & EURNZD = kandidat terkuat, sekaligus mengurangi konsentrasi CHF (non-CHF).
+
+## Riset Pair JPY (18 Agustus 2026 — 4 tahun H1)
+
+**Latar belakang:** retest pair JPY dengan data 4 tahun (lebih panjang dari riset 16 Agustus yang 3 tahun). Skrip: `scratch/jpy_research.py`, hasil: `scratch/results/jpy_results.csv` + `jpy_report.md`.
+
+**Spread real:** EURJPY 0.6 pts (termurah) | CADJPY 4.8 | NZDJPY 5.8 | CHFJPY 7.0 | AUDJPY 7.0 | GBPJPY 10.4 (termahal).
+
+**Hasil edge:**
+- **CHFJPY-ECNc (TERKUAT):** 4 EDGE + 3 CANDIDATE. `Inside Bar Bearish` NY WR 62.1% EV +0.20, `Bearish Sweep` NY EV +0.14, CANDIDATE near_resistance R:R 1:2 EV +0.89-0.91 (n=37).
+- **AUDJPY-ECNc (KUAT):** 4 EDGE + 4 CANDIDATE. `Inside Bar Bearish` NY WR 63.6% EV +0.22 (terbaik), CANDIDATE near_resistance EV +0.39-0.58.
+- **NZDJPY-ECNc:** 7 EDGE (WR 55-59%, EV +0.06-0.13).
+- **EURJPY-ECNc:** 2 EDGE (`Bearish Sweep` NY EV +0.17, `Bullish Engulfing` London EV +0.14) + Double Bottom CANDIDATE — membaik dari ranking #11 di riset 3th (4 tahun lebih akurat).
+- **CADJPY-ECNc:** 2 EDGE tipis (EV +0.12-0.18).
+- **GBPJPY-ECNc:** 1 EDGE lemah (EV +0.10) + spread 10.4 — gugur (mirip kasus GBPNZD).
+- **Kesimpulan:** CHFJPY & AUDJPY kandidat kuat tapi spread 7.0; EURJPY layak dipertimbangkan ulang (spread termurah).
+
+## Keputusan pool 18 Agustus 2026
+
+- **GBPNZD → AUDCHF** (spread GBPNZD ngelebar; AUDCHF peringkat 4 riset: 24 EDGE, 6 kuat).
+- **EURAUD → NZDCAD** (EURAUD edge paling lemah di pool: 3 EDGE 0 kuat; performa 1 hari bukan bukti. NZDCAD juara riset CAD-EUR-GBP: 27 EDGE, spread 2.2).
+- **Pool FX final:** `GBPCHF, EURCHF, AUDCHF, CADCHF, GBPAUD, NZDCAD`.
+- **Whisper registry** (`src/analytics/whisper_registry.json`) bertambah 42 entries (70 → 112): NZDCAD 14, EURNZD 10, CHFJPY 4, AUDJPY 3, AUDCAD 2, EURJPY 2, CADJPY 2, NZDJPY 4, GBPJPY 1, dst. Hanya kondisi yang matchable runtime (session/near_SR/multi/ALL).
 
 ## Riset XAU M30 (17 Agustus 2026 — Backtest Khusus XAU, branch dev-backtest)
 

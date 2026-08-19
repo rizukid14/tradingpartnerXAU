@@ -787,6 +787,19 @@ def _safe_order_send(request):
     except Exception:
         return None
 
+def _safe_order_check(request):
+    """Pre-checks trade request using mt5.order_check before sending to trade server."""
+    try:
+        res = mt5.order_check(request)
+        if res is not None:
+            return res
+    except Exception:
+        pass
+    try:
+        return mt5.order_check(request=request)
+    except Exception:
+        return None
+
 def _send_with_retry(build_request, symbol, label):
     """Send a request via mt5.order_send with retries and fill-policy fallback."""
     policy = get_filling_policy(symbol)
@@ -795,6 +808,16 @@ def _send_with_retry(build_request, symbol, label):
     req = build_request(base_dev, policy)
     if req is None:
         return None  # quote degenerate/stale — dibatalkan bersih (bukan spam retry 10013)
+
+    # Pre-check via MT5 OrderCheck() untuk mendeteksi error margin/filling/autotrading lokal secara instan
+    check_res = _safe_order_check(req)
+    if check_res is not None:
+        check_code = getattr(check_res, "retcode", 0)
+        # Structural errors (no money, autotrading disabled, invalid volume, unsupported filling mode)
+        if check_code not in (0, getattr(mt5, "TRADE_RETCODE_DONE", 10009)) and check_code in (10019, 10027, 10014, 10030):
+            print(f" {UI.tag('MT5 CHECK ERROR', UI.RED)} OrderCheck ditolak terminal! Code {check_code}: {check_res.comment}")
+            return check_res
+
     result = _safe_order_send(req)
 
     for attempt in range(_MAX_RETRIES):
@@ -853,10 +876,11 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     # Quote-health check (update 15 Agustus): spread 0 (bid==ask) itu NORMAL di akun
     # ECN - order tetap valid & bisa dieksekusi (harga bid==ask saat itu). Yang beneran
     # berbahaya: tick None (quote hilang), tick stale (feed beku - harga basi), spread
-    # spike (quote burst). 14 Agustus malam sempat nge-block spread 0 karena salah
-    # attribusi 10013 EURJPY -> ternyata EURAUD juga spread 0 tapi BISA buka (user).
+    # spike (quote burst).
     if tick is None:
         return {"status": "ERROR", "comment": "Tidak ada quote (tick None) — order dibatalkan"}
+    if tick.ask <= 0 or tick.bid <= 0:
+        return {"status": "ERROR", "comment": "Quote tidak valid (ask/bid 0) — order dibatalkan"}
     spread_now = (tick.ask - tick.bid) / point if point else 0.0
     tick_age = -1
     if getattr(tick, "time", 0):
@@ -902,8 +926,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             live_price = live_tick.ask if action == "BUY" else live_tick.bid
         else:
             live_price = price
-        # Guard per-attempt: tick None -> skip retry (feed hilang total). Spread 0
-        # TIDAK di-block (normal di akun ECN, order tetap valid - 15 Agustus).
+        # Guard per-attempt: tick None -> skip retry (feed hilang total)
         if live_tick is None:
             return None
         if action == "BUY":
@@ -1043,3 +1066,170 @@ def close_position(ticket):
     print(f" {UI.tag('MT5', UI.GREEN)} Posisi #{ticket} berhasil ditutup.")
     invalidate_deals_cache()  # deal OUT baru -> closed_today berubah
     return True
+
+
+def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_points=None,
+                       comment=None, sl_price=None, tp_price=None, expiration_minutes=None):
+    """
+    Sends a pending order (BUY_STOP/SELL_STOP/BUY_LIMIT/SELL_LIMIT) to MT5 with
+    expiration. When the pending order fills, it becomes a normal position with
+    the given SL/TP -- position manager (BEP/trailing) applies as usual.
+    entry_type: "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit"
+    Returns {"status": "SUCCESS", "ticket": n} or {"status": "ERROR", "comment": ...}
+    """
+    # resolve order type after symbol lookup
+    order_type_map = {
+        "buy_stop": mt5.ORDER_TYPE_BUY_STOP,
+        "sell_stop": mt5.ORDER_TYPE_SELL_STOP,
+        "buy_limit": mt5.ORDER_TYPE_BUY_LIMIT,
+        "sell_limit": mt5.ORDER_TYPE_SELL_LIMIT,
+    }
+    if entry_type not in order_type_map:
+        return {"status": "ERROR", "comment": f"Invalid entry_type: {entry_type}"}
+
+    if config.DRY_RUN:
+        print(f"[DRY RUN] Simulasi pending {entry_type} untuk {symbol} @ {entry_price} sebanyak {lot} lot "
+              f"(SL: {sl_points} pts, TP: {tp_points} pts, expiry {expiration_minutes} menit).")
+        return {"status": "SUCCESS", "ticket": 0, "comment": "Dry Run Mode Active"}
+
+    symbol = get_valid_trade_symbol(symbol)
+    mt5.symbol_select(symbol, True)
+
+    tick = mt5.symbol_info_tick(symbol)
+    symbol_info = mt5.symbol_info(symbol)
+    if tick is None or symbol_info is None:
+        return {"status": "ERROR", "comment": "Symbol info unavailable"}
+    point = symbol_info.point
+
+    # Quote-health: pending order perlu harga valid saat pasang (bukan saat eksekusi)
+    if tick is None:
+        return {"status": "ERROR", "comment": "Tidak ada quote (tick None) — pending dibatalkan"}
+
+    # Expiration: server time (GMT+3). Pakai offset broker biar akurat.
+    if not expiration_minutes:
+        expiration_minutes = config.PENDING_ORDER_EXPIRY_MINUTES
+    now_server = datetime.now(timezone.utc) + timedelta(seconds=get_broker_offset_seconds(symbol))
+    expiration = int(now_server.timestamp()) + int(expiration_minutes * 60)
+
+    # SL/TP absolute dari points (relatif ke entry_price, bukan harga sekarang)
+    if sl_points and sl_points > 0:
+        sl_price = sl_price if sl_price else (entry_price - (sl_points * point) if entry_type in ("buy_stop", "buy_limit") else entry_price + (sl_points * point))
+    if tp_points and tp_points > 0:
+        tp_price = tp_price if tp_price else (entry_price + (tp_points * point) if entry_type in ("buy_stop", "buy_limit") else entry_price - (tp_points * point))
+
+    order_type = order_type_map[entry_type]
+    last_req = {}
+
+    def _build(deviation, fill_policy):
+        nonlocal last_req
+        live_tick = mt5.symbol_info_tick(symbol)
+        if live_tick is None:
+            return None
+        req = {
+            "action": mt5.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": lot,
+            "type": order_type,
+            "price": float(entry_price),
+            "sl": float(sl_price) if sl_price else 0.0,
+            "tp": float(tp_price) if tp_price else 0.0,
+            "deviation": deviation,
+            "magic": config.MAGIC_NUMBER,
+            "comment": comment or "Pending",
+            "type_time": mt5.ORDER_TIME_SPECIFIED,
+            "expiration": expiration,
+            "type_filling": fill_policy,
+        }
+        last_req = req
+        return req
+
+    print(f" {UI.tag('MT5', UI.BLUE)} Pasang pending {entry_type} {symbol} @ {entry_price} "
+          f"(exp {expiration_minutes} menit, SL {sl_price}, TP {tp_price})...")
+    result = _send_with_retry(_build, symbol, f"Pending {entry_type}")
+
+    if result is None:
+        return {"status": "ERROR", "comment": "Tick hilang saat pasang (feed off) — pending dibatalkan"}
+    if not _is_order_success(result):
+        retcode = getattr(result, "retcode", "N/A") if result else "N/A"
+        comment = getattr(result, "comment", "No result") if result else "No result"
+        print(f" {UI.tag('MT5 ERROR', UI.RED)} Pending gagal! Retcode: {retcode}, Pesan: {comment}")
+        return {"status": "ERROR", "comment": comment, "code": retcode}
+
+    ticket_no = getattr(result, "order", 0) or getattr(result, "deal", 0)
+    print(f" {UI.tag('MT5', UI.GREEN)} Pending BERHASIL! Ticket: {ticket_no}")
+    return {"status": "SUCCESS", "ticket": ticket_no, "comment": result.comment}
+
+
+def get_pending_orders(magic=None):
+    """Returns list of active pending orders (TRADE_ACTION_PENDING) for the bot's
+    magic number. Fields: ticket, symbol, type, price, sl, tp, expiration, comment."""
+    try:
+        orders = mt5.orders_get()
+    except Exception:
+        return []
+    if orders is None:
+        return []
+    magic = config.MAGIC_NUMBER if magic is None else magic
+    out = []
+    for o in orders:
+        if o.magic != magic:
+            continue
+        out.append({
+            "ticket": o.ticket,
+            "symbol": o.symbol,
+            "type": o.type,
+            "type_str": _order_type_str(o.type),
+            "price": o.price_open,
+            "sl": o.sl,
+            "tp": o.tp,
+            "expiration": o.time_expiration,
+            "comment": o.comment,
+        })
+    return out
+
+
+def _order_type_str(t):
+    """Map MT5 order type int to readable string."""
+    try:
+        m = {
+            mt5.ORDER_TYPE_BUY_STOP: "buy_stop",
+            mt5.ORDER_TYPE_SELL_STOP: "sell_stop",
+            mt5.ORDER_TYPE_BUY_LIMIT: "buy_limit",
+            mt5.ORDER_TYPE_SELL_LIMIT: "sell_limit",
+            mt5.ORDER_TYPE_BUY: "BUY",
+            mt5.ORDER_TYPE_SELL: "SELL",
+        }
+        return m.get(t, str(t))
+    except Exception:
+        return str(t)
+
+
+def cancel_pending_order(ticket):
+    """Cancels a pending order by ticket. Returns bool."""
+    if config.DRY_RUN:
+        print(f"[DRY RUN] Simulasi cancel pending #{ticket}.")
+        return True
+    try:
+        order = mt5.orders_get(ticket=ticket)
+        if order is None or len(order) == 0:
+            return False
+        o = order[0]
+        symbol = get_valid_trade_symbol(o.symbol)
+        req = {
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "symbol": symbol,
+            "order": ticket,
+            "magic": config.MAGIC_NUMBER,
+            "comment": "Cancel pending",
+        }
+        result = mt5.order_send(req)
+        if result is None:
+            return False
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print(f" {UI.tag('MT5 ERROR', UI.RED)} Gagal cancel pending #{ticket}: {result.comment}")
+            return False
+        print(f" {UI.tag('MT5', UI.GREEN)} Pending #{ticket} dibatalkan.")
+        return True
+    except Exception as e:
+        print(f" [MT5] Error cancel pending #{ticket}: {e}")
+        return False

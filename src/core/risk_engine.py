@@ -437,7 +437,11 @@ class RiskEngine:
         if tick is None or symbol_info is None or not symbol_info.point or symbol_info.point <= 0:
             return False, " [RISK] Tidak bisa memverifikasi spread (MT5 data/point unavailable). Menunggu..."
 
+        if tick.ask <= 0 or tick.bid <= 0:
+            return False, " [RISK] Quote tidak valid (harga Ask/Bid 0). Menunggu..."
+
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
+
         max_spread = config.max_spread_points_for(config.SYMBOL)
         if spread_points > max_spread:
             return False, (f" [RISK] Spread terlalu tinggi: {spread_points} pts "

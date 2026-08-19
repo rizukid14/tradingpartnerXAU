@@ -481,7 +481,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     min_act = 30 if config.is_fx(symbol) else 100
 
     # Mode-aware activation:
-    # - LLM mode: trailing aktif saat profit >= 50% TP (TRAILING_ACTIVATION_TP_PCT)
+    # - LLM mode: trailing aktif saat profit >= 58% TP (TRAILING_ACTIVATION_TP_PCT)
     # - ATR-Based mode: TP-adaptive 60% TP
     if config.sltp_mode_for(symbol) == "LLM":
         if tp_points > 0:
@@ -550,6 +550,14 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         # Interpolasi linear start_mult -> end_mult, lalu floor ke min_mult
         dynamic_mult = start_mult - (start_mult - end_mult) * progress
         dynamic_mult = max(dynamic_mult, min_mult)
+
+    # Floor absolut jarak trailing (anti noise & spread squeeze saat SL tipis / TP lock mepet)
+    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 25) if config.is_fx(symbol) else getattr(config, "TRAILING_DISTANCE_MIN_POINTS_XAU", 100)
+    min_dist_price = min_dist_pts * point
+
+    if not config.is_crypto(symbol):
+        trail_distance = max(trail_distance, min_dist_price)
+
     if pos.type == mt5.ORDER_TYPE_BUY:
         new_sl = trail_ref - trail_distance
         # Progressive TP-lock: pastikan SL setidaknya mengunci target % TP sesuai progress
@@ -557,6 +565,9 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
             tp_locked_pts = _calculate_progressive_tp_lock_points(profit_points, tp_points)
             if tp_locked_pts > 0:
                 tp_lock_sl = pos.price_open + (tp_locked_pts * point)
+                # Cap tp_lock_sl agar tetap menyisakan breathing room min_dist_pts dari extreme price
+                if not config.is_crypto(symbol):
+                    tp_lock_sl = min(tp_lock_sl, trail_ref - min_dist_price)
                 new_sl = max(new_sl, tp_lock_sl)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL up, never down
@@ -569,6 +580,9 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
             tp_locked_pts = _calculate_progressive_tp_lock_points(profit_points, tp_points)
             if tp_locked_pts > 0:
                 tp_lock_sl = pos.price_open - (tp_locked_pts * point)
+                # Cap tp_lock_sl agar tetap menyisakan breathing room min_dist_pts dari extreme price
+                if not config.is_crypto(symbol):
+                    tp_lock_sl = max(tp_lock_sl, trail_ref + min_dist_price)
                 new_sl = min(new_sl, tp_lock_sl)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL down, never up

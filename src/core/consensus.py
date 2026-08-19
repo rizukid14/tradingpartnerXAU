@@ -182,9 +182,12 @@ def calculate_consensus(decisions):
         sltp_info = f"SL: {sl} pts, TP: {tp} pts" if sig in ("BUY", "SELL") else "SL/TP: -"
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
+        invalidation_text = (dec.get("invalidation") or "").strip()
         if setup_label:
             box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
         box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
+        if invalidation_text:
+            box_items.append((f"  {UI.RED}Inval.{UI.RST}  : ", invalidation_text))
 
         
     # Evaluate consensus for active position early-close actions
@@ -297,6 +300,8 @@ def calculate_consensus(decisions):
 
     # Calculate average SL, TP, Confidence
     inv_list, tgt_list, sl_list, tp_list, conf_list = [], [], [], [], []
+    entry_type_votes = {}
+    entry_price_list = []
     for name in agreeing_models:
         dec = decisions[name]
         conf_list.append(dec.get("confidence", 0.5))
@@ -309,6 +314,13 @@ def calculate_consensus(decisions):
         if isinstance(sl_val, (int, float)) and sl_val > 0: sl_list.append(sl_val)
         tp_val = dec.get("tp_points")
         if isinstance(tp_val, (int, float)) and tp_val > 0: tp_list.append(tp_val)
+        et = (dec.get("entry_type") or "market").strip().lower()
+        if et not in ("market", "buy_stop", "sell_stop", "buy_limit", "sell_limit"):
+            et = "market"
+        entry_type_votes[et] = entry_type_votes.get(et, 0) + 1
+        ep = dec.get("entry_price")
+        if isinstance(ep, (int, float)) and ep > 0:
+            entry_price_list.append(ep)
 
     outlier_notes = []
     inv_list, note1 = _drop_standalone_outlier(inv_list, "Invalidation Price")
@@ -319,6 +331,23 @@ def calculate_consensus(decisions):
     if note3: outlier_notes.append(note3)
     tp_list, note4 = _drop_standalone_outlier(tp_list, "TP Points")
     if note4: outlier_notes.append(note4)
+    entry_price_list, note5 = _drop_standalone_outlier(entry_price_list, "Entry Price")
+    if note5: outlier_notes.append(note5)
+
+    # entry_type: mayoritas dari model yang setuju arah; seri -> market
+    final_entry_type = "market"
+    if entry_type_votes:
+        top_type, top_count = max(entry_type_votes.items(), key=lambda kv: kv[1])
+        if top_count >= max(1, len(agreeing_models) // 2):
+            final_entry_type = top_type
+    # Konsistensi arah: BUY -> buy_stop/buy_limit, SELL -> sell_stop/sell_limit
+    if consensus_signal == "BUY" and final_entry_type not in ("buy_stop", "buy_limit"):
+        final_entry_type = "market"
+    if consensus_signal == "SELL" and final_entry_type not in ("sell_stop", "sell_limit"):
+        final_entry_type = "market"
+    final_entry_price = float(sum(entry_price_list) / len(entry_price_list)) if entry_price_list else None
+    if final_entry_type != "market" and not final_entry_price:
+        final_entry_type = "market"
 
     avg_confidence = float(sum(conf_list) / len(conf_list)) if conf_list else 0.0
     final_inv = sum(inv_list) / len(inv_list) if inv_list else None
@@ -345,6 +374,40 @@ def calculate_consensus(decisions):
                     final_tgt = entry_price - (final_tp * point)
     except Exception:
         pass
+
+    # Guardrail entry pending: jarak dari harga harus dalam [2x spread, 1.5x ATR]
+    # dari harga saat ini, dan arah konsisten dengan entry_type. Kalau tidak
+    # valid -> downgrade ke market (perilaku lama) supaya sinyal tidak hilang.
+    if final_entry_type != "market" and final_entry_price is not None:
+        try:
+            from config import mt5
+            tick = mt5.symbol_info_tick(config.SYMBOL)
+            si = mt5.symbol_info(config.SYMBOL)
+            point = si.point if si else 0.00001
+            ref_price = tick.ask if consensus_signal == "BUY" else tick.bid
+            dist_pts = abs(final_entry_price - ref_price) / point if (point and ref_price) else None
+            spread_pts = int(round((tick.ask - tick.bid) / point)) if (tick and point) else 0
+            atr_pts = 0
+            try:
+                import pandas as pd
+                from ta.volatility import AverageTrueRange
+                rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
+                if rates is not None and len(rates) > 0:
+                    df = pd.DataFrame(rates)
+                    df['atr'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+                    atr_val = df.iloc[-1]['atr']
+                    if pd.notna(atr_val) and point and point > 0:
+                        atr_pts = int(atr_val / point)
+            except Exception:
+                atr_pts = 0
+            min_dist = spread_pts * float(getattr(config, "PENDING_ENTRY_MIN_SPREAD_MULT", 2.0))
+            max_dist = (atr_pts if atr_pts > 0 else int(config.default_sl_points_for(config.SYMBOL))) * float(getattr(config, "PENDING_ENTRY_MAX_ATR_MULT", 1.5))
+            if dist_pts is None or dist_pts < min_dist or dist_pts > max_dist:
+                outlier_notes.append(f"Entry pending {final_entry_price} (jarak {dist_pts:.0f} pts) di luar band [2x spread, 1.5x ATR] -> downgrade ke market")
+                final_entry_type = "market"
+                final_entry_price = None
+        except Exception:
+            pass
 
     all_notes = []
     for onote in outlier_notes:
@@ -395,7 +458,8 @@ def calculate_consensus(decisions):
     box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)"))
     if best_reason:
         box_items.append((f"  {UI.CYAN}Setup / Reason:{UI.RST} ", best_reason))
-    price_info = f" | Price SL {final_inv:.2f} / TP {final_tgt:.2f}" if final_inv else ""
+    price_decimals = 5 if (point and point < 0.001) else 2
+    price_info = f" | Price SL {final_inv:.{price_decimals}f} / TP {final_tgt:.{price_decimals}f}" if final_inv else ""
     box_items.append((f"  {UI.BOLD}Final SL / TP :{UI.RST} ", f"{UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}"))
 
     print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
@@ -407,6 +471,8 @@ def calculate_consensus(decisions):
         "tp_points": final_tp,
         "invalidation_price": final_inv,
         "target_price": final_tgt,
+        "entry_type": final_entry_type,
+        "entry_price": final_entry_price,
         "agreeing_count": len(agreeing_models),
         "agreeing_models": list(agreeing_models),
         "reason": best_reason,
