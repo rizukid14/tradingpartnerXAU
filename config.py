@@ -52,8 +52,9 @@ LLM_TIMEOUT_SECONDS = 24.0
 
 
 # --- TRADING PARAMETERS ---
-# Symbol to trade (e.g., "XAUUSD" for Gold, "EURUSD" for Forex)
-SYMBOL = "XAUUSD-ECNc"
+MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "demo").lower()
+# Symbol to trade (e.g., "XAUUSD-ECN" for demo, "XAUUSD-ECNc" for live)
+SYMBOL = os.getenv("SYMBOL", "XAUUSD-ECN" if MT5_ACCOUNT_MODE == "demo" else "XAUUSD-ECNc")
 
 # Timeframe for Scalping: 5 Minutes
 TIMEFRAME = mt5.TIMEFRAME_M5
@@ -195,5 +196,4 @@ FUNDAMENTAL_ANALYSIS_ENABLED = True
 PRIMARY_ANALYSIS_MODEL = GEMINI_MODEL
 
 # --- LOGGING SETTINGS ---
-LOG_FILE = "trading_bot.log"
-
+LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")

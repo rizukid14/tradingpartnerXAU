@@ -13,6 +13,32 @@ from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 import config
 
+def get_valid_trade_symbol(symbol):
+    """Auto-resolves symbol name based on broker's exact symbol naming (e.g. XAUUSD-ECNc vs XAUUSD-ECN vs XAUUSD)."""
+    if mt5.symbol_info(symbol) is not None:
+        return symbol
+
+    base = symbol.split("-")[0].split(".")[0].upper()
+    candidates = [
+        symbol,
+        f"{base}-ECN",
+        f"{base}-ECNc",
+        base,
+        f"{base}.c",
+        f"{base}.ecn",
+        f"{base}.m",
+        f"{base}.pro",
+        f"{base}.MT5",
+    ]
+    for cand in candidates:
+        info = mt5.symbol_info(cand)
+        if info is not None:
+            mt5.symbol_select(cand, True)
+            print(f"[MT5] Auto-resolved symbol '{symbol}' -> '{cand}' di broker {config.MT5_SERVER}")
+            return cand
+    return symbol
+
+
 def initialize_mt5():
     """Initializes connection to MT5 terminal."""
     if not mt5.initialize():
@@ -35,6 +61,10 @@ def initialize_mt5():
     else:
         print("[MT5] Terhubung ke terminal MT5 yang sedang aktif.")
         
+    # Auto-resolve symbol for Demo vs Live broker naming differences
+    resolved_sym = get_valid_trade_symbol(config.SYMBOL)
+    config.SYMBOL = resolved_sym
+
     # Check if the symbol is available and visible
     symbol_info = mt5.symbol_info(config.SYMBOL)
     if symbol_info is None:
