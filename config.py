@@ -62,7 +62,7 @@ MAX_TP_POINTS = 55
 
 # --- CONSENSUS & FORECAST SETTINGS ---
 DRY_RUN = False
-CONSENSUS_THRESHOLD = 3             # Wajib 3/3 Unanimous! Jika tidak 3/3 -> HOLD / SKIP
+CONSENSUS_THRESHOLD = 2             # Konsensus Majority 2/3 (3/3 Unanimous Buka 2 Layer)
 DEBATE_ENABLED = False
 FORECAST_ENABLED = False
 
