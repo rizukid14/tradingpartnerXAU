@@ -1124,12 +1124,13 @@ Current Bid: {_fmt_price(current_tick['bid'], point_size)}
 Current Ask: {_fmt_price(current_tick['ask'], point_size)}
 Spread: {current_tick['spread']} points (point size = {current_tick['point']})
 Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
+{macro_str}
 {key_levels_str}
 {structure_str}
 {delta_main_str}
 {micro_candles_str}
 {atr_gate_str}
-{randomness_str}{quant_prob_str}{macro_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
