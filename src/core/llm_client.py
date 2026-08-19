@@ -228,8 +228,6 @@ Do not treat any single indicator (RSI, EMA, Fibonacci, ATR) as a mandatory trig
 ### DATA INTEGRITY
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
 
-The MULTI-TIMEFRAME ANALYSIS note is COMPUTED from actual higher-timeframe candles (EMA20/50, RSI, ATR, swing levels) -- use it to judge whether the current move is a pullback within a larger trend or a reversal. If its numbers conflict with the visible candles, prefer the visible candles. Any news/fundamental note is advisory only -- disregard if generic or stale.
-
 The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
 
 ### RISK CONSTRAINTS (apply regardless of chosen strategy)
