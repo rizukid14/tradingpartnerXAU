@@ -82,3 +82,28 @@ Dokumen ini berisi panduan lokasi file aktif, tempat log, dan struktur branch un
 
 4. **`legacy-3`**:
    - **Fokus**: Emas M5 + Rotasi BTC M30, Fibonacci Retracement, & forecast horizon T+5m.
+
+5. **`feature/m1-micro-scalper`** (Branch M1 SuperScalper Active):
+   - **Fokus**: Scalping Emas Micro M1/M5 (`XAUUSD-ECN` / `XAUUSD-ECNc`).
+   - **Mega Lot Jumbo**: SL Super Ketat 30–60 pts ($0.30–$0.60) -> Lot ~0.25–0.40 per $1.000.
+   - **Mega Fast TP**: TP Super Kilat 40–80 pts ($0.40–$0.80, R:R 1:1.15+).
+   - **Log File**: `data/trading_bot_m1_scalper.log`.
+
+---
+
+## 📜 6. ATURAN & RENCANA PRODUCTION BRANCH `feature/m1-micro-scalper`
+
+### A. Rencana Eksekusi Production (Live Account)
+* **Dedicated Account**: Bot versi ini disiapkan khusus untuk akun **ECNc** terpisah (`XAUUSD-ECNc`).
+* **Jam Operasional Terbatas**: Hanya aktif pada **2 Jam Prime Overlap London-NY** (misal `19:30 – 21:30 WIB`). Pada jam ini likuiditas tertinggi, spread ECN tertipis (5-10 pts), dan momentum micro M1 paling bersih.
+* **Target & Max Loss Harian (Rekomendasi)**:
+  * Target Profit Harian: `+$80 – +$100 USD` (+8% – +10% Equity).
+  * Max Loss Harian: `-$45 – -$60 USD` (-4.5% – -6% Equity).
+
+### B. Spesifikasi Technical Execution
+* **Super-Tight SL Bounds**: SL 30–60 points ($0.30–$0.60 pergerakan Emas).
+* **Super-Fast TP Bounds**: TP 40–80 points ($0.40–$0.80 pergerakan Emas, R:R 1:1.15+).
+* **Mega Lot Jumbo Sizing**: Dynamic 1.5% Equity Risk otomatis menghasilkan **~0.25 s.d 0.40 Lot Mega Jumbo** per $1.000 modal.
+* **Real-time Closed Tracker (5s)**: Deteksi tertutupnya posisi (Hit TP/SL/Close Manual) terjadi setiap 5 detik dengan notifikasi instan CLI & Telegram.
+* **1-Hour Telegram Recap**: Notifikasi rekap P/L harian & win rate dikirim otomatis setiap 1 jam.
+* **Log Terisolasi**: Log disimpan di `data/trading_bot_m1_scalper.log`.
