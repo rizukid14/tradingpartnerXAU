@@ -255,7 +255,7 @@ BUY or SELL:
   "signal": "BUY" | "SELL",
   "confidence": float (0.50 to 1.00),
   "setup": "string (short label for setup type)",
-  "reasoning": "string (MAX 40 WORDS: core entry thesis & edge for this new entry)",
+  "reasoning": "string (MAX 60 WORDS: detailed entry thesis, key levels, and core edge for this trade)",
   "invalidation": "string (key technical condition that invalidates this thesis)",
   "sl_points": integer (Stop Loss distance in broker POINTS from current price),
   "tp_points": integer (Take Profit distance in broker POINTS from current price),
@@ -1224,7 +1224,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         kwargs = {
             "model": model_name,
             "messages": [
-                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 1-2 sentences (max 40 words); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
             ],
             "response_format": {"type": "json_object"},
             "timeout": timeout_sec
@@ -1243,7 +1243,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 1-2 sentences (max 40 words); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -1385,7 +1385,7 @@ def query_gemini(prompt):
 def _execute_claude_single(model_name, prompt, timeout_sec):
     system_text = (
         "You are a professional financial trading assistant. "
-        "Always respond with valid JSON only. Reasoning: 1-2 sentences (max 40 words); "
+        "Always respond with valid JSON only. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); "
         "if HOLD, keep it to 1 short sentence (max 20 words) citing the single key "
         "level/indicator. Never enumerate."
     )

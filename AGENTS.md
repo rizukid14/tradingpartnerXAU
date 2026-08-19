@@ -88,6 +88,8 @@ python main.py
    - **BEP Trigger (`BREAK_EVEN_TRIGGER_TP_PCT`)**: **`0.35` (35% Target TP)** dengan padding komisi round-trip + Pocket Profit 1.5 pips (`15 pts`).
    - **Trailing Activation (`TRAILING_ACTIVATION_TP_PCT`)**: **`0.58` (58% Target TP)**.
    - **Floor Absolut Trailing (`TRAILING_DISTANCE_MIN_POINTS_FX`)**: **`25 points` (2.5 pips)** dari harga ekstrem untuk mencegah spread squeeze.
+9. **Benchmark Live `gpt-5.4-mini` vs `gemini-2.5-flash-lite` (19 Agustus)**: Pengujian live data 8 FX pairs H1. `gemini-2.5-flash-lite` menghasilkan **100% HOLD (8/8 pair)** dengan latency 1.26s — mengonfirmasi paralysis model 2.5-flash-lite (mengapa bot produksi memakai `gemini-3.1-flash-lite`). `gpt-5.4-mini` (low reasoning) menghasilkan **6/8 trade aktif** (3 BUY, 3 SELL, 2 HOLD; confidence 63%–69%, R:R >2:1, latency ~4.33s).
+
 
 ### Optimasi kecepatan loop (11 Agustus — bersama fitur TP_SL_RULES)
 
