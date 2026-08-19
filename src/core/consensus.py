@@ -344,6 +344,8 @@ def calculate_consensus(decisions):
     if consensus_signal == "SELL" and final_entry_type not in ("sell_stop", "sell_limit"):
         final_entry_type = "market"
     final_entry_price = float(sum(entry_price_list) / len(entry_price_list)) if entry_price_list else None
+    if final_entry_type != "market" and not final_entry_price:
+        final_entry_type = "market"
 
     avg_confidence = float(sum(conf_list) / len(conf_list)) if conf_list else 0.0
     final_inv = sum(inv_list) / len(inv_list) if inv_list else None
