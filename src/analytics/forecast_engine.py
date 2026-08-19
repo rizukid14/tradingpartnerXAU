@@ -149,10 +149,10 @@ class ForecastEngine:
         # Resolve dynamic timeframe label
         tf_val = config.get_timeframe(symbol)
         tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
-        tf_label = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
+        tf_label = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
 
-        if config.is_crypto(symbol):
-            # BTC main is M30 -> M30 horizons
+        if config.is_crypto(symbol) or "XAU" in symbol.upper():
+            # M30 main (BTC & XAU) -> M30 horizons
             horizon_5m = "next 30 minutes (T+30m)"
             horizon_short = "next 1 hour (T+1h)"
             horizon_long = "next 4 hours (T+4h)"
@@ -160,15 +160,6 @@ class ForecastEngine:
             horizon_short_key = "target_t1h"
             horizon_long_key = "target_t4h"
             horizon_label = "T+30m/T+1h/T+4h"
-        elif "XAU" in symbol.upper():
-            # XAU main is M15 -> M15 horizons
-            horizon_5m = "next 15 minutes (T+15m)"
-            horizon_short = "next 45 minutes (T+45m)"
-            horizon_long = "next 2 hours (T+2h)"
-            horizon_5m_key = "target_t15m"
-            horizon_short_key = "target_t45m"
-            horizon_long_key = "target_t2h"
-            horizon_label = "T+15m/T+45m/T+2h"
         else:
             # FX main is H1 -> H1 horizons
             horizon_5m = "next 1 hour (T+1h)"

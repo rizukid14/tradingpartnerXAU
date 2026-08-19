@@ -131,29 +131,55 @@ def _wrap_positions(parts, max_w, indent):
     return lines
 
 
-_last_status_lines = 1  # jumlah baris status yang terakhir ditulis (default 1 baris)
+_status_render_count = 0  # jumlah baris status live yang sedang tampil (di-update tiap render)
 
 
 def _reset_status_lines():
-    global _last_status_lines
-    _last_status_lines = 1
-
-
-def _render_status(status_line, pos_lines, max_w, vt_ok):
-    """Bangun blok status multi-baris + sequence ANSI buat refresh in-place.
-    Setiap baris diawali \\x1b[2K\\r untuk menghapus baris lama dan reset kursor ke kolom 0.
+    """Hapus SEMUA baris status loop live (bisa multi-baris) sebelum mencetak event/log baru
+    agar tidak bertumpuk. Cursor-up ke baris pertama status, lalu erase tiap baris ke bawah.
     """
-    global _last_status_lines
-    n_lines = 1 + len(pos_lines)
-    lines = [status_line] + pos_lines
-    if vt_ok:
-        up = f"\x1b[{_last_status_lines - 1}A" if _last_status_lines > 1 else ""
-        block = "\n".join(f"\x1b[2K\r{ln}" for ln in lines)
-        _last_status_lines = n_lines
-        return f"\r{up}{block}"
-    block = "\n".join(lines)
-    _last_status_lines = 1
-    return f"{block}\n"
+    global _status_render_count
+    n = _status_render_count
+    _status_render_count = 0
+    if n <= 0:
+        sys.stdout.write("\r")
+        sys.stdout.flush()
+        return
+    if _VT_OK:
+        if n > 1:
+            sys.stdout.write(f"\x1b[{n - 1}A")  # naik ke baris pertama status
+        for i in range(n):
+            sys.stdout.write("\x1b[2K")  # hapus isi baris
+            if i < n - 1:
+                sys.stdout.write("\x1b[B")  # turun ke baris berikutnya
+        sys.stdout.write("\r")
+    else:
+        sys.stdout.write("\r")
+    sys.stdout.flush()
+
+
+def _render_status_lines(lines, vt_ok=True):
+    """Tulis status live multi-baris: hapus baris lama (cursor-up + erase per baris) lalu
+    tulis yang baru, supaya auto-scroll terminal tidak merusak refresh in-place.
+    lines = daftar baris (masing-masing boleh berisi ANSI).
+    """
+    global _status_render_count
+    n_old = _status_render_count
+    n_new = len(lines)
+    _status_render_count = n_new
+    if not vt_ok:
+        return "\r" + lines[0] + "".join(f"\n{l}" for l in lines[1:])
+    out = ["\r"]
+    if n_old > 1:
+        out.append(f"\x1b[{n_old - 1}A")  # naik ke baris pertama status lama
+    max_rows = max(n_old, n_new)
+    for i in range(max_rows):
+        out.append("\x1b[2K")  # hapus isi baris (sisa lama atau baris baru)
+        if i < n_new:
+            out.append(lines[i])
+        if i < max_rows - 1:
+            out.append("\n")
+    return "".join(out)
 
 
 
@@ -211,6 +237,8 @@ def parse_cli_overrides(argv=None):
                    help="Aturan SL/TP: 'ATR-Based' (gate per AI mode: single 1.25x/2.5x, dual 1.5x/3.0x, triple 1.75x/3.5x ATR, R:R 2:1) atau 'LLM' (bebas sesuai model, safety floor XAU 400 / FX 250 pts + R:R min 1.25:1)")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Lewati prompt interaktif saat startup (cocok untuk Docker/non-interactive)")
     args = p.parse_args(argv)
 
     applied = []
@@ -562,14 +590,14 @@ def _seed_startup_scan(valid_pool):
             _symbol_last_candle[sym] = int(r[-2]['time'])
 
 
-def _prompt_startup_scan_mode():
+def _prompt_startup_scan_mode(skip_prompt=False):
     """FASE 6 - CLI prompt mode scan startup:
     [1] Scan semua simbol sekarang (scan all now)
     [2] Scan sesuai timeframe masing-masing (default) - tunggu candle close tiap aset
     Non-interactive / timeout 10 detik -> default "timeframe".
     """
     global _STARTUP_SCAN_MODE
-    if not sys.stdin.isatty():
+    if skip_prompt or not sys.stdin.isatty():
         return  # non-interactive (scheduler/redirect) -> default
     try:
         import msvcrt
@@ -577,7 +605,7 @@ def _prompt_startup_scan_mode():
         return
     print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
     print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 7 Simbol Sekarang (Immediate Full Market Scan)            |")
-    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M15 / H1 / M30 - Default)      |")
+    print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: M30 / H1 / M30 - Default)      |")
     print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
     sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
     sys.stdout.flush()
@@ -712,7 +740,7 @@ def _run_cycle_for_current_symbol():
         # posisi lemah buat buka slot). Hanya entry baru yang ditahan (entry_blocked).
         # Simbol yang TIDAK punya posisi terbuka di-skip: re-evaluator gak ada kerjaan,
         # entry juga diblokir -> LLM call sia-sia.
-        max_pos_now = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+        max_pos_now = config.get_max_open_positions(risk.is_recovery_mode)
         if len(connector.get_all_open_positions()) >= max_pos_now:
             if not connector.get_open_positions(config.SYMBOL):
                 print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai & {config.SYMBOL} tanpa posisi terbuka — skip (re-evaluator kosong).")
@@ -726,13 +754,13 @@ def _run_cycle_for_current_symbol():
             print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
             return True  # Not an error, just skipping
     
-    # 1. Fetch market data (51 bar, buang bar aktif -> 50 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
-    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=51)
+    # 1. Fetch market data (53 bar, buang bar aktif -> 52 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
+    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=53)
     if df is None or len(df) == 0:
         print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.")
         return False
-    if len(df) > 50:
-        df = df.iloc[-50:-1].reset_index(drop=True)
+    if len(df) > 52:
+        df = df.iloc[-52:-1].reset_index(drop=True)
         
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
@@ -794,6 +822,19 @@ def _run_cycle_for_current_symbol():
     if macro_context:
         print(f"Menyertakan analisa Multi-Timeframe & Fundamental ({config.SYMBOL}) untuk LLM...")
 
+    # Pattern edge whisper: deteksi pola di candle terakhir & inject statistik
+    # tervalidasi kalau match registry (informational only, bukan directive).
+    whisper_str = None
+    if getattr(config, "PATTERN_WHISPER_ENABLED", True):
+        try:
+            from src.analytics.pattern_detector import detect_and_whisper
+            whisper_str = detect_and_whisper(df, config.SYMBOL)
+            if whisper_str:
+                first_line = whisper_str.strip().split("\n")[0]
+                print(f" {UI.tag('WHISPER', UI.MAGENTA)} {first_line}")
+        except Exception as e:
+            print(f"[WHISPER ERROR {config.SYMBOL}] {e}")
+
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
         if lessons_ctx:
@@ -811,7 +852,9 @@ def _run_cycle_for_current_symbol():
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
     print(f" {UI.tag('AI', UI.CYAN)} Mode {ai_mode.upper()} ({len(active_models)} model: {', '.join(active_models)}) | Mengirim data ke LLM...")
-    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions)
+    all_open_positions = connector.get_all_open_positions()
+    decisions = llm.get_multi_llm_decisions(config.SYMBOL, df, tick, macro_context, open_positions,
+                                            whisper_str, all_open_positions=all_open_positions)
 
     
     # 5. Calculate consensus
@@ -851,8 +894,8 @@ def _run_cycle_for_current_symbol():
     # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
     # counter-trend di sini. Konsensus LLM yang menentukan entry.
 
-    # Check if max open positions reached for NEW trades (recovery mode: tighter cap)
-    max_positions = config.MAX_OPEN_POSITIONS_RECOVERY if risk.is_recovery_mode else config.MAX_OPEN_POSITIONS
+    # Check if max open positions reached for NEW trades (recovery mode: tighter cap; late NY: max 2)
+    max_positions = config.get_max_open_positions(risk.is_recovery_mode)
     if entry_blocked or len(open_positions) >= max_positions:
         if entry_blocked:
             print(f"-> Entry ditahan: posisi bot sudah {max_positions} (aggregate semua simbol). Re-evaluator tetap jalan.")
@@ -972,7 +1015,8 @@ def _run_cycle_for_current_symbol():
                 tg.alert_trade_opened(
                     trade_signal, effective_lot, sl_points, pos_tp,
                     recovery_mode=risk.is_recovery_mode,
-                    session_multiplier=risk.session_lot_multiplier
+                    session_multiplier=risk.session_lot_multiplier,
+                    symbol=config.SYMBOL
                 )
             else:
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
@@ -1036,11 +1080,11 @@ def main():
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
         print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M15) | FX Cross (H1) | BTC (M30) - Smart Rotation")
+        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M30) | FX Cross (H1) | BTC (M30) - Smart Rotation")
     else:
-        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M15 Swing)")
+        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M30 Swing)")
 
-    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}] / err-fb {config.OPENAI_FALLBACK_MODEL}), Dual slot: {config.AI_DUAL_SECOND_MODEL}{' (reasoning ' + config.DEEPSEEK_REASONING_EFFORT + ')' if config.AI_DUAL_SECOND_MODEL.strip().lower() in ('deepseek', 'ds') else ''}, Gemini ({config.GEMINI_MODEL}), {llm.claude_slot_label()} ({config.CLAUDE_MODEL})")
+    print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}]), DeepSeek ({config.DEEPSEEK_MODEL} [reasoning {config.DEEPSEEK_REASONING_EFFORT}]), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
     print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {'XAU: LLM (floor 400) | BTC: ATR-Based (fix) | FX: LLM (floor 1.5xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
@@ -1071,7 +1115,7 @@ def main():
         print(f"[STARTUP EVALUATOR WARNING] {e}")
         
     # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
-    _prompt_startup_scan_mode()
+    _prompt_startup_scan_mode(skip_prompt)
 
     print("Bot berjalan... Menunggu penutupan candle berikutnya.\n")
     
@@ -1258,8 +1302,7 @@ def main():
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
             
-            # Show any running (open) bot positions across ALL symbols — baris terpisah
-            # (multi-line) kalau posisi banyak, biar SEMUA kelihatan (tidak di-truncate).
+            # Show any running (open) bot positions across ALL symbols in a single line refresh
             open_pos = connector.get_all_open_positions()
             pos_parts = []
             if open_pos:
@@ -1268,25 +1311,33 @@ def main():
                     by_sym.setdefault(p.get("symbol", "?"), []).append(p)
                 for sym, plist in sorted(by_sym.items()):
                     float_s = sum(x.get("profit", 0.0) for x in plist)
-                    pos_parts.append(f"{sym}: {len(plist)} pos ({UI.badge_pnl(float_s)})")
-            status_line = f"[{UI.BOLD}{config.SYMBOL}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
-            # Potong berdasarkan LEBAR TAMPILAN terminal aktual (emoji = 2 kolom), bukan
-            # jumlah karakter - kalau baris wrap, \r tidak balik ke awal baris dan status
-            # jadi nge-print ke bawah (bukan refresh). Sisakan margin 4 kolom biar aman.
+                    sym_clean = sym.replace("-ECNc", "").replace(".c", "")
+                    count_str = f"({len(plist)})" if len(plist) > 1 else ""
+                    badges = "".join(position_manager.get_ticket_status_badge(x.get("ticket")) for x in plist)
+                    pos_parts.append(f"{sym_clean}{count_str}: {UI.badge_pnl(float_s)}{badges}")
+                pos_str = f" | {UI.GRAY}pos:{UI.RST} " + " | ".join(pos_parts)
+            else:
+                pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
+
+            main_sym = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
+            header_part = f"[{UI.BOLD}{main_sym}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
+            
+            # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)
+            # supaya auto-scroll terminal tidak merusak refresh in-place multi-baris.
             try:
                 cols = shutil.get_terminal_size((120, 24)).columns
             except Exception:
                 cols = 120
-            max_w = max(60, cols - 4)
-            status_line = _truncate_disp(status_line, max_w)
-            if pos_parts:
-                pos_lines = _wrap_positions(pos_parts, max_w, indent=UI.GRAY + "  pos: " + UI.RST)
+            max_w = max(40, cols - 2)
+            if open_pos:
+                status_lines = _wrap_positions(pos_parts, max_w, indent=header_part + f" | {UI.GRAY}pos:{UI.RST} ")
             else:
-                pos_lines = [UI.GRAY + "  pos: No active pos" + UI.RST]
-            sys.stdout.write(_render_status(status_line, pos_lines, max_w, _VT_OK))
+                status_lines = [header_part + pos_str]
+
+            sys.stdout.write(_render_status_lines(status_lines, _VT_OK))
             sys.stdout.flush()
 
-            # Sleep 5 seconds between checks
+            # Sleep 3 seconds between checks
             time.sleep(3)  # loop utama - cache query MT5 sudah kurangi beban, 3 detik aman
 
             

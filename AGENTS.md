@@ -5,9 +5,9 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.
-- **XAUUSD-ECNc** (Gold): short-term intraday swing **M15**, weekday, MTF context M30/H1. Config default `WEEKDAY_SYMBOL = "XAUUSD-ECNc"` (langsung nama broker live — FASE 1; `get_valid_trade_symbol` tetap auto-correct kalau suffix beda, mis. demo).
+- **XAUUSD-ECNc** (Gold): intraday swing **M30**, weekday, MTF context H1/H4. Config default `WEEKDAY_SYMBOL = "XAUUSD-ECNc"` (langsung nama broker live — FASE 1; `get_valid_trade_symbol` tetap auto-correct kalau suffix beda, mis. demo).
 - **BTCUSD.c** (Bitcoin): intraday **M30**, weekend + setelah jam 22:00 Jumat WIB (rotasi otomatis, `config.get_active_symbol`). **MTF context H1/H4, forecast horizon T+4h/T+D1 (bebas swap overnight).**
-- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (**parallel scan pool 7 simbol**: XAU + 6 FX cross, FASE 1). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `GBPCHF-ECNc, EURCHF-ECNc, GBPNZD-ECNc, EURJPY-ECNc, GBPUSD-ECNc, EURAUD-ECNc`), dipotong `MAX_ROTATION_SYMBOLS` (7). **Timeframe per aset: XAU M15 (swing pendek), FX H1 (swing), BTC M30** — risk per trade XAU 1.0% / FX 1.0% / BTC 1.5% (XAU naik dari 0.5% pada 13 Agustus: min lot 0.01 broker gak bisa mewakili risk 0.5% dengan SL struktur lebar). **Smart Timeframe Rotation (FASE 5)**: LLM call per simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di main.py) — XAU tiap 15 menit, FX tiap 1 jam, BTC tiap 30 menit (hemat token drastis). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol). Implementasi: `run_trading_cycle()` → loop `for sym in pool: config.SYMBOL = sym; _run_cycle_for_current_symbol()` (post-mortem 1× aggregate per candle, macro/MTF per-symbol di-populate di dalam loop).
+- **TRADING_MODE** (config/.env/UI dashboard): `"xau"` (default, XAU only) | `"xau_pairs"` (**parallel scan pool 7 simbol**: XAU + 6 FX cross, FASE 1). Pool = `WEEKDAY_SYMBOL` + `FX_PAIR_SYMBOLS` (default `GBPCHF-ECNc, EURCHF-ECNc, GBPNZD-ECNc, CADCHF-ECNc, GBPAUD-ECNc, EURAUD-ECNc`), dipotong `MAX_ROTATION_SYMBOLS` (7). **Timeframe per aset: XAU M30 (intraday swing), FX H1 (swing), BTC M30** — risk per trade XAU 1.0% / FX 1.0% / BTC 1.5%. **Smart Timeframe Rotation (FASE 5)**: LLM call per simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di main.py) — XAU tiap 30 menit, FX tiap 1 jam, BTC tiap 30 menit (hemat token drastis). Weekend: FX tutup → pool jatuh ke XAU (atau BTC kalau `ENABLE_BTC_ROTATION`). Max posisi & daily loss **aggregate semua simbol** (bukan per-simbol). Implementasi: `run_trading_cycle()` → loop `for sym in pool: config.SYMBOL = sym; _run_cycle_for_current_symbol()` (post-mortem 1× aggregate per candle, macro/MTF per-symbol di-populate di dalam loop).
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`) — jangan pernah test sembarangan tanpa konfirmasi
 - Balance awal $1000, sekarang ~$1065
 - Waktu semua pakai **WIB** (Asia/Jakarta)
@@ -25,22 +25,22 @@ python main.py
 
 | File | Fungsi |
 |---|---|
-| `main.py` | Loop utama: manage posisi tiap 3 detik, full cycle tiap candle per-symbol (M15 XAU / H1 FX / M30 BTC) dengan **Smart Timeframe Rotation** (`_symbol_last_candle`) |
+| `main.py` | Loop utama: manage posisi tiap 3 detik, full cycle tiap candle per-symbol (M30 XAU / H1 FX / M30 BTC) dengan **Smart Timeframe Rotation** (`_symbol_last_candle`) |
 | `config.py` | Semua parameter + helper per-symbol (`get_timeframe`, `get_higher_timeframes`, `lot_size_for`, `risk_percent_for`, `default_sl/tp`, `max_spread_points`, `confidence_threshold_for`) |
-| `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call LLM paralel sesuai **time-based AI mode** (single→OpenAI, dual→OpenAI+Gemini, triple→OpenAI+Gemini+DeepSeek) |
-| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware **per-kategori** (`config.sltp_mode_for(symbol)`, 13 Agustus): **XAU & BTC = fix ATR-Based** → **GATE**: proposal AI dipakai, tapi trade DITOLAK kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (bukan dinaikkan — cari setup yang secara alamiah 2R); **multiplier dinamis per AI mode: single 1.25/2.5, dual 1.5/3.0, triple 1.75/3.5 — R:R 2:1 selalu**; **FX = LLM** → bebas struktur, Safety Floor `max(2x spread, 0.5x default_sl_points)` + gate R:R minimum **1:1** (TP ≥ SL)) + **outlier filter SL/TP (average, nilai "beda sendiri" dibuang)** |
-| `src/core/risk_engine.py` | Gate: spread, sesi, daily loss, recovery mode, BEP tolerance, **risk-based lot sizing** (danger zone dimatikan — full 24 jam) |
+| `src/core/llm_client.py` | **Build prompt dinamis per-symbol** + call LLM paralel sesuai **time-based AI mode** (single→OpenAI o4-mini medium reasoning, dual→OpenAI+Gemini, triple→OpenAI+Gemini+DeepSeek/Claude) + **Proximity & Trap Avoidance** |
+| `src/core/consensus.py` | **Weighted confidence consensus** (skor = Σ confidence per arah, threshold per-symbol, min 2 model searah) + SL/TP mode-aware **per-kategori** (`config.sltp_mode_for(symbol)`, 13 Agustus): **XAU & FX = LLM mode** dengan safety floor dinamis ATR + **R:R minimum 1.25:1**; **BTC = fix ATR-Based R:R 2:1** |
+| `src/core/risk_engine.py` | Gate: spread, sesi, daily loss ($50), daily profit target 6%, dead zone 02:00-11:00 WIB, recovery mode, BEP tolerance, **risk-based lot sizing** |
 | `src/core/mt5_connector.py` | Order send/close (retry + fill policy dinamis), history deals, market data, magic filter |
-| `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+15m/T+30m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
-| `src/analytics/macro_analyst.py` | Fundamental + MTF context per-symbol (XAU M30/H1, FX H4/D1, BTC H1/H4), **cache berlaci per-symbol** (FASE 4 — nggak di-reset pas simbol bergeser; window proporsional: M15=48 bar, M30=72 bar, H4/D1=30 bar) |
+| `src/analytics/forecast_engine.py` | Forecast multi-horizon per-symbol (XAU T+30m/T+60m, BTC T+4h/T+D1), invalidation, entry zone — **informational, tidak memblokir** |
+| `src/analytics/macro_analyst.py` | Fundamental + MTF context per-symbol (XAU H1/H4, FX H4/D1, BTC H1/H4), **cache berlaci per-symbol** |
 | `src/analytics/trade_evaluator.py` | Post-mortem tiap trade → lessons (`data/memory_lessons.json`), per-symbol |
 | `src/analytics/dynamic_config.py` | Adaptasi otomatis: win rate <40% → threshold 3/3; >70% → 2/3 |
 | `src/analytics/position_manager.py` | Trailing stop, break-even, partial close — **semua symbol, skip kalau market tutup** |
-| `src/analytics/decision_memory.py` | 6 keputusan terakhir per symbol (HOLD-streak awareness) + **outcome tracking**: `record(..., result="OPEN")` pas trade dieksekusi, `update_result(symbol, result, profit, commission)` pas close (profit NET sudah termasuk komisi) → `summarize_recent_outcomes` hitung win/loss/BEP AKURAT dari profit (BEP tolerance dinamis per komisi), bukan cuma count HOLD |
+| `src/analytics/decision_memory.py` | 6 keputusan terakhir per symbol (HOLD-streak awareness) + **outcome tracking**: `record(..., result="OPEN")` pas trade dieksekusi, `update_result(symbol, result, profit, commission)` pas close |
 
 ## Alur cycle (main.py → run_trading_cycle)
 
-0. **Time-Based AI Mode** (WIB, 14 Agustus update): 00:01–09:59 = **single** (OpenAI o4-mini), 10:00–15:00 = **single_gemini** (Gemini 3.1-flash-lite Only), 15:01–19:29 = **single** (OpenAI o4-mini), **19:30–21:30 = triple** (OpenAI+Gemini+DeepSeek — London-NY overlap, volatilitas tertinggi), 21:31–23:59 = **single** (OpenAI o4-mini). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
+0. **Time-Based AI Mode** (WIB, 17 Agustus update — **SINGLE MODE DIHAPUS TOTAL**): **00:00–19:29 = dual** (OpenAI o4-mini + DeepSeek v4-flash low reasoning — Asia & London session; 02:00-06:00 Dead Zone auto-skip), **19:30–21:30 = triple** (OpenAI o4-mini + Gemini 3.1-flash-lite + Claude 3.5 Haiku — London-NY overlap, puncak volatilitas), **21:31–23:59 = dual** (OpenAI o4-mini + DeepSeek v4-flash — Late NY session). Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Mode di-resolve **fresh tiap cycle** (gak ada cache) — rotasi jalan mulus mid-trade.
 1. `risk.can_trade()` — spread/sesi/daily loss gate. Gagal → skip (nggak ada biaya LLM)
 2. Ambil 50 candle timeframe aktif (M15 XAU / H1 FX / M30 BTC) + tick
 3. Post-mortem evaluasi trade tertutup + dynamic rules (BEP excluded dari win rate)
@@ -55,7 +55,7 @@ python main.py
 - **Weighted consensus**: ≥ 2 model searah, skor confidence > threshold per-symbol (XAU 1.0 / BTC 1.2; 3/3 defensif = ×1.5)
 - SL/TP per kategori (`config.sltp_mode_for(symbol)` — **13 Agustus, pisah logic per-simbol biar enak debug**):
   - **XAUUSD & BTC = fix ATR-Based (SELALU, tidak bisa di-override ke LLM)**: **GATE LAYAK/TIDAK (Non-negotiable)** — proposal AI dipakai apa adanya, tapi trade DITOLAK otomatis kalau SL < SL_MULT× ATR atau TP < TP_MULT× ATR (**R:R 2:1 selalu**). Multiplier dinamis per AI mode: single 1.25×/2.5×, dual 1.5×/3.0×, triple 1.75×/3.5×. Position management tetap ATR-based. Alasan: floor 400 pts cuma 0.49× ATR M15 (~819 pts) — terlalu scalping utk swing M15.
-  - **FX pairs = LLM (bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (FX 50 pts) + **gate R:R minimum 1:1** (TP ≥ SL). **Position management (BEP/trailing) = pure % TP (15 Agustus: 65%/80% TP)** — lihat entri 15 Agustus di bawah.
+  - **FX pairs = LLM (bebas struktur)**: SL/TP murni struktur LLM (`invalidation_price`/`target_price`), dibatasi **Safety Floor** minimal `max(2x spread, 0.5x default_sl_points)` (FX 50 pts) + **gate R:R minimum 1:1** (TP ≥ SL). **Position management: BEP aktif di 35% TP (dengan padding menutup komisi round-trip per lot), Trailing Stop aktif di 50% TP**.
   - **Force override**: kalau `config.TP_SL_RULES` di-set eksplisit "ATR-Based" via CLI/`--tpsl-rules`/`.env`, SEMUA kategori (termasuk FX) ikut ATR-Based. Default "LLM" = aturan per-kategori di atas.
 - Spread ≤ 50 pts (XAU & FX) / 2400 pts (BTC)
 - **Trading 24 jam** (XAU + BTC, 11-08): danger zone dimatikan (`DANGER_ZONES_WIB = []`) + session XAU diperluas — Asia Dawn 05:00-07:00 (×0.7), Tokyo 07:00-16:00 (×0.7), London 15:00-23:59 (×1.0), London-NY 20:00-23:59 (×1.2), NY 20:00-05:00 (×1.0). Tidak ada jam yang diblokir
@@ -306,6 +306,102 @@ Asumsi nilai tukar: **1 USD = Rp 15.500,-**
   * Biaya Harian: OpenAI: $0.00 ($0.0288 jika berbayar) | Gemini: $0.0042 | Claude Sonnet (4 call): $0.0512
   * **Total Harian:** **~$0.0554 / hari (± Rp 860,-)** — *[Jika OpenAI berbayar: ~$0.0842 / hari (± Rp 1.300,-)]*
   * **Total Bulanan (30 Hari):** **~$1.66 / bulan (± Rp 25.700,-)** — *[Jika OpenAI berbayar: ~$2.52 / bulan (± Rp 39.000,-)]*
+
+## Hasil Riset Kuantitatif Bebas Bias & Temuan Edge (16 Agustus 2026)
+
+Berdasarkan pengujian statistik bebas bias (*lookahead-bias-free*) selama 3 tahun terakhir pada data historis broker VTMarkets, berikut adalah rangkuman temuan edge kuantitatif yang tervalidasi ($n \ge 100$, $p < 0.05$, Interval Kepercayaan $95\%$ batas bawah $> 0$):
+
+### 1. Pola dengan Edge Signifikan (EDGE - whispers_valid.csv)
+Seluruh pola candlestick yang terbukti memiliki keunggulan statistik riil adalah **pola Bearish (Sell) yang tereksekusi pada sesi New York (WIB malam)**:
+*   **GBPCHF-ECNc (4 EDGE):**
+    *   `Bearish Sweep` (R:R 1:2) | Win Rate **55.5%** | EV **+0.65** ($n=254$, $p=0.039$) — *Paling Sakti!*
+    *   `Bearish Engulfing` (R:R 1:1.5) | Win Rate **59.4%** | EV **+0.47** ($n=475$)
+    *   `Inside Bar Bearish` (R:R 1:1.5) | Win Rate **58.8%** | EV **+0.46** ($n=447$)
+    *   `Bearish Pin Bar` (R:R 1:1.5) | Win Rate **55.0%** | EV **+0.36** ($n=444$)
+*   **EURCHF-ECNc (4 EDGE):**
+    *   `Inside Bar Bearish` (R:R 1:1.5) | Win Rate **59.2%** | EV **+0.46** ($n=417$)
+    *   `Bearish Engulfing` (R:R 1:1.5) | Win Rate **57.0%** | EV **+0.41** ($n=528$)
+    *   `Bearish Sweep` (R:R 1:1.5) | Win Rate **55.9%** | EV **+0.38** ($n=272$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **60.6%** | EV **+0.19** ($n=439$)
+*   **GBPNZD-ECNc (4 EDGE):**
+    *   `Inside Bar Bearish` (R:R 1:1) | Win Rate **63.6%** | EV **+0.27** ($n=385$)
+    *   `Bearish Engulfing` (R:R 1:1) | Win Rate **61.6%** | EV **+0.23** ($n=485$)
+    *   `Bearish Sweep` (R:R 1:1) | Win Rate **60.5%** | EV **+0.20** ($n=339$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **57.9%** | EV **+0.15** ($n=451$)
+*   **EURAUD-ECNc (3 EDGE):**
+    *   `Bearish Pin Bar` (regime=range, R:R 1:1) | Win Rate **64.0%** | EV **+0.27** ($n=175$)
+    *   `Inside Bar Bearish` (session=ny, R:R 1:1) | Win Rate **63.5%** | EV **+0.26** ($n=452$)
+    *   `Bearish Engulfing` (session=ny, R:R 1:1) | Win Rate **55.7%** | EV **+0.11** ($n=515$)
+*   **EURJPY-ECNc (2 EDGE):**
+    *   `Bearish Sweep` (R:R 1:1) | Win Rate **58.8%** | EV **+0.17** ($n=374$)
+    *   `Bearish Pin Bar` (R:R 1:1) | Win Rate **55.6%** | EV **+0.10** ($n=423$)
+*   **GBPAUD-ECNc (Lolos Menggantikan AUDJPY):**
+    *   Memiliki **15+ EDGE** valid dengan performa yang sangat konsisten di R:R 1:1 (EV +0.22 s/d +0.31). 
+    *   `Inside Bar Bearish` (session=ny, R:R 1:1): Win Rate **65.6%** | EV **+0.31** ($n=459$).
+    *   `Bearish Engulfing` (session=ny, R:R 1:1): Win Rate **61.2%** | EV **+0.22** ($n=516$).
+
+### 2. Pola Klasik & Emas (XAUUSD-ECNc M15)
+*   Emas **tidak memiliki edge** untuk pola candlestick mentah.
+*   Satu-satunya pola dengan edge tervalidasi adalah **Double Bottom (CANDIDATE)**:
+    *   `Double Bottom` (volume=low, R:R 1:1): Win Rate **75.8%** | EV **+0.49** ($n=33$, $p=0.002$)
+    *   `Double Bottom` (secara umum / ALL, R:R 1:1): Win Rate **64.6%** | EV **+0.28** ($n=82$, $p=0.004$)
+
+### 3. Hasil Eliminasi Pola Harmonik (NO-EDGE)
+*   Pengujian mandiri DeepSeek terhadap **1.068 kombinasi pola Harmonik** (Gartley, Bat, Butterfly, Crab) menghasilkan **1.067 NO-EDGE** dan hanya 1 CANDIDATE.
+*   Pola Harmonik resmi **dibuang total dari rencana bisikan** karena performa tinggi di masa lalu terbukti sebagai ilusi *Small Sample Bias* ($n < 30$).
+
+### 4. Kesimpulan Riset & Perankingan Komprehensif Pair Forex (DeepSeek)
+Berdasarkan kelimpahan, kualitas, dan konsistensi *EDGE* tervalidasi dari riset statistik tanding terhadap 11 pair Forex (H1) dan Emas (M15), berikut adalah peringkat kelayakan trading:
+
+🏆 **Top 3 Pair Terkuat (Edge Paling Banyak & Konsisten):**
+1.  **`GBPCHF-ECNc` (Juara Mutlak):** 36 EDGE, 17 di antaranya memiliki EV > 0.20. Sangat dominan di sesi New York (9 EDGE). Pola terbaik: `Bearish Sweep` sesi NY R:R 1:2 (EV **+0.65**, $n=254$).
+2.  **`EURCHF-ECNc` (Total Edge Terbanyak):** 37 EDGE, 12 di antaranya memiliki EV > 0.20. Dominan di sesi NY & London. Pola terbaik: `Inside Bar Bearish` sesi NY R:R 1:1.5 (EV **+0.46**).
+3.  **`CADCHF-ECNc` (Paling Terdiversifikasi):** 27 EDGE, 8 di antaranya memiliki EV > 0.20. Konsisten meloloskan edge di 5 pola berbeda. Pola terbaik: `Bearish Sweep` sesi NY R:R 1:1.5 (EV **+0.43**).
+
+🥈 **Kandidat Kuat Berikutnya (Pair Backup & Pengganti):**
+4.  **`AUDCHF-ECNc` (Peringkat 4):** 24 EDGE, 6 di antaranya memiliki EV > 0.20. Pola terbaik: `Inside Bar Bearish` sesi NY WR 70% (EV **+0.38 s/d +0.41**).
+5.  **`GBPNZD-ECNc` (Peringkat 5 - Aktif di Bot):** 17 EDGE, 4 di antaranya memiliki EV > 0.20. Edge merata di 4 pola berbeda.
+6.  **`GBPAUD-ECNc` (Peringkat 6 - Lolos Menggantikan AUDJPY di Bot):** 19 EDGE, 3 di antaranya memiliki EV > 0.20. Memiliki performa yang jauh lebih aktif dan menguntungkan dibanding AUDJPY (yang hanya memiliki 1 edge).
+
+*(Catatan Kuantitatif: Seluruh 4 peringkat teratas dikuasai oleh cross CHF. Hal ini membuktikan karakteristik Swiss Franc (safe haven) yang memiliki pergerakan harga bersih, stabil, dan patuh tinggi pada pembalikan arah/mean-reversion di sesi NY).*
+
+### 5. Temuan Confluence & Mitos HTF Alignment Terbongkar (16 Agustus 2026)
+Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuahkan beberapa kesimpulan revolusioner bagi logika trading bot:
+*   **Mitos "HTF Trend Alignment" Terbongkar:** Mengharuskan pola searah dengan tren HTF (EMA 50 vs 200) terbukti **tidak memiliki edge statistik yang kuat** (hanya meloloskan 2 EDGE lemah). 
+*   **Kekuatan Counter-Trend di Resistance:** Sebaliknya, mengambil pola bearish (Sell) saat HTF sedang naik (*counter-trend*) **di dekat area Resistance** (jarak ≤ 0.5 ATR) terbukti menghasilkan edge yang sangat superior (contoh: EURCHF Inside Bar Bearish saat HTF sedang naik menghasilkan EV **+0.44**). Hal ini karena area resistance memberikan batas Stop Loss yang sangat tipis dengan ruang Take Profit yang sangat lebar (R:R sangat tinggi).
+*   **Near Resistance (Penambah Edge Terkuat Baru):** Pola bearish yang dipadukan dengan lokasi dekat resistance adalah filter terkuat:
+    *   `Bearish Pin Bar` GBPCHF dekat resistance (volatility-adjusted): Win Rate **69.0%** | EV **+0.37** ($n=145$).
+*   **Sesi NY Tetap Juara:** Meloloskan 48 EDGE di semua 12 simbol trading. Sesi New York (WIB malam) adalah filter waktu terbaik.
+*   **Multi-Pattern (2+ Pola Searah):** Hanya berguna sebagai konfirmasi pendukung (EV kecil +0.08 s/d +0.20, n besar 600-800), bukan edge mandiri yang kuat.
+
+## Riset XAU M30 (17 Agustus 2026 — Backtest Khusus XAU, branch dev-backtest)
+
+**Latar belakang:** XAU sudah pindah ke M30 (intraday swing). User minta backtest khusus XAU M30 5 tahun ke belakang untuk cari strategi terbaik (fallback 5->4->3->2->1 thn kalau broker tidak simpan data panjang).
+
+**Data:** Broker VTMarkets cuma menyimpan M30 XAU sejak **Mei 2022** → maksimal **4.23 tahun (50.036 bar M30, 24 Mei 2022 s/d 17 Agu 2026)**. Fallback otomatis mengambil data terbanyak yang tersedia.
+
+**Hasil 1 — Pola candlestick (14 pola × 18 kondisi × 4 R:R = 848 kombinasi):**
+- **0 EDGE valid** — konsisten dengan riset M15 kemarin (XAU tidak punya edge pola candlestick).
+- 1 CANDIDATE: `Double Bottom` regime=up_trend R:R 1:1 (n=38, WR 68.4%, p=0.012, EV +0.35) — sampel kecil, belum layak pakai.
+
+**Hasil 2 — Strategi mekanis (Donchian/EMA/RSI × kondisi × R:R = 320 kombinasi) — TEMUAN EDGE:**
+- **Donchian50 Breakout BUY di sesi NY (20:00-05:00 WIB), R:R 1:1 → EDGE** (n=605, WR 58.5%, p=0.00001, EV +0.158, CI 95% [+0.085, +0.237]). Konsisten 4 tahun berturut-turut (2023-2026); 2022 negatif tapi cuma setengah tahun data.
+- **Donchian20 Breakout BUY di NY, R:R 1:1 → EDGE** (n=786, WR 56.2%, p=0.0002, EV +0.111).
+- Donchian50 BUY vol=high R:R 1:1 → EDGE tapi **TIDAK stabil** (semua profit numpuk di 2025, 2023-2024 datar) — red flag overfit, jangan dipakai.
+
+**Temuan struktural:**
+- **Asimetri arah**: SEMUA SELL Donchian negatif (WR 41-45%) — shorting breakout XAU kalah. Hanya **BUY** yang punya edge. Berlawanan dengan FX (yang justru bearish di NY).
+- **TP optimal = R:R 1:1 saja**: R:R 1.5/2/3 semua NO-EDGE (WR anjlok 45%→35%→23%). Edge tipis tapi sering: menang 58% profit 1R, kalah 42% loss 1R.
+- Spread XAU 10 pts sudah dipotong (spread_r ~0.012 = 1.2% dari SL).
+
+**Skrip (di `scratch/`, hasil di `scratch/results/`):**
+- `xau_m30_backtest.py` — backtest pola XAU M30 (fallback tahun otomatis 5→1). Output: `xau_m30_results.csv`, `xau_m30_report.md/.html`.
+- `xau_m30_strategies.py` — backtest strategi mekanis (Donchian20/50, EMA20/50 cross, RSI14). Output: `xau_m30_strategies.csv/.txt`.
+- `verify_xau_m30_edges.py` — stabilitas tahunan per EDGE (semua edge harus dicek begini sebelum dipakai).
+
+**Status:** Belum diintegrasikan ke bot. Kandidat integrasi = **whisper Donchian BUY NY** (opsi paling konservatif: LLM tetap pegang keputusan, cuma dikasih konteks "breakout Donchian valid, historis 58.5% win"). Belum diputuskan user — diskusi dulu sebelum implementasi.
+
+---
 
 ## Konvensi & hal yang perlu diingat
 

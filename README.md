@@ -2,9 +2,9 @@
 
 Bot trading berbasis AI yang mengintegrasikan data pasar dari **MetaTrader 5 (MT5)** dengan tiga slot model LLM via API: **OpenAI**, **Google Gemini**, dan **slot ketiga (default DeepSeek V4 Flash, bisa di-switch ke Claude)**.
 
-- **Weekday**: `XAUUSD-ECNc` (Gold) — scalping **M15** — **Weekend**: `BTCUSD.c` (Bitcoin) — intraday **M30** (rotasi otomatis via `config.get_active_symbol`)
-- **Multi-scan (opsional, mode `xau_pairs`)**: bot melakukan scan **7 simbol dalam pool sekaligus**: XAUUSD M15 (swing pendek) + 6 FX cross non-USD H1 (swing).
-- **Smart Timeframe Rotation**: LLM call hanya dipicu ketika candle timeframe spesifik aset tersebut berganti (XAU tiap 15 menit, FX tiap 1 jam, BTC tiap 30 menit). Menghemat ~90% biaya API LLM!
+- **Weekday**: `XAUUSD-ECNc` (Gold) — intraday **M30** — **Weekend**: `BTCUSD.c` (Bitcoin) — intraday **M30** (rotasi otomatis via `config.get_active_symbol`)
+- **Multi-scan (opsional, mode `xau_pairs`)**: bot melakukan scan **7 simbol dalam pool sekaligus**: XAUUSD M30 (intraday swing) + 6 FX cross non-USD H1 (swing).
+- **Smart Timeframe Rotation**: LLM call hanya dipicu ketika candle timeframe spesifik aset tersebut berganti (XAU tiap 30 menit, FX tiap 1 jam, BTC tiap 30 menit). Menghemat ~90% biaya API LLM!
 - Bot memanggil AI sesuai **time-based mode** (single/dual/triple — lihat jadwal WIB), menghitung **weighted-confidence consensus**, lalu mengeksekusi order ke MT5.
 - Akun: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic number `20260625`.
 - Semua timestamp internal pakai **WIB** (Asia/Jakarta).
@@ -15,12 +15,12 @@ Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **XAU + P
 
 | # | Simbol (base) | Live / Demo | Timeframe | Arah / Gaya |
 |---|---|---|---|---|
-| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M15 | Swing (1.0% risk) |
+| 1 | `XAUUSD-ECN` | `XAUUSD-ECNc` / `XAUUSD-ECN` | M30 | Intraday Swing (1.0% risk) |
 | 2 | `GBPCHF-ECN` | `GBPCHF-ECNc` / `GBPCHF-ECN` | H1 | Swing (1.0% risk) |
 | 3 | `EURCHF-ECN` | `EURCHF-ECNc` / `EURCHF-ECN` | H1 | Swing (1.0% risk) |
 | 4 | `GBPNZD-ECN` | `GBPNZD-ECNc` / `GBPNZD-ECN` | H1 | Swing (1.0% risk) |
-| 5 | `EURJPY-ECN` | `EURJPY-ECNc` / `EURJPY-ECN` | H1 | Swing (1.0% risk) |
-| 6 | `GBPUSD-ECN` | `GBPUSD-ECNc` / `GBPUSD-ECN` | H1 | Swing (1.0% risk) |
+| 5 | `CADCHF-ECN` | `CADCHF-ECNc` / `CADCHF-ECN` | H1 | Swing (1.0% risk) |
+| 6 | `GBPAUD-ECN` | `GBPAUD-ECNc` / `GBPAUD-ECN` | H1 | Swing (1.0% risk) |
 | 7 | `EURAUD-ECN` | `EURAUD-ECNc` / `EURAUD-ECN` | H1 | Swing (1.0% risk) |
 
 **Kenapa pair-nya gitu?** Semua **cross non-USD** (dan GBPUSD) yang memiliki korelasi rendah dengan XAUUSD. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo).
@@ -92,15 +92,13 @@ graph TD
 - **Fundamental Search Grounding**: OFF (`FUNDAMENTAL_ANALYSIS_ENABLED=False`). Search grounding Gemini sering kasih konteks basi ("ahead of NFP" berjam-jam setelah rilis).
 - **Multi-Agent Debate Protocol**: dihapus total (11 Agustus 2026). 53 debate historis tidak pernah mengubah keputusan jadi trade — murni buang token. Kode debate (`prepare_debate_prompt`, `DEBATE_ENABLED`) sudah dibersihkan, diganti **Time-Based AI Mode** (lihat fitur #21).
 
-### ⏱️ Time-Based AI Mode (11 Agustus 2026)
-Jumlah model AI yang dipanggil per cycle mengikuti jam WIB — hemat token tanpa buang safety di jam aktif:
-- **00:01–08:59 → single** (OpenAI saja)
-- **09:00–13:00 → dual** (OpenAI + DeepSeek slot-3)
-- **13:01–18:59 → single** (OpenAI saja)
-- **19:30–21:30 → triple** (OpenAI + Gemini + DeepSeek — London-NY overlap aja)
-- **23:01–00:00 → single** (fallback, di luar jadwal eksplisit)
+### ⏱️ Time-Based AI Mode (17 Agustus 2026 Update)
+Single Mode telah **dihapus total** demi keamanan (setiap trade baru wajib disepakati minimal 2 model cerdas). Jumlah dan kombinasi model AI yang dipanggil per cycle mengikuti jam WIB:
+- **00:00–19:29 WIB → DUAL** (`OpenAI o4-mini` + `DeepSeek v4-flash low reasoning`) — Sesi Asia & London (02:00-06:00 Dead Zone auto-skip).
+- **19:30–21:30 WIB → TRIPLE** (`OpenAI o4-mini` + `Gemini 3.1-flash-lite` + `Claude 3.5 Haiku`) — London-NY overlap (puncak volatilitas harian).
+- **21:31–23:59 WIB → DUAL** (`OpenAI o4-mini` + `DeepSeek v4-flash`) — Late NY session.
 
-Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Konsensus adaptif: single → 1 model + threshold ×0.6; dual → 2/2 searah; triple → normal (defensif ×1.5). Gemini cuma kepanggil di mode triple (hemat token).
+Config: `AI_MODE_POLICY` (schedule|fixed), `AI_MODE_SCHEDULE`, `AI_FIXED_MODE`. Konsensus adaptif: dual → 2/2 searah; triple → normal (defensif ×1.5).
 
 ---
 

@@ -151,12 +151,18 @@ def init_mt5():
             print(f"[MT5 ERROR] Could not select symbol {config.SYMBOL}")
             mt5.shutdown()
             return False
-            
+
+    # Verifikasi apakah tombol Algo Trading di MT5 aktif
+    if hasattr(mt5, "terminal_info"):
+        term_info = mt5.terminal_info()
+        if term_info is not None and hasattr(term_info, "trade_allowed") and not term_info.trade_allowed:
+            print(f" {UI.tag('MT5 WARNING', UI.YELLOW)} ⚠️ Algo Trading dinonaktifkan di MetaTrader 5!")
+            print("                Aktifkan tombol 'Algo Trading' di toolbar MT5 agar order dapat dieksekusi.")
+
     return True
 
 initialize_mt5 = init_mt5
 
-initialize_mt5 = init_mt5
 
 def get_market_data(symbol, timeframe, num_candles=50):
     """
@@ -259,6 +265,23 @@ def get_current_tick(symbol):
         "point": si.point,
         "usd_per_point": usd_per_pt,
     }
+
+
+def get_usd_per_point(symbol, volume=1.0):
+    """Menghitung nilai USD per 1 point untuk volume tertentu."""
+    try:
+        si = mt5.symbol_info(symbol)
+        if si and si.trade_tick_size and si.point and si.trade_tick_value:
+            return float(si.trade_tick_value * volume * (si.point / si.trade_tick_size))
+    except Exception:
+        pass
+    # Fallback kasar jika MT5 disconnected
+    if config.is_fx(symbol):
+        return 1.0 * volume
+    elif config.is_crypto(symbol):
+        return 0.01 * volume
+    return 1.0 * volume
+
 
 def get_open_positions(symbol=None, magic=None):
     """
@@ -653,8 +676,37 @@ _RETRYABLE_RETCODES = {
     getattr(mt5, "TRADE_RETCODE_INVALID", 10013),
 }
 
-_MAX_RETRIES = 2
+_SUCCESS_RETCODES = {
+    getattr(mt5, "TRADE_RETCODE_DONE", 10009),
+    getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+    getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010),
+    0,  # Retcode 0 = Standard MT5 OK / Done
+    1,  # RES_S_OK
+}
+
+def _is_order_success(result):
+    """Checks if an order_send result represents successful placement/execution."""
+    if result is None:
+        return False
+    retcode = getattr(result, "retcode", None)
+    if retcode in _SUCCESS_RETCODES:
+        return True
+    comment = str(getattr(result, "comment", "")).strip().lower()
+    if comment in ("done", "request executed", "order placed", "success", "placed"):
+        return True
+    return False
+
+is_order_success = _is_order_success
+
+_MAX_RETRIES = 3
 _RETRY_SLEEP_SECONDS = 0.4
+# Jeda retry bertahap untuk 10013 transien (broker ECN VTMarkets tolak sesaat,
+# pulih dalam hitungan MENIT - terbukti: request identik yang gagal 10013 sukses
+# total beberapa menit kemudian, lot 0.01 & 0.04 dua-duanya jalan). Retry 10013:
+# 6s -> 15s -> 30s (total block ~51s, bounded). Kalau masih gagal setelah 3x,
+# skip bersih - sinyal bisa muncul lagi di cycle berikutnya. Retcode lain tetap
+# jeda cepat 0.4s.
+_RETRY_SLEEP_10013 = (6.0, 15.0, 30.0)
 
 def _get_exec_mode(info):
     if not info:
@@ -704,22 +756,23 @@ def get_valid_trade_symbol(symbol):
 def get_filling_policy(symbol):
     """
     Determines the supported filling policy for a symbol dynamically.
-    Returns mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, or mt5.ORDER_FILLING_RETURN.
+    Returns mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK, or mt5.ORDER_FILLING_RETURN.
     """
+    symbol = get_valid_trade_symbol(symbol)
     info = mt5.symbol_info(symbol)
     if info is None:
-        return mt5.ORDER_FILLING_FOK
+        return mt5.ORDER_FILLING_IOC
 
     # Bitmask of filling modes:
     # 1: SYMBOL_FILLING_FOK
     # 2: SYMBOL_FILLING_IOC
     fm = getattr(info, "filling_mode", 0)
-    if fm & 1:
-        return mt5.ORDER_FILLING_FOK
-    elif fm & 2:
+    if fm & 2:
         return mt5.ORDER_FILLING_IOC
+    elif fm & 1:
+        return mt5.ORDER_FILLING_FOK
     else:
-        return mt5.ORDER_FILLING_RETURN
+        return mt5.ORDER_FILLING_IOC
 
 def _safe_order_send(request):
     """Sends order request safely supporting both native MT5 and mt5linux RPC bridge."""
@@ -737,36 +790,37 @@ def _safe_order_send(request):
 def _send_with_retry(build_request, symbol, label):
     """Send a request via mt5.order_send with retries and fill-policy fallback."""
     policy = get_filling_policy(symbol)
+    base_dev = getattr(config, "deviation_for", lambda s: config.DEVIATION)(symbol)
 
-    req = build_request(config.DEVIATION, policy)
+    req = build_request(base_dev, policy)
     if req is None:
         return None  # quote degenerate/stale — dibatalkan bersih (bukan spam retry 10013)
     result = _safe_order_send(req)
 
     for attempt in range(_MAX_RETRIES):
-        if not result or result.retcode not in _RETRYABLE_RETCODES:
+        if _is_order_success(result) or not result or result.retcode not in _RETRYABLE_RETCODES:
             break
-        widen = config.DEVIATION + (5 * (attempt + 1))
-        print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, widening deviation to {widen} pts")
-        time.sleep(_RETRY_SLEEP_SECONDS)  # jeda singkat biar broker settle (transient 10013/requote)
+        widen_step = 15 if "XAU" in (symbol or "").upper() else 5
+        widen = base_dev + (widen_step * (attempt + 1))
+        # 10013 transien (broker ECN): jeda bertahap 6s -> 15s biar liquidity pulih,
+        # bukan 0.4s yang cuma spam (terbukti: request identik sukses ~1 menit kemudian).
+        if result.retcode == getattr(mt5, "TRADE_RETCODE_INVALID", 10013):
+            sleep_sec = _RETRY_SLEEP_10013[attempt] if attempt < len(_RETRY_SLEEP_10013) else _RETRY_SLEEP_10013[-1]
+        else:
+            sleep_sec = _RETRY_SLEEP_SECONDS
+        print(f"[MT5] {label} retry {attempt + 1}/{_MAX_RETRIES}: retcode={result.retcode}, "
+              f"widening deviation to {widen} pts (tunggu {sleep_sec:.0f}s sebelum retry)")
+        time.sleep(sleep_sec)  # jeda biar broker settle (transient 10013/requote)
         req = build_request(widen, policy)
         if req is None:
             return None
         result = _safe_order_send(req)
 
-    # If order failed with 10013 (Invalid request) or 10030 (Invalid fill), fallback to alt filling policies
-    if result and result.retcode in (getattr(mt5, "TRADE_RETCODE_INVALID_FILL", 10030), getattr(mt5, "TRADE_RETCODE_INVALID", 10013)):
-        for alt_policy in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
-            if alt_policy == policy:
-                continue
-            print(f"[MT5] {label} fallback fill policy to {alt_policy} (retcode was {result.retcode})")
-            req = build_request(config.DEVIATION, alt_policy)
-            if req is None:
-                continue
-            res_alt = _safe_order_send(req)
-            if res_alt and res_alt.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
-                result = res_alt
-                break
+    # Fallback fill policy TIDAK dilakukan lagi untuk 10013/10030: bukti empiris
+    # order_check - simbol ECN cuma support IOC (filling_mode=2), FOK/RETURN
+    # ditolak 10030 "Unsupported filling mode". Mencoba keduanya = 2 request
+    # ekstra yang pasti gagal + spam log. Kalau IOC ditolak, ganti policy tidak
+    # akan menolong - masalahnya market tipis / request invalid, bukan fill mode.
 
     return result
 
@@ -838,7 +892,11 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     if not tp and default_tp:
         tp = price + (default_tp * point) if action == "BUY" else price - (default_tp * point)
 
+    # Simpan request terakhir yang dikirim untuk diagnostik 10013
+    last_req = {}
+
     def _build(deviation, fill_policy):
+        nonlocal last_req
         live_tick = mt5.symbol_info_tick(symbol)
         if live_tick is not None:
             live_price = live_tick.ask if action == "BUY" else live_tick.bid
@@ -878,12 +936,12 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             if live_tp > 0 and live_tp >= (bid - min_dist):
                 live_tp = bid - min_dist
 
-        return {
+        req = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": lot,
             "type": order_type,
-            "price": live_price,
+            "price": round(live_price, symbol_info.digits),
             "sl": round(live_sl, symbol_info.digits),
             "tp": round(live_tp, symbol_info.digits),
             "deviation": deviation,
@@ -892,26 +950,51 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
+        last_req = req
+        return req
 
-    print(f" {UI.tag('MT5', UI.BLUE)} Mengirim order: {action} {symbol} {lot} lot pada harga {price} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
+    print(f" {UI.tag('MT5', UI.BLUE)} Mengirim order: {action} {symbol} {lot} lot pada harga {round(price, symbol_info.digits)} (SL: {round(sl, symbol_info.digits)}, TP: {round(tp, symbol_info.digits)})...")
     result = _send_with_retry(_build, symbol, f"Order {action} {symbol}")
 
     if result is None:
         # _build return None = tick None saat kirim (feed hilang total)
         return {"status": "ERROR", "comment": "Tick hilang saat kirim (feed off) — order dibatalkan"}
 
-    if result.retcode not in (
-        mt5.TRADE_RETCODE_DONE,
-        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
-    ):
+    if not _is_order_success(result):
         retcode = getattr(result, "retcode", "N/A") if result else "N/A"
         comment = getattr(result, "comment", "No result") if result else "No result"
         print(f" {UI.tag('MT5 ERROR', UI.RED)} Order gagal! Retcode: {retcode}, Pesan: {comment}")
+        # Diagnostik 10013: print detail request terakhir + kondisi quote biar bisa
+        # dibedakan "request invalid beneran" vs "market tipis/spread 0 transien".
+        if retcode == getattr(mt5, "TRADE_RETCODE_INVALID", 10013) and last_req:
+            try:
+                dbg_tick = mt5.symbol_info_tick(symbol)
+                dbg_spread = ((dbg_tick.ask - dbg_tick.bid) / point) if (dbg_tick and point) else -1
+                dbg_bid = dbg_tick.bid if dbg_tick else -1
+                dbg_ask = dbg_tick.ask if dbg_tick else -1
+                print(f"  [DIAG 10013] spread={dbg_spread:.1f} pts | bid={dbg_bid} ask={dbg_ask} | "
+                      f"req price={last_req.get('price')} sl={last_req.get('sl')} tp={last_req.get('tp')} "
+                      f"dev={last_req.get('deviation')} fill={last_req.get('type_filling')} lot={last_req.get('volume')}")
+                # Jarak SL/TP dihitung sesuai arah order (SELL: SL di atas entry, TP di bawah)
+                req_type = last_req.get("type")
+                if req_type == mt5.ORDER_TYPE_SELL:
+                    sl_dist = (last_req.get('sl', 0) - last_req.get('price', 0)) / point if point else 0
+                    tp_dist = (last_req.get('price', 0) - last_req.get('tp', 0)) / point if point else 0
+                else:
+                    sl_dist = (last_req.get('price', 0) - last_req.get('sl', 0)) / point if point else 0
+                    tp_dist = (last_req.get('tp', 0) - last_req.get('price', 0)) / point if point else 0
+                print(f"  [DIAG 10013] SL jarak {sl_dist:.0f} pts | TP jarak {tp_dist:.0f} pts | "
+                      f"stops_level={getattr(symbol_info, 'trade_stops_level', 0)} pts")
+            except Exception as diag_e:
+                print(f"  [DIAG 10013] gagal ambil detail: {diag_e}")
+        if retcode == 10027:
+            print("                 💡 Solusi: Aktifkan tombol 'Algo Trading' (icon play/robot) di toolbar atas MetaTrader 5.")
         return {"status": "ERROR", "comment": comment, "code": retcode}
 
-    print(f" {UI.tag('MT5', UI.GREEN)} Order BERHASIL! Ticket: {result.order}")
+    ticket_no = getattr(result, "order", 0) or getattr(result, "deal", 0)
+    print(f" {UI.tag('MT5', UI.GREEN)} Order BERHASIL! Ticket: {ticket_no}")
     invalidate_deals_cache()  # posisi baru dibuka -> bot_opened & closed_today berubah
-    return {"status": "SUCCESS", "ticket": result.order, "comment": result.comment}
+    return {"status": "SUCCESS", "ticket": ticket_no, "comment": result.comment}
 
 def close_position(ticket):
     """Closes an open position by its ticket number."""
@@ -953,10 +1036,7 @@ def close_position(ticket):
     print(f" {UI.tag('MT5', UI.BLUE)} Menutup posisi #{ticket}...")
     result = _send_with_retry(_build, symbol, f"Close #{ticket}")
 
-    if result is None or result.retcode not in (
-        mt5.TRADE_RETCODE_DONE,
-        getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
-    ):
+    if not _is_order_success(result):
         comment = getattr(result, "comment", "No result") if result else "No result"
         print(f" {UI.tag('MT5 ERROR', UI.RED)} Gagal menutup posisi: {comment}")
         return False

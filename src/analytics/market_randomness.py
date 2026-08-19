@@ -133,7 +133,7 @@ def analyze_market_randomness(df, symbol=None):
             if sys_mt5 := getattr(connector, "mt5", None):
                 tf_val = config.get_timeframe(symbol)
                 tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
-                tf_name = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
+                tf_name = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
                 micro_tf = tf_val
                 num_micro_candles = 48
                 micro_df = connector.get_market_data(symbol, micro_tf, num_candles=num_micro_candles)

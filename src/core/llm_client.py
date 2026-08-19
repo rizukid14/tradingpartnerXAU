@@ -1,6 +1,8 @@
 import json
 import re
 import time
+import sys
+import threading
 import concurrent.futures
 from openai import OpenAI
 from google import genai
@@ -48,7 +50,9 @@ if config.DEEPSEEK_API_KEY:
     try:
         deepseek_client = OpenAI(
             api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_API_BASE
+            base_url=config.DEEPSEEK_API_BASE,
+            max_retries=0,
+            timeout=getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
         )
     except Exception as e:
         print(f"[LLM WARNING] Gagal init DeepSeek client: {e}")
@@ -188,7 +192,7 @@ def analyze_fundamentals(symbol):
     elif "XAU" not in symbol.upper():
         execution_style = "1-hour (H1) swing"
     else:
-        execution_style = "15-minute (M15) short-term swing"
+        execution_style = "30-minute (M30) swing"
     prompt = f"""
 What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
 Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
@@ -237,6 +241,7 @@ Any BUY or SELL must satisfy all of the following:
 - Use ATR(14) as a volatility sanity check: a structural SL much smaller than roughly 0.5x ATR is likely noise-level on the active timeframe -- prefer invalidation levels at least around half an ATR away when structure allows.
 - Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
+- PROXIMITY & TRAP AVOIDANCE: Do NOT initiate a BUY directly into immediate major resistance (e.g. 50-bar Swing High, PDH, or key HTF resistance) or a SELL directly into immediate major support (e.g. 50-bar Swing Low, PDL, or key HTF support) without a clear, confirmed breakout. Ensure there is sufficient room before the opposing structure to achieve your required target. Chasing extended green candles into resistance or red candles into support is strictly prohibited.
 
 HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
 
@@ -447,7 +452,7 @@ def _build_sltp_rules_block(symbol, timeframe):
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (approx {config.LLM_XAU_FLOOR_ATR_MULT}x ATR M15) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (approx {config.LLM_XAU_FLOOR_ATR_MULT}x ATR M30) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
                 f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. Wider SLs (e.g. 1000-1900 pts) are still ACCEPTED as long as actual risk at min lot stays within the OVER-RISK gate (max ~2% of equity at current balance) -- prefer structural levels in the ~{lo_pts}-{hi_pts} range when available, but give your real structural invalidation either way.\n"
             )
         elif is_btc:
@@ -668,10 +673,13 @@ def summarize_recent_outcomes(decisions, n=6):
     )
 
 
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None):
+def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None,
+                   whisper_str=None, all_open_positions=None):
     """
     Constructs a rich prompt for LLM models containing price action,
     multi-timeframe technical indicators, MTF macro analysis, and active open positions.
+    whisper_str: optional pattern research stats (validated edge) — informational only.
+    all_open_positions: all open bot positions across all symbols for cross-portfolio awareness.
     """
 
     # Dynamic timeframe label resolved from dataframe or fallback to config
@@ -686,7 +694,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     if not tf_label:
         tf_val = config.get_timeframe(symbol)
         tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
-        tf_label = tf_map_rev.get(tf_val, "M15" if "XAU" in symbol.upper() else "M5")
+        tf_label = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
 
     # Create recent candles string - FULL 50 candles (~4 jam M5 / ~25 jam M30),
     # OHLC only (drop volume) supaya window 50-Bar Swing High/Low & Fib bisa
@@ -818,6 +826,8 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale.)\n"
         )
 
+    whisper_str = whisper_str or ""
+
     lessons_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
         try:
@@ -869,6 +879,21 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
+    # Global portfolio context across all symbols
+    global_portfolio_str = ""
+    if all_open_positions and len(all_open_positions) > 0:
+        gp_lines = []
+        total_pnl = sum(p.get('profit', 0.0) for p in all_open_positions)
+        for ap in all_open_positions:
+            s_name = ap.get('symbol', '?')
+            gp_lines.append(f"- {s_name}: {ap.get('type')} {ap.get('volume')} lot @ {ap.get('price_open')} (Floating P/L: ${ap.get('profit', 0.0):+.2f} USD)")
+        global_portfolio_str = (
+            "\n### GLOBAL PORTFOLIO CONTEXT (All active bot positions across symbols)\n"
+            f"Total Active Positions: {len(all_open_positions)} | Net Floating P/L: ${total_pnl:+.2f} USD\n"
+            + "\n".join(gp_lines) + "\n"
+            "(Use this cross-asset awareness to detect conflicting currency exposures -- e.g. opposing CHF/EUR/GBP trades -- and take profit or cut exposure accordingly.)\n"
+        )
+
     positions_str = ""
     if open_positions and len(open_positions) > 0:
         pos_lines = []
@@ -901,9 +926,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
             "For EACH open position above, make an explicit decision:\n" +
-            f"- 'CLOSE' ONLY if the trade thesis is genuinely broken (e.g., the invalidation level is breached, a clear counter-trend structure has formed on {tf_label}, or a fundamental shift has occurred). Do NOT recommend CLOSE for minor or normal pullbacks within the expected {tf_label} volatility.\n" +
-            "- 'HOLD' if the thesis remains intact, the position is within normal price fluctuations, or progressing toward target.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: price broke invalidation level at 4350.8', or 'HOLD: price holding above support, within normal pullback'). Never leave a ticket without an action.\n"
+            f"- 'CLOSE' if:\n" +
+            f"  (a) INVALIDATION / THESIS BROKEN: The technical invalidation level is breached, a clear counter-trend reversal structure formed on {tf_label}, or momentum is failing.\n" +
+            f"  (b) EARLY PROFIT TAKE / EXHAUSTION: The trade has captured substantial profit (e.g. >= 1R or near major opposing swing structure), is showing momentum exhaustion/divergence, OR conflicts with a stronger broad-market currency trend.\n" +
+            f"- 'HOLD' if the thesis remains intact, the move is within normal healthy {tf_label} fluctuations, and has clear room to reach the full target.\n" +
+            f"Do NOT recommend CLOSE for minor healthy pullbacks when the underlying trend structure is still fully intact.\n" +
+            "Provide a concrete quantitative reason (e.g., 'CLOSE: Invalidation breached at 1.0965', 'CLOSE: Secure +$10 profit near H1 resistance with momentum divergence', or 'HOLD: Healthy pullback, thesis intact'). Never leave a ticket without an action.\n"
         )
 
     # Explicitly separate the two decisions so the LLM does not mix them:
@@ -963,7 +991,7 @@ Spread note: this spread has ALREADY passed the bot's spread gate (max {config.m
 - EMA (50): {_fmt_price(latest['ema_50'])}
 - ATR (14): {_fmt_price(latest['atr_14'])} (which is {atr_points} points)
 {atr_gate_str}{fib_str}
-{randomness_str}{quant_prob_str}{macro_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{macro_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1140,7 +1168,7 @@ def query_openai(prompt):
 
     primary_model = _resolve_openai_primary()
     fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)  # o3-mini (fallback error)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
     try:
         return _execute_openai_single(primary_model, prompt, timeout_sec)
@@ -1157,6 +1185,30 @@ def query_openai(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"OpenAI Error: {str(e)}"}
 
 
+def _execute_gemini_single(model_name, prompt, timeout_sec, thinking_budget=None):
+    """Execute a single Gemini call with strict JSON and thinking budget."""
+    if not gemini_client:
+        raise RuntimeError("Gemini client is not initialized.")
+    from google.genai import types
+    if thinking_budget is None:
+        thinking_budget = getattr(config, "GEMINI_THINKING_BUDGET", 1024)
+    cfg_kwargs = dict(response_mime_type="application/json")
+    if thinking_budget and thinking_budget > 0:
+        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+    def _call(mod):
+        res = gemini_client.models.generate_content(
+            model=mod,
+            contents=prompt,
+            config=types.GenerateContentConfig(**cfg_kwargs)
+        )
+        return clean_json_response(res.text)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_call, model_name)
+        return fut.result(timeout=timeout_sec)
+
+
 def query_gemini(prompt):
     """Queries Gemini API with timeout and fallback model support."""
     if not gemini_client:
@@ -1164,28 +1216,15 @@ def query_gemini(prompt):
 
     primary_model = config.GEMINI_MODEL
     fallback_model = getattr(config, "GEMINI_FALLBACK_MODEL", None)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
-
-    def _call(mod):
-        from google.genai import types
-        res = gemini_client.models.generate_content(
-            model=mod,
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        return clean_json_response(res.text)
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_call, primary_model)
-            return fut.result(timeout=timeout_sec)
+        return _execute_gemini_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
             print(f" [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(_call, fallback_model)
-                    return fut.result(timeout=timeout_sec)
+                return _execute_gemini_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[GEMINI FALLBACK ERROR] {fb_err}")
                 return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Gemini Error: {str(fb_err)}"}
@@ -1249,56 +1288,74 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
-def _execute_deepseek_single(model_name, prompt, timeout_sec):
+def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=None):
     """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
-    'deepseek/' prefix (e.g. 'deepseek-v4-flash'). Uses config.DEEPSEEK_REASONING_EFFORT:
-    "low"/"medium"/"high" -> thinking mode (lebih lambat, 4-60s);
-    kosong/None -> fast mode TANPA reasoning_effort (deepseek-chat biasa, 2-5s).
-    Default "low" sejak 14 Agustus - biar lebih responsif daripada "medium"."""
+    'deepseek/' prefix (e.g. 'deepseek-v4-flash').
+    reasoning_effort: "low"/"medium"/"high" -> thinking mode; None/"" -> fast mode tanpa reasoning (deepseek-chat, 2-3s)."""
     raw_model = model_name.split("/", 1)[1] if "/" in model_name else model_name
-    reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "low") or "").strip()
+    if reasoning_effort is None:
+        if "chat" in raw_model.lower():
+            reasoning_effort = ""
+        else:
+            reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "none") or "").strip()
+
+    kwargs = dict(
+        model=raw_model,
+        messages=[
+            {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
+            {"role": "user", "content": prompt}
+        ],
+        response_format={"type": "json_object"},
+        timeout=timeout_sec,
+    )
+    if reasoning_effort and reasoning_effort.lower() not in ("none", "off", "false", "", "disabled"):
+        kwargs["reasoning_effort"] = reasoning_effort
+        kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+    else:
+        kwargs["temperature"] = 0.2
+        # DeepSeek API format to completely disable reasoning thinking CoT
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+    response = deepseek_client.chat.completions.create(**kwargs)
+    return clean_json_response(response.choices[0].message.content)
+
+
+def query_deepseek(prompt):
+    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support (e.g. Gemini 2.5 Flash Lite)."""
+    primary_model = getattr(config, "DEEPSEEK_MODEL", "deepseek-v4-flash")
+    fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
+
+    if not deepseek_client:
+        if gemini_client and "gemini" in fallback_model.lower():
+            return _execute_gemini_single(fallback_model, prompt, timeout_sec)
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": "DeepSeek API Key tidak diset."}
+
     try:
-        try:
-            kwargs = dict(
-                model=raw_model,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                timeout=timeout_sec,
-            )
-            if reasoning_effort:
-                # reasoning_effort kosong/None = fast mode (skip param, deepseek-chat biasa)
-                kwargs["reasoning_effort"] = reasoning_effort
-            response = deepseek_client.chat.completions.create(**kwargs)
-        except Exception:
-            # Fallback to standard call if API endpoint does not recognize reasoning_effort param
-            response = deepseek_client.chat.completions.create(
-                model=raw_model,
-                messages=[
-                    {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                timeout=timeout_sec
-            )
-        return clean_json_response(response.choices[0].message.content)
+        return _execute_deepseek_single(primary_model, prompt, timeout_sec)
     except Exception as e:
-        raise e
+        if fallback_model and fallback_model != primary_model:
+            print(f" [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            try:
+                if "gemini" in fallback_model.lower():
+                    return _execute_gemini_single(fallback_model, prompt, timeout_sec, thinking_budget=1024)
+                else:
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="")
+            except Exception as fb_err:
+                print(f"[DEEPSEEK FALLBACK ERROR] {fb_err}")
+                return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Fallback Error: {str(fb_err)}"}
+        else:
+            print(f"[DEEPSEEK ERROR] {e}")
+            return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"DeepSeek Error: {str(e)}"}
 
 
 def query_claude(prompt):
-    """Queries the 'Claude slot' model with timeout and fallback support.
-    Routes automatically: model starting with 'deepseek/' -> DeepSeek API
-    (OpenAI-compatible, much cheaper); 'claude-...' -> Anthropic.
-    Config: config.CLAUDE_MODEL / config.CLAUDE_FALLBACK_MODEL."""
-    primary_model = config.CLAUDE_MODEL
-    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
+    """Queries Anthropic Claude API (claude-sonnet-4-6) with timeout and fallback support."""
+    primary_model = getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-6")
+    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
     is_deepseek = primary_model.startswith("deepseek/")
-
     try:
         if is_deepseek:
             if not deepseek_client:
@@ -1323,28 +1380,47 @@ def query_claude(prompt):
 
 
 
-def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None):
+def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
+                            whisper_str=None, all_open_positions=None):
     """
     Query only the AI slots active for the current WIB time window.
-    mode = single        -> OpenAI only (00:01-09:59 / 15:01-19:29 / 21:31-23:59)
-    mode = single_gemini -> Gemini only (10:00-15:00, Asia/Pre-London - hemat & disiplin)
-    mode = triple        -> OpenAI + Gemini + DeepSeek (19:30-21:30, London-NY overlap)
-    mode = dual          -> legacy (OpenAI + AI_DUAL_SECOND_MODEL), masih didukung via AI_FIXED_MODE
+    mode = single        -> OpenAI only (00:00-14:59 / 21:31-23:59)
+    mode = dual          -> OpenAI + DeepSeek (15:00-19:29, London Session)
+    mode = triple        -> OpenAI + Gemini + Claude (19:30-21:30, London-NY overlap)
     """
-    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions)
+    prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions, whisper_str, all_open_positions=all_open_positions)
 
     active_models = config.active_ai_model_names()
-    slot_label = claude_slot_label()
     model_fns = {
         "OpenAI": query_openai,
         "Gemini": query_gemini,
-        slot_label: query_claude,
+        "DeepSeek": query_deepseek,
+        "Claude": query_claude,
     }
     selected = {name: model_fns[name] for name in active_models if name in model_fns}
 
     results = {}
     latencies = {}
     start_total = time.time()
+    pending_models = set(selected.keys())
+    stop_spinner = threading.Event()
+
+    def _spinner_task():
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        idx = 0
+        while not stop_spinner.is_set():
+            elapsed = time.time() - start_total
+            waiting_for = ", ".join(sorted(pending_models)) if pending_models else "finalizing..."
+            spin = spinner_chars[idx % len(spinner_chars)]
+            sys.stdout.write(f"\r  {UI.CYAN}{spin}{UI.RST} {UI.DIM}Menunggu respon AI ({elapsed:.1f}s) -> [Menunggu: {waiting_for}]...{UI.RST}   ")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.1)
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+    spinner_thread = threading.Thread(target=_spinner_task, daemon=True)
+    spinner_thread.start()
 
     def _query_timed(query_fn, p):
         t0 = time.time()
@@ -1365,10 +1441,17 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
                 data, elapsed = future.result()
                 results[model_name] = data
                 latencies[model_name] = elapsed
+                pending_models.discard(model_name)
+                sys.stdout.write(f"\r{UI.clear_line()}  {UI.GREEN}✓{UI.RST} {UI.BOLD}{model_name}{UI.RST} selesai dalam {elapsed:.2f}s\n")
+                sys.stdout.flush()
             except Exception as exc:
-                print(f"[LLM CLIENT ERROR] Model {model_name} generated an exception: {exc}")
+                print(f"\r{UI.clear_line()}[LLM CLIENT ERROR] Model {model_name} generated an exception: {exc}")
                 results[model_name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": str(exc)}
                 latencies[model_name] = 0.0
+                pending_models.discard(model_name)
+
+    stop_spinner.set()
+    spinner_thread.join(timeout=0.5)
 
     total_elapsed = time.time() - start_total
     mode = config.get_ai_mode()
