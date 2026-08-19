@@ -222,10 +222,10 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - ATR (14): {latest['atr_14']:.2f} ({atr_points} points)
 {m15_summary}
 {macro_str}{forecast_str}{positions_str}
-### STRATEGY CONSTRAINTS (Ultra-Micro Scalping Execution)
+### STRATEGY CONSTRAINTS (Mega-Tight Scalping Execution)
 - Target fast micro momentum breakouts or instant pullback rejections.
-- ULTRA-TIGHT SL BOUNDS: Stop Loss MUST be between {min_sl} and {max_sl} points ($0.50-$0.90 Gold move).
-- ULTRA-FAST TP BOUNDS: Take Profit MUST be between {min_tp} and {max_tp} points ($0.80-$1.50 Gold move, R:R 1:1.5+).
+- MEGA-TIGHT SL BOUNDS: Stop Loss MUST be between {min_sl} and {max_sl} points ($0.30-$0.60 Gold move).
+- MEGA-FAST TP BOUNDS: Take Profit MUST be between {min_tp} and {max_tp} points ($0.40-$0.80 Gold move, R:R 1:1.15+).
 - STRICT NO-HOLD MANDATE: 'HOLD' is STRICTLY FORBIDDEN. You MUST choose an active direction: either 'BUY' or 'SELL'. Evaluate which side has higher micro probability.
 
 ### RESPONSE FORMAT
