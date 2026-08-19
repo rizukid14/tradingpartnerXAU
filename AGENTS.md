@@ -44,7 +44,7 @@ Dokumen ini berisi panduan lokasi file aktif, tempat log, dan struktur branch un
 * **50-Bar Range Summary**: Ringkasan High & Low 50-bar M5 beserta persentase posisi harga live.
 * **Tanpa Lessons/Memory Trauma**: `lessons_str` dihapus total agar AI mengevaluasi setiap candle 100% *fresh* tanpa bias rugi masa lalu.
 * **Tanpa Rule Berita**: Pembatasan jam berita dihapus agar murni berfokus pada momentum & *price action* teknikal M5.
-* **STRICT NO-HOLD MANDATE**: Opsi `HOLD` dihapus total dari prompt. Setiap AI diwajibkan memilih arah aktif: **`BUY` atau `SELL`**. Dengan 3 AI dan 2 opsi, konsensus 2/3 atau 3/3 dijamin 100% selalu tercapai di setiap candle M5.
+* **STRICT CONFIDENCE THRESHOLD**: Opsi `HOLD` diperbolehkan jika kondisi pasar konsolidasi/choppy (confidence < 0.50). Sinyal `BUY` atau `SELL` hanya dieksekusi jika confidence >= 0.50.
 
 ### C. Risk Management & Lot Sizing
 * **Dynamic 1.5% Equity Risk Sizing**: Ukuran lot dihitung otomatis berdasarkan nominal 1.5% equity modal dibagi jarak `sl_points` dari AI:
