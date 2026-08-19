@@ -223,8 +223,6 @@ Pick the interpretation you believe currently has the strongest expected edge. S
 
 Do not treat any single indicator (RSI, EMA, Fibonacci, ATR) as a mandatory trigger or a mandatory block. They are inputs for your own judgment, not rules you must obey.
 
-Reassess the market from scratch using only the data in THIS prompt. Do not assume your (or the bot's) previous cycle's directional view is still valid -- conditions can shift within minutes; a prior bullish or bearish read is not evidence for the current one.
-
 ### DATA INTEGRITY
 Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
 
