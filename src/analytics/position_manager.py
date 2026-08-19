@@ -180,21 +180,27 @@ def _check_break_even(pos, profit_points, point, symbol_info):
 #  TRAILING STOP (from XAU-60 trade_executor.py)
 # =============================================================================
 def _check_trailing_stop(pos, profit_points, current_price, point, symbol_info):
-    """Trail stop loss behind price once activation threshold is reached."""
-    if profit_points < config.TRAILING_ACTIVATION_POINTS:
+    """Trail stop loss 200 pts behind price once 50% of target TP is reached."""
+    # Determine activation points: 50% of position's target TP distance in points
+    activation_points = getattr(config, "TRAILING_ACTIVATION_POINTS", 500)
+    if pos.tp and pos.tp > 0 and pos.price_open and pos.price_open > 0 and point > 0:
+        tp_dist_pts = int(abs(pos.tp - pos.price_open) / point)
+        if tp_dist_pts > 0:
+            act_pct = getattr(config, "TRAILING_ACTIVATION_PERCENT_TP", 50) / 100.0
+            activation_points = max(100, int(tp_dist_pts * act_pct))
+
+    if profit_points < activation_points:
         return
 
     trail_distance = config.TRAILING_DISTANCE_POINTS * point
 
     if pos.type == mt5.ORDER_TYPE_BUY:
-        new_sl = current_price - trail_distance
-        new_sl = round(new_sl, symbol_info.digits)
+        new_sl = round(current_price - trail_distance, symbol_info.digits)
         # Only move SL up, never down
         if pos.sl >= new_sl:
             return
     else:  # SELL
-        new_sl = current_price + trail_distance
-        new_sl = round(new_sl, symbol_info.digits)
+        new_sl = round(current_price + trail_distance, symbol_info.digits)
         # Only move SL down, never up
         if pos.sl != 0 and pos.sl <= new_sl:
             return

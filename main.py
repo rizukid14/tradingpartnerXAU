@@ -65,13 +65,7 @@ def run_trading_cycle():
         
     print(f"📈 Harga saat ini {config.SYMBOL} - Bid: {tick['bid']}, Ask: {tick['ask']}, Spread: {tick['spread']} pts")
     
-    # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation
-    try:
-        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
-        closed_deals = connector.get_closed_positions_today()
-        dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
-    except Exception as e:
-        print(f"[EVALUATOR WARNING] {e}")
+    # 2.5 Post-Mortem Trade Evaluation & Dynamic Config Adaptation (Disabled for Fresh Scalping)
 
 
     # 3. Check for existing open positions

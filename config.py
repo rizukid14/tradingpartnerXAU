@@ -64,8 +64,9 @@ DEBATE_ENABLED = False
 
 # --- TRAILING STOP ---
 TRAILING_STOP_ENABLED = True
-TRAILING_ACTIVATION_POINTS = 200   # Activate trailing after 200 pts profit (~$2.00 on Gold)
-TRAILING_DISTANCE_POINTS = 150     # Trail SL 150 pts behind current price
+TRAILING_ACTIVATION_PERCENT_TP = 50 # Activate trailing after reaching 50% of target TP
+TRAILING_ACTIVATION_POINTS = 500    # Fallback activation points if no TP set
+TRAILING_DISTANCE_POINTS = 200      # Trail SL 200 pts behind current active price
 
 # --- BREAK-EVEN ---
 BREAK_EVEN_ENABLED = True
