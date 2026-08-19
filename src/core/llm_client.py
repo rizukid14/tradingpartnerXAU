@@ -315,9 +315,19 @@ def _structure_block(df, current_tick, atr_points):
     swing_high = float(df["high"].max())
     swing_low = float(df["low"].min())
     diff = swing_high - swing_low
-    fib_382 = round(swing_high - 0.382 * diff, 6)
-    fib_500 = round(swing_high - 0.500 * diff, 6)
-    fib_618 = round(swing_high - 0.618 * diff, 6)
+    first_close = float(df["close"].iloc[0])
+    last_close = float(df["close"].iloc[-1])
+    is_downtrend = first_close > last_close
+    if is_downtrend:
+        fib_382 = round(swing_low + 0.382 * diff, 6)
+        fib_500 = round(swing_low + 0.500 * diff, 6)
+        fib_618 = round(swing_low + 0.618 * diff, 6)
+        fib_label = "Downtrend Bounce"
+    else:
+        fib_382 = round(swing_high - 0.382 * diff, 6)
+        fib_500 = round(swing_high - 0.500 * diff, 6)
+        fib_618 = round(swing_high - 0.618 * diff, 6)
+        fib_label = "Uptrend Pullback"
     close = float(df["close"].iloc[-1])
     point = current_tick.get("point", 0.01) if current_tick else 0.01
     if not point or point <= 0:
@@ -332,7 +342,7 @@ def _structure_block(df, current_tick, atr_points):
     lines = [
         f"### STRUCTURE (50-bar window)",
         f"- Swing High: {_fmt_price(swing_high, point)} | Swing Low: {_fmt_price(swing_low, point)} | Range: {int(diff/point)} pts",
-        f"- Fib: 38.2% {_fmt_price(fib_382, point)} | 50% {_fmt_price(fib_500, point)} | 61.8% {_fmt_price(fib_618, point)}",
+        f"- Fib ({fib_label}): 38.2% {_fmt_price(fib_382, point)} | 50% {_fmt_price(fib_500, point)} | 61.8% {_fmt_price(fib_618, point)}",
         f"- Close {_fmt_price(close, point)}: {int(to_low)} pts above swing low | {int(to_high)} pts below swing high",
     ]
     if ema20 is not None and ema50 is not None:
