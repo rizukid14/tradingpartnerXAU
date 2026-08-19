@@ -135,10 +135,10 @@ def run_trading_cycle():
         print(reason)
         return True  # Not an error, just skipping
     
-    # 1. Fetch market data (50 candles of M5 + 20 candles of M1)
-    df = connector.get_market_data(config.SYMBOL, config.TIMEFRAME, num_candles=50)
+    # 1. Fetch market data (50 candles of M5 for trend context + 20 candles of M1 for micro entry)
+    df = connector.get_market_data(config.SYMBOL, mt5.TIMEFRAME_M5, num_candles=50)
     if df is None or len(df) == 0:
-        print("❌ Gagal mendapatkan market data. Melewatkan siklus ini.")
+        print("❌ Gagal mendapatkan market data M5. Melewatkan siklus ini.")
         return False
 
     df_m1 = connector.get_market_data(config.SYMBOL, mt5.TIMEFRAME_M1, num_candles=20)
