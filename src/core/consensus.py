@@ -180,9 +180,12 @@ def calculate_consensus(decisions):
         sltp_info = f"SL: {sl} pts, TP: {tp} pts" if sig in ("BUY", "SELL") else "SL/TP: -"
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
+        invalidation_text = (dec.get("invalidation") or "").strip()
         if setup_label:
             box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
         box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
+        if invalidation_text:
+            box_items.append((f"  {UI.RED}Inval.{UI.RST}  : ", invalidation_text))
 
         
     # Evaluate consensus for active position early-close actions
