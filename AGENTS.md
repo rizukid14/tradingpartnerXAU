@@ -2,6 +2,12 @@
 
 > Ringkasan cepat untuk sesi coding. Baca ini dulu sebelum ngapa-ngapain.
 
+## ⚠️ ATURAN WAJIB AI AGENT (MANDATORY AGENT RULES)
+
+1. **SELALU MINTA KONFIRMASI SEBELUM MENGUBAH KODE (ALWAYS ASK BEFORE EDITING CODE)**:
+   - Sebelum melakukan edit/perubahan file kode apa pun, AI WAJIB menjelaskan masalah dan menampilkan rencana/perubahan yang diusulkan.
+   - AI DILARANG mengeksekusi tool edit file (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) sebelum pengguna memberikan persetujuan/konfirmasi eksplisit.
+
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude) yang jalan di **MetaTrader 5**.

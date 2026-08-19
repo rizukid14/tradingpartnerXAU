@@ -58,13 +58,15 @@ def _apply_sltp_rules(sl_points, tp_points):
         is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
 
         if is_xau:
+            xau_mult = getattr(config, "LLM_XAU_FLOOR_ATR_MULT", 1.2)
             if atr_points > 0:
-                min_sl = max(spread_pts * 2, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_points))
+                min_sl = max(spread_pts * 2, int(xau_mult * atr_points))
             else:
                 min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
         else:
+            fx_mult = getattr(config, "LLM_FX_FLOOR_ATR_MULT", 1.5)
             if atr_points > 0:
-                min_sl = max(spread_pts * 2, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
+                min_sl = max(spread_pts * 2, int(fx_mult * atr_points))
             else:
                 min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
             

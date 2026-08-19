@@ -985,6 +985,12 @@ def serve(host="0.0.0.0", port=8765):
                         setattr(config, attr, val)
                         applied_keys.append(attr)
 
+                if applied_keys and hasattr(config, "save_config_to_env"):
+                    try:
+                        config.save_config_to_env({k: getattr(config, k) for k in applied_keys})
+                    except Exception:
+                        pass
+
                 _send_json(self, {
                     "status": "success",
                     "message": f"Applied preset '{preset_name}'",
@@ -994,6 +1000,11 @@ def serve(host="0.0.0.0", port=8765):
 
             elif path in ("/api/pause", "/api/pause_trading"):
                 config.TRADING_PAUSED = True
+                if hasattr(config, "save_config_to_env"):
+                    try:
+                        config.save_config_to_env({"TRADING_PAUSED": True})
+                    except Exception:
+                        pass
                 _send_json(self, {
                     "status": "success",
                     "message": "Trading paused successfully",
@@ -1002,6 +1013,11 @@ def serve(host="0.0.0.0", port=8765):
 
             elif path in ("/api/resume", "/api/resume_trading"):
                 config.TRADING_PAUSED = False
+                if hasattr(config, "save_config_to_env"):
+                    try:
+                        config.save_config_to_env({"TRADING_PAUSED": False})
+                    except Exception:
+                        pass
                 _send_json(self, {
                     "status": "success",
                     "message": "Trading resumed successfully",
