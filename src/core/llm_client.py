@@ -266,7 +266,7 @@ BUY or SELL:
 
 "position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
 
-CONFIDENCE guide: 0.70+ = strong, well-supported thesis | 0.50-0.70 = moderate, reasonable but not fully clean | 0.30-0.50 = weak, default to HOLD unless you have a concrete reason to act | below 0.30 = no real edge, HOLD.
+CONFIDENCE guide for BUY/SELL: 0.70 to 1.00 = strong, well-supported thesis | 0.50 to 0.69 = moderate, reasonable thesis | below 0.50 = weak edge / low conviction -- MUST select HOLD (HOLD schema does not use confidence).
 
 {{PENDING_RULES_BLOCK}}"""
 
