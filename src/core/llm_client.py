@@ -236,7 +236,6 @@ Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
 {{SLTP_RULES_BLOCK}}
-- Spread must not consume a large share of the SL distance
 - Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
 - PROXIMITY & TRAP AVOIDANCE: Do NOT initiate a BUY directly into immediate major resistance (e.g. 50-bar Swing High, PDH, or key HTF resistance) or a SELL directly into immediate major support (e.g. 50-bar Swing Low, PDL, or key HTF support) without a clear, confirmed breakout. Ensure there is sufficient room before the opposing structure to achieve your required target. Chasing extended green candles into resistance or red candles into support is strictly prohibited.
 
