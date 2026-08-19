@@ -107,3 +107,7 @@ Dokumen ini berisi panduan lokasi file aktif, tempat log, dan struktur branch un
 * **Real-time Closed Tracker (5s)**: Deteksi tertutupnya posisi (Hit TP/SL/Close Manual) terjadi setiap 5 detik dengan notifikasi instan CLI & Telegram.
 * **1-Hour Telegram Recap**: Notifikasi rekap P/L harian & win rate dikirim otomatis setiap 1 jam.
 * **Log Terisolasi**: Log disimpan di `data/trading_bot_m1_scalper.log`.
+
+### C. Strategi Loop M5 vs Full M1 (Hybrid Master Blueprint)
+* **Jam Biasa / Testing Harian**: Gunakan **Loop M5 (dengan Context M1)** untuk memfilter noise acak di luar jam sibuk, menjaga kuota API, dan menghindari false breakout.
+* **2 Jam Prime Overlap London-NY (19:30 – 21:30 WIB)**: Gunakan **Full Loop M1 (`TIMEFRAME = M1`)** untuk zero-delay entry dan menangkap 10–15 momentum rejection kilat secara maksimal saat spread ECN tertipis (5-10 pts).
