@@ -82,7 +82,7 @@ PARTIAL_CLOSE_PERCENT = 50         # Close 50% of position at TP1
 PARTIAL_CLOSE_TP1_POINTS = 400     # TP1 trigger: 400 pts profit (~$4.00)
 
 # --- DAILY RISK LIMITS ---
-MAX_DAILY_LOSS_USD = 50.0          # Halt all trading after losing $50 today
+MAX_DAILY_LOSS_USD = 99999.0       # Daily loss limit disabled
 MAX_CONSECUTIVE_LOSSES = 999       # Pause after consecutive losses disabled
 PAUSE_AFTER_LOSSES_MINUTES = 0     # Pause duration disabled
 MAX_OPEN_POSITIONS = 6             # Max simultaneous positions
