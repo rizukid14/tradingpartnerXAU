@@ -210,7 +210,7 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
 # cycles so provider-side prompt/context caching stays effective.
 # ================================================================
 _SYSTEM_PROMPT_TEMPLATE = """### ROLE
-You are an independent {{TIMEFRAME}} short-term swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+You are an expert {{TIMEFRAME}} short-term intraday-swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
 
 ### EXECUTION CONTEXT
 {{EXECUTION_NOTE}}

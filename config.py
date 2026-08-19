@@ -723,6 +723,19 @@ def get_timeframe(symbol):
     return mt5.TIMEFRAME_M30
 
 
+def risk_percent_for(symbol):
+    """Returns the risk per trade percentage for a symbol.
+    BTC: RISK_PERCENT_BTC (1.5%)
+    XAU: RISK_PERCENT_XAU (1.0%)
+    FX: RISK_PERCENT_FX (1.25%)
+    """
+    if is_crypto(symbol):
+        return RISK_PERCENT_BTC
+    if is_gold(symbol):
+        return RISK_PERCENT_XAU
+    return RISK_PERCENT_FX
+
+
 def default_sl_points_for(symbol):
     if is_crypto(symbol): return DEFAULT_SL_POINTS_BTC
     if "XAU" not in symbol.upper(): return 100
