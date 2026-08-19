@@ -341,7 +341,7 @@ def _structure_block(df, current_tick, atr_points=0):
     to_h50 = (h50 - close) / point
     to_l50 = (close - l50) / point
 
-    lines.append("### STRUCTURE (50-bar & 100-bar Window)")
+    lines.append("### INTRADAY STRUCTURE (50-bar Window)")
     lines.append(f"- 50-bar Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
     lines.append(f"- 50-bar Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
     lines.append(f"- Close {_fmt_price(close, point)}: {int(to_l50)} pts above 50-bar low | {int(to_h50)} pts below 50-bar high")
@@ -362,22 +362,28 @@ def _structure_block(df, current_tick, atr_points=0):
             f618_100 = round(h100 - 0.618 * diff100, 6)
             label100 = "Uptrend Pullback"
 
+        lines.append("\n### MACRO STRUCTURE (100-bar Window)")
         lines.append(f"- 100-bar Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
         lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
 
     # 3. Indicators
+    ind_lines = []
     ema20 = float(df["ema_20"].iloc[-1]) if "ema_20" in df.columns else None
     ema50 = float(df["ema_50"].iloc[-1]) if "ema_50" in df.columns else None
     if ema20 is not None and ema50 is not None:
         gap = (ema20 - ema50) / point
         rel_ema20 = (close - ema20) / point
         pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
-        lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
+        ind_lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
     if "rsi_14" in df.columns:
         rsi = float(df["rsi_14"].iloc[-1])
-        lines.append(f"- RSI14 {rsi:.2f}")
+        ind_lines.append(f"- RSI14 {rsi:.2f}")
     if atr_points and atr_points > 0:
-        lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
+        ind_lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
+
+    if ind_lines:
+        lines.append("\n### TECHNICAL INDICATORS (Active Timeframe)")
+        lines.extend(ind_lines)
 
     return "\n".join(lines)
 
