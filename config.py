@@ -119,10 +119,10 @@ CLAUDE_FALLBACK_MODEL = os.getenv("CLAUDE_FALLBACK_MODEL", "deepseek/deepseek-v4
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_FALLBACK_MODEL = os.getenv("DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
 
-# DeepSeek reasoning effort: "high" | "medium" | "low" | "none" (default "low" for targeted CoT reasoning)
-DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
+# DeepSeek reasoning effort: "high" | "medium" | "low" | "none" (default "none" for ultra-fast response)
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "none")
 
-# OpenAI reasoning effort: "high" | "medium" | "low" | "none" (default "low" for speed & low latency)
+# OpenAI reasoning effort: "high" | "medium" | "low" | "none" (default "low" for CoT reasoning)
 OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
