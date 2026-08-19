@@ -306,46 +306,69 @@ def _delta_candle_lines(df, n=15, point_size=0.01):
     return lines
 
 
-def _structure_block(df, current_tick, atr_points):
-    """Ringkas struktur 50-bar window: swing/Fib/posisi harga relatif level.
-    Ganti 50 candle mentah -- semua info level tetap ada, tanpa baris OHLC.
+def _structure_block(df, current_tick, atr_points=0):
+    """Ringkas struktur 50-bar (short-term) & 100-bar (macro) window:
+    swing/Fib (trend-aware)/posisi harga relatif level.
     """
     if df is None or len(df) == 0:
         return ""
-    swing_high = float(df["high"].max())
-    swing_low = float(df["low"].min())
-    diff = swing_high - swing_low
-    first_close = float(df["close"].iloc[0])
-    last_close = float(df["close"].iloc[-1])
-    is_downtrend = first_close > last_close
-    if is_downtrend:
-        fib_382 = round(swing_low + 0.382 * diff, 6)
-        fib_500 = round(swing_low + 0.500 * diff, 6)
-        fib_618 = round(swing_low + 0.618 * diff, 6)
-        fib_label = "Downtrend Bounce"
-    else:
-        fib_382 = round(swing_high - 0.382 * diff, 6)
-        fib_500 = round(swing_high - 0.500 * diff, 6)
-        fib_618 = round(swing_high - 0.618 * diff, 6)
-        fib_label = "Uptrend Pullback"
+
     close = float(df["close"].iloc[-1])
     point = current_tick.get("point", 0.01) if current_tick else 0.01
     if not point or point <= 0:
         point = 0.01
-    # posisi relatif close ke level (dalam poin)
-    to_high = (swing_high - close) / point
-    to_low = (close - swing_low) / point
+
+    lines = []
+
+    # 1. 50-bar Short-Term Window
+    df_50 = df.tail(min(50, len(df)))
+    h50, l50 = float(df_50["high"].max()), float(df_50["low"].min())
+    diff50 = h50 - l50
+    is_down50 = float(df_50["close"].iloc[0]) > close
+    if is_down50:
+        f382_50 = round(l50 + 0.382 * diff50, 6)
+        f500_50 = round(l50 + 0.500 * diff50, 6)
+        f618_50 = round(l50 + 0.618 * diff50, 6)
+        label50 = "Downtrend Bounce"
+    else:
+        f382_50 = round(h50 - 0.382 * diff50, 6)
+        f500_50 = round(h50 - 0.500 * diff50, 6)
+        f618_50 = round(h50 - 0.618 * diff50, 6)
+        label50 = "Uptrend Pullback"
+
+    to_h50 = (h50 - close) / point
+    to_l50 = (close - l50) / point
+
+    lines.append("### STRUCTURE (50-bar & 100-bar Window)")
+    lines.append(f"- 50-bar Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
+    lines.append(f"- 50-bar Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
+    lines.append(f"- Close {_fmt_price(close, point)}: {int(to_l50)} pts above 50-bar low | {int(to_h50)} pts below 50-bar high")
+
+    # 2. 100-bar Macro Multi-Day Window
+    if len(df) >= 70:
+        h100, l100 = float(df["high"].max()), float(df["low"].min())
+        diff100 = h100 - l100
+        is_down100 = float(df["close"].iloc[0]) > close
+        if is_down100:
+            f382_100 = round(l100 + 0.382 * diff100, 6)
+            f500_100 = round(l100 + 0.500 * diff100, 6)
+            f618_100 = round(l100 + 0.618 * diff100, 6)
+            label100 = "Downtrend Bounce"
+        else:
+            f382_100 = round(h100 - 0.382 * diff100, 6)
+            f500_100 = round(h100 - 0.500 * diff100, 6)
+            f618_100 = round(h100 - 0.618 * diff100, 6)
+            label100 = "Uptrend Pullback"
+
+        lines.append(f"- 100-bar Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
+        lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
+
+    # 3. Indicators
     ema20 = float(df["ema_20"].iloc[-1]) if "ema_20" in df.columns else None
     ema50 = float(df["ema_50"].iloc[-1]) if "ema_50" in df.columns else None
-    gap = (ema20 - ema50) / point if (ema20 is not None and ema50 is not None) else None
-    rel_ema20 = (close - ema20) / point if ema20 is not None else None
-    lines = [
-        f"### STRUCTURE (50-bar window)",
-        f"- Swing High: {_fmt_price(swing_high, point)} | Swing Low: {_fmt_price(swing_low, point)} | Range: {int(diff/point)} pts",
-        f"- Fib ({fib_label}): 38.2% {_fmt_price(fib_382, point)} | 50% {_fmt_price(fib_500, point)} | 61.8% {_fmt_price(fib_618, point)}",
-        f"- Close {_fmt_price(close, point)}: {int(to_low)} pts above swing low | {int(to_high)} pts below swing high",
-    ]
     if ema20 is not None and ema50 is not None:
+        gap = (ema20 - ema50) / point
+        rel_ema20 = (close - ema20) / point
         pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
         lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
     if "rsi_14" in df.columns:
@@ -353,6 +376,7 @@ def _structure_block(df, current_tick, atr_points):
         lines.append(f"- RSI14 {rsi:.2f}")
     if atr_points and atr_points > 0:
         lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
+
     return "\n".join(lines)
 
 
