@@ -158,17 +158,28 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
 
 
+# --- RISK PERCENTAGE ---
+RISK_PERCENT = float(os.getenv("RISK_PERCENT", "1.5"))
+
 # --- MT5 CONNECTION ---
-# Leave empty to connect to the currently running MT5 terminal instance
-MT5_LOGIN = os.getenv("MT5_LOGIN", "")
-MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER = os.getenv("MT5_SERVER", "")
+MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "demo").lower()
+if MT5_ACCOUNT_MODE == "demo":
+    MT5_LOGIN = os.getenv("MT5_DEMO_LOGIN", "")
+    MT5_PASSWORD = os.getenv("MT5_DEMO_PASSWORD", "")
+    MT5_SERVER = os.getenv("MT5_DEMO_SERVER", "")
+else:
+    MT5_LOGIN = os.getenv("MT5_LIVE_LOGIN", os.getenv("MT5_LOGIN", ""))
+    MT5_PASSWORD = os.getenv("MT5_LIVE_PASSWORD", os.getenv("MT5_PASSWORD", ""))
+    MT5_SERVER = os.getenv("MT5_LIVE_SERVER", os.getenv("MT5_SERVER", ""))
 
 # Unique ID for orders placed by this bot (only bot positions are managed/risked)
 MAGIC_NUMBER = 20260625
 
 if MT5_LOGIN:
-    MT5_LOGIN = int(MT5_LOGIN)
+    try:
+        MT5_LOGIN = int(MT5_LOGIN)
+    except Exception:
+        pass
 
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
 MTF_ANALYSIS_ENABLED = True

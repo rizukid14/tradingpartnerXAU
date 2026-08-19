@@ -217,13 +217,42 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION
     # =========================================================================
-    def get_effective_lot_size(self):
+    def get_effective_lot_size(self, sl_points=None):
         """
         Returns adjusted lot size based on:
-        - Recovery mode (from xaubot-ai: reduce lot after losses)
-        - Session multiplier (from xaubot-ai: boost during London-NY overlap)
+        - Dynamic 1.5% Equity Risk Sizing (using SL points distance)
+        - Recovery mode (reduce lot after losses)
+        - Session multiplier (boost during London-NY overlap)
         """
         lot = config.LOT_SIZE
+        risk_pct = getattr(config, "RISK_PERCENT", 1.5)
+
+        if sl_points and sl_points > 0:
+            try:
+                acc = mt5.account_info()
+                if acc is not None:
+                    equity = acc.equity or acc.balance or 1000.0
+                    risk_usd = equity * (risk_pct / 100.0)
+                    sym_info = mt5.symbol_info(config.SYMBOL)
+                    point = sym_info.point if sym_info else 0.01
+
+                    # Cost per 1.0 lot for sl_points
+                    trade_tick_val = getattr(sym_info, "trade_tick_value", 1.0) or 1.0
+                    trade_tick_sz = getattr(sym_info, "trade_tick_size", point) or point
+                    risk_per_lot = (sl_points * (point / trade_tick_sz)) * trade_tick_val
+
+                    if risk_per_lot > 0:
+                        calc_lot = risk_usd / risk_per_lot
+                        v_min = getattr(sym_info, "volume_min", 0.01) or 0.01
+                        v_max = getattr(sym_info, "volume_max", 100.0) or 100.0
+                        v_step = getattr(sym_info, "volume_step", 0.01) or 0.01
+
+                        lot_units = round(calc_lot / v_step) * v_step
+                        lot = max(v_min, min(v_max, round(lot_units, 2)))
+                        print(f" [SIZING] {config.SYMBOL}: equity ${equity:.2f}, risk {risk_pct}% = ${risk_usd:.2f}, "
+                              f"SL {sl_points} pts = ${risk_per_lot:.2f}/lot -> lot {lot}")
+            except Exception as e:
+                print(f"[RISK SIZING ERROR] {e}")
 
         # Recovery mode: reduce lot size
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
