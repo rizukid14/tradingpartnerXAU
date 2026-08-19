@@ -2,6 +2,7 @@ import json
 import re
 import time
 import concurrent.futures
+import pandas as pd
 from openai import OpenAI
 from google import genai
 import config
