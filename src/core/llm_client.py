@@ -953,22 +953,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
         )
 
-    # USD value of 1 point for the default bot lot - tells the LLM the real
-    # money scale of the SL/TP distances it proposes (critical for BTC, where
-    # 1 pt = $0.0001 and the LLM otherwise proposes absurdly tight stops).
-    usd_per_point = current_tick.get("usd_per_point", 0.0)
-    if usd_per_point > 0:
-        pts_per_usd = 1.0 / usd_per_point
-        usd_context = (
-            f"Money scale: 1 point = ${usd_per_point:.4f} USD with the default "
-            f"{config.lot_size_for(symbol)} lot. So {int(pts_per_usd * 10)} pts = ~$10, "
-            f"{int(pts_per_usd * 5)} pts = ~$5, and 100000 pts = ~${100000 * usd_per_point:.2f}.\n"
-            f"Current spread is {current_tick.get('spread', '?')} pts "
-            f"(approx ${current_tick.get('spread_usd', 0.0):.2f} USD) - NEVER set SL closer than "
-            f"{int(current_tick.get('spread', 0) * 2)} pts (2x spread); the broker will reject it.\n"
-        )
-    else:
-        usd_context = ""
+    usd_context = ""
 
     macro_str = ""
     if macro_context:
