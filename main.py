@@ -1025,13 +1025,13 @@ def _run_cycle_for_current_symbol():
     
     # 0.5 Pending order lifecycle: expired/cap/contra cleanup (hanya kalau enabled)
     _manage_pending_orders()    
-    # 1. Fetch market data (53 bar, buang bar aktif -> 52 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
-    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=53)
+    # 1. Fetch market data (103 bar, buang bar aktif -> 100 candle SUDAH CLOSE. M15 XAU / H1 FX / M30 BTC)
+    df = connector.get_market_data(config.SYMBOL, config.get_timeframe(config.SYMBOL), num_candles=103)
     if df is None or len(df) == 0:
         print(f" {UI.tag('DATA ERROR', UI.RED)} Gagal mendapatkan market data untuk {config.SYMBOL}. Melewatkan siklus.")
         return False
-    if len(df) > 52:
-        df = df.iloc[-52:-1].reset_index(drop=True)
+    if len(df) > 102:
+        df = df.iloc[-102:-1].reset_index(drop=True)
         
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
