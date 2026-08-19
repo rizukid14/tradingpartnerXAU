@@ -190,11 +190,12 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         macro_str = f"\n### HIGHER-LEVEL MACRO CONTEXT\n{macro_context}\n"
 
     forecast_str = ""
-    try:
-        from src.analytics import forecast_engine
-        forecast_str = forecast_engine.forecaster.get_forecast_context()
-    except Exception:
-        pass
+    if getattr(config, "FORECAST_ENABLED", False):
+        try:
+            from src.analytics import forecast_engine
+            forecast_str = forecast_engine.forecaster.get_forecast_context()
+        except Exception:
+            pass
 
     positions_str = ""
     if open_positions and len(open_positions) > 0:

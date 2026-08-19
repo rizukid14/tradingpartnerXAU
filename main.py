@@ -89,14 +89,15 @@ def run_trading_cycle():
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
 
-    # 5.5 Multi-Horizon Forecast Context (Informational Only)
-    try:
-        is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
-            config.SYMBOL, tick, result, df
-        )
-        print(f"🔮 [FORECAST INFO] {f_reason}")
-    except Exception as e:
-        print(f"[FORECAST INFO WARNING] {e}")
+    # 5.5 Multi-Horizon Forecast Context (Disabled if FORECAST_ENABLED is False)
+    if getattr(config, "FORECAST_ENABLED", False):
+        try:
+            is_valid, f_reason, _, _ = forecast_engine.forecaster.validate_forecast_trigger(
+                config.SYMBOL, tick, result, df
+            )
+            print(f"🔮 [FORECAST INFO] {f_reason}")
+        except Exception as e:
+            print(f"[FORECAST INFO WARNING] {e}")
 
 
 
