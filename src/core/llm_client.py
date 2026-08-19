@@ -253,16 +253,15 @@ HOLD:
 BUY or SELL:
 {
   "signal": "BUY" | "SELL",
-  "confidence": 0.0-1.0,
-  "setup": "Your own short label for this setup type (e.g. 'momentum continuation', 'mean-reversion exhaustion', 'breakout retest') -- not a fixed list, use whatever best describes your thesis.",
-  "edge": "1-2 sentences: what specifically creates the edge here.",
-  "invalidation": "1 short sentence: what would prove this thesis wrong.",
-  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer) from the current price, measured to your invalidation level. Read the CRITICAL UNIT DEFINITION below!
-  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer) from the current price, measured to your structural target. Read the CRITICAL UNIT DEFINITION below!
-  "invalidation_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP. If provided, MUST correspond to price structural data (swing high/low, Fibonacci, PDH/PDL, EMA).
-  "target_price": number, // OPTIONAL: reference level for thesis/probability reasoning only -- the bot does NOT use it to place SL/TP.
+  "confidence": 0.5-1.0,
+  "setup": "Short label for setup type (e.g. 'momentum continuation', 'pullback retest')",
+  "reasoning": "1-2 sentences (MAX 40 WORDS): core entry thesis and why this trade has edge now",
+  "invalidation": "1 short sentence: key technical level/condition that breaks this thesis",
+  "sl_points": number, // REQUIRED: Stop Loss distance in broker POINTS (integer)
+  "tp_points": number, // REQUIRED: Take Profit distance in broker POINTS (integer)
+  "invalidation_price": number, // OPTIONAL: reference price level for invalidation
+  "target_price": number, // OPTIONAL: reference price level for target
 {{PENDING_FIELDS}}
-  "reasoning": "1-2 sentences (MAX 40 WORDS), on the NEW ENTRY decision only -- not on existing positions."
 }
 
 "position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
@@ -681,8 +680,8 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
             "- If you are not confident the level will trigger, output \"market\" or HOLD instead."
         )
         pending_fields = (
-            '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit", // OPTIONAL, default "market". Only for BUY/SELL. See PENDING ORDER rules below.\n'
-            '  "entry_price": number, // REQUIRED if entry_type != "market": the price level where the pending order triggers. MUST be consistent with entry_type direction and thesis.'
+            '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit", // OPTIONAL, default "market"\n'
+            '  "entry_price": number // REQUIRED if entry_type != "market"'
         )
     else:
         execution_note = (
