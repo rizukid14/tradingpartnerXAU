@@ -498,7 +498,7 @@ def _atr_points_for(symbol, timeframe):
     if hit and now - hit[0] < 60:
         return hit[1]
     try:
-        import MetaTrader5 as _mt5
+        from config import mt5 as _mt5
         si = _mt5.symbol_info(symbol)
         point = si.point if si else None
         if not point:
@@ -523,8 +523,12 @@ def _atr_points_for(symbol, timeframe):
 def _fx_atr_h1_points(symbol):
     """ATR(14) H1 FX dalam poin broker (cache 60s) — dipakai untuk
     floor dinamis & typical SL range di prompt. Return None kalau gagal."""
-    import MetaTrader5 as _mt5
-    return _atr_points_for(symbol, _mt5.TIMEFRAME_H1)
+    try:
+        from config import mt5 as _mt5
+        tf_h1 = getattr(_mt5, "TIMEFRAME_H1", 16385)
+        return _atr_points_for(symbol, tf_h1)
+    except Exception:
+        return None
 
 
 def _build_sltp_rules_block(symbol, timeframe):
