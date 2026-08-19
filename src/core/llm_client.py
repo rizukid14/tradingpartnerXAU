@@ -236,8 +236,11 @@ Any BUY or SELL must satisfy all of the following:
 - A concrete, statable entry thesis (why this direction, why now)
 - A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
 {{SLTP_RULES_BLOCK}}
-- Reasonable distance from immediately opposing structure, unless the thesis is specifically a reversal/exhaustion trade at that structure
-- PROXIMITY & TRAP AVOIDANCE: Do NOT initiate a BUY directly into immediate major resistance (e.g. 50-bar Swing High, PDH, or key HTF resistance) or a SELL directly into immediate major support (e.g. 50-bar Swing Low, PDL, or key HTF support) without a clear, confirmed breakout. Ensure there is sufficient room before the opposing structure to achieve your required target. Chasing extended green candles into resistance or red candles into support is strictly prohibited.
+- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.
+- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum (e.g. 2+ consecutive same-direction H1 closes or expanding candle bodies) but has not closed beyond it yet, do not chase with an immediate market order. Instead:
+  (a) Use buy_stop/sell_stop placed ~0.2x ATR H1 beyond the key level to catch a genuine breakout wave.
+  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.
+  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 room remaining to your structural target.
 
 HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
 
