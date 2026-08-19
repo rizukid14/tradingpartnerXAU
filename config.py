@@ -611,9 +611,18 @@ LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
 # ============================================================================
 #  SYMBOL ROTATION HELPERS (weekday XAUUSD, weekend BTCUSD)
 # ============================================================================
+def is_gold(symbol):
+    """True if the given symbol is Gold (XAUUSD)."""
+    s = (symbol or "").upper()
+    return "XAU" in s or "GOLD" in s
+
 def is_crypto(symbol):
     """True if the given symbol is a crypto pair (weekend trading)."""
-    return symbol in CRYPTO_SYMBOLS
+    return symbol in CRYPTO_SYMBOLS or "BTC" in (symbol or "").upper()
+
+def is_forex(symbol):
+    """True if the given symbol is a Forex currency pair (non-gold, non-crypto)."""
+    return not is_gold(symbol) and not is_crypto(symbol)
 
 
 def sltp_mode_for(symbol):
