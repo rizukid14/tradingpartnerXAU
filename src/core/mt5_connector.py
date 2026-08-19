@@ -186,6 +186,16 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
     point = symbol_info.point
     digits = symbol_info.digits
 
+    # Guard against MT5 retcode 10016 (Invalid stops) by checking broker stops_level + spread
+    stops_lvl = getattr(symbol_info, "trade_stops_level", 20) or 20
+    spread_pts = round((tick.ask - tick.bid) / point, 1) if point > 0 else 10.0
+    min_safe_sl_pts = int(spread_pts + stops_lvl + 5)  # e.g. 11 + 20 + 5 = 36 pts
+
+    if sl_points and sl_points < min_safe_sl_pts:
+        sl_points = min_safe_sl_pts
+    if tp_points and tp_points < min_safe_sl_pts:
+        tp_points = int(min_safe_sl_pts * 1.15)
+
     if action == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
         price = round(tick.ask, digits)
