@@ -460,7 +460,9 @@ def _build_points_explanation(symbol, point_size):
                          "context below for the exact dynamic minimum required for this specific trade")
         else:
             gate_note = (" -- for the exact floor relevant to this symbol, see the SL/TP "
-                         "rules in the RISK CONSTRAINTS section below")
+                         "rules in the RISK CONSTRAINTS section above")
+        pips_val = round(lo_pts / 10.0, 1)
+        pips_int = int(round(lo_pts / 10.0))
         return (
             f"### CRITICAL UNIT DEFINITION: POINTS vs PIPS vs PRICE MOVEMENT\n"
             f"You MUST calculate and return Stop Loss and Take Profit in broker **POINTS** (integer), NOT pips, NOT USD price.\n"
@@ -470,9 +472,9 @@ def _build_points_explanation(symbol, point_size):
             f"- 100 points = 10 pips = {_fmt_price(point_size * 100) if point_size else '1.00'} price movement.\n"
             f"- Typical Stop Loss distance for {symbol} is usually {lo_pts} to {hi_pts} points{gate_note}.\n\n"
             f"CRITICAL WARNING:\n"
-            f"Double-check your numbers. If you want a Stop Loss of {lo_pts // 10} pips, you MUST return {lo_pts} points. "
-            f"If you return {lo_pts // 10}, it sets a Stop Loss of just {lo_pts // 10} points "
-            f"({max(1, lo_pts // 100)} pip / {_fmt_price((lo_pts // 10) * (point_size or 0.01))} price movement), "
+            f"Double-check your units! If you want a Stop Loss of {pips_val} pips (~{lo_pts} points), you MUST return {lo_pts} points. "
+            f"If you accidentally return {pips_int}, it sets a Stop Loss of just {pips_int} points "
+            f"({pips_int/10:.1f} pips / {_fmt_price(pips_int * (point_size or 0.01))} price movement), "
             f"which is inside the spread and will cause an instant loss or broker rejection!"
         )
 
