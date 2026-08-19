@@ -87,9 +87,9 @@ MAX_CONSECUTIVE_LOSSES = 3         # Pause trading after 3 consecutive losses
 PAUSE_AFTER_LOSSES_MINUTES = 30    # Pause duration after consecutive losses
 MAX_OPEN_POSITIONS = 6             # Max simultaneous positions
 
-# --- RECOVERY MODE ---
-RECOVERY_MODE_ENABLED = True
-RECOVERY_LOT_MULTIPLIER = 0.5     # Use 50% of normal lot size during recovery
+# --- RECOVERY MODE (Disabled) ---
+RECOVERY_MODE_ENABLED = False
+RECOVERY_LOT_MULTIPLIER = 1.0
 
 # --- COOLDOWN ---
 TRADE_COOLDOWN_SECONDS = 0

@@ -198,9 +198,12 @@ class RiskEngine:
             if self._consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
                 pause_seconds = config.PAUSE_AFTER_LOSSES_MINUTES * 60
                 self._paused_until = time.time() + pause_seconds
-                self._in_recovery_mode = True
-                print(f"🛑 [RISK] {self._consecutive_losses} loss berturut-turut! "
-                      f"Pause {config.PAUSE_AFTER_LOSSES_MINUTES} menit + Recovery Mode aktif.")
+                if getattr(config, "RECOVERY_MODE_ENABLED", False):
+                    self._in_recovery_mode = True
+                    print(f"🛑 [RISK] {self._consecutive_losses} loss berturut-turut! "
+                          f"Pause {config.PAUSE_AFTER_LOSSES_MINUTES} menit + Recovery Mode aktif.")
+                else:
+                    print(f"🛑 [RISK] {self._consecutive_losses} loss berturut-turut! Pause {config.PAUSE_AFTER_LOSSES_MINUTES} menit.")
         else:
             if self._consecutive_losses > 0:
                 print(f"✅ [RISK] Win setelah {self._consecutive_losses} loss. Streak direset.")
