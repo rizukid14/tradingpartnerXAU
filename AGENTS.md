@@ -95,6 +95,12 @@ python main.py
    - **Trailing Activation (`TRAILING_ACTIVATION_TP_PCT`)**: **`0.58` (58% Target TP)**.
    - **Floor Absolut Trailing (`TRAILING_DISTANCE_MIN_POINTS_FX`)**: **`25 points` (2.5 pips)** dari harga ekstrem untuk mencegah spread squeeze.
 9. **Benchmark Live `gpt-5.4-mini` vs `gemini-2.5-flash-lite` (19 Agustus)**: Pengujian live data 8 FX pairs H1. `gemini-2.5-flash-lite` menghasilkan **100% HOLD (8/8 pair)** dengan latency 1.26s — mengonfirmasi paralysis model 2.5-flash-lite (mengapa bot produksi memakai `gemini-3.1-flash-lite`). `gpt-5.4-mini` (low reasoning) menghasilkan **6/8 trade aktif** (3 BUY, 3 SELL, 2 HOLD; confidence 63%–69%, R:R >2:1, latency ~4.33s).
+10. **Fix Bug Multi-Symbol Pending Order Cancellation (`main.py`, 19 Agustus)**: `_cancel_pending_contra(new_signal, symbol)` ditambahkan filter presisi `p["symbol"] == target_symbol`. Mencegah bug di mana sinyal baru pada simbol A (misal EURCHF BUY) secara tidak sengaja membatalkan pending order aktif pada simbol B (misal USDCAD SELL ticket #1201621074) dalam pool 8 FX pairs.
+11. **[PLAN MENDATANG] Refaktorisasi Konsensus Pending vs Market (`consensus.py` & `llm_client.py`)**:
+    - **Masalah**: Ketika 1 AI minta Retest (`sell_limit`) dan 1 AI minta Breakout (`sell_stop`), consensus merata-ratakan harga menjadi *Frankenstein price* dan `max()` Python memilih `entry_type` secara acak saat seri 1 vs 1.
+    - **Rencana Solusi**: 
+      1. Restrukturisasi JSON prompt LLM: `execution_mode: "market" | "pending"`, `pending_type: "limit" | "stop"`, `trigger_price`.
+      2. Kuorum Pending di `consensus.py`: Jika model-model setuju arah tapi beda strategi entri (misal Limit vs Stop), sistem TIDAK merata-ratakan harga kontradiktif, melainkan otomatis **Fallback ke Market Execution** (entri langsung) atau membatalkan pending. Hanya merata-ratakan `entry_price` dari model yang setuju jenis pending eksak yang sama.
 
 
 ### Optimasi kecepatan loop (11 Agustus — bersama fitur TP_SL_RULES)

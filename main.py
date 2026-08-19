@@ -231,9 +231,9 @@ def _detect_filled_pending():
         print(f"[PENDING FILL DETECT ERROR] {e}")
 
 
-def _cancel_pending_contra(new_signal):
+def _cancel_pending_contra(new_signal, symbol=None):
     """
-    Cancel semua pending order yang arahnya berlawanan dengan sinyal baru.
+    Cancel semua pending order yang arahnya berlawanan dengan sinyal baru untuk simbol tertentu.
     Konsensus baru = tesis lama sudah mati -> pending kontra tidak relevan.
     """
     if not getattr(config, "PENDING_ORDERS_ENABLED", False):
@@ -242,7 +242,10 @@ def _cancel_pending_contra(new_signal):
         pendings = connector.get_pending_orders()
         if not pendings or new_signal not in ("BUY", "SELL"):
             return
+        target_symbol = symbol or getattr(config, "SYMBOL", None)
         for p in pendings:
+            if target_symbol and p.get("symbol") != target_symbol:
+                continue
             ptype = p.get("type_str", "")
             is_buy_pending = ptype in ("buy_stop", "buy_limit")
             is_sell_pending = ptype in ("sell_stop", "sell_limit")
@@ -1260,7 +1263,7 @@ def _run_cycle_for_current_symbol():
                     print(f" {UI.tag('PENDING', UI.YELLOW)} Sudah ada pending untuk {config.SYMBOL} — skip duplikat.")
                 else:
                     # Cancel pending kontra dulu (tesis baru = arah baru)
-                    _cancel_pending_contra(trade_signal)
+                    _cancel_pending_contra(trade_signal, symbol=config.SYMBOL)
                     # SL/TP absolute dihitung relatif ke entry_price pending
                     p_point = tick_live["point"] if tick_live else 0.01
                     p_sl_price = None
