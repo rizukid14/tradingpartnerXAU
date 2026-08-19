@@ -1425,12 +1425,12 @@ def main():
     if config.TRADING_MODE == "xau_pairs":
         pool = config.get_rotation_pool()
         print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        print(f"  {UI.BOLD}Timeframe   :{UI.RST} XAU (M30) | FX Cross (H1) | BTC (M30) - Smart Rotation")
+        print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs (H1 Expert Intraday-Swing) | BTC (M30 Intraday) - Smart Rotation")
     else:
-        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}XAU ONLY{UI.RST} (M30 Swing)")
+        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}FX PAIRS ONLY{UI.RST} (H1 Expert Intraday-Swing)")
 
     print(f"  {UI.BOLD}AI Models   :{UI.RST} OpenAI ({config.OPENAI_MODEL} [reasoning {config.OPENAI_REASONING_EFFORT}]), DeepSeek ({config.DEEPSEEK_MODEL} [reasoning {config.DEEPSEEK_REASONING_EFFORT}]), Gemini ({config.GEMINI_MODEL}), Claude ({config.CLAUDE_MODEL})")
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {f'XAU: LLM (floor {config.LLM_XAU_FLOOR_ATR_MULT}xATR) | BTC: ATR-Based (fix) | FX: LLM (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1)' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {f'FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1) | BTC: ATR-Based (fix) | XAU: LLM' if config.TP_SL_RULES == 'LLM' else config.TP_SL_RULES + ' (force semua)'} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
