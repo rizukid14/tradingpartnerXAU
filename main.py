@@ -77,10 +77,42 @@ def check_and_notify_closed_trades():
         print(f"[CLOSED TRADE TRACKER ERROR] {e}")
 
 
+_last_hourly_recap_time = time.time()
+
+def check_and_send_hourly_recap():
+    """Sends an hourly summary recap to Telegram every 1 hour (3600s)."""
+    global _last_hourly_recap_time
+    now = time.time()
+    if now - _last_hourly_recap_time >= 3600:
+        _last_hourly_recap_time = now
+        try:
+            from datetime import datetime
+            pnl = risk.get_daily_pnl()
+            closed_today = connector.get_closed_positions_today()
+            total_trades = len(closed_today)
+            wins = sum(1 for c in closed_today if c.get("profit", 0) >= 0)
+            losses = sum(1 for c in closed_today if c.get("profit", 0) < 0)
+            win_rate = (wins / total_trades * 100.0) if total_trades > 0 else 0.0
+
+            pnl_sign = "+$" if pnl >= 0 else "-$"
+            text = (
+                f"📊 *[REKAP PER 1 JAM - M1 SUPER SCALPER]*\n"
+                f"• P/L Hari Ini: *{pnl_sign}{abs(pnl):.2f} USD*\n"
+                f"• Total Trade Selesai: `{total_trades}` (Win: `{wins}`, Loss: `{losses}`)\n"
+                f"• Win Rate: `{win_rate:.1f}%`\n"
+                f"• Waktu: `{datetime.now().strftime('%H:%M:%S WIB')}`"
+            )
+            tg.send_message(text)
+            print(f"📊 [HOURLY RECAP SENT] P/L: ${pnl:.2f} | Trades: {total_trades} | Win Rate: {win_rate:.1f}%")
+        except Exception as e:
+            print(f"[HOURLY RECAP ERROR] {e}")
+
+
 def run_trading_cycle():
     """Performs one full cycle of fetching data, querying LLMs, and checking consensus."""
-    # Always check for closed trades at cycle start
+    # Always check for closed trades & hourly recap at cycle start
     check_and_notify_closed_trades()
+    check_and_send_hourly_recap()
 
     print(f"\n⚡ [CYCLE START] Memulai analisa market pada {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     

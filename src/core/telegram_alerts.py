@@ -38,17 +38,17 @@ def send_message(text):
 
 
 def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0):
-    """Send trade entry alert with full context."""
+    """Send trade entry alert with full M1 SuperScalper context."""
     emoji = "🟢" if signal == "BUY" else "🔴"
-    mode_tag = "🔄 RECOVERY" if recovery_mode else ("⚠️ DRY RUN" if config.DRY_RUN else "🔥 LIVE")
+    mode_tag = "⚠️ DRY RUN" if config.DRY_RUN else "🔥 LIVE MEGA JUMBO"
     text = (
-        f"{emoji} *Trade {signal} Dibuka*\n"
+        f"{emoji} *[M1 SUPER SCALPER] Trade {signal} Dibuka*\n"
         f"• Symbol: `{config.SYMBOL}`\n"
-        f"• Lot: `{lot}` (session x{session_multiplier})\n"
-        f"• SL: `{sl_points}` pts | TP: `{tp_points}` pts\n"
+        f"• Lot Sizing: `{lot}` Lot (Dynamic 1.5% Risk)\n"
+        f"• Stop Loss: `{sl_points}` pts (${sl_points * 0.01:.2f} Gold Move)\n"
+        f"• Take Profit: `{tp_points}` pts (${tp_points * 0.01:.2f} Gold Move)\n"
         f"• Mode: `{mode_tag}`\n"
-        f"• Partial Close: `{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'}` "
-        f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)"
+        f"• Mandatory Decision: `STRICT NO-HOLD` (Consensus {config.CONSENSUS_THRESHOLD}/3)"
     )
     send_message(text)
 
@@ -222,25 +222,23 @@ def alert_recovery_mode(active, consecutive_losses):
 
 
 def alert_bot_started():
-    """Send bot startup notification with full config."""
-    mode = "DRY RUN" if config.DRY_RUN else "🔥 LIVE"
+    """Send bot startup notification with full M1 SuperScalper config."""
+    mode = "DRY RUN" if config.DRY_RUN else "🔥 LIVE EXECUTION"
     text = (
-        f"🤖 *Bot Trading Multi-LLM Dimulai*\n"
+        f"⚡ *[BOT TRADING MULTI-LLM - M1 SUPER SCALPER]*\n"
+        f"• Branch: `feature/m1-micro-scalper`\n"
         f"• Symbol: `{config.SYMBOL}`\n"
-        f"• Lot: `{config.LOT_SIZE}`\n"
         f"• Mode: `{mode}`\n"
+        f"• Sizing: `Dynamic 1.5% Equity Risk` (Mega Lot Jumbo)\n"
         f"─────────────────\n"
-        f"📊 *Proteksi Aktif:*\n"
-        f"• Trailing Stop: `{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}` "
-        f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts)\n"
-        f"• Break-Even: `{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}` "
-        f"(trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)\n"
-        f"• Partial Close: `{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'}` "
-        f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)\n"
-        f"• Max Daily Loss: `${config.MAX_DAILY_LOSS_USD}`\n"
-        f"• Recovery Mode: `{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}`\n"
-        f"• Weekend Close: `{'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}`\n"
-        f"• Session Filter: `{'ON' if config.SESSION_FILTER_ENABLED else 'OFF'}`"
+        f"📊 *Parameter Scalping Mega-Tight:*\n"
+        f"• SL Bounds: `{config.MIN_SL_POINTS}-{config.MAX_SL_POINTS} pts` ($0.30-$0.60)\n"
+        f"• TP Bounds: `{config.MIN_TP_POINTS}-{config.MAX_TP_POINTS} pts` ($0.40-$0.80, R:R 1:1.15+)\n"
+        f"• Trailing Stop: `OFF` (Pure Fast TP/SL Hit)\n"
+        f"• Break-Even: `{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}` (trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)\n"
+        f"• Max Daily Loss: `DISABLED`\n"
+        f"• Consecutive Loss Pause: `DISABLED`\n"
+        f"• Recovery Mode: `DISABLED`"
     )
     send_message(text)
 
