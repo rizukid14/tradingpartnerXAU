@@ -558,7 +558,7 @@ def _build_sltp_rules_block(symbol, timeframe):
                 f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
                 f"- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 (~{prox_pts} pts) below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 (~{prox_pts} pts) above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.\n"
                 f"- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum (e.g. 2+ consecutive same-direction H1 closes or expanding candle bodies) but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
-                f"  (a) Use buy_stop/sell_stop placed ~0.2x ATR H1 (~{stop_pts} pts) beyond the key level to catch a genuine breakout wave.\n"
+                f"  (a) Use buy_stop/sell_stop placed ~0.2x-0.3x ATR H1 (~{stop_pts}-{int(1.5*stop_pts)} pts) beyond the key level to filter false breaks and catch a genuine breakout wave.\n"
                 f"  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.\n"
                 f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your structural target."
             )
