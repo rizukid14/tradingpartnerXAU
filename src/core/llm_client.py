@@ -208,23 +208,16 @@ Spread: {current_tick['spread']} points (1 point = {current_tick['point']})
 - ATR (14): {latest['atr_14']:.2f} (which is {atr_points} points)
 {m15_summary}
 {macro_str}{forecast_str}{positions_str}
-### STRATEGY CONSTRAINTS (M5 Scalping)
-- Focus on high-probability M5 momentum breakouts or clean pullback rejections at M5/M15 Support/Resistance.
+### STRATEGY CONSTRAINTS (M5 Scalping Execution)
+- Focus on M5 momentum breakouts or pullback rejections at M5/M15 Support/Resistance.
 - SL Placement: Place SL beyond the nearest structural Swing High/Low or S/R level. ATR bounds ({min_sl}-{max_sl} pts) define the valid risk envelope.
 - TP Requirement: TP must be at least 1.5x of SL ({min_tp}-{max_tp} pts).
-- Confidence Threshold: Confidence >= 0.50 required for BUY/SELL. If edge is weak or market is choppy/unclear, MUST output HOLD.
+- STRICT NO-HOLD MANDATE: 'HOLD' is STRICTLY FORBIDDEN. You MUST choose an active direction: either 'BUY' or 'SELL'. Evaluate which side has higher probability based on price action and indicators.
 
 ### RESPONSE FORMAT
 Respond ONLY with a valid JSON object. Do not include any text before or after the JSON.
 
-If HOLD (Confidence < 0.50 or no clear edge):
-{{
-  "signal": "HOLD",
-  "confidence": 0.0,
-  "reasoning": "1 short sentence explaining why holding."
-}}
-
-If BUY or SELL (Confidence >= 0.50):
+JSON Schema:
 {{
   "signal": "BUY" | "SELL",
   "confidence": 0.50 to 1.00,
