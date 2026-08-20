@@ -222,8 +222,15 @@ def _detect_filled_pending():
                 changed = True
                 print(f" {UI.tag('PENDING', UI.GREEN)} Pending #{ticket} {ev.get('type')} {ev.get('symbol')} "
                       f"@ {ev.get('price')} TER-FILL -> posisi #{pos_id}. (AI proven: level entry tercapai)")
-            # kalau pending hilang tapi tidak ada deal IN = expired/cancelled manual
-            # (sudah dicatat oleh MT5/expired handler, skip)
+            else:
+                # Pending hilang + TIDAK ada deal IN = DICANCEL MANUAL ATAU EXPIRED
+                ev2 = dict(ev)
+                events.append(ev2)
+                ev2["event"] = "cancelled_manual"
+                ev2["cancel_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                changed = True
+                print(f" {UI.tag('PENDING', UI.YELLOW)} Pending #{ticket} {ev.get('type')} {ev.get('symbol')} "
+                      f"@ {ev.get('price')} DICANCEL MANUAL / EXPIRED MT5 -> Dihapus dari memori.")
         if changed:
             state["pending"] = events[-500:]
             _save_pending_state(state)
@@ -312,12 +319,13 @@ def _hold_recap_line(result):
 
 
 def _send_hold_recap():
-    """Kirim recap HOLD gabungan (satu pesan) kalau ada isi. Reset buffer."""
+    """Kirim recap HOLD + News Alert gabungan (satu pesan) kalau ada isi. Reset buffer."""
     global _hold_recap_lines
-    if not _hold_recap_lines:
-        return
     try:
-        tg.alert_hold_recap(list(_hold_recap_lines))
+        from src.analytics.economic_calendar import calendar as econ_cal
+        active_news = econ_cal.get_context()
+        if _hold_recap_lines or active_news:
+            tg.alert_hold_recap(list(_hold_recap_lines), news_context=active_news)
     except Exception as e:
         print(f"[HOLD RECAP ERROR] {e}")
     _hold_recap_lines = []
@@ -959,6 +967,16 @@ def run_trading_cycle():
 
     title_str = f"CYCLE START - {time.strftime('%Y-%m-%d %H:%M:%S')} WIB"
     print("\n" + UI.make_box(title_str, box_items, width=74, border_color=UI.CYAN))
+
+    # Economic news alert banner: print 1 unified box if active high-impact news in 6h window
+    try:
+        from src.analytics.economic_calendar import calendar as econ_cal
+        active_news = econ_cal.get_context()
+        if active_news and active_news.strip():
+            news_lines = [f"{UI.YELLOW}{l}{UI.RST}" for l in active_news.strip().split("\n")]
+            print("\n" + UI.make_box("📒 [ECONOMIC NEWS ALERT - 6H WINDOW]", news_lines, width=74, border_color=UI.YELLOW))
+    except Exception as e:
+        print(f"[NEWS BANNER ERROR] {e}")
 
     # -- Multi-symbol parallel scan ----------------------------------------------
     global _symbol_last_candle

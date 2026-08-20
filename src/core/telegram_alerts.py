@@ -308,7 +308,7 @@ def alert_partial_close(ticket, symbol, closed_vol, remaining_vol, profit_points
 
 def alert_bot_started():
     """Send bot startup notification with full config."""
-    mode = "DRY RUN" if config.DRY_RUN else " LIVE"
+    mode = "DRY RUN" if config.DRY_RUN else "LIVE"
     trading_mode = getattr(config, "TRADING_MODE", "xau")
     if trading_mode == "xau_pairs" and hasattr(config, "get_rotation_pool"):
         try:
@@ -319,25 +319,50 @@ def alert_bot_started():
     else:
         sym_line = f"- Symbol: `{config.SYMBOL}`\n"
 
+    # Dynamic trailing stop & BEP formatting
+    if config.TRAILING_STOP_ENABLED:
+        trail_act = int(getattr(config, "TRAILING_ACTIVATION_TP_PCT", 0.70) * 100)
+        trail_dist = getattr(config, "TRAILING_DISTANCE_ATR_MULT_FX", 0.5)
+        trail_floor = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 60)
+        trail_str = f"ON (aktif @ {trail_act}% TP | Dist: {trail_dist}x ATR, floor {trail_floor} pts)"
+    else:
+        trail_str = "OFF"
+
+    if config.BREAK_EVEN_ENABLED:
+        bep_trig = int(getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.58) * 100)
+        bep_str = f"ON (trigger @ {bep_trig}% TP)"
+    else:
+        bep_str = "OFF"
+
+    if config.PARTIAL_CLOSE_ENABLED:
+        partial_str = f"ON ({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)"
+    else:
+        partial_str = "OFF"
+
+    pending_max = getattr(config, "PENDING_ORDER_MAX_ACTIVE", 2)
+    pending_exp = getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 120)
+    pending_str = f"ON (Limit/Stop AI, max {pending_max} aktif, exp {pending_exp}m)" if getattr(config, "PENDING_ORDERS_ENABLED", False) else "OFF"
+    rec_str = "ON" if getattr(config, "RECOVERY_MODE_ENABLED", False) else "OFF"
+    wk_str = "ON" if getattr(config, "WEEKEND_CLOSE_ENABLED", False) else "OFF"
+    sess_str = "ON" if getattr(config, "SESSION_FILTER_ENABLED", False) else "OFF"
+
     text = (
-        f"🚀 *Bot Trading Multi-LLM Dimulai*\n"
+        "🚀 *Bot Trading Multi-LLM Dimulai*\n"
         f"{sym_line}"
-        f"- Lot: `{config.LOT_SIZE}`\n"
+        f"- Lot: `{config.LOT_SIZE}` (Risk FX: `{config.RISK_PERCENT_FX}%`, Max Posisi: `{config.MAX_OPEN_POSITIONS}`)\n"
         f"- Mode Eksekusi: `{mode}`\n"
-        f"-----------------\n"
-        f"🛡️ *Proteksi Aktif:*\n"
-        f"- Trailing Stop: `{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}` "
-        f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts)\n"
-        f"- Break-Even: `{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}` "
-        f"(trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)\n"
-        f"- Partial Close: `{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'}` "
-        f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)\n"
+        "-----------------\n"
+        "🛡️ *Proteksi Aktif:*\n"
+        f"- Trailing Stop: `{trail_str}`\n"
+        f"- Break-Even: `{bep_str}`\n"
+        f"- Partial Close: `{partial_str}`\n"
+        f"- Pending Orders: `{pending_str}`\n"
         f"- Max Daily Loss: `${config.MAX_DAILY_LOSS_USD}`\n"
-        f"- Recovery Mode: `{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}`\n"
-        f"- Weekend Close: `{'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}`\n"
-        f"- Session Filter: `{'ON' if config.SESSION_FILTER_ENABLED else 'OFF'}`"
+        f"- Recovery Mode: `{rec_str}`\n"
+        f"- Weekend Close: `{wk_str}`\n"
+        f"- Session Filter: `{sess_str}`"
     )
-    send_message(text)
+    return send_message(text)
 
 
 def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, open_positions=None, reason="Harian"):
@@ -504,29 +529,29 @@ def alert_consensus_hold(result, symbol=None):
     return False
 
 
-def alert_hold_recap(hold_lines):
-    """
-    Kirim SATU pesan recap HOLD untuk semua simbol dalam satu cycle.
-    hold_lines: list str, tiap baris = ringkasan 1 simbol (misal
-    "GBPCHF: HOLD (OpenAI SELL 60%, Gemini HOLD)").
-    Dipanggil dari main.py di akhir run_trading_cycle — HOLD tidak lagi
-    dikirim per-symbol (anti-spam, 18 Agu).
-    """
+
+
+def alert_hold_recap(hold_lines, news_context=None):
+    """Kirim SATU pesan recap HOLD dan Economic News Alert untuk semua simbol dalam satu cycle."""
     if not config.TELEGRAM_ENABLED:
         return False
     if not getattr(config, "TELEGRAM_NOTIFY_HOLD", True):
         return False
-    if not hold_lines:
+    if not hold_lines and not news_context:
         return False
 
-    # Batasi panjang: max 12 simbol per pesan
-    body = "\n".join(hold_lines[:12])
-    if len(hold_lines) > 12:
+    news_header = ""
+    if news_context and news_context.strip():
+        news_header = "📰 *High-Impact News Alert (6h Window)*:\n" + news_context.strip() + "\n\n"
+
+    n = len(hold_lines) if hold_lines else 0
+    body = "\n".join(hold_lines[:12]) if hold_lines else "• _Semua simbol aman_"
+    if hold_lines and len(hold_lines) > 12:
         body += f"\n  ... dan {len(hold_lines) - 12} simbol lainnya"
     text = (
-        f"⏸️ *Recap HOLD ({len(hold_lines)} simbol)*\n"
-        f"{body}\n"
-        f"_Tidak ada entry baru — menunggu setup searah._"
+        news_header
+        + f"⏸️ *Recap Scan ({n} Simbol)*\n"
+        + body + "\n\n"
+        + "_Manajemen posisi dan proteksi risiko berjalan 24/7._"
     )
     return send_message(text)
-
