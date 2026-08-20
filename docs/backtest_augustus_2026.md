@@ -124,11 +124,17 @@ detail di AGENTS.md "Perubahan 20 Agustus (lanjutan malam) — Refactor GLOBAL B
 
 - **S9-GBPUSD (entry horn breakout + TP structural, floor R:R 1.5) = kandidat edge terverifikasi**
   (EV +0.196, CI_low +0.034, 5/5 tahun positif, profil risiko sehat: avg win 1.78R / avg loss 1.0R, bukan lotere).
-- **BELUM diintegrasikan** ke bot. Kandidat integrasi = whisper (LLM tetap pegang keputusan, cuma dikasih konteks),
-  konsisten filosofi "guardrails in prompt". Butuh diskusi & keputusan user dulu.
-- Detector S9 di `pattern_detector.py` tetap terhapus (belum di-restore).
+- **SUDAH diintegrasikan ke bot** sebagai whisper di `pattern_detector.py` (`_check_s9_structural_breakout`,
+  commit `38ec5bf`, 20 Agu malam). Definisi mirror persis backtest (valley flat 0.25×ATR, neckline = high
+  antar-valley, jarak ≤ 10 bar, gap-up + close > neckline + strong close 20%, SL = min(L1,L2) − 1.0×ATR).
+  Hanya **GBPUSD BUY-only** (SELL EV +0.071 tidak signifikan, tidak di-whisper). Tanpa filter session
+  (konsisten backtest: 5/5 tahun positif di semua jam). Whisper pakai angka BUY-only dari
+  `bep_trail_matrix.py` baseline: **n=174, WR 45.4%, EV +0.302, CI_low +0.067** (angka n=322/EV +0.196
+  di tabel verifikasi = BUY+SELL gabungan). Teks whisper menyatakan eksplisit
+  *"Historical probability context only — NOT a directive"* — tetap guardrail di prompt, LLM pegang keputusan.
 - Skrip: `scratch/test_s9_htf_targets.py` (sumber klaim), `scratch/verify_s9_htf.py` (audit),
-  `scratch/s9_trailing_backtest.py` (trailing/BEP), `scratch/debug_trail_struct.py`.
+  `scratch/s9_trailing_backtest.py` (trailing/BEP), `scratch/bep_trail_matrix.py` (sumber angka BUY-only),
+  `scratch/debug_trail_struct.py`.
 
 ---
 
