@@ -289,27 +289,22 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 
     min_trigger = 30 if config.is_fx(symbol) else 100
 
-    # Break-even trigger (mode-aware, 15 Agustus - pindah ke PURE % TP):
-    # - LLM mode: BEP aktif saat profit >= 65% TP (BREAK_EVEN_TRIGGER_TP_PCT).
-    #   Alasan pindah dari SL-based (1x SL): SL-based cacat di dua ujung untuk trade
-    #   R:R rendah (1.25-1.5, gate R:R min 1.25) - 1x SL untuk R:R 1.25 = 80% TP
-    #   (kecepetan) dan cap 50% TP untuk R:R 3:1 = 1.5x SL (telat). Pure % TP selalu
-    #   proporsional: R:R 2:1 -> 1.3x SL, R:R 1.25 -> 0.81x SL (pas, bukan kecepetan).
-    #   Posisi tanpa TP -> fallback SL-based (1x SL) biar tetap ada proteksi.
-    # - ATR-Based mode: 50% TP aktual (di mode ini TP = 2x SL, jadi 50% TP = 1x SL).
-    if config.sltp_mode_for(symbol) == "LLM":
-        if tp_points > 0:
-            be_trigger = max(min_trigger, int(tp_points * config.BREAK_EVEN_TRIGGER_TP_PCT))
-        else:
-            sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
-            if sl_points > 0:
-                be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
-            else:
-                be_trigger = config.break_even_trigger_for(symbol)
-    elif tp_points > 0:
-        be_trigger = max(min_trigger, int(tp_points * 0.50))
+    # Break-even trigger (GLOBAL single path, 20 Agustus malam):
+    # BEP aktif saat profit >= 58% TP (BREAK_EVEN_TRIGGER_TP_PCT) - persetujuan
+    # user ("aktif di 58% TP jangan telat banget"). Hasil backtest S9 GBPUSD:
+    # BEP 35% +0.158 | 50% +0.205 | 65% +0.222 -> lebih telat lebih baik, tapi
+    # user pilih 58% sebagai kompromi. Padding komisi round-trip tetap
+    # dipertahankan (lihat comm_pad_pts di bawah) biar net profit saat BEP >= +$0.00.
+    # Posisi tanpa TP -> fallback SL-based (BREAK_EVEN_TRIGGER_SL_MULT).
+    # Tidak ada lagi percabangan mode LLM vs ATR-Based.
+    if tp_points > 0:
+        be_trigger = max(min_trigger, int(tp_points * config.BREAK_EVEN_TRIGGER_TP_PCT))
     else:
-        be_trigger = config.break_even_trigger_for(symbol)
+        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+        if sl_points > 0:
+            be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
+        else:
+            be_trigger = config.break_even_trigger_for(symbol)
 
     # Hitung padding dinamis yang menutupi komisi round-trip broker (deal IN + deal OUT)
     # agar saat terkena BEP, net profit setelah dikurangi komisi broker benar-benar >= +$0.00 USD.
@@ -410,51 +405,27 @@ def _get_dynamic_atr_points(symbol, point):
     return 0
 
 
-def _calculate_progressive_tp_lock_points(profit_points, tp_points):
-    """
-    Progressive Dynamic Trailing Stop Lock Curve:
-    - 50% TP profit -> kunci 25% TP (langsung melampaui level BEP)
-    - 60% TP profit -> kunci 40% TP
-    - 70% TP profit -> kunci 55% TP
-    - 80% TP profit -> kunci 70% TP
-    - >=90% TP profit -> kunci 85% TP (ketat mendekati TP)
-    Interpolasi mulus antar tingkat.
-    """
-    if tp_points <= 0 or profit_points < (tp_points * 0.50):
-        return 0.0
-
-    ratio = profit_points / tp_points
-    if ratio >= 0.90:
-        lock_pct = 0.85 + min(ratio - 0.90, 0.08)  # 90% profit -> 85% lock, 95% -> 90% lock
-    elif ratio >= 0.80:
-        # Interpolasi 70% -> 85% saat profit 80% -> 90%
-        lock_pct = 0.70 + ((ratio - 0.80) / 0.10) * 0.15
-    elif ratio >= 0.70:
-        # Interpolasi 55% -> 70% saat profit 70% -> 80%
-        lock_pct = 0.55 + ((ratio - 0.70) / 0.10) * 0.15
-    elif ratio >= 0.60:
-        # Interpolasi 40% -> 55% saat profit 60% -> 70%
-        lock_pct = 0.40 + ((ratio - 0.60) / 0.10) * 0.15
-    else:  # 0.50 <= ratio < 0.60
-        # Interpolasi 25% -> 40% saat profit 50% -> 60%
-        lock_pct = 0.25 + ((ratio - 0.50) / 0.10) * 0.15
-
-    return lock_pct * tp_points
-
-
 # =============================================================================
 #  TRAILING STOP (from XAU-60 trade_executor.py)
 # =============================================================================
 def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info):
-    """Trail stop loss behind price using dynamic mode-aware multipliers.
+    """Trail stop loss behind price using a GLOBAL single-path rule.
 
-    Referensi multiplier (13 Agustus):
-    - LLM mode: jarak SL posisi (thesis-relative, nyambung sama struktur SL LLM)
-    - ATR-Based mode: ATR (konsisten, karena SL/TP ATR mode juga turunan ATR)
+    GLOBAL single path (20 Agustus malam, hasil backtest S9 GBPUSD n=174):
+    - Activation: profit >= 70% TP (TRAILING_ACTIVATION_TP_PCT). Fallback tanpa
+      TP: TRAILING_ACTIVATION_SL_MULT x SL.
+    - Distance: KONSTAN 0.5x ATR(14) dari harga ekstrem sejak entry (bukan
+      progressive SL-based, bukan range adaptif) + floor absolut
+      TRAILING_DISTANCE_MIN_POINTS_FX/XAU.
+    Hasil backtest (scratch/bep_trail_matrix.py):
+      act70 + atr0.5 = EV +0.272 (terbaik, nyaris setara baseline +0.302)
+      progressive SL +0.197 | adaptif +0.041 | fixed pips +0.128-0.180 (inferior)
+    TP-lock progressive & progressive distance DIHAPUS - backtest membuktikan
+    jarak konstan 0.5x ATR yang paling tidak merusak edge.
     """
     atr_points = _get_dynamic_atr_points(symbol, point)
 
-    # Hitung jarak target TP posisi (jika ada) untuk aktivasi adaptif & progress calculation
+    # Jarak target TP posisi (jika ada) untuk aktivasi % TP
     tp_points = 0
     if pos.tp:
         if pos.type == mt5.ORDER_TYPE_BUY:
@@ -462,34 +433,36 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    # Jarak SL posisi (struktur LLM di mode LLM, atau hasil gate ATR di mode ATR-Based).
-    # Mode LLM: pakai SL ORIGINAL (sebelum BE/trailing geser) biar referensi stabil.
+    # Jarak SL posisi (fallback tanpa TP). Pakai SL ORIGINAL (sebelum BE/trailing
+    # geser) biar referensi stabil.
     if pos.sl:
         sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
     else:
         sl_points = 0
 
-    act_mult, dist_mult, fallback_act, fallback_dist, act_cap = config.trailing_activation_params_for(symbol)
-
-    if atr_points > 0:
-        activation = min(int(atr_points * act_mult), act_cap)
-        distance = int(atr_points * dist_mult)
-    else:
-        activation = fallback_act
-        distance = fallback_dist
-
     min_act = 30 if config.is_fx(symbol) else 100
 
-    # Mode-aware activation:
-    # - LLM mode: trailing aktif saat profit >= 58% TP (TRAILING_ACTIVATION_TP_PCT)
-    # - ATR-Based mode: TP-adaptive 60% TP
-    if config.sltp_mode_for(symbol) == "LLM":
-        if tp_points > 0:
-            activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), min_act)
-        elif sl_points > 0:
-            activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), min_act)
-    elif tp_points > 0 and not config.is_crypto(symbol):
-        activation = int(tp_points * 0.60)
+    # Activation GLOBAL % TP (fallback SL-based kalau posisi tanpa TP)
+    if tp_points > 0:
+        activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), min_act)
+    elif sl_points > 0:
+        activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), min_act)
+    else:
+        activation = min_act
+
+    # Distance GLOBAL: KONSTAN 0.5x ATR per-kategori (default 0.5).
+    # Fallback kalau ATR gagal: fallback_dist dari trailing_activation_params_for.
+    if atr_points > 0:
+        if config.is_fx(symbol):
+            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_FX", 0.5)
+        elif config.is_crypto(symbol):
+            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
+        else:
+            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
+        trail_distance = max(int(atr_points * dist_mult), 1) * point
+    else:
+        _, _, _, fallback_dist, _ = config.trailing_activation_params_for(symbol)
+        trail_distance = fallback_dist * point
 
     # Track the extreme price seen since entry. The SL trails behind this
     # extreme, never behind the current price, so a pullback cannot drag the
@@ -509,49 +482,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if profit_points < activation:
         return
 
-    # ---- Progressive distance ----
-    # Distance mengecil linear dari START (longgar saat baru aktivasi) ke END
-    # (ketat saat mendekati TP). Progress dihitung dari posisi profit terhadap
-    # TP posisi (atau fallback: 2x activation).
-    # Referensi multiplier (13 Agustus):
-    # - LLM mode: SL posisi (thesis-relative, nyambung sama struktur LLM)
-    # - ATR-Based mode: ATR (konsisten dengan SL/TP ATR mode)
-    # Fix bug progress_ref: pakai tp_points langsung (bukan max(tp, 2x activation)
-    # yang selalu 1.2x TP) supaya distance beneran mencapai end_mult tepat di TP.
-    llm_mode = config.sltp_mode_for(symbol) == "LLM"
-
-    if llm_mode and sl_points > 0:
-        # LLM mode: interpolasi 1.2 -> 0.4 x SL (floor 0.3). Selalu progressive
-        # (termasuk BTC) karena struktur SL LLM memang thesis-based. Dilonggarkan
-        # 15 Agustus (dari 0.8 -> 0.3): distance awal 1.2x SL bikin pullback normal
-        # gak langsung kena trailing; baru ketat mendekati TP.
-        start_mult = config.TRAILING_DISTANCE_START_SL_MULT
-        end_mult = config.TRAILING_DISTANCE_END_SL_MULT
-        min_mult = config.TRAILING_DISTANCE_MIN_SL_MULT
-        progress_ref = tp_points if tp_points > 0 else activation * 2
-        progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
-        dynamic_mult = max(start_mult - (start_mult - end_mult) * progress, min_mult)
-        trail_distance = sl_points * dynamic_mult * point
-    elif config.is_crypto(symbol):
-        trail_distance = distance * point
-    else:
-        if config.is_fx(symbol):
-            start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_FX", 0.8)
-            end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_FX", 0.3)
-            min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_FX", 0.2)
-        else:
-            start_mult = getattr(config, "TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.2)
-            end_mult = getattr(config, "TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
-            min_mult = getattr(config, "TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
-
-        progress_ref = tp_points if tp_points > 0 else activation * 2
-        progress = min(max((profit_points - activation) / (progress_ref - activation), 0.0), 1.0) if progress_ref > activation else 0.0
-
-        # Interpolasi linear start_mult -> end_mult, lalu floor ke min_mult
-        dynamic_mult = start_mult - (start_mult - end_mult) * progress
-        dynamic_mult = max(dynamic_mult, min_mult)
-
-    # Floor absolut jarak trailing (anti noise & spread squeeze saat SL tipis / TP lock mepet)
+    # Floor absolut jarak trailing (anti noise & spread squeeze saat SL tipis)
     min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 25) if config.is_fx(symbol) else getattr(config, "TRAILING_DISTANCE_MIN_POINTS_XAU", 100)
     min_dist_price = min_dist_pts * point
 
@@ -560,30 +491,12 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     if pos.type == mt5.ORDER_TYPE_BUY:
         new_sl = trail_ref - trail_distance
-        # Progressive TP-lock: pastikan SL setidaknya mengunci target % TP sesuai progress
-        if tp_points > 0:
-            tp_locked_pts = _calculate_progressive_tp_lock_points(profit_points, tp_points)
-            if tp_locked_pts > 0:
-                tp_lock_sl = pos.price_open + (tp_locked_pts * point)
-                # Cap tp_lock_sl agar tetap menyisakan breathing room min_dist_pts dari extreme price
-                if not config.is_crypto(symbol):
-                    tp_lock_sl = min(tp_lock_sl, trail_ref - min_dist_price)
-                new_sl = max(new_sl, tp_lock_sl)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL up, never down
         if pos.sl >= new_sl:
             return
     else:  # SELL
         new_sl = trail_ref + trail_distance
-        # Progressive TP-lock: pastikan SL setidaknya mengunci target % TP sesuai progress
-        if tp_points > 0:
-            tp_locked_pts = _calculate_progressive_tp_lock_points(profit_points, tp_points)
-            if tp_locked_pts > 0:
-                tp_lock_sl = pos.price_open - (tp_locked_pts * point)
-                # Cap tp_lock_sl agar tetap menyisakan breathing room min_dist_pts dari extreme price
-                if not config.is_crypto(symbol):
-                    tp_lock_sl = max(tp_lock_sl, trail_ref + min_dist_price)
-                new_sl = min(new_sl, tp_lock_sl)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL down, never up
         if pos.sl != 0 and pos.sl <= new_sl:
@@ -603,11 +516,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         _trailing_active_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         dist_pts = int(trail_distance / point) if point > 0 else 0
-        if config.is_crypto(symbol) and not (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0):
-            print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {distance} pts)")
-        else:
-            ref_label = "SL" if (config.sltp_mode_for(symbol) == "LLM" and sl_points > 0) else "ATR"
-            print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts, {dynamic_mult:.2f}x {ref_label})")
+        print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts ATR)")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"\r\x1b[2K[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

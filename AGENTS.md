@@ -90,10 +90,11 @@ python main.py
 7. **Pembersihan Redundansi & Dynamic Banner**:
    - Paragraf duplikat tentang Multi-Timeframe Analysis dihapus dari `DATA INTEGRITY` (hanya ada 1× di `HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT`).
    - Format `Risk & Rules` pada banner startup `main.py` disesuaikan dinamis sesuai `TRADING_MODE` (menghapus catatan `XAU` saat di mode FX Pairs).
-8. **Parameter Proteksi Posisi Real-time (`.env`)**:
-   - **BEP Trigger (`BREAK_EVEN_TRIGGER_TP_PCT`)**: **`0.35` (35% Target TP)** dengan padding komisi round-trip + Pocket Profit 1.5 pips (`15 pts`).
-   - **Trailing Activation (`TRAILING_ACTIVATION_TP_PCT`)**: **`0.58` (58% Target TP)**.
-   - **Floor Absolut Trailing (`TRAILING_DISTANCE_MIN_POINTS_FX`)**: **`25 points` (2.5 pips)** dari harga ekstrem untuk mencegah spread squeeze.
+8. **Parameter Proteksi Posisi Real-time (`.env`)** — **UPDATE 20 Agustus malam (refactor global)**:
+   - **BEP Trigger (`BREAK_EVEN_TRIGGER_TP_PCT`)**: **`0.58` (58% Target TP)** dengan padding komisi round-trip + Pocket Profit 1.5 pips (`15 pts`) — user: "aktif di 58% TP jangan telat banget" (backtest: BEP 35% +0.158 / 50% +0.205 / 65% +0.222 → 58% kompromi).
+   - **Trailing Activation (`TRAILING_ACTIVATION_TP_PCT`)**: **`0.70` (70% Target TP)** — hasil backtest act70 terbaik (EV +0.272).
+   - **Trailing Distance (`TRAILING_DISTANCE_ATR_MULT_FX`)**: **`0.5` (KONSTAN 0.5×ATR)** dari harga ekstrem — bukan SL-progressive lagi (backtest: progressive +0.197, adaptif +0.041, fixed pips +0.128-0.180 — semuanya inferior).
+   - **Floor Absolut Trailing (`TRAILING_DISTANCE_MIN_POINTS_FX`)**: **`60 points` (6 pips)** dari harga ekstrem untuk mencegah spread squeeze.
 9. **Benchmark Live `gpt-5.4-mini` vs `gemini-2.5-flash-lite` (19 Agustus)**: Pengujian live data 8 FX pairs H1. `gemini-2.5-flash-lite` menghasilkan **100% HOLD (8/8 pair)** dengan latency 1.26s — mengonfirmasi paralysis model 2.5-flash-lite (mengapa bot produksi memakai `gemini-3.1-flash-lite`). `gpt-5.4-mini` (low reasoning) menghasilkan **6/8 trade aktif** (3 BUY, 3 SELL, 2 HOLD; confidence 63%–69%, R:R >2:1, latency ~4.33s).
 10. **Fix Bug Multi-Symbol Pending Order Cancellation (`main.py`, 19 Agustus)**: `_cancel_pending_contra(new_signal, symbol)` ditambahkan filter presisi `p["symbol"] == target_symbol`. Mencegah bug di mana sinyal baru pada simbol A (misal EURCHF BUY) secara tidak sengaja membatalkan pending order aktif pada simbol B (misal USDCAD SELL ticket #1201621074) dalam pool 8 FX pairs.
 11. **[PLAN MENDATANG] Refaktorisasi Konsensus Pending vs Market (`consensus.py` & `llm_client.py`)**:
@@ -129,10 +130,81 @@ python main.py
 8. **Hasil Benchmark Live 3 Model AI (OpenAI + Gemini + DeepSeek)**:
    - Pengujian live 8 FX pairs membuktikan **100% efektivitas Anti-Fade Filter**: DeepSeek (v4-flash), OpenAI (o4-mini), dan Gemini (3.1-flash-lite) secara konsisten mengeluarkan **HOLD** atau **SELL mengikuti tren turun** (tidak ada lagi BUY konyol saat crash).
    - Kasus `EURCHF`: OpenAI (SELL 0.65) + Gemini (SELL 0.75) sepakat 2/2 searah (Skor 1.40 > 1.0 Threshold) → **Bot berhasil mengeksekusi SELL terukur mengikuti tren**.
+9. **Riset & Konteks Volume Prompt LLM (20 Agustus)**:
+   - **Hasil Evaluasi**: Pasar Forex OTC terdesentralisasi tidak memiliki *Real Traded Volume* (hanya *Tick Volume* MT5 yang *noisy*). Penambahan data volume mentah per-candle membuang-buang 150+ token tanpa mendukung edge.
+   - **Opsi Agregat Ringkas (~20 Token)**: Jika diaktifkan, opsi termurah & paling efisien adalah 1 baris agregat di ### TECHNICAL INDICATORS:
+     - VOLUME: last5/prev20 ratio 1.35x (expanding) | last candle vs 20-avg 1.8x (spike)
+   - **Prinsip**: *Informational Only* (memberi konteks partisipasi vs *drift*, bukan *hard-gate* kaku).
 
 **Verifikasi:** `scratch/preview_fx_prompt.py` (GBPCHF H1) — ADX14 20.1 (trend building), EMA200 H4 5.7x ATR ABOVE (BULLISH), slope EMA50 rising, CRITICAL TREND FILTER ter-inject, momentum rule terperkuat. `economic_calendar.get_context()` simulasi 19 Agu 19:00 WIB → FOMC Minutes in 6.0h; 20 Agu 03:00 WIB → recently released 2.0h ago; hari tenang → kosong. `py_compile` 4 file OK.
 
+### Riset Backtest 20 Agustus — SEMUA 10 Strategi Buku = NO EDGE (erratum S9)
 
+**Latar belakang:** user minta backtest strategi trend-following (5 tahun, fallback 4 → ternyata broker cuma simpan **~3 tahun**, Mei 2022 – Agu 2026; `copy_rates_from_pos` >50k bar return None), lalu pyramiding di tiap swing low/high, lalu 10 strategi dari buku (NotebookLM `docs/hasilnotebooklm.md`), lalu kombinasi filter buku (Rayner Teo + Candlestick Bible). Hasil lengkap (plus erratum): **`docs/backtest_augustus_2026.md`**. Skrip sumber di `scratch/` (untuk dihapus setelah integrasi).
+
+**⚠️ ERRATUM KRITIS (20 Agustus sore) — backtest buku (NotebookLM) CACAT:**
+`simulate_exit()` mengembalikan **`+1.0R` tetap** setiap TP hit tanpa menghitung jarak TP aktual. Valid untuk strategi R:R tetap, tapi **SALAH total untuk fixed-TP seperti S9** (TP = leher + tinggi pola). Entry S9 terjadi SETELAH breakout kuat → jarak entry→TP aktual cuma **~0.22×SL** (median 0.24). Backtest lama menghitung menang kecil itu sebagai +1.0R → **EV +0.58 palsu**. Hasil ulang dengan R aktual:
+
+| Strategi | EV lama (bug) | EV aktual | CI95% low | Verdict |
+|---|---|---|---|---|
+| **S9 Horn** | +0.505 | **−0.016** | −0.030 | ❌ BUKAN edge |
+| S2 Break-Hook-Go | +0.159 | +0.005 | −0.037 | ❌ |
+| S3 Buildup | +0.150 | +0.060 | −0.063 | ❌ |
+| S5 Liquidity FBO | −0.410 | +0.005 | −0.031 | ⚠️ nol |
+| S1/S4/S6/S10 | negatif | ~0 | <0 | ❌ |
+
+**Kesimpulan: SEMUA 10 strategi buku NO EDGE** (CI95% bawah < 0 semua). **Detector S9 + whisper sudah DIHAPUS** dari `pattern_detector.py` (tidak ada jejak `s9`/`horn`). S5 bukan anti-edge juga (nol), tetap jangan dipakai. S7/S8 skip (butuh data trendline). **Jangan implementasikan strategi buku mana pun tanpa re-backtest R aktual.**
+
+**Yang TETAP VALID:**
+1. **Trend-following FX H1 = GAGAL** (10 strategi, 1.308 kombinasi, semua EV negatif WR 44–49%; spread cuma 1–2% dari SL bukan penyebab).
+2. **Pyramiding H4 = GAGAL** (0 dari 18 varian lolos; pyramiding memperbesar loss, TP 2.0 terparah, ADX tidak menyelamatkan).
+3. **Riset FX bearish NY (16-18 Agustus, `whisper_registry.json` 112 entries)** — EV dihitung matematis `WR×rr−(1−WR)−spread` per R:R tetap → **VALID, tidak kena bug** (registry simpan `rr` per entry).
+4. **XAU Donchian BUY NY R:R 1:1 (17 Agustus)** — **VALID** (R:R 1:1, spread dipotong).
+5. **XAU H1 vs M30 vs H4** — perbandingan hanya relevan untuk S9 (gugur); keputusan timeframe XAU kembali ke riset valid lain. Detector Donchian XAU di `pattern_detector.py` TIDAK disentuh (tetap jalan).
+6. **Pelajaran metodologi**: backtest strategi fixed-TP wajib menghitung R aktual (`tp_dist/sl_dist`), bukan asumsi +1.0R per TP hit. Semua backtest ke depan harus pakai simulasi R aktual + CI95%.
+7. **Uji penyelamatan S9 (20 Agustus, `scratch/s9_variant_backtest.py`) — SEMUA GAGAL, S9 tidak bisa diselamatkan**: variasi entri diuji dgn R aktual → Market baseline EV −0.017 (nol); **Limit retest neckline EV −0.061** (lebih buruk — SL tetap `height+ATR` dari entry, R:R ~0.22 sama, WR turun 75→61%); retest+overextension filter (break bar > 1×ATR skip) −0.064; **R:R gate ≥1.25 cuma lolos 10 dari 7.657 sinyal (retest: 0 lolos)** — konfirmasi matematis formula TP buku (`neckline+height`) + SL (`valley−1×ATR`) hampir selalu R:R < 1 (height median ~0.28×ATR). Akar masalah = formula TP/SL buku, bukan timing entri. Jangan coba-coba S9 lagi; arah baru = S&D Compression (limit entry di zona fresh, SL tipis, TP ke liquidity void) — itu strategi baru, bukan perbaikan S9.
+
+### [PLAN MENDATANG] Parabolic Filter di position_manager (20 Agustus — ide dari buku Rayner Teo, BELUM diimplementasi)
+
+**Masalah:** saat tren berubah parabolik (lilin membesar abnormal, kemiringan ~vertikal), trailing biasa (EMA/trendline/higher-low) tertinggal jauh → reversal tiba-tiba mengembalikan profit besar ke nol sebelum trailing sempat mengunci.
+
+**Logika (dari `The Complete Guide to Trend Line Trading` — Rayner Teo):**
+```
+JIKA  (kemiringan trendline > 70 derajat)
+DAN   (rata-rata ukuran lilin > 2.0 × ATR)
+MAKA  → mode PARABOLIK: trailing AGRESIF
+       → SL digeser ke low candle sebelumnya (previous bar low) pada timeframe eksekusi
+       → (bukan nunggu higher-low / EMA lagi)
+```
+
+**Catatan penting:**
+- Berlaku untuk SEMUA simbol (XAU, FX, BTC) — bukan spesifik pola entry tertentu.
+- Trade-off: ambang 70°/2.0×ATR bisa over-sensitif di tren kuat normal (lilin 1.5-2×ATR itu wajar di London/NY) → bisa mengunci profit terlalu cepat (kehilangan "let profits run").
+- Bot saat ini pakai trailing **global** (activation 70% TP, distance konstan 0.5×ATR, `position_manager.py` — refactor 20 Agustus malam) — filter parabolik bisa jadi **override yang mengetatkan trailing** saat kondisi ekstrem, bukan mengganti sistem.
+- **Langkah sebelum implementasi:** backtest dulu ke data live (frekuensi tren parabolik di H1 FX / M30 XAU, apakah filter mengunci profit lebih baik daripada trailing biasa). Belum ada skrip pengukuran — dibutuhkan kalau mau lanjut.
+
+### Perubahan 20 Agustus (lanjutan malam) — Refactor GLOBAL BEP/Trailing (single-path, hasil backtest S9)
+
+**Latar belakang:** user kurang sreg dengan trailing SL-progressive (`1.2→0.4×SL`) dan BEP 35% TP. Backtest matrix `scratch/bep_trail_matrix.py` (S9 BUY GBPUSD, n=174, baseline +0.302):
+- **BEP**: 35% → +0.158 (paling merusak), 50% → +0.205, 65% → +0.222 → **BEP lebih telat lebih baik**
+- **Trailing**: act70 + distance konstan 0.5×ATR → **+0.272 (terbaik, nyaris setara baseline)**; progressive SL → +0.197; ADAPTIVE range (ide user) → +0.041 (paling merusak — data bilang kebalikannya); fixed pips 10/20 → +0.180/+0.128 (inferior dari ATR)
+- BEP35 + TRAIL58 atr1.0 (≈ setting bot lama) → +0.092 (jelek)
+
+**Keputusan user (20 Agustus):** *"boleh, tapi BEP tetep harus ada padding komisinya dan aktif di 58% TP jangan telat banget"*.
+
+| Parameter | Lama | Baru |
+|---|---|---|
+| `BREAK_EVEN_TRIGGER_TP_PCT` | 0.35 | **0.58** (58% TP + padding komisi tetap) |
+| `TRAILING_ACTIVATION_TP_PCT` | 0.58 | **0.70** (70% TP) |
+| Trailing distance | SL-progressive 1.2→0.4×SL (floor 0.3) | **KONSTAN 0.5×ATR(14)** (`TRAILING_DISTANCE_ATR_MULT_FX=0.5`, XAU/BTC juga 0.5) |
+| Floor absolut trailing | `TRAILING_DISTANCE_MIN_POINTS_FX=25` | **60 pts** (6 pips, sesuai floor backtest) |
+| Mode LLM vs ATR-Based | percabangan di BEP/trailing | **DIHAPUS → single path global** per simbol |
+
+**Implementasi:**
+1. `config.py`: default BEP 0.35→0.58, activation 0.58→0.70; hapus `TRAILING_DISTANCE_START/END/MIN_SL_MULT` & `START/END/MIN_ATR_MULT_FX/XAU`; tambah `TRAILING_DISTANCE_ATR_MULT_FX=0.5`; XAU mult 0.6→0.5 (global). `BREAK_EVEN_TRIGGER_SL_MULT`/`TRAILING_ACTIVATION_SL_MULT` tetap ada = fallback posisi tanpa TP.
+2. `position_manager.py`: `_check_break_even` & `_check_trailing_stop` jadi **single path global** (hapus branching `sltp_mode_for`). Trailing: activation 70% TP (fallback 1.0×SL tanpa TP), distance **konstan 0.5×ATR dari harga ekstrem** (fallback `fallback_dist` kalau ATR gagal), floor absolut tetap. **TP-lock progressive (`_calculate_progressive_tp_lock_points`) & progressive distance DIHAPUS** — backtest membuktikan konstan 0.5×ATR paling tidak merusak edge. Padding komisi BEP (`comm_pad_pts` + `extra_cuan_pts` 15 pts) **tetap dipertahankan** (net profit saat BEP ≥ +$0.00).
+3. `.env`: sinkron (0.58 / 0.70 / ATR mult 0.5 / floor 60).
+4. **Test**: `scratch/test_bep_trail_global.py` — **15/15 PASS** (konstanta, BEP aktif tepat 58% + padding 16 pts, trailing aktif 70% + dist 60 pts BUY/SELL mirror, fallback tanpa TP).
 
 ### Optimasi kecepatan loop (11 Agustus — bersama fitur TP_SL_RULES)
 
@@ -504,6 +576,25 @@ Hasil pengujian terhadap **8.908 kombinasi confluence** (210 EDGE lolos) membuah
 - `verify_xau_m30_edges.py` — stabilitas tahunan per EDGE (semua edge harus dicek begini sebelum dipakai).
 
 **Status:** Belum diintegrasikan ke bot. Kandidat integrasi = **whisper Donchian BUY NY** (opsi paling konservatif: LLM tetap pegang keputusan, cuma dikasih konteks "breakout Donchian valid, historis 58.5% win"). Belum diputuskan user — diskusi dulu sebelum implementasi.
+
+### Update 20 Agustus (malam) — S9 Horn + HTF Structural Target = EDGE GBPUSD (revisi sebagian erratum)
+
+**Latar belakang:** user mengajukan laporan revisi audit (3 "cacat logika" backtest lama: TP kaku neckline+height memotong profit, mengabaikan daily ATR, buku melarang exit di target minimal) + aturan buku (Edianto Ong / Rayner Teo: bidik Maximum Price Objective / level struktural H4-Daily, bukan tinggi pola). Laporan mengklaim S9 profitable dengan TP structural / R:R 2.0 di GBPUSD & XAU.
+
+**Verifikasi (`scratch/verify_s9_htf.py`):**
+- **Angka laporan DIREPRODUKSI 100%** (GBPUSD `htf_structural` n=314 WR 42% EV +0.187; `rr_2.0` n=306 EV +0.176; XAU `rr_2.0` n=402 EV +0.037).
+- Audit script lama menemukan 2 kelemahan: (1) timeout 200 bar DIBUANG (bias seleksi), (2) `h4_high` rolling50 include high bar entry (win instan). **Setelah keduanya diperbaiki** (timeout dihitung pnl aktual, TP pakai rolling50 shift(1)): GBPUSD EV **+0.196**, CI_low **+0.034** ✅ — edge tetap, bukan artefak bug.
+- **Stabilitas GBPUSD 5/5 tahun positif** (2022 +0.564 ✅, 2023 +0.072, 2024 +0.137, 2025 +0.166, 2026 +0.098).
+- **XAU TIDAK edge**: EV +0.023, CI_low −0.102, 3/5 tahun negatif → klaim laporan "XAU profitable" = noise.
+- **7 pair cross negatif semua** → eksklusi cross pairs di laporan benar.
+- **Catatan teknis**: label "H4 swing high/low" di script keliru — implementasinya `rolling(50).max()` bar H1 (≈2 hari), bukan data H4. Valid sebagai "target resistance 2-hari + floor R:R 1.5".
+
+**Backtest trailing/BEP versi buku (`scratch/s9_trailing_backtest.py`) — SEMUA GAGAL:**
+- Fixed TP structural = **+0.196** (juara) | BEP 35% +0.066 | BEP 65% +0.027 | trail EMA20 **−0.045** | TP min→trail EMA20 −0.022 | trail structure+1×ATR +0.033 (tidak signifikan) | trail EMA20+TP −0.004.
+- **Insight kontra-intuitif**: trail EMA20 punya SL cuma 7% (93% exit trailing, "jarang kena SL") tapi EV negatif; fixed TP "sering kena SL" (57%) tapi EV +0.196 → yang menentukan **expectancy**, bukan frekuensi SL. **BEP paling merusak** (mengubah win 1.78R → 0R; WR sejati 42.9%→9.9%) karena avg win > avg loss, memotong win lebih mahal daripada menahan loss.
+- Koreksi bug internal: hasil awal trail_struct_atr −1.000 WR 0% = artefak script (SL hit hardcode r=−1.0 padahal SL trailing di atas entry = profit) → +0.033.
+
+**Status:** S9-GBPUSD (horn breakout + TP structural floor R:R 1.5, hold ~1.7 hari, avg win 1.78R) = **kandidat whisper terverifikasi**. BELUM diintegrasikan — detector S9 tetap terhapus dari `pattern_detector.py`; butuh keputusan user. Detail lengkap: `docs/backtest_augustus_2026.md` (section UPDATE malam). Skrip: `scratch/test_s9_htf_targets.py`, `verify_s9_htf.py`, `s9_trailing_backtest.py`.
 
 ---
 

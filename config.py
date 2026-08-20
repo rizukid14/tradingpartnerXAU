@@ -382,38 +382,26 @@ TRAILING_DISTANCE_POINTS_BTC = _getenv_int("TRAILING_DISTANCE_POINTS_BTC", 12500
 TRAILING_ACTIVATION_ATR_MULT_BTC = _getenv_float("TRAILING_ACTIVATION_ATR_MULT_BTC", 1.0)
 TRAILING_DISTANCE_ATR_MULT_BTC = _getenv_float("TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
 TRAILING_ACTIVATION_ATR_MULT_XAU = _getenv_float("TRAILING_ACTIVATION_ATR_MULT_XAU", 1.2)
-TRAILING_DISTANCE_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_ATR_MULT_XAU", 0.6)
+TRAILING_DISTANCE_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
 TRAILING_ACTIVATION_MAX_POINTS_BTC = _getenv_int("TRAILING_ACTIVATION_MAX_POINTS_BTC", 40000)
 TRAILING_ACTIVATION_MAX_POINTS_XAU = _getenv_int("TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
-TRAILING_DISTANCE_START_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_START_ATR_MULT_XAU", 1.2)
-TRAILING_DISTANCE_END_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_END_ATR_MULT_XAU", 0.4)
-TRAILING_DISTANCE_MIN_ATR_MULT_XAU = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MULT_XAU", 0.3)
-TRAILING_DISTANCE_START_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_START_ATR_MULT_FX", 0.8)
-TRAILING_DISTANCE_END_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_END_ATR_MULT_FX", 0.3)
-TRAILING_DISTANCE_MIN_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_MIN_ATR_MULT_FX", 0.2)
+# Distance trailing GLOBAL: KONSTAN 0.5x ATR(14) dari harga ekstrem (20 Agustus malam).
+# Hasil backtest S9 GBPUSD (n=174): act70 + atr0.5 = EV +0.272 (terbaik, nyaris baseline
+# +0.302); progressive SL +0.197, adaptif +0.041, fixed pips +0.128-0.180 (inferior).
+TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0.5)
 
-# --- SL-BASED TRAILING & BEP (mode LLM, 13 Agustus) ---
-# Di mode LLM, SL/TP murni struktur LLM (R:R bisa asimetris, TP bisa jauh, bahkan TP < SL).
-# Trailing/BEP di-scale ke jarak SL posisi (thesis-relative), BUKAN ke ATR (yang gak nyambung
-# sama struktur LLM) dan BUKAN ke % TP (yang bisa jauh & gak kesampean -> proteksi gak pernah
-# aktif). Mode ATR-Based tetap pakai konstanta ATR di atas (konsisten karena SL/TP-nya juga
-# turunan ATR).
-#
-# UPDATE 15 Agustus - BEP/trailing pindah ke PURE % TP (default 65%/80%):
-# SL-based (1x SL BEP, 1.5x SL activation) ternyata cacat di dua ujung untuk trade
-# R:R rendah (1.25-1.5, hasil gate R:R min 1.25):
-#   - Tanpa cap TP: activation 1.5x SL > TP 1.25x SL -> trailing TIDAK PERNAH nyala
-#   - Dengan cap 60% TP: activation jadi 0.75x SL -> kecepetan (sebelum 1x SL)
-# Pure % TP selalu proporsional ke target: R:R 2:1 -> BEP 1.3x SL, activation 1.6x SL
-# (ruang napas); R:R 1.25 -> BEP 0.81x SL, activation 1.0x SL (tetap nyala, pas).
-# Konstanta SL_MULT di bawah tetap dipakai sebagai FALLBACK untuk posisi tanpa TP.
-BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.35)  # BEP aktif saat profit >= 35% TP (responsif)
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.58)  # trailing aktif saat profit >= 58% TP
+# --- GLOBAL BEP & TRAILING (20 Agustus malam, refactor global single-path) ---
+# Percabangan mode LLM vs ATR-Based DIHAPUS -> satu jalur global per simbol.
+# Hasil backtest matrix (scratch/bep_trail_matrix.py, S9 BUY GBPUSD n=174):
+#   - BEP 35% +0.158 | 50% +0.205 | 65% +0.222  (BEP lebih telat = lebih baik;
+#     user memilih 58%: "aktif di 58% TP jangan telat banget")
+#   - TRAIL act70 + dist 0.5x ATR = +0.272 (terbaik, nyaris setara baseline +0.302)
+#   - progressive SL +0.197 | adaptif/range +0.041 | fixed pips +0.128-0.180 (inferior)
+# Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.58)  # BEP aktif saat profit >= 58% TP (padding komisi tetap dipertahankan)
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.70)  # trailing aktif saat profit >= 70% TP
 BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
-TRAILING_DISTANCE_START_SL_MULT = _getenv_float("TRAILING_DISTANCE_START_SL_MULT", 1.2)  # longgar saat baru aktif (15 Agu: 0.8->1.2)
-TRAILING_DISTANCE_END_SL_MULT = _getenv_float("TRAILING_DISTANCE_END_SL_MULT", 0.4)  # ketat mendekati TP (15 Agu: 0.3->0.4)
-TRAILING_DISTANCE_MIN_SL_MULT = _getenv_float("TRAILING_DISTANCE_MIN_SL_MULT", 0.3)  # floor (15 Agu: 0.2->0.3)
 TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 25)    # Floor absolut jarak trailing FX (pts) anti noise/spread
 TRAILING_DISTANCE_MIN_POINTS_XAU = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_XAU", 100)  # Floor absolut jarak trailing XAU (pts)
 

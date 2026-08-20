@@ -29,6 +29,13 @@ ATR_PERIOD = 14
 PROXIMITY_ATR_MULT = 0.5   # dekat S/R = jarak <= 0.5 ATR
 MULTI_PATTERN_BARS = 3     # 2+ pola searah dalam 3 bar
 
+# S9 Horn Bottom (GBPUSD-only) — mirror persis definisi backtest 20 Agu 2026
+# (scratch/test_s9_htf_targets.py + verify_s9_htf.py)
+S9_MAX_VALLEY_DIST = 10
+S9_FLAT_MULT = 0.25
+S9_CONFIRM_WINDOW = 5
+S9_STRONG_CLOSE_FRAC = 0.2
+
 def _session_wib(ts) -> str:
     if isinstance(ts, (int, float)):
         if ts > 1_000_000:
@@ -196,6 +203,69 @@ def _check_xau_structural_breakout(df: pd.DataFrame, symbol: str) -> str | None:
     return None
 
 
+def _check_s9_structural_breakout(df: pd.DataFrame, symbol: str) -> str | None:
+    """Deteksi S9 Horn Bottom (BUY) breakout di GBPUSD H1 — edge tervalidasi 20 Agu 2026.
+
+    Mirror persis definisi backtest:
+    - 2 valley sejajar flat (|L1-L2| < 0.25*ATR14, jarak <= 10 bar); neckline = high max antar valley
+    - Candle TERAKHIR = konfirmasi breakout: gap up (open > close prev), close > neckline,
+      strong close (close di 20% area terujung atas range)
+    - Edge HANYA arah BUY (horn bottoms): n=174, WR 45.4%, EV +0.302 (CI_low +0.067),
+      5/5 tahun positif. SELL (horn tops) TIDAK signifikan (EV +0.071) -> tidak di-whisper.
+    """
+    try:
+        if "GBPUSD" not in symbol.upper():
+            return None
+        if len(df) < 25:
+            return None
+        o = df["open"].to_numpy(dtype=float)
+        h = df["high"].to_numpy(dtype=float)
+        l = df["low"].to_numpy(dtype=float)
+        c = df["close"].to_numpy(dtype=float)
+        tr = pd.concat([
+            df["high"] - df["low"],
+            (df["high"] - df["close"].shift(1)).abs(),
+            (df["low"] - df["close"].shift(1)).abs(),
+        ], axis=1).max(axis=1)
+        atr = tr.rolling(ATR_PERIOD).mean().to_numpy(dtype=float)
+
+        n = len(df)
+        last = n - 1
+        valley = [i for i in range(2, n - 1) if l[i] < l[i - 1] and l[i] < l[i + 1]]
+        for a in range(len(valley) - 1):
+            L1_idx, L2_idx = valley[a], valley[a + 1]
+            dist = L2_idx - L1_idx
+            if dist <= 0 or dist > S9_MAX_VALLEY_DIST:
+                continue
+            if np.isnan(atr[L2_idx]):
+                continue
+            L1, L2 = l[L1_idx], l[L2_idx]
+            if abs(L1 - L2) >= S9_FLAT_MULT * atr[L2_idx]:
+                continue
+            interim = h[L1_idx:L2_idx + 1].max()
+            # Konfirmasi breakout harus di candle TERAKHIR (sinyal fresh, entry belum terjadi)
+            if not (L2_idx + 1 <= last <= L2_idx + S9_CONFIRM_WINDOW):
+                continue
+            rng_last = h[last] - l[last]
+            if rng_last <= 0:
+                continue
+            strong = (h[last] - c[last]) <= S9_STRONG_CLOSE_FRAC * rng_last
+            if (o[last] > c[last - 1] and c[last] > interim and strong
+                    and not np.isnan(atr[last]) and atr[last] > 0):
+                return (
+                    f"### STRUCTURAL BREAKOUT RESEARCH (HISTORICAL BACKTEST DATA)\n"
+                    f"Detected: GBPUSD H1 S9 Horn Bottom (double-valley accumulation) breakout with strong close.\n"
+                    f"Validated backtest (n=174, 3yr, BUY-only, actual R, spread deducted): "
+                    f"Win rate 45.4% at R:R 1:1.5+, EV +0.30 (95% CI low +0.07, 5/5 years positive).\n"
+                    f"Edge structure: hold ~1.7 days, exit at 2-day structural resistance (floor R:R 1.5). "
+                    f"Backtest shows BEP/trailing exits REDUCE this edge -- let price reach the structural target.\n"
+                    f"(Historical probability context only -- NOT a directive, NOT a rule. The final decision is yours.)\n"
+                )
+    except Exception:
+        pass
+    return None
+
+
 def detect_and_whisper(df: pd.DataFrame, symbol: str) -> str | None:
     """Deteksi pola di candle terakhir & match registry. Return whisper_str atau None.
 
@@ -209,6 +279,12 @@ def detect_and_whisper(df: pd.DataFrame, symbol: str) -> str | None:
         xau_whisper = _check_xau_structural_breakout(df, symbol)
         if xau_whisper:
             return xau_whisper
+
+    # Khusus GBPUSD: S9 Horn Bottom BUY breakout (edge tervalidasi 20 Agustus)
+    if "GBPUSD" in symbol.upper():
+        s9_whisper = _check_s9_structural_breakout(df, symbol)
+        if s9_whisper:
+            return s9_whisper
 
     registry = get_registry()
     if registry is None or len(registry) == 0:
