@@ -37,21 +37,102 @@ def send_message(text):
 
 
 
-def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None):
-    """Send trade entry alert with full context."""
+def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None,
+                       ticket=None, entry_price=None, sl_price=None, tp_price=None, models="", confidence=0.0,
+                       setup="", reason="", invalidation=""):
+    """Send trade entry alert with full technical and AI context."""
     emoji = "🟢" if signal == "BUY" else "🔴"
     mode_tag = " RECOVERY" if recovery_mode else (" DRY RUN" if config.DRY_RUN else " LIVE")
     sym = symbol or config.SYMBOL
-    text = (
-        f"{emoji} *Trade {signal} Dibuka*\n"
-        f"- Symbol: `{sym}`\n"
-        f"- Lot: `{lot}` (session x{session_multiplier})\n"
-        f"- SL: `{sl_points}` pts | TP: `{tp_points}` pts\n"
-        f"- Mode: `{mode_tag}`\n"
-        f"- Partial Close: `{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'}` "
-        f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)"
-    )
-    send_message(text)
+
+    rr_str = ""
+    if sl_points and sl_points > 0 and tp_points:
+        rr_str = f" | R:R {tp_points/sl_points:.2f}:1"
+
+    sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
+    tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
+
+    lines = [
+        f"{emoji} *Trade {signal} Dibuka (Market Order)*",
+        f"• *Symbol*: `{sym}`",
+    ]
+    if ticket:
+        lines.append(f"• *Ticket*: `#{ticket}`")
+    if entry_price:
+        lines.append(f"• *Entry Price*: `{entry_price}`")
+    lines.append(f"• *Lot Size*: `{lot}` (session x{session_multiplier})")
+    lines.append(f"• *Stop Loss*: {sl_str}")
+    lines.append(f"• *Take Profit*: {tp_str}")
+    lines.append(f"• *Mode*: `{mode_tag}`")
+
+    if models:
+        conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
+        lines.append(f"• *Model Sepakat*: `{models}{conf_str}`")
+    if setup:
+        lines.append(f"• *Setup*: `{setup}`")
+    if reason:
+        lines.append(f"• *Reason*: _{reason}_")
+    if invalidation:
+        lines.append(f"• *Invalidation*: _{invalidation}_")
+
+    send_message("\n".join(lines))
+
+
+def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_points, tp_points,
+                               sl_price=None, tp_price=None, models="", confidence=0.0,
+                               setup="", reason="", invalidation="", expiration_minutes=120):
+    """Send rich notification when a pending order (buy_stop, sell_stop, buy_limit, sell_limit) is placed."""
+    emoji = "⏳"
+    etype_upper = (entry_type or "pending").upper()
+    sym = symbol or config.SYMBOL
+
+    rr_str = ""
+    if sl_points and sl_points > 0 and tp_points:
+        rr_str = f" | R:R {tp_points/sl_points:.2f}:1"
+
+    sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
+    tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
+
+    lines = [
+        f"{emoji} *Pending Order Terpasang: {etype_upper}*",
+        f"• *Symbol*: `{sym}`",
+        f"• *Ticket*: `#{ticket}`",
+        f"• *Entry Price*: `{entry_price}`",
+        f"• *Lot Size*: `{lot}`",
+        f"• *Stop Loss*: {sl_str}",
+        f"• *Take Profit*: {tp_str}",
+    ]
+
+    if models:
+        conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
+        lines.append(f"• *Model Sepakat*: `{models}{conf_str}`")
+    if setup:
+        lines.append(f"• *Setup*: `{setup}`")
+    if reason:
+        lines.append(f"• *Reason*: _{reason}_")
+    if invalidation:
+        lines.append(f"• *Invalidation*: _{invalidation}_")
+    if expiration_minutes:
+        lines.append(f"• *Expire*: `{expiration_minutes} Menit`")
+
+    send_message("\n".join(lines))
+
+
+def alert_pending_order_filled(ticket, symbol, pos_type, price, pos_id=None, sl_price=None, tp_price=None):
+    """Send notification when a pending order is filled by broker (AI Proven)."""
+    sym = symbol or config.SYMBOL
+    ptype_upper = (pos_type or "").upper()
+    lines = [
+        f"🎯 *Pending Order TER-FILL -> Posisi Aktif* (AI Proven)",
+        f"• *Symbol*: `{sym}`",
+        f"• *Order*: `{ptype_upper}`",
+        f"• *Ticket Posisi*: `#{pos_id or ticket}`",
+        f"• *Execution Price*: `{price}`",
+    ]
+    if sl_price or tp_price:
+        lines.append(f"• *SL / TP*: `SL {sl_price or '-'} | TP {tp_price or '-'}`")
+    lines.append("• *Status*: _Level entry tercapai. Posisi kini aktif & dikawal oleh Position Manager._")
+    send_message("\n".join(lines))
 
 
 from datetime import datetime

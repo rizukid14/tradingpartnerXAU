@@ -100,8 +100,11 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 # --- TELEGRAM & BOT API CONFIG ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_TOKEN = TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", True)
+TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8765")
 API_TOKEN = os.getenv("API_TOKEN", "")
 
@@ -181,13 +184,13 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        # 19 Agustus (user): XAUUSD diganti GBPUSD + USDCAD (8 pair pool H1).
-        # Pool FX 8 simbol H1: GBPUSD, USDCAD, EURJPY, GBPAUD, AUDCAD, EURCHF, AUDCHF, CADCHF.
-        "GBPUSD-ECNc,USDCAD-ECNc,EURJPY-ECNc,GBPAUD-ECNc,AUDCAD-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc",
+        # 20 Agustus (user): USDCAD di-remove (7 pair pool H1 untuk penghematan).
+        # Pool FX 7 simbol H1: GBPUSD, EURJPY, GBPAUD, AUDCAD, EURCHF, AUDCHF, CADCHF.
+        "GBPUSD-ECNc,EURJPY-ECNc,GBPAUD-ECNc,AUDCAD-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc",
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 8)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 7)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M30").upper()
 TIMEFRAME_MAP = {
@@ -361,7 +364,7 @@ ECONOMIC_NEWS_COUNTRIES = [
 # Event global: US high-impact yang mempengaruhi SEMUA pair (bukan cuma pair USD)
 ECONOMIC_NEWS_GLOBAL_KEYWORDS = ("FOMC", "NFP", "Non Farm", "Powell", "Trump", "Fed Chair", "Fed Rate")
 # Event US lain (CPI, PCE, Retail Sales, Unemployment, GDP US, ISM, dst) =
-# pair-specific USD -> hanya GBPUSD & USDCAD yang kena.
+# pair-specific USD -> hanya GBPUSD yang kena.
 
 # POST_MORTEM_ENABLED = False (default): mesin post-mortem (trade_evaluator) DIMATIKAN.
 # Hasilnya (lessons) sudah tidak dipakai karena MEMORY_CONTEXT_ENABLED=False, tapi
@@ -508,7 +511,7 @@ SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
     {"name": "Tokyo / Asia Pagi", "start": (9, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
-    {"name": "London-NY Overlap", "start": (19, 30),"end": (21, 30), "lot_multiplier": 1.2},
+    {"name": "London-NY Overlap", "start": (19, 0), "end": (21, 0),  "lot_multiplier": 1.2},
     {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": 1.0},
 ]
 

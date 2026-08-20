@@ -443,16 +443,20 @@ def calculate_consensus(decisions):
 
     best_setup = ""
     best_reason = ""
+    best_invalidation = ""
     sorted_agreeing = sorted(agreeing_models, key=lambda m: decisions.get(m, {}).get("confidence", 0.0), reverse=True)
     for m in sorted_agreeing:
         dec = decisions.get(m, {})
         s_candidate = (dec.get("setup") or "").strip()
         r_candidate = (dec.get("reasoning") or dec.get("edge") or "").strip()
+        i_candidate = (dec.get("invalidation") or "").strip()
         if s_candidate and not best_setup:
             best_setup = " ".join(s_candidate.replace("\n", " ").replace("\r", " ").split())
         if r_candidate and not best_reason:
             best_reason = " ".join(r_candidate.replace("\n", " ").replace("\r", " ").split())
-        if best_setup and best_reason:
+        if i_candidate and not best_invalidation:
+            best_invalidation = " ".join(i_candidate.replace("\n", " ").replace("\r", " ").split())
+        if best_setup and best_reason and best_invalidation:
             break
 
     badge = UI.badge_signal(consensus_signal)
@@ -481,6 +485,7 @@ def calculate_consensus(decisions):
         "agreeing_models": list(agreeing_models),
         "setup": best_setup,
         "reason": best_reason,
+        "invalidation_text": best_invalidation,
         "tickets_to_close": tickets_to_close,
         "details": f"Consensus by: {agreeing_models}"
     }

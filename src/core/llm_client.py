@@ -1570,6 +1570,27 @@ def query_claude(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Claude Error: {str(e)}"}
 
 
+def query_all_models_parallel(prompt, models=("OpenAI", "Gemini", "DeepSeek")):
+    """Queries specified LLM models in parallel and returns dict of decisions."""
+    model_fns = {
+        "OpenAI": query_openai,
+        "Gemini": query_gemini,
+        "DeepSeek": query_deepseek,
+        "Claude": query_claude,
+    }
+    selected = {name: model_fns[name] for name in models if name in model_fns}
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(selected))) as executor:
+        futs = {executor.submit(fn, prompt): name for name, fn in selected.items()}
+        for fut in concurrent.futures.as_completed(futs):
+            name = futs[fut]
+            try:
+                results[name] = fut.result()
+            except Exception as e:
+                results[name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Error: {e}"}
+    return results
+
+
 
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
                             whisper_str=None, all_open_positions=None):

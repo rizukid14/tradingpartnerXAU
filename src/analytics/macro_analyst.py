@@ -90,14 +90,14 @@ class MacroAnalyst:
         matches.sort(key=lambda m: (m[2], -m[1]))
         return matches[0][0]
 
-    def check_and_update_analysis(self, force=False):
+    def check_and_update_analysis(self, force=False, symbol=None):
         """
         Checks if higher timeframe candles or trading session have updated.
         If they have, triggers LLM analysis and updates cache.
         If force=True, runs analysis immediately regardless of last candle/session times.
         """
         updated = False
-        sym = config.SYMBOL
+        sym = symbol or config.SYMBOL
 
         if sym not in self.cache:
             self.cache[sym] = {
@@ -124,7 +124,7 @@ class MacroAnalyst:
 
                     if force or current_candle_time > cached_candle_time:
                         print(f" [MTF] Menjalankan analisa struktur untuk timeframe {tf_name} ({sym})...")
-                        analysis = self._run_timeframe_analysis(tf_name, tf_const)
+                        analysis = self._run_timeframe_analysis(tf_name, tf_const, symbol=sym)
                         if analysis:
                             sym_cache["timeframe_analysis"][tf_name] = {
                                 "last_candle_time": current_candle_time,
@@ -143,7 +143,7 @@ class MacroAnalyst:
             # Trigger if session changes and is valid, or if force run
             if force or (current_session != "None" and current_session != cached_session):
                 print(f" [FUNDAMENTAL] Menjalankan analisa fundamental untuk sesi '{current_session}' ({sym})...")
-                outlook = self._run_fundamental_analysis()
+                outlook = self._run_fundamental_analysis(symbol=sym)
                 if outlook:
                     sym_cache["last_fundamental_session"] = current_session
                     sym_cache["last_fundamental_time"] = time.time()
@@ -154,12 +154,13 @@ class MacroAnalyst:
             self._save_cache()
             print(f" [MACRO] Analisa cache diperbarui dan disimpan ({sym}).")
 
-    def _run_timeframe_analysis(self, tf_name, tf_const):
+    def _run_timeframe_analysis(self, tf_name, tf_const, symbol=None):
         """
         Computes higher-timeframe trend structure DIRECTLY from MT5 indicators -
         NO LLM call. EMA20/50, RSI, ATR dan swing high/low dihitung dari df M30
         (XAU) / H1-H4 (BTC). Output teks faktual, bukan opini LLM.
         """
+        sym = symbol or config.SYMBOL
         if tf_name == "M15":
             window_size = 48
         elif tf_name == "M30":
@@ -177,9 +178,9 @@ class MacroAnalyst:
         # 20 Agustus, paket anti-FOMC). H4/D1 fetch 260 bar (sekali per
         # pergantian candle HTF, cache per-symbol sudah ada - murah).
         fetch_candles = 260 if tf_name in ("H4", "D1") else max(50, window_size + 20)
-        df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=fetch_candles)
+        df = connector.get_market_data(sym, tf_const, num_candles=fetch_candles)
         if df is None or len(df) < 30:
-            print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
+            print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name} ({sym}).")
             return None
 
         latest = df.iloc[-1]
@@ -246,15 +247,21 @@ class MacroAnalyst:
             f"swing {window_size}-candle: high {_fmt(swing_high)} ({resistance_line}), low {_fmt(swing_low)} ({support_line})"
         )
 
-    def _run_fundamental_analysis(self):
+    def _run_fundamental_analysis(self, symbol=None):
         """Queries Gemini with Search Grounding to generate fundamental outlook."""
-        return llm.analyze_fundamentals(config.SYMBOL)
+        sym = symbol or config.SYMBOL
+        return llm.analyze_fundamentals(sym)
 
-    def get_macro_context(self):
+    def get_macro_context(self, symbol=None):
         """Formats the cached macro & MTF analyses into a unified context block."""
         context = []
-        sym = config.SYMBOL
+        sym = symbol or config.SYMBOL
         sym_cache = self.cache.get(sym, {})
+
+        # If cache for this symbol is missing, build it on-demand
+        if not sym_cache or not sym_cache.get("timeframe_analysis"):
+            self.check_and_update_analysis(force=True, symbol=sym)
+            sym_cache = self.cache.get(sym, {})
 
         # 1. Add Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
@@ -279,3 +286,7 @@ class MacroAnalyst:
             return ""
 
         return "\n\n".join(context)
+
+
+# Singleton instance for modular access
+analyst = MacroAnalyst()

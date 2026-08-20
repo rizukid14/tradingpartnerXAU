@@ -178,11 +178,11 @@ def _detect_filled_pending():
         if not events:
             return
         # Pending yang tercatat 'placed' dan belum punya status terminal
-        # (filled/expired/cancelled) - fix 18 Agustus: filter tiket yang sudah
-        # punya event terminal biar tidak terdeteksi filled BERULANG tiap cycle.
+        # (filled/expired/cancelled) - filter tiket yang sudah punya event terminal
+        # (semua event selain 'placed') agar tidak terdeteksi berulang tiap cycle.
         terminal_tickets = {
             e.get("ticket") for e in events
-            if e.get("event") in ("filled", "expired", "cancelled_cap", "cancelled_contra") and e.get("ticket")
+            if e.get("event") != "placed" and e.get("ticket")
         }
         active_placed = {}
         for e in events:
@@ -222,6 +222,15 @@ def _detect_filled_pending():
                 changed = True
                 print(f" {UI.tag('PENDING', UI.GREEN)} Pending #{ticket} {ev.get('type')} {ev.get('symbol')} "
                       f"@ {ev.get('price')} TER-FILL -> posisi #{pos_id}. (AI proven: level entry tercapai)")
+                tg.alert_pending_order_filled(
+                    ticket=ticket,
+                    symbol=ev.get("symbol"),
+                    pos_type=ev.get("type"),
+                    price=ev.get("price"),
+                    pos_id=pos_id,
+                    sl_price=ev.get("sl_price"),
+                    tp_price=ev.get("tp_price"),
+                )
             else:
                 # Pending hilang + TIDAK ada deal IN = DICANCEL MANUAL ATAU EXPIRED
                 ev2 = dict(ev)
@@ -282,7 +291,7 @@ def _report_pending_stats():
         placed = [e for e in events if e.get("event") in ("placed",)]
         filled = [e for e in events if e.get("event") == "filled"]
         expired = [e for e in events if e.get("event") == "expired"]
-        cancelled = [e for e in events if e.get("event") == "cancelled_contra"]
+        cancelled = [e for e in events if e.get("event") in ("cancelled_contra", "cancelled_cap", "cancelled_manual")]
         print(f" {UI.tag('PENDING STATS', UI.MAGENTA)} placed={len(placed)} filled={len(filled)} "
               f"expired={len(expired)} cancelled={len(cancelled)}")
     except Exception as e:
@@ -879,8 +888,9 @@ def _prompt_startup_scan_mode(skip_prompt=False):
         import msvcrt
     except ImportError:
         return
+    n_pool = len(config.get_rotation_pool())
     print(f"\n{UI.CYAN}+-- [PILIHAN STARTUP SCAN MODE] -----------------------------------------+{UI.RST}")
-    print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua 8 Simbol Sekarang (Immediate Full Market Scan)            |")
+    print(f"| {UI.BOLD}[1]{UI.RST} Scan Semua {n_pool} Simbol Sekarang (Immediate Full Market Scan)            |")
     print(f"| {UI.BOLD}[2]{UI.RST} Scan Sesuai Timeframe (Smart Rotation: H1 / M30 - Default)           |")
     print(f"{UI.CYAN}+------------------------------------------------------------------------+{UI.RST}")
     sys.stdout.write(f"  {UI.YELLOW}Pilihan [2]{UI.RST} (10 detik timeout, Enter = default): ")
@@ -905,7 +915,7 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     sys.stdout.write("\n")
     sys.stdout.flush()
     _STARTUP_SCAN_MODE = "all" if buf.strip() == "1" else "timeframe"
-    mode_txt = "SCAN ALL 8 SYMBOLS NOW" if _STARTUP_SCAN_MODE == "all" else "SMART ROTATION (Tunggu Candle Close Tiap Aset)"
+    mode_txt = f"SCAN ALL {n_pool} SYMBOLS NOW" if _STARTUP_SCAN_MODE == "all" else "SMART ROTATION (Tunggu Candle Close Tiap Aset)"
     print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
@@ -1317,9 +1327,28 @@ def _run_cycle_for_current_symbol():
                             "price": entry_price,
                             "sl_points": sl_points,
                             "tp_points": tp_points,
+                            "sl_price": p_sl_price,
+                            "tp_price": p_tp_price,
                             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
                         })
                         print(f" {UI.tag('PENDING', UI.GREEN)} Pending {entry_type} @ {entry_price} terpasang (ticket {pending_res['ticket']}).")
+                        tg.alert_pending_order_placed(
+                            symbol=config.SYMBOL,
+                            entry_type=entry_type,
+                            ticket=pending_res["ticket"],
+                            entry_price=entry_price,
+                            lot=effective_lot,
+                            sl_points=sl_points,
+                            tp_points=tp_points,
+                            sl_price=p_sl_price,
+                            tp_price=p_tp_price,
+                            models=", ".join(result.get("agreeing_models") or []),
+                            confidence=result.get("confidence", 0.0),
+                            setup=result.get("setup", ""),
+                            reason=result.get("reason", ""),
+                            invalidation=result.get("invalidation_text", ""),
+                            expiration_minutes=config.PENDING_ORDER_EXPIRY_MINUTES,
+                        )
                     else:
                         print(f" {UI.tag('PENDING', UI.RED)} Gagal pasang pending: {pending_res.get('comment')}")
                     return True  # pending sudah dipasang, tidak lanjut ke market order
@@ -1374,7 +1403,16 @@ def _run_cycle_for_current_symbol():
                     trade_signal, effective_lot, sl_points, pos_tp,
                     recovery_mode=risk.is_recovery_mode,
                     session_multiplier=risk.session_lot_multiplier,
-                    symbol=config.SYMBOL
+                    symbol=config.SYMBOL,
+                    ticket=order_res["ticket"],
+                    entry_price=execution_price if 'execution_price' in locals() else None,
+                    sl_price=sl_price,
+                    tp_price=pos_tp_price,
+                    models=", ".join(result.get("agreeing_models") or []),
+                    confidence=result.get("confidence", 0.0),
+                    setup=result.get("setup", ""),
+                    reason=result.get("reason", ""),
+                    invalidation=result.get("invalidation_text", ""),
                 )
             else:
                 print(f"Gagal menempatkan order #{i+1}: {order_res['comment']}")
@@ -1490,6 +1528,13 @@ def main():
     
     # Send startup alert
     tg.alert_bot_started()
+
+    # Start 2-Way Interactive Telegram Bot Controller (Long-Polling Listener)
+    try:
+        from src.core import telegram_bot
+        telegram_bot.start_telegram_listener()
+    except Exception as e:
+        print(f" [TELEGRAM BOT LISTENER ERROR] {e}")
     
     # Run initial macro and MTF analysis (forced on startup to ensure we have data immediately)
     if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
@@ -1713,8 +1758,11 @@ def main():
             else:
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
 
-            main_sym = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
-            header_part = f"[{UI.BOLD}{main_sym}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
+            if config.TRADING_MODE == "xau_pairs":
+                label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS"
+            else:
+                label_hdr = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
+            header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
             # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)
             # supaya auto-scroll terminal tidak merusak refresh in-place multi-baris.
