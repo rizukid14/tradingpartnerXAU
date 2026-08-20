@@ -668,6 +668,8 @@ def interactive_setup():
         ("PROTEKSI", "Weekend Trading", "config.WEEKEND_TRADING_ENABLED", "ON" if config.WEEKEND_TRADING_ENABLED else "OFF"),
         ("ANALISIS & NOTIF", "MTF Analysis", "config.MTF_ANALYSIS_ENABLED", "ON" if config.MTF_ANALYSIS_ENABLED else "OFF"),
         ("ANALISIS & NOTIF", "Fundamental", "config.FUNDAMENTAL_ANALYSIS_ENABLED", "ON" if config.FUNDAMENTAL_ANALYSIS_ENABLED else "OFF"),
+        ("ANALISIS & NOTIF", "News Filter (Kalender)", "config.ECONOMIC_NEWS_ENABLED",
+         "ON (fetch 6 jam, high-impact)" if config.ECONOMIC_NEWS_ENABLED else "OFF"),
         ("ANALISIS & NOTIF", "Telegram", "config.TELEGRAM_ENABLED", "ON" if config.TELEGRAM_ENABLED else "OFF"),
     ]
 
