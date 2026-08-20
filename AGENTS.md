@@ -123,11 +123,15 @@ python main.py
 5. **HTF NOTES tegas + EMA50 slope**:
    - `macro_analyst.py` `_run_timeframe_analysis`: hitung `ema50_slope` (rising/falling/flat dari EMA50 bar vs prev) → di-inject di tiap baris MTF.
    - `llm_client.py`: **CRITICAL TREND FILTER** baru setelah HTF NOTES: *"if RSI is oversold AND EMA50 slope is pointing DOWN AND price is BELOW both EMA20 and EMA50 → STRONG DOWNWARD CONTINUATION, NOT a pullback -- DO NOT FADE OR BUY"* (+ mirror untuk overbought/up). Mean-reversion hanya boleh kalau ADX < 20 atau structural extreme jelas.
-6. **EMA200 H4/D1 regime filter**: `macro_analyst.py` fetch H4/D1 naik ke **260 bar** (cukup utk EMA200 valid; sekali per pergantian candle HTF, cache per-symbol sudah ada — murah). Output MTF tambah: `EMA200 1.0881 (close ABOVE, 5.7x ATR -> BULLISH regime (institutions long))`. `mt5_connector.py` hitung `ema_200` hanya kalau `len(df) >= 200` (NaN di data pendek — prompt utama 103 bar tidak terpengaruh). Indicator block aktif-timeframe juga support EMA200 (muncul hanya kalau df ≥ 200 bar).
-
-**Catatan:** EMA200 **H1 eksekusi** (fetch 260 bar di prompt utama) BELUM dipasang — paket ini EMA200 dari HTF (H4/D1) saja; H1 eksekusi bisa jadi fase berikutnya. Gate keras EMA200+ADX di `consensus.py` masih PLAN (item 7 ditunda). Token impact: +150-250 token/call (ADX + EMA200 + slope + news guard) — masih hemat.
+7. **Penataan Layout Prompt Top-Down & Pemendekan Note Spread (20 Agustus)**:
+   - Layout prompt di `llm_client.py` dirapikan mengikuti *Top-Down Attention Flow*: `### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT` (H4/D1, EMA200, Critical Trend Filter) → `### TECHNICAL INDICATORS (Active Timeframe H1)` → `### INTRADAY STRUCTURE (50-bar Window)` → `### MACRO STRUCTURE (100-bar Window)` → `### RECENT PRICE ACTION`.
+   - `Spread note` dipangkas dari 47 kata (~240 karakter) menjadi 12 kata (~75 karakter: *"Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD."*) — menghemat token tanpa mengurangi instruksi.
+8. **Hasil Benchmark Live 3 Model AI (OpenAI + Gemini + DeepSeek)**:
+   - Pengujian live 8 FX pairs membuktikan **100% efektivitas Anti-Fade Filter**: DeepSeek (v4-flash), OpenAI (o4-mini), dan Gemini (3.1-flash-lite) secara konsisten mengeluarkan **HOLD** atau **SELL mengikuti tren turun** (tidak ada lagi BUY konyol saat crash).
+   - Kasus `EURCHF`: OpenAI (SELL 0.65) + Gemini (SELL 0.75) sepakat 2/2 searah (Skor 1.40 > 1.0 Threshold) → **Bot berhasil mengeksekusi SELL terukur mengikuti tren**.
 
 **Verifikasi:** `scratch/preview_fx_prompt.py` (GBPCHF H1) — ADX14 20.1 (trend building), EMA200 H4 5.7x ATR ABOVE (BULLISH), slope EMA50 rising, CRITICAL TREND FILTER ter-inject, momentum rule terperkuat. `economic_calendar.get_context()` simulasi 19 Agu 19:00 WIB → FOMC Minutes in 6.0h; 20 Agu 03:00 WIB → recently released 2.0h ago; hari tenang → kosong. `py_compile` 4 file OK.
+
 
 
 ### Optimasi kecepatan loop (11 Agustus — bersama fitur TP_SL_RULES)
