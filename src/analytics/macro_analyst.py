@@ -173,7 +173,10 @@ class MacroAnalyst:
         else:
             window_size = 30
 
-        fetch_candles = max(50, window_size + 20)
+        # EMA200 H4/D1 butuh >= 200 bar utk valid (institutional regime filter,
+        # 20 Agustus, paket anti-FOMC). H4/D1 fetch 260 bar (sekali per
+        # pergantian candle HTF, cache per-symbol sudah ada - murah).
+        fetch_candles = 260 if tf_name in ("H4", "D1") else max(50, window_size + 20)
         df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=fetch_candles)
         if df is None or len(df) < 30:
             print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
@@ -185,6 +188,12 @@ class MacroAnalyst:
         ema50 = float(latest["ema_50"])
         rsi = float(latest["rsi_14"])
         atr = float(latest["atr_14"])
+
+        # EMA50 slope (20 Agustus, paket anti-FOMC): tren ekspansi yang SEDANG
+        # terjadi ditandai slope EMA50 searah. Slope dihitung dari pergeseran
+        # EMA50 bar terakhir vs bar sebelumnya (naik/turun).
+        ema50_prev = float(df["ema_50"].iloc[-2]) if len(df) >= 2 else ema50
+        ema50_slope = "rising" if ema50 > ema50_prev else ("falling" if ema50 < ema50_prev else "flat")
 
         # Trend direction dari hubungan harga vs EMA20 vs EMA50
         if close > ema20 > ema50:
@@ -213,13 +222,27 @@ class MacroAnalyst:
         else:
             rsi_label = "neutral"
 
+        # EMA200 regime (institutional benchmark). Hanya valid kalau data >= 200 bar
+        # (fetch 260 di atas). NaN kalau data pendek -> skip baris EMA200.
+        ema200_str = ""
+        if "ema_200" in df.columns and len(df) >= 200:
+            ema200 = float(df["ema_200"].iloc[-1])
+            if ema200 == ema200:  # NaN guard
+                above = close >= ema200
+                dist200 = (close - ema200) / (atr if atr > 0 else 1.0)
+                regime = "BULLISH regime (institutions long)" if above else "BEARISH regime (institutions short)"
+                ema200_str = (
+                    f" | EMA200 {_fmt(ema200)} (close {'ABOVE' if above else 'BELOW'}, "
+                    f"{abs(dist200):.1f}x ATR -> {regime})"
+                )
+
         # Jarak harga ke swing (dalam satuan ATR) biar LLM tahu seberapa dekat level
         support_line = f"nearest support {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR below)" if swing_low_dist <= 2.0 else f"support far {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR)"
         resistance_line = f"nearest resistance {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR above)" if swing_high_dist <= 2.0 else f"resistance far {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR)"
 
         return (
             f"trend {trend} | close {_fmt(close)}, EMA20 {_fmt(ema20)}, EMA50 {_fmt(ema50)} "
-            f"(gap EMA {_fmt(abs(ema20 - ema50))}), RSI {rsi:.1f} ({rsi_label}), ATR {_fmt(atr)} | "
+            f"(gap EMA {_fmt(abs(ema20 - ema50))}, slope EMA50 {ema50_slope}), RSI {rsi:.1f} ({rsi_label}), ATR {_fmt(atr)}{ema200_str} | "
             f"swing {window_size}-candle: high {_fmt(swing_high)} ({resistance_line}), low {_fmt(swing_low)} ({support_line})"
         )
 

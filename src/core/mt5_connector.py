@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 from ta.trend import EMAIndicator
+from ta.trend import ADXIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 
@@ -190,6 +191,19 @@ def get_market_data(symbol, timeframe, num_candles=50):
         df['atr_14'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
     else:
         df['atr_14'] = float('nan')
+    # ADX(14) - trend strength filter (20 Agustus, paket anti-FOMC).
+    # ADX >= 25 = strong trend (do NOT counter-trend), ADX < 20 = ranging.
+    if len(df) >= 30:
+        df['adx_14'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
+    else:
+        df['adx_14'] = float('nan')
+    # EMA200 - institutional regime filter (H4/D1 macro context). Valid
+    # HANYA kalau data >= 200 bar (fetch 260 di macro_analyst). Short data
+    # requests (103 bar prompt utama) degrade to NaN - tidak dipakai di sana.
+    if len(df) >= 200:
+        df['ema_200'] = EMAIndicator(close=df['close'], window=200).ema_indicator()
+    else:
+        df['ema_200'] = float('nan')
     
     return df
 

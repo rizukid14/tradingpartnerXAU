@@ -330,13 +330,13 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
 # Jadwal WIB (Single Mode DIHAPUS TOTAL demi keamanan - minimal 2 model sepakat):
-#   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 00:00–19:29 (Asia & London session; 00:00-09:00 Dead Zone risk gate)
-#   - triple (OpenAI + Gemini + Claude 3.5 Haiku): 19:30–21:30 (London-NY overlap, puncak volatilitas)
-#   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 21:31–23:59 (Late NY session)
+#   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 00:00–18:59 (Asia & London session; 00:00-09:00 Dead Zone risk gate)
+#   - triple (OpenAI + Gemini + Claude/DeepSeek): 19:00–22:00 (London-NY overlap, puncak volatilitas — 4x call H1 pada jam 19, 20, 21, dan 22 WIB)
+#   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 22:01–23:59 (Late NY session)
 AI_MODE_SCHEDULE = [
-    (0, 0, 19, 29, "dual"),
-    (19, 30, 21, 30, "triple"),
-    (21, 31, 23, 59, "dual"),
+    (0, 0, 18, 59, "dual"),
+    (19, 0, 22, 0, "triple"),
+    (22, 1, 23, 59, "dual"),
 ]
 
 # Model pengisi slot kedua di mode "dual". Default "Gemini" (o4-mini + gemini-3.1-flash-lite).
@@ -347,6 +347,21 @@ QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
 MONTE_CARLO_ENABLED = _getenv_bool("MONTE_CARLO_ENABLED", False)
 FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", False)
 MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: lesson learned & recent outcomes TIDAK di-inject ke prompt LLM (lesson M5-scalp toxic, bikin HOLD terus). Kode tetap ada, tinggal set True kalau mau aktif lagi.
+
+# --- ECONOMIC NEWS (kalender ekonomi, 20 Agustus) ---
+# Fetch high-impact events dari TradingView API (data Investing.com) tiap N jam,
+# di-inject ke prompt LLM sebagai NEWS WINDOW GUARD. Event global (FOMC/NFP/
+# Powell/Trump speech) masuk ke SEMUA symbol; event negara lain hanya masuk ke
+# pair yang mengandung mata uang negara tsb (mis. ECB -> EURJPY/EURCHF saja).
+ECONOMIC_NEWS_ENABLED = _getenv_bool("ECONOMIC_NEWS_ENABLED", True)
+ECONOMIC_NEWS_TTL_HOURS = _getenv_int("ECONOMIC_NEWS_TTL_HOURS", 6)  # fetch tiap 6 jam
+ECONOMIC_NEWS_COUNTRIES = [
+    c.strip().upper() for c in os.getenv("ECONOMIC_NEWS_COUNTRIES", "US,GB,EU,CH,JP,AU,CA").split(",") if c.strip()
+]
+# Event global: US high-impact yang mempengaruhi SEMUA pair (bukan cuma pair USD)
+ECONOMIC_NEWS_GLOBAL_KEYWORDS = ("FOMC", "NFP", "Non Farm", "Powell", "Trump", "Fed Chair", "Fed Rate")
+# Event US lain (CPI, PCE, Retail Sales, Unemployment, GDP US, ISM, dst) =
+# pair-specific USD -> hanya GBPUSD & USDCAD yang kena.
 
 # POST_MORTEM_ENABLED = False (default): mesin post-mortem (trade_evaluator) DIMATIKAN.
 # Hasilnya (lessons) sudah tidak dipakai karena MEMORY_CONTEXT_ENABLED=False, tapi
