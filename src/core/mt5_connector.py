@@ -3,12 +3,14 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 from ta.trend import EMAIndicator
+from ta.trend import ADXIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 
 import config
 from config import mt5
 from src.core.cli_theme import UI
+from src.core import telegram_alerts
 
 # Indonesian Western Standard Time (WIB) = UTC+7 (Asia/Jakarta)
 WIB = ZoneInfo("Asia/Jakarta")
@@ -189,6 +191,19 @@ def get_market_data(symbol, timeframe, num_candles=50):
         df['atr_14'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
     else:
         df['atr_14'] = float('nan')
+    # ADX(14) - trend strength filter (20 Agustus, paket anti-FOMC).
+    # ADX >= 25 = strong trend (do NOT counter-trend), ADX < 20 = ranging.
+    if len(df) >= 30:
+        df['adx_14'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
+    else:
+        df['adx_14'] = float('nan')
+    # EMA200 - institutional regime filter (H4/D1 macro context). Valid
+    # HANYA kalau data >= 200 bar (fetch 260 di macro_analyst). Short data
+    # requests (103 bar prompt utama) degrade to NaN - tidak dipakai di sana.
+    if len(df) >= 200:
+        df['ema_200'] = EMAIndicator(close=df['close'], window=200).ema_indicator()
+    else:
+        df['ema_200'] = float('nan')
     
     return df
 
@@ -969,7 +984,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
             "tp": round(live_tp, symbol_info.digits),
             "deviation": deviation,
             "magic": config.MAGIC_NUMBER,
-            "comment": (str(comment)[:31].strip() if comment else "Multi-LLM Bot"),
+            "comment": (str(comment)[:25].strip() if comment else "Multi-LLM Bot"),
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_policy,
         }
@@ -981,12 +996,30 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
 
     if result is None:
         # _build return None = tick None saat kirim (feed hilang total)
+        telegram_alerts.alert_order_error(symbol, action, lot, sl_points, tp_points, "N/A", "Tick hilang / feed off saat kirim", price=price, sl_price=sl_price, tp_price=tp_price, thesis=comment)
         return {"status": "ERROR", "comment": "Tick hilang saat kirim (feed off) — order dibatalkan"}
 
     if not _is_order_success(result):
         retcode = getattr(result, "retcode", "N/A") if result else "N/A"
-        comment = getattr(result, "comment", "No result") if result else "No result"
-        print(f" {UI.tag('MT5 ERROR', UI.RED)} Order gagal! Retcode: {retcode}, Pesan: {comment}")
+        err_msg = getattr(result, "comment", "No result") if result else "No result"
+        print(f" {UI.tag('MT5 ERROR', UI.RED)} Order gagal! Retcode: {retcode}, Pesan: {err_msg}")
+        # Buffer untuk Telegram recap gabungan
+        req_p = last_req.get("price") if last_req else price
+        req_sl = last_req.get("sl") if last_req else sl_price
+        req_tp = last_req.get("tp") if last_req else tp_price
+        telegram_alerts.alert_order_error(
+            symbol=symbol,
+            signal=action,
+            lot=lot,
+            sl_points=sl_points,
+            tp_points=tp_points,
+            retcode=retcode,
+            comment=err_msg,
+            price=req_p,
+            sl_price=req_sl,
+            tp_price=req_tp,
+            thesis=comment or "Consensus LLM Trade",
+        )
         # Diagnostik 10013: print detail request terakhir + kondisi quote biar bisa
         # dibedakan "request invalid beneran" vs "market tipis/spread 0 transien".
         if retcode == getattr(mt5, "TRADE_RETCODE_INVALID", 10013) and last_req:
@@ -1111,11 +1144,17 @@ def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_
     now_server = datetime.now(timezone.utc) + timedelta(seconds=get_broker_offset_seconds(symbol))
     expiration = int(now_server.timestamp()) + int(expiration_minutes * 60)
 
+    digits = symbol_info.digits
+    entry_price = round(float(entry_price), digits)
+
     # SL/TP absolute dari points (relatif ke entry_price, bukan harga sekarang)
     if sl_points and sl_points > 0:
         sl_price = sl_price if sl_price else (entry_price - (sl_points * point) if entry_type in ("buy_stop", "buy_limit") else entry_price + (sl_points * point))
     if tp_points and tp_points > 0:
         tp_price = tp_price if tp_price else (entry_price + (tp_points * point) if entry_type in ("buy_stop", "buy_limit") else entry_price - (tp_points * point))
+
+    sl_price = round(float(sl_price), digits) if sl_price else 0.0
+    tp_price = round(float(tp_price), digits) if tp_price else 0.0
 
     order_type = order_type_map[entry_type]
     last_req = {}
@@ -1125,17 +1164,34 @@ def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_
         live_tick = mt5.symbol_info_tick(symbol)
         if live_tick is None:
             return None
+
+        ask = live_tick.ask
+        bid = live_tick.bid
+        stops_level_pts = getattr(symbol_info, "trade_stops_level", 0) or 0
+        min_dist_pts = max(2 * ((ask - bid) / point if point else 0), 20, stops_level_pts)
+        min_dist = min_dist_pts * point
+
+        adj_entry = entry_price
+        if order_type == mt5.ORDER_TYPE_BUY_STOP and adj_entry <= (ask + min_dist):
+            adj_entry = round(ask + min_dist, digits)
+        elif order_type == mt5.ORDER_TYPE_SELL_STOP and adj_entry >= (bid - min_dist):
+            adj_entry = round(bid - min_dist, digits)
+        elif order_type == mt5.ORDER_TYPE_BUY_LIMIT and adj_entry >= (ask - min_dist):
+            adj_entry = round(ask - min_dist, digits)
+        elif order_type == mt5.ORDER_TYPE_SELL_LIMIT and adj_entry <= (bid + min_dist):
+            adj_entry = round(bid + min_dist, digits)
+
         req = {
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": symbol,
             "volume": lot,
             "type": order_type,
-            "price": float(entry_price),
-            "sl": float(sl_price) if sl_price else 0.0,
-            "tp": float(tp_price) if tp_price else 0.0,
+            "price": adj_entry,
+            "sl": sl_price,
+            "tp": tp_price,
             "deviation": deviation,
             "magic": config.MAGIC_NUMBER,
-            "comment": comment or "Pending",
+            "comment": (str(comment)[:25].strip() if comment else "Pending"),
             "type_time": mt5.ORDER_TIME_SPECIFIED,
             "expiration": expiration,
             "type_filling": fill_policy,
@@ -1148,12 +1204,28 @@ def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_
     result = _send_with_retry(_build, symbol, f"Pending {entry_type}")
 
     if result is None:
+        telegram_alerts.alert_order_error(symbol, "PENDING", lot, sl_points, tp_points, "N/A", "Tick hilang saat pasang", price=entry_price, entry_type=entry_type, sl_price=sl_price, tp_price=tp_price, thesis=comment)
         return {"status": "ERROR", "comment": "Tick hilang saat pasang (feed off) — pending dibatalkan"}
     if not _is_order_success(result):
         retcode = getattr(result, "retcode", "N/A") if result else "N/A"
-        comment = getattr(result, "comment", "No result") if result else "No result"
-        print(f" {UI.tag('MT5 ERROR', UI.RED)} Pending gagal! Retcode: {retcode}, Pesan: {comment}")
-        return {"status": "ERROR", "comment": comment, "code": retcode}
+        err_msg = getattr(result, "comment", "No result") if result else "No result"
+        print(f" {UI.tag('MT5 ERROR', UI.RED)} Pending gagal! Retcode: {retcode}, Pesan: {err_msg}")
+        req_p = last_req.get("price") if last_req else entry_price
+        telegram_alerts.alert_order_error(
+            symbol=symbol,
+            signal="PENDING",
+            lot=lot,
+            sl_points=sl_points,
+            tp_points=tp_points,
+            retcode=retcode,
+            comment=err_msg,
+            price=req_p,
+            entry_type=entry_type,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            thesis=comment or f"Pending {entry_type}",
+        )
+        return {"status": "ERROR", "comment": err_msg, "code": retcode}
 
     ticket_no = getattr(result, "order", 0) or getattr(result, "deal", 0)
     print(f" {UI.tag('MT5', UI.GREEN)} Pending BERHASIL! Ticket: {ticket_no}")

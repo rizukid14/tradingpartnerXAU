@@ -37,21 +37,200 @@ def send_message(text):
 
 
 
-def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None):
-    """Send trade entry alert with full context."""
+def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None,
+                       ticket=None, entry_price=None, sl_price=None, tp_price=None, models="", confidence=0.0,
+                       setup="", reason="", invalidation=""):
+    """Send trade entry alert with full technical and AI context."""
     emoji = "🟢" if signal == "BUY" else "🔴"
     mode_tag = " RECOVERY" if recovery_mode else (" DRY RUN" if config.DRY_RUN else " LIVE")
     sym = symbol or config.SYMBOL
-    text = (
-        f"{emoji} *Trade {signal} Dibuka*\n"
-        f"- Symbol: `{sym}`\n"
-        f"- Lot: `{lot}` (session x{session_multiplier})\n"
-        f"- SL: `{sl_points}` pts | TP: `{tp_points}` pts\n"
-        f"- Mode: `{mode_tag}`\n"
-        f"- Partial Close: `{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'}` "
-        f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)"
+
+    rr_str = ""
+    if sl_points and sl_points > 0 and tp_points:
+        rr_str = f" | R:R {tp_points/sl_points:.2f}:1"
+
+    sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
+    tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
+
+    lines = [
+        f"{emoji} *Trade {signal} Dibuka (Market Order)*",
+        f"• *Symbol*: `{sym}`",
+    ]
+    if ticket:
+        lines.append(f"• *Ticket*: `#{ticket}`")
+    if entry_price:
+        lines.append(f"• *Entry Price*: `{entry_price}`")
+    lines.append(f"• *Lot Size*: `{lot}` (session x{session_multiplier})")
+    lines.append(f"• *Stop Loss*: {sl_str}")
+    lines.append(f"• *Take Profit*: {tp_str}")
+    lines.append(f"• *Mode*: `{mode_tag}`")
+
+    if models:
+        conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
+        lines.append(f"• *Model Sepakat*: `{models}{conf_str}`")
+    if setup:
+        lines.append(f"• *Setup*: `{setup}`")
+    if reason:
+        lines.append(f"• *Reason*: _{reason}_")
+    if invalidation:
+        lines.append(f"• *Invalidation*: _{invalidation}_")
+
+    send_message("\n".join(lines))
+
+
+def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_points, tp_points,
+                               sl_price=None, tp_price=None, models="", confidence=0.0,
+                               setup="", reason="", invalidation="", expiration_minutes=120):
+    """Send rich notification when a pending order (buy_stop, sell_stop, buy_limit, sell_limit) is placed."""
+    emoji = "⏳"
+    etype_upper = (entry_type or "pending").upper()
+    sym = symbol or config.SYMBOL
+
+    rr_str = ""
+    if sl_points and sl_points > 0 and tp_points:
+        rr_str = f" | R:R {tp_points/sl_points:.2f}:1"
+
+    sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
+    tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
+
+    lines = [
+        f"{emoji} *Pending Order Terpasang: {etype_upper}*",
+        f"• *Symbol*: `{sym}`",
+        f"• *Ticket*: `#{ticket}`",
+        f"• *Entry Price*: `{entry_price}`",
+        f"• *Lot Size*: `{lot}`",
+        f"• *Stop Loss*: {sl_str}",
+        f"• *Take Profit*: {tp_str}",
+    ]
+
+    if models:
+        conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
+        lines.append(f"• *Model Sepakat*: `{models}{conf_str}`")
+    if setup:
+        lines.append(f"• *Setup*: `{setup}`")
+    if reason:
+        lines.append(f"• *Reason*: _{reason}_")
+    if invalidation:
+        lines.append(f"• *Invalidation*: _{invalidation}_")
+    if expiration_minutes:
+        lines.append(f"• *Expire*: `{expiration_minutes} Menit`")
+
+    send_message("\n".join(lines))
+
+
+def alert_pending_order_filled(ticket, symbol, pos_type, price, pos_id=None, sl_price=None, tp_price=None):
+    """Send notification when a pending order is filled by broker (AI Proven)."""
+    sym = symbol or config.SYMBOL
+    ptype_upper = (pos_type or "").upper()
+    lines = [
+        f"🎯 *Pending Order TER-FILL -> Posisi Aktif* (AI Proven)",
+        f"• *Symbol*: `{sym}`",
+        f"• *Order*: `{ptype_upper}`",
+        f"• *Ticket Posisi*: `#{pos_id or ticket}`",
+        f"• *Execution Price*: `{price}`",
+    ]
+    if sl_price or tp_price:
+        lines.append(f"• *SL / TP*: `SL {sl_price or '-'} | TP {tp_price or '-'}`")
+    lines.append("• *Status*: _Level entry tercapai. Posisi kini aktif & dikawal oleh Position Manager._")
+    send_message("\n".join(lines))
+
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+WIB = ZoneInfo("Asia/Jakarta")
+_failed_orders_recap = []
+
+
+def buffer_failed_order(symbol, action, lot, sl_points, tp_points, sl_price=None, tp_price=None, req_price=None, retcode="N/A", comment="Unknown error", thesis="", entry_type=None):
+    """Buffer a failed order details entry for batch recap Telegram dispatch."""
+    _failed_orders_recap.append({
+        "symbol": symbol or config.SYMBOL,
+        "action": action,
+        "lot": lot,
+        "sl_points": sl_points,
+        "tp_points": tp_points,
+        "sl_price": sl_price,
+        "tp_price": tp_price,
+        "req_price": req_price,
+        "retcode": retcode,
+        "comment": comment,
+        "thesis": thesis,
+        "entry_type": entry_type or "market",
+        "timestamp": datetime.now(WIB).strftime("%H:%M:%S WIB")
+    })
+
+
+def alert_order_error(symbol, signal, lot, sl_points, tp_points, retcode, comment, price=None, entry_type=None, sl_price=None, tp_price=None, thesis=""):
+    """Buffer order error for cycle recap (and flush if standalone)."""
+    buffer_failed_order(
+        symbol=symbol,
+        action=signal,
+        lot=lot,
+        sl_points=sl_points,
+        tp_points=tp_points,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        req_price=price,
+        retcode=retcode,
+        comment=comment,
+        thesis=thesis,
+        entry_type=entry_type,
     )
-    send_message(text)
+
+
+def flush_failed_orders_recap():
+    """Send a SINGLE combined recap message via Telegram for all failed orders in the cycle."""
+    global _failed_orders_recap
+    if not _failed_orders_recap:
+        return False
+
+    count = len(_failed_orders_recap)
+    lines = [f"⚠️ *REKAP KEGAGALAN EKSEKUSI BOT ({count} Order)*"]
+    lines.append("_Order gagal dieksekusi otomatis oleh MT5. Berikut detail parameter lengkap untuk order manual:_\n")
+
+    for i, item in enumerate(_failed_orders_recap, 1):
+        sym = item["symbol"]
+        act = item["action"]
+        lot = item["lot"]
+        sl_pts = item["sl_points"] or 0
+        tp_pts = item["tp_points"] or 0
+        sl_p = item["sl_price"]
+        tp_p = item["tp_price"]
+        req_p = item["req_price"]
+        code = item["retcode"]
+        err = item["comment"]
+        thesis = item["thesis"] or "Sinyal Consensus AI"
+        etype = item["entry_type"]
+        ts = item["timestamp"]
+
+        # Calculate R:R Ratio
+        rr_ratio = (tp_pts / sl_pts) if (sl_pts and sl_pts > 0 and tp_pts) else 0.0
+        rr_str = f"{rr_ratio:.2f}:1" if rr_ratio > 0 else "N/A"
+
+        kind_str = f"Pending {etype.upper()}" if etype != "market" else f"Market {act}"
+        price_str = f"`{req_p}`" if req_p else "`Harga Market Live`"
+
+        sl_str = f"`{sl_p}` ({sl_pts} pts)" if sl_p else f"`{sl_pts} pts`"
+        tp_str = f"`{tp_p}` ({tp_pts} pts)" if tp_p else f"`{tp_pts} pts`"
+
+        lines.append(
+            f"*{i}. {sym} — {kind_str}*\n"
+            f"• *Entry Price*: {price_str}\n"
+            f"• *Lot Size*: `{lot} lot`\n"
+            f"• *Stop Loss (SL)*: {sl_str}\n"
+            f"• *Take Profit (TP)*: {tp_str} (R:R {rr_str})\n"
+            f"• *Penyebab Gagal*: `Code {code}: {err}`\n"
+            f"• *Tesis AI*: _{thesis}_\n"
+            f"• *Waktu*: `{ts}`"
+        )
+
+    lines.append("\n👉 *Gunakan parameter di atas untuk membuka posisi secara manual di MT5 jika setup teknikal masih valid.*")
+
+    msg_text = "\n\n".join(lines)
+    result = send_message(msg_text)
+    _failed_orders_recap.clear()
+    return result
 
 
 def alert_trade_result(signal, ticket, comment):
@@ -210,7 +389,7 @@ def alert_partial_close(ticket, symbol, closed_vol, remaining_vol, profit_points
 
 def alert_bot_started():
     """Send bot startup notification with full config."""
-    mode = "DRY RUN" if config.DRY_RUN else " LIVE"
+    mode = "DRY RUN" if config.DRY_RUN else "LIVE"
     trading_mode = getattr(config, "TRADING_MODE", "xau")
     if trading_mode == "xau_pairs" and hasattr(config, "get_rotation_pool"):
         try:
@@ -221,25 +400,50 @@ def alert_bot_started():
     else:
         sym_line = f"- Symbol: `{config.SYMBOL}`\n"
 
+    # Dynamic trailing stop & BEP formatting
+    if config.TRAILING_STOP_ENABLED:
+        trail_act = int(getattr(config, "TRAILING_ACTIVATION_TP_PCT", 0.70) * 100)
+        trail_dist = getattr(config, "TRAILING_DISTANCE_ATR_MULT_FX", 0.5)
+        trail_floor = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 60)
+        trail_str = f"ON (aktif @ {trail_act}% TP | Dist: {trail_dist}x ATR, floor {trail_floor} pts)"
+    else:
+        trail_str = "OFF"
+
+    if config.BREAK_EVEN_ENABLED:
+        bep_trig = int(getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.58) * 100)
+        bep_str = f"ON (trigger @ {bep_trig}% TP)"
+    else:
+        bep_str = "OFF"
+
+    if config.PARTIAL_CLOSE_ENABLED:
+        partial_str = f"ON ({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)"
+    else:
+        partial_str = "OFF"
+
+    pending_max = getattr(config, "PENDING_ORDER_MAX_ACTIVE", 2)
+    pending_exp = getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 120)
+    pending_str = f"ON (Limit/Stop AI, max {pending_max} aktif, exp {pending_exp}m)" if getattr(config, "PENDING_ORDERS_ENABLED", False) else "OFF"
+    rec_str = "ON" if getattr(config, "RECOVERY_MODE_ENABLED", False) else "OFF"
+    wk_str = "ON" if getattr(config, "WEEKEND_CLOSE_ENABLED", False) else "OFF"
+    sess_str = "ON" if getattr(config, "SESSION_FILTER_ENABLED", False) else "OFF"
+
     text = (
-        f"🚀 *Bot Trading Multi-LLM Dimulai*\n"
+        "🚀 *Bot Trading Multi-LLM Dimulai*\n"
         f"{sym_line}"
-        f"- Lot: `{config.LOT_SIZE}`\n"
+        f"- Lot: `{config.LOT_SIZE}` (Risk FX: `{config.RISK_PERCENT_FX}%`, Max Posisi: `{config.MAX_OPEN_POSITIONS}`)\n"
         f"- Mode Eksekusi: `{mode}`\n"
-        f"-----------------\n"
-        f"🛡️ *Proteksi Aktif:*\n"
-        f"- Trailing Stop: `{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}` "
-        f"(aktivasi {config.TRAILING_ACTIVATION_POINTS} pts)\n"
-        f"- Break-Even: `{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}` "
-        f"(trigger {config.BREAK_EVEN_TRIGGER_POINTS} pts)\n"
-        f"- Partial Close: `{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'}` "
-        f"({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)\n"
+        "-----------------\n"
+        "🛡️ *Proteksi Aktif:*\n"
+        f"- Trailing Stop: `{trail_str}`\n"
+        f"- Break-Even: `{bep_str}`\n"
+        f"- Partial Close: `{partial_str}`\n"
+        f"- Pending Orders: `{pending_str}`\n"
         f"- Max Daily Loss: `${config.MAX_DAILY_LOSS_USD}`\n"
-        f"- Recovery Mode: `{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}`\n"
-        f"- Weekend Close: `{'ON' if config.WEEKEND_CLOSE_ENABLED else 'OFF'}`\n"
-        f"- Session Filter: `{'ON' if config.SESSION_FILTER_ENABLED else 'OFF'}`"
+        f"- Recovery Mode: `{rec_str}`\n"
+        f"- Weekend Close: `{wk_str}`\n"
+        f"- Session Filter: `{sess_str}`"
     )
-    send_message(text)
+    return send_message(text)
 
 
 def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, open_positions=None, reason="Harian"):
@@ -444,29 +648,29 @@ def alert_consensus_hold(result, symbol=None):
     return False
 
 
-def alert_hold_recap(hold_lines):
-    """
-    Kirim SATU pesan recap HOLD untuk semua simbol dalam satu cycle.
-    hold_lines: list str, tiap baris = ringkasan 1 simbol (misal
-    "GBPCHF: HOLD (OpenAI SELL 60%, Gemini HOLD)").
-    Dipanggil dari main.py di akhir run_trading_cycle — HOLD tidak lagi
-    dikirim per-symbol (anti-spam, 18 Agu).
-    """
+
+
+def alert_hold_recap(hold_lines, news_context=None):
+    """Kirim SATU pesan recap HOLD dan Economic News Alert untuk semua simbol dalam satu cycle."""
     if not config.TELEGRAM_ENABLED:
         return False
     if not getattr(config, "TELEGRAM_NOTIFY_HOLD", True):
         return False
-    if not hold_lines:
+    if not hold_lines and not news_context:
         return False
 
-    # Batasi panjang: max 12 simbol per pesan
-    body = "\n".join(hold_lines[:12])
-    if len(hold_lines) > 12:
+    news_header = ""
+    if news_context and news_context.strip():
+        news_header = "📰 *High-Impact News Alert (6h Window)*:\n" + news_context.strip() + "\n\n"
+
+    n = len(hold_lines) if hold_lines else 0
+    body = "\n".join(hold_lines[:12]) if hold_lines else "• _Semua simbol aman_"
+    if hold_lines and len(hold_lines) > 12:
         body += f"\n  ... dan {len(hold_lines) - 12} simbol lainnya"
     text = (
-        f"⏸️ *Recap HOLD ({len(hold_lines)} simbol)*\n"
-        f"{body}\n"
-        f"_Tidak ada entry baru — menunggu setup searah._"
+        news_header
+        + f"⏸️ *Recap Scan ({n} Simbol)*\n"
+        + body + "\n\n"
+        + "_Manajemen posisi dan proteksi risiko berjalan 24/7._"
     )
     return send_message(text)
-

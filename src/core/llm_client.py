@@ -255,7 +255,7 @@ BUY or SELL:
   "signal": "BUY" | "SELL",
   "confidence": float (0.50 to 1.00),
   "setup": "string (short label for setup type)",
-  "reasoning": "string (MAX 40 WORDS: core entry thesis & edge for this new entry)",
+  "reasoning": "string (MAX 60 WORDS: detailed entry thesis, key levels, and core edge for this trade)",
   "invalidation": "string (key technical condition that invalidates this thesis)",
   "sl_points": integer (Stop Loss distance in broker POINTS from current price),
   "tp_points": integer (Take Profit distance in broker POINTS from current price),
@@ -320,7 +320,42 @@ def _structure_block(df, current_tick, atr_points=0):
 
     lines = []
 
-    # 1. 50-bar Short-Term Window
+    # 1. Active Timeframe Indicators
+    ind_lines = []
+    ema20 = float(df["ema_20"].iloc[-1]) if "ema_20" in df.columns else None
+    ema50 = float(df["ema_50"].iloc[-1]) if "ema_50" in df.columns else None
+    if ema20 is not None and ema50 is not None:
+        gap = (ema20 - ema50) / point
+        rel_ema20 = (close - ema20) / point
+        pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
+        ind_lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
+    if "rsi_14" in df.columns:
+        rsi = float(df["rsi_14"].iloc[-1])
+        ind_lines.append(f"- RSI14 {rsi:.2f}")
+    if "adx_14" in df.columns:
+        adx = float(df["adx_14"].iloc[-1])
+        if adx == adx:  # NaN guard (NaN != NaN)
+            if adx >= 25:
+                adx_label = "STRONG TREND EXPANSION: do NOT counter-trend trade"
+            elif adx >= 20:
+                adx_label = "trend building"
+            else:
+                adx_label = "weak/ranging (mean-reversion allowed)"
+            ind_lines.append(f"- ADX14 {adx:.1f} ({adx_label})")
+    if "ema_200" in df.columns and len(df) >= 200:
+        ema200 = float(df["ema_200"].iloc[-1])
+        rel200 = (close - ema200) / point
+        regime = "BULLISH regime" if rel200 > 0 else "BEARISH regime"
+        ind_lines.append(f"- EMA200 {_fmt_price(ema200, point)} (close {int(abs(rel200))} pts {'ABOVE' if rel200 > 0 else 'BELOW'}, {regime})")
+    if atr_points and atr_points > 0:
+        ind_lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
+
+    if ind_lines:
+        lines.append("### TECHNICAL INDICATORS (Active Timeframe)")
+        lines.extend(ind_lines)
+        lines.append("")
+
+    # 2. 50-bar Short-Term Window
     df_50 = df.tail(min(50, len(df)))
     h50, l50 = float(df_50["high"].max()), float(df_50["low"].min())
     diff50 = h50 - l50
@@ -344,7 +379,7 @@ def _structure_block(df, current_tick, atr_points=0):
     lines.append(f"- 50-bar Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
     lines.append(f"- Close {_fmt_price(close, point)}: {int(to_l50)} pts above 50-bar low | {int(to_h50)} pts below 50-bar high")
 
-    # 2. 100-bar Macro Multi-Day Window
+    # 3. 100-bar Macro Multi-Day Window
     if len(df) >= 70:
         h100, l100 = float(df["high"].max()), float(df["low"].min())
         diff100 = h100 - l100
@@ -363,25 +398,6 @@ def _structure_block(df, current_tick, atr_points=0):
         lines.append("\n### MACRO STRUCTURE (100-bar Window)")
         lines.append(f"- 100-bar Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
         lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
-
-    # 3. Indicators
-    ind_lines = []
-    ema20 = float(df["ema_20"].iloc[-1]) if "ema_20" in df.columns else None
-    ema50 = float(df["ema_50"].iloc[-1]) if "ema_50" in df.columns else None
-    if ema20 is not None and ema50 is not None:
-        gap = (ema20 - ema50) / point
-        rel_ema20 = (close - ema20) / point
-        pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
-        ind_lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
-    if "rsi_14" in df.columns:
-        rsi = float(df["rsi_14"].iloc[-1])
-        ind_lines.append(f"- RSI14 {rsi:.2f}")
-    if atr_points and atr_points > 0:
-        ind_lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
-
-    if ind_lines:
-        lines.append("\n### TECHNICAL INDICATORS (Active Timeframe)")
-        lines.extend(ind_lines)
 
     return "\n".join(lines)
 
@@ -600,14 +616,14 @@ def _build_sltp_rules_block(symbol, timeframe):
                 room_pts = 90
             if getattr(config, "PENDING_ORDERS_ENABLED", False):
                 breakout_rule = (
-                    f"- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum (e.g. 2+ consecutive same-direction H1 closes or expanding candle bodies) but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
+                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction H1 closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
                     f"  (a) Use buy_stop/sell_stop placed ~0.2x-0.3x ATR H1 (~{stop_pts}-{int(1.5*stop_pts)} pts) beyond the key level to filter false breaks and catch a genuine breakout wave.\n"
                     f"  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.\n"
                     f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your structural target."
                 )
             else:
                 breakout_rule = (
-                    f"- MOMENTUM & BREAKOUT EXECUTION: If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with a market order -- wait for a confirmed candle close beyond the level with at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your target, or select HOLD."
+                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction H1 closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with a market order -- wait for a confirmed candle close beyond the level with at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your target, or select HOLD."
                 )
 
             return (
@@ -996,6 +1012,14 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "NOTE: HTF close/EMA values reflect the last CLOSED higher-timeframe bar (H1/H4) "
             "and may lag the current price slightly -- the live Bid/Ask and the active-timeframe "
             "candles are the current reference.)\n"
+            "\nCRITICAL TREND FILTER (anti-fade, do not confuse continuation with pullback):\n"
+            "if RSI is oversold AND EMA50 slope is pointing DOWN AND price is BELOW both "
+            "EMA20 and EMA50 (or the equivalent macro structure on HTF), this is STRONG "
+            "DOWNWARD CONTINUATION, NOT a pullback -- DO NOT FADE OR BUY. Mirror rule: if "
+            "RSI is overbought AND EMA50 slope is pointing UP AND price is ABOVE both EMA20 "
+            "and EMA50, this is STRONG UPWARD CONTINUATION -- DO NOT FADE OR SELL. Mean-"
+            "reversion (fading) is only acceptable when trend strength is weak (ADX < 20) "
+            "or price is at a genuine structural extreme with a clear invalidation.\n"
         )
 
     whisper_str = whisper_str or ""
@@ -1045,9 +1069,25 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         )
 
     calendar_str = ""
+    news_guard_str = ""
     try:
         from src.analytics import economic_calendar
-        calendar_str = economic_calendar.calendar.get_context()
+        # Filter per-pair (20 Agustus): FOMC/NFP/Powell/Trump = semua symbol;
+        # event negara lain (ECB/BoJ/RBA/SNB/CPI GB/Unemployment US, dst) hanya
+        # untuk pair yang mengandung mata uang negara tsb.
+        calendar_str = economic_calendar.calendar.get_context(symbol=symbol)
+        if calendar_str:
+            # Conditional News Anti-Fade Rule (20 Agustus): hanya muncul saat ada
+            # high-impact event imminent/recently-released. Hari tenang = prompt
+            # identik dengan sebelumnya (tidak mengubah perilaku normal).
+            news_guard_str = (
+                "\nNEWS WINDOW GUARD (high-impact event imminent or just released):\n"
+                "A major scheduled news event (FOMC/CPI/NFP/etc) is within the warning "
+                "window. DO NOT fade breakout momentum or attempt counter-trend "
+                "mean-reversion during/after it. Ignore RSI oversold/overbought as an "
+                "entry trigger during news windows. Wait for post-news volatility to "
+                "settle and a confirmed H1 candle close before entering.\n"
+            )
     except Exception:
         pass
 
@@ -1137,14 +1177,14 @@ Timeframe: {tf_label}
 Current Bid: {_fmt_price(current_tick['bid'], point_size)}
 Current Ask: {_fmt_price(current_tick['ask'], point_size)}
 Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
-Spread note: this spread has ALREADY passed the bot's spread gate (max {config.max_spread_points_for(symbol)} pts for {symbol}), so treat it as NORMAL for this symbol. Do NOT use spread as a reason to reject a trade or pick HOLD. Spread only matters for SL placement: set SL >= 2x spread (the bot enforces this floor anyway).
+Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD.
 {macro_str}
 {key_levels_str}
 {structure_str}
 {delta_main_str}
 {micro_candles_str}
 {atr_gate_str}
-{randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
+{randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1228,7 +1268,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         kwargs = {
             "model": model_name,
             "messages": [
-                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 1-2 sentences (max 40 words); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
             ],
             "response_format": {"type": "json_object"},
             "timeout": timeout_sec
@@ -1247,7 +1287,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 1-2 sentences (max 40 words); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -1389,7 +1429,7 @@ def query_gemini(prompt):
 def _execute_claude_single(model_name, prompt, timeout_sec):
     system_text = (
         "You are a professional financial trading assistant. "
-        "Always respond with valid JSON only. Reasoning: 1-2 sentences (max 40 words); "
+        "Always respond with valid JSON only. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); "
         "if HOLD, keep it to 1 short sentence (max 20 words) citing the single key "
         "level/indicator. Never enumerate."
     )
@@ -1512,8 +1552,8 @@ def query_claude(prompt):
     Routes automatically: model starting with 'deepseek/' or non-claude models -> DeepSeek/Router API
     (OpenAI-compatible); 'claude-...' -> Anthropic.
     Config: config.CLAUDE_MODEL / config.CLAUDE_FALLBACK_MODEL."""
-    primary_model = config.CLAUDE_MODEL
-    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", None)
+    primary_model = getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-6")
+    fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", "deepseek/deepseek-v4-flash")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
     is_deepseek = primary_model.startswith("deepseek/") or not primary_model.startswith("claude-")
@@ -1530,7 +1570,7 @@ def query_claude(prompt):
             print(f" [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if fallback_model.startswith("deepseek/") or not fallback_model.startswith("claude-"):
-                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec)
+                    return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="none")
                 return _execute_claude_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
                 print(f"[CLAUDE FALLBACK ERROR] {fb_err}")
@@ -1540,14 +1580,34 @@ def query_claude(prompt):
             return {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Claude Error: {str(e)}"}
 
 
+def query_all_models_parallel(prompt, models=("OpenAI", "Gemini", "DeepSeek")):
+    """Queries specified LLM models in parallel and returns dict of decisions."""
+    model_fns = {
+        "OpenAI": query_openai,
+        "Gemini": query_gemini,
+        "DeepSeek": query_deepseek,
+        "Claude": query_claude,
+    }
+    selected = {name: model_fns[name] for name in models if name in model_fns}
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(selected))) as executor:
+        futs = {executor.submit(fn, prompt): name for name, fn in selected.items()}
+        for fut in concurrent.futures.as_completed(futs):
+            name = futs[fut]
+            try:
+                results[name] = fut.result()
+            except Exception as e:
+                results[name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Error: {e}"}
+    return results
+
+
 
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
                             whisper_str=None, all_open_positions=None):
     """
     Query only the AI slots active for the current WIB time window.
-    mode = single        -> OpenAI only (00:00-14:59 / 21:31-23:59)
-    mode = dual          -> OpenAI + DeepSeek (15:00-19:29, London Session)
-    mode = triple        -> OpenAI + Gemini + Claude (19:30-21:30, London-NY overlap)
+    mode = dual          -> OpenAI + Gemini (00:00-18:59 / 22:01-23:59)
+    mode = triple        -> OpenAI + Gemini + Claude/DeepSeek (19:00-22:00, London-NY overlap, 4x call H1)
     """
     prompt = prepare_prompt(symbol, df, current_tick, macro_context, open_positions, whisper_str, all_open_positions=all_open_positions)
 

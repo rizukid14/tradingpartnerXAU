@@ -90,14 +90,14 @@ class MacroAnalyst:
         matches.sort(key=lambda m: (m[2], -m[1]))
         return matches[0][0]
 
-    def check_and_update_analysis(self, force=False):
+    def check_and_update_analysis(self, force=False, symbol=None):
         """
         Checks if higher timeframe candles or trading session have updated.
         If they have, triggers LLM analysis and updates cache.
         If force=True, runs analysis immediately regardless of last candle/session times.
         """
         updated = False
-        sym = config.SYMBOL
+        sym = symbol or config.SYMBOL
 
         if sym not in self.cache:
             self.cache[sym] = {
@@ -124,7 +124,7 @@ class MacroAnalyst:
 
                     if force or current_candle_time > cached_candle_time:
                         print(f" [MTF] Menjalankan analisa struktur untuk timeframe {tf_name} ({sym})...")
-                        analysis = self._run_timeframe_analysis(tf_name, tf_const)
+                        analysis = self._run_timeframe_analysis(tf_name, tf_const, symbol=sym)
                         if analysis:
                             sym_cache["timeframe_analysis"][tf_name] = {
                                 "last_candle_time": current_candle_time,
@@ -143,7 +143,7 @@ class MacroAnalyst:
             # Trigger if session changes and is valid, or if force run
             if force or (current_session != "None" and current_session != cached_session):
                 print(f" [FUNDAMENTAL] Menjalankan analisa fundamental untuk sesi '{current_session}' ({sym})...")
-                outlook = self._run_fundamental_analysis()
+                outlook = self._run_fundamental_analysis(symbol=sym)
                 if outlook:
                     sym_cache["last_fundamental_session"] = current_session
                     sym_cache["last_fundamental_time"] = time.time()
@@ -154,12 +154,13 @@ class MacroAnalyst:
             self._save_cache()
             print(f" [MACRO] Analisa cache diperbarui dan disimpan ({sym}).")
 
-    def _run_timeframe_analysis(self, tf_name, tf_const):
+    def _run_timeframe_analysis(self, tf_name, tf_const, symbol=None):
         """
         Computes higher-timeframe trend structure DIRECTLY from MT5 indicators -
         NO LLM call. EMA20/50, RSI, ATR dan swing high/low dihitung dari df M30
         (XAU) / H1-H4 (BTC). Output teks faktual, bukan opini LLM.
         """
+        sym = symbol or config.SYMBOL
         if tf_name == "M15":
             window_size = 48
         elif tf_name == "M30":
@@ -173,10 +174,13 @@ class MacroAnalyst:
         else:
             window_size = 30
 
-        fetch_candles = max(50, window_size + 20)
-        df = connector.get_market_data(config.SYMBOL, tf_const, num_candles=fetch_candles)
+        # EMA200 H4/D1 butuh >= 200 bar utk valid (institutional regime filter,
+        # 20 Agustus, paket anti-FOMC). H4/D1 fetch 260 bar (sekali per
+        # pergantian candle HTF, cache per-symbol sudah ada - murah).
+        fetch_candles = 260 if tf_name in ("H4", "D1") else max(50, window_size + 20)
+        df = connector.get_market_data(sym, tf_const, num_candles=fetch_candles)
         if df is None or len(df) < 30:
-            print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name}.")
+            print(f" [MTF ERROR] Gagal mendapatkan data untuk timeframe {tf_name} ({sym}).")
             return None
 
         latest = df.iloc[-1]
@@ -185,6 +189,12 @@ class MacroAnalyst:
         ema50 = float(latest["ema_50"])
         rsi = float(latest["rsi_14"])
         atr = float(latest["atr_14"])
+
+        # EMA50 slope (20 Agustus, paket anti-FOMC): tren ekspansi yang SEDANG
+        # terjadi ditandai slope EMA50 searah. Slope dihitung dari pergeseran
+        # EMA50 bar terakhir vs bar sebelumnya (naik/turun).
+        ema50_prev = float(df["ema_50"].iloc[-2]) if len(df) >= 2 else ema50
+        ema50_slope = "rising" if ema50 > ema50_prev else ("falling" if ema50 < ema50_prev else "flat")
 
         # Trend direction dari hubungan harga vs EMA20 vs EMA50
         if close > ema20 > ema50:
@@ -213,25 +223,45 @@ class MacroAnalyst:
         else:
             rsi_label = "neutral"
 
+        # EMA200 regime (institutional benchmark). Hanya valid kalau data >= 200 bar
+        # (fetch 260 di atas). NaN kalau data pendek -> skip baris EMA200.
+        ema200_str = ""
+        if "ema_200" in df.columns and len(df) >= 200:
+            ema200 = float(df["ema_200"].iloc[-1])
+            if ema200 == ema200:  # NaN guard
+                above = close >= ema200
+                dist200 = (close - ema200) / (atr if atr > 0 else 1.0)
+                regime = "BULLISH regime (institutions long)" if above else "BEARISH regime (institutions short)"
+                ema200_str = (
+                    f" | EMA200 {_fmt(ema200)} (close {'ABOVE' if above else 'BELOW'}, "
+                    f"{abs(dist200):.1f}x ATR -> {regime})"
+                )
+
         # Jarak harga ke swing (dalam satuan ATR) biar LLM tahu seberapa dekat level
         support_line = f"nearest support {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR below)" if swing_low_dist <= 2.0 else f"support far {_fmt(swing_low)} (~{swing_low_dist:.1f}x ATR)"
         resistance_line = f"nearest resistance {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR above)" if swing_high_dist <= 2.0 else f"resistance far {_fmt(swing_high)} (~{swing_high_dist:.1f}x ATR)"
 
         return (
             f"trend {trend} | close {_fmt(close)}, EMA20 {_fmt(ema20)}, EMA50 {_fmt(ema50)} "
-            f"(gap EMA {_fmt(abs(ema20 - ema50))}), RSI {rsi:.1f} ({rsi_label}), ATR {_fmt(atr)} | "
+            f"(gap EMA {_fmt(abs(ema20 - ema50))}, slope EMA50 {ema50_slope}), RSI {rsi:.1f} ({rsi_label}), ATR {_fmt(atr)}{ema200_str} | "
             f"swing {window_size}-candle: high {_fmt(swing_high)} ({resistance_line}), low {_fmt(swing_low)} ({support_line})"
         )
 
-    def _run_fundamental_analysis(self):
+    def _run_fundamental_analysis(self, symbol=None):
         """Queries Gemini with Search Grounding to generate fundamental outlook."""
-        return llm.analyze_fundamentals(config.SYMBOL)
+        sym = symbol or config.SYMBOL
+        return llm.analyze_fundamentals(sym)
 
-    def get_macro_context(self):
+    def get_macro_context(self, symbol=None):
         """Formats the cached macro & MTF analyses into a unified context block."""
         context = []
-        sym = config.SYMBOL
+        sym = symbol or config.SYMBOL
         sym_cache = self.cache.get(sym, {})
+
+        # If cache for this symbol is missing, build it on-demand
+        if not sym_cache or not sym_cache.get("timeframe_analysis"):
+            self.check_and_update_analysis(force=True, symbol=sym)
+            sym_cache = self.cache.get(sym, {})
 
         # 1. Add Multi-Timeframe Analysis
         if getattr(config, "MTF_ANALYSIS_ENABLED", True):
@@ -256,3 +286,7 @@ class MacroAnalyst:
             return ""
 
         return "\n\n".join(context)
+
+
+# Singleton instance for modular access
+analyst = MacroAnalyst()

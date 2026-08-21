@@ -443,21 +443,31 @@ def calculate_consensus(decisions):
             "details": f"SL/TP gate ATR gagal: {sltp_reason}"
         }
 
+    best_setup = ""
     best_reason = ""
+    best_invalidation = ""
     sorted_agreeing = sorted(agreeing_models, key=lambda m: decisions.get(m, {}).get("confidence", 0.0), reverse=True)
     for m in sorted_agreeing:
         dec = decisions.get(m, {})
-        candidate = (dec.get("setup") or "").strip()
-        if not candidate: candidate = (dec.get("reasoning") or dec.get("edge") or "").strip()
-        if candidate:
-            best_reason = " ".join(candidate.replace("\n", " ").replace("\r", " ").split())
+        s_candidate = (dec.get("setup") or "").strip()
+        r_candidate = (dec.get("reasoning") or dec.get("edge") or "").strip()
+        i_candidate = (dec.get("invalidation") or "").strip()
+        if s_candidate and not best_setup:
+            best_setup = " ".join(s_candidate.replace("\n", " ").replace("\r", " ").split())
+        if r_candidate and not best_reason:
+            best_reason = " ".join(r_candidate.replace("\n", " ").replace("\r", " ").split())
+        if i_candidate and not best_invalidation:
+            best_invalidation = " ".join(i_candidate.replace("\n", " ").replace("\r", " ").split())
+        if best_setup and best_reason and best_invalidation:
             break
 
     badge = UI.badge_signal(consensus_signal)
     box_items.append(f"{UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(Skor {best_score:.2f} >= {threshold:.2f}){UI.RST}")
     box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)"))
+    if best_setup:
+        box_items.append((f"  {UI.CYAN}Setup{UI.RST}         : ", best_setup))
     if best_reason:
-        box_items.append((f"  {UI.CYAN}Setup / Reason:{UI.RST} ", best_reason))
+        box_items.append((f"  {UI.CYAN}Reason{UI.RST}        : ", best_reason))
     price_decimals = 5 if (point and point < 0.001) else 2
     price_info = f" | Price SL {final_inv:.{price_decimals}f} / TP {final_tgt:.{price_decimals}f}" if final_inv else ""
     box_items.append((f"  {UI.BOLD}Final SL / TP :{UI.RST} ", f"{UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}"))
@@ -475,7 +485,9 @@ def calculate_consensus(decisions):
         "entry_price": final_entry_price,
         "agreeing_count": len(agreeing_models),
         "agreeing_models": list(agreeing_models),
+        "setup": best_setup,
         "reason": best_reason,
+        "invalidation_text": best_invalidation,
         "tickets_to_close": tickets_to_close,
         "details": f"Consensus by: {agreeing_models}"
     }

@@ -226,8 +226,8 @@ tr:hover { background: var(--panel-hover); }
       <option value="30d">30 Hari</option>
     </select></label>
     <label>Mode Trading: <select id="f-trading-mode" title="Pilih mode simbol yang di-scan bot (perlu dashboard mode serve)">
+      <option value="xau_pairs">🔄 8 FX Pairs Pool (H1 Intraday-Swing)</option>
       <option value="xau">🎯 XAU Only</option>
-      <option value="xau_pairs">🔄 XAU + Pairs</option>
     </select></label>
     <span id="mode-save-status" class="sub" style="font-size:11px;"></span>
   </div>
@@ -413,7 +413,7 @@ async function saveTradingMode() {
       body: JSON.stringify({TRADING_MODE: mode})
     });
     if (r.ok) {
-      st.textContent = '✅ mode ' + (mode === 'xau_pairs' ? 'XAU + Pairs' : 'XAU Only') + ' tersimpan (restart bot untuk apply)';
+      st.textContent = '✅ mode ' + (mode === 'xau_pairs' ? '8 FX Pairs Pool' : 'XAU Only') + ' tersimpan (restart bot untuk apply)';
       st.style.color = '#4ade80';
     } else {
       st.textContent = '⚠️ gagal simpan (HTTP ' + r.status + ') — mode ini aktif di bot setelah restart + config reload';
@@ -572,7 +572,7 @@ function renderStatusPanel() {
   let oaiWindow = CONFIG_DATA ? (CONFIG_DATA.OPENAI_PRIMARY_WINDOW_WIB || "15:00-19:30") : "15:00-19:30";
   let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
   let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";
-  let dualSecond = CONFIG_DATA ? (CONFIG_DATA.AI_DUAL_SECOND_MODEL || "DeepSeek") : "DeepSeek";
+  let dualSecond = CONFIG_DATA ? (CONFIG_DATA.AI_DUAL_SECOND_MODEL || "Gemini") : "Gemini";
   let dsReasoning = CONFIG_DATA ? (CONFIG_DATA.DEEPSEEK_REASONING_EFFORT || "low") : "low";
 
   let connectionStatus = LIVE ? '<span class="green" style="font-weight: 700;">● CONNECTED (LIVE)</span>' : '<span class="muted" style="font-weight: 700;">○ STATIC MODE (Offline)</span>';
@@ -593,7 +593,7 @@ function renderStatusPanel() {
       </div>
       <div style="display:flex; justify-content:space-between;">
         <span>Rotation Mode:</span>
-        <b style="color:var(--amber);">${mode === 'xau_pairs' ? '🔄 XAU + FX Pairs' : '🎯 XAUUSD Only'}</b>
+        <b style="color:var(--amber);">${mode === 'xau_pairs' ? '🔄 8 FX Pairs Pool (H1 Intraday-Swing)' : '🎯 Single Symbol (XAUUSD)'}</b>
       </div>
     </div>
 
@@ -625,16 +625,15 @@ function renderStatusPanel() {
       <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🤖 Active AI Models & Scheduling</div>
       <div style="margin-bottom:6px; font-size:10px; color:var(--muted); line-height: 1.5;">
         Slot 1 (OpenAI): <b>${esc(oaiModel)}</b> <span style="color:var(--accent);">(${esc(oaiWindow)} WIB)</span> / default ${esc(oaiDefaultModel)} / err-fb ${esc(oaiFallbackModel)}<br>
-        Slot 2 (Gemini, legacy dual): <b>${esc(gemModel)}</b><br>
-        Slot 3 (Claude Slot): <b>${esc(cldModel)}</b>
+        Slot 2 (Gemini / Dual): <b>${esc(gemModel)}</b> (Slot 2 Dual & Triple)<br>
+        Slot 3 (Claude Slot): <b>${esc(cldModel)}</b> (Fallback: deepseek-v4-flash fast mode)
       </div>
       <div style="font-size:10px; line-height: 1.4; background: rgba(255,255,255,0.01); padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
         <b>WIB Time-based AI Mode:</b><br>
-        • 00:01-09:59: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
-        • 10:00-15:00: <span style="color:var(--amber);">Single (Gemini Only)</span><br>
-        • 15:01-19:29: <span style="color:var(--muted-light);">Single (OpenAI)</span><br>
-        • 19:30-21:30: <span style="color:var(--amber);">Triple (OpenAI+Gemini+DeepSeek)</span><br>
-        • 21:31-23:59: <span style="color:var(--muted-light);">Single (OpenAI)</span>
+        • 00:00-09:00: <span style="color:var(--red);">🛑 Dead Zone Subuh & Rollover</span><br>
+        • 09:00-19:29: <span style="color:var(--amber);">⚡ Dual Mode (OpenAI + Gemini)</span><br>
+        • 19:30-21:30: <span style="color:var(--accent);">🔥 Triple Mode (OpenAI + Gemini + Claude)</span><br>
+        • 21:31-23:59: <span style="color:var(--amber);">🌙 Dual Mode (OpenAI + Gemini)</span> <span style="color:var(--muted);">(23:00-00:00 Max 2 Pos)</span>
       </div>
     </div>
   `;

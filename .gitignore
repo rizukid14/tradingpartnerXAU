@@ -49,3 +49,15 @@ tg_proxy_vercel/
 # --- LOCAL DOCS & ARTIFACTS ---
 openaipage.html
 _proxy.txt
+
+# --- PRIVATE DOCS, BOOKS & TRADING ROBOTS ---
+docs/reference/
+docs/strategy/
+*.pdf
+*.ex4
+*.ex5
+*.mq4
+*.mq5
+*.mqh
+*.set
+*.tpl
