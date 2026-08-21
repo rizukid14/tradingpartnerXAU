@@ -67,7 +67,10 @@ if config.ANTHROPIC_API_KEY:
 
 gemini_client = None
 if config.GEMINI_API_KEY:
-    gemini_client = genai.Client(api_key=config.GEMINI_API_KEY)
+    gemini_kwargs = {"api_key": config.GEMINI_API_KEY}
+    if getattr(config, "GEMINI_API_BASE", None):
+        gemini_kwargs["http_options"] = {"base_url": config.GEMINI_API_BASE}
+    gemini_client = genai.Client(**gemini_kwargs)
 
 
 def asset_desc(symbol):

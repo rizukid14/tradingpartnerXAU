@@ -107,6 +107,7 @@ API_TOKEN = os.getenv("API_TOKEN", "")
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "")
 
 
 # --- MODEL NAMES & FALLBACKS ---
