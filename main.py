@@ -673,7 +673,8 @@ def interactive_setup():
         ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", _scan_mode_label() if config.TRADING_MODE == "xau_pairs" else "FX Pairs Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk FX (% equity)", "config.RISK_PERCENT_FX", str(config.RISK_PERCENT_FX)),
-        ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
+        ("LIMIT & FILTER", "Max Daily Loss (% eq)", "config.MAX_DAILY_LOSS_PERCENT", f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}% (${config.MAX_DAILY_LOSS_USD} fallback)"),
+        ("LIMIT & FILTER", "Daily Profit Target (% eq)", "config.DAILY_PROFIT_TARGET_PERCENT", f"{getattr(config, 'DAILY_PROFIT_TARGET_PERCENT', 6.0)}%"),
         ("LIMIT & FILTER", "Max Posisi", "config.MAX_OPEN_POSITIONS", str(config.MAX_OPEN_POSITIONS)),
         ("LIMIT & FILTER", "Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
         ("LIMIT & FILTER", "Spread Max BTC (pts)", "config.MAX_SPREAD_POINTS_BTC", str(config.MAX_SPREAD_POINTS_BTC)),
@@ -1553,7 +1554,8 @@ def main():
     else:
         sltp_desc = f"XAU: LLM Structure (floor {config.LLM_SAFETY_FLOOR_XAU_PTS} pts) | BTC: ATR-Based (fix)"
 
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    loss_desc = f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%"
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 

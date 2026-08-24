@@ -424,14 +424,25 @@ class RiskEngine:
     #  INDIVIDUAL CHECKS
     # =========================================================================
     def _check_daily_loss(self):
-        """Check today's realized P/L from bot-closed positions in MT5 deal history."""
+        """Check today's realized P/L from bot-closed positions in MT5 deal history against dynamic % equity limit."""
         try:
             closed = connector.get_closed_positions_today()
             daily_pnl = sum(c["profit"] for c in closed)
 
-            if daily_pnl <= -config.MAX_DAILY_LOSS_USD:
+            account = mt5.account_info()
+            equity = float(account.equity) if account else (float(account.balance) if account else 0.0)
+            loss_pct = getattr(config, "MAX_DAILY_LOSS_PERCENT", 0.0)
+
+            if loss_pct > 0 and equity > 0:
+                max_loss_usd = equity * loss_pct / 100.0
+                limit_desc = f"-{loss_pct:.1f}% / -${max_loss_usd:.2f}"
+            else:
+                max_loss_usd = getattr(config, "MAX_DAILY_LOSS_USD", 50.0)
+                limit_desc = f"-${max_loss_usd:.2f}"
+
+            if daily_pnl <= -max_loss_usd:
                 return False, (f" [RISK] Batas kerugian harian tercapai! "
-                               f"P/L: ${daily_pnl:.2f} (Batas: -${config.MAX_DAILY_LOSS_USD:.2f})")
+                               f"P/L: ${daily_pnl:.2f} (Batas: {limit_desc})")
             return True, ""
 
         except Exception as e:
@@ -442,7 +453,7 @@ class RiskEngine:
         """
         Daily profit target (14 Agustus): begitu net profit harian (WIB-midnight,
         dari get_closed_positions_today) mencapai DAILY_PROFIT_TARGET_PERCENT % dari
-        balance MT5, bot BERHENTI membuka posisi baru sampai tengah malam WIB
+        equity/balance MT5, bot BERHENTI membuka posisi baru sampai tengah malam WIB
         berikutnya (reset otomatis karena window P/L harian = midnight WIB).
         Nilai 0.0 / negatif = fitur dimatikan.
         """
@@ -455,12 +466,12 @@ class RiskEngine:
             daily_pnl = sum(c["profit"] for c in closed)  # profit sudah NET (termasuk swap+komisi)
 
             account = mt5.account_info()
-            balance = float(account.balance) if account else 0.0
-            # Kalau balance tidak terbaca (MT5 disconnected / None), jangan blokir
+            equity = float(account.equity) if account else (float(account.balance) if account else 0.0)
+            # Kalau equity/balance tidak terbaca (MT5 disconnected / None), jangan blokir
             # trade karena target tidak bisa dihitung - biarkan gate lain yang kerja.
-            if balance <= 0:
+            if equity <= 0:
                 return True, ""
-            target_usd = balance * target_pct / 100.0
+            target_usd = equity * target_pct / 100.0
 
             if daily_pnl >= target_usd:
                 return False, (f" [RISK] Target Profit Harian Tercapai! P/L: +${daily_pnl:.2f} "

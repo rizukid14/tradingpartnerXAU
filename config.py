@@ -216,7 +216,7 @@ LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
-RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.25)
+RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.0)
 DEVIATION = _getenv_int("DEVIATION", 30)
 DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
 DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
@@ -283,6 +283,7 @@ LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
+SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 
 # Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
 # per-trade) TIDAK otomatis ditolak di risk_pct — masih diterima selama risk aktual
@@ -431,6 +432,7 @@ PARTIAL_CLOSE_TP1_POINTS_XAU = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_XAU", PARTI
 PARTIAL_CLOSE_TP1_POINTS_BTC = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_BTC", 44500)
 
 # --- DAILY RISK LIMITS ---
+MAX_DAILY_LOSS_PERCENT = _getenv_float("MAX_DAILY_LOSS_PERCENT", 4.0)
 MAX_DAILY_LOSS_USD = _getenv_float("MAX_DAILY_LOSS_USD", 50.0)
 MAX_CONSECUTIVE_LOSSES = _getenv_int("MAX_CONSECUTIVE_LOSSES", 5)
 PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
@@ -764,7 +766,7 @@ def risk_percent_for(symbol):
     """Returns the risk per trade percentage for a symbol.
     BTC: RISK_PERCENT_BTC (1.5%)
     XAU: RISK_PERCENT_XAU (1.0%)
-    FX: RISK_PERCENT_FX (1.25%)
+    FX: RISK_PERCENT_FX (1.0%)
     """
     if is_crypto(symbol):
         return RISK_PERCENT_BTC
@@ -800,6 +802,13 @@ def max_spread_points_for(symbol, atr_h1_pts=None):
     if atr_h1_pts and atr_h1_pts > 0:
         return max(int(atr_h1_pts * SPREAD_ATR_RATIO), SPREAD_ATR_FLOOR_PTS)
     return MAX_SPREAD_POINTS  # fallback flat jika ATR tidak tersedia
+
+
+def sl_padding_for(symbol):
+    """Returns extra anti-wick/spread buffer in points for specific pairs (e.g. +20 pts for NZD crosses)."""
+    if "NZD" in (symbol or "").upper():
+        return getattr(sys.modules.get(__name__) or config, "SL_PADDING_NZD_POINTS", 20)
+    return 0
 
 
 def confidence_threshold_for(symbol):

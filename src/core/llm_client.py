@@ -249,10 +249,10 @@ Respond with a single valid JSON object ONLY -- no text before or after it:
   "rr_valid": true | false,
   "signal": "BUY" | "SELL" | "HOLD",
   "confidence": float (0.00 to 1.00),
-  "sl_points": integer (Stop Loss distance in broker POINTS from current price),
-  "tp_points": integer (Take Profit distance in broker POINTS from current price),
-  "invalidation_price": float (OPTIONAL reference price level),
-  "target_price": float (OPTIONAL reference price level),
+  "sl_points": integer (Stop Loss distance in broker POINTS from current price; null if HOLD),
+  "tp_points": integer (Take Profit distance in broker POINTS from current price; null if HOLD),
+  "invalidation_price": float (key structural price level for thesis invalidation/boundary),
+  "target_price": float (key structural target/projection price level),
 {{PENDING_FIELDS}}
   "reasoning": "string (MAX 30 WORDS: 1 concise sentence explaining the trade thesis)"
 }

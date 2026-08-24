@@ -13,7 +13,7 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude/DeepSeek) yang berjalan di **MetaTrader 5**.
-- **TRADING_MODE = "pairs" (Default)**: **Pool 6 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 5 FX pairs (`EURCHF-ECNc`, `GBPCHF-ECNc`, `EURNZD-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.25%**. Net currency exposure seimbang (GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1).
+- **TRADING_MODE = "pairs" (Default)**: **Pool 6 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 5 FX pairs (`EURCHF-ECNc`, `GBPCHF-ECNc`, `EURNZD-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.0%**. Net currency exposure seimbang (GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1).
 - **BTCUSD.c (Bitcoin)**: Intraday **M30**, risk: **1.5%**, aktif di weekend + setelah jam 22:00 Jumat WIB (`ENABLE_BTC_ROTATION`). Bebas swap overnight.
 - **XAUUSD-ECNc (Gold)**: Intraday **M30**, risk: **1.0%** (aktif saat mode `xau`).
 - **Smart Timeframe Rotation**: AI dipanggil per-simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di `main.py`) — FX tiap 1 jam, BTC/XAU tiap 30 menit (hemat token drastis ~90%).
@@ -63,7 +63,7 @@ python main.py
 4. **Panggil LLM paralel sesuai Time-Based AI Mode**.
 5. **Weighted Consensus Engine**: skor $\Sigma$ confidence $\ge$ threshold (FX/XAU/BTC **1.2**; defensif $\times 1.5$) + eksekusi rekomendasi CLOSE dari AI Re-evaluator.
 6. Forecast context (bias/target) bersifat murni *informational* (tidak memblokir eksekusi).
-7. **Risk-based lot sizing**: lot dihitung dari equity & SL (FX 1.25%, BTC 1.5%, XAU 1.0%).
+7. **Risk-based lot sizing**: lot dihitung dari equity & SL (FX 1.0%, BTC 1.5%, XAU 1.0%).
 8. Cek kapasitas max posisi (aggregate pool 6 posisi), lalu eksekusi order MT5.
 
 ---
@@ -76,7 +76,7 @@ python main.py
   - **BTC & XAU = Mode ATR-Based**: Gate ATR non-negotiable (R:R 2:1 fix).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1 pts}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 02:00–06:00 WIB (hanya untuk FX & XAU; BTC tetap aktif 24/7).
-- **Proteksi Akun**: Max daily loss $50, max 3 consecutive loss, daily profit target 6%, max 6 total posisi bot.
+- **Proteksi Akun**: Max daily loss 4% equity, max 5 consecutive loss, daily profit target 6% equity, max 5 total posisi bot.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
   - **Break-Even (BEP)**: Aktif di **58% TP** (atau **45% TP** saat Low Volatility) + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
   - **Trailing Stop**: Aktif di **70% TP**, jarak **konstan 0.5× ATR(14)** dari harga ekstrem, floor absolut 60 pts (6 pips).

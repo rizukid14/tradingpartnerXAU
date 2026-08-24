@@ -1,3 +1,4 @@
+import json
 import config
 from src.analytics import dynamic_config
 from src.core.cli_theme import UI
@@ -71,6 +72,12 @@ def _apply_sltp_rules(sl_points, tp_points):
         if sl_points < min_sl:
             _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
             sl_points = min_sl
+
+        # Anti-wick padding untuk pair silang (misal NZD +20 pts)
+        nzd_padding = config.sl_padding_for(config.SYMBOL)
+        if nzd_padding > 0:
+            sl_points += nzd_padding
+            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {config.SYMBOL} (SL -> {sl_points} pts).")
 
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
@@ -154,7 +161,8 @@ def _drop_standalone_outlier(values, label):
 
     if dropped:
         v_drop = dropped[0]
-        note = f"Outlier {label} dibuang (median {median:.0f}): {v_drop:.0f if isinstance(v_drop, float) and v_drop.is_integer() else v_drop}"
+        v_drop_str = f"{v_drop:.0f}" if isinstance(v_drop, float) and v_drop.is_integer() else str(v_drop)
+        note = f"Outlier {label} dibuang (median {median:.0f}): {v_drop_str}"
         filtered = [v for v in values if v != v_drop]
         return filtered, note
     return values, None
@@ -191,11 +199,19 @@ def calculate_consensus(decisions):
             sltp_info = "SL/TP: -"
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
-        if setup_label:
-            box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
-        box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
         
-        # Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
+        # 1. CoT (Trend, Velocity, RR Valid)
+        trend_val = dec.get("trend")
+        vel_val = dec.get("velocity")
+        rr_val = dec.get("rr_valid")
+        if trend_val or vel_val or rr_val is not None:
+            rr_str = "✓" if rr_val else "✗"
+            cot_str = f"Trend: {trend_val or '-'} | Velocity: {vel_val or '-'} | RR Valid: {rr_str}"
+            box_items.append((f"  {UI.CYAN}CoT{UI.RST}    : ", cot_str))
+        elif setup_label:
+            box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
+        
+        # 2. Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
         inv_val = dec.get("invalidation_price") or (dec.get("invalidation") or "").strip()
         tgt_val = dec.get("target_price")
         levels_info = []
@@ -205,6 +221,9 @@ def calculate_consensus(decisions):
             levels_info.append(f"Target: {tgt_val}")
         if levels_info:
             box_items.append((f"  {UI.RED}Levels{UI.RST} : ", " | ".join(levels_info)))
+
+        # 3. Reason
+        box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
 
         
     # Evaluate consensus for active position early-close actions
@@ -296,7 +315,7 @@ def calculate_consensus(decisions):
         box_items.append("---")
         box_items.append(f"{UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")
         box_items.append((f"  {UI.DIM}Skor Arah:{UI.RST} ", f"BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f} (Threshold: {threshold:.2f})"))
-        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
+        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
         
         any_trade_intent = any(dec.get("signal") in ("BUY", "SELL") for dec in decisions.values())
         return {
@@ -441,7 +460,7 @@ def calculate_consensus(decisions):
     if not sltp_ok:
         box_items.append(f"{UI.RED}[-] HASIL: TRADE DIBATALKAN OLEH GATE ATR{UI.RST}")
         box_items.append((f"  {UI.RED}Alasan{UI.RST}    : ", sltp_reason))
-        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
+        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
         return {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -502,7 +521,7 @@ def calculate_consensus(decisions):
     price_info = f" | Price SL {final_inv:.{price_decimals}f} / TP {final_tgt:.{price_decimals}f}" if final_inv else ""
     box_items.append((f"  {UI.BOLD}Final SL / TP :{UI.RST} ", f"{UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}"))
 
-    print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
+    print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
 
     return {
         "signal": consensus_signal,

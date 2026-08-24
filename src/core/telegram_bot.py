@@ -148,7 +148,7 @@ def handle_status_command(chat_id):
             f"• *Daily Realized P/L*: `${pnl_today:+.2f}`\n"
             f"• *Net Floating P/L*: `${total_floating:+.2f}` ({len(open_pos)} positions)\n"
             f"• *Active Mode*: `{mode_name}`\n"
-            f"• *Max Daily Loss*: `${config.MAX_DAILY_LOSS_USD}`\n"
+            f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%`\n"
             f"• *Daily Profit Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"
         )
         kb = {"inline_keyboard": [[{"text": "[ Back to Menu ]", "callback_data": "cmd:menu"}]]}
