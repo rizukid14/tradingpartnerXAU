@@ -13,7 +13,7 @@ for path in [BASE_DIR, os.path.join(BASE_DIR, "src"), os.path.join(BASE_DIR, "sr
         sys.path.insert(0, path)
 
 # Load environmental variables from .env file
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # --- ENV PARSING HELPERS ---
 def _getenv_bool(key: str, default: bool) -> bool:

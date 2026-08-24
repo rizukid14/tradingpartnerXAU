@@ -1647,7 +1647,7 @@ def main():
 
                 # Sync siklus pending order (kirim alert Telegram saat ter-fill / ter-cancel)
                 try:
-                    _sync_pending_lifecycle()
+                    _detect_filled_pending()
                 except Exception as e:
                     print(f"[PENDING SYNC ERROR] {e}")
 
