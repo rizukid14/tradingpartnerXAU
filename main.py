@@ -1509,7 +1509,17 @@ def main():
     # Apply CLI overrides (sesi saja) sebelum bot jalan
     cli_applied, skip_prompt = parse_cli_overrides()
 
-    # Setup TeeLogger to save all terminal logs
+    # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
+    if not skip_prompt and sys.stdin.isatty():
+        interactive_setup()
+
+    # Set active symbol now so the banner shows the symbol that will be traded
+    config.refresh_active_symbol()
+
+    # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
+    _prompt_startup_scan_mode(skip_prompt)
+
+    # Setup TeeLogger to save all terminal logs from here on (clean logs, no interactive menus)
     if getattr(config, "LOG_FILE", None):
         tee_logger = TeeLogger(config.LOG_FILE)
         sys.stdout = tee_logger
@@ -1520,13 +1530,6 @@ def main():
     if cli_applied:
         print(f" {UI.YELLOW}[CLI OVERRIDE]{UI.RST} " + " | ".join(cli_applied))
         print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
-
-    # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
-    if not skip_prompt and sys.stdin.isatty():
-        interactive_setup()
-
-    # Set active symbol now so the banner shows the symbol that will be traded
-    config.refresh_active_symbol()
 
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
@@ -1583,9 +1586,6 @@ def main():
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
     except Exception as e:
         print(f"[STARTUP EVALUATOR WARNING] {e}")
-        
-    # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
-    _prompt_startup_scan_mode(skip_prompt)
 
     print("Bot berjalan... Menunggu penutupan candle berikutnya.\n")
     
