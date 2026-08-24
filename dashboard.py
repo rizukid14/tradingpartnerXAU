@@ -339,7 +339,7 @@ def compute_metrics(events, state=None):
     
     mt5_open_tickets = None
     try:
-        import MetaTrader5 as mt5
+        from config import mt5
         if mt5.initialize():
             positions = mt5.positions_get()
             mt5_open_tickets = {p.ticket for p in (positions or [])}
