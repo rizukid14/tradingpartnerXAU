@@ -135,6 +135,21 @@ def alert_pending_order_filled(ticket, symbol, pos_type, price, pos_id=None, sl_
     send_message("\n".join(lines))
 
 
+def alert_pending_order_cancelled(ticket, symbol, pos_type, price, reason="Expired / Sinyal Berlawanan"):
+    """Send notification when a pending order is cancelled or expired."""
+    sym = symbol or config.SYMBOL
+    ptype_upper = (pos_type or "").upper()
+    lines = [
+        f"🗑️ *Pending Order Dibatalkan / Expired*",
+        f"• *Symbol*: `{sym}`",
+        f"• *Order*: `{ptype_upper}` @ `{price}`",
+        f"• *Ticket*: `#{ticket}`",
+        f"• *Alasan*: _{reason}_",
+    ]
+    send_message("\n".join(lines))
+
+
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
