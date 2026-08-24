@@ -244,6 +244,13 @@ def _detect_filled_pending():
                 changed = True
                 print(f" {UI.tag('PENDING', UI.YELLOW)} Pending #{ticket} {ev.get('type')} {ev.get('symbol')} "
                       f"@ {ev.get('price')} DICANCEL MANUAL / EXPIRED MT5 -> Dihapus dari memori.")
+                tg.alert_pending_order_cancelled(
+                    ticket=ticket,
+                    symbol=ev.get("symbol"),
+                    pos_type=ev.get("type"),
+                    price=ev.get("price"),
+                    reason="Expired / Dicancel MT5",
+                )
         if changed:
             state["pending"] = events[-500:]
             _save_pending_state(state)
@@ -1637,6 +1644,12 @@ def main():
 
                 # Trailing stop + break-even + partial close
                 position_manager.manage_all_positions()
+
+                # Sync siklus pending order (kirim alert Telegram saat ter-fill / ter-cancel)
+                try:
+                    _detect_filled_pending()
+                except Exception as e:
+                    print(f"[PENDING SYNC ERROR] {e}")
 
                 # Detect positions closed by MT5 (SL/TP/manual) in real time.
                 # Returns newly closed deals -> alert Telegram immediately,

@@ -180,12 +180,20 @@ def calculate_consensus(decisions):
         sltp_info = f"SL: {sl} pts, TP: {tp} pts" if sig in ("BUY", "SELL") else "SL/TP: -"
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
-        invalidation_text = (dec.get("invalidation") or "").strip()
         if setup_label:
             box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
         box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
-        if invalidation_text:
-            box_items.append((f"  {UI.RED}Inval.{UI.RST}  : ", invalidation_text))
+        
+        # Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
+        inv_val = dec.get("invalidation_price") or (dec.get("invalidation") or "").strip()
+        tgt_val = dec.get("target_price")
+        levels_info = []
+        if inv_val:
+            levels_info.append(f"Inval: {inv_val}")
+        if tgt_val:
+            levels_info.append(f"Target: {tgt_val}")
+        if levels_info:
+            box_items.append((f"  {UI.RED}Levels{UI.RST} : ", " | ".join(levels_info)))
 
         
     # Evaluate consensus for active position early-close actions
@@ -456,6 +464,8 @@ def calculate_consensus(decisions):
             best_reason = " ".join(r_candidate.replace("\n", " ").replace("\r", " ").split())
         if i_candidate and not best_invalidation:
             best_invalidation = " ".join(i_candidate.replace("\n", " ").replace("\r", " ").split())
+        elif not best_invalidation and dec.get("invalidation_price"):
+            best_invalidation = f"Level {dec.get('invalidation_price')}"
         if best_setup and best_reason and best_invalidation:
             break
 
