@@ -21,6 +21,7 @@ docs/
 ## 📚 Daftar Dokumen Lengkap
 
 ### 1. 🏗️ Architecture (`docs/architecture/`)
+* [BROKER_INFRASTRUCTURE_AND_SAFETY.md](file:///c:/Vibe/tradingpartner/docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md) — **Analisis Infrastruktur Broker, Regulasi & Keamanan Dana (Algo Trading)**: Bedah VT Markets (Mauritius FSC, server Equinix LD4, ECN Raw), realitas A-Book vs B-Book, dan roadmap broker multi-tier (Swissquote, IBKR, IC Markets, Bappebti).
 * [blueprint.md](file:///c:/Vibe/tradingpartner/docs/architecture/blueprint.md) — Cetak biru awal dan rancangan arsitektur dasar sistem bot.
 * [PROMPT_COMPARISON.md](file:///c:/Vibe/tradingpartner/docs/architecture/PROMPT_COMPARISON.md) — Riwayat perbandingan skema JSON output prompt antar iterasi.
 * [prompt_claude.md](file:///c:/Vibe/tradingpartner/docs/architecture/prompt_claude.md) — Referensi skema prompt khusus Claude Sonnet / Haiku.
