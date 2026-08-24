@@ -7,6 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Ensure data directory exists and make entrypoint script executable
-RUN mkdir -p /app/data && chmod +x /app/entrypoint.sh
+RUN mkdir -p /app/data && dos2unix /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Expose API & Dashboard server port
 EXPOSE 8765
