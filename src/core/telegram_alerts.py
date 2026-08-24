@@ -12,8 +12,16 @@ import requests
 import config
 
 
+def _clean_md(val):
+    """Escapes or cleans Markdown v1 special characters from dynamic AI/user strings."""
+    if not val:
+        return ""
+    s = str(val).replace("\\", "")
+    return s.replace("_", "\\_").replace("*", "\\*")
+
+
 def send_message(text):
-    """Send a message via Telegram Bot API. Fails silently if disabled."""
+    """Send a message via Telegram Bot API with automatic plain text fallback."""
     if not config.TELEGRAM_ENABLED:
         return False
 
@@ -30,9 +38,19 @@ def send_message(text):
             "disable_web_page_preview": True,
         }
         resp = requests.post(url, json=payload, timeout=5)
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            return True
+
+        # Fallback: jika parsing Markdown ditolak Telegram (400), kirim ulang sebagai Plain Text
+        plain_payload = {
+            "chat_id": config.TELEGRAM_CHAT_ID,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        resp2 = requests.post(url, json=plain_payload, timeout=5)
+        return resp2.status_code == 200
     except Exception:
-        # Gracefully handle network blocking (e.g. office firewall / ISP block) without throwing noise
+        # Gracefully handle network blocking without throwing noise
         return False
 
 
@@ -67,13 +85,13 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
 
     if models:
         conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
-        lines.append(f"• *Model Sepakat*: `{models}{conf_str}`")
+        lines.append(f"• *Model Sepakat*: `{_clean_md(models)}{conf_str}`")
     if setup:
-        lines.append(f"• *Setup*: `{setup}`")
+        lines.append(f"• *Setup*: `{_clean_md(setup)}`")
     if reason:
-        lines.append(f"• *Reason*: _{reason}_")
+        lines.append(f"• *Reason*: {_clean_md(reason)}")
     if invalidation:
-        lines.append(f"• *Invalidation*: _{invalidation}_")
+        lines.append(f"• *Invalidation*: {_clean_md(invalidation)}")
 
     send_message("\n".join(lines))
 
@@ -105,13 +123,13 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
 
     if models:
         conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
-        lines.append(f"• *Model Sepakat*: `{models}{conf_str}`")
+        lines.append(f"• *Model Sepakat*: `{_clean_md(models)}{conf_str}`")
     if setup:
-        lines.append(f"• *Setup*: `{setup}`")
+        lines.append(f"• *Setup*: `{_clean_md(setup)}`")
     if reason:
-        lines.append(f"• *Reason*: _{reason}_")
+        lines.append(f"• *Reason*: {_clean_md(reason)}")
     if invalidation:
-        lines.append(f"• *Invalidation*: _{invalidation}_")
+        lines.append(f"• *Invalidation*: {_clean_md(invalidation)}")
     if expiration_minutes:
         lines.append(f"• *Expire*: `{expiration_minutes} Menit`")
 
