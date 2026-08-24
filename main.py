@@ -324,7 +324,12 @@ def _hold_recap_line(result):
         sig = dec.get("signal") or "HOLD"
         if sig in ("BUY", "SELL"):
             conf = (dec.get("confidence") or 0.0) * 100
-            parts.append(f"{m_name} {sig} {conf:.0f}%")
+            et = (dec.get("entry_type") or "market").strip().lower()
+            ep = dec.get("entry_price")
+            if et != "market" and ep:
+                parts.append(f"{m_name} {sig} {conf:.0f}% ({et} @ {ep})")
+            else:
+                parts.append(f"{m_name} {sig} {conf:.0f}% ({et})")
         else:
             parts.append(f"{m_name} HOLD")
     vote_str = ", ".join(parts)
@@ -1397,7 +1402,7 @@ def _run_cycle_for_current_symbol():
                             tp_points=tp_points,
                             sl_price=p_sl_price,
                             tp_price=p_tp_price,
-                            models=", ".join(result.get("agreeing_models") or []),
+                            models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
                             confidence=result.get("confidence", 0.0),
                             setup=result.get("setup", ""),
                             reason=result.get("reason", ""),
@@ -1464,7 +1469,7 @@ def _run_cycle_for_current_symbol():
                     entry_price=execution_price if 'execution_price' in locals() else None,
                     sl_price=sl_price,
                     tp_price=pos_tp_price,
-                    models=", ".join(result.get("agreeing_models") or []),
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
                     confidence=result.get("confidence", 0.0),
                     setup=result.get("setup", ""),
                     reason=result.get("reason", ""),

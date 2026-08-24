@@ -177,7 +177,18 @@ def calculate_consensus(decisions):
         
         badge = UI.badge_signal(sig)
         bar = UI.make_bar(conf, 1.0, width=8)
-        sltp_info = f"SL: {sl} pts, TP: {tp} pts" if sig in ("BUY", "SELL") else "SL/TP: -"
+        
+        # Format info eksekusi (Market vs Pending Order)
+        entry_type = (dec.get("entry_type") or "market").strip().lower()
+        entry_price = dec.get("entry_price")
+        if sig in ("BUY", "SELL"):
+            if entry_type != "market" and entry_price:
+                exec_str = f"{entry_type.upper()} @ {entry_price}"
+            else:
+                exec_str = "MARKET"
+            sltp_info = f"{exec_str} | SL: {sl} pts, TP: {tp} pts"
+        else:
+            sltp_info = "SL/TP: -"
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
         if setup_label:
@@ -469,9 +480,20 @@ def calculate_consensus(decisions):
         if best_setup and best_reason and best_invalidation:
             break
 
+    agreeing_details = []
+    for m in agreeing_models:
+        d = decisions.get(m, {})
+        et = (d.get("entry_type") or "market").strip().lower()
+        ep = d.get("entry_price")
+        if et != "market" and ep:
+            agreeing_details.append(f"{m} ({et} @ {ep})")
+        else:
+            agreeing_details.append(f"{m} ({et})")
+    agreeing_models_str = ", ".join(agreeing_details)
+
     badge = UI.badge_signal(consensus_signal)
     box_items.append(f"{UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(Skor {best_score:.2f} >= {threshold:.2f}){UI.RST}")
-    box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)"))
+    box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{agreeing_models_str} (Avg Conf: {avg_confidence*100:.1f}%)"))
     if best_setup:
         box_items.append((f"  {UI.CYAN}Setup{UI.RST}         : ", best_setup))
     if best_reason:
@@ -493,6 +515,7 @@ def calculate_consensus(decisions):
         "entry_price": final_entry_price,
         "agreeing_count": len(agreeing_models),
         "agreeing_models": list(agreeing_models),
+        "agreeing_models_str": agreeing_models_str,
         "setup": best_setup,
         "reason": best_reason,
         "invalidation_text": best_invalidation,
