@@ -13,7 +13,7 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude/DeepSeek) yang berjalan di **MetaTrader 5**.
-- **TRADING_MODE = "xau_pairs" (Default)**: **Pool 6 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 5 FX pairs (`EURCHF-ECNc`, `GBPCHF-ECNc`, `EURNZD-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.25%**. Net currency exposure seimbang (GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1).
+- **TRADING_MODE = "pairs" (Default)**: **Pool 6 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 5 FX pairs (`EURCHF-ECNc`, `GBPCHF-ECNc`, `EURNZD-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.25%**. Net currency exposure seimbang (GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1).
 - **BTCUSD.c (Bitcoin)**: Intraday **M30**, risk: **1.5%**, aktif di weekend + setelah jam 22:00 Jumat WIB (`ENABLE_BTC_ROTATION`). Bebas swap overnight.
 - **XAUUSD-ECNc (Gold)**: Intraday **M30**, risk: **1.0%** (aktif saat mode `xau`).
 - **Smart Timeframe Rotation**: AI dipanggil per-simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di `main.py`) — FX tiap 1 jam, BTC/XAU tiap 30 menit (hemat token drastis ~90%).
@@ -27,7 +27,7 @@ Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude/DeepSeek) yang ber
 python main.py
 ```
 - `config.DRY_RUN = False` $\rightarrow$ **LIVE trading** (order beneran dikirim). Jangan ubah tanpa izin user.
-- **Ganti mode trading**: `.env` `TRADING_MODE=xau` / `TRADING_MODE=xau_pairs`, atau via UI dashboard $\rightarrow$ restart bot biar apply.
+- **Ganti mode trading**: `.env` `TRADING_MODE=pairs` / `TRADING_MODE=xau`, atau via UI dashboard $\rightarrow$ restart bot biar apply.
 - Log: `data/trading_bot.log` (auto-rotate 2MB, keep 5000 baris). Log ini campur sesi demo lama + live baru; verifikasi akurat dilakukan dengan query MT5 langsung.
 
 ---

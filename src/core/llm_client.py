@@ -825,7 +825,7 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
         )
         pending_fields = (
             '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",\n'
-            '  "entry_price": float (REQUIRED if entry_type != "market")'
+            '  "entry_price": float (REQUIRED if entry_type != "market"),\n'
         )
     else:
         execution_note = (

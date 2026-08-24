@@ -699,7 +699,7 @@ def get_rotation_pool(now=None):
         if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
             return [WEEKEND_SYMBOL]
         return [WEEKDAY_SYMBOL]
-    if TRADING_MODE == "xau_pairs":
+    if TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
         pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL]
         return pool[:MAX_ROTATION_SYMBOLS]
     return [WEEKDAY_SYMBOL]

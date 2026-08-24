@@ -391,10 +391,10 @@ def alert_bot_started():
     """Send bot startup notification with full config."""
     mode = "DRY RUN" if config.DRY_RUN else "LIVE"
     trading_mode = getattr(config, "TRADING_MODE", "xau")
-    if trading_mode == "xau_pairs" and hasattr(config, "get_rotation_pool"):
+    if trading_mode in ("xau_pairs", "pairs", "fx_pairs") and hasattr(config, "get_rotation_pool"):
         try:
             pool_syms = config.get_rotation_pool()
-            sym_line = f"- Mode: `xau_pairs` (Pool: `{', '.join(pool_syms)}`)\n"
+            sym_line = f"- Mode: `pairs` (Pool: `{', '.join(pool_syms)}`)\n"
         except Exception:
             sym_line = f"- Symbol: `{config.SYMBOL}`\n"
     else:
