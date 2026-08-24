@@ -184,13 +184,16 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        # 20 Agustus (user): USDCAD di-remove (7 pair pool H1 untuk penghematan).
-        # Pool FX 7 simbol H1: GBPUSD, EURJPY, GBPAUD, AUDCAD, EURCHF, AUDCHF, CADCHF.
-        "GBPUSD-ECNc,EURJPY-ECNc,GBPAUD-ECNc,AUDCAD-ECNc,EURCHF-ECNc,AUDCHF-ECNc,CADCHF-ECNc",
+        # 21 Agustus (user): EURJPY di-remove (edge tipis, 2 EDGE vs CHF pairs 24-37 EDGE).
+        # Pool FX 6 simbol H1 (24 Agustus 2026 — GLM review):
+        # GBPUSD, EURCHF, GBPCHF, EURNZD, NZDCAD, AUDCAD.
+        # Eksposur: GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1 (tidak ada >2).
+        # Keluar: GBPAUD (GBP×3), AUDCHF/CADCHF (CHF×3 + vol harian terendah ~34-40 pips).
+        "GBPUSD-ECNc,EURCHF-ECNc,GBPCHF-ECNc,EURNZD-ECNc,NZDCAD-ECNc,AUDCAD-ECNc",
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 7)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 6)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M30").upper()
 TIMEFRAME_MAP = {
@@ -258,7 +261,7 @@ DEFAULT_TP_POINTS_XAU = _getenv_int("DEFAULT_TP_POINTS_XAU", 1000)
 DEFAULT_SL_POINTS_BTC = _getenv_int("DEFAULT_SL_POINTS_BTC", 50000)
 DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # Default SL/TP FX (12 Agustus, FASE 1): FX trading H1 swing - default flat 100/200 pts
-# (10/20 pips EURJPY scale). Dulu per-pair 50/100 & 40/80 waktu FX masih M5 scalping;
+# (10/20 pips FX scale). Dulu per-pair 50/100 & 40/80 waktu FX masih M5 scalping;
 # sejak pindah H1, ATR H1 jauh lebih besar jadi 100/200 lebih pas. Gate ATR-Based tetap
 # menolak otomatis kalau proposal SL/TP < multiplier x ATR (lihat atr_sl_multiplier).
 
@@ -299,7 +302,7 @@ ERA_PRESETS = {
         "DRY_RUN": True,
         "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     },
     "v2": {
@@ -307,7 +310,7 @@ ERA_PRESETS = {
         "DRY_RUN": True,
         "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     },
     "v3": {
@@ -315,7 +318,7 @@ ERA_PRESETS = {
         "DRY_RUN": False,
         "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.5,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.0,
+        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     }
 }
@@ -323,7 +326,7 @@ ERA_PRESETS = {
 CONSENSUS_THRESHOLD = _getenv_int("CONSENSUS_THRESHOLD", 2)
 DYNAMIC_CONFIG_ENABLED = _getenv_bool("DYNAMIC_CONFIG_ENABLED", False)
 
-CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.0)
+CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.2)
 CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
@@ -504,6 +507,11 @@ TRADE_COOLDOWN_SECONDS = _getenv_int("TRADE_COOLDOWN_SECONDS", 0)
 MAX_SPREAD_POINTS = _getenv_int("MAX_SPREAD_POINTS", 50)
 MAX_SPREAD_POINTS_XAU = _getenv_int("MAX_SPREAD_POINTS_XAU", MAX_SPREAD_POINTS)
 MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
+# FX spread cap: ATR-based = max(SPREAD_ATR_RATIO × ATR_H1_pts, SPREAD_ATR_FLOOR_PTS)
+# Lebih adil antar-pair: pair volatile (EURNZD, GBPJPY) dapat toleransi lebih besar,
+# pair slow-mover (EURCHF) tidak langsung kena flat-cap 50 pts yang terlalu longgar.
+SPREAD_ATR_RATIO     = float(os.getenv("SPREAD_ATR_RATIO", "0.15"))   # 15% ATR H1
+SPREAD_ATR_FLOOR_PTS = _getenv_int("SPREAD_ATR_FLOOR_PTS", 20)        # floor minimum FX (pts)
 
 # --- SESSION FILTER ---
 # Trade Zone: 09:00 - 00:00 WIB (00:00 - 09:00 WIB Dead Zone Rollover & Sepi Likuiditas)
@@ -527,6 +535,29 @@ WEEKEND_CLOSE_PROFIT_MIN_USD = _getenv_float("WEEKEND_CLOSE_PROFIT_MIN_USD", 1.0
 WEEKEND_CLOSE_HOURS_BEFORE = _getenv_float("WEEKEND_CLOSE_HOURS_BEFORE", 2.0)
 WEEKEND_MAX_LOSS_TO_HOLD_USD = _getenv_float("WEEKEND_MAX_LOSS_TO_HOLD_USD", 20.0)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
+
+# --- TIME-DECAY STAGNATION & PRE-ROLLOVER SHIELD (Ide 1) ---
+TIME_DECAY_STAGNATION_ENABLED = _getenv_bool("TIME_DECAY_STAGNATION_ENABLED", True)
+TIME_DECAY_HOURS              = _getenv_float("TIME_DECAY_HOURS", 8.0)          # Max hold 8 jam jika stagnan (Hard Safety Net)
+TIME_DECAY_MIN_R              = _getenv_float("TIME_DECAY_MIN_R", -0.20)         # Floating min boundary
+TIME_DECAY_MAX_R              = _getenv_float("TIME_DECAY_MAX_R", 0.20)          # Floating max boundary
+TIME_DECAY_MAX_PEAK_R         = _getenv_float("TIME_DECAY_MAX_PEAK_R", 0.30)    # Hanya close jika peak < +0.30R
+TIME_DECAY_START_HOUR_WIB     = _getenv_int("TIME_DECAY_START_HOUR_WIB", 14)    # Hanya aktif di sesi London-NY (14:00 WIB)
+TIME_DECAY_END_HOUR_WIB       = _getenv_int("TIME_DECAY_END_HOUR_WIB", 0)       # s/d 00:00 WIB midnight
+
+PRE_ROLLOVER_SHIELD_ENABLED   = _getenv_bool("PRE_ROLLOVER_SHIELD_ENABLED", True)
+PRE_ROLLOVER_START_HOUR_WIB   = _getenv_int("PRE_ROLLOVER_START_HOUR_WIB", 3)     # 03:00 WIB
+PRE_ROLLOVER_END_HOUR_WIB     = _getenv_int("PRE_ROLLOVER_END_HOUR_WIB", 5)       # 05:00 WIB
+PRE_ROLLOVER_DRAWDOWN_PCT     = _getenv_float("PRE_ROLLOVER_DRAWDOWN_PCT", 0.45)   # Cut loss jika >= 45% SL
+
+# --- DYNAMIC VOLATILITY SCALING (Ide 4) ---
+VOL_REGIME_SCALING_ENABLED    = _getenv_bool("VOL_REGIME_SCALING_ENABLED", True)
+VOL_REGIME_LOW_THRESHOLD      = _getenv_float("VOL_REGIME_LOW_THRESHOLD", 0.70)   # < 0.70x baseline
+VOL_REGIME_HIGH_THRESHOLD     = _getenv_float("VOL_REGIME_HIGH_THRESHOLD", 1.20)  # > 1.20x baseline
+VOL_REGIME_LOW_MULTIPLIER     = _getenv_float("VOL_REGIME_LOW_MULTIPLIER", 0.75)  # 0.75x sizing
+VOL_REGIME_NORMAL_MULTIPLIER  = _getenv_float("VOL_REGIME_NORMAL_MULTIPLIER", 1.00)
+VOL_REGIME_HIGH_MULTIPLIER    = _getenv_float("VOL_REGIME_HIGH_MULTIPLIER", 1.15) # 1.15x sizing
+VOL_REGIME_LOW_BEP_RATIO      = _getenv_float("VOL_REGIME_LOW_BEP_RATIO", 0.45)   # 45% TP saat low vol
 
 # --- PATTERN EDGE WHISPER (16 Agustus, dev-backtest) ---
 # Inject statistik pola tervalidasi (dari riset pattern_research.py) ke prompt LLM
@@ -754,8 +785,21 @@ def default_tp_points_for(symbol):
     return DEFAULT_TP_POINTS_XAU
 
 
-def max_spread_points_for(symbol):
-    return MAX_SPREAD_POINTS_BTC if is_crypto(symbol) else MAX_SPREAD_POINTS_XAU
+def max_spread_points_for(symbol, atr_h1_pts=None):
+    """Return max spread in points for a symbol.
+    - Crypto : flat BTC cap (2400 pts)
+    - XAU    : flat XAU cap (50 pts)
+    - FX     : max(15% × ATR_H1_pts, floor 20 pts).
+                Fallback ke flat MAX_SPREAD_POINTS jika atr_h1_pts tidak tersedia.
+    """
+    if is_crypto(symbol):
+        return MAX_SPREAD_POINTS_BTC
+    if is_gold(symbol):
+        return MAX_SPREAD_POINTS_XAU
+    # FX: ATR-based dengan floor
+    if atr_h1_pts and atr_h1_pts > 0:
+        return max(int(atr_h1_pts * SPREAD_ATR_RATIO), SPREAD_ATR_FLOOR_PTS)
+    return MAX_SPREAD_POINTS  # fallback flat jika ATR tidak tersedia
 
 
 def confidence_threshold_for(symbol):
@@ -825,8 +869,8 @@ def active_ai_model_names(now=None):
     """Return the model slots to query for the active AI mode.
     - single: OpenAI (o4-mini)
     - single_gemini: Gemini (gemini-3.1-flash-lite)
-    - dual: OpenAI (o4-mini) + DeepSeek (deepseek-v4-flash)
-    - triple: OpenAI (o4-mini) + Gemini (gemini-3.1-flash-lite) + Claude (claude-sonnet-4-6)
+    - dual: OpenAI (o4-mini) + Gemini (gemini-3.1-flash-lite)
+    - triple: OpenAI (o4-mini) + Gemini (gemini-3.1-flash-lite) + DeepSeek (deepseek-v4-flash)
     """
     mode = get_ai_mode(now)
     if mode == "single_gemini":
@@ -838,7 +882,7 @@ def active_ai_model_names(now=None):
         if second in ("gemini", "gem"):
             return ["OpenAI", "Gemini"]
         return ["OpenAI", "DeepSeek"]
-    return ["OpenAI", "Gemini", "Claude"]
+    return ["OpenAI", "Gemini", "DeepSeek"]
 
 
 def risk_percent_for(symbol):

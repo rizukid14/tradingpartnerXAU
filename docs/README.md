@@ -27,6 +27,7 @@ docs/
 * [LLM_COST_ESTIMATION.md](file:///c:/Vibe/tradingpartner/docs/architecture/LLM_COST_ESTIMATION.md) — Simulasi kuota token, frekuensi call harian, dan perbandingan biaya API bulanan (DeepSeek vs Claude).
 
 ### 2. 📊 Research (`docs/research/`)
+* [LLM_PROMPT_BENCHMARK_EXPERIMENTS.md](file:///c:/Vibe/tradingpartner/docs/research/LLM_PROMPT_BENCHMARK_EXPERIMENTS.md) — **Riset & Eksperimen Benchmark LLM (Agustus 2026)**: Hasil pengujian empiris diagnostik 4 model AI (o4-mini, Gemini, Claude, DeepSeek), perbandingan Structured JSON CoT vs Anti-Paralysis Directive, dan Master Matrix 36 evaluasi di pool bot.
 * [QUANT_RESEARCH_EDGES.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_EDGES.md) — Hasil riset statistik 3–4 tahun bebas bias (*lookahead-bias-free*), 112 Edge Bearish NY, perankingan pair Forex, riset CAD/EUR/GBP, JPY, dan Donchian XAU BUY NY.
 * [backtest_augustus_2026.md](file:///c:/Vibe/tradingpartner/docs/research/backtest_augustus_2026.md) — Hasil backtest 10 strategi buku (NotebookLM), erratum S9 Horn, dan verifikasi S9 HTF Structural Target pada GBPUSD.
 * [hasilnotebooklm.md](file:///c:/Vibe/tradingpartner/docs/research/hasilnotebooklm.md) — Ekstraksi 10 strategi teknikal dari literatur buku trading via Google NotebookLM.

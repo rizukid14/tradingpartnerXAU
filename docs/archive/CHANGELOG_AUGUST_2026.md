@@ -56,3 +56,53 @@
 3. **R:R minimum 1.25:1** (`LLM_MIN_RR_RATIO = 1.25`): TP dinaikkan otomatis jika AI mengusulkan R:R di bawah 1.25.
 4. **Perubahan Format Harga FX 5-Desimal**: perbaikan bug formatting `.2f` pada pair Forex.
 5. **AI Re-evaluator tetap aktif saat posisi MAX (6/6)**: jika slot penuh, bot tetap memanggil re-evaluator untuk mencari peluang *early exit* pada posisi yang melemah.
+
+---
+
+## 5. Perubahan 24 Agustus 2026 — Transisi ke Ultra-Compact Chain-of-Thought JSON Schema
+
+### 📜 Arsip Skema JSON Lama (Digantikan):
+```json
+// Skema Lama (HOLD):
+{
+  "signal": "HOLD",
+  "reasoning": "string (MAX 20 WORDS: single key technical reason why no setup exists)"
+}
+
+// Skema Lama (BUY/SELL):
+{
+  "signal": "BUY" | "SELL",
+  "confidence": float (0.50 to 1.00),
+  "setup": "string (short label for setup type)",
+  "reasoning": "string (MAX 60 WORDS: detailed entry thesis, key levels, and core edge for this trade)",
+  "invalidation": "string (key technical condition that invalidates this thesis)",
+  "sl_points": integer (Stop Loss distance in broker POINTS from current price),
+  "tp_points": integer (Take Profit distance in broker POINTS from current price),
+  "invalidation_price": float (OPTIONAL: reference price level for invalidation),
+  "target_price": float (OPTIONAL: reference price level for target),
+  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",
+  "entry_price": float
+}
+```
+
+### ✨ Skema Baru: Ultra-Compact Chain-of-Thought JSON:
+```json
+{
+  "trend": "BULL_PULLBACK | BEAR_PULLBACK | BREAKOUT | RANGING",
+  "velocity": "NORMAL | CRASH | STAGNANT",
+  "rr_valid": true | false,
+  "signal": "BUY" | "SELL" | "HOLD",
+  "confidence": float (0.00 to 1.00),
+  "sl_points": integer (Stop Loss distance in broker POINTS),
+  "tp_points": integer (Take Profit distance in broker POINTS),
+  "invalidation_price": float (OPTIONAL reference price level),
+  "target_price": float (OPTIONAL reference price level),
+  "reasoning": "string (1 concise sentence explaining the trade thesis)"
+}
+```
+
+### 💎 Rangkuman Peningkatan 24 Agustus 2026:
+1. **Forced Logic Chain-of-Thought**: Token `trend`, `velocity`, dan `rr_valid` diproses sebelum `signal`, memangkas halusinasi & salah arah pada OpenAI, Gemini, dan DeepSeek.
+2. **Kenaikan Threshold FX/XAU $\rightarrow$ 1.20**: Meningkatkan standar kualitas konsensus Forex dan Emas (wajib $\ge 2$ model searah, skor $\ge 1.20$).
+3. **Efisiensi & Kecepatan Respons**: Ukuran output terpangkas menjadi ~35 token dengan waktu respons < 5 detik per simbol.
+

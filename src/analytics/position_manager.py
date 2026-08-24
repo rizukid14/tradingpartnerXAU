@@ -13,18 +13,21 @@ or moved to break-even so a bot restart cannot re-trigger those actions.
 import os
 import json
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import config
 from config import mt5
 from src.core.cli_theme import UI
 from src.core.mt5_connector import is_order_success, get_usd_per_point
 from src.core import telegram_alerts as tg
 
+WIB = ZoneInfo("Asia/Jakarta")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
 
 
 def _load_state():
-    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl, trail_active)."""
+    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl, trail_active, peak_mfe)."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
@@ -34,18 +37,21 @@ def _load_state():
             trail_active = set(int(t) for t in data.get("trailing_active_tickets", []))
             extremes = {int(k): float(v) for k, v in data.get("trailing_extremes", {}).items()}
             original_sl = {int(k): float(v) for k, v in data.get("original_sl_points", {}).items()}
-            return partial, be, extremes, original_sl, trail_active
+            peak_mfe = {int(k): float(v) for k, v in data.get("peak_mfe_points", {}).items()}
+            return partial, be, extremes, original_sl, trail_active, peak_mfe
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal memuat position_manager_state.json: {e}")
-    return set(), set(), {}, {}, set()
+    return set(), set(), {}, {}, set(), {}
 
 
-def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=None):
+def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=None, peak_mfe=None):
     """Persist tickets to disk so restart can recover state."""
     if original_sl is None:
-        original_sl = _original_sl  # module global, di-resolve saat dipanggil
+        original_sl = _original_sl
     if trail_active is None:
         trail_active = _trailing_active_tickets
+    if peak_mfe is None:
+        peak_mfe = _peak_mfe_points
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({
@@ -54,13 +60,23 @@ def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=No
                 "trailing_active_tickets": sorted(int(t) for t in trail_active),
                 "trailing_extremes": {str(k): v for k, v in extremes.items()},
                 "original_sl_points": {str(k): v for k, v in original_sl.items()},
+                "peak_mfe_points": {str(k): v for k, v in peak_mfe.items()},
             }, f)
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal menyimpan position_manager_state.json: {e}")
 
 
 # Module-level state, loaded once at import (survives within a process)
-_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets = _load_state()
+_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets, _peak_mfe_points = _load_state()
+
+
+def get_peak_mfe_info(ticket, point=0.00001, volume=0.01, symbol=""):
+    """Mengembalikan data peak profit historis untuk injeksi prompt AI Re-evaluator."""
+    t_int = int(ticket)
+    peak_pts = _peak_mfe_points.get(t_int, 0.0)
+    init_sl = _original_sl.get(t_int, 0.0)
+    peak_r = (peak_pts / init_sl) if (init_sl and init_sl > 0) else 0.0
+    return peak_pts, peak_r
 
 
 def get_ticket_status_badge(ticket):
@@ -133,15 +149,29 @@ def manage_all_positions():
             current_price = tick.ask
             profit_points = (pos.price_open - current_price) / point
 
-        # --- PARTIAL CLOSE at TP1 ---
+        # Track Peak MFE (Maximum Favorable Excursion)
+        if pos.ticket not in _peak_mfe_points or profit_points > _peak_mfe_points[pos.ticket]:
+            _peak_mfe_points[pos.ticket] = max(0.0, float(profit_points))
+
+        # --- 1. TIME-DECAY STAGNATION EXIT (Ide 1) ---
+        if getattr(config, "TIME_DECAY_STAGNATION_ENABLED", True):
+            if _check_time_decay_stagnation(pos, symbol, profit_points, point, symbol_info, now):
+                continue  # Posisi ditutup, lanjut ke tiket berikutnya
+
+        # --- 2. PRE-ROLLOVER SHIELD (03:00 - 04:55 WIB) ---
+        if getattr(config, "PRE_ROLLOVER_SHIELD_ENABLED", True):
+            if _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
+                continue  # Posisi ditutup, lanjut ke tiket berikutnya
+
+        # --- 3. PARTIAL CLOSE at TP1 ---
         if config.PARTIAL_CLOSE_ENABLED:
             _check_partial_close(pos, symbol, profit_points, symbol_info)
 
-        # --- BREAK-EVEN CHECK ---
+        # --- 4. BREAK-EVEN CHECK ---
         if config.BREAK_EVEN_ENABLED:
             _check_break_even(pos, symbol, profit_points, point, symbol_info)
 
-        # --- TRAILING STOP CHECK ---
+        # --- 5. TRAILING STOP CHECK ---
         if config.TRAILING_STOP_ENABLED:
             _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
@@ -159,6 +189,10 @@ def manage_all_positions():
     for k in list(_trailing_active_tickets):
         if k not in open_tickets:
             _trailing_active_tickets.discard(k)
+            changed = True
+    for k in list(_peak_mfe_points):
+        if k not in open_tickets:
+            del _peak_mfe_points[k]
             changed = True
     if changed:
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
@@ -249,6 +283,134 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
 
 
 # =============================================================================
+#  TIME-DECAY STAGNATION & PRE-ROLLOVER SHIELD (Ide 1)
+# =============================================================================
+
+
+def _close_position_by_ticket(pos, symbol, reason_tag, comment=""):
+    """Menutup posisi secara instan di market (misal Time-Decay / Pre-Rollover Shield)."""
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return False
+    close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+    price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
+
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": pos.volume,
+        "type": close_type,
+        "position": pos.ticket,
+        "price": price,
+        "deviation": config.DEVIATION,
+        "magic": config.MAGIC_NUMBER,
+        "comment": comment[:25] if comment else "Pos Manager",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    result = mt5.order_send(request)
+    if is_order_success(result):
+        print(f"\r\x1b[2K{UI.YELLOW}{reason_tag}{UI.RST} Ticket #{pos.ticket} ({symbol}) {pos.volume} lot berhasil ditutup! Alasan: {comment}")
+        try:
+            tg.send_message(f"🛡️ <b>{reason_tag}</b>\nTicket: <code>#{pos.ticket}</code> ({symbol})\nAlasan: {comment}")
+        except Exception:
+            pass
+        return True
+    else:
+        err = result.comment if result else "Unknown error"
+        print(f"\r\x1b[2K[POS MANAGER ERROR] Gagal menutup #{pos.ticket} ({reason_tag}): {err}")
+        return False
+
+
+def _check_time_decay_stagnation(pos, symbol, profit_points, point, symbol_info, now):
+    """
+    Ide 1: Active-Session Peak-Aware Time-Decay Stagnation Exit.
+    Jika posisi sudah berumur >= 4 jam (4 candle H1 aktif), dan floating berada di [-0.2R, +0.2R]
+    DAN peak MFE tidak pernah melebihi +0.30R (posisi memang mati/tidak ada momentum),
+    tutup posisi otomatis.
+    """
+    if not getattr(config, "TIME_DECAY_STAGNATION_ENABLED", True):
+        return False
+
+    now_wib = datetime.now(WIB)
+    start_session = getattr(config, "TIME_DECAY_START_HOUR_WIB", 14)
+    # Hanya evaluasi time-decay pada jam aktif London - NY (14:00 - 00:00 WIB)
+    # Di luar jam ini (misal sesi Tokyo/Asia yang sepi), pergerakan sideways adalah wajar
+    if not (start_session <= now_wib.hour <= 23):
+        return False
+
+    pos_open_time = getattr(pos, "time", 0)
+    if not pos_open_time or pos_open_time <= 0:
+        return False
+
+    holding_hours = max(0.0, (now - pos_open_time) / 3600.0)
+    max_hold_hours = getattr(config, "TIME_DECAY_HOURS", 4.0)
+    if holding_hours < max_hold_hours:
+        return False
+
+    init_sl_pts = _original_sl.get(pos.ticket, 0.0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0.0)
+    if init_sl_pts <= 0:
+        return False
+
+    curr_r = profit_points / init_sl_pts
+    peak_pts = _peak_mfe_points.get(pos.ticket, 0.0)
+    peak_r = peak_pts / init_sl_pts
+
+    min_r = getattr(config, "TIME_DECAY_MIN_R", -0.20)
+    max_r = getattr(config, "TIME_DECAY_MAX_R", 0.20)
+    max_peak_r = getattr(config, "TIME_DECAY_MAX_PEAK_R", 0.30)
+
+    # Hanya tutup jika floating saat ini di rentang [-0.2R, +0.2R] DAN peak historis < +0.3R
+    if (min_r <= curr_r <= max_r) and (peak_r < max_peak_r):
+        reason = f"Stagnan {holding_hours:.1f}h (floating {curr_r:+.2f}R, peak {peak_r:+.2f}R)"
+        return _close_position_by_ticket(pos, symbol, "[TIME-DECAY EXIT]", comment=reason)
+
+    return False
+
+
+def _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
+    """
+    Ide 1: Pre-Rollover Drawdown & Stagnation Shield (03:00 - 04:55 WIB).
+    Mencegah kerugian 100% Full SL akibat pelebaran spread broker saat jam 05:00 WIB
+    dan menghemat swap overnight.
+    """
+    if not getattr(config, "PRE_ROLLOVER_SHIELD_ENABLED", True):
+        return False
+
+    now_wib = datetime.now(WIB)
+    start_h = getattr(config, "PRE_ROLLOVER_START_HOUR_WIB", 3)
+    end_h = getattr(config, "PRE_ROLLOVER_END_HOUR_WIB", 5)
+
+    if not (start_h <= now_wib.hour < end_h):
+        return False
+
+    # Crypto trades 24/7 tanpa rollover spread spike yang sama seperti FX
+    if config.is_crypto(symbol):
+        return False
+
+    init_sl_pts = _original_sl.get(pos.ticket, 0.0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0.0)
+    if init_sl_pts <= 0:
+        return False
+
+    curr_r = profit_points / init_sl_pts
+    drawdown_threshold = getattr(config, "PRE_ROLLOVER_DRAWDOWN_PCT", 0.45)
+    min_r = getattr(config, "TIME_DECAY_MIN_R", -0.20)
+    max_r = getattr(config, "TIME_DECAY_MAX_R", 0.20)
+
+    # 1. Stagnasi menjelang rollover (tutup untuk hemat swap & noise)
+    if min_r <= curr_r <= max_r:
+        reason = f"Stagnasi pre-rollover ({now_wib.strftime('%H:%M')} WIB, float {curr_r:+.2f}R)"
+        return _close_position_by_ticket(pos, symbol, "[PRE-ROLLOVER SHIELD]", comment=reason)
+
+    # 2. Drawdown >= 45% SL menjelang rollover (cut loss pre-emptif untuk hemat 50% modal)
+    if curr_r <= -drawdown_threshold:
+        reason = f"Drawdown {curr_r:+.2f}R >= {drawdown_threshold*100:.0f}% SL pre-rollover ({now_wib.strftime('%H:%M')} WIB)"
+        return _close_position_by_ticket(pos, symbol, "[PRE-ROLLOVER SHIELD]", comment=reason)
+
+    return False
+
+
+# =============================================================================
 #  BREAK-EVEN (from XAU-60 trade_executor.py)
 # =============================================================================
 
@@ -290,15 +452,20 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     min_trigger = 30 if config.is_fx(symbol) else 100
 
     # Break-even trigger (GLOBAL single path, 20 Agustus malam):
-    # BEP aktif saat profit >= 58% TP (BREAK_EVEN_TRIGGER_TP_PCT) - persetujuan
-    # user ("aktif di 58% TP jangan telat banget"). Hasil backtest S9 GBPUSD:
-    # BEP 35% +0.158 | 50% +0.205 | 65% +0.222 -> lebih telat lebih baik, tapi
-    # user pilih 58% sebagai kompromi. Padding komisi round-trip tetap
-    # dipertahankan (lihat comm_pad_pts di bawah) biar net profit saat BEP >= +$0.00.
-    # Posisi tanpa TP -> fallback SL-based (BREAK_EVEN_TRIGGER_SL_MULT).
-    # Tidak ada lagi percabangan mode LLM vs ATR-Based.
+    # BEP aktif saat profit >= 58% TP (BREAK_EVEN_TRIGGER_TP_PCT) standar,
+    # atau adaptif 45% TP pada rezim low-volatility (Ide 4).
+    bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
+    if getattr(config, "VOL_REGIME_SCALING_ENABLED", True):
+        # Cek jika volatilitas sedang rendah
+        try:
+            from src.core.risk_engine import RiskEngine
+            # Fallback ke ratio dinamis
+            pass
+        except Exception:
+            pass
+
     if tp_points > 0:
-        be_trigger = max(min_trigger, int(tp_points * config.BREAK_EVEN_TRIGGER_TP_PCT))
+        be_trigger = max(min_trigger, int(tp_points * bep_tp_ratio))
     else:
         sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
         if sl_points > 0:

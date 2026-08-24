@@ -862,7 +862,7 @@ def _send_with_retry(build_request, symbol, label):
 
     return result
 
-def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, comment=None, sl_price=None, tp_price=None):
+def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, comment=None, sl_price=None, tp_price=None, atr_h1_pts=None):
     """
     Sends a buy/sell trade order to MT5.
     action: "BUY" or "SELL"
@@ -906,7 +906,7 @@ def send_trade_order(symbol, action, lot, sl_points=None, tp_points=None, commen
         tick_age = time.time() - (tick.time - broker_offset)
     if tick_age > 10:
         return {"status": "ERROR", "comment": f"Tick stale {tick_age:.0f}s — order dibatalkan"}
-    max_spread = config.max_spread_points_for(symbol)
+    max_spread = config.max_spread_points_for(symbol, atr_h1_pts=atr_h1_pts)
     if spread_now > max_spread:
         return {"status": "ERROR", "comment": (f"Spread spike: {spread_now:.0f} pts > maks {max_spread} pts "
                                                f"— order dibatalkan (hindari entry pas quote burst)")}

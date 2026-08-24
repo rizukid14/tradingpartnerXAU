@@ -44,8 +44,15 @@ class RiskEngine:
         self._in_recovery_mode = False
         self._session_lot_multiplier = 1.0  # Adjusted per session
         self._known_closed = set()          # Position ids already accounted for
+        self._atr_h1_pts = None             # ATR H1 dalam points, di-update tiap cycle
         self._load_state()
         self.sync_closed_positions()
+
+    def update_atr_h1(self, atr_pts):
+        """Update ATR H1 (dalam points). Dipanggil dari main loop setelah df tersedia.
+        Dipakai oleh _check_spread() untuk ATR-based spread cap pada FX pairs."""
+        if atr_pts and atr_pts > 0:
+            self._atr_h1_pts = float(atr_pts)
 
     def get_remaining_pause(self):
         """Returns the remaining pause duration in seconds, or 0 if not paused."""
@@ -341,12 +348,67 @@ class RiskEngine:
 
         return lot
 
+    def get_volatility_regime_and_multiplier(self, symbol):
+        """
+        Ide 4: Dynamic Volatility Scaling berbasis ATR Percentile.
+        Membandingkan ATR H1 saat ini dengan rata-rata historis (baseline).
+        Returns: (regime_name: 'LOW'|'NORMAL'|'HIGH', multiplier: float, vol_ratio: float)
+        """
+        if not getattr(config, "VOL_REGIME_SCALING_ENABLED", True) or config.is_crypto(symbol):
+            return "NORMAL", 1.0, 1.0
+
+        current_atr_pts = self._atr_h1_pts
+        if not current_atr_pts or current_atr_pts <= 0:
+            return "NORMAL", self._session_lot_multiplier, 1.0
+
+        # Hitung baseline ATR H1 dari 120 candle H1 terakhir (~5 hari trading aktif)
+        baseline_atr_pts = None
+        try:
+            r = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 1, 120)
+            if r is not None and len(r) >= 30:
+                info = mt5.symbol_info(symbol)
+                pt = info.point if info and info.point > 0 else 0.00001
+                trs = [max(r[i]['high'] - r[i]['low'],
+                           abs(r[i]['high'] - r[i-1]['close']),
+                           abs(r[i]['low'] - r[i-1]['close']))
+                       for i in range(1, len(r))]
+                if trs:
+                    baseline_atr_pts = (sum(trs) / len(trs)) / pt
+        except Exception:
+            pass
+
+        if not baseline_atr_pts or baseline_atr_pts <= 0:
+            return "NORMAL", 1.0, 1.0
+
+        vol_ratio = current_atr_pts / baseline_atr_pts
+        low_th = getattr(config, "VOL_REGIME_LOW_THRESHOLD", 0.70)
+        high_th = getattr(config, "VOL_REGIME_HIGH_THRESHOLD", 1.20)
+
+        if vol_ratio < low_th:
+            mult = getattr(config, "VOL_REGIME_LOW_MULTIPLIER", 0.75)
+            return "LOW", mult, vol_ratio
+        elif vol_ratio > high_th:
+            mult = getattr(config, "VOL_REGIME_HIGH_MULTIPLIER", 1.15)
+            return "HIGH", mult, vol_ratio
+        else:
+            mult = getattr(config, "VOL_REGIME_NORMAL_MULTIPLIER", 1.00)
+            return "NORMAL", mult, vol_ratio
+
     def _apply_lot_multipliers(self, lot, symbol):
-        """Apply recovery (x0.5) and session (x1.0/1.2) lot multipliers."""
+        """Apply recovery (x0.5) and dynamic volatility/session lot multipliers."""
         if self._in_recovery_mode and config.RECOVERY_MODE_ENABLED:
             lot *= config.RECOVERY_LOT_MULTIPLIER
             print(f" {UI.tag('RECOVERY', UI.YELLOW)} Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
-        lot *= self._session_lot_multiplier
+
+        # Ide 4: Ganti jam dinding statis dengan Dynamic Volatility Sizing (ATR Percentile)
+        if getattr(config, "VOL_REGIME_SCALING_ENABLED", True) and not config.is_crypto(symbol):
+            regime, vol_mult, ratio = self.get_volatility_regime_and_multiplier(symbol)
+            lot *= vol_mult
+            if vol_mult != 1.0:
+                print(f" {UI.tag('VOL REGIME', UI.CYAN)} {symbol}: Volatility {regime} (Ratio {ratio:.2f}x baseline) -> Dynamic Sizing Mult x{vol_mult}")
+        else:
+            lot *= self._session_lot_multiplier
+
         return lot
 
 
@@ -442,7 +504,9 @@ class RiskEngine:
 
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
 
-        max_spread = config.max_spread_points_for(config.SYMBOL)
+        # FX: ATR-based cap (15% ATR H1, floor 20 pts).
+        # XAU/BTC: flat cap dari config.
+        max_spread = config.max_spread_points_for(config.SYMBOL, atr_h1_pts=self._atr_h1_pts)
         if spread_points > max_spread:
             return False, (f" [RISK] Spread terlalu tinggi: {spread_points} pts "
                            f"(Maks: {max_spread} pts). Menunggu...")

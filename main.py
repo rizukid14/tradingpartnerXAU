@@ -18,6 +18,10 @@ from src.analytics.macro_analyst import MacroAnalyst
 import re
 import shutil
 import unicodedata
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_WIB = ZoneInfo("Asia/Jakarta")
 
 # --- Status line terminal (Windows) ---
 _VT_OK = False
@@ -794,10 +798,13 @@ def interactive_setup():
 
 
 class TeeLogger(object):
-    """Redirects stdout and stderr to both the console and a log file with auto-size rotation."""
+    """Redirects stdout and stderr to both the console (with full ANSI colors)
+    and a clean, timestamped log file for easy AI parsing and historical analysis.
+    """
     def __init__(self, filepath, max_bytes=2000000):
         self.terminal = sys.stdout
         self.filepath = filepath
+        self._buffer = ""
         # Rotate log if size exceeds max_bytes (keep last 5000 lines)
         if os.path.exists(filepath) and os.path.getsize(filepath) > max_bytes:
             try:
@@ -813,24 +820,51 @@ class TeeLogger(object):
     def write(self, message):
         self.terminal.write(message)
         # Skip carriage return live clock lines from spamming log file
-        if "\r" not in message:
-            # Filter verbose noise patterns to save space and focus the logs
-            skip_patterns = (
-                "Menyertakan analisa Multi-Timeframe",
-                "Menyertakan Lesson Learned",
-                "Mengirim data ke OpenAI",
-                "[LATENSI MODEL",
-                "ANALISIS KONSENSUS MULTI-LLM",
-                "==================================================",
-                "--------------------------------------------------"
-            )
-            if any(p in message for p in skip_patterns):
-                return
-            self.log.write(message)
-            self.log.flush()
+        if "\r" in message:
+            return
+
+        self._buffer += message
+        if "\n" in self._buffer:
+            lines = self._buffer.split("\n")
+            for raw_line in lines[:-1]:
+                clean_line = _ANSI_RE.sub("", raw_line).strip()
+                if not clean_line:
+                    continue
+
+                skip_patterns = (
+                    "Menyertakan analisa Multi-Timeframe",
+                    "Menyertakan Lesson Learned",
+                    "Mengirim data ke OpenAI",
+                    "[LATENSI MODEL",
+                    "ANALISIS KONSENSUS MULTI-LLM",
+                    "==================================================",
+                    "--------------------------------------------------",
+                    "+-- [PILIHAN STARTUP SCAN MODE]",
+                )
+                if any(p in clean_line for p in skip_patterns):
+                    continue
+
+                try:
+                    ts = datetime.now(_WIB).strftime("%Y-%m-%d %H:%M:%S")
+                    self.log.write(f"[{ts} WIB] {clean_line}\n")
+                except Exception:
+                    self.log.write(f"{clean_line}\n")
+                self.log.flush()
+
+            self._buffer = lines[-1]
 
     def flush(self):
         self.terminal.flush()
+        if self._buffer:
+            clean_line = _ANSI_RE.sub("", self._buffer).strip()
+            if clean_line:
+                try:
+                    ts = datetime.now(_WIB).strftime("%Y-%m-%d %H:%M:%S")
+                    self.log.write(f"[{ts} WIB] {clean_line}\n")
+                except Exception:
+                    self.log.write(f"{clean_line}\n")
+                self.log.flush()
+            self._buffer = ""
         self.log.flush()
 
 
@@ -1065,7 +1099,21 @@ def _run_cycle_for_current_symbol():
         return False
     if len(df) > 102:
         df = df.iloc[-102:-1].reset_index(drop=True)
-        
+
+    # Update ATR H1 di risk engine dari df yang fresh.
+    # Dipakai oleh _check_spread() untuk ATR-based spread cap (FX pairs).
+    # Dilakukan di sini (bukan sebelum can_trade) karena df baru tersedia setelah fetch.
+    # Cycle berikutnya otomatis pakai ATR terbaru; cycle pertama fallback ke flat cap.
+    try:
+        _pt = connector.get_current_tick(config.SYMBOL)
+        _point_sz = (_pt.get("point", 0) if _pt else 0) or 0.00001
+        _atr_raw = float(df.iloc[-1].get("atr_14", 0) or 0)
+        if _atr_raw > 0 and _point_sz > 0:
+            risk.update_atr_h1(_atr_raw / _point_sz)
+    except Exception:
+        pass  # non-critical, fallback flat cap masih berlaku
+
+
     # 2. Fetch current tick (Bid/Ask)
     tick = connector.get_current_tick(config.SYMBOL)
     if tick is None:
@@ -1393,7 +1441,8 @@ def _run_cycle_for_current_symbol():
                 tp_points=pos_tp,
                 comment=order_comment,
                 sl_price=sl_price,
-                tp_price=pos_tp_price
+                tp_price=pos_tp_price,
+                atr_h1_pts=risk._atr_h1_pts,
             )
             if order_res["status"] == "SUCCESS":
                 order_executed = True

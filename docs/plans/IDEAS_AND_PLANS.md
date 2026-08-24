@@ -13,6 +13,9 @@
 | 3 | [RFC 3: Parabolic Filter di Position Manager](#rfc-3-parabolic-filter-di-position-manager) | ⚪ Konsep (Butuh Backtest) | `position_manager.py` |
 | 4 | [RFC 4: Anti-Hedge Gate per Simbol](#rfc-4-anti-hedge-gate-per-simbol) | ⚪ Konsep | `main.py`, `consensus.py` |
 | 5 | [RFC 5: 2-Way Interactive Telegram Controller Hardening](#rfc-5-2-way-interactive-telegram-controller-hardening) | 🟡 Didesain (Perlu Fixing) | `telegram_bot.py`, `llm_client.py` |
+| 6 | [RFC 6: Peak-Aware Time-Decay Stagnation Exit & Pre-Rollover Shield](#rfc-6-peak-aware-time-decay-stagnation-exit--pre-rollover-shield) | 🟢 LIVE (Agustus 2026) | `position_manager.py` |
+| 7 | [RFC 7: Dynamic Volatility Sizing & Adaptive BEP](#rfc-7-dynamic-volatility-sizing--adaptive-bep) | 🟢 LIVE (Agustus 2026) | `risk_engine.py`, `position_manager.py`, `llm_client.py` |
+| 8 | [RFC 8: Intermarket Macro Commodity Pulse](#rfc-8-intermarket-macro-commodity-pulse) | 🟡 Didesain (Backlog) | `macro_analyst.py`, `llm_client.py` |
 
 ---
 
@@ -157,3 +160,51 @@ Modul pengendali dua arah berbasis Telegram Bot (`src/core/telegram_bot.py`) yan
 - [ ] **Background Listener Responsiveness**: Verifikasi loop polling `getUpdates` agar tidak menahan/tertunda saat loop utama MT5 sedang memproses 7 pair di `main.py`.
 - [ ] **Telegram Markdown Parsing Safety**: Pastikan semua karakter khusus seperti `_`, `*`, `[`, `]` di teks log/error ter-escape dengan benar agar Telegram API tidak menolak payload.
 - [ ] **Cross-Platform Verification**: Uji pengiriman command dari Telegram Desktop dan Mobile app saat bot running live.
+ 
+---
+ 
+## RFC 6: Peak-Aware Time-Decay Stagnation Exit & Pre-Rollover Shield
+ 
+### 1. Active-Session Peak-Aware Time-Decay
+- Menutup posisi yang hold $\ge 4$ jam aktif (H1) yang floating di $[-0.20R, +0.20R]$ **hanya jika** Peak MFE historis $< +0.30R$.
+- Memastikan trade yang sempat ekspansi $+0.4R/+0.5R$ lalu pullback normal **TIDAK TER-CLOSE PREMATUR**.
+ 
+### 2. Pre-Rollover Drawdown & Stagnation Shield (03:00–04:55 WIB)
+- Menutup posisi stagnan atau posisi ber-drawdown $\ge 45\%$ SL sebelum pergantian hari (jam 05:00 WIB).
+- Menghemat $50\%$ modal risiko dari ancaman pelebaran spread broker saat pergantian hari.
+ 
+---
+ 
+## RFC 7: Dynamic Volatility Sizing & Adaptive BEP
+ 
+### 1. Dynamic Volatility Scaling (ATR Percentile)
+- Menggantikan multiplier jam dinding statis (`0.7x`, `1.0x`, `1.2x`) dengan rasio volatilitas aktual terhadap baseline 30-hari:
+  - Low Vol ($< 0.70\times$): Multiplier `0.75x` & Adaptive BEP `45% TP`.
+  - Normal Vol ($0.70 - 1.20\times$): Multiplier `1.00x` & BEP `58% TP`.
+  - High Vol ($> 1.20\times$): Multiplier `1.15x` & BEP `58% TP`.
+ 
+### 2. Peak MFE Awareness di Prompt AI Re-Evaluator
+- Menampilkan data objektif `Peak: +$X.XX (+Y.YY R)` pada daftar tiket terbuka agar LLM dapat mendeteksi kegagalan momentum (*U-turn reversal*) secara alami.
+
+---
+
+## RFC 8: Intermarket Macro Commodity Pulse
+
+### 1. Latar Belakang & Masalah
+- **Kondisi saat ini**: Analisis makro di `macro_analyst.py` berfokus pada MTF (H4/D1) dan korelasi D1 antar-pair Forex internal.
+- **Tujuan**: Memberikan konteks sentimen global dan komoditas utama yang menggerakkan mata uang komoditas (*Commodity Currencies*):
+  - `CL-OIL` (Minyak Mentah) $\rightarrow$ Pendorong fundamental CAD (`NZDCAD`, `AUDCAD`).
+  - `COPPER` (Tembaga) $\rightarrow$ Pendorong fundamental AUD & NZD (`EURNZD`, `AUDCAD`).
+  - `NAS100` / `US500` (Indeks Ekuitas) $\rightarrow$ Pengukur sentimen Risk-On vs Risk-Off (Safe Haven CHF vs Risk FX).
+  - `XAUUSD` (Emas) $\rightarrow$ Arah likuiditas moneter global & pelemahan/penguatan DXY.
+
+### 2. Desain Implementasi
+- **Fetch Ringan MT5 (Cache 1 Jam)**:
+  - Mengambil perubahan persentase harian D1 (Today Open vs Current Bid) dari simbol broker terkait (`CL-OIL`, `COPPER`, `US100`, `XAUUSD`).
+  - Diformat menjadi 1 baris teks padat objektif:
+    ```yaml
+    ### GLOBAL COMMODITY & RISK PULSE (D1 Change)
+    - Oil (WTI): +1.2% (CAD bullish) | Copper: -0.8% (AUD/NZD mild drag) | Gold: +0.4% | Nasdaq: +0.6% (Risk-On)
+    ```
+- **Prinsip**: Data murni numerik dan faktual tanpa instruksi dogmatis, membiarkan LLM memanfaatkan korelasi intermarket secara independen.
+

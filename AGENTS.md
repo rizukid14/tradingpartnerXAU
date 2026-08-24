@@ -13,7 +13,7 @@
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude/DeepSeek) yang berjalan di **MetaTrader 5**.
-- **TRADING_MODE = "xau_pairs" (Default)**: **Pool 7 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 6 FX pairs (`EURJPY-ECNc`, `GBPAUD-ECNc`, `AUDCAD-ECNc`, `EURCHF-ECNc`, `AUDCHF-ECNc`, `CADCHF-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.25%**.
+- **TRADING_MODE = "xau_pairs" (Default)**: **Pool 6 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 5 FX pairs (`EURCHF-ECNc`, `GBPCHF-ECNc`, `EURNZD-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.25%**. Net currency exposure seimbang (GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1).
 - **BTCUSD.c (Bitcoin)**: Intraday **M30**, risk: **1.5%**, aktif di weekend + setelah jam 22:00 Jumat WIB (`ENABLE_BTC_ROTATION`). Bebas swap overnight.
 - **XAUUSD-ECNc (Gold)**: Intraday **M30**, risk: **1.0%** (aktif saat mode `xau`).
 - **Smart Timeframe Rotation**: AI dipanggil per-simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di `main.py`) — FX tiap 1 jam, BTC/XAU tiap 30 menit (hemat token drastis ~90%).
@@ -61,7 +61,7 @@ python main.py
 2. Ambil data 100 closed bars + tick live + indikator ADX(14), ATR, EMA, Fib 50/100-bar.
 3. Sinkronisasi deal tertutup + update post-mortem lessons.
 4. **Panggil LLM paralel sesuai Time-Based AI Mode**.
-5. **Weighted Consensus Engine**: skor $\Sigma$ confidence $\ge$ threshold (FX 1.0, BTC 1.2; defensif $\times 1.5$) + eksekusi rekomendasi CLOSE dari AI Re-evaluator.
+5. **Weighted Consensus Engine**: skor $\Sigma$ confidence $\ge$ threshold (FX/XAU/BTC **1.2**; defensif $\times 1.5$) + eksekusi rekomendasi CLOSE dari AI Re-evaluator.
 6. Forecast context (bias/target) bersifat murni *informational* (tidak memblokir eksekusi).
 7. **Risk-based lot sizing**: lot dihitung dari equity & SL (FX 1.25%, BTC 1.5%, XAU 1.0%).
 8. Cek kapasitas max posisi (aggregate pool 6 posisi), lalu eksekusi order MT5.
@@ -70,22 +70,24 @@ python main.py
 
 ## Gate eksekusi aktif (Hard Rules)
 
-- **Weighted Consensus**: $\ge 2$ model searah, skor confidence > threshold per-simbol (FX 1.0 / BTC 1.2).
+- **Weighted Consensus**: $\ge 2$ model searah, skor confidence $\ge$ threshold per-simbol (FX/XAU/BTC **1.2**).
 - **Aturan SL/TP (`config.sltp_mode_for(symbol)`)**:
   - **FX Pairs = Mode LLM**: SL/TP murni struktur teknikal LLM, dibatasi **Safety Floor** $\max(2\times \text{spread}, 50\text{ pts})$ + **Gate R:R minimum 1.25:1** (TP dinaikkan otomatis jika R:R < 1.25).
   - **BTC & XAU = Mode ATR-Based**: Gate ATR non-negotiable (R:R 2:1 fix).
-- **Spread Filter**: Spread $\le 50$ pts (FX & XAU) / $\le 2400$ pts (BTC).
+- **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1 pts}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 02:00–06:00 WIB (hanya untuk FX & XAU; BTC tetap aktif 24/7).
 - **Proteksi Akun**: Max daily loss $50, max 3 consecutive loss, daily profit target 6%, max 6 total posisi bot.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
-  - **Break-Even (BEP)**: Aktif di **58% TP** + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
+  - **Break-Even (BEP)**: Aktif di **58% TP** (atau **45% TP** saat Low Volatility) + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
   - **Trailing Stop**: Aktif di **70% TP**, jarak **konstan 0.5× ATR(14)** dari harga ekstrem, floor absolut 60 pts (6 pips).
+  - **Peak-Aware Time-Decay Stagnation Exit**: Posisi $\ge 8$ jam hold di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
+  - **Pre-Rollover Shield (03:00–04:55 WIB)**: Menutup posisi stagnan atau floating loss $\ge 45\%$ SL sebelum lonjakan spread pergantian hari jam 05:00 WIB.
 
 ---
 
 ## Status Terkini Sistem (Live Production — Agustus 2026)
 
-1. **FX Pairs 7-Symbol Pool (H1)**: Parallel scan 7 simbol (`GBPUSD`, `EURJPY`, `GBPAUD`, `AUDCAD`, `EURCHF`, `AUDCHF`, `CADCHF`).
+1. **FX Pairs 6-Symbol Pool (H1)**: Parallel scan 6 simbol (`GBPUSD`, `EURCHF`, `GBPCHF`, `EURNZD`, `NZDCAD`, `AUDCAD`) update 24 Agu 2026 (GLM structural review: GBPAUD/AUDCHF/CADCHF diganti GBPCHF/EURNZD/NZDCAD untuk eliminasi CHF×3 dan GBP×3 overexposure).
 2. **Trend-Aware Dual-Window Fibonacci**: Window 50-bar Intraday + 100-bar Macro Multi-Day dengan formula sadar arah tren.
 3. **Dynamic Pending Orders Prompt**: Jika `PENDING_ORDERS_ENABLED = False`, blok pending rules dan field `entry_type`/`entry_price` dihilangkan 100% dari prompt (menghemat ~459 token).
 4. **Paket Anti-FOMC & High-Impact News (Dynamic TradingView API)**:
@@ -100,6 +102,14 @@ python main.py
    - Pemantauan akun real-time (`/status`, `/posisi`, `/scan`, `/closeall`).
    - Fast POST polling via Vercel proxy (`https://tg-proxy-vercel-eight.vercel.app`).
    - *Status task fixing*: Perlu finalisasi stabilitas penerimaan input/command background listener saat berdampingan dengan main cycle MT5.
+8. **Peak-Aware Time-Decay Stagnation Exit & Pre-Rollover Shield (`position_manager.py`)**:
+   - Perlindungan modal dari time-decay momentum dan pelebaran spread broker saat rollover dini hari.
+9. **Dynamic Volatility Scaling (ATR Percentile)**:
+   - Menggantikan jam dinding statis dengan rasio volatilitas aktual vs baseline 30-hari (Low `0.75x`, Normal `1.00x`, High `1.15x`) + injeksi objektif Peak MFE ke AI Re-evaluator.
+10. **Ultra-Compact Chain-of-Thought JSON Protocol (24 Agu 2026)**:
+    - Mengunci urutan inferensi LLM: `trend` $\rightarrow$ `velocity` $\rightarrow$ `rr_valid` $\rightarrow$ `signal` $\rightarrow$ `confidence`.
+    - Memangkas token output menjadi ~35 token dan mempercepat respons inferensi menjadi < 5 detik per simbol.
+    - Menghilangkan *analysis paralysis* pada pair live dan menjaga konsensus tetap tajam & tegas.
 
 ---
 
@@ -120,7 +130,9 @@ Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/READ
 | Kategori | Dokumen | Deskripsi Isi |
 |---|---|---|
 | 💡 **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate. |
+| 🔴 **Plans & RFC** | **[docs/plans/GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md)** | **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table. |
 | 📊 **Research** | **[docs/research/QUANT_RESEARCH_EDGES.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_EDGES.md)** | **Riset Statistik Bebas Bias (3–4 Tahun)**: Temuan 112 Edge Pola Bearish NY, Ranking Pair Forex, Riset CAD/EUR/GBP & JPY, Riset Donchian XAU BUY NY, Confluence. |
+| 📊 **Research** | **[docs/research/DAILY_RANGE_VOLATILITY.md](file:///c:/Vibe/tradingpartner/docs/research/DAILY_RANGE_VOLATILITY.md)** | **Riset Volatilitas Harian D1 (365 hari, 29 pair)**: Mean & Median daily range pips untuk semua Major + Minor/Cross + XAUUSD. Ranking volatilitas, analisis CHF crosses di pool bot, kandidat upgrade pair. |
 | 📈 **Research** | **[docs/research/backtest_augustus_2026.md](file:///c:/Vibe/tradingpartner/docs/research/backtest_augustus_2026.md)** | **Hasil Backtest Agustus 2026**: Evaluasi 10 strategi buku (NotebookLM), Erratum S9 Horn, Verifikasi S9 + Target Struktural GBPUSD. |
 | 🏗️ **Architecture** | **[docs/architecture/LLM_COST_ESTIMATION.md](file:///c:/Vibe/tradingpartner/docs/architecture/LLM_COST_ESTIMATION.md)** | **Estimasi Frekuensi & Biaya LLM**: Simulasi kuota token, perbandingan opsi DeepSeek vs Claude Sonnet per bulan. |
 | 🏗️ **Architecture** | **[docs/architecture/PROMPT_COMPARISON.md](file:///c:/Vibe/tradingpartner/docs/architecture/PROMPT_COMPARISON.md)** | Perbandingan skema prompt antar iterasi versi bot. |

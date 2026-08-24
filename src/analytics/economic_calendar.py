@@ -389,13 +389,17 @@ class EconomicCalendar:
             for e in upcoming[:4]:
                 delta = e["dt"] - now
                 hours = delta.total_seconds() / 3600
-                lines.append(f"- {e['name']} in {hours:.1f}h ({e['dt'].strftime('%a %d %b %H:%M WIB')}) [{e['impact']}]")
+                country = (e.get("country") or "").strip()
+                prefix = f"[{country}] " if country else ""
+                lines.append(f"- {prefix}{e['name']} in {hours:.1f}h ({e['dt'].strftime('%a %d %b %H:%M WIB')}) [{e['impact']}]")
         if recent:
             lines.append(f"### RECENTLY RELEASED HIGH-IMPACT EVENTS (last {self.EVENT_AFTER_HOURS}h) -- volatility may persist, do not fade the move")
             for e in recent[:4]:
                 delta = now - e["dt"]
                 hours = delta.total_seconds() / 3600
-                lines.append(f"- {e['name']} {hours:.1f}h ago ({e['dt'].strftime('%a %d %b %H:%M WIB')}) [{e['impact']}]")
+                country = (e.get("country") or "").strip()
+                prefix = f"[{country}] " if country else ""
+                lines.append(f"- {prefix}{e['name']} {hours:.1f}h ago ({e['dt'].strftime('%a %d %b %H:%M WIB')}) [{e['impact']}]")
         return "\n".join(lines) + "\n"
 
 

@@ -91,18 +91,17 @@ def _build_main_menu_keyboard():
         "inline_keyboard": [
             [
                 {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD-ECNc"},
-                {"text": "EURJPY H1", "callback_data": "analyze:EURJPY-ECNc"},
+                {"text": "EURCHF H1", "callback_data": "analyze:EURCHF-ECNc"},
             ],
             [
-                {"text": "GBPAUD H1", "callback_data": "analyze:GBPAUD-ECNc"},
+                {"text": "GBPCHF H1", "callback_data": "analyze:GBPCHF-ECNc"},
+                {"text": "EURNZD H1", "callback_data": "analyze:EURNZD-ECNc"},
+            ],
+            [
+                {"text": "NZDCAD H1", "callback_data": "analyze:NZDCAD-ECNc"},
                 {"text": "AUDCAD H1", "callback_data": "analyze:AUDCAD-ECNc"},
             ],
             [
-                {"text": "EURCHF H1", "callback_data": "analyze:EURCHF-ECNc"},
-                {"text": "AUDCHF H1", "callback_data": "analyze:AUDCHF-ECNc"},
-            ],
-            [
-                {"text": "CADCHF H1", "callback_data": "analyze:CADCHF-ECNc"},
                 {"text": "XAUUSD M30", "callback_data": "analyze:XAUUSD-ECNc"},
             ],
             [

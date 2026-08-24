@@ -241,32 +241,25 @@ HOLD is correct whenever no structure offers an SL at/behind a real invalidation
 
 {{POINTS_EXPLANATION}}
 
-### OUTPUT FORMAT
-Respond with a single valid JSON object ONLY -- no text before or after it.
-
-HOLD:
+### OUTPUT FORMAT (ULTRA-COMPACT CHAIN-OF-THOUGHT PROTOCOL)
+Respond with a single valid JSON object ONLY -- no text before or after it:
 {
-  "signal": "HOLD",
-  "reasoning": "string (MAX 20 WORDS: single key technical reason why no setup exists)"
-}
-
-BUY or SELL:
-{
-  "signal": "BUY" | "SELL",
-  "confidence": float (0.50 to 1.00),
-  "setup": "string (short label for setup type)",
-  "reasoning": "string (MAX 60 WORDS: detailed entry thesis, key levels, and core edge for this trade)",
-  "invalidation": "string (key technical condition that invalidates this thesis)",
+  "trend": "BULL_PULLBACK" | "BEAR_PULLBACK" | "BREAKOUT" | "RANGING",
+  "velocity": "NORMAL" | "CRASH" | "STAGNANT",
+  "rr_valid": true | false,
+  "signal": "BUY" | "SELL" | "HOLD",
+  "confidence": float (0.00 to 1.00),
   "sl_points": integer (Stop Loss distance in broker POINTS from current price),
   "tp_points": integer (Take Profit distance in broker POINTS from current price),
-  "invalidation_price": float (OPTIONAL: reference price level for invalidation),
-  "target_price": float (OPTIONAL: reference price level for target),
+  "invalidation_price": float (OPTIONAL reference price level),
+  "target_price": float (OPTIONAL reference price level),
 {{PENDING_FIELDS}}
+  "reasoning": "string (MAX 30 WORDS: 1 concise sentence explaining the trade thesis)"
 }
 
-"position_actions": include ONLY when positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
+"position_actions": include ONLY when open positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
 
-CONFIDENCE guide for BUY/SELL: 0.70 to 1.00 = strong, well-supported thesis | 0.50 to 0.69 = moderate, reasonable thesis | below 0.50 = weak edge / low conviction -- MUST select HOLD (HOLD schema does not use confidence).
+CONFIDENCE guide: 0.70 to 1.00 = strong conviction | 0.50 to 0.69 = moderate conviction | below 0.50 = weak edge / low conviction -> select HOLD with confidence < 0.50.
 
 {{PENDING_RULES_BLOCK}}"""
 
@@ -400,6 +393,85 @@ def _structure_block(df, current_tick, atr_points=0):
         lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
 
     return "\n".join(lines)
+
+
+def _momentum_summary(df_micro, df_main, point_size=0.01, micro_tf_label="M5", main_tf_label="H1"):
+    """Momentum summary di timeframe micro (M15 utk FX / M5 utk BTC-XAU),
+    dihitung LOKAL. Murni data/angka, TANPA verdict atau interpretasi apa pun
+    (user: "harus informatif") — AI yang menilai sendiri.
+
+    Isi: ADX micro + delta 5 bar, arah (+DI/-DI), harga vs EMA20 micro, dan
+    kontras ADX micro vs ADX timeframe aktif.
+    Fix 21 Agustus.
+    """
+    try:
+        if df_micro is None or len(df_micro) < 10:
+            return ""
+        if df_main is None or "adx_14" not in df_main.columns:
+            return ""
+        if not point_size or point_size <= 0:
+            point_size = 0.01
+
+        # ---- ADX micro + delta (5 bar lalu) ----
+        if "adx_14" not in df_micro.columns:
+            return ""
+        adx_now = float(df_micro["adx_14"].iloc[-1])
+        adx_prev = float(df_micro["adx_14"].iloc[-6]) if len(df_micro) >= 6 else adx_now
+        if adx_now != adx_now or adx_prev != adx_prev:  # NaN guard
+            return ""
+        delta_adx = adx_now - adx_prev
+        if delta_adx >= 2.0:
+            mom_label = "EXPANDING"
+        elif delta_adx <= -2.0:
+            mom_label = "WEAKENING"
+        else:
+            mom_label = "STABLE"
+
+        # ---- Arah: +DI / -DI (ADX buta arah) ----
+        di_str = ""
+        try:
+            from ta.trend import ADXIndicator
+            di = ADXIndicator(high=df_micro["high"], low=df_micro["low"],
+                              close=df_micro["close"], window=14)
+            di_pos = float(di.adx_pos().iloc[-1])
+            di_neg = float(di.adx_neg().iloc[-1])
+            if di_pos == di_pos and di_neg == di_neg:
+                di_str = (f" | +DI {di_pos:.1f} {'>' if di_pos > di_neg else '<'} "
+                          f"-DI {di_neg:.1f}")
+        except Exception:
+            pass
+
+        # ---- Harga vs EMA20 micro (cross-check) ----
+        ema20_str = ""
+        if "ema_20" in df_micro.columns:
+            ema20 = float(df_micro["ema_20"].iloc[-1])
+            close = float(df_micro["close"].iloc[-1])
+            if ema20 == ema20:
+                rel = int((close - ema20) / point_size)
+                side = "ABOVE" if rel > 0 else "BELOW"
+                ema20_str = f"\n- Harga {abs(rel)} pts {side} EMA20 {micro_tf_label}"
+
+        # ---- Kontras vs ADX timeframe aktif (murni data, tanpa interpretasi) ----
+        adx_main = float(df_main["adx_14"].iloc[-1])
+        contrast_str = ""
+        if adx_main == adx_main:
+            if mom_label == "WEAKENING":
+                contrast_str = (f"\n- ADX {main_tf_label} {adx_main:.1f} vs ADX {micro_tf_label} "
+                                f"{adx_now:.1f} (turun {abs(delta_adx):.1f} dalam 5 bar)")
+            elif mom_label == "EXPANDING":
+                contrast_str = (f"\n- ADX {main_tf_label} {adx_main:.1f} vs ADX {micro_tf_label} "
+                                f"{adx_now:.1f} (naik {abs(delta_adx):.1f} dalam 5 bar)")
+            else:
+                contrast_str = (f"\n- ADX {main_tf_label} {adx_main:.1f} vs ADX {micro_tf_label} "
+                                f"{adx_now:.1f} (stabil dalam 5 bar)")
+
+        return (
+            f"### {micro_tf_label} MOMENTUM SUMMARY (computed locally)\n"
+            f"- ADX {micro_tf_label}: {adx_now:.1f} (vs {adx_prev:.1f} 5 bar lalu, delta {delta_adx:+.1f})"
+            f"{di_str}{ema20_str}{contrast_str}"
+        )
+    except Exception:
+        return ""
 
 
 
@@ -911,7 +983,11 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     # Micro price action: M5, delta juga. XAU/BTC 18 (1.5 jam), FX 24 (2 jam).
     # Micro M5 adalah satu-satunya price action granular intra-period utk
     # timeframe lambat (M30/H1) - TIDAK dihapus, cuma dikompres.
+    # Fix 21 Agustus: tambah M15/M5 MOMENTUM SUMMARY (murni data, dihitung
+    # lokal) di bawah blok M5 — biar AI bisa lihat kontras momentum micro vs
+    # ADX timeframe aktif yang lagging. M5 FX tetap 24 (2 jam = 2 candle H1).
     micro_candles_str = ""
+    momentum_summary_str = ""
     try:
         from src.core import mt5_connector
         is_crypto_asset = config.is_crypto(symbol)
@@ -936,6 +1012,22 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
                     f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period, "
                     f"OHLC absolute prices)\n" + "\n".join(micro_delta) + "\n"
                 )
+        # ---- M15/M5 MOMENTUM SUMMARY (fix 21 Agustus) ----
+        # FX -> M15 (fetch kecil tambahan, gratis lokal), BTC/XAU -> M5 (pakai
+        # micro_df yang sudah ada). Verdict dihitung LOKAL biar AI tidak salah
+        # interpretasi ADX timeframe aktif yang lagging.
+        if is_crypto_asset or "XAU" in symbol.upper():
+            momentum_df = micro_df
+            micro_tf_label = "M5"
+        else:
+            momentum_df = mt5_connector.get_market_data(symbol, mt5_connector.mt5.TIMEFRAME_M15, num_candles=35)
+            micro_tf_label = "M15"
+        if momentum_df is not None and len(momentum_df) >= 10:
+            momentum_summary_str = _momentum_summary(
+                momentum_df, df, point_size, micro_tf_label, tf_label
+            )
+            if momentum_summary_str:
+                momentum_summary_str = "\n" + momentum_summary_str.strip() + "\n"
     except Exception as e:
         pass
 
@@ -1129,7 +1221,29 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
             swap_str = f" | Swap: ${p_swap:.2f} USD" if p_swap != 0.0 else ""
             sl_tp_str = f" (SL: {p_sl}, TP: {p_tp})" if (p_sl or p_tp) else ""
-            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open}{sl_tp_str}{time_str}{swap_str} | Floating P/L: ${p_profit:.2f} USD")
+
+            # Peak MFE & Current R calculation (Ide 1 & Enhanced Re-evaluator)
+            peak_str = ""
+            r_str = ""
+            try:
+                from src.analytics import position_manager
+                pt_val = point_size if point_size > 0 else 0.00001
+                peak_pts, peak_r = position_manager.get_peak_mfe_info(p_ticket, point=pt_val)
+                if peak_pts > 0 and peak_r > 0:
+                    peak_str = f" | Peak: +{peak_r:.2f}R (+{peak_pts:.0f} pts)"
+
+                if p_sl and p_open and pt_val > 0:
+                    init_sl_dist = abs(p_open - p_sl) / pt_val
+                    if init_sl_dist > 0:
+                        bid_px = current_tick.get('bid', p_open)
+                        ask_px = current_tick.get('ask', p_open)
+                        curr_pts = ((bid_px - p_open) / pt_val) if p_type == 'BUY' else ((p_open - ask_px) / pt_val)
+                        curr_r = curr_pts / init_sl_dist
+                        r_str = f" ({curr_r:+.2f}R)"
+            except Exception:
+                pass
+
+            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open}{sl_tp_str}{time_str}{peak_str}{swap_str} | Floating P/L: ${p_profit:.2f} USD{r_str}")
         positions_str = (
             "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
             "\n".join(pos_lines) + "\n" +
@@ -1179,6 +1293,7 @@ Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason 
 {structure_str}
 {delta_main_str}
 {micro_candles_str}
+{momentum_summary_str}
 {atr_gate_str}
 {randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
@@ -1224,11 +1339,11 @@ def clean_json_response(text):
                         parsed[key] = json.loads(val)
                     except json.JSONDecodeError:
                         parsed[key] = val.strip('"')
-        # Validate keys (setup/edge/invalidation are optional new fields -
-        # model may omit them; HOLD responses won't have them)
-        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation", "entry_type", "entry_price"]:
+        # Validate keys (including Ultra-Compact CoT keys)
+        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation", "entry_type", "entry_price", "trend", "velocity", "rr_valid"]:
             if key not in parsed:
                 parsed[key] = None
+
         # Ensure signal is upper case
         if parsed.get("signal"):
             parsed["signal"] = str(parsed["signal"]).upper()
@@ -1236,6 +1351,23 @@ def clean_json_response(text):
                 parsed["signal"] = "HOLD"
         else:
             parsed["signal"] = "HOLD"
+
+        # Ensure confidence is float
+        try:
+            if parsed.get("confidence") is not None:
+                parsed["confidence"] = float(parsed["confidence"])
+            else:
+                parsed["confidence"] = 0.0 if parsed["signal"] == "HOLD" else 0.5
+        except (ValueError, TypeError):
+            parsed["confidence"] = 0.0 if parsed["signal"] == "HOLD" else 0.5
+
+        # Ensure points are int if present
+        for pt_key in ["sl_points", "tp_points"]:
+            if parsed.get(pt_key) is not None:
+                try:
+                    parsed[pt_key] = int(round(float(parsed[pt_key])))
+                except (ValueError, TypeError):
+                    pass
 
         if parsed["signal"] == "HOLD":
             if parsed.get("confidence") is None:
@@ -1253,6 +1385,9 @@ def clean_json_response(text):
             "tp_points": None,
             "invalidation_price": None,
             "target_price": None,
+            "trend": None,
+            "velocity": None,
+            "rr_valid": None,
             "reasoning": f"Gagal memparsing respon: {str(e)}"
         }
 

@@ -16,15 +16,13 @@ Default bot cuma trading **XAU** (`TRADING_MODE=xau`). Ada mode kedua: **FX Pair
 | # | Simbol (base) | Live Suffix | Timeframe | Risk % | Gaya Trading |
 |---|---|---|---|---|---|
 | 1 | `GBPUSD` | `GBPUSD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 2 | `USDCAD` | `USDCAD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 3 | `EURJPY` | `EURJPY-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 4 | `GBPAUD` | `GBPAUD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 5 | `AUDCAD` | `AUDCAD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 6 | `EURCHF` | `EURCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 7 | `AUDCHF` | `AUDCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
-| 8 | `CADCHF` | `CADCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 2 | `GBPAUD` | `GBPAUD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 3 | `AUDCAD` | `AUDCAD-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 4 | `EURCHF` | `EURCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 5 | `AUDCHF` | `AUDCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
+| 6 | `CADCHF` | `CADCHF-ECNc` | H1 | 1.25% | Expert Intraday-Swing |
 
-**Kenapa 8 pair ini?** Kombinasi Major (GBPUSD, USDCAD) dan FX Cross pilihan dengan korelasi seimbang. Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo).
+**Kenapa 6 pair ini?** Kombinasi Major (GBPUSD) dan FX Cross CHF/AUD pilihan dengan edge statistik kuat (24–37 EDGE per pair vs EURJPY hanya 2 EDGE). Suffix `-ECN`/`-ECNc` di-auto-correct otomatis oleh `get_valid_trade_symbol` sesuai akun (live vs demo).
 
 **Cara kerja per cycle:**
 1. Pool di-resolve via `config.get_rotation_pool()` → `[XAU] + FX_PAIR_SYMBOLS`, dipotong `MAX_ROTATION_SYMBOLS` (default 7)

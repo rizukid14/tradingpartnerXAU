@@ -37,10 +37,14 @@ def test_per_symbol_helpers():
     assert config.default_sl_points_for("XAUUSD-ECNc") == config.DEFAULT_SL_POINTS_XAU
     assert config.default_tp_points_for("XAUUSD-ECNc") == config.DEFAULT_TP_POINTS_XAU
     assert config.max_spread_points_for("XAUUSD-ECNc") == 50
-    # FX pairs (H1 swing, FASE 1): default flat 100/200 pts (10/20 pips EURJPY scale)
-    for sym in ["CADCHF-ECNc", "GBPCHF-ECNc", "GBPNZD-ECNc", "EURCHF-ECNc", "GBPAUD-ECNc", "EURAUD-ECNc"]:
+    # FX pairs (H1 swing): default flat 100/200 pts (10/20 pips EURJPY scale)
+    for sym in ["GBPUSD-ECNc", "EURCHF-ECNc", "GBPCHF-ECNc", "EURNZD-ECNc", "NZDCAD-ECNc", "AUDCAD-ECNc"]:
         assert config.default_sl_points_for(sym) == 100
         assert config.default_tp_points_for(sym) == 200
+    # FX spread cap: ATR-based (15% ATR H1, floor 20 pts)
+    assert config.max_spread_points_for("EURCHF-ECNc", atr_h1_pts=60) == 20   # 15% of 60 = 9 -> floor 20
+    assert config.max_spread_points_for("EURNZD-ECNc", atr_h1_pts=191) == 28  # 15% of 191 = 28.65 -> 28
+    assert config.max_spread_points_for("EURCHF-ECNc") == config.MAX_SPREAD_POINTS  # fallback without ATR
     # BTC helpers (scaled for BTC point size - see config comments)
     assert config.lot_size_for("BTCUSD.c") == 0.01
     assert config.default_sl_points_for("BTCUSD.c") == config.DEFAULT_SL_POINTS_BTC
@@ -49,26 +53,26 @@ def test_per_symbol_helpers():
     # is_crypto
     assert config.is_crypto("BTCUSD.c") is True
     assert config.is_crypto("XAUUSD-ECNc") is False
-    # Timeframe per-symbol (FASE 1): XAU M5 scalping, FX H1 swing, BTC M30
+    # Timeframe per-symbol: XAU M30 scalping/swing, FX H1 swing, BTC M30
     assert config.get_timeframe("XAUUSD-ECNc") == config.TIMEFRAME
-    assert config.get_timeframe("CADCHF-ECNc") == config.H1_TIMEFRAME
     assert config.get_timeframe("GBPCHF-ECNc") == config.H1_TIMEFRAME
+    assert config.get_timeframe("EURNZD-ECNc") == config.H1_TIMEFRAME
     assert config.get_timeframe("BTCUSD.c") == config.mt5.TIMEFRAME_M30
-    # Risk per-trade (FASE 1): XAU 0.5%, FX 1.0%, BTC 1.5%
+    # Risk per-trade: XAU 1.0%, FX 1.25%, BTC 1.5%
     assert config.risk_percent_for("XAUUSD-ECNc") == config.RISK_PERCENT_XAU
-    assert config.risk_percent_for("CADCHF-ECNc") == 1.0
-    assert config.risk_percent_for("GBPNZD-ECNc") == 1.0
+    assert config.risk_percent_for("GBPCHF-ECNc") == config.RISK_PERCENT_FX
+    assert config.risk_percent_for("EURNZD-ECNc") == config.RISK_PERCENT_FX
     assert config.risk_percent_for("BTCUSD.c") == config.RISK_PERCENT_BTC
     print("OK  per-symbol helpers (lot/sl/tp/spread/is_crypto/timeframe/risk)")
     return failed
 
 def test_rotation_pool():
     failed = 0
-    # Gunakan hari Rabu (weekday) agar mengembalikan pool lengkap berisi 7 simbol
+    # Gunakan hari Rabu (weekday) agar mengembalikan pool lengkap berisi 6 simbol
     wednesday = datetime(2026, 8, 12, 10, 0, tzinfo=WIB)
     pool = config.get_rotation_pool(wednesday)
-    # FASE 1: pool = 1 XAU + 6 FX (MAX_ROTATION_SYMBOLS = 7)
-    assert len(pool) == 7, f"pool harus 7 simbol, dapat {len(pool)}: {pool}"
+    # Pool = 6 FX symbols (GBPUSD, EURCHF, GBPCHF, EURNZD, NZDCAD, AUDCAD)
+    assert len(pool) == 6, f"pool harus 6 simbol, dapat {len(pool)}: {pool}"
     assert pool[0] == config.WEEKDAY_SYMBOL
     for sym in config.FX_PAIR_SYMBOLS:
         assert sym in pool, f"{sym} harus ada di pool"
