@@ -1828,9 +1828,11 @@ def main():
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
 
             if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-                label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS"
+                tf_cur = config.get_timeframe_str()
+                label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS ({tf_cur})"
             else:
-                label_hdr = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
+                tf_cur = config.get_timeframe_str(config.SYMBOL)
+                label_hdr = f"{config.SYMBOL.replace('-ECNc', '').replace('.c', '')} ({tf_cur})"
             header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
             # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)

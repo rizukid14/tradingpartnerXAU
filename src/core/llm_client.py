@@ -241,7 +241,7 @@ HOLD is correct whenever no structure offers an SL at/behind a real invalidation
 
 {{POINTS_EXPLANATION}}
 
-### OUTPUT FORMAT (ULTRA-COMPACT CHAIN-OF-THOUGHT PROTOCOL)
+### OUTPUT FORMAT
 Respond with a single valid JSON object ONLY -- no text before or after it:
 {
   "trend": "BULL_PULLBACK" | "BEAR_PULLBACK" | "BREAKOUT" | "RANGING",
@@ -299,7 +299,7 @@ def _delta_candle_lines(df, n=15, point_size=0.01):
     return lines
 
 
-def _structure_block(df, current_tick, atr_points=0):
+def _structure_block(df, current_tick, atr_points=0, tf_label="M30"):
     """Ringkas struktur 50-bar (short-term) & 100-bar (macro) window:
     swing/Fib (trend-aware)/posisi harga relatif level.
     """
@@ -344,7 +344,7 @@ def _structure_block(df, current_tick, atr_points=0):
         ind_lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
 
     if ind_lines:
-        lines.append("### TECHNICAL INDICATORS (Active Timeframe)")
+        lines.append(f"### TECHNICAL INDICATORS ({tf_label} Active Timeframe)")
         lines.extend(ind_lines)
         lines.append("")
 
@@ -367,9 +367,9 @@ def _structure_block(df, current_tick, atr_points=0):
     to_h50 = (h50 - close) / point
     to_l50 = (close - l50) / point
 
-    lines.append("### INTRADAY STRUCTURE (50-bar Window)")
-    lines.append(f"- 50-bar Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
-    lines.append(f"- 50-bar Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
+    lines.append(f"### INTRADAY STRUCTURE (50-bar {tf_label} Window)")
+    lines.append(f"- 50-bar {tf_label} Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
+    lines.append(f"- 50-bar {tf_label} Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
     lines.append(f"- Close {_fmt_price(close, point)}: {int(to_l50)} pts above 50-bar low | {int(to_h50)} pts below 50-bar high")
 
     # 3. 100-bar Macro Multi-Day Window
@@ -388,9 +388,9 @@ def _structure_block(df, current_tick, atr_points=0):
             f618_100 = round(h100 - 0.618 * diff100, 6)
             label100 = "Uptrend Pullback"
 
-        lines.append("\n### MACRO STRUCTURE (100-bar Window)")
-        lines.append(f"- 100-bar Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
-        lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
+        lines.append(f"\n### MACRO STRUCTURE (100-bar {tf_label} Window)")
+        lines.append(f"- 100-bar {tf_label} Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
+        lines.append(f"- 100-bar {tf_label} Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
 
     return "\n".join(lines)
 
@@ -669,10 +669,12 @@ def _build_sltp_rules_block(symbol, timeframe):
                 f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
             )
         else:
-            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL & Proximity/Breakout
-            # berbasis ATR aktif H1 real-time.
+            # FX Pairs: bebas mengikuti struktur harga, tapi floor SL & Proximity/Breakout
+            # berbasis ATR aktif real-time (M30/H1 sesuai timeframe aktif).
+            tf_str = str(timeframe or "M30")
+            tf_mt5 = config.TIMEFRAME_MAP.get(tf_str, config.mt5.TIMEFRAME_M30)
             fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
-            atr_pts_fx = _fx_atr_h1_points(symbol)
+            atr_pts_fx = _atr_points_for(symbol, tf_mt5)
             if atr_pts_fx and atr_pts_fx > 0:
                 fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
                 prox_pts = int(0.5 * atr_pts_fx)
@@ -684,21 +686,21 @@ def _build_sltp_rules_block(symbol, timeframe):
                 room_pts = 90
             if getattr(config, "PENDING_ORDERS_ENABLED", False):
                 breakout_rule = (
-                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction H1 closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
-                    f"  (a) Use buy_stop/sell_stop placed ~0.2x-0.3x ATR H1 (~{stop_pts}-{int(1.5*stop_pts)} pts) beyond the key level to filter false breaks and catch a genuine breakout wave.\n"
+                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction {tf_str} closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
+                    f"  (a) Use buy_stop/sell_stop placed ~0.2x-0.3x ATR {tf_str} (~{stop_pts}-{int(1.5*stop_pts)} pts) beyond the key level to filter false breaks and catch a genuine breakout wave.\n"
                     f"  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.\n"
-                    f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your structural target."
+                    f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR {tf_str} (~{room_pts} pts) room remaining to your structural target."
                 )
             else:
                 breakout_rule = (
-                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction H1 closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with a market order -- wait for a confirmed candle close beyond the level with at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your target, or select HOLD."
+                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction {tf_str} closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with a market order -- wait for a confirmed candle close beyond the level with at least 1.0x ATR {tf_str} (~{room_pts} pts) room remaining to your target, or select HOLD."
                 )
 
             return (
                 f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.\n"
                 f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
-                f"- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 (~{prox_pts} pts) below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 (~{prox_pts} pts) above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.\n"
+                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR {tf_str}) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
+                f"- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR {tf_str} (~{prox_pts} pts) below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR {tf_str} (~{prox_pts} pts) above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.\n"
                 f"{breakout_rule}"
             )
 
@@ -971,7 +973,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     point_size = current_tick.get("point", 0.01) or 0.01
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
 
-    structure_str = _structure_block(df, current_tick, atr_points)
+    structure_str = _structure_block(df, current_tick, atr_points, tf_label=tf_label)
     delta_main = _delta_candle_lines(df, n=15, point_size=point_size)
     delta_main_str = ""
     if delta_main:
@@ -990,41 +992,29 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     momentum_summary_str = ""
     try:
         from src.core import mt5_connector
-        is_crypto_asset = config.is_crypto(symbol)
-
-        if is_crypto_asset or "XAU" in symbol.upper():
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-            micro_tf_name = "M5"
-            num_micro_send = 18
+        micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+        micro_tf_name = "M5"
+        if tf_label == "H1":
+            num_micro_send = 24  # 24 candle M5 = 120 menit (2 jam = 2 candle H1)
+            duration_label = "2h"
         else:
-            # FX main is H1 -> micro M5 24 (2 jam) intra-period
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-            micro_tf_name = "M5"
-            num_micro_send = 24
+            num_micro_send = 12  # 12 candle M5 = 60 menit (1 jam = 2 candle M30)
+            duration_label = "1h"
 
-        # Fetch enough candles so ta.volatility.AverageTrueRange (window 14) doesn't raise IndexError
+        # Fetch enough candles so ta indicators (window 14) don't raise IndexError
         num_fetch = max(35, num_micro_send + 15)
         micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
         if micro_df is not None and len(micro_df) > 0:
             micro_delta = _delta_candle_lines(micro_df, n=num_micro_send, point_size=point_size)
             if micro_delta:
                 micro_candles_str = (
-                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period, "
+                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period {duration_label}, "
                     f"OHLC absolute prices)\n" + "\n".join(micro_delta) + "\n"
                 )
-        # ---- M15/M5 MOMENTUM SUMMARY (fix 21 Agustus) ----
-        # FX -> M15 (fetch kecil tambahan, gratis lokal), BTC/XAU -> M5 (pakai
-        # micro_df yang sudah ada). Verdict dihitung LOKAL biar AI tidak salah
-        # interpretasi ADX timeframe aktif yang lagging.
-        if is_crypto_asset or "XAU" in symbol.upper():
-            momentum_df = micro_df
-            micro_tf_label = "M5"
-        else:
-            momentum_df = mt5_connector.get_market_data(symbol, mt5_connector.mt5.TIMEFRAME_M15, num_candles=35)
-            micro_tf_label = "M15"
-        if momentum_df is not None and len(momentum_df) >= 10:
+        # ---- M5 MOMENTUM SUMMARY (computed locally) ----
+        if micro_df is not None and len(micro_df) >= 10:
             momentum_summary_str = _momentum_summary(
-                momentum_df, df, point_size, micro_tf_label, tf_label
+                micro_df, df, point_size, "M5", tf_label
             )
             if momentum_summary_str:
                 momentum_summary_str = "\n" + momentum_summary_str.strip() + "\n"
@@ -1174,7 +1164,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
                 "window. DO NOT fade breakout momentum or attempt counter-trend "
                 "mean-reversion during/after it. Ignore RSI oversold/overbought as an "
                 "entry trigger during news windows. Wait for post-news volatility to "
-                "settle and a confirmed H1 candle close before entering.\n"
+                f"settle and a confirmed {tf_label} candle close before entering.\n"
             )
     except Exception:
         pass

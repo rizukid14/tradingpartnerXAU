@@ -370,41 +370,46 @@ def _check_time_decay_stagnation(pos, symbol, profit_points, point, symbol_info,
 
 def _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
     """
-    Ide 1: Pre-Rollover Drawdown & Stagnation Shield (03:00 - 04:55 WIB).
-    Mencegah kerugian 100% Full SL akibat pelebaran spread broker saat jam 05:00 WIB
-    dan menghemat swap overnight.
+    RFC 9: Pre-Rollover Precision Distance-to-SL Shield (03:50 - 04:15 WIB).
+    Mengecek sisa jarak fisik harga ke level SL. Jika sisa jarak ke SL <= threshold lonjakan
+    spread rollover simbol tersebut, tutup posisi bersih di jam 03:50 WIB sebelum lonjakan
+    spread jam 04:00 WIB terjadi untuk mencegah gap down & slippage 2x SL.
     """
-    if not getattr(config, "PRE_ROLLOVER_SHIELD_ENABLED", True):
+    if not getattr(config, "PRE_ROLLOVER_SHIELD_ENABLED", False):
         return False
 
     now_wib = datetime.now(WIB)
-    start_h = getattr(config, "PRE_ROLLOVER_START_HOUR_WIB", 3)
-    end_h = getattr(config, "PRE_ROLLOVER_END_HOUR_WIB", 5)
+    exit_h = getattr(config, "PRE_ROLLOVER_EXIT_HOUR_WIB", 3)
+    exit_m = getattr(config, "PRE_ROLLOVER_EXIT_MINUTE_WIB", 50)
 
-    if not (start_h <= now_wib.hour < end_h):
+    # Hanya aktif di jendela 03:50 s/d 04:15 WIB (00:00 MT5 server rollover)
+    curr_min = now_wib.hour * 60 + now_wib.minute
+    target_start_min = exit_h * 60 + exit_m   # 03:50 -> 230
+    target_end_min = 4 * 60 + 15            # 04:15 -> 255
+
+    if not (target_start_min <= curr_min <= target_end_min):
         return False
 
     # Crypto trades 24/7 tanpa rollover spread spike yang sama seperti FX
     if config.is_crypto(symbol):
         return False
 
-    init_sl_pts = _original_sl.get(pos.ticket, 0.0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0.0)
-    if init_sl_pts <= 0:
+    # Posisi tanpa SL tidak dievaluasi
+    if not pos.sl or pos.sl <= 0:
         return False
 
-    curr_r = profit_points / init_sl_pts
-    drawdown_threshold = getattr(config, "PRE_ROLLOVER_DRAWDOWN_PCT", 0.45)
-    min_r = getattr(config, "TIME_DECAY_MIN_R", -0.20)
-    max_r = getattr(config, "TIME_DECAY_MAX_R", 0.20)
+    # Hitung sisa jarak fisik harga saat ini ke level SL
+    close_price = getattr(pos, "price_current", 0.0) or getattr(pos, "price_open", 0.0)
+    dist_sl_pts = abs(close_price - pos.sl) / point
 
-    # 1. Stagnasi menjelang rollover (tutup untuk hemat swap & noise)
-    if min_r <= curr_r <= max_r:
-        reason = f"Stagnasi pre-rollover ({now_wib.strftime('%H:%M')} WIB, float {curr_r:+.2f}R)"
-        return _close_position_by_ticket(pos, symbol, "[PRE-ROLLOVER SHIELD]", comment=reason)
+    # Dapatkan threshold bahaya lonjakan per-simbol
+    threshold_pts = config.get_pre_rollover_slippage_threshold(symbol)
 
-    # 2. Drawdown >= 45% SL menjelang rollover (cut loss pre-emptif untuk hemat 50% modal)
-    if curr_r <= -drawdown_threshold:
-        reason = f"Drawdown {curr_r:+.2f}R >= {drawdown_threshold*100:.0f}% SL pre-rollover ({now_wib.strftime('%H:%M')} WIB)"
+    # HANYA TUTUP jika sisa jarak fisik ke SL <= threshold lonjakan rollover
+    if dist_sl_pts <= threshold_pts:
+        pips_scale = 10.0
+        reason = (f"SL mepet pre-rollover ({now_wib.strftime('%H:%M')} WIB, "
+                  f"sisa SL {dist_sl_pts/pips_scale:.1f}p <= spike {threshold_pts/pips_scale:.1f}p)")
         return _close_position_by_ticket(pos, symbol, "[PRE-ROLLOVER SHIELD]", comment=reason)
 
     return False

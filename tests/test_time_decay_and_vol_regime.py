@@ -15,11 +15,12 @@ WIB = ZoneInfo("Asia/Jakarta")
 
 
 class DummyPosition:
-    def __init__(self, ticket=1001, symbol="GBPUSD-ECNc", pos_type=0, price_open=1.35000, sl=1.34500, tp=1.36000, volume=0.05, open_time=0):
+    def __init__(self, ticket=1001, symbol="GBPUSD-ECNc", pos_type=0, price_open=1.35000, sl=1.34500, tp=1.36000, volume=0.05, open_time=0, price_current=None):
         self.ticket = ticket
         self.symbol = symbol
         self.type = pos_type  # 0 = BUY, 1 = SELL
         self.price_open = price_open
+        self.price_current = price_current if price_current is not None else price_open
         self.sl = sl
         self.tp = tp
         self.volume = volume
@@ -91,35 +92,42 @@ def test_time_decay_stagnation():
 
 
 def test_pre_rollover_shield():
-    print("Testing Pre-Rollover Shield...")
+    print("Testing Pre-Rollover Distance-to-SL Precision Shield (RFC 9)...")
     point = 0.00001
     si = DummySymbolInfo(point=point)
     now = 100000.0
 
-    pos = DummyPosition(ticket=3001)
-    position_manager._original_sl[3001] = 500.0  # SL = 500 pts
-
-    # 1. Jam 04:15 WIB (dalam window 03:00 - 05:00), floating loss 48% SL (-240 pts) -> HARUS CUT LOSS
-    dt_roll = datetime(2026, 8, 24, 4, 15, tzinfo=WIB)
-    profit_loss_48 = -240.0  # -0.48R <= -0.45R threshold
+    # 1. Jam 03:55 WIB (dalam window 03:50 - 04:15), EURCHF (threshold = 240 pts)
+    # SL mepet: price_current = 0.93600, sl = 0.93450 (dist = 150 pts <= 240 pts) -> HARUS CLOSE
+    pos_mepet = DummyPosition(ticket=3001, sl=0.93450, price_current=0.93600)
+    dt_roll = datetime(2026, 8, 24, 3, 55, tzinfo=WIB)
 
     with patch("src.analytics.position_manager.datetime") as mock_dt:
         mock_dt.now.return_value = dt_roll
         with patch("src.analytics.position_manager._close_position_by_ticket", return_value=True) as mock_close:
-            closed = position_manager._check_pre_rollover_shield(pos, "GBPUSD-ECNc", profit_loss_48, point, si, now)
+            closed = position_manager._check_pre_rollover_shield(pos_mepet, "EURCHF-ECNc", 0.0, point, si, now)
             assert closed is True
             assert mock_close.called
 
-    # 2. Jam 14:00 WIB (di luar window 03:00 - 05:00), floating loss 48% -> TIDAK DI-CLOSE
+    # 2. Jam 03:55 WIB, EURCHF posisi profit/SL aman: price_current = 0.93850, sl = 0.93450 (dist = 400 pts > 240 pts) -> JALAN TERUS
+    pos_aman = DummyPosition(ticket=3002, sl=0.93450, price_current=0.93850)
+    with patch("src.analytics.position_manager.datetime") as mock_dt:
+        mock_dt.now.return_value = dt_roll
+        with patch("src.analytics.position_manager._close_position_by_ticket", return_value=True) as mock_close:
+            closed = position_manager._check_pre_rollover_shield(pos_aman, "EURCHF-ECNc", 400.0, point, si, now)
+            assert closed is False
+            assert not mock_close.called
+
+    # 3. Jam 14:00 WIB (di luar window 03:50 - 04:15), SL mepet -> TIDAK DI-CLOSE
     dt_day = datetime(2026, 8, 24, 14, 0, tzinfo=WIB)
     with patch("src.analytics.position_manager.datetime") as mock_dt:
         mock_dt.now.return_value = dt_day
         with patch("src.analytics.position_manager._close_position_by_ticket", return_value=True) as mock_close:
-            closed = position_manager._check_pre_rollover_shield(pos, "GBPUSD-ECNc", profit_loss_48, point, si, now)
+            closed = position_manager._check_pre_rollover_shield(pos_mepet, "EURCHF-ECNc", 0.0, point, si, now)
             assert closed is False
             assert not mock_close.called
 
-    print("  -> OK: Pre-Rollover Shield valid!")
+    print("  -> OK: Pre-Rollover Precision Distance-to-SL Shield valid!")
 
 
 def test_dynamic_volatility_scaling():

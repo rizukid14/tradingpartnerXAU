@@ -1,5 +1,7 @@
 import os
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 # --- PATH & DIRECTORY SETUP ---
@@ -184,16 +186,15 @@ FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
-        # 21 Agustus (user): EURJPY di-remove (edge tipis, 2 EDGE vs CHF pairs 24-37 EDGE).
-        # Pool FX 6 simbol H1 (24 Agustus 2026 — GLM review):
-        # GBPUSD, EURCHF, GBPCHF, EURNZD, NZDCAD, AUDCAD.
-        # Eksposur: GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1 (tidak ada >2).
-        # Keluar: GBPAUD (GBP×3), AUDCHF/CADCHF (CHF×3 + vol harian terendah ~34-40 pips).
-        "GBPUSD-ECNc,EURCHF-ECNc,GBPCHF-ECNc,EURNZD-ECNc,NZDCAD-ECNc,AUDCAD-ECNc",
+        # Pool FX 4 simbol M30 Intraday (25 Agustus 2026):
+        # GBPUSD, GBPCHF, NZDCAD, AUDCAD.
+        # Net Exposure: GBP×2, CAD×2, CHF×1, USD×1, AUD×1, NZD×1 (keseimbangan optimal).
+        # Eliminasi: EURCHF (illiquid rollover) dan EURNZD (spread lebar 2.5-5.0 pips).
+        "GBPUSD-ECNc,GBPCHF-ECNc,NZDCAD-ECNc,AUDCAD-ECNc",
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 6)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 4)  # max symbols in the rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "M30").upper()
 TIMEFRAME_MAP = {
@@ -207,6 +208,12 @@ TIMEFRAME_MAP = {
 }
 TIMEFRAME = TIMEFRAME_MAP.get(TIMEFRAME_STR, mt5.TIMEFRAME_M30)
 H1_TIMEFRAME = mt5.TIMEFRAME_H1
+
+# Dynamic Session Timeframe: H1 saat Sesi Tokyo (08:00 - 14:00 WIB), M30 saat London/NY (14:00 - 00:00 WIB)
+DYNAMIC_SESSION_TIMEFRAME = _getenv_bool("DYNAMIC_SESSION_TIMEFRAME", True)
+ASIA_TIMEFRAME = os.getenv("ASIA_TIMEFRAME", "H1").upper()
+LONDON_NY_TIMEFRAME = os.getenv("LONDON_NY_TIMEFRAME", "M30").upper()
+DYNAMIC_TF_SWITCH_HOUR_WIB = _getenv_int("DYNAMIC_TF_SWITCH_HOUR_WIB", 14)
 
 STARTING_BALANCE = _getenv_float("STARTING_BALANCE", 1000.0)
 
@@ -472,6 +479,9 @@ def get_max_open_positions(in_recovery_mode=False, now=None):
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
 # (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
 DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
+MAX_DAILY_LOSS_PERCENT      = _getenv_float("MAX_DAILY_LOSS_PERCENT", 4.0)
+MAX_DAILY_LOSS_USD          = _getenv_float("MAX_DAILY_LOSS_USD", 250.0)
+DAILY_LOSS_OPENED_TODAY_ONLY = _getenv_bool("DAILY_LOSS_OPENED_TODAY_ONLY", True)
 
 
 def bep_tolerance_for(deal):
@@ -519,16 +529,16 @@ SPREAD_ATR_FLOOR_PTS = _getenv_int("SPREAD_ATR_FLOOR_PTS", 20)        # floor mi
 # Trade Zone: 09:00 - 00:00 WIB (00:00 - 09:00 WIB Dead Zone Rollover & Sepi Likuiditas)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo / Asia Pagi", "start": (9, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "Tokyo / Asia Pagi", "start": (8, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
     {"name": "London-NY Overlap", "start": (19, 0), "end": (21, 0),  "lot_multiplier": 1.2},
     {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones (Dead Zone subuh & rollover 00:00 - 09:00 WIB). Berlaku XAU & FX; BTC 24/7.
+# Danger zones (Dead Zone subuh & rollover 00:00 - 08:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Rollover Dead Zone (00:00 - 09:00 WIB)", "start": (0, 0), "end": (9, 0),
-     "reason": "Dead Zone rollover & sepi likuiditas (00:00 - 09:00 WIB)"},
+    {"name": "Overnight Rollover Dead Zone (00:00 - 08:00 WIB)", "start": (0, 0), "end": (8, 0),
+     "reason": "Dead Zone rollover & sepi likuiditas (00:00 - 08:00 WIB)"},
 ]
 
 # --- WEEKEND PROTECTION ---
@@ -540,7 +550,7 @@ WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 
 # --- TIME-DECAY STAGNATION & PRE-ROLLOVER SHIELD (Ide 1) ---
 TIME_DECAY_STAGNATION_ENABLED = _getenv_bool("TIME_DECAY_STAGNATION_ENABLED", True)
-TIME_DECAY_HOURS              = _getenv_float("TIME_DECAY_HOURS", 8.0)          # Max hold 8 jam jika stagnan (Hard Safety Net)
+TIME_DECAY_HOURS              = _getenv_float("TIME_DECAY_HOURS", 4.0)          # Max hold 4 jam jika stagnan (8 bar M30)
 TIME_DECAY_MIN_R              = _getenv_float("TIME_DECAY_MIN_R", -0.20)         # Floating min boundary
 TIME_DECAY_MAX_R              = _getenv_float("TIME_DECAY_MAX_R", 0.20)          # Floating max boundary
 TIME_DECAY_MAX_PEAK_R         = _getenv_float("TIME_DECAY_MAX_PEAK_R", 0.30)    # Hanya close jika peak < +0.30R
@@ -548,9 +558,33 @@ TIME_DECAY_START_HOUR_WIB     = _getenv_int("TIME_DECAY_START_HOUR_WIB", 14)    
 TIME_DECAY_END_HOUR_WIB       = _getenv_int("TIME_DECAY_END_HOUR_WIB", 0)       # s/d 00:00 WIB midnight
 
 PRE_ROLLOVER_SHIELD_ENABLED   = _getenv_bool("PRE_ROLLOVER_SHIELD_ENABLED", True)
-PRE_ROLLOVER_START_HOUR_WIB   = _getenv_int("PRE_ROLLOVER_START_HOUR_WIB", 3)     # 03:00 WIB
-PRE_ROLLOVER_END_HOUR_WIB     = _getenv_int("PRE_ROLLOVER_END_HOUR_WIB", 5)       # 05:00 WIB
-PRE_ROLLOVER_DRAWDOWN_PCT     = _getenv_float("PRE_ROLLOVER_DRAWDOWN_PCT", 0.45)   # Cut loss jika >= 45% SL
+PRE_ROLLOVER_EXIT_HOUR_WIB    = _getenv_int("PRE_ROLLOVER_EXIT_HOUR_WIB", 3)      # 03:00 WIB
+PRE_ROLLOVER_EXIT_MINUTE_WIB  = _getenv_int("PRE_ROLLOVER_EXIT_MINUTE_WIB", 50)  # 03:50 WIB
+PRE_ROLLOVER_SLIPPAGE_EURCHF_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_EURCHF_PTS", 240.0)
+PRE_ROLLOVER_SLIPPAGE_GBPCHF_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_GBPCHF_PTS", 210.0)
+PRE_ROLLOVER_SLIPPAGE_EURNZD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_EURNZD_PTS", 240.0)
+PRE_ROLLOVER_SLIPPAGE_GBPUSD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_GBPUSD_PTS", 180.0)
+PRE_ROLLOVER_SLIPPAGE_NZDCAD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_NZDCAD_PTS", 140.0)
+PRE_ROLLOVER_SLIPPAGE_AUDCAD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_AUDCAD_PTS", 130.0)
+PRE_ROLLOVER_SLIPPAGE_DEFAULT_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_DEFAULT_PTS", 200.0)
+
+
+def get_pre_rollover_slippage_threshold(symbol: str) -> float:
+    """Mengembalikan threshold jarak SL kritis (points) saat jendela pre-rollover 03:50 WIB."""
+    s_clean = (symbol or "").replace("-ECNc", "").replace(".c", "").upper()
+    if "EURCHF" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_EURCHF_PTS
+    elif "GBPCHF" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_GBPCHF_PTS
+    elif "EURNZD" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_EURNZD_PTS
+    elif "GBPUSD" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_GBPUSD_PTS
+    elif "NZDCAD" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_NZDCAD_PTS
+    elif "AUDCAD" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_AUDCAD_PTS
+    return PRE_ROLLOVER_SLIPPAGE_DEFAULT_PTS
 
 # --- DYNAMIC VOLATILITY SCALING (Ide 4) ---
 VOL_REGIME_SCALING_ENABLED    = _getenv_bool("VOL_REGIME_SCALING_ENABLED", True)
@@ -627,18 +661,22 @@ HIGHER_TIMEFRAMES_CRYPTO = {
     "H1": mt5.TIMEFRAME_H1,
     "H4": mt5.TIMEFRAME_H4
 }
-HIGHER_TIMEFRAMES_FX = {
+HIGHER_TIMEFRAMES_H1_ACTIVE = {
     "H4": mt5.TIMEFRAME_H4,
-    "D1": mt5.TIMEFRAME_D1
+}
+HIGHER_TIMEFRAMES_M30_ACTIVE = {
+    "H1": mt5.TIMEFRAME_H1,
+    "H4": mt5.TIMEFRAME_H4,
 }
 
 def get_higher_timeframes(symbol):
-    """Returns the MTF context timeframes for a symbol (crypto/XAU -> H1/H4)."""
+    """Returns the MTF context timeframes for a symbol based on current active session timeframe."""
     if is_crypto(symbol):
         return HIGHER_TIMEFRAMES_CRYPTO
-    if "XAU" not in symbol.upper():
-        return HIGHER_TIMEFRAMES_FX
-    return HIGHER_TIMEFRAMES
+    tf_str = get_timeframe_str(symbol)
+    if tf_str == "H1":
+        return HIGHER_TIMEFRAMES_H1_ACTIVE
+    return HIGHER_TIMEFRAMES_M30_ACTIVE
 
 FUNDAMENTAL_ANALYSIS_ENABLED = _getenv_bool("FUNDAMENTAL_ANALYSIS_ENABLED", False)
 PRIMARY_ANALYSIS_MODEL = os.getenv("PRIMARY_ANALYSIS_MODEL", "o4-mini")
@@ -752,14 +790,28 @@ def lot_size_for(symbol):
     return LOT_SIZE_BTC if is_crypto(symbol) else LOT_SIZE_XAU
 
 
-def get_timeframe(symbol):
-    """Returns the trading timeframe for a symbol.
-    BTC/crypto trades on M30 (30-minute intraday) to avoid overnight swap charges.
-    FX crosses on H1, XAU trades on M30 (30-minute intraday swing).
+def get_timeframe_str(symbol=None, now_wib=None):
+    """Returns the active trading timeframe string ('H1' or 'M30') taking into account
+    Dynamic Session Timeframe (H1 in Tokyo 08:00-14:00, M30 in London/NY 14:00-00:00).
     """
-    if is_crypto(symbol): return mt5.TIMEFRAME_M30
-    if "XAU" not in symbol.upper(): return mt5.TIMEFRAME_H1
-    return mt5.TIMEFRAME_M30
+    if symbol and is_crypto(symbol):
+        return "M30"
+    if DYNAMIC_SESSION_TIMEFRAME:
+        if now_wib is None:
+            now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+        wib_hour = now_wib.hour
+        # Sesi Tokyo / Asia: 08:00 - 14:00 WIB
+        if 8 <= wib_hour < DYNAMIC_TF_SWITCH_HOUR_WIB:
+            return ASIA_TIMEFRAME
+        else:
+            return LONDON_NY_TIMEFRAME
+    return TIMEFRAME_STR
+
+
+def get_timeframe(symbol=None, now_wib=None):
+    """Returns the MT5 timeframe integer corresponding to the current active session."""
+    tf_str = get_timeframe_str(symbol, now_wib)
+    return TIMEFRAME_MAP.get(tf_str, TIMEFRAME)
 
 
 def risk_percent_for(symbol):
@@ -807,7 +859,7 @@ def max_spread_points_for(symbol, atr_h1_pts=None):
 def sl_padding_for(symbol):
     """Returns extra anti-wick/spread buffer in points for specific pairs (e.g. +20 pts for NZD crosses)."""
     if "NZD" in (symbol or "").upper():
-        return getattr(sys.modules.get(__name__) or config, "SL_PADDING_NZD_POINTS", 20)
+        return globals().get("SL_PADDING_NZD_POINTS", 20)
     return 0
 
 

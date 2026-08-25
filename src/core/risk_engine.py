@@ -427,17 +427,22 @@ class RiskEngine:
         """Check today's realized P/L from bot-closed positions in MT5 deal history against dynamic % equity limit."""
         try:
             closed = connector.get_closed_positions_today()
-            daily_pnl = sum(c["profit"] for c in closed)
+            if getattr(config, "DAILY_LOSS_OPENED_TODAY_ONLY", True):
+                closed_for_loss = [c for c in closed if c.get("opened_today", True)]
+            else:
+                closed_for_loss = closed
+
+            daily_pnl = sum(c["profit"] for c in closed_for_loss)
 
             account = mt5.account_info()
             equity = float(account.equity) if account else (float(account.balance) if account else 0.0)
-            loss_pct = getattr(config, "MAX_DAILY_LOSS_PERCENT", 0.0)
+            loss_pct = getattr(config, "MAX_DAILY_LOSS_PERCENT", 4.0)
 
             if loss_pct > 0 and equity > 0:
                 max_loss_usd = equity * loss_pct / 100.0
-                limit_desc = f"-{loss_pct:.1f}% / -${max_loss_usd:.2f}"
+                limit_desc = f"-{loss_pct:.1f}% (-${max_loss_usd:.2f})"
             else:
-                max_loss_usd = getattr(config, "MAX_DAILY_LOSS_USD", 50.0)
+                max_loss_usd = getattr(config, "MAX_DAILY_LOSS_USD", 250.0)
                 limit_desc = f"-${max_loss_usd:.2f}"
 
             if daily_pnl <= -max_loss_usd:
@@ -662,7 +667,11 @@ class RiskEngine:
         """Returns today's realized P/L (bot trades only) for display purposes."""
         try:
             closed = connector.get_closed_positions_today()
-            return sum(c["profit"] for c in closed)
+            if getattr(config, "DAILY_LOSS_OPENED_TODAY_ONLY", True):
+                closed_for_loss = [c for c in closed if c.get("opened_today", True)]
+            else:
+                closed_for_loss = closed
+            return sum(c["profit"] for c in closed_for_loss)
         except Exception:
             return 0.0
 

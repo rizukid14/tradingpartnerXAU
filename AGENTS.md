@@ -8,15 +8,40 @@
    - Sebelum melakukan edit/perubahan file kode apa pun, AI WAJIB menjelaskan masalah dan menampilkan rencana/perubahan yang diusulkan.
    - AI DILARANG mengeksekusi tool edit file (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) sebelum pengguna memberikan persetujuan/konfirmasi eksplisit.
 
+2. **`.env` ADALAH SINGLE SOURCE OF TRUTH UNTUK KONFIGURASI (CONFIGURATION OVERRIDE)**:
+   - File `.env` SELALU me-*override* nilai default di `config.py` via `load_dotenv()`.
+   - Jika mengubah parameter konfigurasi/fitur (enable/disable fitur, jam operasi, threshold, risk), AI WAJIB mengecek dan mengubah langsung file `.env` di samping `config.py`. Mengubah `config.py` saja tanpa menyelaraskan `.env` adalah KESALAHAN FATAL karena `.env` yang akan dimuat saat bot berjalan.
+
+3. **KONVERSI WAKTU SERVER MT5 KE WIB (SERVER TIME + 4 JAM = WIB)**:
+   - Server MT5 (`VTMarkets-Live 3`) beroperasi di zona **GMT+3**.
+   - **Waktu WIB (GMT+7) = Jam Server MT5 + 4 Jam**.
+   - **Pergantian Hari / Daily Rollover (00:00 Server) = TEPAT JAM 04:00 WIB**.
+   - Jendela bahaya lonjakan spread rollover dan *liquidity gap* terjadi di **03:55 – 04:15 WIB** (00:00 server). AI DILARANG keras salah menghitung waktu rollover sebagai jam 05:00 atau jam 07:00.
+
+4. **ANALISIS DAMPAK HOLISTIK & PENYELARASAN MENYELURUH (ZERO HALF-BAKED CHANGES)**:
+   - Setiap kali melakukan perubahan besar (timeframe, rotasi pool pair, jam sesi, SL/TP rules, model AI, atau risk gate), AI WAJIB memikirkan dan memeriksa SEMUA file yang terdampak secara holistik dalam 1 kali jalan tanpa menunggu diminta satu per satu.
+   - **INTEGRITAS IMPORT & SINTAKS (ZERO MISSING IMPORTS / ZERO NAME_ERROR)**:
+     - AI WAJIB memastikan semua library (`datetime`, `ZoneInfo`, `os`, `sys`, `json`, dll), konstanta, dan helper module internal ter-import dengan sempurna di bagian atas file yang diedit.
+     - DILARANG menggunakan variabel/konstanta tanpa deklarasi atau import eksplisit (mencegah `NameError` saat runtime).
+   - **Daftar Checklist 8 File Wajib Diperiksa & Diselaraskan Setiap Ada Perubahan**:
+     1. **`config.py` & `.env`**: Parameter konfigurasi, default fallback, helpers per-simbol (`get_timeframe`, `lot_size_for`, `risk_percent_for`, `get_higher_timeframes`), dan import `ZoneInfo`/`datetime`.
+     2. **`src/core/llm_client.py`**: Prompt AI, deteksi label timeframe (`tf_label`), jumlah candle intra-period (`num_micro_send`), format JSON output, ringkasan momentum mikro, dan variabel lokal candle.
+     3. **`src/core/cli_theme.py` & `main.py`**: Banner utama terminal, dynamic status clock line (`[POOL 4 PAIRS (H1) | HH:MM:SS]`), dan log range candle.
+     4. **`src/core/telegram_bot.py` & `telegram_alerts.py`**: Label tombol menu keyboard (`GBPUSD H1/M30`), command on-demand (`/analisa`, `/scan`, `/status`), dan pesan alert.
+     5. **`src/analytics/macro_analyst.py`**: Hirarki timeframe MTF (`H1`, `H4`, `D1`), key levels caching, dan background analysis.
+     6. **`src/core/risk_engine.py` & `position_manager.py`**: Filter spread, dead zone, ATR-based safety floor, time-decay stagnation, dan pre-rollover shield.
+     7. **`tests/test_*.py`**: Unit test suite (`test_symbol_rotation.py`, `test_time_decay_and_vol_regime.py`, `test_macro.py`) wajib diupdate dan dipastikan **100% PASS**.
+     8. **`docs/archive/CHANGELOG_AUGUST_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
+
 ---
 
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude/DeepSeek) yang berjalan di **MetaTrader 5**.
-- **TRADING_MODE = "pairs" (Default)**: **Pool 6 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 5 FX pairs (`EURCHF-ECNc`, `GBPCHF-ECNc`, `EURNZD-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). Timeframe FX: **H1 swing**, risk per trade: **1.0%**. Net currency exposure seimbang (GBP×2, EUR×2, CHF×2, CAD×2, NZD×2, AUD×1, USD×1).
-- **BTCUSD.c (Bitcoin)**: Intraday **M30**, risk: **1.5%**, aktif di weekend + setelah jam 22:00 Jumat WIB (`ENABLE_BTC_ROTATION`). Bebas swap overnight.
-- **XAUUSD-ECNc (Gold)**: Intraday **M30**, risk: **1.0%** (aktif saat mode `xau`).
-- **Smart Timeframe Rotation**: AI dipanggil per-simbol HANYA pas candle timeframe simbol itu berganti (`_symbol_last_candle` di `main.py`) — FX tiap 1 jam, BTC/XAU tiap 30 menit (hemat token drastis ~90%).
+- **TRADING_MODE = "pairs" (Default)**: **Pool 4 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 3 FX pairs (`GBPCHF-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). **Dynamic Session-Adaptive Timeframe**: **H1 di Sesi Tokyo (08:00–14:00 WIB)** untuk menyaring noise + **M30 di Sesi London/NY (14:00–00:00 WIB)** untuk menangkap momentum breakout lincah. Risk per trade: **1.0%**. Net currency exposure seimbang (GBP×2, CAD×2, USD×1, CHF×1, AUD×1, NZD×1).
+- **BTCUSD.c (Bitcoin)**: Intraday **M30 (24/7)**, risk: **1.5%**, aktif di weekend + setelah jam 22:00 Jumat WIB (`ENABLE_BTC_ROTATION`). Bebas swap overnight.
+- **XAUUSD-ECNc (Gold)**: Sesi adaptif **H1 Tokyo / M30 London-NY**, risk: **1.0%** (aktif saat mode `xau`).
+- **Smart Timeframe Rotation**: AI dipanggil per-simbol HANYA pas candle timeframe aktif berganti (`_symbol_last_candle` di `main.py`) — H1 tiap 60 menit saat pagi, M30 tiap 30 menit saat sore/malam (hemat token drastis ~92%).
 - **Akun**: **LIVE** `VTMarkets-Live 3` (login `27556325`), Balance ~$1065, Waktu **WIB** (Asia/Jakarta).
 
 ---
@@ -75,19 +100,19 @@ python main.py
   - **FX Pairs = Mode LLM**: SL/TP murni struktur teknikal LLM, dibatasi **Safety Floor** $\max(2\times \text{spread}, 50\text{ pts})$ + **Gate R:R minimum 1.25:1** (TP dinaikkan otomatis jika R:R < 1.25).
   - **BTC & XAU = Mode ATR-Based**: Gate ATR non-negotiable (R:R 2:1 fix).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1 pts}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
-- **Dead Zone**: 02:00–06:00 WIB (hanya untuk FX & XAU; BTC tetap aktif 24/7).
+- **Dead Zone**: 00:00–08:00 WIB (Trading aktif mulai 08:00 WIB untuk FX & XAU; BTC tetap aktif 24/7).
 - **Proteksi Akun**: Max daily loss 4% equity, max 5 consecutive loss, daily profit target 6% equity, max 5 total posisi bot.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
   - **Break-Even (BEP)**: Aktif di **58% TP** (atau **45% TP** saat Low Volatility) + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
   - **Trailing Stop**: Aktif di **70% TP**, jarak **konstan 0.5× ATR(14)** dari harga ekstrem, floor absolut 60 pts (6 pips).
-  - **Peak-Aware Time-Decay Stagnation Exit**: Posisi $\ge 8$ jam hold di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
-  - **Pre-Rollover Shield (03:00–04:55 WIB)**: Menutup posisi stagnan atau floating loss $\ge 45\%$ SL sebelum lonjakan spread pergantian hari jam 05:00 WIB.
+  - **Peak-Aware Time-Decay Stagnation Exit**: Posisi $\ge 4$ jam hold (8 bar M30) di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
+  - **Pre-Rollover Precision Distance-to-SL Shield (03:50–04:15 WIB)**: Menutup posisi secara bersih di jam 03:50 WIB JIKA sisa jarak fisik ke SL $\le$ threshold lonjakan rollover per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, NZDCAD 140 pts, AUDCAD 130 pts) untuk mencegah gap down & slippage 2x SL. Posisi dengan SL aman atau profit tebal dibiarkan jalan ke TP.
 
 ---
 
 ## Status Terkini Sistem (Live Production — Agustus 2026)
 
-1. **FX Pairs 6-Symbol Pool (H1)**: Parallel scan 6 simbol (`GBPUSD`, `EURCHF`, `GBPCHF`, `EURNZD`, `NZDCAD`, `AUDCAD`) update 24 Agu 2026 (GLM structural review: GBPAUD/AUDCHF/CADCHF diganti GBPCHF/EURNZD/NZDCAD untuk eliminasi CHF×3 dan GBP×3 overexposure).
+1. **FX Pairs 4-Symbol Pool (M30 Intraday)**: Parallel scan 4 simbol (`GBPUSD`, `GBPCHF`, `NZDCAD`, `AUDCAD`) update 25 Agu 2026 (Eliminasi EURCHF & EURNZD untuk zero overnight hazard, durasi trade 2–4 jam bersih).
 2. **Trend-Aware Dual-Window Fibonacci**: Window 50-bar Intraday + 100-bar Macro Multi-Day dengan formula sadar arah tren.
 3. **Dynamic Pending Orders Prompt**: Jika `PENDING_ORDERS_ENABLED = False`, blok pending rules dan field `entry_type`/`entry_price` dihilangkan 100% dari prompt (menghemat ~459 token).
 4. **Paket Anti-FOMC & High-Impact News (Dynamic TradingView API)**:
@@ -102,7 +127,7 @@ python main.py
    - Pemantauan akun real-time (`/status`, `/posisi`, `/scan`, `/closeall`).
    - Fast POST polling via Vercel proxy (`https://tg-proxy-vercel-eight.vercel.app`).
    - *Status task fixing*: Perlu finalisasi stabilitas penerimaan input/command background listener saat berdampingan dengan main cycle MT5.
-8. **Peak-Aware Time-Decay Stagnation Exit & Pre-Rollover Shield (`position_manager.py`)**:
+8. **Peak-Aware Time-Decay Stagnation Exit & Pre-Rollover Precision Distance-to-SL Shield (`position_manager.py`)**:
    - Perlindungan modal dari time-decay momentum dan pelebaran spread broker saat rollover dini hari.
 9. **Dynamic Volatility Scaling (ATR Percentile)**:
    - Menggantikan jam dinding statis dengan rasio volatilitas aktual vs baseline 30-hari (Low `0.75x`, Normal `1.00x`, High `1.15x`) + injeksi objektif Peak MFE ke AI Re-evaluator.
