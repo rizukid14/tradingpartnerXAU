@@ -44,6 +44,7 @@ docs/
   * **RFC 4**: Anti-Hedge Gate per Simbol.
   * **RFC 8**: Intermarket Macro Commodity Pulse (DXY, US10Y, Oil, Gold).
   * **RFC 9**: Revamp Dynamic Distance-to-SL Pre-Rollover Shield (04:50–05:10 WIB Precision Window + Tail-Risk Buffer).
+  * **RFC 10**: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Trigger vs Devil's Advocate / Risk Auditor).
 * [implementation_plan_pattern_whisper.md](file:///c:/Vibe/tradingpartner/docs/plans/implementation_plan_pattern_whisper.md) — Rencana implementasi integrasi bisikan pola kuantitatif ke dalam prompt LLM.
 
 ### 4. 🚀 Deployment (`docs/deployment/`)

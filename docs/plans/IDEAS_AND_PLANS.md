@@ -17,6 +17,100 @@
 | 7 | [RFC 7: Dynamic Volatility Sizing & Adaptive BEP](#rfc-7-dynamic-volatility-sizing--adaptive-bep) | 🟢 LIVE (Agustus 2026) | `risk_engine.py`, `position_manager.py`, `llm_client.py` |
 | 8 | [RFC 8: Intermarket Macro Commodity Pulse](#rfc-8-intermarket-macro-commodity-pulse) | 🟡 Didesain (Backlog) | `macro_analyst.py`, `llm_client.py` |
 | 9 | [RFC 9: Revamp Dynamic Distance-to-SL Pre-Rollover Shield](#rfc-9-revamp-dynamic-distance-to-sl-pre-rollover-shield) | 🟢 LIVE (Agustus 2026) | `position_manager.py`, `config.py`, `.env` |
+| 10 | [RFC 10: Asymmetric 3-LLM Specialized Roles](#rfc-10-asymmetric-3-llm-specialized-roles) | ⚪ Konsep / Riset Arsitektur | `llm_client.py`, `consensus.py` |
+
+---
+
+## RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)
+
+### 1. Latar Belakang & Filosofi Arsitektur
+Saat ini seluruh model LLM (OpenAI, Gemini, DeepSeek/Claude) menerima prompt identik dan diminta menyelesaikan seluruh siklus analisa dari hulu ke hilir secara simetris. Pendekatan ini rentan terhadap *simultaneous blindspots* atau *groupthink*.
+
+Proposal ChatGPT "Second Opinion" mengusulkan pembagian peran asimetris (*Separation of Concerns*) menjadi 3 peran terspesialisasi:
+
+```
+[ Market Data & MTF Feeds ]
+           │
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Model A (Macro / Structure Specialist: OpenAI o4-mini) │
+│ - Tugas: Petakan H4/D1 EMA200, key swings & clearance │
+│ - Output: market_regime, allowed_bias, major_levels    │
+└────────────────────────────────────────────────────────┘
+           │ (Allowed Bias & Clearance)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Model B (Price Action & Timing: Gemini 3.1-Flash-Lite) │
+│ - Tugas: Analisa lilin M30/M5, wicks, state machine    │
+│ - Output: setup, state, entry_type (Limit/Stop/Market) │
+└────────────────────────────────────────────────────────┘
+           │ (Draft Proposal Sinyal)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Model C (Devil's Advocate / Auditor: DeepSeek/Claude)  │
+│ - Tugas: Cari jebakan/flaws, proximity trap, bad R:R   │
+│ - Output: veto_flag (TRUE/FALSE), risk_score (0.0-1.0) │
+└────────────────────────────────────────────────────────┘
+           │ (Jika Veto == False & Risk <= 0.40)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Python Deterministic Engine: Risk Sizing & MT5 Order   │
+└────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2. Rincian Spesialisasi Peran
+
+#### A. Model A — Macro & Structure Specialist (OpenAI o4-mini)
+* **Keahlian**: Penalaran top-down, evaluasi tren jangka panjang, pemetaan clearance.
+* **Input Payload**: H4/D1 candles, EMA20/50/200, ADR kuota harian, swing high/low 100-bar.
+* **Output Ringkas**:
+  ```json
+  {
+    "market_regime": "BULL_TREND",
+    "allowed_bias": ["BUY", "HOLD"],
+    "clearance_to_resistance": 450,
+    "clearance_to_support": 220
+  }
+  ```
+
+#### B. Model B — Price Action & Execution Trigger (Gemini 3.1-flash-lite)
+* **Keahlian**: Latensi ultra-cepat (< 2 detik), pembacaan bentuk lilin (body/wick/rejection).
+* **Input Payload**: 15 lilin M30, 12 lilin M5, momentum summary, clearance dari Model A.
+* **Output Ringkas**:
+  ```json
+  {
+    "setup": "CONTINUATION",
+    "state": "REJECTION",
+    "entry_type": "buy_limit",
+    "entry_price": 159.200,
+    "sl_points": 110,
+    "tp_points": 240
+  }
+  ```
+
+#### C. Model C — Devil's Advocate & Risk Auditor (DeepSeek V4 / Claude)
+* **Keahlian**: Skeptisisme teknikal, pengujian skenario kegagalan, deteksi false breakout.
+* **Input Payload**: Draft proposal Model A + Model B, kalender berita, order book/spread.
+* **Output Ringkas**:
+  ```json
+  {
+    "veto_flag": false,
+    "risk_score": 0.25,
+    "identified_risks": "Minor M5 compression, but R:R 2.18 compensates adequately."
+  }
+  ```
+
+---
+
+### 3. Kelebihan & Trade-Off Arsitektur Asimetris
+
+| Kelebihan | Trade-Off / Tantangan |
+|---|---|
+| **Zero Groupthink**: Model C bertugas mencari kesalahan, bukan ikut-ikutan setuju. | **Latensi Pipeline Berantai**: Harus menunggu Model A $\rightarrow$ Model B $\rightarrow$ Model C (bukan paralel serentak). |
+| **Token Sangat Hemat**: Tiap model hanya dikirimi sub-payload spesifik (~200–300 token). | **Ketergantungan Kuat**: Jika Model A salah mendeteksi regime, seluruh pipeline downstream ikut terpengaruh. |
+| **Pemisahan Logika Tajam**: Struktur makro dipisahkan dari eksekusi mikroskopik. | **Kompleksitas Konsensus**: Membutuhkan penanganan fallback jika salah satu model timeout / error. |
 
 ---
 
