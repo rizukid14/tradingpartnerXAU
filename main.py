@@ -1549,20 +1549,23 @@ def main():
     if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
         pool = config.get_rotation_pool()
         print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs (H1 Expert Intraday-Swing) | BTC (M30 Intraday) - Smart Rotation")
+        if getattr(config, "DYNAMIC_SESSION_TIMEFRAME", False):
+            print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (M30 24/7) - Smart Rotation")
+        else:
+            print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (M30 24/7) - Smart Rotation")
     else:
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}SINGLE SYMBOL ONLY{UI.RST}")
 
     if config.TP_SL_RULES != "LLM":
         sltp_desc = f"{config.TP_SL_RULES} (force semua)"
     elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1) | BTC: ATR-Based (fix)"
+        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR, min R:R {config.LLM_MIN_RR_RATIO}) | BTC: ATR-Based (fix)"
     else:
         sltp_desc = f"XAU: LLM Structure (floor {config.LLM_SAFETY_FLOOR_XAU_PTS} pts) | BTC: ATR-Based (fix)"
 
     loss_desc = f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%"
     print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
-    print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
+    print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} ({int(config.TRAILING_ACTIVATION_TP_PCT*100)}% TP)], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} ({int(config.BREAK_EVEN_TRIGGER_TP_PCT*100)}% TP)], Partial [{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} ({int(config.PARTIAL_CLOSE_TRIGGER_TP_PCT*100)}% TP)], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
     # Validate API keys before connecting to MT5
