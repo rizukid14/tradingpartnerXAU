@@ -32,17 +32,22 @@
      6. **`src/core/risk_engine.py` & `position_manager.py`**: Filter spread, dead zone, ATR-based safety floor, time-decay stagnation, dan pre-rollover shield.
      7. **`tests/test_*.py`**: Unit test suite (`test_symbol_rotation.py`, `test_time_decay_and_vol_regime.py`, `test_macro.py`) wajib diupdate dan dipastikan **100% PASS**.
      8. **`docs/archive/CHANGELOG_AUGUST_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
-
+5. **GAYA KOMUNIKASI & VERIFIKASI FAKTUAL (COMMUNICATION STYLE & ZERO FLATTERY)**:
+   - Dilarang membuka respon dengan frasa validasi basi seperti *"Kamu benar 100%"*, *"Pertanyaan bagus"*, *"Kekhawatiranmu sangat tepat"*, dll.
+   - Jangan membenarkan asumsi pengguna sebelum melakukan verifikasi langsung ke kode atau log data. Jika belum diverifikasi, katakan belum diverifikasi.
+   - Lewati kalimat pembuka persetujuan/basa-basi. Langsung jawab substansi teknikal terlebih dahulu.
+   - Sebelum menyetujui klaim, periksa faktanya di kode/data riil. Jika tidak bisa diverifikasi, sebutkan secara lugas.
+   - Jika asumsi pengguna keliru atau hanya benar sebagian, katakan langsung apa adanya dan jelaskan alasannya tanpa perlu melembutkan dengan pujian.
 ---
 
 ## Apa ini
 
 Bot trading **multi-LLM consensus** (OpenAI + Gemini + Claude/DeepSeek) yang berjalan di **MetaTrader 5**.
-- **TRADING_MODE = "pairs" (Default)**: **Pool 4 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 3 FX pairs (`GBPCHF-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`). **Dynamic Session-Adaptive Timeframe**: **H1 di Sesi Tokyo (08:00–14:00 WIB)** untuk menyaring noise + **M30 di Sesi London/NY (14:00–00:00 WIB)** untuk menangkap momentum breakout lincah. Risk per trade: **1.0%**. Net currency exposure seimbang (GBP×2, CAD×2, USD×1, CHF×1, AUD×1, NZD×1).
+- **TRADING_MODE = "pairs" (Default)**: **Pool 4 simbol FX paralel**: `WEEKDAY_SYMBOL = "GBPUSD-ECNc"` + 3 FX pairs (`GBPCHF-ECNc`, `USDJPY-ECNc`, `AUDCAD-ECNc`). **Dynamic Session-Adaptive Timeframe**: **H1 di Sesi Tokyo (08:00–14:00 WIB)** untuk menyaring noise + **M30 di Sesi London/NY (14:00–00:00 WIB)** untuk menangkap momentum breakout lincah. Risk per trade: **1.0%**. Net currency exposure seimbang (GBP×2, USD×2, CAD×1, CHF×1, AUD×1, JPY×1).
 - **BTCUSD.c (Bitcoin)**: Intraday **M30 (24/7)**, risk: **1.5%**, aktif di weekend + setelah jam 22:00 Jumat WIB (`ENABLE_BTC_ROTATION`). Bebas swap overnight.
 - **XAUUSD-ECNc (Gold)**: Sesi adaptif **H1 Tokyo / M30 London-NY**, risk: **1.0%** (aktif saat mode `xau`).
 - **Smart Timeframe Rotation**: AI dipanggil per-simbol HANYA pas candle timeframe aktif berganti (`_symbol_last_candle` di `main.py`) — H1 tiap 60 menit saat pagi, M30 tiap 30 menit saat sore/malam (hemat token drastis ~92%).
-- **Akun**: **LIVE** `VTMarkets-Live 3` (login `27556325`), Balance ~$1065, Waktu **WIB** (Asia/Jakarta).
+- **Akun**: **LIVE** `VTMarkets-Live 3` (login `27556325`), Balance ~$6000, Waktu **WIB** (Asia/Jakarta).
 
 ---
 
@@ -101,18 +106,19 @@ python main.py
   - **BTC & XAU = Mode ATR-Based**: Gate ATR non-negotiable (R:R 2:1 fix).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1 pts}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 00:00–08:00 WIB (Trading aktif mulai 08:00 WIB untuk FX & XAU; BTC tetap aktif 24/7).
-- **Proteksi Akun**: Max daily loss 4% equity, max 5 consecutive loss, daily profit target 6% equity, max 5 total posisi bot.
+- **Proteksi Akun**: Max daily loss 4% equity, max 5 consecutive loss, daily profit target 6% equity, max 6 total open posisi bot (shared pool), max 4 active pending orders (shared pool).
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
-  - **Break-Even (BEP)**: Aktif di **58% TP** (atau **45% TP** saat Low Volatility) + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
-  - **Trailing Stop**: Aktif di **70% TP**, jarak **konstan 0.5× ATR(14)** dari harga ekstrem, floor absolut 60 pts (6 pips).
+  - **Break-Even (BEP)**: Aktif di **55% TP** (atau **45% TP** saat Low Volatility) + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
+  - **Partial Close (TP1)**: Aktif di **55% TP**, mencairkan 50% lot ke saldo balance + geser sisa posisi ke Risk-Free BEP.
+  - **Trailing Stop**: Aktif di **75% TP**, jarak **konstan 0.5× ATR(14)** dari harga ekstrem, floor absolut 60 pts (6 pips).
   - **Peak-Aware Time-Decay Stagnation Exit**: Posisi $\ge 4$ jam hold (8 bar M30) di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
-  - **Pre-Rollover Precision Distance-to-SL Shield (03:50–04:15 WIB)**: Menutup posisi secara bersih di jam 03:50 WIB JIKA sisa jarak fisik ke SL $\le$ threshold lonjakan rollover per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, NZDCAD 140 pts, AUDCAD 130 pts) untuk mencegah gap down & slippage 2x SL. Posisi dengan SL aman atau profit tebal dibiarkan jalan ke TP.
+  - **Pre-Rollover Precision Distance-to-SL Shield (03:50–04:15 WIB)**: Menutup posisi secara bersih di jam 03:50 WIB JIKA sisa jarak fisik ke SL $\le$ threshold lonjakan rollover per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, USDJPY 150 pts, NZDCAD 140 pts, AUDCAD 130 pts) untuk mencegah gap down & slippage 2x SL. Posisi dengan SL aman atau profit tebal dibiarkan jalan ke TP.
 
 ---
 
 ## Status Terkini Sistem (Live Production — Agustus 2026)
 
-1. **FX Pairs 4-Symbol Pool (M30 Intraday)**: Parallel scan 4 simbol (`GBPUSD`, `GBPCHF`, `NZDCAD`, `AUDCAD`) update 25 Agu 2026 (Eliminasi EURCHF & EURNZD untuk zero overnight hazard, durasi trade 2–4 jam bersih).
+1. **FX Pairs 4-Symbol Pool (M30 Intraday)**: Parallel scan 4 simbol (`GBPUSD`, `GBPCHF`, `USDJPY`, `AUDCAD`) update 25 Agu 2026 (Eliminasi NZDCAD untuk upgrade volatilitas 2x lipat dan spread super tipis di Sesi Tokyo).
 2. **Trend-Aware Dual-Window Fibonacci**: Window 50-bar Intraday + 100-bar Macro Multi-Day dengan formula sadar arah tren.
 3. **Dynamic Pending Orders Prompt**: Jika `PENDING_ORDERS_ENABLED = False`, blok pending rules dan field `entry_type`/`entry_price` dihilangkan 100% dari prompt (menghemat ~459 token).
 4. **Paket Anti-FOMC & High-Impact News (Dynamic TradingView API)**:

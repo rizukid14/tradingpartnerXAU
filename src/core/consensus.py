@@ -200,16 +200,24 @@ def calculate_consensus(decisions):
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
         
-        # 1. CoT (Trend, Velocity, RR Valid)
-        trend_val = dec.get("trend")
-        vel_val = dec.get("velocity")
+        # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid)
+        regime_val = dec.get("market_regime") or dec.get("trend")
+        state_val = dec.get("state")
         rr_val = dec.get("rr_valid")
-        if trend_val or vel_val or rr_val is not None:
+        ctx_parts = []
+        if regime_val:
+            ctx_parts.append(f"Regime: {regime_val}")
+        if setup_label:
+            ctx_parts.append(f"Setup: {setup_label}")
+        if state_val:
+            ctx_parts.append(f"State: {state_val}")
+        if rr_val is not None:
             rr_str = "✓" if rr_val else "✗"
-            cot_str = f"Trend: {trend_val or '-'} | Velocity: {vel_val or '-'} | RR Valid: {rr_str}"
-            box_items.append((f"  {UI.CYAN}CoT{UI.RST}    : ", cot_str))
-        elif setup_label:
-            box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
+            ctx_parts.append(f"RR: {rr_str}")
+        elif dec.get("velocity"):
+            ctx_parts.append(f"Velocity: {dec.get('velocity')}")
+        if ctx_parts:
+            box_items.append((f"  {UI.CYAN}Context{UI.RST} : ", " | ".join(ctx_parts)))
         
         # 2. Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
         inv_val = dec.get("invalidation_price") or (dec.get("invalidation") or "").strip()
@@ -480,16 +488,20 @@ def calculate_consensus(decisions):
         }
 
     best_setup = ""
+    best_state = ""
     best_reason = ""
     best_invalidation = ""
     sorted_agreeing = sorted(agreeing_models, key=lambda m: decisions.get(m, {}).get("confidence", 0.0), reverse=True)
     for m in sorted_agreeing:
         dec = decisions.get(m, {})
         s_candidate = (dec.get("setup") or "").strip()
+        st_candidate = (dec.get("state") or "").strip()
         r_candidate = (dec.get("reasoning") or dec.get("edge") or "").strip()
         i_candidate = (dec.get("invalidation") or "").strip()
         if s_candidate and not best_setup:
             best_setup = " ".join(s_candidate.replace("\n", " ").replace("\r", " ").split())
+        if st_candidate and not best_state:
+            best_state = " ".join(st_candidate.replace("\n", " ").replace("\r", " ").split())
         if r_candidate and not best_reason:
             best_reason = " ".join(r_candidate.replace("\n", " ").replace("\r", " ").split())
         if i_candidate and not best_invalidation:
@@ -513,10 +525,12 @@ def calculate_consensus(decisions):
     badge = UI.badge_signal(consensus_signal)
     box_items.append(f"{UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(Skor {best_score:.2f} >= {threshold:.2f}){UI.RST}")
     box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{agreeing_models_str} (Avg Conf: {avg_confidence*100:.1f}%)"))
-    if best_setup:
-        box_items.append((f"  {UI.CYAN}Setup{UI.RST}         : ", best_setup))
+    
+    setup_state_str = f"[{best_setup} | {best_state}]" if (best_setup and best_state) else (best_setup or best_state or "")
+    if setup_state_str:
+        box_items.append((f"  {UI.CYAN}Setup / State :{UI.RST} ", setup_state_str))
     if best_reason:
-        box_items.append((f"  {UI.CYAN}Reason{UI.RST}        : ", best_reason))
+        box_items.append((f"  {UI.CYAN}Reason        :{UI.RST} ", best_reason))
     price_decimals = 5 if (point and point < 0.001) else 2
     price_info = f" | Price SL {final_inv:.{price_decimals}f} / TP {final_tgt:.{price_decimals}f}" if final_inv else ""
     box_items.append((f"  {UI.BOLD}Final SL / TP :{UI.RST} ", f"{UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}"))
@@ -536,6 +550,7 @@ def calculate_consensus(decisions):
         "agreeing_models": list(agreeing_models),
         "agreeing_models_str": agreeing_models_str,
         "setup": best_setup,
+        "state": best_state,
         "reason": best_reason,
         "invalidation_text": best_invalidation,
         "tickets_to_close": tickets_to_close,

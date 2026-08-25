@@ -38,7 +38,7 @@ def test_per_symbol_helpers():
     assert config.default_tp_points_for("XAUUSD-ECNc") == config.DEFAULT_TP_POINTS_XAU
     assert config.max_spread_points_for("XAUUSD-ECNc") == 50
     # FX pairs (H1 swing): default flat 100/200 pts (10/20 pips EURJPY scale)
-    for sym in ["GBPUSD-ECNc", "EURCHF-ECNc", "GBPCHF-ECNc", "EURNZD-ECNc", "NZDCAD-ECNc", "AUDCAD-ECNc"]:
+    for sym in ["GBPUSD-ECNc", "EURCHF-ECNc", "GBPCHF-ECNc", "EURNZD-ECNc", "USDJPY-ECNc", "AUDCAD-ECNc"]:
         assert config.default_sl_points_for(sym) == 100
         assert config.default_tp_points_for(sym) == 200
     # FX spread cap: ATR-based (15% ATR H1, floor 20 pts)
@@ -64,7 +64,7 @@ def test_per_symbol_helpers():
     # Risk per-trade: XAU 1.0%, FX 1.0%, BTC 1.5%
     assert config.risk_percent_for("XAUUSD-ECNc") == config.RISK_PERCENT_XAU
     assert config.risk_percent_for("GBPCHF-ECNc") == config.RISK_PERCENT_FX
-    assert config.risk_percent_for("NZDCAD-ECNc") == config.RISK_PERCENT_FX
+    assert config.risk_percent_for("USDJPY-ECNc") == config.RISK_PERCENT_FX
     assert config.risk_percent_for("BTCUSD.c") == config.RISK_PERCENT_BTC
     print("OK  per-symbol helpers (lot/sl/tp/spread/is_crypto/timeframe/risk)")
     return failed
@@ -74,7 +74,7 @@ def test_rotation_pool():
     # Gunakan hari Rabu (weekday) agar mengembalikan pool lengkap berisi 4 simbol
     wednesday = datetime(2026, 8, 12, 10, 0, tzinfo=WIB)
     pool = config.get_rotation_pool(wednesday)
-    # Pool = 4 FX symbols (GBPUSD, GBPCHF, NZDCAD, AUDCAD)
+    # Pool = 4 FX symbols (GBPUSD, GBPCHF, USDJPY, AUDCAD)
     assert len(pool) == 4, f"pool harus 4 simbol, dapat {len(pool)}: {pool}"
     assert pool[0] == config.WEEKDAY_SYMBOL
     for sym in config.FX_PAIR_SYMBOLS:

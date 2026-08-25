@@ -187,10 +187,9 @@ FX_PAIR_SYMBOLS = [
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
         # Pool FX 4 simbol M30 Intraday (25 Agustus 2026):
-        # GBPUSD, GBPCHF, NZDCAD, AUDCAD.
-        # Net Exposure: GBP×2, CAD×2, CHF×1, USD×1, AUD×1, NZD×1 (keseimbangan optimal).
-        # Eliminasi: EURCHF (illiquid rollover) dan EURNZD (spread lebar 2.5-5.0 pips).
-        "GBPUSD-ECNc,GBPCHF-ECNc,NZDCAD-ECNc,AUDCAD-ECNc",
+        # GBPUSD, GBPCHF, USDJPY, AUDCAD.
+        # Net Exposure: GBP×2, USD×2, CAD×1, CHF×1, AUD×1, JPY×1 (keseimbangan optimal).
+        "GBPUSD-ECNc,GBPCHF-ECNc,USDJPY-ECNc,AUDCAD-ECNc",
     ).split(",")
     if s.strip()
 ]
@@ -412,8 +411,8 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 #   - TRAIL act70 + dist 0.5x ATR = +0.272 (terbaik, nyaris setara baseline +0.302)
 #   - progressive SL +0.197 | adaptif/range +0.041 | fixed pips +0.128-0.180 (inferior)
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
-BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.58)  # BEP aktif saat profit >= 58% TP (padding komisi tetap dipertahankan)
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.70)  # trailing aktif saat profit >= 70% TP
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.55)  # BEP aktif saat profit >= 55% TP (padding komisi tetap dipertahankan)
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.75)  # trailing aktif saat profit >= 75% TP
 BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
 TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 25)    # Floor absolut jarak trailing FX (pts) anti noise/spread
@@ -431,8 +430,9 @@ BREAK_EVEN_TRIGGER_POINTS_BTC = _getenv_int("BREAK_EVEN_TRIGGER_POINTS_BTC", 335
 BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 1000)
 
 # --- PARTIAL CLOSE ---
-PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", False)
+PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
+PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.55)  # Partial close aktif di 55% TP
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
 PARTIAL_CLOSE_TP1_POINTS_XAU = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_XAU", PARTIAL_CLOSE_TP1_POINTS)
@@ -443,7 +443,7 @@ MAX_DAILY_LOSS_PERCENT = _getenv_float("MAX_DAILY_LOSS_PERCENT", 4.0)
 MAX_DAILY_LOSS_USD = _getenv_float("MAX_DAILY_LOSS_USD", 50.0)
 MAX_CONSECUTIVE_LOSSES = _getenv_int("MAX_CONSECUTIVE_LOSSES", 5)
 PAUSE_AFTER_LOSSES_MINUTES = _getenv_int("PAUSE_AFTER_LOSSES_MINUTES", 15)
-MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 5)
+MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
@@ -451,7 +451,7 @@ MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:
 
 def get_max_open_positions(in_recovery_mode=False, now=None):
     """Maksimum open posisi agregat (semua simbol):
-    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (5)
+    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
     - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (3)
     - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
       (kalau recovery mode aktif di jam late NY, tetap min(2, 3) = 2).
@@ -564,6 +564,7 @@ PRE_ROLLOVER_SLIPPAGE_EURCHF_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_EURCHF_P
 PRE_ROLLOVER_SLIPPAGE_GBPCHF_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_GBPCHF_PTS", 210.0)
 PRE_ROLLOVER_SLIPPAGE_EURNZD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_EURNZD_PTS", 240.0)
 PRE_ROLLOVER_SLIPPAGE_GBPUSD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_GBPUSD_PTS", 180.0)
+PRE_ROLLOVER_SLIPPAGE_USDJPY_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_USDJPY_PTS", 150.0)
 PRE_ROLLOVER_SLIPPAGE_NZDCAD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_NZDCAD_PTS", 140.0)
 PRE_ROLLOVER_SLIPPAGE_AUDCAD_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_AUDCAD_PTS", 130.0)
 PRE_ROLLOVER_SLIPPAGE_DEFAULT_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_DEFAULT_PTS", 200.0)
@@ -580,6 +581,8 @@ def get_pre_rollover_slippage_threshold(symbol: str) -> float:
         return PRE_ROLLOVER_SLIPPAGE_EURNZD_PTS
     elif "GBPUSD" in s_clean:
         return PRE_ROLLOVER_SLIPPAGE_GBPUSD_PTS
+    elif "USDJPY" in s_clean:
+        return PRE_ROLLOVER_SLIPPAGE_USDJPY_PTS
     elif "NZDCAD" in s_clean:
         return PRE_ROLLOVER_SLIPPAGE_NZDCAD_PTS
     elif "AUDCAD" in s_clean:
@@ -607,9 +610,9 @@ POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_A
 # di demo/dry-run. Saat aktif, LLM boleh kasih entry_type (market/buy_stop/
 # sell_stop/buy_limit/sell_limit) + entry_price. Pending punya expiration,
 # tereksekusi -> posisi normal (SL/TP + BEP + trailing).
-PENDING_ORDERS_ENABLED = _getenv_bool("PENDING_ORDERS_ENABLED", False)
+PENDING_ORDERS_ENABLED = _getenv_bool("PENDING_ORDERS_ENABLED", True)
 PENDING_ORDER_EXPIRY_MINUTES = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES", 120)
-PENDING_ORDER_MAX_ACTIVE = _getenv_int("PENDING_ORDER_MAX_ACTIVE", 3)
+PENDING_ORDER_MAX_ACTIVE = _getenv_int("PENDING_ORDER_MAX_ACTIVE", 4)
 # Jarak entry pending dari harga sekarang: minimal 2x spread, maksimal 1.5x ATR
 PENDING_ENTRY_MIN_SPREAD_MULT = _getenv_float("PENDING_ENTRY_MIN_SPREAD_MULT", 2.0)
 PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)

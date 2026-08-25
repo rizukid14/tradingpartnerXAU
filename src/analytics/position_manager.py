@@ -222,9 +222,10 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    # TP-Adaptive Partial Close (60% of actual TP target if exists, otherwise fallback)
+    # TP-Adaptive Partial Close (55% of actual TP target if exists, otherwise fallback)
     if tp_points > 0:
-        tp1_points = int(tp_points * 0.60)
+        pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.55)
+        tp1_points = int(tp_points * pct)
         min_tp1 = 40 if config.is_fx(symbol) else 120
         tp1_points = max(min_tp1, tp1_points)
     else:

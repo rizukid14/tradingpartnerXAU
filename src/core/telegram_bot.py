@@ -89,7 +89,7 @@ def _build_main_menu_keyboard():
     """Builds clean institutional inline keyboard for main menu with dynamic session timeframes."""
     tf_gu = config.get_timeframe_str("GBPUSD-ECNc")
     tf_gc = config.get_timeframe_str("GBPCHF-ECNc")
-    tf_nc = config.get_timeframe_str("NZDCAD-ECNc")
+    tf_uj = config.get_timeframe_str("USDJPY-ECNc")
     tf_ac = config.get_timeframe_str("AUDCAD-ECNc")
     tf_xau = config.get_timeframe_str("XAUUSD-ECNc")
     tf_btc = config.get_timeframe_str("BTCUSD.c")
@@ -100,7 +100,7 @@ def _build_main_menu_keyboard():
                 {"text": f"GBPCHF {tf_gc}", "callback_data": "analyze:GBPCHF-ECNc"},
             ],
             [
-                {"text": f"NZDCAD {tf_nc}", "callback_data": "analyze:NZDCAD-ECNc"},
+                {"text": f"USDJPY {tf_uj}", "callback_data": "analyze:USDJPY-ECNc"},
                 {"text": f"AUDCAD {tf_ac}", "callback_data": "analyze:AUDCAD-ECNc"},
             ],
             [

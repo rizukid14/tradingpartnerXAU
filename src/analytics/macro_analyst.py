@@ -231,7 +231,7 @@ class MacroAnalyst:
             if ema200 == ema200:  # NaN guard
                 above = close >= ema200
                 dist200 = (close - ema200) / (atr if atr > 0 else 1.0)
-                regime = "BULLISH regime (institutions long)" if above else "BEARISH regime (institutions short)"
+                regime = "BULLISH regime" if above else "BEARISH regime"
                 ema200_str = (
                     f" | EMA200 {_fmt(ema200)} (close {'ABOVE' if above else 'BELOW'}, "
                     f"{abs(dist200):.1f}x ATR -> {regime})"

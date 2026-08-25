@@ -1405,7 +1405,7 @@ def _run_cycle_for_current_symbol():
                             tp_price=p_tp_price,
                             models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
                             confidence=result.get("confidence", 0.0),
-                            setup=result.get("setup", ""),
+                            setup=f"{result.get('setup', '')} (State: {result['state']})" if result.get("state") else result.get("setup", ""),
                             reason=result.get("reason", ""),
                             invalidation=result.get("invalidation_text", ""),
                             expiration_minutes=config.PENDING_ORDER_EXPIRY_MINUTES,
@@ -1461,6 +1461,9 @@ def _run_cycle_for_current_symbol():
                 order_executed = True
                 print(f"Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
                 risk.record_trade_opened()
+                setup_str = f"{result.get('setup', '')}"
+                if result.get("state"):
+                    setup_str = f"{setup_str} (State: {result['state']})" if setup_str else f"State: {result['state']}"
                 tg.alert_trade_opened(
                     trade_signal, effective_lot, sl_points, pos_tp,
                     recovery_mode=risk.is_recovery_mode,
@@ -1472,7 +1475,7 @@ def _run_cycle_for_current_symbol():
                     tp_price=pos_tp_price,
                     models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
                     confidence=result.get("confidence", 0.0),
-                    setup=result.get("setup", ""),
+                    setup=setup_str,
                     reason=result.get("reason", ""),
                     invalidation=result.get("invalidation_text", ""),
                 )
