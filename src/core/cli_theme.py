@@ -271,11 +271,16 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     # ── TILE 1: FULL 22-PAIR QUANT RADAR HEAT MATRIX (Top Left) ──
     t1_lines = []
     
+    import config
+    scanner_syms = config.get_scanner_symbols() if hasattr(config, "get_scanner_symbols") else []
     all_symbols = [
+        s.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
+        for s in scanner_syms
+    ] or [
         "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "GBPJPY", "EURJPY",
-        "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURCHF",
-        "EURAUD", "EURCAD", "EURNZD", "GBPAUD", "GBPCAD", "GBPCHF",
-        "GBPNZD", "AUDCAD", "AUDCHF", "AUDJPY"
+        "AUDUSD", "USDCAD", "USDCHF", "CADJPY", "EURGBP", "EURCHF",
+        "EURAUD", "EURCAD", "CHFJPY", "GBPAUD", "GBPCAD", "GBPCHF",
+        "NZDCAD", "AUDCAD", "AUDCHF", "AUDJPY"
     ]
     
     hot_pairs = []
