@@ -1,10 +1,33 @@
+# ==============================================================================
+# Stage 1: Build Dependencies
+# ==============================================================================
+FROM python:3.12-slim AS builder
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Install build tools if needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements and install packages to /install directory
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ==============================================================================
+# Stage 2: Final Minimal Runtime Image
+# ==============================================================================
 FROM python:3.12-slim
 
-# Set timezone and unbuffered stdout
 ENV PYTHONUNBUFFERED=1 \
-    TZ=Asia/Jakarta
+    TZ=Asia/Jakarta \
+    PYTHONPATH=/app
 
-# Install system dependencies
+# Install minimal runtime system packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
     dos2unix \
@@ -12,14 +35,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy pre-installed Python packages from builder stage
+COPY --from=builder /install /usr/local
 
-# Copy source code
-COPY . .
+# Copy application source files
+COPY config.py main.py dashboard.py dashboard_assets.py mt5_safe.py entrypoint.sh ./
+COPY src/ ./src/
+COPY tele_bot/ ./tele_bot/
 
-# Ensure data directory exists and make entrypoint script executable
+# Ensure data directory exists and sanitize entrypoint line endings
 RUN mkdir -p /app/data && dos2unix /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Expose API & Dashboard server port

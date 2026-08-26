@@ -2,7 +2,10 @@ version: '3.8'
 
 services:
   trading-bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tradingpartner:latest
     container_name: tradingpartner_bot
     restart: unless-stopped
     ports:
@@ -18,9 +21,7 @@ services:
       - ./data:/app/data
 
   telegram-bot:
-    build:
-      context: .
-      dockerfile: tele_bot/Dockerfile
+    image: tradingpartner:latest
     container_name: tradingpartner_telegram_bot
     restart: unless-stopped
     depends_on:
@@ -31,4 +32,4 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-
+    command: ["python", "tele_bot/telegram_ai_agent.py"]

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.gitattributes
+.env
+data/
+docs/
+tests/
+scratch/
+scripts/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.md
+*.txt
+!requirements.txt
