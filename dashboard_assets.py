@@ -1,11 +1,11 @@
 """
-Template dashboard HTML (mode live/static).
-
-Data TIDAK di-embed di sini. Halaman memuat data via:
-  - fetch('/api/data')  → mode live (dashboard.py --serve)
-  - window.__INITIAL_DATA__ → mode static (di-inject oleh render_html)
-Lalu semua konten dirender via JS. Auto-refresh 5 detik (fetch saja, TANPA reload halaman)
-sehingga tidak ada kedipan/animasi ulang.
+Dashboard Assets & Modern HTML Template for 2-Stage Quant Funnel Trading Bot.
+Features:
+- Live 22-Pair SMC Radar Matrix
+- 2-Pass Cross-Examination Jury & Risk Veto Stream
+- Funnel Conversion KPIs (Radar -> Pass 1 -> Pass 2 Veto -> MT5 Dispatch)
+- Live MT5 Portfolio & Pending Orders Table
+- Dark Obsidian & Glassmorphism Theme (Inter + JetBrains Mono)
 """
 
 TEMPLATE = r"""<!DOCTYPE html>
@@ -13,695 +13,558 @@ TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trading Bot Dashboard — XAUUSD Gold</title>
+<title>2-Stage Quant Funnel & 3-LLM Jury Operations Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root {
-  --bg: #141413;
-  --panel: #1e1e1d;
-  --panel-hover: #262625;
-  --border: #2d2d2b;
-  --border-light: #3f3f3d;
-  --text: #e6e6e3;
-  --muted: #8a8a85;
-  --muted-light: #b5b5b0;
-  --green: #4ade80;
-  --green-bg: rgba(74, 222, 128, 0.08);
-  --red: #f87171;
-  --red-bg: rgba(248, 113, 113, 0.08);
-  --blue: #a3a3a3;
-  --blue-bg: rgba(163, 163, 163, 0.08);
-  --amber: #cc7a5c;
+  --bg: #07090e;
+  --surface: #0e131f;
+  --surface-elevated: #141b2d;
+  --card: #121829;
+  --card-hover: #18223a;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  
+  --green: #10b981;
+  --green-dim: rgba(16, 185, 129, 0.12);
+  --cyan: #06b6d4;
+  --cyan-dim: rgba(6, 182, 212, 0.12);
+  --rose: #f43f5e;
+  --rose-dim: rgba(244, 63, 94, 0.12);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245, 158, 11, 0.12);
+  --purple: #a855f7;
+  --purple-dim: rgba(168, 85, 247, 0.12);
+  --blue: #3b82f6;
+  --blue-dim: rgba(59, 130, 246, 0.12);
+  
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  padding: 16px;
+  font-family: var(--font-sans);
+  padding: 20px;
   min-height: 100vh;
   font-size: 13px;
   line-height: 1.5;
 }
 
-/* Header Compact */
+/* Header */
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   gap: 12px;
 }
-.brand { display: flex; align-items: center; gap: 10px; }
-.brand h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: #fff; }
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-pill {
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+  color: #000;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+.header-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+.header-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 .badge-live {
-  display: inline-flex;
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--green-bg);
-  color: var(--green);
-  border: 1px solid rgba(34, 197, 94, 0.2);
-  padding: 2px 8px;
-  border-radius: 99px;
+}
+.badge-live::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--green);
+}
+
+/* KPI Banner */
+.grid-kpi {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.kpi-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+.kpi-lbl {
   font-size: 11px;
   font-weight: 600;
-}
-.badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-.sub { color: var(--muted-light); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
-
-.filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.filters label { font-size: 12px; color: var(--muted); font-weight: 500; }
-.filters select {
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-family: inherit;
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-.filters select:hover, .filters select:focus { border-color: var(--amber); }
-
-/* Bento Box Grid System */
-.bento-grid {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  gap: 14px;
-}
-
-.bento-box {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-  transition: border-color 0.2s;
-}
-.bento-box:hover { border-color: var(--border-light); }
-
-.bento-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted-light);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
+}
+.kpi-val {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1.1;
+  margin-bottom: 4px;
+}
+.kpi-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* Bento Grid */
+.bento-grid {
+  display: grid;
+  grid-template-columns: 7fr 5fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.bento-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+.card-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
 }
-.bento-title span { color: var(--muted); font-size: 11px; font-weight: 400; text-transform: none; }
-
-/* Grid Spans */
-.col-12 { grid-column: span 12; }
-.col-8 { grid-column: span 8; }
-.col-6 { grid-column: span 6; }
-.col-5 { grid-column: span 5; }
-.col-4 { grid-column: span 4; }
-.col-3 { grid-column: span 3; }
-.col-7 { grid-column: span 7; }
-
-@media (max-width: 1024px) {
-  .col-8, .col-7, .col-6, .col-5, .col-4, .col-3 { grid-column: span 12; }
+.card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-/* KPI Cards Layout */
-.kpi-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px;
+/* Tables */
+.table-wrap {
+  overflow-x: auto;
+  max-height: 400px;
+  border-radius: var(--radius-sm);
+}
+table {
   width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
 }
-.kpi-card {
-  background: rgba(255, 255, 255, 0.02);
+th {
+  background: var(--surface-elevated);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255, 255, 255, 0.02); color: var(--text); }
+.mono { font-family: var(--font-mono); }
+
+/* Badges */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.tag-green { background: var(--green-dim); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.25); }
+.tag-cyan { background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(6, 182, 212, 0.25); }
+.tag-rose { background: var(--rose-dim); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.25); }
+.tag-amber { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.25); }
+.tag-purple { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(168, 85, 247, 0.25); }
+
+/* Jury Feed Cards */
+.jury-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.jury-item {
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
-.kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 500; }
-.kpi-value { font-size: 18px; font-weight: 700; margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
+.jury-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.jury-models {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.jury-reason {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
 
-.green { color: var(--green); }
-.red { color: var(--red); }
-.muted { color: var(--muted); }
-
-/* Charts Inside Bento */
-.chart-container { position: relative; width: 100%; height: 220px; }
-.chart-container-sm { position: relative; width: 100%; height: 170px; }
-
-/* Tables Clean & Compact */
-.table-wrap { width: 100%; overflow-x: auto; max-height: 320px; overflow-y: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
-th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
-th { color: var(--muted-light); font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); z-index: 2; }
-th:hover { color: var(--amber); }
-tr:hover { background: var(--panel-hover); }
-
-/* Cards & Badges */
-.sym-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-.sym-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-.sym-name { font-weight: 700; color: var(--amber); font-size: 13px; margin-bottom: 4px; }
-
-.lesson-item { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 12px; }
-.theme-tag { display: inline-block; background: rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 6px; font-size: 10px; color: var(--muted-light); margin-right: 6px; text-transform: uppercase; }
-.sym-tag { color: var(--amber); font-weight: 600; margin-right: 6px; }
-
-.empty-hint { text-align: center; padding: 30px; color: var(--muted); font-size: 12px; }
-
-/* Scrollbar Customization */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: var(--panel); }
-::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+@media (max-width: 1200px) {
+  .grid-kpi { grid-template-columns: repeat(3, 1fr); }
+  .bento-grid { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="brand">
-    <h1>🏛️ CONSENSUS TRADING DASHBOARD</h1>
-    <div id="live-badge-wrap"></div>
-  </div>
-  <div class="sub" id="sub-line">Memuat data...</div>
-  <div class="filters">
-    <label>Simbol: <select id="f-symbol"></select></label>
-    <label>Rentang: <select id="f-range">
-      <option value="all">Semua Waktu</option>
-      <option value="7d">7 Hari</option>
-      <option value="30d">30 Hari</option>
-    </select></label>
-    <label>Mode Trading: <select id="f-trading-mode" title="Pilih mode simbol yang di-scan bot (perlu dashboard mode serve)">
-      <option value="xau_pairs">🔄 8 FX Pairs Pool (H1 Intraday-Swing)</option>
-      <option value="xau">🎯 XAU Only</option>
-    </select></label>
-    <span id="mode-save-status" class="sub" style="font-size:11px;"></span>
-  </div>
-</div>
-
-<!-- Bento Grid Layout 1-Halaman -->
-<div class="bento-grid">
-  
-  <!-- Row 1: KPI Grid (Full 12 cols) -->
-  <div class="bento-box col-12">
-    <div class="kpi-row" id="kpi-grid"></div>
-  </div>
-
-  <!-- Row 2: Equity Curve (8 cols) + Per-Symbol Breakdown (4 cols) -->
-  <div class="bento-box col-8">
-    <div class="bento-title">Equity Curve &amp; Growth <span id="eq-hint"></span></div>
-    <div class="chart-container"><canvas id="chart-equity"></canvas></div>
-  </div>
-
-  <div class="bento-box col-4">
-    <div class="bento-title" style="display:flex; justify-content:space-between; align-items:center;">
-      <span>Per-Symbol Performance</span>
-      <select id="sort-sym" style="font-size:11px; padding:2px 4px; background:#1e1e1e; color:#ccc; border:1px solid #444; border-radius:3px; outline:none; cursor:pointer;" onchange="renderSym()">
-        <option value="default">Default</option>
-        <option value="az">A-Z</option>
-        <option value="profit-desc">Profit Tertinggi</option>
-        <option value="profit-asc">Profit Terendah</option>
-      </select>
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <span class="brand-pill">2-STAGE FUNNEL</span>
+      <div>
+        <h1 class="header-title">Trading Operations Center</h1>
+        <div class="header-sub">22-Pair SMC Fast Radar &bull; 2-Pass Cross-Examination Jury &bull; MT5 Live</div>
+      </div>
     </div>
-    <div id="sym-cards" style="overflow-y: auto; max-height: 220px;"></div>
-  </div>
-
-  <!-- Row 3: Model Decision Distribution (6 cols) + Latency & LLM Accuracy (6 cols) -->
-  <div class="bento-box col-6">
-    <div class="bento-title">Model Decisions <span>OpenAI vs Gemini vs DeepSeek</span></div>
-    <div class="chart-container-sm"><canvas id="chart-decisions"></canvas></div>
-  </div>
-
-  <div class="bento-box col-6">
-    <div class="bento-title">Model Latency (detik) <span>Ronde 1 Evaluation</span></div>
-    <div class="chart-container-sm"><canvas id="chart-latency"></canvas></div>
-  </div>
-
-  <!-- Row 4: LLM Model Accuracy Table (6 cols) + SL/TP & R:R Distribution (6 cols) -->
-  <div class="bento-box col-6">
-    <div class="bento-title">Model Accuracy &amp; Confidence Calibration</div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Model</th><th>N</th><th>BUY</th><th>SELL</th><th>HOLD</th><th>Akurasi</th><th>Avg Conf</th><th>Conf Win</th><th>Conf Loss</th></tr></thead>
-        <tbody id="model-tbody"></tbody>
-      </table>
-    </div>
-    <div class="sub" id="agree-line" style="margin-top:8px;"></div>
-  </div>
-
-  <div class="bento-box col-6">
-    <div class="bento-title">SL/TP &amp; R:R Effectiveness</div>
-    <div style="display: flex; gap: 10px;">
-      <div style="flex:1;" class="chart-container-sm"><canvas id="chart-sl"></canvas></div>
-      <div style="flex:1;" class="chart-container-sm"><canvas id="chart-rr"></canvas></div>
-    </div>
-    <div class="sub" id="sltp-line" style="margin-top:6px;"></div>
-  </div>
-
-  <!-- Row 5: Trade History (7 cols) + Post-Mortem Lessons (5 cols) -->
-  <div class="bento-box col-7">
-    <div class="bento-title">Riwayat Trade Terakhir</div>
-    <div class="table-wrap">
-      <table id="trades-table">
-        <thead><tr><th>Ticket</th><th>Symbol</th><th>Side</th><th>Lot</th><th>Entry</th><th>SL</th><th>TP</th><th>P/L ($)</th><th>Waktu</th><th>Status</th></tr></thead>
-        <tbody id="trades-tbody"></tbody>
-      </table>
+    <div class="header-right">
+      <div class="badge-live" id="statusPill">LIVE CONNECTED</div>
+      <div style="color: var(--text-dim);" id="clockWib">00:00:00 WIB</div>
     </div>
   </div>
 
-  <div class="bento-box col-5">
-    <div class="bento-title">Bot Status &amp; Risk Engine</div>
-    <div id="status-panel-div" style="overflow-y: auto; max-height: 280px;"></div>
+  <!-- KPI Banner -->
+  <div class="grid-kpi">
+    <div class="kpi-box">
+      <div class="kpi-lbl">Balance / Equity</div>
+      <div class="kpi-val" id="kpiBalance">$0.00</div>
+      <div class="kpi-sub" id="kpiEquity">Eq: $0.00</div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-lbl">Today P/L (Realized)</div>
+      <div class="kpi-val" id="kpiPnlToday">$0.00</div>
+      <div class="kpi-sub" id="kpiPnlPct">0.0% of target</div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-lbl">Floating P/L</div>
+      <div class="kpi-val" id="kpiFloating">$0.00</div>
+      <div class="kpi-sub" id="kpiActivePositions">0 Open Positions</div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-lbl">Stage 1 Radar Detections</div>
+      <div class="kpi-val mono" style="color: var(--cyan);" id="kpiStage1">0</div>
+      <div class="kpi-sub">A+ Trigger Candidates</div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-lbl">Pass 2 Veto Shield</div>
+      <div class="kpi-val mono" style="color: var(--rose);" id="kpiVetoed">0</div>
+      <div class="kpi-sub" id="kpiVetoRate">0.0% Vetoed (Saved)</div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-lbl">MT5 Executed Trades</div>
+      <div class="kpi-val mono" style="color: var(--green);" id="kpiExecuted">0</div>
+      <div class="kpi-sub" id="kpiPendingCount">0 Pending Orders</div>
+    </div>
   </div>
 
-</div>
+  <!-- Bento Grid 1: Radar Matrix & Live Positions -->
+  <div class="bento-grid">
+    <!-- 22-Pair SMC Radar Matrix -->
+    <div class="bento-card">
+      <div class="card-head">
+        <div class="card-title">📡 22-Pair SMC Fast Radar Matrix (Live Layer)</div>
+        <div class="tag tag-cyan">60s Polling</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Pair</th>
+              <th>Compass</th>
+              <th>Dealing Range (H1)</th>
+              <th>Nearest OB / FVG</th>
+              <th>ATR / Spread</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="radarTableBody">
+            <tr><td colspan="6" style="text-align: center; padding: 24px;">Memuat data radar...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-<!-- Unused hidden elements kept for script compatibility -->
-<div style="display:none;">
-  <canvas id="chart-conf"></canvas>
-  <canvas id="chart-agg"></canvas>
-</div>
+    <!-- Active Positions & Pending Limit Queue -->
+    <div class="bento-card">
+      <div class="card-head">
+        <div class="card-title">💼 Active Positions & Pending Orders</div>
+        <div class="tag tag-green" id="posCapacityBadge">0/6 Slots</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticket</th>
+              <th>Pair</th>
+              <th>Type</th>
+              <th>Lot</th>
+              <th>Entry</th>
+              <th>SL / TP</th>
+              <th>P/L ($)</th>
+            </tr>
+          </thead>
+          <tbody id="positionsTableBody">
+            <tr><td colspan="7" style="text-align: center; padding: 24px;">Tidak ada posisi terbuka.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-<script>
-"use strict";
-let DATA = window.__INITIAL_DATA__ || null;
-let CONFIG_DATA = null;
-let LIVE = false;
-const charts = {};
-const $ = id => document.getElementById(id);
+  <!-- Bento Grid 2: 2-Pass Jury Live Feed & Equity Chart -->
+  <div class="bento-grid">
+    <!-- 2-Pass Jury Verdict Stream -->
+    <div class="bento-card">
+      <div class="card-head">
+        <div class="card-title">⚖️ 2-Pass AI Jury Decisions & Risk Veto Stream</div>
+        <div class="tag tag-purple">Sequential Audit</div>
+      </div>
+      <div class="jury-feed" id="juryFeedBody">
+        <div style="text-align: center; padding: 24px; color: var(--text-dim);">Belum ada sesi sidang konsensus baru.</div>
+      </div>
+    </div>
 
-function fmtMoney(v) { return (v === null || v === undefined) ? "—" : (v>=0?"+":"") + "$" + v.toFixed(2); }
-function fmtPct(v) { return (v === null || v === undefined) ? "—" : (v*100).toFixed(1) + "%"; }
-function fmtTs(ts) { if (!ts) return ""; const d = new Date(ts*1000); return d.toLocaleString(); }
-function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+    <!-- Daily Performance & Funnel Chart -->
+    <div class="bento-card">
+      <div class="card-head">
+        <div class="card-title">📈 Daily Equity & Funnel Conversion</div>
+        <div class="tag tag-amber">Performance</div>
+      </div>
+      <div style="height: 380px; position: relative;">
+        <canvas id="perfChart"></canvas>
+      </div>
+    </div>
+  </div>
 
-async function loadData() {
-  try {
-    const r = await fetch('/api/data', {cache:'no-store'});
-    if (r.ok) { DATA = await r.json(); LIVE = true; }
-  } catch (e) { /* static mode */ }
-  if (!DATA) DATA = window.__INITIAL_DATA__ || {meta:{}, summary:{}, trades:[], equity_curve:[], model_stats:{}, per_symbol:{}, sl_buckets:{}, rr_buckets:{}, agreement:{}, latency:{}, position_manager:{}, sltp_floor:{}, forecast_bias:{}};
-  await loadTradingMode();
-  renderAll();
-}
+  <script>
+    let perfChart = null;
 
-async function loadTradingMode() {
-  const sel = $('f-trading-mode');
-  if (!sel) return;
-  let mode = null;
-  try {
-    const r = await fetch('/api/config', {cache:'no-store'});
-    if (r.ok) {
-      const res = await r.json();
-      CONFIG_DATA = res.config || null;
-      if (CONFIG_DATA) {
-        mode = CONFIG_DATA.TRADING_MODE || null;
-        const pairs = CONFIG_DATA.FX_PAIR_SYMBOLS || [];
-        if (pairs.length && CONFIG_DATA.TRADING_MODE === 'xau_pairs') {
-          sel.title = 'Pool: ' + (CONFIG_DATA.WEEKDAY_SYMBOL || 'XAU') + ' → ' + pairs.join(', ');
-        }
+    function renderDashboard(data) {
+      if (!data) return;
+
+      // Clock & Status
+      document.getElementById('clockWib').textContent = data.clock_wib || new Date().toLocaleTimeString('id-ID');
+      
+      // KPIs
+      const acc = data.account || {};
+      document.getElementById('kpiBalance').textContent = '$' + (acc.balance || 0).toFixed(2);
+      document.getElementById('kpiEquity').textContent = 'Eq: $' + (acc.equity || 0).toFixed(2);
+      
+      const pnl = data.daily_pnl || 0;
+      const pnlEl = document.getElementById('kpiPnlToday');
+      pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+      pnlEl.style.color = pnl > 0.04 ? 'var(--green)' : (pnl < -0.04 ? 'var(--rose)' : 'var(--text)');
+      
+      const fl = data.floating_pnl || 0;
+      const flEl = document.getElementById('kpiFloating');
+      flEl.textContent = (fl >= 0 ? '+$' : '-$') + Math.abs(fl).toFixed(2);
+      flEl.style.color = fl > 0.04 ? 'var(--green)' : (fl < -0.04 ? 'var(--rose)' : 'var(--text)');
+
+      const openPos = data.open_positions || [];
+      const pendingOrd = data.pending_orders || [];
+      document.getElementById('kpiActivePositions').textContent = `${openPos.length} Open Pos (${pendingOrd.length} Pending)`;
+      document.getElementById('posCapacityBadge').textContent = `${openPos.length + pendingOrd.length}/${data.max_positions || 6} Slots`;
+
+      // Funnel KPIs
+      const f = data.funnel || {};
+      document.getElementById('kpiStage1').textContent = f.stage1_detected || 0;
+      document.getElementById('kpiVetoed').textContent = f.pass2_vetoed || 0;
+      document.getElementById('kpiExecuted').textContent = f.executed || 0;
+      document.getElementById('kpiVetoRate').textContent = `${(f.veto_rate_pct || 0).toFixed(1)}% Veto Rate`;
+      document.getElementById('kpiPendingCount').textContent = `${pendingOrd.length} Orders in Queue`;
+
+      // Radar Table
+      const radarBody = document.getElementById('radarTableBody');
+      const radar = data.radar_pairs || [];
+      if (radar.length > 0) {
+        radarBody.innerHTML = radar.map(r => {
+          const compClass = r.compass === 'BULLISH' ? 'tag-green' : (r.compass === 'BEARISH' ? 'tag-rose' : 'tag-amber');
+          const rangeTag = r.range_pos <= 0.38 ? '<span class="tag tag-green">DISCOUNT</span>' : (r.range_pos >= 0.62 ? '<span class="tag tag-rose">PREMIUM</span>' : '<span class="tag tag-cyan">EQ</span>');
+          return `
+            <tr>
+              <td><strong class="mono" style="color: var(--text);">${r.symbol}</strong></td>
+              <td><span class="tag ${compClass}">${r.compass}</span></td>
+              <td>${(r.range_pos * 100).toFixed(1)}% ${rangeTag}</td>
+              <td class="mono" style="font-size: 11px;">${r.ob_zone || '-'}</td>
+              <td class="mono">${r.atr_pts} / ${r.spread_pts} pts</td>
+              <td><span class="tag tag-cyan">${r.status || 'WATCH'}</span></td>
+            </tr>
+          `;
+        }).join('');
       }
+
+      // Positions Table
+      const posBody = document.getElementById('positionsTableBody');
+      const allActive = [...openPos, ...pendingOrd];
+      if (allActive.length > 0) {
+        posBody.innerHTML = allActive.map(p => {
+          const isPending = !!p.type_str && p.type_str.includes('LIMIT');
+          const pnlVal = p.profit || 0;
+          const pnlColor = pnlVal > 0.04 ? 'var(--green)' : (pnlVal < -0.04 ? 'var(--rose)' : 'var(--text-muted)');
+          return `
+            <tr>
+              <td class="mono">#${p.ticket}</td>
+              <td><strong class="mono">${p.symbol}</strong></td>
+              <td><span class="tag ${isPending ? 'tag-amber' : (p.type_str === 'BUY' ? 'tag-green' : 'tag-rose')}">${p.type_str}</span></td>
+              <td class="mono">${p.volume}</td>
+              <td class="mono">${p.price_open}</td>
+              <td class="mono">${p.sl || '-'} / ${p.tp || '-'}</td>
+              <td class="mono" style="color: ${pnlColor}; font-weight: 700;">${isPending ? 'PENDING' : (pnlVal >= 0 ? '+$' : '-$') + Math.abs(pnlVal).toFixed(2)}</td>
+            </tr>
+          `;
+        }).join('');
+      } else {
+        posBody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 24px; color: var(--text-dim);">Tidak ada posisi aktif atau antrian pending order.</td></tr>';
+      }
+
+      // Jury Feed
+      const juryBody = document.getElementById('juryFeedBody');
+      const juryEvents = data.jury_events || [];
+      if (juryEvents.length > 0) {
+        juryBody.innerHTML = juryEvents.map(j => {
+          const vClass = j.verdict === 'APPROVE' ? 'tag-green' : (j.verdict === 'REVISE' ? 'tag-amber' : 'tag-rose');
+          return `
+            <div class="jury-item">
+              <div class="jury-top">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="tag ${vClass}">${j.verdict}</span>
+                  <strong class="mono">${j.symbol}</strong>
+                  <span style="color: var(--text-dim); font-size: 11px;">${j.setup}</span>
+                </div>
+                <span class="mono" style="color: var(--text-dim); font-size: 11px;">${j.time}</span>
+              </div>
+              <div class="jury-models">
+                ${(j.models || []).map(m => `<span class="tag tag-cyan">${m.name}: ${m.signal} (${(m.conf*100).toFixed(0)}%)</span>`).join('')}
+              </div>
+              <div class="jury-reason">${j.reason || 'Tidak ada catatan.'}</div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Performance Chart
+      renderPerfChart(data.chart_data || {});
     }
-  } catch (e) { /* static mode — keep default */ }
-  if (mode && [...sel.options].some(o => o.value === mode)) sel.value = mode;
-}
 
-async function saveTradingMode() {
-  const sel = $('f-trading-mode');
-  const st = $('mode-save-status');
-  if (!sel || !st) return;
-  const mode = sel.value;
-  st.textContent = 'menyimpan…';
-  try {
-    const r = await fetch('/api/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({TRADING_MODE: mode})
-    });
-    if (r.ok) {
-      st.textContent = '✅ mode ' + (mode === 'xau_pairs' ? '8 FX Pairs Pool' : 'XAU Only') + ' tersimpan (restart bot untuk apply)';
-      st.style.color = '#4ade80';
-    } else {
-      st.textContent = '⚠️ gagal simpan (HTTP ' + r.status + ') — mode ini aktif di bot setelah restart + config reload';
-      st.style.color = '#f87171';
+    function renderPerfChart(chartData) {
+      const ctx = document.getElementById('perfChart').getContext('2d');
+      if (perfChart) {
+        perfChart.data.labels = chartData.labels || [];
+        perfChart.data.datasets[0].data = chartData.equity || [];
+        perfChart.update();
+        return;
+      }
+      perfChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: chartData.labels || ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00'],
+          datasets: [{
+            label: 'Portfolio Equity ($)',
+            data: chartData.equity || [6000, 6010, 6005, 6025, 6048, 6050],
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.08)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 3
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } } },
+            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } } }
+          }
+        }
+      });
     }
-  } catch (e) {
-    st.textContent = '⚠️ dashboard static — mode hanya tampilan. Set TRADING_MODE di .env/config lalu restart bot.';
-    st.style.color = '#f59e0b';
-  }
-}
 
-function getFilteredTrades() {
-  const sym = $('f-symbol').value;
-  const range = $('f-range').value;
-  const now = Date.now() / 1000;
-
-  return (DATA.trades || []).filter(t => {
-    if (sym && t.symbol !== sym) return false;
-    if (range !== 'all') {
-      const days = range === '7d' ? 7 : 30;
-      if (t.ts && (now - t.ts) > days * 86400) return false;
+    // Auto Polling via /api/data or Initial State
+    if (window.__INITIAL_DATA__) {
+      renderDashboard(window.__INITIAL_DATA__);
     }
-    return true;
-  });
-}
 
-function renderSub() {
-  const meta = DATA.meta || {};
-  let s = "";
-  if (meta.accounts && meta.accounts.length) s += 'Akun: <b>' + esc(meta.accounts.join(', ')) + '</b>';
-  if (s) s += ' &nbsp;|&nbsp; ';
-  s += 'Update: <b>' + esc(meta.generated_at || '') + '</b>';
-  $('sub-line').innerHTML = s;
-
-  if (LIVE) {
-    $('live-badge-wrap').innerHTML = '<div class="badge-live"><div class="badge-dot"></div> LIVE (5s)</div>';
-  } else {
-    $('live-badge-wrap').innerHTML = '<div class="badge-live" style="background:rgba(204,122,92,0.1);color:var(--amber);border-color:rgba(204,122,92,0.2);">STATIC</div>';
-  }
-}
-
-function renderFilters() {
-  const symSel = $('f-symbol');
-  const prevSym = symSel.value;
-  symSel.innerHTML = '<option value="">Semua Simbol</option>';
-
-  (DATA.meta.symbols || []).forEach(s => {
-    const o = document.createElement('option');
-    o.value = s;
-    o.text = s;
-    symSel.appendChild(o);
-  });
-
-  if (prevSym && [...symSel.options].some(o=>o.value===prevSym)) {
-    symSel.value = prevSym;
-  } else {
-    symSel.value = '';
-  }
-}
-
-function renderKpi() {
-  const filteredTrades = getFilteredTrades();
-  const closed = filteredTrades.filter(t => t.status === 'closed' && t.pnl !== null);
-  const wins = closed.filter(t => t.pnl > 0.04);
-  const losses = closed.filter(t => t.pnl < -0.04);
-  const netPnl = closed.reduce((acc, t) => acc + t.pnl, 0);
-  const grossWin = wins.reduce((acc, t) => acc + t.pnl, 0);
-  const grossLoss = Math.abs(losses.reduce((acc, t) => acc + t.pnl, 0));
-  const winRate = (wins.length + losses.length) > 0 ? wins.length / (wins.length + losses.length) : null;
-  const pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? grossWin : null);
-  const expectancy = closed.length > 0 ? netPnl / closed.length : null;
-
-  let peak = 1000.0, bal = 1000.0, maxDd = 0.0;
-  closed.forEach(t => {
-    bal += t.pnl;
-    if (bal > peak) peak = bal;
-    const dd = peak - bal;
-    if (dd > maxDd) maxDd = dd;
-  });
-
-  const cards = [
-    ['Net P/L', fmtMoney(netPnl), netPnl >= 0 ? 'green' : 'red'],
-    ['Win Rate', fmtPct(winRate), ''],
-    ['Profit Factor', pf != null ? pf.toFixed(2) : '—', ''],
-    ['Expectancy', fmtMoney(expectancy), ''],
-    ['Max Drawdown', fmtMoney(-maxDd), 'red'],
-    ['Closed Trades', String(closed.length), ''],
-    ['Open Positions', String(filteredTrades.filter(t => t.status === 'open').length), ''],
-    ['Total Cycles', String(DATA.summary ? DATA.summary.total_cycles : 0), ''],
-  ];
-  $('kpi-grid').innerHTML = cards.map(([l,v,c]) =>
-    `<div class="kpi-card"><div class="kpi-label">${esc(l)}</div><div class="kpi-value ${c}">${esc(v)}</div></div>`
-  ).join('');
-}
-
-function renderSym() {
-  const ps = DATA.per_symbol || {};
-  const selectedSym = $('f-symbol').value;
-  let keys = Object.keys(ps).filter(k => !selectedSym || k === selectedSym);
-  
-  const sortMode = $('sort-sym') ? $('sort-sym').value : 'default';
-  if (sortMode === 'az') {
-    keys.sort();
-  } else if (sortMode === 'profit-desc') {
-    keys.sort((a, b) => (ps[b].pnl || 0) - (ps[a].pnl || 0));
-  } else if (sortMode === 'profit-asc') {
-    keys.sort((a, b) => (ps[a].pnl || 0) - (ps[b].pnl || 0));
-  }
-  
-  $('sym-cards').innerHTML = keys.length ? keys.map(sym => {
-    const st = ps[sym];
-    return `<div class="sym-card"><div class="sym-name">${esc(sym)}</div>` +
-      `<div><b>${st.n} Trade</b>: ${st.win}W-${st.loss}L (WR ${fmtPct(st.win_rate)})</div>` +
-      `<div style="margin-top:2px;">P/L: <b class="${(st.pnl||0)>=0?'green':'red'}">${fmtMoney(st.pnl)}</b></div></div>`;
-  }).join('') : '<div class="muted empty-hint">Belum ada trade tertutup.</div>';
-}
-
-function renderModelTable() {
-  const ms = DATA.model_stats || {};
-  const order = ['OpenAI','Gemini','Claude','DeepSeek'];
-  const rows = order.filter(m => ms[m]).map(m => {
-    const st = ms[m];
-    return `<tr><td><b>${esc(m)}</b></td><td>${st.n}</td><td>${st.BUY}</td><td>${st.SELL}</td><td>${st.HOLD}</td>` +
-      `<td><b class="${(st.acc||0)>=0.5?'green':'red'}">${fmtPct(st.acc)}</b></td><td>${fmtPct(st.avg_conf)}</td><td>${fmtPct(st.avg_conf_win)}</td><td>${fmtPct(st.avg_conf_loss)}</td></tr>`;
-  }).join('');
-  $('model-tbody').innerHTML = rows || '<tr><td colspan="9" class="muted">Belum ada data model.</td></tr>';
-
-  const ag = DATA.agreement || {};
-  const s = DATA.summary || {};
-  $('agree-line').innerHTML =
-    `Agreement: ${ag.cycles||0} cycle — ≥2 searah: ${ag.ge2||0} (${fmtPct(ag.cycles?ag.ge2/ag.cycles:null)}), ` +
-    `3/3: ${ag.all3||0}, split: ${ag.split||0}. Konsensus OK: ${s.consensus_approved||0} / Fail: ${s.consensus_failed||0}.`;
-}
-
-function renderSltp() {
-  const pm = DATA.position_manager || {};
-  const fl = DATA.sltp_floor || {};
-  $('sltp-line').innerHTML =
-    `BEP: ${pm.break_even||0}× | Trailing: ${pm.trailing||0}× | Partial: ${pm.partial_close||0}× | SL Floor OK: ${fl.above_floor||0}`;
-}
-
-function renderStatusPanel() {
-  const div = $('status-panel-div');
-  if (!div) return;
-
-  const dyn = DATA.dynamic_rules || {};
-  const risk = DATA.risk_state || {};
-  
-  // Status dari Live API
-  let isPaused = CONFIG_DATA ? CONFIG_DATA.TRADING_PAUSED : false;
-  let isDry = CONFIG_DATA ? CONFIG_DATA.DRY_RUN : true; // default true for safety in static
-  let mode = CONFIG_DATA ? CONFIG_DATA.TRADING_MODE : "xau";
-  let oaiModel = CONFIG_DATA ? CONFIG_DATA.OPENAI_MODEL : "gpt-5.2";
-  let oaiDefaultModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_DEFAULT_MODEL || "o3-mini") : "o3-mini";
-  let oaiFallbackModel = CONFIG_DATA ? (CONFIG_DATA.OPENAI_FALLBACK_MODEL || "gpt-4o-mini") : "gpt-4o-mini";
-  let oaiWindow = CONFIG_DATA ? (CONFIG_DATA.OPENAI_PRIMARY_WINDOW_WIB || "15:00-19:30") : "15:00-19:30";
-  let gemModel = CONFIG_DATA ? CONFIG_DATA.GEMINI_MODEL : "gemini-3.1-flash-lite";
-  let cldModel = CONFIG_DATA ? CONFIG_DATA.CLAUDE_MODEL : "deepseek/deepseek-v4-flash";
-  let dualSecond = CONFIG_DATA ? (CONFIG_DATA.AI_DUAL_SECOND_MODEL || "Gemini") : "Gemini";
-  let dsReasoning = CONFIG_DATA ? (CONFIG_DATA.DEEPSEEK_REASONING_EFFORT || "low") : "low";
-
-  let connectionStatus = LIVE ? '<span class="green" style="font-weight: 700;">● CONNECTED (LIVE)</span>' : '<span class="muted" style="font-weight: 700;">○ STATIC MODE (Offline)</span>';
-
-  let html = `
-    <div style="margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border);">
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>API Connection:</span>
-        <b>${connectionStatus}</b>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>Trading Status:</span>
-        <b class="${isPaused ? 'red' : 'green'}">${isPaused ? '🛑 PAUSED' : '🟢 ACTIVE'}</b>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>Execution Mode:</span>
-        <b class="${isDry ? 'muted' : 'red'}">${isDry ? '🔍 DRY RUN (Simulated)' : '⚠️ LIVE TRADING (Real Money!)'}</b>
-      </div>
-      <div style="display:flex; justify-content:space-between;">
-        <span>Rotation Mode:</span>
-        <b style="color:var(--amber);">${mode === 'xau_pairs' ? '🔄 8 FX Pairs Pool (H1 Intraday-Swing)' : '🎯 Single Symbol (XAUUSD)'}</b>
-      </div>
-    </div>
-
-    <div style="margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border);">
-      <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🛡️ Risk Engine & self-Tuning</div>
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>Recovery Mode:</span>
-        <b class="${risk.recovery_mode ? 'red' : 'muted'}">${risk.recovery_mode ? '🚨 ACTIVE' : 'NORMAL'}</b>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>Consecutive Losses:</span>
-        <b class="${(risk.consecutive_losses || 0) > 0 ? 'red' : ''}">${risk.consecutive_losses || 0} / 3</b>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>Required Consensus:</span>
-        <b>${dyn.consensus_threshold || 2} / 3 Models</b>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>ATR Multiplier (SL/TP):</span>
-        <b>${(dyn.sl_multiplier || 1.5).toFixed(2)}x / ${(dyn.tp_multiplier || 3.0).toFixed(2)}x</b>
-      </div>
-      <div style="display:flex; justify-content:space-between; font-size:10px;">
-        <span>Tuning Status:</span>
-        <span style="color:var(--muted-light);">${esc(dyn.status_message || '—')}</span>
-      </div>
-    </div>
-
-    <div>
-      <div style="font-weight: 600; color: var(--muted-light); margin-bottom: 6px; text-transform: uppercase; font-size: 10px;">🤖 Active AI Models & Scheduling</div>
-      <div style="margin-bottom:6px; font-size:10px; color:var(--muted); line-height: 1.5;">
-        Slot 1 (OpenAI): <b>${esc(oaiModel)}</b> <span style="color:var(--accent);">(${esc(oaiWindow)} WIB)</span> / default ${esc(oaiDefaultModel)} / err-fb ${esc(oaiFallbackModel)}<br>
-        Slot 2 (Gemini / Dual): <b>${esc(gemModel)}</b> (Slot 2 Dual & Triple)<br>
-        Slot 3 (Claude Slot): <b>${esc(cldModel)}</b> (Fallback: deepseek-v4-flash fast mode)
-      </div>
-      <div style="font-size:10px; line-height: 1.4; background: rgba(255,255,255,0.01); padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
-        <b>WIB Time-based AI Mode:</b><br>
-        • 00:00-09:00: <span style="color:var(--red);">🛑 Dead Zone Subuh & Rollover</span><br>
-        • 09:00-19:29: <span style="color:var(--amber);">⚡ Dual Mode (OpenAI + Gemini)</span><br>
-        • 19:30-21:30: <span style="color:var(--accent);">🔥 Triple Mode (OpenAI + Gemini + Claude)</span><br>
-        • 21:31-23:59: <span style="color:var(--amber);">🌙 Dual Mode (OpenAI + Gemini)</span> <span style="color:var(--muted);">(23:00-00:00 Max 2 Pos)</span>
-      </div>
-    </div>
-  `;
-  div.innerHTML = html;
-}
-
-function renderTrades() {
-  const trades = getFilteredTrades();
-  trades.sort((a, b) => {
-    if (a.status === 'open' && b.status !== 'open') return -1;
-    if (a.status !== 'open' && b.status === 'open') return 1;
-    return (b.ts || 0) - (a.ts || 0);
-  });
-  $('trades-tbody').innerHTML = trades.map(t =>
-    `<tr data-era="${esc(t.era||'')}" data-symbol="${esc(t.symbol)}" data-ts="${t.ts||0}">` +
-    `<td>${t.ticket||'—'}</td><td><b style="color:var(--amber);">${esc(t.symbol)}</b></td>` +
-    `<td><b class="${t.side==='BUY'?'green':'red'}">${t.side}</b></td><td>${t.lot||'—'}</td>` +
-    `<td>${t.entry||'—'}</td><td>${t.sl||'—'}</td><td>${t.tp||'—'}</td>` +
-    `<td class="${t.pnl>0?'green':t.pnl<0?'red':''}"><b>${fmtMoney(t.pnl)}</b></td>` +
-    `<td>${fmtTs(t.ts)}</td><td><span class="theme-tag" style="${t.status==='open'?'background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,0.3);':''}">${t.status}</span></td></tr>`
-  ).join('') || '<tr><td colspan="10" class="muted empty-hint">Tidak ada trade sesuai filter.</td></tr>';
-}
-
-function mkChart(id, cfg) {
-  const el = $(id);
-  if (!el) return;
-  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
-  charts[id] = new Chart(el, cfg);
-}
-
-function renderCharts() {
-  Chart.defaults.color = '#8a8a85';
-  Chart.defaults.borderColor = '#2d2d2b';
-  Chart.defaults.font.family = "'Inter', sans-serif";
-
-  const trades = getFilteredTrades().filter(t => t.status === 'closed' && t.pnl !== null);
-  let bal = 1000.0;
-  const eqData = trades.map(t => {
-    bal += t.pnl;
-    return { ts: t.ts, balance: bal };
-  });
-
-  if (eqData.length) {
-    $('eq-hint').textContent = '';
-    mkChart('chart-equity', {
-      type:'line',
-      data:{ labels: eqData.map(p => fmtTs(p.ts)), datasets:[{ label:'Balance ($)', data: eqData.map(p=>p.balance), borderColor:'#cc7a5c', backgroundColor:'rgba(204, 122, 92, 0.04)', fill:true, tension:.3, pointRadius:3 }] },
-      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ y:{ ticks:{ callback:v=>'$'+v.toFixed(0) } } } }
-    });
-  } else {
-    if (charts['chart-equity']) { charts['chart-equity'].destroy(); delete charts['chart-equity']; }
-    $('eq-hint').textContent = '— belum ada trade P/L tertutup';
-  }
-
-  const models = Object.keys(DATA.model_stats||{});
-  mkChart('chart-decisions', {
-    type:'bar',
-    data:{ labels: models, datasets:[
-      {label:'BUY', data:models.map(m=>DATA.model_stats[m].BUY), backgroundColor:'#4ade80'},
-      {label:'SELL', data:models.map(m=>DATA.model_stats[m].SELL), backgroundColor:'#f87171'},
-      {label:'HOLD', data:models.map(m=>DATA.model_stats[m].HOLD), backgroundColor:'#737373'}
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{stacked:true}, y:{stacked:true} } }
-  });
-
-  const latModels = Object.keys(DATA.latency||{});
-  mkChart('chart-latency', {
-    type:'bar',
-    data:{ labels: latModels, datasets:[{ label:'Avg Latency (s)', data:latModels.map(m=>DATA.latency[m].avg), backgroundColor:'#8a8a85', borderRadius:4 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} } }
-  });
-
-  const slKeys = Object.keys(DATA.sl_buckets||{});
-  mkChart('chart-sl', {
-    type:'bar',
-    data:{ labels: slKeys, datasets:[{ label:'SL Points', data:slKeys.map(k=>DATA.sl_buckets[k].n), backgroundColor:'#8a8a85', borderRadius:4 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} } }
-  });
-
-  const rrKeys = Object.keys(DATA.rr_buckets||{});
-  mkChart('chart-rr', {
-    type:'bar',
-    data:{ labels: rrKeys, datasets:[{ label:'R:R Ratio', data:rrKeys.map(k=>DATA.rr_buckets[k]), backgroundColor:'#cc7a5c', borderRadius:4 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} } }
-  });
-}
-
-function renderAll() {
-  renderSub();
-  renderKpi();
-  renderSym();
-  renderModelTable();
-  renderSltp();
-  renderStatusPanel();
-  renderCharts();
-  renderTrades();
-}
-
-function initDashboard() {
-  renderSub();
-  renderFilters();
-  renderAll();
-}
-
-['f-symbol','f-range'].forEach(id => $(id).addEventListener('change', renderAll));
-const _modeSel = $('f-trading-mode');
-if (_modeSel) _modeSel.addEventListener('change', saveTradingMode);
-
-document.querySelectorAll('#trades-table th').forEach(th => {
-  th.addEventListener('click', () => {
-    const idx = Array.from(th.parentNode.children).indexOf(th);
-    const tbody = $('trades-tbody');
-    const rows = Array.from(tbody.rows);
-    rows.sort((a,b) => {
-      const av = a.cells[idx].textContent, bv = b.cells[idx].textContent;
-      const an = parseFloat(av.replace(/[$+,—]/g,'')), bn = parseFloat(bv.replace(/[$+,—]/g,''));
-      const isNum = !isNaN(an) && !isNaN(bn);
-      return isNum ? an-bn : av.localeCompare(bv);
-    });
-    rows.forEach(r => tbody.appendChild(r));
-  });
-});
-
-loadData().then(initDashboard);
-if (location.protocol === 'http:' || location.protocol === 'https:') {
-  setInterval(async () => { await loadData(); renderAll(); }, 5000);
-}
-</script>
+    setInterval(() => {
+      fetch('/api/data')
+        .then(res => res.json())
+        .then(data => renderDashboard(data))
+        .catch(() => {});
+    }, 3000);
+  </script>
 </body>
 </html>
 """

@@ -100,6 +100,13 @@ class MarketScanner:
         self._last_radar_scan_time: float = 0.0
         self._symbol_last_trigger: Dict[str, float] = {}
 
+    def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: int = 1800):
+        """Applies a 30-minute cooldown when a pending order is cancelled or expired."""
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        # Cooldown check is `now_ts - last_trigger < 900`.
+        # To make cooldown = 1800s (30m), set timestamp to now_ts + (1800 - 900) = now_ts + 900.
+        self._symbol_last_trigger[clean_sym] = time.time() + max(0, cooldown_seconds - 900)
+
     def _get_point(self, symbol: str) -> float:
         clean = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         return POINT_MAP.get(clean, 1e-5)
@@ -287,19 +294,23 @@ class MarketScanner:
         # ── ACTIVE POSITION & PENDING ORDER GATES (0 Token) ──
         positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
         orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
-        bot_positions = [p for p in (positions or []) if getattr(p, "magic", 0) == config.MAGIC_NUMBER]
-        bot_orders = [o for o in (orders or []) if getattr(o, "magic", 0) == config.MAGIC_NUMBER]
         
-        # Max capacity gate
+        # Max capacity gate: If total open + pending orders on MT5 account >= max_positions, FREEZE LLM calls!
+        total_active = len(positions or []) + len(orders or [])
         max_positions = config.get_max_open_positions()
-        if len(bot_positions) + len(bot_orders) >= max_positions:
+        if total_active >= max_positions:
+            return []
+
+        # Max pending orders gate (default max 3 pending orders)
+        max_pending = getattr(config, "MAX_PENDING_ORDERS", 3)
+        if len(orders or []) >= max_pending:
             return []
 
         active_symbols = set()
-        for p in bot_positions:
-            active_symbols.add(p.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper())
-        for o in bot_orders:
-            active_symbols.add(o.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper())
+        for p in (positions or []):
+            active_symbols.add(getattr(p, 'symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper())
+        for o in (orders or []):
+            active_symbols.add(getattr(o, 'symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper())
 
         now_ts = time.time()
 
@@ -532,89 +543,7 @@ class MarketScanner:
                         ))
                         continue
 
-                # ── MECHANISM 4: M5 SNIPER LIQUIDITY SWEEP (2-HOUR LOCAL INTRADAY SWEEP) ──
-                if config.mt5 is not None and hasattr(config.mt5, "copy_rates_from_pos"):
-                    try:
-                        m5_rates = config.mt5.copy_rates_from_pos(sym, config.mt5.TIMEFRAME_M5, 0, 26)
-                        if m5_rates is not None and len(m5_rates) >= 25:
-                            m5_highs = [b['high'] for b in m5_rates[:-1]]
-                            m5_lows = [b['low'] for b in m5_rates[:-1]]
-                            prev_24_h = max(m5_highs)
-                            prev_24_l = min(m5_lows)
-                            live_bar = m5_rates[-1]
-                            l_open = live_bar['open']
-                            l_high = live_bar['high']
-                            l_low = live_bar['low']
-                            l_close = live_bar['close']
-                            c_range = max(l_high - l_low, pt)
-
-                            # Bullish M5 Sweep: Low swept 2h low, rebounded & close >= open
-                            if macro['is_bull'] and (l_low < prev_24_l) and (mid > prev_24_l) and (l_close >= l_open):
-                                lower_wick = min(l_open, l_close) - l_low
-                                if lower_wick / c_range >= 0.30:
-                                    sl = l_low - (spread_pts * pt) - (5 * pt)
-                                    tp = mid + abs(mid - sl) * 2.0
-                                    if abs(mid - sl) / pt >= 10:
-                                        candidates.append(CandidateSetup(
-                                            symbol=sym,
-                                            setup_type="M5_SNIPER_SWEEP",
-                                            direction=1,
-                                            trigger_price=ask,
-                                            timeframe="M5",
-                                            macro_compass=macro['trend_label'],
-                                            dealing_range_pos=macro['dealing_range_pos'],
-                                            rejection_wick_ratio=round(lower_wick / c_range, 2),
-                                            current_spread_pts=spread_pts,
-                                            current_atr_pts=atr_pts,
-                                            key_support=prev_24_l,
-                                            key_resistance=prev_24_h,
-                                            suggested_sl=round(sl, 5 if pt < 0.01 else 2),
-                                            suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                            risk_reward_ratio=2.0,
-                                            strong_low=macro.get('strong_low', 0.0),
-                                            strong_high=macro.get('strong_high', 0.0),
-                                            bullish_ob_zone=macro.get('bullish_ob_zone', ""),
-                                            bearish_ob_zone=macro.get('bearish_ob_zone', ""),
-                                            fvg_zone=macro.get('fvg_zone', ""),
-                                            liquidity_pools=macro.get('liquidity_pools', ""),
-                                            timestamp_wib=now.strftime("%H:%M:%S WIB")
-                                        ))
-                                        continue
-
-                            # Bearish M5 Sweep: High swept 2h high, rebounded down & close <= open
-                            if macro['is_bear'] and (l_high > prev_24_h) and (mid < prev_24_h) and (l_close <= l_open):
-                                upper_wick = l_high - max(l_open, l_close)
-                                if upper_wick / c_range >= 0.30:
-                                    sl = l_high + (spread_pts * pt) + (5 * pt)
-                                    tp = mid - abs(sl - mid) * 2.0
-                                    if abs(mid - sl) / pt >= 10:
-                                        candidates.append(CandidateSetup(
-                                            symbol=sym,
-                                            setup_type="M5_SNIPER_SWEEP",
-                                            direction=-1,
-                                            trigger_price=bid,
-                                            timeframe="M5",
-                                            macro_compass=macro['trend_label'],
-                                            dealing_range_pos=macro['dealing_range_pos'],
-                                            rejection_wick_ratio=round(upper_wick / c_range, 2),
-                                            current_spread_pts=spread_pts,
-                                            current_atr_pts=atr_pts,
-                                            key_support=prev_24_l,
-                                            key_resistance=prev_24_h,
-                                            suggested_sl=round(sl, 5 if pt < 0.01 else 2),
-                                            suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                            risk_reward_ratio=2.0,
-                                            strong_low=macro.get('strong_low', 0.0),
-                                            strong_high=macro.get('strong_high', 0.0),
-                                            bullish_ob_zone=macro.get('bullish_ob_zone', ""),
-                                            bearish_ob_zone=macro.get('bearish_ob_zone', ""),
-                                            fvg_zone=macro.get('fvg_zone', ""),
-                                            liquidity_pools=macro.get('liquidity_pools', ""),
-                                            timestamp_wib=now.strftime("%H:%M:%S WIB")
-                                        ))
-                                        continue
-                    except Exception as e_m5:
-                        logger.debug(f"M5 sweep check error on {sym}: {e_m5}")
+                # (M5 candlestick data is reserved exclusively for Pass 2 Devil's Advocate audit to prevent overtrading)
 
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")

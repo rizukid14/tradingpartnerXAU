@@ -150,7 +150,7 @@ python main.py
     - Menyingkap hukum fraktal: **Macro (D1/H4) Expands (Breakout/Trend)** vs **Micro (H1/M30) Mean-Reverts (Osilasi/Diskon)**.
     - Master Strategy: *Trend-Aligned Mean Reversion* (Beli di diskon H1 searah arus breakout D1/H4).
 13. **Master Quant Dossier HTML (Book-Grade Report)**:
-    - Tersedia di `docs/research/multiyear_backtest_report.html` (9 Bab lengkap, visual flow 2-stage screener, perbandingan 4 timeframe, dan atlas DNA 22 simbol).
+    - Tersedia di `report.html` (9 Bab lengkap, visual flow 2-stage screener, perbandingan 4 timeframe, dan atlas DNA 22 simbol).
 14. **2-Stage Quant Funnel Architecture (Branch `quant-trade` — 26 Agu 2026)**:
     - **Stage 1 (Hybrid Dual-Speed Market Scanner `market_scanner.py`)**: Caching struktur makro D1/H4 (0 token) + Fast Execution Radar tiap 60 detik pada 22 pair (M1 Judas Sweep, M2 Trend Pullback, M3 NY ADR Exhaustion).
     - **Stage 2 (3-LLM Consensus Jury with High-Density Dossier Prompt)**: Dipanggil HANYA saat setup A+ terdeteksi (~4–8 call/hari). Menghemat biaya API ~85% dan menaikkan Win Rate ke 55–60% & PF > 1.40.
@@ -164,6 +164,14 @@ python main.py
     - Diinjeksikan ke Bagian 2 Master Dossier Prompt sehingga AI menaruh Stop Loss presisi di balik Order Block/Strong Low dan Take Profit pada area magnet FVG/Weak High.
 17. **Hourly SMC Radar & Market Pulse Telegram Digest (`telegram_alerts.py` & `main.py`)**:
     - Rekap otomatis berkala setiap 1 jam (pada pergantian jam WIB) yang mempublikasikan status Market Compass 22 pair (Bullish/Bearish/Sideways), Dealing Range SMC (Top Discount & Premium watch), status portofolio MT5 (floating & realized P/L), serta ringkasan aktivitas sweep 60 detik tanpa membebani kuota API token.
+18. **Strict High-Timeframe Execution Hierarchy (H1 & M30 Only — Anti-Overtrading)**:
+    - Stage 1 Fast Radar memindai secara ketat HANYA pada timeframe struktural **H1 & M30** (M1 London Judas Sweep, M2 Trend Pullback, M3 NY ADR Exhaustion).
+    - Timeframe M5 DILARANG KERAS dijadikan trigger pembuka posisi langsung guna menyaring noise wick broker, mencegah overtrading, dan menekan fee churn.
+19. **M5 Candlestick Micro-Microscope (Exclusive for Pass 2 Risk Veto Audit)**:
+    - 25 candle M5 live dicadangkan secara eksklusif sebagai berkas audit mikro bagi **DeepSeek V4-Flash (Devil's Advocate & Chief Risk Officer)** untuk mendeteksi *falling knife* dan menjatuhkan Hard Risk VETO (`COUNTER_TREND_MOMENTUM`, `LIQUIDITY_TRAP`) sebelum eksekusi MT5.
+20. **Unanimous 3/3 High Confidence Split (+25% Boost per Posisi)**:
+    - Jika 3 AI sepakat bulat dengan rata-rata confidence $\ge 75\%$ dan tersedia $\ge 2$ slot MT5, sistem mengeksekusi 2 posisi sekaligus masing-masing @ $0.625\times$ Base Lot (Pos #1 Target Standar TP1, Pos #2 Target Extended 1.2× TP2 + Trailing Stop).
+    - True Clean Arithmetic Mean diterapkan pada seluruh level konsensus dengan plafon realistis $1.25\times \le \text{TP} \le 3.0\times \text{SL}$.
 
 
 ---
@@ -184,7 +192,7 @@ Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/READ
 
 | Kategori | Dokumen | Deskripsi Isi |
 |---|---|---|
-| 📊 **Research** | **[docs/research/multiyear_backtest_report.html](file:///c:/Vibe/tradingpartner/docs/research/multiyear_backtest_report.html)** | **Master Quant Dossier (HTML Book Report)**: Laporan buku putih lengkap 9 Bab: 55 tahun dataset FBS (3.78M bar), komparasi 4 timeframe (M30–D1), 4 arketipe, atlas DNA 22 simbol, strategi *Trend-Aligned Mean Reversion*, dan arsitektur 2-Stage Screener. |
+| 📊 **Research** | **[report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html)** | **Master Quant Dossier (HTML Book Report)**: Laporan buku putih lengkap 9 Bab: 55 tahun dataset FBS (3.78M bar), komparasi 4 timeframe (M30–D1), 4 arketipe, atlas DNA 22 simbol, strategi *Trend-Aligned Mean Reversion*, dan arsitektur 2-Stage Screener. |
 | 📊 **Research** | **[docs/research/MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md)** | **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Validasi 396.183 trade (10.7 thn H1, 55.6 thn H4, 16.6 thn D1). Komparasi head-to-head, evaluasi 4 arketipe, validasi SMC CHoCH/Order Block, dan ranking 22 simbol. |
 | 💡 **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate, **RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)**. |
 | 🔴 **Plans & RFC** | **[docs/plans/GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md)** | **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table. |

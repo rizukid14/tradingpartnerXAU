@@ -751,7 +751,7 @@ def interactive_setup():
                         print(f"  Akun MT5 diubah ke {v.upper()} (login: {config.MT5_LOGIN} @ {config.MT5_SERVER}).")
                         continue
                     elif "DRY_RUN" in attr:
-                        config.DRY_RUN = new_val.lower() in ("1", "true", "yes", "live", "on")
+                        config.DRY_RUN = new_val.lower() in ("1", "true", "yes", "dry", "on")
                     elif "ENABLED" in attr:
                         setattr(config, attr.split(".")[1], new_val.lower() in ("1", "true", "yes", "on"))
                     elif "THRESHOLD" in attr or "RISK" in attr or "LOSS" in attr or "SPREAD" in attr:
@@ -1557,6 +1557,67 @@ def record_funnel_event(event_type: str, sym: str = "", setup: str = "", details
         pass
 
 
+_known_pending_orders = {}  # ticket -> {"symbol": sym, "type": ptype, "price": price, "sl": sl, "tp": tp}
+_recent_trihourly_opened = []  # List of dicts: {"time", "symbol", "signal", "lot", "entry_type"}
+_recent_trihourly_vetoed = []  # List of dicts: {"time", "symbol", "setup", "veto_by", "reason"}
+
+def _detect_filled_pending(scanner=None):
+    """
+    Tracks pending orders lifecycle:
+    - If a tracked pending order converts to an open position -> trigger alert_pending_order_filled.
+    - If a tracked pending order disappears without becoming an open position -> CANCELLED/EXPIRED:
+      applies a 30-minute cooldown on the symbol in market scanner and sends Telegram notification.
+    """
+    global _known_pending_orders
+    try:
+        current_orders = connector.get_pending_orders() if hasattr(connector, 'get_pending_orders') else []
+        cur_order_map = {o["ticket"]: o for o in current_orders}
+        
+        # 1. Register newly observed pending orders
+        for t, o in cur_order_map.items():
+            if t not in _known_pending_orders:
+                _known_pending_orders[t] = {
+                    "symbol": o.get("symbol", config.SYMBOL),
+                    "type": o.get("type", "pending"),
+                    "price": o.get("price", 0.0),
+                    "sl": o.get("sl", 0.0),
+                    "tp": o.get("tp", 0.0),
+                }
+
+        # 2. Check disappearing orders
+        disappeared_tickets = [t for t in _known_pending_orders if t not in cur_order_map]
+        if not disappeared_tickets:
+            return
+
+        open_positions = connector.get_all_open_positions() if hasattr(connector, 'get_all_open_positions') else []
+        open_tickets = {p["ticket"] for p in open_positions}
+        
+        for t in disappeared_tickets:
+            info = _known_pending_orders.pop(t, {})
+            sym = info.get("symbol", config.SYMBOL)
+            ptype = info.get("type", "pending")
+            price = info.get("price", 0.0)
+
+            # Check if this ticket exists in open positions (filled)
+            if t in open_tickets:
+                print(f" {UI.GREEN}🎯 [PENDING FILLED] Pending order #{t} {sym} ({ptype}) ter-fill menjadi posisi aktif!{UI.RST}")
+                try:
+                    tg.alert_pending_order_filled(t, sym, ptype, price, pos_id=t, sl_price=info.get("sl"), tp_price=info.get("tp"))
+                except Exception as e:
+                    print(f"[PENDING ALERT ERROR] {e}")
+            else:
+                # Cancelled or expired -> Apply 30-minute cooldown
+                print(f" {UI.YELLOW}🗑️ [PENDING CANCELLED/EXPIRED] Pending order #{t} {sym} ({ptype}) dibatalkan / expired. Mengaktifkan cooldown 30 menit.{UI.RST}")
+                if scanner is not None and hasattr(scanner, "mark_symbol_cancelled"):
+                    scanner.mark_symbol_cancelled(sym, cooldown_seconds=1800)
+                try:
+                    tg.alert_pending_order_cancelled(t, sym, ptype, price, reason="Expired / Dibatalkan User (Cooldown 30m Aktif)")
+                except Exception as e:
+                    print(f"[PENDING ALERT ERROR] {e}")
+    except Exception as e:
+        print(f"[PENDING SYNC ERROR] {e}")
+
+
 def run_scanner_trading_cycle(cand, risk):
     """
     Stage 2 Funnel Execution:
@@ -1565,7 +1626,8 @@ def run_scanner_trading_cycle(cand, risk):
     """
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
-    print(f"\n {UI.PURPLE}{UI.BOLD}[STAGE 1 TRIGGER] Setup {cand.setup_type} ({'BUY' if cand.direction==1 else 'SELL'}) Timeframe [{tf_str}] Terdeteksi pada {sym}!{UI.RST}")
+    _reset_status_lines()
+    print("\n" + render_candidate_alert_box(cand))
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
@@ -1607,6 +1669,13 @@ def run_scanner_trading_cycle(cand, risk):
             
         if trade_signal == "HOLD" and (decisions.get("DeepSeek", {}).get("veto") or "VETO" in (result.get("reason") or "")):
             record_funnel_event("pass2_vetoed", sym=sym, setup=cand.setup_type, details={"reason": result.get("reason")})
+            _recent_trihourly_vetoed.append({
+                "time": datetime.now(_WIB).strftime("%H:%M"),
+                "symbol": sym,
+                "setup": cand.setup_type,
+                "veto_by": "Devil's Advocate (DeepSeek)" if decisions.get("DeepSeek", {}).get("veto") else "Hard Risk Veto",
+                "reason": result.get("reason", "Critical Risk Detected")
+            })
             print(f" {UI.RED}[PASS 2 VETO] Trade {sym} di-veto oleh DeepSeek Devil's Advocate: {result.get('reason')}{UI.RST}")
             return False
 
@@ -1636,7 +1705,28 @@ def run_scanner_trading_cycle(cand, risk):
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False
                 
-            effective_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym)
+            # High Confidence Multi-Position sizing:
+            # If 3/3 AI agree and confidence >= 0.75 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
+            positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
+            orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
+            total_active = len(positions or []) + len(orders or [])
+            max_positions = config.get_max_open_positions()
+            remaining_slots = max(0, max_positions - total_active)
+            
+            agreeing_count = result.get("agreeing_count", 0)
+            avg_conf = result.get("confidence", 0.0)
+            is_high_conf = (agreeing_count >= 3 and avg_conf >= 0.75 and remaining_slots >= 2)
+            num_positions = 2 if is_high_conf else 1
+            
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym)
+            if num_positions == 2:
+                effective_lot = round(base_lot * 0.625, 2)
+                si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
+                min_v = getattr(si, "volume_min", 0.01) if si else 0.01
+                effective_lot = max(effective_lot, min_v)
+                print(f" {UI.GREEN}🚀 [HIGH CONFIDENCE 3/3 JURY] 3 AI sepakat {trade_signal} (Avg Conf {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos)!{UI.RST}")
+            else:
+                effective_lot = base_lot
             
             # Final Pre-Dispatch Risk Check (guards against positions opened while LLM was reasoning)
             can_trade_ok, risk_msg = risk.can_trade(sym)
@@ -1646,79 +1736,101 @@ def run_scanner_trading_cycle(cand, risk):
 
             # If pending order
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and entry_type != "market" and entry_price:
-                p_sl_price = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)
-                p_tp_price = entry_price + (tp_points * point) if trade_signal == "BUY" else entry_price - (tp_points * point)
-                pending_res = connector.send_pending_order(
-                    symbol=sym,
-                    entry_type=entry_type,
-                    entry_price=entry_price,
-                    lot=effective_lot,
-                    sl_points=sl_points,
-                    tp_points=tp_points,
-                    comment=f"JURY {cand.setup_type[:10]}",
-                    sl_price=p_sl_price,
-                    tp_price=p_tp_price,
-                    expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240)
-                )
-                if pending_res.get("status") == "SUCCESS":
-                    print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Pending {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
-                    risk.record_trade_opened()
-                    record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
-                    tg.alert_pending_order_placed(
+                for i in range(num_positions):
+                    pos_tp_pts = int(tp_points * 1.20) if i == 1 else tp_points
+                    p_sl_price = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)
+                    p_tp_price = (entry_price + (pos_tp_pts * point)) if trade_signal == "BUY" else (entry_price - (pos_tp_pts * point))
+                    
+                    pending_res = connector.send_pending_order(
                         symbol=sym,
                         entry_type=entry_type,
-                        ticket=pending_res.get("ticket"),
                         entry_price=entry_price,
                         lot=effective_lot,
                         sl_points=sl_points,
-                        tp_points=tp_points,
+                        tp_points=pos_tp_pts,
+                        comment=f"JURY {cand.setup_type[:6]} P{i+1}",
                         sl_price=p_sl_price,
                         tp_price=p_tp_price,
-                        models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
-                        confidence=result.get("confidence", 0.0),
-                        setup=f"{cand.setup_type} ({cand.timeframe})",
-                        reason=result.get("reason", ""),
-                        invalidation=f"SL: {p_sl_price}",
-                        expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240),
+                        expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240)
                     )
-                    return True
+                    if pending_res.get("status") == "SUCCESS":
+                        if config.DRY_RUN:
+                            print(f" {UI.YELLOW}✓ [STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
+                        else:
+                            print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
+                        risk.record_trade_opened()
+                        record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
+                        _recent_trihourly_opened.append({
+                            "time": datetime.now(_WIB).strftime("%H:%M"),
+                            "symbol": sym,
+                            "signal": trade_signal,
+                            "lot": effective_lot,
+                            "entry_type": entry_type
+                        })
+                        tg.alert_pending_order_placed(
+                            symbol=sym,
+                            entry_type=entry_type,
+                            ticket=pending_res.get("ticket"),
+                            entry_price=entry_price,
+                            lot=effective_lot,
+                            sl_points=sl_points,
+                            tp_points=pos_tp_pts,
+                            sl_price=p_sl_price,
+                            tp_price=p_tp_price,
+                            models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
+                            confidence=result.get("confidence", 0.0),
+                            setup=f"{cand.setup_type} ({cand.timeframe}) [Pos #{i+1}]",
+                            reason=result.get("reason", ""),
+                            invalidation=f"SL: {p_sl_price}",
+                            expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240),
+                        )
+                return True
             
             # Otherwise Market Order
-            sl_price = ref_price - (sl_points * point) if trade_signal == "BUY" else ref_price + (sl_points * point)
-            tp_price = ref_price + (tp_points * point) if trade_signal == "BUY" else ref_price - (tp_points * point)
-            
-            order_res = connector.send_trade_order(
-                symbol=sym,
-                action=trade_signal,
-                lot=effective_lot,
-                sl_points=sl_points,
-                tp_points=tp_points,
-                comment=f"JURY {cand.setup_type[:10]}",
-                sl_price=sl_price,
-                tp_price=tp_price,
-                atr_h1_pts=cand.current_atr_pts,
-            )
-            if order_res.get("status") == "SUCCESS":
-                print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Market {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
-                risk.record_trade_opened()
-                record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
-                tg.alert_trade_opened(
-                    trade_signal, effective_lot, sl_points, tp_points,
-                    recovery_mode=risk.is_recovery_mode,
-                    reason=result.get("reason", ""),
-                    ticket=order_res.get("ticket"),
-                    entry_price=ref_price,
+            for i in range(num_positions):
+                pos_tp_pts = int(tp_points * 1.20) if i == 1 else tp_points
+                sl_price = ref_price - (sl_points * point) if trade_signal == "BUY" else ref_price + (sl_points * point)
+                tp_price = (ref_price + (pos_tp_pts * point)) if trade_signal == "BUY" else (ref_price - (pos_tp_pts * point))
+                
+                order_res = connector.send_trade_order(
                     symbol=sym,
-                    setup=f"{cand.setup_type} ({cand.timeframe})",
+                    action=trade_signal,
+                    lot=effective_lot,
+                    sl_points=sl_points,
+                    tp_points=pos_tp_pts,
+                    comment=f"JURY {cand.setup_type[:6]} P{i+1}",
                     sl_price=sl_price,
                     tp_price=tp_price,
-                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
-                    confidence=result.get("confidence", 0.0),
+                    atr_h1_pts=cand.current_atr_pts,
                 )
-                return True
-            else:
-                print(f" {UI.RED}✗ [STAGE 2 JURY ERROR] Gagal eksekusi order MT5: {order_res.get('comment')}{UI.RST}")
-                return False
+                if order_res.get("status") == "SUCCESS":
+                    if config.DRY_RUN:
+                        print(f" {UI.YELLOW}✓ [STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
+                    else:
+                        print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
+                    risk.record_trade_opened()
+                    record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
+                    _recent_trihourly_opened.append({
+                        "time": datetime.now(_WIB).strftime("%H:%M"),
+                        "symbol": sym,
+                        "signal": trade_signal,
+                        "lot": effective_lot,
+                        "entry_type": "market"
+                    })
+                    tg.alert_trade_opened(
+                        trade_signal, effective_lot, sl_points, pos_tp_pts,
+                        recovery_mode=risk.is_recovery_mode,
+                        reason=result.get("reason", ""),
+                        ticket=order_res.get("ticket"),
+                        entry_price=ref_price,
+                        symbol=sym,
+                        setup=f"{cand.setup_type} ({cand.timeframe}) [Pos #{i+1}]",
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
+                        confidence=result.get("confidence", 0.0),
+                    )
+            return True
         else:
             print(f" {UI.DIM}[STAGE 2 JURY] Setup {cand.setup_type} pada {sym} DITOLAK/HOLD oleh sidang konsensus.{UI.RST}")
             return False
@@ -1822,8 +1934,9 @@ def main():
     except Exception:
         pass
     
-    # Send startup alert
-    tg.alert_bot_started()
+    # Send startup alert (in background thread so terminal boots instantly)
+    import threading
+    threading.Thread(target=tg.alert_bot_started, daemon=True).start()
 
     # Start 2-Way Interactive Telegram Bot Controller (Long-Polling Listener)
     try:
@@ -1898,9 +2011,9 @@ def main():
                 # Trailing stop + break-even + partial close + stagnation
                 position_manager.manage_all_positions()
 
-                # Sync siklus pending order (kirim alert Telegram saat ter-fill / ter-cancel)
+                # Sync siklus pending order (kirim alert Telegram saat ter-fill / ter-cancel & terapkan cooldown 30m)
                 try:
-                    _detect_filled_pending()
+                    _detect_filled_pending(scanner=scanner)
                 except Exception as e:
                     print(f"[PENDING SYNC ERROR] {e}")
 
@@ -2003,14 +2116,18 @@ def main():
                             active_models=config.active_ai_model_names()
                         ) + "\n")
 
-                        # 3. Kirim rekap komprehensif ke Telegram
-                        if getattr(config, "ENABLE_HOURLY_RADAR_RECAP", True):
-                            tg.alert_hourly_radar_recap(
+                        # 3. Kirim rekap komprehensif ke Telegram HANYA pada jam kelipatan 3 (00, 03, 06, 09, 12, 15, 18, 21 WIB)
+                        if getattr(config, "ENABLE_HOURLY_RADAR_RECAP", True) and (cur_dt.hour % 3 == 0):
+                            tg.alert_trihourly_radar_recap(
                                 scanner=scanner,
                                 open_positions=open_p,
                                 today_pnl=pnl_today,
-                                risk=risk
+                                risk=risk,
+                                recent_opened=list(_recent_trihourly_opened),
+                                recent_vetoed=list(_recent_trihourly_vetoed)
                             )
+                            _recent_trihourly_opened.clear()
+                            _recent_trihourly_vetoed.clear()
                     except Exception as e:
                         print(f"[HOURLY SYNC ERROR] {e}")
 
@@ -2024,7 +2141,14 @@ def main():
                                 run_scanner_trading_cycle(cand, risk)
                         else:
                             wib_s = cur_dt.strftime('%H:%M:%S')
-                            _last_radar_status = f"22 Pairs Normal ({wib_s})"
+                            open_p_live = connector.get_all_open_positions() if hasattr(connector, 'get_all_open_positions') else []
+                            pending_p_live = connector.get_pending_orders() if hasattr(connector, 'get_pending_orders') else []
+                            pos_count = len(open_p_live or []) + len(pending_p_live or [])
+                            max_pos = config.get_max_open_positions()
+                            if pos_count >= max_pos:
+                                _last_radar_status = f"22 Pairs Swept | Max Capacity Full ({pos_count}/{max_pos}) - LLM Paused ({wib_s})"
+                            else:
+                                _last_radar_status = f"22 Pairs Normal ({wib_s})"
                     except Exception as e:
                         _last_radar_status = f"Radar Err: {e}"
             else:

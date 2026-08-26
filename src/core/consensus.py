@@ -83,10 +83,15 @@ def _apply_sltp_rules(sl_points, tp_points):
             tp_points = config.default_tp_points_for(config.SYMBOL)
 
         min_rr = config.LLM_MIN_RR_RATIO
+        max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
         min_tp = int(sl_points * min_rr)
+        max_tp = int(sl_points * max_rr)
         if tp_points < min_tp:
             _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
             tp_points = min_tp
+        elif tp_points > max_tp:
+            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
+            tp_points = max_tp
 
         try:
             account = mt5.account_info() if 'mt5' in dir() else None
@@ -220,7 +225,7 @@ def calculate_consensus(decisions):
         else:
             sltp_info = "SL/TP: -"
         
-        verdict_str = f" [{dec.get('verdict')}]" if dec.get("verdict") else ""
+        verdict_str = f" {UI.badge_verdict(dec.get('verdict'))}" if dec.get("verdict") else ""
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar}{verdict_str} | {UI.DIM}{sltp_info}{UI.RST}")
         
         # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid, Risk Flag)
@@ -424,16 +429,6 @@ def calculate_consensus(decisions):
             entry_price_list.append(ep)
 
     outlier_notes = []
-    inv_list, note1 = _drop_standalone_outlier(inv_list, "Invalidation Price")
-    if note1: outlier_notes.append(note1)
-    tgt_list, note2 = _drop_standalone_outlier(tgt_list, "Target Price")
-    if note2: outlier_notes.append(note2)
-    sl_list, note3 = _drop_standalone_outlier(sl_list, "SL Points")
-    if note3: outlier_notes.append(note3)
-    tp_list, note4 = _drop_standalone_outlier(tp_list, "TP Points")
-    if note4: outlier_notes.append(note4)
-    entry_price_list, note5 = _drop_standalone_outlier(entry_price_list, "Entry Price")
-    if note5: outlier_notes.append(note5)
 
     # entry_type: mayoritas dari model yang setuju arah; seri -> market
     final_entry_type = "market"
@@ -571,8 +566,9 @@ def calculate_consensus(decisions):
     agreeing_details = []
     for m in agreeing_models:
         d = decisions.get(m, {})
-        et = (d.get("entry_type") or "market").strip().lower()
-        ep = d.get("entry_price")
+        exec_block = d.get("execution", {}) if isinstance(d.get("execution"), dict) else {}
+        et = (exec_block.get("entry_type") or d.get("entry_type") or "market").strip().lower()
+        ep = exec_block.get("entry_price") or d.get("entry_price")
         if et != "market" and ep:
             agreeing_details.append(f"{m} ({et} @ {ep})")
         else:

@@ -662,14 +662,15 @@ def alert_hold_recap(hold_lines, news_context=None):
     return send_message(text)
 
 
-def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None):
+def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
     """
-    Send comprehensive Hourly SMC Radar & Portfolio Pulse Digest to Telegram.
+    Send comprehensive 3-Hourly SMC Radar & Portfolio Pulse Digest to Telegram.
     Summarizes:
+    - Executed Orders in the last 3-hour period
+    - Vetoed Signals & Capital Protection in the last 3-hour period
     - Market Compass (H4/D1 Trend Bullish / Bearish / Range across 22 pairs)
     - Key SMC Dealing Range zones (Top Discount / Premium pairs)
     - Live Portfolio & Floating P/L status
-    - 60s Fast Radar activity
     """
     if not config.TELEGRAM_ENABLED:
         return False
@@ -680,11 +681,39 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
     time_str = now.strftime("%H:%M WIB")
 
     lines = [
-        f"📡 *RADAR PASAR & STATUS BOT ({time_str})*",
+        f"📡 *REKAP 3 JAM PASAR & STATUS BOT ({time_str})*",
         "━" * 32
     ]
 
-    # 1. Market Compass & SMC Levels
+    # 1. Executed Orders in last 3 Hours
+    lines.append("📥 *Order Terpasang (3 Jam Terakhir):*")
+    if recent_opened:
+        for o in recent_opened[-5:]:
+            sym_clean = o.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            t_str = o.get('time', '')
+            sig = o.get('signal', 'ORDER')
+            lot = o.get('lot', '')
+            etype = o.get('entry_type', 'market')
+            lines.append(f"  • `[{t_str}]` `{sym_clean}` *{sig}* ({etype}) `{lot} lot`")
+    else:
+        lines.append("  • _Nihil (Tidak ada order baru di jendela ini)_")
+    lines.append("━" * 32)
+
+    # 2. Vetoed Signals & Protected Capital
+    lines.append("🛡️ *Penyelamatan Veto (3 Jam Terakhir):*")
+    if recent_vetoed:
+        for v in recent_vetoed[-5:]:
+            sym_clean = v.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            t_str = v.get('time', '')
+            setup = v.get('setup', '')
+            by = v.get('veto_by', 'Devil\'s Advocate')
+            reason = v.get('reason', 'Critical Risk')
+            lines.append(f"  • `[{t_str}]` `{sym_clean}` ({setup}) di-veto oleh *{by}*\n    └─ _{reason}_")
+    else:
+        lines.append("  • _Nihil (Semua kandidat lolos atau tidak ada trap)_")
+    lines.append("━" * 32)
+
+    # 3. Market Compass & SMC Levels
     if scanner is not None and getattr(scanner, "macro_cache", None):
         bull_pairs = []
         bear_pairs = []
@@ -721,21 +750,21 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
         lines.append("🎯 *Zona Pantau Potensial:*")
         if discount_pairs:
             disc_list = [f"`{sym}`" for sym, _ in discount_pairs[:4]]
-            lines.append(f"• 🛒 *Area Paling Murah (Siap BUY jika Reversal):*\n  → {', '.join(disc_list)} (Harga di dasar ayunan)")
+            lines.append(f"• 🛒 *Area Diskon (Siap BUY):*\n  → {', '.join(disc_list)}")
         else:
-            lines.append("• 🛒 *Area Paling Murah*: _Semua pair di harga normal_")
+            lines.append("• 🛒 *Area Diskon*: _Semua pair di harga normal_")
 
         if premium_pairs:
             prem_list = [f"`{sym}`" for sym, _ in premium_pairs[:4]]
-            lines.append(f"• 🏷️ *Area Paling Mahal (Siap SELL jika Rejection):*\n  → {', '.join(prem_list)} (Harga di pucuk ayunan)")
+            lines.append(f"• 🏷️ *Area Premium (Siap SELL):*\n  → {', '.join(prem_list)}")
         else:
-            lines.append("• 🏷️ *Area Paling Mahal*: _Semua pair di harga normal_")
+            lines.append("• 🏷️ *Area Premium*: _Semua pair di harga normal_")
         lines.append("━" * 32)
     else:
         lines.append("📊 *SMC Radar:* `Macro cache stand-by`")
         lines.append("━" * 32)
 
-    # 2. Portfolio & Floating Status
+    # 4. Portfolio & Floating Status
     total_float = 0.0
     pos_lines = []
     if open_positions:
@@ -759,4 +788,9 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
     lines.append("_Gunakan menu keyboard atau `/radar` untuk refresh instant._")
 
     return send_message("\n".join(lines))
+
+
+def alert_trihourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
+    """Direct alias for 3-hour radar recap."""
+    return alert_hourly_radar_recap(scanner, open_positions, today_pnl, risk, recent_opened, recent_vetoed)
 

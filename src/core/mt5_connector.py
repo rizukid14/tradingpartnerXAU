@@ -120,8 +120,7 @@ def server_to_wib(dt_or_ts):
 def init_mt5():
     """Initializes connection to MT5 terminal and verifies account & symbol availability."""
     if config.DRY_RUN:
-        print("[DRY RUN MODE] MetaTrader 5 live order execution disabled.")
-        return True
+        print(f" {UI.YELLOW}[DRY RUN MODE]{UI.RST} Membaca data live MT5 untuk simulasi (eksekusi order riil dinonaktifkan).")
 
     print(f"[MT5] Connecting to MT5 Terminal for symbol {config.SYMBOL}...")
 
@@ -804,6 +803,9 @@ def get_filling_policy(symbol):
 
 def _safe_order_send(request):
     """Sends order request safely supporting both native MT5 and mt5linux RPC bridge."""
+    if getattr(config, "DRY_RUN", False):
+        print(f" [DRY RUN HARD SHIELD] order_send dicegah karena DRY_RUN=True.")
+        return None
     try:
         res = mt5.order_send(request)
         if res is not None:

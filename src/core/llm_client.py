@@ -1817,14 +1817,14 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_h1_str=None, recent_
     }
 
     if pass1_targets:
+        start_pass1 = time.time()
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass1_targets)) as executor:
             futs = {executor.submit(model_fns[m], prompt_base): m for m in pass1_targets}
             for fut in concurrent.futures.as_completed(futs):
                 model_name = futs[fut]
                 try:
-                    t0 = time.time()
                     res = fut.result()
-                    latencies[model_name] = time.time() - t0
+                    latencies[model_name] = time.time() - start_pass1
                     verdict = str(res.get("verdict") or res.get("signal") or "").strip().upper()
                     conf = float(res.get("confidence", 0.0) or 0.0)
                     if verdict in ("APPROVE", "REVISE", "ACCEPT", "YES", "VALID", "BUY", "SELL", direction_str):
