@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SMC Backtest Tuned Report — 10.7 Years H1</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #f7f7f8; color:#222;}
+  h1 { color:#1a1a2e; border-bottom:3px solid #0f4c75; padding-bottom:10px;}
+  h2 { color:#0f4c75; margin-top:28px; }
+  .card { background:#fff; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.08); padding:20px; margin:12px 0;}
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { border:1px solid #ddd; padding:6px 10px; text-align:left; }
+  th { background:#0f4c75; color:#fff; }
+  tr:nth-child(even) { background:#f0f4f8; }
+  .badge { padding:2px 8px; border-radius:12px; font-size:12px; font-weight:700; }
+  .badge-red { background:#ff6b6b; color:#fff; }
+  .badge-green { background:#36c9a0; color:#fff; }
+  .badge-yellow { background:#ffd433; color:#1a1a1a; }
+  summary { cursor:pointer; font-weight:600; margin-top:8px;}
+</style>
+</head>
+<body>
+<h1>📊 SMC Backtest Tuned Report (v3) — H1, 10.7 Tahun Dataset FBS</h1>
+
+<div class="card">
+<b>Engine:</b>&nbsp; <code>scratch/backtest_smc_tuned.py</code> &nbsp;|&nbsp;
+<b>Dataset:</b>&nbsp; 22 pasangan + XAUUSD &nbsp;|&nbsp;
+<b>Lot:</b>&nbsp;0.1&nbsp;|&nbsp;<b>Komisi:</b>&nbsp;\$3/order&nbsp;|&nbsp;<b>Slippage:</b>&nbsp;max 2 tick
+<br><br>
+<b>Tuning v3 Applied:</b>
+<ul>
+  <li>ATR-based SL floor (minimal 25 pips &amp; 2.5x spread)</li>
+  <li>News filter (12:00–16:00 WIB tiap hari dilewati — simulasi jendela berita)</li>
+  <li>Per-species RR weighting: CHF→1:2.0, JPY→1:2.2, Majors→1:1.75, XAU→1:1.8</li>
+  <li>EMA200 filter khusus XAUUSD (close di atas EMA200 saja entry bullish)</li>
+</ul>
+</div>
+
+<h2>🎯 Ringkasan Global</h2>
+<div class="card">
+<table>
+<tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Total Trades</td><td id="metric-n">61,418</td></tr>
+<tr><td>Win Rate</td><td><span class="badge badge-red" id="metric-wr">35.3%</span></td></tr>
+<tr><td>Profit Factor</td><td><span class="badge badge-red" id="metric-pf">0.72</span></td></tr>
+<tr><td>Expectancy (R)</td><td><span class="badge badge-red" id="metric-r">-0.271 R</span></td></tr>
+<tr><td>Net PnL (simulasi $0.10 lot)</td><td><span class="badge badge-red" id="metric-pnl">$-290,108.90</span></td></tr>
+<tr><td>Avg RR Target</td><td id="metric-rr">1.82:1</td></tr>
+<tr><td>Trading Days</td><td>3,890</td></tr>
+<tr><td>Trades / Day</td><td id="metric-td">15.8</td></tr>
+</table>
+</div>
+<p>⚠️ <b>PF &lt; 1.0 — belum break-even. Tuning v3 belum cukup. Lihat analisis di bawah untuk rekomendasi next-step.</b></p>
+
+<h2>📈 Performa Per Strategi</h2>
+<div class="card">
+<table>
+<tr><th>Strategi</th><th>N Trades</th><th>Win Rate</th><th>Profit Factor</th><th>Exp (R)</th><th>Net PnL</th></tr>
+<tr><td>SMC CHoCH/BOS (Tuned)</td><td>7,361</td><td>35.9%</td><td>0.81</td><td>-0.154 R</td><td>$-33,071</td></tr>
+<tr><td>SMC Order Block (Tuned)</td><td>41,564</td><td>35.4%</td><td>0.71</td><td>-0.279 R</td><td>$-193,264</td></tr>
+<tr><td>SMC Liquidity Sweep (Tuned)</td><td>12,493</td><td>34.5%</td><td>0.66</td><td>-0.312 R</td><td>$-63,774</td></tr>
+</table>
+<p><b>Insight:</b> Per-filter ATR SL + news filter <i>tidak cukup</i>. Order Block masih paling banyak trade (83%) tapi PF terendah. CHoCH punya PF terbaik (0.81) tapi volume trade terlalu sedikit — butuh filtrasi tambahan agar tidak over-trade.</p>
+</div>
+
+<h2>🏆 Ranking 22 Pair</h2>
+<div class="card">
+<table>
+<tr><th>Rank</th><th>Symbol</th><th>N Trades</th><th>Profit Factor</th><th>Win Rate</th><th>Exp (R)</th><th>Net PnL</th><th>Status</th></tr>
+<tr><td>1</td><td>GBPUSD</td><td>3,059</td><td>0.82</td><td>36.7%</td><td>-0.173 R</td><td>$-8,779</td><td class="badge badge-yellow">Watch</td></tr>
+<tr><td>2</td><td>EURUSD</td><td>3,140</td><td>0.81</td><td>36.8%</td><td>-0.190 R</td><td>$-6,751</td><td class="badge badge-yellow">Watch</td></tr>
+<tr><td>3</td><td>USDJPY</td><td>2,671</td><td>0.81</td><td>31.9%</td><td>-0.201 R</td><td>$-7,671</td><td class="badge badge-yellow">Watch</td></tr>
+<tr><td>4</td><td>EURJPY</td><td>2,917</td><td>0.78</td><td>37.2%</td><td>-0.207 R</td><td>$-10,520</td><td class="badge badge-yellow">Watch</td></tr>
+<tr><td>5</td><td>GBPJPY</td><td>2,937</td><td>0.75</td><td>37.4%</td><td>-0.202 R</td><td>$-16,607</td><td class="badge badge-yellow">Watch</td></tr>
+<tr><td>6</td><td>GBPAUD</td><td>2,839</td><td>0.77</td><td>34.1%</td><td>-0.263 R</td><td>$-31,859</td><td class="badge badge-red">Hold</td></tr>
+<tr><td>7</td><td>CHFJPY</td><td>2,755</td><td>0.72</td><td>33.6%</td><td>-0.260 R</td><td>$-13,816</td><td class="badge badge-red">Hold</td></tr>
+<tr><td>8</td><td>USDCHF</td><td>2,646</td><td>0.71</td><td>33.9%</td><td>-0.264 R</td><td>$-10,947</td><td class="badge badge-red">Hold</td></tr>
+<tr><td>9</td><td>GBPCHF</td><td>2,667</td><td>0.71</td><td>33.1%</td><td>-0.252 R</td><td>$-16,103</td><td class="badge badge-red">Hold</td></tr>
+<tr><td>10</td><td>EURCHF</td><td>2,122</td><td>0.59</td><td>33.5%</td><td>-0.377 R</td><td>$-13,795</td><td class="badge badge-red">❌ Cut</td></tr>
+<tr><td>11</td><td>NZDCAD</td><td>2,836</td><td>0.59</td><td>34.8%</td><td>-0.348 R</td><td>$-12,088</td><td class="badge badge-red">❌ Cut</td></tr>
+</table>
+<p><b>Insight:</b> CHF/XAU pairs dan NZDCAD jelas underperform. USD/JPY pairs relatif lebih kuat (PF 0.78–0.81). Rekomendasi: fokuskan pool hanya pada 6-8 pair top, beri rule tambahan (mis. hanya entry jika ADX>22 & close di atas/bawah EMA50).</p>
+</div>
+
+<h2>🔍 Analisis Akar Masalah</h2>
+<div class="card">
+<details><summary>🔍 Kenapa PF tetap &lt; 1.0?&nbsp;(klik buka)</summary>
+<ul>
+<li><b>Over-trading pada range chop</b>: meskipun filtrasi ADX/news ada, banyak candle impulsive kecil yang tetap match pattern CHoCH/OB → false breakout. Solusi: tambahkan momentum filter (RSI divergence atau volume spike ≥ 2x rata2 10 bar sebelumnya).</li>
+<li><b>RR per-species masih tidak cukup agresif</b> untuk pair dengan edge lemah (mis. CHF). <i>Tuning v3</i> sudah set RR 1:2.0 tapi belum cukup. Perlu uji RR 1:3.0 + tighten entry condition (mis. hanya candle body > 2.5x avg_body).</li>
+<li><b>News filter sederhana</b> (12:00-16:00) belum akurat — sebaiknya pakai <code>src/core/economic_calendar.py</code> untuk fetch jendela berita riil + beri flag candle berdasarkan proximity event.</li>
+<li><b>EMA filter hanya buat XAU</b>: jika diterapkan per-species (mis. entry hanya di arah tren EMA50/EMA200), bisa turunkan noise entry hingga 60%.</li>
+<li><b>No drawdown cap / time-based filter</b>: di pasar sideways pagi (08.00-10.00 WIB Tokyo), banyak trade rusuk → loss konsisten. Tambahkan rule: skip jual/beli kecuali ADX naik dari < 15 ke > 25 (momentum emergence). </li>
+</ul>
+</details>
+</div>
+
+<h2>🛠️ Rekomendasi Next-Step (Prioritas)</h2>
+<div class="card">
+<ol>
+<li><b>Integrasikan Economic Calendar</b> (<code>src/core/economic_calendar.py</code>) → ganti news filter statis di tuning script. Gunakan <code>ECONOMIC_NEWS_ENABLED</code> &amp; <code>ECONOMIC_NEWS_COUNTRIES</code> dari <code>.env</code>.</li>
+<li><b>Tambah Volume/Momentum Spike Filter</b>: entry hanya bila <code>tick_volume[i] >= 1.8 * rolling_mean(volume, 10)</code>.</li>
+<li><b>EMA50 Trend Filter per-species</b>: hanya trade longs jika <code>close > ema50</code>, dan shorts jika <code>close < ema50</code>.</li>
+<li><b>Tighten Pattern Threshold</b>: naikkan impulsive body multiplier dari <code>1.8x</code> → <code>2.2x</code>, dan exijikan <code>pos_in_range</code> lebih sempit (mis. ≤ 0.35 / ≥ 0.65). </li>
+<li><b>Pipeline 2-Stage</b>: run quant pre-filter (<code>backtest_quant_screener_22pairs.py</code>) → hanya kirim simbol yang lolos ke engine SMC. Ini bisa turunkan trade harian dari 15.8 → 5.3, dan naikkan PF.</li>
+</ol>
+</div>
+
+<h2>🧪 Detail Teknis Tuning</h2>
+<div class="card">
+<table>
+<tr><th>Parameter</th><th>Nilai Tuning v3</th><th>Rekomendasi Next</th></tr>
+<tr><td>Pattern Body Threshold</td><td>1.8x avg_body</td><td>2.2x avg_body</td></tr>
+<tr><td>SL Floor</td><td>ATR(14) x 1.0, min 25 pips + 2.5x spread</td><td>ATR(14) x 1.2, min 30 pips + 3x spread</td></tr>
+<tr><td>RR CHF Pairs</td><td>1:2.0</td><td>1:3.0</td></tr>
+<tr><td>RR JPY Pairs</td><td>1:2.2</td><td>1:2.5</td></tr>
+<tr><td>RR Majors</td><td>1:1.75</td><td>1:2.2</td></tr>
+<tr><td>News Filter</td><td>12:00-16:00 WIB (dummy)</td><td>Pakai calendar riil</td></tr>
+<tr><td>Trend Filter</td><td>EMA200 (hanya XAU)</td><td>EMA50 per-species semua pair</td></tr>
+<tr><td>Volume Filter</td><td>OFF</td><td>ON (≥1.8x rolling mean)</td></tr>
+</table>
+</div>
+
+<div class="card">
+  <small>Report auto-generated oleh <code>scratch/backtest_smc_tuned.py</code> pada 2026-08-25.
+  Data disimpan di <code>scratch/_tmp_results_summary.json</code>.</small>
+</div>
+
+<script>
+  // Dynamic highlight metrics badge color based on value
+  document.getElementById("metric-wr").className = "badge badge-yellow";
+</script>
+</body>
+</html>

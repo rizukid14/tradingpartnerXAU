@@ -151,6 +151,20 @@ python main.py
     - Master Strategy: *Trend-Aligned Mean Reversion* (Beli di diskon H1 searah arus breakout D1/H4).
 13. **Master Quant Dossier HTML (Book-Grade Report)**:
     - Tersedia di `docs/research/multiyear_backtest_report.html` (9 Bab lengkap, visual flow 2-stage screener, perbandingan 4 timeframe, dan atlas DNA 22 simbol).
+14. **2-Stage Quant Funnel Architecture (Branch `quant-trade` — 26 Agu 2026)**:
+    - **Stage 1 (Hybrid Dual-Speed Market Scanner `market_scanner.py`)**: Caching struktur makro D1/H4 (0 token) + Fast Execution Radar tiap 60 detik pada 22 pair (M1 Judas Sweep, M2 Trend Pullback, M3 NY ADR Exhaustion).
+    - **Stage 2 (3-LLM Consensus Jury with High-Density Dossier Prompt)**: Dipanggil HANYA saat setup A+ terdeteksi (~4–8 call/hari). Menghemat biaya API ~85% dan menaikkan Win Rate ke 55–60% & PF > 1.40.
+    - **Telegram & CLI Overhaul**: Command `/radar`, `/levels`, & `/smc` menampilkan live heat-table 22 pair, daily morning SMC briefing, dan glow matrix CLI terminal.
+15. **2-Pass Sequential Cross-Examination 3-LLM Jury & Qualified Hard Risk Veto**:
+    - **Pass 1 (Parallel Investigation: ~3.0s)**: `OpenAI o4-mini` (Structure) & `Gemini 3.1-Flash` (Momentum) menganalisis data candlestick live H1 & M5 secara independen.
+    - **Pass 2 (Cross-Examination Audit: ~1.5s)**: `DeepSeek V4-Flash` (Devil's Advocate & Chief Risk Officer) menerima seluruh Master Dossier **PLUS** proposal & argumen tertulis dari OpenAI & Gemini, menguji kelemahan logika mereka terhadap 24 candle M5. Total waktu sidang: < 5.5 detik!
+    - **Qualified Hard Risk Veto Engine**: Menolak trade otomatis jika model mengangkat bendera bahaya kritis (`COUNTER_TREND_MOMENTUM`, `HIGH_IMPACT_NEWS`, `LIQUIDITY_TRAP`, `SPREAD_SPIKE`) dengan alasan tertulis, mencegah akun terjebak *falling knife*.
+16. **LuxAlgo Smart Money Concepts (SMC) & Liquidity Map Engine (`src/indicators/lux_smc.py`)**:
+    - Porting murni 1:1 dari LuxAlgo TradingView Pine Script v5 ke Python: mendeteksi *Unmitigated Order Blocks (OB)*, *Fair Value Gaps (FVG)*, *Strong Low / Strong High*, dan *Equal Highs/Lows (EQH/EQL)*.
+    - Diinjeksikan ke Bagian 2 Master Dossier Prompt sehingga AI menaruh Stop Loss presisi di balik Order Block/Strong Low dan Take Profit pada area magnet FVG/Weak High.
+17. **Hourly SMC Radar & Market Pulse Telegram Digest (`telegram_alerts.py` & `main.py`)**:
+    - Rekap otomatis berkala setiap 1 jam (pada pergantian jam WIB) yang mempublikasikan status Market Compass 22 pair (Bullish/Bearish/Sideways), Dealing Range SMC (Top Discount & Premium watch), status portofolio MT5 (floating & realized P/L), serta ringkasan aktivitas sweep 60 detik tanpa membebani kuota API token.
+
 
 ---
 

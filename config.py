@@ -2,7 +2,19 @@ import os
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv  # type: ignore
+except ImportError:
+    def load_dotenv(dotenv_path=None, override=False):
+        if dotenv_path and os.path.exists(dotenv_path):
+            with open(dotenv_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        if override or k not in os.environ:
+                            os.environ[k] = v
 
 # --- PATH & DIRECTORY SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -76,7 +88,7 @@ class DummyMT5:
 
 if sys.platform == 'win32':
     try:
-        import MetaTrader5 as mt5
+        import MetaTrader5 as mt5  # type: ignore
     except ImportError:
         mt5 = DummyMT5()
 else:
@@ -101,7 +113,12 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKE
 TELEGRAM_TOKEN = TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", True)
-TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
+TELEGRAM_USE_PROXY = _getenv_bool("TELEGRAM_USE_PROXY", False)
+TELEGRAM_PROXY_URL = os.getenv("TELEGRAM_PROXY_URL", "https://tg-proxy-vercel-eight.vercel.app")
+if TELEGRAM_USE_PROXY:
+    TELEGRAM_API_BASE = os.getenv("TELEGRAM_PROXY_URL", "https://tg-proxy-vercel-eight.vercel.app")
+else:
+    TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8765")
 API_TOKEN = os.getenv("API_TOKEN", "")
 
@@ -180,12 +197,34 @@ CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", 
 ENABLE_BTC_ROTATION = _getenv_bool("ENABLE_BTC_ROTATION", False)
 SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 
-# --- TRADING MODE: "xau" (default, XAU only) | "xau_pairs" (XAU + FX cross pairs, parallel scan per candle) ---
-# FX cross pairs (non-USD => low correlation with XAUUSD). Default = nama broker LIVE
-# (suffix -ECNc). Auto-correct cuma arah demo (live -> -ECNc, demo -> -ECN).
-# Pool 3 simbol: XAUUSD + EURJPY + GBPCHF (GBPCHF spread 0, tick value 2x EURJPY,
-# bebas korelasi EUR/JPY - hasil kurasi user, 5x cycle kemahalan).
-TRADING_MODE = os.getenv("TRADING_MODE", "xau").strip().lower()
+# --- TRADING MODE: "scanner" (2-Stage 22-Pair Quant Funnel) | "pairs" | "xau" | "xau_pairs" ---
+TRADING_MODE = os.getenv("TRADING_MODE", "scanner").strip().lower()
+SCANNER_MODE = _getenv_bool("SCANNER_MODE", True)
+
+# Universe 22 Simbol Terkurasi (21 Pasangan FX + Gold)
+ALL_SCANNER_SYMBOLS = [
+    "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
+    "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
+    "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
+    "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
+    "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc",
+    "XAUUSD-ECNc"
+]
+
+SCANNER_SYMBOLS = [
+    s.strip()
+    for s in os.getenv("SCANNER_SYMBOLS", ",".join(ALL_SCANNER_SYMBOLS)).split(",")
+    if s.strip()
+]
+
+# Fast Execution Radar interval (detik) & Rejection Wick Floor
+RADAR_SCAN_INTERVAL_SECONDS = _getenv_int("RADAR_SCAN_INTERVAL_SECONDS", 60)
+RADAR_MIN_WICK_RATIO = _getenv_float("RADAR_MIN_WICK_RATIO", 0.30)
+ENABLE_HOURLY_RADAR_RECAP = _getenv_bool("ENABLE_HOURLY_RADAR_RECAP", True)
+
+
+
+
 FX_PAIR_SYMBOLS = [
     s.strip()
     for s in os.getenv(
@@ -197,9 +236,9 @@ FX_PAIR_SYMBOLS = [
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 4)  # max symbols in the rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 22 if SCANNER_MODE else 4)  # max symbols in rotation pool
 
-TIMEFRAME_STR = os.getenv("TIMEFRAME", "M30").upper()
+TIMEFRAME_STR = os.getenv("TIMEFRAME", "H1").upper()
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,
     "M5": mt5.TIMEFRAME_M5,
@@ -344,7 +383,7 @@ MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
 # Format: (start_hour, start_minute, end_hour, end_minute, mode)
 # Mode values: "single" | "single_gemini" | "dual" | "triple"
-AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "schedule").strip().lower()  # schedule | fixed
+AI_MODE_POLICY = os.getenv("AI_MODE_POLICY", "fixed").strip().lower()  # schedule | fixed
 AI_FIXED_MODE = os.getenv("AI_FIXED_MODE", "triple").strip().lower()
 # Jadwal WIB (Single Mode DIHAPUS TOTAL demi keamanan - minimal 2 model sepakat):
 #   - dual   (OpenAI o4-mini + Gemini 3.1-flash-lite): 00:00–18:59 (Asia & London session; 00:00-09:00 Dead Zone risk gate)
@@ -734,12 +773,17 @@ def sltp_mode_for(symbol):
     return "LLM"
 
 
+def get_scanner_symbols():
+    """Returns the curated universe of 22 symbols for 2-Stage Quant Screener."""
+    return [s for s in SCANNER_SYMBOLS]
+
+
 def get_rotation_pool(now=None):
     """
     Returns the ordered list of symbols currently in the rotation pool:
+    - TRADING_MODE == "scanner" (2-Stage Quant Funnel): SCANNER_SYMBOLS (22 pairs)
     - TRADING_MODE == "xau" (default): [WEEKDAY_SYMBOL] (weekend -> WEEKEND if ENABLE_BTC_ROTATION)
-    - TRADING_MODE == "xau_pairs": [WEEKDAY_SYMBOL] + FX_PAIR_SYMBOLS, truncated to MAX_ROTATION_SYMBOLS.
-      Weekend: FX pairs market closed -> falls back to XAU (or BTC if ENABLE_BTC_ROTATION).
+    - TRADING_MODE == "xau_pairs" / "pairs": [WEEKDAY_SYMBOL] + FX_PAIR_SYMBOLS, truncated to MAX_ROTATION_SYMBOLS.
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -747,10 +791,12 @@ def get_rotation_pool(now=None):
     now = now or datetime.now(WIB)
     is_weekend = (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6)
     if is_weekend:
-        # FX pairs market closed on weekend -> XAU or BTC only
+        # FX pairs market closed on weekend -> BTC or fallback
         if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
             return [WEEKEND_SYMBOL]
         return [WEEKDAY_SYMBOL]
+    if TRADING_MODE == "scanner" or SCANNER_MODE:
+        return [s for s in SCANNER_SYMBOLS]
     if TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
         pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL]
         return pool[:MAX_ROTATION_SYMBOLS]

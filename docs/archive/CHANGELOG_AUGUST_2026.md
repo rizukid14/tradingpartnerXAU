@@ -178,3 +178,58 @@ You are NOT required to follow a single predefined trading strategy. You may use
 3. **5-State Machine Context**: `FAR`, `TESTING`, `REJECTION`, `COMPRESSION`, `BREAKOUT` sebagai status kesepakatan antara Python dan AI.
 4. **Python Deterministic Clearance & ADR Gate**: Menghitung `Range Location %`, `Clearance`, dan `Remaining Daily Range` untuk mencegah pasang TP melayang di sesi sepi.
 5. **Konsistensi Jarak SL/TP dari `entry_price`**: Menghilangkan ambiguitas jarak pada pending orders.
+
+---
+
+## 6. Pembaruan 26 Agustus 2026 — 2-Stage Quant Funnel Architecture (Branch `quant-trade`)
+
+1. **Stage 1 (Hybrid Dual-Speed Market Scanner `src/analytics/market_scanner.py`)**:
+   * **Slow Macro Layer (H1/D1 Close)**: Meng-cache Kompas Tren D1/H4 (EMA200, ADX $\ge 20$), Range Sesi Asia (08:00–13:00 WIB), dan Dealing Range 100-bar H1 (Diskon $\le 38\%$, Premium $\ge 62\%$) untuk 22 pasangan mata uang & Gold (0 Token).
+   * **Fast Execution Radar (60s Tick Scan)**: Memindai live tick 22 pair setiap 60 detik di memori lokal untuk mendeteksi sentuhan level kunci (*London Judas Sweep*, *Trend-Aligned Pullback*, *NY ADR Exhaustion Reversal*).
+2. **Stage 2 (3-LLM Consensus Jury with High-Density Structured Dossier `src/core/llm_client.py`)**:
+   * AI hanya dipanggil ketika Stage 1 mengonfirmasi setup matang A+ (~4–8 call/hari, hemat kuota ~85%).
+   * Mengirimkan *High-Density Pre-Computed Dossier* lengkap dengan validasi skeptisisme *Devil's Advocate*.
+3. **Telegram Controller & CLI Overhaul**:
+   * Penambahan command `/radar`, `/levels`, `/smc` untuk menampilkan matriks level kunci 22 pair secara real-time.
+   * Banner matrix visual di terminal (`render_scanner_banner` & `render_candidate_alert_box`).
+4. **Test Suite Verification**:
+   * Pembuatan unit test `tests/test_market_scanner.py` dan verifikasi 100% PASS pada seluruh test suite sistem.
+
+---
+
+## 7. Pembaruan 26 Agustus 2026 (Sesi Siang) — LuxAlgo SMC, 2-Pass Jury, Direct Telegram Controller, & Flexible `/analisa`
+
+1. **LuxAlgo Smart Money Concepts (SMC) & Liquidity Map Engine (`src/indicators/lux_smc.py` & `market_scanner.py`)**:
+   * Porting algoritma Pine Script LuxAlgo v5 ke Python: mendeteksi *Unmitigated Order Blocks (Bullish/Bearish OB)*, *Fair Value Gaps (FVG)*, *Strong Low / Strong High*, dan *Equal Highs/Lows (EQH/EQL)*.
+   * Injeksi langsung ke Bagian 2 Dossier Prompt sehingga AI menaruh Stop Loss presisi di balik Order Block dan Take Profit pada area magnet FVG/Weak High.
+2. **2-Pass Sequential Cross-Examination 3-LLM Jury & Qualified Hard Risk Veto (`src/core/llm_client.py` & `consensus.py`)**:
+   * **Pass 1**: OpenAI o4-mini (Structure) + Gemini 3.1-Flash (Momentum) voting independen (~3.0s).
+   * **Pass 2**: DeepSeek V4-Flash (Devil's Advocate) membaca seluruh berkas Dossier + usulan OpenAI & Gemini, menguji kelemahan logika mereka terhadap 24 candle M5 (~1.5s).
+   * **Qualified Hard Risk Veto**: Otomatis menolak trade jika model mengangkat bendera bahaya kritis (`COUNTER_TREND_MOMENTUM`, `HIGH_IMPACT_NEWS`, `LIQUIDITY_TRAP`, `SPREAD_SPIKE`) dengan alasan tertulis untuk mencegah *falling knife*.
+3. **Direct Telegram Controller & Proxy Toggle (`config.py`, `.env`, `telegram_bot.py`)**:
+   * Menambahkan toggle `TELEGRAM_USE_PROXY=false` dan fallback `TELEGRAM_PROXY_URL` di `.env`. Default beralih ke direct `api.telegram.org` untuk kecepatan respons instan tanpa buffer Vercel.
+   * Menambahkan `allowed_updates: ["message", "callback_query"]` pada polling `getUpdates` untuk penanganan klik tombol *inline button* seketika.
+   * Penguatan autentikasi `_is_user_authorized` untuk mencegah bentrok multi-instance dan mengeliminasi popup *Access Denied*.
+4. **Flexible Custom Timeframe & Auto-Correction di `/analisa` (`telegram_bot.py`, `mt5_connector.py`)**:
+   * Dukungan command `/analisa <symbol> [timeframe]` (contoh: `/analisa GBPUSD M15`, `/analisa XAUUSD H4`, `/analisa BTCUSD D1`).
+   * Normalisasi timeframe fleksibel (`1H` $\rightarrow$ `H1`, `15M` $\rightarrow$ `M15`, `4H` $\rightarrow$ `H4`, `1D` $\rightarrow$ `D1`).
+   * Auto-Correction simbol broker VT Markets (`GBPUSD` $\rightarrow$ `GBPUSD-ECNc`, `GOLD` $\rightarrow$ `XAUUSD-ECNc`, `BTC` $\rightarrow$ `BTCUSD.c`) yang memprioritaskan simbol aktif dengan izin trading penuh (`trade_mode = FULL`).
+   * Perbaikan deklarasi menu keyboard `_build_main_menu_keyboard()` untuk memastikan menu kontrol interaktif selalu muncul seketika.
+5. **Master Quant Dossier HTML Report (Book-Grade Report — Chapter 11 & 12)**:
+   * Pembaruan Chapter 11 (LuxAlgo SMC Framework) dan Chapter 12 (2-Pass Cross-Examination Jury, Veto Engine, Live Transcripts, dan Benchmark Matrix) di `docs/research/multiyear_backtest_report.html`.
+
+## 8. Pembaruan 26 Agustus 2026 (Sesi Sore) — Session-Aware Pair Selection, Visual MT5 Indicator Upgrade, & `/indicators`
+
+1. **Session-Aware Pair Selection Engine (`src/analytics/market_scanner.py`)**:
+   * **Aktivasi Terukur Sesi Tokyo (08:00–14:00 WIB)**: Berdasarkan backtest 10.7 tahun FBS MT5 (22.812 trade), radar Stage 1 Mechanism 2 (*Trend-Aligned Pullback*) diaktifkan di Sesi Tokyo khusus untuk 10 pair ber-EV positif: `USDCAD` (PF 1.18), `AUDCAD` (PF 1.18), `AUDUSD` (PF 1.15), `EURCAD` (PF 1.11), `USDCHF` (PF 1.09), `GBPJPY` (PF 1.08), `XAUUSD` (PF 1.05), `GBPCHF` (PF 1.05), `AUDJPY` (PF 1.04), dan `CADJPY` (PF 1.01).
+   * **Proteksi Pair Eropa (08:00–14:00 WIB)**: Pair Eropa murni (`GBPUSD` PF 0.76, `EURCHF` PF 0.65, `GBPAUD` PF 0.77, `EURJPY` PF 0.80) secara otomatis diblokir saat pagi untuk mencegah *false wick* dan kebocoran modal, baru dibuka penuh saat sesi London/Frankfurt resmi dimulai jam 14:00 WIB.
+2. **Upgrade Indikator Visual MT5 (`mql5/LuxAlgo_SMC_MT5.mq5` & `.ex5`)**:
+   * Menambahkan visualisasi **Dealing Range 100-bar**: Kotak **Premium Zone (61.8% – 100%)** bernuansa *Muted Dark Rose*, kotak **Discount Zone (0% – 38.2%)** bernuansa *Muted Deep Emerald*, garis putus-putus **100% High** & **0% Low** dengan label harga aktual, serta garis titik-titik **50% Equilibrium**.
+   * Otomatis di-compile via `MetaEditor64.exe` (0 errors, 0 warnings) dan disinkronkan ke seluruh direktori data terminal MT5.
+3. **Telegram Command `/indicators` & `/levels` (`src/core/telegram_bot.py`)**:
+   * Menambahkan perintah `/indicators <symbol>` (atau `/levels` / `/smc`) yang merangkum koordinat harga eksak untuk 100% Range High, Zona Premium, 50% Equilibrium, Zona Diskon, 0% Range Low, Order Blocks, dan Fair Value Gaps secara real-time.
+4. **Unit Test & Linter Green Verification (`tests/test_market_scanner.py`)**:
+   * Menambahkan unit test `test_session_aware_pair_filtering` yang memvalidasi isolasi pair Tokyo vs London/NY. Seluruh 9 unit test suite lulus **100% PASS (OK)**.
+
+
+

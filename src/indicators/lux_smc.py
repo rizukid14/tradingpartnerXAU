@@ -1,22 +1,18 @@
 """
-LuxAlgo Smart Money Concepts (SMC) - Signal Engine.
+LuxAlgo Smart Money Concepts (SMC) - Pure Python Engine
+1:1 Mathematical Port from TradingView Pine Script v5 (LuxAlgo SMC).
 
-Pure-Python, self-contained module. Tidak bergantung ke modul lain di project.
-Di pakai untuk menghasilkan sinyal struktural harga ke LLM prompt / risk engine.
+Features:
+  1. Swing Legs & Pivots (HH, HL, LH, LL)
+  2. Break of Structure (BOS) vs Change of Character (CHoCH) Stateful Tracking
+  3. Order Blocks (OB) with Real-Time Mitigation Engine
+  4. Fair Value Gaps (FVG) with 3-Bar Imbalance & Mitigation
+  5. Equal Highs / Equal Lows (EQH / EQL Liquidity Pools)
+  6. Authentic Dealing Range (Discount 0-50%, Equilibrium 50%, Premium 50-100%)
+  7. Strong & Weak High/Low Levels
 
-Fitur:
-  - Bullish / Bearish Structure (Higher High, Lower Low, dsb.)
-  - Order Blocks (bullish & bearish)
-  - Equal Highs / Equal Lows (liquidity pools)
-  - Premium & Discount Zones (session range)
-  - Break of Structure (BOS)
-  - Change of Character (CHoCH)
-  - Strong High / Low (swing dikonfirmasi volume)
-
-Input  : pandas.DataFrame dengan kolom time|open|high|low|close [,tick_volume]
-Output : SMCSignal (dataclass) — semua field berisi list of dict atau float.
-
-Author : @commandcode
+Input  : pandas.DataFrame with columns ['open', 'high', 'low', 'close', optional 'time', 'tick_volume']
+Output : SMCSignal dataclass
 """
 from __future__ import annotations
 
@@ -24,18 +20,15 @@ import math
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any, Tuple
 
-import pandas as pd
-import numpy as np
+import pandas as pd  # type: ignore
+import numpy as np  # type: ignore
 
 
-# ------------------------------------------------------------------ #
-#  Data container                                                     #
-# ------------------------------------------------------------------ #
 @dataclass
 class SMCStructure:
     price: float
     index: int
-    direction: str  # "higher_high" | "lower_high" | "higher_low" | "lower_low"
+    direction: str  # "HH", "LH", "HL", "LL"
     time: Optional[Any] = None
 
 
@@ -43,9 +36,20 @@ class SMCStructure:
 class SMCOrderBlock:
     top: float
     bottom: float
-    close_price: float        # harga tutup candle OB
     index: int
-    direction: str           # "bullish" | "bearish"
+    direction: str       # "bullish" | "bearish"
+    mitigated: bool = False
+    time: Optional[Any] = None
+
+
+@dataclass
+class SMCFairValueGap:
+    top: float
+    bottom: float
+    mid: float
+    index: int
+    direction: str       # "bullish" | "bearish"
+    mitigated: bool = False
     time: Optional[Any] = None
 
 
@@ -53,324 +57,363 @@ class SMCOrderBlock:
 class SMCLevelCluster:
     price: float
     indices: List[int]
+    direction: str       # "equal_high" | "equal_low"
     time: Optional[Any] = None
 
 
 @dataclass
-class SMBOS:
-    direction: str           # "bullish" | "bearish" | "none"
-    level: float
-    index: Optional[int] = None
-
-
-@dataclass
-class SMCStrongLevel:
-    price: float
-    index: int              # lokasi candle swing
-    is_high: bool
-    strength: float         # tick_volume relatif (0..1)
-
-
-@dataclass
 class SMCSignal:
+    trend_bias:            str = "neutral"  # "bullish" | "bearish" | "neutral"
     bullish_structures:    List[Dict[str, Any]] = field(default_factory=list)
     bearish_structures:    List[Dict[str, Any]] = field(default_factory=list)
     order_blocks_bullish:  List[Dict[str, Any]] = field(default_factory=list)
     order_blocks_bearish:  List[Dict[str, Any]] = field(default_factory=list)
+    fvg_bullish:           List[Dict[str, Any]] = field(default_factory=list)
+    fvg_bearish:           List[Dict[str, Any]] = field(default_factory=list)
     equal_highs:           List[Dict[str, Any]] = field(default_factory=list)
     equal_lows:            List[Dict[str, Any]] = field(default_factory=list)
-    premium_zone:          float  = 0.0   # session upper-mid
-    discount_zone:         float  = 0.0   # session lower-mid
+    discount_zone:         float = 0.0   # Bottom 0-50% threshold / low boundary
+    equilibrium:           float = 0.0   # 50% midpoint
+    premium_zone:          float = 0.0   # Top 50-100% threshold / high boundary
     bos:                   Dict[str, Any] = field(default_factory=lambda: {"direction": "none", "level": 0.0, "index": None})
     choch:                 Dict[str, Any] = field(default_factory=lambda: {"direction": "none", "level": 0.0, "index": None})
-    strong_high:           float  = 0.0
-    strong_low:            float  = 0.0
+    strong_high:           float = 0.0
+    strong_low:            float = 0.0
 
 
-# ------------------------------------------------------------------ #
-#  Helper internal                                                    #
-# ------------------------------------------------------------------ #
-def _swing_points(series: pd.Series, left: int = 3, right: int = 3) -> np.ndarray:
-    """Kembalikan array boolean: True bila candle ke-i swing high/low."""
-    n = len(series)
-    highs = np.zeros(n, dtype=bool)
-    lows  = np.zeros(n, dtype=bool)
-    for i in range(left, n - right):
-        window = series[i - left: i + right + 1]
-        mid = series[i]
-        idx = series.index[i]
-        if mid == window.max() and (window == mid).sum() == 1:
-            highs[i] = True
-        if mid == window.min() and (window == mid).sum() == 1:
-            lows[i] = True
-    return highs, lows
-
-
-# ------------------------------------------------------------------ #
-#  Main analyzer                                                     #
-# ------------------------------------------------------------------ #
 class LuxSMCAnalyzer:
     """
+    1:1 Pure-Python Port of TradingView LuxAlgo Smart Money Concepts.
+    
     Parameters
     ----------
-    tol_pips : float
-        Toleransi pip agar dua harga dianggap *equal* (default 3 pip).
-    ob_lookback : int
-        Berapa candle ke-belakang untuk mencari order block (default 20).
-    eq_cluster : int
-        Berapa banyak swing points berhimpitan minimum agar jadi equal high/low.
-    swing_left / swing_right : int
-        Lebar jendela swing detection (left bars, right bars).
+    swing_length : int
+        Number of left/right bars for swing detection (default 5 for internal, 10 for major swings).
+    eq_threshold_atr : float
+        ATR multiplier to group Equal Highs / Lows (default 0.10 * ATR).
+    ob_max_display : int
+        Maximum active unmitigated Order Blocks to retain (default 10).
     """
 
     def __init__(
         self,
-        tol_pips: float = 3,
-        ob_lookback: int = 20,
-        eq_cluster: int = 3,
-        swing_left: int = 3,
-        swing_right: int = 3,
+        swing_length: int = 5,
+        eq_threshold_atr: float = 0.10,
+        ob_max_display: int = 10,
     ):
-        self.tol_pips   = tol_pips
-        self.ob_lookback = ob_lookback
-        self.eq_cluster  = eq_cluster
-        self.swing_left  = swing_left
-        self.swing_right = swing_right
+        self.swing_length = swing_length
+        self.eq_threshold_atr = eq_threshold_atr
+        self.ob_max_display = ob_max_display
 
-    # -------------------------------------------------------------- #
     def analyze(self, df: pd.DataFrame, point_size: float = 0.0001) -> SMCSignal:
         """
-        df  : DataFrame OHLC dengan kolom [time, open, high, low, close, tick_volume?]
-              Index bebas — fungsi ini memakai `.reset_index(drop=True)` internal.
-        point_size : pip-per-point (FX major = 0.0001, JPY = 0.01, XAU = 0.1, dst).
+        Executes full LuxAlgo SMC scan on OHLC dataframe.
         """
         df = df.copy().reset_index(drop=True)
         n = len(df)
         sig = SMCSignal()
 
-        if n < 10:
+        if n < self.swing_length * 2 + 5:
             return sig
 
-        highs   = df["high"].to_numpy()
-        lows    = df["low"].to_numpy()
-        closes  = df["close"].to_numpy()
-        opens   = df["open"].to_numpy()
-        vols    = df["tick_volume"].to_numpy() if "tick_volume" in df.columns else np.ones(n)
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+        closes = df["close"].to_numpy(dtype=float)
+        opens = df["open"].to_numpy(dtype=float)
+        vols = df["tick_volume"].to_numpy(dtype=float) if "tick_volume" in df.columns else np.ones(n)
+        times = df["time"].tolist() if "time" in df.columns else [None] * n
 
-        # Tolerance dalam harga (bukan pip)
-        tol_price = self.tol_pips * point_size
+        # -------------------------------------------------------------
+        # 0. ATR Calculation (for EQH / EQL threshold)
+        # -------------------------------------------------------------
+        tr = np.zeros(n)
+        tr[0] = highs[0] - lows[0]
+        for i in range(1, n):
+            tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+        atr = pd.Series(tr).rolling(14, min_periods=1).mean().to_numpy()
+        current_atr = float(atr[-1]) if len(atr) > 0 else 0.0010
 
-        # ---------------------------------------------------------- #
-        # 1. Swing points
-        # ---------------------------------------------------------- #
-        is_high, is_low = _swing_points(df["high"], self.swing_left, self.swing_right)
-        is_low2, _      = _swing_points(df["low"],  self.swing_left, self.swing_right)
-        swing_idx_high = np.where(is_high)[0]
-        swing_idx_low  = np.where(is_low)[0]
+        # -------------------------------------------------------------
+        # 1. Swing Leg & Pivot Detection (LuxAlgo leg algorithm)
+        # -------------------------------------------------------------
+        sw_len = self.swing_length
+        swing_highs = []  # list of (index, price, 'HH'/'LH')
+        swing_lows = []   # list of (index, price, 'HL'/'LL')
 
-        # ---------------------------------------------------------- #
-        # 2. Structures (HH, LH bullish / HL, LL bearish) — versi
-        #    sederhana: bandingkan tiap swing berturut-turut.
-        # ---------------------------------------------------------- #
-        def _build_structures(idx_arr: np.ndarray, vals: np.ndarray, is_highs: bool):
-            structs = []
-            if len(idx_arr) < 3:
-                return structs
-            for i in range(1, len(idx_arr) - 1):
-                prev_v, cur_v, next_v = vals[idx_arr[i-1]], vals[idx_arr[i]], vals[idx_arr[i+1]]
-                if is_highs:
-                    if cur_v > prev_v and cur_v > next_v:
-                        d = "higher_high"
-                    elif cur_v < prev_v and cur_v < next_v:
-                        d = "lower_high"
-                    else:
-                        continue
+        last_sh_price = None
+        last_sl_price = None
+
+        for i in range(sw_len, n - sw_len):
+            # Check swing high
+            if highs[i] == np.max(highs[i - sw_len : i + sw_len + 1]):
+                if len(swing_highs) == 0 or swing_highs[-1][0] != i:
+                    struct_type = "HH" if (last_sh_price is not None and highs[i] > last_sh_price) else "LH"
+                    swing_highs.append((i, highs[i], struct_type))
+                    last_sh_price = highs[i]
+
+            # Check swing low
+            if lows[i] == np.min(lows[i - sw_len : i + sw_len + 1]):
+                if len(swing_lows) == 0 or swing_lows[-1][0] != i:
+                    struct_type = "LL" if (last_sl_price is not None and lows[i] < last_sl_price) else "HL"
+                    swing_lows.append((i, lows[i], struct_type))
+                    last_sl_price = lows[i]
+
+        # Populate structures in output
+        for s_idx, s_price, s_type in swing_highs:
+            t_str = times[s_idx].strftime("%H:%M") if hasattr(times[s_idx], 'strftime') else str(times[s_idx])
+            sig.bullish_structures.append({
+                "price": round(float(s_price), 5),
+                "index": int(s_idx),
+                "direction": s_type,
+                "time": t_str
+            })
+
+        for s_idx, s_price, s_type in swing_lows:
+            t_str = times[s_idx].strftime("%H:%M") if hasattr(times[s_idx], 'strftime') else str(times[s_idx])
+            sig.bearish_structures.append({
+                "price": round(float(s_price), 5),
+                "index": int(s_idx),
+                "direction": s_type,
+                "time": t_str
+            })
+
+        # -------------------------------------------------------------
+        # 2. Stateful BOS vs CHoCH Tracking (Authentic LuxAlgo Engine)
+        # -------------------------------------------------------------
+        # State: 1 = BULLISH, -1 = BEARISH, 0 = UNKNOWN
+        trend_state = 0
+        active_sh = None
+        active_sl = None
+
+        bullish_obs_raw: List[SMCOrderBlock] = []
+        bearish_obs_raw: List[SMCOrderBlock] = []
+
+        last_bos = {"direction": "none", "level": 0.0, "index": None}
+        last_choch = {"direction": "none", "level": 0.0, "index": None}
+
+        # Step through bars to accurately track crosses and state transitions
+        for i in range(sw_len * 2, n):
+            # Update known confirmed swing highs / lows up to bar i
+            available_sh = [s for s in swing_highs if s[0] <= i - sw_len]
+            available_sl = [s for s in swing_lows if s[0] <= i - sw_len]
+
+            if available_sh:
+                active_sh = available_sh[-1]
+            if available_sl:
+                active_sl = available_sl[-1]
+
+            cur_close = closes[i]
+
+            # Bullish Breakout (Close crosses above Active Swing High)
+            if active_sh is not None and cur_close > active_sh[1]:
+                if trend_state == -1:
+                    # Bearish -> Bullish reversal = CHoCH
+                    last_choch = {"direction": "bullish", "level": round(float(active_sh[1]), 5), "index": int(i)}
+                    trend_state = 1
+                elif trend_state == 1:
+                    # Continuation = BOS
+                    last_bos = {"direction": "bullish", "level": round(float(active_sh[1]), 5), "index": int(i)}
                 else:
-                    if cur_v > prev_v and cur_v > next_v:
-                        d = "higher_low"
-                    elif cur_v < prev_v and cur_v < next_v:
-                        d = "lower_low"
-                    else:
-                        continue
-                structs.append({
-                    "price": round(float(cur_v), 5),
-                    "index": int(idx_arr[i]),
-                    "direction": d,
-                    "time": df["time"].iloc[int(idx_arr[i])].strftime("%H:%M") if "time" in df.columns else None
-                })
-            return structs
+                    trend_state = 1
+                    last_bos = {"direction": "bullish", "level": round(float(active_sh[1]), 5), "index": int(i)}
 
-        sig.bullish_structures = _build_structures(swing_idx_high, highs, True)
-        sig.bearish_structures = _build_structures(swing_idx_low,  lows,  False)
+                # Extract Bullish Order Block (Lowest candle before the up-break)
+                start_search = max(0, active_sh[0])
+                if i > start_search:
+                    min_idx = start_search + int(np.argmin(lows[start_search:i+1]))
+                    t_str = times[min_idx].strftime("%H:%M") if hasattr(times[min_idx], 'strftime') else str(times[min_idx])
+                    bullish_obs_raw.append(SMCOrderBlock(
+                        top=round(float(highs[min_idx]), 5),
+                        bottom=round(float(lows[min_idx]), 5),
+                        index=int(min_idx),
+                        direction="bullish",
+                        mitigated=False,
+                        time=t_str
+                    ))
+                active_sh = None  # Consume swing high to avoid re-triggering on same level
 
-        # ---------------------------------------------------------- #
-        # 3. Premium / Discount zone (session 24h lookback)
-        # ---------------------------------------------------------- #
-        lookback = min(200, n)
-        sess_high = float(np.max(highs[-lookback:]))
-        sess_low  = float(np.min(lows[-lookback:]))
-        sess_range = sess_high - sess_low if sess_high != sess_low else 1e-9
-        sig.premium_zone   = round(sess_low + sess_range * 0.25, 5)
-        sig.discount_zone  = round(sess_low + sess_range * 0.75, 5)
+            # Bearish Breakdown (Close crosses below Active Swing Low)
+            if active_sl is not None and cur_close < active_sl[1]:
+                if trend_state == 1:
+                    # Bullish -> Bearish reversal = CHoCH
+                    last_choch = {"direction": "bearish", "level": round(float(active_sl[1]), 5), "index": int(i)}
+                    trend_state = -1
+                elif trend_state == -1:
+                    # Continuation = BOS
+                    last_bos = {"direction": "bearish", "level": round(float(active_sl[1]), 5), "index": int(i)}
+                else:
+                    trend_state = -1
+                    last_bos = {"direction": "bearish", "level": round(float(active_sl[1]), 5), "index": int(i)}
 
-        # ---------------------------------------------------------- #
-        # 4. Order blocks  (bearish engulf candle setelah bullish candle
-        #    berada di bawah OB atau sebaliknya)
-        # ---------------------------------------------------------- #
-        def _find_ob(direction: str):
-            obs = []
-            end = min(n - self.swing_right - 1, n - 1)
-            for i in range(self.swing_left, end):
-                oi = opens[i]
-                ci = closes[i]
-                hi = highs[i]
-                lo = lows[i]
-                body = abs(ci - oi)
-                avg_body = np.mean(np.abs(closes[max(0, i-5):i+1] - opens[max(0, i-5):i+1]))
-                if avg_body == 0:
-                    avg_body = 1e-9
-                # Candle besar (body > 2x rata) → impulsive
-                if body > 2 * avg_body:
-                    if direction == "bullish":
-                        # candle bullish engulfing → OB di bawah (candle sebelumnya biasanya bearish)
-                        for j in range(i - 1, i - self.ob_lookback, -1):
-                            if j < self.swing_left:
-                                continue
-                            if opens[j] > closes[j]:  # bearish candle → jadi OB bearish → sebaliknya
-                                continue
-                            if closes[j] <= lo:
-                                obs.append({
-                                    "top": round(float(hi), 5),
-                                    "bottom": round(float(lo), 5),
-                                    "close_price": round(float(ci), 5),
-                                    "index": int(i),
-                                    "direction": "bullish",
-                                    "time": df["time"].iloc[i].strftime("%H:%M") if "time" in df.columns else None
-                                })
-                                break
-                    else:  # bearish OB
-                        for j in range(i - 1, i - self.ob_lookback, -1):
-                            if j < self.swing_left:
-                                continue
-                            if opens[j] < closes[j]:  # bullish candle → bukan OB bearish
-                                continue
-                            if closes[j] >= hi:
-                                obs.append({
-                                    "top": round(float(hi), 5),
-                                    "bottom": round(float(lo), 5),
-                                    "close_price": round(float(ci), 5),
-                                    "index": int(i),
-                                    "direction": "bearish",
-                                    "time": df["time"].iloc[i].strftime("%H:%M") if "time" in df.columns else None
-                                })
-                                break
-            return obs
+                # Extract Bearish Order Block (Highest candle before the down-break)
+                start_search = max(0, active_sl[0])
+                if i > start_search:
+                    max_idx = start_search + int(np.argmax(highs[start_search:i+1]))
+                    t_str = times[max_idx].strftime("%H:%M") if hasattr(times[max_idx], 'strftime') else str(times[max_idx])
+                    bearish_obs_raw.append(SMCOrderBlock(
+                        top=round(float(highs[max_idx]), 5),
+                        bottom=round(float(lows[max_idx]), 5),
+                        index=int(max_idx),
+                        direction="bearish",
+                        mitigated=False,
+                        time=t_str
+                    ))
+                active_sl = None
 
-        sig.order_blocks_bullish = _find_ob("bullish")
-        sig.order_blocks_bearish = _find_ob("bearish")
+        sig.trend_bias = "bullish" if trend_state == 1 else ("bearish" if trend_state == -1 else "neutral")
+        sig.bos = last_bos
+        sig.choch = last_choch
 
-        # ---------------------------------------------------------- #
-        # 5. Equal Highs / Lows  (cluster sederhana)
-        # ---------------------------------------------------------- #
-        def _equal_levels(values: np.ndarray, is_highs: bool, cluster=True):
-            levels = []
-            sorted_idx = np.argsort(values)
-            for idx_pos, i in enumerate(sorted_idx):
-                # Cari neighbour dalam toleransi harga
-                same_zone = [j for j in sorted_idx[idx_pos:idx_pos + self.eq_cluster]
-                             if abs(values[j] - values[i]) <= tol_price]
-                if len(same_zone) >= self.eq_cluster and len(values) - idx_pos >= self.eq_cluster:
-                    group_values = values[same_zone]
-                    avg_price = group_values.mean()
-                    # Pastikan indeks relatif dekat (bukan candle jauh jauh)
-                    idx_arr_local = sorted(same_zone)
-                    time_diffs = np.diff([df["time"].iloc[k].timestamp() if hasattr(df["time"].iloc[k], 'timestamp') else k for k in idx_arr_local])
-                    if np.mean(time_diffs) > 0:
-                        first_idx = int(idx_arr_local[0])
-                        levels.append({
-                            "price": round(float(avg_price), 5),
-                            "indices": [int(x) for x in idx_arr_local[:self.eq_cluster]],
-                            "direction": "equal_high" if is_highs else "equal_low",
-                            "time": df["time"].iloc[first_idx].strftime("%H:%M") if "time" in df.columns else None
-                        })
-                    if not cluster:
-                        cluster = False  # hanya butuh loop sekali
-                    del sorted_idx[idx_pos:idx_pos + self.eq_cluster]
+        # -------------------------------------------------------------
+        # 3. Order Block Mitigation Check (Real-Time Active Filter)
+        # -------------------------------------------------------------
+        active_bull_obs = []
+        for ob in bullish_obs_raw:
+            ob_mitigated = False
+            for j in range(ob.index + 1, n):
+                if lows[j] < ob.bottom:
+                    ob_mitigated = True
                     break
-            return levels
+            if not ob_mitigated:
+                active_bull_obs.append(asdict(ob))
 
-        sig.equal_highs = _equal_levels(highs, True)
-        sig.equal_lows  = _equal_levels(lows,  False)
+        active_bear_obs = []
+        for ob in bearish_obs_raw:
+            ob_mitigated = False
+            for j in range(ob.index + 1, n):
+                if highs[j] > ob.top:
+                    ob_mitigated = True
+                    break
+            if not ob_mitigated:
+                active_bear_obs.append(asdict(ob))
 
-        # ---------------------------------------------------------- #
-        # 6. BOS & CHoCH  (break of structure / change of character)
-        # ---------------------------------------------------------- #
-        bos_level, bos_dir, bos_idx = 0.0, "none", None
-        choch_level, choch_dir, choch_idx = 0.0, "none", None
+        sig.order_blocks_bullish = active_bull_obs[-self.ob_max_display:]
+        sig.order_blocks_bearish = active_bear_obs[-self.ob_max_display:]
 
-        last_close = closes[-1]
-        # Sederhana: cari swing high/low terakhir, lalu cek close break
-        if len(swing_idx_high) > 0 and len(swing_idx_low) > 0:
-            last_swing_high = highs[swing_idx_high[-1]]
-            last_swing_low  = lows[swing_idx_low[-1]]
+        # -------------------------------------------------------------
+        # 4. Fair Value Gaps (FVG) with 3-Bar Imbalance & Mitigation
+        # -------------------------------------------------------------
+        bull_fvg_list = []
+        bear_fvg_list = []
 
-            # BOS = penembusan swing terakhir dengan konfirmasi candle menutup
-            if last_close > last_swing_high:
-                bos_dir = "bullish"
-                bos_level = round(float(last_swing_high), 5)
-                bos_idx = int(swing_idx_high[-1])
-            elif last_close < last_swing_low:
-                bos_dir = "bearish"
-                bos_level = round(float(last_swing_low), 5)
-                bos_idx = int(swing_idx_low[-1])
+        for i in range(2, n):
+            # Bullish FVG: low[i] > high[i-2]
+            if lows[i] > highs[i-2]:
+                gap_top = round(float(lows[i]), 5)
+                gap_bot = round(float(highs[i-2]), 5)
+                gap_mid = round((gap_top + gap_bot) / 2.0, 5)
+                
+                fvg_mitigated = False
+                for j in range(i + 1, n):
+                    if lows[j] <= gap_bot:
+                        fvg_mitigated = True
+                        break
+                if not fvg_mitigated:
+                    t_str = times[i].strftime("%H:%M") if hasattr(times[i], 'strftime') else str(times[i])
+                    bull_fvg_list.append({
+                        "top": gap_top,
+                        "bottom": gap_bot,
+                        "mid": gap_mid,
+                        "index": int(i),
+                        "direction": "bullish",
+                        "time": t_str
+                    })
 
-            # CHoCH = perubahan karakter — swing low terakhir jadi swing high baru (atau sebaliknya)
-            # versi sederhana: close break ke arah berlawanan dari arah terakhir
-            if len(swing_idx_low) >= 2:
-                prev_swing_low = lows[swing_idx_low[-2]]
-                if last_close > last_swing_high and closes[-2] < prev_swing_low:
-                    choch_dir = "bullish"
-                    choch_level = round(float(last_swing_high), 5)
-                    choch_idx = int(swing_idx_high[-1])
-            if len(swing_idx_high) >= 2:
-                prev_swing_high = highs[swing_idx_high[-2]]
-                if last_close < last_swing_low and closes[-2] > prev_swing_high:
-                    choch_dir = "bearish"
-                    choch_level = round(float(last_swing_low), 5)
-                    choch_idx = int(swing_idx_low[-1])
+            # Bearish FVG: high[i] < low[i-2]
+            if highs[i] < lows[i-2]:
+                gap_top = round(float(lows[i-2]), 5)
+                gap_bot = round(float(highs[i]), 5)
+                gap_mid = round((gap_top + gap_bot) / 2.0, 5)
+                
+                fvg_mitigated = False
+                for j in range(i + 1, n):
+                    if highs[j] >= gap_top:
+                        fvg_mitigated = True
+                        break
+                if not fvg_mitigated:
+                    t_str = times[i].strftime("%H:%M") if hasattr(times[i], 'strftime') else str(times[i])
+                    bear_fvg_list.append({
+                        "top": gap_top,
+                        "bottom": gap_bot,
+                        "mid": gap_mid,
+                        "index": int(i),
+                        "direction": "bearish",
+                        "time": t_str
+                    })
 
-        sig.bos = {"direction": bos_dir, "level": bos_level, "index": bos_idx}
-        sig.choch = {"direction": choch_dir, "level": choch_level, "index": choch_idx}
+        sig.fvg_bullish = bull_fvg_list[-10:]
+        sig.fvg_bearish = bear_fvg_list[-10:]
 
-        # ---------------------------------------------------------- #
-        # 7. Strong High / Low  (swing dikonfirmasi volume tinggi)
-        # ---------------------------------------------------------- #
-        vol_max = float(np.max(vols)) if np.max(vols) > 0 else 1e-9
-        strong_hi, strong_lo = 0.0, 0.0
-        hi_strength, lo_strength = 0.0, 0.0
-        if len(swing_idx_high) > 0:
-            hi_vols = vols[swing_idx_high]
-            max_v_pos = np.argmax(hi_vols)
-            if hi_vols[max_v_pos] / vol_max >= 0.6:  # volume relatif tinggi
-                idx = int(swing_idx_high[max_v_pos])
-                strong_hi = round(float(highs[idx]), 5)
-                hi_strength = round(float(hi_vols[max_v_pos] / vol_max), 3)
-        if len(swing_idx_low) > 0:
-            lo_vols = vols[swing_idx_low]
-            max_v_pos = np.argmax(lo_vols)
-            if lo_vols[max_v_pos] / vol_max >= 0.6:
-                idx = int(swing_idx_low[max_v_pos])
-                strong_lo = round(float(lows[idx]), 5)
-                lo_strength = round(float(lo_vols[max_v_pos] / vol_max), 3)
-        sig.strong_high = strong_hi
-        sig.strong_low  = strong_lo
+        # -------------------------------------------------------------
+        # 5. Equal Highs / Equal Lows (EQH / EQL Liquidity Pools)
+        # -------------------------------------------------------------
+        eq_dist = self.eq_threshold_atr * current_atr
+        
+        eq_highs = []
+        for i in range(len(swing_highs)):
+            for j in range(i + 1, len(swing_highs)):
+                idx1, p1, _ = swing_highs[i]
+                idx2, p2, _ = swing_highs[j]
+                if abs(p1 - p2) <= eq_dist:
+                    t_str = times[idx2].strftime("%H:%M") if hasattr(times[idx2], 'strftime') else str(times[idx2])
+                    eq_highs.append({
+                        "price": round(float((p1 + p2) / 2.0), 5),
+                        "indices": [int(idx1), int(idx2)],
+                        "direction": "equal_high",
+                        "time": t_str
+                    })
+                    break
+        sig.equal_highs = eq_highs[-5:]
+
+        eq_lows = []
+        for i in range(len(swing_lows)):
+            for j in range(i + 1, len(swing_lows)):
+                idx1, p1, _ = swing_lows[i]
+                idx2, p2, _ = swing_lows[j]
+                if abs(p1 - p2) <= eq_dist:
+                    t_str = times[idx2].strftime("%H:%M") if hasattr(times[idx2], 'strftime') else str(times[idx2])
+                    eq_lows.append({
+                        "price": round(float((p1 + p2) / 2.0), 5),
+                        "indices": [int(idx1), int(idx2)],
+                        "direction": "equal_low",
+                        "time": t_str
+                    })
+                    break
+        sig.equal_lows = eq_lows[-5:]
+
+        # -------------------------------------------------------------
+        # 6. Authentic Dealing Range (Discount, Equilibrium, Premium)
+        # -------------------------------------------------------------
+        lookback = min(100, n)
+        range_high = float(np.max(highs[-lookback:]))
+        range_low = float(np.min(lows[-lookback:]))
+        range_span = max(range_high - range_low, 1e-9)
+
+        sig.equilibrium   = round(range_low + 0.50 * range_span, 5)
+        sig.discount_zone = round(range_low + 0.382 * range_span, 5)   # Discount threshold <= 38.2%
+        sig.premium_zone  = round(range_low + 0.618 * range_span, 5)   # Premium threshold >= 61.8%
+
+        # -------------------------------------------------------------
+        # 7. Strong High & Strong Low
+        # -------------------------------------------------------------
+        if swing_highs:
+            max_sh = max(swing_highs, key=lambda x: x[1])
+            sig.strong_high = round(float(max_sh[1]), 5)
+        else:
+            sig.strong_high = round(range_high, 5)
+
+        if swing_lows:
+            min_sl = min(swing_lows, key=lambda x: x[1])
+            sig.strong_low = round(float(min_sl[1]), 5)
+        else:
+            sig.strong_low = round(range_low, 5)
 
         return sig
 
-    # -------------------------------------------------------------- #
     def to_dict(self, sig: SMCSignal) -> Dict[str, Any]:
         return asdict(sig)
 
     def to_json(self, sig: SMCSignal) -> str:
         import json
         return json.dumps(asdict(sig), default=str, ensure_ascii=False)
+

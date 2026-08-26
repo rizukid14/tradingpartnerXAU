@@ -171,6 +171,19 @@ def _drop_standalone_outlier(values, label):
 def calculate_consensus(decisions):
     box_items = []
     
+    point = 0.00001
+    ref_price = 0.0
+    try:
+        from config import mt5
+        si = mt5.symbol_info(config.SYMBOL)
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        if si and si.point:
+            point = si.point
+        if tick:
+            ref_price = tick.bid
+    except Exception:
+        pass
+
     # Print details for each model
     for model_name, dec in decisions.items():
         sig = dec.get("signal") or "HOLD"
@@ -179,16 +192,25 @@ def calculate_consensus(decisions):
         if len(reason) > 380:
             reason = reason[:377] + "..."
 
+        exec_block = dec.get("execution") or {}
+        entry_type = (exec_block.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
+        entry_price = exec_block.get("entry_price") or dec.get("entry_price")
+        sl_price = exec_block.get("sl_price") or dec.get("invalidation_price")
+        tp_price = exec_block.get("tp_price") or dec.get("target_price")
+
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
+        if (sl is None or sl <= 0) and sl_price and point > 0 and ref_price > 0:
+            sl = int(round(abs(ref_price - float(sl_price)) / point))
+        if (tp is None or tp <= 0) and tp_price and point > 0 and ref_price > 0:
+            tp = int(round(abs(ref_price - float(tp_price)) / point))
+
         setup_label = dec.get("setup")
         
         badge = UI.badge_signal(sig)
         bar = UI.make_bar(conf, 1.0, width=8)
         
         # Format info eksekusi (Market vs Pending Order)
-        entry_type = (dec.get("entry_type") or "market").strip().lower()
-        entry_price = dec.get("entry_price")
         if sig in ("BUY", "SELL"):
             if entry_type != "market" and entry_price:
                 exec_str = f"{entry_type.upper()} @ {entry_price}"
@@ -198,12 +220,14 @@ def calculate_consensus(decisions):
         else:
             sltp_info = "SL/TP: -"
         
-        box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
+        verdict_str = f" [{dec.get('verdict')}]" if dec.get("verdict") else ""
+        box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar}{verdict_str} | {UI.DIM}{sltp_info}{UI.RST}")
         
-        # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid)
+        # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid, Risk Flag)
         regime_val = dec.get("market_regime") or dec.get("trend")
         state_val = dec.get("state")
         rr_val = dec.get("rr_valid")
+        risk_flag = dec.get("risk_flag")
         ctx_parts = []
         if regime_val:
             ctx_parts.append(f"Regime: {regime_val}")
@@ -211,6 +235,8 @@ def calculate_consensus(decisions):
             ctx_parts.append(f"Setup: {setup_label}")
         if state_val:
             ctx_parts.append(f"State: {state_val}")
+        if risk_flag and risk_flag != "NONE":
+            ctx_parts.append(f"Risk: {risk_flag}")
         if rr_val is not None:
             rr_str = "✓" if rr_val else "✗"
             ctx_parts.append(f"RR: {rr_str}")
@@ -220,17 +246,17 @@ def calculate_consensus(decisions):
             box_items.append((f"  {UI.CYAN}Context{UI.RST} : ", " | ".join(ctx_parts)))
         
         # 2. Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
-        inv_val = dec.get("invalidation_price") or (dec.get("invalidation") or "").strip()
-        tgt_val = dec.get("target_price")
         levels_info = []
-        if inv_val:
-            levels_info.append(f"Inval: {inv_val}")
-        if tgt_val:
-            levels_info.append(f"Target: {tgt_val}")
+        if sl_price:
+            levels_info.append(f"SL Price: {sl_price}")
+        if tp_price:
+            levels_info.append(f"TP Price: {tp_price}")
         if levels_info:
             box_items.append((f"  {UI.RED}Levels{UI.RST} : ", " | ".join(levels_info)))
 
-        # 3. Reason
+        # 3. Reason / Veto Reason
+        if dec.get("veto_reason"):
+            box_items.append((f"  {UI.RED}Veto{UI.RST}   : ", dec.get("veto_reason")))
         box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
 
         
@@ -319,6 +345,23 @@ def calculate_consensus(decisions):
             agreeing_models = direction_models[sig]
             best_score = direction_scores[sig]
 
+    # Qualified Hard Risk Veto Engine (Preserves Capital against Critical Traps)
+    hard_veto_models = []
+    for model_name, dec in decisions.items():
+        rf = dec.get("risk_flag")
+        vd = dec.get("verdict")
+        if vd == "REJECT" and rf in ("COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP", "SPREAD_SPIKE"):
+            hard_veto_models.append((model_name, rf, dec.get("veto_reason") or dec.get("reasoning") or "Critical Risk Detected"))
+
+    if hard_veto_models and consensus_signal in ("BUY", "SELL"):
+        veto_names = ", ".join([v[0] for v in hard_veto_models])
+        veto_reasons = " | ".join([f"{v[0]}: {v[1]} ({v[2]})" for v in hard_veto_models])
+        box_items.append("---")
+        box_items.append(f"{UI.RED}{UI.BOLD}[⛔ HARD RISK VETO AKTIF] Trade {consensus_signal} Dibatalkan oleh {veto_names}!{UI.RST}")
+        box_items.append((f"  {UI.RED}Alasan Veto{UI.RST} : ", veto_reasons))
+        consensus_signal = "HOLD"
+        agreeing_models = []
+
     if consensus_signal == "HOLD":
         box_items.append("---")
         box_items.append(f"{UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")
@@ -350,19 +393,33 @@ def calculate_consensus(decisions):
         dec = decisions[name]
         conf_list.append(dec.get("confidence", 0.5))
         
-        inv_val = dec.get("invalidation_price")
-        if isinstance(inv_val, (int, float)) and inv_val > 0: inv_list.append(inv_val)
-        tgt_val = dec.get("target_price")
-        if isinstance(tgt_val, (int, float)) and tgt_val > 0: tgt_list.append(tgt_val)
+        exec_block = dec.get("execution") or {}
+        inv_val = exec_block.get("sl_price") or dec.get("invalidation_price")
+        if isinstance(inv_val, (int, float)) and inv_val > 0:
+            inv_list.append(inv_val)
+        
+        tgt_val = exec_block.get("tp_price") or dec.get("target_price")
+        if isinstance(tgt_val, (int, float)) and tgt_val > 0:
+            tgt_list.append(tgt_val)
+        
         sl_val = dec.get("sl_points")
-        if isinstance(sl_val, (int, float)) and sl_val > 0: sl_list.append(sl_val)
+        if (sl_val is None or sl_val <= 0) and inv_val and point > 0 and ref_price > 0:
+            sl_val = int(round(abs(ref_price - float(inv_val)) / point))
+        if isinstance(sl_val, (int, float)) and sl_val > 0:
+            sl_list.append(sl_val)
+        
         tp_val = dec.get("tp_points")
-        if isinstance(tp_val, (int, float)) and tp_val > 0: tp_list.append(tp_val)
-        et = (dec.get("entry_type") or "market").strip().lower()
+        if (tp_val is None or tp_val <= 0) and tgt_val and point > 0 and ref_price > 0:
+            tp_val = int(round(abs(ref_price - float(tgt_val)) / point))
+        if isinstance(tp_val, (int, float)) and tp_val > 0:
+            tp_list.append(tp_val)
+        
+        et = (exec_block.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
         if et not in ("market", "buy_stop", "sell_stop", "buy_limit", "sell_limit"):
             et = "market"
         entry_type_votes[et] = entry_type_votes.get(et, 0) + 1
-        ep = dec.get("entry_price")
+        
+        ep = exec_block.get("entry_price") or dec.get("entry_price")
         if isinstance(ep, (int, float)) and ep > 0:
             entry_price_list.append(ep)
 
