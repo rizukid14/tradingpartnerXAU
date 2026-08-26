@@ -20,6 +20,8 @@ import time
 import json
 import re
 import requests
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import config
 from src.core import mt5_connector as connector
 from src.core.risk_engine import RiskEngine
@@ -28,6 +30,7 @@ from src.core import consensus
 from src.analytics import macro_analyst
 
 _risk_engine = RiskEngine()
+WIB = ZoneInfo("Asia/Jakarta")
 
 
 _listener_thread = None
@@ -130,6 +133,61 @@ def handle_radar_command(chat_id):
     except Exception as e:
         print(f"[TG BOT ERROR] handle_radar_command: {e}")
         send_telegram_msg(f"Error fetching radar: `{e}`", chat_id=chat_id)
+
+
+def handle_indicators_command(chat_id, symbol_input=None):
+    """Sends exact price levels for Dealing Range (High, Low, Equilibrium), Discount/Premium Zones, and SMC Order Blocks."""
+    try:
+        from src.analytics.market_scanner import MarketScanner
+        sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
+        clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
+        
+        scanner = MarketScanner()
+        scanner.update_macro_context(connector, force=False)
+        smc = scanner.get_symbol_smc_levels(clean_sym)
+        
+        tick = connector.get_current_tick(sym)
+        cur_price = tick.get("bid", 0.0) if tick else 0.0
+        pt = tick.get("point", 1e-5) if tick else 1e-5
+        dec = 2 if pt >= 0.01 else 5
+        cur_price_str = f"{cur_price:.{dec}f}" if cur_price > 0 else "-"
+        
+        if not smc:
+            send_telegram_msg(f"⚠️ Data level SMC untuk *{sym}* belum termuat. Coba jalankan `/radar` terlebih dahulu.", chat_id=chat_id)
+            return
+
+        lines = [
+            f"🏛️ *SMC & DEALING RANGE LEVELS: {clean_sym} (H1)*",
+            f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | Kompas: `{smc.get('trend_label', '-')}`\n",
+            "📊 *DEALING RANGE 100-BAR (H1)*:",
+            f"• 🔼 *100% Range High*: `{smc['range_high_100']}`",
+            f"• 🔴 *Premium Zone (Sell)*: `{smc['premium_zone_start']}` - `{smc['range_high_100']}`",
+            f"• ⚪ *50% Equilibrium*: `{smc['equilibrium_50']}`",
+            f"• 🟢 *Discount Zone (Buy)*: `{smc['range_low_0']}` - `{smc['discount_zone_end']}`",
+            f"• 🔽 *0% Range Low*: `{smc['range_low_0']}`\n",
+            f"📍 *Harga Live Saat Ini*: `{cur_price_str}` ({smc['pos_pct']}% — *{smc['pos_label']}*)\n",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "🎯 *SMC STRUCTURAL ZONES & KEY LEVELS*:",
+            f"• 🛡️ *Strong High*: `{smc['strong_high']}`",
+            f"• 🛡️ *Strong Low*: `{smc['strong_low']}`",
+            f"• 🌅 *Asian High (08-13)*: `{smc['asian_high']}`",
+            f"• 🌅 *Asian Low (08-13)*: `{smc['asian_low']}`",
+            f"• 🟩 *Bullish Order Block*: `{smc['bullish_ob']}`",
+            f"• 🟥 *Bearish Order Block*: `{smc['bearish_ob']}`",
+            f"• ⚡ *Fair Value Gap (FVG)*: `{smc['fvg']}`"
+        ]
+
+        kb = {
+            "inline_keyboard": [
+                [{"text": f"[ 🤖 3-AI Analisa {clean_sym} ]", "callback_data": f"analyze:{clean_sym}_H1"}],
+                [{"text": "[ 📡 22-Pair SMC Radar ]", "callback_data": "cmd:radar"}, {"text": "[ ☰ Menu ]", "callback_data": "cmd:menu"}]
+            ]
+        }
+
+        send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_indicators_command: {e}")
+        send_telegram_msg(f"Error fetching indicators for `{symbol_input}`: `{e}`", chat_id=chat_id)
 
 
 def _build_main_menu_keyboard():
@@ -599,14 +657,15 @@ def _process_update(update):
 
         if cmd in ("/start", "/menu", "/help"):
             handle_menu_command(target_chat)
-        elif cmd in ("/radar", "/levels", "/smc"):
+        elif cmd in ("/radar", "/scan", "/scanner"):
             handle_radar_command(target_chat)
+        elif cmd in ("/indicators", "/indikator", "/levels", "/smc"):
+            sym = args[0] if args else config.SYMBOL
+            handle_indicators_command(target_chat, symbol_input=sym)
         elif cmd in ("/status", "/akun"):
             handle_status_command(target_chat)
         elif cmd in ("/posisi", "/positions", "/open"):
             handle_positions_command(target_chat)
-        elif cmd in ("/scan", "/scanner"):
-            handle_radar_command(target_chat)
         elif cmd in ("/analisa", "/analyze", "/signal"):
             if len(args) >= 2:
                 run_ondemand_analysis(args[0], target_chat, timeframe_input=args[1])
@@ -732,7 +791,8 @@ def register_bot_commands():
     commands = [
         {"command": "menu", "description": "Interactive Control Menu & Actions"},
         {"command": "analisa", "description": "3-AI Analysis (e.g. /analisa GBPUSD M15)"},
-        {"command": "radar", "description": "22-Pair SMC Quant Scanner & Key Levels"},
+        {"command": "radar", "description": "22-Pair SMC Quant Scanner & Overview"},
+        {"command": "indicators", "description": "High/Low, Zona Diskon, Premium, & SMC OB/FVG"},
         {"command": "posisi", "description": "View & Manage Open Positions"},
         {"command": "status", "description": "Account & Risk Intelligence Status"},
         {"command": "closeall", "description": "Emergency Close All Positions"}

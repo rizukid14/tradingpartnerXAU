@@ -477,7 +477,39 @@ class MarketScanner:
                 logger.debug(f"Radar check error on {sym}: {e}")
 
         self.last_candidates = candidates
-        return candidates
+    def get_symbol_smc_levels(self, symbol: str) -> Dict[str, Any]:
+        """Calculates and returns exact price boundaries for Dealing Range, Discount, Equilibrium, Premium, OB, and FVG."""
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
+        for k, v in self.macro_cache.items():
+            if k.startswith(clean_sym):
+                h = v['dealing_range_high']
+                l = v['dealing_range_low']
+                rng = max(h - l, 1e-5)
+                eq = l + 0.500 * rng
+                disc_382 = l + 0.382 * rng
+                prem_618 = l + 0.618 * rng
+                pt = self._get_point(k)
+                dec = 2 if pt >= 0.01 else 5
+                
+                return {
+                    "symbol": k,
+                    "range_high_100": round(h, dec),
+                    "premium_zone_start": round(prem_618, dec),
+                    "equilibrium_50": round(eq, dec),
+                    "discount_zone_end": round(disc_382, dec),
+                    "range_low_0": round(l, dec),
+                    "pos_pct": round(v['dealing_range_pos'] * 100, 1),
+                    "pos_label": "DEEP DISCOUNT" if v['dealing_range_pos'] <= 0.38 else ("EXTREME PREMIUM" if v['dealing_range_pos'] >= 0.62 else "EQUILIBRIUM"),
+                    "asian_high": round(v.get('asian_high', h), dec),
+                    "asian_low": round(v.get('asian_low', l), dec),
+                    "strong_high": round(v.get('strong_high', 0.0), dec),
+                    "strong_low": round(v.get('strong_low', 0.0), dec),
+                    "bullish_ob": v.get('bullish_ob_zone', "-"),
+                    "bearish_ob": v.get('bearish_ob_zone', "-"),
+                    "fvg": v.get('fvg_zone', "-"),
+                    "trend_label": v.get('trend_label', "-")
+                }
+        return {}
 
     def get_market_structure_report(self) -> str:
         """Generates institutional market structure text table for Telegram / CLI."""
@@ -503,21 +535,30 @@ class MarketScanner:
             elif m['is_bear']: bear_pairs.append(clean)
             else: range_pairs.append(clean)
 
+            h = m['dealing_range_high']
+            l = m['dealing_range_low']
+            rng = max(h - l, 1e-5)
+            disc_top = l + 0.382 * rng
+            prem_bot = l + 0.618 * rng
+
             if m['dealing_range_pos'] <= 0.38:
-                discount_pairs.append(f"{clean} ({m['dealing_range_pos']*100:.0f}%)")
+                discount_pairs.append(f"• *{clean}*: `{disc_top:.5f}` (Pos: {m['dealing_range_pos']*100:.0f}% Diskon)")
             elif m['dealing_range_pos'] >= 0.62:
-                premium_pairs.append(f"{clean} ({m['dealing_range_pos']*100:.0f}%)")
+                premium_pairs.append(f"• *{clean}*: `{prem_bot:.5f}` (Pos: {m['dealing_range_pos']*100:.0f}% Premium)")
 
         lines.append(f"🟢 *Bullish Compass:* {', '.join(bull_pairs[:6]) if bull_pairs else '-'}")
         lines.append(f"🔴 *Bearish Compass:* {', '.join(bear_pairs[:6]) if bear_pairs else '-'}")
         lines.append(f"⚪ *Sideways Range:* {', '.join(range_pairs[:6]) if range_pairs else '-'}")
         lines.append("━" * 36)
-        lines.append(f"🎯 *Zona Diskon (Buy Radar):* {', '.join(discount_pairs[:5]) if discount_pairs else 'Nihil'}")
-        lines.append(f"🎯 *Zona Premium (Sell Radar):* {', '.join(premium_pairs[:5]) if premium_pairs else 'Nihil'}")
+        lines.append("🎯 *ZONA DISKON (Buy Radar <= 38.2%):*")
+        lines.extend(discount_pairs[:4] if discount_pairs else ["• Nihil (Tidak ada pair di zona diskon)"])
+        lines.append("━" * 36)
+        lines.append("🎯 *ZONA PREMIUM (Sell Radar >= 61.8%):*")
+        lines.extend(premium_pairs[:4] if premium_pairs else ["• Nihil (Tidak ada pair di zona premium)"])
         
         if self.last_candidates:
             lines.append("━" * 36)
-            lines.append(f"⚡ *KANDIDAT AKTIF ({len(self.last_candidates)}):*")
+            lines.append(f"⚡ *KANDIDAT RADAR AKTIF ({len(self.last_candidates)}):*")
             for c in self.last_candidates[:3]:
                 d_str = "BUY" if c.direction == 1 else "SELL"
                 lines.append(f"• *{c.symbol}* [{d_str}] -> {c.setup_type} @ {c.trigger_price} (SL: {c.suggested_sl}, TP: {c.suggested_tp})")
