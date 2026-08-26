@@ -967,84 +967,7 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
-def run_scanner_trading_cycle(candidate, risk_obj):
-    """
-    Stage 2 Event Handler: Processes an A+ candidate detected by the Fast Radar Scanner.
-    Executes 3-LLM Consensus Jury with High-Density Dossier Prompt.
-    """
-    _reset_status_lines()
-    sys.stdout.write(UI.clear_line())
-    sys.stdout.flush()
 
-    sym = candidate.symbol
-    print("\n" + render_candidate_alert_box(candidate))
-    
-    # 1. Check Risk limits
-    can_trade, reason = risk_obj.can_trade(sym)
-    if not can_trade:
-        print(f" {UI.RED}[RISK REJECTED]{UI.RST} {sym}: {reason}")
-        return
-        
-    # Check max open positions (6)
-    open_pos = connector.get_all_open_positions()
-    if len(open_pos) >= config.MAX_OPEN_POSITIONS:
-        print(f" {UI.RED}[RISK REJECTED]{UI.RST} Max open positions ({config.MAX_OPEN_POSITIONS}) reached.")
-        return
-        
-    # 2. Call 3-LLM Consensus Jury with High-Density Dossier
-    decisions = llm.get_multi_llm_decisions_for_candidate(candidate)
-    
-    # 3. Consensus Engine
-    consensus_res = consensus.evaluate_consensus(decisions)
-    action = consensus_res.get("action", "HOLD")
-    conf = consensus_res.get("confidence", 0.0)
-    
-    print(f" {UI.tag('CONSENSUS', UI.PURPLE)} {sym} Verdict: {UI.badge_signal(action)} (Confidence: {conf:.2f})")
-    
-    if action in ("BUY", "SELL"):
-        # Calculate SL distance in points
-        si = config.mt5.symbol_info(sym)
-        pt = si.point if si and si.point else 1e-5
-        sl_distance_pts = int(round(abs(candidate.trigger_price - candidate.suggested_sl) / pt))
-        if sl_distance_pts <= 0:
-            sl_distance_pts = 200
-            
-        lot = risk_obj.calculate_lot_size(sym, sl_distance_pts)
-        sl_price = candidate.suggested_sl
-        tp_price = candidate.suggested_tp
-        
-        print(f" {UI.GREEN}[EXECUTING ORDER]{UI.RST} {action} {sym} | Lot: {lot} | SL: {sl_price} | TP: {tp_price}")
-        
-        res = connector.open_position(
-            symbol=sym,
-            order_type=action,
-            lot=lot,
-            sl=sl_price,
-            tp=tp_price,
-            deviation=config.deviation_for(sym),
-            magic=config.MAGIC_NUMBER,
-            comment=f"Quant-{candidate.setup_type[:6]}"
-        )
-        if res and res.get("status") == "SUCCESS":
-            t_id = res.get("ticket")
-            print(f" {UI.GREEN}✓ Order #{t_id} berhasil dieksekusi!{UI.RST}")
-            tg.alert_trade_opened(
-                signal=action,
-                lot=lot,
-                sl_points=sl_distance_pts,
-                tp_points=int(round(abs(tp_price - candidate.trigger_price) / pt)),
-                symbol=sym,
-                ticket=t_id,
-                entry_price=candidate.trigger_price,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                confidence=conf,
-                setup=candidate.setup_type,
-                reason=consensus_res.get("reasoning", "")
-            )
-        else:
-            err = res.get("comment") if res else "Unknown"
-            print(f" {UI.RED}❌ Gagal eksekusi order MT5: {err}{UI.RST}")
 
 
 def run_trading_cycle():
@@ -1589,6 +1512,52 @@ def _run_cycle_for_current_symbol():
     return True
 
 
+def record_funnel_event(event_type: str, sym: str = "", setup: str = "", details: dict = None):
+    """Tracks Stage 1, Pass 1, Pass 2 Veto, and Execution conversion rates."""
+    metrics_file = os.path.join(config.DATA_DIR, "quant_funnel_metrics.json")
+    try:
+        data = {}
+        if os.path.exists(metrics_file):
+            try:
+                with open(metrics_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        
+        counts = data.setdefault("counts", {
+            "stage1_detected": 0,
+            "pass1_approved": 0,
+            "pass2_vetoed": 0,
+            "executed": 0
+        })
+        
+        if event_type in counts:
+            counts[event_type] += 1
+            
+        logs = data.setdefault("recent_events", [])
+        now_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S WIB")
+        logs.append({
+            "time": now_str,
+            "event": event_type,
+            "symbol": sym,
+            "setup": setup,
+            "details": details or {}
+        })
+        data["recent_events"] = logs[-100:]
+        
+        s1 = counts["stage1_detected"]
+        p1 = counts["pass1_approved"]
+        v2 = counts["pass2_vetoed"]
+        ex = counts["executed"]
+        data["veto_rate_pct"] = round((v2 / p1 * 100) if p1 > 0 else 0.0, 2)
+        data["execution_rate_pct"] = round((ex / s1 * 100) if s1 > 0 else 0.0, 2)
+        
+        with open(metrics_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        pass
+
+
 def run_scanner_trading_cycle(cand, risk):
     """
     Stage 2 Funnel Execution:
@@ -1597,6 +1566,7 @@ def run_scanner_trading_cycle(cand, risk):
     """
     sym = cand.symbol
     print(f"\n {UI.PURPLE}{UI.BOLD}[STAGE 1 TRIGGER] Setup {cand.setup_type} ({'BUY' if cand.direction==1 else 'SELL'}) Terdeteksi pada {sym}!{UI.RST}")
+    record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
     if not risk.can_trade(sym):
@@ -1629,6 +1599,16 @@ def run_scanner_trading_cycle(cand, risk):
         result = consensus.calculate_consensus(decisions)
         
         trade_signal = result.get("signal", "HOLD")
+        
+        # Check if Pass 1 approved vs Pass 2 vetoed
+        if decisions.get("OpenAI", {}).get("signal") in ("BUY", "SELL") or decisions.get("Gemini", {}).get("signal") in ("BUY", "SELL"):
+            record_funnel_event("pass1_approved", sym=sym, setup=cand.setup_type)
+            
+        if trade_signal == "HOLD" and (decisions.get("DeepSeek", {}).get("veto") or "VETO" in (result.get("reason") or "")):
+            record_funnel_event("pass2_vetoed", sym=sym, setup=cand.setup_type, details={"reason": result.get("reason")})
+            print(f" {UI.RED}[PASS 2 VETO] Trade {sym} di-veto oleh DeepSeek Devil's Advocate: {result.get('reason')}{UI.RST}")
+            return False
+
         if trade_signal in ("BUY", "SELL"):
             # Execute trade order on MT5 (pending or market)
             sl_points = result.get("sl_points")
@@ -1643,12 +1623,19 @@ def run_scanner_trading_cycle(cand, risk):
             point = tick_live.get("point", 0.00001)
             ref_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
             
+            # Stale price protection (~4.5s latency guard)
+            price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
+            max_allowed_drift = max(15.0, (cand.current_atr_pts or 50) * 0.20)
+            if entry_type == "market" and price_diff_pts > max_allowed_drift:
+                print(f" {UI.YELLOW}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order.{UI.RST}")
+                return False
+            
             sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False
                 
-            effective_lot = risk.get_effective_lot_size(sl_points, split_count=1)
+            effective_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym)
             
             # If pending order
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and entry_type != "market" and entry_price:
@@ -1669,6 +1656,7 @@ def run_scanner_trading_cycle(cand, risk):
                 if pending_res.get("status") == "SUCCESS":
                     print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Pending {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
                     risk.record_trade_opened()
+                    record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                     tg.alert_pending_order_placed(
                         symbol=sym,
                         entry_type=entry_type,
@@ -1706,6 +1694,7 @@ def run_scanner_trading_cycle(cand, risk):
             if order_res.get("status") == "SUCCESS":
                 print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Market {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
                 risk.record_trade_opened()
+                record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                 tg.alert_trade_opened(
                     trade_signal, effective_lot, sl_points, tp_points,
                     recovery_mode=risk.is_recovery_mode,
