@@ -139,7 +139,7 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
 def alert_pending_order_filled(ticket, symbol, pos_type, price, pos_id=None, sl_price=None, tp_price=None):
     """Send notification when a pending order is filled by broker (AI Proven)."""
     sym = symbol or config.SYMBOL
-    ptype_upper = (pos_type or "").upper()
+    ptype_upper = str(pos_type or "").upper()
     lines = [
         f"🎯 *Pending Order TER-FILL -> Posisi Aktif* (AI Proven)",
         f"• *Symbol*: `{sym}`",
@@ -156,7 +156,7 @@ def alert_pending_order_filled(ticket, symbol, pos_type, price, pos_id=None, sl_
 def alert_pending_order_cancelled(ticket, symbol, pos_type, price, reason="Expired / Sinyal Berlawanan"):
     """Send notification when a pending order is cancelled or expired."""
     sym = symbol or config.SYMBOL
-    ptype_upper = (pos_type or "").upper()
+    ptype_upper = str(pos_type or "").upper()
     lines = [
         f"🗑️ *Pending Order Dibatalkan / Expired*",
         f"• *Symbol*: `{sym}`",
@@ -439,7 +439,7 @@ def alert_bot_started():
             "----------------------------------------\n"
             "🛡️ *Proteksi & Filter Otomatis:*\n"
             "• *Stage 1 Radar*: `60s Sweep on SMC Levels & Dealing Range`\n"
-            "• *SMC Framework*: `London Judas Sweep + Trend Pullback + NY ADR`\n"
+            "• *5 Core Archetypes*: `M1 Judas + M2 Trend Pullback + M3 ADR + M4 SMC + M5 Retest`\n"
             "• *Dealing Range*: `100-bar H1 (Discount <=38% | Premium >=62%)`\n"
             "• *News Shield*: `TradingView News Window Guard Active (±6h)`\n"
             "• *Trailing Stop*: `ON (75% TP | Dist: 0.5x ATR, floor 60 pts)`\n"
@@ -764,7 +764,33 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
         lines.append("📊 *SMC Radar:* `Macro cache stand-by`")
         lines.append("━" * 32)
 
-    # 4. Portfolio & Floating Status
+    # 4. High-Impact News Context (Past 3h & Upcoming 12h)
+    try:
+        from src.analytics import economic_calendar
+        cal_obj = getattr(economic_calendar, "calendar", None)
+        if cal_obj:
+            all_events = cal_obj.get_events(now)
+            recent_news = [e for e in all_events if (now - timedelta(hours=3)) <= e["dt"] < now]
+            upcoming_news = [e for e in all_events if now <= e["dt"] <= (now + timedelta(hours=12))]
+
+            lines.append("📰 *Kalender Berita High-Impact (±12 Jam):*")
+            if recent_news:
+                for ne in recent_news[:3]:
+                    t_rel = ne['dt'].strftime('%H:%M WIB')
+                    flag = ne.get('country', 'US')
+                    lines.append(f"  • `[{t_rel}]` ⚠️ *{flag}*: `{ne['name']}` _(Baru Rilis)_")
+            if upcoming_news:
+                for ne in upcoming_news[:3]:
+                    t_rel = ne['dt'].strftime('%H:%M WIB')
+                    flag = ne.get('country', 'US')
+                    lines.append(f"  • `[{t_rel}]` ⏳ *{flag}*: `{ne['name']}`")
+            if not recent_news and not upcoming_news:
+                lines.append("  • _Tenang (Tidak ada rilis berita High-Impact terdekat)_")
+            lines.append("━" * 32)
+    except Exception:
+        pass
+
+    # 5. Portfolio & Floating Status
     total_float = 0.0
     pos_lines = []
     if open_positions:

@@ -113,6 +113,37 @@ class TestMarketScanner(unittest.TestCase):
         self.assertIn("APPROVE", prompt)
         self.assertIn("REVISE", prompt)
 
+    def test_multi_touch_candidate_payload(self):
+        cand = CandidateSetup(
+            symbol="CADJPY-ECNc",
+            setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+            direction=1,
+            trigger_price=108.50,
+            macro_compass="D1_BULLISH_TREND (ADX 26.5)",
+            dealing_range_pos=0.45,
+            rejection_wick_ratio=0.25,
+            current_spread_pts=12,
+            current_atr_pts=380,
+            key_support=108.40,
+            key_resistance=109.80,
+            suggested_sl=108.15,
+            suggested_tp=109.35,
+            risk_reward_ratio=2.5,
+            metadata={
+                "entry_type": "buy_limit",
+                "entry_price": 108.50,
+                "zone_level": 108.40,
+                "zone_touches": 3,
+                "range_age_hours": 48.0,
+                "wave_regime": "SUPER_COMPRESSION_THRUST"
+            }
+        )
+        prompt = build_high_density_dossier_prompt(cand)
+        self.assertIn("MULTI_TOUCH_BREAKOUT_RETEST", prompt)
+        self.assertIn("Structural Zone Touch Count: 3 touches", prompt)
+        self.assertIn("SUPER_COMPRESSION_THRUST", prompt)
+        self.assertIn("BUY_LIMIT @ 108.5", prompt)
+
 
     def test_session_aware_pair_filtering(self):
         # 1. Tokyo Session (10:00 WIB)

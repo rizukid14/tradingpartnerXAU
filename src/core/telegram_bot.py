@@ -157,7 +157,7 @@ def handle_indicators_command(chat_id, symbol_input=None):
             return
 
         lines = [
-            f"🏛️ *SMC & DEALING RANGE LEVELS: {clean_sym} (H1)*",
+            f"🏛️ *SMC & CLUSTER STRUCTURE: {clean_sym} (H1)*",
             f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | Kompas: `{smc.get('trend_label', '-')}`\n",
             "📊 *DEALING RANGE 100-BAR (H1)*:",
             f"• 🔼 *100% Range High*: `{smc['range_high_100']}`",
@@ -165,16 +165,20 @@ def handle_indicators_command(chat_id, symbol_input=None):
             f"• ⚪ *50% Equilibrium*: `{smc['equilibrium_50']}`",
             f"• 🟢 *Discount Zone (Buy)*: `{smc['range_low_0']}` - `{smc['discount_zone_end']}`",
             f"• 🔽 *0% Range Low*: `{smc['range_low_0']}`\n",
-            f"📍 *Harga Live Saat Ini*: `{cur_price_str}` ({smc['pos_pct']}% — *{smc['pos_label']}*)\n",
+            f"📍 *Harga Live*: `{cur_price_str}` ({smc['pos_pct']}% — *{smc['pos_label']}*)\n",
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            "🎯 *SMC STRUCTURAL ZONES & KEY LEVELS*:",
+            "🧱 *STRUCTURAL CLUSTERS & COMPRESSION*:",
+            f"• 🔴 *Resist Cluster*: `{smc.get('cluster_resistance', '-')}` (Sentuh: *{smc.get('touches_resistance', 0)}x*)",
+            f"• 🟢 *Support Cluster*: `{smc.get('cluster_support', '-')}` (Sentuh: *{smc.get('touches_support', 0)}x*)",
+            f"• 🌊 *Regime*: `{smc.get('wave_regime', 'NORMAL')}` (Umur: `{smc.get('range_age_hours', 24.0)}h`)\n",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "🎯 *LUXALGO SMC & LIQUIDITY LEVELS*:",
             f"• 🛡️ *Strong High*: `{smc['strong_high']}`",
             f"• 🛡️ *Strong Low*: `{smc['strong_low']}`",
-            f"• 🌅 *Asian High (08-13)*: `{smc['asian_high']}`",
-            f"• 🌅 *Asian Low (08-13)*: `{smc['asian_low']}`",
-            f"• 🟩 *Bullish Order Block*: `{smc['bullish_ob']}`",
-            f"• 🟥 *Bearish Order Block*: `{smc['bearish_ob']}`",
-            f"• ⚡ *Fair Value Gap (FVG)*: `{smc['fvg']}`"
+            f"• 🌅 *Asian Range*: `{smc['asian_low']}` - `{smc['asian_high']}`",
+            f"• 🟩 *Bullish OB*: `{smc['bullish_ob']}`",
+            f"• 🟥 *Bearish OB*: `{smc['bearish_ob']}`",
+            f"• ⚡ *FVG*: `{smc['fvg']}`"
         ]
 
         kb = {

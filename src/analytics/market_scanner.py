@@ -12,6 +12,9 @@ import pandas as pd  # type: ignore
 
 import config
 from src.indicators.lux_smc import LuxSMCAnalyzer
+from src.indicators.candle_quality import classify_candle, classify_breakout_sequence
+from src.indicators.sweep_detector import detect as sweep_detect
+from src.indicators.wave_regime import evaluate_wave_regime
 
 logger = logging.getLogger("market_scanner")
 WIB = ZoneInfo("Asia/Jakarta")
@@ -237,6 +240,29 @@ class MarketScanner:
                     liq_str += f"EQL @ {smc_sig.equal_lows[-1]['price']:.5f}"
                 liq_str = liq_str.strip()
 
+                # ── H1 CLUSTER ZONE & MULTI-TOUCH CALCULATION (40 bars) ──
+                lb_bars = min(40, len(df))
+                recent_h = df['high'].iloc[-lb_bars:].tolist()
+                recent_l = df['low'].iloc[-lb_bars:].tolist()
+                recent_c = df['close'].iloc[-lb_bars:].tolist()
+                recent_o = df['open'].iloc[-lb_bars:].tolist()
+                cur_atr = df['atr'].iloc[-1] if pd.notna(df['atr'].iloc[-1]) else (300 * pt)
+
+                ref_hi = max(recent_h)
+                ref_lo = min(recent_l)
+                tol_clust = cur_atr * 0.50
+
+                cluster_hi = [x for x in recent_h if abs(x - ref_hi) <= tol_clust]
+                cluster_res = float(np.median(cluster_hi)) if cluster_hi else ref_hi
+                touches_res = sum(1 for h_val, l_val in zip(recent_h[:-1], recent_l[:-1]) if (cluster_res - tol_clust) <= h_val <= (cluster_res + tol_clust * 1.5))
+
+                cluster_lo = [x for x in recent_l if abs(x - ref_lo) <= tol_clust]
+                cluster_sup = float(np.median(cluster_lo)) if cluster_lo else ref_lo
+                touches_sup = sum(1 for h_val, l_val in zip(recent_h[:-1], recent_l[:-1]) if (cluster_sup - tol_clust * 1.5) <= l_val <= (cluster_sup + tol_clust))
+
+                # Wave Regime & Range Age
+                regime_res = evaluate_wave_regime(recent_h, recent_l, recent_c, timeframe_hours=1.0, dealing_range_window=lb_bars)
+
                 self.macro_cache[valid_sym] = {
                     'symbol': valid_sym,
                     'trend_label': f"{trend_label} (ADX {cur_adx:.1f}, EMA200={cur_ema200:.5f})",
@@ -246,7 +272,7 @@ class MarketScanner:
                     'ema50': cur_ema50,
                     'ema200': cur_ema200,
                     'adx': cur_adx,
-                    'atr_pts': (df['atr'].iloc[-1] / pt) if pd.notna(df['atr'].iloc[-1]) else 300,
+                    'atr_pts': (cur_atr / pt) if pd.notna(cur_atr) else 300,
                     'dealing_range_high': sess_h,
                     'dealing_range_low': sess_l,
                     'dealing_range_pos': pos_in_range,
@@ -260,6 +286,13 @@ class MarketScanner:
                     'bearish_ob_zone': bear_ob_str,
                     'fvg_zone': fvg_str,
                     'liquidity_pools': liq_str,
+                    'cluster_resistance': cluster_res,
+                    'cluster_support': cluster_sup,
+                    'touches_resistance': touches_res,
+                    'touches_support': touches_sup,
+                    'range_age_hours': regime_res.get('range_age_hours', 24.0),
+                    'effective_sqz_bars': regime_res.get('effective_sqz_bars', 0),
+                    'wave_regime_name': regime_res.get('regime', 'YOUNG_OSCILLATION'),
                     'point': pt,
                     'last_update': now
                 }
@@ -543,7 +576,98 @@ class MarketScanner:
                         ))
                         continue
 
-                # (M5 candlestick data is reserved exclusively for Pass 2 Devil's Advocate audit to prevent overtrading)
+                # ── MECHANISM 5: MULTI-TOUCH CLUSTER BREAKOUT & DELAYED RETEST (H1/M30) ──
+                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                    c_res = macro.get('cluster_resistance', 0.0)
+                    c_sup = macro.get('cluster_support', 0.0)
+                    t_res = macro.get('touches_resistance', 0)
+                    t_sup = macro.get('touches_support', 0)
+                    atr_val = atr_pts * pt
+
+                    # Bullish Breakout Retest: Tested >= 2 times, broke above cluster resistance, macro bull
+                    if macro['is_bull'] and t_res >= 2 and (c_res > 0):
+                        # Price broke above cluster resistance (clean break)
+                        if mid >= (c_res + atr_val * 0.10):
+                            entry_lim = c_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance
+                            sl = c_res - (atr_val * 0.65) - (spread_pts * pt)
+                            tp = entry_lim + abs(entry_lim - sl) * 2.5
+                            if abs(entry_lim - sl) / pt >= 15:
+                                candidates.append(CandidateSetup(
+                                    symbol=sym,
+                                    setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+                                    direction=1,
+                                    trigger_price=round(entry_lim, 5 if pt < 0.01 else 2),
+                                    timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                    macro_compass=macro['trend_label'],
+                                    dealing_range_pos=macro['dealing_range_pos'],
+                                    rejection_wick_ratio=0.30,
+                                    current_spread_pts=spread_pts,
+                                    current_atr_pts=atr_pts,
+                                    key_support=c_res,
+                                    key_resistance=macro['dealing_range_high'],
+                                    suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                    suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                    risk_reward_ratio=2.5,
+                                    strong_low=c_res,
+                                    strong_high=macro.get('strong_high', 0.0),
+                                    bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                    bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                    fvg_zone=macro.get('fvg_zone', ""),
+                                    liquidity_pools=f"Tested {t_res}x (Range Age: {macro.get('range_age_hours', 24)}h)",
+                                    economic_context="",
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    metadata={
+                                        "entry_type": "buy_limit",
+                                        "entry_price": round(entry_lim, 5 if pt < 0.01 else 2),
+                                        "zone_level": c_res,
+                                        "zone_touches": t_res,
+                                        "range_age_hours": macro.get('range_age_hours', 24),
+                                        "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION')
+                                    }
+                                ))
+                                continue
+
+                    # Bearish Breakout Retest: Tested >= 2 times, broke below cluster support, macro bear
+                    if macro['is_bear'] and t_sup >= 2 and (c_sup > 0):
+                        if mid <= (c_sup - atr_val * 0.10):
+                            entry_lim = c_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support
+                            sl = c_sup + (atr_val * 0.65) + (spread_pts * pt)
+                            tp = entry_lim - abs(sl - entry_lim) * 2.5
+                            if abs(sl - entry_lim) / pt >= 15:
+                                candidates.append(CandidateSetup(
+                                    symbol=sym,
+                                    setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+                                    direction=-1,
+                                    trigger_price=round(entry_lim, 5 if pt < 0.01 else 2),
+                                    timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                    macro_compass=macro['trend_label'],
+                                    dealing_range_pos=macro['dealing_range_pos'],
+                                    rejection_wick_ratio=0.30,
+                                    current_spread_pts=spread_pts,
+                                    current_atr_pts=atr_pts,
+                                    key_support=macro['dealing_range_low'],
+                                    key_resistance=c_sup,
+                                    suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                    suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                    risk_reward_ratio=2.5,
+                                    strong_low=macro.get('strong_low', 0.0),
+                                    strong_high=c_sup,
+                                    bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                    bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                    fvg_zone=macro.get('fvg_zone', ""),
+                                    liquidity_pools=f"Tested {t_sup}x (Range Age: {macro.get('range_age_hours', 24)}h)",
+                                    economic_context="",
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    metadata={
+                                        "entry_type": "sell_limit",
+                                        "entry_price": round(entry_lim, 5 if pt < 0.01 else 2),
+                                        "zone_level": c_sup,
+                                        "zone_touches": t_sup,
+                                        "range_age_hours": macro.get('range_age_hours', 24),
+                                        "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION')
+                                    }
+                                ))
+                                continue
 
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")
@@ -584,6 +708,12 @@ class MarketScanner:
                     "bullish_ob": v.get('bullish_ob_zone', "-"),
                     "bearish_ob": v.get('bearish_ob_zone', "-"),
                     "fvg": v.get('fvg_zone', "-"),
+                    "cluster_resistance": round(v.get('cluster_resistance', h), dec),
+                    "cluster_support": round(v.get('cluster_support', l), dec),
+                    "touches_resistance": v.get('touches_resistance', 0),
+                    "touches_support": v.get('touches_support', 0),
+                    "wave_regime": v.get('wave_regime_name', "NORMAL"),
+                    "range_age_hours": round(v.get('range_age_hours', 24.0), 1),
                     "trend_label": v.get('trend_label', "-")
                 }
         return {}

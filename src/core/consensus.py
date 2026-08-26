@@ -352,10 +352,14 @@ def calculate_consensus(decisions):
 
     # Qualified Hard Risk Veto Engine (Preserves Capital against Critical Traps)
     hard_veto_models = []
+    VALID_HARD_VETO_FLAGS = (
+        "COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
+        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW"
+    )
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")
         vd = dec.get("verdict")
-        if vd == "REJECT" and rf in ("COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP", "SPREAD_SPIKE"):
+        if (vd == "REJECT" or dec.get("veto_reason")) and rf in VALID_HARD_VETO_FLAGS:
             hard_veto_models.append((model_name, rf, dec.get("veto_reason") or dec.get("reasoning") or "Critical Risk Detected"))
 
     if hard_veto_models and consensus_signal in ("BUY", "SELL"):

@@ -257,6 +257,7 @@ def render_candidate_alert_box(candidate):
     direction_color = UI.GREEN if candidate.direction == 1 else UI.RED
     dir_str = "BUY" if candidate.direction == 1 else "SELL"
     tf_str = getattr(candidate, "timeframe", "H1")
+    t_wib = getattr(candidate, "timestamp_wib", "") or datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S WIB")
     
     zone_name = "Discount Zone (Cheap)" if candidate.dealing_range_pos <= 0.38 else (
         "Premium Zone (Expensive)" if candidate.dealing_range_pos >= 0.62 else "Equilibrium (Mid-Range)"
@@ -265,13 +266,14 @@ def render_candidate_alert_box(candidate):
     items = [
         f"{UI.BOLD}{direction_color}⚡ STAGE 1 QUANT RADAR TRIGGER: {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
         "---",
+        (f"• Trigger Time : ", f"{UI.CYAN}{t_wib}{UI.RST}"),
         (f"• Setup Type   : ", f"{UI.WHITE}{candidate.setup_type} ({tf_str}){UI.RST}"),
         (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
         (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (Wick {candidate.rejection_wick_ratio*100:.0f}%)"),
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
         (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
-    return UI.make_box(f"QUANT SETUP DETECTED: {candidate.symbol} [{tf_str}]", items, width=76, border_color=UI.PURPLE)
+    return UI.make_box(f"QUANT SETUP DETECTED: {candidate.symbol} [{tf_str} | {t_wib}]", items, width=76, border_color=UI.PURPLE)
 
 
 def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, open_positions=None, active_models=None):

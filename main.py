@@ -1578,7 +1578,7 @@ def _detect_filled_pending(scanner=None):
             if t not in _known_pending_orders:
                 _known_pending_orders[t] = {
                     "symbol": o.get("symbol", config.SYMBOL),
-                    "type": o.get("type", "pending"),
+                    "type": o.get("type_str") or str(o.get("type", "pending")),
                     "price": o.get("price", 0.0),
                     "sl": o.get("sl", 0.0),
                     "tp": o.get("tp", 0.0),
@@ -1595,7 +1595,7 @@ def _detect_filled_pending(scanner=None):
         for t in disappeared_tickets:
             info = _known_pending_orders.pop(t, {})
             sym = info.get("symbol", config.SYMBOL)
-            ptype = info.get("type", "pending")
+            ptype = str(info.get("type", "pending"))
             price = info.get("price", 0.0)
 
             # Check if this ticket exists in open positions (filled)
@@ -2241,7 +2241,8 @@ def main():
                 cols = 120
             max_w = max(40, cols - 2)
             if open_pos:
-                status_lines = _wrap_positions(pos_parts, max_w, indent=header_part + f" | {UI.GRAY}pos:{UI.RST} ")
+                pos_wrapped = _wrap_positions(pos_parts, max_w, indent=f"  └─ {UI.GRAY}pos:{UI.RST} ")
+                status_lines = [header_part] + pos_wrapped
             else:
                 status_lines = [header_part + pos_str]
 

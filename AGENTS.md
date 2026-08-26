@@ -172,6 +172,9 @@ python main.py
 20. **Unanimous 3/3 High Confidence Split (+25% Boost per Posisi)**:
     - Jika 3 AI sepakat bulat dengan rata-rata confidence $\ge 75\%$ dan tersedia $\ge 2$ slot MT5, sistem mengeksekusi 2 posisi sekaligus masing-masing @ $0.625\times$ Base Lot (Pos #1 Target Standar TP1, Pos #2 Target Extended 1.2× TP2 + Trailing Stop).
     - True Clean Arithmetic Mean diterapkan pada seluruh level konsensus dengan plafon realistis $1.25\times \le \text{TP} \le 3.0\times \text{SL}$.
+21. **Multi-Touch Cluster Breakout & Delayed Retest Engine (M5 — 27 Agu 2026)**:
+    - Validasi 10.7 tahun FBS (23.173 trade, PF 1.11, 21/22 pair profitable): level cluster support/resistance yang disentuh $\ge 2\times$ dan ditembus candle momentum $(\ge 55\%\text{ body})$ dieksekusi via **Pending Limit Order saat retest** (delay 3–4 bar). Dilarang keras *chase breakout* langsung guna mencegah jebakan *Judas Sweep*.
+    - Integrasi modul `src/indicators/candle_quality.py` & `src/indicators/sweep_detector.py` ke dalam Fast Radar Stage 1 dan pengayaan payload 8 layer ke LLM Veto (DeepSeek CRO).
 
 
 ---

@@ -1724,6 +1724,7 @@ def build_high_density_dossier_prompt(candidate, recent_h1_str=None, recent_m5_s
     """
     sym = candidate.symbol
     direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    meta = getattr(candidate, 'metadata', {}) or {}
     
     candles_block = ""
     if recent_h1_str:
@@ -1731,6 +1732,15 @@ def build_high_density_dossier_prompt(candidate, recent_h1_str=None, recent_m5_s
     if recent_m5_str:
         candles_block += f"\n### RECENT M5 MICRO FLOW (last intra-period candles):\n{recent_m5_str}\n"
     
+    meta_lines = []
+    if meta.get("entry_type"):
+        meta_lines.append(f"- Proposed Execution Method: {meta.get('entry_type').upper()} @ {meta.get('entry_price')}")
+    if meta.get("zone_touches"):
+        meta_lines.append(f"- Structural Zone Touch Count: {meta.get('zone_touches')} touches in last 40 bars")
+    if meta.get("range_age_hours"):
+        meta_lines.append(f"- Compression Duration / Range Age: {meta.get('range_age_hours')} hours ({meta.get('wave_regime', 'YOUNG_OSCILLATION')})")
+    meta_block = "\n".join(meta_lines) if meta_lines else "- Execution Method: Standard structural assessment"
+
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
@@ -1747,6 +1757,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Dealing Range (100-bar H1): {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
 - Rejection Wick Ratio: {candidate.rejection_wick_ratio*100:.1f}%
 - Volatility: ATR(14) = {candidate.current_atr_pts:.1f} pts | Current Spread = {candidate.current_spread_pts} pts
+{meta_block}
 
 ## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
 - Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
@@ -1770,7 +1781,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 Evaluate the proposal impartially:
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type
-- If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT"
+- If market is plunging/surging with strong opposing momentum, instant fake-break (< 2 bars), or trapped in chop -> select "REJECT"
 
 ## 6. RESPONSE FORMAT (MANDATORY STRICT JSON ONLY)
 Respond with valid JSON:
@@ -1784,7 +1795,7 @@ Respond with valid JSON:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM",
+  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW",
   "reasoning": "2-3 concise sentences justifying the verdict and chosen execution levels."
 }}
 """
@@ -1879,7 +1890,7 @@ Respond strictly in the same JSON format:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM",
+  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW",
   "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
 }}
 """
