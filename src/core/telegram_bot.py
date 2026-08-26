@@ -380,7 +380,7 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
             votes_str = "\n".join(model_votes)
 
             # Calculate lot sizing preview
-            effective_lot = _risk_engine.get_effective_lot_size(sl_pts, split_count=1) if sl_pts > 0 else 0.01
+            effective_lot = _risk_engine.get_effective_lot_size(sl_pts, split_count=1, symbol=sym) if sl_pts > 0 else config.lot_size_for(sym)
 
             rr_str = f"{tp_pts/sl_pts:.2f}:1" if (sl_pts and sl_pts > 0 and tp_pts) else "N/A"
 

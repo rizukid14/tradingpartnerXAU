@@ -264,7 +264,7 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None, split_count=1):
+    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
@@ -282,7 +282,7 @@ class RiskEngine:
              risk target), so multipliers are not distorted by rounding.
         Falls back to config.lot_size_for() when SL is unknown.
         """
-        symbol = config.SYMBOL
+        symbol = connector.get_valid_trade_symbol(symbol or config.SYMBOL)
         risk_pct = config.risk_percent_for(symbol)
         try:
             account = mt5.account_info()
