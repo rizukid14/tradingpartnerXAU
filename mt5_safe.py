@@ -52,14 +52,16 @@ class SafeMT5:
     def __init__(self, host="localhost", port=18812):
         self._host = host
         self._port = port
-        self._conn = rpyc.classic.connect(host, port, config={"sync_request_timeout": 60})
+        self._conn = rpyc.classic.connect(host, port)
+        if hasattr(self._conn, "_config"):
+            self._conn._config["sync_request_timeout"] = 60
         self._mt5 = self._conn.modules.MetaTrader5
         try:
             self._conn.modules.builtins.mt5 = self._mt5
         except Exception:
             pass
         try:
-            self._conn.execute("import builtins; builtins.mt5 = __import__('MetaTrader5')")
+            self._conn.execute("import builtins; builtins.mt5 = __import__('MetaTrader5'); builtins.datetime = __import__('datetime')")
         except Exception:
             pass
 

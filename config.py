@@ -80,7 +80,34 @@ class DummyMT5:
     def symbol_info(self, *args, **kwargs):
         return None
 
+    def symbol_select(self, *args, **kwargs):
+        return False
+
     def copy_rates_from_pos(self, *args, **kwargs):
+        return None
+
+    def positions_get(self, *args, **kwargs):
+        return []
+
+    def orders_get(self, *args, **kwargs):
+        return []
+
+    def history_deals_get(self, *args, **kwargs):
+        return []
+
+    def history_orders_get(self, *args, **kwargs):
+        return []
+
+    def order_send(self, *args, **kwargs):
+        return None
+
+    def order_check(self, *args, **kwargs):
+        return None
+
+    def account_info(self, *args, **kwargs):
+        return None
+
+    def terminal_info(self, *args, **kwargs):
         return None
 
     def last_error(self):
