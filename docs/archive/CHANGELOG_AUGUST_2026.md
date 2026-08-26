@@ -195,3 +195,27 @@ You are NOT required to follow a single predefined trading strategy. You may use
 4. **Test Suite Verification**:
    * Pembuatan unit test `tests/test_market_scanner.py` dan verifikasi 100% PASS pada seluruh test suite sistem.
 
+---
+
+## 7. Pembaruan 26 Agustus 2026 (Sesi Siang) — LuxAlgo SMC, 2-Pass Jury, Direct Telegram Controller, & Flexible `/analisa`
+
+1. **LuxAlgo Smart Money Concepts (SMC) & Liquidity Map Engine (`src/indicators/lux_smc.py` & `market_scanner.py`)**:
+   * Porting algoritma Pine Script LuxAlgo v5 ke Python: mendeteksi *Unmitigated Order Blocks (Bullish/Bearish OB)*, *Fair Value Gaps (FVG)*, *Strong Low / Strong High*, dan *Equal Highs/Lows (EQH/EQL)*.
+   * Injeksi langsung ke Bagian 2 Dossier Prompt sehingga AI menaruh Stop Loss presisi di balik Order Block dan Take Profit pada area magnet FVG/Weak High.
+2. **2-Pass Sequential Cross-Examination 3-LLM Jury & Qualified Hard Risk Veto (`src/core/llm_client.py` & `consensus.py`)**:
+   * **Pass 1**: OpenAI o4-mini (Structure) + Gemini 3.1-Flash (Momentum) voting independen (~3.0s).
+   * **Pass 2**: DeepSeek V4-Flash (Devil's Advocate) membaca seluruh berkas Dossier + usulan OpenAI & Gemini, menguji kelemahan logika mereka terhadap 24 candle M5 (~1.5s).
+   * **Qualified Hard Risk Veto**: Otomatis menolak trade jika model mengangkat bendera bahaya kritis (`COUNTER_TREND_MOMENTUM`, `HIGH_IMPACT_NEWS`, `LIQUIDITY_TRAP`, `SPREAD_SPIKE`) dengan alasan tertulis untuk mencegah *falling knife*.
+3. **Direct Telegram Controller & Proxy Toggle (`config.py`, `.env`, `telegram_bot.py`)**:
+   * Menambahkan toggle `TELEGRAM_USE_PROXY=false` dan fallback `TELEGRAM_PROXY_URL` di `.env`. Default beralih ke direct `api.telegram.org` untuk kecepatan respons instan tanpa buffer Vercel.
+   * Menambahkan `allowed_updates: ["message", "callback_query"]` pada polling `getUpdates` untuk penanganan klik tombol *inline button* seketika.
+   * Penguatan autentikasi `_is_user_authorized` untuk mencegah bentrok multi-instance dan mengeliminasi popup *Access Denied*.
+4. **Flexible Custom Timeframe & Auto-Correction di `/analisa` (`telegram_bot.py`, `mt5_connector.py`)**:
+   * Dukungan command `/analisa <symbol> [timeframe]` (contoh: `/analisa GBPUSD M15`, `/analisa XAUUSD H4`, `/analisa BTCUSD D1`).
+   * Normalisasi timeframe fleksibel (`1H` $\rightarrow$ `H1`, `15M` $\rightarrow$ `M15`, `4H` $\rightarrow$ `H4`, `1D` $\rightarrow$ `D1`).
+   * Auto-Correction simbol broker VT Markets (`GBPUSD` $\rightarrow$ `GBPUSD-ECNc`, `GOLD` $\rightarrow$ `XAUUSD-ECNc`, `BTC` $\rightarrow$ `BTCUSD.c`) yang memprioritaskan simbol aktif dengan izin trading penuh (`trade_mode = FULL`).
+   * Perbaikan deklarasi menu keyboard `_build_main_menu_keyboard()` untuk memastikan menu kontrol interaktif selalu muncul seketika.
+5. **Master Quant Dossier HTML Report (Book-Grade Report — Chapter 11 & 12)**:
+   * Pembaruan Chapter 11 (LuxAlgo SMC Framework) dan Chapter 12 (2-Pass Cross-Examination Jury, Veto Engine, Live Transcripts, dan Benchmark Matrix) di `docs/research/multiyear_backtest_report.html`.
+
+
