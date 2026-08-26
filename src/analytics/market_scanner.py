@@ -27,6 +27,12 @@ POINT_MAP = {
     'CHFJPY': 0.001, 'CHFJPY-ECNc': 0.001, 'CHFJPY-ECN': 0.001,
 }
 
+# Proven positive-EV pairs for Tokyo Session (08:00 - 14:00 WIB) based on 10.7-year FBS MT5 backtest
+TOKYO_PROVEN_SYMBOLS = {
+    'USDCAD', 'AUDCAD', 'AUDUSD', 'EURCAD', 'USDCHF',
+    'GBPJPY', 'XAUUSD', 'GBPCHF', 'AUDJPY', 'CADJPY'
+}
+
 @dataclass
 class CandidateSetup:
     symbol: str
@@ -96,6 +102,20 @@ class MarketScanner:
     def _get_point(self, symbol: str) -> float:
         clean = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         return POINT_MAP.get(clean, 1e-5)
+
+    @staticmethod
+    def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
+        """
+        Filters symbols based on empirical expected value (EV) per trading session.
+        - Tokyo Session (08:00 - 14:00 WIB): Only allow proven positive-EV pairs (Asia/Commodities).
+        - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured 22 pairs.
+        """
+        clean_sym = symbol.replace('-ECNc', '').replace('-ECN', '').replace('.c', '').replace('m', '').replace('_', '')
+        if 8 <= hour_wib < 14:
+            return clean_sym in TOKYO_PROVEN_SYMBOLS
+        elif 14 <= hour_wib <= 23:
+            return True
+        return False
 
     def update_macro_context(self, mt5_connector=None, force: bool = False) -> None:
         """
@@ -351,7 +371,8 @@ class MarketScanner:
                             continue
 
                 # ── MECHANISM 2: TREND-ALIGNED PULLBACK (D1 BULL/BEAR + DISCOUNT/PREMIUM) ──
-                if (14 <= h <= 23):
+                # Active in Tokyo (08:00 - 14:00 WIB) for proven positive-EV pairs, and 14:00 - 23:00 WIB for all pairs.
+                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     ema20 = macro['ema20']
                     pos_in_range = macro['dealing_range_pos']
                     

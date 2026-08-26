@@ -218,4 +218,18 @@ You are NOT required to follow a single predefined trading strategy. You may use
 5. **Master Quant Dossier HTML Report (Book-Grade Report — Chapter 11 & 12)**:
    * Pembaruan Chapter 11 (LuxAlgo SMC Framework) dan Chapter 12 (2-Pass Cross-Examination Jury, Veto Engine, Live Transcripts, dan Benchmark Matrix) di `docs/research/multiyear_backtest_report.html`.
 
+## 8. Pembaruan 26 Agustus 2026 (Sesi Sore) — Session-Aware Pair Selection, Visual MT5 Indicator Upgrade, & `/indicators`
+
+1. **Session-Aware Pair Selection Engine (`src/analytics/market_scanner.py`)**:
+   * **Aktivasi Terukur Sesi Tokyo (08:00–14:00 WIB)**: Berdasarkan backtest 10.7 tahun FBS MT5 (22.812 trade), radar Stage 1 Mechanism 2 (*Trend-Aligned Pullback*) diaktifkan di Sesi Tokyo khusus untuk 10 pair ber-EV positif: `USDCAD` (PF 1.18), `AUDCAD` (PF 1.18), `AUDUSD` (PF 1.15), `EURCAD` (PF 1.11), `USDCHF` (PF 1.09), `GBPJPY` (PF 1.08), `XAUUSD` (PF 1.05), `GBPCHF` (PF 1.05), `AUDJPY` (PF 1.04), dan `CADJPY` (PF 1.01).
+   * **Proteksi Pair Eropa (08:00–14:00 WIB)**: Pair Eropa murni (`GBPUSD` PF 0.76, `EURCHF` PF 0.65, `GBPAUD` PF 0.77, `EURJPY` PF 0.80) secara otomatis diblokir saat pagi untuk mencegah *false wick* dan kebocoran modal, baru dibuka penuh saat sesi London/Frankfurt resmi dimulai jam 14:00 WIB.
+2. **Upgrade Indikator Visual MT5 (`mql5/LuxAlgo_SMC_MT5.mq5` & `.ex5`)**:
+   * Menambahkan visualisasi **Dealing Range 100-bar**: Kotak **Premium Zone (61.8% – 100%)** bernuansa *Muted Dark Rose*, kotak **Discount Zone (0% – 38.2%)** bernuansa *Muted Deep Emerald*, garis putus-putus **100% High** & **0% Low** dengan label harga aktual, serta garis titik-titik **50% Equilibrium**.
+   * Otomatis di-compile via `MetaEditor64.exe` (0 errors, 0 warnings) dan disinkronkan ke seluruh direktori data terminal MT5.
+3. **Telegram Command `/indicators` & `/levels` (`src/core/telegram_bot.py`)**:
+   * Menambahkan perintah `/indicators <symbol>` (atau `/levels` / `/smc`) yang merangkum koordinat harga eksak untuk 100% Range High, Zona Premium, 50% Equilibrium, Zona Diskon, 0% Range Low, Order Blocks, dan Fair Value Gaps secara real-time.
+4. **Unit Test & Linter Green Verification (`tests/test_market_scanner.py`)**:
+   * Menambahkan unit test `test_session_aware_pair_filtering` yang memvalidasi isolasi pair Tokyo vs London/NY. Seluruh 9 unit test suite lulus **100% PASS (OK)**.
+
+
 
