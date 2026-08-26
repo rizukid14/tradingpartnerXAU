@@ -30,6 +30,7 @@ access on returned objects, etc.) stays exactly the same.
 """
 
 from types import SimpleNamespace
+import json
 import rpyc
 
 
@@ -51,7 +52,7 @@ class SafeMT5:
     def __init__(self, host="localhost", port=18812):
         self._host = host
         self._port = port
-        self._conn = rpyc.classic.connect(host, port)
+        self._conn = rpyc.classic.connect(host, port, config={"sync_request_timeout": 60})
         self._mt5 = self._conn.modules.MetaTrader5
         try:
             self._conn.modules.builtins.mt5 = self._mt5
@@ -84,32 +85,36 @@ class SafeMT5:
     def _eval_single(self, expr):
         """Fetch a single MT5 object as a plain (2-level-deep-flattened) dict,
         wrapped in a namespace. Built entirely on the REMOTE side, where the
-        object is still real (not a proxy) — only primitives/dicts/lists
-        ever cross the wire, avoiding the custom-class pickling bug."""
+        object is still real (not a proxy) — serialized to JSON string over RPyC wire
+        to eliminate pickling bugs and avoid multiple netref round-trip timeouts."""
         code = (
-            "(lambda _r: None if _r is None else ("
-            "_r if isinstance(_r, (int, float, str, bool, dict)) else "
+            "(lambda _r: None if _r is None else __import__('json').dumps("
+            "(_r if isinstance(_r, (int, float, str, bool, dict)) else "
             "{k: " + self._FLATTEN_0 + "(getattr(_r, k)) for k in dir(_r) "
-            "if not k.startswith('_') and not callable(getattr(_r, k))}"
+            "if not k.startswith('_') and not callable(getattr(_r, k))})"
             "))(" + expr + ")"
         )
-        result = self._conn.eval(code)
-        return _to_namespace(result)
+        raw_json = self._conn.eval(code)
+        if raw_json is None:
+            return None
+        return _to_namespace(json.loads(raw_json))
 
     def _eval_list(self, expr):
         """Fetch a list/tuple of MT5 objects as a list of plain flattened
-        dicts (wrapped in namespaces), same approach as _eval_single applied
-        per item."""
+        dicts (wrapped in namespaces), JSON-serialized on the remote side
+        to transfer as 1 single payload and eliminate netref timeouts."""
         code = (
-            "(lambda _r: None if _r is None else ["
+            "(lambda _r: None if _r is None else __import__('json').dumps(["
             "(x if isinstance(x, (int, float, str, bool, dict)) else "
             "{k: " + self._FLATTEN_0 + "(getattr(x, k)) for k in dir(x) "
             "if not k.startswith('_') and not callable(getattr(x, k))}) "
             "for x in _r"
-            "])(" + expr + ")"
+            "]))(" + expr + ")"
         )
-        result = self._conn.eval(code)
-        return _to_namespace(result)
+        raw_json = self._conn.eval(code)
+        if raw_json is None:
+            return None
+        return _to_namespace(json.loads(raw_json))
 
     def _fmt_args(self, args, kwargs):
         parts = [repr(a) for a in args]

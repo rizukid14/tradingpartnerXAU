@@ -1867,9 +1867,7 @@ def main():
                 # Day-change detection: kalau tanggal WIB berubah, kirim ringkasan
                 # harian (rich) sebelum reset, biar laporan tiap hari lengkap.
                 try:
-                    from datetime import datetime
-                    from zoneinfo import ZoneInfo
-                    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+                    wib_now = datetime.now(_WIB)
                     today_str = wib_now.strftime("%Y-%m-%d")
                     if _last_day is None:
                         _last_day = today_str
