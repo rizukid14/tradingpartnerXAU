@@ -141,6 +141,16 @@ python main.py
     - Mengunci urutan inferensi LLM: `trend` $\rightarrow$ `velocity` $\rightarrow$ `rr_valid` $\rightarrow$ `signal` $\rightarrow$ `confidence`.
     - Memangkas token output menjadi ~35 token dan mempercepat respons inferensi menjadi < 5 detik per simbol.
     - Menghilangkan *analysis paralysis* pada pair live dan menjaga konsensus tetap tajam & tegas.
+11. **Multi-Year FBS Historical Dataset & SMC Validation (26 Agu 2026)**:
+    - 88 file dataset offline riil FBS MT5 di `data/historical/fbs/` (3.788.000+ bar, 22 simbol: M30 4.6 thn, H1 10.7 thn, H4 19–55.6 thn, D1 16.6 thn).
+    - Validasi 396.183 trade: H1 mengalahkan M30 sebesar **+22.8% Profit Factor** pada rentang tanggal identik 2022–2026 (hemat token 47% & kebal wick noise).
+    - Arketipe *Mean Reversion* (PF 0.72) dan *SMC CHoCH/Displacement* (PF 0.81–1.00) mendominasi intraday, sedangkan *Breakout* terbukti toksik di pasar FX intraday (PF 0.20).
+12. **Multi-Decade H4 & D1 Macro Expansion Discovery (1971–2026)**:
+    - Gold (XAUUSD) menghasilkan **+$36.8k (PF 1.64)** di H4 (30.5 thn) dan **+$29.5k (PF 2.50)** di D1 (16.6 thn) pada strategi Donchian Breakout.
+    - Menyingkap hukum fraktal: **Macro (D1/H4) Expands (Breakout/Trend)** vs **Micro (H1/M30) Mean-Reverts (Osilasi/Diskon)**.
+    - Master Strategy: *Trend-Aligned Mean Reversion* (Beli di diskon H1 searah arus breakout D1/H4).
+13. **Master Quant Dossier HTML (Book-Grade Report)**:
+    - Tersedia di `docs/research/multiyear_backtest_report.html` (9 Bab lengkap, visual flow 2-stage screener, perbandingan 4 timeframe, dan atlas DNA 22 simbol).
 
 ---
 
@@ -160,6 +170,8 @@ Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/READ
 
 | Kategori | Dokumen | Deskripsi Isi |
 |---|---|---|
+| 📊 **Research** | **[docs/research/multiyear_backtest_report.html](file:///c:/Vibe/tradingpartner/docs/research/multiyear_backtest_report.html)** | **Master Quant Dossier (HTML Book Report)**: Laporan buku putih lengkap 9 Bab: 55 tahun dataset FBS (3.78M bar), komparasi 4 timeframe (M30–D1), 4 arketipe, atlas DNA 22 simbol, strategi *Trend-Aligned Mean Reversion*, dan arsitektur 2-Stage Screener. |
+| 📊 **Research** | **[docs/research/MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md)** | **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Validasi 396.183 trade (10.7 thn H1, 55.6 thn H4, 16.6 thn D1). Komparasi head-to-head, evaluasi 4 arketipe, validasi SMC CHoCH/Order Block, dan ranking 22 simbol. |
 | 💡 **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate, **RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)**. |
 | 🔴 **Plans & RFC** | **[docs/plans/GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md)** | **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table. |
 | 📊 **Research** | **[docs/research/QUANT_RESEARCH_EDGES.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_EDGES.md)** | **Riset Statistik Bebas Bias (3–4 Tahun)**: Temuan 112 Edge Pola Bearish NY, Ranking Pair Forex, Riset CAD/EUR/GBP & JPY, Riset Donchian XAU BUY NY, Confluence. |
