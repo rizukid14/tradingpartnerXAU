@@ -108,6 +108,15 @@ API_TOKEN = os.getenv("API_TOKEN", "")
 # --- API BASE URLS ---
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "")
+
+# --- MANUAL TRIGGER FLAG ---
+TRIGGER_CYCLE_REQUESTED = False
+
+def trigger_manual_cycle():
+    """Trigger a manual trading cycle on next loop iteration."""
+    global TRIGGER_CYCLE_REQUESTED
+    TRIGGER_CYCLE_REQUESTED = True
 
 
 # --- MODEL NAMES & FALLBACKS ---
@@ -957,6 +966,75 @@ def risk_percent_for(symbol):
     if is_crypto(symbol): return RISK_PERCENT_BTC
     if "XAU" not in symbol.upper(): return RISK_PERCENT_FX
     return RISK_PERCENT_XAU
+
+
+def save_config_to_env(updates: dict) -> list:
+    """
+    Saves/updates key-value pairs into local .env file.
+    Does NOT touch .env.example (which is the git template).
+    """
+    env_path = os.path.join(BASE_DIR, ".env")
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+    str_updates = {k: str(v) if not isinstance(v, bool) else ("true" if v else "false") for k, v in updates.items()}
+    new_lines = []
+    found_keys = set()
+    updated_keys = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in line:
+            key = line.split("=", 1)[0].strip()
+            if key in str_updates:
+                new_lines.append(f"{key}={str_updates[key]}\n")
+                found_keys.add(key)
+                updated_keys.append(key)
+                continue
+        new_lines.append(line)
+
+    for k, v in str_updates.items():
+        if k not in found_keys:
+            if new_lines and not new_lines[-1].endswith("\n"):
+                new_lines.append("\n")
+            new_lines.append(f"{k}={v}\n")
+            updated_keys.append(k)
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    # Automatically reload modified values into runtime memory
+    reload_from_env()
+    return updated_keys
+
+
+def reload_from_env():
+    """
+    Reloads all environment configurations from .env into runtime module attributes.
+    """
+    load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+    mod = sys.modules[__name__]
+
+    # Reload common attributes if present in os.environ
+    for k, v in os.environ.items():
+        if hasattr(mod, k):
+            curr_val = getattr(mod, k)
+            if isinstance(curr_val, bool):
+                setattr(mod, k, v.strip().lower() in ("true", "1", "yes", "on"))
+            elif isinstance(curr_val, int):
+                try:
+                    setattr(mod, k, int(v.strip()))
+                except ValueError:
+                    pass
+            elif isinstance(curr_val, float):
+                try:
+                    setattr(mod, k, float(v.strip()))
+                except ValueError:
+                    pass
+            elif isinstance(curr_val, str):
+                setattr(mod, k, v)
 
 
 def is_fx(symbol):

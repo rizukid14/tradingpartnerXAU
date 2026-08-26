@@ -966,7 +966,7 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
-def run_trading_cycle():
+def run_trading_cycle(force=False):
     """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
     per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
     = [XAU, EURJPY, GBPCHF] - all symbols scanned ONLY when their specific timeframe
@@ -1050,8 +1050,8 @@ def run_trading_cycle():
         closed_time = int(rates[-2]['time'])
         last_time = _symbol_last_candle.get(sym)
         
-        # Eksekusi siklus LLM jika belum pernah di-scan (startup mode "all") ATAU candle baru sudah close
-        if last_time is None or closed_time > last_time:
+        # Eksekusi siklus LLM jika force=True ATAU belum pernah di-scan ATAU candle baru sudah close
+        if force or last_time is None or closed_time > last_time:
             _symbol_last_candle[sym] = closed_time
             
             # Log indikator candle baru untuk pair selain pair utama
@@ -1757,6 +1757,7 @@ def main():
                     print(f"[MACRO UPDATE ERROR] {e}")
 
             rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
+            trigger_requested = getattr(config, "TRIGGER_CYCLE_REQUESTED", False)
             if rates is not None and len(rates) > 0:
                 # FASE 6: scan pas candle CLOSE - rates[-1] = candle aktif (belum close),
                 # rates[-2] = candle terakhir yang SUDAH close. Trigger pakai open-time candle close.
@@ -1765,9 +1766,14 @@ def main():
                 else:
                     current_candle_time = int(rates[-1]['time'])
                 
-                if startup_run or (last_candle_time is not None and current_candle_time > last_candle_time):
+                if startup_run or trigger_requested or (last_candle_time is not None and current_candle_time > last_candle_time):
                     skip_cycle = False
-                    if startup_run:
+                    if trigger_requested:
+                        _reset_status_lines()
+                        print(f"\n {UI.YELLOW}⚡ [MANUAL RETRIGGER] Memulai siklus analisa pasar sesuai permintaan...{UI.RST}")
+                        if hasattr(config, "TRIGGER_CYCLE_REQUESTED"):
+                            config.TRIGGER_CYCLE_REQUESTED = False
+                    elif startup_run:
                         startup_run = False
                         if _STARTUP_SCAN_MODE == "timeframe":
                             # Seed SEKARANG (di startup): _symbol_last_candle[sym] = open-time
@@ -1803,10 +1809,13 @@ def main():
                           f"Session Lot: x{status['session_lot_multiplier']}")
                     
                     if not skip_cycle:
-                        # Run trading cycle
-                        run_trading_cycle()
+                        # Run trading cycle (pass force=True if manual retrigger was requested)
+                        run_trading_cycle(force=trigger_requested)
                         tg.flush_failed_orders_recap()
             else:
+                if trigger_requested:
+                    if hasattr(config, "trigger_manual_cycle"):
+                        config.trigger_manual_cycle()
                 print("Gagal mengecek status candle di MT5. Mencoba kembali...")
             
             # Show live status clock line in CLI every loop iteration (clean ANSI, zero emojis)
