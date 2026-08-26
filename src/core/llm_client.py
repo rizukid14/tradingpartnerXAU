@@ -1716,6 +1716,198 @@ def query_all_models_parallel(prompt, models=("OpenAI", "Gemini", "DeepSeek")):
 
 
 
+def build_high_density_dossier_prompt(candidate, recent_h1_str=None, recent_m5_str=None):
+    """
+    Builds the High-Density Institutional Dossier Prompt for 3-LLM Consensus Jury.
+    Injected when Stage 1 Fast Execution Radar flags a candidate setup.
+    Includes live H1 and M5 candlestick price action for unbiased objective verification.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    
+    candles_block = ""
+    if recent_h1_str:
+        candles_block += f"\n### RECENT H1 CANDLES (OHLC absolute prices):\n{recent_h1_str}\n"
+    if recent_m5_str:
+        candles_block += f"\n### RECENT M5 MICRO FLOW (last intra-period candles):\n{recent_m5_str}\n"
+    
+    prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
+
+Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
+Your task is to objectively evaluate this proposal against the raw market data:
+1. Macro Sentiment & Price Flow: Compare proposed direction against recent H1/M5 momentum.
+2. Order Optimization: Choose to APPROVE as proposed, REVISE entry to a better structural level/pending limit, or REJECT if risk is high.
+3. Invalidation & Target: Verify SL is behind structural barriers and TP has clear room (Mandatory R:R >= 1.25).
+
+## 1. MARKET STRUCTURE & MACRO COMPASS
+- Symbol: {sym} | Asset: {asset_desc(sym)}
+- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str}
+- Current Trigger Price: {candidate.trigger_price}
+- Macro Compass: {candidate.macro_compass}
+- Dealing Range (100-bar H1): {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
+- Rejection Wick Ratio: {candidate.rejection_wick_ratio*100:.1f}%
+- Volatility: ATR(14) = {candidate.current_atr_pts:.1f} pts | Current Spread = {candidate.current_spread_pts} pts
+
+## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
+- Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
+- Structural Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
+- Nearest Bullish Order Block (OB): {getattr(candidate, 'bullish_ob_zone', '') or 'None active nearby'}
+- Nearest Bearish Order Block (OB): {getattr(candidate, 'bearish_ob_zone', '') or 'None active nearby'}
+- Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None active nearby'}
+- Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
+
+## 3. STRUCTURAL PROPOSAL
+- Key Support: {candidate.key_support}
+- Key Resistance: {candidate.key_resistance}
+- Proposed Technical SL: {candidate.suggested_sl}
+- Proposed Technical TP: {candidate.suggested_tp}
+- Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1
+{candles_block}
+## 4. ECONOMIC CONTEXT & NEWS SHIELD
+- Calendar Context: {candidate.economic_context or "No High-Impact News releases within +/- 6 hours"}
+
+## 5. EVALUATION DIRECTIVE
+Evaluate the proposal impartially:
+- If setup is solid and actionable now -> select "APPROVE"
+- If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type
+- If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT"
+
+## 6. RESPONSE FORMAT (MANDATORY STRICT JSON ONLY)
+Respond with valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "confidence": float (0.00 to 1.00),
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
+    "entry_price": float (null if market, required if pending),
+    "sl_price": float (exact absolute price),
+    "tp_price": float (exact absolute price)
+  }},
+  "veto_reason": null | string (max 15 words if REJECT),
+  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM",
+  "reasoning": "2-3 concise sentences justifying the verdict and chosen execution levels."
+}}
+"""
+    return _strip_emoji(prompt)
+
+
+def get_multi_llm_decisions_for_candidate(candidate, recent_h1_str=None, recent_m5_str=None):
+    """
+    Evaluates a candidate setup from Stage 1 using 2-Pass Sequential Cross-Examination 3-LLM Jury:
+    - Pass 1 (Parallel Investigation): OpenAI (Structure) + Gemini (Momentum) evaluate candidate dossier.
+    - Pass 2 (Cross-Examination Audit): DeepSeek (Devil's Advocate) audits Pass 1 arguments against raw M5/H1 data.
+    """
+    prompt_base = build_high_density_dossier_prompt(candidate, recent_h1_str=recent_h1_str, recent_m5_str=recent_m5_str)
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    active_models = config.active_ai_model_names()
+
+    results = {}
+    latencies = {}
+    start_total = time.time()
+
+    # ─────────────────────────────────────────────────────────────
+    # PASS 1: PARALLEL INVESTIGATION (OPENAI & GEMINI)
+    # ─────────────────────────────────────────────────────────────
+    pass1_targets = [m for m in ("OpenAI", "Gemini") if m in active_models]
+    model_fns = {
+        "OpenAI": query_openai,
+        "Gemini": query_gemini,
+        "DeepSeek": query_deepseek,
+        "Claude": query_claude,
+    }
+
+    if pass1_targets:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass1_targets)) as executor:
+            futs = {executor.submit(model_fns[m], prompt_base): m for m in pass1_targets}
+            for fut in concurrent.futures.as_completed(futs):
+                model_name = futs[fut]
+                try:
+                    t0 = time.time()
+                    res = fut.result()
+                    latencies[model_name] = time.time() - t0
+                    verdict = str(res.get("verdict") or res.get("signal") or "").strip().upper()
+                    conf = float(res.get("confidence", 0.0) or 0.0)
+                    if verdict in ("APPROVE", "REVISE", "ACCEPT", "YES", "VALID", "BUY", "SELL", direction_str):
+                        res["signal"] = direction_str
+                        res["confidence"] = conf if conf > 0 else 0.85
+                        res["verdict"] = "REVISE" if verdict == "REVISE" else "APPROVE"
+                    else:
+                        res["signal"] = "HOLD"
+                        res["confidence"] = 0.0
+                        res["verdict"] = "REJECT"
+                    results[model_name] = res
+                except Exception as e:
+                    results[model_name] = {"signal": "HOLD", "verdict": "REJECT", "confidence": 0.0, "reasoning": f"Error: {e}"}
+                    latencies[model_name] = 0.0
+
+    # ─────────────────────────────────────────────────────────────
+    # PASS 2: DEVIL'S ADVOCATE CROSS-EXAMINATION AUDIT (DEEPSEEK / CLAUDE)
+    # ─────────────────────────────────────────────────────────────
+    auditor_model = "DeepSeek" if "DeepSeek" in active_models else ("Claude" if "Claude" in active_models else None)
+    if auditor_model and auditor_model in model_fns:
+        pass1_summary_lines = []
+        for name in pass1_targets:
+            if name in results:
+                r = results[name]
+                pass1_summary_lines.append(
+                    f"- Model [{name}]: Verdict = {r.get('verdict')} (Conf {r.get('confidence', 0.0):.2f})\n"
+                    f"  Proposed Execution: {r.get('execution')}\n"
+                    f"  Thesis / Rationale: \"{r.get('reasoning')}\""
+                )
+        pass1_text = "\n".join(pass1_summary_lines) if pass1_summary_lines else "No previous findings available."
+
+        prompt_pass2 = f"""{prompt_base}
+
+## 7. PREVIOUS JURY PROPOSALS (TARGET OF YOUR CROSS-EXAMINATION)
+The first-round panel members have analyzed this setup and submitted the following findings:
+{pass1_text}
+
+## 8. DEVIL'S ADVOCATE AUDIT DIRECTIVE
+You are the Chief Risk Officer & Devil's Advocate. Your mission is to scrutinize their arguments against the raw M5/H1 candle data:
+1. Examine if their thesis ignores recent counter-trend momentum, lack of rejection wicks, or structural traps.
+2. If you find a critical flaw, liquidity trap, or news risk -> VETO by selecting "REJECT" with an explicit veto_reason and risk_flag.
+3. If their thesis is mathematically solid and accounts for risks (e.g. valid pending limit) -> select "APPROVE" or "REVISE".
+
+Respond strictly in the same JSON format:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "confidence": float (0.00 to 1.00),
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
+    "entry_price": float (null if market, required if pending),
+    "sl_price": float (exact absolute price),
+    "tp_price": float (exact absolute price)
+  }},
+  "veto_reason": null | string (max 15 words if REJECT),
+  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM",
+  "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
+}}
+"""
+        try:
+            t0 = time.time()
+            res_audit = model_fns[auditor_model](_strip_emoji(prompt_pass2))
+            latencies[auditor_model] = time.time() - t0
+            verdict_audit = str(res_audit.get("verdict") or res_audit.get("signal") or "").strip().upper()
+            conf_audit = float(res_audit.get("confidence", 0.0) or 0.0)
+            if verdict_audit in ("APPROVE", "REVISE", "ACCEPT", "YES", "VALID", "BUY", "SELL", direction_str):
+                res_audit["signal"] = direction_str
+                res_audit["confidence"] = conf_audit if conf_audit > 0 else 0.85
+                res_audit["verdict"] = "REVISE" if verdict_audit == "REVISE" else "APPROVE"
+            else:
+                res_audit["signal"] = "HOLD"
+                res_audit["confidence"] = 0.0
+                res_audit["verdict"] = "REJECT"
+            results[auditor_model] = res_audit
+        except Exception as e:
+            results[auditor_model] = {"signal": "HOLD", "verdict": "REJECT", "confidence": 0.0, "reasoning": f"Audit Error: {e}"}
+            latencies[auditor_model] = 0.0
+
+    total_elapsed = time.time() - start_total
+    lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s ({results.get(m, {}).get('verdict', 'HOLD')})" for m in active_models if m in latencies])
+    print(f" {UI.tag('STAGE 2 JURY', UI.PURPLE)} {candidate.symbol} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
+    return results
+
+
 def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_positions=None,
                             whisper_str=None, all_open_positions=None):
     """

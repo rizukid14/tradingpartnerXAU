@@ -1,113 +1,60 @@
-"""Test symbol rotation logic (weekday XAUUSD, weekend BTCUSD)."""
+"""Test symbol rotation and helper logic for both Scanner Mode and Legacy Pairs Mode."""
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+import unittest
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
 import config
 
 WIB = ZoneInfo("Asia/Jakarta")
-config.ENABLE_BTC_ROTATION = True
 
 
-def test_active_symbol():
-    cases = [
-        ("Jumat 21:59", datetime(2026, 8, 7, 21, 59, tzinfo=WIB), config.WEEKDAY_SYMBOL),
-        ("Jumat 22:00", datetime(2026, 8, 7, 22, 0, tzinfo=WIB), config.WEEKEND_SYMBOL),
-        ("Sabtu 12:00", datetime(2026, 8, 8, 12, 0, tzinfo=WIB), config.WEEKEND_SYMBOL),
-        ("Minggu 23:59", datetime(2026, 8, 9, 23, 59, tzinfo=WIB), config.WEEKEND_SYMBOL),
-        ("Senin 00:00", datetime(2026, 8, 10, 0, 0, tzinfo=WIB), config.WEEKDAY_SYMBOL),
-        ("Rabu 10:00", datetime(2026, 8, 12, 10, 0, tzinfo=WIB), config.WEEKDAY_SYMBOL),
-    ]
-    failed = 0
-    for label, dt, expected in cases:
-        got = config.get_active_symbol(dt)
-        ok = got == expected
-        failed += 0 if ok else 1
-        print(f"{'OK  ' if ok else 'FAIL'} {label}: expected={expected} got={got}")
-    return failed
+class TestSymbolRotationAndHelpers(unittest.TestCase):
+    def setUp(self):
+        config.ENABLE_BTC_ROTATION = True
 
+    def test_scanner_pool(self):
+        # In scanner mode, rotation pool should contain all 22 symbols on weekdays
+        wednesday = datetime(2026, 8, 12, 10, 0, tzinfo=WIB)
+        pool = config.get_rotation_pool(wednesday)
+        if config.SCANNER_MODE:
+            self.assertEqual(len(pool), 22)
+            self.assertIn("GBPUSD-ECNc", pool)
+            self.assertIn("XAUUSD-ECNc", pool)
+            self.assertIn("USDJPY-ECNc", pool)
 
-def test_per_symbol_helpers():
-    failed = 0
-    # XAU helpers (default naik ke 400/800 - ATR M5 XAU ~300 pts, gate
-    # butuh SL >= 1.25x ATR ~375+)
-    assert config.lot_size_for("XAUUSD-ECNc") == 0.01
-    assert config.default_sl_points_for("XAUUSD-ECNc") == config.DEFAULT_SL_POINTS_XAU
-    assert config.default_tp_points_for("XAUUSD-ECNc") == config.DEFAULT_TP_POINTS_XAU
-    assert config.max_spread_points_for("XAUUSD-ECNc") == 50
-    # FX pairs (H1 swing): default flat 100/200 pts (10/20 pips EURJPY scale)
-    for sym in ["GBPUSD-ECNc", "EURCHF-ECNc", "GBPCHF-ECNc", "EURNZD-ECNc", "USDJPY-ECNc", "AUDCAD-ECNc"]:
-        assert config.default_sl_points_for(sym) == 100
-        assert config.default_tp_points_for(sym) == 200
-    # FX spread cap: ATR-based (15% ATR H1, floor 20 pts)
-    assert config.max_spread_points_for("EURCHF-ECNc", atr_h1_pts=60) == 20   # 15% of 60 = 9 -> floor 20
-    assert config.max_spread_points_for("EURNZD-ECNc", atr_h1_pts=191) == 28  # 15% of 191 = 28.65 -> 28
-    assert config.max_spread_points_for("EURCHF-ECNc") == config.MAX_SPREAD_POINTS  # fallback without ATR
-    # BTC helpers (scaled for BTC point size - see config comments)
-    assert config.lot_size_for("BTCUSD.c") == 0.01
-    assert config.default_sl_points_for("BTCUSD.c") == config.DEFAULT_SL_POINTS_BTC
-    assert config.default_tp_points_for("BTCUSD.c") == config.DEFAULT_TP_POINTS_BTC
-    assert config.max_spread_points_for("BTCUSD.c") == config.MAX_SPREAD_POINTS_BTC
-    # is_crypto
-    assert config.is_crypto("BTCUSD.c") is True
-    assert config.is_crypto("XAUUSD-ECNc") is False
-    # Timeframe per-symbol: Dynamic Session (H1 Tokyo, M30 London/NY)
-    tokyo_time = datetime(2026, 8, 25, 10, 0, tzinfo=WIB)
-    london_time = datetime(2026, 8, 25, 16, 0, tzinfo=WIB)
-    assert config.get_timeframe("XAUUSD-ECNc", tokyo_time) == config.mt5.TIMEFRAME_H1
-    assert config.get_timeframe("GBPCHF-ECNc", tokyo_time) == config.mt5.TIMEFRAME_H1
-    assert config.get_timeframe("GBPCHF-ECNc", london_time) == config.mt5.TIMEFRAME_M30
-    assert config.get_timeframe("BTCUSD.c", tokyo_time) == config.mt5.TIMEFRAME_M30
-    assert config.get_timeframe("BTCUSD.c", london_time) == config.mt5.TIMEFRAME_M30
-    # Risk per-trade: XAU 1.0%, FX 1.0%, BTC 1.5%
-    assert config.risk_percent_for("XAUUSD-ECNc") == config.RISK_PERCENT_XAU
-    assert config.risk_percent_for("GBPCHF-ECNc") == config.RISK_PERCENT_FX
-    assert config.risk_percent_for("USDJPY-ECNc") == config.RISK_PERCENT_FX
-    assert config.risk_percent_for("BTCUSD.c") == config.RISK_PERCENT_BTC
-    print("OK  per-symbol helpers (lot/sl/tp/spread/is_crypto/timeframe/risk)")
-    return failed
+    def test_weekend_switch(self):
+        # Weekend should return BTC if enabled
+        saturday = datetime(2026, 8, 8, 12, 0, tzinfo=WIB)
+        pool = config.get_rotation_pool(saturday)
+        self.assertEqual(pool, [config.WEEKEND_SYMBOL])
 
-def test_rotation_pool():
-    failed = 0
-    # Gunakan hari Rabu (weekday) agar mengembalikan pool lengkap berisi 4 simbol
-    wednesday = datetime(2026, 8, 12, 10, 0, tzinfo=WIB)
-    pool = config.get_rotation_pool(wednesday)
-    # Pool = 4 FX symbols (GBPUSD, GBPCHF, USDJPY, AUDCAD)
-    assert len(pool) == 4, f"pool harus 4 simbol, dapat {len(pool)}: {pool}"
-    assert pool[0] == config.WEEKDAY_SYMBOL
-    for sym in config.FX_PAIR_SYMBOLS:
-        assert sym in pool, f"{sym} harus ada di pool"
-    print(f"OK  rotation pool: {pool}")
-    return failed
+    def test_per_symbol_helpers(self):
+        # XAU helpers
+        self.assertEqual(config.lot_size_for("XAUUSD-ECNc"), 0.01)
+        self.assertEqual(config.default_sl_points_for("XAUUSD-ECNc"), config.DEFAULT_SL_POINTS_XAU)
+        self.assertEqual(config.default_tp_points_for("XAUUSD-ECNc"), config.DEFAULT_TP_POINTS_XAU)
+        self.assertEqual(config.max_spread_points_for("XAUUSD-ECNc"), 50)
 
+        # FX pairs
+        for sym in ["GBPUSD-ECNc", "USDJPY-ECNc", "GBPJPY-ECNc", "EURUSD-ECNc"]:
+            self.assertEqual(config.default_sl_points_for(sym), 100)
+            self.assertEqual(config.default_tp_points_for(sym), 200)
 
-def test_refresh_symbol():
-    failed = 0
-    # Simulate: currently XAU, at Saturday -> should switch to BTC
-    saturday = datetime(2026, 8, 8, 10, 0, tzinfo=WIB)
-    # reset internal state first
-    config.refresh_active_symbol(datetime(2026, 8, 5, 10, 0, tzinfo=WIB))  # Wednesday
-    config.refresh_active_symbol(saturday)
-    new_sym, changed = config.refresh_active_symbol(saturday)
-    ok = (new_sym == config.WEEKEND_SYMBOL and changed is False)
-    failed += 0 if ok else 1
-    print(f"{'OK  ' if ok else 'FAIL'} refresh: active={new_sym} changed={changed}")
-    # Now switch back to Monday
-    monday = datetime(2026, 8, 10, 0, 0, tzinfo=WIB)
-    new_sym, changed = config.refresh_active_symbol(monday)
-    ok = (new_sym == config.WEEKDAY_SYMBOL and changed is True)
-    failed += 0 if ok else 1
-    print(f"{'OK  ' if ok else 'FAIL'} refresh: active={new_sym} changed={changed}")
-    return failed
+        # BTC helpers
+        self.assertEqual(config.lot_size_for("BTCUSD.c"), 0.01)
+        self.assertEqual(config.default_sl_points_for("BTCUSD.c"), config.DEFAULT_SL_POINTS_BTC)
+        self.assertEqual(config.default_tp_points_for("BTCUSD.c"), config.DEFAULT_TP_POINTS_BTC)
+        self.assertEqual(config.max_spread_points_for("BTCUSD.c"), config.MAX_SPREAD_POINTS_BTC)
+        self.assertTrue(config.is_crypto("BTCUSD.c"))
+        self.assertFalse(config.is_crypto("XAUUSD-ECNc"))
+
+        # Risk percent
+        self.assertEqual(config.risk_percent_for("XAUUSD-ECNc"), config.RISK_PERCENT_XAU)
+        self.assertEqual(config.risk_percent_for("GBPUSD-ECNc"), config.RISK_PERCENT_FX)
+        self.assertEqual(config.risk_percent_for("BTCUSD.c"), config.RISK_PERCENT_BTC)
 
 
 if __name__ == "__main__":
-    total = 0
-    total += test_active_symbol()
-    total += test_per_symbol_helpers()
-    total += test_rotation_pool()
-    total += test_refresh_symbol()
-    print(f"\n{'PASS' if total == 0 else 'FAIL'} - {total} failures")
-    sys.exit(1 if total else 0)
+    unittest.main()

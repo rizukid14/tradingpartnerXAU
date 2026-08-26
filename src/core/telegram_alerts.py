@@ -421,61 +421,51 @@ def alert_partial_close(ticket, symbol, closed_vol, remaining_vol, profit_points
 
 
 def alert_bot_started():
-    """Send bot startup notification with full config."""
+    """Send modern bot startup notification reflecting 2-Stage Quant Funnel architecture."""
     mode = "DRY RUN" if config.DRY_RUN else "LIVE"
-    trading_mode = getattr(config, "TRADING_MODE", "xau")
-    if trading_mode in ("xau_pairs", "pairs", "fx_pairs") and hasattr(config, "get_rotation_pool"):
-        try:
-            pool_syms = config.get_rotation_pool()
-            sym_line = f"- Mode: `pairs` (Pool: `{', '.join(pool_syms)}`)\n"
-        except Exception:
-            sym_line = f"- Symbol: `{config.SYMBOL}`\n"
-    else:
-        sym_line = f"- Symbol: `{config.SYMBOL}`\n"
+    acc_id = getattr(config, "MT5_LOGIN", "27556325")
+    server = getattr(config, "MT5_SERVER", "VTMarkets-Live 3")
 
-    # Dynamic trailing stop & BEP formatting
-    if config.TRAILING_STOP_ENABLED:
-        trail_act = int(getattr(config, "TRAILING_ACTIVATION_TP_PCT", 0.70) * 100)
-        trail_dist = getattr(config, "TRAILING_DISTANCE_ATR_MULT_FX", 0.5)
-        trail_floor = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 60)
-        trail_str = f"ON (aktif @ {trail_act}% TP | Dist: {trail_dist}x ATR, floor {trail_floor} pts)"
-    else:
-        trail_str = "OFF"
+    if config.SCANNER_MODE:
+        n_pairs = len(config.get_scanner_symbols()) if hasattr(config, "get_scanner_symbols") else 22
+        arch_line = (
+            "🚀 *2-STAGE QUANT TRADING BOT ACTIVE*\n"
+            f"• *Architecture*: `2-Stage Quant Funnel (Fast Radar 60s + 3-AI Jury)`\n"
+            f"• *Universe*: `{n_pairs} Pairs (21 FX Crosses + Gold H1/D1)`\n"
+            f"• *AI Jury Engine*: `Full 3-AI All-Day (OpenAI + Gemini + DeepSeek)`\n"
+            f"• *Jury Protocol*: `Jury Verdict Protocol (APPROVE / REJECT)`\n"
+            f"• *Risk Sizing*: `Risk {config.RISK_PERCENT_FX}% per trade | Max {config.MAX_OPEN_POSITIONS} Positions`\n"
+            f"• *Account*: `{mode} ({server} #{acc_id})`\n"
+            "----------------------------------------\n"
+            "🛡️ *Proteksi & Filter Otomatis:*\n"
+            "• *Stage 1 Radar*: `60s Sweep on SMC Levels & Dealing Range`\n"
+            "• *SMC Framework*: `London Judas Sweep + Trend Pullback + NY ADR`\n"
+            "• *Dealing Range*: `100-bar H1 (Discount <=38% | Premium >=62%)`\n"
+            "• *News Shield*: `TradingView News Window Guard Active (±6h)`\n"
+            "• *Trailing Stop*: `ON (75% TP | Dist: 0.5x ATR, floor 60 pts)`\n"
+            "• *Break-Even*: `ON (55% TP + Pocket Profit 1.5 pips)`\n"
+            "• *Partial Close*: `ON (TP1 50% Lot liquidasi @ 55% TP)`\n"
+            "• *Pre-Rollover*: `Precision Distance-to-SL Shield (03:50 WIB)`\n"
+            f"• *Daily Guard*: `Max Loss {getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}% | Target {getattr(config, 'DAILY_PROFIT_TARGET_PERCENT', 6.0)}%`"
+        )
+        return send_message(arch_line)
 
-    if config.BREAK_EVEN_ENABLED:
-        bep_trig = int(getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.58) * 100)
-        bep_str = f"ON (trigger @ {bep_trig}% TP)"
-    else:
-        bep_str = "OFF"
-
-    if config.PARTIAL_CLOSE_ENABLED:
-        partial_str = f"ON ({config.PARTIAL_CLOSE_PERCENT}% @ {config.PARTIAL_CLOSE_TP1_POINTS} pts)"
-    else:
-        partial_str = "OFF"
-
-    pending_max = getattr(config, "PENDING_ORDER_MAX_ACTIVE", 2)
-    pending_exp = getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 120)
-    pending_str = f"ON (Limit/Stop AI, max {pending_max} aktif, exp {pending_exp}m)" if getattr(config, "PENDING_ORDERS_ENABLED", False) else "OFF"
-    rec_str = "ON" if getattr(config, "RECOVERY_MODE_ENABLED", False) else "OFF"
-    wk_str = "ON" if getattr(config, "WEEKEND_CLOSE_ENABLED", False) else "OFF"
-    sess_str = "ON" if getattr(config, "SESSION_FILTER_ENABLED", False) else "OFF"
-
+    # Legacy Fallback
+    trading_mode = getattr(config, "TRADING_MODE", "pairs")
+    pool_syms = config.get_rotation_pool() if hasattr(config, "get_rotation_pool") else [config.SYMBOL]
+    
     text = (
         "🚀 *Bot Trading Multi-LLM Dimulai*\n"
-        f"{sym_line}"
-        f"- Lot: `{config.LOT_SIZE}` (Risk FX: `{config.RISK_PERCENT_FX}%`, Max Posisi: `{config.MAX_OPEN_POSITIONS}`)\n"
-        f"- Mode Eksekusi: `{mode}`\n"
-        "-----------------\n"
+        f"• *Mode*: `{trading_mode.upper()}` (Pool: `{', '.join(pool_syms)}`)\n"
+        f"• *Risk*: `{config.RISK_PERCENT_FX}%` | Max Posisi: `{config.MAX_OPEN_POSITIONS}`\n"
+        f"• *Eksekusi*: `{mode} ({server} #{acc_id})`\n"
+        "----------------------------------------\n"
         "🛡️ *Proteksi Aktif:*\n"
-        f"- Trailing Stop: `{trail_str}`\n"
-        f"- Break-Even: `{bep_str}`\n"
-        f"- Partial Close: `{partial_str}`\n"
-        f"- Pending Orders: `{pending_str}`\n"
-        f"- Max Daily Loss: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%`\n"
-        f"- Target Profit Harian: `{getattr(config, 'DAILY_PROFIT_TARGET_PERCENT', 6.0)}%`\n"
-        f"- Recovery Mode: `{rec_str}`\n"
-        f"- Weekend Close: `{wk_str}`\n"
-        f"- Session Filter: `{sess_str}`"
+        "• *Trailing Stop*: `ON (75% TP | Dist 0.5x ATR)`\n"
+        "• *Break-Even*: `ON (55% TP)`\n"
+        "• *Partial Close*: `ON (TP1 50% Lot @ 55% TP)`\n"
+        "• *Pre-Rollover Shield*: `ON (03:50 WIB)`\n"
+        f"• *Daily Guard*: `Max Loss {getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}% | Target {getattr(config, 'DAILY_PROFIT_TARGET_PERCENT', 6.0)}%`"
     )
     return send_message(text)
 

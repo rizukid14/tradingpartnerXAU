@@ -21,6 +21,7 @@ docs/
 ## 📚 Daftar Dokumen Lengkap
 
 ### 1. 🏗️ Architecture (`docs/architecture/` & `docs/`)
+* [FULL_SYSTEM_PROMPTS_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/architecture/FULL_SYSTEM_PROMPTS_AUGUST_2026.md) — **Full System Prompts Master Specification (Agustus 2026)**: Spesifikasi verbatim lengkap Stage 2 High-Density Verification Dossier Prompt, Smart Money Concepts (SMC) & Liquidity Map, 2-Pass Sequential Cross-Examination, dan Qualified Hard Risk Veto.
 * [PROMPT_SPECIFICATION_V2.md](file:///c:/Vibe/tradingpartner/docs/PROMPT_SPECIFICATION_V2.md) — **Master Prompt Specification V2 (Streamlined State Machine Protocol)**: Blueprint lengkap System Prompt V2 (< 400 token), Decision Framework 7-langkah, 3 Playbook, dan contoh payload data masukan live.
 * [BROKER_INFRASTRUCTURE_AND_SAFETY.md](file:///c:/Vibe/tradingpartner/docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md) — **Analisis Infrastruktur Broker, Regulasi & Keamanan Dana (Algo Trading)**: Bedah VT Markets (Mauritius FSC, server Equinix LD4, ECN Raw), realitas A-Book vs B-Book, dan roadmap broker multi-tier (Swissquote, IBKR, IC Markets, Bappebti).
 * [blueprint.md](file:///c:/Vibe/tradingpartner/docs/architecture/blueprint.md) — Cetak biru awal dan rancangan arsitektur dasar sistem bot.

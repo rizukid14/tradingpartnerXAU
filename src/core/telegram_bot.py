@@ -22,10 +22,12 @@ import re
 import requests
 import config
 from src.core import mt5_connector as connector
-from src.core import risk_engine as risk
+from src.core.risk_engine import RiskEngine
 from src.core import llm_client
 from src.core import consensus
 from src.analytics import macro_analyst
+
+_risk_engine = RiskEngine()
 
 
 _listener_thread = None
@@ -86,34 +88,72 @@ def answer_callback_query(callback_query_id, text=None, show_alert=False):
 
 
 def _build_main_menu_keyboard():
-    """Builds clean institutional inline keyboard for main menu with dynamic session timeframes."""
-    tf_gu = config.get_timeframe_str("GBPUSD-ECNc")
-    tf_gc = config.get_timeframe_str("GBPCHF-ECNc")
-    tf_uj = config.get_timeframe_str("USDJPY-ECNc")
-    tf_ac = config.get_timeframe_str("AUDCAD-ECNc")
-    tf_xau = config.get_timeframe_str("XAUUSD-ECNc")
-    tf_btc = config.get_timeframe_str("BTCUSD.c")
+    """Builds clean institutional inline keyboard for main menu."""
     return {
         "inline_keyboard": [
             [
-                {"text": f"GBPUSD {tf_gu}", "callback_data": "analyze:GBPUSD-ECNc"},
-                {"text": f"GBPCHF {tf_gc}", "callback_data": "analyze:GBPCHF-ECNc"},
+                {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD-ECNc"},
+                {"text": "USDJPY H1", "callback_data": "analyze:USDJPY-ECNc"},
             ],
             [
-                {"text": f"USDJPY {tf_uj}", "callback_data": "analyze:USDJPY-ECNc"},
-                {"text": f"AUDCAD {tf_ac}", "callback_data": "analyze:AUDCAD-ECNc"},
+                {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY-ECNc"},
+                {"text": "XAUUSD H1", "callback_data": "analyze:XAUUSD-ECNc"},
             ],
             [
-                {"text": f"XAUUSD {tf_xau}", "callback_data": "analyze:XAUUSD-ECNc"},
-                {"text": f"BTCUSD {tf_btc}", "callback_data": "analyze:BTCUSD.c"},
+                {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"},
             ],
             [
-                {"text": "[ Multi-Pair Scan ]", "callback_data": "cmd:scan"},
                 {"text": "[ Active Positions ]", "callback_data": "cmd:positions"},
+                {"text": "[ Daily Summary ]", "callback_data": "cmd:rekap"},
             ],
             [
-                {"text": "[ Daily Summary ]", "callback_data": "cmd:rekap"},
                 {"text": "[ Account Status ]", "callback_data": "cmd:status"},
+            ]
+        ]
+    }
+
+
+def handle_radar_command(chat_id):
+    """Sends the 22-pair Market Structure & SMC Radar report."""
+    try:
+        from src.analytics.market_scanner import MarketScanner
+        scanner = MarketScanner()
+        scanner.update_macro_context(connector, force=False)
+        report = scanner.get_market_structure_report()
+        kb = {
+            "inline_keyboard": [
+                [{"text": "[ 🔄 Refresh Radar ]", "callback_data": "cmd:radar"}],
+                [{"text": "[ Back to Menu ]", "callback_data": "cmd:menu"}]
+            ]
+        }
+        send_telegram_msg(report, reply_markup=kb, chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_radar_command: {e}")
+        send_telegram_msg(f"Error fetching radar: `{e}`", chat_id=chat_id)
+
+
+def _build_main_menu_keyboard():
+    """Builds the clean institutional inline keyboard for /menu."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD_H1"},
+                {"text": "USDJPY H1", "callback_data": "analyze:USDJPY_H1"}
+            ],
+            [
+                {"text": "EURUSD H1", "callback_data": "analyze:EURUSD_H1"},
+                {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY_H1"}
+            ],
+            [
+                {"text": "XAUUSD H1 (Gold)", "callback_data": "analyze:XAUUSD_H1"},
+                {"text": "BTCUSD M30", "callback_data": "analyze:BTCUSD_M30"}
+            ],
+            [
+                {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"}
+            ],
+            [
+                {"text": "📊 [ Open Positions ]", "callback_data": "cmd:positions"},
+                {"text": "🛡️ [ Account Status ]", "callback_data": "cmd:status"}
             ]
         ]
     }
@@ -122,8 +162,8 @@ def _build_main_menu_keyboard():
 def handle_menu_command(chat_id):
     """Sends the clean institutional control panel."""
     text = (
-        "*CONTROL PANEL — MULTI-LLM TRADING PARTNER*\n"
-        "_Select an instrument for on-demand 3-AI consensus or manage active positions:_"
+        "*CONTROL PANEL — 2-STAGE QUANT TRADING BOT*\n"
+        "_Select an instrument for on-demand 3-AI consensus or view 22-Pair SMC Radar:_"
     )
     send_telegram_msg(text, reply_markup=_build_main_menu_keyboard(), chat_id=chat_id)
 
@@ -143,18 +183,25 @@ def handle_status_command(chat_id):
         mode_name = config.TRADING_MODE.upper()
 
         text = (
-            "*ACCOUNT & RISK ENGINE STATUS*\n"
-            f"• *Server*: `{acc.get('server', 'N/A')}` (Login `{acc.get('login', 'N/A')}`)\n"
-            f"• *Balance*: `${acc.get('balance', 0.0):.2f}`\n"
-            f"• *Equity*: `${acc.get('equity', 0.0):.2f}`\n"
-            f"• *Free Margin*: `${acc.get('free_margin', 0.0):.2f}`\n"
+            "*ACCOUNT & 2-STAGE QUANT STATUS*\n"
+            f"• *Server*: `{acc.get('server', 'N/A')}` (Login `#{acc.get('login', 'N/A')}`)\n"
+            f"• *Balance*: `${acc.get('balance', 0.0):,.2f}`\n"
+            f"• *Equity*: `${acc.get('equity', 0.0):,.2f}`\n"
+            f"• *Free Margin*: `${acc.get('free_margin', 0.0):,.2f}`\n"
             f"• *Daily Realized P/L*: `${pnl_today:+.2f}`\n"
             f"• *Net Floating P/L*: `${total_floating:+.2f}` ({len(open_pos)} positions)\n"
-            f"• *Active Mode*: `{mode_name}`\n"
-            f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%`\n"
-            f"• *Daily Profit Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"
+            f"• *Architecture*: `2-Stage Quant Funnel (22 Pairs H1/D1)`\n"
+            f"• *Fast Radar*: `60s Sweep Active (0 Token)`\n"
+            f"• *3-AI Jury*: `Full 3-AI (OpenAI + Gemini + DeepSeek)`\n"
+            f"• *Risk per Trade*: `{config.RISK_PERCENT_FX}%` (Max Pos: `{config.MAX_OPEN_POSITIONS}`)\n"
+            f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` | *Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"
         )
-        kb = {"inline_keyboard": [[{"text": "[ Back to Menu ]", "callback_data": "cmd:menu"}]]}
+        kb = {
+            "inline_keyboard": [
+                [{"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"}],
+                [{"text": "[ Back to Menu ]", "callback_data": "cmd:menu"}]
+            ]
+        }
         send_telegram_msg(text, reply_markup=kb, chat_id=chat_id)
     except Exception as e:
         print(f" [TELEGRAM BOT ERROR] handle_status_command: {e}")
@@ -239,20 +286,45 @@ def handle_close_all(chat_id):
     )
 
 
-def run_ondemand_analysis(symbol_input, chat_id):
+def _normalize_timeframe(tf_str):
+    """Normalizes various timeframe representations (e.g. 1H -> H1, 15M -> M15, 1D -> D1)."""
+    if not tf_str:
+        return None
+    t = tf_str.strip().upper()
+    mapping = {
+        "M1": "M1", "1M": "M1",
+        "M5": "M5", "5M": "M5",
+        "M15": "M15", "15M": "M15",
+        "M30": "M30", "30M": "M30",
+        "H1": "H1", "1H": "H1",
+        "H4": "H4", "4H": "H4",
+        "D1": "D1", "1D": "D1"
+    }
+    return mapping.get(t, t)
+
+
+def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
     """
     Runs on-demand parallel analysis using 3 AI models (OpenAI, Gemini, DeepSeek).
+    Supports optional custom timeframe request (e.g. /analisa GBPUSD M15, /analisa XAUUSD H4).
     Sends clean consensus response + one-click execution buttons.
     """
     sym = connector.get_valid_trade_symbol(symbol_input)
-    send_telegram_msg(f"*Starting On-Demand 3-AI Analysis for `{sym}`...*\n_Fetching live candle data, indicators, and H4/D1 macro structure..._", chat_id=chat_id)
+    norm_tf = _normalize_timeframe(timeframe_input)
+    tf_label = norm_tf or config.get_timeframe_str(sym)
+
+    send_telegram_msg(f"*Starting On-Demand 3-AI Analysis for `{sym}` ({tf_label})...*\n_Fetching live candle data, indicators, and H4/D1 macro structure..._", chat_id=chat_id)
 
     def _worker():
         try:
-            tf = config.get_timeframe(sym)
+            if norm_tf and norm_tf in getattr(config, "TIMEFRAME_MAP", {}):
+                tf = config.TIMEFRAME_MAP[norm_tf]
+            else:
+                tf = config.get_timeframe(sym)
+
             df = connector.get_market_data(sym, tf, num_candles=100)
             if df is None or len(df) < 50:
-                send_telegram_msg(f"Error: Gagal mengambil market data `{sym}` dari MT5.", chat_id=chat_id)
+                send_telegram_msg(f"Error: Gagal mengambil market data `{sym}` ({tf_label}) dari MT5.", chat_id=chat_id)
                 return
 
             tick_live = connector.get_current_tick(sym)
@@ -308,12 +380,12 @@ def run_ondemand_analysis(symbol_input, chat_id):
             votes_str = "\n".join(model_votes)
 
             # Calculate lot sizing preview
-            effective_lot = risk.get_effective_lot_size(sl_pts, split_count=1) if sl_pts > 0 else 0.01
+            effective_lot = _risk_engine.get_effective_lot_size(sl_pts, split_count=1) if sl_pts > 0 else 0.01
 
             rr_str = f"{tp_pts/sl_pts:.2f}:1" if (sl_pts and sl_pts > 0 and tp_pts) else "N/A"
 
             lines = [
-                f"*ON-DEMAND ANALYSIS: {sym}*",
+                f"*ON-DEMAND ANALYSIS: {sym} ({tf_label})*",
                 f"Timestamp: `{time.strftime('%H:%M:%S WIB')}` | Engine: `Triple AI (OpenAI + Gemini + DeepSeek)`\n",
                 f"*MODEL SIGNALS*:\n{votes_str}\n",
                 f"----------------------------------------",
@@ -486,6 +558,15 @@ def handle_scan_all_pairs(chat_id):
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _is_user_authorized(from_id, chat_id):
+    """Checks if the user ID or chat ID matches TELEGRAM_CHAT_ID (supports single ID or comma-separated)."""
+    raw = getattr(config, "TELEGRAM_CHAT_ID", "")
+    if not raw:
+        return True
+    allowed_ids = {str(item).strip() for item in str(raw).split(",") if str(item).strip()}
+    return (str(from_id).strip() in allowed_ids) or (str(chat_id).strip() in allowed_ids)
+
+
 def _process_update(update):
     """Processes a single incoming Telegram update (Message or Callback Query)."""
     global _last_update_id
@@ -502,9 +583,8 @@ def _process_update(update):
         msg_chat_id = str(msg.get("chat", {}).get("id", "")).strip()
         target_chat = msg_chat_id or msg_from_id or whitelisted
 
-        # Security whitelist check: allow if either chat_id or from_id matches
-        if whitelisted and msg_chat_id != whitelisted and msg_from_id != whitelisted:
-            print(f" [TELEGRAM BOT] Ignored message from unauthorized chat {target_chat}")
+        if not _is_user_authorized(msg_from_id, msg_chat_id):
+            print(f" [TELEGRAM BOT] Ignored message from unauthorized chat {target_chat} (from: {msg_from_id})")
             return
 
         text = (msg.get("text") or "").strip()
@@ -519,17 +599,34 @@ def _process_update(update):
 
         if cmd in ("/start", "/menu", "/help"):
             handle_menu_command(target_chat)
+        elif cmd in ("/radar", "/levels", "/smc"):
+            handle_radar_command(target_chat)
         elif cmd in ("/status", "/akun"):
             handle_status_command(target_chat)
         elif cmd in ("/posisi", "/positions", "/open"):
             handle_positions_command(target_chat)
         elif cmd in ("/scan", "/scanner"):
-            handle_scan_all_pairs(target_chat)
+            handle_radar_command(target_chat)
         elif cmd in ("/analisa", "/analyze", "/signal"):
-            if args:
-                run_ondemand_analysis(args[0], target_chat)
+            if len(args) >= 2:
+                run_ondemand_analysis(args[0], target_chat, timeframe_input=args[1])
+            elif len(args) == 1:
+                parts_sym = args[0].replace("-", "_").split("_")
+                if len(parts_sym) == 2 and _normalize_timeframe(parts_sym[1]) in getattr(config, "TIMEFRAME_MAP", {}):
+                    run_ondemand_analysis(parts_sym[0], target_chat, timeframe_input=parts_sym[1])
+                else:
+                    run_ondemand_analysis(args[0], target_chat)
             else:
-                send_telegram_msg("Usage: `/analisa <symbol>`\nExample: `/analisa GBPUSD` or `/analisa XAUUSD`", chat_id=target_chat)
+                send_telegram_msg(
+                    "Usage: `/analisa <symbol> [timeframe]`\n\n"
+                    "Examples:\n"
+                    "• `/analisa GBPUSD` (Default Sesi)\n"
+                    "• `/analisa XAUUSD M15`\n"
+                    "• `/analisa GBPUSD M30`\n"
+                    "• `/analisa USDJPY H4`\n"
+                    "• `/analisa BTCUSD D1`",
+                    chat_id=target_chat
+                )
         elif cmd in ("/close", "/tutup"):
             if args:
                 handle_close_ticket(args[0], target_chat)
@@ -540,7 +637,8 @@ def _process_update(update):
         elif cmd in ("/rekap", "/profit"):
             handle_status_command(target_chat)
         elif any(p in cmd for p in ("gbpusd", "eurjpy", "gbpaud", "audcad", "eurchf", "audchf", "cadchf", "xauusd", "btcusd", "gold", "btc")):
-            run_ondemand_analysis(parts[0], target_chat)
+            tf_custom = args[0] if args else None
+            run_ondemand_analysis(parts[0], target_chat, timeframe_input=tf_custom)
         return
 
     # 2. Handle Inline Button Callbacks
@@ -551,7 +649,7 @@ def _process_update(update):
         cb_chat_id = str(cb.get("message", {}).get("chat", {}).get("id", "")).strip()
         target_chat = cb_chat_id or cb_from_id or whitelisted
 
-        if whitelisted and cb_from_id != whitelisted and cb_chat_id != whitelisted:
+        if not _is_user_authorized(cb_from_id, cb_chat_id):
             answer_callback_query(cb_id, "Access denied.")
             return
 
@@ -560,8 +658,12 @@ def _process_update(update):
         print(f" [TELEGRAM BOT] Button clicked: '{data}' by {target_chat}")
 
         if data.startswith("analyze:"):
-            target_sym = data.split(":", 1)[1]
-            run_ondemand_analysis(target_sym, target_chat)
+            payload_data = data.split(":", 1)[1]
+            if "_" in payload_data:
+                p_sym, p_tf = payload_data.split("_", 1)
+                run_ondemand_analysis(p_sym, target_chat, timeframe_input=p_tf)
+            else:
+                run_ondemand_analysis(payload_data, target_chat)
         elif data.startswith("exec_m:"):
             token = data.split(":", 1)[1]
             execute_cached_trade(token, "market", target_chat)
@@ -575,12 +677,14 @@ def _process_update(update):
             handle_close_all(target_chat)
         elif data == "cmd:menu":
             handle_menu_command(target_chat)
+        elif data == "cmd:radar":
+            handle_radar_command(target_chat)
         elif data == "cmd:positions":
             handle_positions_command(target_chat)
         elif data == "cmd:status":
             handle_status_command(target_chat)
         elif data == "cmd:scan":
-            handle_scan_all_pairs(target_chat)
+            handle_radar_command(target_chat)
         elif data == "cmd:rekap":
             handle_status_command(target_chat)
 
@@ -599,7 +703,8 @@ def _poll_loop():
             url = _get_api_url("getUpdates")
             payload = {
                 "offset": _last_update_id + 1,
-                "timeout": 2
+                "timeout": 2,
+                "allowed_updates": ["message", "callback_query"]
             }
             resp = requests.post(url, json=payload, timeout=6)
             if resp.status_code == 200:
@@ -625,12 +730,12 @@ def register_bot_commands():
     if not config.TELEGRAM_ENABLED or not config.TELEGRAM_BOT_TOKEN:
         return False
     commands = [
-        {"command": "menu", "description": "Main Control Panel"},
-        {"command": "analisa", "description": "On-Demand 3-AI Analysis (e.g. /analisa GBPUSD)"},
+        {"command": "menu", "description": "Interactive Control Menu & Actions"},
+        {"command": "analisa", "description": "3-AI Analysis (e.g. /analisa GBPUSD M15)"},
+        {"command": "radar", "description": "22-Pair SMC Quant Scanner & Key Levels"},
         {"command": "posisi", "description": "View & Manage Open Positions"},
-        {"command": "scan", "description": "Multi-Pair Trend & ADX Scanner"},
-        {"command": "status", "description": "Account & Risk Engine Status"},
-        {"command": "closeall", "description": "Close All Active Positions"}
+        {"command": "status", "description": "Account & Risk Intelligence Status"},
+        {"command": "closeall", "description": "Emergency Close All Positions"}
     ]
     try:
         url = _get_api_url("setMyCommands")

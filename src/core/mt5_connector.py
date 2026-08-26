@@ -2,10 +2,10 @@ import time
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
-from ta.trend import EMAIndicator
-from ta.trend import ADXIndicator
-from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
+from ta.trend import EMAIndicator  # type: ignore
+from ta.trend import ADXIndicator  # type: ignore
+from ta.momentum import RSIIndicator  # type: ignore
+from ta.volatility import AverageTrueRange  # type: ignore
 
 import config
 from config import mt5
@@ -750,23 +750,31 @@ def get_valid_trade_symbol(symbol):
     if symbol in _valid_symbol_cache:
         return _valid_symbol_cache[symbol]
     info = mt5.symbol_info(symbol)
-    if info is not None and getattr(info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
+    if info is not None and getattr(info, "trade_mode", 0) in (getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4), 4):
         _valid_symbol_cache[symbol] = symbol
         return symbol
 
+    clean_sym = symbol.strip().upper()
+    if clean_sym in ("GOLD", "XAU"):
+        clean_sym = "XAUUSD"
+    elif clean_sym in ("BTC", "BITCOIN"):
+        clean_sym = "BTCUSD"
+
     candidates = [
-        symbol + "c",
-        symbol + ".c",
-        symbol + ".ecn",
-        symbol + "c.ecn",
-        symbol[:-1] if symbol.endswith("c") else symbol,
+        clean_sym + "-ECNc",
+        clean_sym + "-ECN",
+        clean_sym + ".c",
+        clean_sym + "c",
+        clean_sym,
+        clean_sym + ".ecn",
+        clean_sym + "c.ecn",
+        clean_sym[:-1] if clean_sym.endswith("C") else clean_sym,
     ]
     for cand in candidates:
-        if cand == symbol:
-            continue
         cand_info = mt5.symbol_info(cand)
-        if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (mt5.SYMBOL_TRADE_MODE_FULL, 4):
-            print(f"[MT5 AUTO-CORRECT] Symbol '{symbol}' auto-corrected to broker symbol: '{cand}'")
+        if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4), 4):
+            if cand != symbol:
+                print(f"[MT5 AUTO-CORRECT] Symbol '{symbol}' auto-corrected to broker symbol: '{cand}'")
             _valid_symbol_cache[symbol] = cand
             return cand
 

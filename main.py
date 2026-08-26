@@ -11,9 +11,10 @@ import config
 from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
-from src.core.cli_theme import UI, render_banner
+from src.core.cli_theme import UI, render_banner, render_scanner_banner, render_candidate_alert_box, render_hacker_bento_hud
 from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
 from src.analytics.macro_analyst import MacroAnalyst
+from src.analytics.market_scanner import MarketScanner, CandidateSetup
 
 import re
 import shutil
@@ -966,6 +967,86 @@ def _prompt_startup_scan_mode(skip_prompt=False):
     print(f" {UI.GREEN}[+] Mode Terpilih:{UI.RST} {UI.BOLD}{mode_txt}{UI.RST}\n")
 
 
+def run_scanner_trading_cycle(candidate, risk_obj):
+    """
+    Stage 2 Event Handler: Processes an A+ candidate detected by the Fast Radar Scanner.
+    Executes 3-LLM Consensus Jury with High-Density Dossier Prompt.
+    """
+    _reset_status_lines()
+    sys.stdout.write(UI.clear_line())
+    sys.stdout.flush()
+
+    sym = candidate.symbol
+    print("\n" + render_candidate_alert_box(candidate))
+    
+    # 1. Check Risk limits
+    can_trade, reason = risk_obj.can_trade(sym)
+    if not can_trade:
+        print(f" {UI.RED}[RISK REJECTED]{UI.RST} {sym}: {reason}")
+        return
+        
+    # Check max open positions (6)
+    open_pos = connector.get_all_open_positions()
+    if len(open_pos) >= config.MAX_OPEN_POSITIONS:
+        print(f" {UI.RED}[RISK REJECTED]{UI.RST} Max open positions ({config.MAX_OPEN_POSITIONS}) reached.")
+        return
+        
+    # 2. Call 3-LLM Consensus Jury with High-Density Dossier
+    decisions = llm.get_multi_llm_decisions_for_candidate(candidate)
+    
+    # 3. Consensus Engine
+    consensus_res = consensus.evaluate_consensus(decisions)
+    action = consensus_res.get("action", "HOLD")
+    conf = consensus_res.get("confidence", 0.0)
+    
+    print(f" {UI.tag('CONSENSUS', UI.PURPLE)} {sym} Verdict: {UI.badge_signal(action)} (Confidence: {conf:.2f})")
+    
+    if action in ("BUY", "SELL"):
+        # Calculate SL distance in points
+        si = config.mt5.symbol_info(sym)
+        pt = si.point if si and si.point else 1e-5
+        sl_distance_pts = int(round(abs(candidate.trigger_price - candidate.suggested_sl) / pt))
+        if sl_distance_pts <= 0:
+            sl_distance_pts = 200
+            
+        lot = risk_obj.calculate_lot_size(sym, sl_distance_pts)
+        sl_price = candidate.suggested_sl
+        tp_price = candidate.suggested_tp
+        
+        print(f" {UI.GREEN}[EXECUTING ORDER]{UI.RST} {action} {sym} | Lot: {lot} | SL: {sl_price} | TP: {tp_price}")
+        
+        res = connector.open_position(
+            symbol=sym,
+            order_type=action,
+            lot=lot,
+            sl=sl_price,
+            tp=tp_price,
+            deviation=config.deviation_for(sym),
+            magic=config.MAGIC_NUMBER,
+            comment=f"Quant-{candidate.setup_type[:6]}"
+        )
+        if res and res.get("status") == "SUCCESS":
+            t_id = res.get("ticket")
+            print(f" {UI.GREEN}✓ Order #{t_id} berhasil dieksekusi!{UI.RST}")
+            tg.alert_trade_opened(
+                signal=action,
+                lot=lot,
+                sl_points=sl_distance_pts,
+                tp_points=int(round(abs(tp_price - candidate.trigger_price) / pt)),
+                symbol=sym,
+                ticket=t_id,
+                entry_price=candidate.trigger_price,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                confidence=conf,
+                setup=candidate.setup_type,
+                reason=consensus_res.get("reasoning", "")
+            )
+        else:
+            err = res.get("comment") if res else "Unknown"
+            print(f" {UI.RED}❌ Gagal eksekusi order MT5: {err}{UI.RST}")
+
+
 def run_trading_cycle():
     """Performs one full cycle: post-mortem (1x, aggregate all symbols) + full cycle
     per symbol in the rotation pool. Mode "xau": pool=[XAU]. Mode "xau_pairs": pool
@@ -1508,19 +1589,161 @@ def _run_cycle_for_current_symbol():
     return True
 
 
+def run_scanner_trading_cycle(cand, risk):
+    """
+    Stage 2 Funnel Execution:
+    Triggered when Stage 1 Python Quant Scanner identifies an A+ setup on one of 22 pairs.
+    Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
+    """
+    sym = cand.symbol
+    print(f"\n {UI.PURPLE}{UI.BOLD}[STAGE 1 TRIGGER] Setup {cand.setup_type} ({'BUY' if cand.direction==1 else 'SELL'}) Terdeteksi pada {sym}!{UI.RST}")
+    
+    # 1. Check risk gates for candidate symbol
+    if not risk.can_trade(sym):
+        print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} tidak diizinkan oleh Risk Engine (Spread / Session / Drawdown Filter).{UI.RST}")
+        return False
+    
+    # 2. Fetch live candles (H1 & M5) from MT5
+    try:
+        from config import mt5
+        rates_h1 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_H1, 0, 16)
+        rates_m5 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 25)
+        
+        def _fmt(rates):
+            lines = []
+            for r in rates:
+                t_s = connector.format_time(r["time"]) if hasattr(connector, "format_time") else str(r["time"])
+                lines.append(f"- [{t_s}] Open: {r['open']:.5f} | High: {r['high']:.5f} | Low: {r['low']:.5f} | Close: {r['close']:.5f}")
+            return "\n".join(lines)
+            
+        h1_str = _fmt(rates_h1[:-1]) if rates_h1 is not None else None
+        m5_str = _fmt(rates_m5[:-1]) if rates_m5 is not None else None
+    except Exception as e:
+        h1_str, m5_str = None, None
+        
+    # 3. Call 2-Pass Sequential Cross-Examination Jury
+    old_sym = config.SYMBOL
+    config.SYMBOL = sym
+    try:
+        decisions = llm.get_multi_llm_decisions_for_candidate(cand, recent_h1_str=h1_str, recent_m5_str=m5_str)
+        result = consensus.calculate_consensus(decisions)
+        
+        trade_signal = result.get("signal", "HOLD")
+        if trade_signal in ("BUY", "SELL"):
+            # Execute trade order on MT5 (pending or market)
+            sl_points = result.get("sl_points")
+            tp_points = result.get("tp_points")
+            entry_type = result.get("entry_type") or "market"
+            entry_price = result.get("entry_price")
+            
+            tick_live = connector.get_current_tick(sym)
+            if not tick_live:
+                return False
+                
+            point = tick_live.get("point", 0.00001)
+            ref_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
+            
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
+            if not sltp_ok:
+                print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
+                return False
+                
+            effective_lot = risk.get_effective_lot_size(sl_points, split_count=1)
+            
+            # If pending order
+            if getattr(config, "PENDING_ORDERS_ENABLED", False) and entry_type != "market" and entry_price:
+                p_sl_price = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)
+                p_tp_price = entry_price + (tp_points * point) if trade_signal == "BUY" else entry_price - (tp_points * point)
+                pending_res = connector.send_pending_order(
+                    symbol=sym,
+                    entry_type=entry_type,
+                    entry_price=entry_price,
+                    lot=effective_lot,
+                    sl_points=sl_points,
+                    tp_points=tp_points,
+                    comment=f"JURY {cand.setup_type[:10]}",
+                    sl_price=p_sl_price,
+                    tp_price=p_tp_price,
+                    expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240)
+                )
+                if pending_res.get("status") == "SUCCESS":
+                    print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Pending {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
+                    risk.record_trade_opened()
+                    tg.alert_pending_order_placed(
+                        symbol=sym,
+                        entry_type=entry_type,
+                        ticket=pending_res.get("ticket"),
+                        entry_price=entry_price,
+                        lot=effective_lot,
+                        sl_points=sl_points,
+                        tp_points=tp_points,
+                        sl_price=p_sl_price,
+                        tp_price=p_tp_price,
+                        models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
+                        confidence=result.get("confidence", 0.0),
+                        setup=f"{cand.setup_type} ({cand.timeframe})",
+                        reason=result.get("reason", ""),
+                        invalidation=f"SL: {p_sl_price}",
+                        expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240),
+                    )
+                    return True
+            
+            # Otherwise Market Order
+            sl_price = ref_price - (sl_points * point) if trade_signal == "BUY" else ref_price + (sl_points * point)
+            tp_price = ref_price + (tp_points * point) if trade_signal == "BUY" else ref_price - (tp_points * point)
+            
+            order_res = connector.send_trade_order(
+                symbol=sym,
+                action=trade_signal,
+                lot=effective_lot,
+                sl_points=sl_points,
+                tp_points=tp_points,
+                comment=f"JURY {cand.setup_type[:10]}",
+                sl_price=sl_price,
+                tp_price=tp_price,
+                atr_h1_pts=cand.current_atr_pts,
+            )
+            if order_res.get("status") == "SUCCESS":
+                print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Market {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
+                risk.record_trade_opened()
+                tg.alert_trade_opened(
+                    trade_signal, effective_lot, sl_points, tp_points,
+                    recovery_mode=risk.is_recovery_mode,
+                    reason=result.get("reason", ""),
+                    ticket=order_res.get("ticket"),
+                    entry_price=ref_price,
+                    symbol=sym,
+                    setup=f"{cand.setup_type} ({cand.timeframe})",
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
+                    confidence=result.get("confidence", 0.0),
+                )
+                return True
+            else:
+                print(f" {UI.RED}✗ [STAGE 2 JURY ERROR] Gagal eksekusi order MT5: {order_res.get('comment')}{UI.RST}")
+                return False
+        else:
+            print(f" {UI.DIM}[STAGE 2 JURY] Setup {cand.setup_type} pada {sym} DITOLAK/HOLD oleh sidang konsensus.{UI.RST}")
+            return False
+    finally:
+        config.SYMBOL = old_sym
+
+
 def main():
     # Apply CLI overrides (sesi saja) sebelum bot jalan
     cli_applied, skip_prompt = parse_cli_overrides()
 
-    # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
-    if not skip_prompt and sys.stdin.isatty():
+    # Prompt interaktif setting - di-bypass di mode Scanner (semua konfigurasi via .env)
+    if not skip_prompt and sys.stdin.isatty() and not config.SCANNER_MODE:
         interactive_setup()
 
     # Set active symbol now so the banner shows the symbol that will be traded
     config.refresh_active_symbol()
 
-    # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
-    _prompt_startup_scan_mode(skip_prompt)
+    # FASE 6 - pilihan mode scan startup (di-bypass di mode Scanner karena Fast Radar 60s aktif otomatis)
+    if not config.SCANNER_MODE:
+        _prompt_startup_scan_mode(skip_prompt)
 
     # Setup TeeLogger to save all terminal logs from here on (clean logs, no interactive menus)
     if getattr(config, "LOG_FILE", None):
@@ -1537,24 +1760,33 @@ def main():
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
 
-    print(render_banner(
-        account_info=getattr(config, "MT5_LOGIN", None),
-        symbol=config.SYMBOL,
-        tf=tf_name,
-        mode=config.TRADING_MODE,
-        is_live=not config.DRY_RUN
-    ))
-
-    # Info Trading Mode
-    if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        pool = config.get_rotation_pool()
-        print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        if getattr(config, "DYNAMIC_SESSION_TIMEFRAME", False):
-            print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (M30 24/7) - Smart Rotation")
-        else:
-            print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (M30 24/7) - Smart Rotation")
+    if config.SCANNER_MODE:
+        print(render_scanner_banner(
+            account_info=getattr(config, "MT5_LOGIN", None),
+            is_live=not config.DRY_RUN,
+            total_symbols=len(config.get_scanner_symbols())
+        ))
+        print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
+        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (21 FX Crosses + Gold H1/D1){UI.RST}")
     else:
-        print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}SINGLE SYMBOL ONLY{UI.RST}")
+        print(render_banner(
+            account_info=getattr(config, "MT5_LOGIN", None),
+            symbol=config.SYMBOL,
+            tf=tf_name,
+            mode=config.TRADING_MODE,
+            is_live=not config.DRY_RUN
+        ))
+
+        # Info Trading Mode
+        if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
+            pool = config.get_rotation_pool()
+            print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
+            if getattr(config, "DYNAMIC_SESSION_TIMEFRAME", False):
+                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (M30 24/7) - Smart Rotation")
+            else:
+                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (M30 24/7) - Smart Rotation")
+        else:
+            print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}SINGLE SYMBOL ONLY{UI.RST}")
 
     if config.TP_SL_RULES != "LLM":
         sltp_desc = f"{config.TP_SL_RULES} (force semua)"
@@ -1584,16 +1816,15 @@ def main():
         print("Gagal terhubung ke MetaTrader 5 terminal. Pastikan MT5 Anda aktif.")
         sys.exit(1)
         
-    print("\n Terhubung ke MT5 dengan sukses!")
+    acc_info = connector.get_account_info()
+    acc_login = f"Login #{acc_info.get('login', 'Live')}" if acc_info else "Connected"
+    print(f"\n {UI.GREEN}✓{UI.RST} Terhubung ke MT5 Terminal ({acc_login})")
     
-    # One-time startup check to evaluate any trades closed while offline
+    # Background post-mortem check for closed trades
     try:
-        print("[STARTUP] Memeriksa tiket terlewat untuk evaluasi post-mortem...")
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
-    except Exception as e:
-        print(f"[STARTUP EVALUATOR WARNING] {e}")
-
-    print("Bot berjalan... Menunggu penutupan candle berikutnya.\n")
+    except Exception:
+        pass
     
     # Send startup alert
     tg.alert_bot_started()
@@ -1605,8 +1836,29 @@ def main():
     except Exception as e:
         print(f" [TELEGRAM BOT LISTENER ERROR] {e}")
     
+    # Initialize 2-Stage Quant Funnel Market Scanner if enabled
+    scanner = None
+    _last_radar_scan = 0.0
+    _last_radar_status = "Standby (60s loop)"
+    _radar_anim_idx = 0
+    if config.SCANNER_MODE:
+        try:
+            scanner = MarketScanner()
+            scanner.update_macro_context(connector, force=True)
+            acc_info = connector.get_account_info()
+            open_pos = connector.get_all_open_positions()
+            print("\n" + render_hacker_bento_hud(
+                macro_cache=scanner.macro_cache,
+                account_info=acc_info,
+                daily_pnl=risk.get_daily_pnl(),
+                open_positions=open_pos,
+                active_models=config.active_ai_model_names()
+            ) + "\n")
+        except Exception as e:
+            print(f"[STARTUP SCANNER WARNING] {e}\n")
+
     # Run initial macro and MTF analysis (forced on startup to ensure we have data immediately)
-    if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
+    if not config.SCANNER_MODE and (config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED):
         print("\n [STARTUP] Menjalankan analisa Multi-Timeframe & Fundamental awal...")
         try:
             macro.check_and_update_analysis(force=True)
@@ -1622,7 +1874,7 @@ def main():
     try:
         while True:
             # =================================================================
-            #  EVERY TICK (5s): Manage open positions + weekend check
+            #  EVERY TICK (3s): Manage open positions + weekend check
             # =================================================================
             try:
                 # Day-change detection: kalau tanggal WIB berubah, kirim ringkasan
@@ -1648,14 +1900,7 @@ def main():
                 except Exception as e:
                     print(f"[DAY CHANGE ERROR] {e}")
 
-                # Symbol rotation: XAUUSD weekdays, BTCUSD weekends
-                active_symbol, changed = config.refresh_active_symbol()
-                if changed:
-                    print(f"[SYMBOL SWITCH] {last_symbol} -> {active_symbol}")
-                    tg.alert_symbol_switch(last_symbol, active_symbol)
-                    last_symbol = active_symbol
-
-                # Trailing stop + break-even + partial close
+                # Trailing stop + break-even + partial close + stagnation
                 position_manager.manage_all_positions()
 
                 # Sync siklus pending order (kirim alert Telegram saat ter-fill / ter-cancel)
@@ -1665,8 +1910,6 @@ def main():
                     print(f"[PENDING SYNC ERROR] {e}")
 
                 # Detect positions closed by MT5 (SL/TP/manual) in real time.
-                # Returns newly closed deals -> alert Telegram immediately,
-                # instead of waiting for the next candle cycle.
                 try:
                     new_closed = risk.sync_closed_positions()
                     for deal in new_closed:
@@ -1690,8 +1933,6 @@ def main():
                             )
                         except Exception as e:
                             print(f"[TELEGRAM WARNING] Gagal kirim alert close: {e}")
-                        # Update decision memory dengan hasil trade (biar
-                        # summarize_recent_outcomes punya count win/loss AKURAT).
                         try:
                             decision_memory.memory.update_result(
                                 d_symbol,
@@ -1702,9 +1943,6 @@ def main():
                         except Exception as e:
                             print(f"[DECISION MEMORY WARNING] update_result: {e}")
 
-                    # Post-mortem langsung untuk tiket yang baru saja ditutup,
-                    # jalan di background thread biar loop 5 detik nggak ke-block
-                    # sama LLM call post-mortem.
                     if new_closed:
                         try:
                             _pm_deals = list(new_closed)
@@ -1725,8 +1963,6 @@ def main():
                     reason = action["reason"]
                     print(f"{reason}")
                     
-                    # Get position profit before closing (include swap+commission
-                    # so the recorded result matches what MT5 deal history reports)
                     positions = mt5.positions_get(ticket=ticket)
                     profit = 0.0
                     if positions and len(positions) > 0:
@@ -1735,11 +1971,9 @@ def main():
                     success = connector.close_position(ticket)
                     if success:
                         print(f"Posisi #{ticket} ditutup untuk weekend.")
-                        # Net profit REAL = profit + swap + komisi IN+OUT (query deals lengkap).
                         net_profit = connector.get_position_net_profit(ticket)
                         if net_profit is not None:
                             profit = net_profit
-                        # Komisi aktual trade buat BEP tolerance dinamis (lihat di atas).
                         trade_cost = connector.get_position_total_cost(ticket)
                         risk.record_position_closed(ticket, profit, trade_cost)
                         tg.alert_weekend_close(ticket, profit, reason)
@@ -1748,66 +1982,64 @@ def main():
                 print(f"[POS MANAGER ERROR] {e}")
             
             # =================================================================
-            #  ON NEW CANDLE: Run full trading cycle
-            # Check and update multi-timeframe and macro analysis
-            if config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED:
-                try:
-                    macro.check_and_update_analysis()
-                except Exception as e:
-                    print(f"[MACRO UPDATE ERROR] {e}")
-
-            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
-            if rates is not None and len(rates) > 0:
-                # FASE 6: scan pas candle CLOSE - rates[-1] = candle aktif (belum close),
-                # rates[-2] = candle terakhir yang SUDAH close. Trigger pakai open-time candle close.
-                if len(rates) >= 2:
-                    current_candle_time = int(rates[-2]['time'])
-                else:
-                    current_candle_time = int(rates[-1]['time'])
-                
-                if startup_run or (last_candle_time is not None and current_candle_time > last_candle_time):
-                    skip_cycle = False
-                    if startup_run:
-                        startup_run = False
-                        if _STARTUP_SCAN_MODE == "timeframe":
-                            # Seed SEKARANG (di startup): _symbol_last_candle[sym] = open-time
-                            # candle terakhir yang SUDAH close. Cycle pertama menyusul pas candle
-                            # close BERIKUTNYA (closed_time > seeded_time -> LOLOS).
-                            # JANGAN seed di dalam run_trading_cycle: cycle pertama yang trigger
-                            # candle baru close -> closed_time == seeded_time -> SEMUA symbol skip.
-                            try:
-                                _seed_startup_scan(_resolve_valid_pool())
-                            except Exception as e:
-                                print(f"[SEED WARNING] {e}")
-                            skip_cycle = True
-                            _reset_status_lines()
-                            print("Startup scan mode: sesuai timeframe - menunggu candle close berikutnya...")
+            #  STAGE 1: 2-STAGE QUANT FUNNEL (SCANNER MODE) vs CLASSIC CYCLE
+            # =================================================================
+            if config.SCANNER_MODE and scanner is not None:
+                cur_t = time.time()
+                if cur_t - _last_radar_scan >= config.RADAR_SCAN_INTERVAL_SECONDS:
+                    _last_radar_scan = cur_t
+                    try:
+                        candidates = scanner.scan_fast_radar(connector)
+                        if candidates:
+                            for cand in candidates:
+                                run_scanner_trading_cycle(cand, risk)
                         else:
-                            _reset_status_lines()
-                            print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
-                    else:
-                        candle_wib = connector.server_to_wib(int(current_candle_time))
-                        tf_main = config.get_timeframe(config.SYMBOL)
-                        _reset_status_lines()
-                        print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Range: {_candle_range_label(current_candle_time, tf_main)}")
-                    
-                    last_candle_time = current_candle_time
-                    
-                    # Show daily P/L and risk status
-                    daily_pnl = risk.get_daily_pnl()
-                    status = risk.get_status_summary()
-                    _reset_status_lines()
-                    print(f" {UI.CYAN}[STATUS]{UI.RST} P/L Hari Ini: {UI.badge_pnl(daily_pnl)} | "
-                          f"Loss Streak: {status['consecutive_losses']} | "
-                          f"Recovery: {'Ya' if status['recovery_mode'] else 'Tidak'} | "
-                          f"Session Lot: x{status['session_lot_multiplier']}")
-                    
-                    if not skip_cycle:
-                        # Run trading cycle
-                        run_trading_cycle()
-                        tg.flush_failed_orders_recap()
+                            wib_s = time.strftime('%H:%M:%S')
+                            _last_radar_status = f"22 Pairs Normal ({wib_s})"
+                    except Exception as e:
+                        _last_radar_status = f"Radar Err: {e}"
             else:
-                print("Gagal mengecek status candle di MT5. Mencoba kembali...")
+                # Classic Candle Cycle (Single Symbol / Pairs Polling)
+                rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
+                if rates is not None and len(rates) > 0:
+                    if len(rates) >= 2:
+                        current_candle_time = int(rates[-2]['time'])
+                    else:
+                        current_candle_time = int(rates[-1]['time'])
+                    
+                    if startup_run or (last_candle_time is not None and current_candle_time > last_candle_time):
+                        skip_cycle = False
+                        if startup_run:
+                            startup_run = False
+                            if _STARTUP_SCAN_MODE == "timeframe":
+                                try:
+                                    _seed_startup_scan(_resolve_valid_pool())
+                                except Exception as e:
+                                    print(f"[SEED WARNING] {e}")
+                                skip_cycle = True
+                                _reset_status_lines()
+                                print("Startup scan mode: sesuai timeframe - menunggu candle close berikutnya...")
+                            else:
+                                _reset_status_lines()
+                                print("Menjalankan siklus analisa pertama saat startup (scan all now)...")
+                        else:
+                            tf_main = config.get_timeframe(config.SYMBOL)
+                            _reset_status_lines()
+                            print(f"\n {UI.GREEN}[+] Candle baru terdeteksi!{UI.RST} Range: {_candle_range_label(current_candle_time, tf_main)}")
+                        
+                        last_candle_time = current_candle_time
+                        
+                        daily_pnl = risk.get_daily_pnl()
+                        status = risk.get_status_summary()
+                        _reset_status_lines()
+                        print(f" {UI.CYAN}[STATUS]{UI.RST} P/L Hari Ini: {UI.badge_pnl(daily_pnl)} | "
+                              f"Loss Streak: {status['consecutive_losses']} | "
+                              f"Recovery: {'Ya' if status['recovery_mode'] else 'Tidak'} | "
+                              f"Session Lot: x{status['session_lot_multiplier']}")
+                        
+                        if not skip_cycle:
+                            run_trading_cycle()
+                            tg.flush_failed_orders_recap()
             
             # Show live status clock line in CLI every loop iteration (clean ANSI, zero emojis)
             now_str = time.strftime('%H:%M:%S')
@@ -1816,7 +2048,6 @@ def main():
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
             
-            # Show any running (open) bot positions across ALL symbols in a single line refresh
             open_pos = connector.get_all_open_positions()
             pos_parts = []
             if open_pos:
@@ -1833,13 +2064,21 @@ def main():
             else:
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
 
-            if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
+            if config.SCANNER_MODE:
+                _radar_frames = ["📡 ◌", "📡 ◔", "📡 ◑", "📡 ◕", "📡 ●"]
+                _radar_anim_idx = (_radar_anim_idx + 1) % len(_radar_frames)
+                anim_icon = _radar_frames[_radar_anim_idx]
+                n_active = len(scanner.macro_cache) if scanner else 22
+                label_hdr = f"QUANT RADAR {anim_icon} ({n_active} Pairs)"
+                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | Radar: {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
+            elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
                 tf_cur = config.get_timeframe_str()
                 label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS ({tf_cur})"
+                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             else:
                 tf_cur = config.get_timeframe_str(config.SYMBOL)
                 label_hdr = f"{config.SYMBOL.replace('-ECNc', '').replace('.c', '')} ({tf_cur})"
-            header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
+                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
             # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)
             # supaya auto-scroll terminal tidak merusak refresh in-place multi-baris.

@@ -178,3 +178,20 @@ You are NOT required to follow a single predefined trading strategy. You may use
 3. **5-State Machine Context**: `FAR`, `TESTING`, `REJECTION`, `COMPRESSION`, `BREAKOUT` sebagai status kesepakatan antara Python dan AI.
 4. **Python Deterministic Clearance & ADR Gate**: Menghitung `Range Location %`, `Clearance`, dan `Remaining Daily Range` untuk mencegah pasang TP melayang di sesi sepi.
 5. **Konsistensi Jarak SL/TP dari `entry_price`**: Menghilangkan ambiguitas jarak pada pending orders.
+
+---
+
+## 6. Pembaruan 26 Agustus 2026 — 2-Stage Quant Funnel Architecture (Branch `quant-trade`)
+
+1. **Stage 1 (Hybrid Dual-Speed Market Scanner `src/analytics/market_scanner.py`)**:
+   * **Slow Macro Layer (H1/D1 Close)**: Meng-cache Kompas Tren D1/H4 (EMA200, ADX $\ge 20$), Range Sesi Asia (08:00–13:00 WIB), dan Dealing Range 100-bar H1 (Diskon $\le 38\%$, Premium $\ge 62\%$) untuk 22 pasangan mata uang & Gold (0 Token).
+   * **Fast Execution Radar (60s Tick Scan)**: Memindai live tick 22 pair setiap 60 detik di memori lokal untuk mendeteksi sentuhan level kunci (*London Judas Sweep*, *Trend-Aligned Pullback*, *NY ADR Exhaustion Reversal*).
+2. **Stage 2 (3-LLM Consensus Jury with High-Density Structured Dossier `src/core/llm_client.py`)**:
+   * AI hanya dipanggil ketika Stage 1 mengonfirmasi setup matang A+ (~4–8 call/hari, hemat kuota ~85%).
+   * Mengirimkan *High-Density Pre-Computed Dossier* lengkap dengan validasi skeptisisme *Devil's Advocate*.
+3. **Telegram Controller & CLI Overhaul**:
+   * Penambahan command `/radar`, `/levels`, `/smc` untuk menampilkan matriks level kunci 22 pair secara real-time.
+   * Banner matrix visual di terminal (`render_scanner_banner` & `render_candidate_alert_box`).
+4. **Test Suite Verification**:
+   * Pembuatan unit test `tests/test_market_scanner.py` dan verifikasi 100% PASS pada seluruh test suite sistem.
+
