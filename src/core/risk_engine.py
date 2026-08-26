@@ -139,11 +139,13 @@ class RiskEngine:
     # =========================================================================
     #  MASTER GATE
     # =========================================================================
-    def can_trade(self):
+    def can_trade(self, symbol=None):
         """
         Master gate. Returns (bool, reason_string).
         Call this before entering any new trade.
         """
+        sym = symbol or config.SYMBOL
+
         # 0. Check manual trading pause flag
         if getattr(config, "TRADING_PAUSED", False):
             return False, " Trading dipause secara manual via API/Tool."
@@ -176,7 +178,7 @@ class RiskEngine:
             return False, cool_msg
 
         # 5. Check spread
-        spread_ok, spread_msg = self._check_spread()
+        spread_ok, spread_msg = self._check_spread(symbol=sym)
         if not spread_ok:
             return False, spread_msg
 
@@ -508,23 +510,24 @@ class RiskEngine:
             return False, f" [RISK] Cooldown antar-trade. Tunggu {remaining}s lagi."
         return True, ""
 
-    def _check_spread(self):
+    def _check_spread(self, symbol=None):
         """Check if current spread is acceptable."""
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        symbol_info = mt5.symbol_info(config.SYMBOL)
+        sym = symbol or config.SYMBOL
+        tick = mt5.symbol_info_tick(sym)
+        symbol_info = mt5.symbol_info(sym)
         if tick is None or symbol_info is None or not symbol_info.point or symbol_info.point <= 0:
-            return False, " [RISK] Tidak bisa memverifikasi spread (MT5 data/point unavailable). Menunggu..."
+            return False, f" [RISK] Tidak bisa memverifikasi spread untuk {sym} (MT5 data/point unavailable). Menunggu..."
 
         if tick.ask <= 0 or tick.bid <= 0:
-            return False, " [RISK] Quote tidak valid (harga Ask/Bid 0). Menunggu..."
+            return False, f" [RISK] Quote tidak valid untuk {sym} (harga Ask/Bid 0). Menunggu..."
 
         spread_points = round((tick.ask - tick.bid) / symbol_info.point, 1)
 
         # FX: ATR-based cap (15% ATR H1, floor 20 pts).
         # XAU/BTC: flat cap dari config.
-        max_spread = config.max_spread_points_for(config.SYMBOL, atr_h1_pts=self._atr_h1_pts)
+        max_spread = config.max_spread_points_for(sym, atr_h1_pts=self._atr_h1_pts)
         if spread_points > max_spread:
-            return False, (f" [RISK] Spread terlalu tinggi: {spread_points} pts "
+            return False, (f" [RISK] Spread {sym} terlalu tinggi: {spread_points} pts "
                            f"(Maks: {max_spread} pts). Menunggu...")
         return True, ""
 

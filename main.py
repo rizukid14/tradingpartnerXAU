@@ -1564,12 +1564,14 @@ def run_scanner_trading_cycle(cand, risk):
     Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
     """
     sym = cand.symbol
-    print(f"\n {UI.PURPLE}{UI.BOLD}[STAGE 1 TRIGGER] Setup {cand.setup_type} ({'BUY' if cand.direction==1 else 'SELL'}) Terdeteksi pada {sym}!{UI.RST}")
+    tf_str = getattr(cand, "timeframe", "H1")
+    print(f"\n {UI.PURPLE}{UI.BOLD}[STAGE 1 TRIGGER] Setup {cand.setup_type} ({'BUY' if cand.direction==1 else 'SELL'}) Timeframe [{tf_str}] Terdeteksi pada {sym}!{UI.RST}")
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
-    if not risk.can_trade(sym):
-        print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} tidak diizinkan oleh Risk Engine (Spread / Session / Drawdown Filter).{UI.RST}")
+    can_trade_ok, risk_msg = risk.can_trade(sym)
+    if not can_trade_ok:
+        print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         return False
     
     # 2. Fetch live candles (H1 & M5) from MT5
