@@ -1638,6 +1638,12 @@ def run_scanner_trading_cycle(cand, risk):
                 
             effective_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym)
             
+            # Final Pre-Dispatch Risk Check (guards against positions opened while LLM was reasoning)
+            can_trade_ok, risk_msg = risk.can_trade(sym)
+            if not can_trade_ok:
+                print(f" {UI.YELLOW}[PRE-DISPATCH BLOCKED] Trade {sym} dibatalkan: {risk_msg}{UI.RST}")
+                return False
+
             # If pending order
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and entry_type != "market" and entry_price:
                 p_sl_price = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)

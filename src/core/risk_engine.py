@@ -491,33 +491,30 @@ class RiskEngine:
             return True, ""
 
     def _check_max_positions(self, symbol=None):
-        """Check if max open positions + pending orders (of this bot) reached - aggregated across ALL
+        """Check if max open positions + pending orders reached - aggregated across ALL
         symbols, and ensures strict 1-position/order limit per symbol."""
         positions = mt5.positions_get() or []
         orders = mt5.orders_get() or []
         
-        bot_positions = [p for p in positions if getattr(p, "magic", 0) == config.MAGIC_NUMBER]
-        bot_orders = [o for o in orders if getattr(o, "magic", 0) == config.MAGIC_NUMBER]
-        
-        # 1. Total aggregate capacity (Open + Pending)
-        total_active = len(bot_positions) + len(bot_orders)
+        # 1. Total aggregate capacity (Open + Pending) across entire MT5 account
+        total_active = len(positions) + len(orders)
         max_positions = config.get_max_open_positions(self._in_recovery_mode)
         if total_active >= max_positions:
-            return False, f" [RISK] Total order aktif (open+pending) sudah {total_active}/{max_positions}."
+            return False, f" [RISK] Total order aktif (open+pending) di MT5 sudah {total_active}/{max_positions}."
 
         # 2. Max pending orders limit
         max_pending = getattr(config, "MAX_PENDING_ORDERS", 3)
-        if len(bot_orders) >= max_pending:
-            return False, f" [RISK] Pending order sudah mencapai batas {len(bot_orders)}/{max_pending}."
+        if len(orders) >= max_pending:
+            return False, f" [RISK] Pending order di MT5 sudah mencapai batas {len(orders)}/{max_pending}."
 
         # 3. Strict 1-trade limit per symbol
         if symbol:
             clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
-            for p in bot_positions:
+            for p in positions:
                 p_sym = p.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
                 if clean_sym == p_sym:
                     return False, f" [RISK] Simbol {symbol} sudah memiliki posisi terbuka aktif (Ticket #{p.ticket})."
-            for o in bot_orders:
+            for o in orders:
                 o_sym = o.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
                 if clean_sym == o_sym:
                     return False, f" [RISK] Simbol {symbol} sudah memiliki pending order aktif (Ticket #{o.ticket})."
