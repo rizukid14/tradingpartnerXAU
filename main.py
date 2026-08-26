@@ -2013,7 +2013,8 @@ def main():
                     try:
                         candidates = scanner.scan_fast_radar(connector)
                         if candidates:
-                            for cand in candidates:
+                            # Process at most 1 top setup per 60s cycle to prevent LLM burst
+                            for cand in candidates[:1]:
                                 run_scanner_trading_cycle(cand, risk)
                         else:
                             wib_s = cur_dt.strftime('%H:%M:%S')

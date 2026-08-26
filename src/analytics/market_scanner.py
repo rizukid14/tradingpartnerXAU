@@ -98,6 +98,7 @@ class MarketScanner:
         self.last_macro_update: Optional[datetime] = None
         self.last_candidates: List[CandidateSetup] = []
         self._last_radar_scan_time: float = 0.0
+        self._symbol_last_trigger: Dict[str, float] = {}
 
     def _get_point(self, symbol: str) -> float:
         clean = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
@@ -283,7 +284,36 @@ class MarketScanner:
         is_london_open = (14 <= h <= 18)
         is_ny_session = (19 <= h <= 23)
 
+        # ── ACTIVE POSITION & PENDING ORDER GATES (0 Token) ──
+        positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
+        orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
+        bot_positions = [p for p in (positions or []) if getattr(p, "magic", 0) == config.MAGIC_NUMBER]
+        bot_orders = [o for o in (orders or []) if getattr(o, "magic", 0) == config.MAGIC_NUMBER]
+        
+        # Max capacity gate
+        max_positions = config.get_max_open_positions()
+        if len(bot_positions) + len(bot_orders) >= max_positions:
+            return []
+
+        active_symbols = set()
+        for p in bot_positions:
+            active_symbols.add(p.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper())
+        for o in bot_orders:
+            active_symbols.add(o.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper())
+
+        now_ts = time.time()
+
         for sym, macro in self.macro_cache.items():
+            clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+            
+            # Anti-Duplicate: Skip if symbol already has active position or pending order!
+            if clean_sym in active_symbols:
+                continue
+
+            # Per-Symbol Cooldown: Min 15 minutes between LLM Jury evaluations for the same symbol
+            if (now_ts - self._symbol_last_trigger.get(clean_sym, 0.0)) < 900:
+                continue
+
             try:
                 # Get live tick
                 tick = None
@@ -588,6 +618,10 @@ class MarketScanner:
 
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")
+
+        for c in candidates:
+            c_clean = c.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+            self._symbol_last_trigger[c_clean] = now_ts
 
         self.last_candidates = candidates
         return candidates

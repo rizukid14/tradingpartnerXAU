@@ -168,7 +168,7 @@ class RiskEngine:
             return False, profit_msg
 
         # 3. Check max open positions
-        pos_ok, pos_msg = self._check_max_positions()
+        pos_ok, pos_msg = self._check_max_positions(symbol=sym)
         if not pos_ok:
             return False, pos_msg
 
@@ -490,14 +490,38 @@ class RiskEngine:
             print(f"[RISK WARNING] Gagal memeriksa target profit harian: {e}")
             return True, ""
 
-    def _check_max_positions(self):
-        """Check if max open positions (of this bot) reached - aggregated across ALL
-        symbols (XAU + FX pairs + BTC), since rotation mode trades multiple symbols."""
-        positions = mt5.positions_get()
-        bot_positions = [p for p in (positions or []) if p.magic == config.MAGIC_NUMBER]
+    def _check_max_positions(self, symbol=None):
+        """Check if max open positions + pending orders (of this bot) reached - aggregated across ALL
+        symbols, and ensures strict 1-position/order limit per symbol."""
+        positions = mt5.positions_get() or []
+        orders = mt5.orders_get() or []
+        
+        bot_positions = [p for p in positions if getattr(p, "magic", 0) == config.MAGIC_NUMBER]
+        bot_orders = [o for o in orders if getattr(o, "magic", 0) == config.MAGIC_NUMBER]
+        
+        # 1. Total aggregate capacity (Open + Pending)
+        total_active = len(bot_positions) + len(bot_orders)
         max_positions = config.get_max_open_positions(self._in_recovery_mode)
-        if len(bot_positions) >= max_positions:
-            return False, f" [RISK] Posisi terbuka sudah {len(bot_positions)}/{max_positions} (semua simbol)."
+        if total_active >= max_positions:
+            return False, f" [RISK] Total order aktif (open+pending) sudah {total_active}/{max_positions}."
+
+        # 2. Max pending orders limit
+        max_pending = getattr(config, "MAX_PENDING_ORDERS", 3)
+        if len(bot_orders) >= max_pending:
+            return False, f" [RISK] Pending order sudah mencapai batas {len(bot_orders)}/{max_pending}."
+
+        # 3. Strict 1-trade limit per symbol
+        if symbol:
+            clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+            for p in bot_positions:
+                p_sym = p.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+                if clean_sym == p_sym:
+                    return False, f" [RISK] Simbol {symbol} sudah memiliki posisi terbuka aktif (Ticket #{p.ticket})."
+            for o in bot_orders:
+                o_sym = o.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+                if clean_sym == o_sym:
+                    return False, f" [RISK] Simbol {symbol} sudah memiliki pending order aktif (Ticket #{o.ticket})."
+
         return True, ""
 
     def _check_cooldown(self):
