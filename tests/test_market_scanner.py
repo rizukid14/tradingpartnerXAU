@@ -135,6 +135,23 @@ class TestMarketScanner(unittest.TestCase):
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("XAUUSD-ECNc", 20))
 
+    def test_alert_hourly_radar_recap(self):
+        from src.core import telegram_alerts as tg
+        self.scanner.update_macro_context(self.connector, force=True)
+        # Mock positions
+        mock_positions = [
+            {"ticket": 12345, "symbol": "GBPUSD-ECNc", "type": "BUY", "volume": 0.05, "profit": 15.20},
+            {"ticket": 12346, "symbol": "USDJPY-ECNc", "type": "SELL", "volume": 0.05, "profit": -4.80}
+        ]
+        # Test that calling alert_hourly_radar_recap executes without error (returns boolean)
+        result = tg.alert_hourly_radar_recap(
+            scanner=self.scanner,
+            open_positions=mock_positions,
+            today_pnl=42.50
+        )
+        self.assertIsInstance(result, bool)
+
 
 if __name__ == "__main__":
     unittest.main()
+

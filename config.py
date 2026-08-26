@@ -218,6 +218,10 @@ SCANNER_SYMBOLS = [
 # Fast Execution Radar interval (detik) & Rejection Wick Floor
 RADAR_SCAN_INTERVAL_SECONDS = _getenv_int("RADAR_SCAN_INTERVAL_SECONDS", 60)
 RADAR_MIN_WICK_RATIO = _getenv_float("RADAR_MIN_WICK_RATIO", 0.30)
+ENABLE_HOURLY_RADAR_RECAP = _getenv_bool("ENABLE_HOURLY_RADAR_RECAP", True)
+
+
+
 
 FX_PAIR_SYMBOLS = [
     s.strip()

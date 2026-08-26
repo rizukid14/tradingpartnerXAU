@@ -162,6 +162,9 @@ python main.py
 16. **LuxAlgo Smart Money Concepts (SMC) & Liquidity Map Engine (`src/indicators/lux_smc.py`)**:
     - Porting murni 1:1 dari LuxAlgo TradingView Pine Script v5 ke Python: mendeteksi *Unmitigated Order Blocks (OB)*, *Fair Value Gaps (FVG)*, *Strong Low / Strong High*, dan *Equal Highs/Lows (EQH/EQL)*.
     - Diinjeksikan ke Bagian 2 Master Dossier Prompt sehingga AI menaruh Stop Loss presisi di balik Order Block/Strong Low dan Take Profit pada area magnet FVG/Weak High.
+17. **Hourly SMC Radar & Market Pulse Telegram Digest (`telegram_alerts.py` & `main.py`)**:
+    - Rekap otomatis berkala setiap 1 jam (pada pergantian jam WIB) yang mempublikasikan status Market Compass 22 pair (Bullish/Bearish/Sideways), Dealing Range SMC (Top Discount & Premium watch), status portofolio MT5 (floating & realized P/L), serta ringkasan aktivitas sweep 60 detik tanpa membebani kuota API token.
+
 
 ---
 

@@ -660,3 +660,110 @@ def alert_hold_recap(hold_lines, news_context=None):
         + "_Manajemen posisi dan proteksi risiko berjalan 24/7._"
     )
     return send_message(text)
+
+
+def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None):
+    """
+    Send comprehensive Hourly SMC Radar & Portfolio Pulse Digest to Telegram.
+    Summarizes:
+    - Market Compass (H4/D1 Trend Bullish / Bearish / Range across 22 pairs)
+    - Key SMC Dealing Range zones (Top Discount / Premium pairs)
+    - Live Portfolio & Floating P/L status
+    - 60s Fast Radar activity
+    """
+    if not config.TELEGRAM_ENABLED:
+        return False
+    if not getattr(config, "ENABLE_HOURLY_RADAR_RECAP", True):
+        return False
+
+    now = datetime.now(WIB)
+    time_str = now.strftime("%H:%M WIB")
+
+    lines = [
+        f"📡 *HOURLY QUANT RADAR & MARKET PULSE ({time_str})*",
+        "━" * 32
+    ]
+
+    # 1. Market Compass & SMC Levels
+    if scanner is not None and getattr(scanner, "macro_cache", None):
+        bull_pairs = []
+        bear_pairs = []
+        range_pairs = []
+        discount_pairs = []
+        premium_pairs = []
+
+        for sym, m in scanner.macro_cache.items():
+            clean = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            if m.get('is_bull'):
+                bull_pairs.append(clean)
+            elif m.get('is_bear'):
+                bear_pairs.append(clean)
+            else:
+                range_pairs.append(clean)
+
+            h = m.get('dealing_range_high', 0.0)
+            l = m.get('dealing_range_low', 0.0)
+            rng = max(h - l, 1e-5)
+            disc_top = l + 0.382 * rng
+            prem_bot = l + 0.618 * rng
+            pos = m.get('dealing_range_pos', 0.5)
+
+            if pos <= 0.382:
+                discount_pairs.append((clean, disc_top, pos))
+            elif pos >= 0.618:
+                premium_pairs.append((clean, prem_bot, pos))
+
+        # Sort discount (lowest pos first) & premium (highest pos first)
+        discount_pairs.sort(key=lambda x: x[2])
+        premium_pairs.sort(key=lambda x: -x[2])
+
+        lines.append("📊 *Market Compass (22 Pairs H4/D1):*")
+        lines.append(f"• 🟢 *Bullish ({len(bull_pairs)})*: `{', '.join(bull_pairs[:6]) if bull_pairs else '-'}`")
+        lines.append(f"• 🔴 *Bearish ({len(bear_pairs)})*: `{', '.join(bear_pairs[:6]) if bear_pairs else '-'}`")
+        lines.append(f"• ⚪ *Sideways ({len(range_pairs)})*: `{', '.join(range_pairs[:6]) if range_pairs else '-'}`")
+        lines.append("━" * 32)
+
+        lines.append("🎯 *Zona Kunci SMC (Potensi Entry):*")
+        if discount_pairs:
+            lines.append("• 🛒 *Diskon (Buy Watch <= 38.2%):*")
+            for c_sym, c_lvl, c_pos in discount_pairs[:4]:
+                lines.append(f"  - `{c_sym}`: `{c_lvl:.5f}` (Pos: `{c_pos*100:.0f}%` Diskon)")
+        else:
+            lines.append("• 🛒 *Diskon (Buy Watch)*: _Belum ada pair di zona diskon ekstrim_")
+
+        if premium_pairs:
+            lines.append("• 🏷️ *Premium (Sell Watch >= 61.8%):*")
+            for c_sym, c_lvl, c_pos in premium_pairs[:4]:
+                lines.append(f"  - `{c_sym}`: `{c_lvl:.5f}` (Pos: `{c_pos*100:.0f}%` Premium)")
+        else:
+            lines.append("• 🏷️ *Premium (Sell Watch)*: _Belum ada pair di zona premium ekstrim_")
+        lines.append("━" * 32)
+    else:
+        lines.append("📊 *SMC Radar:* `Macro cache stand-by`")
+        lines.append("━" * 32)
+
+    # 2. Portfolio & Floating Status
+    total_float = 0.0
+    pos_lines = []
+    if open_positions:
+        total_float = sum(p.get("profit", 0.0) for p in open_positions)
+        for p in open_positions[:6]:
+            sym_clean = p.get("symbol", "?").replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            pos_lines.append(f"  • `{sym_clean}` {p.get('type')} {p.get('volume')} lot `${p.get('profit', 0.0):+.2f}`")
+
+    pnl_emoji = "🟢" if today_pnl >= 0 else "🔴"
+    float_emoji = "🟢" if total_float >= 0 else "🔴"
+    lines.append("💼 *Portofolio & Fast Radar:*")
+    lines.append(f"• {pnl_emoji} Realized Today: `${today_pnl:+.2f}`")
+    lines.append(f"• {float_emoji} Floating P/L: `${total_float:+.2f}`")
+    if pos_lines:
+        lines.append(f"• 📌 Posisi Aktif ({len(open_positions)}):\n" + "\n".join(pos_lines))
+    else:
+        lines.append("• 📌 Posisi Aktif: `Nihil (Semua Bersih)`")
+
+    lines.append("• 📡 Fast Radar: `22 Pairs Swept Every 60s (0 Token)`")
+    lines.append("━" * 32)
+    lines.append("_Gunakan menu keyboard atau `/radar` untuk refresh instant._")
+
+    return send_message("\n".join(lines))
+

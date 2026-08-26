@@ -1830,6 +1830,7 @@ def main():
     _last_radar_scan = 0.0
     _last_radar_status = "Standby (60s loop)"
     _radar_anim_idx = 0
+    _last_hourly_recap_hour = datetime.now(_WIB).hour
     if config.SCANNER_MODE:
         try:
             scanner = MarketScanner()
@@ -1975,6 +1976,39 @@ def main():
             # =================================================================
             if config.SCANNER_MODE and scanner is not None:
                 cur_t = time.time()
+                cur_dt = datetime.now(_WIB)
+
+                # Hourly SMC Radar & Market Pulse: Sinkronisasi Re-render CLI Matrix + Telegram Digest (setiap ganti jam WIB)
+                if cur_dt.hour != _last_hourly_recap_hour:
+                    _last_hourly_recap_hour = cur_dt.hour
+                    try:
+                        # 1. Update Macro Context layer dengan data bar H1 terbaru
+                        scanner.update_macro_context(connector, force=True)
+                        acc_info = connector.get_account_info()
+                        open_p = connector.get_all_open_positions()
+                        pnl_today = risk.get_daily_pnl()
+
+                        # 2. Re-render Bento HUD Matrix di Terminal CLI
+                        _reset_status_lines()
+                        print("\n" + render_hacker_bento_hud(
+                            macro_cache=scanner.macro_cache,
+                            account_info=acc_info,
+                            daily_pnl=pnl_today,
+                            open_positions=open_p,
+                            active_models=config.active_ai_model_names()
+                        ) + "\n")
+
+                        # 3. Kirim rekap komprehensif ke Telegram
+                        if getattr(config, "ENABLE_HOURLY_RADAR_RECAP", True):
+                            tg.alert_hourly_radar_recap(
+                                scanner=scanner,
+                                open_positions=open_p,
+                                today_pnl=pnl_today,
+                                risk=risk
+                            )
+                    except Exception as e:
+                        print(f"[HOURLY SYNC ERROR] {e}")
+
                 if cur_t - _last_radar_scan >= config.RADAR_SCAN_INTERVAL_SECONDS:
                     _last_radar_scan = cur_t
                     try:
@@ -1983,7 +2017,7 @@ def main():
                             for cand in candidates:
                                 run_scanner_trading_cycle(cand, risk)
                         else:
-                            wib_s = time.strftime('%H:%M:%S')
+                            wib_s = cur_dt.strftime('%H:%M:%S')
                             _last_radar_status = f"22 Pairs Normal ({wib_s})"
                     except Exception as e:
                         _last_radar_status = f"Radar Err: {e}"
