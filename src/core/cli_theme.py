@@ -329,8 +329,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             c1 = UI.pad_line(_format_cell(p1), 16)
             c2 = UI.pad_line(_format_cell(p2) if p2 else "", 16)
             c3 = UI.pad_line(_format_cell(p3) if p3 else "", 16)
-            
             t1_lines.append(f" {c1} │ {c2} │ {c3}")
+            
+        t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────{UI.RST}")
+        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ ●Side │ 🔥ADX≥28 │ 🎯In-Zone │ 🧊Cold{UI.RST}")
     else:
         t1_lines = [
             f" {UI.YELLOW}● Inisialisasi 22-Pair Macro Compass...{UI.RST}",
