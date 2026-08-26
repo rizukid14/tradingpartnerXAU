@@ -680,7 +680,7 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
     time_str = now.strftime("%H:%M WIB")
 
     lines = [
-        f"📡 *HOURLY QUANT RADAR & MARKET PULSE ({time_str})*",
+        f"📡 *RADAR PASAR & STATUS BOT ({time_str})*",
         "━" * 32
     ]
 
@@ -701,42 +701,35 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
             else:
                 range_pairs.append(clean)
 
-            h = m.get('dealing_range_high', 0.0)
-            l = m.get('dealing_range_low', 0.0)
-            rng = max(h - l, 1e-5)
-            disc_top = l + 0.382 * rng
-            prem_bot = l + 0.618 * rng
             pos = m.get('dealing_range_pos', 0.5)
 
             if pos <= 0.382:
-                discount_pairs.append((clean, disc_top, pos))
+                discount_pairs.append((clean, pos))
             elif pos >= 0.618:
-                premium_pairs.append((clean, prem_bot, pos))
+                premium_pairs.append((clean, pos))
 
         # Sort discount (lowest pos first) & premium (highest pos first)
-        discount_pairs.sort(key=lambda x: x[2])
-        premium_pairs.sort(key=lambda x: -x[2])
+        discount_pairs.sort(key=lambda x: x[1])
+        premium_pairs.sort(key=lambda x: -x[1])
 
-        lines.append("📊 *Market Compass (22 Pairs H4/D1):*")
-        lines.append(f"• 🟢 *Bullish ({len(bull_pairs)})*: `{', '.join(bull_pairs[:6]) if bull_pairs else '-'}`")
-        lines.append(f"• 🔴 *Bearish ({len(bear_pairs)})*: `{', '.join(bear_pairs[:6]) if bear_pairs else '-'}`")
+        lines.append("📊 *Arah Tren Pasar (22 Pair H4/D1):*")
+        lines.append(f"• 🟢 *Tren Naik ({len(bull_pairs)})*: `{', '.join(bull_pairs[:6]) if bull_pairs else '-'}`")
+        lines.append(f"• 🔴 *Tren Turun ({len(bear_pairs)})*: `{', '.join(bear_pairs[:6]) if bear_pairs else '-'}`")
         lines.append(f"• ⚪ *Sideways ({len(range_pairs)})*: `{', '.join(range_pairs[:6]) if range_pairs else '-'}`")
         lines.append("━" * 32)
 
-        lines.append("🎯 *Zona Kunci SMC (Potensi Entry):*")
+        lines.append("🎯 *Zona Pantau Potensial:*")
         if discount_pairs:
-            lines.append("• 🛒 *Diskon (Buy Watch <= 38.2%):*")
-            for c_sym, c_lvl, c_pos in discount_pairs[:4]:
-                lines.append(f"  - `{c_sym}`: `{c_lvl:.5f}` (Pos: `{c_pos*100:.0f}%` Diskon)")
+            disc_list = [f"`{sym}`" for sym, _ in discount_pairs[:4]]
+            lines.append(f"• 🛒 *Area Paling Murah (Siap BUY jika Reversal):*\n  → {', '.join(disc_list)} (Harga di dasar ayunan)")
         else:
-            lines.append("• 🛒 *Diskon (Buy Watch)*: _Belum ada pair di zona diskon ekstrim_")
+            lines.append("• 🛒 *Area Paling Murah*: _Semua pair di harga normal_")
 
         if premium_pairs:
-            lines.append("• 🏷️ *Premium (Sell Watch >= 61.8%):*")
-            for c_sym, c_lvl, c_pos in premium_pairs[:4]:
-                lines.append(f"  - `{c_sym}`: `{c_lvl:.5f}` (Pos: `{c_pos*100:.0f}%` Premium)")
+            prem_list = [f"`{sym}`" for sym, _ in premium_pairs[:4]]
+            lines.append(f"• 🏷️ *Area Paling Mahal (Siap SELL jika Rejection):*\n  → {', '.join(prem_list)} (Harga di pucuk ayunan)")
         else:
-            lines.append("• 🏷️ *Premium (Sell Watch)*: _Belum ada pair di zona premium ekstrim_")
+            lines.append("• 🏷️ *Area Paling Mahal*: _Semua pair di harga normal_")
         lines.append("━" * 32)
     else:
         lines.append("📊 *SMC Radar:* `Macro cache stand-by`")
@@ -753,7 +746,7 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
 
     pnl_emoji = "🟢" if today_pnl >= 0 else "🔴"
     float_emoji = "🟢" if total_float >= 0 else "🔴"
-    lines.append("💼 *Portofolio & Fast Radar:*")
+    lines.append("💼 *Portofolio & Eksekusi:*")
     lines.append(f"• {pnl_emoji} Realized Today: `${today_pnl:+.2f}`")
     lines.append(f"• {float_emoji} Floating P/L: `${total_float:+.2f}`")
     if pos_lines:
@@ -761,7 +754,7 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
     else:
         lines.append("• 📌 Posisi Aktif: `Nihil (Semua Bersih)`")
 
-    lines.append("• 📡 Fast Radar: `22 Pairs Swept Every 60s (0 Token)`")
+    lines.append("• 🛡️ Status Radar: `Multi-Timeframe M15-H4 Aktif Tiap 60s`")
     lines.append("━" * 32)
     lines.append("_Gunakan menu keyboard atau `/radar` untuk refresh instant._")
 

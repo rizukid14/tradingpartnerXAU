@@ -306,13 +306,15 @@ class MarketScanner:
                 spread_pts = int(round(abs(ask - bid) / pt))
                 atr_pts = macro['atr_pts']
 
-                # ── MECHANISM 1: LONDON JUDAS ASIAN LIQUIDITY SWEEP (14:00 - 18:00 WIB) ──
-                if is_london_open:
-                    asian_h = macro['asian_high']
-                    asian_l = macro['asian_low']
-                    # Bearish Judas Sweep: Price pushed above Asian High, now pulling back inside
-                    if bid <= asian_h and (mid >= asian_h - (15 * pt)):
-                        sl = asian_h + (atr_pts * 0.4 * pt) + (spread_pts * pt)
+                # ── MECHANISM 1: LONDON & NY JUDAS LIQUIDITY SWEEP (M15/M30/H1) ──
+                if is_london_open or is_ny_session:
+                    asian_h = macro.get('asian_high', 0.0)
+                    asian_l = macro.get('asian_low', 0.0)
+                    sweep_tol = atr_pts * 0.35 * pt
+                    
+                    # Bearish Judas Sweep: Price pushed above Asian High / Liquidity Pool, now rejecting back down
+                    if (asian_h > 0) and (asian_h - sweep_tol <= mid <= asian_h + (atr_pts * 0.50 * pt)):
+                        sl = max(asian_h, mid) + (atr_pts * 0.40 * pt) + (spread_pts * pt)
                         tp = mid - abs(sl - mid) * 2.2
                         if abs(mid - sl) / pt >= 15:
                             candidates.append(CandidateSetup(
@@ -320,9 +322,10 @@ class MarketScanner:
                                 setup_type="LONDON_JUDAS_SWEEP",
                                 direction=-1,
                                 trigger_price=bid,
+                                timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                 macro_compass=macro['trend_label'],
                                 dealing_range_pos=macro['dealing_range_pos'],
-                                rejection_wick_ratio=0.38,
+                                rejection_wick_ratio=0.35,
                                 current_spread_pts=spread_pts,
                                 current_atr_pts=atr_pts,
                                 key_support=asian_l,
@@ -340,9 +343,9 @@ class MarketScanner:
                             ))
                             continue
 
-                    # Bullish Judas Sweep: Price pushed below Asian Low, now pulling back inside
-                    if ask >= asian_l and (mid <= asian_l + (15 * pt)):
-                        sl = asian_l - (atr_pts * 0.4 * pt) - (spread_pts * pt)
+                    # Bullish Judas Sweep: Price pushed below Asian Low / Liquidity Pool, now rejecting back up
+                    if (asian_l > 0) and (asian_l - (atr_pts * 0.50 * pt) <= mid <= asian_l + sweep_tol):
+                        sl = min(asian_l, mid) - (atr_pts * 0.40 * pt) - (spread_pts * pt)
                         tp = mid + abs(mid - sl) * 2.2
                         if abs(mid - sl) / pt >= 15:
                             candidates.append(CandidateSetup(
@@ -350,9 +353,10 @@ class MarketScanner:
                                 setup_type="LONDON_JUDAS_SWEEP",
                                 direction=1,
                                 trigger_price=ask,
+                                timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                 macro_compass=macro['trend_label'],
                                 dealing_range_pos=macro['dealing_range_pos'],
-                                rejection_wick_ratio=0.38,
+                                rejection_wick_ratio=0.35,
                                 current_spread_pts=spread_pts,
                                 current_atr_pts=atr_pts,
                                 key_support=asian_l,
@@ -370,33 +374,33 @@ class MarketScanner:
                             ))
                             continue
 
-                # ── MECHANISM 2: TREND-ALIGNED PULLBACK (D1 BULL/BEAR + DISCOUNT/PREMIUM) ──
-                # Active in Tokyo (08:00 - 14:00 WIB) for proven positive-EV pairs, and 14:00 - 23:00 WIB for all pairs.
+                # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK (H1/H4 PULLBACK) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     ema20 = macro['ema20']
                     pos_in_range = macro['dealing_range_pos']
                     
-                    # BUY: D1 Bullish + Price near EMA20 in Discount Zone (pos <= 0.45)
-                    if macro['is_bull'] and pos_in_range <= 0.48:
-                        if abs(mid - ema20) <= (atr_pts * 0.35 * pt):
+                    # BUY: Bullish Macro + Intraday Pullback into EMA20 / Support zone (pos <= 0.65)
+                    if macro['is_bull'] and pos_in_range <= 0.65:
+                        if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
                             sl = mid - (atr_pts * 0.75 * pt) - (spread_pts * pt)
-                            tp = mid + abs(mid - sl) * 2.5
-                            if abs(mid - sl) / pt >= 20:
+                            tp = mid + abs(mid - sl) * 2.2
+                            if abs(mid - sl) / pt >= 15:
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
                                     direction=1,
                                     trigger_price=ask,
+                                    timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=pos_in_range,
-                                    rejection_wick_ratio=0.32,
+                                    rejection_wick_ratio=0.30,
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=ema20,
                                     key_resistance=macro['dealing_range_high'],
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                    risk_reward_ratio=2.5,
+                                    risk_reward_ratio=2.2,
                                     strong_low=macro.get('strong_low', 0.0),
                                     strong_high=macro.get('strong_high', 0.0),
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
@@ -407,27 +411,28 @@ class MarketScanner:
                                 ))
                                 continue
 
-                    # SELL: D1 Bearish + Price near EMA20 in Premium Zone (pos >= 0.52)
-                    if macro['is_bear'] and pos_in_range >= 0.52:
-                        if abs(mid - ema20) <= (atr_pts * 0.35 * pt):
+                    # SELL: Bearish Macro + Intraday Pullback into EMA20 / Resistance zone (pos >= 0.35)
+                    if macro['is_bear'] and pos_in_range >= 0.35:
+                        if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
                             sl = mid + (atr_pts * 0.75 * pt) + (spread_pts * pt)
-                            tp = mid - abs(sl - mid) * 2.5
-                            if abs(mid - sl) / pt >= 20:
+                            tp = mid - abs(sl - mid) * 2.2
+                            if abs(mid - sl) / pt >= 15:
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
                                     direction=-1,
                                     trigger_price=bid,
+                                    timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=pos_in_range,
-                                    rejection_wick_ratio=0.32,
+                                    rejection_wick_ratio=0.30,
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=macro['dealing_range_low'],
                                     key_resistance=ema20,
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                    risk_reward_ratio=2.5,
+                                    risk_reward_ratio=2.2,
                                     strong_low=macro.get('strong_low', 0.0),
                                     strong_high=macro.get('strong_high', 0.0),
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
@@ -438,8 +443,8 @@ class MarketScanner:
                                 ))
                                 continue
 
-                # ── MECHANISM 3: NY ADR EXHAUSTION REVERSAL (XAUUSD & Range Majors) ──
-                if is_ny_session and macro['adr_pct'] >= 0.85:
+                # ── MECHANISM 3: NY ADR RANGE REVERSAL (XAUUSD & Range Majors) ──
+                if is_ny_session and macro.get('adr_pct', 0.0) >= 0.75:
                     pos_in_range = macro['dealing_range_pos']
                     if pos_in_range >= 0.65: # Top of range -> Fading SELL
                         sl = mid + (atr_pts * 0.6 * pt) + (spread_pts * pt)
@@ -449,9 +454,10 @@ class MarketScanner:
                             setup_type="NY_ADR_REVERSAL",
                             direction=-1,
                             trigger_price=bid,
+                            timeframe="M30",
                             macro_compass=macro['trend_label'],
                             dealing_range_pos=pos_in_range,
-                            rejection_wick_ratio=0.40,
+                            rejection_wick_ratio=0.35,
                             current_spread_pts=spread_pts,
                             current_atr_pts=atr_pts,
                             key_support=macro['dealing_range_low'],
@@ -475,9 +481,10 @@ class MarketScanner:
                             setup_type="NY_ADR_REVERSAL",
                             direction=1,
                             trigger_price=ask,
+                            timeframe="M30",
                             macro_compass=macro['trend_label'],
                             dealing_range_pos=pos_in_range,
-                            rejection_wick_ratio=0.40,
+                            rejection_wick_ratio=0.35,
                             current_spread_pts=spread_pts,
                             current_atr_pts=atr_pts,
                             key_support=macro['dealing_range_low'],
@@ -493,11 +500,97 @@ class MarketScanner:
                             liquidity_pools=macro.get('liquidity_pools', ""),
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
+                        continue
+
+                # ── MECHANISM 4: M5 SNIPER LIQUIDITY SWEEP (2-HOUR LOCAL INTRADAY SWEEP) ──
+                if config.mt5 is not None and hasattr(config.mt5, "copy_rates_from_pos"):
+                    try:
+                        m5_rates = config.mt5.copy_rates_from_pos(sym, config.mt5.TIMEFRAME_M5, 0, 26)
+                        if m5_rates is not None and len(m5_rates) >= 25:
+                            m5_highs = [b['high'] for b in m5_rates[:-1]]
+                            m5_lows = [b['low'] for b in m5_rates[:-1]]
+                            prev_24_h = max(m5_highs)
+                            prev_24_l = min(m5_lows)
+                            live_bar = m5_rates[-1]
+                            l_open = live_bar['open']
+                            l_high = live_bar['high']
+                            l_low = live_bar['low']
+                            l_close = live_bar['close']
+                            c_range = max(l_high - l_low, pt)
+
+                            # Bullish M5 Sweep: Low swept 2h low, rebounded & close >= open
+                            if macro['is_bull'] and (l_low < prev_24_l) and (mid > prev_24_l) and (l_close >= l_open):
+                                lower_wick = min(l_open, l_close) - l_low
+                                if lower_wick / c_range >= 0.30:
+                                    sl = l_low - (spread_pts * pt) - (5 * pt)
+                                    tp = mid + abs(mid - sl) * 2.0
+                                    if abs(mid - sl) / pt >= 10:
+                                        candidates.append(CandidateSetup(
+                                            symbol=sym,
+                                            setup_type="M5_SNIPER_SWEEP",
+                                            direction=1,
+                                            trigger_price=ask,
+                                            timeframe="M5",
+                                            macro_compass=macro['trend_label'],
+                                            dealing_range_pos=macro['dealing_range_pos'],
+                                            rejection_wick_ratio=round(lower_wick / c_range, 2),
+                                            current_spread_pts=spread_pts,
+                                            current_atr_pts=atr_pts,
+                                            key_support=prev_24_l,
+                                            key_resistance=prev_24_h,
+                                            suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                            suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                            risk_reward_ratio=2.0,
+                                            strong_low=macro.get('strong_low', 0.0),
+                                            strong_high=macro.get('strong_high', 0.0),
+                                            bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                            bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                            fvg_zone=macro.get('fvg_zone', ""),
+                                            liquidity_pools=macro.get('liquidity_pools', ""),
+                                            timestamp_wib=now.strftime("%H:%M:%S WIB")
+                                        ))
+                                        continue
+
+                            # Bearish M5 Sweep: High swept 2h high, rebounded down & close <= open
+                            if macro['is_bear'] and (l_high > prev_24_h) and (mid < prev_24_h) and (l_close <= l_open):
+                                upper_wick = l_high - max(l_open, l_close)
+                                if upper_wick / c_range >= 0.30:
+                                    sl = l_high + (spread_pts * pt) + (5 * pt)
+                                    tp = mid - abs(sl - mid) * 2.0
+                                    if abs(mid - sl) / pt >= 10:
+                                        candidates.append(CandidateSetup(
+                                            symbol=sym,
+                                            setup_type="M5_SNIPER_SWEEP",
+                                            direction=-1,
+                                            trigger_price=bid,
+                                            timeframe="M5",
+                                            macro_compass=macro['trend_label'],
+                                            dealing_range_pos=macro['dealing_range_pos'],
+                                            rejection_wick_ratio=round(upper_wick / c_range, 2),
+                                            current_spread_pts=spread_pts,
+                                            current_atr_pts=atr_pts,
+                                            key_support=prev_24_l,
+                                            key_resistance=prev_24_h,
+                                            suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                            suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                            risk_reward_ratio=2.0,
+                                            strong_low=macro.get('strong_low', 0.0),
+                                            strong_high=macro.get('strong_high', 0.0),
+                                            bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                            bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                            fvg_zone=macro.get('fvg_zone', ""),
+                                            liquidity_pools=macro.get('liquidity_pools', ""),
+                                            timestamp_wib=now.strftime("%H:%M:%S WIB")
+                                        ))
+                                        continue
+                    except Exception as e_m5:
+                        logger.debug(f"M5 sweep check error on {sym}: {e_m5}")
 
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")
 
         self.last_candidates = candidates
+        return candidates
     def get_symbol_smc_levels(self, symbol: str) -> Dict[str, Any]:
         """Calculates and returns exact price boundaries for Dealing Range, Discount, Equilibrium, Premium, OB, and FVG."""
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")

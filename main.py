@@ -19,7 +19,7 @@ from src.analytics.market_scanner import MarketScanner, CandidateSetup
 import re
 import shutil
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 _WIB = ZoneInfo("Asia/Jakarta")
@@ -201,7 +201,6 @@ def _detect_filled_pending():
 
         # Cari deal IN (entry) dalam 7 hari terakhir yang order-nya == pending ticket.
         # Pakai history_deals_get(range) biar dapat field `order` (ticket pending asal).
-        from datetime import datetime, timedelta
         now_dt = datetime.now()
         from_epoch = int((now_dt - timedelta(days=7)).timestamp())
         to_epoch = int(now_dt.timestamp()) + 86400
@@ -1870,9 +1869,7 @@ def main():
                 # Day-change detection: kalau tanggal WIB berubah, kirim ringkasan
                 # harian (rich) sebelum reset, biar laporan tiap hari lengkap.
                 try:
-                    from datetime import datetime
-                    from zoneinfo import ZoneInfo
-                    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+                    wib_now = datetime.now(_WIB)
                     today_str = wib_now.strftime("%Y-%m-%d")
                     if _last_day is None:
                         _last_day = today_str

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 from datetime import datetime
@@ -143,13 +144,15 @@ class TestMarketScanner(unittest.TestCase):
             {"ticket": 12345, "symbol": "GBPUSD-ECNc", "type": "BUY", "volume": 0.05, "profit": 15.20},
             {"ticket": 12346, "symbol": "USDJPY-ECNc", "type": "SELL", "volume": 0.05, "profit": -4.80}
         ]
-        # Test that calling alert_hourly_radar_recap executes without error (returns boolean)
-        result = tg.alert_hourly_radar_recap(
-            scanner=self.scanner,
-            open_positions=mock_positions,
-            today_pnl=42.50
-        )
-        self.assertIsInstance(result, bool)
+        # Test that calling alert_hourly_radar_recap executes without error and does NOT send live Telegram messages
+        with patch("src.core.telegram_alerts.send_message", return_value=True) as mock_send:
+            result = tg.alert_hourly_radar_recap(
+                scanner=self.scanner,
+                open_positions=mock_positions,
+                today_pnl=42.50
+            )
+            self.assertTrue(result)
+            mock_send.assert_called_once()
 
 
 if __name__ == "__main__":
