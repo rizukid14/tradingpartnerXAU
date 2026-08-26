@@ -1,3 +1,4 @@
+import json
 import config
 from src.analytics import dynamic_config
 from src.core.cli_theme import UI
@@ -71,6 +72,12 @@ def _apply_sltp_rules(sl_points, tp_points):
         if sl_points < min_sl:
             _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
             sl_points = min_sl
+
+        # Anti-wick padding untuk pair silang (misal NZD +20 pts)
+        nzd_padding = config.sl_padding_for(config.SYMBOL)
+        if nzd_padding > 0:
+            sl_points += nzd_padding
+            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {config.SYMBOL} (SL -> {sl_points} pts).")
 
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(config.SYMBOL)
@@ -154,7 +161,8 @@ def _drop_standalone_outlier(values, label):
 
     if dropped:
         v_drop = dropped[0]
-        note = f"Outlier {label} dibuang (median {median:.0f}): {v_drop:.0f if isinstance(v_drop, float) and v_drop.is_integer() else v_drop}"
+        v_drop_str = f"{v_drop:.0f}" if isinstance(v_drop, float) and v_drop.is_integer() else str(v_drop)
+        note = f"Outlier {label} dibuang (median {median:.0f}): {v_drop_str}"
         filtered = [v for v in values if v != v_drop]
         return filtered, note
     return values, None
@@ -177,14 +185,41 @@ def calculate_consensus(decisions):
         
         badge = UI.badge_signal(sig)
         bar = UI.make_bar(conf, 1.0, width=8)
-        sltp_info = f"SL: {sl} pts, TP: {tp} pts" if sig in ("BUY", "SELL") else "SL/TP: -"
+        
+        # Format info eksekusi (Market vs Pending Order)
+        entry_type = (dec.get("entry_type") or "market").strip().lower()
+        entry_price = dec.get("entry_price")
+        if sig in ("BUY", "SELL"):
+            if entry_type != "market" and entry_price:
+                exec_str = f"{entry_type.upper()} @ {entry_price}"
+            else:
+                exec_str = "MARKET"
+            sltp_info = f"{exec_str} | SL: {sl} pts, TP: {tp} pts"
+        else:
+            sltp_info = "SL/TP: -"
         
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar} | {UI.DIM}{sltp_info}{UI.RST}")
-        if setup_label:
-            box_items.append((f"  {UI.CYAN}Setup{UI.RST}  : ", setup_label))
-        box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
         
-        # Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
+        # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid)
+        regime_val = dec.get("market_regime") or dec.get("trend")
+        state_val = dec.get("state")
+        rr_val = dec.get("rr_valid")
+        ctx_parts = []
+        if regime_val:
+            ctx_parts.append(f"Regime: {regime_val}")
+        if setup_label:
+            ctx_parts.append(f"Setup: {setup_label}")
+        if state_val:
+            ctx_parts.append(f"State: {state_val}")
+        if rr_val is not None:
+            rr_str = "✓" if rr_val else "✗"
+            ctx_parts.append(f"RR: {rr_str}")
+        elif dec.get("velocity"):
+            ctx_parts.append(f"Velocity: {dec.get('velocity')}")
+        if ctx_parts:
+            box_items.append((f"  {UI.CYAN}Context{UI.RST} : ", " | ".join(ctx_parts)))
+        
+        # 2. Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
         inv_val = dec.get("invalidation_price") or (dec.get("invalidation") or "").strip()
         tgt_val = dec.get("target_price")
         levels_info = []
@@ -194,6 +229,9 @@ def calculate_consensus(decisions):
             levels_info.append(f"Target: {tgt_val}")
         if levels_info:
             box_items.append((f"  {UI.RED}Levels{UI.RST} : ", " | ".join(levels_info)))
+
+        # 3. Reason
+        box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
 
         
     # Evaluate consensus for active position early-close actions
@@ -285,7 +323,7 @@ def calculate_consensus(decisions):
         box_items.append("---")
         box_items.append(f"{UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")
         box_items.append((f"  {UI.DIM}Skor Arah:{UI.RST} ", f"BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f} (Threshold: {threshold:.2f})"))
-        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
+        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
         
         any_trade_intent = any(dec.get("signal") in ("BUY", "SELL") for dec in decisions.values())
         return {
@@ -430,7 +468,7 @@ def calculate_consensus(decisions):
     if not sltp_ok:
         box_items.append(f"{UI.RED}[-] HASIL: TRADE DIBATALKAN OLEH GATE ATR{UI.RST}")
         box_items.append((f"  {UI.RED}Alasan{UI.RST}    : ", sltp_reason))
-        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
+        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
         return {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -450,16 +488,20 @@ def calculate_consensus(decisions):
         }
 
     best_setup = ""
+    best_state = ""
     best_reason = ""
     best_invalidation = ""
     sorted_agreeing = sorted(agreeing_models, key=lambda m: decisions.get(m, {}).get("confidence", 0.0), reverse=True)
     for m in sorted_agreeing:
         dec = decisions.get(m, {})
         s_candidate = (dec.get("setup") or "").strip()
+        st_candidate = (dec.get("state") or "").strip()
         r_candidate = (dec.get("reasoning") or dec.get("edge") or "").strip()
         i_candidate = (dec.get("invalidation") or "").strip()
         if s_candidate and not best_setup:
             best_setup = " ".join(s_candidate.replace("\n", " ").replace("\r", " ").split())
+        if st_candidate and not best_state:
+            best_state = " ".join(st_candidate.replace("\n", " ").replace("\r", " ").split())
         if r_candidate and not best_reason:
             best_reason = " ".join(r_candidate.replace("\n", " ").replace("\r", " ").split())
         if i_candidate and not best_invalidation:
@@ -469,18 +511,31 @@ def calculate_consensus(decisions):
         if best_setup and best_reason and best_invalidation:
             break
 
+    agreeing_details = []
+    for m in agreeing_models:
+        d = decisions.get(m, {})
+        et = (d.get("entry_type") or "market").strip().lower()
+        ep = d.get("entry_price")
+        if et != "market" and ep:
+            agreeing_details.append(f"{m} ({et} @ {ep})")
+        else:
+            agreeing_details.append(f"{m} ({et})")
+    agreeing_models_str = ", ".join(agreeing_details)
+
     badge = UI.badge_signal(consensus_signal)
     box_items.append(f"{UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(Skor {best_score:.2f} >= {threshold:.2f}){UI.RST}")
-    box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{', '.join(agreeing_models)} (Avg Conf: {avg_confidence*100:.1f}%)"))
-    if best_setup:
-        box_items.append((f"  {UI.CYAN}Setup{UI.RST}         : ", best_setup))
+    box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{agreeing_models_str} (Avg Conf: {avg_confidence*100:.1f}%)"))
+    
+    setup_state_str = f"[{best_setup} | {best_state}]" if (best_setup and best_state) else (best_setup or best_state or "")
+    if setup_state_str:
+        box_items.append((f"  {UI.CYAN}Setup / State :{UI.RST} ", setup_state_str))
     if best_reason:
-        box_items.append((f"  {UI.CYAN}Reason{UI.RST}        : ", best_reason))
+        box_items.append((f"  {UI.CYAN}Reason        :{UI.RST} ", best_reason))
     price_decimals = 5 if (point and point < 0.001) else 2
     price_info = f" | Price SL {final_inv:.{price_decimals}f} / TP {final_tgt:.{price_decimals}f}" if final_inv else ""
     box_items.append((f"  {UI.BOLD}Final SL / TP :{UI.RST} ", f"{UI.RED}SL {final_sl} pts{UI.RST} | {UI.GREEN}TP {final_tp} pts{UI.RST}{price_info}"))
 
-    print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=74, border_color=UI.CYAN) + "\n")
+    print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
 
     return {
         "signal": consensus_signal,
@@ -493,7 +548,9 @@ def calculate_consensus(decisions):
         "entry_price": final_entry_price,
         "agreeing_count": len(agreeing_models),
         "agreeing_models": list(agreeing_models),
+        "agreeing_models_str": agreeing_models_str,
         "setup": best_setup,
+        "state": best_state,
         "reason": best_reason,
         "invalidation_text": best_invalidation,
         "tickets_to_close": tickets_to_close,

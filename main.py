@@ -324,7 +324,12 @@ def _hold_recap_line(result):
         sig = dec.get("signal") or "HOLD"
         if sig in ("BUY", "SELL"):
             conf = (dec.get("confidence") or 0.0) * 100
-            parts.append(f"{m_name} {sig} {conf:.0f}%")
+            et = (dec.get("entry_type") or "market").strip().lower()
+            ep = dec.get("entry_price")
+            if et != "market" and ep:
+                parts.append(f"{m_name} {sig} {conf:.0f}% ({et} @ {ep})")
+            else:
+                parts.append(f"{m_name} {sig} {conf:.0f}% ({et})")
         else:
             parts.append(f"{m_name} HOLD")
     vote_str = ", ".join(parts)
@@ -668,7 +673,8 @@ def interactive_setup():
         ("MODE & RISK", "Scan Mode", "config.TRADING_MODE", _scan_mode_label() if config.TRADING_MODE == "xau_pairs" else "FX Pairs Only"),
         ("MODE & RISK", "Risk BTC (% equity)", "config.RISK_PERCENT_BTC", str(config.RISK_PERCENT_BTC)),
         ("MODE & RISK", "Risk FX (% equity)", "config.RISK_PERCENT_FX", str(config.RISK_PERCENT_FX)),
-        ("LIMIT & FILTER", "Max Daily Loss ($)", "config.MAX_DAILY_LOSS_USD", str(config.MAX_DAILY_LOSS_USD)),
+        ("LIMIT & FILTER", "Max Daily Loss (% eq)", "config.MAX_DAILY_LOSS_PERCENT", f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}% (${config.MAX_DAILY_LOSS_USD} fallback)"),
+        ("LIMIT & FILTER", "Daily Profit Target (% eq)", "config.DAILY_PROFIT_TARGET_PERCENT", f"{getattr(config, 'DAILY_PROFIT_TARGET_PERCENT', 6.0)}%"),
         ("LIMIT & FILTER", "Max Posisi", "config.MAX_OPEN_POSITIONS", str(config.MAX_OPEN_POSITIONS)),
         ("LIMIT & FILTER", "Cooldown (detik)", "config.TRADE_COOLDOWN_SECONDS", str(config.TRADE_COOLDOWN_SECONDS)),
         ("LIMIT & FILTER", "Spread Max BTC (pts)", "config.MAX_SPREAD_POINTS_BTC", str(config.MAX_SPREAD_POINTS_BTC)),
@@ -1397,9 +1403,9 @@ def _run_cycle_for_current_symbol():
                             tp_points=tp_points,
                             sl_price=p_sl_price,
                             tp_price=p_tp_price,
-                            models=", ".join(result.get("agreeing_models") or []),
+                            models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
                             confidence=result.get("confidence", 0.0),
-                            setup=result.get("setup", ""),
+                            setup=f"{result.get('setup', '')} (State: {result['state']})" if result.get("state") else result.get("setup", ""),
                             reason=result.get("reason", ""),
                             invalidation=result.get("invalidation_text", ""),
                             expiration_minutes=config.PENDING_ORDER_EXPIRY_MINUTES,
@@ -1455,6 +1461,9 @@ def _run_cycle_for_current_symbol():
                 order_executed = True
                 print(f"Sukses menempatkan order #{i+1}: {trade_signal} (Ticket: {order_res['ticket']}, Lot: {effective_lot})")
                 risk.record_trade_opened()
+                setup_str = f"{result.get('setup', '')}"
+                if result.get("state"):
+                    setup_str = f"{setup_str} (State: {result['state']})" if setup_str else f"State: {result['state']}"
                 tg.alert_trade_opened(
                     trade_signal, effective_lot, sl_points, pos_tp,
                     recovery_mode=risk.is_recovery_mode,
@@ -1464,9 +1473,9 @@ def _run_cycle_for_current_symbol():
                     entry_price=execution_price if 'execution_price' in locals() else None,
                     sl_price=sl_price,
                     tp_price=pos_tp_price,
-                    models=", ".join(result.get("agreeing_models") or []),
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or []),
                     confidence=result.get("confidence", 0.0),
-                    setup=result.get("setup", ""),
+                    setup=setup_str,
                     reason=result.get("reason", ""),
                     invalidation=result.get("invalidation_text", ""),
                 )
@@ -1503,7 +1512,17 @@ def main():
     # Apply CLI overrides (sesi saja) sebelum bot jalan
     cli_applied, skip_prompt = parse_cli_overrides()
 
-    # Setup TeeLogger to save all terminal logs
+    # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
+    if not skip_prompt and sys.stdin.isatty():
+        interactive_setup()
+
+    # Set active symbol now so the banner shows the symbol that will be traded
+    config.refresh_active_symbol()
+
+    # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
+    _prompt_startup_scan_mode(skip_prompt)
+
+    # Setup TeeLogger to save all terminal logs from here on (clean logs, no interactive menus)
     if getattr(config, "LOG_FILE", None):
         tee_logger = TeeLogger(config.LOG_FILE)
         sys.stdout = tee_logger
@@ -1514,13 +1533,6 @@ def main():
     if cli_applied:
         print(f" {UI.YELLOW}[CLI OVERRIDE]{UI.RST} " + " | ".join(cli_applied))
         print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
-
-    # Prompt interaktif setting - kecuali --yes atau non-TTY / Docker mode (langsung jalan)
-    if not skip_prompt and sys.stdin.isatty():
-        interactive_setup()
-
-    # Set active symbol now so the banner shows the symbol that will be traded
-    config.refresh_active_symbol()
 
     _tf_map = {mt5.TIMEFRAME_M5: "M5", mt5.TIMEFRAME_M15: "M15", mt5.TIMEFRAME_M30: "M30", mt5.TIMEFRAME_H1: "H1"}
     tf_name = _tf_map.get(config.get_timeframe(config.SYMBOL), "?")
@@ -1537,19 +1549,23 @@ def main():
     if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
         pool = config.get_rotation_pool()
         print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
-        print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs (H1 Expert Intraday-Swing) | BTC (M30 Intraday) - Smart Rotation")
+        if getattr(config, "DYNAMIC_SESSION_TIMEFRAME", False):
+            print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (M30 24/7) - Smart Rotation")
+        else:
+            print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (M30 24/7) - Smart Rotation")
     else:
         print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}SINGLE SYMBOL ONLY{UI.RST}")
 
     if config.TP_SL_RULES != "LLM":
         sltp_desc = f"{config.TP_SL_RULES} (force semua)"
     elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR H1) | BTC: ATR-Based (fix)"
+        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR, min R:R {config.LLM_MIN_RR_RATIO}) | BTC: ATR-Based (fix)"
     else:
         sltp_desc = f"XAU: LLM Structure (floor {config.LLM_SAFETY_FLOOR_XAU_PTS} pts) | BTC: ATR-Based (fix)"
 
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
-    print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing Stop [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'}], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'}], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
+    loss_desc = f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%"
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} ({int(config.TRAILING_ACTIVATION_TP_PCT*100)}% TP)], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} ({int(config.BREAK_EVEN_TRIGGER_TP_PCT*100)}% TP)], Partial [{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} ({int(config.PARTIAL_CLOSE_TRIGGER_TP_PCT*100)}% TP)], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
     # Validate API keys before connecting to MT5
@@ -1576,9 +1592,6 @@ def main():
         trade_evaluator.evaluator.check_and_evaluate_closed_trades()
     except Exception as e:
         print(f"[STARTUP EVALUATOR WARNING] {e}")
-        
-    # FASE 6 - pilihan mode scan startup (CLI professional, default sesuai timeframe, timeout 10 detik)
-    _prompt_startup_scan_mode(skip_prompt)
 
     print("Bot berjalan... Menunggu penutupan candle berikutnya.\n")
     
@@ -1821,9 +1834,11 @@ def main():
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
 
             if config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-                label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS"
+                tf_cur = config.get_timeframe_str()
+                label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS ({tf_cur})"
             else:
-                label_hdr = config.SYMBOL.replace("-ECNc", "").replace(".c", "")
+                tf_cur = config.get_timeframe_str(config.SYMBOL)
+                label_hdr = f"{config.SYMBOL.replace('-ECNc', '').replace('.c', '')} ({tf_cur})"
             header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
             # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)

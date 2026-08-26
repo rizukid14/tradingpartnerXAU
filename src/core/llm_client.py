@@ -213,55 +213,64 @@ Your response must be extremely brief (maximum 3-4 sentences) as it will be used
 # cycles so provider-side prompt/context caching stays effective.
 # ================================================================
 _SYSTEM_PROMPT_TEMPLATE = """### ROLE
-You are an expert {{TIMEFRAME}} short-term intraday-swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+You are an expert {{TIMEFRAME}} short-term intraday-swing analyst for {{SYMBOL}} ({{ASSET_DESC}}). Find a high-quality actionable setup with R:R >= 1.25, or return HOLD. Do not force trades.
 
-### EXECUTION CONTEXT
-{{EXECUTION_NOTE}}
+### 1. DECISION FRAMEWORK (Analyze in this strict order)
+1. Regime: Determine HTF directional bias and {{TIMEFRAME}} market state: trend, pullback, breakout, or range.
+2. Location & Clearance: Determine whether price is near a meaningful structural level or trapped in mid-range. Measure clearance (room available to opposing barrier).
+3. Setup: Choose exactly one:
+   - CONTINUATION: Trade with HTF trend after pullback/retest into value/discount zone.
+   - EXHAUSTION: Fade an extended move at major support/resistance with rejection wick + weakening momentum.
+   - BREAKOUT: Trade only after decisive {{TIMEFRAME}} close beyond a key level (or pending stop for untriggered breakout).
+   - NONE: No valid structural setup -> select HOLD.
+4. Entry: Market (if actionable now) or Pending (buy_limit/sell_limit/buy_stop/sell_stop at trigger level).
+5. Invalidation (SL): Nearest structural level behind entry that proves thesis wrong.
+6. Target (TP): Next realistic opposing structural level (must not exceed available clearance).
+7. Calculate SL/TP distances strictly FROM ENTRY PRICE:
+   - sl_points = |entry_price - invalidation_price| / point_size
+   - tp_points = |target_price - entry_price| / point_size
+   - Verify R:R = tp_points / sl_points >= 1.25. If R:R < 1.25 -> MUST select HOLD.
 
-### ANALYSIS FREEDOM
-You are NOT required to follow a single predefined trading strategy. You may use any market interpretation you judge relevant, including but not limited to: trend following, momentum, breakout, pullback, mean reversion, reversal/exhaustion, support/resistance, price action, volatility, or indicator confluence -- alone or combined.
+### 2. WHAT IS NOT AN ENTRY SIGNAL (ANTI-NARRATIVE RULES)
+A valid trade requires structure + location + actionable setup + valid invalidation + sufficient clearance.
+- DATA INTEGRITY: Use ONLY exact prices, levels, and indicators provided in the payload -- NEVER hallucinate unlisted data.
+- HTF bias alone is NOT an entry signal.
+- EMA alignment alone is NOT an entry signal.
+- RSI overbought/oversold alone is NOT an entry signal.
+- Mid-range location without clear clearance is NOT an entry signal.
+- Past outcomes / win-loss history (if present) do NOT dictate current directional signal.
 
-Pick the interpretation you believe currently has the strongest expected edge. State what creates that edge and what would invalidate it. Do not force a trade into a fixed template just to produce a signal.
+### 3. HARD EXECUTION RULES
+- Independent Roles: `signal` is strictly for NEW entries; `position_actions` is strictly for managing existing open tickets (`signal: HOLD` does NOT force close open positions).
+- BUY only when bullish setup exists. SELL only when bearish setup exists. HOLD when setup is absent/unclear.
+- Proximity Traps: Avoid blind BUY market orders directly below major resistance (< 0.3x ATR away) unless closed above it. Avoid blind SELL market orders directly above major support (< 0.3x ATR away) unless closed below it.
+- Mid-range entries are normally HOLD unless a defined limit setup offers verified clearance and R:R >= 1.25.
+- Pending Rules: Entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: buy_stop/buy_limit. SELL: sell_stop/sell_limit.
+- Unit Definition: sl_points & tp_points are broker POINTS from ENTRY PRICE.
+  * {{POINTS_EXPLANATION}}
+  * CRITICAL UNIT WARNING: Double check units! If you want 15 pips SL, you MUST return 150 points, NOT 15. Single/double-digit SLs inside spread will be rejected.
+- Safety Floors: Give your honest structural levels; the bot engine automatically widens SL/TP to meet broker safety floors (>= 1.3x ATR {{TIMEFRAME}}) and enforces min R:R 1.25.
+- Confidence: Represents structural setup validity (0.00 to 1.00), NOT statistical win probability.
 
-Do not treat any single indicator (RSI, EMA, Fibonacci, ATR) as a mandatory trigger or a mandatory block. They are inputs for your own judgment, not rules you must obey.
-
-### DATA INTEGRITY
-Only use indicators and values explicitly provided below. Do not reference or estimate data that isn't given (for example: if no VWAP is provided, do not assume or invent one).
-
-The "recent outcomes" note, if present, is win/loss history for your risk awareness only -- not a directional signal to stay consistent with.
-
-### RISK CONSTRAINTS (apply regardless of chosen strategy)
-Read the market data first and form your thesis from structure. Then validate that thesis against the constraints below -- do not start from the constraints and reverse-engineer a thesis to fit them.
-Any BUY or SELL must satisfy all of the following:
-- A concrete, statable entry thesis (why this direction, why now)
-- A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above) -- not the latest candle's extreme, not the furthest swing of the entire window. The level where the thesis is broken.
-{{SLTP_RULES_BLOCK}}
-
-HOLD is correct whenever no structure offers an SL at/behind a real invalidation level that also satisfies the SL/TP floors above -- do not force a trade to avoid it.
-
-{{POINTS_EXPLANATION}}
-
-### OUTPUT FORMAT (ULTRA-COMPACT CHAIN-OF-THOUGHT PROTOCOL)
-Respond with a single valid JSON object ONLY -- no text before or after it:
+### 4. OUTPUT FORMAT
+Return ONE valid JSON object only -- no surrounding markdown text:
 {
-  "trend": "BULL_PULLBACK" | "BEAR_PULLBACK" | "BREAKOUT" | "RANGING",
-  "velocity": "NORMAL" | "CRASH" | "STAGNANT",
-  "rr_valid": true | false,
+  "market_regime": "BULL_TREND" | "BEAR_TREND" | "RANGE",
+  "setup": "CONTINUATION" | "EXHAUSTION" | "BREAKOUT" | "NONE",
+  "state": "FAR" | "TESTING" | "REJECTION" | "COMPRESSION" | "BREAKOUT",
   "signal": "BUY" | "SELL" | "HOLD",
   "confidence": float (0.00 to 1.00),
-  "sl_points": integer (Stop Loss distance in broker POINTS from current price),
-  "tp_points": integer (Take Profit distance in broker POINTS from current price),
-  "invalidation_price": float (OPTIONAL reference price level),
-  "target_price": float (OPTIONAL reference price level),
-{{PENDING_FIELDS}}
-  "reasoning": "string (MAX 30 WORDS: 1 concise sentence explaining the trade thesis)"
+  "rr_valid": true | false,
+  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",
+  "entry_price": float (null if entry_type == "market"),
+  "sl_points": integer (null if HOLD),
+  "tp_points": integer (null if HOLD),
+  "invalidation_price": float (null if HOLD),
+  "target_price": float (null if HOLD),
+  "reasoning": "string (MAX 25 WORDS: structural event and verified R:R)"
 }
 
-"position_actions": include ONLY when open positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}, ... -- one entry per listed ticket.
-
-CONFIDENCE guide: 0.70 to 1.00 = strong conviction | 0.50 to 0.69 = moderate conviction | below 0.50 = weak edge / low conviction -> select HOLD with confidence < 0.50.
-
-{{PENDING_RULES_BLOCK}}"""
+"position_actions": include ONLY when open positions are listed above -- for each ticket: {"ticket": number, "action": "CLOSE" | "HOLD", "reason": "max 5 words"}"""
 
 
 def _fmt_price(x, point_size=None):
@@ -299,7 +308,7 @@ def _delta_candle_lines(df, n=15, point_size=0.01):
     return lines
 
 
-def _structure_block(df, current_tick, atr_points=0):
+def _structure_block(df, current_tick, atr_points=0, tf_label="M30"):
     """Ringkas struktur 50-bar (short-term) & 100-bar (macro) window:
     swing/Fib (trend-aware)/posisi harga relatif level.
     """
@@ -329,11 +338,11 @@ def _structure_block(df, current_tick, atr_points=0):
         adx = float(df["adx_14"].iloc[-1])
         if adx == adx:  # NaN guard (NaN != NaN)
             if adx >= 25:
-                adx_label = "STRONG TREND EXPANSION: do NOT counter-trend trade"
+                adx_label = "strong trend expansion"
             elif adx >= 20:
                 adx_label = "trend building"
             else:
-                adx_label = "weak/ranging (mean-reversion allowed)"
+                adx_label = "weak/ranging"
             ind_lines.append(f"- ADX14 {adx:.1f} ({adx_label})")
     if "ema_200" in df.columns and len(df) >= 200:
         ema200 = float(df["ema_200"].iloc[-1])
@@ -344,14 +353,14 @@ def _structure_block(df, current_tick, atr_points=0):
         ind_lines.append(f"- ATR14 {_fmt_price(float(df['atr_14'].iloc[-1]), point)} (= {atr_points} pts)")
 
     if ind_lines:
-        lines.append("### TECHNICAL INDICATORS (Active Timeframe)")
+        lines.append(f"### TECHNICAL INDICATORS ({tf_label} Active Timeframe)")
         lines.extend(ind_lines)
         lines.append("")
 
     # 2. 50-bar Short-Term Window
     df_50 = df.tail(min(50, len(df)))
     h50, l50 = float(df_50["high"].max()), float(df_50["low"].min())
-    diff50 = h50 - l50
+    diff50 = h50 - l50 if h50 != l50 else point
     is_down50 = float(df_50["close"].iloc[0]) > close
     if is_down50:
         f382_50 = round(l50 + 0.382 * diff50, 6)
@@ -366,11 +375,19 @@ def _structure_block(df, current_tick, atr_points=0):
 
     to_h50 = (h50 - close) / point
     to_l50 = (close - l50) / point
+    loc_pct = round(((close - l50) / diff50) * 100.0, 1)
+    if loc_pct >= 75.0:
+        loc_desc = "Near High / Resistance Zone"
+    elif loc_pct <= 25.0:
+        loc_desc = "Near Low / Support Zone"
+    else:
+        loc_desc = "Mid-Range / Value Zone"
 
-    lines.append("### INTRADAY STRUCTURE (50-bar Window)")
-    lines.append(f"- 50-bar Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
-    lines.append(f"- 50-bar Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
-    lines.append(f"- Close {_fmt_price(close, point)}: {int(to_l50)} pts above 50-bar low | {int(to_h50)} pts below 50-bar high")
+    lines.append(f"### INTRADAY STRUCTURE (50-bar {tf_label} Window)")
+    lines.append(f"- 50-bar {tf_label} Swing: High {_fmt_price(h50, point)} | Low {_fmt_price(l50, point)} | Range: {int(diff50/point)} pts")
+    lines.append(f"- Location in 50-bar Range: {loc_pct:.1f}% ({loc_desc})")
+    lines.append(f"- Clearance: {int(to_h50)} pts to Resistance High ({_fmt_price(h50, point)}) | {int(to_l50)} pts to Support Low ({_fmt_price(l50, point)})")
+    lines.append(f"- 50-bar {tf_label} Fib ({label50}): 38.2% {_fmt_price(f382_50, point)} | 50% {_fmt_price(f500_50, point)} | 61.8% {_fmt_price(f618_50, point)}")
 
     # 3. 100-bar Macro Multi-Day Window
     if len(df) >= 70:
@@ -388,9 +405,9 @@ def _structure_block(df, current_tick, atr_points=0):
             f618_100 = round(h100 - 0.618 * diff100, 6)
             label100 = "Uptrend Pullback"
 
-        lines.append("\n### MACRO STRUCTURE (100-bar Window)")
-        lines.append(f"- 100-bar Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
-        lines.append(f"- 100-bar Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
+        lines.append(f"\n### MACRO STRUCTURE (100-bar {tf_label} Window)")
+        lines.append(f"- 100-bar {tf_label} Swing: High {_fmt_price(h100, point)} | Low {_fmt_price(l100, point)} | Range: {int(diff100/point)} pts")
+        lines.append(f"- 100-bar {tf_label} Fib ({label100}): 38.2% {_fmt_price(f382_100, point)} | 50% {_fmt_price(f500_100, point)} | 61.8% {_fmt_price(f618_100, point)}")
 
     return "\n".join(lines)
 
@@ -638,78 +655,40 @@ def _build_sltp_rules_block(symbol, timeframe):
     min_rr = config.LLM_MIN_RR_RATIO
 
     if mode == "LLM":
-        # Mode LLM: Bebas sesuai thesis/struktur pasar, tapi bot yang enforce floor.
-        # Filosofi (14 Agustus): model kasih level struktural JUJUR (berapa pun
-        # jaraknya); bot yang menaikkan SL/TP ke floor minimum (SL >= floor, TP >=
-        # 1.25x SL). Model TIDAK perlu stretch level ke angka tertentu - itu justru
-        # bikin model HOLD terus ("no clean 400+ invalidation").
         if is_xau:
-            # 15 Agustus: floor XAU dinamis = 1.2x ATR M15 (LLM_XAU_FLOOR_ATR_MULT),
-            # fallback 400 statis kalau ATR gagal. SL tipis 0.8x ATR (o4-mini) di-floor
-            # otomatis ke 1.2x ATR supaya swing M15 gak kena noise duluan.
             xau_floor = config.LLM_SAFETY_FLOOR_XAU_PTS
             atr_pts_xau = _atr_points_for(symbol, config.get_timeframe(symbol))
             if atr_pts_xau and atr_pts_xau > 0:
                 xau_floor = max(20, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_pts_xau))
             lo_pts = xau_floor
             hi_pts = max(1000, int(lo_pts * 2.5))
-            # 14 Agustus malam: gate OVER-RISK dilonggarkan ke 2% (config
-            # OVER_RISK_MAX_PERCENT) - SL >1000 pts TETAP BISA diterima selama risk
-            # aktual di min lot <= 2%. Guidance ini cuma preferensi, bukan batas keras.
             return (
-                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/Fib/PDH-PDL level). These are what the bot actually uses for the order.\n"
-                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (approx {config.LLM_XAU_FLOOR_ATR_MULT}x ATR M30) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
-                f"- For risk sizing with min lot 0.01, an SL in the ~{lo_pts}-{hi_pts} pts range is most efficient. Wider SLs (e.g. 1000-1900 pts) are still ACCEPTED as long as actual risk at min lot stays within the OVER-RISK gate (max ~2% of equity at current balance) -- prefer structural levels in the ~{lo_pts}-{hi_pts} range when available, but give your real structural invalidation either way.\n"
+                f"- Calculate 'sl_points' and 'tp_points' strictly from your ENTRY PRICE (in broker POINTS): sl_points = |entry_price - invalidation_price| / point_size, tp_points = |target_price - entry_price| / point_size.\n"
+                f"- The bot enforces minimum floors automatically: SL >= {lo_pts} pts (~{config.LLM_XAU_FLOOR_ATR_MULT}x ATR M30) and TP >= {min_rr}x SL. Give your honest structural levels; the bot handles the safety floors.\n"
             )
         elif is_btc:
             return (
-                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS (typically 20000 to 60000 points / $200-$600), measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure), tp_points = distance to your structural target. These are what the bot actually uses for the order.\n"
-                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL. Give your real structural levels; the bot handles the floors.\n"
+                f"- Calculate 'sl_points' and 'tp_points' strictly from your ENTRY PRICE in broker POINTS (typically 20000 to 60000 points / $200-$600): sl_points = |entry_price - invalidation_price| / point_size, tp_points = |target_price - entry_price| / point_size.\n"
+                f"- The bot enforces minimum floors automatically: SL >= 2x current spread and TP >= {min_rr}x SL.\n"
             )
         else:
-            # FX Pairs H1: bebas mengikuti struktur harga, tapi floor SL & Proximity/Breakout
-            # berbasis ATR aktif H1 real-time.
+            tf_str = str(timeframe or "M30")
+            tf_mt5 = config.TIMEFRAME_MAP.get(tf_str, config.mt5.TIMEFRAME_M30)
             fx_floor = config.LLM_SAFETY_FLOOR_FX_PTS
-            atr_pts_fx = _fx_atr_h1_points(symbol)
+            atr_pts_fx = _atr_points_for(symbol, tf_mt5)
             if atr_pts_fx and atr_pts_fx > 0:
                 fx_floor = max(20, int(config.LLM_FX_FLOOR_ATR_MULT * atr_pts_fx))
-                prox_pts = int(0.5 * atr_pts_fx)
-                stop_pts = max(10, int(0.2 * atr_pts_fx))
-                room_pts = int(1.0 * atr_pts_fx)
-            else:
-                prox_pts = 45
-                stop_pts = 18
-                room_pts = 90
-            if getattr(config, "PENDING_ORDERS_ENABLED", False):
-                breakout_rule = (
-                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction H1 closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with an immediate market order. Instead:\n"
-                    f"  (a) Use buy_stop/sell_stop placed ~0.2x-0.3x ATR H1 (~{stop_pts}-{int(1.5*stop_pts)} pts) beyond the key level to filter false breaks and catch a genuine breakout wave.\n"
-                    f"  (b) Use buy_limit/sell_limit at or near the key level to enter on a pullback/retest.\n"
-                    f"  (c) Use a market order ONLY if a candle has already closed beyond the level and there is at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your structural target."
-                )
-            else:
-                breakout_rule = (
-                    f"- MOMENTUM & BREAKOUT EXECUTION: 2+ consecutive same-direction H1 closes (or expanding candle bodies) = confirmed trend momentum -- trade WITH the trend, not against it. A sharp 2-3 candle directional move is momentum, not a pullback opportunity. If price is approaching a key level with momentum but has not closed beyond it yet, do not chase with a market order -- wait for a confirmed candle close beyond the level with at least 1.0x ATR H1 (~{room_pts} pts) room remaining to your target, or select HOLD."
-                )
-
             return (
-                f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (the nearest opposing swing structure behind the entry), tp_points = distance to your structural target (swing/support-resistance/EMA). These are what the bot actually uses for the order.\n"
-                f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP. Do not stress about their exact values.\n"
-                f"- The bot enforces minimum floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR H1) and TP >= {min_rr}x SL. If your honest structural distance is tighter than the floor, the bot widens SL (and TP to keep R:R) -- give your real structural levels; the bot handles the floors.\n"
-                f"- PROXIMITY & TRAP AVOIDANCE: Do not enter BUY market orders when price is within 0.5x ATR H1 (~{prox_pts} pts) below major resistance (50-bar swing high, PDH, or key HTF resistance) unless price has already closed beyond that level. Mirror this for SELL within 0.5x ATR H1 (~{prox_pts} pts) above major support. Ensure the distance from entry to your target is at least 1.25x the distance to the opposing structure.\n"
-                f"{breakout_rule}"
+                f"- Calculate 'sl_points' and 'tp_points' strictly from your ENTRY PRICE (in broker POINTS): sl_points = |entry_price - invalidation_price| / point_size, tp_points = |target_price - entry_price| / point_size.\n"
+                f"- The bot enforces minimum safety floors automatically: SL >= max(2x spread, ~{fx_floor} pts = {config.LLM_FX_FLOOR_ATR_MULT}x ATR {tf_str}) and TP >= {min_rr}x SL. Give your honest structural levels; the bot handles the floors.\n"
             )
 
-    # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk semua simbol
+    # Mode ATR-Based: ATR HARD GATE (non-negotiable) berlaku untuk mode ATR
     sl_mult = config.atr_sl_multiplier()
     tp_mult = config.atr_tp_multiplier()
     return (
-        f"- Define 'sl_points' and 'tp_points' as DISTANCES from the current price in broker POINTS, measured to your structural levels: sl_points = distance to your invalidation (nearest opposing swing), tp_points = distance to your structural target. These are what the bot actually uses for the order.\n"
-        f"- 'invalidation_price'/'target_price' are OPTIONAL reference levels used only to describe your thesis & probability reasoning -- the bot does NOT use them to place SL/TP.\n"
-        f"- HARD GATE (non-negotiable, enforced by the bot): if the resulting SL < {sl_mult}x current ATR or TP < {tp_mult}x current ATR, the bot REJECTS the trade -- no order is sent. Give your real structural levels; if they cannot meet the gate, HOLD is the correct call.\n"
-        f"- These minimums guarantee R:R 2:1 (SL {sl_mult}x ATR -> TP {tp_mult}x ATR). The exact minimum price distances required for current ATR are listed in the MARKET DATA section (ATR HARD GATE line).\n"
+        f"- Calculate 'sl_points' and 'tp_points' strictly from your ENTRY PRICE (in broker POINTS): sl_points = |entry_price - invalidation_price| / point_size, tp_points = |target_price - entry_price| / point_size.\n"
+        f"- HARD GATE (non-negotiable): SL >= {sl_mult}x ATR and TP >= {tp_mult}x ATR (minimum R:R 2:1). If structural levels cannot meet the gate, select HOLD.\n"
     )
 
 
@@ -734,7 +713,7 @@ def _get_key_levels_str(symbol, current_bid):
         # get_market_data() here: it computes indicators with window=14+ and
         # crashes (ATR) when given fewer candles (e.g. num_candles=3).
         rates = mt5_connector.mt5.copy_rates_from_pos(
-            mt5_connector.get_valid_trade_symbol(symbol), config.mt5.TIMEFRAME_D1, 0, 3
+            mt5_connector.get_valid_trade_symbol(symbol), config.mt5.TIMEFRAME_D1, 0, 15
         )
         if rates is None or len(rates) < 2:
             return ""
@@ -743,6 +722,25 @@ def _get_key_levels_str(symbol, current_bid):
         pdh = float(prev['high'])
         pdl = float(prev['low'])
         today_open = float(today['open'])
+        today_high = float(today['high'])
+        today_low = float(today['low'])
+
+        # Hitung D1 ADR 14-hari dan sisa ruang pergerakan harian
+        point = None
+        si = mt5_connector.mt5.symbol_info(mt5_connector.get_valid_trade_symbol(symbol))
+        if si:
+            point = si.point
+        if not point or point <= 0:
+            point = 0.00001
+
+        daily_used_pts = int((today_high - today_low) / point)
+        if len(rates) >= 15:
+            ranges = [(float(r['high']) - float(r['low'])) / point for r in rates[:-1]]
+            adr_d1_pts = int(sum(ranges[-14:]) / len(ranges[-14:]))
+        else:
+            adr_d1_pts = max(1, int(daily_used_pts * 1.5))
+        remaining_adr_pts = max(0, adr_d1_pts - daily_used_pts)
+        pct_used = int((daily_used_pts / adr_d1_pts * 100)) if adr_d1_pts > 0 else 0
 
         # Round number: nearest 1000 untuk BTC, nearest 2-desimal (pip-level)
         # untuk FX (harga < 100, mis. EURJPY 151.23 / GBPCHF 1.10), nearest
@@ -777,9 +775,10 @@ def _get_key_levels_str(symbol, current_bid):
         session_str = ", ".join(session_names) if session_names else "no session"
 
         out = (
-            f"### KEY LEVELS\n"
-            f"- Previous Day High: {_fmt_price(pdh)} | Previous Day Low: {_fmt_price(pdl)}\n"
-            f"- Today Open: {_fmt_price(today_open)}\n"
+            f"### KEY LEVELS & DAILY RANGE\n"
+            f"- Previous Day High: {_fmt_price(pdh, point)} | Previous Day Low: {_fmt_price(pdl, point)}\n"
+            f"- Today Open: {_fmt_price(today_open, point)}\n"
+            f"- Daily ADR (14D): {daily_used_pts} pts used / {adr_d1_pts} pts ADR ({pct_used}%) | Remaining Expected: ~{remaining_adr_pts} pts\n"
             f"- Nearest Psychological Round Number: {round_str}\n"
             f"- Active Session (WIB): {session_str}\n"
         )
@@ -971,7 +970,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     point_size = current_tick.get("point", 0.01) or 0.01
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
 
-    structure_str = _structure_block(df, current_tick, atr_points)
+    structure_str = _structure_block(df, current_tick, atr_points, tf_label=tf_label)
     delta_main = _delta_candle_lines(df, n=15, point_size=point_size)
     delta_main_str = ""
     if delta_main:
@@ -990,41 +989,29 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     momentum_summary_str = ""
     try:
         from src.core import mt5_connector
-        is_crypto_asset = config.is_crypto(symbol)
-
-        if is_crypto_asset or "XAU" in symbol.upper():
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-            micro_tf_name = "M5"
-            num_micro_send = 18
+        micro_tf = mt5_connector.mt5.TIMEFRAME_M5
+        micro_tf_name = "M5"
+        if tf_label == "H1":
+            num_micro_send = 24  # 24 candle M5 = 120 menit (2 jam = 2 candle H1)
+            duration_label = "2h"
         else:
-            # FX main is H1 -> micro M5 24 (2 jam) intra-period
-            micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-            micro_tf_name = "M5"
-            num_micro_send = 24
+            num_micro_send = 12  # 12 candle M5 = 60 menit (1 jam = 2 candle M30)
+            duration_label = "1h"
 
-        # Fetch enough candles so ta.volatility.AverageTrueRange (window 14) doesn't raise IndexError
+        # Fetch enough candles so ta indicators (window 14) don't raise IndexError
         num_fetch = max(35, num_micro_send + 15)
         micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
         if micro_df is not None and len(micro_df) > 0:
             micro_delta = _delta_candle_lines(micro_df, n=num_micro_send, point_size=point_size)
             if micro_delta:
                 micro_candles_str = (
-                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period, "
+                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period {duration_label}, "
                     f"OHLC absolute prices)\n" + "\n".join(micro_delta) + "\n"
                 )
-        # ---- M15/M5 MOMENTUM SUMMARY (fix 21 Agustus) ----
-        # FX -> M15 (fetch kecil tambahan, gratis lokal), BTC/XAU -> M5 (pakai
-        # micro_df yang sudah ada). Verdict dihitung LOKAL biar AI tidak salah
-        # interpretasi ADX timeframe aktif yang lagging.
-        if is_crypto_asset or "XAU" in symbol.upper():
-            momentum_df = micro_df
-            micro_tf_label = "M5"
-        else:
-            momentum_df = mt5_connector.get_market_data(symbol, mt5_connector.mt5.TIMEFRAME_M15, num_candles=35)
-            micro_tf_label = "M15"
-        if momentum_df is not None and len(momentum_df) >= 10:
+        # ---- M5 MOMENTUM SUMMARY (computed locally) ----
+        if micro_df is not None and len(micro_df) >= 10:
             momentum_summary_str = _momentum_summary(
-                momentum_df, df, point_size, micro_tf_label, tf_label
+                micro_df, df, point_size, "M5", tf_label
             )
             if momentum_summary_str:
                 momentum_summary_str = "\n" + momentum_summary_str.strip() + "\n"
@@ -1094,20 +1081,9 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             "\n### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT\n"
             f"{macro_context}\n"
             "(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe "
-            "candles (EMA20/50, RSI, ATR, swing levels) - use it to determine whether the "
-            "current move is a pullback within a larger trend or a reversal. The FUNDAMENTAL "
-            "ANALYSIS section is news sentiment only - advisory, disregard if generic or stale. "
-            "NOTE: HTF close/EMA values reflect the last CLOSED higher-timeframe bar (H1/H4) "
-            "and may lag the current price slightly -- the live Bid/Ask and the active-timeframe "
-            "candles are the current reference.)\n"
-            "\nCRITICAL TREND FILTER (anti-fade, do not confuse continuation with pullback):\n"
-            "if RSI is oversold AND EMA50 slope is pointing DOWN AND price is BELOW both "
-            "EMA20 and EMA50 (or the equivalent macro structure on HTF), this is STRONG "
-            "DOWNWARD CONTINUATION, NOT a pullback -- DO NOT FADE OR BUY. Mirror rule: if "
-            "RSI is overbought AND EMA50 slope is pointing UP AND price is ABOVE both EMA20 "
-            "and EMA50, this is STRONG UPWARD CONTINUATION -- DO NOT FADE OR SELL. Mean-"
-            "reversion (fading) is only acceptable when trend strength is weak (ADX < 20) "
-            "or price is at a genuine structural extreme with a clear invalidation.\n"
+            "candles (EMA20/50, RSI, ATR, swing levels) -- use it as directional context to determine whether the "
+            "current move is a trend continuation, a pullback, or an exhaustion reversal at extremes. NOTE: HTF close/EMA values "
+            "reflect the last CLOSED bar and may lag current price slightly -- the live Bid/Ask and active candles are the current reference.)\n"
         )
 
     whisper_str = whisper_str or ""
@@ -1174,7 +1150,7 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
                 "window. DO NOT fade breakout momentum or attempt counter-trend "
                 "mean-reversion during/after it. Ignore RSI oversold/overbought as an "
                 "entry trigger during news windows. Wait for post-news volatility to "
-                "settle and a confirmed H1 candle close before entering.\n"
+                f"settle and a confirmed {tf_label} candle close before entering.\n"
             )
     except Exception:
         pass
@@ -1339,10 +1315,18 @@ def clean_json_response(text):
                         parsed[key] = json.loads(val)
                     except json.JSONDecodeError:
                         parsed[key] = val.strip('"')
-        # Validate keys (including Ultra-Compact CoT keys)
-        for key in ["signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price", "reasoning", "setup", "edge", "invalidation", "entry_type", "entry_price", "trend", "velocity", "rr_valid"]:
+        # Validate keys (including Streamlined V2 schema keys)
+        for key in [
+            "signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price",
+            "reasoning", "setup", "state", "market_regime", "entry_type", "entry_price",
+            "rr_valid", "trend", "velocity", "position_actions"
+        ]:
             if key not in parsed:
                 parsed[key] = None
+
+        # Fallback: jika model menghasilkan "direction" alih-alih "signal"
+        if not parsed.get("signal") and parsed.get("direction"):
+            parsed["signal"] = parsed["direction"]
 
         # Ensure signal is upper case
         if parsed.get("signal"):
@@ -1351,6 +1335,11 @@ def clean_json_response(text):
                 parsed["signal"] = "HOLD"
         else:
             parsed["signal"] = "HOLD"
+
+        # Ensure setup & state & market_regime are upper case strings if present
+        for str_key in ["setup", "state", "market_regime", "trend", "velocity"]:
+            if parsed.get(str_key):
+                parsed[str_key] = str(parsed[str_key]).upper()
 
         # Ensure confidence is float
         try:

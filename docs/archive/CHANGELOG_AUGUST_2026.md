@@ -106,3 +106,75 @@
 2. **Kenaikan Threshold FX/XAU $\rightarrow$ 1.20**: Meningkatkan standar kualitas konsensus Forex dan Emas (wajib $\ge 2$ model searah, skor $\ge 1.20$).
 3. **Efisiensi & Kecepatan Respons**: Ukuran output terpangkas menjadi ~35 token dengan waktu respons < 5 detik per simbol.
 
+---
+
+## 4. Pembaruan Produksi 25 Agustus 2026 (M30 Intraday & Precision Shield)
+
+1. **Peralihan FX Pairs ke Timeframe M30 & Pool 4 Simbol Liquid**:
+   * Seluruh instrumen bot (`FX`, `BTC`, `XAU`) kini seragam berjalan di timeframe **M30 Intraday**.
+   * Pool dikurasi menjadi **4 Pair Terbaik**: `GBPUSD-ECNc`, `GBPCHF-ECNc`, `NZDCAD-ECNc`, `AUDCAD-ECNc`.
+   * Net Exposure seimbang: `GBP` (2), `CAD` (2), `CHF` (1), `USD` (1), `AUD` (1), `NZD` (1).
+   * Eliminasi `EURCHF` *(likuiditas malam tipis)* dan `EURNZD` *(spread lebar $2.5 - 5.0\text{ pips}$)* untuk menghilangkan risiko lonjakan rollover subuh.
+2. **Pre-Rollover Precision Distance-to-SL Shield (03:50–04:15 WIB - RFC 9)**:
+   * Menutup posisi berisiko secara bersih di jam 03:50 WIB JIKA sisa jarak fisik harga ke level SL $\le$ threshold lonjakan slippage broker per-simbol (`EURCHF`/`EURNZD` 240 pts, `GBPCHF` 210 pts, `GBPUSD` 180 pts, `NZDCAD` 140 pts, `AUDCAD` 130 pts). Posisi dengan SL jauh atau profit tebal dibiarkan jalan ke TP.
+3. **Trade-Inception Daily Loss Attribution (`DAILY_LOSS_OPENED_TODAY_ONLY=true`)**:
+   * Posisi multi-day yang dibuka kemarin dan terkena SL subuh hari ini tidak lagi memakan kuota 4% max daily loss hari baru. Kuota 4% ($248.73) murni diperuntukkan bagi trade yang dibuka hari ini.
+4. **Time-Decay Stagnation Disesuaikan ke 4 Jam (8 Bar M30)**:
+   * Parameter `TIME_DECAY_HOURS = 4.0` memotong posisi flat yang hold $\ge 4\text{ jam}$ di rentang $[-0.20R, +0.20R]$ jika Peak MFE $< +0.30R$.
+5. **Jadwal Trading Dimulai Jam 08:00 WIB**:
+   * Dead zone dipersempit menjadi `00:00 - 08:00 WIB`, sesi Tokyo/Asia Pagi dimulai jam `08:00 - 16:00 WIB`.
+6. **Prompt Dinamis Timeframe-Agnostic**:
+   * Prompt AI sepenuhnya otomatis membaca dan menyesuaikan label timeframe (`M30`/`H1`), candle price action, ATR aktif, dan momentum summary langsung dari MT5 tanpa perlu modifikasi template prompt.
+7. **Sinkronisasi Data Mikro M5 (12 Candle Intra-Period + M5 Momentum Summary)**:
+   * Data mikro sub-candle dipadatkan menjadi **12 bar M5 (tepat 1 jam / 2 bar M30)** dan **M5 Momentum Summary (ADX M5, DI delta, EMA20 M5)**. Menghemat ~120 token per cycle dan memberikan deteksi momentum lincah tanpa fetch tambahan.
+   * Label struktur 50-bar dan 100-bar kini secara eksplisit mencantumkan nama timeframe (`50-bar M30 Window` & `100-bar M30 Window`).
+8. **Dynamic Session-Adaptive Timeframe (`H1 Tokyo` -> `M30 London/NY`)**:
+   * Fitur configurable via `.env` (`DYNAMIC_SESSION_TIMEFRAME=true`, `ASIA_TIMEFRAME=H1`, `LONDON_NY_TIMEFRAME=M30`, `DYNAMIC_TF_SWITCH_HOUR_WIB=14`).
+   * **Pukul 08:00–14:00 WIB (Tokyo)**: Beroperasi pada timeframe **H1** (60 menit) untuk menyaring noise pasar sepi dan menghemat 50% kuota token pagi.
+   * **Pukul 14:00–00:00 WIB (London/NY)**: Otomatis beralih ke timeframe **M30** (30 menit) untuk menangkap ledakan momentum breakout institusi secara lincah.
+   * Terintegrasi penuh dan otomatis berubah secara real-time pada: **Prompt AI, CLI Banner, Status Bar Terminal, Menu & Tombol Telegram, serta MTF Macro Context**.
+
+---
+
+## 5. Pembaruan 25 Agustus 2026 (Malam) — Streamlined Prompt V2 & State Machine Clearance Engine
+
+### 📦 Arsip Prompt Lama (Versi 24–25 Agustus Siang — Rollback Reference)
+```text
+### ROLE
+You are an expert {{TIMEFRAME}} short-term intraday-swing analyst for {{SYMBOL}} -- {{ASSET_DESC}}. Your job is to find a high-quality short-term trading opportunity directly from the market data given each cycle, or to conclude that no valid opportunity currently exists.
+
+### EXECUTION CONTEXT
+{{EXECUTION_NOTE}}
+
+### ANALYSIS FREEDOM
+You are NOT required to follow a single predefined trading strategy. You may use any market interpretation you judge relevant, including but not limited to: trend following, momentum, breakout, pullback, mean reversion, reversal/exhaustion, support/resistance, price action, volatility, or indicator confluence -- alone or combined.
+
+### RISK CONSTRAINTS (apply regardless of chosen strategy)
+- A concrete, statable entry thesis (why this direction, why now)
+- A clear invalidation condition: the nearest opposing swing structure behind your entry (for BUY: the last relevant swing low below; for SELL: the last relevant swing high above)
+{{SLTP_RULES_BLOCK}}
+
+{{POINTS_EXPLANATION}}
+
+### OUTPUT FORMAT
+{
+  "trend": "BULL_PULLBACK" | "BEAR_PULLBACK" | "BREAKOUT" | "RANGING",
+  "velocity": "NORMAL" | "CRASH" | "STAGNANT",
+  "rr_valid": true | false,
+  "signal": "BUY" | "SELL" | "HOLD",
+  "confidence": float (0.00 to 1.00),
+  "sl_points": integer,
+  "tp_points": integer,
+  "invalidation_price": float,
+  "target_price": float,
+{{PENDING_FIELDS}}
+  "reasoning": "string (MAX 30 WORDS)"
+}
+```
+
+### 🚀 Fitur Baru Streamlined Prompt V2 (25 Agustus Malam):
+1. **7-Step Decision Framework**: Membimbing inferensi: `Regime` $\rightarrow$ `Location & Clearance` $\rightarrow$ `Setup` $\rightarrow$ `Entry` $\rightarrow$ `Invalidation` $\rightarrow$ `Target` $\rightarrow$ `R:R` (hemat token ~65%, latensi < 3s).
+2. **3 Playbooks & Penghapusan Dogma Anti-Fade**: Mengeliminasi klausul kaku *"DO NOT FADE OR SELL"*, membuka peluang *Exhaustion SELL di pucuk* dan *Pullback BUY di support*.
+3. **5-State Machine Context**: `FAR`, `TESTING`, `REJECTION`, `COMPRESSION`, `BREAKOUT` sebagai status kesepakatan antara Python dan AI.
+4. **Python Deterministic Clearance & ADR Gate**: Menghitung `Range Location %`, `Clearance`, dan `Remaining Daily Range` untuk mencegah pasang TP melayang di sesi sepi.
+5. **Konsistensi Jarak SL/TP dari `entry_price`**: Menghilangkan ambiguitas jarak pada pending orders.

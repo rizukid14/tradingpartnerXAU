@@ -86,23 +86,26 @@ def answer_callback_query(callback_query_id, text=None, show_alert=False):
 
 
 def _build_main_menu_keyboard():
-    """Builds clean institutional inline keyboard for main menu."""
+    """Builds clean institutional inline keyboard for main menu with dynamic session timeframes."""
+    tf_gu = config.get_timeframe_str("GBPUSD-ECNc")
+    tf_gc = config.get_timeframe_str("GBPCHF-ECNc")
+    tf_uj = config.get_timeframe_str("USDJPY-ECNc")
+    tf_ac = config.get_timeframe_str("AUDCAD-ECNc")
+    tf_xau = config.get_timeframe_str("XAUUSD-ECNc")
+    tf_btc = config.get_timeframe_str("BTCUSD.c")
     return {
         "inline_keyboard": [
             [
-                {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD-ECNc"},
-                {"text": "EURCHF H1", "callback_data": "analyze:EURCHF-ECNc"},
+                {"text": f"GBPUSD {tf_gu}", "callback_data": "analyze:GBPUSD-ECNc"},
+                {"text": f"GBPCHF {tf_gc}", "callback_data": "analyze:GBPCHF-ECNc"},
             ],
             [
-                {"text": "GBPCHF H1", "callback_data": "analyze:GBPCHF-ECNc"},
-                {"text": "EURNZD H1", "callback_data": "analyze:EURNZD-ECNc"},
+                {"text": f"USDJPY {tf_uj}", "callback_data": "analyze:USDJPY-ECNc"},
+                {"text": f"AUDCAD {tf_ac}", "callback_data": "analyze:AUDCAD-ECNc"},
             ],
             [
-                {"text": "NZDCAD H1", "callback_data": "analyze:NZDCAD-ECNc"},
-                {"text": "AUDCAD H1", "callback_data": "analyze:AUDCAD-ECNc"},
-            ],
-            [
-                {"text": "XAUUSD M30", "callback_data": "analyze:XAUUSD-ECNc"},
+                {"text": f"XAUUSD {tf_xau}", "callback_data": "analyze:XAUUSD-ECNc"},
+                {"text": f"BTCUSD {tf_btc}", "callback_data": "analyze:BTCUSD.c"},
             ],
             [
                 {"text": "[ Multi-Pair Scan ]", "callback_data": "cmd:scan"},
@@ -148,7 +151,7 @@ def handle_status_command(chat_id):
             f"• *Daily Realized P/L*: `${pnl_today:+.2f}`\n"
             f"• *Net Floating P/L*: `${total_floating:+.2f}` ({len(open_pos)} positions)\n"
             f"• *Active Mode*: `{mode_name}`\n"
-            f"• *Max Daily Loss*: `${config.MAX_DAILY_LOSS_USD}`\n"
+            f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%`\n"
             f"• *Daily Profit Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"
         )
         kb = {"inline_keyboard": [[{"text": "[ Back to Menu ]", "callback_data": "cmd:menu"}]]}

@@ -13,9 +13,104 @@
 | 3 | [RFC 3: Parabolic Filter di Position Manager](#rfc-3-parabolic-filter-di-position-manager) | ⚪ Konsep (Butuh Backtest) | `position_manager.py` |
 | 4 | [RFC 4: Anti-Hedge Gate per Simbol](#rfc-4-anti-hedge-gate-per-simbol) | ⚪ Konsep | `main.py`, `consensus.py` |
 | 5 | [RFC 5: 2-Way Interactive Telegram Controller Hardening](#rfc-5-2-way-interactive-telegram-controller-hardening) | 🟡 Didesain (Perlu Fixing) | `telegram_bot.py`, `llm_client.py` |
-| 6 | [RFC 6: Peak-Aware Time-Decay Stagnation Exit & Pre-Rollover Shield](#rfc-6-peak-aware-time-decay-stagnation-exit--pre-rollover-shield) | 🟢 LIVE (Agustus 2026) | `position_manager.py` |
+| 6 | [RFC 6: Peak-Aware Time-Decay Stagnation Exit](#rfc-6-peak-aware-time-decay-stagnation-exit) | 🟢 LIVE (Agustus 2026) | `position_manager.py` |
 | 7 | [RFC 7: Dynamic Volatility Sizing & Adaptive BEP](#rfc-7-dynamic-volatility-sizing--adaptive-bep) | 🟢 LIVE (Agustus 2026) | `risk_engine.py`, `position_manager.py`, `llm_client.py` |
 | 8 | [RFC 8: Intermarket Macro Commodity Pulse](#rfc-8-intermarket-macro-commodity-pulse) | 🟡 Didesain (Backlog) | `macro_analyst.py`, `llm_client.py` |
+| 9 | [RFC 9: Revamp Dynamic Distance-to-SL Pre-Rollover Shield](#rfc-9-revamp-dynamic-distance-to-sl-pre-rollover-shield) | 🟢 LIVE (Agustus 2026) | `position_manager.py`, `config.py`, `.env` |
+| 10 | [RFC 10: Asymmetric 3-LLM Specialized Roles](#rfc-10-asymmetric-3-llm-specialized-roles) | ⚪ Konsep / Riset Arsitektur | `llm_client.py`, `consensus.py` |
+
+---
+
+## RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)
+
+### 1. Latar Belakang & Filosofi Arsitektur
+Saat ini seluruh model LLM (OpenAI, Gemini, DeepSeek/Claude) menerima prompt identik dan diminta menyelesaikan seluruh siklus analisa dari hulu ke hilir secara simetris. Pendekatan ini rentan terhadap *simultaneous blindspots* atau *groupthink*.
+
+Proposal ChatGPT "Second Opinion" mengusulkan pembagian peran asimetris (*Separation of Concerns*) menjadi 3 peran terspesialisasi:
+
+```
+[ Market Data & MTF Feeds ]
+           │
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Model A (Macro / Structure Specialist: OpenAI o4-mini) │
+│ - Tugas: Petakan H4/D1 EMA200, key swings & clearance │
+│ - Output: market_regime, allowed_bias, major_levels    │
+└────────────────────────────────────────────────────────┘
+           │ (Allowed Bias & Clearance)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Model B (Price Action & Timing: Gemini 3.1-Flash-Lite) │
+│ - Tugas: Analisa lilin M30/M5, wicks, state machine    │
+│ - Output: setup, state, entry_type (Limit/Stop/Market) │
+└────────────────────────────────────────────────────────┘
+           │ (Draft Proposal Sinyal)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Model C (Devil's Advocate / Auditor: DeepSeek/Claude)  │
+│ - Tugas: Cari jebakan/flaws, proximity trap, bad R:R   │
+│ - Output: veto_flag (TRUE/FALSE), risk_score (0.0-1.0) │
+└────────────────────────────────────────────────────────┘
+           │ (Jika Veto == False & Risk <= 0.40)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│ Python Deterministic Engine: Risk Sizing & MT5 Order   │
+└────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2. Rincian Spesialisasi Peran
+
+#### A. Model A — Macro & Structure Specialist (OpenAI o4-mini)
+* **Keahlian**: Penalaran top-down, evaluasi tren jangka panjang, pemetaan clearance.
+* **Input Payload**: H4/D1 candles, EMA20/50/200, ADR kuota harian, swing high/low 100-bar.
+* **Output Ringkas**:
+  ```json
+  {
+    "market_regime": "BULL_TREND",
+    "allowed_bias": ["BUY", "HOLD"],
+    "clearance_to_resistance": 450,
+    "clearance_to_support": 220
+  }
+  ```
+
+#### B. Model B — Price Action & Execution Trigger (Gemini 3.1-flash-lite)
+* **Keahlian**: Latensi ultra-cepat (< 2 detik), pembacaan bentuk lilin (body/wick/rejection).
+* **Input Payload**: 15 lilin M30, 12 lilin M5, momentum summary, clearance dari Model A.
+* **Output Ringkas**:
+  ```json
+  {
+    "setup": "CONTINUATION",
+    "state": "REJECTION",
+    "entry_type": "buy_limit",
+    "entry_price": 159.200,
+    "sl_points": 110,
+    "tp_points": 240
+  }
+  ```
+
+#### C. Model C — Devil's Advocate & Risk Auditor (DeepSeek V4 / Claude)
+* **Keahlian**: Skeptisisme teknikal, pengujian skenario kegagalan, deteksi false breakout.
+* **Input Payload**: Draft proposal Model A + Model B, kalender berita, order book/spread.
+* **Output Ringkas**:
+  ```json
+  {
+    "veto_flag": false,
+    "risk_score": 0.25,
+    "identified_risks": "Minor M5 compression, but R:R 2.18 compensates adequately."
+  }
+  ```
+
+---
+
+### 3. Kelebihan & Trade-Off Arsitektur Asimetris
+
+| Kelebihan | Trade-Off / Tantangan |
+|---|---|
+| **Zero Groupthink**: Model C bertugas mencari kesalahan, bukan ikut-ikutan setuju. | **Latensi Pipeline Berantai**: Harus menunggu Model A $\rightarrow$ Model B $\rightarrow$ Model C (bukan paralel serentak). |
+| **Token Sangat Hemat**: Tiap model hanya dikirimi sub-payload spesifik (~200–300 token). | **Ketergantungan Kuat**: Jika Model A salah mendeteksi regime, seluruh pipeline downstream ikut terpengaruh. |
+| **Pemisahan Logika Tajam**: Struktur makro dipisahkan dari eksekusi mikroskopik. | **Kompleksitas Konsensus**: Membutuhkan penanganan fallback jika salah satu model timeout / error. |
 
 ---
 
@@ -207,4 +302,44 @@ Modul pengendali dua arah berbasis Telegram Bot (`src/core/telegram_bot.py`) yan
     - Oil (WTI): +1.2% (CAD bullish) | Copper: -0.8% (AUD/NZD mild drag) | Gold: +0.4% | Nasdaq: +0.6% (Risk-On)
     ```
 - **Prinsip**: Data murni numerik dan faktual tanpa instruksi dogmatis, membiarkan LLM memanfaatkan korelasi intermarket secara independen.
+
+---
+
+## RFC 9: Revamp Dynamic Distance-to-SL Pre-Rollover Shield
+
+### 1. Latar Belakang & Masalah
+* **Kelemahan Shield Statis Lama**:
+  1. Window 03:00–05:00 WIB terlalu lebar dan memotong 2 jam likuiditas aktif sesi US.
+  2. Rule stagnasi $[-0.20R, +0.20R]$ membunuh swing H1 yang sehat.
+  3. Cut loss statis $\le -0.45R$ buta terhadap sisa jarak harga ke SL fisik dan estimasi spread riil per pair.
+* **Hasil Riset Empiris VT Markets (60 Hari)**:
+  * Median spread spike rollover hanya $0.8 - 1.8\text{ pips}$.
+  * P90 jumping harga pergantian hari: Major $\approx 10\text{ pips}$, Cross $\approx 10 - 25\text{ pips}$, EURNZD $\approx 37\text{ pips}$. Tail risk terparah (EURCAD) pernah mencapai $14\text{ pips}$ ($140\text{ pts}$).
+
+### 2. Desain Arsitektur Baru: Dynamic Distance-to-SL Clearance
+* **Jendela Waktu Presisi (Server + 4h = WIB)**:
+  * Server Rollover = 00:00 Server $\rightarrow$ **TEPAT 04:00:00 WIB**.
+  * Jendela Shield Aktif: **03:50 – 04:15 WIB** (10 menit sebelum s/d 15 menit setelah 00:00 server).
+* **Hapus Total Rule Stagnasi**: Posisi flat/profit dibiarkan berjalan.
+* **Formula Dynamic Clearance**:
+  $$\text{Distance to SL (pts)} = \frac{|\text{Current Price} - \text{pos.sl}|}{\text{point}}$$
+  $$\text{Tail-Risk Buffer (pts)} = \max(\text{Config Buffer}, \ 5 \times \text{Live Spread}, \ 25\% \times \text{ATR H1})$$
+  * **Major (`GBPUSD`)**: $80\text{ pts}$ ($8.0\text{ pips}$)
+  * **Cross Pair (`EURCHF`, `GBPCHF`, `AUDCAD`, `NZDCAD`, `EURNZD`, `EURCAD`)**: $300\text{ pts}$ ($30.0\text{ pips}$) *(menampung spike 226–250 pts yang terjadi pada EURCHF/GBPCHF/EURNZD)*
+  * **Gold (`XAUUSD`)**: $400\text{ pts}$ ($40.0\text{ pips}$)
+  * **Crypto (`BTCUSD`)**: Bebas / Skip (24/7).
+* **Kriteria Eksekusi Emergency Cut-Loss**:
+  $$\text{TUTUP BERSIH HANYA JIKA: } \text{Distance to SL} \le \text{Tail-Risk Buffer} \times 1.1 \quad (\text{pada jam } 03:50 - 04:15\text{ WIB})$$
+  *(Posisi dengan SL mepet $\le 30\text{ pips}$ langsung ditutup pada 03:50 WIB di harga normal sebelum terjadi gap down & slippage 2x).*
+
+### 3. File Target & Single Source of Truth
+* Target implementasi: `src/analytics/position_manager.py` (`_check_pre_rollover_shield`).
+* Konfigurasi `.env` & `config.py`:
+  * `PRE_ROLLOVER_SHIELD_ENABLED=true` (setelah refactor selesai)
+  * `PRE_ROLLOVER_START_MINUTE_WIB=230`  # 03:50 WIB (3*60+50)
+  * `PRE_ROLLOVER_END_MINUTE_WIB=255`    # 04:15 WIB (4*60+15)
+  * `PRE_ROLLOVER_BUFFER_MAJOR_PTS=80.0`
+  * `PRE_ROLLOVER_BUFFER_CROSS_PTS=300.0`
+  * `PRE_ROLLOVER_BUFFER_XAU_PTS=400.0`
+
 

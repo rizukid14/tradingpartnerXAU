@@ -393,7 +393,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
         return []
 
     if _bot_opened_cache["value"] is not None and (now - _bot_opened_cache["ts"]) < _BOT_OPENED_CACHE_TTL:
-        bot_opened, comm_by_pos, entry_price_by_pos = _bot_opened_cache["value"]
+        bot_opened, comm_by_pos, entry_price_by_pos, entry_time_by_pos = _bot_opened_cache["value"]
     else:
         wide_from_epoch = int((today_start - timedelta(days=7)).timestamp() + broker_offset)
         wide_deals = mt5.history_deals_get(wide_from_epoch, to_epoch)
@@ -403,13 +403,13 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             d.position_id for d in wide_deals
             if (target_magic is None or d.magic == target_magic) and d.entry == mt5.DEAL_ENTRY_IN
         }
-        # Harga entry per posisi (dari deal IN) - dipakai buat bedain SL awal vs
-        # trailing/BEP: kalau harga SL yang kena > entry (BUY), berarti SL sudah
-        # digeser melewati entry = trailing stop / break-even, bukan SL awal.
+        # Harga entry dan waktu entry per posisi (dari deal IN)
         entry_price_by_pos = {}
+        entry_time_by_pos = {}
         for d in wide_deals:
             if d.entry == mt5.DEAL_ENTRY_IN:
                 entry_price_by_pos.setdefault(d.position_id, d.price)
+                entry_time_by_pos.setdefault(d.position_id, int(d.time - broker_offset))
         # Biaya per posisi = komisi (IN + OUT) + admin fee swap-free.
         # position.profit dari MT5 TIDAK include komisi/fee - net profit dikurangi semua biaya.
         comm_by_pos = {}
@@ -420,7 +420,7 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             if total_cost != 0.0:
                 comm_by_pos[d.position_id] = comm_by_pos.get(d.position_id, 0.0) + total_cost
         _bot_opened_cache["ts"] = now
-        _bot_opened_cache["value"] = (bot_opened, comm_by_pos, entry_price_by_pos)
+        _bot_opened_cache["value"] = (bot_opened, comm_by_pos, entry_price_by_pos, entry_time_by_pos)
 
     closed = []
     for deal in deals:
@@ -477,6 +477,9 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
         # Net profit REAL = profit + swap - komisi total (IN + OUT).
         # comm_by_pos berisi nilai NEGATIF (komisi di-charge) -> ditambahkan langsung.
         net_comm = comm_by_pos.get(deal.position_id, 0.0) or 0.0
+        open_time = entry_time_by_pos.get(deal.position_id, int(deal.time - broker_offset))
+        opened_today = open_time >= int(today_start.timestamp())
+
         closed.append({
             "ticket": deal.position_id,
             "symbol": deal.symbol,
@@ -486,7 +489,9 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
             "reason": reason,
             "comment": getattr(deal, "comment", ""),
             "type": pos_type,
-            "time": int(deal.time - broker_offset), # Convert to local epoch
+            "time": int(deal.time - broker_offset),  # Convert to local epoch
+            "open_time": open_time,
+            "opened_today": opened_today,
         })
     _closed_today_cache["ts"] = now
     _closed_today_cache["key"] = cache_key

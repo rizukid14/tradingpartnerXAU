@@ -221,8 +221,14 @@ class UI:
         return "\n".join(out)
 
 
-def render_banner(account_info=None, symbol="GBPUSD-ECNc", tf="H1", mode="xau_pairs", is_live=True):
+def render_banner(account_info=None, symbol="GBPUSD-ECNc", tf=None, mode="pairs", is_live=True):
     """Renders a modern clean ASCII banner for FX Pairs Trading Terminal."""
+    if tf is None:
+        try:
+            import config
+            tf = config.get_timeframe_str(symbol)
+        except Exception:
+            tf = "M30"
     badge_mode = UI.badge_live() if is_live else UI.badge_dry()
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
