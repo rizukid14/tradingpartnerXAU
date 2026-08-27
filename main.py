@@ -1712,7 +1712,7 @@ def run_scanner_trading_cycle(cand, risk):
                 print(f" {UI.YELLOW}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order.{UI.RST}")
                 return False
             
-            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points, symbol=sym)
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False

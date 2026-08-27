@@ -326,9 +326,9 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
 LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.3)
-LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.8)  # 1.8x ATR buffer agar kebal dari spike hunting di sesi NY
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
-LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 600)  # fallback kalau ATR gagal (6 USD)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 

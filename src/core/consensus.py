@@ -18,7 +18,7 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
-def _apply_sltp_rules(sl_points, tp_points):
+def _apply_sltp_rules(sl_points, tp_points, symbol=None):
     """
     SL/TP final sesuai config.TP_SL_RULES.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
@@ -26,10 +26,12 @@ def _apply_sltp_rules(sl_points, tp_points):
     global _last_sltp_adjustments
     _last_sltp_adjustments = []
 
+    sym = symbol or config.SYMBOL
+
     if not sl_points or sl_points <= 0:
-        sl_points = config.default_sl_points_for(config.SYMBOL)
+        sl_points = config.default_sl_points_for(sym)
     if not tp_points or tp_points <= 0:
-        tp_points = config.default_tp_points_for(config.SYMBOL)
+        tp_points = config.default_tp_points_for(sym)
 
     spread_pts = 0
     atr_points = 0
@@ -37,11 +39,11 @@ def _apply_sltp_rules(sl_points, tp_points):
         from config import mt5
         import pandas as pd
         from ta.volatility import AverageTrueRange
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        si = mt5.symbol_info(config.SYMBOL)
+        tick = mt5.symbol_info_tick(sym)
+        si = mt5.symbol_info(sym)
         if tick is not None and si is not None and si.point:
             spread_pts = int(round((tick.ask - tick.bid) / si.point))
-            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
+            rates = mt5.copy_rates_from_pos(sym, config.get_timeframe(sym), 0, 50)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
                 df['atr'] = AverageTrueRange(
@@ -53,10 +55,10 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
-    mode = config.sltp_mode_for(config.SYMBOL)
+    mode = config.sltp_mode_for(sym)
 
     if mode == "LLM":
-        is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
+        is_xau = "XAU" in sym.upper() or "GOLD" in sym.upper()
 
         if is_xau:
             if atr_points > 0:

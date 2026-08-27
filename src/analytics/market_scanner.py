@@ -442,19 +442,14 @@ class MarketScanner:
         is_london_open = (14 <= h <= 18)
         is_ny_session = (19 <= h <= 23)
 
-        # ── ACTIVE POSITION & PENDING ORDER GATES (0 Token) ──
+        # ── SHARED AGGREGATE CAPACITY GATE (Max 6 Total Active Positions + Pending Orders) ──
         positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
         orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
         
-        # Max capacity gate: If total open + pending orders on MT5 account >= max_positions, FREEZE LLM calls!
+        # Max capacity gate: If total open + pending orders on MT5 account >= max_positions (6), FREEZE radar
         total_active = len(positions or []) + len(orders or [])
         max_positions = config.get_max_open_positions()
         if total_active >= max_positions:
-            return []
-
-        # Max pending orders gate (default max 3 pending orders)
-        max_pending = getattr(config, "MAX_PENDING_ORDERS", 3)
-        if len(orders or []) >= max_pending:
             return []
 
         active_symbols = set()
