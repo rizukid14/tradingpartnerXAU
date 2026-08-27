@@ -2235,7 +2235,18 @@ def main():
                 anim_icon = _radar_frames[_radar_anim_idx]
                 n_active = len(scanner.macro_cache) if scanner else 22
                 label_hdr = f"QUANT RADAR {anim_icon} ({n_active} Pairs)"
-                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | Radar: {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
+                
+                csm_mini = ""
+                try:
+                    from src.analytics.currency_strength import calculate_boitoki_csm
+                    _sc_m15, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
+                    if _sc_m15:
+                        _sorted_m15 = sorted(_sc_m15.items(), key=lambda x: x[1], reverse=True)
+                        csm_mini = f" | CSM: {UI.YELLOW}{'>'.join([c for c, _ in _sorted_m15[:4]])}{UI.RST}"
+                except Exception:
+                    pass
+
+                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str}{csm_mini} | Radar: {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
             elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
                 tf_cur = config.get_timeframe_str()
                 label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS ({tf_cur})"

@@ -104,6 +104,7 @@ def _build_main_menu_keyboard():
             ],
             [
                 {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"},
+                {"text": "🌐 [ Boitoki CSM Radar ]", "callback_data": "cmd:csm"},
             ],
             [
                 {"text": "[ Active Positions ]", "callback_data": "cmd:positions"},
@@ -114,6 +115,70 @@ def _build_main_menu_keyboard():
             ]
         ]
     }
+
+
+def handle_csm_command(chat_id):
+    """Sends the Dual-Horizon Boitoki CSM & Flow Velocity report."""
+    try:
+        from src.analytics.currency_strength import calculate_boitoki_csm
+        scores_h1, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_H1, lookback_bars=24)
+        scores_m15, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
+
+        if not scores_h1:
+            send_telegram_msg("⚠️ CSM Engine initializing... Please try again in 5 seconds.", chat_id=chat_id)
+            return
+
+        sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True)
+        sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
+
+        majors_22 = [
+            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD",
+            "EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURCAD",
+            "GBPJPY", "GBPCHF", "GBPAUD", "GBPCAD",
+            "AUDJPY", "AUDCHF", "AUDCAD",
+            "CADJPY", "CHFJPY", "NZDCAD"
+        ]
+        deltas = []
+        for p in majors_22:
+            base, quote = p[:3], p[3:6]
+            b_s = scores_m15.get(base, 0.0) if scores_m15 else 0.0
+            q_s = scores_m15.get(quote, 0.0) if scores_m15 else 0.0
+            deltas.append((p, b_s - q_s))
+
+        sorted_deltas = sorted(deltas, key=lambda x: x[1], reverse=True)
+        top_in = sorted_deltas[:3]
+        top_out = sorted_deltas[-3:]
+
+        in_str = "\n".join([f"• *{p}*: `+{d:.1f} pts` (Bullish Inflow)" for p, d in top_in if d > 0]) or "• None"
+        out_str = "\n".join([f"• *{p}*: `{d:.1f} pts` (Bearish Outflow)" for p, d in reversed(top_out) if d < 0]) or "• None"
+
+        usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else 0.0
+        gold_impact = "USD Outflow (Bullish Fuel)" if usd_m15 <= -5.0 else ("USD Inflow (Bearish Pressure)" if usd_m15 >= 5.0 else "Balanced / Neutral")
+
+        msg = (
+            f"🌐 *DUAL-HORIZON BOITOKI CSM RADAR*\n"
+            f"Timestamp: `{time.strftime('%H:%M:%S WIB')}` | Horizon: `24h Macro vs 4h Session`\n\n"
+            f"📊 *24-Hour Macro Flow (H1)*:\n"
+            f"{' | '.join([f'`{c} {s:+.1f}`' for c, s in sorted_h1])}\n\n"
+            f"⚡ *4-Hour Session Velocity (M15)*:\n"
+            f"{' | '.join([f'`{c} {s:+.1f}`' for c, s in sorted_m15])}\n\n"
+            f"🚀 *Top Inflow Pairs (M15)*:\n{in_str}\n\n"
+            f"🔻 *Top Outflow Pairs (M15)*:\n{out_str}\n\n"
+            f"🪙 *Gold Dollar Pressure (XAUUSD)*:\n"
+            f"• 4h USD Velocity: `{usd_m15:+.2f}` ({gold_impact})\n"
+        )
+
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔄 Refresh CSM", "callback_data": "cmd:csm"}],
+                [{"text": "📡 SMC Radar 22 Pairs", "callback_data": "cmd:radar"}],
+                [{"text": "« Back to Menu", "callback_data": "cmd:menu"}]
+            ]
+        }
+        send_telegram_msg(msg, reply_markup=kb, chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_csm_command: {e}")
+        send_telegram_msg(f"Error fetching CSM: `{e}`", chat_id=chat_id)
 
 
 def handle_radar_command(chat_id):
@@ -661,6 +726,8 @@ def _process_update(update):
 
         if cmd in ("/start", "/menu", "/help"):
             handle_menu_command(target_chat)
+        elif cmd in ("/csm", "/strength", "/currency"):
+            handle_csm_command(target_chat)
         elif cmd in ("/radar", "/scan", "/scanner"):
             handle_radar_command(target_chat)
         elif cmd in ("/indicators", "/indikator", "/levels", "/smc"):
@@ -740,6 +807,8 @@ def _process_update(update):
             handle_close_all(target_chat)
         elif data == "cmd:menu":
             handle_menu_command(target_chat)
+        elif data == "cmd:csm":
+            handle_csm_command(target_chat)
         elif data == "cmd:radar":
             handle_radar_command(target_chat)
         elif data == "cmd:positions":
@@ -794,6 +863,7 @@ def register_bot_commands():
         return False
     commands = [
         {"command": "menu", "description": "Interactive Control Menu & Actions"},
+        {"command": "csm", "description": "Dual-Horizon Boitoki CSM Currency Strength"},
         {"command": "analisa", "description": "3-AI Analysis (e.g. /analisa GBPUSD M15)"},
         {"command": "radar", "description": "22-Pair SMC Quant Scanner & Overview"},
         {"command": "indicators", "description": "High/Low, Zona Diskon, Premium, & SMC OB/FVG"},

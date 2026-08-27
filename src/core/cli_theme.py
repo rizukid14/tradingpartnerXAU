@@ -368,43 +368,75 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     eq = acc.get("equity", 6005.04)
     bal = acc.get("balance", 6034.87)
     
+    positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
+    orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
+    total_active = len(positions or []) + len(orders or [])
+    max_positions = config.get_max_open_positions()
+
     t2_lines = [
         f" Server    : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
         f" Equity    : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
-        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}4.0%{UI.RST}",
+        f" Capacity  : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} (Shared Basket Engine)",
+        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss: {UI.RED}4.0% ($50){UI.RST}",
+        f" Gold Armor: {UI.YELLOW}1.8x ATR Floor (600 pts Anti-Hunt Shield){UI.RST}",
     ]
     if open_positions:
         pos_strs = []
         for p in open_positions[:3]:
             s_clean = p.get("symbol", "").replace("-ECNc", "").replace(".c", "")
             pos_strs.append(f"{s_clean}: {UI.badge_pnl(p.get('profit', 0.0))}")
-        t2_lines.append(f" Posisi    : {' | '.join(pos_strs)}")
+        t2_lines.append(f" Positions : {' | '.join(pos_strs)}")
+    elif orders:
+        ord_strs = []
+        for o in orders[:3]:
+            s_clean = o.symbol.replace("-ECNc", "").replace(".c", "")
+            ord_strs.append(f"{s_clean} (Pend)")
+        t2_lines.append(f" Positions : {UI.YELLOW}{' | '.join(ord_strs)}{UI.RST}")
     else:
-        t2_lines.append(f" Posisi    : {UI.GRAY}No active positions (Flat / Cash){UI.RST}")
+        t2_lines.append(f" Positions : {UI.GRAY}No active positions (Flat / Ready){UI.RST}")
         
     hot_str = ", ".join(hot_pairs[:3]) if hot_pairs else "None (Normal Vol)"
     in_zone_str = ", ".join(in_zone_pairs[:3]) if in_zone_pairs else "None (Mid-Range)"
     
     t2_lines.append(f" Top Hot   : {UI.YELLOW}{hot_str}{UI.RST} 🔥")
     t2_lines.append(f" In-Zone   : {UI.GREEN}{in_zone_str}{UI.RST} 🎯")
-    t2_lines.append(f" Radar     : {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens){UI.RST}")
-    t2_lines.append(f" Risk Gate : {UI.DIM}Safety Floor 1.3x ATR | Spread Shield{UI.RST}")
+    t2_lines.append(f" Fast Radar: {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens){UI.RST}")
+    t2_lines.append(f" Proteksi  : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay{UI.RST}")
         
-    # ── TILE 3: SMC LIQUIDITY & TIMEFRAME (Bottom Left) ──
-    t3_lines = [
-        f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
-        f" Judas    : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
-        f" Structure: {UI.CYAN}100-bar H1 (Disc <=38% | Prem >=62%){UI.RST}",
-        f" News     : {UI.GREEN}ACTIVE (TradingView News Window Shield){UI.RST}"
-    ]
+    # ── TILE 3: DUAL-HORIZON BOITOKI CSM RADAR (Bottom Left) ──
+    t3_lines = []
+    try:
+        from src.analytics.currency_strength import calculate_boitoki_csm
+        scores_h1, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_H1, lookback_bars=24)
+        scores_m15, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
+        
+        sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True) if scores_h1 else []
+        sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
+        
+        h1_str = " > ".join([f"{c}" for c, s in sorted_h1[:6]]) if sorted_h1 else "--"
+        m15_str = " > ".join([f"{c}" for c, s in sorted_m15[:6]]) if sorted_m15 else "--"
+        
+        usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else 0.0
+        gold_impact = "USD Outflow (Tailwind)" if usd_m15 <= -5.0 else ("USD Inflow (Headwind)" if usd_m15 >= 5.0 else "Balanced")
+        
+        t3_lines.append(f" 24h Macro (H1)  : {UI.CYAN}{h1_str}{UI.RST}")
+        t3_lines.append(f" 4h Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
+        t3_lines.append(f" Gold Dollar Flow: {UI.GREEN if usd_m15 <= -5.0 else (UI.RED if usd_m15 >= 5.0 else UI.WHITE)}USD {usd_m15:+.1f} [{gold_impact}]{UI.RST}")
+        t3_lines.append(f" Refresh Interval: {UI.DIM}Every 60s MT5 Tick (0 Token / On-Demand /csm){UI.RST}")
+    except Exception:
+        t3_lines = [
+            f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
+            f" Judas    : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
+            f" Structure: {UI.CYAN}100-bar H1 (Disc <=38% | Prem >=62%){UI.RST}",
+            f" News     : {UI.GREEN}ACTIVE (TradingView News Window Shield){UI.RST}"
+        ]
     
-    # ── TILE 4: 3-LLM JURY PROTOCOL (Bottom Right) ──
-    models = active_models or ["OpenAI", "Gemini", "DeepSeek"]
+    # ── TILE 4: 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL (Bottom Right) ──
     t4_lines = [
-        f" Protocol : {UI.PURPLE}3-Way Asymmetric Jury (APPROVE / REJECT){UI.RST}",
-        f" Model 1  : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure Validator)",
-        f" Model 2  : {UI.WHITE}Gemini 3.1-Flash-Lite{UI.RST} (Speed Screener)",
-        f" Model 3  : {UI.WHITE}DeepSeek V4-Flash{UI.RST} (Devil's Advocate)"
+        f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini{UI.RST} (Speed)",
+        f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Veto)",
+        f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife)",
+        f" Pending Order: {UI.CYAN}Auto-Retest at FVG / Order Block (60-120m){UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
@@ -431,11 +463,11 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         out.append(f"{c_cyan}|{c_rst}{l_pad}{c_cyan}|{c_rst}{r_pad}{c_cyan}|{c_rst}")
         
     # Middle Divider
-    m1_title = f"+-- [ {UI.BOLD}{UI.WHITE}SMC LIQUIDITY & MARKET REGIME{UI.RST}{c_cyan} ] "
+    m1_title = f"+-- [ {UI.BOLD}{UI.WHITE}DUAL-HORIZON BOITOKI CSM RADAR{UI.RST}{c_cyan} ] "
     md1 = max(0, lw - UI.disp_width(m1_title) + 1)
     m1_bar = f"{c_cyan}{m1_title}{'-' * md1}+{c_rst}"
     
-    m2_title = f"-- [ {UI.BOLD}{UI.WHITE}3-LLM CONSENSUS JURY HUD{UI.RST}{c_cyan} ] "
+    m2_title = f"-- [ {UI.BOLD}{UI.WHITE}2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL{UI.RST}{c_cyan} ] "
     md2 = max(0, rw - UI.disp_width(m2_title) + 1)
     m2_bar = f"{c_cyan}{m2_title}{'-' * md2}+{c_rst}"
     
