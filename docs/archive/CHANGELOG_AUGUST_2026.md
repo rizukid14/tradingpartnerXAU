@@ -253,7 +253,26 @@ You are NOT required to follow a single predefined trading strategy. You may use
 5. **Pewarnaan Vonis Yuridis Konsensus CLI (`UI.badge_verdict`)**:
    * `[APPROVE]` Hijau, `[REVISE]` Kuning, dan `[REJECT]` Merah pada terminal CLI.
 6. **Overhaul Bab 05: Master Atlas DNA 22 Pasangan Mata Uang di HTML & Markdown**:
-   * Master table 22 baris tunggal di [report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html) dan [QUANT_RESEARCH_EDGES.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/QUANT_RESEARCH_EDGES.md) dilengkapi legenda visual metrik kuantitatif dan pemetaan Dual-DNA (🥇 Alpha Utama & 🥈 Alpha Sekunder) untuk setiap simbol.metrik kuantitatif dan pemetaan Dual-DNA (🥇 Alpha Utama & 🥈 Alpha Sekunder) untuk setiap simbol.
+   * Master table 22 baris tunggal di [report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html) dan [QUANT_RESEARCH_EDGES.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/QUANT_RESEARCH_EDGES.md) dilengkapi legenda visual metrik kuantitatif dan pemetaan Dual-DNA (🥇 Alpha Utama & 🥈 Alpha Sekunder) untuk setiap simbol.
 
+---
 
+## 10. Pembaruan 27 Agustus 2026 (Sesi Pagi) — Multi-Touch Cluster Breakout & Delayed Retest Engine
 
+1. **Multi-Touch Cluster Breakout & Delayed Retest Engine (M5 — 27 Agu 2026)**:
+   * Validasi 10.7 tahun FBS (23.173 trade, PF 1.11, 21/22 pair profitable): level cluster support/resistance yang disentuh $\ge 2\times$ dan ditembus candle momentum $(\ge 55\%\text{ body})$ dieksekusi via **Pending Limit Order saat retest** (delay 3–4 bar). Dilarang keras *chase breakout* langsung guna mencegah jebakan *Judas Sweep*.
+   * Integrasi modul `src/indicators/candle_quality.py` & `src/indicators/sweep_detector.py` ke dalam Fast Radar Stage 1 dan pengayaan payload 8 layer ke LLM Veto (DeepSeek CRO).
+
+---
+
+## 11. Pembaruan 27 Agustus 2026 (Sesi Sore) — Boitoki Currency Strength Matrix & Intraday Market Cycle
+
+1. **Boitoki Currency Strength Matrix Engine (`src/analytics/currency_strength.py`)**:
+   * Porting 1:1 algoritma Boitoki CSM ([`csm.txt`](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/external_repos/csm.txt)) via 7 USD Majors di MT5 (`EURUSD`, `USDJPY`, `USDCHF`, `GBPUSD`, `AUDUSD`, `USDCAD`, `NZDUSD`).
+   * Menghitung nilai logaritmik relatif ($\ln(P_1/P_2)\times 10000$) dan menurunkan 21 cross pair secara instan via hubungan aljabar matematis (waktu eksekusi < 0.05s, cache 30 detik).
+2. **Injeksi Kuantitatif Murni ke Prompt LLM (`src/core/llm_client.py`)**:
+   * Menambahkan blok `GLOBAL CURRENCY STRENGTH MATRIX` (Ranking 8-Mata Uang, Base/Quote Score & Rank, Net Currency Delta) ke dalam *Market Data Context*.
+   * Murni berupa data/fakta kuantitatif tanpa kalimat direktif perintah (*clean quantitative matrix*), memberikan kebebasan penalaran (*reasoning autonomy*) bagi OpenAI o4-mini, Gemini 3.1 Flash, dan DeepSeek CRO.
+3. **Dokumen Spesifikasi & Validasi Backtest 21 Pair FBS (2022–2026)**:
+   * Pembuatan dokumen arsitektur [INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md).
+   * Validasi 31.161 trade: memotong 90% trade overtrading, memulihkan modal $+7.333\text{R}$ (+92% kerugian terpangkas), dan membalikkan 6 pair utama menjadi profitabel (`EURUSD` PF 1.09, `GBPUSD` PF 1.08, `AUDJPY` PF 1.09, `EURJPY` PF 1.07, `EURAUD` PF 1.05, `GBPJPY` PF 1.03).

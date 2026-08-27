@@ -1073,6 +1073,15 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
             f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
         )
 
+    csm_context_str = ""
+    try:
+        from src.analytics import currency_strength
+        csm_payload = currency_strength.get_csm_prompt_payload(symbol)
+        if csm_payload:
+            csm_context_str = "\n" + csm_payload.strip() + "\n"
+    except Exception:
+        pass
+
     usd_context = ""
 
     macro_str = ""
@@ -1264,7 +1273,7 @@ Current Bid: {_fmt_price(current_tick['bid'], point_size)}
 Current Ask: {_fmt_price(current_tick['ask'], point_size)}
 Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
 Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD.
-{macro_str}
+{csm_context_str}{macro_str}
 {key_levels_str}
 {structure_str}
 {delta_main_str}

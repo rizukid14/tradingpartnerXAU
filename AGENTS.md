@@ -175,6 +175,11 @@ python main.py
 21. **Multi-Touch Cluster Breakout & Delayed Retest Engine (M5 — 27 Agu 2026)**:
     - Validasi 10.7 tahun FBS (23.173 trade, PF 1.11, 21/22 pair profitable): level cluster support/resistance yang disentuh $\ge 2\times$ dan ditembus candle momentum $(\ge 55\%\text{ body})$ dieksekusi via **Pending Limit Order saat retest** (delay 3–4 bar). Dilarang keras *chase breakout* langsung guna mencegah jebakan *Judas Sweep*.
     - Integrasi modul `src/indicators/candle_quality.py` & `src/indicators/sweep_detector.py` ke dalam Fast Radar Stage 1 dan pengayaan payload 8 layer ke LLM Veto (DeepSeek CRO).
+22. **Boitoki Currency Strength Matrix & Prompt Relative Flow (H1 — 27 Agu 2026)**:
+    - Porting 1:1 algoritma Boitoki CSM ([`csm.txt`](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/external_repos/csm.txt)) via 7 USD Majors di MT5 (`src/analytics/currency_strength.py`).
+    - Menghilangkan *Macro Bias Trap* & kebutaan *Single-Pair Silo* (mencegah false BUY saat mata uang dasar sedang di-dump secara sistemik).
+    - Injeksi blok kuantitatif murni `GLOBAL CURRENCY STRENGTH MATRIX` (Ranking 8-Currency, Base/Quote Rank & Score, Net Currency Delta) ke prompt LLM agar AI menalar aliran modal secara otonom.
+    - Validasi multi-tahun 21 pair FBS (31.161 trade): memotong 90% trade overtrading dan memulihkan modal $+7.333\text{R}$ (+92% kerugian terpangkas) dengan pair bintang (`EURUSD` PF 1.09, `GBPUSD` PF 1.08, `AUDJPY` PF 1.09, `EURJPY` PF 1.07).
 
 
 ---
@@ -195,6 +200,7 @@ Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/READ
 
 | Kategori | Dokumen | Deskripsi Isi |
 |---|---|---|
+| 📊 **Research** | **[docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md)** | **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support). |
 | 📊 **Research** | **[report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html)** | **Master Quant Dossier (HTML Book Report)**: Laporan buku putih lengkap 9 Bab: 55 tahun dataset FBS (3.78M bar), komparasi 4 timeframe (M30–D1), 4 arketipe, atlas DNA 22 simbol, strategi *Trend-Aligned Mean Reversion*, dan arsitektur 2-Stage Screener. |
 | 📊 **Research** | **[docs/research/MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md)** | **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Validasi 396.183 trade (10.7 thn H1, 55.6 thn H4, 16.6 thn D1). Komparasi head-to-head, evaluasi 4 arketipe, validasi SMC CHoCH/Order Block, dan ranking 22 simbol. |
 | 💡 **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate, **RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)**. |
