@@ -59,6 +59,16 @@ class CandidateSetup:
     bearish_ob_zone: str = ""
     fvg_zone: str = ""
     liquidity_pools: str = ""
+    pdh: float = 0.0
+    pdl: float = 0.0
+    daily_open: float = 0.0
+    adr_used_pct: float = 0.0
+    h4_trend: str = ""
+    d1_50_range: str = ""
+    d1_100_range: str = ""
+    pwh: float = 0.0
+    pwl: float = 0.0
+    h4_monthly_range: str = ""
     economic_context: str = ""
     timestamp_wib: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -74,6 +84,16 @@ class CandidateSetup:
             "timeframe": self.timeframe,
             "timestamp_wib": self.timestamp_wib or datetime.now(WIB).strftime("%H:%M:%S WIB"),
             "macro_compass": self.macro_compass,
+            "h4_trend": self.h4_trend or "H4_CONFLUENCE_ALIGNED",
+            "previous_day_high_pdh": self.pdh,
+            "previous_day_low_pdl": self.pdl,
+            "previous_week_high_pwh": self.pwh,
+            "previous_week_low_pwl": self.pwl,
+            "daily_open": self.daily_open,
+            "adr_used_pct": f"{self.adr_used_pct*100:.1f}%",
+            "d1_50_day_range": self.d1_50_range,
+            "d1_100_day_range": self.d1_100_range,
+            "h4_monthly_range": self.h4_monthly_range,
             "dealing_range_position": f"{self.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if self.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if self.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})",
             "rejection_wick_ratio": f"{self.rejection_wick_ratio*100:.1f}%",
             "current_spread_pts": self.current_spread_pts,
@@ -151,48 +171,125 @@ class MarketScanner:
                 if hasattr(config.mt5, 'symbol_select'):
                     config.mt5.symbol_select(valid_sym, True)
 
-                # Fetch 120 bars of H1
-                rates = None
+                # ── FETCH DISCRETE DATA: H1 (120 bars), D1 (100 bars), H4 (120 bars) ──
+                rates_h1 = None
+                rates_d1 = None
+                rates_h4 = None
                 if hasattr(config.mt5, 'copy_rates_from_pos'):
-                    rates = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_H1, 0, 120)
-                if (rates is None or len(rates) < 30) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
-                    rates = mt5_connector.get_closed_bars(valid_sym, count=120, timeframe=config.mt5.TIMEFRAME_H1)
-                
-                if rates is None or len(rates) < 30:
+                    rates_h1 = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_H1, 0, 120)
+                    rates_d1 = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_D1, 0, 100)
+                    rates_h4 = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_H4, 0, 120)
+
+                if (rates_h1 is None or len(rates_h1) < 30) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+                    rates_h1 = mt5_connector.get_closed_bars(valid_sym, count=120, timeframe=getattr(config.mt5, 'TIMEFRAME_H1', 16385))
+                if (rates_d1 is None or len(rates_d1) < 2) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+                    rates_d1 = mt5_connector.get_closed_bars(valid_sym, count=100, timeframe=getattr(config.mt5, 'TIMEFRAME_D1', 16408))
+                if (rates_h4 is None or len(rates_h4) < 5) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+                    rates_h4 = mt5_connector.get_closed_bars(valid_sym, count=120, timeframe=getattr(config.mt5, 'TIMEFRAME_H4', 16388))
+
+                if rates_h1 is None or len(rates_h1) < 30:
                     continue
 
-                df = pd.DataFrame(rates)
+                df = pd.DataFrame(rates_h1)
                 if 'time' in df.columns:
                     if not pd.api.types.is_datetime64_any_dtype(df['time']):
                         df['time'] = pd.to_datetime(df['time'], unit='s', utc=True).dt.tz_convert(WIB)
                     df.set_index('time', inplace=True)
 
                 pt = self._get_point(valid_sym)
+                cur_close = df['close'].iloc[-1]
 
-                # Indicators
+                # ── 1. D1 DISCRETE LEVEL & 50/100-DAY RANGE PROCESSING ──
+                pdh = cur_close + (300 * pt)
+                pdl = cur_close - (300 * pt)
+                daily_open = df['open'].iloc[0]
+                adr20 = 500 * pt
+                d1_is_bull = False
+                d1_is_bear = False
+                d1_trend_label = "D1_SIDEWAYS_RANGE"
+                d1_50_range_str = f"[{pdl:.5f} - {pdh:.5f}]"
+                d1_100_range_str = f"[{pdl:.5f} - {pdh:.5f}]"
+
+                if rates_d1 is not None and len(rates_d1) >= 2:
+                    df_d1 = pd.DataFrame(rates_d1)
+                    pdh = float(df_d1['high'].iloc[-2])
+                    pdl = float(df_d1['low'].iloc[-2])
+                    daily_open = float(df_d1['open'].iloc[-1])
+                    d_ranges = df_d1['high'] - df_d1['low']
+                    adr20 = float(d_ranges.tail(20).mean()) if len(d_ranges) >= 10 else (500 * pt)
+                    
+                    d1_50_hi = float(df_d1['high'].tail(50).max())
+                    d1_50_lo = float(df_d1['low'].tail(50).min())
+                    d1_50_range_str = f"[{d1_50_lo:.5f} - {d1_50_hi:.5f}]"
+
+                    d1_100_hi = float(df_d1['high'].tail(100).max())
+                    d1_100_lo = float(df_d1['low'].tail(100).min())
+                    d1_100_range_str = f"[{d1_100_lo:.5f} - {d1_100_hi:.5f}]"
+                    
+                    d1_c = float(df_d1['close'].iloc[-1])
+                    d1_ema_short = df_d1['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+                    d1_ema_long = df_d1['close'].ewm(span=50, adjust=False).mean().iloc[-1] if len(df_d1) >= 30 else d1_ema_short
+                    d1_is_bull = d1_c > d1_ema_long and d1_ema_short > d1_ema_long
+                    d1_is_bear = d1_c < d1_ema_long and d1_ema_short < d1_ema_long
+                    d1_trend_label = "D1_BULLISH_EXPANSION" if d1_is_bull else ("D1_BEARISH_EXPANSION" if d1_is_bear else "D1_SIDEWAYS")
+
+                cur_day_move = abs(cur_close - daily_open)
+                adr_used_pct = (cur_day_move / adr20) if (adr20 > 0) else 0.5
+
+                # ── 2. H4 DISCRETE LEVEL, WEEKLY PWH/PWL & MONTHLY RANGE ──
+                h4_is_bull = False
+                h4_is_bear = False
+                h4_trend_label = "H4_SIDEWAYS"
+                h4_swing_high = pdh
+                h4_swing_low = pdl
+                pwh = pdh
+                pwl = pdl
+                h4_monthly_range_str = f"[{pdl:.5f} - {pdh:.5f}]"
+
+                if rates_h4 is not None and len(rates_h4) >= 5:
+                    df_h4 = pd.DataFrame(rates_h4)
+                    h4_c = float(df_h4['close'].iloc[-1])
+                    h4_ema20 = df_h4['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+                    h4_ema50 = df_h4['close'].ewm(span=50, adjust=False).mean().iloc[-1] if len(df_h4) >= 15 else h4_ema20
+                    h4_is_bull = h4_c > h4_ema20 and h4_ema20 >= h4_ema50
+                    h4_is_bear = h4_c < h4_ema20 and h4_ema20 <= h4_ema50
+                    h4_trend_label = "H4_BULLISH_EXPANSION" if h4_is_bull else ("H4_BEARISH_EXPANSION" if h4_is_bear else "H4_PULLBACK_RANGE")
+                    h4_swing_high = float(df_h4['high'].iloc[-6:].max())
+                    h4_swing_low = float(df_h4['low'].iloc[-6:].min())
+
+                    # Previous Week High / Low (bars -60 to -30 approx)
+                    if len(df_h4) >= 35:
+                        prev_week_slice = df_h4.iloc[-60:-30] if len(df_h4) >= 60 else df_h4.iloc[:-30]
+                        pwh = float(prev_week_slice['high'].max())
+                        pwl = float(prev_week_slice['low'].min())
+                    else:
+                        pwh = float(df_h4['high'].max())
+                        pwl = float(df_h4['low'].min())
+
+                    # Monthly H4 Range (120 bars)
+                    h4_m_hi = float(df_h4['high'].max())
+                    h4_m_lo = float(df_h4['low'].min())
+                    h4_monthly_range_str = f"[{h4_m_lo:.5f} - {h4_m_hi:.5f}]"
+
+                # ── 3. H1 INDICATORS & DEALING RANGE ──
                 df['atr'] = self._calc_atr(df, 14)
                 df['adx'] = self._calc_adx(df, 14)
                 df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
                 df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
                 df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
 
-                # Dealing range (100 bars)
-                sess_h = df['high'].rolling(100, min_periods=20).max().iloc[-1]
-                sess_l = df['low'].rolling(100, min_periods=20).min().iloc[-1]
-                cur_close = df['close'].iloc[-1]
-                rng = max(sess_h - sess_l, 1e-5)
-                pos_in_range = (cur_close - sess_l) / rng
-
-                # D1 / H4 Trend Compass
                 cur_ema20 = df['ema20'].iloc[-1]
                 cur_ema50 = df['ema50'].iloc[-1]
                 cur_ema200 = df['ema200'].iloc[-1]
                 cur_adx = df['adx'].iloc[-1]
+                cur_atr = df['atr'].iloc[-1] if pd.notna(df['atr'].iloc[-1]) else (300 * pt)
 
-                is_d1_bull = (cur_close > cur_ema200) and (cur_ema50 > cur_ema200) and (cur_adx >= 20)
-                is_d1_bear = (cur_close < cur_ema200) and (cur_ema50 < cur_ema200) and (cur_adx >= 20)
+                sess_h = df['high'].rolling(100, min_periods=20).max().iloc[-1]
+                sess_l = df['low'].rolling(100, min_periods=20).min().iloc[-1]
+                rng = max(sess_h - sess_l, 1e-5)
+                pos_in_range = (cur_close - sess_l) / rng
 
-                trend_label = "D1_BULLISH_TREND" if is_d1_bull else ("D1_BEARISH_TREND" if is_d1_bear else "D1_SIDEWAYS_RANGE")
+                combined_trend_label = f"{d1_trend_label} | {h4_trend_label} (H1 ADX {cur_adx:.1f})"
 
                 # Asian Session Range (08:00 - 13:00 WIB)
                 h = df.index.hour
@@ -208,24 +305,28 @@ class MarketScanner:
                     asian_low = sess_l
 
                 # ADR (20-day)
-                d_range = df['high'].rolling(24, min_periods=10).max() - df['low'].rolling(24, min_periods=10).min()
-                adr20 = d_range.rolling(20 * 24, min_periods=20).mean().iloc[-1]
-                cur_day_range = d_range.iloc[-1]
-                adr_pct = (cur_day_range / adr20) if (pd.notna(adr20) and adr20 > 0) else 0.5
+                adr_pct = adr_used_pct
 
                 # ── LUXALGO SMC STRUCTURAL SCANNER (Order Blocks, FVG, Strong/Weak) ──
                 smc_analyzer = LuxSMCAnalyzer(swing_length=5)
                 smc_sig = smc_analyzer.analyze(df, point_size=pt)
 
+                cur_atr = df['atr'].iloc[-1] if ('atr' in df.columns and pd.notna(df['atr'].iloc[-1])) else (300 * pt)
+                max_ob_dist = cur_atr * 1.5
+
                 bull_ob_str = ""
                 if smc_sig.order_blocks_bullish:
-                    lob = smc_sig.order_blocks_bullish[-1]
-                    bull_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
+                    nearby_bull_obs = [ob for ob in smc_sig.order_blocks_bullish if abs(cur_close - ob['top']) <= max_ob_dist]
+                    if nearby_bull_obs:
+                        lob = nearby_bull_obs[-1]
+                        bull_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
 
                 bear_ob_str = ""
                 if smc_sig.order_blocks_bearish:
-                    lob = smc_sig.order_blocks_bearish[-1]
-                    bear_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
+                    nearby_bear_obs = [ob for ob in smc_sig.order_blocks_bearish if abs(ob['bottom'] - cur_close) <= max_ob_dist]
+                    if nearby_bear_obs:
+                        lob = nearby_bear_obs[-1]
+                        bear_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
 
                 fvg_str = ""
                 active_fvgs = smc_sig.fvg_bullish + smc_sig.fvg_bearish
@@ -265,9 +366,26 @@ class MarketScanner:
 
                 self.macro_cache[valid_sym] = {
                     'symbol': valid_sym,
-                    'trend_label': f"{trend_label} (ADX {cur_adx:.1f}, EMA200={cur_ema200:.5f})",
-                    'is_bull': is_d1_bull,
-                    'is_bear': is_d1_bear,
+                    'trend_label': combined_trend_label,
+                    'd1_trend_label': d1_trend_label,
+                    'h4_trend_label': h4_trend_label,
+                    'is_d1_bull': d1_is_bull,
+                    'is_d1_bear': d1_is_bear,
+                    'is_h4_bull': h4_is_bull,
+                    'is_h4_bear': h4_is_bear,
+                    'is_bull': d1_is_bull,
+                    'is_bear': d1_is_bear,
+                    'pdh': pdh,
+                    'pdl': pdl,
+                    'daily_open': daily_open,
+                    'adr_used_pct': adr_used_pct,
+                    'd1_50_range': d1_50_range_str,
+                    'd1_100_range': d1_100_range_str,
+                    'pwh': pwh,
+                    'pwl': pwl,
+                    'h4_monthly_range': h4_monthly_range_str,
+                    'h4_swing_high': h4_swing_high,
+                    'h4_swing_low': h4_swing_low,
                     'ema20': cur_ema20,
                     'ema50': cur_ema50,
                     'ema200': cur_ema200,
@@ -384,11 +502,14 @@ class MarketScanner:
                 if is_london_open or is_ny_session:
                     asian_h = macro.get('asian_high', 0.0)
                     asian_l = macro.get('asian_low', 0.0)
+                    pdh_val = macro.get('pdh', 0.0)
+                    pdl_val = macro.get('pdl', 0.0)
                     sweep_tol = atr_pts * 0.35 * pt
                     
-                    # Bearish Judas Sweep: Price pushed above Asian High / Liquidity Pool, now rejecting back down
-                    if (asian_h > 0) and (asian_h - sweep_tol <= mid <= asian_h + (atr_pts * 0.50 * pt)):
-                        sl = max(asian_h, mid) + (atr_pts * 0.40 * pt) + (spread_pts * pt)
+                    # Bearish Judas Sweep: Price pushed above PDH / Asian High, now rejecting back down
+                    ref_top = max(asian_h, pdh_val) if pdh_val > 0 else asian_h
+                    if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
+                        sl = max(ref_top, mid) + (atr_pts * 0.40 * pt) + (spread_pts * pt)
                         tp = mid - abs(sl - mid) * 2.2
                         if abs(mid - sl) / pt >= 15:
                             candidates.append(CandidateSetup(
@@ -402,8 +523,8 @@ class MarketScanner:
                                 rejection_wick_ratio=0.35,
                                 current_spread_pts=spread_pts,
                                 current_atr_pts=atr_pts,
-                                key_support=asian_l,
-                                key_resistance=asian_h,
+                                key_support=min(asian_l, pdl_val) if pdl_val > 0 else asian_l,
+                                key_resistance=ref_top,
                                 suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                 suggested_tp=round(tp, 5 if pt < 0.01 else 2),
                                 risk_reward_ratio=2.2,
@@ -413,13 +534,24 @@ class MarketScanner:
                                 bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                 fvg_zone=macro.get('fvg_zone', ""),
                                 liquidity_pools=macro.get('liquidity_pools', ""),
+                                pdh=macro.get('pdh', 0.0),
+                                pdl=macro.get('pdl', 0.0),
+                                daily_open=macro.get('daily_open', 0.0),
+                                adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                h4_trend=macro.get('h4_trend_label', ''),
+                                d1_50_range=macro.get('d1_50_range', ''),
+                                d1_100_range=macro.get('d1_100_range', ''),
+                                pwh=macro.get('pwh', 0.0),
+                                pwl=macro.get('pwl', 0.0),
+                                h4_monthly_range=macro.get('h4_monthly_range', ''),
                                 timestamp_wib=now.strftime("%H:%M:%S WIB")
                             ))
                             continue
 
-                    # Bullish Judas Sweep: Price pushed below Asian Low / Liquidity Pool, now rejecting back up
-                    if (asian_l > 0) and (asian_l - (atr_pts * 0.50 * pt) <= mid <= asian_l + sweep_tol):
-                        sl = min(asian_l, mid) - (atr_pts * 0.40 * pt) - (spread_pts * pt)
+                    # Bullish Judas Sweep: Price pushed below PDL / Asian Low, now rejecting back up
+                    ref_bot = min(asian_l, pdl_val) if pdl_val > 0 else asian_l
+                    if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
+                        sl = min(ref_bot, mid) - (atr_pts * 0.40 * pt) - (spread_pts * pt)
                         tp = mid + abs(mid - sl) * 2.2
                         if abs(mid - sl) / pt >= 15:
                             candidates.append(CandidateSetup(
@@ -433,8 +565,8 @@ class MarketScanner:
                                 rejection_wick_ratio=0.35,
                                 current_spread_pts=spread_pts,
                                 current_atr_pts=atr_pts,
-                                key_support=asian_l,
-                                key_resistance=asian_h,
+                                key_support=ref_bot,
+                                key_resistance=max(asian_h, pdh_val) if pdh_val > 0 else asian_h,
                                 suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                 suggested_tp=round(tp, 5 if pt < 0.01 else 2),
                                 risk_reward_ratio=2.2,
@@ -444,6 +576,16 @@ class MarketScanner:
                                 bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                 fvg_zone=macro.get('fvg_zone', ""),
                                 liquidity_pools=macro.get('liquidity_pools', ""),
+                                pdh=macro.get('pdh', 0.0),
+                                pdl=macro.get('pdl', 0.0),
+                                daily_open=macro.get('daily_open', 0.0),
+                                adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                h4_trend=macro.get('h4_trend_label', ''),
+                                d1_50_range=macro.get('d1_50_range', ''),
+                                d1_100_range=macro.get('d1_100_range', ''),
+                                pwh=macro.get('pwh', 0.0),
+                                pwl=macro.get('pwl', 0.0),
+                                h4_monthly_range=macro.get('h4_monthly_range', ''),
                                 timestamp_wib=now.strftime("%H:%M:%S WIB")
                             ))
                             continue
@@ -481,6 +623,16 @@ class MarketScanner:
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=macro.get('liquidity_pools', ""),
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=macro.get('pwh', 0.0),
+                                    pwl=macro.get('pwl', 0.0),
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB")
                                 ))
                                 continue
@@ -513,6 +665,16 @@ class MarketScanner:
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=macro.get('liquidity_pools', ""),
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=macro.get('pwh', 0.0),
+                                    pwl=macro.get('pwl', 0.0),
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB")
                                 ))
                                 continue
@@ -545,6 +707,16 @@ class MarketScanner:
                             bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                             fvg_zone=macro.get('fvg_zone', ""),
                             liquidity_pools=macro.get('liquidity_pools', ""),
+                            pdh=macro.get('pdh', 0.0),
+                            pdl=macro.get('pdl', 0.0),
+                            daily_open=macro.get('daily_open', 0.0),
+                            adr_used_pct=macro.get('adr_used_pct', 0.0),
+                            h4_trend=macro.get('h4_trend_label', ''),
+                            d1_50_range=macro.get('d1_50_range', ''),
+                            d1_100_range=macro.get('d1_100_range', ''),
+                            pwh=macro.get('pwh', 0.0),
+                            pwl=macro.get('pwl', 0.0),
+                            h4_monthly_range=macro.get('h4_monthly_range', ''),
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
                     elif pos_in_range <= 0.35: # Bottom of range -> Fading BUY
@@ -572,6 +744,16 @@ class MarketScanner:
                             bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                             fvg_zone=macro.get('fvg_zone', ""),
                             liquidity_pools=macro.get('liquidity_pools', ""),
+                            pdh=macro.get('pdh', 0.0),
+                            pdl=macro.get('pdl', 0.0),
+                            daily_open=macro.get('daily_open', 0.0),
+                            adr_used_pct=macro.get('adr_used_pct', 0.0),
+                            h4_trend=macro.get('h4_trend_label', ''),
+                            d1_50_range=macro.get('d1_50_range', ''),
+                            d1_100_range=macro.get('d1_100_range', ''),
+                            pwh=macro.get('pwh', 0.0),
+                            pwl=macro.get('pwl', 0.0),
+                            h4_monthly_range=macro.get('h4_monthly_range', ''),
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
                         continue
@@ -614,6 +796,16 @@ class MarketScanner:
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=f"Tested {t_res}x (Range Age: {macro.get('range_age_hours', 24)}h)",
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=macro.get('pwh', 0.0),
+                                    pwl=macro.get('pwl', 0.0),
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     economic_context="",
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     metadata={
@@ -656,6 +848,16 @@ class MarketScanner:
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=f"Tested {t_sup}x (Range Age: {macro.get('range_age_hours', 24)}h)",
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=macro.get('pwh', 0.0),
+                                    pwl=macro.get('pwl', 0.0),
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     economic_context="",
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     metadata={

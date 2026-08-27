@@ -1636,29 +1636,41 @@ def run_scanner_trading_cycle(cand, risk):
         print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         return False
     
-    # 2. Fetch live candles (H1 & M5) from MT5
+    # 2. Fetch live candles (D1, H4, H1 & M5) from MT5
     try:
         from config import mt5
+        rates_d1 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_D1, 0, 4)
+        rates_h4 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_H4, 0, 7)
         rates_h1 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_H1, 0, 16)
         rates_m5 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 25)
         
         def _fmt(rates):
+            if rates is None or len(rates) == 0:
+                return None
             lines = []
             for r in rates:
                 t_s = connector.format_time(r["time"]) if hasattr(connector, "format_time") else str(r["time"])
                 lines.append(f"- [{t_s}] Open: {r['open']:.5f} | High: {r['high']:.5f} | Low: {r['low']:.5f} | Close: {r['close']:.5f}")
             return "\n".join(lines)
             
-        h1_str = _fmt(rates_h1[:-1]) if rates_h1 is not None else None
-        m5_str = _fmt(rates_m5[:-1]) if rates_m5 is not None else None
+        d1_str = _fmt(rates_d1[:-1]) if rates_d1 is not None and len(rates_d1) > 1 else None
+        h4_str = _fmt(rates_h4[:-1]) if rates_h4 is not None and len(rates_h4) > 1 else None
+        h1_str = _fmt(rates_h1[:-1]) if rates_h1 is not None and len(rates_h1) > 1 else None
+        m5_str = _fmt(rates_m5[:-1]) if rates_m5 is not None and len(rates_m5) > 1 else None
     except Exception as e:
-        h1_str, m5_str = None, None
+        d1_str, h4_str, h1_str, m5_str = None, None, None, None
         
     # 3. Call 2-Pass Sequential Cross-Examination Jury
     old_sym = config.SYMBOL
     config.SYMBOL = sym
     try:
-        decisions = llm.get_multi_llm_decisions_for_candidate(cand, recent_h1_str=h1_str, recent_m5_str=m5_str)
+        decisions = llm.get_multi_llm_decisions_for_candidate(
+            cand,
+            recent_d1_str=d1_str,
+            recent_h4_str=h4_str,
+            recent_h1_str=h1_str,
+            recent_m5_str=m5_str
+        )
         result = consensus.calculate_consensus(decisions)
         
         trade_signal = result.get("signal", "HOLD")

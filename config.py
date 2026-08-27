@@ -452,8 +452,8 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 #   - TRAIL act70 + dist 0.5x ATR = +0.272 (terbaik, nyaris setara baseline +0.302)
 #   - progressive SL +0.197 | adaptif/range +0.041 | fixed pips +0.128-0.180 (inferior)
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
-BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.55)  # BEP aktif saat profit >= 55% TP (padding komisi tetap dipertahankan)
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.75)  # trailing aktif saat profit >= 75% TP
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.45)  # BEP aktif saat profit >= 45% TP (padding komisi tetap dipertahankan)
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP
 BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
 TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 25)    # Floor absolut jarak trailing FX (pts) anti noise/spread
@@ -473,7 +473,7 @@ BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 100
 # --- PARTIAL CLOSE ---
 PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
-PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.55)  # Partial close aktif di 55% TP
+PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)  # Partial close aktif di 45% TP
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
 PARTIAL_CLOSE_TP1_POINTS_XAU = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_XAU", PARTIAL_CLOSE_TP1_POINTS)

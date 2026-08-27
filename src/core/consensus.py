@@ -203,12 +203,14 @@ def calculate_consensus(decisions):
         sl_price = exec_block.get("sl_price") or dec.get("invalidation_price")
         tp_price = exec_block.get("tp_price") or dec.get("target_price")
 
+        base_ref = entry_price if (entry_type != "market" and isinstance(entry_price, (int, float)) and entry_price > 0) else ref_price
+
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
-        if (sl is None or sl <= 0) and sl_price and point > 0 and ref_price > 0:
-            sl = int(round(abs(ref_price - float(sl_price)) / point))
-        if (tp is None or tp <= 0) and tp_price and point > 0 and ref_price > 0:
-            tp = int(round(abs(ref_price - float(tp_price)) / point))
+        if (sl is None or sl <= 0) and sl_price and point > 0 and base_ref > 0:
+            sl = int(round(abs(base_ref - float(sl_price)) / point))
+        if (tp is None or tp <= 0) and tp_price and point > 0 and base_ref > 0:
+            tp = int(round(abs(base_ref - float(tp_price)) / point))
 
         setup_label = dec.get("setup")
         
@@ -403,6 +405,10 @@ def calculate_consensus(decisions):
         conf_list.append(dec.get("confidence", 0.5))
         
         exec_block = dec.get("execution") or {}
+        entry_type = (exec_block.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
+        ep = exec_block.get("entry_price") or dec.get("entry_price")
+        base_ref = ep if (entry_type != "market" and isinstance(ep, (int, float)) and ep > 0) else ref_price
+
         inv_val = exec_block.get("sl_price") or dec.get("invalidation_price")
         if isinstance(inv_val, (int, float)) and inv_val > 0:
             inv_list.append(inv_val)
@@ -412,23 +418,21 @@ def calculate_consensus(decisions):
             tgt_list.append(tgt_val)
         
         sl_val = dec.get("sl_points")
-        if (sl_val is None or sl_val <= 0) and inv_val and point > 0 and ref_price > 0:
-            sl_val = int(round(abs(ref_price - float(inv_val)) / point))
+        if (sl_val is None or sl_val <= 0) and inv_val and point > 0 and base_ref > 0:
+            sl_val = int(round(abs(base_ref - float(inv_val)) / point))
         if isinstance(sl_val, (int, float)) and sl_val > 0:
             sl_list.append(sl_val)
         
         tp_val = dec.get("tp_points")
-        if (tp_val is None or tp_val <= 0) and tgt_val and point > 0 and ref_price > 0:
-            tp_val = int(round(abs(ref_price - float(tgt_val)) / point))
+        if (tp_val is None or tp_val <= 0) and tgt_val and point > 0 and base_ref > 0:
+            tp_val = int(round(abs(base_ref - float(tgt_val)) / point))
         if isinstance(tp_val, (int, float)) and tp_val > 0:
             tp_list.append(tp_val)
         
-        et = (exec_block.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
-        if et not in ("market", "buy_stop", "sell_stop", "buy_limit", "sell_limit"):
-            et = "market"
-        entry_type_votes[et] = entry_type_votes.get(et, 0) + 1
+        if entry_type not in ("market", "buy_stop", "sell_stop", "buy_limit", "sell_limit"):
+            entry_type = "market"
+        entry_type_votes[entry_type] = entry_type_votes.get(entry_type, 0) + 1
         
-        ep = exec_block.get("entry_price") or dec.get("entry_price")
         if isinstance(ep, (int, float)) and ep > 0:
             entry_price_list.append(ep)
 
@@ -458,26 +462,9 @@ def calculate_consensus(decisions):
 
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
 
-    try:
-        from config import mt5
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        si = mt5.symbol_info(config.SYMBOL)
-        point = si.point if si else 0.00001
-        if tick and si and point:
-            entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
-            if entry_price > 0:
-                if consensus_signal == "BUY":
-                    final_inv = entry_price - (final_sl * point)
-                    final_tgt = entry_price + (final_tp * point)
-                else:
-                    final_inv = entry_price + (final_sl * point)
-                    final_tgt = entry_price - (final_tp * point)
-    except Exception:
-        pass
-
     # Guardrail entry pending: jarak dari harga harus dalam [2x spread, 1.5x ATR]
     # dari harga saat ini, dan arah konsisten dengan entry_type. Kalau tidak
-    # valid -> downgrade ke market (perilaku lama) supaya sinyal tidak hilang.
+    # valid -> downgrade ke market supaya sinyal tidak hilang.
     if final_entry_type != "market" and final_entry_price is not None:
         try:
             from config import mt5
@@ -506,8 +493,32 @@ def calculate_consensus(decisions):
                 outlier_notes.append(f"Entry pending {final_entry_price} (jarak {dist_pts:.0f} pts) di luar band [2x spread, 1.5x ATR] -> downgrade ke market")
                 final_entry_type = "market"
                 final_entry_price = None
+                # Re-anchor SL/TP jika SL limit terlalu lebar (> 1.2x ATR) untuk market execution
+                if atr_pts > 0 and final_sl > int(atr_pts * 1.2):
+                    old_sl = final_sl
+                    final_sl = int(atr_pts * 1.0)
+                    final_tp = int(round(final_sl * 1.5))
+                    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+                    outlier_notes.append(f"SL dire-anchor dari {old_sl} pts ke {final_sl} pts (1.0x ATR) pasca-downgrade market")
         except Exception:
             pass
+
+    try:
+        from config import mt5
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        si = mt5.symbol_info(config.SYMBOL)
+        point = si.point if si else 0.00001
+        if tick and si and point:
+            exec_ref = final_entry_price if (final_entry_type != "market" and final_entry_price) else (tick.ask if consensus_signal == "BUY" else tick.bid)
+            if exec_ref > 0:
+                if consensus_signal == "BUY":
+                    final_inv = exec_ref - (final_sl * point)
+                    final_tgt = exec_ref + (final_tp * point)
+                else:
+                    final_inv = exec_ref + (final_sl * point)
+                    final_tgt = exec_ref - (final_tp * point)
+    except Exception:
+        pass
 
     all_notes = []
     for onote in outlier_notes:
