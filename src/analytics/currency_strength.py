@@ -18,13 +18,10 @@ CURRENCIES = ["EUR", "USD", "JPY", "CHF", "GBP", "AUD", "CAD", "NZD"]
 MAJORS_7 = ["EURUSD", "USDJPY", "USDCHF", "GBPUSD", "AUDUSD", "USDCAD", "NZDUSD"]
 
 _csm_cache = {
-    "ts": 0.0,
-    "timeframe": None,
-    "ranks": {},
-    "scores": {},
-    "lock": threading.Lock()
+    "locks": threading.Lock(),
+    "entries": {}
 }
-_CACHE_TTL = 30.0  # 30 detik cache agar efisien dan 0 beban MT5
+_CACHE_TTL = 30.0  # 30 detik cache per timeframe agar efisien dan 0 beban MT5
 
 def _get_valid_symbol(pair):
     """Cari format simbol yang valid di broker MT5."""
@@ -42,11 +39,13 @@ def calculate_boitoki_csm(timeframe=None, lookback_bars=24):
     """
     global _csm_cache
     now = time.time()
-    tf = timeframe or mt5.TIMEFRAME_H1
+    tf = timeframe if timeframe is not None else mt5.TIMEFRAME_H1
+    cache_key = f"{tf}_{lookback_bars}"
 
-    with _csm_cache["lock"]:
-        if _csm_cache["scores"] and (now - _csm_cache["ts"] < _CACHE_TTL) and (_csm_cache["timeframe"] == tf):
-            return _csm_cache["scores"], _csm_cache["ranks"]
+    with _csm_cache["locks"]:
+        cached = _csm_cache["entries"].get(cache_key)
+        if cached and (now - cached["ts"] < _CACHE_TTL):
+            return cached["scores"], cached["ranks"]
 
         data_v1 = {}
         data_v2 = {}
@@ -54,99 +53,57 @@ def calculate_boitoki_csm(timeframe=None, lookback_bars=24):
         for pair in MAJORS_7:
             sym = _get_valid_symbol(pair)
             if not sym:
-                continue
-            mt5.symbol_select(sym, True)
-            rates = mt5.copy_rates_from_pos(sym, tf, 0, lookback_bars + 1)
+                return {}, {}
+
+            rates = mt5.copy_rates_from_pos(sym, tf, 0, lookback_bars + 2)
             if rates is None or len(rates) < lookback_bars:
-                continue
-            data_v1[pair] = rates[-1]['close']
-            data_v2[pair] = rates[0]['close']
+                return {}, {}
 
-        # Fallback jika data tidak lengkap
-        if len(data_v1) < 6:
-            return _csm_cache.get("scores", {}), _csm_cache.get("ranks", {})
+            data_v1[pair] = float(rates[-1]['close'])
+            data_v2[pair] = float(rates[-lookback_bars]['open'])
 
-        def get_val(v1, v2):
-            if v2 == 0: return 0.0
-            return math.log(v1 / v2) * 10000.0
+        val = {}
+        for p in MAJORS_7:
+            p1 = data_v1.get(p, 0.0)
+            p2 = data_v2.get(p, 0.0)
+            if p1 > 0 and p2 > 0:
+                val[p] = math.log(p1 / p2) * 10000.0
+            else:
+                val[p] = 0.0
 
-        def get_val_m(v1, v2, v3, v4):
-            val1 = v1 * v3
-            val2 = v2 * v4
-            if val2 == 0: return 0.0
-            return math.log(val1 / val2) * 10000.0
+        scores = {}
+        scores["EUR"] = val.get("EURUSD", 0.0)
+        scores["JPY"] = -val.get("USDJPY", 0.0)
+        scores["CHF"] = -val.get("USDCHF", 0.0)
+        scores["GBP"] = val.get("GBPUSD", 0.0)
+        scores["AUD"] = val.get("AUDUSD", 0.0)
+        scores["CAD"] = -val.get("USDCAD", 0.0)
+        scores["NZD"] = val.get("NZDUSD", 0.0)
+        scores["USD"] = 0.0
 
-        def get_val_d(v1, v2, v3, v4):
-            if v3 == 0 or v4 == 0: return 0.0
-            val1 = v1 / v3
-            val2 = v2 / v4
-            if val2 == 0: return 0.0
-            return math.log(val1 / val2) * 10000.0
+        total_score = sum(scores.values())
+        avg_score = total_score / 8.0
 
-        EURUSD = get_val(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0))
-        USDJPY = get_val(data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0))
-        USDCHF = get_val(data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0))
-        GBPUSD = get_val(data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0))
-        AUDUSD = get_val(data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0))
-        USDCAD = get_val(data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        NZDUSD = get_val(data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0))
+        for c in CURRENCIES:
+            scores[c] = round(scores[c] - avg_score, 2)
 
-        EURJPY = get_val_m(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0), data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0))
-        EURCHF = get_val_m(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0), data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0))
-        EURGBP = get_val_d(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0), data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0))
-        EURCAD = get_val_m(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0), data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        EURAUD = get_val_d(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0), data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0))
-        EURNZD = get_val_d(data_v1.get('EURUSD', 1.0), data_v2.get('EURUSD', 1.0), data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0))
+        sorted_curr = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        ranks = {curr: rank + 1 for rank, (curr, _) in enumerate(sorted_curr)}
 
-        GBPCHF = get_val_m(data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0), data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0))
-        GBPJPY = get_val_m(data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0), data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0))
-        GBPCAD = get_val_m(data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0), data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        GBPAUD = get_val_d(data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0), data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0))
-        GBPNZD = get_val_d(data_v1.get('GBPUSD', 1.0), data_v2.get('GBPUSD', 1.0), data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0))
-
-        AUDCHF = get_val_m(data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0), data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0))
-        AUDJPY = get_val_m(data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0), data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0))
-        AUDCAD = get_val_m(data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0), data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        AUDNZD = get_val_d(data_v1.get('AUDUSD', 1.0), data_v2.get('AUDUSD', 1.0), data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0))
-
-        NZDCAD = get_val_m(data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0), data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        NZDCHF = get_val_m(data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0), data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0))
-        NZDJPY = get_val_m(data_v1.get('NZDUSD', 1.0), data_v2.get('NZDUSD', 1.0), data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0))
-
-        CADJPY = get_val_d(data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0), data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        CADCHF = get_val_d(data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0), data_v1.get('USDCAD', 1.0), data_v2.get('USDCAD', 1.0))
-        CHFJPY = get_val_d(data_v1.get('USDJPY', 1.0), data_v2.get('USDJPY', 1.0), data_v1.get('USDCHF', 1.0), data_v2.get('USDCHF', 1.0))
-
-        # Akumulasi 8 Currencies (Boitoki Formula)
-        EUR = (EURUSD + EURJPY + EURCHF + EURGBP + EURAUD + EURCAD + EURNZD) / 7.0
-        USD = (-EURUSD + USDJPY + USDCHF - GBPUSD - AUDUSD + USDCAD - NZDUSD) / 7.0
-        JPY = (-EURJPY - USDJPY - CHFJPY - GBPJPY - AUDJPY - CADJPY - NZDJPY) / 7.0
-        CHF = (-EURCHF - USDCHF + CHFJPY - GBPCHF - AUDCHF - CADCHF - NZDCHF) / 7.0
-        GBP = (-EURGBP + GBPUSD + GBPCHF + GBPJPY + GBPAUD + GBPCAD + GBPNZD) / 7.0
-        AUD = (-EURAUD + AUDUSD + AUDJPY + AUDCHF - GBPAUD + AUDCAD + AUDNZD) / 7.0
-        CAD = (-EURCAD - USDCAD + CADJPY + CADCHF - GBPCAD - AUDCAD - NZDCAD) / 7.0
-        NZD = (-EURNZD + NZDUSD + NZDJPY + NZDCHF - GBPNZD + NZDCAD - AUDNZD) / 7.0
-
-        scores = {
-            "EUR": round(EUR, 2), "USD": round(USD, 2), "JPY": round(JPY, 2),
-            "CHF": round(CHF, 2), "GBP": round(GBP, 2), "AUD": round(AUD, 2),
-            "CAD": round(CAD, 2), "NZD": round(NZD, 2)
+        _csm_cache["entries"][cache_key] = {
+            "ts": now,
+            "scores": scores,
+            "ranks": ranks
         }
-
-        sorted_ranks = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        ranks = {c: i + 1 for i, (c, _) in enumerate(sorted_ranks)}
-
-        _csm_cache["ts"] = now
-        _csm_cache["timeframe"] = tf
-        _csm_cache["scores"] = scores
-        _csm_cache["ranks"] = ranks
 
         return scores, ranks
 
 def get_csm_prompt_payload(symbol):
     """
     Menghasilkan blok teks kuantitatif bersih untuk diinjeksi ke Prompt LLM.
-    Murni data/angka, tanpa kata direktif perintah agar LLM menalar sendiri.
+    Mendukung Dual-Horizon Flow:
+    1. 24-Hour Macro Flow (H1 24-bar) -> Akumulasi tren makro harian
+    2. 4-Hour Session Velocity (M15 16-bar) -> Kecepatan rotasi modal sesi aktif
     """
     clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
     if len(clean_sym) < 6 and not ("XAU" in clean_sym or "GOLD" in clean_sym):
@@ -154,34 +111,44 @@ def get_csm_prompt_payload(symbol):
     if "BTC" in clean_sym:
         return ""
 
-    scores, ranks = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)
-    if not scores or not ranks:
+    scores_h1, ranks_h1 = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)
+    scores_m15, ranks_m15 = calculate_boitoki_csm(mt5.TIMEFRAME_M15, lookback_bars=16)
+
+    if not scores_h1 or not ranks_h1:
         return ""
 
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    rank_str = ", ".join([f"{c}: {s:+.1f}" for c, s in sorted_scores])
+    sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True)
+    rank_h1_str = ", ".join([f"{c}: {s:+.1f}" for c, s in sorted_h1])
 
-    # Khusus Gold (XAUUSD) -> Evaluasi Macro Dollar Flow
+    sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
+    rank_m15_str = ", ".join([f"{c}: {s:+.1f}" for c, s in sorted_m15]) if sorted_m15 else "N/A"
+
+    # Khusus Gold (XAUUSD) -> Evaluasi Dual-Horizon Dollar Flow
     if "XAU" in clean_sym or "GOLD" in clean_sym:
-        usd_score = scores.get("USD", 0.0)
-        usd_rank = ranks.get("USD", 4)
-        if usd_score >= 10.0:
-            usd_impact = "STRONG DOLLAR (Macro Bearish Headwind for Gold)"
-        elif usd_score >= 5.0:
-            usd_impact = "MODERATE DOLLAR STRENGTH (Mild Headwind for Gold)"
-        elif usd_score <= -10.0:
-            usd_impact = "WEAK DOLLAR DUMPING (Macro Bullish Fuel/Tailwind for Gold)"
-        elif usd_score <= -5.0:
-            usd_impact = "MILD DOLLAR WEAKNESS (Supportive Tailwind for Gold)"
+        usd_h1 = scores_h1.get("USD", 0.0)
+        usd_rank_h1 = ranks_h1.get("USD", 4)
+        usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else usd_h1
+        usd_rank_m15 = ranks_m15.get("USD", 4) if ranks_m15 else usd_rank_h1
+
+        if usd_m15 >= 10.0:
+            usd_session_impact = "STRONG DOLLAR SURGE (Session Bearish Headwind for Gold)"
+        elif usd_m15 >= 5.0:
+            usd_session_impact = "MODERATE DOLLAR INFLOW (Mild Headwind for Gold)"
+        elif usd_m15 <= -10.0:
+            usd_session_impact = "HEAVY DOLLAR OUTFLOW (Bullish Tailwind for Gold)"
+        elif usd_m15 <= -5.0:
+            usd_session_impact = "MILD DOLLAR WEAKNESS (Supportive for Gold)"
         else:
-            usd_impact = "BALANCED / NEUTRAL DOLLAR FLOW"
+            usd_session_impact = "BALANCED / NEUTRAL DOLLAR FLOW"
 
         lines = [
-            "### GLOBAL CURRENCY STRENGTH MATRIX (Live Boitoki CSM H1)",
-            f"- 8-Currency Strength Ranking: [{rank_str}]",
-            f"- Macro Dollar Flow for Gold ({symbol}):",
-            f"  * Quote Currency (USD): {usd_score:+.2f} (Rank #{usd_rank}/8)",
-            f"  * Macro Dollar Impact: {usd_impact}"
+            "### GLOBAL CURRENCY STRENGTH MATRIX (Dual-Horizon Flow)",
+            f"- 24-Hour Macro Flow (H1): [{rank_h1_str}]",
+            f"- 4-Hour Session Velocity (M15): [{rank_m15_str}]",
+            f"- Relative Dollar Flow for Gold ({symbol}):",
+            f"  * 24h Macro USD: {usd_h1:+.2f} (Rank #{usd_rank_h1}/8)",
+            f"  * 4h Session USD: {usd_m15:+.2f} (Rank #{usd_rank_m15}/8)",
+            f"  * Live Session Dollar Impact: {usd_session_impact}"
         ]
         return "\n".join(lines)
 
@@ -191,30 +158,37 @@ def get_csm_prompt_payload(symbol):
     if base not in CURRENCIES or quote not in CURRENCIES:
         return ""
 
-    base_score = scores.get(base, 0.0)
-    base_rank = ranks.get(base, 4)
-    quote_score = scores.get(quote, 0.0)
-    quote_rank = ranks.get(quote, 4)
-    delta = round(base_score - quote_score, 2)
+    base_h1 = scores_h1.get(base, 0.0)
+    base_rank_h1 = ranks_h1.get(base, 4)
+    quote_h1 = scores_h1.get(quote, 0.0)
+    quote_rank_h1 = ranks_h1.get(quote, 4)
+    delta_h1 = round(base_h1 - quote_h1, 2)
 
-    if delta >= 20.0:
-        flow_status = "STRONG BULLISH FLOW"
-    elif delta >= 10.0:
-        flow_status = "MODERATE BULLISH FLOW"
-    elif delta <= -20.0:
-        flow_status = "CRITICAL BEARISH FLOW / SEVERE OUTFLOW"
-    elif delta <= -10.0:
-        flow_status = "MODERATE BEARISH FLOW"
+    base_m15 = scores_m15.get(base, 0.0) if scores_m15 else base_h1
+    base_rank_m15 = ranks_m15.get(base, 4) if scores_m15 else base_rank_h1
+    quote_m15 = scores_m15.get(quote, 0.0) if scores_m15 else quote_h1
+    quote_rank_m15 = ranks_m15.get(quote, 4) if scores_m15 else quote_rank_h1
+    delta_m15 = round(base_m15 - quote_m15, 2) if scores_m15 else delta_h1
+
+    if delta_m15 >= 20.0:
+        session_flow = "STRONG BULLISH INFLOW"
+    elif delta_m15 >= 10.0:
+        session_flow = "MODERATE BULLISH INFLOW"
+    elif delta_m15 <= -20.0:
+        session_flow = "CRITICAL BEARISH OUTFLOW"
+    elif delta_m15 <= -10.0:
+        session_flow = "MODERATE BEARISH OUTFLOW"
     else:
-        flow_status = "BALANCED / COMPRESSION"
+        session_flow = "BALANCED / SESSION COMPRESSION"
 
     lines = [
-        "### GLOBAL CURRENCY STRENGTH MATRIX (Live Boitoki CSM H1)",
-        f"- 8-Currency Strength Ranking: [{rank_str}]",
-        f"- Cross-Currency Relative Flow ({symbol}):",
-        f"  * Base ({base}): {base_score:+.2f} (Rank #{base_rank}/8)",
-        f"  * Quote ({quote}): {quote_score:+.2f} (Rank #{quote_rank}/8)",
-        f"  * Net Currency Delta ({base} minus {quote}): {delta:+.2f} ({flow_status})"
+        "### GLOBAL CURRENCY STRENGTH MATRIX (Dual-Horizon Flow)",
+        f"- 24-Hour Macro Flow (H1): [{rank_h1_str}]",
+        f"- 4-Hour Session Velocity (M15): [{rank_m15_str}]",
+        f"- Cross-Currency Relative Velocity ({symbol}):",
+        f"  * Base ({base}): 24h = {base_h1:+.2f} (Rank #{base_rank_h1}/8) | 4h Session = {base_m15:+.2f} (Rank #{base_rank_m15}/8)",
+        f"  * Quote ({quote}): 24h = {quote_h1:+.2f} (Rank #{quote_rank_h1}/8) | 4h Session = {quote_m15:+.2f} (Rank #{quote_rank_m15}/8)",
+        f"  * Net 4-Hour Session Delta ({base} minus {quote}): {delta_m15:+.2f} ({session_flow}) | Net 24h Delta: {delta_h1:+.2f}"
     ]
 
     return "\n".join(lines)
