@@ -2158,11 +2158,11 @@ def main():
                             pos_count = len(open_p_live or []) + len(pending_p_live or [])
                             max_pos = config.get_max_open_positions()
                             if pos_count >= max_pos:
-                                _last_radar_status = f"22 Pairs Swept | Max Capacity Full ({pos_count}/{max_pos}) - LLM Paused ({wib_s})"
+                                _last_radar_status = f"Capacity Full ({pos_count}/{max_pos}) - Paused ({wib_s})"
                             else:
-                                _last_radar_status = f"22 Pairs Normal ({wib_s})"
+                                _last_radar_status = f"Normal ({wib_s})"
                     except Exception as e:
-                        _last_radar_status = f"Radar Err: {e}"
+                        _last_radar_status = f"Err: {e}"
             else:
                 # Classic Candle Cycle (Single Symbol / Pairs Polling)
                 rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
@@ -2246,7 +2246,7 @@ def main():
                 except Exception:
                     pass
 
-                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str}{csm_mini} | Radar: {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
+                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str}{csm_mini} | {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
             elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
                 tf_cur = config.get_timeframe_str()
                 label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS ({tf_cur})"
