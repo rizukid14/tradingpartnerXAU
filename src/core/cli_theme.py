@@ -287,8 +287,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     c_purp = UI.PURPLE
     c_rst = UI.RST
     
-    lw = 58  # Left column inner width (119 total cols)
-    rw = 58  # Right column inner width
+    lw = 68  # Left column inner width (139 total cols)
+    rw = 68  # Right column inner width
     
     # ── TILE 1: FULL 22-PAIR QUANT RADAR HEAT MATRIX (Top Left) ──
     t1_lines = []
@@ -348,13 +348,13 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             p2 = all_symbols[r+1] if r+1 < len(all_symbols) else None
             p3 = all_symbols[r+2] if r+2 < len(all_symbols) else None
             
-            c1 = UI.pad_line(_format_cell(p1), 16)
-            c2 = UI.pad_line(_format_cell(p2) if p2 else "", 16)
-            c3 = UI.pad_line(_format_cell(p3) if p3 else "", 16)
+            c1 = UI.pad_line(_format_cell(p1), 20)
+            c2 = UI.pad_line(_format_cell(p2) if p2 else "", 20)
+            c3 = UI.pad_line(_format_cell(p3) if p3 else "", 20)
             t1_lines.append(f" {c1} │ {c2} │ {c3}")
             
-        t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────{UI.RST}")
-        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ ●Side │ 🔥ADX≥28 │ 🎯In-Zone │ 🧊Cold{UI.RST}")
+        t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
+        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ ●Side │ 🔥ADX≥28 │ 🎯In-Zone (Disc/Prem) │ 🧊Cold{UI.RST}")
     else:
         t1_lines = [
             f" {UI.YELLOW}● Inisialisasi 22-Pair Macro Compass...{UI.RST}",
@@ -378,8 +378,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     t2_lines = [
         f" Server    : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
         f" Equity    : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
-        f" Capacity  : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} (Shared Basket Engine)",
-        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss: {UI.RED}4.0% ($50){UI.RST}",
+        f" Capacity  : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} (Shared Basket Pool Engine)",
+        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}4.0% ($50){UI.RST}",
         f" Gold Armor: {UI.YELLOW}1.8x ATR Floor (600 pts Anti-Hunt Shield){UI.RST}",
     ]
     if open_positions:
@@ -397,13 +397,13 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     else:
         t2_lines.append(f" Positions : {UI.GRAY}No active positions (Flat / Ready){UI.RST}")
         
-    hot_str = ", ".join(hot_pairs[:3]) if hot_pairs else "None (Normal Vol)"
-    in_zone_str = ", ".join(in_zone_pairs[:3]) if in_zone_pairs else "None (Mid-Range)"
+    hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else "None (Normal Vol)"
+    in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else "None (Mid-Range)"
     
     t2_lines.append(f" Top Hot   : {UI.YELLOW}{hot_str}{UI.RST} 🔥")
     t2_lines.append(f" In-Zone   : {UI.GREEN}{in_zone_str}{UI.RST} 🎯")
-    t2_lines.append(f" Fast Radar: {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens){UI.RST}")
-    t2_lines.append(f" Proteksi  : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay{UI.RST}")
+    t2_lines.append(f" Fast Radar: {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
+    t2_lines.append(f" Proteksi  : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         
     # ── TILE 3: DUAL-HORIZON BOITOKI CSM RADAR (Bottom Left) ──
     t3_lines = []
@@ -415,11 +415,11 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True) if scores_h1 else []
         sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
         
-        h1_str = " > ".join([f"{c}" for c, s in sorted_h1[:6]]) if sorted_h1 else "--"
-        m15_str = " > ".join([f"{c}" for c, s in sorted_m15[:6]]) if sorted_m15 else "--"
+        h1_str = " > ".join([f"{c}" for c, s in sorted_h1]) if sorted_h1 else "--"
+        m15_str = " > ".join([f"{c}" for c, s in sorted_m15]) if sorted_m15 else "--"
         
         usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else 0.0
-        gold_impact = "USD Outflow (Tailwind)" if usd_m15 <= -5.0 else ("USD Inflow (Headwind)" if usd_m15 >= 5.0 else "Balanced")
+        gold_impact = "USD Outflow (Bullish Fuel)" if usd_m15 <= -5.0 else ("USD Inflow (Bearish Pressure)" if usd_m15 >= 5.0 else "Balanced")
         
         t3_lines.append(f" 24h Macro (H1)  : {UI.CYAN}{h1_str}{UI.RST}")
         t3_lines.append(f" 4h Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
@@ -435,10 +435,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     
     # ── TILE 4: 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL (Bottom Right) ──
     t4_lines = [
-        f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini{UI.RST} (Speed)",
-        f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Veto)",
-        f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife)",
-        f" Pending Order: {UI.CYAN}Auto-Retest at FVG / Order Block (60-120m){UI.RST}"
+        f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini 3.1-Flash{UI.RST} (Speed)",
+        f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Hard Risk Veto)",
+        f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife Guard)",
+        f" Pending Mode : {UI.CYAN}Auto-Retest at FVG / Order Block (60-120m Expiry){UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
