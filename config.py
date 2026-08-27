@@ -454,9 +454,12 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
 BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.45)  # BEP aktif saat profit >= 45% TP (padding komisi tetap dipertahankan)
 TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP
-BREAK_EVEN_TRIGGER_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
+TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR M30 lock)
+TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing
+TRAILING_BREAK_EVEN_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
-TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 25)    # Floor absolut jarak trailing FX (pts) anti noise/spread
+TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 80)    # Floor absolut jarak normal trailing FX (8 pips)
+TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)  # Floor absolut terminal trailing (3 pips)
 TRAILING_DISTANCE_MIN_POINTS_XAU = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_XAU", 100)  # Floor absolut jarak trailing XAU (pts)
 
 
@@ -652,8 +655,27 @@ POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_A
 # sell_stop/buy_limit/sell_limit) + entry_price. Pending punya expiration,
 # tereksekusi -> posisi normal (SL/TP + BEP + trailing).
 PENDING_ORDERS_ENABLED = _getenv_bool("PENDING_ORDERS_ENABLED", True)
-PENDING_ORDER_EXPIRY_MINUTES = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES", 120)
+PENDING_ORDER_EXPIRY_MINUTES = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES", 60)
+PENDING_ORDER_EXPIRY_MINUTES_ASIA = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES_ASIA", 120)  # Sesi Tokyo / Asia (08:00–14:00 WIB)
+PENDING_ORDER_EXPIRY_MINUTES_LDN_NY = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES_LDN_NY", 60) # Sesi London / NY (14:00–00:00 WIB)
 PENDING_ORDER_MAX_ACTIVE = _getenv_int("PENDING_ORDER_MAX_ACTIVE", 4)
+
+
+def get_pending_order_expiry_minutes(now=None):
+    """Expiry pending order adaptif sesi:
+    - Sesi Tokyo / Asia (08:00 - 14:00 WIB): 120 Menit (2 jam)
+    - Sesi London / NY (14:00 - 00:00 WIB): 60 Menit (1 jam)
+    - Di luar jam di atas / Late NY: 60 Menit
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now_wib = now or datetime.now(WIB)
+    cur_hour = now_wib.hour
+    if 8 <= cur_hour < 14:
+        return PENDING_ORDER_EXPIRY_MINUTES_ASIA
+    return PENDING_ORDER_EXPIRY_MINUTES_LDN_NY
+
 # Jarak entry pending dari harga sekarang: minimal 2x spread, maksimal 1.5x ATR
 PENDING_ENTRY_MIN_SPREAD_MULT = _getenv_float("PENDING_ENTRY_MIN_SPREAD_MULT", 2.0)
 PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)

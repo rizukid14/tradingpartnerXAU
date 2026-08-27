@@ -1763,7 +1763,7 @@ def run_scanner_trading_cycle(cand, risk):
                         comment=f"JURY {cand.setup_type[:6]} P{i+1}",
                         sl_price=p_sl_price,
                         tp_price=p_tp_price,
-                        expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240)
+                        expiration_minutes=config.get_pending_order_expiry_minutes()
                     )
                     if pending_res.get("status") == "SUCCESS":
                         if config.DRY_RUN:
@@ -1794,7 +1794,7 @@ def run_scanner_trading_cycle(cand, risk):
                             setup=f"{cand.setup_type} ({cand.timeframe}) [Pos #{i+1}]",
                             reason=result.get("reason", ""),
                             invalidation=f"SL: {p_sl_price}",
-                            expiration_minutes=getattr(config, "PENDING_ORDER_EXPIRY_MINUTES", 240),
+                            expiration_minutes=config.get_pending_order_expiry_minutes(),
                         )
                 return True
             
@@ -2245,6 +2245,21 @@ def main():
                 label_hdr = f"{config.SYMBOL.replace('-ECNc', '').replace('.c', '')} ({tf_cur})"
                 header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
+            # Live Currency Strength Matrix ticker
+            csm_line = None
+            try:
+                from src.analytics import currency_strength
+                csm_scores, _ = currency_strength.calculate_boitoki_csm()
+                if csm_scores:
+                    sorted_csm = sorted(csm_scores.items(), key=lambda x: x[1], reverse=True)
+                    csm_toks = []
+                    for c, s in sorted_csm:
+                        col = UI.GREEN if s >= 5.0 else (UI.RED if s <= -5.0 else UI.GRAY)
+                        csm_toks.append(f"{c} {col}{s:+.1f}{UI.RST}")
+                    csm_line = f"  └─ {UI.CYAN}CSM H1:{UI.RST} " + " ".join(csm_toks)
+            except Exception:
+                pass
+
             # Wrap daftar posisi ke baris terpisah (SEMUA posisi tampil, tidak ada truncate paksa)
             # supaya auto-scroll terminal tidak merusak refresh in-place multi-baris.
             try:
@@ -2252,11 +2267,14 @@ def main():
             except Exception:
                 cols = 120
             max_w = max(40, cols - 2)
+            status_lines = [header_part]
+            if csm_line:
+                status_lines.append(csm_line)
             if open_pos:
                 pos_wrapped = _wrap_positions(pos_parts, max_w, indent=f"  └─ {UI.GRAY}pos:{UI.RST} ")
-                status_lines = [header_part] + pos_wrapped
+                status_lines.extend(pos_wrapped)
             else:
-                status_lines = [header_part + pos_str]
+                status_lines.append(f"  └─ {UI.GRAY}pos: No active pos{UI.RST}")
 
             sys.stdout.write(_render_status_lines(status_lines, _VT_OK))
             sys.stdout.flush()

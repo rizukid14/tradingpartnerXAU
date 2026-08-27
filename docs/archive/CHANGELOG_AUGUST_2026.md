@@ -276,3 +276,11 @@ You are NOT required to follow a single predefined trading strategy. You may use
 3. **Dokumen Spesifikasi & Validasi Backtest 21 Pair FBS (2022–2026)**:
    * Pembuatan dokumen arsitektur [INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md).
    * Validasi 31.161 trade: memotong 90% trade overtrading, memulihkan modal $+7.333\text{R}$ (+92% kerugian terpangkas), dan membalikkan 6 pair utama menjadi profitabel (`EURUSD` PF 1.09, `GBPUSD` PF 1.08, `AUDJPY` PF 1.09, `EURJPY` PF 1.07, `EURAUD` PF 1.05, `GBPJPY` PF 1.03).
+
+---
+
+## 12. Pembaruan 27 Agustus 2026 (Sesi Malam) — 2-Stage Dynamic Trailing Stop Engine
+
+1. **2-Stage Dynamic Trailing Stop (`src/analytics/position_manager.py` & `config.py`)**:
+   * **Stage 1 (Swing Breathing Zone: 65% s/d < 90% TP)**: Jarak dihitung berbasis **ATR H1 ($0.75\times\text{ATR H1}$)** dengan floor absolut 80 pts (8 pips FX) untuk memberi ruang nafas yang longgar dari noise wick agar posisi dapat melaju mulus ke TP2.
+   * **Stage 2 (Terminal Profit Lock: $\ge$ 90% TP)**: Otomatis mengencang (*tightening*) berbasis **ATR M30 ($0.50\times\text{ATR M30}$)** dengan floor 30 pts (3 pips FX) untuk mengunci cuan 90% secara rapat di pucuk sebelum terjadi pembalikan harga mendadak tepat di depan target TP.

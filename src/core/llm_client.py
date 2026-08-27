@@ -1725,6 +1725,109 @@ def query_all_models_parallel(prompt, models=("OpenAI", "Gemini", "DeepSeek")):
 
 
 
+def compute_micro_objective_frames(symbol, point=None):
+    """
+    Computes pure deterministic quantitative metrics for M30 (50-bar / 24h)
+    and M15 (32-bar / 8h) windows directly from MT5.
+    Returns formatted multi-line string.
+    """
+    try:
+        import pandas as pd
+        from config import mt5
+        from ta.trend import EMAIndicator, ADXIndicator
+        from ta.momentum import RSIIndicator
+        from ta.volatility import AverageTrueRange
+
+        if point is None or point <= 0:
+            si = mt5.symbol_info(symbol)
+            point = si.point if si and si.point > 0 else 0.00001
+
+        lines = []
+
+        # 1. M30 (50-bar / 24h Window)
+        rates_m30 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M30, 0, 70)
+        if rates_m30 is not None and len(rates_m30) >= 50:
+            df30 = pd.DataFrame(rates_m30)
+            c30 = df30['close']
+            h30 = df30['high']
+            l30 = df30['low']
+
+            w50_h = float(h30.iloc[-50:].max())
+            w50_l = float(l30.iloc[-50:].min())
+            curr_px = float(c30.iloc[-1])
+            rng50 = w50_h - w50_l
+            pos50_pct = ((curr_px - w50_l) / rng50 * 100.0) if rng50 > 0 else 50.0
+
+            ema20 = float(EMAIndicator(c30, window=20).ema_indicator().iloc[-1])
+            ema50 = float(EMAIndicator(c30, window=50).ema_indicator().iloc[-1])
+            ema200 = float(EMAIndicator(c30, window=min(200, len(c30))).ema_indicator().iloc[-1]) if len(c30) >= 60 else ema50
+
+            rsi30 = float(RSIIndicator(c30, window=14).rsi().iloc[-1])
+            adx30_obj = ADXIndicator(h30, l30, c30, window=14)
+            adx30 = float(adx30_obj.adx().iloc[-1])
+            dip30 = float(adx30_obj.adx_pos().iloc[-1])
+            dim30 = float(adx30_obj.adx_neg().iloc[-1])
+            atr30_pts = float(AverageTrueRange(h30, l30, c30, window=14).average_true_range().iloc[-1] / point)
+
+            if ema20 > ema50 > ema200:
+                align30 = "EMA20 > EMA50 > EMA200 (Bullish Alignment)"
+            elif ema20 < ema50 < ema200:
+                align30 = "EMA20 < EMA50 < EMA200 (Bearish Alignment)"
+            else:
+                align30 = f"EMA20={ema20:.5f}, EMA50={ema50:.5f}, EMA200={ema200:.5f}"
+
+            lines.append("- M30 Structural Frame (50-bar / 24h Window):")
+            lines.append(f"  * 50-Bar High: {w50_h:.5f} | 50-Bar Low: {w50_l:.5f} | Position: {pos50_pct:.1f}% of Range")
+            lines.append(f"  * Moving Averages: EMA20 = {ema20:.5f} | EMA50 = {ema50:.5f} | EMA200 = {ema200:.5f} ({align30})")
+            lines.append(f"  * Indicators: RSI(14) = {rsi30:.1f} | ADX(14) = {adx30:.1f} (DI+: {dip30:.1f}, DI-: {dim30:.1f}) | ATR(14) = {atr30_pts:.1f} pts")
+
+        # 2. M15 (32-bar / 8h Window)
+        rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 50)
+        if rates_m15 is not None and len(rates_m15) >= 32:
+            df15 = pd.DataFrame(rates_m15)
+            c15 = df15['close']
+            h15 = df15['high']
+            l15 = df15['low']
+
+            w32_h = float(h15.iloc[-32:].max())
+            w32_l = float(l15.iloc[-32:].min())
+            curr_px15 = float(c15.iloc[-1])
+            rng32 = w32_h - w32_l
+            pos32_pct = ((curr_px15 - w32_l) / rng32 * 100.0) if rng32 > 0 else 50.0
+
+            ema9 = float(EMAIndicator(c15, window=9).ema_indicator().iloc[-1])
+            ema21 = float(EMAIndicator(c15, window=21).ema_indicator().iloc[-1])
+            ema50_15 = float(EMAIndicator(c15, window=min(50, len(c15))).ema_indicator().iloc[-1])
+
+            rsi15 = float(RSIIndicator(c15, window=14).rsi().iloc[-1])
+            adx15_obj = ADXIndicator(h15, l15, c15, window=14)
+            adx15 = float(adx15_obj.adx().iloc[-1])
+            dip15 = float(adx15_obj.adx_pos().iloc[-1])
+            dim15 = float(adx15_obj.adx_neg().iloc[-1])
+            atr15_pts = float(AverageTrueRange(h15, l15, c15, window=14).average_true_range().iloc[-1] / point)
+
+            last3_bodies = [abs(float(df15['close'].iloc[-i]) - float(df15['open'].iloc[-i])) / point for i in range(1, 4)]
+            avg_body_pts = sum(last3_bodies) / 3.0
+            body_atr_ratio = (avg_body_pts / atr15_pts) if atr15_pts > 0 else 0.0
+
+            if ema9 > ema21 > ema50_15:
+                align15 = "EMA9 > EMA21 > EMA50 (Bullish Momentum Stack)"
+            elif ema9 < ema21 < ema50_15:
+                align15 = "EMA9 < EMA21 < EMA50 (Bearish Momentum Stack)"
+            else:
+                align15 = f"EMA9={ema9:.5f}, EMA21={ema21:.5f}, EMA50={ema50_15:.5f}"
+
+            lines.append("- M15 Micro Flow Frame (32-bar / 8h Session Window):")
+            lines.append(f"  * 32-Bar High: {w32_h:.5f} | 32-Bar Low: {w32_l:.5f} | Position: {pos32_pct:.1f}% of Range")
+            lines.append(f"  * Moving Averages: EMA9 = {ema9:.5f} | EMA21 = {ema21:.5f} | EMA50 = {ema50_15:.5f} ({align15})")
+            lines.append(f"  * Indicators: RSI(14) = {rsi15:.1f} | ADX(14) = {adx15:.1f} (DI+: {dip15:.1f}, DI-: {dim15:.1f}) | ATR(14) = {atr15_pts:.1f} pts")
+            lines.append(f"  * Micro Velocity: Last 3 bars avg candle body = {avg_body_pts:.1f} pts ({body_atr_ratio:.2f}x ATR M15)")
+
+        return "\n".join(lines) if lines else ""
+    except Exception:
+        return ""
+
+
 def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m5_str=None):
     """
     Builds the High-Density Institutional Dossier Prompt for 3-LLM Consensus Jury.
@@ -1764,12 +1867,26 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     d1_50_str = getattr(candidate, 'd1_50_range', '') or 'N/A'
     d1_100_str = getattr(candidate, 'd1_100_range', '') or 'N/A'
     h4_m_str = getattr(candidate, 'h4_monthly_range', '') or 'N/A'
+    
+    # Compute deterministic micro objective frames (M30 50-bar + M15 32-bar)
+    micro_frames_block = compute_micro_objective_frames(sym)
+    if micro_frames_block:
+        micro_frames_block = f"\n{micro_frames_block}\n"
+
+    csm_block = ""
+    try:
+        from src.analytics import currency_strength
+        csm_payload = currency_strength.get_csm_prompt_payload(sym)
+        if csm_payload:
+            csm_block = f"\n{csm_payload.strip()}\n"
+    except Exception:
+        csm_block = ""
 
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
 Your task is to objectively evaluate this proposal against the raw market data:
-1. Macro Sentiment & Price Flow: Compare proposed direction against recent D1/H4/H1/M5 momentum.
+1. Macro Sentiment & Price Flow: Compare proposed direction against recent D1/H4/H1/M5 momentum, M30/M15 micro frames, and Currency Strength Flow.
 2. Order Optimization: Choose to APPROVE as proposed, REVISE entry to a better structural level/pending limit, or REJECT if risk is high.
 3. Invalidation & Target: Verify SL is behind structural barriers and TP has clear room (Mandatory R:R >= 1.25).
 
@@ -1787,7 +1904,8 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Rejection Wick Ratio: {candidate.rejection_wick_ratio*100:.1f}%
 - Volatility: ATR(14) = {candidate.current_atr_pts:.1f} pts | Current Spread = {candidate.current_spread_pts} pts
 {meta_block}
-
+{micro_frames_block}
+{csm_block}
 ## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
 - Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
 - Structural Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
@@ -1807,6 +1925,11 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Calendar Context: {candidate.economic_context or "No High-Impact News releases within +/- 6 hours"}
 
 ## 5. EVALUATION DIRECTIVE
+Indicator Hierarchy & Nature:
+- Moving Averages (EMA), RSI, ADX, and Currency Strength Matrix (CSM) are LAGGING mathematical derivatives of past price/flow history.
+- Live Candlestick Price Action (rejection wicks, structural liquidity sweeps, Order Block/FVG reactions) is LEADING.
+- Use lagging indicator and CSM frames to assess macro alignment, regime maturity, and momentum exhaustion, but prioritize live price action structure and clear invalidation for exact trigger timing.
+
 Evaluate the proposal with full institutional depth:
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type (MUST be a realistic shallow retest within 0.1x to 1.0x ATR from trigger price; do NOT pick deep or obsolete multi-day Order Blocks)

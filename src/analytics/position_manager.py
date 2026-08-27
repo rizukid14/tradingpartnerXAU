@@ -557,14 +557,12 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 
 
 
-def _get_dynamic_atr_points(symbol, point):
+def _get_atr_points_tf(symbol, timeframe, point):
     """
-    Computes real-time ATR(14) in points for the given symbol using its active timeframe:
-    M30 for BTC, M5 for XAU.
+    Computes real-time ATR(14) in points for a specific timeframe (H1 vs M30).
     """
     try:
-        tf = config.get_timeframe(symbol)
-        rates = mt5.copy_rates_from_pos(symbol, tf, 0, 20)
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 20)
         if rates is not None and len(rates) >= 15:
             import pandas as pd
             from ta.volatility import AverageTrueRange
@@ -578,26 +576,22 @@ def _get_dynamic_atr_points(symbol, point):
     return 0
 
 
+def _get_dynamic_atr_points(symbol, point):
+    """Fallback active timeframe ATR."""
+    tf = config.get_timeframe(symbol)
+    return _get_atr_points_tf(symbol, tf, point)
+
+
 # =============================================================================
-#  TRAILING STOP (from XAU-60 trade_executor.py)
+#  TRAILING STOP (2-Stage Dynamic: H1 Breathing vs M30 Terminal Lock)
 # =============================================================================
 def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info):
-    """Trail stop loss behind price using a GLOBAL single-path rule.
-
-    GLOBAL single path (20 Agustus malam, hasil backtest S9 GBPUSD n=174):
-    - Activation: profit >= 70% TP (TRAILING_ACTIVATION_TP_PCT). Fallback tanpa
-      TP: TRAILING_ACTIVATION_SL_MULT x SL.
-    - Distance: KONSTAN 0.5x ATR(14) dari harga ekstrem sejak entry (bukan
-      progressive SL-based, bukan range adaptif) + floor absolut
-      TRAILING_DISTANCE_MIN_POINTS_FX/XAU.
-    Hasil backtest (scratch/bep_trail_matrix.py):
-      act70 + atr0.5 = EV +0.272 (terbaik, nyaris setara baseline +0.302)
-      progressive SL +0.197 | adaptif +0.041 | fixed pips +0.128-0.180 (inferior)
-    TP-lock progressive & progressive distance DIHAPUS - backtest membuktikan
-    jarak konstan 0.5x ATR yang paling tidak merusak edge.
+    """Trail stop loss behind price using 2-Stage Dynamic Distance:
+    - Stage 1 (Swing Breathing: 65% s/d < 90% TP): Jarak 0.75x ATR H1 (Floor FX 80 pts / 8 pips)
+      untuk memberikan ruang nafas luas agar trade tidak mudah ter-wick keluar menuju TP2.
+    - Stage 2 (Terminal Lock: >= 90% TP): Jarak 0.50x ATR M30 (Floor FX 30 pts / 3 pips)
+      untuk mengunci cuan 90% secara ketat di pucuk sebelum reversal mendadak.
     """
-    atr_points = _get_dynamic_atr_points(symbol, point)
-
     # Jarak target TP posisi (jika ada) untuk aktivasi % TP
     tp_points = 0
     if pos.tp:
@@ -606,8 +600,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    # Jarak SL posisi (fallback tanpa TP). Pakai SL ORIGINAL (sebelum BE/trailing
-    # geser) biar referensi stabil.
+    # Jarak SL posisi (fallback tanpa TP). Pakai SL ORIGINAL
     if pos.sl:
         sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
     else:
@@ -618,28 +611,55 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     # Activation GLOBAL % TP (fallback SL-based kalau posisi tanpa TP)
     if tp_points > 0:
         activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), min_act)
+        tp_progress = profit_points / tp_points if tp_points > 0 else 0.0
     elif sl_points > 0:
         activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), min_act)
+        tp_progress = profit_points / (sl_points * 2.0) if sl_points > 0 else 0.0
     else:
         activation = min_act
+        tp_progress = 0.0
 
-    # Distance GLOBAL: KONSTAN 0.5x ATR per-kategori (default 0.5).
-    # Fallback kalau ATR gagal: fallback_dist dari trailing_activation_params_for.
-    if atr_points > 0:
-        if config.is_fx(symbol):
-            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_FX", 0.5)
-        elif config.is_crypto(symbol):
-            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
+    # Evaluasi 2-Stage Dynamic Trailing Distance:
+    is_terminal = (tp_progress >= getattr(config, "TRAILING_TERMINAL_TP_PCT", 0.90))
+
+    if config.is_fx(symbol):
+        if is_terminal:
+            # Stage 2: Terminal Tightening (ATR M30 lock)
+            atr_tf = mt5.TIMEFRAME_M30
+            atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+            dist_mult = 0.50
+            min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)
+            stage_label = "TERMINAL-M30"
         else:
-            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
-        trail_distance = max(int(atr_points * dist_mult), 1) * point
+            # Stage 1: Swing Breathing (ATR H1 breathing)
+            atr_tf = mt5.TIMEFRAME_H1
+            atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
+            min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
+            stage_label = "SWING-H1"
+    elif config.is_crypto(symbol):
+        atr_pts = _get_dynamic_atr_points(symbol, point)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
+        min_dist_pts = 0
+        stage_label = "CRYPTO"
+    else:  # Gold (XAU)
+        atr_pts = _get_dynamic_atr_points(symbol, point)
+        dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
+        min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_XAU", 100)
+        stage_label = "XAU"
+
+    if atr_pts > 0:
+        trail_distance = max(int(atr_pts * dist_mult), 1) * point
     else:
         _, _, _, fallback_dist, _ = config.trailing_activation_params_for(symbol)
         trail_distance = fallback_dist * point
 
-    # Track the extreme price seen since entry. The SL trails behind this
-    # extreme, never behind the current price, so a pullback cannot drag the
-    # SL backwards.
+    # Floor absolut jarak trailing
+    min_dist_price = min_dist_pts * point
+    if not config.is_crypto(symbol):
+        trail_distance = max(trail_distance, min_dist_price)
+
+    # Track the extreme price seen since entry.
     ticket = pos.ticket
     if pos.type == mt5.ORDER_TYPE_BUY:
         extreme = max(_trailing_extremes.get(ticket, pos.price_open), current_price)
@@ -654,13 +674,6 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     if profit_points < activation:
         return
-
-    # Floor absolut jarak trailing (anti noise & spread squeeze saat SL tipis)
-    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 25) if config.is_fx(symbol) else getattr(config, "TRAILING_DISTANCE_MIN_POINTS_XAU", 100)
-    min_dist_price = min_dist_pts * point
-
-    if not config.is_crypto(symbol):
-        trail_distance = max(trail_distance, min_dist_price)
 
     if pos.type == mt5.ORDER_TYPE_BUY:
         new_sl = trail_ref - trail_distance
@@ -689,7 +702,7 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         _trailing_active_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
         dist_pts = int(trail_distance / point) if point > 0 else 0
-        print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts ATR)")
+        print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP | {stage_label}]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts ATR)")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"\r\x1b[2K[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

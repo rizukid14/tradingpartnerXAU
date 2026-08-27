@@ -111,7 +111,9 @@ class RiskEngine:
         # the known set (no alerts - these are historical, not new closes).
         if not self._known_closed:
             for c in closed:
-                self._known_closed.add(c["ticket"])
+                key = c.get("deal_ticket", c["ticket"])
+                self._known_closed.add(key)
+                self._known_closed.add(c["ticket"])  # retain position_id for compatibility
             losses = 0
             for c in reversed(closed):
                 # BEP tolerance dinamis: kalah cuma sebesar komisi ? loss.
@@ -126,8 +128,10 @@ class RiskEngine:
 
         new_deals = []
         for c in closed:
-            if c["ticket"] in self._known_closed:
+            deal_key = c.get("deal_ticket", c["ticket"])
+            if deal_key in self._known_closed:
                 continue
+            self._known_closed.add(deal_key)
             self._known_closed.add(c["ticket"])
             self._record_result(c["profit"], c.get("commission", 0.0))
             new_deals.append(c)

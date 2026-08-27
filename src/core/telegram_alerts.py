@@ -764,6 +764,26 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
         lines.append("📊 *SMC Radar:* `Macro cache stand-by`")
         lines.append("━" * 32)
 
+    # 3b. Boitoki Currency Strength Matrix (H1 Relative Flow)
+    try:
+        from src.analytics import currency_strength
+        scores, ranks = currency_strength.calculate_boitoki_csm()
+        if scores:
+            sorted_cur = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            top3 = [f"*{c}* (`{s:+.1f}`)" for c, s in sorted_cur[:3]]
+            bot3 = [f"*{c}* (`{s:+.1f}`)" for c, s in sorted_cur[-3:]]
+            lead_c, lead_s = sorted_cur[0]
+            lagg_c, lagg_s = sorted_cur[-1]
+            disp = round(lead_s - lagg_s, 1)
+
+            lines.append("🌐 *Arus Kekuatan Mata Uang (Boitoki CSM H1):*")
+            lines.append(f"• 🟢 *Top Inflow*: {', '.join(top3)}")
+            lines.append(f"• 🔴 *Top Outflow*: {', '.join(bot3)}")
+            lines.append(f"• ⚡ *Max Disparity*: `{lead_c}/{lagg_c}` (Δ `{disp:+.1f}`)")
+            lines.append("━" * 32)
+    except Exception:
+        pass
+
     # 4. High-Impact News Context (Past 3h & Upcoming 12h)
     try:
         from src.analytics import economic_calendar

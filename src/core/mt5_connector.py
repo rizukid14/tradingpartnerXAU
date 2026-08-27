@@ -480,7 +480,9 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
         opened_today = open_time >= int(today_start.timestamp())
 
         closed.append({
+            "deal_ticket": deal.ticket,
             "ticket": deal.position_id,
+            "position_id": deal.position_id,
             "symbol": deal.symbol,
             "direction": pos_type,
             "profit": round(deal.profit + deal.swap + net_comm, 2),
@@ -1155,7 +1157,7 @@ def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_
 
     # Expiration: server time (GMT+3). Pakai offset broker biar akurat.
     if not expiration_minutes:
-        expiration_minutes = config.PENDING_ORDER_EXPIRY_MINUTES
+        expiration_minutes = config.get_pending_order_expiry_minutes()
     now_server = datetime.now(timezone.utc) + timedelta(seconds=get_broker_offset_seconds(symbol))
     expiration = int(now_server.timestamp()) + int(expiration_minutes * 60)
 

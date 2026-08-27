@@ -108,9 +108,11 @@ python main.py
 - **Dead Zone**: 00:00–08:00 WIB (Trading aktif mulai 08:00 WIB untuk FX & XAU; BTC tetap aktif 24/7).
 - **Proteksi Akun**: Max daily loss 4% equity, max 5 consecutive loss, daily profit target 6% equity, max 6 total open posisi bot (shared pool), max 4 active pending orders (shared pool).
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
-  - **Break-Even (BEP)**: Aktif di **55% TP** (atau **45% TP** saat Low Volatility) + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
-  - **Partial Close (TP1)**: Aktif di **55% TP**, mencairkan 50% lot ke saldo balance + geser sisa posisi ke Risk-Free BEP.
-  - **Trailing Stop**: Aktif di **75% TP**, jarak **konstan 0.5× ATR(14)** dari harga ekstrem, floor absolut 60 pts (6 pips).
+  - **Break-Even (BEP)**: Aktif di **45%–55% TP** + padding komisi round-trip + Pocket Profit 1.5 pips (15 pts).
+  - **Partial Close (TP1)**: Aktif di **45%–55% TP**, mencairkan 50% lot ke saldo balance + geser sisa posisi ke Risk-Free BEP.
+  - **2-Stage Dynamic Trailing Stop**:
+    * **Stage 1 (Swing Breathing: 65% s/d < 90% TP)**: Mengacu ke **ATR H1 ($0.75\times\text{ATR H1}$)** dengan floor absolut 80 pts (8 pips) untuk memberikan ruang ayun longgar dari noise wick saat menuju TP2.
+    * **Stage 2 (Terminal Lock: $\ge$ 90% TP)**: Otomatis mengencang (*tightening*) ke **ATR M30 ($0.50\times\text{ATR M30}$)** dengan floor 30 pts (3 pips) untuk mengunci cuan 90% secara rapat di pucuk sebelum terjadi pembalikan harga mendadak.
   - **Peak-Aware Time-Decay Stagnation Exit**: Posisi $\ge 4$ jam hold (8 bar M30) di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
   - **Pre-Rollover Precision Distance-to-SL Shield (03:50–04:15 WIB)**: Menutup posisi secara bersih di jam 03:50 WIB JIKA sisa jarak fisik ke SL $\le$ threshold lonjakan rollover per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, USDJPY 150 pts, NZDCAD 140 pts, AUDCAD 130 pts) untuk mencegah gap down & slippage 2x SL. Posisi dengan SL aman atau profit tebal dibiarkan jalan ke TP.
 
@@ -180,6 +182,10 @@ python main.py
     - Menghilangkan *Macro Bias Trap* & kebutaan *Single-Pair Silo* (mencegah false BUY saat mata uang dasar sedang di-dump secara sistemik).
     - Injeksi blok kuantitatif murni `GLOBAL CURRENCY STRENGTH MATRIX` (Ranking 8-Currency, Base/Quote Rank & Score, Net Currency Delta) ke prompt LLM agar AI menalar aliran modal secara otonom.
     - Validasi multi-tahun 21 pair FBS (31.161 trade): memotong 90% trade overtrading dan memulihkan modal $+7.333\text{R}$ (+92% kerugian terpangkas) dengan pair bintang (`EURUSD` PF 1.09, `GBPUSD` PF 1.08, `AUDJPY` PF 1.09, `EURJPY` PF 1.07).
+23. **2-Stage Dynamic Trailing Stop Engine (H1 Swing Breathing vs M30 Terminal Lock — 27 Agu 2026)**:
+    - Mengatasi masalah trailing stop yang terlalu mepet akibat pemakaian ATR M30 statis (hanya 3.5 pips di JPY pairs).
+    - **Stage 1 (Swing Breathing: 65% s/d < 90% TP)**: Jarak $0.75\times\text{ATR H1}$ (floor FX 80 pts / 8 pips) memberi ruang nafas dari noise wick menuju TP2.
+    - **Stage 2 (Terminal Lock: $\ge$ 90% TP)**: Beralih ke $0.50\times\text{ATR M30}$ (floor FX 30 pts / 3 pips) untuk mengunci cuan 90% di pucuk sebelum terjadi pembalikan harga mendadak.
 
 
 ---
