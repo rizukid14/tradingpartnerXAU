@@ -31,20 +31,24 @@ import json
 import requests
 import config
 from openai import OpenAI
-from telegram import Update
-from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
 logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     level=logging.INFO
 )
 
-client = OpenAI(api_key=config.OPENAI_API_KEY)
 MODEL = os.getenv("TELEGRAM_AI_MODEL", "gpt-5.4-mini")
-
 API_BASE_URL = getattr(config, "API_BASE_URL", "http://localhost:8765").rstrip("/")
 API_TOKEN = getattr(config, "API_TOKEN", "")
 API_TIMEOUT = 15  # seconds
+
+
+def get_openai_client():
+    api_key = getattr(config, "OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+    api_base = os.getenv("OPENAI_API_BASE", "").strip() or getattr(config, "OPENAI_API_BASE", "").strip()
+    if api_base:
+        return OpenAI(api_key=api_key, base_url=api_base)
+    return OpenAI(api_key=api_key)
 
 # ---------------------------------------------------------------------------
 # 1. HTTP HELPERS - every tool goes through one of these, hitting YOUR bot's API
@@ -76,32 +80,104 @@ def _api_post(path: str, body: dict = None):
         return {"error": f"POST {path} failed: {e}"}
 
 # ---------------------------------------------------------------------------
-# 2. TOOL IMPLEMENTATIONS - mapped 1:1 to your bot's real API
+# 2. TOOL IMPLEMENTATIONS - mapped 1:1 to bot API with direct module fallback
 # ---------------------------------------------------------------------------
 
 def get_summary() -> dict:
     """GET /api/summary - P/L, win rate, total trades, balance, active symbol, recovery status, etc."""
-    return _api_get("/api/summary")
+    res = _api_get("/api/summary")
+    if not res.get("error"):
+        return res
+    # Fallback to direct Python calculation
+    try:
+        from src.core import mt5_connector
+        acc = mt5_connector.get_account_info() or {}
+        pos = mt5_connector.get_all_open_positions() or []
+        deals = mt5_connector.get_closed_positions_today() or []
+        today_pnl = sum(float(d.get("profit", 0.0)) for d in deals)
+        floating = sum(float(p.get("profit", 0.0)) for p in pos)
+        return {
+            "balance": acc.get("balance", 0.0),
+            "equity": acc.get("equity", 0.0),
+            "margin_free": acc.get("margin_free", 0.0),
+            "open_positions_count": len(pos),
+            "floating_pnl": floating,
+            "today_closed_trades_count": len(deals),
+            "today_pnl": today_pnl,
+            "active_symbol": getattr(config, "SYMBOL", "XAUUSD-ECNc"),
+            "trading_mode": getattr(config, "TRADING_MODE", "pairs"),
+            "trading_paused": getattr(config, "TRADING_PAUSED", False),
+        }
+    except Exception as e:
+        return {"error": f"Failed to get summary: {e}"}
 
 
 def get_open_positions() -> dict:
     """GET /api/open-positions - ticket, symbol, type, volume, SL/TP, floating P/L."""
-    return _api_get("/api/open-positions")
+    res = _api_get("/api/open-positions")
+    if not res.get("error"):
+        return res
+    try:
+        from src.core import mt5_connector
+        raw_pos = mt5_connector.get_all_open_positions() or []
+        positions = []
+        for p in raw_pos:
+            positions.append({
+                "ticket": p.get("ticket"),
+                "symbol": p.get("symbol"),
+                "type": "BUY" if p.get("type") == 0 else "SELL",
+                "volume": p.get("volume"),
+                "price_open": p.get("price_open"),
+                "sl": p.get("sl"),
+                "tp": p.get("tp"),
+                "profit": p.get("profit", 0.0),
+            })
+        return {"status": "success", "count": len(positions), "positions": positions}
+    except Exception as e:
+        return {"error": f"Failed to get open positions: {e}"}
 
 
 def get_recent_trades(limit: int = 10) -> dict:
     """GET /api/recent-trades?limit=N - closed trade history."""
-    return _api_get("/api/recent-trades", params={"limit": limit})
+    res = _api_get("/api/recent-trades", params={"limit": limit})
+    if not res.get("error"):
+        return res
+    try:
+        from src.core import mt5_connector
+        deals = mt5_connector.get_closed_positions_today() or []
+        return {"status": "success", "count": len(deals[-limit:]), "trades": deals[-limit:]}
+    except Exception as e:
+        return {"error": f"Failed to get recent trades: {e}"}
 
 
 def get_config() -> dict:
-    """GET /api/config - active bot config (DRY_RUN, risk %, threshold, preset, etc.)."""
-    return _api_get("/api/config")
+    """GET /api/config - active bot config."""
+    res = _api_get("/api/config")
+    if not res.get("error"):
+        return res
+    return {
+        "DRY_RUN": getattr(config, "DRY_RUN", False),
+        "TRADING_PAUSED": getattr(config, "TRADING_PAUSED", False),
+        "SYMBOL": getattr(config, "SYMBOL", "XAUUSD-ECNc"),
+        "TRADING_MODE": getattr(config, "TRADING_MODE", "pairs"),
+        "RISK_PERCENT_FX": getattr(config, "RISK_PERCENT_FX", 1.0),
+        "RISK_PERCENT_BTC": getattr(config, "RISK_PERCENT_BTC", 1.5),
+        "RISK_PERCENT_XAU": getattr(config, "RISK_PERCENT_XAU", 1.0),
+        "MAX_OPEN_POSITIONS": getattr(config, "MAX_OPEN_POSITIONS", 6),
+    }
 
 
 def update_config(updates: dict) -> dict:
-    """POST /api/config - change one or more config fields, e.g. {'RISK_PERCENT_BTC': 2.0}."""
-    return _api_post("/api/config", body=updates)
+    """POST /api/config - change one or more config fields."""
+    res = _api_post("/api/config", body=updates)
+    if not res.get("error"):
+        return res
+    updated = []
+    for k, v in updates.items():
+        if hasattr(config, k):
+            setattr(config, k, v)
+            updated.append(k)
+    return {"status": "success", "message": f"Updated config directly: {updated}", "updated_keys": updated}
 
 
 def set_strategy_preset(preset: str) -> dict:
@@ -111,16 +187,24 @@ def set_strategy_preset(preset: str) -> dict:
 
 def pause_trading() -> dict:
     """POST /api/pause - TRADING_PAUSED = True."""
-    return _api_post("/api/pause")
+    res = _api_post("/api/pause")
+    if not res.get("error"):
+        return res
+    config.TRADING_PAUSED = True
+    return {"status": "success", "message": "Trading paused successfully", "trading_paused": True}
 
 
 def resume_trading() -> dict:
     """POST /api/resume - TRADING_PAUSED = False."""
-    return _api_post("/api/resume")
+    res = _api_post("/api/resume")
+    if not res.get("error"):
+        return res
+    config.TRADING_PAUSED = False
+    return {"status": "success", "message": "Trading resumed successfully", "trading_paused": False}
 
 
 def retrigger_cycle() -> dict:
-    """POST /api/retrigger_cycle ΓÇö Force/retrigger an immediate market analysis cycle."""
+    """POST /api/retrigger_cycle — Force/retrigger an immediate market analysis cycle."""
     return _api_post("/api/retrigger_cycle")
 
 
@@ -177,8 +261,8 @@ TOOLS = [
         {"preset": {"type": "string", "description": "Preset name, e.g. 'v1', 'v2', 'v3'"}},
         required=["preset"],
     ),
-    _tool("pause_trading", "Pause the bot ΓÇö stop opening new trades. Existing open positions are untouched."),
-    _tool("resume_trading", "Resume the bot ΓÇö allow new trades to open again."),
+    _tool("pause_trading", "Pause the bot — stop opening new trades. Existing open positions are untouched."),
+    _tool("resume_trading", "Resume the bot — allow new trades to open again."),
     _tool("retrigger_cycle", "Force or retrigger an immediate market analysis cycle (run LLM consensus & risk check now without waiting for next candle)."),
 ]
 
@@ -190,34 +274,34 @@ the relevant tool - never guess numbers, always call a tool to get real data.
 
 When reporting summary performance (when user asks for summary, /summary, status, performa, or performance), ALWAYS call get_summary tool first and format your response in a rich, structured, executive style like this:
 
-≡ƒôè **LAPORAN PERFORMA TRADING BOT**
-ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü
-≡ƒÆ╝ **Informasi Akun MT5**:
-ΓÇó Balance: $... | Equity: $...
-ΓÇó Floating P/L: $... (... posisi terbuka)
-ΓÇó Free Margin: $...
+📊 **LAPORAN PERFORMA TRADING BOT**
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+💼 **Informasi Akun MT5**:
+• Balance: $... | Equity: $...
+• Floating P/L: $... (... posisi terbuka)
+• Free Margin: $...
 
-≡ƒôê **Statistik Performa Trading**:
-ΓÇó Total Siklus: ... | Total Order: ...
-ΓÇó Trade Tertutup: ... posisi
-ΓÇó **Net P/L**: **+$... USD** ≡ƒƒó (atau ≡ƒö┤ jika loss)
-ΓÇó **Win Rate**: **...%** (... Menang / ... Kalah / ... BEP)
-ΓÇó Profit Factor: ... (Gross Win: +$... | Gross Loss: -$... )
+📈 **Statistik Performa Trading**:
+• Total Siklus: ... | Total Order: ...
+• Trade Tertutup: ... posisi
+• **Net P/L**: **+$... USD** 🟢 (atau 🔴 jika loss)
+• **Win Rate**: **...%** (... Menang / ... Kalah / ... BEP)
+• Profit Factor: ... (Gross Win: +$... | Gross Loss: -$... )
 
-≡ƒÆ▒ **Breakdown Per Pasangan Simbol**:
+💵 **Breakdown Per Pasangan Simbol**:
 (rincikan data per_symbol dari JSON summary: Win Rate, Total Trade, Net P/L)
 
-ΓÜÖ∩╕Å **Status Sistem**:
-ΓÇó Mode Trading: ...
-ΓÇó Mode AI: ...
-ΓÇó Loss Streak: ... | Recovery Mode: ...
+⚙️ **Status Sistem**:
+• Mode Trading: ...
+• Mode AI: ...
+• Loss Streak: ... | Recovery Mode: ...
 
 Before calling update_config, if you're not certain of the exact config key name or its current
 value, call get_config first to check - field names must match exactly or the change will be
 rejected by the bot.
 
 For any change (config, preset, pause/resume, retrigger cycle), confirm clearly and briefly what you changed or executed after
-the tool call succeeds ΓÇö mention the old and new value if you have them. If a tool call returns an
+the tool call succeeds — mention the old and new value if you have them. If a tool call returns an
 error, tell the user plainly what failed; don't pretend it worked.
 
 If the user asks to start or run an analysis cycle, trigger or retrigger a cycle, or check the market immediately (e.g. "/start", "/trigger", "/retrigger", "/cycle", "start cycle", "start", "mulai cycle", "jalankan cycle", "analisa sekarang", "cek market"), ALWAYS call retrigger_cycle to start a market analysis cycle right away.
@@ -247,6 +331,7 @@ def _sanitize_history(history: list) -> list:
 
 
 def run_agent_turn(user_text: str, history: list) -> str:
+    client = get_openai_client()
     clean_history = _sanitize_history(history)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + clean_history + [{"role": "user", "content": user_text}]
 
@@ -293,10 +378,10 @@ def run_agent_turn(user_text: str, history: list) -> str:
             func = TOOL_FUNCTIONS.get(tool_call.function.name)
             try:
                 args = json.loads(tool_call.function.arguments or "{}")
-                print(f"≡ƒ¢á∩╕Å [TELEGRAM TOOL] Executing tool {tool_call.function.name}({args})...")
+                print(f" 🛠️ [TELEGRAM TOOL] Executing tool {tool_call.function.name}({args})...")
                 result = func(**args) if func else {"error": f"Unknown tool {tool_call.function.name}"}
             except Exception as e:
-                print(f"Γ¥î [TELEGRAM TOOL ERROR] {tool_call.function.name}: {e}")
+                print(f" [TELEGRAM TOOL ERROR] {tool_call.function.name}: {e}")
                 result = {"error": str(e)}
             messages.append({
                 "role": "tool",
@@ -306,60 +391,67 @@ def run_agent_turn(user_text: str, history: list) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 5. TELEGRAM WIRING
+# 5. TELEGRAM WIRING (Optional standalone runner)
 # ---------------------------------------------------------------------------
 
 CONVERSATION_HISTORY = []
 
 
-def is_authorized(update: Update) -> bool:
+def is_authorized(update) -> bool:
     if not config.TELEGRAM_CHAT_ID:
         return True  # If no TELEGRAM_CHAT_ID restricted, allow chat
     return str(update.effective_chat.id) == str(config.TELEGRAM_CHAT_ID)
 
 
-async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_message(update, context):
     user_name = update.effective_user.username or update.effective_user.first_name if update.effective_user else "Unknown"
     chat_id = update.effective_chat.id
     text = (update.message.text or "").strip()
 
     if text.lower() in ("/reset", "/clear", "reset", "clear"):
         CONVERSATION_HISTORY.clear()
-        print(f"≡ƒº╣ [TELEGRAM RESET] Chat #{chat_id} reset conversation history.")
-        await update.message.reply_text("≡ƒº╣ Riwayat percakapan telah direset. Silakan kirim pesan baru!")
+        print(f" 🧹 [TELEGRAM RESET] Chat #{chat_id} reset conversation history.")
+        await update.message.reply_text("🧹 Riwayat percakapan telah direset. Silakan kirim pesan baru!")
         return
 
-    print(f"≡ƒô⌐ [TELEGRAM RECV] Chat #{chat_id} (@{user_name}): '{text}'")
+    print(f" 📩 [TELEGRAM RECV] Chat #{chat_id} (@{user_name}): '{text}'")
 
     if not is_authorized(update):
-        print(f"≡ƒÜ½ [TELEGRAM UNAUTHORIZED] Chat #{chat_id} (@{user_name}) is not authorized! Allowed: {config.TELEGRAM_CHAT_ID}")
-        await update.message.reply_text("Γ¢ö Anda tidak memiliki akses ke Telegram AI Agent ini.")
+        print(f" ⛔ [TELEGRAM UNAUTHORIZED] Chat #{chat_id} (@{user_name}) is not authorized! Allowed: {config.TELEGRAM_CHAT_ID}")
+        await update.message.reply_text("⛔ Anda tidak memiliki akses ke Telegram AI Agent ini.")
         return
 
     await update.message.chat.send_action("typing")
     try:
         reply = run_agent_turn(text, CONVERSATION_HISTORY)
     except Exception as e:
-        print(f"Γ¥î [TELEGRAM AGENT ERROR] {e}")
+        print(f" [TELEGRAM AGENT ERROR] {e}")
         CONVERSATION_HISTORY.clear()  # Auto-clear broken state on error
-        reply = f"ΓÜá∩╕Å Terjadi kesalahan: {e}\n\n*(Riwayat percakapan telah direset otomatis agar bot dapat membalas kembali)*"
+        reply = f"⚠️ Terjadi kesalahan: {e}\n\n*(Riwayat percakapan telah direset otomatis agar bot dapat membalas kembali)*"
 
-    print(f"≡ƒôñ [TELEGRAM SENT] Reply to Chat #{chat_id}: '{reply[:80]}...'")
+    print(f" 📤 [TELEGRAM SENT] Reply to Chat #{chat_id}: '{reply[:80]}...'")
     await update.message.reply_text(reply)
 
 
 def run_ai_agent():
+    try:
+        from telegram import Update
+        from telegram.ext import Application, MessageHandler, ContextTypes, filters
+    except ImportError:
+        print(" [TELEGRAM ERROR] python-telegram-bot is not installed. To run standalone agent: pip install python-telegram-bot")
+        return
+
     token = getattr(config, "TELEGRAM_TOKEN", None) or os.getenv("TELEGRAM_BOT_TOKEN", "") or os.getenv("TELEGRAM_TOKEN", "")
     if not token:
-        print("Γ¥î [TELEGRAM ERROR] TELEGRAM_TOKEN or TELEGRAM_BOT_TOKEN is missing in environment/.env!")
+        print(" [TELEGRAM ERROR] TELEGRAM_TOKEN or TELEGRAM_BOT_TOKEN is missing in environment/.env!")
         print("   Please set TELEGRAM_BOT_TOKEN=your_token in your .env file to enable Telegram AI Agent.")
         return
 
     chat_id = getattr(config, "TELEGRAM_CHAT_ID", "")
     print("=" * 60)
-    print(f"≡ƒñû Starting Telegram AI Agent (Target API: {API_BASE_URL})...")
-    print(f"≡ƒöÆ Authorized Chat ID: {chat_id if chat_id else 'ANY (Unrestricted)'}")
-    print("ΓÜí Polling for Telegram messages...")
+    print(f" 🤖 Starting Telegram AI Agent (Target API: {API_BASE_URL})...")
+    print(f" 🔒 Authorized Chat ID: {chat_id if chat_id else 'ANY (Unrestricted)'}")
+    print(" ⚡ Polling for Telegram messages...")
     print("=" * 60)
 
     api_base = getattr(config, "TELEGRAM_API_BASE", "").rstrip("/")
@@ -373,3 +465,4 @@ def run_ai_agent():
 
 if __name__ == "__main__":
     run_ai_agent()
+

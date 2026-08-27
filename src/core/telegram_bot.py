@@ -77,6 +77,20 @@ def send_telegram_msg(text, reply_markup=None, chat_id=None):
         return False
 
 
+def send_chat_action(action="typing", chat_id=None):
+    """Send chat action (e.g. typing) to Telegram."""
+    if not config.TELEGRAM_ENABLED or not config.TELEGRAM_BOT_TOKEN:
+        return
+    target_chat = chat_id or config.TELEGRAM_CHAT_ID
+    if not target_chat:
+        return
+    try:
+        url = _get_api_url("sendChatAction")
+        requests.post(url, json={"chat_id": target_chat, "action": action}, timeout=5)
+    except Exception:
+        pass
+
+
 def answer_callback_query(callback_query_id, text=None, show_alert=False):
     """Acknowledge a callback button press."""
     try:
@@ -629,6 +643,21 @@ def _is_user_authorized(from_id, chat_id):
     return (str(from_id).strip() in allowed_ids) or (str(chat_id).strip() in allowed_ids)
 
 
+def _handle_ai_agent_message(text: str, chat_id: str):
+    """Processes natural language conversation via AI agent in a background daemon thread."""
+    def _worker():
+        send_chat_action("typing", chat_id=chat_id)
+        try:
+            from tele_bot.telegram_ai_agent import run_agent_turn, CONVERSATION_HISTORY
+            reply = run_agent_turn(text, CONVERSATION_HISTORY)
+            send_telegram_msg(reply, chat_id=chat_id)
+        except Exception as e:
+            print(f" [TG AI AGENT ERROR] {e}")
+            send_telegram_msg(f"⚠️ Terjadi kendala saat memproses AI Agent: `{e}`", chat_id=chat_id)
+
+    threading.Thread(target=_worker, daemon=True, name="TelegramAIAgentWorker").start()
+
+
 def _process_update(update):
     """Processes a single incoming Telegram update (Message or Callback Query)."""
     global _last_update_id
@@ -653,7 +682,7 @@ def _process_update(update):
         if not text:
             return
 
-        print(f" [TELEGRAM BOT] Received command: '{text}' from {target_chat}")
+        print(f" [TELEGRAM BOT] Received message: '{text}' from {target_chat}")
         parts = text.split()
         cmd_raw = parts[0].lower()
         cmd = cmd_raw.split("@")[0]  # Remove @botname suffix
@@ -702,6 +731,16 @@ def _process_update(update):
         elif any(p in cmd for p in ("gbpusd", "eurjpy", "gbpaud", "audcad", "eurchf", "audchf", "cadchf", "xauusd", "btcusd", "gold", "btc")):
             tf_custom = args[0] if args else None
             run_ondemand_analysis(parts[0], target_chat, timeframe_input=tf_custom)
+        elif cmd in ("/reset", "/clear", "reset", "clear"):
+            try:
+                from tele_bot.telegram_ai_agent import CONVERSATION_HISTORY
+                CONVERSATION_HISTORY.clear()
+            except Exception:
+                pass
+            send_telegram_msg("🧹 Riwayat percakapan AI Agent telah direset. Silakan kirim pesan baru!", chat_id=target_chat)
+        else:
+            # Route natural language conversation to AI agent
+            _handle_ai_agent_message(text, target_chat)
         return
 
     # 2. Handle Inline Button Callbacks
