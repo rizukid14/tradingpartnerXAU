@@ -65,6 +65,19 @@ class UI:
             return f"{cls.BG_DARK} HOLD {cls.RST}"
 
     @classmethod
+    def badge_verdict(cls, verdict):
+        v = str(verdict or "").upper()
+        if v == "APPROVE":
+            return f"{cls.GREEN}[APPROVE]{cls.RST}"
+        elif v == "REVISE":
+            return f"{cls.YELLOW}[REVISE]{cls.RST}"
+        elif v == "REJECT":
+            return f"{cls.RED}[REJECT]{cls.RST}"
+        elif v:
+            return f"{cls.CYAN}[{v}]{cls.RST}"
+        return ""
+
+    @classmethod
     def badge_pnl(cls, pnl):
         if pnl > 0.04:
             return f"{cls.GREEN}+${pnl:.2f}{cls.RST}"
@@ -243,17 +256,24 @@ def render_candidate_alert_box(candidate):
     """Renders an institutional ASCII panel when Fast Radar detects a candidate."""
     direction_color = UI.GREEN if candidate.direction == 1 else UI.RED
     dir_str = "BUY" if candidate.direction == 1 else "SELL"
+    tf_str = getattr(candidate, "timeframe", "H1")
+    t_wib = getattr(candidate, "timestamp_wib", "") or datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S WIB")
+    
+    zone_name = "Discount Zone (Cheap)" if candidate.dealing_range_pos <= 0.38 else (
+        "Premium Zone (Expensive)" if candidate.dealing_range_pos >= 0.62 else "Equilibrium (Mid-Range)"
+    )
     
     items = [
-        f"{UI.BOLD}{direction_color}⚡ STAGE 1 QUANT RADAR TRIGGER: {candidate.symbol} [{dir_str}]{UI.RST}",
+        f"{UI.BOLD}{direction_color}⚡ STAGE 1 QUANT RADAR TRIGGER: {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
         "---",
-        f"• Setup Type  : {UI.WHITE}{candidate.setup_type}{UI.RST}",
-        f"• Macro Trend : {UI.CYAN}{candidate.macro_compass}{UI.RST}",
-        f"• Location    : {UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Dealing Range (Wick {candidate.rejection_wick_ratio*100:.0f}%){UI.RST}",
-        f"• Proposal    : Entry={candidate.trigger_price} | SL={candidate.suggested_sl} | TP={candidate.suggested_tp} (R:R {candidate.risk_reward_ratio:.1f}:1)",
-        f"• Friction    : Spread={candidate.current_spread_pts} pts | ATR={candidate.current_atr_pts:.1f} pts"
+        (f"• Trigger Time : ", f"{UI.CYAN}{t_wib}{UI.RST}"),
+        (f"• Setup Type   : ", f"{UI.WHITE}{candidate.setup_type} ({tf_str}){UI.RST}"),
+        (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
+        (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (Wick {candidate.rejection_wick_ratio*100:.0f}%)"),
+        (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
+        (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
-    return UI.make_box(f"QUANT SETUP DETECTED: {candidate.symbol}", items, width=76, border_color=UI.PURPLE)
+    return UI.make_box(f"QUANT SETUP DETECTED: {candidate.symbol} [{tf_str} | {t_wib}]", items, width=76, border_color=UI.PURPLE)
 
 
 def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, open_positions=None, active_models=None):

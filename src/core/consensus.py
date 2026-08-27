@@ -83,10 +83,15 @@ def _apply_sltp_rules(sl_points, tp_points):
             tp_points = config.default_tp_points_for(config.SYMBOL)
 
         min_rr = config.LLM_MIN_RR_RATIO
+        max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
         min_tp = int(sl_points * min_rr)
+        max_tp = int(sl_points * max_rr)
         if tp_points < min_tp:
             _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
             tp_points = min_tp
+        elif tp_points > max_tp:
+            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
+            tp_points = max_tp
 
         try:
             account = mt5.account_info() if 'mt5' in dir() else None
@@ -198,12 +203,14 @@ def calculate_consensus(decisions):
         sl_price = exec_block.get("sl_price") or dec.get("invalidation_price")
         tp_price = exec_block.get("tp_price") or dec.get("target_price")
 
+        base_ref = entry_price if (entry_type != "market" and isinstance(entry_price, (int, float)) and entry_price > 0) else ref_price
+
         sl = dec.get("sl_points")
         tp = dec.get("tp_points")
-        if (sl is None or sl <= 0) and sl_price and point > 0 and ref_price > 0:
-            sl = int(round(abs(ref_price - float(sl_price)) / point))
-        if (tp is None or tp <= 0) and tp_price and point > 0 and ref_price > 0:
-            tp = int(round(abs(ref_price - float(tp_price)) / point))
+        if (sl is None or sl <= 0) and sl_price and point > 0 and base_ref > 0:
+            sl = int(round(abs(base_ref - float(sl_price)) / point))
+        if (tp is None or tp <= 0) and tp_price and point > 0 and base_ref > 0:
+            tp = int(round(abs(base_ref - float(tp_price)) / point))
 
         setup_label = dec.get("setup")
         
@@ -220,7 +227,7 @@ def calculate_consensus(decisions):
         else:
             sltp_info = "SL/TP: -"
         
-        verdict_str = f" [{dec.get('verdict')}]" if dec.get("verdict") else ""
+        verdict_str = f" {UI.badge_verdict(dec.get('verdict'))}" if dec.get("verdict") else ""
         box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar}{verdict_str} | {UI.DIM}{sltp_info}{UI.RST}")
         
         # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid, Risk Flag)
@@ -347,10 +354,14 @@ def calculate_consensus(decisions):
 
     # Qualified Hard Risk Veto Engine (Preserves Capital against Critical Traps)
     hard_veto_models = []
+    VALID_HARD_VETO_FLAGS = (
+        "COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
+        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW"
+    )
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")
         vd = dec.get("verdict")
-        if vd == "REJECT" and rf in ("COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP", "SPREAD_SPIKE"):
+        if (vd == "REJECT" or dec.get("veto_reason")) and rf in VALID_HARD_VETO_FLAGS:
             hard_veto_models.append((model_name, rf, dec.get("veto_reason") or dec.get("reasoning") or "Critical Risk Detected"))
 
     if hard_veto_models and consensus_signal in ("BUY", "SELL"):
@@ -394,6 +405,10 @@ def calculate_consensus(decisions):
         conf_list.append(dec.get("confidence", 0.5))
         
         exec_block = dec.get("execution") or {}
+        entry_type = (exec_block.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
+        ep = exec_block.get("entry_price") or dec.get("entry_price")
+        base_ref = ep if (entry_type != "market" and isinstance(ep, (int, float)) and ep > 0) else ref_price
+
         inv_val = exec_block.get("sl_price") or dec.get("invalidation_price")
         if isinstance(inv_val, (int, float)) and inv_val > 0:
             inv_list.append(inv_val)
@@ -403,37 +418,25 @@ def calculate_consensus(decisions):
             tgt_list.append(tgt_val)
         
         sl_val = dec.get("sl_points")
-        if (sl_val is None or sl_val <= 0) and inv_val and point > 0 and ref_price > 0:
-            sl_val = int(round(abs(ref_price - float(inv_val)) / point))
+        if (sl_val is None or sl_val <= 0) and inv_val and point > 0 and base_ref > 0:
+            sl_val = int(round(abs(base_ref - float(inv_val)) / point))
         if isinstance(sl_val, (int, float)) and sl_val > 0:
             sl_list.append(sl_val)
         
         tp_val = dec.get("tp_points")
-        if (tp_val is None or tp_val <= 0) and tgt_val and point > 0 and ref_price > 0:
-            tp_val = int(round(abs(ref_price - float(tgt_val)) / point))
+        if (tp_val is None or tp_val <= 0) and tgt_val and point > 0 and base_ref > 0:
+            tp_val = int(round(abs(base_ref - float(tgt_val)) / point))
         if isinstance(tp_val, (int, float)) and tp_val > 0:
             tp_list.append(tp_val)
         
-        et = (exec_block.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
-        if et not in ("market", "buy_stop", "sell_stop", "buy_limit", "sell_limit"):
-            et = "market"
-        entry_type_votes[et] = entry_type_votes.get(et, 0) + 1
+        if entry_type not in ("market", "buy_stop", "sell_stop", "buy_limit", "sell_limit"):
+            entry_type = "market"
+        entry_type_votes[entry_type] = entry_type_votes.get(entry_type, 0) + 1
         
-        ep = exec_block.get("entry_price") or dec.get("entry_price")
         if isinstance(ep, (int, float)) and ep > 0:
             entry_price_list.append(ep)
 
     outlier_notes = []
-    inv_list, note1 = _drop_standalone_outlier(inv_list, "Invalidation Price")
-    if note1: outlier_notes.append(note1)
-    tgt_list, note2 = _drop_standalone_outlier(tgt_list, "Target Price")
-    if note2: outlier_notes.append(note2)
-    sl_list, note3 = _drop_standalone_outlier(sl_list, "SL Points")
-    if note3: outlier_notes.append(note3)
-    tp_list, note4 = _drop_standalone_outlier(tp_list, "TP Points")
-    if note4: outlier_notes.append(note4)
-    entry_price_list, note5 = _drop_standalone_outlier(entry_price_list, "Entry Price")
-    if note5: outlier_notes.append(note5)
 
     # entry_type: mayoritas dari model yang setuju arah; seri -> market
     final_entry_type = "market"
@@ -459,26 +462,9 @@ def calculate_consensus(decisions):
 
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
 
-    try:
-        from config import mt5
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        si = mt5.symbol_info(config.SYMBOL)
-        point = si.point if si else 0.00001
-        if tick and si and point:
-            entry_price = tick.ask if consensus_signal == "BUY" else tick.bid
-            if entry_price > 0:
-                if consensus_signal == "BUY":
-                    final_inv = entry_price - (final_sl * point)
-                    final_tgt = entry_price + (final_tp * point)
-                else:
-                    final_inv = entry_price + (final_sl * point)
-                    final_tgt = entry_price - (final_tp * point)
-    except Exception:
-        pass
-
     # Guardrail entry pending: jarak dari harga harus dalam [2x spread, 1.5x ATR]
     # dari harga saat ini, dan arah konsisten dengan entry_type. Kalau tidak
-    # valid -> downgrade ke market (perilaku lama) supaya sinyal tidak hilang.
+    # valid -> downgrade ke market supaya sinyal tidak hilang.
     if final_entry_type != "market" and final_entry_price is not None:
         try:
             from config import mt5
@@ -507,8 +493,32 @@ def calculate_consensus(decisions):
                 outlier_notes.append(f"Entry pending {final_entry_price} (jarak {dist_pts:.0f} pts) di luar band [2x spread, 1.5x ATR] -> downgrade ke market")
                 final_entry_type = "market"
                 final_entry_price = None
+                # Re-anchor SL/TP jika SL limit terlalu lebar (> 1.2x ATR) untuk market execution
+                if atr_pts > 0 and final_sl > int(atr_pts * 1.2):
+                    old_sl = final_sl
+                    final_sl = int(atr_pts * 1.0)
+                    final_tp = int(round(final_sl * 1.5))
+                    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+                    outlier_notes.append(f"SL dire-anchor dari {old_sl} pts ke {final_sl} pts (1.0x ATR) pasca-downgrade market")
         except Exception:
             pass
+
+    try:
+        from config import mt5
+        tick = mt5.symbol_info_tick(config.SYMBOL)
+        si = mt5.symbol_info(config.SYMBOL)
+        point = si.point if si else 0.00001
+        if tick and si and point:
+            exec_ref = final_entry_price if (final_entry_type != "market" and final_entry_price) else (tick.ask if consensus_signal == "BUY" else tick.bid)
+            if exec_ref > 0:
+                if consensus_signal == "BUY":
+                    final_inv = exec_ref - (final_sl * point)
+                    final_tgt = exec_ref + (final_tp * point)
+                else:
+                    final_inv = exec_ref + (final_sl * point)
+                    final_tgt = exec_ref - (final_tp * point)
+    except Exception:
+        pass
 
     all_notes = []
     for onote in outlier_notes:
@@ -571,8 +581,9 @@ def calculate_consensus(decisions):
     agreeing_details = []
     for m in agreeing_models:
         d = decisions.get(m, {})
-        et = (d.get("entry_type") or "market").strip().lower()
-        ep = d.get("entry_price")
+        exec_block = d.get("execution", {}) if isinstance(d.get("execution"), dict) else {}
+        et = (exec_block.get("entry_type") or d.get("entry_type") or "market").strip().lower()
+        ep = exec_block.get("entry_price") or d.get("entry_price")
         if et != "market" and ep:
             agreeing_details.append(f"{m} ({et} @ {ep})")
         else:

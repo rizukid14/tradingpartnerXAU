@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 from datetime import datetime
@@ -112,6 +113,37 @@ class TestMarketScanner(unittest.TestCase):
         self.assertIn("APPROVE", prompt)
         self.assertIn("REVISE", prompt)
 
+    def test_multi_touch_candidate_payload(self):
+        cand = CandidateSetup(
+            symbol="CADJPY-ECNc",
+            setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+            direction=1,
+            trigger_price=108.50,
+            macro_compass="D1_BULLISH_TREND (ADX 26.5)",
+            dealing_range_pos=0.45,
+            rejection_wick_ratio=0.25,
+            current_spread_pts=12,
+            current_atr_pts=380,
+            key_support=108.40,
+            key_resistance=109.80,
+            suggested_sl=108.15,
+            suggested_tp=109.35,
+            risk_reward_ratio=2.5,
+            metadata={
+                "entry_type": "buy_limit",
+                "entry_price": 108.50,
+                "zone_level": 108.40,
+                "zone_touches": 3,
+                "range_age_hours": 48.0,
+                "wave_regime": "SUPER_COMPRESSION_THRUST"
+            }
+        )
+        prompt = build_high_density_dossier_prompt(cand)
+        self.assertIn("MULTI_TOUCH_BREAKOUT_RETEST", prompt)
+        self.assertIn("Structural Zone Touch Count: 3 touches", prompt)
+        self.assertIn("SUPER_COMPRESSION_THRUST", prompt)
+        self.assertIn("BUY_LIMIT @ 108.5", prompt)
+
 
     def test_session_aware_pair_filtering(self):
         # 1. Tokyo Session (10:00 WIB)
@@ -143,13 +175,15 @@ class TestMarketScanner(unittest.TestCase):
             {"ticket": 12345, "symbol": "GBPUSD-ECNc", "type": "BUY", "volume": 0.05, "profit": 15.20},
             {"ticket": 12346, "symbol": "USDJPY-ECNc", "type": "SELL", "volume": 0.05, "profit": -4.80}
         ]
-        # Test that calling alert_hourly_radar_recap executes without error (returns boolean)
-        result = tg.alert_hourly_radar_recap(
-            scanner=self.scanner,
-            open_positions=mock_positions,
-            today_pnl=42.50
-        )
-        self.assertIsInstance(result, bool)
+        # Test that calling alert_hourly_radar_recap executes without error and does NOT send live Telegram messages
+        with patch("src.core.telegram_alerts.send_message", return_value=True) as mock_send:
+            result = tg.alert_hourly_radar_recap(
+                scanner=self.scanner,
+                open_positions=mock_positions,
+                today_pnl=42.50
+            )
+            self.assertTrue(result)
+            mock_send.assert_called_once()
 
 
 if __name__ == "__main__":

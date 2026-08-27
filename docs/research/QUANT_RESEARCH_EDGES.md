@@ -117,3 +117,22 @@ Riset untuk mencari alternatif pengganti pair dengan spread lebar:
 
 ## 7. Pola Harmonik yang Dieliminasi (NO-EDGE)
 Pengujian mandiri terhadap **1.068 kombinasi pola Harmonik** (Gartley, Bat, Butterfly, Crab) menghasilkan **1.067 NO-EDGE**. Pola Harmonik dibuang permanen karena performa tinggi di masa lalu terbukti sebagai *Small Sample Bias* ($n < 30$).
+
+---
+
+## 8. Profil DNA Kuantitatif EURUSD & Atlas 22-Pair SMC (Riset 26 Agustus 2026 — 55 Tahun)
+
+### A. Bedah Karakteristik `EURUSD-ECNc`:
+- **Peringkat Global**: Rank 7 dari 22 Pasangan Mata Uang.
+- **Rasio Spread vs ADR**: Spread 10–12 pts vs ADR 74.4 pips (**$< 2\%$ friksi** — instrumen paling bersih dan likuid di dunia).
+- **Edge Utama**:
+  1. **`London Judas Sweep (14:00 – 16:00 WIB)`**: Sapuan semu High/Low sesi Asia yang langsung memantul kembali ke rentang dengan *rejection wick* $\ge 30\%$ memiliki Win Rate **58.4%**.
+  2. **`SMC Liquidity Sweep H1 (10.7 Tahun)`**: Menghasilkan **Profit Factor 0.84** (Win Rate 42.0% pada R:R 2.2:1), setup terbaik di seluruh pengujian H1 EURUSD.
+  3. **`H4 Macro Breakout (19 Tahun)`**: Menghasilkan Net Profit **+$7,300 (PF 1.13)** secara mekanikal mandiri tanpa filter AI.
+- **Sesi Terbaik**: London Open (14:00–18:00 WIB) & NY Overlap (19:00–22:00 WIB). Sesi Tokyo dihindari (sideways / range sempit).
+
+### B. Hukum Universal 22-Pair Atlas DNA:
+1. **Kluster JPY (`USDJPY`, `GBPJPY`, `EURJPY`, `AUDJPY`, `CHFJPY`)**: Mesin *Trend Pullback*. Dilarang keras counter-trend; buy di diskon saat D1 Bullish.
+2. **Kluster Swiss Franc (`GBPCHF`, `USDCHF`, `CHFJPY`)**: Benci breakout (+281% lebih unggul di *Mean Reversion*). Masuk saat harga menyentuh ujung Premium $\ge 80\%$.
+3. **Kluster Gold & High Beta (`XAUUSD`, `GBPAUD`, `EURAUD`)**: Kapasitas ekspansi makro raksasa ($+\$36.8k$ di Gold H4). Wajib pasang TP bertingkat (TP1 1.0x & TP2 1.2x + Trailing Stop).
+4. **Pasangan yang Dieliminasi dari Intraday (`EURCHF`, `EURGBP`, `NZDCAD`, `AUDCHF`)**: Rasio spread terhadap rentang harian terlalu besar, memicu *fee churn* jika ditradingkan intraday.

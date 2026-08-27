@@ -120,8 +120,7 @@ def server_to_wib(dt_or_ts):
 def init_mt5():
     """Initializes connection to MT5 terminal and verifies account & symbol availability."""
     if config.DRY_RUN:
-        print("[DRY RUN MODE] MetaTrader 5 live order execution disabled.")
-        return True
+        print(f" {UI.YELLOW}[DRY RUN MODE]{UI.RST} Membaca data live MT5 untuk simulasi (eksekusi order riil dinonaktifkan).")
 
     print(f"[MT5] Connecting to MT5 Terminal for symbol {config.SYMBOL}...")
 
@@ -481,7 +480,9 @@ def get_closed_positions_today(symbol=None, lookback_hours=0, magic=None):
         opened_today = open_time >= int(today_start.timestamp())
 
         closed.append({
+            "deal_ticket": deal.ticket,
             "ticket": deal.position_id,
+            "position_id": deal.position_id,
             "symbol": deal.symbol,
             "direction": pos_type,
             "profit": round(deal.profit + deal.swap + net_comm, 2),
@@ -804,6 +805,9 @@ def get_filling_policy(symbol):
 
 def _safe_order_send(request):
     """Sends order request safely supporting both native MT5 and mt5linux RPC bridge."""
+    if getattr(config, "DRY_RUN", False):
+        print(f" [DRY RUN HARD SHIELD] order_send dicegah karena DRY_RUN=True.")
+        return None
     try:
         res = mt5.order_send(request)
         if res is not None:
@@ -1153,7 +1157,7 @@ def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_
 
     # Expiration: server time (GMT+3). Pakai offset broker biar akurat.
     if not expiration_minutes:
-        expiration_minutes = config.PENDING_ORDER_EXPIRY_MINUTES
+        expiration_minutes = config.get_pending_order_expiry_minutes()
     now_server = datetime.now(timezone.utc) + timedelta(seconds=get_broker_offset_seconds(symbol))
     expiration = int(now_server.timestamp()) + int(expiration_minutes * 60)
 

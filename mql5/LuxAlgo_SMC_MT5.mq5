@@ -39,6 +39,12 @@ input color    InpEquilibriumColor  = C'120,135,155'; // Equilibrium 50% Line (S
 input color    InpDiscountColor     = C'18,44,35';    // Discount Zone Box (0% - 38.2%)
 input color    InpRangeLowColor     = C'85,190,140';  // 0% Range Low Line (Soft Emerald Green)
 
+input string   InpGroup5            = "=== 5. Equal Highs & Equal Lows (EQH/EQL) ===";
+input bool     InpShowEQH           = true;           // Show Equal Highs / Lows (Liquidity Pools)
+input double   InpEQHThresholdATR   = 0.10;           // ATR Tolerance Threshold (0.10 = 10% ATR)
+input color    InpEQHColor          = C'220,95,110';  // EQH Dotted Line & Tag (Soft Rose Red)
+input color    InpEQLColor          = C'85,190,140';  // EQL Dotted Line & Tag (Soft Emerald Green)
+
 //--- Internal State Structs
 struct SwingPoint {
    int      bar_index;
@@ -534,6 +540,112 @@ int OnCalculate(const int rates_total,
       ObjectSetInteger(0, txt_lo, OBJPROP_FONTSIZE, 8);
       ObjectSetInteger(0, txt_lo, OBJPROP_ANCHOR, ANCHOR_LEFT);
       ObjectSetInteger(0, txt_lo, OBJPROP_SELECTABLE, false);
+   }
+
+   // 6. Equal Highs (EQH) & Equal Lows (EQL) Liquidity Pool Dotted Lines (Recent Active Only)
+   if(InpShowEQH)
+   {
+      // Calculate ATR(14) for EQH/EQL tolerance
+      int atr_period = 14;
+      double tr_sum = 0.0;
+      for(int a = 1; a <= atr_period && a < rates_total - 1; a++)
+      {
+         double tr = MathMax(high[a] - low[a], MathMax(MathAbs(high[a] - close[a+1]), MathAbs(low[a] - close[a+1])));
+         tr_sum += tr;
+      }
+      double atr_val = tr_sum / MathMax(atr_period, 1);
+      if(atr_val <= 0.0) atr_val = _Point * 30;
+      double eq_dist = InpEQHThresholdATR * atr_val;
+
+      // Detect & Render Recent EQH (Max 2 recent unmitigated)
+      int sh_size = ArraySize(swing_highs);
+      int drawn_eqh = 0;
+      for(int i = sh_size - 1; i >= 1 && drawn_eqh < 2; i--)
+      {
+         for(int j = i - 1; j >= 0; j--)
+         {
+            if(MathAbs(swing_highs[i].price - swing_highs[j].price) <= eq_dist)
+            {
+               double p_avg = (swing_highs[i].price + swing_highs[j].price) / 2.0;
+               datetime t_start = swing_highs[j].time;
+               datetime t_end   = swing_highs[i].time;
+
+               // Check if already blown through / mitigated
+               bool mit = false;
+               for(int b = swing_highs[i].bar_index - 1; b >= 0; b--)
+               {
+                  if(close[b] > p_avg + eq_dist) { mit = true; break; }
+               }
+               if(mit) continue;
+
+               string line_name = g_prefix + "EQH_LINE_" + IntegerToString(drawn_eqh);
+               ObjectCreate(0, line_name, OBJ_TREND, 0, t_start, p_avg, t_end, p_avg);
+               ObjectSetInteger(0, line_name, OBJPROP_COLOR, InpEQHColor);
+               ObjectSetInteger(0, line_name, OBJPROP_STYLE, STYLE_DOT);
+               ObjectSetInteger(0, line_name, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, line_name, OBJPROP_RAY_RIGHT, false);
+               ObjectSetInteger(0, line_name, OBJPROP_SELECTABLE, false);
+
+               datetime t_mid = (datetime)(((long)t_start + (long)t_end) / 2);
+               string txt_name = g_prefix + "EQH_TXT_" + IntegerToString(drawn_eqh);
+               ObjectCreate(0, txt_name, OBJ_TEXT, 0, t_mid, p_avg + _Point * 8);
+               ObjectSetString(0, txt_name, OBJPROP_TEXT, "EQH");
+               ObjectSetString(0, txt_name, OBJPROP_FONT, "Segoe UI Semibold");
+               ObjectSetInteger(0, txt_name, OBJPROP_COLOR, InpEQHColor);
+               ObjectSetInteger(0, txt_name, OBJPROP_FONTSIZE, 7);
+               ObjectSetInteger(0, txt_name, OBJPROP_ANCHOR, ANCHOR_LOWER);
+               ObjectSetInteger(0, txt_name, OBJPROP_SELECTABLE, false);
+
+               drawn_eqh++;
+               break;
+            }
+         }
+      }
+
+      // Detect & Render Recent EQL (Max 2 recent unmitigated)
+      int sl_size = ArraySize(swing_lows);
+      int drawn_eql = 0;
+      for(int i = sl_size - 1; i >= 1 && drawn_eql < 2; i--)
+      {
+         for(int j = i - 1; j >= 0; j--)
+         {
+            if(MathAbs(swing_lows[i].price - swing_lows[j].price) <= eq_dist)
+            {
+               double p_avg = (swing_lows[i].price + swing_lows[j].price) / 2.0;
+               datetime t_start = swing_lows[j].time;
+               datetime t_end   = swing_lows[i].time;
+
+               // Check if already blown through / mitigated
+               bool mit = false;
+               for(int b = swing_lows[i].bar_index - 1; b >= 0; b--)
+               {
+                  if(close[b] < p_avg - eq_dist) { mit = true; break; }
+               }
+               if(mit) continue;
+
+               string line_name = g_prefix + "EQL_LINE_" + IntegerToString(drawn_eql);
+               ObjectCreate(0, line_name, OBJ_TREND, 0, t_start, p_avg, t_end, p_avg);
+               ObjectSetInteger(0, line_name, OBJPROP_COLOR, InpEQLColor);
+               ObjectSetInteger(0, line_name, OBJPROP_STYLE, STYLE_DOT);
+               ObjectSetInteger(0, line_name, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, line_name, OBJPROP_RAY_RIGHT, false);
+               ObjectSetInteger(0, line_name, OBJPROP_SELECTABLE, false);
+
+               datetime t_mid = (datetime)(((long)t_start + (long)t_end) / 2);
+               string txt_name = g_prefix + "EQL_TXT_" + IntegerToString(drawn_eql);
+               ObjectCreate(0, txt_name, OBJ_TEXT, 0, t_mid, p_avg - _Point * 8);
+               ObjectSetString(0, txt_name, OBJPROP_TEXT, "EQL");
+               ObjectSetString(0, txt_name, OBJPROP_FONT, "Segoe UI Semibold");
+               ObjectSetInteger(0, txt_name, OBJPROP_COLOR, InpEQLColor);
+               ObjectSetInteger(0, txt_name, OBJPROP_FONTSIZE, 7);
+               ObjectSetInteger(0, txt_name, OBJPROP_ANCHOR, ANCHOR_UPPER);
+               ObjectSetInteger(0, txt_name, OBJPROP_SELECTABLE, false);
+
+               drawn_eql++;
+               break;
+            }
+         }
+      }
    }
 
    ChartRedraw(0);

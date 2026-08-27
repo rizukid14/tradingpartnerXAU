@@ -214,9 +214,8 @@ You are NOT required to follow a single predefined trading strategy. You may use
    * Dukungan command `/analisa <symbol> [timeframe]` (contoh: `/analisa GBPUSD M15`, `/analisa XAUUSD H4`, `/analisa BTCUSD D1`).
    * Normalisasi timeframe fleksibel (`1H` $\rightarrow$ `H1`, `15M` $\rightarrow$ `M15`, `4H` $\rightarrow$ `H4`, `1D` $\rightarrow$ `D1`).
    * Auto-Correction simbol broker VT Markets (`GBPUSD` $\rightarrow$ `GBPUSD-ECNc`, `GOLD` $\rightarrow$ `XAUUSD-ECNc`, `BTC` $\rightarrow$ `BTCUSD.c`) yang memprioritaskan simbol aktif dengan izin trading penuh (`trade_mode = FULL`).
-   * Perbaikan deklarasi menu keyboard `_build_main_menu_keyboard()` untuk memastikan menu kontrol interaktif selalu muncul seketika.
-5. **Master Quant Dossier HTML Report (Book-Grade Report — Chapter 11 & 12)**:
-   * Pembaruan Chapter 11 (LuxAlgo SMC Framework) dan Chapter 12 (2-Pass Cross-Examination Jury, Veto Engine, Live Transcripts, dan Benchmark Matrix) di `docs/research/multiyear_backtest_report.html`.
+   * Perbaikan deklarasi menu keyboard `_build_main_menu_keyboard()` 5. **Master Quant Dossier HTML Report (Book-Grade Report — Chapter 11 & 12)**:
+    * Pembaruan Chapter 11 (LuxAlgo SMC Framework) dan Chapter 12 (2-Pass Cross-Examination Jury, Veto Engine, Live Transcripts, dan Benchmark Matrix) di `report.html`.
 
 ## 8. Pembaruan 26 Agustus 2026 (Sesi Sore) — Session-Aware Pair Selection, Visual MT5 Indicator Upgrade, & `/indicators`
 
@@ -231,5 +230,57 @@ You are NOT required to follow a single predefined trading strategy. You may use
 4. **Unit Test & Linter Green Verification (`tests/test_market_scanner.py`)**:
    * Menambahkan unit test `test_session_aware_pair_filtering` yang memvalidasi isolasi pair Tokyo vs London/NY. Seluruh 9 unit test suite lulus **100% PASS (OK)**.
 
+---
 
+## 9. Pembaruan 26 Agustus 2026 (Sesi Malam) — High-Confidence Multi-Position Split, H1/M30 Execution Hierarchy, Tri-Hourly Digest, & Atlas DNA Overhaul
 
+1. **High-Confidence 3/3 Consensus Multi-Position Split (+25% Boost per Posisi)**:
+   * Jika 3 AI sepakat bulat, confidence rata-rata $\ge 75\%$, dan akun memiliki $\ge 2$ slot kapasitas MT5:
+     - Sistem memecah eksekusi menjadi 2 posisi sekaligus @ $0.625\times$ Base Lot (Pos #1 Target Standar TP1, Pos #2 Target Extended 1.2x TP2 + Trailing Stop).
+     - *True Clean Arithmetic Mean* diterapkan pada seluruh level konsensus dengan plafon realistis $1.25\times \le \text{TP} \le 3.0\times \text{SL}$.
+2. **Strict High-Timeframe Execution Hierarchy (H1 & M30 Only — Anti-Overtrading)**:
+   * Stage 1 Fast Radar memindai secara ketat HANYA pada timeframe struktural **H1 & M30** (*London Judas Sweep, Trend Pullback, NY ADR Exhaustion*).
+   * Timeframe M5 DILARANG KERAS dijadikan trigger pembuka posisi langsung guna menyaring noise wick broker, mencegah overtrading, dan menekan fee churn.
+   * 25 candlestick M5 live dicadangkan eksklusif sebagai berkas audit mikro bagi **DeepSeek V4-Flash (Devil's Advocate)** untuk mendeteksi *falling knife* dan menjatuhkan Hard Risk VETO (`COUNTER_TREND_MOMENTUM`, `LIQUIDITY_TRAP`) sebelum eksekusi MT5.
+3. **Penyelarasan Kapasitas Akun & Pembersihan Duplikasi `.env`**:
+   * Memperbaiki duplikasi `MAX_OPEN_POSITIONS = 6` dan `PENDING_ORDER_MAX_ACTIVE = 4` di [.env](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/.env) sehingga kuota 6 posisi dan 4 pending aktif konsisten di seluruh modul.
+4. **Rekapitulasi 3 Jam Terjadwal Telegram (`alert_trihourly_radar_recap`)**:
+   * Pengiriman rekap otomatis setiap jam kelipatan 3 (00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, dan 21:00 WIB) yang merangkum:
+     - 📥 Order yang berhasil terpasang dalam 3 jam terakhir
+     - 🛡️ Sinyal yang berhasil di-VETO beserta alasan penolakannya
+     - 💼 Portofolio & Floating P/L
+     - 📊 Arah Kompas Pasar 22 Pair & Zona Diskon/Premium SMC.
+5. **Pewarnaan Vonis Yuridis Konsensus CLI (`UI.badge_verdict`)**:
+   * `[APPROVE]` Hijau, `[REVISE]` Kuning, dan `[REJECT]` Merah pada terminal CLI.
+6. **Overhaul Bab 05: Master Atlas DNA 22 Pasangan Mata Uang di HTML & Markdown**:
+   * Master table 22 baris tunggal di [report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html) dan [QUANT_RESEARCH_EDGES.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/QUANT_RESEARCH_EDGES.md) dilengkapi legenda visual metrik kuantitatif dan pemetaan Dual-DNA (🥇 Alpha Utama & 🥈 Alpha Sekunder) untuk setiap simbol.
+
+---
+
+## 10. Pembaruan 27 Agustus 2026 (Sesi Pagi) — Multi-Touch Cluster Breakout & Delayed Retest Engine
+
+1. **Multi-Touch Cluster Breakout & Delayed Retest Engine (M5 — 27 Agu 2026)**:
+   * Validasi 10.7 tahun FBS (23.173 trade, PF 1.11, 21/22 pair profitable): level cluster support/resistance yang disentuh $\ge 2\times$ dan ditembus candle momentum $(\ge 55\%\text{ body})$ dieksekusi via **Pending Limit Order saat retest** (delay 3–4 bar). Dilarang keras *chase breakout* langsung guna mencegah jebakan *Judas Sweep*.
+   * Integrasi modul `src/indicators/candle_quality.py` & `src/indicators/sweep_detector.py` ke dalam Fast Radar Stage 1 dan pengayaan payload 8 layer ke LLM Veto (DeepSeek CRO).
+
+---
+
+## 11. Pembaruan 27 Agustus 2026 (Sesi Sore) — Boitoki Currency Strength Matrix & Intraday Market Cycle
+
+1. **Boitoki Currency Strength Matrix Engine (`src/analytics/currency_strength.py`)**:
+   * Porting 1:1 algoritma Boitoki CSM ([`csm.txt`](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/external_repos/csm.txt)) via 7 USD Majors di MT5 (`EURUSD`, `USDJPY`, `USDCHF`, `GBPUSD`, `AUDUSD`, `USDCAD`, `NZDUSD`).
+   * Menghitung nilai logaritmik relatif ($\ln(P_1/P_2)\times 10000$) dan menurunkan 21 cross pair secara instan via hubungan aljabar matematis (waktu eksekusi < 0.05s, cache 30 detik).
+2. **Injeksi Kuantitatif Murni ke Prompt LLM (`src/core/llm_client.py`)**:
+   * Menambahkan blok `GLOBAL CURRENCY STRENGTH MATRIX` (Ranking 8-Mata Uang, Base/Quote Score & Rank, Net Currency Delta) ke dalam *Market Data Context*.
+   * Murni berupa data/fakta kuantitatif tanpa kalimat direktif perintah (*clean quantitative matrix*), memberikan kebebasan penalaran (*reasoning autonomy*) bagi OpenAI o4-mini, Gemini 3.1 Flash, dan DeepSeek CRO.
+3. **Dokumen Spesifikasi & Validasi Backtest 21 Pair FBS (2022–2026)**:
+   * Pembuatan dokumen arsitektur [INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md).
+   * Validasi 31.161 trade: memotong 90% trade overtrading, memulihkan modal $+7.333\text{R}$ (+92% kerugian terpangkas), dan membalikkan 6 pair utama menjadi profitabel (`EURUSD` PF 1.09, `GBPUSD` PF 1.08, `AUDJPY` PF 1.09, `EURJPY` PF 1.07, `EURAUD` PF 1.05, `GBPJPY` PF 1.03).
+
+---
+
+## 12. Pembaruan 27 Agustus 2026 (Sesi Malam) — 2-Stage Dynamic Trailing Stop Engine
+
+1. **2-Stage Dynamic Trailing Stop (`src/analytics/position_manager.py` & `config.py`)**:
+   * **Stage 1 (Swing Breathing Zone: 65% s/d < 90% TP)**: Jarak dihitung berbasis **ATR H1 ($0.75\times\text{ATR H1}$)** dengan floor absolut 80 pts (8 pips FX) untuk memberi ruang nafas yang longgar dari noise wick agar posisi dapat melaju mulus ke TP2.
+   * **Stage 2 (Terminal Profit Lock: $\ge$ 90% TP)**: Otomatis mengencang (*tightening*) berbasis **ATR M30 ($0.50\times\text{ATR M30}$)** dengan floor 30 pts (3 pips FX) untuk mengunci cuan 90% secara rapat di pucuk sebelum terjadi pembalikan harga mendadak tepat di depan target TP.
