@@ -149,13 +149,9 @@ def get_csm_prompt_payload(symbol):
     Murni data/angka, tanpa kata direktif perintah agar LLM menalar sendiri.
     """
     clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
-    if len(clean_sym) < 6 or "XAU" in clean_sym or "BTC" in clean_sym:
+    if len(clean_sym) < 6 and not ("XAU" in clean_sym or "GOLD" in clean_sym):
         return ""
-
-    base = clean_sym[:3]
-    quote = clean_sym[3:6]
-
-    if base not in CURRENCIES or quote not in CURRENCIES:
+    if "BTC" in clean_sym:
         return ""
 
     scores, ranks = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)
@@ -164,6 +160,36 @@ def get_csm_prompt_payload(symbol):
 
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     rank_str = ", ".join([f"{c}: {s:+.1f}" for c, s in sorted_scores])
+
+    # Khusus Gold (XAUUSD) -> Evaluasi Macro Dollar Flow
+    if "XAU" in clean_sym or "GOLD" in clean_sym:
+        usd_score = scores.get("USD", 0.0)
+        usd_rank = ranks.get("USD", 4)
+        if usd_score >= 10.0:
+            usd_impact = "STRONG DOLLAR (Macro Bearish Headwind for Gold)"
+        elif usd_score >= 5.0:
+            usd_impact = "MODERATE DOLLAR STRENGTH (Mild Headwind for Gold)"
+        elif usd_score <= -10.0:
+            usd_impact = "WEAK DOLLAR DUMPING (Macro Bullish Fuel/Tailwind for Gold)"
+        elif usd_score <= -5.0:
+            usd_impact = "MILD DOLLAR WEAKNESS (Supportive Tailwind for Gold)"
+        else:
+            usd_impact = "BALANCED / NEUTRAL DOLLAR FLOW"
+
+        lines = [
+            "### GLOBAL CURRENCY STRENGTH MATRIX (Live Boitoki CSM H1)",
+            f"- 8-Currency Strength Ranking: [{rank_str}]",
+            f"- Macro Dollar Flow for Gold ({symbol}):",
+            f"  * Quote Currency (USD): {usd_score:+.2f} (Rank #{usd_rank}/8)",
+            f"  * Macro Dollar Impact: {usd_impact}"
+        ]
+        return "\n".join(lines)
+
+    base = clean_sym[:3]
+    quote = clean_sym[3:6]
+
+    if base not in CURRENCIES or quote not in CURRENCIES:
+        return ""
 
     base_score = scores.get(base, 0.0)
     base_rank = ranks.get(base, 4)
