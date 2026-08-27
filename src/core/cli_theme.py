@@ -7,6 +7,8 @@ Fully compatible with Windows 10/11 Terminal & Linux/macOS.
 import sys
 import shutil
 import unicodedata
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # Ensure stdout uses UTF-8 on Windows
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
