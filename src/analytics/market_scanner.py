@@ -736,13 +736,9 @@ class MarketScanner:
                     # BUY: Bullish Macro + Intraday Pullback into EMA20 / Support zone (pos <= 0.65)
                     if macro['is_bull'] and pos_in_range <= 0.65:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
-                            c_sup = macro.get('cluster_support', 0.0)
-                            s_low = macro.get('strong_low', 0.0)
-                            floor_candidates = [x for x in [c_sup, s_low, ema20] if x > 0 and x < mid]
-                            floor_level = min(floor_candidates) if floor_candidates else (mid - atr_pts * 0.50 * pt)
-                            anti_wick_buffer = atr_pts * 0.35 * pt
-                            sl = floor_level - anti_wick_buffer - (spread_pts * pt)
-                            tp = mid + max(abs(mid - sl) * 2.2, atr_pts * 1.0 * pt)
+                            anti_wick_padding = 15 * pt
+                            sl = mid - (atr_pts * 0.85 * pt) - (spread_pts * pt) - anti_wick_padding
+                            tp = mid + abs(mid - sl) * 2.2
                             if abs(mid - sl) / pt >= 15:
                                 rr_val = round(abs(tp - ask) / max(abs(ask - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
@@ -756,7 +752,7 @@ class MarketScanner:
                                     rejection_wick_ratio=max(0.15, c_qual['max_lower_wick']),
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
-                                    key_support=floor_level,
+                                    key_support=round(sl, 5 if pt < 0.01 else 2),
                                     key_resistance=macro['dealing_range_high'],
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
@@ -787,13 +783,9 @@ class MarketScanner:
                     # SELL: Bearish Macro + Intraday Pullback into EMA20 / Resistance zone (pos >= 0.35)
                     if macro['is_bear'] and pos_in_range >= 0.35:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
-                            c_res = macro.get('cluster_resistance', 0.0)
-                            s_high = macro.get('strong_high', 0.0)
-                            ceil_candidates = [x for x in [c_res, s_high, ema20] if x > 0 and x > mid]
-                            ceil_level = max(ceil_candidates) if ceil_candidates else (mid + atr_pts * 0.50 * pt)
-                            anti_wick_buffer = atr_pts * 0.35 * pt
-                            sl = ceil_level + anti_wick_buffer + (spread_pts * pt)
-                            tp = mid - max(abs(sl - mid) * 2.2, atr_pts * 1.0 * pt)
+                            anti_wick_padding = 15 * pt
+                            sl = mid + (atr_pts * 0.85 * pt) + (spread_pts * pt) + anti_wick_padding
+                            tp = mid - abs(sl - mid) * 2.2
                             if abs(mid - sl) / pt >= 15:
                                 rr_val = round(abs(tp - bid) / max(abs(bid - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
@@ -808,7 +800,7 @@ class MarketScanner:
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=macro['dealing_range_low'],
-                                    key_resistance=ceil_level,
+                                    key_resistance=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
                                     risk_reward_ratio=rr_val,
@@ -839,9 +831,9 @@ class MarketScanner:
                 if is_ny_session and macro.get('adr_pct', 0.0) >= 0.75:
                     pos_in_range = macro['dealing_range_pos']
                     if pos_in_range >= 0.65: # Top of range -> Fading SELL
-                        ceil_level = max(macro.get('dealing_range_high', mid), macro.get('pdh', mid), mid)
-                        sl = ceil_level + (atr_pts * 0.35 * pt) + (spread_pts * pt)
-                        tp = mid - max(abs(sl - mid) * 2.0, atr_pts * 1.0 * pt)
+                        anti_wick_padding = 15 * pt
+                        sl = mid + (atr_pts * 0.75 * pt) + (spread_pts * pt) + anti_wick_padding
+                        tp = mid - abs(sl - mid) * 2.0
                         rr_val = round(abs(tp - bid) / max(abs(bid - sl), 1e-5), 2)
                         candidates.append(CandidateSetup(
                             symbol=sym,
@@ -855,7 +847,7 @@ class MarketScanner:
                             current_spread_pts=spread_pts,
                             current_atr_pts=atr_pts,
                             key_support=macro['dealing_range_low'],
-                            key_resistance=ceil_level,
+                            key_resistance=round(sl, 5 if pt < 0.01 else 2),
                             suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                             suggested_tp=round(tp, 5 if pt < 0.01 else 2),
                             risk_reward_ratio=rr_val,
@@ -882,9 +874,9 @@ class MarketScanner:
                         ))
                         continue
                     elif pos_in_range <= 0.35: # Bottom of range -> Fading BUY
-                        floor_level = min(macro.get('dealing_range_low', mid), macro.get('pdl', mid), mid)
-                        sl = floor_level - (atr_pts * 0.35 * pt) - (spread_pts * pt)
-                        tp = mid + max(abs(mid - sl) * 2.0, atr_pts * 1.0 * pt)
+                        anti_wick_padding = 15 * pt
+                        sl = mid - (atr_pts * 0.75 * pt) - (spread_pts * pt) - anti_wick_padding
+                        tp = mid + abs(mid - sl) * 2.0
                         rr_val = round(abs(tp - ask) / max(abs(ask - sl), 1e-5), 2)
                         candidates.append(CandidateSetup(
                             symbol=sym,
@@ -897,7 +889,7 @@ class MarketScanner:
                             rejection_wick_ratio=max(0.15, c_qual['max_lower_wick']),
                             current_spread_pts=spread_pts,
                             current_atr_pts=atr_pts,
-                            key_support=floor_level,
+                            key_support=round(sl, 5 if pt < 0.01 else 2),
                             key_resistance=macro['dealing_range_high'],
                             suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                             suggested_tp=round(tp, 5 if pt < 0.01 else 2),

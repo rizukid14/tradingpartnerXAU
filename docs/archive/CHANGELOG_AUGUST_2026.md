@@ -320,3 +320,7 @@ You are NOT required to follow a single predefined trading strategy. You may use
 5. **Telegram Interactive `/news` Command & Cyberpunk Bento HUD Live News Ticker (`src/core/telegram_bot.py` & `src/core/cli_theme.py`)**:
    * Menambahkan perintah interaktif `/news` (beserta alias `/kalender`, `/berita`, `/event`) dan tombol inline keyboard pada menu utama Telegram Controller.
    * Mengintegrasikan ticker berita real-time pada Tile 3 (*Dual-Horizon Boitoki CSM*) dan Tile 4 (*2-Pass Sequential Jury*) di Bento Box Terminal HUD (`cli_theme.py`), menampilkan hitung mundur waktu rilis (misal: `[CA] GDP MoM Prel in 2.0h (19:30 WIB)`).
+6. **Intraday Entry-Anchored SL/TP with Anti-Wick Padding & Risk Safety Ceiling (`src/analytics/market_scanner.py` & `src/core/consensus.py`)**:
+   * Mengembalikan formula SL/TP intraday pada `TREND_ALIGNED_PULLBACK` dan `NY_ADR_REVERSAL` di `market_scanner.py` berbasis harga entri (`mid`) dengan penambahan **Anti-Wick Padding (+15 pts / 1.5 pips)** untuk mencegah SL tersapu noise wick broker.
+   * Mengeliminasi pencarian swing low/high makro D1/H4 yang berpotensi menghasilkan SL swing >600 pts.
+   * Menambahkan **Hard Intraday Safety Ceiling** pada `_apply_sltp_rules` di `consensus.py` (FX: $\max \text{SL} = \min(2.0\times\text{ATR}, 160\text{ pts})$; Gold: $\max \text{SL} = 2.5\times\text{ATR}$) untuk menjamin secara matematis SL tidak pernah lepas kendali.

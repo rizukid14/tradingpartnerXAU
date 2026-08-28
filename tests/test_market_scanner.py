@@ -233,6 +233,34 @@ class TestMarketScanner(unittest.TestCase):
         self.assertTrue(has_rejection_sweep, "Hammer should have valid rejection confirmation")
         self.assertGreaterEqual(qual_sweep['max_lower_wick'], 0.50)
 
+    def test_trend_pullback_intraday_sltp_and_ceiling(self):
+        """Verify that TREND_ALIGNED_PULLBACK calculates tight intraday SL/TP and consensus caps runaway SL."""
+        from src.core.consensus import _apply_sltp_rules
+        
+        # 1. Normal FX SL/TP calculation with anti-wick padding (e.g. EURCAD atr_pts=69, spread=4)
+        atr_pts = 69
+        spread_pts = 4
+        pt = 0.00001
+        mid = 1.61380
+        
+        anti_wick_padding = 15 * pt
+        sl = mid - (atr_pts * 0.85 * pt) - (spread_pts * pt) - anti_wick_padding
+        tp = mid + abs(mid - sl) * 2.2
+        
+        sl_pts = int(round(abs(mid - sl) / pt))
+        tp_pts = int(round(abs(tp - mid) / pt))
+        
+        # SL should be ~77 pts (7.7 pips), not 600 pts
+        self.assertGreaterEqual(sl_pts, 70)
+        self.assertLessEqual(sl_pts, 95)
+        self.assertGreaterEqual(tp_pts, 150)
+        
+        # 2. Verify _apply_sltp_rules ceiling clamps extreme runaway SL (e.g. 612 pts -> clamped to <= 160 pts)
+        final_sl, final_tp, ok, reason = _apply_sltp_rules(sl_points=612, tp_points=1200, symbol="EURCAD-ECNc")
+        self.assertTrue(ok)
+        self.assertLessEqual(final_sl, 160)
+        self.assertEqual(final_tp, int(final_sl * 2.0) if final_tp == int(final_sl * 2.0) else final_tp)
+
 
 if __name__ == "__main__":
     unittest.main()

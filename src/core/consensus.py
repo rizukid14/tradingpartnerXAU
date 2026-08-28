@@ -76,13 +76,25 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
             sl_points = min_sl
 
         # Anti-wick padding untuk pair silang (misal NZD +20 pts)
-        nzd_padding = config.sl_padding_for(config.SYMBOL)
+        nzd_padding = config.sl_padding_for(sym)
         if nzd_padding > 0:
             sl_points += nzd_padding
-            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {config.SYMBOL} (SL -> {sl_points} pts).")
+            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {sym} (SL -> {sl_points} pts).")
+
+        # Hard Intraday Ceiling Cap (mencegah SL runaway / swing level)
+        if not is_xau:
+            max_sl = min(int(atr_points * 2.0), 160) if atr_points > 0 else 160
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon intraday. Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
+        else:
+            max_sl = int(atr_points * 2.5) if atr_points > 0 else 800
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon Gold. Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
 
         if tp_points <= 0:
-            tp_points = config.default_tp_points_for(config.SYMBOL)
+            tp_points = config.default_tp_points_for(sym)
 
         min_rr = config.LLM_MIN_RR_RATIO
         max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
