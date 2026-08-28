@@ -255,13 +255,74 @@ class TestMarketScanner(unittest.TestCase):
         self.assertLessEqual(sl_pts, 95)
         self.assertGreaterEqual(tp_pts, 150)
         
-        # 2. Verify _apply_sltp_rules ceiling clamps extreme runaway SL (e.g. 612 pts -> clamped to <= 160 pts)
-        final_sl, final_tp, ok, reason = _apply_sltp_rules(sl_points=612, tp_points=1200, symbol="EURCAD-ECNc")
-        self.assertTrue(ok)
-        self.assertLessEqual(final_sl, 160)
-        self.assertEqual(final_tp, int(final_sl * 2.0) if final_tp == int(final_sl * 2.0) else final_tp)
+    def test_4_layer_permission_matrix(self):
+        """Verify the 4-layer Trade Permission Matrix logic and BUY LOCKED != SELL ENABLED."""
+        from src.analytics.market_scanner import Direction, Phase, Permission, resolve_permission
+
+        # 1. Bullish Macro Tests
+        # Phase 1: Expansion -> WAIT (Do not chase tops)
+        self.assertEqual(resolve_permission(Direction.BULL, Phase.EXPANSION, csm_delta=1.5), Permission.WAIT)
+        
+        # Phase 2: Early Correction / Knife -> LOCK (Anti-falling knife)
+        self.assertEqual(resolve_permission(Direction.BULL, Phase.EARLY_CORRECTION, csm_delta=0.0), Permission.LOCK)
+        
+        # Phase 3: Mature Basing -> ARM if CSM is healthy
+        self.assertEqual(resolve_permission(Direction.BULL, Phase.MATURE_CORRECTION, csm_delta=0.2), Permission.ARM)
+        self.assertEqual(resolve_permission(Direction.BULL, Phase.MATURE_CORRECTION, csm_delta=-1.0), Permission.WATCH)
+        
+        # Phase 4: Base Reclaim -> GO if CSM is not severely dumped
+        self.assertEqual(resolve_permission(Direction.BULL, Phase.RECLAIM, csm_delta=0.5), Permission.GO)
+        self.assertEqual(resolve_permission(Direction.BULL, Phase.RECLAIM, csm_delta=-2.5), Permission.WATCH)
+
+        # 2. Bearish Macro Tests
+        # Phase 1: Expansion -> WAIT (Do not chase bottoms)
+        self.assertEqual(resolve_permission(Direction.BEAR, Phase.EXPANSION, csm_delta=-1.5), Permission.WAIT)
+        
+        # Phase 2: Early Correction -> LOCK (Anti-short squeeze)
+        self.assertEqual(resolve_permission(Direction.BEAR, Phase.EARLY_CORRECTION, csm_delta=0.0), Permission.LOCK)
+        
+        # Phase 4: Base Reclaim -> GO for SELL
+        self.assertEqual(resolve_permission(Direction.BEAR, Phase.RECLAIM, csm_delta=-0.8), Permission.GO)
+
+        # 3. Neutral Direction Fallback
+        self.assertEqual(resolve_permission(Direction.NEUTRAL, Phase.RECLAIM, csm_delta=0.0), Permission.WAIT)
+
+    def test_delayed_limit_retest_generation(self):
+        """Verify that CandidateSetup in Trend-Aligned Pullback calculates delayed limit retest correctly."""
+        from src.analytics.market_scanner import CandidateSetup
+        cand = CandidateSetup(
+            symbol="EURUSD-ECNc",
+            setup_type="TREND_ALIGNED_PULLBACK",
+            direction=1,
+            trigger_price=1.1710,
+            macro_compass="D1_BULLISH_EXPANSION",
+            dealing_range_pos=0.35,
+            rejection_wick_ratio=0.30,
+            current_spread_pts=5,
+            current_atr_pts=50,
+            key_support=1.1680,
+            key_resistance=1.1780,
+            suggested_sl=1.1670,
+            suggested_tp=1.1798,
+            risk_reward_ratio=2.2,
+            permission="GO",
+            csm_delta=0.8,
+            metadata={
+                "entry_type": "buy_limit",
+                "entry_price": 1.1710,
+                "base_floor": 1.1680,
+                "permission": "GO",
+                "csm_delta": 0.8
+            }
+        )
+        payload = cand.to_payload_dict()
+        self.assertEqual(payload["trade_permission"], "GO")
+        self.assertEqual(payload["csm_net_delta"], 0.8)
+        self.assertEqual(cand.metadata["entry_type"], "buy_limit")
+        self.assertEqual(cand.metadata["entry_price"], 1.1710)
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

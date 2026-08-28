@@ -324,3 +324,27 @@ You are NOT required to follow a single predefined trading strategy. You may use
    * Mengembalikan formula SL/TP intraday pada `TREND_ALIGNED_PULLBACK` dan `NY_ADR_REVERSAL` di `market_scanner.py` berbasis harga entri (`mid`) dengan penambahan **Anti-Wick Padding (+15 pts / 1.5 pips)** untuk mencegah SL tersapu noise wick broker.
    * Mengeliminasi pencarian swing low/high makro D1/H4 yang berpotensi menghasilkan SL swing >600 pts.
    * Menambahkan **Hard Intraday Safety Ceiling** pada `_apply_sltp_rules` di `consensus.py` (FX: $\max \text{SL} = \min(2.0\times\text{ATR}, 160\text{ pts})$; Gold: $\max \text{SL} = 2.5\times\text{ATR}$) untuk menjamin secara matematis SL tidak pernah lepas kendali.
+
+---
+
+## 15. Pembaruan 28 Agustus 2026 (Sesi Malam) — 4-Layer Trend-Aligned Permission Engine, Delayed Limit Retest & NZD Alpha Expansion
+
+1. **4-Layer Trend-Aligned Trade Permission Engine (`src/analytics/market_scanner.py`, `currency_strength.py`, `wave_state.py`)**:
+   * **Pemisahan Irama (Cadence Separation)**:
+     - `Direction FSM (D1+H4)`: Lambat, butuh `confirm_count=2` hysteresis (anti flip-flop).
+     - `Phase FSM (H1 Wave)`: Menentukan fase siklus (`EXPANSION`, `EARLY_CORRECTION`, `MATURE_CORRECTION`, `RECLAIM`).
+     - `CSM Pressure Gauge`: Modifier real-time continuous flow sub-detik (`get_csm_delta_for_symbol`).
+     - `Permission Matrix`: Lookup table deterministik (`WAIT`, `LOCK`, `WATCH`, `ARM`, `GO`).
+   * **Prinsip `BUY LOCKED != SELL ENABLED`**: Mencegah *falling knife* (saat koreksi tajam dalam tren bullish, status adalah `LOCK`, bukan mencari posisi SELL counter-trend).
+2. **Delayed Limit Retest & Structural SL Anchoring ($0.20\times\text{ATR}$)**:
+   * Memasang Limit Order saat retest ke zona diskon ($0.20\times\text{ATR}$) dengan Stop Loss di balik support fisik ditambah Anti-Wick Buffer $0.35\times\text{ATR}$.
+   * Validasi Walk-Forward 16 Tahun (2010–2026): Out-of-Sample PF **1.25** (+8.391,6R) dengan Edge Retention **78.7%** (Total Return 16 thn: **+$34.462,6R**).
+3. **Ekspansi 5 Pasangan NZD Alpha (Universe 27 Simbol — `.env` & `config.py`)**:
+   * Validasi 16 tahun 7 pasangan NZD: berbalik dari rugi **-9.251,1R** (metode lama) menjadi untung bersih **+$1.842,3R (PF 1.34)**.
+   * Memasukkan `NZDCAD`, `NZDCHF`, `NZDUSD`, `GBPNZD`, `AUDNZD`, `EURNZD` ke `SCANNER_SYMBOLS` (Universe 27 pasang).
+4. **Cross-Pair Asymmetric Dispersion Discovery**:
+   * Analisis 19.765 snapshot multi-pair: 83.25% waktu pasar tersebar di berbagai fase berbeda, menjamin peluang trading harian konsisten sebesar **93.3%**.
+5. **Dokumentasi Riset & Test Suite 100% PASS**:
+   * Hasil riset tersimpan lengkap di `docs/research/RESEARCH_4_LAYER_PERMISSION_AND_NZD_BENCHMARK.md`.
+   * Seluruh test suite (23 unit tests) lulus 100% OK.
+

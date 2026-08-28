@@ -1094,3 +1094,23 @@ def trailing_activation_params_for(symbol):
             getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_XAU", 150),
             getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
         )
+
+
+def get_scanner_symbols():
+    """Returns the list of configured symbols for the 2-Stage Quant Scanner."""
+    env_symbols = os.getenv("SCANNER_SYMBOLS")
+    if env_symbols:
+        return [s.strip() for s in env_symbols.split(",") if s.strip()]
+    return [
+        "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
+        "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
+        "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
+        "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
+        "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc", "XAUUSD-ECNc"
+    ]
+
+
+def get_max_open_positions():
+    """Returns max open positions allowed."""
+    return _getenv_int("MAX_OPEN_POSITIONS", 6)
+

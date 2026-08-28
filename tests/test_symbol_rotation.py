@@ -15,11 +15,11 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         config.ENABLE_BTC_ROTATION = True
 
     def test_scanner_pool(self):
-        # In scanner mode, rotation pool should contain all 22 symbols on weekdays
+        # In scanner mode, rotation pool should contain all configured scanner symbols on weekdays
         wednesday = datetime(2026, 8, 12, 10, 0, tzinfo=WIB)
         pool = config.get_rotation_pool(wednesday)
         if config.SCANNER_MODE:
-            self.assertEqual(len(pool), 22)
+            self.assertEqual(len(pool), len(config.get_scanner_symbols()))
             self.assertIn("GBPUSD-ECNc", pool)
             self.assertIn("XAUUSD-ECNc", pool)
             self.assertIn("USDJPY-ECNc", pool)

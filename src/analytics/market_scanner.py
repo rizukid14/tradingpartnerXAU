@@ -4,6 +4,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum, auto
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Any
 
@@ -16,9 +17,60 @@ from src.indicators.candle_quality import classify_candle, classify_breakout_seq
 from src.indicators.sweep_detector import detect as sweep_detect
 from src.indicators.wave_regime import evaluate_wave_regime
 from src.indicators.wave_state import evaluate_wave_state, WaveState, WaveStateResult
+from src.analytics.currency_strength import get_csm_delta_for_symbol
 
 logger = logging.getLogger("market_scanner")
 WIB = ZoneInfo("Asia/Jakarta")
+
+
+class Direction(Enum):
+    BULL = 1
+    BEAR = -1
+    NEUTRAL = 0
+
+
+class Phase(Enum):
+    EXPANSION = 1
+    EARLY_CORRECTION = 2
+    MATURE_CORRECTION = 3
+    RECLAIM = 4
+
+
+class Permission(Enum):
+    WAIT = auto()
+    LOCK = auto()
+    WATCH = auto()
+    ARM = auto()
+    GO = auto()
+
+
+def resolve_permission(direction: Direction, phase: Phase, csm_delta: float = 0.0) -> Permission:
+    """
+    4-Layer Trend-Aligned Permission Matrix with default fallback to Permission.WAIT.
+    Enforces BUY LOCKED != SELL ENABLED.
+    """
+    if direction == Direction.BULL:
+        if phase == Phase.EXPANSION:
+            return Permission.WAIT  # Don't chase top
+        elif phase == Phase.EARLY_CORRECTION:
+            return Permission.LOCK  # Anti-falling knife
+        elif phase == Phase.MATURE_CORRECTION:
+            return Permission.ARM if csm_delta >= -0.5 else Permission.WATCH
+        elif phase == Phase.RECLAIM:
+            return Permission.GO if csm_delta >= -1.5 else Permission.WATCH
+
+    elif direction == Direction.BEAR:
+        if phase == Phase.EXPANSION:
+            return Permission.WAIT  # Don't chase bottom
+        elif phase == Phase.EARLY_CORRECTION:
+            return Permission.LOCK  # Anti-short squeeze
+        elif phase == Phase.MATURE_CORRECTION:
+            return Permission.ARM if csm_delta <= 0.5 else Permission.WATCH
+        elif phase == Phase.RECLAIM:
+            return Permission.GO if csm_delta <= 1.5 else Permission.WATCH
+
+    return Permission.WAIT
+
 
 # Point and pip multipliers per category
 POINT_MAP = {
@@ -74,6 +126,8 @@ class CandidateSetup:
     frvp_confluence: str = ""
     wave_state: str = ""
     wave_summary: str = ""
+    permission: str = "GO"
+    csm_delta: float = 0.0
     timestamp_wib: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -91,6 +145,8 @@ class CandidateSetup:
             "h4_trend": self.h4_trend or "H4_CONFLUENCE_ALIGNED",
             "wave_state": self.wave_state or "BASE_RECLAIM_ENABLE",
             "wave_state_summary": self.wave_summary,
+            "trade_permission": self.permission or "GO",
+            "csm_net_delta": self.csm_delta,
             "previous_day_high_pdh": self.pdh,
             "previous_day_low_pdl": self.pdl,
             "previous_week_high_pwh": self.pwh,
@@ -129,6 +185,8 @@ class MarketScanner:
         self.last_candidates: List[CandidateSetup] = []
         self._last_radar_scan_time: float = 0.0
         self._symbol_last_trigger: Dict[str, float] = {}
+        self._direction_states: Dict[str, Dict[str, Any]] = {}
+        self._phase_states: Dict[str, Dict[str, Any]] = {}
 
     def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: int = 1800):
         """Applies a 30-minute cooldown when a pending order is cancelled or expired."""
@@ -473,6 +531,67 @@ class MarketScanner:
                     point_val=pt
                 )
 
+                # ── 4-LAYER TREND-ALIGNED PERMISSION ENGINE ──
+                # Layer 1: Direction FSM (D1 + H4 confirmation with hysteresis)
+                raw_dir = Direction.BULL if (d1_is_bull and (h4_is_bull or (h4_c >= h4_ema50 if 'h4_c' in locals() else True))) else (
+                    Direction.BEAR if (d1_is_bear and (h4_is_bear or (h4_c <= h4_ema50 if 'h4_c' in locals() else True))) else Direction.NEUTRAL
+                )
+                dir_tracker = self._direction_states.setdefault(valid_sym, {"state": raw_dir, "pending": raw_dir, "confirm": 2})
+                if raw_dir == dir_tracker["pending"]:
+                    dir_tracker["confirm"] += 1
+                    if dir_tracker["confirm"] >= 2:
+                        dir_tracker["state"] = raw_dir
+                else:
+                    dir_tracker["pending"] = raw_dir
+                    dir_tracker["confirm"] = 1
+                curr_direction = dir_tracker["state"]
+
+                # Layer 2: Phase FSM (H1 Wave Retracement & Basing)
+                curr_bar_range = max(df['high'].iloc[-1] - df['low'].iloc[-1], 1e-5)
+                l_wick = max(0.0, min(df['open'].iloc[-1], cur_close) - df['low'].iloc[-1])
+                u_wick = max(0.0, df['high'].iloc[-1] - max(df['open'].iloc[-1], cur_close))
+                l_wick_ratio = l_wick / curr_bar_range
+                u_wick_ratio = u_wick / curr_bar_range
+                dist_ema_atr = (cur_close - cur_ema20) / (cur_atr if cur_atr > 0 else 1e-5)
+
+                raw_phase = Phase.EXPANSION
+                if curr_direction == Direction.BULL:
+                    if dist_ema_atr > 0.90 and pos_in_range > 0.65:
+                        raw_phase = Phase.EXPANSION
+                    elif dist_ema_atr <= 0.60:
+                        if pos_in_range <= 0.50:
+                            if l_wick_ratio >= 0.20 or cur_close > cur_ema20:
+                                raw_phase = Phase.RECLAIM
+                            else:
+                                raw_phase = Phase.MATURE_CORRECTION
+                        else:
+                            raw_phase = Phase.EARLY_CORRECTION
+                elif curr_direction == Direction.BEAR:
+                    if dist_ema_atr < -0.90 and pos_in_range < 0.35:
+                        raw_phase = Phase.EXPANSION
+                    elif dist_ema_atr >= -0.60:
+                        if pos_in_range >= 0.50:
+                            if u_wick_ratio >= 0.20 or cur_close < cur_ema20:
+                                raw_phase = Phase.RECLAIM
+                            else:
+                                raw_phase = Phase.MATURE_CORRECTION
+                        else:
+                            raw_phase = Phase.EARLY_CORRECTION
+
+                phase_tracker = self._phase_states.setdefault(valid_sym, {"state": raw_phase, "pending": raw_phase, "confirm": 2})
+                if raw_phase == phase_tracker["pending"]:
+                    phase_tracker["confirm"] += 1
+                    if phase_tracker["confirm"] >= 2:
+                        phase_tracker["state"] = raw_phase
+                else:
+                    phase_tracker["pending"] = raw_phase
+                    phase_tracker["confirm"] = 1
+                curr_phase = phase_tracker["state"]
+
+                # Layer 3 & 4: CSM Pressure & Permission Matrix
+                csm_delta_val = get_csm_delta_for_symbol(valid_sym)
+                perm = resolve_permission(curr_direction, curr_phase, csm_delta_val)
+
                 self.macro_cache[valid_sym] = {
                     'symbol': valid_sym,
                     'trend_label': combined_trend_label,
@@ -484,6 +603,10 @@ class MarketScanner:
                     'is_h4_bear': h4_is_bear,
                     'is_bull': d1_is_bull,
                     'is_bear': d1_is_bear,
+                    'direction_state': curr_direction.name,
+                    'phase_state': curr_phase.name,
+                    'permission_state': perm.name,
+                    'csm_delta': csm_delta_val,
                     'pdh': pdh,
                     'pdl': pdl,
                     'daily_open': daily_open,
@@ -522,8 +645,8 @@ class MarketScanner:
                     'effective_sqz_bars': regime_res.get('effective_sqz_bars', 0),
                     'wave_regime_name': regime_res.get('regime', 'YOUNG_OSCILLATION'),
                     'wave_state': wave_res.state,
-                    'wave_permitted': wave_res.is_trade_permitted,
-                    'wave_summary': wave_res.summary,
+                    'wave_permitted': (perm in (Permission.GO, Permission.ARM)),
+                    'wave_summary': f"[{curr_direction.name} | {curr_phase.name} | CSM {csm_delta_val:+.2f}] -> {perm.name}",
                     'wave_pullback_atr': wave_res.pullback_depth_atr,
                     'wave_zigzag_legs': wave_res.zigzag_legs_count,
                     'point': pt,
@@ -611,13 +734,12 @@ class MarketScanner:
                 # Evaluate live candle quality for real wick measurement & waterfall detection
                 c_qual = self._evaluate_live_candle_quality(sym, mid, atr_pts, pt, mt5_connector=mt5_connector)
 
-                # ── WAVE STATE TRADE PERMISSION GATE (Phase 1/2 Lock vs Phase 3/4 Enable) ──
+                # ── 4-LAYER TRADE PERMISSION GATE (Lock / Wait Enforcement) ──
+                perm_state = macro.get('permission_state', 'GO')
+                csm_delta_val = macro.get('csm_delta', 0.0)
                 if getattr(config, 'ENABLE_WAVE_STATE_PERMISSION', True):
-                    wave_st = macro.get('wave_state', WaveState.MATURE_CORRECTION_ARMED)
-                    wave_perm = macro.get('wave_permitted', True)
-                    wave_sum = macro.get('wave_summary', '')
-                    if (not wave_perm) and getattr(config, 'WAVE_STATE_LOCK_PHASE2', True):
-                        logger.debug(f"[RADAR] {sym} SKIP: Wave state {wave_st} is Locked ({wave_sum}).")
+                    if perm_state in ("LOCK", "WAIT") and getattr(config, 'WAVE_STATE_LOCK_PHASE2', True):
+                        logger.debug(f"[RADAR] {sym} SKIP: Permission state is {perm_state} ({macro.get('wave_summary', '')}).")
                         continue
 
                 # ── MECHANISM 1: LONDON & NY JUDAS LIQUIDITY SWEEP (M15/M30/H1) ──
@@ -674,6 +796,8 @@ class MarketScanner:
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB")
                                 ))
                                 continue
@@ -724,11 +848,13 @@ class MarketScanner:
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB")
                                 ))
                                 continue
 
-                # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK (H1/H4 PULLBACK) ──
+                # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & DELAYED RETEST (H1/M30) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     ema20 = macro['ema20']
                     pos_in_range = macro['dealing_range_pos']
@@ -736,16 +862,18 @@ class MarketScanner:
                     # BUY: Bullish Macro + Intraday Pullback into EMA20 / Support zone (pos <= 0.65)
                     if macro['is_bull'] and pos_in_range <= 0.65:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
-                            anti_wick_padding = 15 * pt
-                            sl = mid - (atr_pts * 0.85 * pt) - (spread_pts * pt) - anti_wick_padding
-                            tp = mid + abs(mid - sl) * 2.2
-                            if abs(mid - sl) / pt >= 15:
-                                rr_val = round(abs(tp - ask) / max(abs(ask - sl), 1e-5), 2)
+                            anti_wick_padding = 20 * pt
+                            lim_entry = mid - (atr_pts * 0.20 * pt)
+                            base_floor = macro['dealing_range_low']
+                            sl = base_floor - (atr_pts * 0.35 * pt) - (spread_pts * pt) - anti_wick_padding
+                            tp = lim_entry + abs(lim_entry - sl) * 2.2
+                            if abs(lim_entry - sl) / pt >= 15:
+                                rr_val = round(abs(tp - lim_entry) / max(abs(lim_entry - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
                                     direction=1,
-                                    trigger_price=ask,
+                                    trigger_price=round(lim_entry, 5 if pt < 0.01 else 2),
                                     timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=pos_in_range,
@@ -776,23 +904,34 @@ class MarketScanner:
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
-                                    timestamp_wib=now.strftime("%H:%M:%S WIB")
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    metadata={
+                                        "entry_type": "buy_limit",
+                                        "entry_price": round(lim_entry, 5 if pt < 0.01 else 2),
+                                        "base_floor": base_floor,
+                                        "permission": perm_state,
+                                        "csm_delta": csm_delta_val
+                                    }
                                 ))
                                 continue
 
                     # SELL: Bearish Macro + Intraday Pullback into EMA20 / Resistance zone (pos >= 0.35)
                     if macro['is_bear'] and pos_in_range >= 0.35:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
-                            anti_wick_padding = 15 * pt
-                            sl = mid + (atr_pts * 0.85 * pt) + (spread_pts * pt) + anti_wick_padding
-                            tp = mid - abs(sl - mid) * 2.2
-                            if abs(mid - sl) / pt >= 15:
-                                rr_val = round(abs(tp - bid) / max(abs(bid - sl), 1e-5), 2)
+                            anti_wick_padding = 20 * pt
+                            lim_entry = mid + (atr_pts * 0.20 * pt)
+                            base_floor = macro['dealing_range_high']
+                            sl = base_floor + (atr_pts * 0.35 * pt) + (spread_pts * pt) + anti_wick_padding
+                            tp = lim_entry - abs(sl - lim_entry) * 2.2
+                            if abs(sl - lim_entry) / pt >= 15:
+                                rr_val = round(abs(tp - lim_entry) / max(abs(sl - lim_entry), 1e-5), 2)
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
                                     direction=-1,
-                                    trigger_price=bid,
+                                    trigger_price=round(lim_entry, 5 if pt < 0.01 else 2),
                                     timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=pos_in_range,
@@ -823,7 +962,16 @@ class MarketScanner:
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
-                                    timestamp_wib=now.strftime("%H:%M:%S WIB")
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    metadata={
+                                        "entry_type": "sell_limit",
+                                        "entry_price": round(lim_entry, 5 if pt < 0.01 else 2),
+                                        "base_floor": base_floor,
+                                        "permission": perm_state,
+                                        "csm_delta": csm_delta_val
+                                    }
                                 ))
                                 continue
 
@@ -870,6 +1018,8 @@ class MarketScanner:
                             h4_monthly_range=macro.get('h4_monthly_range', ''),
                             wave_state=macro.get('wave_state', ''),
                             wave_summary=macro.get('wave_summary', ''),
+                            permission=perm_state,
+                            csm_delta=csm_delta_val,
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
                         continue
@@ -913,6 +1063,8 @@ class MarketScanner:
                             h4_monthly_range=macro.get('h4_monthly_range', ''),
                             wave_state=macro.get('wave_state', ''),
                             wave_summary=macro.get('wave_summary', ''),
+                            permission=perm_state,
+                            csm_delta=csm_delta_val,
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
                         continue
@@ -970,6 +1122,8 @@ class MarketScanner:
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     metadata={
                                         "entry_type": "buy_limit",
@@ -977,7 +1131,9 @@ class MarketScanner:
                                         "zone_level": c_res,
                                         "zone_touches": t_res,
                                         "range_age_hours": macro.get('range_age_hours', 24),
-                                        "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION')
+                                        "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION'),
+                                        "permission": perm_state,
+                                        "csm_delta": csm_delta_val
                                     }
                                 ))
                                 continue
@@ -1025,6 +1181,8 @@ class MarketScanner:
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     metadata={
                                         "entry_type": "sell_limit",
@@ -1032,7 +1190,9 @@ class MarketScanner:
                                         "zone_level": c_sup,
                                         "zone_touches": t_sup,
                                         "range_age_hours": macro.get('range_age_hours', 24),
-                                        "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION')
+                                        "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION'),
+                                        "permission": perm_state,
+                                        "csm_delta": csm_delta_val
                                     }
                                 ))
                                 continue
@@ -1121,29 +1281,36 @@ class MarketScanner:
             elif m['dealing_range_pos'] >= 0.62:
                 premium_pairs.append(f"• *{clean}*: `{prem_bot:.5f}` (Pos: {m['dealing_range_pos']*100:.0f}% Premium)")
 
-        armed_pairs = []
+        go_pairs = []
+        arm_pairs = []
         locked_pairs = []
-        chase_pairs = []
+        wait_pairs = []
 
         for sym, m in self.macro_cache.items():
             clean = sym.replace("-ECNc", "").replace("-ECN", "")
-            w_st = m.get('wave_state', '')
-            w_perm = m.get('wave_permitted', True)
-            if "IMPULSE" in w_st:
-                chase_pairs.append(clean)
-            elif (not w_perm) or "LOCK" in w_st:
-                locked_pairs.append(clean)
-            elif "ARMED" in w_st or "BASE_RECLAIM" in w_st:
-                armed_pairs.append(f"{clean} ({m['dealing_range_pos']*100:.0f}%)")
+            perm = m.get('permission_state', 'WAIT')
+            d_st = m.get('direction_state', 'NEUTRAL')
+            p_st = m.get('phase_state', 'EXPANSION')
+            pos_p = int(m.get('dealing_range_pos', 0.5) * 100)
+            
+            if perm == "GO":
+                go_pairs.append(f"{clean} ({d_st}/{p_st} {pos_p}%)")
+            elif perm == "ARM":
+                arm_pairs.append(f"{clean} ({pos_p}%)")
+            elif perm == "LOCK":
+                locked_pairs.append(f"{clean} ({d_st} Knife)")
+            elif perm in ("WAIT", "WATCH"):
+                wait_pairs.append(clean)
 
         lines.append(f"🟢 *Bullish Compass:* {', '.join(bull_pairs[:6]) if bull_pairs else '-'}")
         lines.append(f"🔴 *Bearish Compass:* {', '.join(bear_pairs[:6]) if bear_pairs else '-'}")
         lines.append(f"⚪ *Sideways Range:* {', '.join(range_pairs[:6]) if range_pairs else '-'}")
         lines.append("━" * 36)
-        lines.append("🌊 *WAVE STATE TRADE PERMISSION:*")
-        lines.append(f"• 🟢 *Armed / Favorable:* {', '.join(armed_pairs[:4]) if armed_pairs else 'Nihil (Menunggu pullback)'}")
-        lines.append(f"• 🔒 *Locked (Falling Knife):* {', '.join(locked_pairs[:4]) if locked_pairs else '-'}")
-        lines.append(f"• ⚡ *Blocked (Impulse Chase):* {', '.join(chase_pairs[:4]) if chase_pairs else '-'}")
+        lines.append("🌊 *4-LAYER TRADE PERMISSION ENGINE:*")
+        lines.append(f"• 🚀 *Permission GO (Ready):* {', '.join(go_pairs[:4]) if go_pairs else 'Nihil (Menunggu retest)'}")
+        lines.append(f"• 🎯 *Permission ARM (Basing):* {', '.join(arm_pairs[:4]) if arm_pairs else '-'}")
+        lines.append(f"• 🔒 *Permission LOCK (Anti-Knife):* {', '.join(locked_pairs[:4]) if locked_pairs else '-'}")
+        lines.append(f"• ⏳ *Permission WAIT (No Chase):* {', '.join(wait_pairs[:5]) if wait_pairs else '-'}")
         lines.append("━" * 36)
         lines.append("🎯 *ZONA DISKON (Buy Radar <= 38.2%):*")
         lines.extend(discount_pairs[:4] if discount_pairs else ["• Nihil (Tidak ada pair di zona diskon)"])

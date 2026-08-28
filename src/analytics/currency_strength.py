@@ -192,3 +192,36 @@ def get_csm_prompt_payload(symbol):
     ]
 
     return "\n".join(lines)
+
+
+def get_csm_delta_for_symbol(symbol: str) -> float:
+    """
+    Mengambil continuous float net delta CSM real-time untuk simbol tertentu.
+    Nilai positif = base menguat vs quote.
+    Nilai negatif = base melemah vs quote.
+    Untuk Gold: mengembalikan -USD score (karena Gold berbanding terbalik dengan USD).
+    """
+    clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
+    if "BTC" in clean_sym:
+        return 0.0
+
+    scores_h1, _ = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)
+    if not scores_h1:
+        return 0.0
+
+    if "XAU" in clean_sym or "GOLD" in clean_sym:
+        usd_h1 = scores_h1.get("USD", 0.0)
+        # Normalisasi ke skala ~[-5.0, +5.0]
+        return round(-usd_h1 / 10.0, 2)
+
+    if len(clean_sym) >= 6:
+        base = clean_sym[:3]
+        quote = clean_sym[3:6]
+        if base in scores_h1 and quote in scores_h1:
+            base_score = scores_h1.get(base, 0.0)
+            quote_score = scores_h1.get(quote, 0.0)
+            net_diff = base_score - quote_score
+            # Normalisasi ke skala ~[-5.0, +5.0]
+            return round(net_diff / 10.0, 2)
+
+    return 0.0
