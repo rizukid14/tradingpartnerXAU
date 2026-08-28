@@ -284,3 +284,36 @@ You are NOT required to follow a single predefined trading strategy. You may use
 1. **2-Stage Dynamic Trailing Stop (`src/analytics/position_manager.py` & `config.py`)**:
    * **Stage 1 (Swing Breathing Zone: 65% s/d < 90% TP)**: Jarak dihitung berbasis **ATR H1 ($0.75\times\text{ATR H1}$)** dengan floor absolut 80 pts (8 pips FX) untuk memberi ruang nafas yang longgar dari noise wick agar posisi dapat melaju mulus ke TP2.
    * **Stage 2 (Terminal Profit Lock: $\ge$ 90% TP)**: Otomatis mengencang (*tightening*) berbasis **ATR M30 ($0.50\times\text{ATR M30}$)** dengan floor 30 pts (3 pips FX) untuk mengunci cuan 90% secara rapat di pucuk sebelum terjadi pembalikan harga mendadak tepat di depan target TP.
+
+---
+
+## 13. Pembaruan 28 Agustus 2026 (Sesi Pagi & Siang) — FRVP Confluence, Wave State Machine, & Anti-Wick SL Buffer
+
+1. **Fixed Range Volume Profile (FRVP) Confluence Engine (`src/indicators/volume_profile.py`, `lux_smc.py`, `market_scanner.py`)**:
+   * Validasi kuantitatif 110.460 trade (4.3 tahun data broker MT5, 24 simbol): sinergi **SMC + FRVP** memangkas 59.2% trade noise dan melipatgandakan **Expected Value (+104% R)** serta menaikkan Profit Factor (`EURCHF` PF 1.79, `GBPCHF` PF 1.53, `XAUUSD` & `USDJPY` berbalik net profit).
+   * Menghitung Point of Control (POC), Value Area High (VAH), Value Area Low (VAL), dan rating Order Block (A+, A, B).
+2. **Wave State Machine & Trade Permission Engine (`src/indicators/wave_state.py`)**:
+   * Validasi 2.793.591 trade (2010–2026): memisahkan *Direction* (Macro D1/H4) dari *Trade Permission* (kapan waktu yang tepat untuk masuk H1).
+   * Menghilangkan *Impulse Chase* (Phase 1, PF 0.52) dan *Early Falling Knife* (Phase 2, PF 0.97).
+   * Membuka izin trading HANYA pada *Mature Basing* (Phase 3, PF 1.30) dan *Base Reclaim* (Phase 4, PF 1.42) di zona Dealing Range Discount ($\le 0.50$, Golden Pocket $\le 0.382$).
+   * Asymmetric CSM Flow: Melarang BUY hanya saat terjadi *systemic dump* ($\text{Delta} \le -2.0$), membebaskan *neutral flow* saat pullback diskon yang sehat.
+3. **Anti-Wick Buffer & Structural SL Anchoring (M30 — `market_scanner.py`)**:
+   * Validasi kuantitatif 2.900.000 candle M30 (2018–2026, 29 instrumen): Stop Loss wajib dijangkar **di balik lantai support/order block fisik ditambah Anti-Wick Buffer $0.35\times\text{ATR} + \text{Spread}$**, bukan dihitung dari harga entri (`mid`).
+   * Menghilangkan *False Wick Stop-Out* saat harga menguji lantai akumulasi/diskon, meningkatkan Win Rate Trend-Aligned Supply/Demand Retest menjadi **57.2% – 58.1% (PF 1.17 – 1.23)**.
+
+---
+
+## 14. Pembaruan 28 Agustus 2026 (Sesi Sore) — Real Wick Measurement, Anti-Waterfall Judas Sweep, Dynamic Point & Live News
+
+1. **Real Candlestick Wick Measurement & Anti-Waterfall Judas Sweep Protection (`src/analytics/market_scanner.py` & `tests/test_market_scanner.py`)**:
+   * Mengeliminasi nilai statis `rejection_wick_ratio` yang sebelumnya ter-hardcode (0.35 / 0.30) di seluruh 4 mekanisme `market_scanner.py`.
+   * Mengintegrasikan helper `_evaluate_live_candle_quality` menggunakan modul `classify_candle` pada data candle live M15 & candle tertutup sebelumnya.
+   * Menambahkan filter *Anti-Breakdown Waterfall* pada `LONDON_JUDAS_SWEEP`: melarang keras trigger BUY jika lilin live berupa marubozu merah tebal yang menembus level tanpa sumbu bawah, serta mewajibkan konfirmasi pembalikan fisik (*reclaim* atau *lower rejection wick* $\ge 20\%$). Mencegah false trigger saat terjadi reli/dumping mata uang ekstrem.
+2. **Dynamic MT5 Point Resolution (`src/analytics/market_scanner.py`)**:
+   * Mengubah `_get_point(sym)` di `market_scanner.py` agar meminta `symbol_info.point` langsung dari broker MT5 dengan fallback cerdas berbasis aset (JPY $\rightarrow 0.001$, XAU/BTC $\rightarrow 0.01$, FX $\rightarrow 0.00001$).
+3. **Live Economic News Injection (`src/core/llm_client.py`)**:
+   * Mengaktifkan live fetch berita ekonomi via API TradingView/Investing.com di `llm_client.py` (`build_high_density_dossier_prompt`) saat menyusun dossier untuk 3-LLM Jury.
+   * Menampilkan event berita berdampak tinggi ($\le 6$ jam sebelum & sesudah rilis) pada Section 4: *ECONOMIC CONTEXT & NEWS SHIELD*.
+4. **Dynamic Risk-to-Reward Ratio & Full FRVP Injection (`src/analytics/market_scanner.py`)**:
+   * Menginjeksikan ringkasan Fixed Range Volume Profile (`frvp_confluence` POC/VAL/VAH) ke seluruh 8 kandidat radar di `market_scanner.py`.
+   * Menghitung `risk_reward_ratio` secara dinamis dari formula matematis $|\text{TP} - \text{Trigger}| / |\text{Trigger} - \text{SL}|$.

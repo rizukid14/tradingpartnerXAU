@@ -1882,6 +1882,15 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         csm_block = ""
 
+    calendar_block = getattr(candidate, 'economic_context', '')
+    if not calendar_block:
+        try:
+            from src.analytics import economic_calendar
+            calendar_block = economic_calendar.calendar.get_context(symbol=sym)
+        except Exception:
+            calendar_block = ""
+    calendar_text = calendar_block.strip() if calendar_block else "No High-Impact News releases within +/- 6 hours"
+
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
@@ -1924,7 +1933,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1
 {candles_block}
 ## 4. ECONOMIC CONTEXT & NEWS SHIELD
-- Calendar Context: {candidate.economic_context or "No High-Impact News releases within +/- 6 hours"}
+- Calendar Context: {calendar_text}
 
 ## 5. EVALUATION DIRECTIVE
 Trade Permission & Confluence Hierarchy:

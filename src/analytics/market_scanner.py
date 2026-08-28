@@ -135,11 +135,22 @@ class MarketScanner:
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         # Cooldown check is `now_ts - last_trigger < 900`.
         # To make cooldown = 1800s (30m), set timestamp to now_ts + (1800 - 900) = now_ts + 900.
-        self._symbol_last_trigger[clean_sym] = time.time() + max(0, cooldown_seconds - 900)
-
     def _get_point(self, symbol: str) -> float:
-        clean = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
-        return POINT_MAP.get(clean, 1e-5)
+        try:
+            if hasattr(config.mt5, "symbol_info"):
+                si = config.mt5.symbol_info(symbol)
+                if si is not None and getattr(si, "point", 0.0) > 0:
+                    return float(si.point)
+        except Exception:
+            pass
+        clean = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        if clean in POINT_MAP:
+            return POINT_MAP[clean]
+        if "JPY" in clean:
+            return 0.001
+        if "XAU" in clean or "GOLD" in clean or "BTC" in clean:
+            return 0.01
+        return 1e-5
 
     @staticmethod
     def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
@@ -154,6 +165,80 @@ class MarketScanner:
         elif 14 <= hour_wib <= 23:
             return True
         return False
+
+    def _evaluate_live_candle_quality(self, sym: str, mid: float, atr_pts: float, pt: float, mt5_connector=None) -> Dict[str, Any]:
+        """
+        Fetches recent M15/M30/H1 rates and calculates live & recent candle quality:
+        body_ratio, lower_wick_pct, upper_wick_pct, velocity_atr, verdict, sweep_side, is_bullish_engulf, is_bearish_engulf.
+        """
+        default_res = {
+            "body_ratio": 0.35,
+            "upper_wick_pct": 0.30,
+            "lower_wick_pct": 0.30,
+            "velocity_atr": 0.50,
+            "direction": "neutral",
+            "verdict": "INDECISION",
+            "sweep_side": None,
+            "max_lower_wick": 0.30,
+            "max_upper_wick": 0.30,
+            "is_bullish_engulf": False,
+            "is_bearish_engulf": False,
+        }
+        
+        rates = None
+        tf = getattr(config.mt5, 'TIMEFRAME_M15', 15)
+        if hasattr(config.mt5, 'copy_rates_from_pos'):
+            rates = config.mt5.copy_rates_from_pos(sym, tf, 0, 5)
+        if (rates is None or len(rates) < 2) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+            rates = mt5_connector.get_closed_bars(sym, count=5, timeframe=tf)
+            
+        if rates is None or len(rates) < 2:
+            return default_res
+            
+        try:
+            cur_bar = rates[-1]
+            prev_bar = rates[-2]
+            atr_val = max(atr_pts * pt, 1e-6)
+            
+            cur_o = float(cur_bar['open'])
+            cur_h = max(float(cur_bar['high']), mid)
+            cur_l = min(float(cur_bar['low']), mid)
+            cur_c = mid
+            
+            prev_o = float(prev_bar['open'])
+            prev_h = float(prev_bar['high'])
+            prev_l = float(prev_bar['low'])
+            prev_c = float(prev_bar['close'])
+            
+            live_qual = classify_candle(
+                cur_o, cur_h, cur_l, cur_c, atr_val,
+                prev_o=prev_o, prev_h=prev_h, prev_l=prev_l, prev_c=prev_c
+            )
+            prev_qual = classify_candle(
+                prev_o, prev_h, prev_l, prev_c, atr_val
+            )
+            
+            max_lw = max(live_qual['lower_wick_pct'], prev_qual['lower_wick_pct'])
+            max_uw = max(live_qual['upper_wick_pct'], prev_qual['upper_wick_pct'])
+            
+            return {
+                "body_ratio": live_qual['body_ratio'],
+                "upper_wick_pct": live_qual['upper_wick_pct'],
+                "lower_wick_pct": live_qual['lower_wick_pct'],
+                "velocity_atr": live_qual['velocity_atr'],
+                "direction": live_qual['direction'],
+                "verdict": live_qual['verdict'],
+                "sweep_side": live_qual['sweep_side'] or prev_qual['sweep_side'],
+                "max_lower_wick": round(max_lw, 3),
+                "max_upper_wick": round(max_uw, 3),
+                "is_bullish_engulf": live_qual['is_bullish_engulf'],
+                "is_bearish_engulf": live_qual['is_bearish_engulf'],
+                "prev_verdict": prev_qual['verdict'],
+                "prev_direction": prev_qual['direction'],
+            }
+        except Exception as e:
+            logger.debug(f"Error classifying candle for {sym}: {e}")
+            return default_res
 
     def update_macro_context(self, mt5_connector=None, force: bool = False) -> None:
         """
@@ -523,6 +608,9 @@ class MarketScanner:
                 spread_pts = int(round(abs(ask - bid) / pt))
                 atr_pts = macro['atr_pts']
 
+                # Evaluate live candle quality for real wick measurement & waterfall detection
+                c_qual = self._evaluate_live_candle_quality(sym, mid, atr_pts, pt, mt5_connector=mt5_connector)
+
                 # ── WAVE STATE TRADE PERMISSION GATE (Phase 1/2 Lock vs Phase 3/4 Enable) ──
                 if getattr(config, 'ENABLE_WAVE_STATE_PERMISSION', True):
                     wave_st = macro.get('wave_state', WaveState.MATURE_CORRECTION_ARMED)
@@ -543,90 +631,102 @@ class MarketScanner:
                     # Bearish Judas Sweep: Price pushed above PDH / Asian High, now rejecting back down
                     ref_top = max(asian_h, pdh_val) if pdh_val > 0 else asian_h
                     if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
-                        sl = max(ref_top, mid) + (atr_pts * 0.40 * pt) + (spread_pts * pt)
-                        tp = mid - abs(sl - mid) * 2.2
-                        if abs(mid - sl) / pt >= 15:
-                            candidates.append(CandidateSetup(
-                                symbol=sym,
-                                setup_type="LONDON_JUDAS_SWEEP",
-                                direction=-1,
-                                trigger_price=bid,
-                                timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
-                                macro_compass=macro['trend_label'],
-                                dealing_range_pos=macro['dealing_range_pos'],
-                                rejection_wick_ratio=0.35,
-                                current_spread_pts=spread_pts,
-                                current_atr_pts=atr_pts,
-                                key_support=min(asian_l, pdl_val) if pdl_val > 0 else asian_l,
-                                key_resistance=ref_top,
-                                suggested_sl=round(sl, 5 if pt < 0.01 else 2),
-                                suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                risk_reward_ratio=2.2,
-                                strong_low=macro.get('strong_low', 0.0),
-                                strong_high=macro.get('strong_high', 0.0),
-                                bullish_ob_zone=macro.get('bullish_ob_zone', ""),
-                                bearish_ob_zone=macro.get('bearish_ob_zone', ""),
-                                fvg_zone=macro.get('fvg_zone', ""),
-                                liquidity_pools=macro.get('liquidity_pools', ""),
-                                pdh=macro.get('pdh', 0.0),
-                                pdl=macro.get('pdl', 0.0),
-                                daily_open=macro.get('daily_open', 0.0),
-                                adr_used_pct=macro.get('adr_used_pct', 0.0),
-                                h4_trend=macro.get('h4_trend_label', ''),
-                                d1_50_range=macro.get('d1_50_range', ''),
-                                d1_100_range=macro.get('d1_100_range', ''),
-                                pwh=macro.get('pwh', 0.0),
-                                pwl=macro.get('pwl', 0.0),
-                                h4_monthly_range=macro.get('h4_monthly_range', ''),
-                                wave_state=macro.get('wave_state', ''),
-                                wave_summary=macro.get('wave_summary', ''),
-                                timestamp_wib=now.strftime("%H:%M:%S WIB")
-                            ))
-                            continue
+                        is_bull_breakout = (c_qual['direction'] == 'bullish' and c_qual['body_ratio'] >= 0.50 and c_qual['upper_wick_pct'] < 0.20 and mid > ref_top)
+                        has_rejection = (mid <= ref_top) or (c_qual['max_upper_wick'] >= 0.20) or (c_qual['sweep_side'] == 'top') or c_qual['is_bearish_engulf']
+                        
+                        if has_rejection and not is_bull_breakout:
+                            sl = max(ref_top, mid) + (atr_pts * 0.40 * pt) + (spread_pts * pt)
+                            tp = mid - abs(sl - mid) * 2.2
+                            if abs(mid - sl) / pt >= 15:
+                                rr_val = round(abs(tp - bid) / max(abs(bid - sl), 1e-5), 2)
+                                candidates.append(CandidateSetup(
+                                    symbol=sym,
+                                    setup_type="LONDON_JUDAS_SWEEP",
+                                    direction=-1,
+                                    trigger_price=bid,
+                                    timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                    macro_compass=macro['trend_label'],
+                                    dealing_range_pos=macro['dealing_range_pos'],
+                                    rejection_wick_ratio=max(0.20, c_qual['max_upper_wick']),
+                                    current_spread_pts=spread_pts,
+                                    current_atr_pts=atr_pts,
+                                    key_support=min(asian_l, pdl_val) if pdl_val > 0 else asian_l,
+                                    key_resistance=ref_top,
+                                    suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                    suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                    risk_reward_ratio=rr_val,
+                                    strong_low=macro.get('strong_low', 0.0),
+                                    strong_high=macro.get('strong_high', 0.0),
+                                    bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                    bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                    fvg_zone=macro.get('fvg_zone', ""),
+                                    liquidity_pools=macro.get('liquidity_pools', ""),
+                                    frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=macro.get('pwh', 0.0),
+                                    pwl=macro.get('pwl', 0.0),
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB")
+                                ))
+                                continue
 
                     # Bullish Judas Sweep: Price pushed below PDL / Asian Low, now rejecting back up
                     ref_bot = min(asian_l, pdl_val) if pdl_val > 0 else asian_l
                     if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
-                        sl = min(ref_bot, mid) - (atr_pts * 0.40 * pt) - (spread_pts * pt)
-                        tp = mid + abs(mid - sl) * 2.2
-                        if abs(mid - sl) / pt >= 15:
-                            candidates.append(CandidateSetup(
-                                symbol=sym,
-                                setup_type="LONDON_JUDAS_SWEEP",
-                                direction=1,
-                                trigger_price=ask,
-                                timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
-                                macro_compass=macro['trend_label'],
-                                dealing_range_pos=macro['dealing_range_pos'],
-                                rejection_wick_ratio=0.35,
-                                current_spread_pts=spread_pts,
-                                current_atr_pts=atr_pts,
-                                key_support=ref_bot,
-                                key_resistance=max(asian_h, pdh_val) if pdh_val > 0 else asian_h,
-                                suggested_sl=round(sl, 5 if pt < 0.01 else 2),
-                                suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                risk_reward_ratio=2.2,
-                                strong_low=macro.get('strong_low', 0.0),
-                                strong_high=macro.get('strong_high', 0.0),
-                                bullish_ob_zone=macro.get('bullish_ob_zone', ""),
-                                bearish_ob_zone=macro.get('bearish_ob_zone', ""),
-                                fvg_zone=macro.get('fvg_zone', ""),
-                                liquidity_pools=macro.get('liquidity_pools', ""),
-                                pdh=macro.get('pdh', 0.0),
-                                pdl=macro.get('pdl', 0.0),
-                                daily_open=macro.get('daily_open', 0.0),
-                                adr_used_pct=macro.get('adr_used_pct', 0.0),
-                                h4_trend=macro.get('h4_trend_label', ''),
-                                d1_50_range=macro.get('d1_50_range', ''),
-                                d1_100_range=macro.get('d1_100_range', ''),
-                                pwh=macro.get('pwh', 0.0),
-                                pwl=macro.get('pwl', 0.0),
-                                h4_monthly_range=macro.get('h4_monthly_range', ''),
-                                wave_state=macro.get('wave_state', ''),
-                                wave_summary=macro.get('wave_summary', ''),
-                                timestamp_wib=now.strftime("%H:%M:%S WIB")
-                            ))
-                            continue
+                        is_bear_breakdown = (c_qual['direction'] == 'bearish' and c_qual['body_ratio'] >= 0.50 and c_qual['lower_wick_pct'] < 0.20 and mid < ref_bot)
+                        has_rejection = (mid >= ref_bot) or (c_qual['max_lower_wick'] >= 0.20) or (c_qual['sweep_side'] == 'bottom') or c_qual['is_bullish_engulf']
+                        
+                        if has_rejection and not is_bear_breakdown:
+                            sl = min(ref_bot, mid) - (atr_pts * 0.40 * pt) - (spread_pts * pt)
+                            tp = mid + abs(mid - sl) * 2.2
+                            if abs(mid - sl) / pt >= 15:
+                                rr_val = round(abs(tp - ask) / max(abs(ask - sl), 1e-5), 2)
+                                candidates.append(CandidateSetup(
+                                    symbol=sym,
+                                    setup_type="LONDON_JUDAS_SWEEP",
+                                    direction=1,
+                                    trigger_price=ask,
+                                    timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                    macro_compass=macro['trend_label'],
+                                    dealing_range_pos=macro['dealing_range_pos'],
+                                    rejection_wick_ratio=max(0.20, c_qual['max_lower_wick']),
+                                    current_spread_pts=spread_pts,
+                                    current_atr_pts=atr_pts,
+                                    key_support=ref_bot,
+                                    key_resistance=max(asian_h, pdh_val) if pdh_val > 0 else asian_h,
+                                    suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                    suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                    risk_reward_ratio=rr_val,
+                                    strong_low=macro.get('strong_low', 0.0),
+                                    strong_high=macro.get('strong_high', 0.0),
+                                    bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                    bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                    fvg_zone=macro.get('fvg_zone', ""),
+                                    liquidity_pools=macro.get('liquidity_pools', ""),
+                                    frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=macro.get('pwh', 0.0),
+                                    pwl=macro.get('pwl', 0.0),
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB")
+                                ))
+                                continue
 
                 # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK (H1/H4 PULLBACK) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
@@ -644,6 +744,7 @@ class MarketScanner:
                             sl = floor_level - anti_wick_buffer - (spread_pts * pt)
                             tp = mid + max(abs(mid - sl) * 2.2, atr_pts * 1.0 * pt)
                             if abs(mid - sl) / pt >= 15:
+                                rr_val = round(abs(tp - ask) / max(abs(ask - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
@@ -652,20 +753,21 @@ class MarketScanner:
                                     timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=pos_in_range,
-                                    rejection_wick_ratio=0.30,
+                                    rejection_wick_ratio=max(0.15, c_qual['max_lower_wick']),
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=floor_level,
                                     key_resistance=macro['dealing_range_high'],
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                    risk_reward_ratio=2.2,
+                                    risk_reward_ratio=rr_val,
                                     strong_low=macro.get('strong_low', 0.0),
                                     strong_high=macro.get('strong_high', 0.0),
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=macro.get('liquidity_pools', ""),
+                                    frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
                                     pdh=macro.get('pdh', 0.0),
                                     pdl=macro.get('pdl', 0.0),
                                     daily_open=macro.get('daily_open', 0.0),
@@ -693,6 +795,7 @@ class MarketScanner:
                             sl = ceil_level + anti_wick_buffer + (spread_pts * pt)
                             tp = mid - max(abs(sl - mid) * 2.2, atr_pts * 1.0 * pt)
                             if abs(mid - sl) / pt >= 15:
+                                rr_val = round(abs(tp - bid) / max(abs(bid - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
@@ -701,20 +804,21 @@ class MarketScanner:
                                     timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=pos_in_range,
-                                    rejection_wick_ratio=0.30,
+                                    rejection_wick_ratio=max(0.15, c_qual['max_upper_wick']),
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=macro['dealing_range_low'],
                                     key_resistance=ceil_level,
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                    risk_reward_ratio=2.2,
+                                    risk_reward_ratio=rr_val,
                                     strong_low=macro.get('strong_low', 0.0),
                                     strong_high=macro.get('strong_high', 0.0),
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=macro.get('liquidity_pools', ""),
+                                    frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
                                     pdh=macro.get('pdh', 0.0),
                                     pdl=macro.get('pdl', 0.0),
                                     daily_open=macro.get('daily_open', 0.0),
@@ -738,6 +842,7 @@ class MarketScanner:
                         ceil_level = max(macro.get('dealing_range_high', mid), macro.get('pdh', mid), mid)
                         sl = ceil_level + (atr_pts * 0.35 * pt) + (spread_pts * pt)
                         tp = mid - max(abs(sl - mid) * 2.0, atr_pts * 1.0 * pt)
+                        rr_val = round(abs(tp - bid) / max(abs(bid - sl), 1e-5), 2)
                         candidates.append(CandidateSetup(
                             symbol=sym,
                             setup_type="NY_ADR_REVERSAL",
@@ -746,20 +851,21 @@ class MarketScanner:
                             timeframe="M30",
                             macro_compass=macro['trend_label'],
                             dealing_range_pos=pos_in_range,
-                            rejection_wick_ratio=0.35,
+                            rejection_wick_ratio=max(0.15, c_qual['max_upper_wick']),
                             current_spread_pts=spread_pts,
                             current_atr_pts=atr_pts,
                             key_support=macro['dealing_range_low'],
                             key_resistance=ceil_level,
                             suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                             suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                            risk_reward_ratio=2.0,
+                            risk_reward_ratio=rr_val,
                             strong_low=macro.get('strong_low', 0.0),
                             strong_high=macro.get('strong_high', 0.0),
                             bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                             bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                             fvg_zone=macro.get('fvg_zone', ""),
                             liquidity_pools=macro.get('liquidity_pools', ""),
+                            frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
                             pdh=macro.get('pdh', 0.0),
                             pdl=macro.get('pdl', 0.0),
                             daily_open=macro.get('daily_open', 0.0),
@@ -779,6 +885,7 @@ class MarketScanner:
                         floor_level = min(macro.get('dealing_range_low', mid), macro.get('pdl', mid), mid)
                         sl = floor_level - (atr_pts * 0.35 * pt) - (spread_pts * pt)
                         tp = mid + max(abs(mid - sl) * 2.0, atr_pts * 1.0 * pt)
+                        rr_val = round(abs(tp - ask) / max(abs(ask - sl), 1e-5), 2)
                         candidates.append(CandidateSetup(
                             symbol=sym,
                             setup_type="NY_ADR_REVERSAL",
@@ -787,20 +894,21 @@ class MarketScanner:
                             timeframe="M30",
                             macro_compass=macro['trend_label'],
                             dealing_range_pos=pos_in_range,
-                            rejection_wick_ratio=0.35,
+                            rejection_wick_ratio=max(0.15, c_qual['max_lower_wick']),
                             current_spread_pts=spread_pts,
                             current_atr_pts=atr_pts,
                             key_support=floor_level,
                             key_resistance=macro['dealing_range_high'],
                             suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                             suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                            risk_reward_ratio=2.0,
+                            risk_reward_ratio=rr_val,
                             strong_low=macro.get('strong_low', 0.0),
                             strong_high=macro.get('strong_high', 0.0),
                             bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                             bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                             fvg_zone=macro.get('fvg_zone', ""),
                             liquidity_pools=macro.get('liquidity_pools', ""),
+                            frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
                             pdh=macro.get('pdh', 0.0),
                             pdl=macro.get('pdl', 0.0),
                             daily_open=macro.get('daily_open', 0.0),
@@ -834,6 +942,7 @@ class MarketScanner:
                             sl = c_res - (atr_val * 0.65) - (spread_pts * pt)
                             tp = entry_lim + abs(entry_lim - sl) * 2.5
                             if abs(entry_lim - sl) / pt >= 15:
+                                rr_val = round(abs(tp - entry_lim) / max(abs(entry_lim - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
@@ -842,20 +951,21 @@ class MarketScanner:
                                     timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=macro['dealing_range_pos'],
-                                    rejection_wick_ratio=0.30,
+                                    rejection_wick_ratio=max(0.15, c_qual['max_lower_wick']),
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=c_res,
                                     key_resistance=macro['dealing_range_high'],
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                    risk_reward_ratio=2.5,
+                                    risk_reward_ratio=rr_val,
                                     strong_low=c_res,
                                     strong_high=macro.get('strong_high', 0.0),
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=f"Tested {t_res}x (Range Age: {macro.get('range_age_hours', 24)}h)",
+                                    frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
                                     pdh=macro.get('pdh', 0.0),
                                     pdl=macro.get('pdl', 0.0),
                                     daily_open=macro.get('daily_open', 0.0),
@@ -866,7 +976,6 @@ class MarketScanner:
                                     pwh=macro.get('pwh', 0.0),
                                     pwl=macro.get('pwl', 0.0),
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
-                                    economic_context="",
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
@@ -888,6 +997,7 @@ class MarketScanner:
                             sl = c_sup + (atr_val * 0.65) + (spread_pts * pt)
                             tp = entry_lim - abs(sl - entry_lim) * 2.5
                             if abs(sl - entry_lim) / pt >= 15:
+                                rr_val = round(abs(tp - entry_lim) / max(abs(entry_lim - sl), 1e-5), 2)
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
@@ -896,20 +1006,21 @@ class MarketScanner:
                                     timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
                                     macro_compass=macro['trend_label'],
                                     dealing_range_pos=macro['dealing_range_pos'],
-                                    rejection_wick_ratio=0.30,
+                                    rejection_wick_ratio=max(0.15, c_qual['max_upper_wick']),
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=macro['dealing_range_low'],
                                     key_resistance=c_sup,
                                     suggested_sl=round(sl, 5 if pt < 0.01 else 2),
                                     suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                    risk_reward_ratio=2.5,
+                                    risk_reward_ratio=rr_val,
                                     strong_low=macro.get('strong_low', 0.0),
                                     strong_high=c_sup,
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
                                     liquidity_pools=f"Tested {t_sup}x (Range Age: {macro.get('range_age_hours', 24)}h)",
+                                    frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
                                     pdh=macro.get('pdh', 0.0),
                                     pdl=macro.get('pdl', 0.0),
                                     daily_open=macro.get('daily_open', 0.0),
@@ -920,7 +1031,6 @@ class MarketScanner:
                                     pwh=macro.get('pwh', 0.0),
                                     pwl=macro.get('pwl', 0.0),
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
-                                    economic_context="",
                                     wave_state=macro.get('wave_state', ''),
                                     wave_summary=macro.get('wave_summary', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),

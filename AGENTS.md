@@ -198,6 +198,15 @@ python main.py
 26. **Anti-Wick Buffer & Structural SL Anchoring (M30 — 28 Agu 2026)**:
     - Validasi kuantitatif 2.900.000 candle M30 (2018–2026, 29 instrumen): Stop Loss wajib dijangkar **di balik lantai support/order block fisik ditambah Anti-Wick Buffer $0.35\times\text{ATR} + \text{Spread}$**, bukan dihitung dari harga entri (`mid`).
     - Menghilangkan *False Wick Stop-Out* saat harga menguji lantai akumulasi/diskon, meningkatkan Win Rate Trend-Aligned Supply/Demand Retest menjadi **57.2% – 58.1% (PF 1.17 – 1.23)**.
+27. **Real Candlestick Wick Measurement & Anti-Waterfall Judas Sweep Protection (28 Agu 2026)**:
+    - Mengeliminasi nilai statis `rejection_wick_ratio` yang sebelumnya ter-hardcode (0.35 / 0.30) di seluruh 4 mekanisme `market_scanner.py`.
+    - Mengintegrasikan helper `_evaluate_live_candle_quality` menggunakan modul `classify_candle` pada data candle live M15 & candle tertutup sebelumnya.
+    - Menambahkan filter *Anti-Breakdown Waterfall* pada `LONDON_JUDAS_SWEEP`: melarang keras trigger BUY jika lilin live berupa marubozu merah tebal yang menembus level tanpa sumbu bawah, serta mewajibkan konfirmasi pembalikan fisik (*reclaim* atau *lower rejection wick* $\ge 20\%$). Mencegah false trigger saat terjadi reli/dumping mata uang ekstrem.
+28. **Dynamic MT5 Point Resolution, Live Economic News & FRVP Confluence Injection (28 Agu 2026)**:
+    - Mengubah `_get_point(sym)` di `market_scanner.py` agar meminta `symbol_info.point` langsung dari broker MT5 dengan fallback cerdas berbasis aset (JPY $\rightarrow 0.001$, XAU/BTC $\rightarrow 0.01$, FX $\rightarrow 0.00001$).
+    - Mengaktifkan live fetch berita ekonomi via API TradingView/Investing.com di `llm_client.py` (`build_high_density_dossier_prompt`) saat menyusun dossier untuk 3-LLM Jury.
+    - Menginjeksikan ringkasan Fixed Range Volume Profile (`frvp_confluence` POC/VAL/VAH) ke seluruh 8 kandidat radar di `market_scanner.py`.
+    - Menghitung `risk_reward_ratio` secara dinamis dari formula matematis $|\text{TP} - \text{Trigger}| / |\text{Trigger} - \text{SL}|$.
 
 
 

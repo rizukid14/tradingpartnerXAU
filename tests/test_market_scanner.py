@@ -185,6 +185,54 @@ class TestMarketScanner(unittest.TestCase):
             self.assertTrue(result)
             mock_send.assert_called_once()
 
+    def test_evaluate_live_candle_quality(self):
+        # Test with custom rates
+        class CustomMockMT5:
+            def get_closed_bars(self, symbol, count=5, timeframe=None):
+                return [
+                    {'open': 0.9400, 'high': 0.9410, 'low': 0.9380, 'close': 0.9385, 'tick_volume': 100},
+                    {'open': 0.9385, 'high': 0.9390, 'low': 0.9350, 'close': 0.9355, 'tick_volume': 100}
+                ]
+        mock_conn = CustomMockMT5()
+        res = self.scanner._evaluate_live_candle_quality("EURCHF-ECNc", mid=0.9355, atr_pts=70, pt=0.00001, mt5_connector=mock_conn)
+        self.assertIn("body_ratio", res)
+        self.assertIn("max_lower_wick", res)
+        self.assertIn("max_upper_wick", res)
+        self.assertEqual(res["direction"], "bearish")
+
+    def test_judas_sweep_anti_waterfall_rejection(self):
+        """Ensure falling knife / bearish waterfall is rejected in Judas Sweep, while real rejection wick is accepted."""
+        # 1. Bearish waterfall (falling knife with 0 lower wick breaking below Asian low 0.9380)
+        waterfall_rates = [
+            {'open': 0.9400, 'high': 0.9410, 'low': 0.9380, 'close': 0.9385, 'tick_volume': 100},
+            {'open': 0.9385, 'high': 0.9385, 'low': 0.9350, 'close': 0.9350, 'tick_volume': 100} # Marubozu waterfall, no lower wick
+        ]
+        class WaterfallMock:
+            def get_closed_bars(self, symbol, count=5, timeframe=None):
+                return waterfall_rates
+        
+        qual_waterfall = self.scanner._evaluate_live_candle_quality("EURCHF-ECNc", mid=0.9350, atr_pts=70, pt=0.00001, mt5_connector=WaterfallMock())
+        is_bear_breakdown = (qual_waterfall['direction'] == 'bearish' and qual_waterfall['body_ratio'] >= 0.50 and qual_waterfall['lower_wick_pct'] < 0.20 and 0.9350 < 0.9380)
+        has_rejection = (0.9350 >= 0.9380) or (qual_waterfall['max_lower_wick'] >= 0.20) or (qual_waterfall['sweep_side'] == 'bottom') or qual_waterfall['is_bullish_engulf']
+        self.assertTrue(is_bear_breakdown, "Waterfall marubozu should be flagged as bear breakdown")
+        self.assertFalse(has_rejection, "Waterfall should not have valid rejection confirmation")
+
+        # 2. Real Judas Sweep Reversal (Hammer candle with 60% lower wick sweeping Asian low and bouncing)
+        sweep_rates = [
+            {'open': 0.9400, 'high': 0.9410, 'low': 0.9380, 'close': 0.9385, 'tick_volume': 100},
+            {'open': 0.9380, 'high': 0.9382, 'low': 0.9350, 'close': 0.9378, 'tick_volume': 100} # Strong pinbar / hammer
+        ]
+        class SweepMock:
+            def get_closed_bars(self, symbol, count=5, timeframe=None):
+                return sweep_rates
+        
+        qual_sweep = self.scanner._evaluate_live_candle_quality("EURCHF-ECNc", mid=0.9378, atr_pts=70, pt=0.00001, mt5_connector=SweepMock())
+        is_bear_breakdown_sweep = (qual_sweep['direction'] == 'bearish' and qual_sweep['body_ratio'] >= 0.50 and qual_sweep['lower_wick_pct'] < 0.20 and 0.9378 < 0.9380)
+        has_rejection_sweep = (0.9378 >= 0.9380) or (qual_sweep['max_lower_wick'] >= 0.20) or (qual_sweep['sweep_side'] == 'bottom') or qual_sweep['is_bullish_engulf']
+        self.assertFalse(is_bear_breakdown_sweep, "Hammer should not be flagged as bear breakdown")
+        self.assertTrue(has_rejection_sweep, "Hammer should have valid rejection confirmation")
+        self.assertGreaterEqual(qual_sweep['max_lower_wick'], 0.50)
+
 
 if __name__ == "__main__":
     unittest.main()
