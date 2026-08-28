@@ -975,6 +975,127 @@ class MarketScanner:
                                 ))
                                 continue
 
+                # ── MECHANISM 3 (M6): HTF WEEKLY WALL REVERSAL (PWH/PWL -> NEXT FOOTHOLD) ──
+                # Triggered when price collides with Previous Week High/Low and rejects back toward Weekly 50% Equilibrium
+                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                    pwh = macro.get('pwh', 0.0)
+                    pwl = macro.get('pwl', 0.0)
+                    if pwh > 0 and pwl > 0:
+                        w_mid = pwl + 0.50 * (pwh - pwl)
+                        anti_wick_padding = 20 * pt
+
+                        # Bearish Wall Collision: Pierced PWH, closed below PWH + 0.20 ATR, Upper Wick >= 25%, Room to 50% Foothold
+                        if (high >= pwh) and (mid <= pwh + atr_pts * 0.20 * pt) and (c_qual['max_upper_wick'] >= 0.25):
+                            if mid > w_mid and abs(mid - w_mid) >= (atr_pts * pt * 1.5):
+                                sl = max(high, pwh) + (atr_pts * 0.35 * pt) + (spread_pts * pt) + anti_wick_padding
+                                tp = w_mid
+                                risk_dist = abs(sl - mid)
+                                if risk_dist > 0 and (abs(mid - tp) / risk_dist >= 1.8):
+                                    rr_val = round(abs(mid - tp) / risk_dist, 2)
+                                    candidates.append(CandidateSetup(
+                                        symbol=sym,
+                                        setup_type="HTF_WEEKLY_WALL_REVERSAL",
+                                        direction=-1,
+                                        trigger_price=round(mid, 5 if pt < 0.01 else 2),
+                                        timeframe="H1",
+                                        macro_compass=macro['trend_label'],
+                                        dealing_range_pos=pos_in_range,
+                                        rejection_wick_ratio=c_qual['max_upper_wick'],
+                                        current_spread_pts=spread_pts,
+                                        current_atr_pts=atr_pts,
+                                        key_support=round(w_mid, 5 if pt < 0.01 else 2),
+                                        key_resistance=round(pwh, 5 if pt < 0.01 else 2),
+                                        suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                        suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                        risk_reward_ratio=rr_val,
+                                        strong_low=macro.get('strong_low', 0.0),
+                                        strong_high=macro.get('strong_high', 0.0),
+                                        bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                        bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                        fvg_zone=macro.get('fvg_zone', ""),
+                                        liquidity_pools=macro.get('liquidity_pools', ""),
+                                        frvp_confluence=macro.get('frvp_summary', '') or "Weekly Wall SFP Liquidity",
+                                        pdh=macro.get('pdh', 0.0),
+                                        pdl=macro.get('pdl', 0.0),
+                                        daily_open=macro.get('daily_open', 0.0),
+                                        adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                        h4_trend=macro.get('h4_trend_label', ''),
+                                        d1_50_range=macro.get('d1_50_range', ''),
+                                        d1_100_range=macro.get('d1_100_range', ''),
+                                        pwh=pwh,
+                                        pwl=pwl,
+                                        h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                        wave_state=macro.get('wave_state', ''),
+                                        wave_summary=macro.get('wave_summary', ''),
+                                        permission=perm_state,
+                                        csm_delta=csm_delta_val,
+                                        timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                        metadata={
+                                            "entry_type": "market_reversal",
+                                            "entry_price": round(mid, 5 if pt < 0.01 else 2),
+                                            "target_foothold": round(w_mid, 5 if pt < 0.01 else 2),
+                                            "permission": perm_state,
+                                            "csm_delta": csm_delta_val
+                                        }
+                                    ))
+                                    continue
+
+                        # Bullish Wall Collision: Pierced PWL, closed above PWL - 0.20 ATR, Lower Wick >= 25%, Room to 50% Foothold
+                        elif (low <= pwl) and (mid >= pwl - atr_pts * 0.20 * pt) and (c_qual['max_lower_wick'] >= 0.25):
+                            if mid < w_mid and abs(w_mid - mid) >= (atr_pts * pt * 1.5):
+                                sl = min(low, pwl) - (atr_pts * 0.35 * pt) - (spread_pts * pt) - anti_wick_padding
+                                tp = w_mid
+                                risk_dist = abs(mid - sl)
+                                if risk_dist > 0 and (abs(tp - mid) / risk_dist >= 1.8):
+                                    rr_val = round(abs(tp - mid) / risk_dist, 2)
+                                    candidates.append(CandidateSetup(
+                                        symbol=sym,
+                                        setup_type="HTF_WEEKLY_WALL_REVERSAL",
+                                        direction=1,
+                                        trigger_price=round(mid, 5 if pt < 0.01 else 2),
+                                        timeframe="H1",
+                                        macro_compass=macro['trend_label'],
+                                        dealing_range_pos=pos_in_range,
+                                        rejection_wick_ratio=c_qual['max_lower_wick'],
+                                        current_spread_pts=spread_pts,
+                                        current_atr_pts=atr_pts,
+                                        key_support=round(pwl, 5 if pt < 0.01 else 2),
+                                        key_resistance=round(w_mid, 5 if pt < 0.01 else 2),
+                                        suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                        suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                        risk_reward_ratio=rr_val,
+                                        strong_low=macro.get('strong_low', 0.0),
+                                        strong_high=macro.get('strong_high', 0.0),
+                                        bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                        bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                        fvg_zone=macro.get('fvg_zone', ""),
+                                        liquidity_pools=macro.get('liquidity_pools', ""),
+                                        frvp_confluence=macro.get('frvp_summary', '') or "Weekly Wall SFP Liquidity",
+                                        pdh=macro.get('pdh', 0.0),
+                                        pdl=macro.get('pdl', 0.0),
+                                        daily_open=macro.get('daily_open', 0.0),
+                                        adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                        h4_trend=macro.get('h4_trend_label', ''),
+                                        d1_50_range=macro.get('d1_50_range', ''),
+                                        d1_100_range=macro.get('d1_100_range', ''),
+                                        pwh=pwh,
+                                        pwl=pwl,
+                                        h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                        wave_state=macro.get('wave_state', ''),
+                                        wave_summary=macro.get('wave_summary', ''),
+                                        permission=perm_state,
+                                        csm_delta=csm_delta_val,
+                                        timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                        metadata={
+                                            "entry_type": "market_reversal",
+                                            "entry_price": round(mid, 5 if pt < 0.01 else 2),
+                                            "target_foothold": round(w_mid, 5 if pt < 0.01 else 2),
+                                            "permission": perm_state,
+                                            "csm_delta": csm_delta_val
+                                        }
+                                    ))
+                                    continue
+
                 # ── MECHANISM 4: MULTI-TOUCH CLUSTER BREAKOUT & DELAYED RETEST (H1/M30) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     c_res = macro.get('cluster_resistance', 0.0)
