@@ -366,10 +366,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 🔥ADX≥28{UI.RST}")
     else:
         t1_lines = [
-            f" {UI.YELLOW}● Inisialisasi 22-Pair Macro Compass...{UI.RST}",
+            f" {UI.YELLOW}● Inisialisasi {len(all_symbols)}-Pair Macro Compass...{UI.RST}",
             f" {UI.DIM}Memindai D1/H4 dealing ranges & level Asia...{UI.RST}",
             f" {UI.DIM}Fast Radar bersiap untuk sweep 60 detik.{UI.RST}",
-            f" {UI.DIM}Monitoring 21 FX Crosses + Gold 24/5.{UI.RST}"
+            f" {UI.DIM}Monitoring {len(all_symbols)-1} FX Crosses + Gold 24/5.{UI.RST}"
         ]
     
     # ── TILE 2: LIVE ACCOUNT & RISK INTELLIGENCE HUD (Top Right) ──
@@ -411,7 +411,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     
     t2_lines.append(f" Top Hot   : {UI.YELLOW}{hot_str}{UI.RST} 🔥")
     t2_lines.append(f" Wave Armed: {UI.GREEN}{in_zone_str}{UI.RST}")
-    t2_lines.append(f" Fast Radar: {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
+    t2_lines.append(f" Fast Radar: {UI.CYAN}{len(all_symbols)} Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
     t2_lines.append(f" Proteksi  : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         
     # ── TILE 3: DUAL-HORIZON BOITOKI CSM RADAR (Bottom Left) ──
