@@ -317,3 +317,6 @@ You are NOT required to follow a single predefined trading strategy. You may use
 4. **Dynamic Risk-to-Reward Ratio & Full FRVP Injection (`src/analytics/market_scanner.py`)**:
    * Menginjeksikan ringkasan Fixed Range Volume Profile (`frvp_confluence` POC/VAL/VAH) ke seluruh 8 kandidat radar di `market_scanner.py`.
    * Menghitung `risk_reward_ratio` secara dinamis dari formula matematis $|\text{TP} - \text{Trigger}| / |\text{Trigger} - \text{SL}|$.
+5. **Telegram Interactive `/news` Command & Cyberpunk Bento HUD Live News Ticker (`src/core/telegram_bot.py` & `src/core/cli_theme.py`)**:
+   * Menambahkan perintah interaktif `/news` (beserta alias `/kalender`, `/berita`, `/event`) dan tombol inline keyboard pada menu utama Telegram Controller.
+   * Mengintegrasikan ticker berita real-time pada Tile 3 (*Dual-Horizon Boitoki CSM*) dan Tile 4 (*2-Pass Sequential Jury*) di Bento Box Terminal HUD (`cli_theme.py`), menampilkan hitung mundur waktu rilis (misal: `[CA] GDP MoM Prel in 2.0h (19:30 WIB)`).

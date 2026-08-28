@@ -259,6 +259,67 @@ def handle_indicators_command(chat_id, symbol_input=None):
         send_telegram_msg(f"Error fetching indicators for `{symbol_input}`: `{e}`", chat_id=chat_id)
 
 
+def handle_news_command(chat_id):
+    """Sends the Upcoming High-Impact Economic Events Calendar (TradingView API / Deterministic)."""
+    try:
+        from src.analytics import economic_calendar
+        cal_obj = getattr(economic_calendar, "calendar", None)
+        if not cal_obj:
+            send_telegram_msg("⚠️ Kalender berita belum terinisialisasi.", chat_id=chat_id)
+            return
+
+        now = datetime.now(WIB)
+        all_events = cal_obj.get_events(now)
+        
+        recent_news = [e for e in all_events if (now - timedelta(hours=6)) <= e["dt"] < now]
+        upcoming_news = [e for e in all_events if now <= e["dt"] <= (now + timedelta(hours=48))]
+
+        lines = [
+            "📰 *KALENDER BERITA HIGH-IMPACT (TradingView / Investing.com)*",
+            f"🕒 `{now.strftime('%H:%M:%S WIB')}` | Horizon: `±48 Jam`\n"
+        ]
+
+        if recent_news:
+            lines.append("⚡ *Baru Saja Dirilis (6 Jam Terakhir):*")
+            for ne in recent_news[:5]:
+                dt_str = ne['dt'].strftime('%H:%M WIB')
+                hours_ago = (now - ne['dt']).total_seconds() / 3600
+                country = ne.get('country', 'US').strip()
+                lines.append(f"• `[{dt_str}]` ⚠️ *[{country}]* `{ne['name']}` _({hours_ago:.1f}h lalu)_")
+            lines.append("")
+
+        if upcoming_news:
+            lines.append("⏳ *Jadwal Rilis Mendatang (Next 48 Jam):*")
+            for ne in upcoming_news[:10]:
+                dt_str = ne['dt'].strftime('%a %d %b %H:%M WIB')
+                hours_in = (ne['dt'] - now).total_seconds() / 3600
+                country = ne.get('country', 'US').strip()
+                impact = ne.get('impact', 'HIGH')
+                lines.append(f"• `[{ne['dt'].strftime('%H:%M WIB')}]` 🚨 *[{country}]* `{ne['name']}`\n   ↳ _{dt_str} (dalam {hours_in:.1f} jam)_ `[{impact}]`")
+        else:
+            lines.append("🟢 *Status Pasar Tenang:*\n_Tidak ada rilis berita High-Impact dalam 48 jam ke depan._")
+
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🛡️ *News Guard*: _Stage 2 Jury otomatis menolak trade jika rilis $\le$ 6 jam terdeteksi._")
+
+        kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🔄 [ Refresh News ]", "callback_data": "cmd:news"},
+                    {"text": "🌐 [ Boitoki CSM ]", "callback_data": "cmd:csm"}
+                ],
+                [
+                    {"text": "📡 [ SMC Radar 22 ]", "callback_data": "cmd:radar"},
+                    {"text": "« [ Menu ]", "callback_data": "cmd:menu"}
+                ]
+            ]
+        }
+        send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_news_command: {e}")
+        send_telegram_msg(f"Error fetching economic calendar: `{e}`", chat_id=chat_id)
+
+
 def _build_main_menu_keyboard():
     """Builds the clean institutional inline keyboard for /menu."""
     return {
@@ -276,10 +337,14 @@ def _build_main_menu_keyboard():
                 {"text": "BTCUSD M30", "callback_data": "analyze:BTCUSD_M30"}
             ],
             [
-                {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"}
+                {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"},
+                {"text": "🌐 [ Boitoki CSM Radar ]", "callback_data": "cmd:csm"}
             ],
             [
-                {"text": "📊 [ Open Positions ]", "callback_data": "cmd:positions"},
+                {"text": "📰 [ News Calendar ]", "callback_data": "cmd:news"},
+                {"text": "📊 [ Open Positions ]", "callback_data": "cmd:positions"}
+            ],
+            [
                 {"text": "🛡️ [ Account Status ]", "callback_data": "cmd:status"}
             ]
         ]
@@ -766,6 +831,8 @@ def _process_update(update):
             handle_close_all(target_chat)
         elif cmd in ("/rekap", "/profit"):
             handle_status_command(target_chat)
+        elif cmd in ("/news", "/kalender", "/berita", "/calendar", "/event", "/events"):
+            handle_news_command(target_chat)
         elif any(p in cmd for p in ("gbpusd", "eurjpy", "gbpaud", "audcad", "eurchf", "audchf", "cadchf", "xauusd", "btcusd", "gold", "btc")):
             tf_custom = args[0] if args else None
             run_ondemand_analysis(parts[0], target_chat, timeframe_input=tf_custom)
@@ -807,6 +874,8 @@ def _process_update(update):
             handle_close_all(target_chat)
         elif data == "cmd:menu":
             handle_menu_command(target_chat)
+        elif data == "cmd:news":
+            handle_news_command(target_chat)
         elif data == "cmd:csm":
             handle_csm_command(target_chat)
         elif data == "cmd:radar":
@@ -863,6 +932,7 @@ def register_bot_commands():
         return False
     commands = [
         {"command": "menu", "description": "Interactive Control Menu & Actions"},
+        {"command": "news", "description": "High-Impact News Calendar & Schedule"},
         {"command": "csm", "description": "Dual-Horizon Boitoki CSM Currency Strength"},
         {"command": "analisa", "description": "3-AI Analysis (e.g. /analisa GBPUSD M15)"},
         {"command": "radar", "description": "22-Pair SMC Quant Scanner & Overview"},

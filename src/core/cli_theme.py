@@ -430,10 +430,26 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else 0.0
         gold_impact = "USD Outflow (Bullish Fuel)" if usd_m15 <= -5.0 else ("USD Inflow (Bearish Pressure)" if usd_m15 >= 5.0 else "Balanced")
         
+        # Live upcoming news ticker
+        news_str = "Quiet (No High-Impact News in 24h)"
+        try:
+            from src.analytics import economic_calendar
+            cal_obj = getattr(economic_calendar, "calendar", None)
+            if cal_obj:
+                now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+                upcoming = cal_obj.get_upcoming(now_wib, hours_ahead=24)
+                if upcoming:
+                    ne = upcoming[0]
+                    hrs = (ne["dt"] - now_wib).total_seconds() / 3600
+                    cntry = ne.get("country", "US").strip()
+                    news_str = f"[{cntry}] {ne['name']} in {hrs:.1f}h ({ne['dt'].strftime('%H:%M WIB')})"
+        except Exception:
+            pass
+        
         t3_lines.append(f" 24h Macro (H1)  : {UI.CYAN}{h1_str}{UI.RST}")
         t3_lines.append(f" 4h Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
         t3_lines.append(f" Gold Dollar Flow: {UI.GREEN if usd_m15 <= -5.0 else (UI.RED if usd_m15 >= 5.0 else UI.WHITE)}USD {usd_m15:+.1f} [{gold_impact}]{UI.RST}")
-        t3_lines.append(f" Refresh Interval: {UI.DIM}Every 60s MT5 Tick (0 Token / On-Demand /csm){UI.RST}")
+        t3_lines.append(f" News Ticker     : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
     except Exception:
         t3_lines = [
             f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
@@ -447,7 +463,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini 3.1-Flash{UI.RST} (Speed)",
         f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Hard Risk Veto)",
         f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife Guard)",
-        f" Pending Mode : {UI.CYAN}Auto-Retest at FVG / Order Block (60-120m Expiry){UI.RST}"
+        f" News Shield  : {UI.GREEN}TradingView/Investing.com Live Filter (±6h Gate){UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──

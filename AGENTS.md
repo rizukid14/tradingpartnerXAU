@@ -207,6 +207,9 @@ python main.py
     - Mengaktifkan live fetch berita ekonomi via API TradingView/Investing.com di `llm_client.py` (`build_high_density_dossier_prompt`) saat menyusun dossier untuk 3-LLM Jury.
     - Menginjeksikan ringkasan Fixed Range Volume Profile (`frvp_confluence` POC/VAL/VAH) ke seluruh 8 kandidat radar di `market_scanner.py`.
     - Menghitung `risk_reward_ratio` secara dinamis dari formula matematis $|\text{TP} - \text{Trigger}| / |\text{Trigger} - \text{SL}|$.
+29. **Telegram Interactive `/news` Command & Cyberpunk Bento HUD Live News Ticker (28 Agu 2026)**:
+    - Menambahkan perintah interaktif `/news` (beserta alias `/kalender`, `/berita`, `/event`) dan tombol inline keyboard pada menu utama Telegram Controller.
+    - Mengintegrasikan ticker berita real-time pada Tile 3 (*Dual-Horizon Boitoki CSM*) dan Tile 4 (*2-Pass Sequential Jury*) di Bento Box Terminal HUD (`cli_theme.py`), menampilkan hitung mundur waktu rilis (misal: `[CA] GDP MoM Prel in 2.0h (19:30 WIB)`).
 
 
 
