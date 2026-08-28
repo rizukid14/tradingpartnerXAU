@@ -24,6 +24,9 @@ import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
 
 
+from src.indicators.volume_profile import compute_fixed_range_volume_profile, check_ob_frvp_confluence, VolumeProfileResult
+
+
 @dataclass
 class SMCStructure:
     price: float
@@ -40,6 +43,13 @@ class SMCOrderBlock:
     direction: str       # "bullish" | "bearish"
     mitigated: bool = False
     time: Optional[Any] = None
+    poc: float = 0.0
+    vah: float = 0.0
+    val: float = 0.0
+    poc_confluence: bool = False
+    va_discount: bool = False
+    frvp_score: float = 0.40
+    frvp_rating: str = "B"
 
 
 @dataclass
@@ -79,6 +89,7 @@ class SMCSignal:
     choch:                 Dict[str, Any] = field(default_factory=lambda: {"direction": "none", "level": 0.0, "index": None})
     strong_high:           float = 0.0
     strong_low:            float = 0.0
+    active_frvp:           Optional[Dict[str, Any]] = None
 
 
 class LuxSMCAnalyzer:
@@ -190,6 +201,7 @@ class LuxSMCAnalyzer:
 
         last_bos = {"direction": "none", "level": 0.0, "index": None}
         last_choch = {"direction": "none", "level": 0.0, "index": None}
+        latest_frvp: Optional[Dict[str, Any]] = None
 
         # Step through bars to accurately track crosses and state transitions
         for i in range(sw_len * 2, n):
@@ -222,13 +234,45 @@ class LuxSMCAnalyzer:
                 if i > start_search:
                     min_idx = start_search + int(np.argmin(lows[start_search:i+1]))
                     t_str = times[min_idx].strftime("%H:%M") if hasattr(times[min_idx], 'strftime') else str(times[min_idx])
+                    
+                    # Compute FRVP on the impulse leg (start_search -> i)
+                    frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_search, i)
+                    if frvp_res:
+                        latest_frvp = frvp_res.to_dict()
+                        conf = check_ob_frvp_confluence(
+                            ob_top=float(highs[min_idx]),
+                            ob_bottom=float(lows[min_idx]),
+                            ob_direction="bullish",
+                            frvp=frvp_res,
+                            atr=current_atr
+                        )
+                        ob_poc = frvp_res.poc
+                        ob_vah = frvp_res.vah
+                        ob_val = frvp_res.val
+                        ob_poc_conf = conf["poc_overlap"]
+                        ob_va_disc = conf["va_discount"]
+                        ob_score = conf["confluence_score"]
+                        ob_rating = conf["rating"]
+                    else:
+                        ob_poc = ob_vah = ob_val = 0.0
+                        ob_poc_conf = ob_va_disc = False
+                        ob_score = 0.40
+                        ob_rating = "B"
+
                     bullish_obs_raw.append(SMCOrderBlock(
                         top=round(float(highs[min_idx]), 5),
                         bottom=round(float(lows[min_idx]), 5),
                         index=int(min_idx),
                         direction="bullish",
                         mitigated=False,
-                        time=t_str
+                        time=t_str,
+                        poc=ob_poc,
+                        vah=ob_vah,
+                        val=ob_val,
+                        poc_confluence=ob_poc_conf,
+                        va_discount=ob_va_disc,
+                        frvp_score=ob_score,
+                        frvp_rating=ob_rating
                     ))
                 active_sh = None  # Consume swing high to avoid re-triggering on same level
 
@@ -250,19 +294,53 @@ class LuxSMCAnalyzer:
                 if i > start_search:
                     max_idx = start_search + int(np.argmax(highs[start_search:i+1]))
                     t_str = times[max_idx].strftime("%H:%M") if hasattr(times[max_idx], 'strftime') else str(times[max_idx])
+                    
+                    # Compute FRVP on the impulse leg (start_search -> i)
+                    frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_search, i)
+                    if frvp_res:
+                        latest_frvp = frvp_res.to_dict()
+                        conf = check_ob_frvp_confluence(
+                            ob_top=float(highs[max_idx]),
+                            ob_bottom=float(lows[max_idx]),
+                            ob_direction="bearish",
+                            frvp=frvp_res,
+                            atr=current_atr
+                        )
+                        ob_poc = frvp_res.poc
+                        ob_vah = frvp_res.vah
+                        ob_val = frvp_res.val
+                        ob_poc_conf = conf["poc_overlap"]
+                        ob_va_disc = conf["va_discount"]
+                        ob_score = conf["confluence_score"]
+                        ob_rating = conf["rating"]
+                    else:
+                        ob_poc = ob_vah = ob_val = 0.0
+                        ob_poc_conf = ob_va_disc = False
+                        ob_score = 0.40
+                        ob_rating = "B"
+
                     bearish_obs_raw.append(SMCOrderBlock(
                         top=round(float(highs[max_idx]), 5),
                         bottom=round(float(lows[max_idx]), 5),
                         index=int(max_idx),
                         direction="bearish",
                         mitigated=False,
-                        time=t_str
+                        time=t_str,
+                        poc=ob_poc,
+                        vah=ob_vah,
+                        val=ob_val,
+                        poc_confluence=ob_poc_conf,
+                        va_discount=ob_va_disc,
+                        frvp_score=ob_score,
+                        frvp_rating=ob_rating
                     ))
                 active_sl = None
 
         sig.trend_bias = "bullish" if trend_state == 1 else ("bearish" if trend_state == -1 else "neutral")
         sig.bos = last_bos
         sig.choch = last_choch
+        if latest_frvp is not None:
+            sig.active_frvp = latest_frvp
 
         # -------------------------------------------------------------
         # 3. Order Block Mitigation Check (Real-Time Active Filter)

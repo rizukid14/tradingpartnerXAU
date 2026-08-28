@@ -18,7 +18,7 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
-def _apply_sltp_rules(sl_points, tp_points):
+def _apply_sltp_rules(sl_points, tp_points, symbol=None):
     """
     SL/TP final sesuai config.TP_SL_RULES.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
@@ -26,10 +26,12 @@ def _apply_sltp_rules(sl_points, tp_points):
     global _last_sltp_adjustments
     _last_sltp_adjustments = []
 
+    sym = symbol or config.SYMBOL
+
     if not sl_points or sl_points <= 0:
-        sl_points = config.default_sl_points_for(config.SYMBOL)
+        sl_points = config.default_sl_points_for(sym)
     if not tp_points or tp_points <= 0:
-        tp_points = config.default_tp_points_for(config.SYMBOL)
+        tp_points = config.default_tp_points_for(sym)
 
     spread_pts = 0
     atr_points = 0
@@ -37,11 +39,11 @@ def _apply_sltp_rules(sl_points, tp_points):
         from config import mt5
         import pandas as pd
         from ta.volatility import AverageTrueRange
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        si = mt5.symbol_info(config.SYMBOL)
+        tick = mt5.symbol_info_tick(sym)
+        si = mt5.symbol_info(sym)
         if tick is not None and si is not None and si.point:
             spread_pts = int(round((tick.ask - tick.bid) / si.point))
-            rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
+            rates = mt5.copy_rates_from_pos(sym, config.get_timeframe(sym), 0, 50)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
                 df['atr'] = AverageTrueRange(
@@ -53,10 +55,10 @@ def _apply_sltp_rules(sl_points, tp_points):
     except Exception:
         pass
 
-    mode = config.sltp_mode_for(config.SYMBOL)
+    mode = config.sltp_mode_for(sym)
 
     if mode == "LLM":
-        is_xau = "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper()
+        is_xau = "XAU" in sym.upper() or "GOLD" in sym.upper()
 
         if is_xau:
             if atr_points > 0:
@@ -356,7 +358,8 @@ def calculate_consensus(decisions):
     hard_veto_models = []
     VALID_HARD_VETO_FLAGS = (
         "COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
-        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW"
+        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW",
+        "FALLING_KNIFE_WATERFALL", "UNMITIGATED_IMPULSE_CHASE", "SYSTEMIC_CURRENCY_DUMP"
     )
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")
@@ -462,9 +465,7 @@ def calculate_consensus(decisions):
 
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
 
-    # Guardrail entry pending: jarak dari harga harus dalam [2x spread, 1.5x ATR]
-    # dari harga saat ini, dan arah konsisten dengan entry_type. Kalau tidak
-    # valid -> downgrade ke market supaya sinyal tidak hilang.
+    # Guardrail entry pending (Filosofi: Percayakan pada LLM, No Trade is Better)
     if final_entry_type != "market" and final_entry_price is not None:
         try:
             from config import mt5
@@ -474,32 +475,24 @@ def calculate_consensus(decisions):
             ref_price = tick.ask if consensus_signal == "BUY" else tick.bid
             dist_pts = abs(final_entry_price - ref_price) / point if (point and ref_price) else None
             spread_pts = int(round((tick.ask - tick.bid) / point)) if (tick and point) else 0
-            atr_pts = 0
-            try:
-                import pandas as pd
-                from ta.volatility import AverageTrueRange
-                rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 50)
-                if rates is not None and len(rates) > 0:
-                    df = pd.DataFrame(rates)
-                    df['atr'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-                    atr_val = df.iloc[-1]['atr']
-                    if pd.notna(atr_val) and point and point > 0:
-                        atr_pts = int(atr_val / point)
-            except Exception:
-                atr_pts = 0
+
             min_dist = spread_pts * float(getattr(config, "PENDING_ENTRY_MIN_SPREAD_MULT", 2.0))
-            max_dist = (atr_pts if atr_pts > 0 else int(config.default_sl_points_for(config.SYMBOL))) * float(getattr(config, "PENDING_ENTRY_MAX_ATR_MULT", 1.5))
-            if dist_pts is None or dist_pts < min_dist or dist_pts > max_dist:
-                outlier_notes.append(f"Entry pending {final_entry_price} (jarak {dist_pts:.0f} pts) di luar band [2x spread, 1.5x ATR] -> downgrade ke market")
+
+            # Jika harga limit terlalu mepet (< 2x spread) -> eksekusi langsung di market
+            if dist_pts is not None and dist_pts < min_dist:
+                outlier_notes.append(f"Entry limit {final_entry_price} sangat dekat (< {min_dist:.0f} pts) -> eksekusi Market")
                 final_entry_type = "market"
                 final_entry_price = None
-                # Re-anchor SL/TP jika SL limit terlalu lebar (> 1.2x ATR) untuk market execution
-                if atr_pts > 0 and final_sl > int(atr_pts * 1.2):
-                    old_sl = final_sl
-                    final_sl = int(atr_pts * 1.0)
-                    final_tp = int(round(final_sl * 1.5))
-                    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
-                    outlier_notes.append(f"SL dire-anchor dari {old_sl} pts ke {final_sl} pts (1.0x ATR) pasca-downgrade market")
+            else:
+                # Verifikasi arah limit valid (Buy Limit di bawah ask, Sell Limit di atas bid)
+                if consensus_signal == "BUY" and final_entry_type == "buy_limit" and final_entry_price >= ref_price:
+                    outlier_notes.append(f"Buy Limit {final_entry_price} di atas harga pasar -> disesuaikan ke Market")
+                    final_entry_type = "market"
+                    final_entry_price = None
+                elif consensus_signal == "SELL" and final_entry_type == "sell_limit" and final_entry_price <= ref_price:
+                    outlier_notes.append(f"Sell Limit {final_entry_price} di bawah harga pasar -> disesuaikan ke Market")
+                    final_entry_type = "market"
+                    final_entry_price = None
         except Exception:
             pass
 

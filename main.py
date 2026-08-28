@@ -1709,7 +1709,7 @@ def run_scanner_trading_cycle(cand, risk):
                 print(f" {UI.YELLOW}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order.{UI.RST}")
                 return False
             
-            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points)
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points, symbol=sym)
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False
@@ -2022,7 +2022,7 @@ def main():
 
                 # Sync siklus pending order (kirim alert Telegram saat ter-fill / ter-cancel & terapkan cooldown 30m)
                 try:
-                    _detect_filled_pending(scanner=scanner)
+                    _detect_filled_pending()
                 except Exception as e:
                     print(f"[PENDING SYNC ERROR] {e}")
 
@@ -2155,11 +2155,11 @@ def main():
                             pos_count = len(open_p_live or []) + len(pending_p_live or [])
                             max_pos = config.get_max_open_positions()
                             if pos_count >= max_pos:
-                                _last_radar_status = f"22 Pairs Swept | Max Capacity Full ({pos_count}/{max_pos}) - LLM Paused ({wib_s})"
+                                _last_radar_status = f"Capacity Full ({pos_count}/{max_pos}) - Paused ({wib_s})"
                             else:
-                                _last_radar_status = f"22 Pairs Normal ({wib_s})"
+                                _last_radar_status = f"Normal ({wib_s})"
                     except Exception as e:
-                        _last_radar_status = f"Radar Err: {e}"
+                        _last_radar_status = f"Err: {e}"
             else:
                 # Classic Candle Cycle (Single Symbol / Pairs Polling)
                 rates = mt5.copy_rates_from_pos(config.SYMBOL, config.get_timeframe(config.SYMBOL), 0, 2)
@@ -2244,7 +2244,18 @@ def main():
                 anim_icon = _radar_frames[_radar_anim_idx]
                 n_active = len(scanner.macro_cache) if scanner else 22
                 label_hdr = f"QUANT RADAR {anim_icon} ({n_active} Pairs)"
-                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | Radar: {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
+                
+                csm_mini = ""
+                try:
+                    from src.analytics.currency_strength import calculate_boitoki_csm
+                    _sc_h1, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_H1, lookback_bars=24)
+                    if _sc_h1:
+                        _sorted_h1 = sorted(_sc_h1.items(), key=lambda x: x[1], reverse=True)
+                        csm_mini = f" | CSM H1: {UI.CYAN}{'>'.join([c for c, _ in _sorted_h1[:4]])}{UI.RST}"
+                except Exception:
+                    pass
+
+                header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str}{csm_mini} | {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
             elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
                 tf_cur = config.get_timeframe_str()
                 label_hdr = f"POOL {len(config.get_rotation_pool())} PAIRS ({tf_cur})"
@@ -2254,18 +2265,18 @@ def main():
                 label_hdr = f"{config.SYMBOL.replace('-ECNc', '').replace('.c', '')} ({tf_cur})"
                 header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
-            # Live Currency Strength Matrix ticker
+            # Live Currency Strength Matrix ticker (M15 Live Session - 4h horizon)
             csm_line = None
             try:
                 from src.analytics import currency_strength
-                csm_scores, _ = currency_strength.calculate_boitoki_csm()
-                if csm_scores:
-                    sorted_csm = sorted(csm_scores.items(), key=lambda x: x[1], reverse=True)
+                csm_scores_m15, _ = currency_strength.calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
+                if csm_scores_m15:
+                    sorted_csm = sorted(csm_scores_m15.items(), key=lambda x: x[1], reverse=True)
                     csm_toks = []
                     for c, s in sorted_csm:
                         col = UI.GREEN if s >= 5.0 else (UI.RED if s <= -5.0 else UI.GRAY)
                         csm_toks.append(f"{c} {col}{s:+.1f}{UI.RST}")
-                    csm_line = f"  └─ {UI.CYAN}CSM H1:{UI.RST} " + " ".join(csm_toks)
+                    csm_line = f"  └─ {UI.YELLOW}CSM M15 (Live 4h):{UI.RST} " + " ".join(csm_toks)
             except Exception:
                 pass
 

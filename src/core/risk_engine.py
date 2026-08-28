@@ -500,16 +500,11 @@ class RiskEngine:
         positions = mt5.positions_get() or []
         orders = mt5.orders_get() or []
         
-        # 1. Total aggregate capacity (Open + Pending) across entire MT5 account
+        # 1. Total aggregate capacity (Open Positions + Pending Orders) across entire MT5 account
         total_active = len(positions) + len(orders)
         max_positions = config.get_max_open_positions(self._in_recovery_mode)
         if total_active >= max_positions:
             return False, f" [RISK] Total order aktif (open+pending) di MT5 sudah {total_active}/{max_positions}."
-
-        # 2. Max pending orders limit
-        max_pending = getattr(config, "MAX_PENDING_ORDERS", 3)
-        if len(orders) >= max_pending:
-            return False, f" [RISK] Pending order di MT5 sudah mencapai batas {len(orders)}/{max_pending}."
 
         # 3. Strict 1-trade limit per symbol
         if symbol:

@@ -15,6 +15,7 @@ from src.indicators.lux_smc import LuxSMCAnalyzer
 from src.indicators.candle_quality import classify_candle, classify_breakout_sequence
 from src.indicators.sweep_detector import detect as sweep_detect
 from src.indicators.wave_regime import evaluate_wave_regime
+from src.indicators.wave_state import evaluate_wave_state, WaveState, WaveStateResult
 
 logger = logging.getLogger("market_scanner")
 WIB = ZoneInfo("Asia/Jakarta")
@@ -39,7 +40,7 @@ TOKYO_PROVEN_SYMBOLS = {
 @dataclass
 class CandidateSetup:
     symbol: str
-    setup_type: str                  # 'TREND_ALIGNED_PULLBACK', 'LONDON_JUDAS_SWEEP', 'NY_ADR_REVERSAL', 'SMC_CHOCH'
+    setup_type: str                  # 'TREND_ALIGNED_PULLBACK', 'LONDON_JUDAS_SWEEP', 'NY_ADR_REVERSAL', 'MULTI_TOUCH_BREAKOUT_RETEST'
     direction: int                   # 1 (BUY) or -1 (SELL)
     trigger_price: float
     timeframe: str = "H1"
@@ -70,6 +71,9 @@ class CandidateSetup:
     pwl: float = 0.0
     h4_monthly_range: str = ""
     economic_context: str = ""
+    frvp_confluence: str = ""
+    wave_state: str = ""
+    wave_summary: str = ""
     timestamp_wib: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -85,6 +89,8 @@ class CandidateSetup:
             "timestamp_wib": self.timestamp_wib or datetime.now(WIB).strftime("%H:%M:%S WIB"),
             "macro_compass": self.macro_compass,
             "h4_trend": self.h4_trend or "H4_CONFLUENCE_ALIGNED",
+            "wave_state": self.wave_state or "BASE_RECLAIM_ENABLE",
+            "wave_state_summary": self.wave_summary,
             "previous_day_high_pdh": self.pdh,
             "previous_day_low_pdl": self.pdl,
             "previous_week_high_pwh": self.pwh,
@@ -103,6 +109,7 @@ class CandidateSetup:
             "suggested_sl": self.suggested_sl,
             "suggested_tp": self.suggested_tp,
             "risk_reward_ratio": round(self.risk_reward_ratio, 2),
+            "frvp_confluence": self.frvp_confluence or "STANDARD_LIQUIDITY",
             "economic_calendar": self.economic_context or "NO_HIGH_IMPACT_NEWS_IN_NEXT_4_HOURS",
             "directive_for_llm": f"Evaluate macro sentiment and confirm {'BUY' if self.direction == 1 else 'SELL'} with structural SL at {self.suggested_sl} and TP at {self.suggested_tp}"
         }
@@ -319,14 +326,16 @@ class MarketScanner:
                     nearby_bull_obs = [ob for ob in smc_sig.order_blocks_bullish if abs(cur_close - ob['top']) <= max_ob_dist]
                     if nearby_bull_obs:
                         lob = nearby_bull_obs[-1]
-                        bull_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
+                        rating_tag = f" [{lob.get('frvp_rating', 'B')} - POC: {lob.get('poc', 0.0):.5f}]" if lob.get('poc_confluence') or lob.get('va_discount') else ""
+                        bull_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}]{rating_tag} (Unmitigated)"
 
                 bear_ob_str = ""
                 if smc_sig.order_blocks_bearish:
                     nearby_bear_obs = [ob for ob in smc_sig.order_blocks_bearish if abs(ob['bottom'] - cur_close) <= max_ob_dist]
                     if nearby_bear_obs:
                         lob = nearby_bear_obs[-1]
-                        bear_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
+                        rating_tag = f" [{lob.get('frvp_rating', 'B')} - POC: {lob.get('poc', 0.0):.5f}]" if lob.get('poc_confluence') or lob.get('va_discount') else ""
+                        bear_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}]{rating_tag} (Unmitigated)"
 
                 fvg_str = ""
                 active_fvgs = smc_sig.fvg_bullish + smc_sig.fvg_bearish
@@ -341,6 +350,11 @@ class MarketScanner:
                     liq_str += f"EQL @ {smc_sig.equal_lows[-1]['price']:.5f}"
                 liq_str = liq_str.strip()
 
+                frvp_summary_str = ""
+                if smc_sig.active_frvp:
+                    af = smc_sig.active_frvp
+                    frvp_summary_str = f"POC: {af.get('poc', 0.0):.5f} | VAL: {af.get('val', 0.0):.5f} | VAH: {af.get('vah', 0.0):.5f}"
+
                 # ── H1 CLUSTER ZONE & MULTI-TOUCH CALCULATION (40 bars) ──
                 lb_bars = min(40, len(df))
                 recent_h = df['high'].iloc[-lb_bars:].tolist()
@@ -349,20 +363,30 @@ class MarketScanner:
                 recent_o = df['open'].iloc[-lb_bars:].tolist()
                 cur_atr = df['atr'].iloc[-1] if pd.notna(df['atr'].iloc[-1]) else (300 * pt)
 
-                ref_hi = max(recent_h)
-                ref_lo = min(recent_l)
+                ref_hi = float(max(recent_h))
                 tol_clust = cur_atr * 0.50
 
                 cluster_hi = [x for x in recent_h if abs(x - ref_hi) <= tol_clust]
                 cluster_res = float(np.median(cluster_hi)) if cluster_hi else ref_hi
                 touches_res = sum(1 for h_val, l_val in zip(recent_h[:-1], recent_l[:-1]) if (cluster_res - tol_clust) <= h_val <= (cluster_res + tol_clust * 1.5))
 
+                ref_lo = float(min(recent_l))
                 cluster_lo = [x for x in recent_l if abs(x - ref_lo) <= tol_clust]
                 cluster_sup = float(np.median(cluster_lo)) if cluster_lo else ref_lo
                 touches_sup = sum(1 for h_val, l_val in zip(recent_h[:-1], recent_l[:-1]) if (cluster_sup - tol_clust * 1.5) <= l_val <= (cluster_sup + tol_clust))
 
                 # Wave Regime & Range Age
                 regime_res = evaluate_wave_regime(recent_h, recent_l, recent_c, timeframe_hours=1.0, dealing_range_window=lb_bars)
+
+                # Wave State Machine (Trade Permission Engine: Phase 1/2 Lock vs Phase 3/4 Enable)
+                h4_dir = 1 if (d1_is_bull or h4_is_bull) else (-1 if (d1_is_bear or h4_is_bear) else 0)
+                wave_res = evaluate_wave_state(
+                    df,
+                    h4_trend_direction=h4_dir,
+                    current_price=cur_close,
+                    atr_pts=(cur_atr / pt) if pd.notna(cur_atr) else 300,
+                    point_val=pt
+                )
 
                 self.macro_cache[valid_sym] = {
                     'symbol': valid_sym,
@@ -404,6 +428,7 @@ class MarketScanner:
                     'bearish_ob_zone': bear_ob_str,
                     'fvg_zone': fvg_str,
                     'liquidity_pools': liq_str,
+                    'frvp_summary': frvp_summary_str,
                     'cluster_resistance': cluster_res,
                     'cluster_support': cluster_sup,
                     'touches_resistance': touches_res,
@@ -411,6 +436,11 @@ class MarketScanner:
                     'range_age_hours': regime_res.get('range_age_hours', 24.0),
                     'effective_sqz_bars': regime_res.get('effective_sqz_bars', 0),
                     'wave_regime_name': regime_res.get('regime', 'YOUNG_OSCILLATION'),
+                    'wave_state': wave_res.state,
+                    'wave_permitted': wave_res.is_trade_permitted,
+                    'wave_summary': wave_res.summary,
+                    'wave_pullback_atr': wave_res.pullback_depth_atr,
+                    'wave_zigzag_legs': wave_res.zigzag_legs_count,
                     'point': pt,
                     'last_update': now
                 }
@@ -442,19 +472,14 @@ class MarketScanner:
         is_london_open = (14 <= h <= 18)
         is_ny_session = (19 <= h <= 23)
 
-        # ── ACTIVE POSITION & PENDING ORDER GATES (0 Token) ──
+        # ── SHARED AGGREGATE CAPACITY GATE (Max 6 Total Active Positions + Pending Orders) ──
         positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
         orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
         
-        # Max capacity gate: If total open + pending orders on MT5 account >= max_positions, FREEZE LLM calls!
+        # Max capacity gate: If total open + pending orders on MT5 account >= max_positions (6), FREEZE radar
         total_active = len(positions or []) + len(orders or [])
         max_positions = config.get_max_open_positions()
         if total_active >= max_positions:
-            return []
-
-        # Max pending orders gate (default max 3 pending orders)
-        max_pending = getattr(config, "MAX_PENDING_ORDERS", 3)
-        if len(orders or []) >= max_pending:
             return []
 
         active_symbols = set()
@@ -497,6 +522,15 @@ class MarketScanner:
                 pt = macro['point']
                 spread_pts = int(round(abs(ask - bid) / pt))
                 atr_pts = macro['atr_pts']
+
+                # ── WAVE STATE TRADE PERMISSION GATE (Phase 1/2 Lock vs Phase 3/4 Enable) ──
+                if getattr(config, 'ENABLE_WAVE_STATE_PERMISSION', True):
+                    wave_st = macro.get('wave_state', WaveState.MATURE_CORRECTION_ARMED)
+                    wave_perm = macro.get('wave_permitted', True)
+                    wave_sum = macro.get('wave_summary', '')
+                    if (not wave_perm) and getattr(config, 'WAVE_STATE_LOCK_PHASE2', True):
+                        logger.debug(f"[RADAR] {sym} SKIP: Wave state {wave_st} is Locked ({wave_sum}).")
+                        continue
 
                 # ── MECHANISM 1: LONDON & NY JUDAS LIQUIDITY SWEEP (M15/M30/H1) ──
                 if is_london_open or is_ny_session:
@@ -544,6 +578,8 @@ class MarketScanner:
                                 pwh=macro.get('pwh', 0.0),
                                 pwl=macro.get('pwl', 0.0),
                                 h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                wave_state=macro.get('wave_state', ''),
+                                wave_summary=macro.get('wave_summary', ''),
                                 timestamp_wib=now.strftime("%H:%M:%S WIB")
                             ))
                             continue
@@ -586,6 +622,8 @@ class MarketScanner:
                                 pwh=macro.get('pwh', 0.0),
                                 pwl=macro.get('pwl', 0.0),
                                 h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                wave_state=macro.get('wave_state', ''),
+                                wave_summary=macro.get('wave_summary', ''),
                                 timestamp_wib=now.strftime("%H:%M:%S WIB")
                             ))
                             continue
@@ -633,6 +671,8 @@ class MarketScanner:
                                     pwh=macro.get('pwh', 0.0),
                                     pwl=macro.get('pwl', 0.0),
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB")
                                 ))
                                 continue
@@ -675,6 +715,8 @@ class MarketScanner:
                                     pwh=macro.get('pwh', 0.0),
                                     pwl=macro.get('pwl', 0.0),
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB")
                                 ))
                                 continue
@@ -717,6 +759,8 @@ class MarketScanner:
                             pwh=macro.get('pwh', 0.0),
                             pwl=macro.get('pwl', 0.0),
                             h4_monthly_range=macro.get('h4_monthly_range', ''),
+                            wave_state=macro.get('wave_state', ''),
+                            wave_summary=macro.get('wave_summary', ''),
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
                     elif pos_in_range <= 0.35: # Bottom of range -> Fading BUY
@@ -754,6 +798,8 @@ class MarketScanner:
                             pwh=macro.get('pwh', 0.0),
                             pwl=macro.get('pwl', 0.0),
                             h4_monthly_range=macro.get('h4_monthly_range', ''),
+                            wave_state=macro.get('wave_state', ''),
+                            wave_summary=macro.get('wave_summary', ''),
                             timestamp_wib=now.strftime("%H:%M:%S WIB")
                         ))
                         continue
@@ -807,6 +853,8 @@ class MarketScanner:
                                     pwl=macro.get('pwl', 0.0),
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     economic_context="",
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     metadata={
                                         "entry_type": "buy_limit",
@@ -859,6 +907,8 @@ class MarketScanner:
                                     pwl=macro.get('pwl', 0.0),
                                     h4_monthly_range=macro.get('h4_monthly_range', ''),
                                     economic_context="",
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     metadata={
                                         "entry_type": "sell_limit",
@@ -955,9 +1005,29 @@ class MarketScanner:
             elif m['dealing_range_pos'] >= 0.62:
                 premium_pairs.append(f"• *{clean}*: `{prem_bot:.5f}` (Pos: {m['dealing_range_pos']*100:.0f}% Premium)")
 
+        armed_pairs = []
+        locked_pairs = []
+        chase_pairs = []
+
+        for sym, m in self.macro_cache.items():
+            clean = sym.replace("-ECNc", "").replace("-ECN", "")
+            w_st = m.get('wave_state', '')
+            w_perm = m.get('wave_permitted', True)
+            if "IMPULSE" in w_st:
+                chase_pairs.append(clean)
+            elif (not w_perm) or "LOCK" in w_st:
+                locked_pairs.append(clean)
+            elif "ARMED" in w_st or "BASE_RECLAIM" in w_st:
+                armed_pairs.append(f"{clean} ({m['dealing_range_pos']*100:.0f}%)")
+
         lines.append(f"🟢 *Bullish Compass:* {', '.join(bull_pairs[:6]) if bull_pairs else '-'}")
         lines.append(f"🔴 *Bearish Compass:* {', '.join(bear_pairs[:6]) if bear_pairs else '-'}")
         lines.append(f"⚪ *Sideways Range:* {', '.join(range_pairs[:6]) if range_pairs else '-'}")
+        lines.append("━" * 36)
+        lines.append("🌊 *WAVE STATE TRADE PERMISSION:*")
+        lines.append(f"• 🟢 *Armed / Favorable:* {', '.join(armed_pairs[:4]) if armed_pairs else 'Nihil (Menunggu pullback)'}")
+        lines.append(f"• 🔒 *Locked (Falling Knife):* {', '.join(locked_pairs[:4]) if locked_pairs else '-'}")
+        lines.append(f"• ⚡ *Blocked (Impulse Chase):* {', '.join(chase_pairs[:4]) if chase_pairs else '-'}")
         lines.append("━" * 36)
         lines.append("🎯 *ZONA DISKON (Buy Radar <= 38.2%):*")
         lines.extend(discount_pairs[:4] if discount_pairs else ["• Nihil (Tidak ada pair di zona diskon)"])

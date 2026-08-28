@@ -249,6 +249,11 @@ RADAR_SCAN_INTERVAL_SECONDS = _getenv_int("RADAR_SCAN_INTERVAL_SECONDS", 60)
 RADAR_MIN_WICK_RATIO = _getenv_float("RADAR_MIN_WICK_RATIO", 0.30)
 ENABLE_HOURLY_RADAR_RECAP = _getenv_bool("ENABLE_HOURLY_RADAR_RECAP", True)
 
+# Wave State Machine (Trade Permission Engine: Phase 1/2 Lock, Phase 3/4 Enable)
+ENABLE_WAVE_STATE_PERMISSION = _getenv_bool("ENABLE_WAVE_STATE_PERMISSION", True)
+WAVE_STATE_LOCK_PHASE2 = _getenv_bool("WAVE_STATE_LOCK_PHASE2", True)
+CSM_ANTI_DUMP_THRESHOLD = _getenv_float("CSM_ANTI_DUMP_THRESHOLD", -2.0)
+
 
 
 
@@ -355,9 +360,9 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
 LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.3)
-LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.2)
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.8)  # 1.8x ATR buffer agar kebal dari spike hunting di sesi NY
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
-LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 400)  # fallback kalau ATR gagal
+LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 600)  # fallback kalau ATR gagal (6 USD)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 
@@ -712,10 +717,6 @@ PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
 PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")
 
 # --- TELEGRAM ALERTS ---
-TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", True)
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
 TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", False)
 
 # --- MT5 CONNECTION ---
