@@ -300,7 +300,7 @@ def handle_news_command(chat_id):
             lines.append("🟢 *Status Pasar Tenang:*\n_Tidak ada rilis berita High-Impact dalam 48 jam ke depan._")
 
         lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("🛡️ *News Guard*: _Stage 2 Jury otomatis menolak trade jika rilis $\le$ 6 jam terdeteksi._")
+        lines.append("🛡️ *News Guard*: _Stage 2 Jury otomatis menolak trade jika rilis ≤ 6 jam terdeteksi._")
 
         kb = {
             "inline_keyboard": [
