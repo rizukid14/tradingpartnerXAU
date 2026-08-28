@@ -195,6 +195,9 @@ python main.py
     - Membuka izin trading HANYA pada *Mature Basing* (Phase 3, PF 1.30) dan *Base Reclaim* (Phase 4, PF 1.42) di zona Dealing Range Discount ($\le 0.50$, Golden Pocket $\le 0.382$).
     - Seluruh model radar (M1 Judas Sweep, M2 Pullback, M3 ADR Exhaustion, M5 Multi-Touch Retest) tetap aktif dan dieksekusi eksklusif saat Trade Permission Gate bernilai `ARMED` atau `ENABLE`.
     - Asymmetric CSM Flow: Melarang BUY hanya saat terjadi *systemic dump* ($\text{Delta} \le -2.0$), membebaskan *neutral flow* saat pullback diskon yang sehat.
+26. **Anti-Wick Buffer & Structural SL Anchoring (M30 — 28 Agu 2026)**:
+    - Validasi kuantitatif 2.900.000 candle M30 (2018–2026, 29 instrumen): Stop Loss wajib dijangkar **di balik lantai support/order block fisik ditambah Anti-Wick Buffer $0.35\times\text{ATR} + \text{Spread}$**, bukan dihitung dari harga entri (`mid`).
+    - Menghilangkan *False Wick Stop-Out* saat harga menguji lantai akumulasi/diskon, meningkatkan Win Rate Trend-Aligned Supply/Demand Retest menjadi **57.2% – 58.1% (PF 1.17 – 1.23)**.
 
 
 
