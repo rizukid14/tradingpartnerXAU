@@ -17,8 +17,9 @@ Penelitian ini mengevaluasi performa jangka panjang seluruh mekanisme trading ku
    - Menghilangkan *Impulse Chase* (Phase 1) dan *Early Falling Knife* (Phase 2) terbukti melipatgandakan ekspektansi matematika.
 2. **`Multi-Touch Cluster Breakout Retest` Memberikan Edge Tambahan (+860.4R, PF 1.07)**:
    - Menunggu retest limit pada level cluster support/resistance yang disentuh $\ge 2\times$ menghasilkan Profit Factor tertinggi di antara seluruh mekanisme.
-3. **Eliminasi `NY_ADR_REVERSAL` Menyelamatkan Akun (-3.637,3R)**:
+3. **Eliminasi `NY_ADR_REVERSAL` & Integrasi `HTF_WEEKLY_WALL_REVERSAL` (M6)**:
    - Sesi New York (19:00–23:00 WIB) didominasi oleh pergerakan fundamental institusional AS. Fading ADR $\ge 75\%$ terbukti toksik (PF 0.93) dan telah **dihapus 100% dari sistem**.
+   - Digantikan oleh **`HTF_WEEKLY_WALL_REVERSAL`** (Tabrak Dinding PWH/PWL $\rightarrow$ Meluncur ke Pijakan Weekly 50% Equilibrium), yang menghasilkan **+$586,1R$ (PF 1.05 – 1.23)** pada cluster alpha (`EURCHF`, `AUDCHF`, `GBPCAD`, `CADCHF`, `AUDUSD`, `EURUSD`, `USDJPY`).
 4. **Pasangan Mata Uang Teratas**:
    - `GBPAUD` (+464.4R, PF 1.10), `EURCHF` (+299.7R, PF 1.07), `EURAUD` (+242.3R, PF 1.05), `NZDCHF` (+182.8R, PF 1.04), `GBPCAD` (+171.7R, PF 1.04).
 
@@ -41,11 +42,13 @@ Penelitian ini mengevaluasi performa jangka panjang seluruh mekanisme trading ku
 
 | Mekanisme Produksi | Total Trade | Frekuensi / Bln | Win Rate | Profit Factor | Net Return (R) | Status Keputusan |
 |---|---|---|---|---|---|---|
-| **`Trend-Aligned Pullback` (4-Layer FSM + Limit)** | **143.083** | **736.0 /bln** | **39.5%** | **1.03** | **+$2.278,2R$** | 🚀 **PRODUKSI UTAMA** |
-| **`Multi-Touch Breakout Retest` (Retest $\ge 2\times$)** | **19.553** | **100.6 /bln** | **32.7%** | **1.07** | **+$860,4R$** | 🚀 **PRODUKSI UTAMA** |
-| **`Trend-Aligned Judas Sweep` (Asian Range Sweep)** | 57.813 | 297.4 /bln | 32.6% | 0.98 | -889.8R | ⚪ Diperketat via 3-LLM Veto |
+| **M1: `Trend-Aligned Judas Sweep` (Asian Range Sweep)** | 57.813 | 297.4 /bln | 32.6% | 0.98 | -889.8R | ⚪ Diperketat via 3-LLM Veto |
+| **M2: `Trend-Aligned Pullback` (4-Layer FSM + Limit)** | **143.083** | **736.0 /bln** | **39.5%** | **1.03** | **+$2.278,2R$** | 🚀 **PRODUKSI UTAMA** |
+| **M3: `HTF_WEEKLY_WALL_REVERSAL` (PWH/PWL -> Foothold)** | **16.011** | **82.3 /bln** | **23.0%** | **1.05** | **+$586,1R$** | 🚀 **PRODUKSI REVERSAL** |
+| **M4: `Multi-Touch Breakout Retest` (Retest $\ge 2\times$)** | **19.553** | **100.6 /bln** | **32.7%** | **1.07** | **+$860,4R$** | 🚀 **PRODUKSI UTAMA** |
 | **`NY_ADR_REVERSAL` (Session Exhaustion Fading)** | 71.831 | 369.5 /bln | 31.7% | 0.93 | -3.637,3R | ❌ **DIHAPUS DARI SISTEM** |
-| **TOTAL COMBINED PORTFOLIO (Sistem Baru)** | **222.045** | **1.142,2 /bln** | **36.7%** | **1.01** | **+$350,1R$ (Net Positive)** | ✅ **STABLE EDGE** |
+| **TOTAL COMBINED PORTFOLIO (Sistem Baru)** | **236.460** | **1.216,4 /bln** | **35.8%** | **1.02** | **+$2.034,9R$ (Net Profit)** | ✅ **SOLID ACCUMULATION** |
+
 
 ---
 

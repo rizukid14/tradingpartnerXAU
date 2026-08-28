@@ -2304,30 +2304,30 @@
 
                 <div class="kpi-row" style="margin: 20px 0 24px 0;">
                     <div class="kpi-box" style="border-top: 3px solid var(--accent-emerald);">
-                        <div class="kpi-lbl">Pullback Alpha (4-Layer FSM)</div>
+                        <div class="kpi-lbl">M2: Pullback (4-Layer FSM)</div>
                         <div class="kpi-num" style="color: var(--accent-emerald);">+2,278.2R</div>
                         <div class="kpi-desc">143.083 Trade · WR 39.5% · PF 1.03</div>
                     </div>
                     <div class="kpi-box" style="border-top: 3px solid var(--accent-cyan);">
-                        <div class="kpi-lbl">Multi-Touch Breakout Retest</div>
+                        <div class="kpi-lbl">M4: Breakout & Retest</div>
                         <div class="kpi-num" style="color: var(--accent-cyan);">+860.4R</div>
                         <div class="kpi-desc">19.553 Trade · WR 32.7% · PF 1.07</div>
                     </div>
-                    <div class="kpi-box" style="border-top: 3px solid var(--accent-rose);">
-                        <div class="kpi-lbl">NY ADR Reversal (Dihapus)</div>
-                        <div class="kpi-num" style="color: var(--accent-rose);">-3,637.3R</div>
-                        <div class="kpi-desc">71.831 Trade · PF 0.93 (Dieliminasi)</div>
+                    <div class="kpi-box" style="border-top: 3px solid var(--accent-amber);">
+                        <div class="kpi-lbl">M3: Weekly Wall Reversal</div>
+                        <div class="kpi-num" style="color: var(--accent-amber);">+586.1R</div>
+                        <div class="kpi-desc">16.011 Trade · WR 23.0% · PF 1.05</div>
                     </div>
                     <div class="kpi-box" style="border-top: 3px solid var(--accent-purple);">
-                        <div class="kpi-lbl">Portfolio MetaQuotes Bersih</div>
-                        <div class="kpi-num" style="color: var(--accent-purple);">+350.1R</div>
-                        <div class="kpi-desc">222.045 Trade Tanpa Fading ADR</div>
+                        <div class="kpi-lbl">Net Portfolio MetaQuotes</div>
+                        <div class="kpi-num" style="color: var(--accent-purple);">+2,034.9R</div>
+                        <div class="kpi-desc">236.460 Trade Bebas NY Fading</div>
                     </div>
                 </div>
 
                 <div class="callout-card" style="--callout-accent: var(--accent-rose); margin-top: 20px;">
                     <strong style="color: var(--accent-rose);">Temuan Kritis: Mengapa NY ADR Reversal Terbukti Toksik di Pasar FX?</strong><br>
-                    Di sesi New York (19:00–23:00 WIB), pergerakan ekspansi ADR &ge; 75% didorong oleh aliran dana fundamental institusional AS (NFP, CPI, FOMC, Fed Rate Decisions). Mencoba mem-fade (melawan) pergerakan 75% ADR terbukti menghasilkan kerugian sistematis <strong>-3.637,3R (PF 0.93)</strong>. Mekanisme ini telah <strong>dihapus 100% dari arsitektur live</strong> untuk melindungi modal dari <em>institutional steamroller effect</em>.
+                    Di sesi New York (19:00–23:00 WIB), pergerakan ekspansi ADR &ge; 75% didorong oleh aliran dana fundamental institusional AS (NFP, CPI, FOMC, Fed Rate Decisions). Mencoba mem-fade (melawan) pergerakan 75% ADR terbukti menghasilkan kerugian sistematis <strong>-3.637,3R (PF 0.93)</strong>. Mekanisme ini telah <strong>dihapus 100% dari arsitektur live</strong> dan digantikan oleh <strong>M3: `HTF_WEEKLY_WALL_REVERSAL` (+586.1R)</strong> yang menargetkan Pijakan Keseimbangan (Weekly 50% Equilibrium).
                 </div>
 
                 <div class="table-responsive" style="margin-top: 24px;">
@@ -2346,25 +2346,7 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td><strong>1. Trend-Aligned Pullback (4-Layer FSM + Limit)</strong></td>
-                                <td class="mono">143.083</td>
-                                <td class="mono">736.0 /bln</td>
-                                <td class="mono">39.5%</td>
-                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">1.03</td>
-                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+2,278.2R</td>
-                                <td><span class="badge badge-green">PRODUKSI UTAMA 🚀</span></td>
-                            </tr>
-                            <tr>
-                                <td><strong>2. Multi-Touch Cluster Breakout & Retest</strong></td>
-                                <td class="mono">19.553</td>
-                                <td class="mono">100.6 /bln</td>
-                                <td class="mono">32.7%</td>
-                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">1.07</td>
-                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+860.4R</td>
-                                <td><span class="badge badge-green">PRODUKSI UTAMA 🚀</span></td>
-                            </tr>
-                            <tr>
-                                <td><strong>3. Trend-Aligned Judas Sweep (Asian Sweep)</strong></td>
+                                <td><strong>M1: Trend-Aligned Judas Sweep (Asian Sweep)</strong></td>
                                 <td class="mono">57.813</td>
                                 <td class="mono">297.4 /bln</td>
                                 <td class="mono">32.6%</td>
@@ -2373,7 +2355,34 @@
                                 <td><span class="badge badge-amber">AUDIT 3-LLM VETO</span></td>
                             </tr>
                             <tr>
-                                <td><strong>4. NY ADR Reversal (Session Exhaustion)</strong></td>
+                                <td><strong>M2: Trend-Aligned Pullback (4-Layer FSM + Limit)</strong></td>
+                                <td class="mono">143.083</td>
+                                <td class="mono">736.0 /bln</td>
+                                <td class="mono">39.5%</td>
+                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">1.03</td>
+                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+2,278.2R</td>
+                                <td><span class="badge badge-green">PRODUKSI UTAMA 🚀</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>M3: HTF Weekly Wall Reversal (PWH/PWL -> Foothold)</strong></td>
+                                <td class="mono">16.011</td>
+                                <td class="mono">82.3 /bln</td>
+                                <td class="mono">23.0%</td>
+                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">1.05</td>
+                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+586.1R</td>
+                                <td><span class="badge badge-green">PRODUKSI REVERSAL 🚀</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>M4: Multi-Touch Cluster Breakout & Retest</strong></td>
+                                <td class="mono">19.553</td>
+                                <td class="mono">100.6 /bln</td>
+                                <td class="mono">32.7%</td>
+                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">1.07</td>
+                                <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+860.4R</td>
+                                <td><span class="badge badge-green">PRODUKSI UTAMA 🚀</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>NY ADR Reversal (Session Exhaustion Fading)</strong></td>
                                 <td class="mono">71.831</td>
                                 <td class="mono">369.5 /bln</td>
                                 <td class="mono">31.7%</td>
@@ -2383,11 +2392,11 @@
                             </tr>
                             <tr style="background: rgba(6, 182, 212, 0.05); font-weight: 700;">
                                 <td><strong>⭐ ALL PRODUCTION STRATEGIES COMBINED</strong></td>
-                                <td class="mono">222.045</td>
-                                <td class="mono">1,142.2 /bln</td>
-                                <td class="mono">36.7%</td>
-                                <td class="mono" style="color: var(--accent-cyan);">1.01</td>
-                                <td class="mono" style="color: var(--accent-cyan);">+350.1R</td>
+                                <td class="mono">236.460</td>
+                                <td class="mono">1,216.4 /bln</td>
+                                <td class="mono">35.8%</td>
+                                <td class="mono" style="color: var(--accent-cyan); font-weight: 700;">1.02</td>
+                                <td class="mono" style="color: var(--accent-cyan); font-weight: 700;">+2,034.9R</td>
                                 <td><span class="badge badge-cyan">PORTFOLIO BERSIH</span></td>
                             </tr>
                         </tbody>

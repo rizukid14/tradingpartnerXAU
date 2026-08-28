@@ -220,6 +220,10 @@ python main.py
     - **Delayed Limit Retest ($0.20\times\text{ATR}$)**: Menempatkan limit order saat retest diskon + SL jangkar lantai support fisik ($0.35\times\text{ATR} + \text{Spread}$).
     - **Ekspansi 5 Pair NZD Alpha (Universe 27 Simbol)**: Menambah edge bersih **+$1.842,3R (PF 1.34)** pada pasangan NZD (`NZDCAD`, `NZDCHF`, `NZDUSD`, `GBPNZD`, `AUDNZD`, `EURNZD`).
     - **Cross-Pair Asymmetric Dispersion**: 83.25% waktu pair tersebar di berbagai fase berbeda, menjamin peluang trade harian konsisten **93.3%**.
+32. **Mechanism 3 (M6) HTF Weekly Wall Reversal & Foothold Targeting (28 Agu 2026)**:
+    - Menggantikan `NY_ADR_REVERSAL` yang terbukti toksik (-3.637,3R) dengan **`HTF_WEEKLY_WALL_REVERSAL` (Tabrak Dinding HTF $\rightarrow$ Pijakan Keseimbangan 50% Equilibrium / Order Block)**.
+    - Validasi 16.2 tahun MetaQuotes (16.011 trade, Win Rate 23.0%, PF 1.05 – 1.23, Net Return **+$586,1R**) pada cluster alpha (`EURCHF` PF 1.23, `AUDCHF` PF 1.07, `GBPCAD` PF 1.06, `CADCHF` PF 1.07, `AUDUSD` PF 1.04, `EURUSD` PF 1.04).
+    - Menyelaraskan seluruh 4 mekanisme produksi aktif di `market_scanner.py`: M1 (London Judas Sweep), M2 (Trend-Aligned Pullback), M3 (HTF Weekly Wall Reversal), dan M4 (Multi-Touch Breakout Retest).
 
 ---
 
@@ -239,8 +243,9 @@ Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/READ
 
 | Kategori | Dokumen | Deskripsi Isi |
 |---|---|---|
-| 📊 **Research** | **[docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md)** | **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support). |
-| 📊 **Research** | **[report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html)** | **Master Quant Dossier (HTML Book Report)**: Laporan buku putih lengkap 9 Bab: 55 tahun dataset FBS (3.78M bar), komparasi 4 timeframe (M30–D1), 4 arketipe, atlas DNA 22 simbol, strategi *Trend-Aligned Mean Reversion*, dan arsitektur 2-Stage Screener. |
+| 📊 **Research** | **[docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md)** | **Master Quant Dossier 16.2 Tahun (Dataset MetaQuotes 2010–2026)**: Validasi 723k Bar H1 / 29 Simbol, 4-Layer Permission FSM, Eliminasi NY ADR Reversal, Integrasi M3 HTF Weekly Wall Reversal (+586.1R), dan Atlas DNA 29 Simbol. |
+| 📊 **Research** | **[report.html](file:///c:/Vibe/tradingpartner/report.html)** | **Master Quant Dossier (HTML Book Report 20 Bab)**: Laporan buku putih interaktif 20 Bab lengkap: 55 thn dataset FBS (3.78M bar), komparasi 4 timeframe, LuxSMC + FRVP, 4-Layer Permission Matrix, M3 HTF Weekly Wall, dan Master Atlas DNA. |
+| 📊 **Research** | **[docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md)** | **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support). |
 | 📊 **Research** | **[docs/research/MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md)** | **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Validasi 396.183 trade (10.7 thn H1, 55.6 thn H4, 16.6 thn D1). Komparasi head-to-head, evaluasi 4 arketipe, validasi SMC CHoCH/Order Block, dan ranking 22 simbol. |
 | 💡 **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate, **RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)**. |
 | 🔴 **Plans & RFC** | **[docs/plans/GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md)** | **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table. |
@@ -253,3 +258,4 @@ Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/READ
 | 🏗️ **Architecture** | **[docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md](file:///c:/Vibe/tradingpartner/docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md)** | **Analisis Broker & Keamanan Dana**: Bedah VT Markets (Mauritius FSC, LD4 ECN), A-Book vs B-Book Algo, Roadmap Broker Multi-Tier (Swissquote, IBKR, Bappebti). |
 | 📜 **Archive** | **[docs/archive/CHANGELOG_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/archive/CHANGELOG_AUGUST_2026.md)** | **Arsip Changelog Detail (8–15 Agustus 2026)**: FASE 1–7, pemisahan mode SL/TP, evolusi lot sizing, dan perbaikan historis. |
 | 🗂️ **Master Index** | **[docs/README.md](file:///c:/Vibe/tradingpartner/docs/README.md)** | Indeks lengkap seluruh file dokumentasi, buku trading (PDF), dan spesifikasi. |
+

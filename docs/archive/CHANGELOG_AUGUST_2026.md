@@ -348,3 +348,23 @@ You are NOT required to follow a single predefined trading strategy. You may use
    * Hasil riset tersimpan lengkap di `docs/research/RESEARCH_4_LAYER_PERMISSION_AND_NZD_BENCHMARK.md`.
    * Seluruh test suite (23 unit tests) lulus 100% OK.
 
+---
+
+## 16. Pembaruan 28 Agustus 2026 (Larut Malam) — Eliminasi NY ADR Reversal & Integrasi M3 (M6) HTF Weekly Wall Reversal
+
+1. **Eliminasi Total Mechanism 3 Lama (`NY_ADR_REVERSAL`)**:
+   * Backtest 16.2 tahun MetaQuotes H1 (71.831 trade) mengungkap bahwa fading 75% ADR di sesi New York menghasilkan rugi bersih **-3.637,3R (PF 0.93)** akibat *institutional steamroller effect* saat rilis berita ekonomi AS.
+   * Mekanisme ini dihapus 100% dari arsitektur live `market_scanner.py`.
+2. **Implementasi Mechanism 3 Baru: `HTF_WEEKLY_WALL_REVERSAL` (M6)**:
+   * Memanfaatkan tabrak dinding *Previous Week High/Low (PWH/PWL)* dengan *Rejection Wick $\ge 25\%$* di H1.
+   * Target Take Profit dijangkar secara objektif ke **Weekly 50% Equilibrium (Pijakan Keseimbangan)** atau Order Block terdekat, dengan SL di balik sumbu PWH/PWL ($0.35\times\text{ATR} + \text{Spread} + 20\text{ pts}$).
+   * Backtest 16.2 tahun membuktikan strategi ini menghasilkan **+$586,1R$ (PF 1.05 – 1.23)** pada cluster pair alpha (`EURCHF`, `AUDCHF`, `GBPCAD`, `CADCHF`, `AUDUSD`, `EURUSD`, `USDJPY`).
+3. **Sinkronisasi 4 Mekanisme Produksi di `market_scanner.py`**:
+   * **M1**: `LONDON_JUDAS_SWEEP` (Asian High/Low sweep $\ge 20\%$ wick).
+   * **M2**: `TREND_ALIGNED_PULLBACK` (4-Layer FSM + Delayed Limit Retest $0.20\times\text{ATR}$).
+   * **M3**: `HTF_WEEKLY_WALL_REVERSAL` (Tabrak Dinding HTF $\rightarrow$ Pijakan 50% Equilibrium).
+   * **M4**: `MULTI_TOUCH_BREAKOUT_RETEST` (Breakout Retest $\ge 2\times$ touches).
+4. **Master Quant Dossier 16.2 Tahun & Overhaul `report.html`**:
+   * Dokumen riset teknikal tersimpan di [`docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md`](file:///c:/Vibe/tradingpartner/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md).
+   * Web report 20 Bab diperbarui di [`report.html`](file:///c:/Vibe/tradingpartner/report.html).
+   * Unit test suite lulus 100% OK (23/23 tests pass).
