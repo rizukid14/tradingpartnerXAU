@@ -2239,10 +2239,10 @@ def main():
                 csm_mini = ""
                 try:
                     from src.analytics.currency_strength import calculate_boitoki_csm
-                    _sc_m15, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
-                    if _sc_m15:
-                        _sorted_m15 = sorted(_sc_m15.items(), key=lambda x: x[1], reverse=True)
-                        csm_mini = f" | CSM: {UI.YELLOW}{'>'.join([c for c, _ in _sorted_m15[:4]])}{UI.RST}"
+                    _sc_h1, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_H1, lookback_bars=24)
+                    if _sc_h1:
+                        _sorted_h1 = sorted(_sc_h1.items(), key=lambda x: x[1], reverse=True)
+                        csm_mini = f" | CSM H1: {UI.CYAN}{'>'.join([c for c, _ in _sorted_h1[:4]])}{UI.RST}"
                 except Exception:
                     pass
 
@@ -2256,18 +2256,18 @@ def main():
                 label_hdr = f"{config.SYMBOL.replace('-ECNc', '').replace('.c', '')} ({tf_cur})"
                 header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | P/L Today: {pnl_str}"
             
-            # Live Currency Strength Matrix ticker
+            # Live Currency Strength Matrix ticker (M15 Live Session - 4h horizon)
             csm_line = None
             try:
                 from src.analytics import currency_strength
-                csm_scores, _ = currency_strength.calculate_boitoki_csm()
-                if csm_scores:
-                    sorted_csm = sorted(csm_scores.items(), key=lambda x: x[1], reverse=True)
+                csm_scores_m15, _ = currency_strength.calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
+                if csm_scores_m15:
+                    sorted_csm = sorted(csm_scores_m15.items(), key=lambda x: x[1], reverse=True)
                     csm_toks = []
                     for c, s in sorted_csm:
                         col = UI.GREEN if s >= 5.0 else (UI.RED if s <= -5.0 else UI.GRAY)
                         csm_toks.append(f"{c} {col}{s:+.1f}{UI.RST}")
-                    csm_line = f"  └─ {UI.CYAN}CSM H1:{UI.RST} " + " ".join(csm_toks)
+                    csm_line = f"  └─ {UI.YELLOW}CSM M15 (Live 4h):{UI.RST} " + " ".join(csm_toks)
             except Exception:
                 pass
 

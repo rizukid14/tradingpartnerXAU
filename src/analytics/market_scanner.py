@@ -70,6 +70,7 @@ class CandidateSetup:
     pwl: float = 0.0
     h4_monthly_range: str = ""
     economic_context: str = ""
+    frvp_confluence: str = ""
     timestamp_wib: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -103,6 +104,7 @@ class CandidateSetup:
             "suggested_sl": self.suggested_sl,
             "suggested_tp": self.suggested_tp,
             "risk_reward_ratio": round(self.risk_reward_ratio, 2),
+            "frvp_confluence": self.frvp_confluence or "STANDARD_LIQUIDITY",
             "economic_calendar": self.economic_context or "NO_HIGH_IMPACT_NEWS_IN_NEXT_4_HOURS",
             "directive_for_llm": f"Evaluate macro sentiment and confirm {'BUY' if self.direction == 1 else 'SELL'} with structural SL at {self.suggested_sl} and TP at {self.suggested_tp}"
         }
@@ -319,14 +321,16 @@ class MarketScanner:
                     nearby_bull_obs = [ob for ob in smc_sig.order_blocks_bullish if abs(cur_close - ob['top']) <= max_ob_dist]
                     if nearby_bull_obs:
                         lob = nearby_bull_obs[-1]
-                        bull_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
+                        rating_tag = f" [{lob.get('frvp_rating', 'B')} - POC: {lob.get('poc', 0.0):.5f}]" if lob.get('poc_confluence') or lob.get('va_discount') else ""
+                        bull_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}]{rating_tag} (Unmitigated)"
 
                 bear_ob_str = ""
                 if smc_sig.order_blocks_bearish:
                     nearby_bear_obs = [ob for ob in smc_sig.order_blocks_bearish if abs(ob['bottom'] - cur_close) <= max_ob_dist]
                     if nearby_bear_obs:
                         lob = nearby_bear_obs[-1]
-                        bear_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}] (Unmitigated)"
+                        rating_tag = f" [{lob.get('frvp_rating', 'B')} - POC: {lob.get('poc', 0.0):.5f}]" if lob.get('poc_confluence') or lob.get('va_discount') else ""
+                        bear_ob_str = f"[{lob['bottom']:.5f} - {lob['top']:.5f}]{rating_tag} (Unmitigated)"
 
                 fvg_str = ""
                 active_fvgs = smc_sig.fvg_bullish + smc_sig.fvg_bearish
@@ -341,6 +345,11 @@ class MarketScanner:
                     liq_str += f"EQL @ {smc_sig.equal_lows[-1]['price']:.5f}"
                 liq_str = liq_str.strip()
 
+                frvp_summary_str = ""
+                if smc_sig.active_frvp:
+                    af = smc_sig.active_frvp
+                    frvp_summary_str = f"POC: {af.get('poc', 0.0):.5f} | VAL: {af.get('val', 0.0):.5f} | VAH: {af.get('vah', 0.0):.5f}"
+
                 # ── H1 CLUSTER ZONE & MULTI-TOUCH CALCULATION (40 bars) ──
                 lb_bars = min(40, len(df))
                 recent_h = df['high'].iloc[-lb_bars:].tolist()
@@ -349,14 +358,14 @@ class MarketScanner:
                 recent_o = df['open'].iloc[-lb_bars:].tolist()
                 cur_atr = df['atr'].iloc[-1] if pd.notna(df['atr'].iloc[-1]) else (300 * pt)
 
-                ref_hi = max(recent_h)
-                ref_lo = min(recent_l)
+                ref_hi = float(max(recent_h))
                 tol_clust = cur_atr * 0.50
 
                 cluster_hi = [x for x in recent_h if abs(x - ref_hi) <= tol_clust]
                 cluster_res = float(np.median(cluster_hi)) if cluster_hi else ref_hi
                 touches_res = sum(1 for h_val, l_val in zip(recent_h[:-1], recent_l[:-1]) if (cluster_res - tol_clust) <= h_val <= (cluster_res + tol_clust * 1.5))
 
+                ref_lo = float(min(recent_l))
                 cluster_lo = [x for x in recent_l if abs(x - ref_lo) <= tol_clust]
                 cluster_sup = float(np.median(cluster_lo)) if cluster_lo else ref_lo
                 touches_sup = sum(1 for h_val, l_val in zip(recent_h[:-1], recent_l[:-1]) if (cluster_sup - tol_clust * 1.5) <= l_val <= (cluster_sup + tol_clust))
@@ -404,6 +413,7 @@ class MarketScanner:
                     'bearish_ob_zone': bear_ob_str,
                     'fvg_zone': fvg_str,
                     'liquidity_pools': liq_str,
+                    'frvp_summary': frvp_summary_str,
                     'cluster_resistance': cluster_res,
                     'cluster_support': cluster_sup,
                     'touches_resistance': touches_res,

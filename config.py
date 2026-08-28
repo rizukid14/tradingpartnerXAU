@@ -683,10 +683,6 @@ PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
 PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")
 
 # --- TELEGRAM ALERTS ---
-TELEGRAM_ENABLED = _getenv_bool("TELEGRAM_ENABLED", True)
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
 TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", False)
 
 # --- MT5 CONNECTION ---

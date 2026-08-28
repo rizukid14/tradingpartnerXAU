@@ -1913,6 +1913,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Nearest Bearish Order Block (OB): {getattr(candidate, 'bearish_ob_zone', '') or 'None active nearby'}
 - Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None active nearby'}
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
+- Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
 ## 3. STRUCTURAL PROPOSAL
 - Key Support: {candidate.key_support}

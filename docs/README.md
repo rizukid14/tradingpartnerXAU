@@ -30,7 +30,7 @@ docs/
 * [prompt_claude.md](file:///c:/Vibe/tradingpartner/docs/architecture/prompt_claude.md) — Referensi skema prompt khusus Claude Sonnet / Haiku.
 * [LLM_COST_ESTIMATION.md](file:///c:/Vibe/tradingpartner/docs/architecture/LLM_COST_ESTIMATION.md) — Simulasi kuota token, frekuensi call harian, dan perbandingan biaya API bulanan (DeepSeek vs Claude).
 
-### 2. 📊 Research (`docs/research/`)
+* [FRVP_SMC_RESEARCH_2026.md](file:///c:/Vibe/tradingpartner/docs/research/FRVP_SMC_RESEARCH_2026.md) — **Riset & Validasi Kuantitatif FRVP + SMC**: Pengujian 110.460 trade (24 simbol, 4.3 thn MT5). Validasi kegagalan FRVP standalone vs sinergi SMC + FRVP (+104% Expected Value & pemangkasan 59% false OB).
 * [INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md) — **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support).
 * [report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html) — **Laporan Visual Interaktif Backtest 10.7 Tahun (Master Quant Dossier)**: Dokumen institusional komprehensif 396k+ trade, komparasi H1 vs M30 vs H4 vs D1, master atlas DNA ranking 22 simbol, dan visualisasi arsitektur 2-Stage Quant Funnel.
 * [MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md) — **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Pengujian 396.183 trade pada 22 simbol (10.7 tahun H1 & 4.6 tahun M30). Komparasi head-to-head H1 vs M30 (+22.8% PF), evaluasi 4 arketipe, validasi Smart Money Concepts (SMC CHoCH/OB/Liquidity Sweep), dan perankingan pool simbol.
