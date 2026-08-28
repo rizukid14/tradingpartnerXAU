@@ -417,8 +417,10 @@ ECONOMIC_NEWS_TTL_HOURS = _getenv_int("ECONOMIC_NEWS_TTL_HOURS", 6)  # fetch tia
 ECONOMIC_NEWS_COUNTRIES = [
     c.strip().upper() for c in os.getenv("ECONOMIC_NEWS_COUNTRIES", "US,GB,EU,CH,JP,AU,CA").split(",") if c.strip()
 ]
-# Event global: US high-impact yang mempengaruhi SEMUA pair (bukan cuma pair USD)
-ECONOMIC_NEWS_GLOBAL_KEYWORDS = ("FOMC", "NFP", "Non Farm", "Powell", "Trump", "Fed Chair", "Fed Rate")
+ECONOMIC_NEWS_GLOBAL_KEYWORDS = (
+    "FOMC", "NFP", "Non Farm", "Payroll", "Payrolls", "Powell", "Trump",
+    "Warsh", "Fed Chair", "Fed Chairman", "Fed Rate", "Benchmark Payrolls"
+)
 # Event US lain (CPI, PCE, Retail Sales, Unemployment, GDP US, ISM, dst) =
 # pair-specific USD -> hanya GBPUSD yang kena.
 

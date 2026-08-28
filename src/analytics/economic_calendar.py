@@ -150,9 +150,11 @@ class EconomicCalendar:
     FETCH_IMPORTANCE_MIN  = 1                  # HIGH only (importance >= 1)
     # Safety-net keyword: event penting yang importance-nya null/0 di API tetap
     # masuk kalau judulnya match (FOMC Minutes kadang importance kosong).
-    FETCH_KEYWORDS        = ("FOMC", "CPI", "NFP", "Non Farm", "Minutes", "Rate Decision",
-                             "PMI", "GDP", "PCE", "Retail Sales", "Unemployment",
-                             "Employment", "Inflation")
+    FETCH_KEYWORDS        = ("FOMC", "CPI", "NFP", "Non Farm", "Payroll", "Payrolls",
+                             "Minutes", "Rate Decision", "PMI", "GDP", "PCE", "Retail Sales",
+                             "Unemployment", "Employment", "Inflation", "Revision", "Benchmark",
+                             "Fed", "Powell", "Warsh", "Speaks", "Speech", "Chairman", "Governor",
+                             "Press Conference", "Testimony", "Interest Rate")
     # Map kode negara API -> mata uang (untuk filter per-pair)
     COUNTRY_CURRENCY = {
         "US": "USD", "GB": "GBP", "EU": "EUR", "JP": "JPY",
