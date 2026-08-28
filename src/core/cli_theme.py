@@ -317,14 +317,23 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     is_bull = v.get('is_bull', False)
                     is_bear = v.get('is_bear', False)
                     
-                    # Determine Badge
-                    if adx >= 28:
+                    wave_st = v.get('wave_state', '')
+                    is_perm = v.get('wave_permitted', True)
+                    
+                    # Determine Badge (Priority: Wave Lock > In-Zone > Hot ADX > Normal)
+                    if "IMPULSE" in wave_st:
+                        badge = f"{UI.PURPLE}⚡{UI.RST}" # Impulse Chase (Blocked)
+                    elif not is_perm or "LOCK" in wave_st:
+                        badge = f"{UI.RED}🔒{UI.RST}" # Early Falling Knife (Locked)
+                    elif "BASE_RECLAIM" in wave_st:
+                        badge = f"{UI.GREEN}🟢{UI.RST}" # Base Reclaim (Enabled)
+                        in_zone_pairs.append(f"{sym_prefix} 🟢")
+                    elif "MATURE" in wave_st or "ARMED" in wave_st:
+                        badge = f"{UI.CYAN}🎯{UI.RST}" # Mature Basing (Armed)
+                        in_zone_pairs.append(f"{sym_prefix} 🎯")
+                    elif adx >= 28:
                         badge = f"{UI.YELLOW}🔥{UI.RST}"
                         hot_pairs.append(f"{sym_prefix} ({adx:.0f})")
-                    elif pos <= 0.38 or pos >= 0.62:
-                        badge = f"{UI.GREEN}🎯{UI.RST}"
-                        zone_lbl = "Disc" if pos <= 0.38 else "Prem"
-                        in_zone_pairs.append(f"{sym_prefix} ({pos*100:.0f}% {zone_lbl})")
                     elif adx < 18:
                         badge = f"{UI.CYAN}🧊{UI.RST}"
                     else:
@@ -354,7 +363,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             t1_lines.append(f" {c1} │ {c2} │ {c3}")
             
         t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
-        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ ●Side │ 🔥ADX≥28 │ 🎯In-Zone (Disc/Prem) │ 🧊Cold{UI.RST}")
+        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 🔥ADX≥28{UI.RST}")
     else:
         t1_lines = [
             f" {UI.YELLOW}● Inisialisasi 22-Pair Macro Compass...{UI.RST}",
@@ -401,7 +410,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else "None (Mid-Range)"
     
     t2_lines.append(f" Top Hot   : {UI.YELLOW}{hot_str}{UI.RST} 🔥")
-    t2_lines.append(f" In-Zone   : {UI.GREEN}{in_zone_str}{UI.RST} 🎯")
+    t2_lines.append(f" Wave Armed: {UI.GREEN}{in_zone_str}{UI.RST}")
     t2_lines.append(f" Fast Radar: {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
     t2_lines.append(f" Proteksi  : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         

@@ -1896,6 +1896,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Current Trigger Price: {candidate.trigger_price}
 - Macro Compass: {candidate.macro_compass}
 - H4 Structural Status: {h4_status}
+- H1 Wave State & Permission: {getattr(candidate, 'wave_state', 'BASE_RECLAIM_ENABLE')} ({getattr(candidate, 'wave_summary', 'Permitted')})
 - Previous Day Levels (D1): PDH = {pdh_val} | PDL = {pdl_val}
 - Previous Week Levels (H4): PWH = {pwh_val} | PWL = {pwl_val}
 - Daily Open (DO): {do_val} | ADR Used %: {adr_used_val*100:.1f}%
@@ -1926,10 +1927,17 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Calendar Context: {candidate.economic_context or "No High-Impact News releases within +/- 6 hours"}
 
 ## 5. EVALUATION DIRECTIVE
+Trade Permission & Confluence Hierarchy:
+- Trend & Direction: Defined by D1/H4 Macro Compass.
+- Wave State Permission: H1 Wave State Machine ensures we never chase running impulses (Phase 1) or catch falling knives (Phase 2). Trade is only permitted in Mature Basing (Phase 3) or Base Reclaim (Phase 4).
+- POI Location: H1 Dealing Range Discount (<= 0.50) / Deep Discount (<= 0.382) & SMC Order Blocks / FRVP POC.
+- Reaction Timing: M5 live wicks/displacement at the POI confirm that reaction has started before pulling trigger.
+- Currency Flow (CSM): Asymmetric flow filter. Veto BUY only if base currency is being systemically dumped (Delta <= -2.0). Mild or neutral CSM is completely normal during healthy discount pullbacks.
+
 Indicator Hierarchy & Nature:
 - Moving Averages (EMA), RSI, ADX, and Currency Strength Matrix (CSM) are LAGGING mathematical derivatives of past price/flow history.
 - Live Candlestick Price Action (rejection wicks, structural liquidity sweeps, Order Block/FVG reactions) is LEADING.
-- Use lagging indicator and CSM frames to assess macro alignment, regime maturity, and momentum exhaustion, but prioritize live price action structure and clear invalidation for exact trigger timing.
+- Use lagging indicators and CSM frames to assess macro alignment and regime maturity, but prioritize live price action structure and clear invalidation for exact trigger timing.
 
 Evaluate the proposal with full institutional depth:
 - If setup is solid and actionable now -> select "APPROVE"
@@ -1954,7 +1962,7 @@ Respond strictly in valid JSON:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 20 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW",
+  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW" | "FALLING_KNIFE_WATERFALL" | "UNMITIGATED_IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP",
   "reasoning": "Detailed 3-5 sentence institutional thesis covering: (1) D1/H4 macro alignment, (2) SMC Order Block/FVG validity, (3) M5 micro flow & wick confirmation, and (4) precise mathematical justification for chosen SL and TP."
 }}
 """
@@ -2049,7 +2057,7 @@ Respond strictly in the same JSON format:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW",
+  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW" | "FALLING_KNIFE_WATERFALL" | "UNMITIGATED_IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP",
   "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
 }}
 """

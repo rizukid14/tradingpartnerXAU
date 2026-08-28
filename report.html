@@ -631,6 +631,18 @@
                     <span class="nav-text">16. Boitoki CSM & Flow</span>
                 </a>
             </li>
+            <li class="nav-item" data-title="17: Wave State & Trade Permission">
+                <a href="#ch17" class="nav-link">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M2 12h5l3-9 4 18 3-9h5"/></svg></span>
+                    <span class="nav-text">17. Wave State Permission</span>
+                </a>
+            </li>
+            <li class="nav-item" data-title="18: M5 Confirmation Ablation Proof">
+                <a href="#ch18" class="nav-link">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+                    <span class="nav-text">18. M5 Noise vs Location</span>
+                </a>
+            </li>
         </ul>
     </aside>
 
@@ -2021,6 +2033,167 @@
                     • <strong>Baseline (Blind Macro)</strong>: 307.512 Trades | Win Rate: 39.5% | PF: 0.95 | Net PnL: <span style="color: var(--accent-rose);">-7.971,2R</span><br>
                     • <strong>Winning Blueprint (CSM+SMC)</strong>: 31.161 Trades | Win Rate: 38.8% | PF: 0.97 | Net PnL: <span style="color: var(--accent-emerald);">-638,0R</span><br>
                     • <strong>Pemulihan Modal</strong>: Menyelamatkan <strong>+7.333,2R (+92.0% dari total kerugian)</strong> dengan memotong 90% trade overtrading.
+                </div>
+            </div>
+        </section>
+
+        <!-- ── CHAPTER 17: WAVE STATE MACHINE & TRADE PERMISSION ENGINE ── -->
+        <section class="chapter-card" id="ch17">
+            <div class="chapter-head">
+                <span class="chap-badge" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald);">BAB 17</span>
+                <div>
+                    <h2 class="chap-title">Wave State Machine & Trade Permission Engine</h2>
+                    <p class="chap-sub">Memisahkan Arah Tren (Direction) dari Waktu Masuk (Trade Permission) Berbasis 2.793.591 Trade Historis</p>
+                </div>
+            </div>
+            <div class="chapter-body">
+                <p>
+                    Kelemahan fatal sistem trading tren konvensional adalah asumsi bahwa <em>"selama tren bullish, setiap saat adalah saat yang tepat untuk BUY"</em>. 
+                    Validasi kuantitatif pada 2.793.591 trade membuktikan bahwa pasar terbagi menjadi 4 fase fraktal dengan ekspektasi matematis yang bertolak belakang:
+                </p>
+
+                <div class="table-container" style="margin-top: 16px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Fase Gelombang (H1)</th>
+                                <th>Karakteristik Fisik</th>
+                                <th>Win Rate</th>
+                                <th>Profit Factor</th>
+                                <th>Expected Value</th>
+                                <th>Kebijakan Bot</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong style="color: var(--accent-rose);">Phase 1: Impulse Chase</strong></td>
+                                <td>Harga di pucuk ekspansi (&lt; 0.50 ATR dari puncak, &le; 3 bar)</td>
+                                <td class="mono">32.4%</td>
+                                <td class="mono" style="color: var(--accent-rose);">0.52</td>
+                                <td class="mono" style="color: var(--accent-rose);">-0.358R</td>
+                                <td><span class="badge" style="background: var(--accent-rose-dim); color: var(--accent-rose);">HARD BLOCK</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong style="color: var(--accent-amber);">Phase 2: Early Correction</strong></td>
+                                <td>Penurunan vertikal tanpa lantai / 1–2 leg awal (&le; 8 bar)</td>
+                                <td class="mono">38.2%</td>
+                                <td class="mono" style="color: var(--accent-amber);">0.97</td>
+                                <td class="mono" style="color: var(--accent-amber);">-0.015R</td>
+                                <td><span class="badge" style="background: var(--accent-amber-dim); color: var(--accent-amber);">LOCK (FALLING KNIFE)</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong style="color: var(--accent-cyan);">Phase 3: Mature Basing</strong></td>
+                                <td>Pullback mencapai Diskon (&le; 0.50) dengan 3–5 leg & wick rejection</td>
+                                <td class="mono">46.5%</td>
+                                <td class="mono" style="color: var(--accent-cyan);">1.30</td>
+                                <td class="mono" style="color: var(--accent-cyan);">+0.159R</td>
+                                <td><span class="badge" style="background: var(--accent-cyan-dim); color: var(--accent-cyan);">ARMED</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong style="color: var(--accent-emerald);">Phase 4: Base Reclaim</strong></td>
+                                <td>Deep Discount (&le; 0.382) / Support floor terbentuk kokoh</td>
+                                <td class="mono">49.1%</td>
+                                <td class="mono" style="color: var(--accent-emerald);">1.42</td>
+                                <td class="mono" style="color: var(--accent-emerald);">+0.217R</td>
+                                <td><span class="badge" style="background: var(--accent-emerald-dim); color: var(--accent-emerald);">ENABLE</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="callout-card" style="--callout-accent: var(--accent-cyan); margin-top: 18px;">
+                    <strong>Prinsip Intraday Trade Permission:</strong><br>
+                    • <strong>D1/H4 Macro Compass</strong>: Menjawab <em>"Kemana arah arus besar?"</em><br>
+                    • <strong>H1 Wave State Machine</strong>: Menjawab <em>"Apakah entry engine diizinkan menyentuh tombol order sekarang (Lock vs Armed vs Enable)?"</em>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── CHAPTER 18: EMPIRICAL M5 CONFIRMATION ABLATION PROOF ── -->
+        <section class="chapter-card" id="ch18">
+            <div class="chapter-head">
+                <span class="chap-badge" style="background: rgba(244, 63, 94, 0.15); color: var(--accent-rose);">BAB 18</span>
+                <div>
+                    <h2 class="chap-title">Pembuktian Empiris Lapisan Konfirmasi M5 (Ablasi 2.900.000 Bar)</h2>
+                    <p class="chap-sub">Mengapa Aturan Filter M5 Rule-Based di Python Justru Merusak Ekspektasi Matematis</p>
+                </div>
+            </div>
+            <div class="chapter-body">
+                <p>
+                    Dalam trading diskresioner ritel, sering disarankan untuk menunggu "konfirmasi M5 (displacement / micro-reclaim)" sebelum masuk di zona support H1. 
+                    Kami menguji hipotesis ini secara ketat pada <strong>2.900.000 candle M5</strong> di 29 pasangan mata uang dan komoditas dengan gesekan spread riil 1.5 pips.
+                </p>
+
+                <div class="table-container" style="margin-top: 16px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Varian Konfirmasi M5</th>
+                                <th>Sampel Trade</th>
+                                <th>Win Rate</th>
+                                <th>Profit Factor</th>
+                                <th>Avg Return (R)</th>
+                                <th>Dampak Kuantitatif</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>1. Baseline H1 Discount (Tanpa Filter M5)</strong></td>
+                                <td class="mono">44.286</td>
+                                <td class="mono">32.7%</td>
+                                <td class="mono">0.90</td>
+                                <td class="mono">-0.070R</td>
+                                <td><span class="badge" style="background: var(--accent-cyan-dim); color: var(--accent-cyan);">BASELINE</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>2. + M5 Wick Sweep (&ge; 35%)</strong></td>
+                                <td class="mono">14.499</td>
+                                <td class="mono">31.6%</td>
+                                <td class="mono" style="color: var(--accent-rose);">0.86</td>
+                                <td class="mono" style="color: var(--accent-rose);">-0.104R</td>
+                                <td><span class="badge" style="background: var(--accent-rose-dim); color: var(--accent-rose);">-0.04 PF (Memburuk)</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>3. + M5 Displacement (Body &ge; 50%)</strong></td>
+                                <td class="mono">10.688</td>
+                                <td class="mono">31.4%</td>
+                                <td class="mono" style="color: var(--accent-rose);">0.85</td>
+                                <td class="mono" style="color: var(--accent-rose);">-0.109R</td>
+                                <td><span class="badge" style="background: var(--accent-rose-dim); color: var(--accent-rose);">-0.05 PF (Memburuk)</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>4. + M5 Micro-Reclaim (Close &gt; High Prev)</strong></td>
+                                <td class="mono">11.168</td>
+                                <td class="mono">30.4%</td>
+                                <td class="mono" style="color: var(--accent-rose);">0.81</td>
+                                <td class="mono" style="color: var(--accent-rose);">-0.139R</td>
+                                <td><span class="badge" style="background: var(--accent-rose-dim); color: var(--accent-rose);">-0.09 PF (Anjlok)</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>5. + Confluence (Sweep + Displacement)</strong></td>
+                                <td class="mono">754</td>
+                                <td class="mono">31.0%</td>
+                                <td class="mono" style="color: var(--accent-rose);">0.83</td>
+                                <td class="mono" style="color: var(--accent-rose);">-0.120R</td>
+                                <td><span class="badge" style="background: var(--accent-rose-dim); color: var(--accent-rose);">-0.07 PF (Memburuk)</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>6. + M5 Retest Limit Entry</strong></td>
+                                <td class="mono">40.523</td>
+                                <td class="mono">28.8%</td>
+                                <td class="mono" style="color: var(--accent-rose);">0.75</td>
+                                <td class="mono" style="color: var(--accent-rose);">-0.188R</td>
+                                <td><span class="badge" style="background: var(--accent-rose-dim); color: var(--accent-rose);">-0.15 PF (Terburuk)</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="callout-card" style="--callout-accent: var(--accent-rose); margin-top: 18px;">
+                    <strong>Mengapa Konfirmasi M5 Rule-Based Gagal?</strong><br>
+                    1. <strong>Confirmation Tax</strong>: Menunggu candle M5 selesai menutup dorongan berarti entry terlambat 4–6 pips dari dasar lantai H1. Akibatnya Stop Loss membesar dan Target TP makin jauh.<br>
+                    2. <strong>Spread Friction</strong>: Spread broker 1.5 pips menghabiskan 25%–40% dari total tinggi candle M5.<br>
+                    3. <strong>Peran M5 yang Benar</strong>: 25 Candle M5 dicadangkan <em>eksklusif untuk LLM Chief Risk Officer (DeepSeek)</em> untuk mendeteksi anomali visual falling knife, bukan dikunci dengan rumus statis di kode Python.
                 </div>
             </div>
         </section>

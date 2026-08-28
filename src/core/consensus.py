@@ -358,7 +358,8 @@ def calculate_consensus(decisions):
     hard_veto_models = []
     VALID_HARD_VETO_FLAGS = (
         "COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
-        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW"
+        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW",
+        "FALLING_KNIFE_WATERFALL", "UNMITIGATED_IMPULSE_CHASE", "SYSTEMIC_CURRENCY_DUMP"
     )
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")

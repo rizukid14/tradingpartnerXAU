@@ -189,6 +189,12 @@ python main.py
 24. **Fixed Range Volume Profile (FRVP) & Institutional Confluence Engine (28 Agu 2026)**:
     - Validasi kuantitatif 110.460 trade (4.3 tahun data broker MT5, 24 simbol): FRVP standalone terbukti gagal (PF 0.94–0.98), namun sinergi **SMC + FRVP** memangkas 59.2% trade noise dan melipatgandakan **Expected Value (+104% R)** serta menaikkan PF (`EURCHF` PF 1.79, `GBPCHF` PF 1.53, `XAUUSD` & `USDJPY` berbalik net profit).
     - Integrasi modul `src/indicators/volume_profile.py` ke dalam `lux_smc.py`, `market_scanner.py` Stage 1 Radar, dan Dossier Prompt LLM (`llm_client.py`).
+25. **Wave State Machine & Trade Permission Engine (H1 — 28 Agu 2026)**:
+    - Validasi 2.793.591 trade (2010–2026): memisahkan *Direction* (kemana arah tren makro H4/D1) dari *Trade Permission* (kapan waktu yang tepat untuk masuk H1).
+    - Menghilangkan *Impulse Chase* (Phase 1, PF 0.52) dan *Early Falling Knife* (Phase 2, PF 0.97).
+    - Membuka izin trading HANYA pada *Mature Basing* (Phase 3, PF 1.30) dan *Base Reclaim* (Phase 4, PF 1.42) di zona Dealing Range Discount ($\le 0.50$, Golden Pocket $\le 0.382$).
+    - Seluruh model radar (M1 Judas Sweep, M2 Pullback, M3 ADR Exhaustion, M5 Multi-Touch Retest) tetap aktif dan dieksekusi eksklusif saat Trade Permission Gate bernilai `ARMED` atau `ENABLE`.
+    - Asymmetric CSM Flow: Melarang BUY hanya saat terjadi *systemic dump* ($\text{Delta} \le -2.0$), membebaskan *neutral flow* saat pullback diskon yang sehat.
 
 
 
