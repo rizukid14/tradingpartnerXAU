@@ -320,7 +320,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     wave_st = v.get('wave_state', '')
                     is_perm = v.get('wave_permitted', True)
                     
-                    # Determine Badge (Priority: Wave Lock > In-Zone > Hot ADX > Normal)
+                    # Determine Badge (Priority: Wave Lock > In-Zone > SMC Zone > Normal)
                     if "IMPULSE" in wave_st:
                         badge = f"{UI.PURPLE}⚡{UI.RST}" # Impulse Chase (Blocked)
                     elif not is_perm or "LOCK" in wave_st:
@@ -331,11 +331,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     elif "MATURE" in wave_st or "ARMED" in wave_st:
                         badge = f"{UI.CYAN}🎯{UI.RST}" # Mature Basing (Armed)
                         in_zone_pairs.append(f"{sym_prefix} 🎯")
-                    elif adx >= 28:
-                        badge = f"{UI.YELLOW}🔥{UI.RST}"
-                        hot_pairs.append(f"{sym_prefix} ({adx:.0f})")
-                    elif adx < 18:
-                        badge = f"{UI.CYAN}🧊{UI.RST}"
+                    elif pos <= 0.382 or pos >= 0.618:
+                        badge = f"{UI.YELLOW}💎{UI.RST}" # SMC Discount / Premium Zone
                     else:
                         badge = f"{UI.GRAY}●{UI.RST}"
                         
@@ -347,9 +344,9 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     else:
                         arrow = f"{UI.GRAY}●{UI.RST}"
                         
-                    adx_str = f"{adx:.0f}" if adx > 0 else "--"
-                    return f"{sym_prefix} {arrow}{adx_str} {badge}"
-            return f"{sym_prefix} {UI.GRAY}●--{UI.RST}  "
+                    pos_str = f"{int(pos*100):02d}%"
+                    return f"{sym_prefix} {arrow}{pos_str} {badge}"
+            return f"{sym_prefix} {UI.GRAY}●--%{UI.RST}  "
 
         # Render 3 pairs per row (7-8 rows)
         for r in range(0, len(all_symbols), 3):
@@ -363,7 +360,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             t1_lines.append(f" {c1} │ {c2} │ {c3}")
             
         t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
-        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 🔥ADX≥28{UI.RST}")
+        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 💎SMC Zone{UI.RST}")
     else:
         t1_lines = [
             f" {UI.YELLOW}● Inisialisasi {len(all_symbols)}-Pair Macro Compass...{UI.RST}",

@@ -566,7 +566,6 @@ class MarketScanner:
 
                 # ── 3. H1 INDICATORS & DEALING RANGE ──
                 df['atr'] = self._calc_atr(df, 14)
-                df['adx'] = self._calc_adx(df, 14)
                 df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
                 df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
                 df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
@@ -574,7 +573,6 @@ class MarketScanner:
                 cur_ema20 = df['ema20'].iloc[-1]
                 cur_ema50 = df['ema50'].iloc[-1]
                 cur_ema200 = df['ema200'].iloc[-1]
-                cur_adx = df['adx'].iloc[-1]
                 cur_atr = df['atr'].iloc[-1] if pd.notna(df['atr'].iloc[-1]) else (300 * pt)
 
                 sess_h = df['high'].rolling(100, min_periods=20).max().iloc[-1]
@@ -582,7 +580,7 @@ class MarketScanner:
                 rng = max(sess_h - sess_l, 1e-5)
                 pos_in_range = (cur_close - sess_l) / rng
 
-                combined_trend_label = f"{d1_trend_label} | {h4_trend_label} (H1 ADX {cur_adx:.1f})"
+                combined_trend_label = f"{d1_trend_label} | {h4_trend_label}"
 
                 # Asian Session Range (08:00 - 13:00 WIB)
                 h = df.index.hour
@@ -803,7 +801,6 @@ class MarketScanner:
                     'ema20': cur_ema20,
                     'ema50': cur_ema50,
                     'ema200': cur_ema200,
-                    'adx': cur_adx,
                     'atr_pts': (cur_atr / pt) if pd.notna(cur_atr) else 300,
                     'dealing_range_high': sess_h,
                     'dealing_range_low': sess_l,

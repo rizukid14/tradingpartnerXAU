@@ -331,19 +331,6 @@ def _structure_block(df, current_tick, atr_points=0, tf_label="M30"):
         rel_ema20 = (close - ema20) / point
         pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
         ind_lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
-    if "rsi_14" in df.columns:
-        rsi = float(df["rsi_14"].iloc[-1])
-        ind_lines.append(f"- RSI14 {rsi:.2f}")
-    if "adx_14" in df.columns:
-        adx = float(df["adx_14"].iloc[-1])
-        if adx == adx:  # NaN guard (NaN != NaN)
-            if adx >= 25:
-                adx_label = "strong trend expansion"
-            elif adx >= 20:
-                adx_label = "trend building"
-            else:
-                adx_label = "weak/ranging"
-            ind_lines.append(f"- ADX14 {adx:.1f} ({adx_label})")
     if "ema_200" in df.columns and len(df) >= 200:
         ema200 = float(df["ema_200"].iloc[-1])
         rel200 = (close - ema200) / point
@@ -1811,11 +1798,6 @@ def compute_micro_objective_frames(symbol, point=None):
             ema50 = float(EMAIndicator(c30, window=50).ema_indicator().iloc[-1])
             ema200 = float(EMAIndicator(c30, window=min(200, len(c30))).ema_indicator().iloc[-1]) if len(c30) >= 60 else ema50
 
-            rsi30 = float(RSIIndicator(c30, window=14).rsi().iloc[-1])
-            adx30_obj = ADXIndicator(h30, l30, c30, window=14)
-            adx30 = float(adx30_obj.adx().iloc[-1])
-            dip30 = float(adx30_obj.adx_pos().iloc[-1])
-            dim30 = float(adx30_obj.adx_neg().iloc[-1])
             atr30_pts = float(AverageTrueRange(h30, l30, c30, window=14).average_true_range().iloc[-1] / point)
 
             if ema20 > ema50 > ema200:
@@ -1828,7 +1810,7 @@ def compute_micro_objective_frames(symbol, point=None):
             lines.append("- M30 Structural Frame (50-bar / 24h Window):")
             lines.append(f"  * 50-Bar High: {w50_h:.5f} | 50-Bar Low: {w50_l:.5f} | Position: {pos50_pct:.1f}% of Range")
             lines.append(f"  * Moving Averages: EMA20 = {ema20:.5f} | EMA50 = {ema50:.5f} | EMA200 = {ema200:.5f} ({align30})")
-            lines.append(f"  * Indicators: RSI(14) = {rsi30:.1f} | ADX(14) = {adx30:.1f} (DI+: {dip30:.1f}, DI-: {dim30:.1f}) | ATR(14) = {atr30_pts:.1f} pts")
+            lines.append(f"  * Volatility Meter: ATR(14) = {atr30_pts:.1f} pts")
 
         # 2. M15 (32-bar / 8h Window)
         rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 50)
@@ -1848,11 +1830,6 @@ def compute_micro_objective_frames(symbol, point=None):
             ema21 = float(EMAIndicator(c15, window=21).ema_indicator().iloc[-1])
             ema50_15 = float(EMAIndicator(c15, window=min(50, len(c15))).ema_indicator().iloc[-1])
 
-            rsi15 = float(RSIIndicator(c15, window=14).rsi().iloc[-1])
-            adx15_obj = ADXIndicator(h15, l15, c15, window=14)
-            adx15 = float(adx15_obj.adx().iloc[-1])
-            dip15 = float(adx15_obj.adx_pos().iloc[-1])
-            dim15 = float(adx15_obj.adx_neg().iloc[-1])
             atr15_pts = float(AverageTrueRange(h15, l15, c15, window=14).average_true_range().iloc[-1] / point)
 
             last3_bodies = [abs(float(df15['close'].iloc[-i]) - float(df15['open'].iloc[-i])) / point for i in range(1, 4)]
@@ -1869,7 +1846,7 @@ def compute_micro_objective_frames(symbol, point=None):
             lines.append("- M15 Micro Flow Frame (32-bar / 8h Session Window):")
             lines.append(f"  * 32-Bar High: {w32_h:.5f} | 32-Bar Low: {w32_l:.5f} | Position: {pos32_pct:.1f}% of Range")
             lines.append(f"  * Moving Averages: EMA9 = {ema9:.5f} | EMA21 = {ema21:.5f} | EMA50 = {ema50_15:.5f} ({align15})")
-            lines.append(f"  * Indicators: RSI(14) = {rsi15:.1f} | ADX(14) = {adx15:.1f} (DI+: {dip15:.1f}, DI-: {dim15:.1f}) | ATR(14) = {atr15_pts:.1f} pts")
+            lines.append(f"  * Volatility Meter: ATR(14) = {atr15_pts:.1f} pts")
             lines.append(f"  * Micro Velocity: Last 3 bars avg candle body = {avg_body_pts:.1f} pts ({body_atr_ratio:.2f}x ATR M15)")
 
         return "\n".join(lines) if lines else ""

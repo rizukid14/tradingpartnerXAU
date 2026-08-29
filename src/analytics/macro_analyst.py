@@ -187,7 +187,6 @@ class MacroAnalyst:
         close = float(latest["close"])
         ema20 = float(latest["ema_20"])
         ema50 = float(latest["ema_50"])
-        rsi = float(latest["rsi_14"])
         atr = float(latest["atr_14"])
 
         # EMA50 slope (20 Agustus, paket anti-FOMC): tren ekspansi yang SEDANG
@@ -215,14 +214,6 @@ class MacroAnalyst:
         swing_high_dist = (swing_high - close) / (atr if atr > 0 else 1.0)
         swing_low_dist = (close - swing_low) / (atr if atr > 0 else 1.0)
 
-        # RSI label
-        if rsi >= 70:
-            rsi_label = "overbought (potential pullback)"
-        elif rsi <= 30:
-            rsi_label = "oversold (potential rebound)"
-        else:
-            rsi_label = "neutral"
-
         # EMA200 regime (institutional benchmark). Hanya valid kalau data >= 200 bar
         # (fetch 260 di atas). NaN kalau data pendek -> skip baris EMA200.
         ema200_str = ""
@@ -243,7 +234,7 @@ class MacroAnalyst:
 
         return (
             f"trend {trend} | close {_fmt(close)}, EMA20 {_fmt(ema20)}, EMA50 {_fmt(ema50)} "
-            f"(gap EMA {_fmt(abs(ema20 - ema50))}, slope EMA50 {ema50_slope}), RSI {rsi:.1f} ({rsi_label}), ATR {_fmt(atr)}{ema200_str} | "
+            f"(gap EMA {_fmt(abs(ema20 - ema50))}, slope EMA50 {ema50_slope}), ATR {_fmt(atr)}{ema200_str} | "
             f"swing {window_size}-candle: high {_fmt(swing_high)} ({resistance_line}), low {_fmt(swing_low)} ({support_line})"
         )
 
