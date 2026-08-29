@@ -107,7 +107,7 @@ python main.py
    - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-flash-lite menganalisis dossier independen.
    - **Pass 2** (cross-examination, ~1.5s): DeepSeek V4-Flash (Devil's Advocate CRO) mengaudit proposal + 24 candle M5 micro.
    - **Hard Risk Veto**: reject otomatis kalau flag `COUNTER_TREND_MOMENTUM/LIQUIDITY_TRAP/HIGH_IMPACT_NEWS/SPREAD_SPIKE/FALLING_KNIFE_WATERFALL`.
-4. **Weighted Consensus**: skor $\Sigma$ confidence $\ge$ threshold per simbol (default **1.2**, defensif $\times 1.5$). Min 2 model searah.
+4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 75\%$ memicu split 2 posisi (+25% boost).
 5. **`_apply_sltp_rules` floor**:
    - XAU: $\text{SL} \ge \max(2 \times \text{spread}, 1.8 \times \text{ATR M30})$. Fallback statis 600 pts kalau ATR gagal.
    - FX: $\text{SL} \ge \max(2 \times \text{spread}, 1.3 \times \text{ATR H1})$. Fallback statis 250 pts kalau ATR gagal.
@@ -119,7 +119,7 @@ python main.py
 
 ## Gate eksekusi aktif (Hard Rules)
 
-- **Weighted Consensus**: $\ge 2$ model searah, skor confidence $\ge$ **1.2** per simbol (defensif $\times 1.5$).
+- **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 75\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
 - **Lantai SL/TP (`_apply_sltp_rules` di `consensus.py`)**:
   - **XAU**: floor SL = $\max(2 \times \text{spread}, 1.8 \times \text{ATR M30})$, fallback 600 pts. Mode `LLM` (default) atau `ATR-Based` via `.env`.
   - **FX**: floor SL = $\max(2 \times \text{spread}, 1.3 \times \text{ATR H1})$, fallback 250 pts.

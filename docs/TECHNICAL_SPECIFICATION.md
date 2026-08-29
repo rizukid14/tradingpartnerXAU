@@ -1,8 +1,9 @@
 # MASTER TECHNICAL SPECIFICATION DOCUMENT
-## 2-Stage Quant Funnel Multi-LLM Consensus Autonomous Trading System (Dual-Directional BUY & SELL Specification)
+## 2-Stage Quant Funnel Multi-LLM Consensus Autonomous Trading System (Strict Unanimous 3/3 & Dual-Directional Equivalence)
 
 **Target Platform**: MetaTrader 5 (`VTMarkets-Live 3`, Account `27556325`, Raw ECN, Magic `20260625`)  
 **Trading Universe**: 27 Simbol Paralel (21 FX Crosses, 6 NZD Alpha, Gold `XAUUSD-ECNc`)  
+**Consensus Protocol**: Strict Unanimous 3/3 Rule (Wajib 3/3 Model Searah; 2/3 atau Split = HOLD Otomatis)  
 **Symmetry Architecture**: Dual-Directional Equivalence (100% Simetris BUY & SELL Logic Gates, SBR/RBS, CSM Matrix)  
 **AI Mode**: `AI_FIXED_MODE = "triple"` (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4-Flash CRO)  
 **Zona Waktu**: Asia/Jakarta (WIB = GMT+7, MT5 Server GMT+3 + 4 Jam, Rollover 04:00 WIB)  
@@ -13,12 +14,12 @@
 ## Daftar Isi
 1. [Bab 1: Executive Architecture & High-Level Design](#bab-1-executive-architecture--high-level-design)
 2. [Bab 2: Fractal Multi-Timeframe Hierarchy & Symbol Universe](#bab-2-fractal-multi-timeframe-hierarchy--symbol-universe)
-3. [Bab 3: Stage 1 Radar — Spesifikasi Presisi BUY vs SELL](#bab-3-stage-1-radar--spesifikasi-presisi-buy-vs-sell)
+3. [Bab 3: Stage 1 Radar — Trio Mekanisme Presisi (M1, M2, M3)](#bab-3-stage-1-radar--trio-mekanisme-presisi-m1-m2-m3)
 4. [Bab 4: 4-Dimensional Market State Engine (wave_state.py)](#bab-4-4-dimensional-market-state-engine-wave_statepy)
 5. [Bab 5: Universal 8-Currency Basket Circuit Breaker (currency_strength.py)](#bab-5-universal-8-currency-basket-circuit-breaker-currency_strengthpy)
 6. [Bab 6: Macro Strategic Engine (MSE) & Zonal SBR/RBS](#bab-6-macro-strategic-engine-mse--zonal-sbrrbs)
 7. [Bab 7: LuxAlgo SMC, Liquidity Map & FRVP Confluence](#bab-7-luxalgo-smc-liquidity-map--frvp-confluence)
-8. [Bab 8: Stage 2 Multi-LLM Consensus Jury & 2-Pass Audit Protocol](#bab-8-stage-2-multi-llm-consensus-jury--2-pass-audit-protocol)
+8. [Bab 8: Stage 2 Multi-LLM Consensus Jury & Strict 3/3 Protocol](#bab-8-stage-2-multi-llm-consensus-jury--strict-33-protocol)
 9. [Bab 9: Risk Engine & Account Safeguards (risk_engine.py)](#bab-9-risk-engine--account-safeguards-risk_enginepy)
 10. [Bab 10: Real-Time Position Management Lifecycle (position_manager.py)](#bab-10-real-time-position-management-lifecycle-position_managerpy)
 11. [Bab 11: Comprehensive Tokenomics, Latency & Cost Optimization](#bab-11-comprehensive-tokenomics-latency--cost-optimization)
@@ -32,7 +33,7 @@
 +-----------------------------------------------------------------------------------+
 |               STAGE 1: FAST QUANTITATIVE RADAR (Lokal di MT5 • 60 Detik • 0 Token)|
 |  Universe: 27 Simbol Paralel | Sockets: MN1, W1, D1, H4, H1, M30                  |
-|  [M1: Judas Sweep]    [M2: Pullback Retest]    [M3: Weekly Wall Reversal]         |
+|  [M1: Judas Sweep]    [M2: Pullback Retest]    [M3: Multi-Touch Breakout Retest]  |
 |  [BUY: Diskon + RBS]  [SELL: Premium + SBR]    [CSM 8-Basket Dual-Horizon Flow]   |
 +-----------------------------------------+-----------------------------------------+
                                           | (Hanya 8-15 Setup A+ / hari lolos)
@@ -42,7 +43,8 @@
 |  PASS 1 (~3.0s): OpenAI o4-mini (Struktur Makro) + Gemini 3.1-Flash (Momentum/Wick)|
 |  PASS 2 (~1.5s): DeepSeek V4-Flash CRO (Devil's Advocate Audit + 24 Candle M5)    |
 |  VETO GATES: 11 Bendera Risiko (Anti-Falling Knife BUY / Anti-Rocket FOMO SELL)   |
-|  KONSENSUS : Skor Confidence >= 1.20 | Unanimous 3/3 Split 2 Posisi (+25% Boost)  |
+|  KONSENSUS : STRICT UNANIMOUS 3/3 (Wajib 3/3 Searah; Split = HOLD)                |
+|  SPLIT BOOST: Unanimous 3/3 + Confidence >= 75% -> 2 Tiket Posisi (+25% Boost)    |
 +-----------------------------------------+-----------------------------------------+
                                           | (Order Disetujui)
                                           v
@@ -56,7 +58,7 @@
 
 ---
 
-## Bab 3: Stage 1 Radar — Spesifikasi Presisi BUY vs SELL
+## Bab 3: Stage 1 Radar — Trio Mekanisme Presisi (M1, M2, M3)
 
 ### 3.1 Mekanisme 1: London Judas Swing Failure (M1)
 
@@ -80,47 +82,27 @@
 | **Safety Ceiling & Floor** | SL Distance: Min $1.3\times\text{ATR}_{\text{H1}}$ s/d Max $\le 160\text{ pts}$ (16 pips FX). | SL Distance: Min $1.3\times\text{ATR}_{\text{H1}}$ s/d Max $\le 160\text{ pts}$ (16 pips FX). |
 | **Target Profit (TP)** | $\text{TP} = \text{Nearest Resistance Station}$ (R:R $\ge 1.25\times$ s/d $3.0\times\text{SL}$). | $\text{TP} = \text{Nearest Support Station}$ (R:R $\ge 1.25\times$ s/d $3.0\times\text{SL}$). |
 
-### 3.3 Mekanisme 3: HTF Weekly Wall Reversal & Foothold Targeting (M3)
+### 3.3 Mekanisme 3: Multi-Touch Cluster Breakout & Delayed Retest (M3)
 
-| Parameter / Kriteria | Skenario BUY (Bounce from Floor) | Skenario SELL (Rejection from Ceiling) |
+| Parameter / Kriteria | Skenario BUY (Bullish Breakout Retest) | Skenario SELL (Bearish Breakdown Retest) |
 |---|---|---|
-| **Macro Wall Collision** | Harga menguji PWL Floor atau Sub-Floor Station 100-pip. | Harga menguji PWH Ceiling atau Sub-Ceiling Station 100-pip. |
-| **Foothold Confirmation** | Lilin H1 ditutup di atas level support stasiun. | Lilin H1 ditutup di bawah level resistance stasiun. |
-| **Target Koridor Estafet** | Target TP = 50% Equilibrium Dealing Range & Next Station. | Target TP = 50% Equilibrium Dealing Range & Lower Station. |
-| **Invalidation SL** | SL diletakkan di bawah titik terendah swing (PWL) + Buffer. | SL diletakkan di atas titik tertinggi swing (PWH) + Buffer. |
+| **Cluster Touch Count** | Cluster Resistance telah diuji $\ge 2\text{ kali}$ (`touches_resistance >= 2`). | Cluster Support telah diuji $\ge 2\text{ kali}$ (`touches_support >= 2`). |
+| **Breakout Validation** | Harga menembus di atas resistance cluster $\ge 0.10\times\text{ATR}$. | Harga menembus di bawah support cluster $\ge 0.10\times\text{ATR}$. |
+| **Delayed Retest Entry** | Buy Limit dipasang tepat di level `cluster_resistance - 0.5 * spread`. | Sell Limit dipasang tepat di level `cluster_support + 0.5 * spread`. |
+| **Macro Corridor Gate** | Macro Corridor wajib BULLISH (Dilarang trade di Bearish Corridor). | Macro Corridor wajib BEARISH (Dilarang trade di Bullish Corridor). |
+| **Structural Invalidation** | SL di balik Support RBS $+ 0.35\times\text{ATR} + \text{Spread}$ ($\le 160\text{ pts}$). | SL di balik Resistance SBR $+ 0.35\times\text{ATR} + \text{Spread}$ ($\le 160\text{ pts}$). |
 
 ---
 
-## Bab 4: 4-Dimensional Market State Engine (`wave_state.py`)
+## Bab 8: Stage 2 Multi-LLM Consensus Jury & Strict 3/3 Protocol
 
-| Fase Siklus Wave | Kondisi Pasar BULLISH (Arah BUY) | Kondisi Pasar BEARISH (Arah SELL) |
-|---|---|---|
-| **Phase 1: Impulse (WAIT)** | Harga melonjak tajam menjauhi EMA20. Permission = WAIT (Dilarang mengejar BUY di pucuk). | Harga anjlok tajam menjauhi EMA20. Permission = WAIT (Dilarang mengejar SELL di dasar). |
-| **Phase 2: Waterfall (LOCK)** | Harga mengalami koreksi tajam beruntun. Permission = LOCK (Dilarang menangkap pisau jatuh). | Harga mengalami rebound tajam beruntun. Permission = LOCK (Dilarang menghadang roket). |
-| **Phase 3: Mature Basing (ARM)** | Pelemahan momentum koreksi di zona diskon ($\le 0.50$). Permission = ARM (Siap pasang Buy Limit). | Pelemahan momentum rebound di zona premium ($\ge 0.50$). Permission = ARM (Siap pasang Sell Limit). |
-| **Phase 4: Base Reclaim (GO)** | Konfirmasi reclaim level support + sumbu bawah. Permission = GO (Eksekusi BUY Aktif). | Konfirmasi reclaim level resistance + sumbu atas. Permission = GO (Eksekusi SELL Aktif). |
+1. **Syarat Eksekusi Mutlak (Zero Tolerance Split)**:
+   - Wajib 3 dari 3 model aktif (`OpenAI o4-mini`, `Gemini 3.1-Flash`, `DeepSeek V4-Flash CRO`) memilih arah yang sama persis (**3/3 BUY** atau **3/3 SELL**).
+   - Jika ada 1 model yang memilih HOLD, REJECT, atau arah berlawanan (hasil 2/3 atau split vote) $\rightarrow$ **OTOMATIS DIBATALKAN (HOLD)**.
+   - Sistem *Weighted-Confidence 1.20* lama sudah di-DROP 100% dari `consensus.py`.
 
----
-
-## Bab 5: Universal 8-Currency Basket Circuit Breaker (`currency_strength.py`)
-
-| Kondisi Arus Modal | Dampak pada Order BUY | Dampak pada Order SELL |
-|---|---|---|
-| **Base Currency DUMP ($\le -20.0$)** | **HARD LOCK BUY** (Dilarang beli mata uang yang sedang crash). | **OPEN SELL ENABLED** (Arus searah dengan pelemahan). |
-| **Base Currency SURGE ($\ge +20.0$)** | **OPEN BUY ENABLED** (Arus searah dengan penguatan). | **HARD LOCK SELL** (Dilarang short mata uang yang sedang rally). |
-| **Quote Currency SURGE ($\ge +20.0$)** | **HARD LOCK BUY** (Quote terlalu kuat, pair akan tertekan turun). | **OPEN SELL ENABLED** (Short diuntungkan oleh quote kuat). |
-| **Quote Currency DUMP ($\le -20.0$)** | **OPEN BUY ENABLED** (Long diuntungkan oleh quote lemah). | **HARD LOCK SELL** (Dilarang short saat quote sedang crash). |
-| **Relative Delta Spread ($|\Delta| \ge 18.0$)** | Jika Net Delta $\le -18.0 \rightarrow$ **HARD LOCK BUY**. | Jika Net Delta $\ge +18.0 \rightarrow$ **HARD LOCK SELL**. |
-
----
-
-## Bab 10: Real-Time Position Management Lifecycle (`position_manager.py`)
-
-| Fitur Proteksi | Aksi pada Posisi BUY (Long) | Aksi pada Posisi SELL (Short) |
-|---|---|---|
-| **Pocket Profit BEP (45-55% TP)** | SL dinaikkan ke: $\text{Entry} + \text{Komisi} + 15\text{ pts}$ (1.5 pips). | SL diturunkan ke: $\text{Entry} - \text{Komisi} - 15\text{ pts}$ (1.5 pips). |
-| **Partial Close (TP1)** | Cairkan 50% lot saat harga mencapai 50% jarak TP. | Cairkan 50% lot saat harga mencapai 50% jarak TP. |
-| **Trailing Stage 1 (65-90% TP)** | SL mengikuti di bawah harga tertinggi sebesar $0.75\times\text{ATR}_{\text{H1}}$. | SL mengikuti di atas harga terendah sebesar $0.75\times\text{ATR}_{\text{H1}}$. |
-| **Trailing Stage 2 ($\ge 90\%$ TP)** | Kunci profit ketat di bawah harga sebesar $0.50\times\text{ATR}_{\text{M30}}$. | Kunci profit ketat di atas harga sebesar $0.50\times\text{ATR}_{\text{M30}}$. |
-| **Time-Decay Stagnation Exit** | Tutup otomatis jika $\ge 4\text{ jam}$ di $[-0.2R, +0.2R]$ & Peak $< +0.3R$. | Tutup otomatis jika $\ge 4\text{ jam}$ di $[-0.2R, +0.2R]$ & Peak $< +0.3R$. |
-| **Pre-Rollover Shield (03:50 WIB)** | Tutup otomatis jika jarak ke SL $\le\text{threshold per pair}$. | Tutup otomatis jika jarak ke SL $\le\text{threshold per pair}$. |
+2. **Eksekusi Unanimous 3/3 High Confidence Split (+25% Boost)**:
+   - Jika ketiga model sepakat bulat dan rata-rata Confidence $\ge 75\%$ serta terdapat $\ge 2$ slot MT5 kosong:
+   - Bot membuka 2 tiket posisi sekaligus @ $0.625\times\text{Base Lot}$ (Total $1.25\times$ bobot):
+     * **Posisi #1**: Menargetkan TP1 Standar (Stasiun terdekat) dengan trailing stop agresif.
+     * **Posisi #2**: Menargetkan TP2 Extended Target (Stasiun makro besar) dengan trailing swing bernafas.
