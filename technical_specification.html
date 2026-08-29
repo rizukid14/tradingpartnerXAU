@@ -9,7 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}], throwOnError: false});"></script>
     <style>
         :root {
             --bg-base: #f8fafc;
@@ -687,24 +687,24 @@
                     <tbody>
                         <tr>
                             <td><strong>M1: London Judas Sweep</strong></td>
-                            <td>Sapuan likuiditas di bawah Asian Low / PDL / PWL ($\ge 0.15	imes	ext{ATR}$) + Reclaim $\le 3$ bar + Lower Wick $\ge 25\%$.</td>
-                            <td>Sapuan likuiditas di atas Asian High / PDH / PWH ($\ge 0.15	imes	ext{ATR}$) + Reclaim $\le 3$ bar + Upper Wick $\ge 25\%$.</td>
-                            <td>Ujung Sumbu Sapuan $\pm 0.35	imes	ext{ATR} + 	ext{Spread}$</td>
+                            <td>Sapuan likuiditas di bawah Asian Low / PDL / PWL ($\ge 0.15\times\text{ATR}$) + Reclaim $\le 3$ bar + Lower Wick $\ge 25\%$.</td>
+                            <td>Sapuan likuiditas di atas Asian High / PDH / PWH ($\ge 0.15\times\text{ATR}$) + Reclaim $\le 3$ bar + Upper Wick $\ge 25\%$.</td>
+                            <td>Ujung Sumbu Sapuan $\pm 0.35\times\text{ATR} + \text{Spread}$</td>
                             <td>50% Equilibrium Dealing Range / Stasiun Lawan</td>
                         </tr>
                         <tr>
                             <td><strong>M2: Trend-Aligned Pullback</strong></td>
-                            <td>D1 Bullish + H4 Slope $>+0.5$ + Harga di Zona Diskon ($\le 0.50$) + Mean Proximity EMA20 $\le 0.45	imes	ext{ATR}$.</td>
-                            <td>D1 Bearish + H4 Slope $<-0.5$ + Harga di Zona Premium ($\ge 0.50$) + Mean Proximity EMA20 $\le 0.45	imes	ext{ATR}$.</td>
-                            <td>Support RBS Fisik $- 0.35	imes	ext{ATR} - 	ext{Spread}$</td>
-                            <td>Stasiun Resistance Terdekat ($1.25	imes	ext{ s/d }3.0	imes	ext{SL}$)</td>
+                            <td>D1 Bullish + H4 Slope $>+0.5$ + Harga di Zona Diskon ($\le 0.50$) + Mean Proximity EMA20 $\le 0.45\times\text{ATR}$.</td>
+                            <td>D1 Bearish + H4 Slope $<-0.5$ + Harga di Zona Premium ($\ge 0.50$) + Mean Proximity EMA20 $\le 0.45\times\text{ATR}$.</td>
+                            <td>Support RBS Fisik $- 0.35\times\text{ATR} - \text{Spread}$</td>
+                            <td>Stasiun Resistance Terdekat ($1.25\times\text{ s/d }3.0\times\text{SL}$)</td>
                         </tr>
                         <tr>
                             <td><strong>M3: Multi-Touch Breakout Retest</strong></td>
-                            <td>Cluster Resistance disentuh $\ge 2	imes$ + Breakout tebal $\ge 0.10	imes	ext{ATR}$ + Limit Retest saat pullback.</td>
-                            <td>Cluster Support disentuh $\ge 2	imes$ + Breakdown tebal $\ge 0.10	imes	ext{ATR}$ + Limit Retest saat pullback.</td>
-                            <td>Support RBS Baru $- 0.35	imes	ext{ATR} - 	ext{Spread}$</td>
-                            <td>Stasiun Makro Berikutnya ($1.25	imes	ext{ s/d }3.0	imes	ext{SL}$)</td>
+                            <td>Cluster Resistance disentuh $\ge 2\times$ + Breakout tebal $\ge 0.10\times\text{ATR}$ + Limit Retest saat pullback.</td>
+                            <td>Cluster Support disentuh $\ge 2\times$ + Breakdown tebal $\ge 0.10\times\text{ATR}$ + Limit Retest saat pullback.</td>
+                            <td>Support RBS Baru $- 0.35\times\text{ATR} - \text{Spread}$</td>
+                            <td>Stasiun Makro Berikutnya ($1.25\times\text{ s/d }3.0\times\text{SL}$)</td>
                         </tr>
                     </tbody>
                 </table>
@@ -723,12 +723,12 @@
                 <div class="card">
                     <span class="badge badge-purple" style="margin-bottom: 8px;">WAIT (Fase Impulse)</span>
                     <h4 style="margin: 4px 0 8px;">Anti-FOMO Expansion Shield</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);">Harga baru saja meledak kencang, jarak ke swing peak $< 0.40	imes	ext{ATR}$ (1–2 bar). <strong>Tindakan: DILARANG ENTRY.</strong></p>
+                    <p style="font-size: 13px; color: var(--text-muted);">Harga baru saja meledak kencang, jarak ke swing peak $< 0.40\times\text{ATR}$ (1–2 bar). <strong>Tindakan: DILARANG ENTRY.</strong></p>
                 </div>
                 <div class="card">
                     <span class="badge badge-rose" style="margin-bottom: 8px;">LOCK (Type A Waterfall)</span>
                     <h4 style="margin: 4px 0 8px;">Anti-Falling Knife Guard</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);">Harga sedang terjun deras dengan candle solid tanpa sumbu ($V \ge 0.30	ext{ ATR/bar}$). <strong>Tindakan: KUNCI PINTU MASUK.</strong></p>
+                    <p style="font-size: 13px; color: var(--text-muted);">Harga sedang terjun deras dengan candle solid tanpa sumbu ($V \ge 0.30\text{ ATR/bar}$). <strong>Tindakan: KUNCI PINTU MASUK.</strong></p>
                 </div>
                 <div class="card">
                     <span class="badge badge-cyan" style="margin-bottom: 8px;">ARM (Type B Compression)</span>
@@ -752,9 +752,7 @@
             <p>Boitoki CSM menghitung kekuatan log-return 8 mata uang utama (USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD) melalui triangulasi simultan 28 pair dunia dengan formula Dual-Horizon:</p>
 
             <div class="math-box">
-                $$	ext{CSM Score}_c = \left(0.60 	imes \sum_{j 
-eq c} \ln\left(rac{P_{c/j}^{	ext{M15}}}{P_{c/j, 	ext{prev}}^{	ext{M15}}}ight)ight) + \left(0.40 	imes \sum_{j 
-eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ight)$$
+                $$\text{CSM Score}_c = \left(0.60 \times \sum_{j \neq c} \ln\left(\frac{P_{c/j}^{\text{M15}}}{P_{c/j, \text{prev}}^{\text{M15}}}\right)\right) + \left(0.40 \times \sum_{j \neq c} \ln\left(\frac{P_{c/j}^{\text{H1}}}{P_{c/j, \text{prev}}^{\text{H1}}}\right)\right)$$
             </div>
 
             <div class="callout callout-rose">
@@ -762,8 +760,8 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
                 <div>
                     <strong>Sistem Circuit Breaker Otomatis:</strong>
                     <ul style="margin-top: 6px; padding-left: 18px;">
-                        <li><strong>Hard Lock BUY</strong>: Jika Base Currency mengalami Systemic Dump ($	ext{CSM} \le -20.0$) atau Quote Currency Surge ($\ge +20.0$).</li>
-                        <li><strong>Hard Lock SELL</strong>: Jika Base Currency mengalami Systemic Surge ($	ext{CSM} \ge +20.0$) atau Quote Currency Dump ($\le -20.0$).</li>
+                        <li><strong>Hard Lock BUY</strong>: Jika Base Currency mengalami Systemic Dump ($\text{CSM} \le -20.0$) atau Quote Currency Surge ($\ge +20.0$).</li>
+                        <li><strong>Hard Lock SELL</strong>: Jika Base Currency mengalami Systemic Surge ($\text{CSM} \ge +20.0$) atau Quote Currency Dump ($\le -20.0$).</li>
                         <li><strong>Relative Delta Spread Lock</strong>: Mengunci order jika selisih kekuatan $|\Delta| \ge 18.0$ berlawanan arah dengan setup.</li>
                     </ul>
                 </div>
@@ -791,15 +789,15 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
                     <tbody>
                         <tr>
                             <td><strong>RBS (Support Beli)</strong></td>
-                            <td>$	ext{Highest Body Open/Close}$ dari candle basis</td>
-                            <td>$	ext{Lowest Wick Low}$ dari candle basis</td>
-                            <td>$	ext{SL} = 	ext{Distal Band} - (0.35	imes	ext{ATR}) - 	ext{Spread}$</td>
+                            <td>$\text{Highest Body Open/Close}$ dari candle basis</td>
+                            <td>$\text{Lowest Wick Low}$ dari candle basis</td>
+                            <td>$\text{SL} = \text{Distal Band} - (0.35\times\text{ATR}) - \text{Spread}$</td>
                         </tr>
                         <tr>
                             <td><strong>SBR (Resistance Jual)</strong></td>
-                            <td>$	ext{Lowest Body Open/Close}$ dari candle basis</td>
-                            <td>$	ext{Highest Wick High}$ dari candle basis</td>
-                            <td>$	ext{SL} = 	ext{Distal Band} + (0.35	imes	ext{ATR}) + 	ext{Spread}$</td>
+                            <td>$\text{Lowest Body Open/Close}$ dari candle basis</td>
+                            <td>$\text{Highest Wick High}$ dari candle basis</td>
+                            <td>$\text{SL} = \text{Distal Band} + (0.35\times\text{ATR}) + \text{Spread}$</td>
                         </tr>
                     </tbody>
                 </table>
@@ -840,7 +838,7 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
                 <span class="callout-icon">⚖️</span>
                 <div>
                     <strong>Aturan Konsensus Bulat 100%:</strong>
-                    <p style="margin: 4px 0 0; font-size: 13px;">Wajib 3/3 model aktif (<code>OpenAI o4-mini</code>, <code>Gemini 3.1-Flash</code>, <code>DeepSeek V4-Flash CRO</code>) memilih arah yang sama persis (<strong>3/3 BUY</strong> atau <strong>3/3 SELL</strong>). Jika ada 1 model saja yang HOLD/REJECT atau split vote $ightarrow$ <strong>OTOMATIS BATAL (HOLD)</strong>.</p>
+                    <p style="margin: 4px 0 0; font-size: 13px;">Wajib 3/3 model aktif (<code>OpenAI o4-mini</code>, <code>Gemini 3.1-Flash</code>, <code>DeepSeek V4-Flash CRO</code>) memilih arah yang sama persis (<strong>3/3 BUY</strong> atau <strong>3/3 SELL</strong>). Jika ada 1 model saja yang HOLD/REJECT atau split vote $\rightarrow$ <strong>OTOMATIS BATAL (HOLD)</strong>.</p>
                 </div>
             </div>
 
@@ -849,10 +847,10 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
                     <span class="card-title">Unanimous 3/3 High Confidence Split (+25% Boost)</span>
                     <span class="badge badge-emerald">2 Tiket Posisi</span>
                 </div>
-                <p style="font-size: 13px; color: var(--text-muted);">Jika 3 model sepakat bulat dengan rata-rata Confidence $\ge 75\%$ dan terdapat $\ge 2$ slot kapasitas MT5 kosong, bot mengeksekusi 2 tiket order sekaligus @ $0.625	imes	ext{Base Lot}$ (Total bobot $1.25	imes$):</p>
+                <p style="font-size: 13px; color: var(--text-muted);">Jika 3 model sepakat bulat dengan rata-rata Confidence $\ge 75\%$ dan terdapat $\ge 2$ slot kapasitas MT5 kosong, bot mengeksekusi 2 tiket order sekaligus @ $0.625\times\text{Base Lot}$ (Total bobot $1.25\times$):</p>
                 <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 18px;">
                     <li><strong>Tiket #1</strong>: Menargetkan TP1 Standar (Stasiun terdekat) dengan trailing stop agresif.</li>
-                    <li><strong>Tiket #2</strong>: Menargetkan TP2 Extended Macro Target ($1.2	imes	ext{TP}$) dengan trailing swing bernafas.</li>
+                    <li><strong>Tiket #2</strong>: Menargetkan TP2 Extended Macro Target ($1.2\times\text{TP}$) dengan trailing swing bernafas.</li>
                 </ul>
             </div>
         </section>
@@ -866,7 +864,7 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
             <p>Formula penentuan lot dinamis berbasis risiko ekuitas riil dan lantai pengaman multi-tier:</p>
 
             <div class="math-box">
-                $$	ext{Lot Size} = rac{	ext{Equity} 	imes 	ext{Risk } (1.0\%)}{	ext{SL Distance (pts)} 	imes 	ext{USD Per Point}}$$
+                $$\text{Lot Size} = \frac{\text{Equity} \times \text{Risk } (1.0\%)}{\text{SL Distance (pts)} \times \text{USD Per Point}}$$
             </div>
 
             <div class="table-container">
@@ -882,27 +880,27 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
                     <tbody>
                         <tr>
                             <td><strong>Forex Majors (H1)</strong></td>
-                            <td>$\max(2	imes	ext{Spread} + 15	ext{ pts}, \mathbf{0.50	imes	ext{ATR}_{	ext{H1}}})$</td>
-                            <td>$\le 160	ext{ pts}$ (16 pips)</td>
-                            <td>$1.25	imes	ext{ s/d }3.0	imes	ext{SL}$</td>
+                            <td>$\max(2\times\text{Spread} + 15\text{ pts}, \mathbf{0.50\times\text{ATR}_{\text{H1}}})$</td>
+                            <td>$\le 160\text{ pts}$ (16 pips)</td>
+                            <td>$1.25\times\text{ s/d }3.0\times\text{SL}$</td>
                         </tr>
                         <tr>
                             <td><strong>NZD Alpha Pairs (H1)</strong></td>
-                            <td>$\max(2	imes	ext{Spread} + 15	ext{ pts}, \mathbf{0.50	imes	ext{ATR}_{	ext{H1}}}) + 20	ext{ pts}$</td>
-                            <td>$\le 180	ext{ pts}$ (18 pips)</td>
-                            <td>$1.25	imes	ext{ s/d }3.0	imes	ext{SL}$</td>
+                            <td>$\max(2\times\text{Spread} + 15\text{ pts}, \mathbf{0.50\times\text{ATR}_{\text{H1}}}) + 20\text{ pts}$</td>
+                            <td>$\le 180\text{ pts}$ (18 pips)</td>
+                            <td>$1.25\times\text{ s/d }3.0\times\text{SL}$</td>
                         </tr>
                         <tr>
                             <td><strong>JPY Crosses (M30)</strong></td>
-                            <td>$\max(2	imes	ext{Spread} + 20	ext{ pts}, \mathbf{1.00	imes	ext{ATR}_{	ext{M30}}})$</td>
-                            <td>$\le 200	ext{ pts}$ (20 pips JPY)</td>
-                            <td>$1.25	imes	ext{ s/d }3.0	imes	ext{SL}$</td>
+                            <td>$\max(2\times\text{Spread} + 20\text{ pts}, \mathbf{1.00\times\text{ATR}_{\text{M30}}})$</td>
+                            <td>$\le 200\text{ pts}$ (20 pips JPY)</td>
+                            <td>$1.25\times\text{ s/d }3.0\times\text{SL}$</td>
                         </tr>
                         <tr>
                             <td><strong>Gold XAUUSD (M30)</strong></td>
-                            <td>$\max(2	imes	ext{Spread}, \mathbf{1.60	imes	ext{ATR}_{	ext{M30}}} 	ext{ [floor 600 pts]})$</td>
-                            <td>$\le 600	ext{ pts}$ ($6.00)</td>
-                            <td>$1.25	imes	ext{ s/d }3.0	imes	ext{SL}$</td>
+                            <td>$\max(2\times\text{Spread}, \mathbf{1.60\times\text{ATR}_{\text{M30}}} \text{ [floor 600 pts]})$</td>
+                            <td>$\le 600\text{ pts}$ ($6.00)</td>
+                            <td>$1.25\times\text{ s/d }3.0\times\text{SL}$</td>
                         </tr>
                     </tbody>
                 </table>
@@ -933,7 +931,7 @@ eq c} \ln\left(rac{P_{c/j}^{	ext{H1}}}{P_{c/j, 	ext{prev}}^{	ext{H1}}}ight)ig
                 <div class="card">
                     <span class="badge badge-purple" style="margin-bottom: 8px;">2-Stage Trailing Stop</span>
                     <h4 style="margin: 4px 0 8px;">Breathing & Terminal Lock</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);"><strong>Stage 1 (65–90% TP)</strong>: Jarak $0.75	imes	ext{ATR H1}$ (floor 80 pts).<br><strong>Stage 2 (≥90% TP)</strong>: Kunci ketat $0.50	imes	ext{ATR M30}$ (floor 30 pts).</p>
+                    <p style="font-size: 13px; color: var(--text-muted);"><strong>Stage 1 (65–90% TP)</strong>: Jarak $0.75\times\text{ATR H1}$ (floor 80 pts).<br><strong>Stage 2 (≥90% TP)</strong>: Kunci ketat $0.50\times\text{ATR M30}$ (floor 30 pts).</p>
                 </div>
 
                 <div class="card">
