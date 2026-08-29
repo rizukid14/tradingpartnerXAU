@@ -583,9 +583,9 @@ class RiskEngine:
         if config.WEEKEND_TRADING_ENABLED:
             return True, ""
         now_wib = datetime.now(WIB)
-        if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
-            return False, " [RISK] Weekend entry blocked: Jumat >= 22:00 WIB. Menunggu Senin 00:00 WIB."
-        if now_wib.weekday() in (5, 6):  # Saturday or Sunday
+        # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 WIB.
+        # Jumat 23:59 masih boleh trading; Sabtu 00:00 langsung block.
+        if now_wib.weekday() in (5, 6):
             return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         return True, ""
 

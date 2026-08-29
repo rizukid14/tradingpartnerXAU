@@ -381,6 +381,8 @@ DYNAMIC_CONFIG_ENABLED = _getenv_bool("DYNAMIC_CONFIG_ENABLED", False)
 
 CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.2)
 CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2)
+# FIX 29 Agu: orphan env var - sekarang dibaca oleh confidence_threshold_for()
+CONFIDENCE_CONSENSUS_THRESHOLD_FX = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_FX", 1.2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
@@ -525,13 +527,14 @@ def get_max_open_positions(in_recovery_mode=False, now=None):
     if in_recovery_mode:
         return min(base, MAX_OPEN_POSITIONS_RECOVERY)
     return base
+# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
+# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
+# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
 # --- DAILY PROFIT TARGET (14 Agustus) ---
 # Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
 # (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
 DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
-MAX_DAILY_LOSS_PERCENT      = _getenv_float("MAX_DAILY_LOSS_PERCENT", 4.0)
-MAX_DAILY_LOSS_USD          = _getenv_float("MAX_DAILY_LOSS_USD", 250.0)
 DAILY_LOSS_OPENED_TODAY_ONLY = _getenv_bool("DAILY_LOSS_OPENED_TODAY_ONLY", True)
 
 
@@ -812,7 +815,7 @@ def get_rotation_pool(now=None):
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
-    is_weekend = (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6)
+    is_weekend = now.weekday() in (5, 6)  # Sabtu (5) + Minggu (6). FIX 29 Agu: cutoff Sabtu 00:00, bukan Jumat 22:00.
     if is_weekend:
         # FX pairs market closed on weekend -> BTC or fallback
         if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
@@ -869,9 +872,8 @@ def lot_size_for(symbol):
 def get_timeframe_str(symbol=None, now_wib=None):
     """Returns the active trading timeframe string ('H1' or 'M30') taking into account
     Dynamic Session Timeframe (H1 in Tokyo 08:00-14:00, M30 in London/NY 14:00-00:00).
+    Crypto (BTC) pakai TIMEFRAME_STR apa adanya (default H1, bukan short-circuit ke M30).
     """
-    if symbol and is_crypto(symbol):
-        return "M30"
     if DYNAMIC_SESSION_TIMEFRAME:
         if now_wib is None:
             now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
@@ -888,19 +890,6 @@ def get_timeframe(symbol=None, now_wib=None):
     """Returns the MT5 timeframe integer corresponding to the current active session."""
     tf_str = get_timeframe_str(symbol, now_wib)
     return TIMEFRAME_MAP.get(tf_str, TIMEFRAME)
-
-
-def risk_percent_for(symbol):
-    """Returns the risk per trade percentage for a symbol.
-    BTC: RISK_PERCENT_BTC (1.5%)
-    XAU: RISK_PERCENT_XAU (1.0%)
-    FX: RISK_PERCENT_FX (1.0%)
-    """
-    if is_crypto(symbol):
-        return RISK_PERCENT_BTC
-    if is_gold(symbol):
-        return RISK_PERCENT_XAU
-    return RISK_PERCENT_FX
 
 
 def default_sl_points_for(symbol):
@@ -941,9 +930,13 @@ def sl_padding_for(symbol):
 
 def confidence_threshold_for(symbol):
     """Weighted-confidence consensus threshold per symbol.
-    BTC (M30, moderate entries) needs higher conviction than XAU (M15, frequent).
+    BTC (H1 swing, moderate entries) needs higher conviction than FX/XAU (M15/H1, frequent).
     """
-    return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
+    if is_crypto(symbol):
+        return CONFIDENCE_CONSENSUS_THRESHOLD_BTC
+    if is_forex(symbol):
+        return CONFIDENCE_CONSENSUS_THRESHOLD_FX
+    return CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 
 
 def get_ai_mode(now=None):
@@ -1108,9 +1101,4 @@ def get_scanner_symbols():
         "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
         "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc", "XAUUSD-ECNc"
     ]
-
-
-def get_max_open_positions():
-    """Returns max open positions allowed."""
-    return _getenv_int("MAX_OPEN_POSITIONS", 6)
 
