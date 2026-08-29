@@ -55,9 +55,9 @@
 
 Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-flash-lite + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
 
-- **`TRADING_MODE = "scanner"` (Default)**: Universe 27 simbol FX + Gold dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (London Judas Sweep), M2 (Trend-Aligned Pullback), M3 (HTF Weekly Wall Reversal) — dengan timeframe struktural **H1 untuk FX majors, M30 untuk XAU/JPY**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
+- **`TRADING_MODE = "scanner"` (Default)**: Universe 27 simbol FX + Gold dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest) — dengan timeframe struktural **H1 untuk FX majors, NZD & Gold, M30 untuk JPY Crosses**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
 - **BTCUSD.c (Bitcoin)**: Tidak masuk scanner universe. Mode `ENABLE_BTC_ROTATION=False` (default) = BTC off. Aktif di legacy mode `xau`/`pairs` saja (weekend fallback).
-- **XAUUSD-ECNc (Gold)**: 1 simbol di scanner universe. Timeframe M30 di radar + ATR M30 di lantai SL floor $1.8 \times$ ATR.
+- **XAUUSD-ECNc (Gold)**: 1 simbol di scanner universe. Timeframe H1 di radar + ATR H1 di lantai SL floor $1.25 \times$ ATR (floor 600 pts).
 - **HTF Macro Cache (Stage 1A)**: Struktur D1 + H4 + W1 di-fetch sekali per refresh window (~$60$ detik) lalu dipakai semua simbol → **0 token LLM**. CSM (Boitoki Currency Strength Matrix) dihitung sub-detik.
 - **Mode AI**: `AI_MODE_POLICY = "fixed"` + `AI_FIXED_MODE = "triple"` → **selalu 3-LLM jury** (OpenAI + Gemini + DeepSeek). Tidak ada schedule dual/triple berdasarkan jam.
 - **Akun**: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic `20260625`, balance ~$6000, Waktu **WIB** (Asia/Jakarta).

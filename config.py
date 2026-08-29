@@ -339,9 +339,9 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     15 Agustus - user minta "floor 1x atr secara lunak", final 1.2x; SL tipis 0.8x ATR
 #     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
-LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 0.68)   # 0.68x ATR H1 untuk FX majors
+LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 0.50)   # 0.50x ATR H1 untuk FX majors
 LLM_JPY_FLOOR_ATR_MULT = _getenv_float("LLM_JPY_FLOOR_ATR_MULT", 1.00)  # 1.00x ATR M30 untuk JPY crosses
-LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.60)  # 1.60x ATR M30 buffer agar kebal dari spike hunting sesi NY
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.25)  # 1.25x ATR H1 buffer Gold H1
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 600)  # fallback kalau ATR gagal (6 USD)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)

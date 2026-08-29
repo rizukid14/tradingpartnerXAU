@@ -635,14 +635,14 @@
             </div>
             <p>Sistem mengeksekusi prinsip fraktal kuantitatif: <strong>Macro Expands (Breakout H4/D1/W1) vs Micro Mean-Reverts (Pullback H1/M30)</strong>. Seluruh 27 simbol dipindai secara paralel setiap 60 detik.</p>
 
-            <div class="card-grid">
+            <div class="card-grid" style="margin-top: 16px;">
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-title">Forex Majors & Crosses (15 Pair)</span>
-                        <span class="badge badge-primary">Timeframe H1</span>
+                        <span class="card-title">Forex Majors (6 Pair)</span>
+                        <span class="badge badge-emerald">Timeframe H1</span>
                     </div>
-                    <p style="font-size: 13px; color: var(--text-muted);">Dipindai pada Timeframe H1. Lantai SL dikalibrasi ke <code>0.50x ATR H1</code> dengan plafon ketat <code>≤ 160 pts</code> (16 pips).</p>
-                    <code>EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD, EURGBP, EURJPY, EURCHF, EURAUD, EURCAD, GBPJPY, GBPCHF, GBPAUD, GBPCAD</code>
+                    <p style="font-size: 13px; color: var(--text-muted);">Likuiditas institusional tertinggi dengan spread terendah. Lantai SL berbasis <code>0.50x ATR H1</code>.</p>
+                    <code>EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD</code>
                 </div>
 
                 <div class="card">
@@ -656,11 +656,11 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-title">JPY Crosses & Gold (6 Pair)</span>
-                        <span class="badge badge-amber">Timeframe M30</span>
+                        <span class="card-title">JPY Crosses (5 Pair) & Gold</span>
+                        <span class="badge badge-amber">M30 (JPY) / H1 (Gold)</span>
                     </div>
-                    <p style="font-size: 13px; color: var(--text-muted);">JPY Crosses beroperasi di M30 dengan lantai <code>1.00x ATR M30</code>. Gold (<code>XAUUSD-ECNc</code>) diproteksi lantai <code>1.60x ATR M30</code> (floor 600 pts).</p>
-                    <code>AUDJPY, CADJPY, CHFJPY, USDJPY, GBPJPY, EURJPY, XAUUSD</code>
+                    <p style="font-size: 13px; color: var(--text-muted);">JPY Crosses beroperasi di M30 dengan lantai <code>1.00x ATR M30</code>. Gold (<code>XAUUSD-ECNc</code>) beroperasi di H1 dengan lantai <code>1.25x ATR H1</code> (floor 600 pts).</p>
+                    <code>AUDJPY, CADJPY, CHFJPY, GBPJPY, EURJPY, XAUUSD</code>
                 </div>
             </div>
         </section>
@@ -671,7 +671,7 @@
                 <span class="chapter-num">03</span>
                 <h2 class="chapter-title">Stage 1 Radar — Trio Mekanisme Presisi (M1, M2, M3)</h2>
             </div>
-            <p>Radar lokal menjalankan 3 mekanisme eksekusi berbasis struktur dengan 100% kesetaraan simetris (*Dual-Directional Equivalence*):</p>
+            <p>Radar lokal beroperasi setiap 60 detik (0 token API) memindai 27 simbol paralel pada timeframe struktural (<strong>H1 untuk Forex, NZD & Gold; M30 untuk JPY Crosses</strong>). Radar menjalankan 3 mekanisme eksekusi institusional dengan 100% kesetaraan simetris (<em>Dual-Directional Equivalence</em>):</p>
 
             <div class="table-container">
                 <table>
@@ -686,9 +686,9 @@
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>M1: London Judas Sweep</strong></td>
-                            <td>Sapuan likuiditas di bawah Asian Low / PDL / PWL ($\ge 0.15\times\text{ATR}$) + Reclaim $\le 3$ bar + Lower Wick $\ge 25\%$.</td>
-                            <td>Sapuan likuiditas di atas Asian High / PDH / PWH ($\ge 0.15\times\text{ATR}$) + Reclaim $\le 3$ bar + Upper Wick $\ge 25\%$.</td>
+                            <td><strong>M1: Universal Liquidity Sweep & SFP</strong></td>
+                            <td>Sapuan likuiditas multi-anchor (Asian Low / PDL / EQL / Floor Psikologis $\ge 0.15\times\text{ATR}$) + Reclaim $\le 3$ bar + Lower Wick $\ge 25\%$ + Delayed Limit Retest ($0.20\times\text{ATR}$).</td>
+                            <td>Sapuan likuiditas multi-anchor (Asian High / PDH / EQH / Ceil Psikologis $\ge 0.15\times\text{ATR}$) + Reclaim $\le 3$ bar + Upper Wick $\ge 25\%$ + Delayed Limit Retest ($0.20\times\text{ATR}$).</td>
                             <td>Ujung Sumbu Sapuan $\pm 0.35\times\text{ATR} + \text{Spread}$</td>
                             <td>50% Equilibrium Dealing Range / Stasiun Lawan</td>
                         </tr>
@@ -708,6 +708,179 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            <!-- M1 DEEP DIVE -->
+            <h3>1. Mekanisme 1 (M1) — Universal Liquidity Sweep & Structural SFP (H1 / M30)</h3>
+            <p>Mekanisme sapuan likuiditas universal yang beroperasi sepanjang jam aktif trading (08:00–23:00 WIB). Institusi kerap menyapu batas likuiditas utama (Asian High/Low, Equal Highs/Lows dari <em>compression box</em>, Previous Day High/Low, atau Stasiun Psikologis Bulat $\pm 0.35\times\text{ATR}$) untuk memicu *stop loss cascade* ritel sebelum membalikkan arah. Sistem mengeksekusi dengan <strong>Delayed Limit Retest ($0.20\times\text{ATR}$)</strong> guna menjamin R:R tebal.</p>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🟢 M1: Skenario BUY (Universal Sweep Low)</span>
+                        <span class="badge badge-emerald">Multi-Anchor Sweep & SFP</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+  [STRUCTURAL LIQUIDITY POOL (Asian Low / PDL / EQL / Round Floor)]
+  ─────────────────────────────────────── Structural Floor
+          \ 
+           \ (Sapuan Likuiditas >= 0.15x ATR)
+            ▼
+            │ (Lower Wick >= 25% - Rejection & SFP)
+            ▲ (Reclaim Cepat <= 3 bar)
+           /
+          /   [DELAYED LIMIT RETEST: +0.20x ATR]
+         /───► [ENTRY BUY LIMIT 🚀]
+        /      (Target: 50% Equilibrium / Resistance Station)
+  [SL: Ujung Sumbu - 0.35x ATR - Spread]
+                    </pre>
+                    <ul style="font-size: 12.5px; color: var(--text-secondary); padding-left: 16px; margin-top: 8px;">
+                        <li><strong>Multi-Anchor Target</strong>: Asian Low, Previous Day Low (PDL), 40-bar Equal Lows (EQL), atau Stasiun Angka Bulat Psikologis.</li>
+                        <li><strong>Syarat Sapuan</strong>: Low menembus anchor $\ge 0.15\times\text{ATR}_{\text{H1}}$.</li>
+                        <li><strong>Syarat Reclaim & SFP</strong>: Harga ditutup kembali di atas level anchor dalam $\le 3$ candle dengan sumbu bawah $\ge 25\%$.</li>
+                        <li><strong>Delayed Limit Entry</strong>: Pasang Buy Limit di $0.20\times\text{ATR}$ diskon untuk memaksimalkan R:R $\ge 2.0$.</li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🔴 M1: Skenario SELL (Universal Sweep High)</span>
+                        <span class="badge badge-rose">Multi-Anchor Sweep & SFP</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+  [SL: Ujung Sumbu + 0.35x ATR + Spread]
+            ▲ (Sapuan Likuiditas >= 0.15x ATR)
+            │ (Upper Wick >= 25% - Rejection & SFP)
+            ▼ (Reclaim Cepat <= 3 bar)
+           /
+          /   [DELAYED LIMIT RETEST: -0.20x ATR]
+         /───► [ENTRY SELL LIMIT 🎯]
+        /      (Target: 50% Equilibrium / Support Station)
+  ─────────────────────────────────────── Structural Ceiling
+  [STRUCTURAL LIQUIDITY POOL (Asian High / PDH / EQH / Round Ceil)]
+                    </pre>
+                    <ul style="font-size: 12.5px; color: var(--text-secondary); padding-left: 16px; margin-top: 8px;">
+                        <li><strong>Multi-Anchor Target</strong>: Asian High, Previous Day High (PDH), 40-bar Equal Highs (EQH), atau Stasiun Angka Bulat Psikologis.</li>
+                        <li><strong>Syarat Sapuan</strong>: High menembus anchor $\ge 0.15\times\text{ATR}_{\text{H1}}$.</li>
+                        <li><strong>Syarat Reclaim & SFP</strong>: Harga ditutup kembali di bawah level anchor dalam $\le 3$ candle dengan sumbu atas $\ge 25\%$.</li>
+                        <li><strong>Delayed Limit Entry</strong>: Pasang Sell Limit di $0.20\times\text{ATR}$ retest untuk memaksimalkan R:R $\ge 2.0$.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- M2 DEEP DIVE -->
+            <h3>2. Mekanisme 2 (M2) — Trend-Aligned Pullback & Delayed Limit Retest</h3>
+            <p>Mekanisme pelacak tren utama yang mengeksekusi posisi hanya ketika harga melakukan koreksi sehat (*mean reversion*) ke area diskon/premium di dekat batas dinamis EMA20, menghindari jebakan membeli di pucuk atau menjual di dasar lembah.</p>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🟢 M2: Skenario BUY (Discount Pullback)</span>
+                        <span class="badge badge-primary">H4/D1 Trend Continuation</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+  [TREN MAKRO BULLISH D1 + H4]
+                     ▲ (Swing High)
+                    / \
+  (Ekspansi)       /   \ (Koreksi Sehat ke Diskon)
+                  /     \
+  ───────────────┼───────┼────────────────────── [Equilibrium 50%]
+                /         ▼ (Proximity EMA20 <= 0.45x ATR)
+               /          [BUY LIMIT DI ZONA DISKON <= 0.38]
+              /            \
+             /              \───► [LANJUT FLY KE TP2 🎯]
+  [SL: Support RBS - 0.35x ATR - Spread]
+                    </pre>
+                    <ul style="font-size: 12.5px; color: var(--text-secondary); padding-left: 16px; margin-top: 8px;">
+                        <li><strong>Filter Arah</strong>: D1 Bullish + H4 Slope $> +0.5$ + Dealing Range $\le 0.50$.</li>
+                        <li><strong>Mean Proximity</strong>: Jarak harga ke EMA20 $\le 0.45\times\text{ATR}$ (tidak overextended).</li>
+                        <li><strong>Limit Entry</strong>: Pasang Buy Limit $0.20\times\text{ATR}$ di bawah harga pasar saat ini.</li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🔴 M2: Skenario SELL (Premium Retracement)</span>
+                        <span class="badge badge-amber">H4/D1 Trend Continuation</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+  [SL: Resistance SBR + 0.35x ATR + Spread]
+             /              /───► [LANJUT TERJUN KE TP2 🎯]
+            /              /
+           /          [SELL LIMIT DI ZONA PREMIUM >= 0.62]
+          /           ▲ (Proximity EMA20 <= 0.45x ATR)
+  ────────┼───────────┼───────────────────────── [Equilibrium 50%]
+           \         /
+  (Ekspansi)\       / (Koreksi Sehat ke Premium)
+             \     /
+              \   /
+               \ / (Swing Low)
+  [TREN MAKRO BEARISH D1 + H4]
+                    </pre>
+                    <ul style="font-size: 12.5px; color: var(--text-secondary); padding-left: 16px; margin-top: 8px;">
+                        <li><strong>Filter Arah</strong>: D1 Bearish + H4 Slope $< -0.5$ + Dealing Range $\ge 0.50$.</li>
+                        <li><strong>Mean Proximity</strong>: Jarak harga ke EMA20 $\le 0.45\times\text{ATR}$ (tidak overextended).</li>
+                        <li><strong>Limit Entry</strong>: Pasang Sell Limit $0.20\times\text{ATR}$ di atas harga pasar saat ini.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- M3 DEEP DIVE -->
+            <h3>3. Mekanisme 3 (M3) — Multi-Touch Cluster Breakout & Delayed Retest</h3>
+            <p>Mekanisme penangkap ekspansi tren besar saat dinding likuiditas yang telah diuji berkali-kali akhirnya dijebol. Bot <strong>dilarang FOMO membeli di pucuk lilin breakout</strong>, melainkan menunggu harga melakukan <em>pullback retest</em> untuk mengeksekusi order Limit di atap lama yang kini menjadi lantai support baru (RBS/SBR).</p>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🟢 M3: Skenario BUY (Multi-Touch Resistance Breakout)</span>
+                        <span class="badge badge-emerald">Jendela 40-Bar H1/M30</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+                                                 [TARGET STASIUN BERIKUTNYA 🎯]
+                                                               ▲
+                                                              /
+                                       (Ekspansi Lanjutan)   /
+  ─── [CLUSTER RESISTANCE DINDING] ─── ─── ─── ─── ─── ─── ───
+         ▲              ▲              ▲ (Breakout Sah) ▲ (Retest Terisi! 🟢)
+        / \            / \            /                / \
+       /   \          /   \          /                /   \ (Pullback Retest)
+      /     \        /     \        /                /
+  ───┼───────┼──────┼───────┼──────┼────────────────┼─────────────────────────
+    [Sentuhan #1]  [Sentuhan #2] [Body >= 55%]   [Buy Limit di Atap Lama (RBS)]
+  [SL: Lantai RBS - 0.35x ATR - Spread]
+                    </pre>
+                    <ul style="font-size: 12.5px; color: var(--text-secondary); padding-left: 16px; margin-top: 8px;">
+                        <li><strong>Sentuhan Kluster ($\ge 2\times$)</strong>: Level resistance diuji minimal 2 kali dalam 40 bar terakhir pada toleransi $\pm 0.50\times\text{ATR}$.</li>
+                        <li><strong>Validasi Breakout</strong>: Penutupan harga menembus resistance $\ge 0.10\times\text{ATR}$ dengan lilin solid ($\text{Body} \ge 55\%$).</li>
+                        <li><strong>Entri Delayed Retest</strong>: Pasang <code>BUY LIMIT</code> di garis resistance lama (level RBS) $- 0.5\times\text{Spread}$.</li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🔴 M3: Skenario SELL (Multi-Touch Support Breakdown)</span>
+                        <span class="badge badge-rose">Jendela 40-Bar H1/M30</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+  [SL: Atap SBR + 0.35x ATR + Spread]
+    [Sentuhan #1]  [Sentuhan #2] [Body >= 55%]   [Sell Limit di Lantai Lama (SBR)]
+  ───┼───────┼──────┼───────┼──────┼────────────────┼─────────────────────────
+      \     /        \     /        \                \
+       \   /          \   /          \                \   / (Pullback Retest)
+        \ /            \ /            \                \ /
+  ─── [CLUSTER SUPPORT LANTAI] ─── ─── ─── ─── ─── ─── ───
+                                       ▼ (Breakdown Sah) ▼ (Retest Terisi! 🔴)
+                                       (Ekspansi Lanjutan)   \
+                                                              \
+                                                               ▼
+                                                 [TARGET STASIUN BERIKUTNYA 🎯]
+                    </pre>
+                    <ul style="font-size: 12.5px; color: var(--text-secondary); padding-left: 16px; margin-top: 8px;">
+                        <li><strong>Sentuhan Kluster ($\ge 2\times$)</strong>: Level support diuji minimal 2 kali dalam 40 bar terakhir pada toleransi $\pm 0.50\times\text{ATR}$.</li>
+                        <li><strong>Validasi Breakdown</strong>: Penutupan harga menembus support $\ge 0.10\times\text{ATR}$ dengan lilin solid ($\text{Body} \ge 55\%$).</li>
+                        <li><strong>Entri Delayed Retest</strong>: Pasang <code>SELL LIMIT</code> di garis support lama (level SBR) $+ 0.5\times\text{Spread}$.</li>
+                    </ul>
+                </div>
             </div>
         </section>
 
@@ -956,9 +1129,9 @@
                             <td>$1.25\times\text{ s/d }3.0\times\text{SL}$</td>
                         </tr>
                         <tr>
-                            <td><strong>Gold XAUUSD (M30)</strong></td>
-                            <td>$\max(2\times\text{Spread}, \mathbf{1.60\times\text{ATR}_{\text{M30}}} \text{ [floor 600 pts]})$</td>
-                            <td>$\le 600\text{ pts}$ ($6.00)</td>
+                            <td><strong>Gold XAUUSD (H1)</strong></td>
+                            <td>$\max(2\times\text{Spread}, \mathbf{1.25\times\text{ATR}_{\text{H1}}} \text{ [floor 600 pts]})$</td>
+                            <td>$\le 800\text{ pts}$ ($8.00)</td>
                             <td>$1.25\times\text{ s/d }3.0\times\text{SL}$</td>
                         </tr>
                     </tbody>

@@ -181,7 +181,7 @@ TOKYO_PROVEN_SYMBOLS = {
 @dataclass
 class CandidateSetup:
     symbol: str
-    setup_type: str                  # 'LONDON_JUDAS_SWEEP' (M1), 'TREND_ALIGNED_PULLBACK' (M2), 'MULTI_TOUCH_BREAKOUT_RETEST' (M3)
+    setup_type: str                  # 'UNIVERSAL_LIQUIDITY_SWEEP' (M1), 'TREND_ALIGNED_PULLBACK' (M2), 'MULTI_TOUCH_BREAKOUT_RETEST' (M3)
     direction: int                   # 1 (BUY) or -1 (SELL)
     trigger_price: float
     timeframe: str = "H1"
@@ -980,12 +980,16 @@ class MarketScanner:
 
                     return True, "ALLOWED"
 
-                # ── MECHANISM 1: LONDON & NY JUDAS LIQUIDITY SWEEP (M15/M30/H1) ──
-                if is_london_open or is_ny_session:
+                # ── MECHANISM 1: UNIVERSAL LIQUIDITY SWEEP & STRUCTURAL SFP (H1 / M30) ──
+                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     asian_h = macro.get('asian_high', 0.0)
                     asian_l = macro.get('asian_low', 0.0)
                     pdh_val = macro.get('pdh', 0.0)
                     pdl_val = macro.get('pdl', 0.0)
+                    eqh_val = macro.get('cluster_resistance', 0.0)
+                    eql_val = macro.get('cluster_support', 0.0)
+                    p_ceil = macro.get('sub_ceiling_50', 0.0)
+                    p_floor = macro.get('sub_floor_50', 0.0)
                     sweep_tol = atr_pts * 0.35 * pt
                     
                     macro_trend_str = "BULLISH" if macro.get('is_bull') else ("BEARISH" if macro.get('is_bear') else "NEUTRAL")
@@ -997,12 +1001,13 @@ class MarketScanner:
                     ema20_val = macro.get('ema20', mid)
                     dr_pos_val = macro.get('dealing_range_pos', 0.5)
 
-                    # Bearish Judas Sweep: Price pushed above PDH / Asian High, now rejecting back down
-                    ref_top = max(asian_h, pdh_val) if pdh_val > 0 else asian_h
+                    # Bearish Liquidity Sweep (SFP High): Sweep above Asian High, PDH, EQH, or Psychological Ceiling
+                    ref_top_cands = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0]
+                    ref_top = max(ref_top_cands) if ref_top_cands else asian_h
                     if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
-                        allowed_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_JUDAS")
+                        allowed_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
                         if not allowed_m1_s:
-                            logger.debug(f"[JUDAS SELL GATE] {sym} SKIP: {reason_m1_s}")
+                            logger.debug(f"[SWEEP SELL GATE] {sym} SKIP: {reason_m1_s}")
                         else:
                             gate_ok, gate_reason = evaluate_judas_sweep_gates(
                                 signal_type='SELL',
@@ -1017,15 +1022,17 @@ class MarketScanner:
                                 macro_trend=macro_trend_str
                             )
                             if not gate_ok:
-                                logger.debug(f"[JUDAS SELL GATE] {sym} SKIP: {gate_reason}")
+                                logger.debug(f"[SWEEP SELL GATE] {sym} SKIP: {gate_reason}")
                             else:
                                 is_bull_breakout = (c_qual['direction'] == 'bullish' and c_qual['body_ratio'] >= 0.50 and c_qual['upper_wick_pct'] < 0.20 and mid > ref_top)
                                 has_rejection = (mid <= ref_top) or (c_qual['max_upper_wick'] >= 0.25) or (c_qual['sweep_side'] == 'top') or c_qual['is_bearish_engulf']
                                 
                                 if has_rejection and not is_bull_breakout:
+                                    # Delayed Limit Retest Entry at discount/retest zone
+                                    limit_entry = min(ref_top, mid + (0.20 * atr_price_val)) - (spread_pts * 0.5 * pt)
                                     sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
-                                        entry_price=bid,
+                                        entry_price=limit_entry,
                                         direction=-1,
                                         origin_level=ref_top,
                                         atr_h1=atr_pts * pt,
@@ -1035,13 +1042,13 @@ class MarketScanner:
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
                                     rr_val = sl_tp['risk_reward']
-                                    if abs(bid - sl) / pt >= 15:
+                                    if abs(limit_entry - sl) / pt >= 15:
                                         candidates.append(CandidateSetup(
                                             symbol=sym,
-                                            setup_type="LONDON_JUDAS_SWEEP",
+                                            setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
                                             direction=-1,
-                                            trigger_price=bid,
-                                            timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                            trigger_price=round(limit_entry, 5 if pt < 0.01 else 2),
+                                            timeframe="M30" if ("JPY" in sym) else "H1",
                                             macro_compass=macro['trend_label'],
                                             dealing_range_pos=dr_pos_val,
                                             rejection_wick_ratio=max(0.25, c_qual['max_upper_wick']),
@@ -1075,8 +1082,8 @@ class MarketScanner:
                                             csm_delta=csm_delta_val,
                                             timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                             metadata={
-                                                "entry_type": "sell_market",
-                                                "entry_price": bid,
+                                                "entry_type": "sell_limit",
+                                                "entry_price": round(limit_entry, 5 if pt < 0.01 else 2),
                                                 "ref_top": ref_top,
                                                 "target_station": sl_tp.get('target_station', 0.0),
                                                 "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
@@ -1084,19 +1091,20 @@ class MarketScanner:
                                         ))
                                         continue
 
-                    # Bullish Judas Sweep: Price pushed below PDL / Asian Low, now rejecting back up
-                    ref_bot = min(asian_l, pdl_val) if pdl_val > 0 else asian_l
+                    # Bullish Liquidity Sweep (SFP Low): Sweep below Asian Low, PDL, EQL, or Psychological Floor
+                    ref_bot_cands = [v for v in [asian_l, pdl_val, eql_val, p_floor] if v > 0]
+                    ref_bot = min(ref_bot_cands) if ref_bot_cands else asian_l
                     if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
-                        allowed_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_JUDAS")
+                        allowed_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
                         if not allowed_m1_b:
-                            logger.debug(f"[JUDAS BUY GATE] {sym} SKIP: {reason_m1_b}")
+                            logger.debug(f"[SWEEP BUY GATE] {sym} SKIP: {reason_m1_b}")
                         else:
                             gate_ok, gate_reason = evaluate_judas_sweep_gates(
                                 signal_type='BUY',
                                 dealing_range_pos=dr_pos_val,
                                 dist_to_htf_floor=abs(mid - pwl_val) if pwl_val > 0 else 9999.0,
                                 dist_to_htf_ceiling=abs(mid - pwh_val) if pwh_val > 0 else 9999.0,
-                                atr_val=atr_pts * pt,
+                                atr_val=atr_price_val,
                                 recent_ceiling_touch=macro.get('recent_ceiling_touch', False),
                                 recent_floor_touch=macro.get('recent_floor_touch', False),
                                 close_below_ema20=(mid < macro.get('ema20', mid)),
@@ -1104,15 +1112,17 @@ class MarketScanner:
                                 macro_trend=macro_trend_str
                             )
                             if not gate_ok:
-                                logger.debug(f"[JUDAS BUY GATE] {sym} SKIP: {gate_reason}")
+                                logger.debug(f"[SWEEP BUY GATE] {sym} SKIP: {gate_reason}")
                             else:
                                 is_bear_breakdown = (c_qual['direction'] == 'bearish' and c_qual['body_ratio'] >= 0.50 and c_qual['lower_wick_pct'] < 0.20 and mid < ref_bot)
                                 has_rejection = (mid >= ref_bot) or (c_qual['max_lower_wick'] >= 0.25) or (c_qual['sweep_side'] == 'bottom') or c_qual['is_bullish_engulf']
                                 
                                 if has_rejection and not is_bear_breakdown:
+                                    # Delayed Limit Retest Entry at premium/retest zone
+                                    limit_entry = max(ref_bot, mid - (0.20 * atr_price_val)) + (spread_pts * 0.5 * pt)
                                     sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
-                                        entry_price=ask,
+                                        entry_price=limit_entry,
                                         direction=1,
                                         origin_level=ref_bot,
                                         atr_h1=atr_pts * pt,
@@ -1122,13 +1132,13 @@ class MarketScanner:
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
                                     rr_val = sl_tp['risk_reward']
-                                    if abs(ask - sl) / pt >= 15:
+                                    if abs(limit_entry - sl) / pt >= 15:
                                         candidates.append(CandidateSetup(
                                             symbol=sym,
-                                            setup_type="LONDON_JUDAS_SWEEP",
+                                            setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
                                             direction=1,
-                                            trigger_price=ask,
-                                            timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                            trigger_price=round(limit_entry, 5 if pt < 0.01 else 2),
+                                            timeframe="M30" if ("JPY" in sym) else "H1",
                                             macro_compass=macro['trend_label'],
                                             dealing_range_pos=dr_pos_val,
                                             rejection_wick_ratio=max(0.25, c_qual['max_lower_wick']),

@@ -49,7 +49,7 @@ class TestMarketScanner(unittest.TestCase):
     def test_candidate_payload_dict(self):
         cand = CandidateSetup(
             symbol="GBPUSD-ECNc",
-            setup_type="LONDON_JUDAS_SWEEP",
+            setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
             direction=1,
             trigger_price=1.2950,
             macro_compass="D1_BULLISH_TREND (ADX 28.4)",
