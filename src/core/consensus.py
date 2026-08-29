@@ -59,17 +59,24 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
 
     if mode == "LLM":
         is_xau = "XAU" in sym.upper() or "GOLD" in sym.upper()
+        is_jpy = "JPY" in sym.upper()
 
         if is_xau:
             if atr_points > 0:
                 min_sl = max(spread_pts * 2, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_points))
             else:
                 min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
+        elif is_jpy:
+            jpy_mult = getattr(config, "LLM_JPY_FLOOR_ATR_MULT", 1.00)
+            if atr_points > 0:
+                min_sl = max(spread_pts * 2 + 20, int(jpy_mult * atr_points))
+            else:
+                min_sl = max(spread_pts * 2 + 20, config.LLM_SAFETY_FLOOR_FX_PTS)
         else:
             if atr_points > 0:
-                min_sl = max(spread_pts * 2, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
+                min_sl = max(spread_pts * 2 + 15, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
             else:
-                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
+                min_sl = max(spread_pts * 2 + 15, config.LLM_SAFETY_FLOOR_FX_PTS)
             
         if sl_points < min_sl:
             _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")

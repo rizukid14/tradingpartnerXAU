@@ -109,8 +109,11 @@ python main.py
    - **Hard Risk Veto**: reject otomatis kalau flag `COUNTER_TREND_MOMENTUM/LIQUIDITY_TRAP/HIGH_IMPACT_NEWS/SPREAD_SPIKE/FALLING_KNIFE_WATERFALL`.
 4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 75\%$ memicu split 2 posisi (+25% boost).
 5. **`_apply_sltp_rules` floor**:
-   - XAU: $\text{SL} \ge \max(2 \times \text{spread}, 1.8 \times \text{ATR M30})$. Fallback statis 600 pts kalau ATR gagal.
-   - FX: $\text{SL} \ge \max(2 \times \text{spread}, 1.3 \times \text{ATR H1})$. Fallback statis 250 pts kalau ATR gagal.
+   - XAU: $\text{SL} \ge \max(2 \times \text{spread}, 1.60 \times \text{ATR M30})$. Fallback statis 600 pts kalau ATR gagal.
+   - JPY Crosses (M30): $\text{SL} \ge \max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$.
+   - FX Majors & Crosses (H1): $\text{SL} \ge \max(2 \times \text{spread} + 15\text{ pts}, 0.68 \times \text{ATR H1})$. Fallback statis 250 pts kalau ATR gagal.
+   - NZD Alpha: $+20\text{ pts}$ anti-wick padding.
+   - Ceiling: FX max $\le 160\text{ pts}$; Gold max $\le 600\text{ pts}$.
    - TP $\ge 1.25 \times$ SL, $\le 3.0 \times$ SL (gate R:R).
 6. **Risk-based lot sizing**: lot = `(equity × risk%) / (SL_pts × usd_per_point)`. FX 1.0%, BTC 1.5%, XAU 1.0%.
 7. **Eksekusi MT5**: aggregate cap 6 posisi total + 4 pending aktif (shared pool). Late NY 23:00-02:00 WIB max 2 posisi. Recovery mode (≥5 loss streak) max 3 posisi.
@@ -121,8 +124,9 @@ python main.py
 
 - **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 75\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
 - **Lantai SL/TP (`_apply_sltp_rules` di `consensus.py`)**:
-  - **XAU**: floor SL = $\max(2 \times \text{spread}, 1.8 \times \text{ATR M30})$, fallback 600 pts. Mode `LLM` (default) atau `ATR-Based` via `.env`.
-  - **FX**: floor SL = $\max(2 \times \text{spread}, 1.3 \times \text{ATR H1})$, fallback 250 pts.
+  - **XAU**: floor SL = $\max(2 \times \text{spread}, 1.60 \times \text{ATR M30})$, fallback 600 pts. Mode `LLM` (default) atau `ATR-Based` via `.env`.
+  - **JPY Crosses**: floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$, ceiling $\le 200\text{ pts}$.
+  - **FX Majors/Crosses**: floor SL = $\max(2 \times \text{spread} + 15\text{ pts}, 0.68 \times \text{ATR H1})$, fallback 250 pts, ceiling $\le 160\text{ pts}$.
   - **BTC** (legacy mode only): mode `ATR-Based` fix R:R 2:1.
   - **R:R**: TP $\in [1.25\times, 3.0\times]$ SL.
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
