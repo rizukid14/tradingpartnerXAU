@@ -717,28 +717,87 @@
                 <span class="chapter-num">04</span>
                 <h2 class="chapter-title">4-Dimensional Market State Engine (wave_state.py)</h2>
             </div>
-            <p>Mesin penentu izin (*Permission Engine*) yang mengevaluasi 4 dimensi siklus pasar untuk mengeliminasi kerugian dari *Impulse Chasing* (PF 0.52) dan *Falling Knife* (PF 0.97):</p>
+            <p>Mesin penentu izin (<em>Permission Engine</em>) yang mengevaluasi 4 dimensi siklus pasar untuk mengeliminasi dua penyebab utama kerugian: <strong>FOMO Impulse Chasing (PF 0.52)</strong> dan <strong>Catching Falling Knife / Facing Skyrocket (PF 0.97)</strong>. Mesin ini beroperasi 100% simetris (<em>Dual-Directional Equivalence</em>) untuk arah BUY dan SELL:</p>
 
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Status Izin</th>
+                            <th>🟢 Skenario BUY (Tren Makro BULLISH)</th>
+                            <th>🔴 Skenario SELL (Tren Makro BEARISH)</th>
+                            <th>Tindakan Sistem (Action)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge badge-purple">WAIT</span></td>
+                            <td><strong>Anti-FOMO Pucuk</strong>: Harga baru saja meledak naik, jarak ke <em>swing peak</em> $< 0.40\times\text{ATR}$ (1–2 bar).</td>
+                            <td><strong>Anti-FOMO Lembah</strong>: Harga baru saja ambruk ke dasar, jarak ke <em>swing trough</em> $< 0.40\times\text{ATR}$ (1–2 bar).</td>
+                            <td><strong>DILARANG ENTRY</strong>. Menunggu harga mendingin (<em>cooldown</em>).</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-rose">LOCK</span></td>
+                            <td><strong>Type A Waterfall (Pisau Jatuh)</strong>: Penurunan sangat deras dengan candle merah solid tanpa sumbu ($V \ge 0.30\text{ ATR/bar}$).</td>
+                            <td><strong>Type A Skyrocket (Roket Terbang)</strong>: Kenaikan sangat kencang dengan candle hijau solid tanpa sumbu ($V \ge 0.30\text{ ATR/bar}$).</td>
+                            <td><strong>KUNCI PINTU MASUK</strong>. Dilarang menangkap pisau atau menghadang roket.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-cyan">ARM</span></td>
+                            <td><strong>Type B Compression di Zona DISKON ($\le 0.50$)</strong>: Penurunan melambat, candle kecil bertumpuk di atas Support RBS.</td>
+                            <td><strong>Type B Compression di Zona PREMIUM ($\ge 0.50$)</strong>: Kenaikan melambat, candle kecil bertumpuk di bawah Resistance SBR.</td>
+                            <td><strong>KOKANG SENJATA</strong>. Pasang Delayed Pending Limit Order di harga murah.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-emerald">GO</span></td>
+                            <td><strong>Bullish Reclaim Confirmed</strong>: Candle Displacement hijau tebal ($\ge 60\%$ body) / Close > High 2 bar lalu + CSM Inflow.</td>
+                            <td><strong>Bearish Reclaim Confirmed</strong>: Candle Displacement merah tebal ($\ge 60\%$ body) / Close < Low 2 bar lalu + CSM Outflow.</td>
+                            <td><strong>100% RISK GREEN LIGHT</strong>. Lolos ke Stage 2 (Sidang 3-LLM Jury).</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>Visualisasi Siklus 4-Dimensi Pasar (Siklus BUY vs Siklus SELL)</h3>
             <div class="card-grid">
                 <div class="card">
-                    <span class="badge badge-purple" style="margin-bottom: 8px;">WAIT (Fase Impulse)</span>
-                    <h4 style="margin: 4px 0 8px;">Anti-FOMO Expansion Shield</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);">Harga baru saja meledak kencang, jarak ke swing peak $< 0.40\times\text{ATR}$ (1–2 bar). <strong>Tindakan: DILARANG ENTRY.</strong></p>
+                    <div class="card-header">
+                        <span class="card-title">🟢 Siklus Pencarian Posisi BUY</span>
+                        <span class="badge badge-emerald">D1/H4 Bullish Trend</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+       [PUCUK GELOMBANG]
+             ▲
+           /   \
+ (Impulse)/     \ (Waterfall Drop)
+         /       \
+  ──────┼─────────┼────────────────────── [Equilibrium 50%]
+       /           \        (Basing Kompresi)
+      /             ▼ ─── ─── ─── ─── ─── ▲ (Reclaim)
+     /              [ZONA DISKON RBS]      \
+    /                                       \──► [BUY 🚀]
+  [WAIT]       [LOCK]        [ARM]           [GO]
+                    </pre>
                 </div>
+
                 <div class="card">
-                    <span class="badge badge-rose" style="margin-bottom: 8px;">LOCK (Type A Waterfall)</span>
-                    <h4 style="margin: 4px 0 8px;">Anti-Falling Knife Guard</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);">Harga sedang terjun deras dengan candle solid tanpa sumbu ($V \ge 0.30\text{ ATR/bar}$). <strong>Tindakan: KUNCI PINTU MASUK.</strong></p>
-                </div>
-                <div class="card">
-                    <span class="badge badge-cyan" style="margin-bottom: 8px;">ARM (Type B Compression)</span>
-                    <h4 style="margin: 4px 0 8px;">Mature Basing in Value Zone</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);">Penurunan melambat di zona diskon ($\le 0.50$), candle saling tumpang tindih. <strong>Tindakan: SIAPKAN LIMIT ORDER.</strong></p>
-                </div>
-                <div class="card">
-                    <span class="badge badge-emerald" style="margin-bottom: 8px;">GO (Reclaim Confirmed)</span>
-                    <h4 style="margin: 4px 0 8px;">100% Risk Green Light</h4>
-                    <p style="font-size: 13px; color: var(--text-muted);">Muncul candle Displacement tebal atau penutupan di atas 2 candle sebelumnya + CSM selaras. <strong>Tindakan: EKSEKUSI KE STAGE 2.</strong></p>
+                    <div class="card-header">
+                        <span class="card-title">🔴 Siklus Pencarian Posisi SELL</span>
+                        <span class="badge badge-rose">D1/H4 Bearish Trend</span>
+                    </div>
+                    <pre style="background: #ffffff; color: #0f172a; border: 1px solid var(--border-light); font-size: 11px; padding: 12px;">
+                    [ZONA PREMIUM SBR]      /──► [SELL 🎯]
+                    (Kenaikan Melambat)    /
+             ▲ ─── ─── ─── ─── ─── ─── ───▼ (Displacement)
+            / \
+           /   \
+  ────────┼─────┼──────────────────────── [Equilibrium 50%]
+         /       \
+ (Rally)/         \ (Impulse Drop)
+       /           ▼
+     [DASAR LEMBAH]
+  [WAIT]       [LOCK]        [ARM]           [GO]
+                    </pre>
                 </div>
             </div>
         </section>
