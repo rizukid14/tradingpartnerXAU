@@ -1082,6 +1082,55 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
+    m3_compass_str = ""
+    try:
+        from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
+        from src.indicators.wave_state import evaluate_macro_compass_corridor
+        
+        cur_price = float(df["close"].iloc[-1])
+        st_info = calculate_dynamic_stations(symbol, cur_price)
+        step_val = st_info["step"]
+        
+        roll_h = float(df["high"].tail(50).max())
+        roll_l = float(df["low"].tail(50).min())
+        pwh_val = float(df["high"].tail(120).max()) if len(df) >= 120 else roll_h
+        pwl_val = float(df["low"].tail(120).min()) if len(df) >= 120 else roll_l
+        
+        last_h = float(df["high"].iloc[-1])
+        last_l = float(df["low"].iloc[-1])
+        last_o = float(df["open"].iloc[-1])
+        last_c = float(df["close"].iloc[-1])
+        
+        m_corr, target_st, psych_step, is_ceil_rej, is_flr_rej = evaluate_macro_compass_corridor(
+            symbol=symbol, current_price=cur_price, pwh=pwh_val, pwl=pwl_val,
+            macro_high=roll_h, macro_low=roll_l, cur_atr=atr_points * point_size,
+            last_high=last_h, last_low=last_l, last_open=last_o, last_close=last_c
+        )
+        
+        rng_50 = max(roll_h - roll_l, 1e-5)
+        dr_pct = round(((cur_price - roll_l) / rng_50) * 100, 1)
+        dr_label = "DISCOUNT ZONE (Favorable for BUY)" if dr_pct <= 38.2 else ("PREMIUM ZONE (Favorable for SELL)" if dr_pct >= 61.8 else "EQUILIBRIUM (Middle Range)")
+        
+        pt = point_size or 0.00001
+        step_pts = int(round(step_val / pt))
+        
+        m3_compass_str = (
+            "\n### M3 MACRO COMPASS & ATLAS DNA DYNAMIC STATIONS\n"
+            f"- Active Macro Corridor: {m_corr} (Target Estafet: {_fmt_price(target_st, pt)})\n"
+            f"- Calibrated Step DNA: {_fmt_price(step_val, pt)} ({step_pts} pts / {step_pts//10} pips)\n"
+            f"- Immediate Dynamic Stations:\n"
+            f"  * Upper Station (+1 Step): {_fmt_price(st_info['upper_station'], pt)}\n"
+            f"  * Base Station (Nearest) : {_fmt_price(st_info['base_station'], pt)}\n"
+            f"  * Lower Station (-1 Step): {_fmt_price(st_info['lower_station'], pt)}\n"
+            f"- 50-Bar Dealing Range: {_fmt_price(roll_l, pt)} <-> {_fmt_price(roll_h, pt)} (Position: {dr_pct}% - {dr_label})\n"
+            f"- Dual-Reaction Roadmap:\n"
+            f"  * IF Level Respected (Rejection Wick >= 25% at Wall) -> REVERSAL PULLBACK to 50% Eq / Opposing Station.\n"
+            f"  * IF Level Broken (Clean Close >= 55% Body beyond Wall) -> BREAKOUT CONTINUATION to Next Dynamic Station.\n"
+            f"  * INTRADAY ESTAFET TARGET: Set TP at the immediate next dynamic station (1.8x - 2.2x ATR) to capture high-liquidity moves and avoid overnight swap/rollover risk.\n"
+        )
+    except Exception:
+        pass
+
     usd_context = ""
 
     macro_str = ""
@@ -1273,7 +1322,7 @@ Current Bid: {_fmt_price(current_tick['bid'], point_size)}
 Current Ask: {_fmt_price(current_tick['ask'], point_size)}
 Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
 Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD.
-{csm_context_str}{macro_str}
+{csm_context_str}{m3_compass_str}{macro_str}
 {key_levels_str}
 {structure_str}
 {delta_main_str}
@@ -1882,6 +1931,69 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         csm_block = ""
 
+    # === ATLAS DNA DYNAMIC STATION CALCULATION ===
+    atlas_dna_block = ""
+    try:
+        from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
+        trigger_px = float(candidate.trigger_price)
+        stations = calculate_dynamic_stations(sym, trigger_px)
+        step_val = stations['step']
+        base_st = stations['base_station']
+        upper_st = stations['upper_station']
+        lower_st = stations['lower_station']
+        upper_2 = round(upper_st + step_val, 5 if step_val < 1 else 3 if step_val >= 1 else 2)
+        lower_2 = round(lower_st - step_val, 5 if step_val < 1 else 3 if step_val >= 1 else 2)
+        
+        # Distances from current price to each station
+        dist_to_upper = abs(upper_st - trigger_px)
+        dist_to_lower = abs(trigger_px - lower_st)
+        dist_to_base = abs(trigger_px - base_st)
+        
+        # Step label for humans
+        if step_val >= 1.0:
+            step_label = f"{step_val:.0f} JPY ({int(step_val * 100)} pips)"
+        elif step_val >= 0.01:
+            step_label = f"{int(step_val * 10000)} pips"
+        else:
+            step_label = f"{int(step_val * 10000)} pips ({step_val:.4f})"
+        
+        # Position within current station range (0% = at lower, 100% = at upper)
+        station_range = upper_st - lower_st
+        position_in_range = ((trigger_px - lower_st) / station_range * 100) if station_range > 0 else 50.0
+        
+        atlas_dna_block = f"""\n## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
+- Calibrated Step Grid: {step_label} per station (backtest-proven from MetaQuotes 2010-2026)
+- Station Ladder: ... {lower_2} → [{lower_st}] → [{base_st}] ← CURRENT → [{upper_st}] → {upper_2} ...
+- Current Price: {trigger_px} | Position in Range: {position_in_range:.1f}% (0% = at Lower Station, 100% = at Upper Station)
+- Distance to Lower [{lower_st}]: {dist_to_lower:.5f} | Distance to Base [{base_st}]: {dist_to_base:.5f} | Distance to Upper [{upper_st}]: {dist_to_upper:.5f}
+- CRITICAL: These psychological stations are natural magnets/barriers where institutional orders cluster. Use them to INDEPENDENTLY determine your TP (next station in YOUR assessed trend direction) and SL (behind the opposing station + 0.35x ATR anti-wick buffer). Do NOT blindly follow the proposed direction.\n"""
+    except Exception:
+        atlas_dna_block = ""
+
+    # === TOP-DOWN MACRO STRATEGIC DIRECTIVE INJECTION ===
+    strat_block = ""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        if strat_dir:
+            traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+            strat_block = f"""\n## 2. PURE QUANT MACRO STRATEGIC DIRECTIVE & MULTI-SCALE SBR/RBS
+- Daily Macro Bias: {strat_dir.daily_macro_bias} | Primary Execution Directive: {strat_dir.primary_execution_directive}
+- Structural Stage: {strat_dir.structural_stage}
+- Strategic Mandate Thesis: {strat_dir.daily_mandate_thesis}
+- Multi-Scale SBR / RBS Hierarchy:
+  * Macro D1 Scale: RBS Support = {strat_dir.macro_rbs_d1} | SBR Resistance = {strat_dir.macro_sbr_d1}
+  * Intermediate H4 Scale: RBS Support = {strat_dir.inter_rbs_h4} | SBR Resistance = {strat_dir.inter_sbr_h4}
+  * Micro Precision H1 Scale: RBS Support = {strat_dir.micro_rbs_h1} | SBR Resistance = {strat_dir.micro_sbr_h1}
+- Dual-Grid Sub-Stations (50-Pip Estafet): Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
+- Intraday Structural Refinement:
+  * Proposed Limit Entry Anchor: {strat_dir.entry_limit_anchor}
+  * Intraday Strict SL: {strat_dir.intraday_sl_price} ({strat_dir.intraday_sl_pips} pips)
+  * TP1 (50% Partial Close): {strat_dir.tp1_price} (+{strat_dir.tp1_pips} pips) | TP2 (Station Target): {strat_dir.tp2_price} (+{strat_dir.tp2_pips} pips, R:R {strat_dir.risk_reward_ratio}:1)
+- Forbidden Traps: {traps_str}\n"""
+    except Exception:
+        strat_block = ""
+
     calendar_block = getattr(candidate, 'economic_context', '')
     if not calendar_block:
         try:
@@ -1916,7 +2028,9 @@ Your task is to objectively evaluate this proposal against the raw market data:
 {meta_block}
 {micro_frames_block}
 {csm_block}
-## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
+{atlas_dna_block}
+{strat_block}
+## 3. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
 - Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
 - Structural Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
 - Nearest Bullish Order Block (OB): {getattr(candidate, 'bullish_ob_zone', '') or 'None active nearby'}
@@ -1925,12 +2039,13 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
-## 3. STRUCTURAL PROPOSAL
+## 3. STRUCTURAL PROPOSAL & STATION-ANCHORED LEVELS
 - Key Support: {candidate.key_support}
 - Key Resistance: {candidate.key_resistance}
-- Proposed Technical SL: {candidate.suggested_sl}
-- Proposed Technical TP: {candidate.suggested_tp}
+- Proposed Technical SL: {candidate.suggested_sl} (Must be anchored BEHIND a structural station/OB + 0.35x ATR anti-wick buffer, NOT calculated from entry price)
+- Proposed Technical TP: {candidate.suggested_tp} (Target: nearest station in {direction_str} direction from Atlas DNA step grid above)
 - Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1
+- Station Context: Your SL and TP MUST reference the Atlas DNA station ladder. If you REVISE, snap your TP to the nearest favorable station and anchor SL behind the nearest opposing station.
 {candles_block}
 ## 4. ECONOMIC CONTEXT & NEWS SHIELD
 - Calendar Context: {calendar_text}

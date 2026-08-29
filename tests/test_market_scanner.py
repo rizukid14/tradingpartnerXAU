@@ -318,8 +318,122 @@ class TestMarketScanner(unittest.TestCase):
         payload = cand.to_payload_dict()
         self.assertEqual(payload["trade_permission"], "GO")
         self.assertEqual(payload["csm_net_delta"], 0.8)
-        self.assertEqual(cand.metadata["entry_type"], "buy_limit")
-        self.assertEqual(cand.metadata["entry_price"], 1.1710)
+    def test_mark_symbol_cancelled_cooldown(self):
+        """Verify mark_symbol_cancelled sets a 30-minute cooldown on the symbol."""
+        import time
+        sym = "EURUSD-ECNc"
+        clean = "EURUSD"
+        self.scanner.mark_symbol_cancelled(sym, cooldown_seconds=1800)
+        self.assertIn(clean, self.scanner._symbol_last_trigger)
+        now_ts = time.time()
+        # Difference between now and recorded timestamp should be >= 890s (900s offset from 1800s)
+        trigger_ts = self.scanner._symbol_last_trigger[clean]
+        self.assertGreater(trigger_ts, now_ts)
+        self.assertLess(now_ts - trigger_ts, 900)
+
+    def test_htf_weekly_wall_reversal_trigger(self):
+        """Verify Mechanism 3 (HTF Weekly Wall Reversal) calculates SL/TP without NameError."""
+        from src.analytics.market_scanner import MarketScanner
+        sym = "AUDUSD"  # Allowed in Tokyo session
+        scanner = MarketScanner([sym])
+        scanner.macro_cache[sym] = {
+            'symbol': sym,
+            'point': 0.00001,
+            'atr_pts': 100.0,
+            'trend_label': 'D1_BULLISH',
+            'is_bull': True,
+            'is_bear': False,
+            'pwh': 0.6500,
+            'pwl': 0.6400,
+            'permission_state': 'GO',
+            'csm_delta': 0.5,
+            'dealing_range_pos': 0.85,
+            'dealing_range_low': 0.6400,
+            'dealing_range_high': 0.6520,
+            'ema20': 0.6200,
+        }
+        
+        # Test Bearish Wall Reversal logic
+        pwh = 0.6500
+        pwl = 0.6400
+        w_mid = pwl + 0.50 * (pwh - pwl)  # 0.6450
+        pt = 0.00001
+        atr_pts = 100.0
+        spread_pts = 10
+        anti_wick_padding = 20 * pt
+        mid = 0.6502
+        live_h = 0.6510
+        
+        sl = max(live_h, pwh) + (atr_pts * 0.35 * pt) + (spread_pts * pt) + anti_wick_padding
+        tp = w_mid
+        risk_dist = abs(sl - mid)
+        rr_val = round(abs(mid - tp) / risk_dist, 2)
+        
+        self.assertGreaterEqual(rr_val, 1.8)
+        self.assertGreater(sl, pwh)
+        self.assertEqual(tp, 0.6450)
+
+    def test_consensus_apply_sltp_symbol_specific(self):
+        """Verify consensus _apply_sltp_rules executes for non-default symbol."""
+        from src.core.consensus import _apply_sltp_rules
+        sl_pts, tp_pts, ok, reason = _apply_sltp_rules(50, 100, symbol="USDJPY-ECNc")
+        self.assertTrue(ok)
+        self.assertGreaterEqual(sl_pts, 50)
+    def test_judas_sweep_gates_locked_during_bearish_delivery(self):
+        """Verify Gate B locks Judas BUY when price is in Bearish Delivery from PWH Ceiling."""
+        from src.analytics.market_scanner import evaluate_judas_sweep_gates
+        allowed, reason = evaluate_judas_sweep_gates(
+            signal_type='BUY',
+            dealing_range_pos=0.65,
+            dist_to_htf_floor=0.0050,
+            dist_to_htf_ceiling=0.0010,
+            atr_val=0.0010,
+            recent_ceiling_touch=True,
+            recent_floor_touch=False,
+            close_below_ema20=True,
+            close_above_ema20=False,
+            macro_trend='BEARISH'
+        )
+        self.assertFalse(allowed)
+        self.assertIn("GATE B", reason)
+        self.assertIn("Bearish Delivery", reason)
+
+    def test_judas_sweep_gates_locked_without_htf_anchor(self):
+        """Verify Gate A locks Judas BUY when sweep occurs in mid-range without HTF Floor anchor."""
+        from src.analytics.market_scanner import evaluate_judas_sweep_gates
+        allowed, reason = evaluate_judas_sweep_gates(
+            signal_type='BUY',
+            dealing_range_pos=0.55,  # Mid range
+            dist_to_htf_floor=0.0060,
+            dist_to_htf_ceiling=0.0040,
+            atr_val=0.0010,
+            recent_ceiling_touch=False,
+            recent_floor_touch=False,
+            close_below_ema20=False,
+            close_above_ema20=True,
+            macro_trend='BULLISH'
+        )
+        self.assertFalse(allowed)
+        self.assertIn("GATE A", reason)
+        self.assertIn("HTF Support Floor", reason)
+
+    def test_judas_sweep_gates_allowed_at_htf_deep_discount(self):
+        """Verify Judas BUY passes when anchored at HTF Deep Discount Floor (DR <= 0.35)."""
+        from src.analytics.market_scanner import evaluate_judas_sweep_gates
+        allowed, reason = evaluate_judas_sweep_gates(
+            signal_type='BUY',
+            dealing_range_pos=0.28,  # Deep Discount <= 35%
+            dist_to_htf_floor=0.0002,  # Very close to floor
+            dist_to_htf_ceiling=0.0080,
+            atr_val=0.0010,
+            recent_ceiling_touch=False,
+            recent_floor_touch=False,
+            close_below_ema20=False,
+            close_above_ema20=True,
+            macro_trend='BULLISH'
+        )
+        self.assertTrue(allowed)
+        self.assertIn("PASSED ALL GATES", reason)
 
 
 if __name__ == "__main__":

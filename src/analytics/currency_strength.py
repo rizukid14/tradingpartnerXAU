@@ -225,3 +225,98 @@ def get_csm_delta_for_symbol(symbol: str) -> float:
             return round(net_diff / 10.0, 2)
 
     return 0.0
+
+
+def evaluate_systemic_basket_lock(
+    symbol: str,
+    proposed_direction: int,
+    scores_h1: dict = None,
+    scores_m15: dict = None
+) -> tuple:
+    """
+    Universal 8-Currency Systemic Basket Circuit Breaker.
+    Evaluates whether a symbol is subject to a hard Systemic Currency Basket Lock
+    across all 8 major currencies (USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD).
+    Prevents counter-trend entries into systemic currency surges, dumps, or extreme spreads.
+
+    Returns:
+        (is_locked: bool, reason: str, currency_locked: str)
+    """
+    if not getattr(config, 'ENABLE_SYSTEMIC_BASKET_LOCK', True):
+        return False, "SYSTEMIC_BASKET_LOCK_DISABLED", ""
+
+    clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
+    if "BTC" in clean_sym:
+        return False, "BTC_EXEMPT", ""
+
+    if scores_h1 is None:
+        scores_h1, _ = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)
+    if scores_m15 is None:
+        scores_m15, _ = calculate_boitoki_csm(mt5.TIMEFRAME_M15, lookback_bars=16)
+
+    if not scores_h1:
+        return False, "NO_CSM_DATA", ""
+
+    # Parse Base and Quote currencies
+    if "XAU" in clean_sym or "GOLD" in clean_sym:
+        base_curr = "XAU"
+        quote_curr = "USD"
+    elif len(clean_sym) >= 6:
+        base_curr = clean_sym[:3]
+        quote_curr = clean_sym[3:6]
+    else:
+        return False, "INVALID_SYMBOL_FORMAT", ""
+
+    # Thresholds (scaled x10 into Boitoki points, default 2.5 -> 25.0)
+    usd_thresh = getattr(config, 'SYSTEMIC_BASKET_USD_THRESHOLD', 2.5) * 10.0
+    jpy_thresh = getattr(config, 'SYSTEMIC_BASKET_JPY_THRESHOLD', 3.0) * 10.0
+    cross_thresh = getattr(config, 'SYSTEMIC_BASKET_CROSS_THRESHOLD', 2.5) * 10.0
+    spread_thresh = getattr(config, 'SYSTEMIC_BASKET_SPREAD_THRESHOLD', 3.5) * 10.0
+
+    def _get_threshold(curr: str) -> float:
+        if curr == "USD":
+            return usd_thresh
+        elif curr == "JPY":
+            return jpy_thresh
+        return cross_thresh
+
+    # Compute effective score for Base and Quote (0.40 H1 + 0.60 M15)
+    def _get_effective_score(curr: str) -> float:
+        if curr == "XAU":
+            return 0.0
+        s_h1 = scores_h1.get(curr, 0.0)
+        s_m15 = scores_m15.get(curr, s_h1) if scores_m15 else s_h1
+        return (s_h1 * 0.4) + (s_m15 * 0.6)
+
+    base_eff = _get_effective_score(base_curr)
+    quote_eff = _get_effective_score(quote_curr)
+
+    # 1. Base Currency Systemic Surge / Dump Evaluation
+    if base_curr in CURRENCIES:
+        b_thresh = _get_threshold(base_curr)
+        if base_eff <= -b_thresh:
+            if proposed_direction == 1:
+                return True, f"SYSTEMIC {base_curr} DUMP (Score {base_eff:+.1f}): Hard Lock BUY on {clean_sym} ({base_curr} collapsing across market).", base_curr
+        elif base_eff >= b_thresh:
+            if proposed_direction == -1:
+                return True, f"SYSTEMIC {base_curr} SURGE (Score {base_eff:+.1f}): Hard Lock SELL on {clean_sym} ({base_curr} surging across market).", base_curr
+
+    # 2. Quote Currency Systemic Surge / Dump Evaluation
+    if quote_curr in CURRENCIES:
+        q_thresh = _get_threshold(quote_curr)
+        if quote_eff >= q_thresh:
+            if proposed_direction == 1:
+                return True, f"SYSTEMIC {quote_curr} SURGE (Score {quote_eff:+.1f}): Hard Lock BUY on {clean_sym} (Quote {quote_curr} strengthening masif).", quote_curr
+        elif quote_eff <= -q_thresh:
+            if proposed_direction == -1:
+                return True, f"SYSTEMIC {quote_curr} DUMP (Score {quote_eff:+.1f}): Hard Lock SELL on {clean_sym} (Quote {quote_curr} dumping masif).", quote_curr
+
+    # 3. Cross-Pair Extreme Relative Delta Spread (|Delta| >= 35.0)
+    if base_curr in CURRENCIES and quote_curr in CURRENCIES:
+        net_delta = base_eff - quote_eff
+        if net_delta >= spread_thresh and proposed_direction == -1:
+            return True, f"EXTREME BASKET DELTA ({base_curr}-{quote_curr} {net_delta:+.1f}): Hard Lock SELL on {clean_sym} (Relative flow strongly bullish).", base_curr
+        elif net_delta <= -spread_thresh and proposed_direction == 1:
+            return True, f"EXTREME BASKET DELTA ({base_curr}-{quote_curr} {net_delta:+.1f}): Hard Lock BUY on {clean_sym} (Relative flow strongly bearish).", quote_curr
+
+    return False, "CLEAR", ""

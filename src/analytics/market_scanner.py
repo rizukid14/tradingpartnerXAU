@@ -17,8 +17,9 @@ from src.indicators.candle_quality import classify_candle, classify_breakout_seq
 from src.indicators.sweep_detector import detect as sweep_detect
 from src.indicators.wave_regime import evaluate_wave_regime
 from src.indicators.wave_state import evaluate_wave_state, WaveState, WaveStateResult
-from src.indicators.atlas_dna import calculate_intraday_sl_tp, calculate_dynamic_stations, get_symbol_step
-from src.analytics.currency_strength import get_csm_delta_for_symbol
+from src.indicators.atlas_dna import calculate_intraday_sl_tp, calculate_dynamic_stations, calculate_dual_grid_stations, get_symbol_step
+from src.analytics.currency_strength import get_csm_delta_for_symbol, evaluate_systemic_basket_lock
+from src.analytics.macro_strategic_engine import macro_strategic_engine, MacroStrategicDirective
 
 logger = logging.getLogger("market_scanner")
 WIB = ZoneInfo("Asia/Jakarta")
@@ -255,6 +256,16 @@ class CandidateSetup:
             "risk_reward_ratio": round(self.risk_reward_ratio, 2),
             "frvp_confluence": self.frvp_confluence or "STANDARD_LIQUIDITY",
             "economic_calendar": self.economic_context or "NO_HIGH_IMPACT_NEWS_IN_NEXT_4_HOURS",
+            "daily_macro_bias": self.metadata.get("daily_macro_bias", ""),
+            "primary_execution_directive": self.metadata.get("primary_execution_directive", ""),
+            "macro_rbs_d1": self.metadata.get("macro_rbs_d1", 0.0),
+            "macro_sbr_d1": self.metadata.get("macro_sbr_d1", 0.0),
+            "micro_rbs_h1": self.metadata.get("micro_rbs_h1", 0.0),
+            "micro_sbr_h1": self.metadata.get("micro_sbr_h1", 0.0),
+            "sub_floor_50": self.metadata.get("sub_floor_50", 0.0),
+            "sub_ceiling_50": self.metadata.get("sub_ceiling_50", 0.0),
+            "forbidden_traps": self.metadata.get("forbidden_traps", []),
+            "daily_mandate_thesis": self.metadata.get("daily_mandate_thesis", ""),
             "directive_for_llm": f"Evaluate macro sentiment and confirm {'BUY' if self.direction == 1 else 'SELL'} with structural SL at {self.suggested_sl} and TP at {self.suggested_tp}"
         }
 
@@ -748,6 +759,13 @@ class MarketScanner:
                 csm_delta_val = get_csm_delta_for_symbol(valid_sym)
                 perm = resolve_permission(curr_direction, curr_phase, csm_delta_val)
 
+                # Pure Quant Hierarchical Strategic Directive (6 Timeframes + Multi-Scale SBR/RBS + Dual-Grid)
+                strat_dir = None
+                try:
+                    strat_dir = macro_strategic_engine.get_directive(valid_sym, mt5_connector=mt5_connector)
+                except Exception as e_strat:
+                    logger.debug(f"[STRAT ENGINE] Error computing directive for {valid_sym}: {e_strat}")
+
                 self.macro_cache[valid_sym] = {
                     'symbol': valid_sym,
                     'trend_label': combined_trend_label,
@@ -824,6 +842,26 @@ class MarketScanner:
                     'psych_step': wave_res.psych_step,
                     'is_ceiling_rejected': wave_res.is_ceiling_rejected,
                     'is_floor_rejected': wave_res.is_floor_rejected,
+                    # Macro Strategic Directive Fields
+                    'strat_dir': strat_dir,
+                    'daily_macro_bias': getattr(strat_dir, 'daily_macro_bias', 'RANGE_BOUND') if strat_dir else 'RANGE_BOUND',
+                    'primary_execution_directive': getattr(strat_dir, 'primary_execution_directive', 'FADE_CORRIDOR_EXTREMES') if strat_dir else 'FADE_CORRIDOR_EXTREMES',
+                    'macro_rbs_d1': getattr(strat_dir, 'macro_rbs_d1', 0.0) if strat_dir else 0.0,
+                    'macro_sbr_d1': getattr(strat_dir, 'macro_sbr_d1', 0.0) if strat_dir else 0.0,
+                    'inter_rbs_h4': getattr(strat_dir, 'inter_rbs_h4', 0.0) if strat_dir else 0.0,
+                    'inter_sbr_h4': getattr(strat_dir, 'inter_sbr_h4', 0.0) if strat_dir else 0.0,
+                    'micro_rbs_h1': getattr(strat_dir, 'micro_rbs_h1', 0.0) if strat_dir else 0.0,
+                    'micro_sbr_h1': getattr(strat_dir, 'micro_sbr_h1', 0.0) if strat_dir else 0.0,
+                    'sub_floor_50': getattr(strat_dir, 'sub_floor_50', 0.0) if strat_dir else 0.0,
+                    'sub_ceiling_50': getattr(strat_dir, 'sub_ceiling_50', 0.0) if strat_dir else 0.0,
+                    'entry_limit_anchor': getattr(strat_dir, 'entry_limit_anchor', 0.0) if strat_dir else 0.0,
+                    'intraday_sl_price': getattr(strat_dir, 'intraday_sl_price', 0.0) if strat_dir else 0.0,
+                    'tp1_price': getattr(strat_dir, 'tp1_price', 0.0) if strat_dir else 0.0,
+                    'tp2_price': getattr(strat_dir, 'tp2_price', 0.0) if strat_dir else 0.0,
+                    'forbidden_traps': getattr(strat_dir, 'forbidden_traps', []) if strat_dir else [],
+                    'daily_mandate_thesis': getattr(strat_dir, 'daily_mandate_thesis', '') if strat_dir else '',
+                    'structural_stage': getattr(strat_dir, 'structural_stage', '') if strat_dir else '',
+                    'strategic_raw_payload': getattr(strat_dir, 'raw_payload', {}) if strat_dir else {},
                     'point': pt,
                     'last_update': now
                 }
@@ -920,6 +958,31 @@ class MarketScanner:
                         logger.debug(f"[RADAR] {sym} SKIP: Permission state is {perm_state} ({macro.get('wave_summary', '')}).")
                         continue
 
+                # ── DIRECTIONAL HARD GATES: SYSTEMIC BASKET LOCK & MSE DIRECTIVE ──
+                def _is_direction_allowed(target_dir: int, setup_label: str) -> tuple:
+                    # 1. Systemic Currency Basket Lock (M15 + H1 Global Flows)
+                    is_basket_locked, basket_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
+                    if is_basket_locked:
+                        return False, f"[SYSTEMIC BASKET LOCK] {basket_reason}"
+
+                    # 2. MSE Hard Stage 1 Gate
+                    if getattr(config, 'ENABLE_MSE_HARD_STAGE1_GATE', True):
+                        strat_dir_sym = macro.get('strat_dir')
+                        if strat_dir_sym is not None:
+                            if target_dir == 1 and strat_dir_sym.daily_macro_bias == "BEARISH_PULLBACK" and strat_dir_sym.primary_execution_directive == "HUNT_SELL_AT_SBR":
+                                return False, f"[MSE STAGE 1 LOCK] BUY blocked by MSE Directive ({strat_dir_sym.primary_execution_directive} / {strat_dir_sym.daily_macro_bias})"
+                            if target_dir == -1 and strat_dir_sym.daily_macro_bias == "BULLISH_EXPANSION" and strat_dir_sym.primary_execution_directive == "HUNT_BUY_AT_RBS":
+                                return False, f"[MSE STAGE 1 LOCK] SELL blocked by MSE Directive ({strat_dir_sym.primary_execution_directive} / {strat_dir_sym.daily_macro_bias})"
+
+                            if strat_dir_sym.forbidden_traps:
+                                for trap in strat_dir_sym.forbidden_traps:
+                                    if target_dir == 1 and ("DO NOT BUY" in trap.upper() or "DON'T BUY" in trap.upper()):
+                                        return False, f"[MSE TRAP VETO] BUY forbidden by MSE: {trap}"
+                                    if target_dir == -1 and ("DO NOT SELL" in trap.upper() or "DO NOT SHORT" in trap.upper() or "DON'T SELL" in trap.upper()):
+                                        return False, f"[MSE TRAP VETO] SELL forbidden by MSE: {trap}"
+
+                    return True, "ALLOWED"
+
                 # ── MECHANISM 1: LONDON & NY JUDAS LIQUIDITY SWEEP (M15/M30/H1) ──
                 if is_london_open or is_ny_session:
                     asian_h = macro.get('asian_high', 0.0)
@@ -940,168 +1003,176 @@ class MarketScanner:
                     # Bearish Judas Sweep: Price pushed above PDH / Asian High, now rejecting back down
                     ref_top = max(asian_h, pdh_val) if pdh_val > 0 else asian_h
                     if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
-                        gate_ok, gate_reason = evaluate_judas_sweep_gates(
-                            signal_type='SELL',
-                            dealing_range_pos=dr_pos_val,
-                            dist_to_htf_floor=dist_floor,
-                            dist_to_htf_ceiling=dist_ceiling,
-                            atr_val=atr_price_val,
-                            recent_ceiling_touch=macro.get('recent_ceiling_touch', False),
-                            recent_floor_touch=macro.get('recent_floor_touch', False),
-                            close_below_ema20=(mid < ema20_val),
-                            close_above_ema20=(mid > ema20_val),
-                            macro_trend=macro_trend_str
-                        )
-                        if not gate_ok:
-                            logger.debug(f"[JUDAS SELL GATE] {sym} SKIP: {gate_reason}")
+                        allowed_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_JUDAS")
+                        if not allowed_m1_s:
+                            logger.debug(f"[JUDAS SELL GATE] {sym} SKIP: {reason_m1_s}")
                         else:
-                            is_bull_breakout = (c_qual['direction'] == 'bullish' and c_qual['body_ratio'] >= 0.50 and c_qual['upper_wick_pct'] < 0.20 and mid > ref_top)
-                            has_rejection = (mid <= ref_top) or (c_qual['max_upper_wick'] >= 0.25) or (c_qual['sweep_side'] == 'top') or c_qual['is_bearish_engulf']
-                            
-                            if has_rejection and not is_bull_breakout:
-                                sl_tp = calculate_intraday_sl_tp(
-                                    symbol=sym,
-                                    entry_price=bid,
-                                    direction=-1,
-                                    origin_level=ref_top,
-                                    atr_h1=atr_pts * pt,
-                                    pwl=pwl_val,
-                                    pwh=pwh_val
-                                )
-                                sl = sl_tp['sl']
-                                tp = sl_tp['tp']
-                                rr_val = sl_tp['risk_reward']
-                                if abs(bid - sl) / pt >= 15:
-                                    candidates.append(CandidateSetup(
+                            gate_ok, gate_reason = evaluate_judas_sweep_gates(
+                                signal_type='SELL',
+                                dealing_range_pos=dr_pos_val,
+                                dist_to_htf_floor=dist_floor,
+                                dist_to_htf_ceiling=dist_ceiling,
+                                atr_val=atr_price_val,
+                                recent_ceiling_touch=macro.get('recent_ceiling_touch', False),
+                                recent_floor_touch=macro.get('recent_floor_touch', False),
+                                close_below_ema20=(mid < ema20_val),
+                                close_above_ema20=(mid > ema20_val),
+                                macro_trend=macro_trend_str
+                            )
+                            if not gate_ok:
+                                logger.debug(f"[JUDAS SELL GATE] {sym} SKIP: {gate_reason}")
+                            else:
+                                is_bull_breakout = (c_qual['direction'] == 'bullish' and c_qual['body_ratio'] >= 0.50 and c_qual['upper_wick_pct'] < 0.20 and mid > ref_top)
+                                has_rejection = (mid <= ref_top) or (c_qual['max_upper_wick'] >= 0.25) or (c_qual['sweep_side'] == 'top') or c_qual['is_bearish_engulf']
+                                
+                                if has_rejection and not is_bull_breakout:
+                                    sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
-                                        setup_type="LONDON_JUDAS_SWEEP",
+                                        entry_price=bid,
                                         direction=-1,
-                                        trigger_price=bid,
-                                        timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
-                                        macro_compass=macro['trend_label'],
-                                        dealing_range_pos=dr_pos_val,
-                                        rejection_wick_ratio=max(0.25, c_qual['max_upper_wick']),
-                                        current_spread_pts=spread_pts,
-                                        current_atr_pts=atr_pts,
-                                        key_support=min(asian_l, pdl_val) if pdl_val > 0 else asian_l,
-                                        key_resistance=ref_top,
-                                        suggested_sl=round(sl, 5 if pt < 0.01 else 2),
-                                        suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                        risk_reward_ratio=rr_val,
-                                        strong_low=macro.get('strong_low', 0.0),
-                                        strong_high=macro.get('strong_high', 0.0),
-                                        bullish_ob_zone=macro.get('bullish_ob_zone', ""),
-                                        bearish_ob_zone=macro.get('bearish_ob_zone', ""),
-                                        fvg_zone=macro.get('fvg_zone', ""),
-                                        liquidity_pools=macro.get('liquidity_pools', ""),
-                                        frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
-                                        pdh=macro.get('pdh', 0.0),
-                                        pdl=macro.get('pdl', 0.0),
-                                        daily_open=macro.get('daily_open', 0.0),
-                                        adr_used_pct=macro.get('adr_used_pct', 0.0),
-                                        h4_trend=macro.get('h4_trend_label', ''),
-                                        d1_50_range=macro.get('d1_50_range', ''),
-                                        d1_100_range=macro.get('d1_100_range', ''),
-                                        pwh=pwh_val,
+                                        origin_level=ref_top,
+                                        atr_h1=atr_pts * pt,
                                         pwl=pwl_val,
-                                        h4_monthly_range=macro.get('h4_monthly_range', ''),
-                                        wave_state=macro.get('wave_state', ''),
-                                        wave_summary=macro.get('wave_summary', ''),
-                                        permission=perm_state,
-                                        csm_delta=csm_delta_val,
-                                        timestamp_wib=now.strftime("%H:%M:%S WIB"),
-                                        metadata={
-                                            "entry_type": "sell_market",
-                                            "entry_price": bid,
-                                            "ref_top": ref_top,
-                                            "target_station": sl_tp.get('target_station', 0.0),
-                                            "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
-                                        }
-                                    ))
-                                    continue
+                                        pwh=pwh_val
+                                    )
+                                    sl = sl_tp['sl']
+                                    tp = sl_tp['tp']
+                                    rr_val = sl_tp['risk_reward']
+                                    if abs(bid - sl) / pt >= 15:
+                                        candidates.append(CandidateSetup(
+                                            symbol=sym,
+                                            setup_type="LONDON_JUDAS_SWEEP",
+                                            direction=-1,
+                                            trigger_price=bid,
+                                            timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                            macro_compass=macro['trend_label'],
+                                            dealing_range_pos=dr_pos_val,
+                                            rejection_wick_ratio=max(0.25, c_qual['max_upper_wick']),
+                                            current_spread_pts=spread_pts,
+                                            current_atr_pts=atr_pts,
+                                            key_support=min(asian_l, pdl_val) if pdl_val > 0 else asian_l,
+                                            key_resistance=ref_top,
+                                            suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                            suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                            risk_reward_ratio=rr_val,
+                                            strong_low=macro.get('strong_low', 0.0),
+                                            strong_high=macro.get('strong_high', 0.0),
+                                            bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                            bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                            fvg_zone=macro.get('fvg_zone', ""),
+                                            liquidity_pools=macro.get('liquidity_pools', ""),
+                                            frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
+                                            pdh=macro.get('pdh', 0.0),
+                                            pdl=macro.get('pdl', 0.0),
+                                            daily_open=macro.get('daily_open', 0.0),
+                                            adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                            h4_trend=macro.get('h4_trend_label', ''),
+                                            d1_50_range=macro.get('d1_50_range', ''),
+                                            d1_100_range=macro.get('d1_100_range', ''),
+                                            pwh=pwh_val,
+                                            pwl=pwl_val,
+                                            h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                            wave_state=macro.get('wave_state', ''),
+                                            wave_summary=macro.get('wave_summary', ''),
+                                            permission=perm_state,
+                                            csm_delta=csm_delta_val,
+                                            timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                            metadata={
+                                                "entry_type": "sell_market",
+                                                "entry_price": bid,
+                                                "ref_top": ref_top,
+                                                "target_station": sl_tp.get('target_station', 0.0),
+                                                "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
+                                            }
+                                        ))
+                                        continue
 
                     # Bullish Judas Sweep: Price pushed below PDL / Asian Low, now rejecting back up
                     ref_bot = min(asian_l, pdl_val) if pdl_val > 0 else asian_l
                     if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
-                        gate_ok, gate_reason = evaluate_judas_sweep_gates(
-                            signal_type='BUY',
-                            dealing_range_pos=dr_pos_val,
-                            dist_to_htf_floor=abs(mid - pwl_val) if pwl_val > 0 else 9999.0,
-                            dist_to_htf_ceiling=abs(mid - pwh_val) if pwh_val > 0 else 9999.0,
-                            atr_val=atr_pts * pt,
-                            recent_ceiling_touch=macro.get('recent_ceiling_touch', False),
-                            recent_floor_touch=macro.get('recent_floor_touch', False),
-                            close_below_ema20=(mid < macro.get('ema20', mid)),
-                            close_above_ema20=(mid > macro.get('ema20', mid)),
-                            macro_trend=macro_trend_str
-                        )
-                        if not gate_ok:
-                            logger.debug(f"[JUDAS BUY GATE] {sym} SKIP: {gate_reason}")
+                        allowed_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_JUDAS")
+                        if not allowed_m1_b:
+                            logger.debug(f"[JUDAS BUY GATE] {sym} SKIP: {reason_m1_b}")
                         else:
-                            is_bear_breakdown = (c_qual['direction'] == 'bearish' and c_qual['body_ratio'] >= 0.50 and c_qual['lower_wick_pct'] < 0.20 and mid < ref_bot)
-                            has_rejection = (mid >= ref_bot) or (c_qual['max_lower_wick'] >= 0.25) or (c_qual['sweep_side'] == 'bottom') or c_qual['is_bullish_engulf']
-                            
-                            if has_rejection and not is_bear_breakdown:
-                                sl_tp = calculate_intraday_sl_tp(
-                                    symbol=sym,
-                                    entry_price=ask,
-                                    direction=1,
-                                    origin_level=ref_bot,
-                                    atr_h1=atr_pts * pt,
-                                    pwl=pwl_val,
-                                    pwh=pwh_val
-                                )
-                                sl = sl_tp['sl']
-                                tp = sl_tp['tp']
-                                rr_val = sl_tp['risk_reward']
-                                if abs(ask - sl) / pt >= 15:
-                                    candidates.append(CandidateSetup(
+                            gate_ok, gate_reason = evaluate_judas_sweep_gates(
+                                signal_type='BUY',
+                                dealing_range_pos=dr_pos_val,
+                                dist_to_htf_floor=abs(mid - pwl_val) if pwl_val > 0 else 9999.0,
+                                dist_to_htf_ceiling=abs(mid - pwh_val) if pwh_val > 0 else 9999.0,
+                                atr_val=atr_pts * pt,
+                                recent_ceiling_touch=macro.get('recent_ceiling_touch', False),
+                                recent_floor_touch=macro.get('recent_floor_touch', False),
+                                close_below_ema20=(mid < macro.get('ema20', mid)),
+                                close_above_ema20=(mid > macro.get('ema20', mid)),
+                                macro_trend=macro_trend_str
+                            )
+                            if not gate_ok:
+                                logger.debug(f"[JUDAS BUY GATE] {sym} SKIP: {gate_reason}")
+                            else:
+                                is_bear_breakdown = (c_qual['direction'] == 'bearish' and c_qual['body_ratio'] >= 0.50 and c_qual['lower_wick_pct'] < 0.20 and mid < ref_bot)
+                                has_rejection = (mid >= ref_bot) or (c_qual['max_lower_wick'] >= 0.25) or (c_qual['sweep_side'] == 'bottom') or c_qual['is_bullish_engulf']
+                                
+                                if has_rejection and not is_bear_breakdown:
+                                    sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
-                                        setup_type="LONDON_JUDAS_SWEEP",
+                                        entry_price=ask,
                                         direction=1,
-                                        trigger_price=ask,
-                                        timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
-                                        macro_compass=macro['trend_label'],
-                                        dealing_range_pos=dr_pos_val,
-                                        rejection_wick_ratio=max(0.25, c_qual['max_lower_wick']),
-                                        current_spread_pts=spread_pts,
-                                        current_atr_pts=atr_pts,
-                                        key_support=ref_bot,
-                                        key_resistance=max(asian_h, pdh_val) if pdh_val > 0 else asian_h,
-                                        suggested_sl=round(sl, 5 if pt < 0.01 else 2),
-                                        suggested_tp=round(tp, 5 if pt < 0.01 else 2),
-                                        risk_reward_ratio=rr_val,
-                                        strong_low=macro.get('strong_low', 0.0),
-                                        strong_high=macro.get('strong_high', 0.0),
-                                        bullish_ob_zone=macro.get('bullish_ob_zone', ""),
-                                        bearish_ob_zone=macro.get('bearish_ob_zone', ""),
-                                        fvg_zone=macro.get('fvg_zone', ""),
-                                        liquidity_pools=macro.get('liquidity_pools', ""),
-                                        frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
-                                        pdh=macro.get('pdh', 0.0),
-                                        pdl=macro.get('pdl', 0.0),
-                                        daily_open=macro.get('daily_open', 0.0),
-                                        adr_used_pct=macro.get('adr_used_pct', 0.0),
-                                        h4_trend=macro.get('h4_trend_label', ''),
-                                        d1_50_range=macro.get('d1_50_range', ''),
-                                        d1_100_range=macro.get('d1_100_range', ''),
-                                        pwh=pwh_val,
+                                        origin_level=ref_bot,
+                                        atr_h1=atr_pts * pt,
                                         pwl=pwl_val,
-                                        h4_monthly_range=macro.get('h4_monthly_range', ''),
-                                        wave_state=macro.get('wave_state', ''),
-                                        wave_summary=macro.get('wave_summary', ''),
-                                        permission=perm_state,
-                                        csm_delta=csm_delta_val,
-                                        timestamp_wib=now.strftime("%H:%M:%S WIB"),
-                                        metadata={
-                                            "entry_type": "buy_market",
-                                            "entry_price": ask,
-                                            "ref_bot": ref_bot,
-                                            "target_station": sl_tp.get('target_station', 0.0),
-                                            "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
-                                        }
-                                    ))
-                                    continue
+                                        pwh=pwh_val
+                                    )
+                                    sl = sl_tp['sl']
+                                    tp = sl_tp['tp']
+                                    rr_val = sl_tp['risk_reward']
+                                    if abs(ask - sl) / pt >= 15:
+                                        candidates.append(CandidateSetup(
+                                            symbol=sym,
+                                            setup_type="LONDON_JUDAS_SWEEP",
+                                            direction=1,
+                                            trigger_price=ask,
+                                            timeframe="M30" if ("XAU" in sym or "JPY" in sym) else "H1",
+                                            macro_compass=macro['trend_label'],
+                                            dealing_range_pos=dr_pos_val,
+                                            rejection_wick_ratio=max(0.25, c_qual['max_lower_wick']),
+                                            current_spread_pts=spread_pts,
+                                            current_atr_pts=atr_pts,
+                                            key_support=ref_bot,
+                                            key_resistance=max(asian_h, pdh_val) if pdh_val > 0 else asian_h,
+                                            suggested_sl=round(sl, 5 if pt < 0.01 else 2),
+                                            suggested_tp=round(tp, 5 if pt < 0.01 else 2),
+                                            risk_reward_ratio=rr_val,
+                                            strong_low=macro.get('strong_low', 0.0),
+                                            strong_high=macro.get('strong_high', 0.0),
+                                            bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                            bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                            fvg_zone=macro.get('fvg_zone', ""),
+                                            liquidity_pools=macro.get('liquidity_pools', ""),
+                                            frvp_confluence=macro.get('frvp_summary', '') or "Standard Institutional Liquidity",
+                                            pdh=macro.get('pdh', 0.0),
+                                            pdl=macro.get('pdl', 0.0),
+                                            daily_open=macro.get('daily_open', 0.0),
+                                            adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                            h4_trend=macro.get('h4_trend_label', ''),
+                                            d1_50_range=macro.get('d1_50_range', ''),
+                                            d1_100_range=macro.get('d1_100_range', ''),
+                                            pwh=pwh_val,
+                                            pwl=pwl_val,
+                                            h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                            wave_state=macro.get('wave_state', ''),
+                                            wave_summary=macro.get('wave_summary', ''),
+                                            permission=perm_state,
+                                            csm_delta=csm_delta_val,
+                                            timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                            metadata={
+                                                "entry_type": "buy_market",
+                                                "entry_price": ask,
+                                                "ref_bot": ref_bot,
+                                                "target_station": sl_tp.get('target_station', 0.0),
+                                                "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
+                                            }
+                                        ))
+                                        continue
 
                 # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & DELAYED RETEST (H1/M30) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
@@ -1110,8 +1181,11 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     
                     # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to EMA20 in Discount
-                    can_buy_m2 = (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
-                    if can_buy_m2 and pos_in_range <= 0.65:
+                    allowed_m2_b, reason_m2_b = _is_direction_allowed(1, "BUY_PULLBACK")
+                    can_buy_m2 = allowed_m2_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
+                    if not allowed_m2_b:
+                        logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP: {reason_m2_b}")
+                    elif can_buy_m2 and pos_in_range <= 0.65:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
                             lim_entry = mid - (atr_pts * 0.20 * pt)
                             base_floor = macro['dealing_range_low']
@@ -1179,8 +1253,11 @@ class MarketScanner:
                                 continue
 
                     # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to EMA20 in Premium
-                    can_sell_m2 = (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
-                    if can_sell_m2 and pos_in_range >= 0.35:
+                    allowed_m2_s, reason_m2_s = _is_direction_allowed(-1, "SELL_PULLBACK")
+                    can_sell_m2 = allowed_m2_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
+                    if not allowed_m2_s:
+                        logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP: {reason_m2_s}")
+                    elif can_sell_m2 and pos_in_range >= 0.35:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
                             lim_entry = mid + (atr_pts * 0.20 * pt)
                             base_floor = macro['dealing_range_high']
@@ -1257,8 +1334,11 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
 
                     # Bullish Breakout Retest: Tested >= 2 times, broke above cluster resistance, macro bull / bullish corridor
-                    can_buy_m3 = (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
-                    if can_buy_m3 and t_res >= 2 and (c_res > 0):
+                    allowed_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST")
+                    can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
+                    if not allowed_m3_b:
+                        logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP: {reason_m3_b}")
+                    elif can_buy_m3 and t_res >= 2 and (c_res > 0):
                         if mid >= (c_res + atr_val * 0.10):
                             entry_lim = c_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance
                             sl_tp = calculate_intraday_sl_tp(
@@ -1328,8 +1408,11 @@ class MarketScanner:
                                 continue
 
                     # Bearish Breakout Retest: Tested >= 2 times, broke below cluster support, macro bear / bearish corridor
-                    can_sell_m3 = (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
-                    if can_sell_m3 and t_sup >= 2 and (c_sup > 0):
+                    allowed_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST")
+                    can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
+                    if not allowed_m3_s:
+                        logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP: {reason_m3_s}")
+                    elif can_sell_m3 and t_sup >= 2 and (c_sup > 0):
                         if mid <= (c_sup - atr_val * 0.10):
                             entry_lim = c_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support
                             sl_tp = calculate_intraday_sl_tp(

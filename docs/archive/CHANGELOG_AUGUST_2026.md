@@ -368,3 +368,44 @@ You are NOT required to follow a single predefined trading strategy. You may use
    * Dokumen riset teknikal tersimpan di [`docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md`](file:///c:/Vibe/tradingpartner/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md).
    * Web report 20 Bab diperbarui di [`report.html`](file:///c:/Vibe/tradingpartner/report.html).
    * Unit test suite lulus 100% OK (23/23 tests pass).
+
+---
+
+## 17. Pembaruan 29 Agustus 2026 (Sesi Siang) — Pure Quant Hierarchical Macro Strategic Engine (MSE) & Atlas DNA Station Delivery
+
+1. **Pure Quant Hierarchical Top-Down Macro Strategic Engine (`src/analytics/macro_strategic_engine.py`)**:
+   * Integrasi 6 timeframe asli MT5 (`MN1` 50 bar, `W1` 100 bar, `D1` 350 bar, `H4` 400 bar, `H1` 250 bar, `M30` 200 bar).
+   * Komputasi matematis sub-detik ($<50\text{ ms per pair}$, 0 Token LLM).
+   * Menghasilkan direktif koridor institusional (`HUNT_SELL_AT_SBR`, `HUNT_BUY_AT_RBS`) dan daftar jebakan visual (`forbidden_traps`).
+2. **Atlas DNA Dual-Grid Station Calculator (`src/indicators/atlas_dna.py`)**:
+   * **Major Stations (100-Pip Grid / $10.00 Gold)**: Angka bulat institusional.
+   * **Sub-Stations (50-Pip Grid / $5.00 Gold)**: Koridor pergerakan harga intraday.
+   * **Formula Intraday SL/TP Anchoring**: Menjangkar SL di balik support/resistance fisik $+ 0.35\times\text{ATR}$ Anti-Wick Buffer dan mengunci Safety Ceiling ($\le 16.0\text{ pips}$ / 160 pts).
+3. **Telegram Command `/macro <symbol>` (`src/core/telegram_bot.py`)**:
+   * Menyediakan laporan on-demand status koridor makro, station ladder, zona SBR/RBS, dan rekomendasi eksekusi per pair secara visual di chat Telegram.
+
+---
+
+## 18. Pembaruan 29 Agustus 2026 (Sesi Malam) — Universal 8-Currency Basket Circuit Breaker & Live E2E 3-LLM Jury Replay
+
+1. **Universal 8-Currency Basket Circuit Breaker (`src/analytics/currency_strength.py` & `config.py` / `.env`)**:
+   * Generalisasi perlindungan sirkuit ke seluruh 8 mata uang utama (`USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD`).
+   * Dual-Horizon Basket Flow weighting: 60% kecepatan sesi M15 (16 bar) + 40% jangkar tren H1 (24 bar).
+   * **Kalibrasi Threshold Empiris**:
+     - `SYSTEMIC_BASKET_USD_THRESHOLD = 2.0` (20.0 pts Boitoki).
+     - `SYSTEMIC_BASKET_JPY_THRESHOLD = 2.0` (20.0 pts Boitoki).
+     - `SYSTEMIC_BASKET_CROSS_THRESHOLD = 2.0` (20.0 pts Boitoki).
+     - `SYSTEMIC_BASKET_SPREAD_THRESHOLD = 1.8` (18.0 pts Boitoki Relative Delta Spread).
+   * Otomatis mengunci (Hard Lock) order counter-flow saat Base/Quote mengalami systemic dump/surge atau selisih kekuatan melebihi toleransi.
+2. **Directional Hard Gate di Stage 1 Radar (`src/analytics/market_scanner.py`)**:
+   * Menolak kandidat setup yang dilarang oleh MSE Directive atau Basket Gate sebelum pemanggilan LLM Jury (hemat 100% token).
+3. **End-to-End Live Multi-LLM Replay Validation (27–28 Agustus 2026)**:
+   * Validasi audit 3-LLM Jury (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4-Flash CRO) pada 11 pair live account.
+   * **Hasil Finansial**:
+     - `GBPUSD` berbalik dari loss -$82.69 (akun riil) menjadi **+$135.00 (+2.25 R, 3/3 Win)** via SELL Pullbacks.
+     - `EURUSD`: +2.00 R (+$120.00), `GBPCHF`: +2.15 R (+$129.00), `EURCHF`: +0.30 R (+$18.00).
+     - **Net Return Terverifikasi**: **+2.85 R (+$171.00 pada equity $6,000)** dengan Win Rate 58.8%.
+4. **Master Report HTML Bab 21**:
+   * Web report `report.html` diperbarui dengan Bab 21 (Universal 8-Currency Basket & Pure Quant MSE Corridor Engine).
+   * Seluruh unit test suite lulus **100% OK (44/44 Tests Pass)**.
+

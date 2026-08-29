@@ -259,6 +259,54 @@ def handle_indicators_command(chat_id, symbol_input=None):
         send_telegram_msg(f"Error fetching indicators for `{symbol_input}`: `{e}`", chat_id=chat_id)
 
 
+def handle_macro_command(chat_id, symbol_input=None):
+    """Sends pure quant 6-timeframe strategic directive, dual-grid stations, and SBR/RBS levels."""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
+        clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
+        
+        directive = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
+        
+        lines = [
+            f"🧭 *TOP-DOWN MACRO STRATEGIC DIRECTIVE: {clean_sym}*",
+            f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | Komputasi: `{directive.calculation_time_ms} ms` (0 Token)\n",
+            f"🎯 *Mandat*: `{directive.daily_macro_bias}`",
+            f"⚡ *Eksekusi*: `{directive.primary_execution_directive}`",
+            f"🏛️ *Tahapan*: `{directive.structural_stage}`\n",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "🧱 *HIRARKI ZONA SBR & RBS*:",
+            f"• 📅 *Macro D1*: RBS `{directive.macro_rbs_d1}` | SBR `{directive.macro_sbr_d1}`",
+            f"• ⏱️ *Inter H4*: RBS `{directive.inter_rbs_h4}` | SBR `{directive.inter_sbr_h4}`",
+            f"• 🔬 *Micro H1*: RBS `{directive.micro_rbs_h1}` | SBR `{directive.micro_sbr_h1}`\n",
+            "🚉 *DUAL-GRID SUB-STATIONS (50 Pips)*:",
+            f"• 🔼 *Sub-Ceiling*: `{directive.sub_ceiling_50}`",
+            f"• 🔽 *Sub-Floor*: `{directive.sub_floor_50}`\n",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "🎯 *INTRADAY REFINED DELIVERY*:",
+            f"• 📍 *Limit Anchor*: `{directive.entry_limit_anchor}`",
+            f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips} pips)",
+            f"• 🎁 *TP1 (Partial 50%)*: `{directive.tp1_price}` (+{directive.tp1_pips} pips)",
+            f"• 🏆 *TP2 (Station Target)*: `{directive.tp2_price}` (+{directive.tp2_pips} pips, R:R {directive.risk_reward_ratio}:1)",
+            f"• 🚫 *Macro Invalidation*: `{directive.invalidation_stop_price}`\n",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"💡 *Thesis*: {directive.daily_mandate_thesis}\n",
+            f"⚠️ *Pantangan*: {', '.join(directive.forbidden_traps) if directive.forbidden_traps else '-'}"
+        ]
+
+        kb = {
+            "inline_keyboard": [
+                [{"text": f"[ 🤖 3-AI Analisa {clean_sym} ]", "callback_data": f"analyze:{clean_sym}_H1"}],
+                [{"text": "[ 📊 Level SMC ]", "callback_data": f"cmd:levels_{clean_sym}"}, {"text": "[ ☰ Menu ]", "callback_data": "cmd:menu"}]
+            ]
+        }
+
+        send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_macro_command: {e}")
+        send_telegram_msg(f"Error computing macro directive for `{symbol_input}`: `{e}`", chat_id=chat_id)
+
+
 def handle_news_command(chat_id):
     """Sends the Upcoming High-Impact Economic Events Calendar (TradingView API / Deterministic)."""
     try:
@@ -798,6 +846,9 @@ def _process_update(update):
         elif cmd in ("/indicators", "/indikator", "/levels", "/smc"):
             sym = args[0] if args else config.SYMBOL
             handle_indicators_command(target_chat, symbol_input=sym)
+        elif cmd in ("/macro", "/directive", "/kompas"):
+            sym = args[0] if args else config.SYMBOL
+            handle_macro_command(target_chat, symbol_input=sym)
         elif cmd in ("/status", "/akun"):
             handle_status_command(target_chat)
         elif cmd in ("/posisi", "/positions", "/open"):
