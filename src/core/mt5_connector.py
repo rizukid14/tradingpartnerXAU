@@ -122,7 +122,11 @@ def init_mt5():
     if config.DRY_RUN:
         print(f" {UI.YELLOW}[DRY RUN MODE]{UI.RST} Membaca data live MT5 untuk simulasi (eksekusi order riil dinonaktifkan).")
 
-    print(f"[MT5] Connecting to MT5 Terminal for symbol {config.SYMBOL}...")
+    sym_count = len(getattr(config, "SCANNER_SYMBOLS", [])) if getattr(config, "SCANNER_MODE", False) else 1
+    if getattr(config, "SCANNER_MODE", False) and sym_count > 1:
+        print(f"[MT5] Connecting to MT5 Terminal for {sym_count} Scanner Universe Symbols...")
+    else:
+        print(f"[MT5] Connecting to MT5 Terminal for symbol {config.SYMBOL}...")
 
     # Reset cache nama simbol - koneksi baru = broker/akun baru, suffix bisa beda.
     _valid_symbol_cache.clear()
