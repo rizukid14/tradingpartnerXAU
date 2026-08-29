@@ -1970,27 +1970,21 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         atlas_dna_block = ""
 
-    # === TOP-DOWN MACRO STRATEGIC DIRECTIVE INJECTION ===
+    # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (DESCRIPTIVE & OBJECTIVE) ===
     strat_block = ""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         if strat_dir:
-            traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
-            strat_block = f"""\n## 2. PURE QUANT MACRO STRATEGIC DIRECTIVE & MULTI-SCALE SBR/RBS
-- Daily Macro Bias: {strat_dir.daily_macro_bias} | Primary Execution Directive: {strat_dir.primary_execution_directive}
-- Structural Stage: {strat_dir.structural_stage}
-- Strategic Mandate Thesis: {strat_dir.daily_mandate_thesis}
-- Multi-Scale SBR / RBS Hierarchy:
-  * Macro D1 Scale: RBS Support = {strat_dir.macro_rbs_d1} | SBR Resistance = {strat_dir.macro_sbr_d1}
-  * Intermediate H4 Scale: RBS Support = {strat_dir.inter_rbs_h4} | SBR Resistance = {strat_dir.inter_sbr_h4}
-  * Micro Precision H1 Scale: RBS Support = {strat_dir.micro_rbs_h1} | SBR Resistance = {strat_dir.micro_sbr_h1}
-- Dual-Grid Sub-Stations (50-Pip Estafet): Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
-- Intraday Structural Refinement:
-  * Proposed Limit Entry Anchor: {strat_dir.entry_limit_anchor}
-  * Intraday Strict SL: {strat_dir.intraday_sl_price} ({strat_dir.intraday_sl_pips} pips)
-  * TP1 (50% Partial Close): {strat_dir.tp1_price} (+{strat_dir.tp1_pips} pips) | TP2 (Station Target): {strat_dir.tp2_price} (+{strat_dir.tp2_pips} pips, R:R {strat_dir.risk_reward_ratio}:1)
-- Forbidden Traps: {traps_str}\n"""
+            strat_block = f"""\n## 2. MACRO STRUCTURAL LANDSCAPE & MULTI-SCALE SBR/RBS ZONES
+- Macro Trend State: D1 {strat_dir.daily_macro_bias} | Structural Phase: {strat_dir.structural_stage}
+- Multi-Scale Zonal Boundaries:
+  * Macro D1 Scale: Major SBR Resistance = {strat_dir.macro_sbr_d1} | Major RBS Support = {strat_dir.macro_rbs_d1}
+  * Intermediate H4 Scale: SBR Resistance = {strat_dir.inter_sbr_h4} | RBS Support = {strat_dir.inter_rbs_h4}
+  * Micro Precision H1 Scale: SBR Resistance = {strat_dir.micro_sbr_h1} | RBS Support = {strat_dir.micro_rbs_h1}
+- Dual-Grid 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
+- Structural Reference Anchor: SBR/RBS Level = {strat_dir.entry_limit_anchor} | Baseline Floor SL = {strat_dir.intraday_sl_price}
+- Station Target Landscape: Intermediate Station = {strat_dir.tp1_price} | Macro Target Station = {strat_dir.tp2_price}\n"""
     except Exception:
         strat_block = ""
 
