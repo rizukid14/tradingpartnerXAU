@@ -238,12 +238,12 @@ class UI:
         return "\n".join(out)
 
 
-def render_scanner_banner(account_info=None, is_live=True, total_symbols=22):
-    """Renders a sleek ASCII banner for 22-Pair Quant Screener & Multi-LLM Jury."""
+def render_scanner_banner(account_info=None, is_live=True, total_symbols=27):
+    """Renders a sleek ASCII banner for Multi-Pair Quant Screener & Multi-LLM Jury."""
     badge_mode = UI.badge_live() if is_live else UI.badge_dry()
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
-    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[22-PAIR PRO]{UI.RST}"
+    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
     status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
     
     items = [
@@ -381,12 +381,15 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     total_active = len(positions or []) + len(orders or [])
     max_positions = config.get_max_open_positions()
 
+    max_loss_dlr = eq * (getattr(config, "MAX_DAILY_LOSS_PERCENT", 4.0) / 100.0)
+    xau_floor = getattr(config, "LLM_XAU_FLOOR_ATR_MULT", 1.60)
+    
     t2_lines = [
         f" Server    : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
         f" Equity    : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
         f" Capacity  : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} (Shared Basket Pool Engine)",
-        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}4.0% ($50){UI.RST}",
-        f" Gold Armor: {UI.YELLOW}1.8x ATR Floor (600 pts Anti-Hunt Shield){UI.RST}",
+        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}{config.MAX_DAILY_LOSS_PERCENT}% (${max_loss_dlr:.0f}){UI.RST}",
+        f" Gold Armor: {UI.YELLOW}{xau_floor:.2f}x ATR Floor ({config.LLM_SAFETY_FLOOR_XAU_PTS} pts Anti-Hunt Shield){UI.RST}",
     ]
     if open_positions:
         pos_strs = []
@@ -467,7 +470,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     out = []
     
     # Top Header
-    h1_title = f"+-- [ {UI.BOLD}{UI.WHITE}22-PAIR LIVE QUANT RADAR MATRIX{UI.RST}{c_cyan} ] "
+    h1_title = f"+-- [ {UI.BOLD}{UI.WHITE}{len(all_symbols)}-PAIR LIVE QUANT RADAR MATRIX{UI.RST}{c_cyan} ] "
     d1 = max(0, lw - UI.disp_width(h1_title) + 1)
     h1_bar = f"{c_cyan}{h1_title}{'-' * d1}+{c_rst}"
     

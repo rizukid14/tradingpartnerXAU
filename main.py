@@ -813,19 +813,41 @@ def interactive_setup():
 class TeeLogger(object):
     """Redirects stdout and stderr to both the console (with full ANSI colors)
     and a clean, timestamped log file for easy AI parsing and historical analysis.
+    Auto-archives logs by week and month into logs/YYYY-MM/trading_bot_Week<W>_<timestamp>.log
     """
     def __init__(self, filepath, max_bytes=2000000):
         self.terminal = sys.stdout
         self.filepath = filepath
         self._buffer = ""
-        # Rotate log if size exceeds max_bytes (keep last 5000 lines)
-        if os.path.exists(filepath) and os.path.getsize(filepath) > max_bytes:
+        
+        # ── AUTO WEEKLY / MONTHLY LOG ARCHIVER ──
+        # Struktur: logs/YYYY-MM/trading_bot_Week<W>_<timestamp>.log
+        if os.path.exists(filepath):
             try:
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                    lines = f.readlines()
-                keep_lines = lines[-5000:]
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.writelines(keep_lines)
+                mtime = os.path.getmtime(filepath)
+                file_dt = datetime.fromtimestamp(mtime, tz=_WIB)
+                now_dt = datetime.now(_WIB)
+                
+                file_cal = file_dt.isocalendar()  # (year, week, weekday)
+                now_cal = now_dt.isocalendar()
+                
+                is_new_week = (file_cal[0] != now_cal[0]) or (file_cal[1] != now_cal[1])
+                is_oversize = os.path.getsize(filepath) > max_bytes
+                
+                if (is_new_week or is_oversize) and os.path.getsize(filepath) > 1000:
+                    archive_folder = os.path.join("logs", file_dt.strftime("%Y-%m"))
+                    os.makedirs(archive_folder, exist_ok=True)
+                    
+                    ts_str = file_dt.strftime("%Y%m%d_%H%M%S")
+                    archive_filename = f"trading_bot_Week{file_cal[1]:02d}_{ts_str}.log"
+                    archive_path = os.path.join(archive_folder, archive_filename)
+                    
+                    shutil.copy2(filepath, archive_path)
+                    
+                    # Bersihkan file aktif untuk sesi baru (kosongkan)
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(f"=== TRADING BOT SESSION LOG (Started {now_dt.strftime('%Y-%m-%d %H:%M:%S WIB')}) ===\n")
+                        f.write(f"=== Archived previous log to: {archive_path} ===\n\n")
             except Exception:
                 pass
         self.log = open(filepath, "a", encoding="utf-8")
@@ -1887,7 +1909,7 @@ def main():
             total_symbols=len(config.get_scanner_symbols())
         ))
         print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
-        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (21 FX Crosses + Gold H1/D1){UI.RST}")
+        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (21 FX Crosses + 6 NZD Alpha + Gold){UI.RST}")
     else:
         print(render_banner(
             account_info=getattr(config, "MT5_LOGIN", None),
