@@ -12,7 +12,7 @@ from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
 from src.core.cli_theme import UI, render_banner, render_scanner_banner, render_candidate_alert_box, render_hacker_bento_hud
-from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
+from src.analytics import position_manager, trade_evaluator, dynamic_config, decision_memory
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 
 import re
@@ -1164,35 +1164,6 @@ def _run_cycle_for_current_symbol():
     print(f"\n{UI.tag('SCAN ASSET', UI.CYAN)} {UI.BOLD}{config.SYMBOL}{UI.RST} ({tf_name}) | Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
 
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails
-    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
-        try:
-            from src.analytics import market_randomness
-            rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
-            ft = rand_info.get('fat_tail', {})
-            tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
-            print(f"[QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
-                  f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
-                  f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
-                  f"Status: {' BLOCKED (Pure Random Walk)' if rand_info['is_random'] else ' PASSED'}")
-        except Exception as e:
-            print(f"[QUANT MATH ERROR] {e}")
-
-    # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
-    if getattr(config, "MONTE_CARLO_ENABLED", False):
-        try:
-            from src.analytics import quant_probability
-            tf_mins = 30 if config.is_crypto(config.SYMBOL) else (60 if "XAU" not in config.SYMBOL.upper() else 15)
-            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-            print(f"[QUANT PROB] Monte Carlo (1000 paths): "
-                  f" UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
-                  f" DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
-                  f"Est. Horizon: {q_res['estimated_time_str']}")
-        except Exception as e:
-            print(f"[QUANT PROB ERROR] {e}")
-    
-
-
 
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
@@ -1230,15 +1201,6 @@ def _run_cycle_for_current_symbol():
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
         if lessons_ctx:
             print("Menyertakan Lesson Learned & Memori Trading untuk LLM...")
-
-    # Pre-warm forecast: synchronous refresh ONLY if cache is stale (15 min XAU /
-    # 30 min BTC). Kalau cache masih fresh, langsung return tanpa nge-block.
-    # Hasil forecast di-print SEBELUM "Mengirim data..." biar urutan log rapi.
-    if getattr(config, "FORECAST_ENABLED", True):
-        try:
-            forecast_engine.forecaster.refresh_if_stale(config.SYMBOL, df, tick, macro_context)
-        except Exception as e:
-            print(f"[FORECAST WARNING] {e}")
 
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()

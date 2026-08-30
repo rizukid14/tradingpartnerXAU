@@ -18,9 +18,9 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
-def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None):
+def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup_grade=None):
     """
-    SL/TP final sesuai config.TP_SL_RULES dan 5-Tier Operational Action Matrix.
+    SL/TP final sesuai config.TP_SL_RULES, 5-Tier Action Matrix, dan Setup Quality Grade.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
     """
     global _last_sltp_adjustments
@@ -116,9 +116,18 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None):
         min_rr = config.LLM_MIN_RR_RATIO
         max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
 
+        # Dynamic Grade-Aware Multipliers
+        grade_str = str(setup_grade or "").upper()
+        if "GRADE_S" in grade_str:
+            max_rr = 3.50
+        elif "GRADE_B" in grade_str:
+            max_rr = 1.25
+        elif "GRADE_A_PLUS" in grade_str:
+            max_rr = 2.50
+
         # 5-Tier Action Matrix R:R constraints
         if action_tier == "TP1_ONLY_SCALP":
-            max_rr = min(max_rr, 1.50)
+            max_rr = min(max_rr, 1.25)
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
@@ -128,7 +137,7 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None):
             _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
             tp_points = min_tp
         elif tp_points > max_tp:
-            tier_msg = f" [{action_tier} Cap]" if action_tier else ""
+            tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""
             _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL{tier_msg}. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
             tp_points = max_tp
 
@@ -385,9 +394,8 @@ def calculate_consensus(decisions):
     # Qualified Hard Risk Veto Engine (Preserves Capital against Critical Traps)
     hard_veto_models = []
     VALID_HARD_VETO_FLAGS = (
-        "COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
-        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW",
-        "FALLING_KNIFE_WATERFALL", "UNMITIGATED_IMPULSE_CHASE", "SYSTEMIC_CURRENCY_DUMP"
+        "COUNTER_TREND_MOMENTUM", "LIQUIDITY_TRAP", "IMPULSE_CHASE",
+        "SYSTEMIC_CURRENCY_DUMP", "HIGH_IMPACT_NEWS", "CURRENCY_CONFLICT", "MACRO_HEADWIND"
     )
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")

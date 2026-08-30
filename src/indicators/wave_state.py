@@ -21,18 +21,26 @@ import pandas as pd
 
 
 class WaveState:
-    # V3 Canonical State Aliases
-    EXPANSION_WAIT = "EXPANSION_WAIT"
-    TYPE_A_WATERFALL_LOCK = "TYPE_A_WATERFALL_LOCK"
-    TYPE_B_COMPRESSION_ARMED = "TYPE_B_COMPRESSION_ARMED"
-    RECLAIM_CONFIRMED_GO = "RECLAIM_CONFIRMED_GO"
+    # V3 Symmetrical Dual-Directional State Names
+    EXPANSION_WAIT_BULL = "EXPANSION_WAIT_BULL"
+    EXPANSION_WAIT_BEAR = "EXPANSION_WAIT_BEAR"
+    WATERFALL_LOCK = "WATERFALL_LOCK"
+    VERTICAL_SPIKE_LOCK = "VERTICAL_SPIKE_LOCK"
+    DISCOUNT_RELOAD_ARMED = "DISCOUNT_RELOAD_ARMED"
+    PREMIUM_RELOAD_ARMED = "PREMIUM_RELOAD_ARMED"
+    DEMAND_REACTION_GO = "DEMAND_REACTION_GO"
+    SUPPLY_REACTION_GO = "SUPPLY_REACTION_GO"
     NEUTRAL_RANGING = "NEUTRAL_RANGING"
     
-    # Backwards-compatibility aliases
-    IMPULSE_CHASE = "EXPANSION_WAIT"
-    EARLY_CORRECTION_LOCK = "TYPE_A_WATERFALL_LOCK"
-    MATURE_CORRECTION_ARMED = "TYPE_B_COMPRESSION_ARMED"
-    BASE_RECLAIM_ENABLE = "RECLAIM_CONFIRMED_GO"
+    # Canonical & Backwards-compatibility aliases
+    EXPANSION_WAIT = "EXPANSION_WAIT_BULL"
+    TYPE_A_WATERFALL_LOCK = "WATERFALL_LOCK"
+    TYPE_B_COMPRESSION_ARMED = "DISCOUNT_RELOAD_ARMED"
+    RECLAIM_CONFIRMED_GO = "DEMAND_REACTION_GO"
+    IMPULSE_CHASE = "EXPANSION_WAIT_BULL"
+    EARLY_CORRECTION_LOCK = "WATERFALL_LOCK"
+    MATURE_CORRECTION_ARMED = "DISCOUNT_RELOAD_ARMED"
+    BASE_RECLAIM_ENABLE = "DEMAND_REACTION_GO"
 
 
 @dataclass
@@ -369,37 +377,37 @@ def evaluate_wave_state(
         
         # Permission Matrix Resolution
         if pullback_depth_atr < 0.40 and bars_since_pivot <= 2:
-            state = WaveState.EXPANSION_WAIT
+            state = WaveState.EXPANSION_WAIT_BULL
             permission = "WAIT"
             corr_type = "EXPANSION"
-            summary = f"EXPANSION WAIT: Price near peak ({pullback_depth_atr:.2f} ATR) -> WAIT (No FOMO)"
+            summary = f"EXPANSION WAIT BULL: Price near peak ({pullback_depth_atr:.2f} ATR) -> WAIT (No FOMO)"
             
         elif is_waterfall or (not in_favorable_zone and velocity >= 0.35):
-            state = WaveState.TYPE_A_WATERFALL_LOCK
+            state = WaveState.WATERFALL_LOCK
             permission = "LOCK"
             corr_type = "TYPE_A_WATERFALL"
-            summary = f"TYPE A WATERFALL LOCK: Violent Plunge ({velocity:.2f} ATR/b, BodyEff {body_efficiency*100:.0f}%) -> LOCK"
+            summary = f"WATERFALL LOCK: Violent Plunge ({velocity:.2f} ATR/b, BodyEff {body_efficiency*100:.0f}%) -> LOCK"
             
         elif csm_delta <= -1.0:
-            state = WaveState.TYPE_B_COMPRESSION_ARMED
+            state = WaveState.DISCOUNT_RELOAD_ARMED
             permission = "WAIT"
             corr_type = "TYPE_B_COIL"
             summary = f"CSM OPPOSED WAIT: Flow Mismatch (Delta {csm_delta:+.2f}) -> WAIT"
             
         elif in_favorable_zone and is_compression and is_reclaim and csm_delta >= -0.2:
-            state = WaveState.RECLAIM_CONFIRMED_GO
+            state = WaveState.DEMAND_REACTION_GO
             permission = "GO"
             corr_type = "TYPE_B_COIL"
-            summary = f"RECLAIM CONFIRMED GO: Type B Coil Reclaimed (DR {dr_pos*100:.1f}%, Reclaim {is_reclaim}) -> GO"
+            summary = f"DEMAND REACTION GO: Discount Reload Reclaimed (DR {dr_pos*100:.1f}%, Reclaim {is_reclaim}) -> GO"
             
         elif in_favorable_zone and is_compression:
-            state = WaveState.TYPE_B_COMPRESSION_ARMED
+            state = WaveState.DISCOUNT_RELOAD_ARMED
             permission = "ARM"
             corr_type = "TYPE_B_COIL"
-            summary = f"TYPE B COMPRESSION ARMED: Basing in Area of Value (DR {dr_pos*100:.1f}%, Overlap {overlap_ratio:.2f}) -> ARM"
+            summary = f"DISCOUNT RELOAD ARMED: Basing in Demand Floor (DR {dr_pos*100:.1f}%, Overlap {overlap_ratio:.2f}) -> ARM"
             
         else:
-            state = WaveState.TYPE_B_COMPRESSION_ARMED if in_favorable_zone else WaveState.TYPE_A_WATERFALL_LOCK
+            state = WaveState.DISCOUNT_RELOAD_ARMED if in_favorable_zone else WaveState.WATERFALL_LOCK
             permission = "ARM" if in_favorable_zone else "WAIT"
             corr_type = "TYPE_B_COIL" if in_favorable_zone else "TYPE_A_WATERFALL"
             summary = f"EQUILIBRIUM: DR Pos {dr_pos*100:.1f}% -> {permission}"
@@ -459,37 +467,37 @@ def evaluate_wave_state(
         
         # Permission Matrix Resolution
         if pullback_depth_atr < 0.40 and bars_since_pivot <= 2:
-            state = WaveState.EXPANSION_WAIT
+            state = WaveState.EXPANSION_WAIT_BEAR
             permission = "WAIT"
             corr_type = "EXPANSION"
-            summary = f"EXPANSION WAIT: Price near floor ({pullback_depth_atr:.2f} ATR) -> WAIT (No FOMO)"
+            summary = f"EXPANSION WAIT BEAR: Price near floor ({pullback_depth_atr:.2f} ATR) -> WAIT (No FOMO)"
             
         elif is_waterfall or (not in_favorable_zone and velocity >= 0.35):
-            state = WaveState.TYPE_A_WATERFALL_LOCK
+            state = WaveState.VERTICAL_SPIKE_LOCK
             permission = "LOCK"
             corr_type = "TYPE_A_WATERFALL"
-            summary = f"TYPE A RALLY LOCK: Violent Surge ({velocity:.2f} ATR/b, BodyEff {body_efficiency*100:.0f}%) -> LOCK"
+            summary = f"VERTICAL SPIKE LOCK: Violent Surge ({velocity:.2f} ATR/b, BodyEff {body_efficiency*100:.0f}%) -> LOCK"
             
         elif csm_delta >= 1.0:
-            state = WaveState.TYPE_B_COMPRESSION_ARMED
+            state = WaveState.PREMIUM_RELOAD_ARMED
             permission = "WAIT"
             corr_type = "TYPE_B_COIL"
             summary = f"CSM OPPOSED WAIT: Flow Mismatch (Delta {csm_delta:+.2f}) -> WAIT"
             
         elif in_favorable_zone and is_compression and is_reclaim and csm_delta <= 0.2:
-            state = WaveState.RECLAIM_CONFIRMED_GO
+            state = WaveState.SUPPLY_REACTION_GO
             permission = "GO"
             corr_type = "TYPE_B_COIL"
-            summary = f"RECLAIM CONFIRMED GO: Type B Coil Reclaimed (DR {dr_pos*100:.1f}%, Reclaim {is_reclaim}) -> GO"
+            summary = f"SUPPLY REACTION GO: Premium Reload Rejection (DR {dr_pos*100:.1f}%, Reclaim {is_reclaim}) -> GO"
             
         elif in_favorable_zone and is_compression:
-            state = WaveState.TYPE_B_COMPRESSION_ARMED
+            state = WaveState.PREMIUM_RELOAD_ARMED
             permission = "ARM"
             corr_type = "TYPE_B_COIL"
-            summary = f"TYPE B COMPRESSION ARMED: Basing in Premium (DR {dr_pos*100:.1f}%, Overlap {overlap_ratio:.2f}) -> ARM"
+            summary = f"PREMIUM RELOAD ARMED: Basing in Premium SBR Roof (DR {dr_pos*100:.1f}%, Overlap {overlap_ratio:.2f}) -> ARM"
             
         else:
-            state = WaveState.TYPE_B_COMPRESSION_ARMED if in_favorable_zone else WaveState.TYPE_A_WATERFALL_LOCK
+            state = WaveState.PREMIUM_RELOAD_ARMED if in_favorable_zone else WaveState.VERTICAL_SPIKE_LOCK
             permission = "ARM" if in_favorable_zone else "WAIT"
             corr_type = "TYPE_B_COIL" if in_favorable_zone else "TYPE_A_WATERFALL"
             summary = f"EQUILIBRIUM: DR Pos {dr_pos*100:.1f}% -> {permission}"

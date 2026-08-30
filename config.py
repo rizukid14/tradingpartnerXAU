@@ -414,9 +414,6 @@ AI_MODE_SCHEDULE = [
 AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
-QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
-MONTE_CARLO_ENABLED = _getenv_bool("MONTE_CARLO_ENABLED", False)
-FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", False)
 MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: lesson learned & recent outcomes TIDAK di-inject ke prompt LLM (lesson M5-scalp toxic, bikin HOLD terus). Kode tetap ada, tinggal set True kalau mau aktif lagi.
 
 # --- ECONOMIC NEWS (kalender ekonomi, 20 Agustus) ---

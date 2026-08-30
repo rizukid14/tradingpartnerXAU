@@ -1229,23 +1229,32 @@ Body_Ratio       = abs(Close - Open) / (High - Low)</pre>
         <section id="ch12">
             <div class="section-header">
                 <span class="sec-badge">BAB 12</span>
-                <h2 class="sec-title">Arsitektur 2-Stage Quant Funnel & 2-Pass Sequential Jury</h2>
+                <h2 class="sec-title">Arsitektur 2-Stage Quant Funnel & Apex Paragon Fundamental FE</h2>
             </div>
             <div class="paper-card">
                 <div class="prose">
                     <p>
-                        Sistem memisahkan pemindaian data masif dari penalaran kognitif tingkat tinggi melalui arsitektur <strong>2-Pass Sequential Jury (~5.5 detik total)</strong>:
+                        Sistem memisahkan pemindaian data kuantitatif masif dari penalaran kognitif tingkat tinggi melalui arsitektur <strong>2-Pass Sequential Jury (~5.5 detik total)</strong> yang dipandu oleh <strong>Apex Paragon Macro Fundamental Engine (40% Weight)</strong>:
                     </p>
                     <div class="grid-2">
                         <div class="callout-card" style="--callout-accent: var(--accent-cyan);">
                             <strong>Pass 1: Panel Paralel (~3.0 detik)</strong><br>
-                            <strong>OpenAI o4-mini</strong> (Analisis Struktur Makro H4/D1 & Station Levels) + <strong>Gemini 3.1-Flash-Lite</strong> (Validasi Pola Price Action & Sumbu M30/M15). Keduanya menyusun proposal independen.
+                            <strong>OpenAI o4-mini</strong> (Analisis Struktur Makro H4/D1 & Station Levels) + <strong>Gemini 3.1-Flash-Lite</strong> (Validasi Pola Price Action & Sumbu M30/M15). Keduanya mengevaluasi berkas dossier dan konvergen makro fundamental.
                         </div>
                         <div class="callout-card" style="--callout-accent: var(--accent-rose);">
                             <strong>Pass 2: Devil's Advocate Audit (~1.5 detik)</strong><br>
-                            <strong>DeepSeek V4-Flash CRO</strong> mengaudit kedua proposal Pass 1 berbekal mikroskop <strong>24 Candle M5 Live</strong>. Bertugas mem-veto proposal jika mendeteksi falling knife, jebakan likuiditas, atau spread spike.
+                            <strong>DeepSeek V4-Flash CRO</strong> mengaudit kedua proposal Pass 1 berbekal mikroskop <strong>24 Candle M5 Live</strong> dan <strong>7 Master Hard Risk Veto Gates</strong>.
                         </div>
                     </div>
+                    <p style="margin-top: 16px;">
+                        <strong>Sistem Kualitas Setup 4-Grade (Setup Quality & Dynamic ATR Multipliers)</strong>:
+                    </p>
+                    <ul style="color: var(--text-secondary); padding-left: 20px; line-height: 1.8;">
+                        <li><strong>👑 GRADE S (God-Tier Setup)</strong>: MSE Sockets + SMC + CSM + Fundamental 100% Selaras &rarr; Full Size ($1.0\times$) + Multiplier TP $3.0\times\text{ATR}$ (Multi-Day Swing Hold).</li>
+                        <li><strong>🟢 GRADE A+ (High Conviction)</strong>: Setup Teknikal + Angin Fundamental Mendukung &rarr; Full Size ($1.0\times$) + Multiplier TP $2.0\times\text{ATR}$.</li>
+                        <li><strong>🟡 GRADE A (Pure Technical)</strong>: Pasar Tenang / Priced-In Equilibrium (Flat) &rarr; Standard Size ($1.0\times$) + Multiplier TP $1.5\times\text{ATR}$.</li>
+                        <li><strong>⚪ GRADE B (Defensive Sizing)</strong>: Ada friksi makro (Currency Conflict / Macro Headwind / Bank Holiday) &rarr; Reduced Size ($0.50\times$) + Multiplier TP $1.25\times\text{ATR}$ (Scalp TP1 Only).</li>
+                    </ul>
                 </div>
             </div>
         </section>
@@ -1254,32 +1263,32 @@ Body_Ratio       = abs(Close - Open) / (High - Low)</pre>
         <section id="ch13">
             <div class="section-header">
                 <span class="sec-badge">BAB 13</span>
-                <h2 class="sec-title">7 Hard Risk Veto Flags & Plafon Keamanan SL Intraday</h2>
+                <h2 class="sec-title">Master Institutional Hard Risk Veto Flags & Safety Bounds</h2>
             </div>
             <div class="paper-card">
                 <div class="prose">
                     <p>
-                        Jika DeepSeek CRO menyertakan salah satu dari <strong>7 Hard Risk Veto Flags</strong>, transaksi langsung <strong>DIBATALKAN MUTLAK (0% Eksekusi)</strong>:
+                        Jika DeepSeek CRO menyertakan salah satu dari <strong>Master Institutional Hard Risk Veto Flags</strong>, transaksi langsung <strong>DIBATALKAN MUTLAK (0% Eksekusi / Auto HOLD)</strong>:
                     </p>
                     <div class="table-responsive">
                         <table>
                             <thead>
-                                <tr><th>Risk Flag</th><th>Kondisi Bahaya di Chart</th><th>Tindakan Sistem</th></tr>
+                                <tr><th>Master Risk Flag</th><th>Kondisi Bahaya di Pasar</th><th>Tindakan Sistem</th></tr>
                             </thead>
                             <tbody>
-                                <tr><td><code>COUNTER_TREND_MOMENTUM</code></td><td>Proposal melawan arah lilin marubozu H1 yang sedang ekspansi</td><td>Hard Veto (0 Token Risk)</td></tr>
-                                <tr><td><code>HIGH_IMPACT_NEWS</code></td><td>Event berita ekonomi berstatus High-Impact dalam window &plusmn;6 jam</td><td>Hard Veto (Anti-Slippage)</td></tr>
-                                <tr><td><code>LIQUIDITY_TRAP</code></td><td>Entri berada tepat di depan kolam Equal Highs/Lows ritel</td><td>Hard Veto (Anti-Stop Hunt)</td></tr>
-                                <tr><td><code>FALLING_KNIFE_WATERFALL</code></td><td>Koreksi tajam tanpa pembentukan lantai basing di M5</td><td>Hard Veto (Anti-Catching Knife)</td></tr>
-                                <tr><td><code>UNMITIGATED_IMPULSE_CHASE</code></td><td>Proposal mengejar harga yang sudah bergerak &gt; 1.0x ATR</td><td>Hard Veto (Anti-FOMO)</td></tr>
-                                <tr><td><code>SPREAD_SPIKE</code></td><td>Spread melebihi 15% ATR H1 saat transisi sesi</td><td>Hard Veto (Anti-Fee Churn)</td></tr>
-                                <tr><td><code>SYSTEMIC_CURRENCY_DUMP</code></td><td>Mata uang Base sedang anjlok di keranjang global CSM</td><td>Hard Veto (Basket Protection)</td></tr>
+                                <tr><td><code>COUNTER_TREND_MOMENTUM</code></td><td>Proposal melawan arah tren utama H4/D1 atau air terjun <i>falling knife</i></td><td>Hard Veto (0 Token Risk)</td></tr>
+                                <tr><td><code>LIQUIDITY_TRAP</code></td><td>Entri berada tepat di depan kolam Equal Highs/Lows (EQH/EQL) atau atap SBR</td><td>Hard Veto (Anti-Stop Hunt)</td></tr>
+                                <tr><td><code>IMPULSE_CHASE</code></td><td>Proposal FOMO mengejar lilin panjang tanpa retest ke zona diskon</td><td>Hard Veto (Anti-FOMO)</td></tr>
+                                <tr><td><code>SYSTEMIC_CURRENCY_DUMP</code></td><td>Mata uang Base sedang dibuang massal di seluruh 7 pair Boitoki CSM</td><td>Hard Veto (Basket Protection)</td></tr>
+                                <tr><td><code>HIGH_IMPACT_NEWS</code></td><td>Tepat di jendela badai rilis berita Tier-1 (<i>The Storm</i> &plusmn;15-30 menit)</td><td>Hard Veto (Anti-Slippage)</td></tr>
+                                <tr><td><code>CURRENCY_CONFLICT</code></td><td>Kedua mata uang sama-sama kuat/lemah (<i>Tug-of-War / Choppy Sideways</i>)</td><td>Downgrade ke <b>GRADE B</b> (0.50x Lot Scalp)</td></tr>
+                                <tr><td><code>MACRO_HEADWIND</code></td><td>Melawan arah divergensi suku bunga Bank Sentral / <i>Carry Spread</i> ekstrem</td><td>Downgrade ke <b>GRADE B</b> (0.50x Lot Scalp)</td></tr>
                             </tbody>
                         </table>
                     </div>
                     <p>
                         <strong>Plafon Keamanan SL Intraday (Safety Ceiling)</strong>:
-                        Forex majors/cross dibatasi mutlak <strong>SL &le; 16.0 pips (160 pts)</strong> dan Gold <strong>SL &le; 2.5x ATR M30</strong>. Menjamin lot size proporsional dan melindungi modal dari swing drawdown.
+                        Forex majors/cross dibatasi mutlak <strong>SL &le; 16.0 pips (160 pts)</strong> dan JPY crosses <strong>SL &le; 20.0 pips (200 pts)</strong>. Menjamin lot size proporsional dan melindungi modal akun.
                     </p>
                 </div>
             </div>
@@ -1289,19 +1298,21 @@ Body_Ratio       = abs(Close - Open) / (High - Low)</pre>
         <section id="ch14">
             <div class="section-header">
                 <span class="sec-badge">BAB 14</span>
-                <h2 class="sec-title">Real-Time Dynamic Position Manager (Trailing, BEP & Stagnation Exit)</h2>
+                <h2 class="sec-title">Real-Time Position Manager & Risk-Weighted Slot Allocation</h2>
             </div>
             <div class="paper-card">
                 <div class="prose">
                     <p>
-                        Posisi aktif dikelola tiap 3 detik dengan protokol perlindungan modal berlapis:
+                        Posisi aktif dikelola tiap 3 detik dengan protokol perlindungan modal berlapis dan <strong>Risk-Weighted Slot Allocation (Opsi 2)</strong>:
                     </p>
                     <ul style="color: var(--text-secondary); padding-left: 20px; line-height: 1.8;">
-                        <li><strong>Partial Close 50% (TP1)</strong>: Aktif otomatis saat floating profit mencapai 45%–55% target TP. Cairkan separuh lot untuk mengamankan saldo real.</li>
-                        <li><strong>Pocket Profit Break-Even (BEP +15 pts)</strong>: Menggeser SL ke titik impas + 15 poin (1.5 pips) di atas harga masuk + komisi broker.</li>
+                        <li><strong>Risk-Weighted Slot Allocation (Opsi 2)</strong>: Kuota dihitung dari posisi <em>At-Risk</em> (maks 6). Posisi Grade S yang sudah mengunci TP1 dan berada di Risk-Free BEP ($0.00 Risk) <strong>TIDAK LAGI memakan kuota 6 slot</strong> risiko intraday (Plafon total akun &le; 8 & Free Margin &ge; 60%).</li>
+                        <li><strong>Partial Close 50% (TP1)</strong>: Snapped di Proximal Edge stasiun MSE terdekat dengan <em>Front-Running Pad ($0.15\times\text{ATR} + \text{Spread}$)</em>.</li>
+                        <li><strong>Milestone-Driven Break-Even (BEP)</strong>: Grade S ditunda ke 65%–70% TP (memberi nafas retest); Grade B cepat di 35%–40% TP.</li>
                         <li><strong>2-Stage Dynamic Trailing Stop</strong>:
-                            <br>• <em>Stage 1 (Breathing: 65% s/d &lt;90% TP)</em>: Berjarak 0.75x ATR H1 (floor 8.0 pips).
-                            <br>• <em>Stage 2 (Terminal Lock: &ge;90% TP)</em>: Berjarak 0.50x ATR M30 (floor 3.0 pips).
+                            <br>• <em>Grade S (Swing Breathing)</em>: Berjarak 1.25x ATR H1 (floor 12.0 pips) & imun dari time-decay 4 jam.
+                            <br>• <em>Grade A+/A (Standar)</em>: Berjarak 0.75x ATR H1 (floor 8.0 pips) &rarr; 0.50x ATR M30.
+                            <br>• <em>Grade B (Ketat)</em>: Berjarak 0.40x ATR M30 (floor 3.0 pips) & strict 4h exit.
                         </li>
                         <li><strong>Peak-Aware Time-Decay Stagnation Exit</strong>: Posisi yang tertahan &ge; 4 jam di rentang [-0.20R, +0.20R] ditutup bersih jika Peak MFE &lt; +0.30R.</li>
                         <li><strong>Pre-Rollover Shield (03:50–04:15 WIB)</strong>: Menutup posisi secara preventif jika jarak fisik ke SL &le; threshold spread rollover.</li>

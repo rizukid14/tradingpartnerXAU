@@ -297,8 +297,138 @@ def handle_macro_command(chat_id, symbol_input=None):
         send_telegram_msg(f"Error computing macro directive for `{symbol_input}`: `{e}`", chat_id=chat_id)
 
 
+def handle_help_command(chat_id):
+    """Sends the complete interactive command reference guide."""
+    lines = [
+        "📖 *PANDUAN LENGKAP COMMAND BOT TRADING*",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "🧭 *ANALISIS & STRATEGI MAKRO:*",
+        "• `/analisa <pair> [tf]` ➔ Analisis On-Demand 3-AI (o4-mini + Gemini + DeepSeek)",
+        "  _Contoh_: `/analisa GBPUSD H1` atau `/analisa USDJPY M30`",
+        "• `/macro [pair]` ➔ 6-TF Top-Down Macro Strategic Engine (Mandat, SBR/RBS, Target, Pantangan)",
+        "  _Contoh_: `/macro GBPUSD` (atau `/macro` untuk menu picker)",
+        "• `/fundamental [pair]` ➔ 8-Currency Composite Fundamental Scorecard & Conflict Matrix (Apex Paragon)",
+        "  _Contoh_: `/fund GBPUSD` atau `/fundamental`",
+        "• `/radar` ➔ Fast Radar Live Heatmap 26 Pairs (M1/M2/M3 A+ setups)",
+        "• `/csm` ➔ Boitoki Currency Strength Matrix & Net Basket Delta",
+        "• `/levels <pair>` ➔ Level teknikal LuxAlgo SMC, FRVP POC/VAL/VAH",
+        "",
+        "📰 *BERITA & SENTIMEN:*",
+        "• `/news` ➔ Kalender Berita Ekonomi & Bank Holiday (ForexFactory Dual-Source)",
+        "",
+        "💼 *MANAJEMEN AKUN & EKSEKUSI:*",
+        "• `/status` ➔ Status Akun Live MT5 (Equity, Balance, Daily P/L, Margin)",
+        "• `/posisi` ➔ Daftar Posisi Terbuka & Floating P/L",
+        "• `/close <ticket>` ➔ Tutup manual 1 tiket posisi tertentu",
+        "• `/closeall` ➔ 🚨 Tutup Darurat SEMUA posisi terbuka",
+        "• `/menu` ➔ Tampilkan Control Panel Utama",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "💡 _Bot beroperasi di Mode Scanner (26 FX Pairs | Weekend BTC)._"
+    ]
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "📡 [ SMC Radar ]", "callback_data": "cmd:radar"},
+                {"text": "🧭 [ MSE Macro ]", "callback_data": "cmd:macro_menu"}
+            ],
+            [
+                {"text": "🏛️ [ Fundamental ]", "callback_data": "cmd:fund"},
+                {"text": "📰 [ Berita ]", "callback_data": "cmd:news"}
+            ],
+            [
+                {"text": "« [ Menu ]", "callback_data": "cmd:menu"}
+            ]
+        ]
+    }
+    send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
+
+def handle_fundamental_command(chat_id, symbol_input=None):
+    """Sends the 8-Currency Composite Fundamental Scorecard & Pair Alignment."""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+
+        if symbol_input:
+            ev = apex_fundamental_engine.evaluate_pair(symbol_input)
+            if not ev.base:
+                send_telegram_msg(f"⚠️ Simbol `{symbol_input}` tidak valid atau tidak memiliki data fundamental.", chat_id=chat_id)
+                return
+
+            cat_lines = "\n".join([f"  {c}" for c in ev.recent_catalysts[:3]]) if ev.recent_catalysts else "  • Baseline Flat (Tidak ada kejutan baru)"
+            veto_line = f"\n🚨 *VETO AKTIF*: `{ev.hard_veto_flag}` ({ev.hard_veto_reason})" if ev.hard_veto_flag else ""
+
+            lines = [
+                f"🏛️ *APEX PARAGON FUNDAMENTAL: {ev.symbol}*",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"• *Base ({ev.base})* : Skor `{ev.base_score:+.2f}` │ Fase: `{ev.base_phase}`",
+                f"• *Quote ({ev.quote})*: Skor `{ev.quote_score:+.2f}` │ Fase: `{ev.quote_phase}`",
+                f"• *Net Delta*: `{ev.fundamental_delta:+.2f}` │ *Carry Spread*: `{ev.carry_spread:+.2f}%`",
+                f"• *Status*: {ev.status_badge}",
+                f"• *Setup Grade*: `{ev.setup_grade}` (Sizing: `{ev.sizing_modifier}x` lot)",
+                f"• *Mandat*: `{ev.action_directive}`{veto_line}",
+                "",
+                "📊 *Katalis & Peluruhan Terkini*:",
+                cat_lines,
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ Framework: `Apex Paragon 4-Tier`"
+            ]
+            kb = {
+                "inline_keyboard": [
+                    [{"text": f"[ 🧠 AI Analisa {ev.symbol} ]", "callback_data": f"analyze:{ev.symbol}_H1"}],
+                    [{"text": "🌐 [ Scorecard 8 Mata Uang ]", "callback_data": "cmd:fund"}, {"text": "« [ Menu ]", "callback_data": "cmd:menu"}]
+                ]
+            }
+            send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+            return
+
+        # Overall 8-Currency Scoreboard
+        scores = apex_fundamental_engine.compute_scores()
+        lines = [
+            "🏛️ *APEX PARAGON 8-CURRENCY FUNDAMENTAL SCORECARD*",
+            f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ Bobot: `Regime-Aware`\n",
+            "📊 *Peringkat Fundamental Mata Uang:*"
+        ]
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1].composite_fundamental_score, reverse=True)
+        for curr, sc in sorted_scores:
+            icon = "🟢" if sc.composite_fundamental_score > 0.15 else ("🔴" if sc.composite_fundamental_score < -0.15 else "⚪")
+            hol_str = " 🏖️" if sc.is_bank_holiday else ""
+            phase_str = f" `[{sc.reaction_phase}]`" if sc.reaction_phase != "PRICED_IN_EQUILIBRIUM" else ""
+            lines.append(f"• {icon} *{curr}*: `{sc.composite_fundamental_score:+.2f}` (Bunga `{sc.central_bank_rate}%` {sc.central_bank_cycle}){hol_str}{phase_str}")
+
+        lines.append("\n🎯 *Rekomendasi Pair Konvergen (Grade S & A+):*")
+        top_strong = sorted_scores[0][0]
+        top_weak = sorted_scores[-1][0]
+        lines.append(f"• 👑 *Top Long*: `{top_strong}{top_weak}` (Delta `{sorted_scores[0][1].composite_fundamental_score - sorted_scores[-1][1].composite_fundamental_score:+.2f}`) ➔ Kuat vs Lemah")
+
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("💡 _Ketik `/fund <pair>` (misal `/fund GBPUSD`) untuk evaluasi mendalam per-pair._")
+
+        kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "GBPUSD", "callback_data": "cmd:fund_GBPUSD"},
+                    {"text": "EURUSD", "callback_data": "cmd:fund_EURUSD"},
+                    {"text": "USDJPY", "callback_data": "cmd:fund_USDJPY"}
+                ],
+                [
+                    {"text": "GBPJPY", "callback_data": "cmd:fund_GBPJPY"},
+                    {"text": "EURJPY", "callback_data": "cmd:fund_EURJPY"},
+                    {"text": "AUDUSD", "callback_data": "cmd:fund_AUDUSD"}
+                ],
+                [
+                    {"text": "🔄 [ Refresh ]", "callback_data": "cmd:fund"},
+                    {"text": "« [ Menu ]", "callback_data": "cmd:menu"}
+                ]
+            ]
+        }
+        send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_fundamental_command: {e}")
+        send_telegram_msg(f"Error computing fundamental scorecard: `{e}`", chat_id=chat_id)
+
+
 def handle_news_command(chat_id):
-    """Sends the Upcoming High-Impact Economic Events Calendar (TradingView API / Deterministic)."""
+    """Sends the Upcoming High-Impact Economic Events & Bank Holidays (ForexFactory Dual-Source)."""
     try:
         from src.analytics import economic_calendar
         cal_obj = getattr(economic_calendar, "calendar", None)
@@ -308,14 +438,31 @@ def handle_news_command(chat_id):
 
         now = datetime.now(WIB)
         all_events = cal_obj.get_events(now)
-        
-        recent_news = [e for e in all_events if (now - timedelta(hours=6)) <= e["dt"] < now]
-        upcoming_news = [e for e in all_events if now <= e["dt"] <= (now + timedelta(hours=48))]
+        today_date = now.date()
+
+        active_holidays = [
+            e for e in all_events
+            if e.get("impact") == "HOLIDAY" and e["dt"].date() == today_date
+        ]
+        recent_news = [
+            e for e in all_events
+            if e.get("impact") != "HOLIDAY" and (now - timedelta(hours=6)) <= e["dt"] < now
+        ]
+        upcoming_news = [
+            e for e in all_events
+            if e.get("impact") != "HOLIDAY" and now <= e["dt"] <= (now + timedelta(hours=48))
+        ]
 
         lines = [
-            "📰 *KALENDER BERITA HIGH-IMPACT (TradingView / Investing.com)*",
-            f"🕒 `{now.strftime('%H:%M:%S WIB')}` | Horizon: `±48 Jam`\n"
+            "📰 *KALENDER BERITA & BANK HOLIDAY (ForexFactory Dual-Source)*",
+            f"🕒 `{now.strftime('%H:%M:%S WIB')}` │ Horizon: `±48 Jam`\n"
         ]
+
+        if active_holidays:
+            lines.append("🏖️ *HARI LIBUR BANK AKTIF HARI INI:*")
+            for h in active_holidays:
+                lines.append(f"• 🏖️ *[{h.get('country')}]* `{h['name']}` ➔ _Likuiditas tipis & spread melebar!_")
+            lines.append("")
 
         if recent_news:
             lines.append("⚡ *Baru Saja Dirilis (6 Jam Terakhir):*")
@@ -323,7 +470,9 @@ def handle_news_command(chat_id):
                 dt_str = ne['dt'].strftime('%H:%M WIB')
                 hours_ago = (now - ne['dt']).total_seconds() / 3600
                 country = ne.get('country', 'US').strip()
-                lines.append(f"• `[{dt_str}]` ⚠️ *[{country}]* `{ne['name']}` _({hours_ago:.1f}h lalu)_")
+                imp = ne.get('impact', 'HIGH')
+                icon = "🔴" if imp == "HIGH" else "🟠"
+                lines.append(f"• `[{dt_str}]` {icon} *[{country}]* `{ne['name']}` _({hours_ago:.1f}h lalu)_")
             lines.append("")
 
         if upcoming_news:
@@ -332,13 +481,16 @@ def handle_news_command(chat_id):
                 dt_str = ne['dt'].strftime('%a %d %b %H:%M WIB')
                 hours_in = (ne['dt'] - now).total_seconds() / 3600
                 country = ne.get('country', 'US').strip()
-                impact = ne.get('impact', 'HIGH')
-                lines.append(f"• `[{ne['dt'].strftime('%H:%M WIB')}]` 🚨 *[{country}]* `{ne['name']}`\n   ↳ _{dt_str} (dalam {hours_in:.1f} jam)_ `[{impact}]`")
+                imp = ne.get('impact', 'HIGH')
+                icon = "🔴" if imp == "HIGH" else "🟠"
+                fore_str = f" _(Fore: {ne['forecast']})_" if ne.get('forecast') else ""
+                prev_str = f" _(Prev: {ne['previous']})_" if ne.get('previous') else ""
+                lines.append(f"• `[{ne['dt'].strftime('%H:%M WIB')}]` {icon} *[{country}]* `{ne['name']}`{fore_str}{prev_str}\n   ↳ _{dt_str} (dalam {hours_in:.1f} jam)_ `[{imp}]`")
         else:
-            lines.append("🟢 *Status Pasar Tenang:*\n_Tidak ada rilis berita High-Impact dalam 48 jam ke depan._")
+            lines.append("🟢 *Status Pasar Tenang:*\n_Tidak ada rilis berita High/Medium-Impact dalam 48 jam ke depan._")
 
         lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("🛡️ *News Guard*: _Stage 2 Jury otomatis menolak trade jika rilis ≤ 6 jam terdeteksi._")
+        lines.append("🛡️ *News Guard*: _Stage 2 Jury otomatis menolak trade jika rilis High-Impact ≤ 6 jam terdeteksi._")
 
         kb = {
             "inline_keyboard": [
@@ -382,11 +534,15 @@ def _build_main_menu_keyboard():
                 {"text": "🌐 [ Boitoki CSM Flow ]", "callback_data": "cmd:csm"}
             ],
             [
-                {"text": "📰 [ News Calendar ]", "callback_data": "cmd:news"},
-                {"text": "💼 [ Active Positions ]", "callback_data": "cmd:positions"}
+                {"text": "📰 [ News & Holiday ]", "callback_data": "cmd:news"},
+                {"text": "🏛️ [ Apex Fundamental ]", "callback_data": "cmd:fund"}
             ],
             [
+                {"text": "💼 [ Active Positions ]", "callback_data": "cmd:positions"},
                 {"text": "📊 [ Account Status ]", "callback_data": "cmd:status"}
+            ],
+            [
+                {"text": "📖 [ Help / Panduan ]", "callback_data": "cmd:help"}
             ]
         ]
     }
@@ -866,8 +1022,10 @@ def _process_update(update):
         cmd = cmd_raw.split("@")[0]  # Remove @botname suffix
         args = parts[1:] if len(parts) > 1 else []
 
-        if cmd in ("/start", "/menu", "/help"):
+        if cmd in ("/start", "/menu"):
             handle_menu_command(target_chat)
+        elif cmd in ("/help", "/bantuan", "/command", "/commands"):
+            handle_help_command(target_chat)
         elif cmd in ("/csm", "/strength", "/currency"):
             handle_csm_command(target_chat)
         elif cmd in ("/radar", "/scan", "/scanner"):
@@ -915,6 +1073,9 @@ def _process_update(update):
             handle_status_command(target_chat)
         elif cmd in ("/news", "/kalender", "/berita", "/calendar", "/event", "/events"):
             handle_news_command(target_chat)
+        elif cmd in ("/fundamental", "/fund", "/makrofund", "/bias"):
+            sym = args[0] if args else None
+            handle_fundamental_command(target_chat, symbol_input=sym)
         elif any(p in cmd for p in ("gbpusd", "eurjpy", "gbpaud", "audcad", "eurchf", "audchf", "cadchf", "xauusd", "btcusd", "gold", "btc")):
             tf_custom = args[0] if args else None
             run_ondemand_analysis(parts[0], target_chat, timeframe_input=tf_custom)
@@ -956,6 +1117,13 @@ def _process_update(update):
             handle_close_all(target_chat)
         elif data == "cmd:menu":
             handle_menu_command(target_chat)
+        elif data in ("cmd:help", "cmd:commands"):
+            handle_help_command(target_chat)
+        elif data in ("cmd:fund", "cmd:fundamental"):
+            handle_fundamental_command(target_chat)
+        elif data.startswith("cmd:fund_"):
+            sym_req = data.split("cmd:fund_", 1)[1]
+            handle_fundamental_command(target_chat, symbol_input=sym_req)
         elif data in ("cmd:macro", "cmd:macro_menu"):
             handle_macro_picker_menu(target_chat)
         elif data.startswith("cmd:macro_"):

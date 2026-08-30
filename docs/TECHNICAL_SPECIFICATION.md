@@ -46,6 +46,7 @@ Untuk mencegah kerancuan dan menjaga konsistensi di seluruh antarmuka (Terminal 
 10. [Bab 10: Risk Engine & Account Capital Preservation (risk_engine.py)](#bab-10-risk-engine--account-capital-preservation-risk_enginepy)
 11. [Bab 11: Real-Time Position Management Lifecycle (position_manager.py)](#bab-11-real-time-position-management-lifecycle-position_managerpy)
 12. [Bab 12: Dedicated On-Demand OpenAI o4-mini & Telegram Controller](#bab-12-dedicated-on-demand-openai-o4-mini--telegram-controller)
+13. [Bab 13: Apex Paragon Macro Fundamental Engine & Dual-Source News Layer](#bab-13-apex-paragon-macro-fundamental-engine--dual-source-news-layer)
 
 ---
 
@@ -192,6 +193,14 @@ flowchart TD
    - Jika 1 model saja memilih HOLD atau berlawanan arah $\rightarrow$ **OTOMATIS HOLD**.
 3. **High-Confidence Split (+25% Boost)**:
    - Jika 3 model sepakat bulat dengan rata-rata Confidence $\ge 75\%$, bot membuka 2 tiket posisi sekaligus @ $0.625\times\text{Base Lot}$ (Total $1.25\times$).
+4. **7 Master Institutional Hard Risk Veto Flags**:
+   - `COUNTER_TREND_MOMENTUM`: Melawan tren H4/D1 atau air terjun *falling knife*.
+   - `LIQUIDITY_TRAP`: Jebakan sapuan likuiditas di pucuk EQH/EQL atau beli di SBR.
+   - `IMPULSE_CHASE`: FOMO mengejar candle panjang tanpa retest ke zona diskon.
+   - `SYSTEMIC_CURRENCY_DUMP`: Keranjang mata uang sedang dibuang di 7 pair CSM.
+   - `HIGH_IMPACT_NEWS`: Berada tepat di tengah badai rilis berita Tier-1 (*The Storm* $\pm 15-30$ menit).
+   - `CURRENCY_CONFLICT`: Perang tarik tambang kedua mata uang (*Tug-of-War / Choppy Sideways*).
+   - `MACRO_HEADWIND`: Melawan arah divergensi suku bunga Bank Sentral / *Carry Spread* ekstrem.
 
 ---
 
@@ -245,9 +254,58 @@ Berjalan pada *fast-loop* 3 detik di `main.py`:
    - Menggunakan model tunggal **OpenAI `o4-mini`** yang dilengkapi berkas konteks kuantitatif **MSE 6-TF Native**.
    - Menghasilkan respon analisa instan (<1.5 detik) dan menghemat $66\%$ token API.
 2. **Interactive 2-Way Controller**:
-   - **Menu Interaktif (`/menu`)**: Akses satu ketukan ke *MSE Macro Strategy*, *SMC Radar 26 Pairs*, *CSM Flow*, *News Calendar*, dan *Account Status*.
+   - **Menu Interaktif (`/menu`)**: Akses satu ketukan ke *MSE Macro Strategy*, *SMC Radar 26 Pairs*, *CSM Flow*, *News Calendar*, *Apex Fundamental*, dan *Account Status*.
    - **Macro Symbol Picker (`/macro`)**: Grid 9 tombol instrumen pilihan untuk membaca arahan makro instan (<100ms, 0 Token).
    - **Smart High-Impact Alert Gate**: Notifikasi radar otomatis hanya dikirim saat terjadi transisi kritis **`Permission GO`** (`alert_radar_go_transition`).
+
+---
+
+## Bab 13: Apex Paragon Macro Fundamental Engine & Dual-Source News Layer
+
+1. **Dual-Source Ingestion & Bank Holiday Guard**:
+   - **Primary**: ForexFactory Official JSON CDN (`nfs.faireconomy.media/ff_calendar_thisweek.json`, latensi <0.2s).
+   - **Fallback**: TradingView API (`economic-calendar.tradingview.com/events`) & Central Bank Overrides.
+   - **Bank Holiday Detection**: Mendeteksi libur pasar (*UK Summer Bank Holiday*) $\rightarrow$ menurunkan grade ke **GRADE B**, memangkas lot ke $0.50\times$, dan melarang *breakout chase*.
+2. **4-Stage Lifecycle of News Catalysts**:
+   - **The Storm (0–30m)**: Veto / Freeze (mencegah slippage).
+   - **The Calm (30m–6h)**: Favor Entry (menunggangi *orderly drift* institusi).
+   - **The Regime Extension (1–3 Hari)**: Trend-Aligned Pullback (M2/M3).
+   - **Priced-In Equilibrium (4+ Hari)**: Pure Technical Mode (murni MSE Sockets & SMC).
+3. **Tiered Half-Life Exponential Decay**:
+   $$\text{Score}(t) = \text{Score}_0 \cdot e^{-\lambda \cdot \Delta t}$$
+   - Tier 1 (FOMC/NFP/CPI): Half-Life $36\text{ Jam}$.
+   - Tier 2 (PMI/GDP/Retail): Half-Life $12\text{ Jam}$.
+   - Tier 3 (Headlines/Speeches): Half-Life $4\text{ Jam}$.
+4. **4-Tier Setup Quality & Dynamic ATR Multipliers**:
+   - 👑 **GRADE S**: Konvergensi Penuh (MSE + SMC + CSM + Fundamental 100% Selaras) $\rightarrow$ *Full Size + Multiplier TP $3.0\times\text{ATR}$ (Multi-Day Swing Hold)*.
+   - 🟢 **GRADE A+**: Setup Teknikal + Angin Fundamental Mendukung $\rightarrow$ *Full Size + Multiplier TP $2.0\times\text{ATR}$*.
+   - 🟡 **GRADE A**: Pasar Tenang / *Priced-In Flat* $\rightarrow$ *Standard Size + Multiplier TP $1.5\times\text{ATR}$ (Murni MSE & SMC)*.
+   - ⚪ **GRADE B**: Ada friksi makro (*Currency Conflict / Macro Headwind / Bank Holiday*) $\rightarrow$ *Reduced Sizing ($0.50\times$) + Multiplier TP $1.25\times\text{ATR}$ (Scalp TP1 Only)*.
+5. **Telegram Command**: `/fundamental` (Scoreboard 8 Mata Uang) & `/fund <pair>` (Evaluasi mendalam per-pair).
+
+---
+
+## Bab 14: Hybrid Confluence, Symmetrical Wave State & Risk-Weighted Slot Allocation
+
+1. **Symmetrical Dual-Directional Wave State Engine**:
+   - 🟢 **Siklus BUY (Lantai Diskon)**: `EXPANSION_WAIT_BULL` $\rightarrow$ `WATERFALL_LOCK` $\rightarrow$ `DISCOUNT_RELOAD_ARMED` $\rightarrow$ **`DEMAND_REACTION_GO 🟢`**.
+   - 🔴 **Siklus SELL (Atap Premium SBR)**: `EXPANSION_WAIT_BEAR` $\rightarrow$ `VERTICAL_SPIKE_LOCK` $\rightarrow$ `PREMIUM_RELOAD_ARMED` $\rightarrow$ **`SUPPLY_REACTION_GO 🟢`**.
+2. **Kuantifikasi Konflik (Severe vs Mild Conflict)**:
+   - 🔴 **Severe Conflict ($|S_{\text{base}}| \ge 0.50$ & $|S_{\text{quote}}| \ge 0.50$ / Super Hawkish Clash)**: **`REJECT_VETO` (Hard Veto)**.
+   - 🟡 **Mild Conflict ($|S| < 0.50$ / Friksi Minor)**: **`GRADE_B` ($0.50\times$ Sizing / TP1 Scalp)**.
+3. **Hybrid Confluence Targeting (MSE Station + Dynamic ATR Envelope)**:
+   - Target TP selalu **menempel (*snapped*) ke level stasiun fisik MSE terdekat** di dalam amplop ATR Grade.
+   - **Front-Running Pad**: $\text{TP}_{\text{final}} = \text{Station} \mp (0.15\times\text{ATR} + \text{Spread})$ untuk mencegah harga berbalik arah 3 pips sebelum garis stasiun.
+4. **Milestone-Driven Data-Backed BEP & Trailing**:
+   - **Grade S**: BEP ditunda di $65\%-70\%$ TP + Trailing lebar $1.25\times\text{ATR H1}$ (floor 120 pts FX) + Imun dari Time-Decay Stagnation 4 jam.
+   - **Grade A+/A**: BEP standar di $45\%-55\%$ TP + Trailing $0.75\times\text{ATR H1}$ (floor 80 pts).
+   - **Grade B**: BEP cepat di $35\%-40\%$ TP + Trailing ketat $0.40\times\text{ATR M30}$ (floor 30 pts) + Strict 4h Exit.
+5. **Risk-Weighted Slot Allocation dengan 5 Lapisan Kontrol Portofolio (Opsi 2)**:
+   - **Lapisan 1 (Kuota At-Risk)**: Maksimal **6 posisi berisiko** ($SL < Entry$). Posisi yang sudah mengunci TP1 dan berada di Risk-Free BEP (Downside Risk $\$0.00$) tidak lagi memakan kuota risk.
+   - **Lapisan 2 (Plafon Absolut MT5)**: Maksimal **8 total tiket terbuka** di akun (termasuk yang sudah BEP) guna mencegah penumpukan margin broker.
+   - **Lapisan 3 (Free Margin Buffer)**: Wajib Free Margin Ratio $\ge 60\%$.
+   - **Lapisan 4 (Konsentrasi Keranjang Valas)**: Maksimal **3 posisi terbuka per mata uang** (USD, EUR, JPY, dll) untuk mencegah risiko korelasi terselubung.
+   - **Lapisan 5 (Konsentrasi Simbol)**: Strict 1-Trade Limit per Symbol.
 
 ---
 *Dokumen ini adalah Single Source of Truth teknikal resmi untuk arsitektur bot trading produksi branch `quant-trade`.*

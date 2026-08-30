@@ -134,33 +134,40 @@ class EconomicCalendar:
     EVENT_AFTER_HOURS = 6
 
     # =========================================================================
-    #  Dynamic fetch from TradingView economic calendar API (data = Investing.com)
-    #  https://economic-calendar.tradingview.com/events
-    #  Free, no API key. importance: -1 low / 0 medium / 1 high.
-    #  Toggle & whitelist di config.py (env-configurable):
-    #    ECONOMIC_NEWS_ENABLED=true/false, ECONOMIC_NEWS_TTL_HOURS=6,
-    #    ECONOMIC_NEWS_COUNTRIES="US,GB,EU,CH,JP,AU,CA"
-    #  Fetch tiap 6 jam -> cache file lokal di data/.
-    #  Fallback ke jadwal statis OVERRIDES kalau fetch gagal (tidak pernah kosong).
+    #  Dual-Source Dynamic Fetch:
+    #  1. PRIMARY : ForexFactory Official JSON Feed (Fastly CDN, highly accurate FX impact & Bank Holidays)
+    #  2. FALLBACK: TradingView Economic Calendar API
     # =========================================================================
-    FETCH_URL             = "https://economic-calendar.tradingview.com/events"
-    FETCH_CACHE_FILE      = os.path.join("data", "economic_events_cache.json")
-    FETCH_LOOKBACK_HOURS  = 12                 # ambil 12h ke belakang (recently released)
-    FETCH_LOOKAHEAD_HOURS = 48                 # + 48h ke depan
-    FETCH_IMPORTANCE_MIN  = 1                  # HIGH only (importance >= 1)
-    # Safety-net keyword: event penting yang importance-nya null/0 di API tetap
-    # masuk kalau judulnya match (FOMC Minutes kadang importance kosong).
-    FETCH_KEYWORDS        = ("FOMC", "CPI", "NFP", "Non Farm", "Payroll", "Payrolls",
-                             "Minutes", "Rate Decision", "PMI", "GDP", "PCE", "Retail Sales",
-                             "Unemployment", "Employment", "Inflation", "Revision", "Benchmark",
-                             "Fed", "Powell", "Warsh", "Speaks", "Speech", "Chairman", "Governor",
-                             "Press Conference", "Testimony", "Interest Rate")
-    # Map kode negara API -> mata uang (untuk filter per-pair)
+    FETCH_FOREXFACTORY_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    FETCH_TRADINGVIEW_URL  = "https://economic-calendar.tradingview.com/events"
+    FETCH_CACHE_FILE       = os.path.join("data", "economic_events_cache.json")
+    FETCH_LOOKBACK_HOURS   = 12
+    FETCH_LOOKAHEAD_HOURS  = 48
+    FETCH_IMPORTANCE_MIN   = 1
+
+    FETCH_KEYWORDS = (
+        "FOMC", "CPI", "NFP", "Non Farm", "Payroll", "Payrolls",
+        "Minutes", "Rate Decision", "PMI", "GDP", "PCE", "Retail Sales",
+        "Unemployment", "Employment", "Inflation", "Revision", "Benchmark",
+        "Fed", "Powell", "Warsh", "Speaks", "Speech", "Chairman", "Governor",
+        "Press Conference", "Testimony", "Interest Rate", "Official Cash Rate",
+        "Overnight Rate", "Monetary Policy", "Bank Holiday", "Holiday"
+    )
+
     COUNTRY_CURRENCY = {
         "US": "USD", "GB": "GBP", "EU": "EUR", "JP": "JPY",
-        "AU": "AUD", "CA": "CAD", "CH": "CHF",
+        "AU": "AUD", "CA": "CAD", "CH": "CHF", "NZ": "NZD", "CN": "CNY",
+        "USD": "USD", "GBP": "GBP", "EUR": "EUR", "JPY": "JPY",
+        "AUD": "AUD", "CAD": "CAD", "CHF": "CHF", "NZD": "NZD", "CNY": "CNY",
     }
-    _HEADERS = {
+
+    _HEADERS_FF = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"),
+        "Accept": "application/json",
+    }
+
+    _HEADERS_TV = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"),
         "Accept": "application/json",
@@ -178,14 +185,12 @@ class EconomicCalendar:
             return (ECONOMIC_NEWS_ENABLED, ECONOMIC_NEWS_TTL_HOURS,
                     ECONOMIC_NEWS_COUNTRIES, ECONOMIC_NEWS_GLOBAL_KEYWORDS)
         except Exception:
-            return (True, 6, ["US", "GB", "EU", "CH", "JP", "AU", "CA"], ())
+            return (True, 6, ["US", "GB", "EU", "CH", "JP", "AU", "CA", "NZ", "USD", "GBP", "EUR", "CHF", "JPY", "AUD", "CAD", "NZD"], ())
 
     @staticmethod
     def _symbol_currencies(symbol: str) -> set:
-        """Extract base/quote currencies from a symbol like 'GBPUSD-ECNc' -> {GBP, USD}.
-        Non-FX (XAUUSD/BTCUSD) -> set() -> hanya event global yang kena."""
+        """Extract base/quote currencies from a symbol like 'GBPUSD-ECNc' -> {GBP, USD}."""
         sym = (symbol or "").upper()
-        # Pisahkan suffix broker: ambil 6 huruf pertama kalau FX (3+3)
         body = sym.split("-")[0].split(".")[0]
         if len(body) == 6 and body[:3] in {"GBP", "USD", "EUR", "JPY", "AUD", "CAD", "CHF", "NZD"} \
                 and body[3:] in {"GBP", "USD", "EUR", "JPY", "AUD", "CAD", "CHF", "NZD"}:
@@ -196,46 +201,49 @@ class EconomicCalendar:
         """
         Per-pair relevance filter:
         - Event GLOBAL (FOMC/NFP/Powell/Trump speech/Fed Chair) -> semua symbol.
-        - Event negara lain -> hanya symbol yang mengandung mata uang negara tsb
-          (mis. ECB -> EURJPY/EURCHF saja; BoJ -> EURJPY saja; US CPI -> GBPUSD/USDCAD).
-        - Symbol non-FX (XAU/BTC) -> hanya event global.
+        - Event negara lain -> hanya symbol yang mengandung mata uang negara tsb.
+        - Non-FX (XAU/BTC) -> hanya event USD/Global.
+        - China (CNY) -> AUD dan NZD.
         """
         _, _, countries, global_keywords = self._cfg()
         title = event.get("name", "")
         country = event.get("country", "")
-        # Global US event?
-        if country == "US" and any(k.lower() in title.lower() for k in global_keywords):
+        currency = event.get("currency") or self.COUNTRY_CURRENCY.get(country)
+
+        # Global US event
+        if (country in ("US", "USD")) and any(k.lower() in title.lower() for k in global_keywords):
             return True
-        # Currency relevance
-        ccy = self.COUNTRY_CURRENCY.get(country)
-        if not ccy:
+
+        if not currency:
             return False
+
         sym_ccys = self._symbol_currencies(symbol)
         if not sym_ccys:
-            return False
-        return ccy in sym_ccys
+            return currency == "USD"
+
+        # China events affect AUD and NZD
+        if currency == "CNY" and any(c in sym_ccys for c in ("AUD", "NZD")):
+            return True
+
+        return currency in sym_ccys
 
     def _is_relevant_country(self, country: str) -> bool:
-        """Whitelist negara dari config."""
+        """Whitelist check."""
         _, _, countries, _ = self._cfg()
-        return (country or "").upper() in countries
+        c_upper = (country or "").upper()
+        return c_upper in countries or self.COUNTRY_CURRENCY.get(c_upper) in countries
 
     def __init__(self):
         self._events = []
-        # Generate current + next year so the schedule always covers ahead
         this_year = datetime.now(WIB).year
         for y in [this_year, this_year + 1]:
             self._events.extend(_generate_recurring(y))
         self._events.extend(OVERRIDES)
         self._events.sort(key=lambda e: e["dt"])
-        # Dynamic (API-fetched) events; dimuat dari cache file kalau ada.
         self._dynamic_events = []
         self._fetched_at = 0.0
         self._load_cache()
 
-    # -------------------------------------------------------------------------
-    #  Dynamic fetch (TradingView API, data Investing.com)
-    # -------------------------------------------------------------------------
     def _load_cache(self):
         """Load previously fetched events from disk (best-effort)."""
         try:
@@ -251,6 +259,10 @@ class EconomicCalendar:
                             "dt": datetime.fromisoformat(e["dt"]),
                             "impact": e.get("impact", "HIGH"),
                             "country": e.get("country", ""),
+                            "currency": e.get("currency", self.COUNTRY_CURRENCY.get(e.get("country", ""), "")),
+                            "forecast": e.get("forecast"),
+                            "previous": e.get("previous"),
+                            "actual": e.get("actual")
                         })
                     except Exception:
                         continue
@@ -259,33 +271,114 @@ class EconomicCalendar:
             self._dynamic_events = []
             self._fetched_at = 0.0
 
-    def _save_cache(self):
+    def _save_cache(self, source: str = "forexfactory"):
         """Persist fetched events to disk (best-effort)."""
         try:
             os.makedirs(os.path.dirname(self.FETCH_CACHE_FILE), exist_ok=True)
             with open(self.FETCH_CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump({
                     "fetched_at": self._fetched_at,
+                    "source": source,
                     "events": [
-                        {"name": e["name"], "dt": e["dt"].isoformat(),
-                         "impact": e["impact"], "country": e.get("country", "")}
+                        {
+                            "name": e["name"],
+                            "dt": e["dt"].isoformat(),
+                            "impact": e["impact"],
+                            "country": e.get("country", ""),
+                            "currency": e.get("currency", ""),
+                            "forecast": e.get("forecast"),
+                            "previous": e.get("previous"),
+                            "actual": e.get("actual")
+                        }
                         for e in self._dynamic_events
                     ],
-                }, f)
+                }, f, indent=2)
         except Exception:
             pass
 
+    def _fetch_forexfactory(self, now: datetime) -> list[dict]:
+        """
+        Primary Provider: Fetch live weekly calendar from ForexFactory JSON API.
+        Accurate folder impacts (High, Medium, Low, Holiday).
+        """
+        import ssl
+        req = urllib.request.Request(self.FETCH_FOREXFACTORY_URL, headers=self._HEADERS_FF)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+
+        events = []
+        lookback = now - timedelta(hours=self.FETCH_LOOKBACK_HOURS)
+        lookahead = now + timedelta(hours=self.FETCH_LOOKAHEAD_HOURS)
+
+        for e in raw:
+            try:
+                title = (e.get("title") or "").strip()
+                ccy = (e.get("country") or "").upper().strip()
+                raw_date = e.get("date") or ""
+                imp_str = (e.get("impact") or "").strip()
+
+                if not raw_date or not title:
+                    continue
+
+                dt_obj = datetime.fromisoformat(raw_date)
+                dt_wib = dt_obj.astimezone(WIB)
+
+                if not (lookback <= dt_wib <= lookahead):
+                    continue
+
+                if imp_str == "High":
+                    impact = "HIGH"
+                elif imp_str == "Medium":
+                    impact = "MEDIUM"
+                elif imp_str in ("Holiday", "Non-Economic") or "holiday" in title.lower():
+                    impact = "HOLIDAY"
+                elif any(k.lower() in title.lower() for k in self.FETCH_KEYWORDS):
+                    impact = "MEDIUM"
+                else:
+                    impact = "LOW"
+
+                if impact in ("HIGH", "MEDIUM", "HOLIDAY"):
+                    events.append({
+                        "name": title,
+                        "dt": dt_wib,
+                        "impact": impact,
+                        "country": ccy,
+                        "currency": ccy,
+                        "forecast": e.get("forecast"),
+                        "previous": e.get("previous"),
+                        "actual": e.get("actual")
+                    })
+            except Exception:
+                continue
+
+        seen = set()
+        unique = []
+        for e in sorted(events, key=lambda x: x["dt"]):
+            key = (e["name"], e["dt"].isoformat())
+            if key not in seen:
+                seen.add(key)
+                unique.append(e)
+        return unique
+
     def _fetch_tradingview(self, now: datetime) -> list[dict]:
         """
-        Fetch high-impact events from TradingView economic calendar API.
-        Returns list of {name, dt (WIB), impact, country} - empty on failure.
+        Secondary Fallback Provider: Fetch high-impact events from TradingView economic calendar API.
         """
+        import ssl
         _, _, countries, _ = self._cfg()
         frm = (now - timedelta(hours=self.FETCH_LOOKBACK_HOURS)).strftime("%Y-%m-%d")
         to = (now + timedelta(hours=self.FETCH_LOOKAHEAD_HOURS)).strftime("%Y-%m-%d")
-        url = f"{self.FETCH_URL}?{urllib.parse.urlencode({'from': frm, 'to': to})}"
-        req = urllib.request.Request(url, headers=self._HEADERS)
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        url = f"{self.FETCH_TRADINGVIEW_URL}?{urllib.parse.urlencode({'from': frm, 'to': to})}"
+        req = urllib.request.Request(url, headers=self._HEADERS_TV)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         raw = payload.get("result", []) if isinstance(payload, dict) else []
         events = []
@@ -298,20 +391,25 @@ class EconomicCalendar:
                     imp_n = 0
                 country = (e.get("country") or "").upper()
                 title = e.get("title") or ""
-                # Whitelist negara (dari config)
                 if not self._is_relevant_country(country):
                     continue
-                # High-impact only: importance >= 1 ATAU keyword match (safety net)
                 if imp_n < self.FETCH_IMPORTANCE_MIN and not any(
                         k.lower() in title.lower() for k in self.FETCH_KEYWORDS):
                     continue
-                # date = UTC ISO (Z) -> WIB
                 dt_utc = datetime.fromisoformat(e["date"].replace("Z", "+00:00"))
                 dt_wib = dt_utc.astimezone(WIB)
-                events.append({"name": title, "dt": dt_wib, "impact": "HIGH", "country": country})
+                events.append({
+                    "name": title,
+                    "dt": dt_wib,
+                    "impact": "HIGH" if imp_n >= 1 else "MEDIUM",
+                    "country": country,
+                    "currency": self.COUNTRY_CURRENCY.get(country, country),
+                    "forecast": e.get("forecast"),
+                    "previous": e.get("previous"),
+                    "actual": e.get("actual")
+                })
             except Exception:
                 continue
-        # sort + dedup by (name, dt) — API kadang return duplikat
         seen = set()
         unique = []
         for e in sorted(events, key=lambda x: x["dt"]):
@@ -321,38 +419,43 @@ class EconomicCalendar:
                 unique.append(e)
         return unique
 
-    def get_events(self, now: datetime, symbol: str = None) -> list[dict]:
+    def get_events(self, now: datetime = None, symbol: str = None) -> list[dict]:
         """
-        Best source of events: cache fresh (<6h) -> fetch API -> cache lama ->
-        jadwal statis OVERRIDES/recurring. Never raises, never empty.
-        Kalau symbol dikasih -> filter per-pair relevance (global events untuk
-        semua, event negara hanya untuk pair yang mengandung mata uangnya).
+        Best source of events: cache fresh (<6h) -> ForexFactory (Primary) ->
+        TradingView (Fallback) -> Cache lama -> Jadwal statis OVERRIDES/recurring.
         """
         now = now or datetime.now(WIB)
         enabled, ttl_hours, _, _ = self._cfg()
         if enabled:
-            # 1) cache fresh?
             if (now.timestamp() - self._fetched_at) < ttl_hours * 3600 and self._dynamic_events:
                 events = self._dynamic_events
             else:
-                # 2) fetch API (max 1x per TTL)
+                fetched = []
+                source_used = "forexfactory"
                 try:
-                    fetched = self._fetch_tradingview(now)
-                    if fetched:
-                        self._dynamic_events = fetched
-                        self._fetched_at = now.timestamp()
-                        self._save_cache()
-                        events = fetched
-                    elif self._dynamic_events:
-                        # 3) cache lama (stale tapi ada) - lebih baik dari kosong
-                        events = self._dynamic_events
-                    else:
-                        events = self._events
+                    fetched = self._fetch_forexfactory(now)
                 except Exception:
-                    events = self._dynamic_events if self._dynamic_events else self._events
+                    fetched = []
+
+                if not fetched:
+                    try:
+                        fetched = self._fetch_tradingview(now)
+                        source_used = "tradingview"
+                    except Exception:
+                        fetched = []
+
+                if fetched:
+                    self._dynamic_events = fetched
+                    self._fetched_at = now.timestamp()
+                    self._save_cache(source=source_used)
+                    events = fetched
+                elif self._dynamic_events:
+                    events = self._dynamic_events
+                else:
+                    events = self._events
         else:
-            # toggle off -> jadwal statis
             events = self._events
+
         if symbol:
             events = [e for e in events if self._event_matches_symbol(e, symbol)]
         return events
@@ -365,27 +468,35 @@ class EconomicCalendar:
 
     def get_context(self, now=None, symbol: str = None) -> str:
         """
-        Returns a compact markdown block for prompt injection, but ONLY when
-        a high-impact event is imminent (within EVENT_BEFORE_HOURS) OR was
-        recently released (within EVENT_AFTER_HOURS).
-        Filter per-pair: global events (FOMC/NFP/Powell/Trump) untuk semua symbol,
-        event negara lain hanya untuk pair yang mengandung mata uangnya.
-        Returns "" (empty) otherwise - saves tokens on quiet candles and
-        avoids injecting far-future events the LLM doesn't need to act on.
+        Returns a compact markdown block for prompt injection, including upcoming,
+        recent, and active Bank Holidays.
         """
         now = now or datetime.now(WIB)
         events = self.get_events(now, symbol=symbol)
+
+        today_date = now.date()
+        active_holidays = [
+            e for e in events
+            if e.get("impact") == "HOLIDAY" and e["dt"].date() == today_date
+        ]
+
         upcoming = [
             e for e in events
-            if now <= e["dt"] <= now + timedelta(hours=self.EVENT_BEFORE_HOURS)
+            if e.get("impact") != "HOLIDAY" and now <= e["dt"] <= now + timedelta(hours=self.EVENT_BEFORE_HOURS)
         ]
         recent = [
             e for e in events
-            if now - timedelta(hours=self.EVENT_AFTER_HOURS) <= e["dt"] < now
+            if e.get("impact") != "HOLIDAY" and now - timedelta(hours=self.EVENT_AFTER_HOURS) <= e["dt"] < now
         ]
-        if not upcoming and not recent:
+
+        if not upcoming and not recent and not active_holidays:
             return ""
+
         lines = []
+        if active_holidays:
+            holidays_str = ", ".join([f"[{h.get('country')}] {h['name']}" for h in active_holidays])
+            lines.append(f"### 🏖️ BANK HOLIDAY ALERT: {holidays_str} today -- expect thin liquidity & wider spreads")
+
         if upcoming:
             lines.append(f"### UPCOMING HIGH-IMPACT ECONOMIC EVENTS (next {self.EVENT_BEFORE_HOURS}h)")
             for e in upcoming[:4]:
@@ -394,6 +505,7 @@ class EconomicCalendar:
                 country = (e.get("country") or "").strip()
                 prefix = f"[{country}] " if country else ""
                 lines.append(f"- {prefix}{e['name']} in {hours:.1f}h ({e['dt'].strftime('%a %d %b %H:%M WIB')}) [{e['impact']}]")
+
         if recent:
             lines.append(f"### RECENTLY RELEASED HIGH-IMPACT EVENTS (last {self.EVENT_AFTER_HOURS}h) -- volatility may persist, do not fade the move")
             for e in recent[:4]:
@@ -402,8 +514,10 @@ class EconomicCalendar:
                 country = (e.get("country") or "").strip()
                 prefix = f"[{country}] " if country else ""
                 lines.append(f"- {prefix}{e['name']} {hours:.1f}h ago ({e['dt'].strftime('%a %d %b %H:%M WIB')}) [{e['impact']}]")
+
         return "\n".join(lines) + "\n"
 
 
 # Singleton instance
 calendar = EconomicCalendar()
+

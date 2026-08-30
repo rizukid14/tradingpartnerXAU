@@ -983,36 +983,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
 
-    # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
-    randomness_str = ""
-    if getattr(config, "QUANT_ANALYSIS_ENABLED", False):
-        try:
-            from src.analytics import market_randomness
-            rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
-            ft = rand_info.get('fat_tail', {})
-            tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
-            randomness_str = (
-                f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
-                f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
-            )
-        except Exception:
-            pass
-
-    quant_prob_str = ""
-    if getattr(config, "MONTE_CARLO_ENABLED", False):
-        try:
-            from src.analytics import quant_probability
-            tf_mins = 30 if config.is_crypto(symbol) else 5
-            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-            quant_prob_str = (
-                f"- Quant Monte Carlo Probabilities (1,000 paths): "
-                f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
-                f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
-                f"Est. Time: {q_res['estimated_time_str']}\n"
-            )
-        except Exception:
-            pass
-
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
     # reflects real 30-minute volatility. XAU df is M15 (swing) - ATR M15 ~819 pts.
 
@@ -1127,21 +1097,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
                 recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"
         except Exception:
             pass
-
-    forecast_str = ""
-    if getattr(config, "FORECAST_ENABLED", False) and getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        try:
-            from src.analytics import forecast_engine
-            forecast_str = forecast_engine.forecaster.get_forecast_context()
-        except Exception:
-            pass
-    if forecast_str:
-        forecast_str = (
-            "\n### MULTI-HORIZON FORECAST (separate model - informational only, not a rule)\n"
-            f"{forecast_str}\n"
-            "(NEUTRAL or disagreeing forecast does not require HOLD; aligned forecast "
-            "does not by itself justify a trade.)\n"
-        )
 
     calendar_str = ""
     news_guard_str = ""
@@ -1282,7 +1237,7 @@ Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason 
 {micro_candles_str}
 {momentum_summary_str}
 {atr_gate_str}
-{randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
+{whisper_str}{lessons_str}{recent_outcomes_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1943,6 +1898,16 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
             calendar_block = ""
     calendar_text = calendar_block.strip() if calendar_block else "No High-Impact News releases within +/- 6 hours"
 
+    # === APEX PARAGON MACRO FUNDAMENTAL SCORECARD ===
+    fund_block = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_block = apex_fundamental_engine.generate_llm_dossier_block(sym)
+        if fund_block:
+            fund_block = f"\n{fund_block.strip()}\n"
+    except Exception:
+        fund_block = ""
+
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
@@ -1970,7 +1935,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 {csm_block}
 {atlas_dna_block}
 {strat_block}
-## 3. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
+## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
 - Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
 - Structural Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
 - Nearest Bullish Order Block (OB): {getattr(candidate, 'bullish_ob_zone', '') or 'None active nearby'}
@@ -1987,12 +1952,13 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1
 - Station Context: Your SL and TP MUST reference the Atlas DNA station ladder. If you REVISE, snap your TP to the nearest favorable station and anchor SL behind the nearest opposing station.
 {candles_block}
-## 4. ECONOMIC CONTEXT & NEWS SHIELD
+## 4. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT
+{fund_block}
 - Calendar Context: {calendar_text}
 
 ## 5. EVALUATION DIRECTIVE
 Trade Permission & Confluence Hierarchy:
-- Trend & Direction: Defined by D1/H4 Macro Compass.
+- Trend & Direction: Defined by D1/H4 Macro Compass & Apex Paragon Fundamental Scorecard.
 - Wave State Permission: H1 Wave State Machine ensures we never chase running impulses (Phase 1) or catch falling knives (Phase 2). Trade is only permitted in Mature Basing (Phase 3) or Base Reclaim (Phase 4).
 - POI Location: H1 Dealing Range Discount (<= 0.50) / Deep Discount (<= 0.382) & SMC Order Blocks / FRVP POC.
 - Reaction Timing: M5 live wicks/displacement at the POI confirm that reaction has started before pulling trigger.
@@ -2008,10 +1974,10 @@ Evaluate the proposal with full institutional depth:
 - If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type (MUST be a realistic shallow retest within 0.1x to 1.0x ATR from trigger price; do NOT pick deep or obsolete multi-day Order Blocks)
 - If market is plunging/surging with strong opposing momentum, instant fake-break (< 2 bars), or trapped in chop -> select "REJECT"
 
-## 6. RESPONSE FORMAT (MANDATORY STRICT JSON ONLY)
-Provide a comprehensive, high-conviction analysis detailing:
-1. Macro & D1/H4 context (50/100-day position, ADR room, PWH/PWL interaction)
-2. SMC structure & Liquidity (OB/FVG targets, avoidance of EQH/EQL traps)
+## 6. JURY OUTPUT FORMAT (STRICT JSON)
+You must submit your assessment with:
+1. Verdict: "APPROVE", "REVISE", or "REJECT"
+2. Suggested entry type, entry price, SL, TP (mandatory R:R >= 1.25)
 3. M5 micro-flow audit (absence of falling knife, presence of rejection wicks)
 4. Definite trade thesis and exact SL/TP placement justification
 
@@ -2026,7 +1992,7 @@ Respond strictly in valid JSON:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 20 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW" | "FALLING_KNIFE_WATERFALL" | "UNMITIGATED_IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP",
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
   "reasoning": "Detailed 3-5 sentence institutional thesis covering: (1) D1/H4 macro alignment, (2) SMC Order Block/FVG validity, (3) M5 micro flow & wick confirmation, and (4) precise mathematical justification for chosen SL and TP."
 }}
 """
@@ -2121,7 +2087,7 @@ Respond strictly in the same JSON format:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW" | "FALLING_KNIFE_WATERFALL" | "UNMITIGATED_IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP",
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
   "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
 }}
 """

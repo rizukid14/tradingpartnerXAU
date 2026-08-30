@@ -87,6 +87,8 @@ class MacroStrategicDirective:
     hard_circuit_breaker: bool = False
     action_tier: str = "WATCH_ONLY"
     contingency_target: float = 0.0
+    fundamental_backing: str = ""
+    fundamental_grade: str = "GRADE_A"
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -405,16 +407,17 @@ class MacroStrategicEngine:
             action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
             
             sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
-            tp1_price = round(entry_anchor - (1.5 * sl_dist), digits)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_price = round(entry_anchor - max(1.25 * sl_dist, 1.5 * sl_dist) + front_pad, digits)
             
             # Look for SMC Bullish Order Block or H4 RBS hurdle as intermediate TP2 milestone
             valid_bull_obs = [ob.get('top', 0.0) for ob in bull_obs if ob.get('top', 0.0) < tp1_price and (entry_anchor - ob.get('top', 0.0)) <= 5.0 * sl_dist and (entry_anchor - ob.get('top', 0.0)) >= 2.0 * sl_dist]
             if valid_bull_obs:
-                tp2_price = round(max(valid_bull_obs) + (spread_pts * pt), digits)
+                tp2_price = round(max(valid_bull_obs) + front_pad, digits)
             elif inter_rbs_h4 < tp1_price and (entry_anchor - inter_rbs_h4) <= 5.0 * sl_dist and (entry_anchor - inter_rbs_h4) >= 2.0 * sl_dist:
-                tp2_price = inter_rbs_h4
+                tp2_price = round(inter_rbs_h4 + front_pad, digits)
             elif floor_station < tp1_price and (entry_anchor - floor_station) <= 6.0 * sl_dist:
-                tp2_price = floor_station
+                tp2_price = round(floor_station + front_pad, digits)
             else:
                 tp2_price = round(entry_anchor - (3.0 * sl_dist), digits)
 
@@ -451,12 +454,12 @@ class MacroStrategicEngine:
                 macro_bias_score += 0.15
             if last_d1_bullish:
                 macro_bias_score += 0.10
-            macro_bias_score = round(min(1.0, max(0.40, macro_bias_score)), 2)
+            macro_bias_score = round(max(0.40, min(1.0, macro_bias_score)), 2)
 
-            entry_anchor = rbr_entry if (rbr_entry and rbr_entry < curr_mid) else (round(sub_floor + (0.02 * atr_h1), digits))
+            entry_anchor = rbr_entry if (rbr_entry and rbr_entry < curr_mid) else micro_rbs_h1
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
-            structural_floor = rbr_floor if rbr_floor else inter_rbs_h4
-
+            structural_floor = rbr_floor if rbr_floor else recent_frontier_low
+            
             calculated_sl = structural_floor - anti_wick_buffer
             if is_crypto:
                 min_sl_dist = max(1.20 * atr_h1, 300.0)
@@ -474,22 +477,23 @@ class MacroStrategicEngine:
                 calculated_sl = entry_anchor - max_sl_dist
             intraday_sl = round(calculated_sl, digits)
 
-            macro_invalidation = round(sub_floor - (0.20 * atr_d1), digits)
+            macro_invalidation = round(recent_frontier_low - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
             hard_circuit_breaker = bool((curr_mid <= sub_floor + (0.15 * atr_h1)) or (curr_mid < macro_invalidation))
             action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
-            tp1_price = round(entry_anchor + (1.5 * sl_dist), digits)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_price = round(entry_anchor + max(1.25 * sl_dist, 1.5 * sl_dist) - front_pad, digits)
             
             # Look for SMC Bearish Order Block or H4 SBR hurdle as intermediate TP2 milestone
             valid_bear_obs = [ob.get('bottom', 0.0) for ob in bear_obs if ob.get('bottom', 0.0) > tp1_price and (ob.get('bottom', 0.0) - entry_anchor) <= 5.0 * sl_dist and (ob.get('bottom', 0.0) - entry_anchor) >= 2.0 * sl_dist]
             if valid_bear_obs:
-                tp2_price = round(min(valid_bear_obs) - (spread_pts * pt), digits)
+                tp2_price = round(min(valid_bear_obs) - front_pad, digits)
             elif inter_sbr_h4 > tp1_price and (inter_sbr_h4 - entry_anchor) <= 5.0 * sl_dist and (inter_sbr_h4 - entry_anchor) >= 2.0 * sl_dist:
-                tp2_price = inter_sbr_h4
+                tp2_price = round(inter_sbr_h4 - front_pad, digits)
             elif ceiling_station > tp1_price and (ceiling_station - entry_anchor) <= 6.0 * sl_dist:
-                tp2_price = ceiling_station
+                tp2_price = round(ceiling_station - front_pad, digits)
             else:
                 tp2_price = round(entry_anchor + (3.0 * sl_dist), digits)
 
@@ -677,6 +681,33 @@ class MacroStrategicEngine:
         else:
             regime_stability = "STABLE"
 
+        # Integrate Apex Paragon Macro Fundamental Engine Confluence
+        fundamental_backing = ""
+        fundamental_grade = "GRADE_A"
+        try:
+            from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+            fund_eval = apex_fundamental_engine.evaluate_pair(symbol)
+            fundamental_backing = fund_eval.action_directive
+            fundamental_grade = fund_eval.setup_grade
+
+            # Check alignment boost
+            if ("BUY" in primary_directive or "BULLISH" in macro_bias) and fund_eval.fundamental_delta > 0.15:
+                confidence_score = min(95, confidence_score + 10)
+                if fund_eval.setup_grade == "GRADE_A_PLUS" and action_tier == "TIER_1_ACTION_EXECUTE":
+                    fundamental_grade = "GRADE_S"
+            elif ("SELL" in primary_directive or "BEARISH" in macro_bias) and fund_eval.fundamental_delta < -0.15:
+                confidence_score = min(95, confidence_score + 10)
+                if fund_eval.setup_grade == "GRADE_A_PLUS" and action_tier == "TIER_1_ACTION_EXECUTE":
+                    fundamental_grade = "GRADE_S"
+
+            if fund_eval.hard_veto_flag:
+                forbidden_traps.append(f"CRITICAL VETO [{fund_eval.hard_veto_flag}]: {fund_eval.hard_veto_reason}")
+                if fund_eval.hard_veto_flag in ("HIGH_IMPACT_NEWS", "CURRENCY_CONFLICT"):
+                    hard_circuit_breaker = True
+                    action_tier = "TIER_5_CIRCUIT_BREAKER_HALT"
+        except Exception:
+            pass
+
         directive = MacroStrategicDirective(
             symbol=symbol,
             calculation_time_ms=calc_ms,
@@ -726,11 +757,15 @@ class MacroStrategicEngine:
             hard_circuit_breaker=hard_circuit_breaker,
             action_tier=action_tier,
             contingency_target=contingency_target_val,
+            fundamental_backing=fundamental_backing,
+            fundamental_grade=fundamental_grade,
             raw_payload={
                 "symbol": symbol,
                 "calculation_time_ms": calc_ms,
                 "engine_token_cost": 0,
                 "macro_bias_score": macro_bias_score,
+                "fundamental_grade": fundamental_grade,
+                "fundamental_backing": fundamental_backing,
                 "regime_stability": regime_stability,
                 "hard_circuit_breaker": hard_circuit_breaker,
                 "action_tier": action_tier,
