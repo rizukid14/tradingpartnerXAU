@@ -112,33 +112,6 @@ def answer_callback_query(callback_query_id, text=None, show_alert=False):
         pass
 
 
-def _build_main_menu_keyboard():
-    """Builds clean institutional inline keyboard for main menu."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD-ECNc"},
-                {"text": "USDJPY H1", "callback_data": "analyze:USDJPY-ECNc"},
-            ],
-            [
-                {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY-ECNc"},
-                {"text": "XAUUSD H1", "callback_data": "analyze:XAUUSD-ECNc"},
-            ],
-            [
-                {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"},
-                {"text": "🌐 [ Boitoki CSM Radar ]", "callback_data": "cmd:csm"},
-            ],
-            [
-                {"text": "[ Active Positions ]", "callback_data": "cmd:positions"},
-                {"text": "[ Daily Summary ]", "callback_data": "cmd:rekap"},
-            ],
-            [
-                {"text": "[ Account Status ]", "callback_data": "cmd:status"},
-            ]
-        ]
-    }
-
-
 def handle_csm_command(chat_id):
     """Sends the Dual-Horizon Boitoki CSM & Flow Velocity report."""
     try:
@@ -153,15 +126,10 @@ def handle_csm_command(chat_id):
         sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True)
         sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
 
-        majors_22 = [
-            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD",
-            "EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURCAD",
-            "GBPJPY", "GBPCHF", "GBPAUD", "GBPCAD",
-            "AUDJPY", "AUDCHF", "AUDCAD",
-            "CADJPY", "CHFJPY", "NZDCAD"
-        ]
+        raw_syms = getattr(config, "SCANNER_SYMBOLS", [])
+        majors_26 = [s.replace("-ECNc", "").replace("-ECN", "").replace(".c", "") for s in raw_syms]
         deltas = []
-        for p in majors_22:
+        for p in majors_26:
             base, quote = p[:3], p[3:6]
             b_s = scores_m15.get(base, 0.0) if scores_m15 else 0.0
             q_s = scores_m15.get(quote, 0.0) if scores_m15 else 0.0
@@ -174,9 +142,6 @@ def handle_csm_command(chat_id):
         in_str = "\n".join([f"• *{p}*: `+{d:.1f} pts` (Bullish Inflow)" for p, d in top_in if d > 0]) or "• None"
         out_str = "\n".join([f"• *{p}*: `{d:.1f} pts` (Bearish Outflow)" for p, d in reversed(top_out) if d < 0]) or "• None"
 
-        usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else 0.0
-        gold_impact = "USD Outflow (Bullish Fuel)" if usd_m15 <= -5.0 else ("USD Inflow (Bearish Pressure)" if usd_m15 >= 5.0 else "Balanced / Neutral")
-
         msg = (
             f"🌐 *DUAL-HORIZON BOITOKI CSM RADAR*\n"
             f"Timestamp: `{time.strftime('%H:%M:%S WIB')}` | Horizon: `24h Macro vs 4h Session`\n\n"
@@ -185,15 +150,13 @@ def handle_csm_command(chat_id):
             f"⚡ *4-Hour Session Velocity (M15)*:\n"
             f"{' | '.join([f'`{c} {s:+.1f}`' for c, s in sorted_m15])}\n\n"
             f"🚀 *Top Inflow Pairs (M15)*:\n{in_str}\n\n"
-            f"🔻 *Top Outflow Pairs (M15)*:\n{out_str}\n\n"
-            f"🪙 *Gold Dollar Pressure (XAUUSD)*:\n"
-            f"• 4h USD Velocity: `{usd_m15:+.2f}` ({gold_impact})\n"
+            f"🔻 *Top Outflow Pairs (M15)*:\n{out_str}\n"
         )
 
         kb = {
             "inline_keyboard": [
                 [{"text": "🔄 Refresh CSM", "callback_data": "cmd:csm"}],
-                [{"text": "📡 SMC Radar 22 Pairs", "callback_data": "cmd:radar"}],
+                [{"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"}],
                 [{"text": "« Back to Menu", "callback_data": "cmd:menu"}]
             ]
         }
@@ -270,8 +233,8 @@ def handle_indicators_command(chat_id, symbol_input=None):
 
         kb = {
             "inline_keyboard": [
-                [{"text": f"[ 🤖 3-AI Analisa {clean_sym} ]", "callback_data": f"analyze:{clean_sym}_H1"}],
-                [{"text": "[ 📡 22-Pair SMC Radar ]", "callback_data": "cmd:radar"}, {"text": "[ ☰ Menu ]", "callback_data": "cmd:menu"}]
+                [{"text": f"[ 🧠 AI Analisa {clean_sym} ]", "callback_data": f"analyze:{clean_sym}_H1"}],
+                [{"text": "[ 📡 26-Pair SMC Radar ]", "callback_data": "cmd:radar"}, {"text": "[ ☰ Menu ]", "callback_data": "cmd:menu"}]
             ]
         }
 
@@ -323,7 +286,7 @@ def handle_macro_command(chat_id, symbol_input=None):
 
         kb = {
             "inline_keyboard": [
-                [{"text": f"[ 🤖 3-AI Analisa {clean_sym} ]", "callback_data": f"analyze:{clean_sym}_H1"}],
+                [{"text": f"[ 🧠 AI Analisa {clean_sym} ]", "callback_data": f"analyze:{clean_sym}_H1"}],
                 [{"text": "[ 📊 Level SMC ]", "callback_data": f"cmd:levels_{clean_sym}"}, {"text": "[ ☰ Menu ]", "callback_data": "cmd:menu"}]
             ]
         }
@@ -384,7 +347,7 @@ def handle_news_command(chat_id):
                     {"text": "🌐 [ Boitoki CSM ]", "callback_data": "cmd:csm"}
                 ],
                 [
-                    {"text": "📡 [ SMC Radar 22 ]", "callback_data": "cmd:radar"},
+                    {"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"},
                     {"text": "« [ Menu ]", "callback_data": "cmd:menu"}
                 ]
             ]
@@ -400,28 +363,30 @@ def _build_main_menu_keyboard():
     return {
         "inline_keyboard": [
             [
+                {"text": "🧭 [ 6-TF MSE Macro Strategy ]", "callback_data": "cmd:macro_menu"}
+            ],
+            [
                 {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD_H1"},
-                {"text": "USDJPY H1", "callback_data": "analyze:USDJPY_H1"}
+                {"text": "USDJPY M30", "callback_data": "analyze:USDJPY_M30"}
             ],
             [
                 {"text": "EURUSD H1", "callback_data": "analyze:EURUSD_H1"},
-                {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY_H1"}
+                {"text": "GBPJPY M30", "callback_data": "analyze:GBPJPY_M30"}
             ],
             [
-                {"text": "EURJPY H1", "callback_data": "analyze:EURJPY_H1"},
-                {"text": "CADJPY H1", "callback_data": "analyze:CADJPY_H1"}
+                {"text": "EURJPY M30", "callback_data": "analyze:EURJPY_M30"},
+                {"text": "CADJPY M30", "callback_data": "analyze:CADJPY_M30"}
             ],
             [
                 {"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"},
-                {"text": "🌐 [ Boitoki CSM Radar ]", "callback_data": "cmd:csm"}
+                {"text": "🌐 [ Boitoki CSM Flow ]", "callback_data": "cmd:csm"}
             ],
             [
-                {"text": "🧭 [ MSE Macro Strategy ]", "callback_data": "cmd:macro_menu"},
-                {"text": "📰 [ News Calendar ]", "callback_data": "cmd:news"}
+                {"text": "📰 [ News Calendar ]", "callback_data": "cmd:news"},
+                {"text": "💼 [ Active Positions ]", "callback_data": "cmd:positions"}
             ],
             [
-                {"text": "📊 [ Open Positions ]", "callback_data": "cmd:positions"},
-                {"text": "🛡️ [ Account Status ]", "callback_data": "cmd:status"}
+                {"text": "📊 [ Account Status ]", "callback_data": "cmd:status"}
             ]
         ]
     }
@@ -911,8 +876,10 @@ def _process_update(update):
             sym = args[0] if args else config.SYMBOL
             handle_indicators_command(target_chat, symbol_input=sym)
         elif cmd in ("/macro", "/directive", "/kompas"):
-            sym = args[0] if args else config.SYMBOL
-            handle_macro_command(target_chat, symbol_input=sym)
+            if args:
+                handle_macro_command(target_chat, symbol_input=args[0])
+            else:
+                handle_macro_picker_menu(target_chat)
         elif cmd in ("/status", "/akun"):
             handle_status_command(target_chat)
         elif cmd in ("/posisi", "/positions", "/open"):
@@ -931,9 +898,9 @@ def _process_update(update):
                     "Usage: `/analisa <symbol> [timeframe]`\n\n"
                     "Examples:\n"
                     "• `/analisa GBPUSD` (Default Sesi)\n"
-                    "• `/analisa XAUUSD M15`\n"
-                    "• `/analisa GBPUSD M30`\n"
-                    "• `/analisa USDJPY H4`\n"
+                    "• `/analisa EURUSD H1`\n"
+                    "• `/analisa USDJPY M30`\n"
+                    "• `/analisa GBPJPY H4`\n"
                     "• `/analisa BTCUSD D1`",
                     chat_id=target_chat
                 )

@@ -280,7 +280,7 @@ class MarketScanner:
     """
     2-Stage Quant Funnel Market Scanner:
     - Stage 1A (Slow Macro Layer): Updates D1/H4 Trend Compass, Asian High/Low, and Dealing Range every hour.
-    - Stage 1B (Fast Execution Radar): Scans live ticks / M5/M15 wicks across 22 symbols every 60 seconds (0 Tokens).
+    - Stage 1B (Fast Execution Radar): Scans live ticks / M5/M15 wicks across 26 symbols every 60 seconds (0 Tokens).
     """
 
     def __init__(self, symbols: Optional[List[str]] = None):
@@ -324,7 +324,7 @@ class MarketScanner:
         """
         Filters symbols based on empirical expected value (EV) per trading session.
         - Tokyo Session (08:00 - 14:00 WIB): Only allow proven positive-EV pairs (Asia/Commodities).
-        - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured 22 pairs.
+        - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured 26 pairs.
         """
         clean_sym = symbol.replace('-ECNc', '').replace('-ECN', '').replace('.c', '').replace('m', '').replace('_', '')
         if 8 <= hour_wib < 14:
@@ -880,7 +880,7 @@ class MarketScanner:
 
     def scan_fast_radar(self, mt5_connector=None) -> List[CandidateSetup]:
         """
-        Fast Execution Radar: Runs every 60 seconds across 22 symbols.
+        Fast Execution Radar: Runs every 60 seconds across 26 symbols.
         Checks live tick / M5-M15 wicks against cached macro levels.
         Returns list of qualifying CandidateSetup objects (0 Tokens).
         """
@@ -1701,7 +1701,7 @@ class MarketScanner:
                 lines.append(f"• *{c.symbol}* [{d_str}] -> {c.setup_type} @ {c.trigger_price} (SL: {c.suggested_sl}, TP: {c.suggested_tp})")
         else:
             lines.append("━" * 36)
-            lines.append("📡 *Fast Radar:* 22 Pasang dipantau, 0 sinyal terpicu saat ini.")
+            lines.append("📡 *Fast Radar:* 26 Pasang dipantau, 0 sinyal terpicu saat ini.")
 
         return "\n".join(lines)
 

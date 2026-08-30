@@ -780,7 +780,7 @@ class MacroStrategicEngine:
 
     def refresh_all_symbols(self, symbols: List[str], mt5_connector=None) -> Dict[str, MacroStrategicDirective]:
         """
-        Batch refreshes all scanner symbols in sequence (<0.5s for 27 symbols).
+        Batch refreshes all scanner symbols in sequence (<0.5s for 26 symbols).
         """
         t0 = time.perf_counter()
         results = {}

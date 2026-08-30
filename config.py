@@ -248,7 +248,7 @@ FX_PAIR_SYMBOLS = [
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 22 if SCANNER_MODE else 4)  # max symbols in rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 26 if SCANNER_MODE else 4)  # max symbols in rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "H1").upper()
 TIMEFRAME_MAP = {

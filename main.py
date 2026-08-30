@@ -2054,9 +2054,10 @@ def main():
     if config.SCANNER_MODE and scanner is not None and scanner.macro_cache:
         for sym_k, m_v in scanner.macro_cache.items():
             p_st = m_v.get('permission_state', 'WAIT')
+            w_st = m_v.get('wave_state', '')
             s_dir = m_v.get('strat_dir')
             b_st = s_dir.primary_execution_directive if s_dir else m_v.get('direction_state', 'NEUTRAL')
-            _last_known_macro_states[sym_k] = (p_st, b_st)
+            _last_known_macro_states[sym_k] = (p_st, w_st, b_st)
 
     last_candle_time = None
     startup_run = True
