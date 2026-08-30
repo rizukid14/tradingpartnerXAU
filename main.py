@@ -2239,13 +2239,13 @@ def main():
 
                                     diff_list = []
                                     if p_prev != p_st:
-                                        diff_list.append(f"Perm: {p_prev}➔{p_st}")
+                                        diff_list.append(f"Perm: {p_prev or 'INIT'} ➔ {p_st}")
                                     if w_prev != w_st:
-                                        diff_list.append(f"Wave: {w_prev}➔{w_st}")
+                                        diff_list.append(f"Wave: {w_prev or 'INIT'} ➔ {w_st}")
                                     if b_prev != b_st:
-                                        diff_list.append(f"Directive: {b_prev}➔{b_st}")
+                                        diff_list.append(f"Directive: {b_prev or 'INIT'} ➔ {b_st}")
                                     
-                                    diff_summary = " | ".join(diff_list) if diff_list else f"{p_prev}➔{p_st}"
+                                    diff_summary = " │ ".join(diff_list) if diff_list else f"{p_prev or 'INIT'} ➔ {p_st}"
                                     changed_details.append(f"{clean_s} ({diff_summary})")
 
                                     # Trigger Telegram high-impact alert ONLY when transitioning to GO
