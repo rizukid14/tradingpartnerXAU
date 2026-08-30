@@ -1944,8 +1944,8 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: {sym} | Asset: {asset_desc(sym)}
 - Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {fp(float(candidate.trigger_price))}
-- Macro Compass: {candidate.macro_compass} | H4 Status: {h4_status}
-- H1 Wave State: {getattr(candidate, 'wave_state', 'DEMAND_REACTION_GO')} ({getattr(candidate, 'wave_summary', 'Permitted')})
+- Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_status or 'N/A'}
+- H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
 - Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_used_val*100:.1f}%
 - Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%

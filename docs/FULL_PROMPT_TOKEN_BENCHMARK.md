@@ -9,10 +9,10 @@
 
 | Komponen Evaluasi | Karakter | Kata | Token (o200k: OpenAI o4-mini) | Token (cl100k: DeepSeek/Claude) | Estimasi Biaya API |
 |---|---|---|---|---|---|
-| **Pass 1 Dossier (OpenAI)** | 8,140 | 1,111 | **2,142** | 2,200 | ~$0.0006 |
-| **Pass 1 Dossier (Gemini)** | 8,140 | 1,111 | **2,142** | 2,200 | ~$0.0001 |
-| **Pass 2 Devil's CRO (DeepSeek)** | 10,197 | 1,388 | 2,683 | **2,755** | ~$0.0003 |
-| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **26,477** | **3,610** | **~6,967 Token Total** | **~7,155 Token Total** | **~$0.0010 per Setup** |
+| **Pass 1 Dossier (OpenAI)** | 8,321 | 1,137 | **2,189** | 2,248 | ~$0.0006 |
+| **Pass 1 Dossier (Gemini)** | 8,321 | 1,137 | **2,189** | 2,248 | ~$0.0001 |
+| **Pass 2 Devil's CRO (DeepSeek)** | 10,378 | 1,414 | 2,731 | **2,804** | ~$0.0003 |
+| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **27,020** | **3,688** | **~7,109 Token Total** | **~7,300 Token Total** | **~$0.0010 per Setup** |
 
 > [!NOTE]
 > Karena arsitektur **2-Stage Quant Funnel** kita hanya memicu Stage 2 pada **8–15 setup A+ per hari** (sisanya disaring radar lokal 0 token), maka total biaya API harian adalah **~$0.015 / hari (kurang dari Rp 250,- per hari)**!
@@ -29,11 +29,11 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: EURUSD | Asset: Forex Currency Pair (EURUSD)
 - Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.08800
-- Macro Compass:  | H4 Status: BEARISH (-1)
-- H1 Wave State:  ()
-- Intraday Dealing Range: 50.0% (EQUILIBRIUM)
+- Macro Compass: D1_BEARISH_TREND | H4 Status: BEARISH (-1)
+- H1 Wave State: PREMIUM_RELOAD_ARMED — H1 supply reload at 72% DR; Direction SELL enabled
+- Intraday Dealing Range: 72.0% (EXTREME PREMIUM)
 - Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 6850.0%
-- Volatility: ATR(14)=0.0 pts | Current Spread=20 pts | Rejection Wick: 0.0%
+- Volatility: ATR(14)=82.0 pts | Current Spread=20 pts | Rejection Wick: 45.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
 - Compression Duration / Range Age: 18 hours (MATURE_COMPRESSION_ARMED)
@@ -81,7 +81,7 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Station Ladder: ... 1.07000 -> [1.08000] -> [1.09000] <CURRENT 1.08800> -> [1.10000] -> 1.11000 ...
 - Distances: to Lower 0.00800 | to Base 0.00200 | to Upper 0.01200
 - Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
-  * Reference TP (SELL): 1.08020 | Reference SL: 1.10020
+  * Reference TP (SELL): 1.08032 | Reference SL: 1.10049
 
 
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
@@ -96,15 +96,15 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Baseline Floor SL: 1.16666 | Macro Invalidation: 1.17207
 
 ## 5. SMART MONEY CONCEPTS (SMC) & FRVP LIQUIDITY MAP
-- Structural Floor (Strong Low): 0.00000 | Ceiling (Strong High): 0.00000
-- Nearest Bullish OB: None nearby | Nearest Bearish OB: None nearby
-- Nearest Fair Value Gap (FVG Magnet): None nearby
-- Liquidity Pools: Clear of immediate EQH/EQL traps
-- Fixed Range Volume Profile (FRVP): Standard Institutional Liquidity
+- Structural Floor (Strong Low): 1.08120 | Ceiling (Strong High): 1.09480
+- Nearest Bullish OB: 1.08000–1.08200 | Nearest Bearish OB: 1.09300–1.09500
+- Nearest Fair Value Gap (FVG Magnet): 1.08650–1.08800 (bearish FVG, unmitigated)
+- Liquidity Pools: EQH cluster at 1.09450; EQL at 1.08050
+- Fixed Range Volume Profile (FRVP): FRVP POC: 1.08870 | VAH: 1.09210 | VAL: 1.08540 (price at VAH — supply zone)
 
 ## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
 - Scanner Raw SL: 1.09100 | Scanner Raw TP: 1.08200 | R:R: 2.00:1
-- Atlas DNA-Anchored Reference: SL = 1.10020 | TP = 1.08020
+- Atlas DNA-Anchored Reference: SL = 1.10049 | TP = 1.08032
   (TP snapped to nearest Station +[0.15xATR+Spread]; SL anchored behind opposing Station - [0.35xATR+Spread])
 
 - D1 Daily Context (Last 3 days OHLC):
@@ -197,11 +197,11 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: EURUSD | Asset: Forex Currency Pair (EURUSD)
 - Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.08800
-- Macro Compass:  | H4 Status: BEARISH (-1)
-- H1 Wave State:  ()
-- Intraday Dealing Range: 50.0% (EQUILIBRIUM)
+- Macro Compass: D1_BEARISH_TREND | H4 Status: BEARISH (-1)
+- H1 Wave State: PREMIUM_RELOAD_ARMED — H1 supply reload at 72% DR; Direction SELL enabled
+- Intraday Dealing Range: 72.0% (EXTREME PREMIUM)
 - Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 6850.0%
-- Volatility: ATR(14)=0.0 pts | Current Spread=20 pts | Rejection Wick: 0.0%
+- Volatility: ATR(14)=82.0 pts | Current Spread=20 pts | Rejection Wick: 45.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
 - Compression Duration / Range Age: 18 hours (MATURE_COMPRESSION_ARMED)
@@ -249,7 +249,7 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Station Ladder: ... 1.07000 -> [1.08000] -> [1.09000] <CURRENT 1.08800> -> [1.10000] -> 1.11000 ...
 - Distances: to Lower 0.00800 | to Base 0.00200 | to Upper 0.01200
 - Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
-  * Reference TP (SELL): 1.08020 | Reference SL: 1.10020
+  * Reference TP (SELL): 1.08032 | Reference SL: 1.10049
 
 
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
@@ -264,15 +264,15 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Baseline Floor SL: 1.16666 | Macro Invalidation: 1.17207
 
 ## 5. SMART MONEY CONCEPTS (SMC) & FRVP LIQUIDITY MAP
-- Structural Floor (Strong Low): 0.00000 | Ceiling (Strong High): 0.00000
-- Nearest Bullish OB: None nearby | Nearest Bearish OB: None nearby
-- Nearest Fair Value Gap (FVG Magnet): None nearby
-- Liquidity Pools: Clear of immediate EQH/EQL traps
-- Fixed Range Volume Profile (FRVP): Standard Institutional Liquidity
+- Structural Floor (Strong Low): 1.08120 | Ceiling (Strong High): 1.09480
+- Nearest Bullish OB: 1.08000–1.08200 | Nearest Bearish OB: 1.09300–1.09500
+- Nearest Fair Value Gap (FVG Magnet): 1.08650–1.08800 (bearish FVG, unmitigated)
+- Liquidity Pools: EQH cluster at 1.09450; EQL at 1.08050
+- Fixed Range Volume Profile (FRVP): FRVP POC: 1.08870 | VAH: 1.09210 | VAL: 1.08540 (price at VAH — supply zone)
 
 ## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
 - Scanner Raw SL: 1.09100 | Scanner Raw TP: 1.08200 | R:R: 2.00:1
-- Atlas DNA-Anchored Reference: SL = 1.10020 | TP = 1.08020
+- Atlas DNA-Anchored Reference: SL = 1.10049 | TP = 1.08032
   (TP snapped to nearest Station +[0.15xATR+Spread]; SL anchored behind opposing Station - [0.35xATR+Spread])
 
 - D1 Daily Context (Last 3 days OHLC):
