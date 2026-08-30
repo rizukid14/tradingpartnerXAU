@@ -503,11 +503,11 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 f_scores = apex_fundamental_engine.compute_scores()
                 if f_scores:
                     sorted_fund = sorted(f_scores.items(), key=lambda x: x[1].composite_fundamental_score, reverse=True)
-                    fund_str = " > ".join([f"{c}" for c, sc in sorted_fund[:5]])
+                    fund_str = " > ".join([f"{c}" for c, sc in sorted_fund])
                     top_s = sorted_fund[0][0]
                     top_w = sorted_fund[-1][0]
                     delta_val = sorted_fund[0][1].composite_fundamental_score - sorted_fund[-1][1].composite_fundamental_score
-                    t3_lines.append(f" Apex Fund Rank  : {UI.CYAN}{fund_str}...{UI.RST}")
+                    t3_lines.append(f" Apex Fund Rank  : {UI.RED}{fund_str}{UI.RST}")
                     t3_lines.append(f" Top Convergent  : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} ➔ Grade S/A+)")
             except Exception:
                 pass
