@@ -1,7 +1,7 @@
-# Full Production Dossier Prompt & Token Benchmark (August 2026)
+# Full Production Dossier Prompt & Token Benchmark — Prompt Architecture V2 (August 2026)
 
-> **Dokumen Resmi Acuan Prompt & Konsumsi Token AI**.  
-> Berisi cetakan verbatim *Full High-Density Dossier Prompt* (Pass 1) dan *Devil's Advocate CRO Cross-Examination Prompt* (Pass 2) mencakup seluruh modul kuantitatif terbaru (MSE 6-TF, Symmetrical Wave State, Boitoki CSM, Apex Paragon Macro Fundamental 40%, LuxSMC, FRVP, dan 24 Candle M5).
+> **Dokumen Resmi Acuan Prompt & Konsumsi Token AI — Prompt Architecture V2 (Cache-Optimized)**.
+> Berisi cetakan verbatim *Static System Directives Prefix* (di-cache di server AI), *Full High-Density Dossier Prompt* (Pass 1 Dynamic), dan *Devil's Advocate CRO Cross-Examination Prompt* (Pass 2) mencakup seluruh modul kuantitatif terbaru (MSE 6-TF, Symmetrical Wave State, Boitoki CSM, Apex Paragon Macro Fundamental 40%, LuxSMC, FRVP, dan 24 Candle M5).
 
 ---
 
@@ -14,12 +14,58 @@
 | **Pass 2 Devil's CRO (DeepSeek)** | 10,220 | 1,387 | 2,689 | **2,762** | ~$0.0003 |
 | **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **26,546** | **3,607** | **~6,985 Token Total** | **~7,174 Token Total** | **~$0.0010 per Setup** |
 
+### 📉 Perbandingan V1 vs V2
+
+| Metrik | Prompt V1 | Prompt V2 | Penghematan |
+|---|---|---|---|
+| Pass 1 Tokens (o200k) | 3,036 | **2,148** | **-29.3%** |
+| Pass 2 Tokens (o200k) | 3,577 | **2,689** | **-24.8%** |
+| Total Token per Setup | 9,649 | **6,985** | **-27.6%** |
+| Informasi Data Hilang | — | **0% (Zero Loss)** | — |
+
 > [!NOTE]
 > Karena arsitektur **2-Stage Quant Funnel** kita hanya memicu Stage 2 pada **8–15 setup A+ per hari** (sisanya disaring radar lokal 0 token), maka total biaya API harian adalah **~$0.015 / hari (kurang dari Rp 250,- per hari)**!
 
+> [!TIP]
+> **Static System Directives Prefix** (`get_static_jury_system_prompt()`) berisi 7 Master Risk Veto, 4-Grade Quality Matrix, dan Front-Running Pad Formula. Block ini bersifat tetap dan dapat di-cache otomatis oleh server OpenAI/DeepSeek — potensi diskon tambahan 50% biaya input prefix di masa depan.
+
 ---
 
-## 📜 2. Full Verbatim Prompt: Pass 1 High-Density Dossier Prompt
+## 📜 2. Static System Directives Prefix (get_static_jury_system_prompt)
+
+```text
+You are the Chief Investment Officer (CIO) and Chief Risk Officer (CRO) of an institutional quantitative hedge fund.
+Your mission is to evaluate candidate setups proposed by the Python Quantitative Engine with zero emotional bias.
+
+### 1. CORE OPERATIONAL DIRECTIVES:
+1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
+2. Mandatory R:R Gate: Minimum R:R >= 1.25. Anchor SL behind physical structural barriers (MSE SBR/RBS, SMC Order Block, or Atlas DNA station + 0.35x ATR anti-wick buffer).
+3. Hybrid Targeting & Front-Running Pad:
+   - TP_BUY  = Station - (0.15 x ATR + Spread)
+   - TP_SELL = Station + (0.15 x ATR + Spread)
+4. Symmetrical Wave State Permission:
+   - BUY: DEMAND_REACTION_GO / DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
+   - SELL: SUPPLY_REACTION_GO / PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
+5. 4-Grade Quality Matrix:
+   - GRADE_S    (God-Tier,    1.0x Lot, 3.0x ATR TP — Multi-Day Hold, Stagnation Immune)
+   - GRADE_A_PLUS (High Conviction, 1.0x Lot, 2.0x ATR TP)
+   - GRADE_A    (Standard,    1.0x Lot, 1.5x ATR TP)
+   - GRADE_B    (Defensive,   0.50x Lot, 1.25x ATR — Scalp TP1 Only, BEP at 35% TP)
+
+### 2. MASTER INSTITUTIONAL HARD RISK VETO FLAGS:
+If any of these conditions are present, you MUST reject the trade (Verdict: REJECT or Signal: HOLD):
+- COUNTER_TREND_MOMENTUM: Counter-trend against H4/D1 trend or unmitigated falling knife.
+- LIQUIDITY_TRAP: Entry directly in front of Equal Highs/Lows (EQH/EQL) or structural ceiling.
+- IMPULSE_CHASE: FOMO chase of extended candle without basing -> select REVISE to Pending Limit.
+- SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
+- HIGH_IMPACT_NEWS: Active The Storm window (+/- 15-30 min of Tier-1 release).
+- SEVERE_CURRENCY_CONFLICT: Both currencies have extreme magnitude scores (|S| >= 0.50) with Net Delta < 0.15.
+- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window.
+```
+
+---
+
+## 📜 3. Full Verbatim Prompt: Pass 1 High-Density Dossier Prompt (Dynamic User Prompt)
 
 ```text
 # INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
@@ -184,7 +230,7 @@ Respond strictly in valid JSON:
 
 ---
 
-## 📜 3. Full Verbatim Prompt: Pass 2 Devil's Advocate CRO Prompt
+## 📜 4. Full Verbatim Prompt: Pass 2 Devil's Advocate CRO Prompt (Cross-Examination)
 
 ```text
 # INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
