@@ -496,8 +496,6 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             except Exception:
                 pass
             
-            t3_lines.append(f" 24h Macro (H1)  : {UI.CYAN}{h1_str}{UI.RST}")
-            t3_lines.append(f" 4h Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
             try:
                 from src.analytics.apex_fundamental_engine import apex_fundamental_engine
                 f_scores = apex_fundamental_engine.compute_scores()
@@ -507,12 +505,15 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     top_s = sorted_fund[0][0]
                     top_w = sorted_fund[-1][0]
                     delta_val = sorted_fund[0][1].composite_fundamental_score - sorted_fund[-1][1].composite_fundamental_score
-                    t3_lines.append(f" Apex Fund Rank  : {UI.RED}{fund_str}{UI.RST}")
-                    t3_lines.append(f" Top Convergent  : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} ➔ Grade S/A+)")
+                    t3_lines.append(f" Apex Fund Rank   : {UI.RED}{fund_str}{UI.RST}")
+                    t3_lines.append(f" Top Convergent   : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} ➔ Grade S/A+)")
             except Exception:
                 pass
-            t3_lines.append(f" Macro Compass   : {UI.GREEN}26 FX Majors & Crosses (H1/M30 Native){UI.RST}")
-            t3_lines.append(f" News Ticker     : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
+
+            t3_lines.append(f" CSM Macro (H1)   : {UI.CYAN}{h1_str}{UI.RST}")
+            t3_lines.append(f" CSM Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
+            t3_lines.append(f" Macro Compass    : {UI.GREEN}26 FX Majors & Crosses (H1/M30 Native){UI.RST}")
+            t3_lines.append(f" News Ticker      : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
         except Exception:
             t3_lines = [
                 f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
