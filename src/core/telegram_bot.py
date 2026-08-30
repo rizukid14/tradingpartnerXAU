@@ -44,6 +44,27 @@ def _get_api_url(method):
     return f"{api_base}/bot{config.TELEGRAM_BOT_TOKEN}/{method}"
 
 
+def _sanitize_tg_markdown(text: str) -> str:
+    """
+    Converts standard GitHub markdown (**bold**, __italic__, snake_case_words)
+    into clean Telegram Legacy Markdown compatible format so Telegram parser never fails.
+    """
+    if not text:
+        return text
+    
+    # 1. Convert Markdown headers (### Header) to bold
+    text = re.sub(r'^#{1,6}\s*(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    
+    # 2. Convert double asterisks **bold** to single asterisk *bold*
+    text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
+    
+    # 3. Replace snake_case underscores inside uppercase words (e.g. BULLISH_EXPANSION -> BULLISH EXPANSION)
+    # so they don't break Telegram italics
+    text = re.sub(r'\b[A-Z0-9]+_[A-Z0-9_]+\b', lambda m: m.group(0).replace('_', ' '), text)
+
+    return text
+
+
 def send_telegram_msg(text, reply_markup=None, chat_id=None):
     """Send message to Telegram with optional inline keyboard."""
     if not config.TELEGRAM_ENABLED or not config.TELEGRAM_BOT_TOKEN:
@@ -52,9 +73,10 @@ def send_telegram_msg(text, reply_markup=None, chat_id=None):
     if not target_chat:
         return False
 
+    sanitized_text = _sanitize_tg_markdown(text)
     payload = {
         "chat_id": target_chat,
-        "text": text,
+        "text": sanitized_text,
         "parse_mode": "Markdown",
         "disable_web_page_preview": True,
     }
@@ -260,39 +282,51 @@ def handle_indicators_command(chat_id, symbol_input=None):
 
 
 def handle_macro_command(chat_id, symbol_input=None):
-    """Sends pure quant 6-timeframe strategic directive, dual-grid stations, and SBR/RBS levels."""
+    """Sends pure quant 6-timeframe strategic directive, translated to institutional narrative via OpenAI."""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
+        from src.core.llm_client import generate_macro_narrative
         sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
         clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         
         directive = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
         
-        lines = [
-            f"🧭 *TOP-DOWN MACRO STRATEGIC DIRECTIVE: {clean_sym}*",
-            f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | Komputasi: `{directive.calculation_time_ms} ms` (0 Token)\n",
-            f"🎯 *Mandat*: `{directive.daily_macro_bias}`",
-            f"⚡ *Eksekusi*: `{directive.primary_execution_directive}`",
-            f"🏛️ *Tahapan*: `{directive.structural_stage}`\n",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            "🧱 *HIRARKI ZONA SBR & RBS*:",
-            f"• 📅 *Macro D1*: RBS `{directive.macro_rbs_d1}` | SBR `{directive.macro_sbr_d1}`",
-            f"• ⏱️ *Inter H4*: RBS `{directive.inter_rbs_h4}` | SBR `{directive.inter_sbr_h4}`",
-            f"• 🔬 *Micro H1*: RBS `{directive.micro_rbs_h1}` | SBR `{directive.micro_sbr_h1}`\n",
-            "🚉 *DUAL-GRID SUB-STATIONS (50 Pips)*:",
-            f"• 🔼 *Sub-Ceiling*: `{directive.sub_ceiling_50}`",
-            f"• 🔽 *Sub-Floor*: `{directive.sub_floor_50}`\n",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            "🎯 *INTRADAY REFINED DELIVERY*:",
-            f"• 📍 *Limit Anchor*: `{directive.entry_limit_anchor}`",
-            f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips} pips)",
-            f"• 🎁 *TP1 (Partial 50%)*: `{directive.tp1_price}` (+{directive.tp1_pips} pips)",
-            f"• 🏆 *TP2 (Station Target)*: `{directive.tp2_price}` (+{directive.tp2_pips} pips, R:R {directive.risk_reward_ratio}:1)",
-            f"• 🚫 *Macro Invalidation*: `{directive.invalidation_stop_price}`\n",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"💡 *Thesis*: {directive.daily_mandate_thesis}\n",
-            f"⚠️ *Pantangan*: {', '.join(directive.forbidden_traps) if directive.forbidden_traps else '-'}"
-        ]
+        # 1. Synthesize executive narrative via OpenAI
+        narrative = generate_macro_narrative(directive)
+        
+        if narrative:
+            msg_text = (
+                f"{narrative}\n\n"
+                f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | 🤖 _Synthesized by OpenAI (gpt-4o-mini) & MSE 6-TF Native_"
+            )
+        else:
+            # Fallback to structured quantitative template if OpenAI is offline
+            lines = [
+                f"🧭 *TOP-DOWN MACRO STRATEGIC DIRECTIVE: {clean_sym}*",
+                f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | Komputasi: `{directive.calculation_time_ms} ms` (0 Token)\n",
+                f"🎯 *Mandat*: `{directive.daily_macro_bias}`",
+                f"⚡ *Eksekusi*: `{directive.primary_execution_directive}`",
+                f"🏛️ *Tahapan*: `{directive.structural_stage}`\n",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                "🧱 *HIRARKI ZONA SBR & RBS*:",
+                f"• 📅 *Macro D1*: RBS `{directive.macro_rbs_d1}` | SBR `{directive.macro_sbr_d1}`",
+                f"• ⏱️ *Inter H4*: RBS `{directive.inter_rbs_h4}` | SBR `{directive.inter_sbr_h4}`",
+                f"• 🔬 *Micro H1*: RBS `{directive.micro_rbs_h1}` | SBR `{directive.micro_sbr_h1}`\n",
+                "🚉 *DUAL-GRID SUB-STATIONS (50 Pips)*:",
+                f"• 🔼 *Sub-Ceiling*: `{directive.sub_ceiling_50}`",
+                f"• 🔽 *Sub-Floor*: `{directive.sub_floor_50}`\n",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                "🎯 *INTRADAY REFINED DELIVERY*:",
+                f"• 📍 *Reload Zone*: `{directive.entry_zone_proximal}` ➔ `{directive.entry_limit_anchor}`",
+                f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips} pips)",
+                f"• 🎁 *TP1 (Partial 50%)*: `{directive.tp1_price}` (+{directive.tp1_pips} pips)",
+                f"• 🏆 *TP2 (Station Target)*: `{directive.tp2_price}` (+{directive.tp2_pips} pips, R:R {directive.risk_reward_ratio}:1)",
+                f"• 🚫 *Macro Invalidation*: `{directive.invalidation_stop_price}`\n",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"💡 *Thesis*: {directive.daily_mandate_thesis}\n",
+                f"⚠️ *Pantangan*: {', '.join(directive.forbidden_traps) if directive.forbidden_traps else '-'}"
+            ]
+            msg_text = "\n".join(lines)
 
         kb = {
             "inline_keyboard": [
@@ -301,7 +335,7 @@ def handle_macro_command(chat_id, symbol_input=None):
             ]
         }
 
-        send_telegram_msg("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+        send_telegram_msg(msg_text, reply_markup=kb, chat_id=chat_id)
     except Exception as e:
         print(f"[TG BOT ERROR] handle_macro_command: {e}")
         send_telegram_msg(f"Error computing macro directive for `{symbol_input}`: `{e}`", chat_id=chat_id)
@@ -381,11 +415,11 @@ def _build_main_menu_keyboard():
                 {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY_H1"}
             ],
             [
-                {"text": "XAUUSD H1 (Gold)", "callback_data": "analyze:XAUUSD_H1"},
-                {"text": "BTCUSD M30", "callback_data": "analyze:BTCUSD_M30"}
+                {"text": "EURJPY H1", "callback_data": "analyze:EURJPY_H1"},
+                {"text": "CADJPY H1", "callback_data": "analyze:CADJPY_H1"}
             ],
             [
-                {"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"},
+                {"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"},
                 {"text": "🌐 [ Boitoki CSM Radar ]", "callback_data": "cmd:csm"}
             ],
             [
@@ -403,7 +437,7 @@ def handle_menu_command(chat_id):
     """Sends the clean institutional control panel."""
     text = (
         "*CONTROL PANEL — 2-STAGE QUANT TRADING BOT*\n"
-        "_Select an instrument for on-demand 3-AI consensus or view 22-Pair SMC Radar:_"
+        "_Select an instrument for on-demand 3-AI consensus or view 26-Pair SMC Radar:_"
     )
     send_telegram_msg(text, reply_markup=_build_main_menu_keyboard(), chat_id=chat_id)
 
@@ -430,15 +464,15 @@ def handle_status_command(chat_id):
             f"• *Free Margin*: `${acc.get('free_margin', 0.0):,.2f}`\n"
             f"• *Daily Realized P/L*: `${pnl_today:+.2f}`\n"
             f"• *Net Floating P/L*: `${total_floating:+.2f}` ({len(open_pos)} positions)\n"
-            f"• *Architecture*: `2-Stage Quant Funnel (22 Pairs H1/D1)`\n"
+            f"• *Architecture*: `2-Stage Quant Funnel (26 Pairs FX | Weekend BTC H1)`\n"
             f"• *Fast Radar*: `60s Sweep Active (0 Token)`\n"
             f"• *3-AI Jury*: `Full 3-AI (OpenAI + Gemini + DeepSeek)`\n"
-            f"• *Risk per Trade*: `{config.RISK_PERCENT_FX}%` (Max Pos: `{config.MAX_OPEN_POSITIONS}`)\n"
+            f"• *Risk per Trade*: `FX {config.RISK_PERCENT_FX}% | BTC {config.RISK_PERCENT_BTC}%` (Max: Weekday `{config.MAX_OPEN_POSITIONS}` / Weekend `{config.MAX_OPEN_POSITIONS_BTC}`)\n"
             f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` | *Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"
         )
         kb = {
             "inline_keyboard": [
-                [{"text": "📡 [ SMC Radar 22 Pairs ]", "callback_data": "cmd:radar"}],
+                [{"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"}],
                 [{"text": "[ Back to Menu ]", "callback_data": "cmd:menu"}]
             ]
         }

@@ -409,3 +409,20 @@ You are NOT required to follow a single predefined trading strategy. You may use
    * Web report `report.html` diperbarui dengan Bab 21 (Universal 8-Currency Basket & Pure Quant MSE Corridor Engine).
    * Seluruh unit test suite lulus **100% OK (44/44 Tests Pass)**.
 
+---
+
+## 19. Pembaruan 30 Agustus 2026 — Eliminasi Permanen XAUUSD (Gold) & Transisi Portofolio Murni 26 FX Universe
+
+1. **Audit Riil 788 Deals Akun Live (`VTMarkets-Live 3`, Login `27556325`)**:
+   * Audit menemukan sumber utama drawdown dari modal awal $\$6,500$ ke $\$5,819$ ($-\$681$ loss) adalah **$100\%$ disebabkan oleh Gold (`XAUUSD-ECNc`) yang menyumbang kerugian sebesar $-\$1,067.79$**.
+   * Sebaliknya, seluruh portofolio 26 pasangan mata uang (**FX Majors & Yen Crosses**) membukukan net profit gabungan **$+\$387.08$** (`CADJPY` +$98.02, `USDCAD` +$63.86, `AUDJPY` +$43.88, `EURAUD` +$41.96, `EURJPY` +$41.45).
+2. **Penghapusan Total & Permanen `XAUUSD-ECNc`**:
+   * `XAUUSD-ECNc` dihapus $100\%$ dari `SCANNER_SYMBOLS` di `.env` dan `ALL_SCANNER_SYMBOLS` di `config.py`.
+   * Scanner universe kini murni terdiri dari **26 FX Majors & Crosses Terkurasi**.
+3. **Penyelarasan Seluruh Stack & Antarmuka**:
+   * **CLI Theme**: Banner terminal diperbarui menjadi `[26-PAIR PRO]`.
+   * **Telegram Controller (`telegram_bot.py`)**: Menu keyboard diperbarui menggantikan tombol Gold dengan `EURJPY H1` dan `CADJPY H1` serta label `[ SMC Radar 26 Pairs ]`.
+   * **Unit Tests**: [`tests/test_symbol_rotation.py`](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/tests/test_symbol_rotation.py) diperbarui dengan `assertNotIn("XAUUSD-ECNc")` — seluruh **44/44 Unit Tests (100%) LULUS**.
+   * **MQL5 EA Reference**: Diberi nama institusional `mql5/XAU_Institutional_SMC_EA.mq5` dengan kalkulasi komisi dinamis 1:1 dari `position_manager.py`.
+
+

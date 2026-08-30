@@ -2259,3 +2259,61 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
     print(f" {UI.tag('AI LATENCY', UI.CYAN)} mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results
 
+
+def generate_macro_narrative(directive) -> str:
+    """
+    Synthesizes pure quantitative MacroStrategicDirective into a rich, high-level
+    institutional executive narrative for Telegram using OpenAI (gpt-4o-mini).
+    """
+    if not openai_client:
+        return ""
+
+    clean_sym = getattr(directive, 'symbol', 'UNKNOWN').replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
+    
+    prompt = f"""Anda adalah Kepala Strategis Makro (Head Macro Strategist) di Quantitative Hedge Fund Institusional.
+Tuliskan memo briefing narasi pasar institusional (Market Story & Execution Narrative) dalam Bahasa Indonesia yang tajam, profesional, dan mengalir seperti memo trader Wall Street untuk Telegram.
+
+[DATA KUANTITATIF KITA]
+- Simbol: {clean_sym}
+- Mandat Makro: {directive.daily_macro_bias} ({directive.primary_execution_directive}) | Kepercayaan: {directive.confidence_score}%
+- Fase Struktur: {directive.structural_stage}
+- Hirarki SBR/RBS: D1 [RBS {directive.macro_rbs_d1} | SBR {directive.macro_sbr_d1}], H4 [RBS {directive.inter_rbs_h4} | SBR {directive.inter_sbr_h4}], H1 [RBS {directive.micro_rbs_h1} | SBR {directive.micro_sbr_h1}]
+- Sub-Stations (50p): Atap {directive.sub_ceiling_50} -> Lantai {directive.sub_floor_50} (Target Stasiun Akhir: {directive.target_station_price})
+- Reload Zone (Limit): {directive.entry_zone_proximal} s/d {directive.entry_limit_anchor}
+- Intraday SL (Anti-Hunt): {directive.intraday_sl_price} ({directive.intraday_sl_pips} pips di balik zona fisik)
+- TP1 (Partial 50% + BEP Lock): {directive.tp1_price} (+{directive.tp1_pips} pips | R:R 1.50:1)
+- TP2 (Milestone Target): {directive.tp2_price} (+{directive.tp2_pips} pips | R:R {directive.risk_reward_ratio}:1 ke Unmitigated OB/Stasiun)
+- Invalidation Point: {directive.invalidation_stop_price}
+- Thesis: {directive.daily_mandate_thesis}
+- Pantangan: {', '.join(directive.forbidden_traps) if directive.forbidden_traps else '-'}
+- Future Roadmap: {directive.future_macro_roadmap}
+
+[INSTRUKSI PENULISAN WAJIB]
+1. Header: 🧭 *TOP-DOWN MACRO BRIEFING: {clean_sym}*
+2. Tulis dalam bentuk **NARASI PARAGRAF CERITA PASAR YANG MENGALIR**, BUKAN sekadar mengulang daftar bullet points kaku!
+3. Jelaskan secara mengalir:
+   - **Konteks & Sentimen Pasar**: Mengapa harga terdorong ke arah ini dan bagaimana struktur institusi menekan/menopang harga.
+   - **Taktik Reload & Perlindungan Modal**: Di mana kita menunggu peluru ditembakkan (**Reload Zone**), mengapa **SL** ditempatkan di level tersebut.
+   - **Manajemen Cuan Bertahap**: Jelaskan aksi penguncian profit 50% di **TP1** + geser ke BEP, serta potensi lanjutan menuju **TP2**.
+4. Di bagian akhir, buat sub-heading tegas:
+   - ⚠️ *PANTANGAN & JEBAKAN MEMATIKAN*: Peringatan keras apa yang dilarang dilakukan trader agar tidak menjadi likuiditas bandar.
+5. Gunakan format Markdown tebal pada angka-angka kunci agar mudah dibaca cepat. Tulis dalam Bahasa Indonesia institusional yang elegan dan percaya diri."""
+
+    try:
+        model_name = getattr(config, "MACRO_NARRATIVE_MODEL", "gpt-4o-mini")
+        resp = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "Anda adalah Lead Macro Strategist institusional. Tulis narasi pasar mengalir, tajam, dan actionable dalam Bahasa Indonesia."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.35,
+            max_tokens=650,
+            timeout=12.0
+        )
+        narrative = resp.choices[0].message.content.strip()
+        return narrative
+    except Exception as e:
+        print(f"[LLM WARNING] generate_macro_narrative error: {e}")
+        return ""
+

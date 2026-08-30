@@ -199,14 +199,14 @@ SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 TRADING_MODE = os.getenv("TRADING_MODE", "scanner").strip().lower()
 SCANNER_MODE = _getenv_bool("SCANNER_MODE", True)
 
-# Universe 22 Simbol Terkurasi (21 Pasangan FX + Gold)
+# Universe 26 Simbol Terkurasi (Murni 26 Pasangan FX Tanpa Gold)
 ALL_SCANNER_SYMBOLS = [
     "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
     "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
     "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
     "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
     "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc",
-    "XAUUSD-ECNc"
+    "NZDCHF-ECNc", "NZDUSD-ECNc", "GBPNZD-ECNc", "AUDNZD-ECNc", "EURNZD-ECNc"
 ]
 
 SCANNER_SYMBOLS = [
@@ -275,7 +275,7 @@ LOT_SIZE = _getenv_float("LOT_SIZE", 0.01)
 LOT_SIZE_XAU = _getenv_float("LOT_SIZE_XAU", LOT_SIZE)
 LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
-RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
+RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 0.50)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
 RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.0)
 DEVIATION = _getenv_int("DEVIATION", 30)
@@ -380,7 +380,7 @@ ERA_PRESETS = {
         "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
         "RISK_PERCENT_XAU": 1.0,
-        "RISK_PERCENT_BTC": 1.5,
+        "RISK_PERCENT_BTC": 0.25,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     }
@@ -510,11 +510,13 @@ MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
+MAX_OPEN_POSITIONS_BTC = _getenv_int("MAX_OPEN_POSITIONS_BTC", 2)        # Weekend BTC trading max 2 posisi
 
 
-def get_max_open_positions(in_recovery_mode=False, now=None):
+def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
     """Maksimum open posisi agregat (semua simbol):
-    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
+    - Weekend Trading / Crypto: MAX_OPEN_POSITIONS_BTC (2 posisi)
+    - Normal Weekday (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
     - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (3)
     - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
       (kalau recovery mode aktif di jam late NY, tetap min(2, 3) = 2).
@@ -523,6 +525,10 @@ def get_max_open_positions(in_recovery_mode=False, now=None):
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
+    is_weekend = now.weekday() in (5, 6)
+    if is_weekend or (symbol and is_crypto(symbol)):
+        return MAX_OPEN_POSITIONS_BTC
+
     cur_min = now.hour * 60 + now.minute
 
     # 23:00 s.d. 02:00 WIB
@@ -809,32 +815,44 @@ def sltp_mode_for(symbol):
     return "LLM"
 
 
-def get_scanner_symbols():
-    """Returns the curated universe of 22 symbols for 2-Stage Quant Screener."""
-    return [s for s in SCANNER_SYMBOLS]
-
-
-def get_rotation_pool(now=None):
-    """
-    Returns the ordered list of symbols currently in the rotation pool:
-    - TRADING_MODE == "scanner" (2-Stage Quant Funnel): SCANNER_SYMBOLS (22 pairs)
-    - TRADING_MODE == "xau" (default): [WEEKDAY_SYMBOL] (weekend -> WEEKEND if ENABLE_BTC_ROTATION)
-    - TRADING_MODE == "xau_pairs" / "pairs": [WEEKDAY_SYMBOL] + FX_PAIR_SYMBOLS, truncated to MAX_ROTATION_SYMBOLS.
+def get_scanner_symbols(now=None):
+    """Returns the curated universe of symbols for 2-Stage Quant Screener:
+    - Weekday: Murni 26 FX symbols (BTC selalu OFF di hari kerja)
+    - Weekend (Sabtu-Minggu): [WEEKEND_SYMBOL] jika ENABLE_BTC_ROTATION=True, else []
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
-    is_weekend = now.weekday() in (5, 6)  # Sabtu (5) + Minggu (6). FIX 29 Agu: cutoff Sabtu 00:00, bukan Jumat 22:00.
+    is_weekend = now.weekday() in (5, 6)
     if is_weekend:
-        # FX pairs market closed on weekend -> BTC or fallback
+        if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
+            return [WEEKEND_SYMBOL]
+        return []
+    # Weekday: Murni 26 FX pairs (BTC selalu OFF di hari kerja)
+    return [s for s in SCANNER_SYMBOLS if not is_crypto(s)]
+
+
+def get_rotation_pool(now=None):
+    """
+    Returns the ordered list of symbols currently in the rotation pool:
+    - Weekend (Sabtu-Minggu): [WEEKEND_SYMBOL] jika ENABLE_BTC_ROTATION=True, else [WEEKDAY_SYMBOL]
+    - Weekday: Murni 26 FX pairs (BTC selalu OFF di hari kerja)
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    is_weekend = now.weekday() in (5, 6)  # Sabtu (5) + Minggu (6). Cutoff Sabtu 00:00 WIB.
+    if is_weekend:
+        # FX pairs market closed on weekend -> BTC if enabled
         if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
             return [WEEKEND_SYMBOL]
         return [WEEKDAY_SYMBOL]
     if TRADING_MODE == "scanner" or SCANNER_MODE:
-        return [s for s in SCANNER_SYMBOLS]
+        return [s for s in SCANNER_SYMBOLS if not is_crypto(s)]
     if TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL]
+        pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL and not is_crypto(s)]
         return pool[:MAX_ROTATION_SYMBOLS]
     return [WEEKDAY_SYMBOL]
 
@@ -1097,18 +1115,4 @@ def trailing_activation_params_for(symbol):
             getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_XAU", 150),
             getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
         )
-
-
-def get_scanner_symbols():
-    """Returns the list of configured symbols for the 2-Stage Quant Scanner."""
-    env_symbols = os.getenv("SCANNER_SYMBOLS")
-    if env_symbols:
-        return [s.strip() for s in env_symbols.split(",") if s.strip()]
-    return [
-        "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
-        "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
-        "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
-        "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
-        "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc", "XAUUSD-ECNc"
-    ]
 

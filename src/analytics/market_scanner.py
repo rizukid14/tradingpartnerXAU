@@ -1346,7 +1346,7 @@ class MarketScanner:
                     if not allowed_m3_b:
                         logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP: {reason_m3_b}")
                     elif can_buy_m3 and t_res >= 2 and (c_res > 0):
-                        if mid >= (c_res + atr_val * 0.10):
+                        if (c_res + atr_val * 0.10) <= mid <= (c_res + atr_val * 0.65):
                             entry_lim = c_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance
                             sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,
@@ -1420,7 +1420,7 @@ class MarketScanner:
                     if not allowed_m3_s:
                         logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP: {reason_m3_s}")
                     elif can_sell_m3 and t_sup >= 2 and (c_sup > 0):
-                        if mid <= (c_sup - atr_val * 0.10):
+                        if (c_sup - atr_val * 0.65) <= mid <= (c_sup - atr_val * 0.10):
                             entry_lim = c_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support
                             sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,

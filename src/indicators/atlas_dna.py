@@ -9,6 +9,9 @@ Contains calibrated step sizes, multi-timeframe baseline anchors, and dynamic st
 # orders cluster (e.g., 1.3400, 1.3500, 1.3600 for GBPUSD).
 # NOT the micro-estafet intraday sub-steps from the backtest.
 ATLAS_STEP_DNA = {
+    # Bitcoin ($1,000 psychological levels: $78k, $79k, $80k)
+    'BTCUSD': 1000.0,
+    
     # Gold ($50 psychological levels: $4400, $4450, $4500, $4550)
     'XAUUSD': 50.0,
     

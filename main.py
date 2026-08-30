@@ -536,6 +536,8 @@ def parse_cli_overrides(argv=None):
                    help="Pending order (LIMIT/STOP dari AI) on/off - default dari .env PENDING_ORDERS_ENABLED")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
+    p.add_argument("--macro", type=str, nargs="?", const="all",
+                   help="Tampilkan Top-Down Macro Strategic Directive (MSE) di CLI untuk simbol tertentu (mis. BTCUSD, EURUSD) atau 'all'")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati prompt interaktif saat startup (cocok untuk Docker/non-interactive)")
     args = p.parse_args(argv)
@@ -616,6 +618,9 @@ def parse_cli_overrides(argv=None):
         config.MT5_ACCOUNT_MODE = args.account
         config.refresh_mt5_credentials()
         applied.append(f"MT5_ACCOUNT_MODE={config.MT5_ACCOUNT_MODE}")
+    if getattr(args, "macro", None) is not None:
+        setattr(config, "CLI_MACRO_ARG", args.macro)
+        applied.append(f"MACRO_INSPECT={args.macro}")
 
     return applied, getattr(args, "yes", False)
 
@@ -1650,6 +1655,14 @@ def run_scanner_trading_cycle(cand, risk):
     tf_str = getattr(cand, "timeframe", "H1")
     _reset_status_lines()
     print("\n" + render_candidate_alert_box(cand))
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        from src.core.cli_theme import render_macro_directive_card
+        macro_dir = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
+        if macro_dir:
+            print("\n" + render_macro_directive_card(macro_dir))
+    except Exception as e:
+        pass
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
@@ -1872,9 +1885,49 @@ def run_scanner_trading_cycle(cand, risk):
         config.SYMBOL = old_sym
 
 
+def execute_cli_macro_command(symbol_arg: str):
+    """
+    Kalkulasi dan tampilkan Top-Down Macro Strategic Directive di CLI Terminal.
+    Jika symbol_arg == 'all', tampilkan tabel ringkasan 26 simbol FX + BTC.
+    Jika symbol_arg == specific symbol, tampilkan kartu detail bergaya ANSI Cyberpunk.
+    """
+    from src.analytics.macro_strategic_engine import macro_strategic_engine
+    from src.core.cli_theme import render_macro_directive_card, render_macro_summary_table
+    
+    print(f"\n {UI.CYAN}[MT5 CONNECT]{UI.RST} Menginisialisasi koneksi MT5 untuk kalkulasi Macro Strategic Engine...")
+    if not connector.initialize_mt5():
+        print(f" {UI.RED}[ERROR]{UI.RST} Gagal terhubung ke terminal MT5.")
+        return
+    
+    sym_clean = (symbol_arg or "all").strip().upper()
+    if sym_clean == "ALL":
+        symbols = config.get_scanner_symbols()
+        if "BTCUSD.c" not in symbols and "BTCUSD" not in symbols:
+            symbols = symbols + ["BTCUSD.c"]
+        print(f" {UI.GREEN}[CALCULATING]{UI.RST} Menghitung 6-TF Native Directive untuk {len(symbols)} simbol...\n")
+        directives = []
+        for s in symbols:
+            valid_s = connector.get_valid_trade_symbol(s)
+            d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+            directives.append(d)
+        print(render_macro_summary_table(directives))
+    else:
+        valid_s = connector.get_valid_trade_symbol(sym_clean)
+        print(f" {UI.GREEN}[CALCULATING]{UI.RST} Menghitung 6-TF Native Directive untuk {valid_s}...\n")
+        d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+        print(render_macro_directive_card(d))
+    print("")
+
+
 def main():
     # Apply CLI overrides (sesi saja) sebelum bot jalan
     cli_applied, skip_prompt = parse_cli_overrides()
+
+    # Eksekusi on-demand CLI Macro Inspector jika diminta flag --macro
+    macro_arg = getattr(config, "CLI_MACRO_ARG", None)
+    if macro_arg is not None:
+        execute_cli_macro_command(macro_arg)
+        return
 
     # Prompt interaktif setting - di-bypass di mode Scanner (semua konfigurasi via .env)
     if not skip_prompt and sys.stdin.isatty() and not config.SCANNER_MODE:
@@ -1909,7 +1962,7 @@ def main():
             total_symbols=len(config.get_scanner_symbols())
         ))
         print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
-        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (21 FX Crosses + 6 NZD Alpha + Gold){UI.RST}")
+        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (26 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
     else:
         print(render_banner(
             account_info=getattr(config, "MT5_LOGIN", None),
@@ -1924,21 +1977,19 @@ def main():
             pool = config.get_rotation_pool()
             print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
             if getattr(config, "DYNAMIC_SESSION_TIMEFRAME", False):
-                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (M30 24/7) - Smart Rotation")
+                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (H1 Weekend) - Smart Rotation")
             else:
-                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (M30 24/7) - Smart Rotation")
+                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (H1 Weekend) - Smart Rotation")
         else:
             print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}SINGLE SYMBOL ONLY{UI.RST}")
 
     if config.TP_SL_RULES != "LLM":
         sltp_desc = f"{config.TP_SL_RULES} (force semua)"
-    elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR, min R:R {config.LLM_MIN_RR_RATIO}) | BTC: ATR-Based (fix)"
     else:
-        sltp_desc = f"XAU: LLM Structure (floor {config.LLM_SAFETY_FLOOR_XAU_PTS} pts) | BTC: ATR-Based (fix)"
+        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR, min R:R {config.LLM_MIN_RR_RATIO}) | BTC: Dynamic ATR (H1)"
 
     loss_desc = f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%"
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} FX Risk {config.RISK_PERCENT_FX}% | BTC Weekend Risk {config.RISK_PERCENT_BTC}% (Max 2 Pos) | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} ({int(config.TRAILING_ACTIVATION_TP_PCT*100)}% TP)], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} ({int(config.BREAK_EVEN_TRIGGER_TP_PCT*100)}% TP)], Partial [{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} ({int(config.PARTIAL_CLOSE_TRIGGER_TP_PCT*100)}% TP)], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
