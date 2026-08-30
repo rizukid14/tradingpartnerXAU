@@ -1,7 +1,7 @@
-# Full Production Dossier Prompt & Token Benchmark — Prompt Architecture V2 (August 2026)
+# Full Production Dossier Prompt & Token Benchmark (August 2026)
 
-> **Dokumen Resmi Acuan Prompt & Konsumsi Token AI — Prompt Architecture V2 (Cache-Optimized)**.
-> Berisi cetakan verbatim *Static System Directives Prefix* (di-cache di server AI), *Full High-Density Dossier Prompt* (Pass 1 Dynamic), dan *Devil's Advocate CRO Cross-Examination Prompt* (Pass 2) mencakup seluruh modul kuantitatif terbaru (MSE 6-TF, Symmetrical Wave State, Boitoki CSM, Apex Paragon Macro Fundamental 40%, LuxSMC, FRVP, dan 24 Candle M5).
+> **Dokumen Resmi Acuan Prompt & Konsumsi Token AI**.  
+> Berisi cetakan verbatim *Full High-Density Dossier Prompt* (Pass 1) dan *Devil's Advocate CRO Cross-Examination Prompt* (Pass 2) mencakup seluruh modul kuantitatif terbaru (MSE 6-TF, Symmetrical Wave State, Boitoki CSM, Apex Paragon Macro Fundamental 40%, LuxSMC, FRVP, dan 24 Candle M5).
 
 ---
 
@@ -9,63 +9,17 @@
 
 | Komponen Evaluasi | Karakter | Kata | Token (o200k: OpenAI o4-mini) | Token (cl100k: DeepSeek/Claude) | Estimasi Biaya API |
 |---|---|---|---|---|---|
-| **Pass 1 Dossier (OpenAI)** | 8,163 | 1,110 | **2,148** | 2,206 | ~$0.0006 |
-| **Pass 1 Dossier (Gemini)** | 8,163 | 1,110 | **2,148** | 2,206 | ~$0.0001 |
-| **Pass 2 Devil's CRO (DeepSeek)** | 10,220 | 1,387 | 2,689 | **2,762** | ~$0.0003 |
-| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **26,546** | **3,607** | **~6,985 Token Total** | **~7,174 Token Total** | **~$0.0010 per Setup** |
-
-### 📉 Perbandingan V1 vs V2
-
-| Metrik | Prompt V1 | Prompt V2 | Penghematan |
-|---|---|---|---|
-| Pass 1 Tokens (o200k) | 3,036 | **2,148** | **-29.3%** |
-| Pass 2 Tokens (o200k) | 3,577 | **2,689** | **-24.8%** |
-| Total Token per Setup | 9,649 | **6,985** | **-27.6%** |
-| Informasi Data Hilang | — | **0% (Zero Loss)** | — |
+| **Pass 1 Dossier (OpenAI)** | 8,140 | 1,111 | **2,142** | 2,200 | ~$0.0006 |
+| **Pass 1 Dossier (Gemini)** | 8,140 | 1,111 | **2,142** | 2,200 | ~$0.0001 |
+| **Pass 2 Devil's CRO (DeepSeek)** | 10,197 | 1,388 | 2,683 | **2,755** | ~$0.0003 |
+| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **26,477** | **3,610** | **~6,967 Token Total** | **~7,155 Token Total** | **~$0.0010 per Setup** |
 
 > [!NOTE]
 > Karena arsitektur **2-Stage Quant Funnel** kita hanya memicu Stage 2 pada **8–15 setup A+ per hari** (sisanya disaring radar lokal 0 token), maka total biaya API harian adalah **~$0.015 / hari (kurang dari Rp 250,- per hari)**!
 
-> [!TIP]
-> **Static System Directives Prefix** (`get_static_jury_system_prompt()`) berisi 7 Master Risk Veto, 4-Grade Quality Matrix, dan Front-Running Pad Formula. Block ini bersifat tetap dan dapat di-cache otomatis oleh server OpenAI/DeepSeek — potensi diskon tambahan 50% biaya input prefix di masa depan.
-
 ---
 
-## 📜 2. Static System Directives Prefix (get_static_jury_system_prompt)
-
-```text
-You are the Chief Investment Officer (CIO) and Chief Risk Officer (CRO) of an institutional quantitative hedge fund.
-Your mission is to evaluate candidate setups proposed by the Python Quantitative Engine with zero emotional bias.
-
-### 1. CORE OPERATIONAL DIRECTIVES:
-1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
-2. Mandatory R:R Gate: Minimum R:R >= 1.25. Anchor SL behind physical structural barriers (MSE SBR/RBS, SMC Order Block, or Atlas DNA station + 0.35x ATR anti-wick buffer).
-3. Hybrid Targeting & Front-Running Pad:
-   - TP_BUY  = Station - (0.15 x ATR + Spread)
-   - TP_SELL = Station + (0.15 x ATR + Spread)
-4. Symmetrical Wave State Permission:
-   - BUY: DEMAND_REACTION_GO / DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
-   - SELL: SUPPLY_REACTION_GO / PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
-5. 4-Grade Quality Matrix:
-   - GRADE_S    (God-Tier,    1.0x Lot, 3.0x ATR TP — Multi-Day Hold, Stagnation Immune)
-   - GRADE_A_PLUS (High Conviction, 1.0x Lot, 2.0x ATR TP)
-   - GRADE_A    (Standard,    1.0x Lot, 1.5x ATR TP)
-   - GRADE_B    (Defensive,   0.50x Lot, 1.25x ATR — Scalp TP1 Only, BEP at 35% TP)
-
-### 2. MASTER INSTITUTIONAL HARD RISK VETO FLAGS:
-If any of these conditions are present, you MUST reject the trade (Verdict: REJECT or Signal: HOLD):
-- COUNTER_TREND_MOMENTUM: Counter-trend against H4/D1 trend or unmitigated falling knife.
-- LIQUIDITY_TRAP: Entry directly in front of Equal Highs/Lows (EQH/EQL) or structural ceiling.
-- IMPULSE_CHASE: FOMO chase of extended candle without basing -> select REVISE to Pending Limit.
-- SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
-- HIGH_IMPACT_NEWS: Active The Storm window (+/- 15-30 min of Tier-1 release).
-- SEVERE_CURRENCY_CONFLICT: Both currencies have extreme magnitude scores (|S| >= 0.50) with Net Delta < 0.15.
-- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window.
-```
-
----
-
-## 📜 3. Full Verbatim Prompt: Pass 1 High-Density Dossier Prompt (Dynamic User Prompt)
+## 📜 2. Full Verbatim Prompt: Pass 1 High-Density Dossier Prompt
 
 ```text
 # INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
@@ -74,15 +28,32 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: EURUSD | Asset: Forex Currency Pair (EURUSD)
-- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.088
+- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.08800
 - Macro Compass:  | H4 Status: BEARISH (-1)
 - H1 Wave State:  ()
 - Intraday Dealing Range: 50.0% (EQUILIBRIUM)
-- Key Levels: PDH=1.0945 | PDL=1.082 | PWH=1.099 | PWL=1.078 | DO=1.0865 | ADR Used: 6850.0%
+- Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 6850.0%
 - Volatility: ATR(14)=0.0 pts | Current Spread=20 pts | Rejection Wick: 0.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
 - Compression Duration / Range Age: 18 hours (MATURE_COMPRESSION_ARMED)
+
+## 2. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT (40% Weight — Read Before Evaluating Technicals)
+
+### APEX PARAGON MACRO FUNDAMENTAL BRIEFING (40% Weight)
+• Base Currency (EUR)   : Score +0.00 | CB Rate: 3.75% (CUT_CYCLE) | Phase: PRICED_IN_EQUILIBRIUM
+• Quote Currency (USD)  : Score -0.40 | CB Rate: 5.5% (HOLD / CUT_WATCH) | Phase: PRICED_IN_EQUILIBRIUM
+• Fundamental Net Delta  : +0.40 | Net Carry Spread: -1.75%
+• Currency Conflict Gate : 🟢 VALID CONVERGENCE (FAVOR BUY)
+• Setup Classification   : GRADE_A_PLUS (Sizing: 1.0x)
+• Macro Directive        : FAVOR_BUY (EUR Strong vs USD Weak | Net Delta +0.40)
+• Recent Catalysts/Decay :
+• [Trading Economics] Euro Slips as Hawkish Fed Tone Supports Dollar (0.0h ago)
+• [Binance News] Dollar Rises After Fed Chair Warsh Remarks as Markets Await U.S. Jobs Data (0.0h ago)
+
+- Economic Calendar Context: No High-Impact News releases within +/- 6 hours
+
+## 3. CURRENCY FLOW & WAVE STATE CONFIRMATION
 
 - M30 Structural Frame (50-bar / 24h Window):
   * 50-Bar High: 1.16594 | 50-Bar Low: 1.15779 | Position: 4.2% of Range
@@ -103,13 +74,14 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
   * Quote (USD): 24h = +44.76 (Rank #1/8) | 4h Session = -0.02 (Rank #4/8)
   * Net 4-Hour Session Delta (EUR minus USD): -4.75 (BALANCED / SESSION COMPRESSION) | Net 24h Delta: -60.77
 
+## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
 
 ## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
-- Calibrated Step Grid: 100 pips per station (backtest-proven from MetaQuotes 2010-2026)
-- Station Ladder: ... 1.07 → [1.08] → [1.09] ← CURRENT → [1.1] → 1.11 ...
-- Current Price: 1.088 | Position in Range: 40.0% (0% = at Lower Station, 100% = at Upper Station)
-- Distance to Lower [1.08]: 0.00800 | Distance to Base [1.09]: 0.00200 | Distance to Upper [1.1]: 0.01200
-- CRITICAL: These psychological stations are natural magnets/barriers where institutional orders cluster. Use them to INDEPENDENTLY determine your TP (next station in YOUR assessed trend direction) and SL (behind the opposing station + 0.35x ATR anti-wick buffer). Do NOT blindly follow the proposed direction.
+- Step Grid: 1000 pips per station | Position in Range: 40.0%
+- Station Ladder: ... 1.07000 -> [1.08000] -> [1.09000] <CURRENT 1.08800> -> [1.10000] -> 1.11000 ...
+- Distances: to Lower 0.00800 | to Base 0.00200 | to Upper 0.01200
+- Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
+  * Reference TP (SELL): 1.08020 | Reference SL: 1.10020
 
 
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
@@ -123,17 +95,17 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Target Landscape: TP1 (Proximal Station) = 1.15942 | TP2 (Macro Target) = 1.15026
 - Baseline Floor SL: 1.16666 | Macro Invalidation: 1.17207
 
-## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): 0.0 | Ceiling (Strong High): 0.0
+## 5. SMART MONEY CONCEPTS (SMC) & FRVP LIQUIDITY MAP
+- Structural Floor (Strong Low): 0.00000 | Ceiling (Strong High): 0.00000
 - Nearest Bullish OB: None nearby | Nearest Bearish OB: None nearby
 - Nearest Fair Value Gap (FVG Magnet): None nearby
 - Liquidity Pools: Clear of immediate EQH/EQL traps
 - Fixed Range Volume Profile (FRVP): Standard Institutional Liquidity
 
-## 3. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
-- Proposed Technical SL: 1.091 (Anchor behind structural station/OB + 0.35x ATR anti-wick buffer)
-- Proposed Technical TP: 1.082 (Target: nearest station in SELL direction)
-- Risk:Reward Ratio: 2.00:1 (Mandatory >= 1.25)
+## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Scanner Raw SL: 1.09100 | Scanner Raw TP: 1.08200 | R:R: 2.00:1
+- Atlas DNA-Anchored Reference: SL = 1.10020 | TP = 1.08020
+  (TP snapped to nearest Station +[0.15xATR+Spread]; SL anchored behind opposing Station - [0.35xATR+Spread])
 
 - D1 Daily Context (Last 3 days OHLC):
 - [04:00] 1.16728/1.16770/1.16420/1.16534
@@ -191,22 +163,7 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - [03:50] 1.15813/1.15828/1.15813/1.15819
 - [03:55] 1.15819/1.15823/1.15806/1.15813
 
-## 4. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT
-
-### APEX PARAGON MACRO FUNDAMENTAL BRIEFING (40% Weight)
-• Base Currency (EUR)   : Score +0.00 | CB Rate: 3.75% (CUT_CYCLE) | Phase: PRICED_IN_EQUILIBRIUM
-• Quote Currency (USD)  : Score -0.40 | CB Rate: 5.5% (HOLD / CUT_WATCH) | Phase: PRICED_IN_EQUILIBRIUM
-• Fundamental Net Delta  : +0.40 | Net Carry Spread: -1.75%
-• Currency Conflict Gate : 🟢 VALID CONVERGENCE (FAVOR BUY)
-• Setup Classification   : GRADE_A_PLUS (Sizing: 1.0x)
-• Macro Directive        : FAVOR_BUY (EUR Strong vs USD Weak | Net Delta +0.40)
-• Recent Catalysts/Decay :
-• [Reuters] Europe's central bankers fear more turbulence in testy U.S. relations (0.0h ago)
-• [Binance News] Dollar Rises After Fed Chair Warsh Remarks as Markets Await U.S. Jobs Data (0.0h ago)
-
-- Economic Calendar Context: No High-Impact News releases within +/- 6 hours
-
-## 5. EVALUATION & JURY OUTPUT INSTRUCTIONS
+## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
@@ -218,8 +175,8 @@ Respond strictly in valid JSON:
   "execution": {
     "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
     "entry_price": float (null if market, required if pending),
-    "sl_price": float (exact absolute price),
-    "tp_price": float (exact absolute price)
+    "sl_price": float (exact absolute price, 5 decimal places),
+    "tp_price": float (exact absolute price, 5 decimal places)
   },
   "veto_reason": null | string (max 15 words if REJECT),
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
@@ -230,7 +187,7 @@ Respond strictly in valid JSON:
 
 ---
 
-## 📜 4. Full Verbatim Prompt: Pass 2 Devil's Advocate CRO Prompt (Cross-Examination)
+## 📜 3. Full Verbatim Prompt: Pass 2 Devil's Advocate CRO Prompt
 
 ```text
 # INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
@@ -239,15 +196,32 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: EURUSD | Asset: Forex Currency Pair (EURUSD)
-- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.088
+- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.08800
 - Macro Compass:  | H4 Status: BEARISH (-1)
 - H1 Wave State:  ()
 - Intraday Dealing Range: 50.0% (EQUILIBRIUM)
-- Key Levels: PDH=1.0945 | PDL=1.082 | PWH=1.099 | PWL=1.078 | DO=1.0865 | ADR Used: 6850.0%
+- Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 6850.0%
 - Volatility: ATR(14)=0.0 pts | Current Spread=20 pts | Rejection Wick: 0.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
 - Compression Duration / Range Age: 18 hours (MATURE_COMPRESSION_ARMED)
+
+## 2. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT (40% Weight — Read Before Evaluating Technicals)
+
+### APEX PARAGON MACRO FUNDAMENTAL BRIEFING (40% Weight)
+• Base Currency (EUR)   : Score +0.00 | CB Rate: 3.75% (CUT_CYCLE) | Phase: PRICED_IN_EQUILIBRIUM
+• Quote Currency (USD)  : Score -0.40 | CB Rate: 5.5% (HOLD / CUT_WATCH) | Phase: PRICED_IN_EQUILIBRIUM
+• Fundamental Net Delta  : +0.40 | Net Carry Spread: -1.75%
+• Currency Conflict Gate : 🟢 VALID CONVERGENCE (FAVOR BUY)
+• Setup Classification   : GRADE_A_PLUS (Sizing: 1.0x)
+• Macro Directive        : FAVOR_BUY (EUR Strong vs USD Weak | Net Delta +0.40)
+• Recent Catalysts/Decay :
+• [Trading Economics] Euro Slips as Hawkish Fed Tone Supports Dollar (0.0h ago)
+• [Binance News] Dollar Rises After Fed Chair Warsh Remarks as Markets Await U.S. Jobs Data (0.0h ago)
+
+- Economic Calendar Context: No High-Impact News releases within +/- 6 hours
+
+## 3. CURRENCY FLOW & WAVE STATE CONFIRMATION
 
 - M30 Structural Frame (50-bar / 24h Window):
   * 50-Bar High: 1.16594 | 50-Bar Low: 1.15779 | Position: 4.2% of Range
@@ -268,13 +242,14 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
   * Quote (USD): 24h = +44.76 (Rank #1/8) | 4h Session = -0.02 (Rank #4/8)
   * Net 4-Hour Session Delta (EUR minus USD): -4.75 (BALANCED / SESSION COMPRESSION) | Net 24h Delta: -60.77
 
+## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
 
 ## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
-- Calibrated Step Grid: 100 pips per station (backtest-proven from MetaQuotes 2010-2026)
-- Station Ladder: ... 1.07 → [1.08] → [1.09] ← CURRENT → [1.1] → 1.11 ...
-- Current Price: 1.088 | Position in Range: 40.0% (0% = at Lower Station, 100% = at Upper Station)
-- Distance to Lower [1.08]: 0.00800 | Distance to Base [1.09]: 0.00200 | Distance to Upper [1.1]: 0.01200
-- CRITICAL: These psychological stations are natural magnets/barriers where institutional orders cluster. Use them to INDEPENDENTLY determine your TP (next station in YOUR assessed trend direction) and SL (behind the opposing station + 0.35x ATR anti-wick buffer). Do NOT blindly follow the proposed direction.
+- Step Grid: 1000 pips per station | Position in Range: 40.0%
+- Station Ladder: ... 1.07000 -> [1.08000] -> [1.09000] <CURRENT 1.08800> -> [1.10000] -> 1.11000 ...
+- Distances: to Lower 0.00800 | to Base 0.00200 | to Upper 0.01200
+- Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
+  * Reference TP (SELL): 1.08020 | Reference SL: 1.10020
 
 
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
@@ -288,17 +263,17 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Target Landscape: TP1 (Proximal Station) = 1.15942 | TP2 (Macro Target) = 1.15026
 - Baseline Floor SL: 1.16666 | Macro Invalidation: 1.17207
 
-## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): 0.0 | Ceiling (Strong High): 0.0
+## 5. SMART MONEY CONCEPTS (SMC) & FRVP LIQUIDITY MAP
+- Structural Floor (Strong Low): 0.00000 | Ceiling (Strong High): 0.00000
 - Nearest Bullish OB: None nearby | Nearest Bearish OB: None nearby
 - Nearest Fair Value Gap (FVG Magnet): None nearby
 - Liquidity Pools: Clear of immediate EQH/EQL traps
 - Fixed Range Volume Profile (FRVP): Standard Institutional Liquidity
 
-## 3. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
-- Proposed Technical SL: 1.091 (Anchor behind structural station/OB + 0.35x ATR anti-wick buffer)
-- Proposed Technical TP: 1.082 (Target: nearest station in SELL direction)
-- Risk:Reward Ratio: 2.00:1 (Mandatory >= 1.25)
+## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Scanner Raw SL: 1.09100 | Scanner Raw TP: 1.08200 | R:R: 2.00:1
+- Atlas DNA-Anchored Reference: SL = 1.10020 | TP = 1.08020
+  (TP snapped to nearest Station +[0.15xATR+Spread]; SL anchored behind opposing Station - [0.35xATR+Spread])
 
 - D1 Daily Context (Last 3 days OHLC):
 - [04:00] 1.16728/1.16770/1.16420/1.16534
@@ -356,22 +331,7 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - [03:50] 1.15813/1.15828/1.15813/1.15819
 - [03:55] 1.15819/1.15823/1.15806/1.15813
 
-## 4. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT
-
-### APEX PARAGON MACRO FUNDAMENTAL BRIEFING (40% Weight)
-• Base Currency (EUR)   : Score +0.00 | CB Rate: 3.75% (CUT_CYCLE) | Phase: PRICED_IN_EQUILIBRIUM
-• Quote Currency (USD)  : Score -0.40 | CB Rate: 5.5% (HOLD / CUT_WATCH) | Phase: PRICED_IN_EQUILIBRIUM
-• Fundamental Net Delta  : +0.40 | Net Carry Spread: -1.75%
-• Currency Conflict Gate : 🟢 VALID CONVERGENCE (FAVOR BUY)
-• Setup Classification   : GRADE_A_PLUS (Sizing: 1.0x)
-• Macro Directive        : FAVOR_BUY (EUR Strong vs USD Weak | Net Delta +0.40)
-• Recent Catalysts/Decay :
-• [Reuters] Europe's central bankers fear more turbulence in testy U.S. relations (0.0h ago)
-• [Binance News] Dollar Rises After Fed Chair Warsh Remarks as Markets Await U.S. Jobs Data (0.0h ago)
-
-- Economic Calendar Context: No High-Impact News releases within +/- 6 hours
-
-## 5. EVALUATION & JURY OUTPUT INSTRUCTIONS
+## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
@@ -383,8 +343,8 @@ Respond strictly in valid JSON:
   "execution": {
     "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
     "entry_price": float (null if market, required if pending),
-    "sl_price": float (exact absolute price),
-    "tp_price": float (exact absolute price)
+    "sl_price": float (exact absolute price, 5 decimal places),
+    "tp_price": float (exact absolute price, 5 decimal places)
   },
   "veto_reason": null | string (max 15 words if REJECT),
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",

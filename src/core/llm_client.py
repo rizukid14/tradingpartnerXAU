@@ -1829,42 +1829,73 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         csm_block = ""
 
+    # === SYMBOL DECIMAL PRECISION (resolves JPY=3, XAU/BTC=2, FX=5) ===
+    def _sym_dec(s):
+        """Returns correct decimal places for a symbol's price display."""
+        s_upper = s.upper()
+        if any(x in s_upper for x in ("JPY", "HUF", "DKK", "NOK", "SEK", "CZK", "HKD")):
+            return 3
+        if any(x in s_upper for x in ("XAU", "GOLD", "BTC", "ETH")):
+            return 2
+        return 5
+
+    sym_dec = _sym_dec(sym)
+    P = sym_dec  # shorthand
+
+    def fp(x):
+        """Format price with correct decimal precision for this symbol."""
+        return f"{x:.{P}f}"
+
     # === ATLAS DNA DYNAMIC STATION CALCULATION ===
     atlas_dna_block = ""
+    atlas_tp_ref = None      # Atlas DNA-anchored TP reference price
+    atlas_sl_ref = None      # Atlas DNA-anchored SL reference price
+    upper_st = lower_st = base_st = step_val = 0.0
     try:
-        from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
+        from src.indicators.atlas_dna import calculate_dynamic_stations
         trigger_px = float(candidate.trigger_price)
         stations = calculate_dynamic_stations(sym, trigger_px)
         step_val = stations['step']
         base_st = stations['base_station']
         upper_st = stations['upper_station']
         lower_st = stations['lower_station']
-        upper_2 = round(upper_st + step_val, 5 if step_val < 1 else 3 if step_val >= 1 else 2)
-        lower_2 = round(lower_st - step_val, 5 if step_val < 1 else 3 if step_val >= 1 else 2)
-        
-        # Distances from current price to each station
+        upper_2 = round(upper_st + step_val, P)
+        lower_2 = round(lower_st - step_val, P)
+
         dist_to_upper = abs(upper_st - trigger_px)
         dist_to_lower = abs(trigger_px - lower_st)
         dist_to_base = abs(trigger_px - base_st)
-        
-        # Step label for humans
+
+        # Step label
         if step_val >= 1.0:
             step_label = f"{step_val:.0f} JPY ({int(step_val * 100)} pips)"
-        elif step_val >= 0.01:
-            step_label = f"{int(step_val * 10000)} pips"
+        elif step_val >= 0.001:
+            step_label = f"{int(step_val * 10**P)} pips"
         else:
-            step_label = f"{int(step_val * 10000)} pips ({step_val:.4f})"
-        
-        # Position within current station range (0% = at lower, 100% = at upper)
+            step_label = f"{int(step_val * 10000)} pips ({step_val:.{P}f})"
+
         station_range = upper_st - lower_st
         position_in_range = ((trigger_px - lower_st) / station_range * 100) if station_range > 0 else 50.0
-        
+
+        # Atlas DNA-Anchored SL/TP Reference (Front-Running Pad formula)
+        atr_px = candidate.current_atr_pts * (10 ** -P) if candidate.current_atr_pts > 0 else 0.0
+        spread_px = candidate.current_spread_pts * (10 ** -P) if candidate.current_spread_pts > 0 else 0.0
+        pad = 0.15 * atr_px + spread_px
+        anti_wick = 0.35 * atr_px + spread_px
+
+        if candidate.direction == 1:  # BUY
+            atlas_tp_ref = round(upper_st - pad, P)
+            atlas_sl_ref = round(lower_st - anti_wick, P)
+        else:  # SELL
+            atlas_tp_ref = round(lower_st + pad, P)
+            atlas_sl_ref = round(upper_st + anti_wick, P)
+
         atlas_dna_block = f"""\n## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
-- Calibrated Step Grid: {step_label} per station (backtest-proven from MetaQuotes 2010-2026)
-- Station Ladder: ... {lower_2} → [{lower_st}] → [{base_st}] ← CURRENT → [{upper_st}] → {upper_2} ...
-- Current Price: {trigger_px} | Position in Range: {position_in_range:.1f}% (0% = at Lower Station, 100% = at Upper Station)
-- Distance to Lower [{lower_st}]: {dist_to_lower:.5f} | Distance to Base [{base_st}]: {dist_to_base:.5f} | Distance to Upper [{upper_st}]: {dist_to_upper:.5f}
-- CRITICAL: These psychological stations are natural magnets/barriers where institutional orders cluster. Use them to INDEPENDENTLY determine your TP (next station in YOUR assessed trend direction) and SL (behind the opposing station + 0.35x ATR anti-wick buffer). Do NOT blindly follow the proposed direction.\n"""
+- Step Grid: {step_label} per station | Position in Range: {position_in_range:.1f}%
+- Station Ladder: ... {fp(lower_2)} -> [{fp(lower_st)}] -> [{fp(base_st)}] <CURRENT {fp(trigger_px)}> -> [{fp(upper_st)}] -> {fp(upper_2)} ...
+- Distances: to Lower {fp(dist_to_lower)} | to Base {fp(dist_to_base)} | to Upper {fp(dist_to_upper)}
+- Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
+  * Reference TP ({direction_str}): {fp(atlas_tp_ref)} | Reference SL: {fp(atlas_sl_ref)}\n"""
     except Exception:
         atlas_dna_block = ""
 
@@ -1912,34 +1943,37 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: {sym} | Asset: {asset_desc(sym)}
-- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {candidate.trigger_price}
+- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {fp(float(candidate.trigger_price))}
 - Macro Compass: {candidate.macro_compass} | H4 Status: {h4_status}
 - H1 Wave State: {getattr(candidate, 'wave_state', 'DEMAND_REACTION_GO')} ({getattr(candidate, 'wave_summary', 'Permitted')})
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
-- Key Levels: PDH={pdh_val} | PDL={pdl_val} | PWH={pwh_val} | PWL={pwl_val} | DO={do_val} | ADR Used: {adr_used_val*100:.1f}%
+- Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_used_val*100:.1f}%
 - Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%
 {meta_block}
+
+## 2. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT (40% Weight — Read Before Evaluating Technicals)
+{fund_block}
+- Economic Calendar Context: {calendar_text}
+
+## 3. CURRENCY FLOW & WAVE STATE CONFIRMATION
 {micro_frames_block}
 {csm_block}
+## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
 {atlas_dna_block}
 {strat_block}
-## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support} | Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
+## 5. SMART MONEY CONCEPTS (SMC) & FRVP LIQUIDITY MAP
+- Structural Floor (Strong Low): {fp(candidate.strong_low) if candidate.strong_low else fp(candidate.key_support)} | Ceiling (Strong High): {fp(candidate.strong_high) if candidate.strong_high else fp(candidate.key_resistance)}
 - Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None nearby'} | Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None nearby'}
 - Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None nearby'}
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
-## 3. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
-- Proposed Technical SL: {candidate.suggested_sl} (Anchor behind structural station/OB + 0.35x ATR anti-wick buffer)
-- Proposed Technical TP: {candidate.suggested_tp} (Target: nearest station in {direction_str} direction)
-- Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1 (Mandatory >= 1.25)
+## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Scanner Raw SL: {fp(float(candidate.suggested_sl))} | Scanner Raw TP: {fp(float(candidate.suggested_tp))} | R:R: {candidate.risk_reward_ratio:.2f}:1
+- Atlas DNA-Anchored Reference: SL = {fp(atlas_sl_ref) if atlas_sl_ref else 'N/A'} | TP = {fp(atlas_tp_ref) if atlas_tp_ref else 'N/A'}
+  (TP snapped to nearest Station {'-' if direction_str == 'BUY' else '+'}[0.15xATR+Spread]; SL anchored behind opposing Station {'+ ' if direction_str == 'BUY' else '- '}[0.35xATR+Spread])
 {candles_block}
-## 4. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT
-{fund_block}
-- Economic Calendar Context: {calendar_text}
-
-## 5. EVALUATION & JURY OUTPUT INSTRUCTIONS
+## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
@@ -1951,8 +1985,8 @@ Respond strictly in valid JSON:
   "execution": {{
     "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
     "entry_price": float (null if market, required if pending),
-    "sl_price": float (exact absolute price),
-    "tp_price": float (exact absolute price)
+    "sl_price": float (exact absolute price, {P} decimal places),
+    "tp_price": float (exact absolute price, {P} decimal places)
   }},
   "veto_reason": null | string (max 15 words if REJECT),
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
