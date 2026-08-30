@@ -9,6 +9,8 @@ Sends formatted alerts via Telegram Bot API.
 Gracefully disabled if not configured.
 """
 import requests
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import config
 
 
@@ -839,4 +841,29 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
 def alert_trihourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
     """Direct alias for 3-hour radar recap."""
     return alert_hourly_radar_recap(scanner, open_positions, today_pnl, risk, recent_opened, recent_vetoed)
+
+
+def alert_radar_go_transition(symbol, setup_type="RECLAIM_CONFIRMED_GO", trigger_price=0.0, dr_pos=0.0, action_tier="FULL_ALLOW", bias_score=0.0):
+    """
+    Sends an instant high-priority Telegram alert when a symbol transitions to 'Permission GO'.
+    Only triggered for confirmed reclaim setups (A+ opportunity) to prevent noise.
+    """
+    clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    now_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S WIB")
+    
+    tier_emoji = "🟢" if action_tier == "FULL_ALLOW" else ("🟡" if action_tier == "REDUCED_CONFIDENCE" else "🟠")
+    
+    lines = [
+        f"🚀 *[RADAR GO ALERT] {clean_sym} AKTIF*",
+        f"🕒 `{now_str}` | {tier_emoji} *Tier:* `{action_tier}`",
+        "━" * 28,
+        f"• 🎯 *Setup:* `{setup_type}`",
+        f"• 📊 *Dealing Range:* `{int(dr_pos*100)}% (Zona Diskon)`",
+        f"• 🧭 *Macro Bias:* `{bias_score:+.2f}`",
+        f"• 📍 *Trigger Level:* `{trigger_price:.5f}`" if trigger_price > 0 else "",
+        "━" * 28,
+        "⚡ _Candle Reclaim terkonfirmasi. Stage 2 (3-LLM Jury) sedang memproses sinyal._"
+    ]
+    lines = [l for l in lines if l]
+    return send_message("\n".join(lines))
 

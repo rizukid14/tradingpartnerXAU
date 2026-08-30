@@ -82,6 +82,11 @@ class MacroStrategicDirective:
     total_bars_computed: int = 0
     w1_key_demand: float = 0.0
     w1_key_supply: float = 0.0
+    macro_bias_score: float = 0.0
+    regime_stability: str = "STABLE"
+    hard_circuit_breaker: bool = False
+    action_tier: str = "WATCH_ONLY"
+    contingency_target: float = 0.0
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -366,6 +371,12 @@ class MacroStrategicEngine:
         if is_ceiling_pullback_active:
             macro_bias = "BEARISH_PULLBACK"
             primary_directive = "HUNT_SELL_PULLBACK"
+            macro_bias_score = -0.75
+            if peak_u_wick_pct >= 40:
+                macro_bias_score -= 0.15
+            if last_d1_bearish:
+                macro_bias_score -= 0.10
+            macro_bias_score = round(max(-1.0, min(-0.40, macro_bias_score)), 2)
 
             entry_anchor = dbd_entry if (dbd_entry and dbd_entry > curr_mid) else micro_sbr_h1
             entry_zone_proximal = round(entry_anchor - reload_width, digits)
@@ -373,8 +384,8 @@ class MacroStrategicEngine:
             
             calculated_sl = structural_roof + anti_wick_buffer
             if is_crypto:
-                min_sl_dist = max(1.0 * atr_h1, 200.0)
-                max_sl_dist = max(1.25 * atr_h1, 250.0)
+                min_sl_dist = max(1.20 * atr_h1, 300.0)
+                max_sl_dist = max(1.80 * atr_h1, 450.0)
             elif "XAU" in symbol:
                 min_sl_dist = max(1.0 * atr_h1, 3.0)
                 max_sl_dist = 2.5 * atr_h1
@@ -390,6 +401,8 @@ class MacroStrategicEngine:
 
             macro_invalidation = round(recent_frontier_high + (0.20 * atr_d1), digits)
             target_station_final = floor_station
+            hard_circuit_breaker = bool((curr_mid >= sub_ceiling - (0.15 * atr_h1)) or (curr_mid > macro_invalidation))
+            action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
             
             sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
             tp1_price = round(entry_anchor - (1.5 * sl_dist), digits)
@@ -433,6 +446,12 @@ class MacroStrategicEngine:
         elif is_near_floor and (peak_l_wick_pct >= 35 or last_d1_bullish or curr_mid >= sub_floor):
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
+            macro_bias_score = +0.75
+            if peak_l_wick_pct >= 40:
+                macro_bias_score += 0.15
+            if last_d1_bullish:
+                macro_bias_score += 0.10
+            macro_bias_score = round(min(1.0, max(0.40, macro_bias_score)), 2)
 
             entry_anchor = rbr_entry if (rbr_entry and rbr_entry < curr_mid) else (round(sub_floor + (0.02 * atr_h1), digits))
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
@@ -440,8 +459,8 @@ class MacroStrategicEngine:
 
             calculated_sl = structural_floor - anti_wick_buffer
             if is_crypto:
-                min_sl_dist = max(1.0 * atr_h1, 200.0)
-                max_sl_dist = max(1.25 * atr_h1, 250.0)
+                min_sl_dist = max(1.20 * atr_h1, 300.0)
+                max_sl_dist = max(1.80 * atr_h1, 450.0)
             elif "XAU" in symbol:
                 min_sl_dist = max(1.0 * atr_h1, 3.0)
                 max_sl_dist = 2.5 * atr_h1
@@ -457,6 +476,8 @@ class MacroStrategicEngine:
 
             macro_invalidation = round(sub_floor - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
+            hard_circuit_breaker = bool((curr_mid <= sub_floor + (0.15 * atr_h1)) or (curr_mid < macro_invalidation))
+            action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
             tp1_price = round(entry_anchor + (1.5 * sl_dist), digits)
@@ -499,6 +520,10 @@ class MacroStrategicEngine:
             if is_macro_bear:
                 macro_bias = "BEARISH_EXPANSION"
                 primary_directive = "HUNT_SELL_CONTINUATION"
+                macro_bias_score = -0.85
+                if peak_u_wick_pct >= 40:
+                    macro_bias_score -= 0.10
+                macro_bias_score = round(max(-1.0, macro_bias_score), 2)
 
                 entry_anchor = micro_sbr_h1 if (micro_sbr_h1 and micro_sbr_h1 > curr_mid) else dbd_entry if (dbd_entry and dbd_entry > curr_mid) else (round(curr_mid + (0.35 * atr_h1), digits))
                 entry_zone_proximal = round(entry_anchor - reload_width, digits)
@@ -506,8 +531,8 @@ class MacroStrategicEngine:
                 
                 calculated_sl = structural_roof + anti_wick_buffer
                 if is_crypto:
-                    min_sl_dist = max(1.0 * atr_h1, 200.0)
-                    max_sl_dist = max(1.25 * atr_h1, 250.0)
+                    min_sl_dist = max(1.20 * atr_h1, 300.0)
+                    max_sl_dist = max(1.80 * atr_h1, 450.0)
                 elif "XAU" in symbol:
                     min_sl_dist = max(1.0 * atr_h1, 3.0)
                     max_sl_dist = 2.5 * atr_h1
@@ -523,6 +548,8 @@ class MacroStrategicEngine:
 
                 macro_invalidation = round(ceiling_station + (0.20 * atr_d1), digits)
                 target_station_final = floor_station
+                hard_circuit_breaker = bool((curr_mid >= ceiling_station) or (curr_mid > macro_invalidation))
+                action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
                 sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
                 tp1_price = round(entry_anchor - (1.5 * sl_dist), digits)
@@ -558,6 +585,10 @@ class MacroStrategicEngine:
             else:
                 macro_bias = "BULLISH_EXPANSION"
                 primary_directive = "HUNT_BUY_CONTINUATION"
+                macro_bias_score = +0.85
+                if peak_l_wick_pct >= 40:
+                    macro_bias_score += 0.10
+                macro_bias_score = round(min(1.0, macro_bias_score), 2)
 
                 entry_anchor = micro_rbs_h1 if (micro_rbs_h1 and micro_rbs_h1 < curr_mid) else rbr_entry if (rbr_entry and rbr_entry < curr_mid) else (round(curr_mid - (0.35 * atr_h1), digits))
                 entry_zone_proximal = round(entry_anchor + reload_width, digits)
@@ -565,8 +596,8 @@ class MacroStrategicEngine:
                 
                 calculated_sl = structural_floor - anti_wick_buffer
                 if is_crypto:
-                    min_sl_dist = max(1.0 * atr_h1, 200.0)
-                    max_sl_dist = max(1.25 * atr_h1, 250.0)
+                    min_sl_dist = max(1.20 * atr_h1, 300.0)
+                    max_sl_dist = max(1.80 * atr_h1, 450.0)
                 elif "XAU" in symbol:
                     min_sl_dist = max(1.0 * atr_h1, 3.0)
                     max_sl_dist = 2.5 * atr_h1
@@ -582,6 +613,8 @@ class MacroStrategicEngine:
 
                 macro_invalidation = round(floor_station - (0.20 * atr_d1), digits)
                 target_station_final = ceiling_station
+                hard_circuit_breaker = bool((curr_mid <= floor_station) or (curr_mid < macro_invalidation))
+                action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
                 sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
                 tp1_price = round(entry_anchor + (1.5 * sl_dist), digits)
@@ -631,6 +664,19 @@ class MacroStrategicEngine:
         contingency_supply_cands = [_get_ob_core(ob) for ob in macro_bear_obs if _get_ob_core(ob) > (macro_invalidation + 0.15 * atr_d1)]
         contingency_supply = round(min(contingency_supply_cands), digits) if contingency_supply_cands else next_macro_target
 
+        contingency_target_val = contingency_demand if ("BUY" in primary_directive or "BULLISH" in macro_bias) else contingency_supply
+
+        # Determine Regime Stability
+        vol_ratio = atr_h1 / max((atr_d1 / 24.0), 1e-6)
+        if vol_ratio > 2.0:
+            regime_stability = "HIGH_VOLATILITY"
+        elif vol_ratio < 0.6:
+            regime_stability = "COMPRESSION"
+        elif abs(macro_bias_score) >= 0.70:
+            regime_stability = "EXPANSION"
+        else:
+            regime_stability = "STABLE"
+
         directive = MacroStrategicDirective(
             symbol=symbol,
             calculation_time_ms=calc_ms,
@@ -675,10 +721,19 @@ class MacroStrategicEngine:
             total_bars_computed=total_bars_cnt,
             w1_key_demand=w1_key_demand,
             w1_key_supply=w1_key_supply,
+            macro_bias_score=macro_bias_score,
+            regime_stability=regime_stability,
+            hard_circuit_breaker=hard_circuit_breaker,
+            action_tier=action_tier,
+            contingency_target=contingency_target_val,
             raw_payload={
                 "symbol": symbol,
                 "calculation_time_ms": calc_ms,
                 "engine_token_cost": 0,
+                "macro_bias_score": macro_bias_score,
+                "regime_stability": regime_stability,
+                "hard_circuit_breaker": hard_circuit_breaker,
+                "action_tier": action_tier,
                 "NARRATIVE_STORYTELLING": {
                     "macro_annual_corridor": f"Annual Range: [{d1_annual_low:.{digits}f} - {d1_annual_high:.{digits}f}] (4-Year: [{mn1_low:.{digits}f} - {mn1_high:.{digits}f}])",
                     "w1_major_anchor": f"W1 Key Demand: {w1_key_demand:.{digits}f} │ W1 Key Supply: {w1_key_supply:.{digits}f}",
@@ -689,6 +744,10 @@ class MacroStrategicEngine:
                 },
                 "QUANT_DIRECTIVE_VALUES": {
                     "daily_macro_bias": macro_bias,
+                    "macro_bias_score": macro_bias_score,
+                    "action_tier": action_tier,
+                    "regime_stability": regime_stability,
+                    "hard_circuit_breaker": hard_circuit_breaker,
                     "primary_execution_directive": primary_directive,
                     "entry_limit_anchor": entry_anchor,
                     "intraday_sl_price": intraday_sl,

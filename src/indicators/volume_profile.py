@@ -233,6 +233,15 @@ def check_ob_frvp_confluence(
         
     # 3. Check if OB sits in LVN (thin volume vacuum)
     is_lvn = any(abs(ob_mid - lvn) <= 0.10 * atr for lvn in frvp.lvn_nodes) if atr > 0 else False
+    is_thin_volume_danger = bool(is_lvn or (poc_dist > 1.5 * atr and not va_discount))
+    
+    # 4. Auction Disambiguation (Acceptance vs Rejection)
+    if va_discount or poc_overlap:
+        auction_state = "ACCEPTANCE"
+    elif is_lvn:
+        auction_state = "REJECTION"
+    else:
+        auction_state = "NEUTRAL"
     
     # Compute composite score
     score = 0.40  # Base SMC score
@@ -244,12 +253,12 @@ def check_ob_frvp_confluence(
     if va_discount:
         score += 0.25
         
-    if is_lvn:
-        score -= 0.20
+    if is_thin_volume_danger:
+        score -= 0.25
         
     score = max(0.0, min(1.0, score))
     
-    if score >= 0.85:
+    if score >= 0.85 and not is_thin_volume_danger:
         rating = "A+"
     elif score >= 0.65:
         rating = "A"
@@ -263,6 +272,8 @@ def check_ob_frvp_confluence(
         "poc_distance": round(poc_dist, 5),
         "va_discount": va_discount,
         "is_lvn": is_lvn,
+        "is_thin_volume_danger": is_thin_volume_danger,
+        "auction_state": auction_state,
         "confluence_score": round(score, 2),
         "rating": rating,
         "poc": poc,

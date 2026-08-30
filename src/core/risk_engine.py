@@ -270,7 +270,7 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None):
+    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
@@ -279,10 +279,12 @@ class RiskEngine:
         unanimous -> 2 posisi), risk dibagi N supaya TOTAL risk per sinyal
         tetap risk_pct, bukan N x risk_pct.
 
+        action_tier: 5-Tier Operational Action Matrix modifier ("REDUCED_CONFIDENCE" -> 0.75x).
+
         Order of operations (important):
           1. Compute risk-based lot from the (already floored) SL distance,
              dibagi split_count.
-          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2).
+          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2, action_tier x0.75).
           3. Clamp to broker volume_min/max and round DOWN to volume_step
              LAST (floor, bukan round - round() bisa naikkan lot MELEBIHI
              risk target), so multipliers are not distorted by rounding.
@@ -300,12 +302,16 @@ class RiskEngine:
         if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
             # No SL given -> fall back to the static per-symbol lot
             lot = config.lot_size_for(symbol)
+            if action_tier == "REDUCED_CONFIDENCE":
+                lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
         # USD value of a 1-point move for 1.0 lot
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
         if usd_per_pt_1lot <= 0:
             lot = config.lot_size_for(symbol)
+            if action_tier == "REDUCED_CONFIDENCE":
+                lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
         split_count = max(1, int(split_count))
@@ -314,6 +320,8 @@ class RiskEngine:
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
+            if action_tier == "REDUCED_CONFIDENCE":
+                lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
@@ -324,6 +332,11 @@ class RiskEngine:
         # Apply recovery/session multipliers BEFORE clamping so rounding cannot
         # erase the intended reduction.
         lot = self._apply_lot_multipliers(lot_raw, symbol)
+
+        # Apply 5-Tier Action Matrix modifier (REDUCED_CONFIDENCE -> 0.75x risk)
+        if action_tier == "REDUCED_CONFIDENCE":
+            lot *= 0.75
+            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE multiplier (x0.75) applied -> {lot:.4f}")
 
         # Clamp to broker volume bounds and round DOWN to step (floor - jangan
         # pakai round(), itu bisa NAIKKAN lot di atas risk target).

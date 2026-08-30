@@ -27,7 +27,7 @@ from src.core import mt5_connector as connector
 from src.core.risk_engine import RiskEngine
 from src.core import llm_client
 from src.core import consensus
-from src.analytics import macro_analyst
+from src.analytics.macro_strategic_engine import macro_strategic_engine
 
 _risk_engine = RiskEngine()
 WIB = ZoneInfo("Asia/Jakarta")
@@ -282,51 +282,44 @@ def handle_indicators_command(chat_id, symbol_input=None):
 
 
 def handle_macro_command(chat_id, symbol_input=None):
-    """Sends pure quant 6-timeframe strategic directive, translated to institutional narrative via OpenAI."""
+    """Sends pure quant 6-timeframe strategic directive directly without LLM overhead (0 token, instant)."""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
-        from src.core.llm_client import generate_macro_narrative
         sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
         clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         
         directive = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
         
-        # 1. Synthesize executive narrative via OpenAI
-        narrative = generate_macro_narrative(directive)
+        is_crypto_or_gold = ("BTC" in clean_sym or "XAU" in clean_sym)
+        pip_unit = "USD" if is_crypto_or_gold else "pips"
         
-        if narrative:
-            msg_text = (
-                f"{narrative}\n\n"
-                f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | 🤖 _Synthesized by OpenAI (gpt-4o-mini) & MSE 6-TF Native_"
-            )
+        # Calculate reload zone difference in pips
+        prox_val = directive.entry_zone_proximal if hasattr(directive, 'entry_zone_proximal') and directive.entry_zone_proximal > 0 else 0.0
+        if prox_val > 0:
+            zone_diff = abs(directive.entry_limit_anchor - prox_val)
+            diff_pips = round(zone_diff, 1) if is_crypto_or_gold else round(zone_diff / (0.01 if "JPY" in clean_sym else 0.0001), 1)
+            reload_str = f"`{directive.entry_zone_proximal}` ➔ `{directive.entry_limit_anchor}` (~{diff_pips:.1f} {pip_unit})"
         else:
-            # Fallback to structured quantitative template if OpenAI is offline
-            lines = [
-                f"🧭 *TOP-DOWN MACRO STRATEGIC DIRECTIVE: {clean_sym}*",
-                f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` | Komputasi: `{directive.calculation_time_ms} ms` (0 Token)\n",
-                f"🎯 *Mandat*: `{directive.daily_macro_bias}`",
-                f"⚡ *Eksekusi*: `{directive.primary_execution_directive}`",
-                f"🏛️ *Tahapan*: `{directive.structural_stage}`\n",
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                "🧱 *HIRARKI ZONA SBR & RBS*:",
-                f"• 📅 *Macro D1*: RBS `{directive.macro_rbs_d1}` | SBR `{directive.macro_sbr_d1}`",
-                f"• ⏱️ *Inter H4*: RBS `{directive.inter_rbs_h4}` | SBR `{directive.inter_sbr_h4}`",
-                f"• 🔬 *Micro H1*: RBS `{directive.micro_rbs_h1}` | SBR `{directive.micro_sbr_h1}`\n",
-                "🚉 *DUAL-GRID SUB-STATIONS (50 Pips)*:",
-                f"• 🔼 *Sub-Ceiling*: `{directive.sub_ceiling_50}`",
-                f"• 🔽 *Sub-Floor*: `{directive.sub_floor_50}`\n",
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                "🎯 *INTRADAY REFINED DELIVERY*:",
-                f"• 📍 *Reload Zone*: `{directive.entry_zone_proximal}` ➔ `{directive.entry_limit_anchor}`",
-                f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips} pips)",
-                f"• 🎁 *TP1 (Partial 50%)*: `{directive.tp1_price}` (+{directive.tp1_pips} pips)",
-                f"• 🏆 *TP2 (Station Target)*: `{directive.tp2_price}` (+{directive.tp2_pips} pips, R:R {directive.risk_reward_ratio}:1)",
-                f"• 🚫 *Macro Invalidation*: `{directive.invalidation_stop_price}`\n",
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                f"💡 *Thesis*: {directive.daily_mandate_thesis}\n",
-                f"⚠️ *Pantangan*: {', '.join(directive.forbidden_traps) if directive.forbidden_traps else '-'}"
-            ]
-            msg_text = "\n".join(lines)
+            reload_str = f"`{directive.entry_limit_anchor}`"
+
+        traps_list = "\n".join([f"• {t}" for t in directive.forbidden_traps]) if directive.forbidden_traps else "• Tidak ada jebakan ekstrem."
+        circuit_str = " 🚨 *CIRCUIT BREAKER*" if getattr(directive, 'hard_circuit_breaker', False) else ""
+
+        lines = [
+            f"🧭 *TOP-DOWN MACRO: {clean_sym}*",
+            f"🎯 *Mandat*: `{directive.daily_macro_bias}` ({directive.macro_bias_score:+.2f}) │ *Tier*: `{directive.action_tier}`{circuit_str}",
+            f"⚡ *Aksi*: `{directive.primary_execution_directive}` (Conf: {directive.confidence_score}%)\n",
+            f"💡 *Gameplan*:\n_{directive.daily_mandate_thesis}_\n",
+            "🎯 *Eksekusi Taktis*:",
+            f"• 📍 *Reload Zone*: {reload_str}",
+            f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips:.1f} {pip_unit})",
+            f"• 🎁 *TP1 (50% + BEP)*: `{directive.tp1_price}` (+{directive.tp1_pips:.1f} {pip_unit} │ 1.50:1 R:R)",
+            f"• 🏆 *TP2 (Target)*: `{directive.tp2_price}` (+{directive.tp2_pips:.1f} {pip_unit} │ {directive.risk_reward_ratio:.2f}:1 R:R)",
+            f"• 🚫 *Invalidasi*: `{directive.invalidation_stop_price}`\n",
+            f"⚠️ *Pantangan*:\n{traps_list}\n",
+            f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ Komputasi: `{directive.calculation_time_ms:.1f} ms` (0 Token)"
+        ]
+        msg_text = "\n".join(lines)
 
         kb = {
             "inline_keyboard": [
@@ -423,21 +416,53 @@ def _build_main_menu_keyboard():
                 {"text": "🌐 [ Boitoki CSM Radar ]", "callback_data": "cmd:csm"}
             ],
             [
-                {"text": "📰 [ News Calendar ]", "callback_data": "cmd:news"},
-                {"text": "📊 [ Open Positions ]", "callback_data": "cmd:positions"}
+                {"text": "🧭 [ MSE Macro Strategy ]", "callback_data": "cmd:macro_menu"},
+                {"text": "📰 [ News Calendar ]", "callback_data": "cmd:news"}
             ],
             [
+                {"text": "📊 [ Open Positions ]", "callback_data": "cmd:positions"},
                 {"text": "🛡️ [ Account Status ]", "callback_data": "cmd:status"}
             ]
         ]
     }
 
 
+def handle_macro_picker_menu(chat_id):
+    """Sends clean symbol picker for 6-TF Macro Strategic Engine directives."""
+    text = (
+        "🧭 *TOP-DOWN MACRO STRATEGIC DIRECTIVES (6-TF)*\n"
+        "_Select an instrument to view 6-TF native mandate, SBR/RBS sockets, reload zones, and intraday targets (<100ms, 0 Token):_"
+    )
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "GBPUSD", "callback_data": "cmd:macro_GBPUSD"},
+                {"text": "USDJPY", "callback_data": "cmd:macro_USDJPY"},
+                {"text": "EURUSD", "callback_data": "cmd:macro_EURUSD"},
+            ],
+            [
+                {"text": "GBPJPY", "callback_data": "cmd:macro_GBPJPY"},
+                {"text": "EURJPY", "callback_data": "cmd:macro_EURJPY"},
+                {"text": "CADJPY", "callback_data": "cmd:macro_CADJPY"},
+            ],
+            [
+                {"text": "AUDUSD", "callback_data": "cmd:macro_AUDUSD"},
+                {"text": "USDCAD", "callback_data": "cmd:macro_USDCAD"},
+                {"text": "BTCUSD", "callback_data": "cmd:macro_BTCUSD"},
+            ],
+            [
+                {"text": "« [ Back to Menu ]", "callback_data": "cmd:menu"}
+            ]
+        ]
+    }
+    send_telegram_msg(text, reply_markup=kb, chat_id=chat_id)
+
+
 def handle_menu_command(chat_id):
     """Sends the clean institutional control panel."""
     text = (
         "*CONTROL PANEL — 2-STAGE QUANT TRADING BOT*\n"
-        "_Select an instrument for on-demand 3-AI consensus or view 26-Pair SMC Radar:_"
+        "_Select an instrument for on-demand OpenAI analysis, MSE Macro Strategy, or view 26-Pair SMC Radar:_"
     )
     send_telegram_msg(text, reply_markup=_build_main_menu_keyboard(), chat_id=chat_id)
 
@@ -587,7 +612,7 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
     norm_tf = _normalize_timeframe(timeframe_input)
     tf_label = norm_tf or config.get_timeframe_str(sym)
 
-    send_telegram_msg(f"*Starting On-Demand 3-AI Analysis for `{sym}` ({tf_label})...*\n_Fetching live candle data, indicators, and H4/D1 macro structure..._", chat_id=chat_id)
+    send_telegram_msg(f"*Starting On-Demand Analysis for `{sym}` ({tf_label})...*\n_Querying OpenAI o4-mini with live MSE 6-TF structural data..._", chat_id=chat_id)
 
     def _worker():
         try:
@@ -603,10 +628,30 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
 
             tick_live = connector.get_current_tick(sym)
             if not tick_live:
-                send_telegram_msg(f"Error: Feed harga live `{sym}` tidak tersedia.", chat_id=chat_id)
-                return
+                info = connector.mt5.symbol_info(sym)
+                pt = info.point if info else (0.001 if "JPY" in sym else (0.01 if "XAU" in sym or "BTC" in sym else 0.00001))
+                last_c = float(df["close"].iloc[-1])
+                tick_live = {"bid": last_c, "ask": last_c, "point": pt, "spread": 10}
 
-            macro_ctx = macro_analyst.analyst.get_macro_context(sym)
+            strat_dir = macro_strategic_engine.get_directive(sym)
+            if strat_dir:
+                macro_ctx = (
+                    f"### TOP-DOWN MACRO STRATEGIC CONTEXT (MSE 6-TF NATIVE)\n"
+                    f"- Macro Mandate: {strat_dir.daily_macro_bias} (Score: {strat_dir.macro_bias_score:+.2f}) | Stability: {strat_dir.regime_stability}\n"
+                    f"- Operational Action Tier: {strat_dir.action_tier} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}\n"
+                    f"- Structural Sockets:\n"
+                    f"  * Macro D1 Scale  : Major SBR Resistance = {strat_dir.macro_sbr_d1} | Major RBS Support = {strat_dir.macro_rbs_d1}\n"
+                    f"  * Intermediate H4 : SBR Resistance = {strat_dir.inter_sbr_h4} | RBS Support = {strat_dir.inter_rbs_h4}\n"
+                    f"  * Micro H1 Scale  : SBR Resistance = {strat_dir.micro_sbr_h1} | RBS Support = {strat_dir.micro_rbs_h1}\n"
+                    f"- Psychological Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]\n"
+                    f"- Reload Zone Anchor   : {strat_dir.entry_limit_anchor} | Baseline Floor SL = {strat_dir.intraday_sl_price}\n"
+                    f"- Station Targets      : TP1 = {strat_dir.tp1_price} | TP2 = {strat_dir.tp2_price}\n"
+                    f"- Strategic Directive  : {strat_dir.primary_execution_directive}\n"
+                    f"- Invalidation Point   : {strat_dir.invalidation_stop_price} | Contingency Target: {strat_dir.contingency_target}\n"
+                )
+            else:
+                macro_ctx = ""
+
             open_pos = connector.get_open_positions(symbol=sym)
             all_open_pos = connector.get_open_positions()
 
@@ -617,61 +662,43 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
                 all_open_positions=all_open_pos
             )
 
-            # Parallel query with 3 models: OpenAI + Gemini + DeepSeek
-            decisions = llm_client.query_all_models_parallel(
-                prompt,
-                models=["OpenAI", "Gemini", "DeepSeek"]
-            )
+            # Direct fast query with OpenAI o4-mini
+            decision = llm_client.query_openai(prompt)
+            if not decision:
+                send_telegram_msg(f"Error: OpenAI o4-mini tidak mengembalikan respons untuk `{sym}`.", chat_id=chat_id)
+                return
 
-            # Consensus computation
-            result = consensus.calculate_consensus(decisions)
-
-            sig = result.get("signal", "HOLD")
-            conf = result.get("confidence", 0.0)
-            score = result.get("best_score", 0.0)
-            thresh = result.get("threshold", 1.0)
-            agree_models = result.get("agreeing_models", [])
-            setup = result.get("setup", "N/A")
-            reason = result.get("reason", "N/A")
-            inv_text = result.get("invalidation_text", "")
-            sl_pts = result.get("sl_points") or 0
-            tp_pts = result.get("tp_points") or 0
-            inv_price = result.get("invalidation_price")
-            tgt_price = result.get("target_price")
-            entry_type = result.get("entry_type") or "market"
-            entry_price = result.get("entry_price")
-
-            # Build model votes text (Clean format, no emoji)
-            model_votes = []
-            for m_name in ["OpenAI", "Gemini", "DeepSeek"]:
-                dec = decisions.get(m_name, {})
-                m_sig = dec.get("signal", "HOLD")
-                m_conf = (dec.get("confidence") or 0.0) * 100
-                m_reason = (dec.get("reasoning") or dec.get("edge") or "-")
-                m_reason_clean = " ".join(m_reason.replace("\n", " ").split())
-                model_votes.append(f"• *{m_name} ({m_conf:.0f}%)*: `{m_sig}` — _{m_reason_clean}_")
-
-            votes_str = "\n".join(model_votes)
+            sig = str(decision.get("signal") or "HOLD").upper()
+            conf = float(decision.get("confidence") or 0.0)
+            setup = decision.get("setup", "N/A")
+            regime = decision.get("market_regime", "N/A")
+            reason = decision.get("reasoning") or decision.get("edge") or "N/A"
+            sl_pts = decision.get("sl_points") or 0
+            tp_pts = decision.get("tp_points") or 0
+            inv_price = decision.get("invalidation_price")
+            tgt_price = decision.get("target_price")
+            entry_type = decision.get("entry_type") or "market"
+            entry_price = decision.get("entry_price")
 
             # Calculate lot sizing preview
             effective_lot = _risk_engine.get_effective_lot_size(sl_pts, split_count=1, symbol=sym) if sl_pts > 0 else config.lot_size_for(sym)
-
             rr_str = f"{tp_pts/sl_pts:.2f}:1" if (sl_pts and sl_pts > 0 and tp_pts) else "N/A"
 
+            sig_emoji = "🟢" if sig == "BUY" else ("🔴" if sig == "SELL" else "🟡")
+
             lines = [
-                f"*ON-DEMAND ANALYSIS: {sym} ({tf_label})*",
-                f"Timestamp: `{time.strftime('%H:%M:%S WIB')}` | Engine: `Triple AI (OpenAI + Gemini + DeepSeek)`\n",
-                f"*MODEL SIGNALS*:\n{votes_str}\n",
-                f"----------------------------------------",
-                f"*CONSENSUS DECISION: {sig}*",
+                f"🧠 *ON-DEMAND ANALYSIS: {sym} ({tf_label})*",
+                f"🕒 `{time.strftime('%H:%M:%S WIB')}` | Engine: `OpenAI o4-mini (Quant MSE Context)`\n",
+                f"📊 *Regime*: `{regime}` | *Setup*: `{setup}`",
+                f"🎯 *Rekomendasi*: {sig_emoji} *`{sig}`* (Confidence: `{conf*100:.0f}%`)",
+                f"━" * 28,
             ]
 
             if sig in ("BUY", "SELL"):
-                lines.append(f"• *Models Agreed*: `{', '.join(agree_models)}` (Avg Conf: `{conf*100:.1f}%` | Score `{score:.2f}/{thresh:.2f}`)")
-                lines.append(f"• *Setup*: `{setup}`")
-                lines.append(f"• *Primary Reason*: _{reason}_")
-                if inv_text:
-                    lines.append(f"• *Invalidation*: _{inv_text}_")
+                if entry_type != "market" and entry_price:
+                    lines.append(f"• *Entry*: `{entry_type.upper()} @ {entry_price}`")
+                else:
+                    lines.append(f"• *Entry*: `Market Execution @ {tick_live.get('ask' if sig=='BUY' else 'bid')}`")
 
                 sl_str = f"`{inv_price}` ({sl_pts} pts)" if inv_price else f"`{sl_pts} pts`"
                 tp_str = f"`{tgt_price}` ({tp_pts} pts | R:R {rr_str})" if tgt_price else f"`{tp_pts} pts`"
@@ -679,7 +706,10 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
                 lines.append(f"• *Take Profit*: {tp_str}")
                 lines.append(f"• *Lot Sizing (Risk {config.risk_percent_for(sym)}%)*: `{effective_lot} lot`")
             else:
-                lines.append(f"• *Status*: _Consensus threshold not met or market ranging. Recommended action: HOLD._")
+                lines.append(f"• *Status*: _Kondisi pasar saat ini belum optimal untuk entri. Disarankan HOLD & menunggu harga memasuki Reload Zone MSE._")
+
+            lines.append(f"━" * 28)
+            lines.append(f"📝 *Analisis*: _{reason}_")
 
             # Store cache token for button callbacks
             token = f"{sym[:3]}_{int(time.time())}"
@@ -959,6 +989,11 @@ def _process_update(update):
             handle_close_all(target_chat)
         elif data == "cmd:menu":
             handle_menu_command(target_chat)
+        elif data in ("cmd:macro", "cmd:macro_menu"):
+            handle_macro_picker_menu(target_chat)
+        elif data.startswith("cmd:macro_"):
+            sym_req = data.split("cmd:macro_", 1)[1]
+            handle_macro_command(target_chat, symbol_input=sym_req)
         elif data == "cmd:news":
             handle_news_command(target_chat)
         elif data == "cmd:csm":
@@ -1017,10 +1052,11 @@ def register_bot_commands():
         return False
     commands = [
         {"command": "menu", "description": "Interactive Control Menu & Actions"},
+        {"command": "macro", "description": "Top-Down 6-TF Macro Strategy (e.g. /macro GBPUSD)"},
         {"command": "news", "description": "High-Impact News Calendar & Schedule"},
         {"command": "csm", "description": "Dual-Horizon Boitoki CSM Currency Strength"},
-        {"command": "analisa", "description": "3-AI Analysis (e.g. /analisa GBPUSD M15)"},
-        {"command": "radar", "description": "22-Pair SMC Quant Scanner & Overview"},
+        {"command": "analisa", "description": "On-Demand Analysis (e.g. /analisa GBPUSD)"},
+        {"command": "radar", "description": "26-Pair SMC Quant Scanner & Overview"},
         {"command": "indicators", "description": "High/Low, Zona Diskon, Premium, & SMC OB/FVG"},
         {"command": "posisi", "description": "View & Manage Open Positions"},
         {"command": "status", "description": "Account & Risk Intelligence Status"},

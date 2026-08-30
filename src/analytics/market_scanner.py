@@ -218,6 +218,9 @@ class CandidateSetup:
     permission: str = "GO"
     csm_delta: float = 0.0
     timestamp_wib: str = ""
+    action_tier: str = "FULL_ALLOW"
+    macro_bias_score: float = 0.0
+    regime_stability: str = "STABLE"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_payload_dict(self) -> Dict[str, Any]:
@@ -226,6 +229,9 @@ class CandidateSetup:
             "event": "FAST_RADAR_TRIGGER_CONFIRMED",
             "symbol": self.symbol,
             "setup_type": self.setup_type,
+            "action_tier": self.action_tier,
+            "macro_bias_score": self.macro_bias_score,
+            "regime_stability": self.regime_stability,
             "direction": "BUY" if self.direction == 1 else "SELL",
             "trigger_price": self.trigger_price,
             "timeframe": self.timeframe,
@@ -842,6 +848,10 @@ class MarketScanner:
                     # Macro Strategic Directive Fields
                     'strat_dir': strat_dir,
                     'daily_macro_bias': getattr(strat_dir, 'daily_macro_bias', 'RANGE_BOUND') if strat_dir else 'RANGE_BOUND',
+                    'macro_bias_score': getattr(strat_dir, 'macro_bias_score', 0.0) if strat_dir else 0.0,
+                    'regime_stability': getattr(strat_dir, 'regime_stability', 'STABLE') if strat_dir else 'STABLE',
+                    'hard_circuit_breaker': getattr(strat_dir, 'hard_circuit_breaker', False) if strat_dir else False,
+                    'action_tier': getattr(strat_dir, 'action_tier', 'WATCH_ONLY') if strat_dir else 'WATCH_ONLY',
                     'primary_execution_directive': getattr(strat_dir, 'primary_execution_directive', 'FADE_CORRIDOR_EXTREMES') if strat_dir else 'FADE_CORRIDOR_EXTREMES',
                     'macro_rbs_d1': getattr(strat_dir, 'macro_rbs_d1', 0.0) if strat_dir else 0.0,
                     'macro_sbr_d1': getattr(strat_dir, 'macro_sbr_d1', 0.0) if strat_dir else 0.0,
@@ -955,30 +965,53 @@ class MarketScanner:
                         logger.debug(f"[RADAR] {sym} SKIP: Permission state is {perm_state} ({macro.get('wave_summary', '')}).")
                         continue
 
-                # ── DIRECTIONAL HARD GATES: SYSTEMIC BASKET LOCK & MSE DIRECTIVE ──
+                # ── DIRECTIONAL 5-TIER OPERATIONAL ACTION MATRIX & CIRCUIT BREAKER ──
                 def _is_direction_allowed(target_dir: int, setup_label: str) -> tuple:
+                    """
+                    Resolves the 5-Tier Operational Action Matrix:
+                    Returns: (allowed: bool, action_tier: str, reason: str)
+                    """
                     # 1. Systemic Currency Basket Lock (M15 + H1 Global Flows)
                     is_basket_locked, basket_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
                     if is_basket_locked:
-                        return False, f"[SYSTEMIC BASKET LOCK] {basket_reason}"
+                        return False, "HARD_BLOCK", f"[SYSTEMIC BASKET LOCK] {basket_reason}"
 
-                    # 2. MSE Hard Stage 1 Gate
-                    if getattr(config, 'ENABLE_MSE_HARD_STAGE1_GATE', True):
-                        strat_dir_sym = macro.get('strat_dir')
-                        if strat_dir_sym is not None:
-                            if target_dir == 1 and strat_dir_sym.daily_macro_bias == "BEARISH_PULLBACK" and strat_dir_sym.primary_execution_directive == "HUNT_SELL_AT_SBR":
-                                return False, f"[MSE STAGE 1 LOCK] BUY blocked by MSE Directive ({strat_dir_sym.primary_execution_directive} / {strat_dir_sym.daily_macro_bias})"
-                            if target_dir == -1 and strat_dir_sym.daily_macro_bias == "BULLISH_EXPANSION" and strat_dir_sym.primary_execution_directive == "HUNT_BUY_AT_RBS":
-                                return False, f"[MSE STAGE 1 LOCK] SELL blocked by MSE Directive ({strat_dir_sym.primary_execution_directive} / {strat_dir_sym.daily_macro_bias})"
+                    strat_dir_sym = macro.get('strat_dir')
+                    if strat_dir_sym is None:
+                        return True, "FULL_ALLOW", "ALLOWED (NO_MSE)"
 
-                            if strat_dir_sym.forbidden_traps:
-                                for trap in strat_dir_sym.forbidden_traps:
-                                    if target_dir == 1 and ("DO NOT BUY" in trap.upper() or "DON'T BUY" in trap.upper()):
-                                        return False, f"[MSE TRAP VETO] BUY forbidden by MSE: {trap}"
-                                    if target_dir == -1 and ("DO NOT SELL" in trap.upper() or "DO NOT SHORT" in trap.upper() or "DON'T SELL" in trap.upper()):
-                                        return False, f"[MSE TRAP VETO] SELL forbidden by MSE: {trap}"
+                    bias_score = getattr(strat_dir_sym, 'macro_bias_score', 0.0)
+                    circuit_breaker = getattr(strat_dir_sym, 'hard_circuit_breaker', False)
 
-                    return True, "ALLOWED"
+                    # 2. Hard Circuit Breaker Collision Check (Extreme Traps & Invalidation)
+                    if circuit_breaker:
+                        if target_dir == 1 and bias_score < -0.40:
+                            return False, "HARD_BLOCK", f"[MSE CIRCUIT BREAKER] BUY blocked at ceiling trap / past invalidation"
+                        if target_dir == -1 and bias_score > 0.40:
+                            return False, "HARD_BLOCK", f"[MSE CIRCUIT BREAKER] SELL blocked at floor trap / past invalidation"
+
+                    if strat_dir_sym.forbidden_traps:
+                        for trap in strat_dir_sym.forbidden_traps:
+                            if target_dir == 1 and ("DO NOT BUY" in trap.upper() or "DON'T BUY" in trap.upper()):
+                                return False, "HARD_BLOCK", f"[MSE TRAP VETO] BUY forbidden: {trap}"
+                            if target_dir == -1 and ("DO NOT SELL" in trap.upper() or "DO NOT SHORT" in trap.upper() or "DON'T SELL" in trap.upper()):
+                                return False, "HARD_BLOCK", f"[MSE TRAP VETO] SELL forbidden: {trap}"
+
+                    # 3. Macro Bias Alignment & Action Tier Resolution
+                    is_aligned = (target_dir == 1 and bias_score >= 0.35) or (target_dir == -1 and bias_score <= -0.35)
+                    is_counter = (target_dir == 1 and bias_score <= -0.35) or (target_dir == -1 and bias_score >= 0.35)
+
+                    if is_aligned:
+                        return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f})"
+                    elif is_counter:
+                        # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap
+                        if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper():
+                            return True, "TP1_ONLY_SCALP", f"COUNTER_TREND_SCALP_PERMITTED ({bias_score:+.2f})"
+                        else:
+                            return False, "HARD_BLOCK", f"[COUNTER TREND BLOCK] Non-sweep setup rejected against macro ({bias_score:+.2f})"
+                    else:
+                        # Neutral / Transition Macro
+                        return True, "REDUCED_CONFIDENCE", f"MODERATE_NEUTRAL_MACRO ({bias_score:+.2f})"
 
                 # ── MECHANISM 1: UNIVERSAL LIQUIDITY SWEEP & STRUCTURAL SFP (H1 / M30) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
@@ -1005,9 +1038,9 @@ class MarketScanner:
                     ref_top_cands = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0]
                     ref_top = max(ref_top_cands) if ref_top_cands else asian_h
                     if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
-                        allowed_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
+                        allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
                         if not allowed_m1_s:
-                            logger.debug(f"[SWEEP SELL GATE] {sym} SKIP: {reason_m1_s}")
+                            logger.debug(f"[SWEEP SELL GATE] {sym} SKIP ({action_tier_m1_s}): {reason_m1_s}")
                         else:
                             gate_ok, gate_reason = evaluate_judas_sweep_gates(
                                 signal_type='SELL',
@@ -1041,6 +1074,8 @@ class MarketScanner:
                                     )
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
+                                    if action_tier_m1_s == "TP1_ONLY_SCALP":
+                                        tp = sl_tp.get('tp1', round(limit_entry - (1.25 * abs(limit_entry - sl)), 5 if pt < 0.01 else 2))
                                     rr_val = sl_tp['risk_reward']
                                     if abs(limit_entry - sl) / pt >= 15:
                                         candidates.append(CandidateSetup(
@@ -1081,11 +1116,15 @@ class MarketScanner:
                                             permission=perm_state,
                                             csm_delta=csm_delta_val,
                                             timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                            action_tier=action_tier_m1_s,
+                                            macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                            regime_stability=macro.get('regime_stability', 'STABLE'),
                                             metadata={
                                                 "entry_type": "sell_limit",
                                                 "entry_price": round(limit_entry, 5 if pt < 0.01 else 2),
                                                 "ref_top": ref_top,
                                                 "target_station": sl_tp.get('target_station', 0.0),
+                                                "action_tier": action_tier_m1_s,
                                                 "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
                                             }
                                         ))
@@ -1095,9 +1134,9 @@ class MarketScanner:
                     ref_bot_cands = [v for v in [asian_l, pdl_val, eql_val, p_floor] if v > 0]
                     ref_bot = min(ref_bot_cands) if ref_bot_cands else asian_l
                     if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
-                        allowed_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
+                        allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
                         if not allowed_m1_b:
-                            logger.debug(f"[SWEEP BUY GATE] {sym} SKIP: {reason_m1_b}")
+                            logger.debug(f"[SWEEP BUY GATE] {sym} SKIP ({action_tier_m1_b}): {reason_m1_b}")
                         else:
                             gate_ok, gate_reason = evaluate_judas_sweep_gates(
                                 signal_type='BUY',
@@ -1131,6 +1170,8 @@ class MarketScanner:
                                     )
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
+                                    if action_tier_m1_b == "TP1_ONLY_SCALP":
+                                        tp = sl_tp.get('tp1', round(limit_entry + (1.25 * abs(limit_entry - sl)), 5 if pt < 0.01 else 2))
                                     rr_val = sl_tp['risk_reward']
                                     if abs(limit_entry - sl) / pt >= 15:
                                         candidates.append(CandidateSetup(
@@ -1171,11 +1212,15 @@ class MarketScanner:
                                             permission=perm_state,
                                             csm_delta=csm_delta_val,
                                             timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                            action_tier=action_tier_m1_b,
+                                            macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                            regime_stability=macro.get('regime_stability', 'STABLE'),
                                             metadata={
-                                                "entry_type": "buy_market",
-                                                "entry_price": ask,
+                                                "entry_type": "buy_limit",
+                                                "entry_price": round(limit_entry, 5 if pt < 0.01 else 2),
                                                 "ref_bot": ref_bot,
                                                 "target_station": sl_tp.get('target_station', 0.0),
+                                                "action_tier": action_tier_m1_b,
                                                 "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
                                             }
                                         ))
@@ -1188,10 +1233,10 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     
                     # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to EMA20 in Discount
-                    allowed_m2_b, reason_m2_b = _is_direction_allowed(1, "BUY_PULLBACK")
+                    allowed_m2_b, action_tier_m2_b, reason_m2_b = _is_direction_allowed(1, "BUY_PULLBACK")
                     can_buy_m2 = allowed_m2_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
                     if not allowed_m2_b:
-                        logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP: {reason_m2_b}")
+                        logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
                     elif can_buy_m2 and pos_in_range <= 0.65:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
                             lim_entry = mid - (atr_pts * 0.20 * pt)
@@ -1207,6 +1252,8 @@ class MarketScanner:
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
+                            if action_tier_m2_b == "TP1_ONLY_SCALP":
+                                tp = sl_tp.get('tp1', round(lim_entry + (1.25 * abs(lim_entry - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
                             if abs(lim_entry - sl) / pt >= 15:
                                 candidates.append(CandidateSetup(
@@ -1247,6 +1294,9 @@ class MarketScanner:
                                     permission=perm_state,
                                     csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    action_tier=action_tier_m2_b,
+                                    macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                    regime_stability=macro.get('regime_stability', 'STABLE'),
                                     metadata={
                                         "entry_type": "buy_limit",
                                         "entry_price": round(lim_entry, 5 if pt < 0.01 else 2),
@@ -1254,16 +1304,17 @@ class MarketScanner:
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
+                                        "action_tier": action_tier_m2_b,
                                         "macro_corridor": m_corr
                                     }
                                 ))
                                 continue
 
                     # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to EMA20 in Premium
-                    allowed_m2_s, reason_m2_s = _is_direction_allowed(-1, "SELL_PULLBACK")
+                    allowed_m2_s, action_tier_m2_s, reason_m2_s = _is_direction_allowed(-1, "SELL_PULLBACK")
                     can_sell_m2 = allowed_m2_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
                     if not allowed_m2_s:
-                        logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP: {reason_m2_s}")
+                        logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
                     elif can_sell_m2 and pos_in_range >= 0.35:
                         if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
                             lim_entry = mid + (atr_pts * 0.20 * pt)
@@ -1279,6 +1330,8 @@ class MarketScanner:
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
+                            if action_tier_m2_s == "TP1_ONLY_SCALP":
+                                tp = sl_tp.get('tp1', round(lim_entry - (1.25 * abs(lim_entry - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
                             if abs(sl - lim_entry) / pt >= 15:
                                 candidates.append(CandidateSetup(
@@ -1319,6 +1372,9 @@ class MarketScanner:
                                     permission=perm_state,
                                     csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    action_tier=action_tier_m2_s,
+                                    macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                    regime_stability=macro.get('regime_stability', 'STABLE'),
                                     metadata={
                                         "entry_type": "sell_limit",
                                         "entry_price": round(lim_entry, 5 if pt < 0.01 else 2),
@@ -1326,6 +1382,7 @@ class MarketScanner:
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
+                                        "action_tier": action_tier_m2_s,
                                         "macro_corridor": m_corr
                                     }
                                 ))
@@ -1341,10 +1398,10 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
 
                     # Bullish Breakout Retest: Tested >= 2 times, broke above cluster resistance, macro bull / bullish corridor
-                    allowed_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST")
+                    allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST")
                     can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
                     if not allowed_m3_b:
-                        logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP: {reason_m3_b}")
+                        logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP ({action_tier_m3_b}): {reason_m3_b}")
                     elif can_buy_m3 and t_res >= 2 and (c_res > 0):
                         if (c_res + atr_val * 0.10) <= mid <= (c_res + atr_val * 0.65):
                             entry_lim = c_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance
@@ -1359,6 +1416,8 @@ class MarketScanner:
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
+                            if action_tier_m3_b == "TP1_ONLY_SCALP":
+                                tp = sl_tp.get('tp1', round(entry_lim + (1.25 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
                             if abs(entry_lim - sl) / pt >= 15:
                                 candidates.append(CandidateSetup(
@@ -1399,6 +1458,9 @@ class MarketScanner:
                                     permission=perm_state,
                                     csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    action_tier=action_tier_m3_b,
+                                    macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                    regime_stability=macro.get('regime_stability', 'STABLE'),
                                     metadata={
                                         "entry_type": "buy_limit",
                                         "entry_price": round(entry_lim, 5 if pt < 0.01 else 2),
@@ -1409,16 +1471,17 @@ class MarketScanner:
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
+                                        "action_tier": action_tier_m3_b,
                                         "macro_corridor": m_corr
                                     }
                                 ))
                                 continue
 
                     # Bearish Breakout Retest: Tested >= 2 times, broke below cluster support, macro bear / bearish corridor
-                    allowed_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST")
+                    allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST")
                     can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
                     if not allowed_m3_s:
-                        logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP: {reason_m3_s}")
+                        logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP ({action_tier_m3_s}): {reason_m3_s}")
                     elif can_sell_m3 and t_sup >= 2 and (c_sup > 0):
                         if (c_sup - atr_val * 0.65) <= mid <= (c_sup - atr_val * 0.10):
                             entry_lim = c_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support
@@ -1433,6 +1496,8 @@ class MarketScanner:
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
+                            if action_tier_m3_s == "TP1_ONLY_SCALP":
+                                tp = sl_tp.get('tp1', round(entry_lim - (1.25 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
                             if abs(sl - entry_lim) / pt >= 15:
                                 candidates.append(CandidateSetup(
@@ -1473,6 +1538,9 @@ class MarketScanner:
                                     permission=perm_state,
                                     csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    action_tier=action_tier_m3_s,
+                                    macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                    regime_stability=macro.get('regime_stability', 'STABLE'),
                                     metadata={
                                         "entry_type": "sell_limit",
                                         "entry_price": round(entry_lim, 5 if pt < 0.01 else 2),
@@ -1483,6 +1551,7 @@ class MarketScanner:
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
+                                        "action_tier": action_tier_m3_s,
                                         "macro_corridor": m_corr
                                     }
                                 ))
@@ -1613,10 +1682,10 @@ class MarketScanner:
         lines.append(f"• 🔴 *Bearish Delivery:* {', '.join(corridor_bears[:4]) if corridor_bears else '-'}")
         lines.append("━" * 36)
         lines.append("🌊 *4-LAYER TRADE PERMISSION ENGINE:*")
-        lines.append(f"• 🚀 *Permission GO (Ready):* {', '.join(go_pairs[:4]) if go_pairs else 'Nihil (Menunggu retest)'}")
-        lines.append(f"• 🎯 *Permission ARM (Basing):* {', '.join(arm_pairs[:4]) if arm_pairs else '-'}")
-        lines.append(f"• 🔒 *Permission LOCK (Anti-Knife):* {', '.join(locked_pairs[:4]) if locked_pairs else '-'}")
-        lines.append(f"• ⏳ *Permission WAIT (No Chase):* {', '.join(wait_pairs[:5]) if wait_pairs else '-'}")
+        lines.append(f"• 🚀 *Permission GO (Pelatuk Aktif / Reclaim):* {', '.join(go_pairs[:4]) if go_pairs else 'Nihil'}")
+        lines.append(f"• 🎯 *Permission ARM (Siaga di Reload Zone):* {', '.join(arm_pairs[:4]) if arm_pairs else '-'}")
+        lines.append(f"• 🔒 *Permission LOCK (Anti-Falling Knife):* {', '.join(locked_pairs[:4]) if locked_pairs else '-'}")
+        lines.append(f"• ⏳ *Permission WAIT (Anti-FOMO / Di Pucuk):* {', '.join(wait_pairs[:5]) if wait_pairs else '-'}")
         lines.append("━" * 36)
         lines.append("🎯 *ZONA DISKON (Buy Radar <= 38.2%):*")
         lines.extend(discount_pairs[:4] if discount_pairs else ["• Nihil (Tidak ada pair di zona diskon)"])

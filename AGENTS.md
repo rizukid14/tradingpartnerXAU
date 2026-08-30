@@ -28,7 +28,7 @@
      2. **`src/core/llm_client.py`**: Prompt AI, deteksi label timeframe (`tf_label`), jumlah candle intra-period (`num_micro_send`), format JSON output, ringkasan momentum mikro, dan variabel lokal candle.
      3. **`src/core/cli_theme.py` & `main.py`**: Banner utama terminal, dynamic status clock line (`[POOL 4 PAIRS (H1) | HH:MM:SS]`), dan log range candle.
      4. **`src/core/telegram_bot.py` & `telegram_alerts.py`**: Label tombol menu keyboard (`GBPUSD H1/M30`), command on-demand (`/analisa`, `/scan`, `/status`), dan pesan alert.
-     5. **`src/analytics/macro_analyst.py`**: Hirarki timeframe MTF (`H1`, `H4`, `D1`), key levels caching, dan background analysis.
+     5. **`src/analytics/macro_strategic_engine.py`**: Pure Quant 6-TF Native Sockets (`MN1/W1/D1/H4/H1/M30`), SBR/RBS zone hierarchy, 5-Tier Operational Action Matrix, dan zero-token on-demand context injection.
      6. **`src/core/risk_engine.py` & `position_manager.py`**: Filter spread, dead zone, ATR-based safety floor, time-decay stagnation, dan pre-rollover shield.
      7. **`tests/test_*.py`**: Unit test suite (`test_symbol_rotation.py`, `test_time_decay_and_vol_regime.py`, `test_macro.py`) wajib diupdate dan dipastikan **100% PASS**.
      8. **`docs/archive/CHANGELOG_AUGUST_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
@@ -95,7 +95,7 @@ python main.py
 | `src/core/economic_calendar.py` | Dynamic fetch kalender ekonomi (TradingView/Investing.com) + anti-FOMC/news context |
 | `src/core/telegram_bot.py` | 2-Way Interactive Telegram Controller + on-demand 3-AI analysis + `/radar` `/levels` `/smc` |
 | `src/analytics/position_manager.py` | 2-Stage Trailing (H1 Breathing 65-90% TP, M30 Terminal Lock $\ge$90% TP), BEP 45-55%, partial close 50%, time-decay stagnation, pre-rollover shield |
-| `src/analytics/macro_analyst.py` | Fundamental + MTF context per-simbol (H4/D1, EMA200, slope EMA50), cache per-simbol |
+| `src/analytics/macro_strategic_engine.py` | Pure Quant 6-TF Native Sockets (`MN1/W1/D1/H4/H1/M30`), SBR/RBS Hierarchy, 5-Tier Action Matrix, Continuous Probabilistic Score |
 
 ---
 
@@ -187,6 +187,26 @@ python main.py
 37. **End-to-End Live Multi-LLM Replay Validation (27–28 Agustus 2026)** (29 Agustus): Validasi live audit 3-LLM Jury (OpenAI o4-mini, Gemini 3.1-Flash, DeepSeek V4-Flash CRO) pada data historis 11 pair akun nyata. Hasil: GBPUSD berbalik dari rugi -$82.69 di akun riil menjadi **+$135.00 (+2.25 R, 3/3 Win)**, EURUSD +2.00 R, GBPCHF +2.15 R, EURCHF +0.30 R. Total net return terverifikasi **+2.85 R (+$171.00 pada equity $6,000)** dengan Win Rate 58.8% dan profit bersih melonjak +135% vs riwayat live akun riil.
 38. **Hierarchical W1 + D1 Multi-Timeframe Order Blocks & Dynamic Contingency Roadmap** (30 Agustus): Integrasi ekstraksi LuxSMC multi-timeframe D1 & W1 (`smc_w1` + `smc_d1`) dengan kalkulasi titik tengah (*Core Midpoint Equilibrium / FRVP POC*). Penyusunan *Contingency Macro Roadmap* logis seberang titik invalidasi: jika breakdown maka memburu lantai Demand D1/W1 terdekat (e.g. USDCAD `1.37043`, GBPCHF `1.08882`), jika breakout memburu atap Supply D1/W1 terdekat (e.g. EURUSD `1.17261`, GBPUSD `1.37000`). Eliminasi anomali directional target inversion dan loncatan target multi-ratusan pips.
 39. **Audit Live Spread Weekend 26 Simbol & Kalibrasi Reload Zone ($0.55\times\text{ATR H1}$)** (30 Agustus): Audit komparatif spread penutupan pasar weekend di akun live MT5 (lonjakan 1.0x s/d 10.1x pada GBPNZD 18.3p, CHFJPY 13.8p, EURNZD 12.3p vs EURUSD/USDCAD 0.7-0.9p). Rekalibrasi matematis lebar *Reload Zone* menjadi $0.55\times\text{ATR H1}$ dengan safety floor per-aset (min 6p FX, 10p JPY, $120 BTC) guna menjamin ruang tangkap limit order optimal pada hari kerja normal.
+40. **Probabilistic Macro Strategic Engine & 5-Tier Operational Action Matrix** (30 Agustus):
+    - **Pemisahan Peran Arsitektural**: MSE = Kompas Arah, Koridor, Invalidation, & Macro Bias Continuous Score ($\in [-1.0, +1.0]$); SMC = Trigger SFP, Liquidity Sweep, & Structure Event; FRVP = Disambiguator Lelang (`ACCEPTANCE` vs `REJECTION`) + *Thin-Volume Danger* filter (cap rating di Grade B jika berada di Low Volume Node / vacuum).
+    - **5-Tier Operational Action Matrix & End-to-End Risk Modifiers**:
+      1. 🟢 `FULL_ALLOW`: Setup searah makro ($|\text{score}| \ge 0.35$), ukuran penuh $100\%$ lot, target koridor penuh TP1 + TP2 runner (+25% boost multi-position jika 3 AI unanimous $\ge 75\%$).
+      2. 🟡 `REDUCED_CONFIDENCE`: Setup valid saat makro netral/moderat ($-0.25 \le \text{score} \le +0.35$), **pengali risiko numerik $0.75\times$ lot size** di `risk_engine.py`, dan pembatasan $\text{TP} \le 2.00 \times \text{SL}$ di `consensus.py`.
+      3. 🟠 `TP1_ONLY_SCALP`: Setup counter-trend berkualitas tinggi (M1 Judas Sweep / SFP) melawan makro moderat ($|\text{score}| \le 0.70$). Wajib sweep bersih + reclaim + wick $\ge 35\%$ + ruang ke TP1 $\ge 1.25\times\text{SL}$ + zero hard trap. Pembatasan $\text{TP} \le 1.50 \times \text{SL}$ dan **larangan keras 2-posisi split** di `main.py` (**100% posisi ditutup di TP1 tunggal**).
+      4. 🔵 `WATCH_ONLY`: Harga di dalam Reload Zone namun trigger belum terkonfirmasi $\rightarrow$ monitor saja, 0 order MT5.
+      5. 🔴 `HARD_BLOCK`: Tabrak hard trap (jarak ke atap/lantai $< 1.0\times\text{ATR H1}$), jebol invalidasi makro, atau waterfall 25-candle M5 $\rightarrow$ hard lock mutlak (0 token LLM).
+    - **Smart 60-Second TTL Cache & Direct Fast Telegram**: Cache memori sub-detik untuk komputasi intraday $\le\text{H4}$ serta pengiriman format quant instan (<100ms, 0 token) di Telegram `/macro`.
+41. **Real-Time State Transition Hook & Smart High-Impact Telegram Alert Gate** (30 Agustus):
+    - **Live State Change Tracker**: Di setiap siklus scan 60 detik (`main.py`), sistem membandingkan status Permission (`ARM/WAIT/GO/LOCK`) dan Mandat Makro tiap simbol terhadap state sebelumnya.
+    - **Auto Re-render Bento Box Terminal**: Jika terjadi transisi state pada pair apa pun (misal: `WAIT -> ARMED` atau `BEARISH_PULLBACK -> BULLISH_EXPANSION`), terminal langsung mencetak log transisi `[⚡ STATE TRANSITION DETECTED]` dan me-render ulang Bento Box HUD seketika tanpa menunggu pergantian jam.
+    - **Smart High-Impact Telegram Gate**: Menghindari spam 26 pair di HP dengan HANYA mengirim notifikasi Telegram pada status kritis **`Permission GO`** (`alert_radar_go_transition` saat reclaim valid terkonfirmasi).
+42. **Full MSE On-Demand Integration & Single OpenAI o4-mini Dedicated Engine** (30 Agustus):
+    - **Total Deletion of `macro_analyst.py`**: Modul usang `src/analytics/macro_analyst.py` dihapus total dari arsitektur.
+    - **Single OpenAI o4-mini On-Demand Engine**: Mode On-Demand Telegram (`/analisa <symbol>`) menggunakan model tunggal OpenAI `o4-mini` yang diperkaya konteks kuantitatif MSE 6-TF lengkap (hemat 66% token API dan respon super cepat <1.5s).
+    - **Prompt Redundancy Elimination**: Menghapus duplikasi level stasiun (`m3_compass_str` saat MSE aktif), menghapus teks narasi penjelasan macro lama, dan menyatukan peringatan unit broker poin di `llm_client.py` $\rightarrow$ menghemat ~220 token per cycle & memangkas latensi respon ~1 detik.
+43. **Codebase Streamlining & Indicator Consolidation** (30 Agustus):
+    - **Dead Code Cleanup**: Menghapus `analyze_fundamentals()` dari `llm_client.py`.
+    - **Indicator Consolidation**: Menggabungkan `squeeze_momentum.py` langsung ke dalam `wave_regime.py` dan memindahkan file catatan referensi PineScript (`.txt`) ke `docs/archive/` sehingga direktori `src/indicators/` murni berisi 7 file Python aktif.
 
 ---
 

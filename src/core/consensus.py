@@ -18,9 +18,9 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
-def _apply_sltp_rules(sl_points, tp_points, symbol=None):
+def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None):
     """
-    SL/TP final sesuai config.TP_SL_RULES.
+    SL/TP final sesuai config.TP_SL_RULES dan 5-Tier Operational Action Matrix.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
     """
     global _last_sltp_adjustments
@@ -58,14 +58,14 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
     mode = config.sltp_mode_for(sym)
 
     if mode == "LLM":
-        is_xau = "XAU" in sym.upper() or "GOLD" in sym.upper()
-        is_jpy = "JPY" in sym.upper()
+        is_xau = ("XAU" in sym.upper())
+        is_btc = config.is_crypto(sym)
+        is_jpy = ("JPY" in sym.upper())
 
-        if is_xau:
-            if atr_points > 0:
-                min_sl = max(spread_pts * 2, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_points))
-            else:
-                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
+        if is_btc:
+            min_sl = max(spread_pts * 2, int(1.20 * atr_points), 30000) if atr_points > 0 else 30000
+        elif is_xau:
+            min_sl = max(spread_pts * 2, int(config.LLM_SAFETY_FLOOR_ATR_MULT * atr_points)) if atr_points > 0 else config.LLM_SAFETY_FLOOR_STATIC_PTS
         elif is_jpy:
             jpy_mult = getattr(config, "LLM_JPY_FLOOR_ATR_MULT", 1.00)
             if atr_points > 0:
@@ -89,15 +89,25 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
             _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {sym} (SL -> {sl_points} pts).")
 
         # Hard Intraday Ceiling Cap (mencegah SL runaway / swing level)
-        if not is_xau:
-            max_sl = min(int(atr_points * 2.0), 160) if atr_points > 0 else 160
+        if is_btc:
+            max_sl = min(int(atr_points * 1.80), 45000) if atr_points > 0 else 45000
             if sl_points > max_sl:
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon intraday. Menyesuaikan SL ke {max_sl} pts.")
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon BTC ($450 USD). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
-        else:
+        elif is_xau:
             max_sl = int(atr_points * 2.5) if atr_points > 0 else 800
             if sl_points > max_sl:
                 _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon Gold. Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
+        elif is_jpy:
+            max_sl = min(int(atr_points * 2.0), 200) if atr_points > 0 else 200
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon JPY (200 pts). Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
+        else:
+            max_sl = min(int(atr_points * 2.0), 160) if atr_points > 0 else 160
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon FX (160 pts). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
 
         if tp_points <= 0:
@@ -105,13 +115,21 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
 
         min_rr = config.LLM_MIN_RR_RATIO
         max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
+
+        # 5-Tier Action Matrix R:R constraints
+        if action_tier == "TP1_ONLY_SCALP":
+            max_rr = min(max_rr, 1.50)
+        elif action_tier == "REDUCED_CONFIDENCE":
+            max_rr = min(max_rr, 2.00)
+
         min_tp = int(sl_points * min_rr)
         max_tp = int(sl_points * max_rr)
         if tp_points < min_tp:
             _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
             tp_points = min_tp
         elif tp_points > max_tp:
-            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
+            tier_msg = f" [{action_tier} Cap]" if action_tier else ""
+            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL{tier_msg}. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
             tp_points = max_tp
 
         try:

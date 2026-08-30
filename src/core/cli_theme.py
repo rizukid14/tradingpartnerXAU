@@ -332,7 +332,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 f" • Inter H4   : RBS {UI.GREEN}${fmt.format(d.inter_rbs_h4)}{UI.RST} | SBR {UI.RED}${fmt.format(d.inter_sbr_h4)}{UI.RST}",
                 f" • Micro H1   : RBS {UI.GREEN}${fmt.format(d.micro_rbs_h1)}{UI.RST} | SBR {UI.RED}${fmt.format(d.micro_sbr_h1)}{UI.RST}",
                 f" • Stations   : Sub-Floor {UI.GREEN}${fmt.format(d.sub_floor_50)}{UI.RST} | Sub-Ceil {UI.RED}${fmt.format(d.sub_ceiling_50)}{UI.RST}",
-                f" • Delivery   : Anchor {UI.YELLOW}${fmt.format(d.entry_limit_anchor)}{UI.RST} | SL {UI.RED}${fmt.format(d.intraday_sl_price)}{UI.RST} (SL {f'${d.intraday_sl_pips:.0f}' if is_btc else f'{d.intraday_sl_pips:.0f}p'})",
+                f" • Reload Zone : {UI.YELLOW}${fmt.format(d.entry_limit_anchor)}{UI.RST} | SL {UI.RED}${fmt.format(d.intraday_sl_price)}{UI.RST} (SL {f'${d.intraday_sl_pips:.0f}' if is_btc else f'{d.intraday_sl_pips:.0f}p'})",
                 f" • Targets    : TP1 {UI.GREEN}${fmt.format(d.tp1_price)}{UI.RST} (50%) | TP2 {UI.GREEN}${fmt.format(d.tp2_price)}{UI.RST} (R:R {d.risk_reward_ratio:.2f}:1)",
                 f" • Pantangan  : {UI.YELLOW}{d.forbidden_traps[0] if d.forbidden_traps else 'None'}{UI.RST}"
             ]
@@ -344,7 +344,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 f" • Inter H4   : RBS {UI.GREEN}$67,289.78{UI.RST} | SBR {UI.RED}$78,150.47{UI.RST}",
                 f" • Micro H1   : RBS {UI.GREEN}$77,943.79{UI.RST} | SBR {UI.RED}$78,993.88{UI.RST}",
                 f" • Stations   : Sub-Floor {UI.GREEN}$78,150.46{UI.RST} | Sub-Ceil {UI.RED}$78,150.47{UI.RST}",
-                f" • Delivery   : Anchor {UI.YELLOW}$78,993.88{UI.RST} | SL {UI.RED}$78,995.48{UI.RST}",
+                f" • Reload Zone : {UI.YELLOW}$78,993.88{UI.RST} | SL {UI.RED}$78,995.48{UI.RST}",
                 f" • Targets    : TP1 $78,150.46 | TP2 $67,289.78 (R:R 7.31:1)",
                 f" • Pantangan  : {UI.YELLOW}Do NOT BUY above $78,494 (Ceiling Trap into ATH){UI.RST}"
             ]
@@ -365,9 +365,28 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         except Exception:
             pass
 
+        w_state_str = "MATURE_BASING"
+        w_perm_str = f"{UI.CYAN}ARMED 🎯 (Menunggu Sentuh Reload Zone){UI.RST}"
+        if macro_cache:
+            for k, v in macro_cache.items():
+                if active_sym in k:
+                    w_st = v.get('wave_state', 'MATURE_BASING')
+                    w_pm = v.get('permission_state', 'ARM')
+                    if w_pm == "GO":
+                        w_perm_str = f"{UI.GREEN}GO 🚀 (Pelatuk Aktif / Reclaim Confirmed){UI.RST}"
+                    elif w_pm == "ARM":
+                        w_perm_str = f"{UI.CYAN}ARMED 🎯 (Menunggu Sentuh Reload Zone){UI.RST}"
+                    elif w_pm == "WAIT":
+                        w_perm_str = f"{UI.GRAY}WAIT ⏳ (Anti-FOMO / Di Pucuk Ekspansi){UI.RST}"
+                    elif w_pm == "LOCK":
+                        w_perm_str = f"{UI.RED}LOCK 🔒 (Anti-Falling Knife){UI.RST}"
+                    w_state_str = w_st
+                    break
+
         t3_lines = [
             f" Sesi Trading : {UI.CYAN}Weekend 24/7 Dedicated Crypto Rotation{UI.RST}",
-            f" Wave State   : {UI.GREEN}MATURE_BASING{UI.RST} (Permission: {UI.CYAN}ARMED 🎯{UI.RST})",
+            f" Wave State   : {UI.GREEN}{w_state_str}{UI.RST}",
+            f" Permission   : {w_perm_str}",
             f" Risk Profile : {UI.YELLOW}0.50% Equity ($29.10 Max Loss | Max 2 Posisi){UI.RST}",
             f" News Ticker  : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}"
         ]
@@ -636,14 +655,23 @@ def render_macro_directive_card(directive, width=95):
     tp1_s = fmt.format(directive.tp1_price) if directive.tp1_price > 0 else "N/A"
     tp2_s = fmt.format(directive.tp2_price) if directive.tp2_price > 0 else "N/A"
     inv_s = fmt.format(directive.invalidation_stop_price) if directive.invalidation_stop_price > 0 else "N/A"
+    contingency_s = fmt.format(directive.contingency_target) if getattr(directive, 'contingency_target', 0.0) > 0 else "N/A"
 
     lines = []
     
     # ── Top Section: Mandat & Execution ──
     total_bars_str = f"{directive.total_bars_computed:,}" if getattr(directive, "total_bars_computed", 0) > 0 else "1,350"
+    bias_score = getattr(directive, 'macro_bias_score', 0.0)
+    stability = getattr(directive, 'regime_stability', 'STABLE')
+    action_tier = getattr(directive, 'action_tier', 'FULL_ALLOW')
+    circuit_breaker = getattr(directive, 'hard_circuit_breaker', False)
+    tier_color = c_green if action_tier == "FULL_ALLOW" else (c_yellow if action_tier == "REDUCED_CONFIDENCE" else (c_purple if action_tier == "TP1_ONLY_SCALP" else c_red))
+
     lines.append(f" {c_bold}{c_white}SYMBOL{c_rst}       : {c_yellow}{clean_sym}{c_rst} | Komputasi: {c_cyan}{directive.calculation_time_ms:.1f} ms{c_rst} (0 Token) | {c_white}Total: {total_bars_str} Bars Native MT5{c_rst}")
     lines.append(f" {c_bold}{c_white}SOCKETS 6-TF{c_rst} : {c_cyan}MN1: 50b (4.1y) │ W1: 100b (1.9y) │ D1: 350b (1.4y) │ H4: 400b │ H1: 250b │ M30: 200b{c_rst}")
-    lines.append(f" {c_bold}{c_white}MACRO BIAS{c_rst}   : {bias_color}{c_bold}{directive.daily_macro_bias}{c_rst} | Stage: {c_purple}{directive.structural_stage}{c_rst}")
+    lines.append(f" {c_bold}{c_white}MACRO BIAS{c_rst}   : {bias_color}{c_bold}{directive.daily_macro_bias}{c_rst} ({bias_score:+.2f}) | Stability: {c_purple}{stability}{c_rst} | Tier: {tier_color}{c_bold}{action_tier}{c_rst}")
+    if circuit_breaker:
+        lines.append(f" {c_bold}{c_red}[!] HARD CIRCUIT BREAKER ACTIVE (Extreme Trap / Structure Invalidation){c_rst}")
     lines.append(f" {c_bold}{c_white}DIRECTIVE{c_rst}    : {exec_color}{c_bold}{directive.primary_execution_directive}{c_rst} (Confidence: {directive.confidence_score}%)")
     lines.append("---")
     

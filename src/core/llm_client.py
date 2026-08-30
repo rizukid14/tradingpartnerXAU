@@ -183,29 +183,6 @@ def query_primary_model(prompt, search_grounding=False):
     return None
 
 
-def analyze_fundamentals(symbol):
-    """
-    Queries Gemini using Google Search Grounding to summarize the latest
-    macroeconomic SENTIMENT affecting the asset (news, outlook, positioning).
-    Event SCHEDULING is handled deterministically by economic_calendar.py -
-    search grounding is only a qualitative complement, never the schedule source.
-    """
-    if config.is_crypto(symbol):
-        execution_style = "30-minute intraday (M30) swing"
-    elif "XAU" not in symbol.upper():
-        execution_style = "1-hour (H1) swing"
-    else:
-        execution_style = "30-minute (M30) swing"
-    prompt = f"""
-What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
-Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
-
-Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a {execution_style} execution model. Focus on DIRECTIONAL macro bias, not event schedules.
-"""
-    # Force search grounding tool
-    return query_primary_model(prompt, search_grounding=True)
-
-
 # ================================================================
 # SYSTEM PROMPT TEMPLATE (docs/prompt_claude.md)
 # "We set guardrails, the LLM sets strategy."
@@ -248,7 +225,6 @@ A valid trade requires structure + location + actionable setup + valid invalidat
 - Pending Rules: Entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: buy_stop/buy_limit. SELL: sell_stop/sell_limit.
 - Unit Definition: sl_points & tp_points are broker POINTS from ENTRY PRICE.
   * {{POINTS_EXPLANATION}}
-  * CRITICAL UNIT WARNING: Double check units! If you want 15 pips SL, you MUST return 150 points, NOT 15. Single/double-digit SLs inside spread will be rejected.
 - Safety Floors: Give your honest structural levels; the bot engine automatically widens SL/TP to meet broker safety floors (>= 1.3x ATR {{TIMEFRAME}}) and enforces min R:R 1.25.
 - Confidence: Represents structural setup validity (0.00 to 1.00), NOT statistical win probability.
 
@@ -1070,66 +1046,56 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
         pass
 
     m3_compass_str = ""
-    try:
-        from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
-        from src.indicators.wave_state import evaluate_macro_compass_corridor
-        
-        cur_price = float(df["close"].iloc[-1])
-        st_info = calculate_dynamic_stations(symbol, cur_price)
-        step_val = st_info["step"]
-        
-        roll_h = float(df["high"].tail(50).max())
-        roll_l = float(df["low"].tail(50).min())
-        pwh_val = float(df["high"].tail(120).max()) if len(df) >= 120 else roll_h
-        pwl_val = float(df["low"].tail(120).min()) if len(df) >= 120 else roll_l
-        
-        last_h = float(df["high"].iloc[-1])
-        last_l = float(df["low"].iloc[-1])
-        last_o = float(df["open"].iloc[-1])
-        last_c = float(df["close"].iloc[-1])
-        
-        m_corr, target_st, psych_step, is_ceil_rej, is_flr_rej = evaluate_macro_compass_corridor(
-            symbol=symbol, current_price=cur_price, pwh=pwh_val, pwl=pwl_val,
-            macro_high=roll_h, macro_low=roll_l, cur_atr=atr_points * point_size,
-            last_high=last_h, last_low=last_l, last_open=last_o, last_close=last_c
-        )
-        
-        rng_50 = max(roll_h - roll_l, 1e-5)
-        dr_pct = round(((cur_price - roll_l) / rng_50) * 100, 1)
-        dr_label = "DISCOUNT ZONE (Favorable for BUY)" if dr_pct <= 38.2 else ("PREMIUM ZONE (Favorable for SELL)" if dr_pct >= 61.8 else "EQUILIBRIUM (Middle Range)")
-        
-        pt = point_size or 0.00001
-        step_pts = int(round(step_val / pt))
-        
-        m3_compass_str = (
-            "\n### M3 MACRO COMPASS & ATLAS DNA DYNAMIC STATIONS\n"
-            f"- Active Macro Corridor: {m_corr} (Target Estafet: {_fmt_price(target_st, pt)})\n"
-            f"- Calibrated Step DNA: {_fmt_price(step_val, pt)} ({step_pts} pts / {step_pts//10} pips)\n"
-            f"- Immediate Dynamic Stations:\n"
-            f"  * Upper Station (+1 Step): {_fmt_price(st_info['upper_station'], pt)}\n"
-            f"  * Base Station (Nearest) : {_fmt_price(st_info['base_station'], pt)}\n"
-            f"  * Lower Station (-1 Step): {_fmt_price(st_info['lower_station'], pt)}\n"
-            f"- 50-Bar Dealing Range: {_fmt_price(roll_l, pt)} <-> {_fmt_price(roll_h, pt)} (Position: {dr_pct}% - {dr_label})\n"
-            f"- Dual-Reaction Roadmap:\n"
-            f"  * IF Level Respected (Rejection Wick >= 25% at Wall) -> REVERSAL PULLBACK to 50% Eq / Opposing Station.\n"
-            f"  * IF Level Broken (Clean Close >= 55% Body beyond Wall) -> BREAKOUT CONTINUATION to Next Dynamic Station.\n"
-            f"  * INTRADAY ESTAFET TARGET: Set TP at the immediate next dynamic station (1.8x - 2.2x ATR) to capture high-liquidity moves and avoid overnight swap/rollover risk.\n"
-        )
-    except Exception:
-        pass
+    if not macro_context:
+        try:
+            from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
+            from src.indicators.wave_state import evaluate_macro_compass_corridor
+            
+            cur_price = float(df["close"].iloc[-1])
+            st_info = calculate_dynamic_stations(symbol, cur_price)
+            step_val = st_info["step"]
+            
+            roll_h = float(df["high"].tail(50).max())
+            roll_l = float(df["low"].tail(50).min())
+            pwh_val = float(df["high"].tail(120).max()) if len(df) >= 120 else roll_h
+            pwl_val = float(df["low"].tail(120).min()) if len(df) >= 120 else roll_l
+            
+            last_h = float(df["high"].iloc[-1])
+            last_l = float(df["low"].iloc[-1])
+            last_o = float(df["open"].iloc[-1])
+            last_c = float(df["close"].iloc[-1])
+            
+            m_corr, target_st, psych_step, is_ceil_rej, is_flr_rej = evaluate_macro_compass_corridor(
+                symbol=symbol, current_price=cur_price, pwh=pwh_val, pwl=pwl_val,
+                macro_high=roll_h, macro_low=roll_l, cur_atr=atr_points * point_size,
+                last_high=last_h, last_low=last_l, last_open=last_o, last_close=last_c
+            )
+            
+            rng_50 = max(roll_h - roll_l, 1e-5)
+            dr_pct = round(((cur_price - roll_l) / rng_50) * 100, 1)
+            dr_label = "DISCOUNT ZONE (Favorable for BUY)" if dr_pct <= 38.2 else ("PREMIUM ZONE (Favorable for SELL)" if dr_pct >= 61.8 else "EQUILIBRIUM (Middle Range)")
+            
+            pt = point_size or 0.00001
+            step_pts = int(round(step_val / pt))
+            
+            m3_compass_str = (
+                "\n### M3 MACRO COMPASS & ATLAS DNA DYNAMIC STATIONS\n"
+                f"- Active Macro Corridor: {m_corr} (Target Estafet: {_fmt_price(target_st, pt)})\n"
+                f"- Calibrated Step DNA: {_fmt_price(step_val, pt)} ({step_pts} pts / {step_pts//10} pips)\n"
+                f"- Immediate Dynamic Stations:\n"
+                f"  * Upper Station (+1 Step): {_fmt_price(st_info['upper_station'], pt)}\n"
+                f"  * Base Station (Nearest) : {_fmt_price(st_info['base_station'], pt)}\n"
+                f"  * Lower Station (-1 Step): {_fmt_price(st_info['lower_station'], pt)}\n"
+                f"- 50-Bar Dealing Range: {_fmt_price(roll_l, pt)} <-> {_fmt_price(roll_h, pt)} (Position: {dr_pct}% - {dr_label})\n"
+            )
+        except Exception:
+            pass
 
     usd_context = ""
 
     macro_str = ""
     if macro_context:
-        macro_str = (
-            "\n### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT\n"
-            f"{macro_context}\n"
-            "(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe "
-            "candles (EMA20/50, RSI, ATR, swing levels) -- use it as directional context to determine whether the "
-            "current move is a trend continuation, a pullback, or an exhaustion reversal at extremes. NOTE: HTF close/EMA values "
-            "reflect the last CLOSED bar and may lag current price slightly -- the live Bid/Ask and active candles are the current reference.)\n"
-        )
+        macro_str = f"\n{macro_context.strip()}\n"
 
     whisper_str = whisper_str or ""
 
@@ -1947,21 +1913,24 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         atlas_dna_block = ""
 
-    # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (DESCRIPTIVE & OBJECTIVE) ===
+    # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (PROBABILISTIC & OBJECTIVE) ===
     strat_block = ""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         if strat_dir:
-            strat_block = f"""\n## 2. MACRO STRUCTURAL LANDSCAPE & MULTI-SCALE SBR/RBS ZONES
-- Macro Trend State: D1 {strat_dir.daily_macro_bias} | Structural Phase: {strat_dir.structural_stage}
+            strat_block = f"""\n## 2. MACRO STRUCTURAL LANDSCAPE & 5-TIER ACTION COMPASS
+- Macro Probabilistic Score: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability}
+- Operational Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
+- Structural Phase: {strat_dir.structural_stage}
 - Multi-Scale Zonal Boundaries:
   * Macro D1 Scale: Major SBR Resistance = {strat_dir.macro_sbr_d1} | Major RBS Support = {strat_dir.macro_rbs_d1}
   * Intermediate H4 Scale: SBR Resistance = {strat_dir.inter_sbr_h4} | RBS Support = {strat_dir.inter_rbs_h4}
   * Micro Precision H1 Scale: SBR Resistance = {strat_dir.micro_sbr_h1} | RBS Support = {strat_dir.micro_rbs_h1}
 - Dual-Grid 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
 - Structural Reference Anchor: SBR/RBS Level = {strat_dir.entry_limit_anchor} | Baseline Floor SL = {strat_dir.intraday_sl_price}
-- Station Target Landscape: Intermediate Station = {strat_dir.tp1_price} | Macro Target Station = {strat_dir.tp2_price}\n"""
+- Station Target Landscape: Intermediate Station = {strat_dir.tp1_price} | Macro Target Station = {strat_dir.tp2_price}
+- Macro Invalidation Point: {strat_dir.invalidation_stop_price} | Contingency Target: {strat_dir.contingency_target}\n"""
     except Exception:
         strat_block = ""
 
