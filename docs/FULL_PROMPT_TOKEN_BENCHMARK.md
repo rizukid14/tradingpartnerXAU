@@ -9,10 +9,10 @@
 
 | Komponen Evaluasi | Karakter | Kata | Token (o200k: OpenAI o4-mini) | Token (cl100k: DeepSeek/Claude) | Estimasi Biaya API |
 |---|---|---|---|---|---|
-| **Pass 1 Dossier (OpenAI)** | 8,321 | 1,137 | **2,189** | 2,248 | ~$0.0006 |
-| **Pass 1 Dossier (Gemini)** | 8,321 | 1,137 | **2,189** | 2,248 | ~$0.0001 |
-| **Pass 2 Devil's CRO (DeepSeek)** | 10,378 | 1,414 | 2,731 | **2,804** | ~$0.0003 |
-| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **27,020** | **3,688** | **~7,109 Token Total** | **~7,300 Token Total** | **~$0.0010 per Setup** |
+| **Pass 1 Dossier (OpenAI)** | 8,215 | 1,123 | **2,161** | 2,220 | ~$0.0006 |
+| **Pass 1 Dossier (Gemini)** | 8,215 | 1,123 | **2,161** | 2,220 | ~$0.0001 |
+| **Pass 2 Devil's CRO (DeepSeek)** | 10,272 | 1,400 | 2,703 | **2,776** | ~$0.0003 |
+| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **26,702** | **3,646** | **~7,025 Token Total** | **~7,216 Token Total** | **~$0.0010 per Setup** |
 
 > [!NOTE]
 > Karena arsitektur **2-Stage Quant Funnel** kita hanya memicu Stage 2 pada **8–15 setup A+ per hari** (sisanya disaring radar lokal 0 token), maka total biaya API harian adalah **~$0.015 / hari (kurang dari Rp 250,- per hari)**!
@@ -32,7 +32,7 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Macro Compass: D1_BEARISH_TREND | H4 Status: BEARISH (-1)
 - H1 Wave State: PREMIUM_RELOAD_ARMED — H1 supply reload at 72% DR; Direction SELL enabled
 - Intraday Dealing Range: 72.0% (EXTREME PREMIUM)
-- Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 6850.0%
+- Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 68.5%
 - Volatility: ATR(14)=82.0 pts | Current Spread=20 pts | Rejection Wick: 45.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
@@ -76,16 +76,14 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
 
-## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
-- Step Grid: 1000 pips per station | Position in Range: 40.0%
+### Atlas DNA Psychological Station Map (16.2-Year Calibrated Grid)
+- Step Grid: 100 pips (1,000 pts) per station | Position in Range: 40.0%
 - Station Ladder: ... 1.07000 -> [1.08000] -> [1.09000] <CURRENT 1.08800> -> [1.10000] -> 1.11000 ...
 - Distances: to Lower 0.00800 | to Base 0.00200 | to Upper 0.01200
-- Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
-  * Reference TP (SELL): 1.08032 | Reference SL: 1.10049
+- DNA-Anchored Reference (SELL): TP = 1.08032 | SL = 1.09049 (TP = Floor [1.08000] + [0.15xATR+Spread], SL = Ceiling [1.09000] + [0.35xATR+Spread])
 
 
-## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
-- Macro Bias: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY | Phase: FRONTIER_EXHAUSTION_AT_1.16000
+- MSE Macro Bias: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY | Phase: FRONTIER_EXHAUSTION_AT_1.16000
 - Action Tier: FULL_ALLOW | Circuit Breaker: CLEAR
 - SBR/RBS Hierarchy:
   * D1 Scale: Major SBR = 1.16552 | Major RBS = 1.14826
@@ -104,8 +102,8 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 
 ## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
 - Scanner Raw SL: 1.09100 | Scanner Raw TP: 1.08200 | R:R: 2.00:1
-- Atlas DNA-Anchored Reference: SL = 1.10049 | TP = 1.08032
-  (TP snapped to nearest Station +[0.15xATR+Spread]; SL anchored behind opposing Station - [0.35xATR+Spread])
+- Atlas DNA-Anchored Reference: SL = 1.09049 | TP = 1.08032
+  (TP = Floor [1.08000] + [0.15xATR+Spread], SL = Ceiling [1.09000] + [0.35xATR+Spread])
 
 - D1 Daily Context (Last 3 days OHLC):
 - [04:00] 1.16728/1.16770/1.16420/1.16534
@@ -200,7 +198,7 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 - Macro Compass: D1_BEARISH_TREND | H4 Status: BEARISH (-1)
 - H1 Wave State: PREMIUM_RELOAD_ARMED — H1 supply reload at 72% DR; Direction SELL enabled
 - Intraday Dealing Range: 72.0% (EXTREME PREMIUM)
-- Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 6850.0%
+- Key Levels: PDH=1.09450 | PDL=1.08200 | PWH=1.09900 | PWL=1.07800 | DO=1.08650 | ADR Used: 68.5%
 - Volatility: ATR(14)=82.0 pts | Current Spread=20 pts | Rejection Wick: 45.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
@@ -244,16 +242,14 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
 
-## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
-- Step Grid: 1000 pips per station | Position in Range: 40.0%
+### Atlas DNA Psychological Station Map (16.2-Year Calibrated Grid)
+- Step Grid: 100 pips (1,000 pts) per station | Position in Range: 40.0%
 - Station Ladder: ... 1.07000 -> [1.08000] -> [1.09000] <CURRENT 1.08800> -> [1.10000] -> 1.11000 ...
 - Distances: to Lower 0.00800 | to Base 0.00200 | to Upper 0.01200
-- Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
-  * Reference TP (SELL): 1.08032 | Reference SL: 1.10049
+- DNA-Anchored Reference (SELL): TP = 1.08032 | SL = 1.09049 (TP = Floor [1.08000] + [0.15xATR+Spread], SL = Ceiling [1.09000] + [0.35xATR+Spread])
 
 
-## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
-- Macro Bias: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY | Phase: FRONTIER_EXHAUSTION_AT_1.16000
+- MSE Macro Bias: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY | Phase: FRONTIER_EXHAUSTION_AT_1.16000
 - Action Tier: FULL_ALLOW | Circuit Breaker: CLEAR
 - SBR/RBS Hierarchy:
   * D1 Scale: Major SBR = 1.16552 | Major RBS = 1.14826
@@ -272,8 +268,8 @@ Python Quantitative Engine has detected a potential quantitative setup (TREND_AL
 
 ## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
 - Scanner Raw SL: 1.09100 | Scanner Raw TP: 1.08200 | R:R: 2.00:1
-- Atlas DNA-Anchored Reference: SL = 1.10049 | TP = 1.08032
-  (TP snapped to nearest Station +[0.15xATR+Spread]; SL anchored behind opposing Station - [0.35xATR+Spread])
+- Atlas DNA-Anchored Reference: SL = 1.09049 | TP = 1.08032
+  (TP = Floor [1.08000] + [0.15xATR+Spread], SL = Ceiling [1.09000] + [0.35xATR+Spread])
 
 - D1 Daily Context (Last 3 days OHLC):
 - [04:00] 1.16728/1.16770/1.16420/1.16534

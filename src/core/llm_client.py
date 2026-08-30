@@ -1721,16 +1721,21 @@ def compute_micro_objective_frames(symbol, point=None):
 
             atr30_pts = float(AverageTrueRange(h30, l30, c30, window=14).average_true_range().iloc[-1] / point)
 
+            # Dynamic precision
+            s_u = symbol.upper()
+            dp = 3 if any(x in s_u for x in ("JPY", "HUF", "DKK", "NOK", "SEK", "CZK", "HKD")) else (2 if any(x in s_u for x in ("XAU", "GOLD", "BTC", "ETH")) else 5)
+            f_px = lambda x: f"{x:.{dp}f}"
+
             if ema20 > ema50 > ema200:
                 align30 = "EMA20 > EMA50 > EMA200 (Bullish Alignment)"
             elif ema20 < ema50 < ema200:
                 align30 = "EMA20 < EMA50 < EMA200 (Bearish Alignment)"
             else:
-                align30 = f"EMA20={ema20:.5f}, EMA50={ema50:.5f}, EMA200={ema200:.5f}"
+                align30 = f"EMA20={f_px(ema20)}, EMA50={f_px(ema50)}, EMA200={f_px(ema200)}"
 
             lines.append("- M30 Structural Frame (50-bar / 24h Window):")
-            lines.append(f"  * 50-Bar High: {w50_h:.5f} | 50-Bar Low: {w50_l:.5f} | Position: {pos50_pct:.1f}% of Range")
-            lines.append(f"  * Moving Averages: EMA20 = {ema20:.5f} | EMA50 = {ema50:.5f} | EMA200 = {ema200:.5f} ({align30})")
+            lines.append(f"  * 50-Bar High: {f_px(w50_h)} | 50-Bar Low: {f_px(w50_l)} | Position: {pos50_pct:.1f}% of Range")
+            lines.append(f"  * Moving Averages: EMA20 = {f_px(ema20)} | EMA50 = {f_px(ema50)} | EMA200 = {f_px(ema200)} ({align30})")
             lines.append(f"  * Volatility Meter: ATR(14) = {atr30_pts:.1f} pts")
 
         # 2. M15 (32-bar / 8h Window)
@@ -1762,11 +1767,11 @@ def compute_micro_objective_frames(symbol, point=None):
             elif ema9 < ema21 < ema50_15:
                 align15 = "EMA9 < EMA21 < EMA50 (Bearish Momentum Stack)"
             else:
-                align15 = f"EMA9={ema9:.5f}, EMA21={ema21:.5f}, EMA50={ema50_15:.5f}"
+                align15 = f"EMA9={f_px(ema9)}, EMA21={f_px(ema21)}, EMA50={f_px(ema50_15)}"
 
             lines.append("- M15 Micro Flow Frame (32-bar / 8h Session Window):")
-            lines.append(f"  * 32-Bar High: {w32_h:.5f} | 32-Bar Low: {w32_l:.5f} | Position: {pos32_pct:.1f}% of Range")
-            lines.append(f"  * Moving Averages: EMA9 = {ema9:.5f} | EMA21 = {ema21:.5f} | EMA50 = {ema50_15:.5f} ({align15})")
+            lines.append(f"  * 32-Bar High: {f_px(w32_h)} | 32-Bar Low: {f_px(w32_l)} | Position: {pos32_pct:.1f}% of Range")
+            lines.append(f"  * Moving Averages: EMA9 = {f_px(ema9)} | EMA21 = {f_px(ema21)} | EMA50 = {f_px(ema50_15)} ({align15})")
             lines.append(f"  * Volatility Meter: ATR(14) = {atr15_pts:.1f} pts")
             lines.append(f"  * Micro Velocity: Last 3 bars avg candle body = {avg_body_pts:.1f} pts ({body_atr_ratio:.2f}x ATR M15)")
 
@@ -1829,7 +1834,7 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         csm_block = ""
 
-    # === SYMBOL DECIMAL PRECISION (resolves JPY=3, XAU/BTC=2, FX=5) ===
+    # === SYMBOL DECIMAL PRECISION & PIPS/POINTS HELPERS ===
     def _sym_dec(s):
         """Returns correct decimal places for a symbol's price display."""
         s_upper = s.upper()
@@ -1839,18 +1844,42 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
             return 2
         return 5
 
+    def _format_step_label(s, step_val):
+        """Formats calibrated psychological step size correctly in pips and points."""
+        s_u = s.upper()
+        if "BTC" in s_u:
+            return f"${step_val:,.0f} ({int(step_val * 100):,} pts)"
+        if "XAU" in s_u or "GOLD" in s_u:
+            return f"${step_val:.0f} ({int(step_val * 100):,} pts)"
+        if "JPY" in s_u:
+            pips = int(round(step_val * 100))
+            pts = int(round(step_val * 1000))
+            return f"{step_val:.0f} JPY ({pips} pips / {pts:,} pts)"
+        # Standard Forex (5-digit): 0.0100 = 100 pips = 1,000 pts
+        pips = int(round(step_val * 10000))
+        pts = int(round(step_val * 100000))
+        return f"{pips} pips ({pts:,} pts)"
+
     sym_dec = _sym_dec(sym)
     P = sym_dec  # shorthand
 
     def fp(x):
         """Format price with correct decimal precision for this symbol."""
-        return f"{x:.{P}f}"
+        if x is None:
+            return "N/A"
+        try:
+            return f"{float(x):.{P}f}"
+        except (ValueError, TypeError):
+            return str(x)
+
+    # Format ADR used safely (handles both 0.685 ratio and 68.5% percent)
+    adr_display_pct = adr_used_val * 100.0 if (0.0 <= adr_used_val <= 1.5) else adr_used_val
 
     # === ATLAS DNA DYNAMIC STATION CALCULATION ===
     atlas_dna_block = ""
     atlas_tp_ref = None      # Atlas DNA-anchored TP reference price
     atlas_sl_ref = None      # Atlas DNA-anchored SL reference price
-    upper_st = lower_st = base_st = step_val = 0.0
+    formula_desc = ""
     try:
         from src.indicators.atlas_dna import calculate_dynamic_stations
         trigger_px = float(candidate.trigger_price)
@@ -1866,36 +1895,44 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
         dist_to_lower = abs(trigger_px - lower_st)
         dist_to_base = abs(trigger_px - base_st)
 
-        # Step label
-        if step_val >= 1.0:
-            step_label = f"{step_val:.0f} JPY ({int(step_val * 100)} pips)"
-        elif step_val >= 0.001:
-            step_label = f"{int(step_val * 10**P)} pips"
-        else:
-            step_label = f"{int(step_val * 10000)} pips ({step_val:.{P}f})"
+        step_label = _format_step_label(sym, step_val)
 
         station_range = upper_st - lower_st
         position_in_range = ((trigger_px - lower_st) / station_range * 100) if station_range > 0 else 50.0
 
-        # Atlas DNA-Anchored SL/TP Reference (Front-Running Pad formula)
+        # Determine exact immediate structural ceiling (above price) and floor (below price)
+        if trigger_px < base_st:
+            ceiling_st = base_st
+            floor_st = lower_st
+        elif trigger_px > base_st:
+            ceiling_st = upper_st
+            floor_st = base_st
+        else:  # exactly at base_st
+            ceiling_st = upper_st
+            floor_st = lower_st
+
+        # Convert ATR and Spread points to absolute price difference
         atr_px = candidate.current_atr_pts * (10 ** -P) if candidate.current_atr_pts > 0 else 0.0
         spread_px = candidate.current_spread_pts * (10 ** -P) if candidate.current_spread_pts > 0 else 0.0
         pad = 0.15 * atr_px + spread_px
         anti_wick = 0.35 * atr_px + spread_px
 
         if candidate.direction == 1:  # BUY
-            atlas_tp_ref = round(upper_st - pad, P)
-            atlas_sl_ref = round(lower_st - anti_wick, P)
+            atlas_tp_ref = round(ceiling_st - pad, P)
+            atlas_sl_ref = round(floor_st - anti_wick, P)
+            formula_desc = f"TP = Ceiling [{fp(ceiling_st)}] - [0.15xATR+Spread], SL = Floor [{fp(floor_st)}] - [0.35xATR+Spread]"
         else:  # SELL
-            atlas_tp_ref = round(lower_st + pad, P)
-            atlas_sl_ref = round(upper_st + anti_wick, P)
+            atlas_tp_ref = round(floor_st + pad, P)
+            atlas_sl_ref = round(ceiling_st + anti_wick, P)
+            formula_desc = f"TP = Floor [{fp(floor_st)}] + [0.15xATR+Spread], SL = Ceiling [{fp(ceiling_st)}] + [0.35xATR+Spread]"
 
-        atlas_dna_block = f"""\n## ATLAS DNA PSYCHOLOGICAL STATION MAP (16.2-Year Calibrated Grid)
+        atlas_dna_block = f"""
+### Atlas DNA Psychological Station Map (16.2-Year Calibrated Grid)
 - Step Grid: {step_label} per station | Position in Range: {position_in_range:.1f}%
 - Station Ladder: ... {fp(lower_2)} -> [{fp(lower_st)}] -> [{fp(base_st)}] <CURRENT {fp(trigger_px)}> -> [{fp(upper_st)}] -> {fp(upper_2)} ...
 - Distances: to Lower {fp(dist_to_lower)} | to Base {fp(dist_to_base)} | to Upper {fp(dist_to_upper)}
-- Atlas DNA-Anchored Reference (Front-Running Pad TP = Station +/- [0.15xATR + Spread], SL = Opposing Station +/- [0.35xATR + Spread]):
-  * Reference TP ({direction_str}): {fp(atlas_tp_ref)} | Reference SL: {fp(atlas_sl_ref)}\n"""
+- DNA-Anchored Reference ({direction_str}): TP = {fp(atlas_tp_ref)} | SL = {fp(atlas_sl_ref)} ({formula_desc})
+"""
     except Exception:
         atlas_dna_block = ""
 
@@ -1905,8 +1942,8 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         if strat_dir:
-            strat_block = f"""\n## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
-- Macro Bias: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability} | Phase: {strat_dir.structural_stage}
+            strat_block = f"""
+- MSE Macro Bias: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability} | Phase: {strat_dir.structural_stage}
 - Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
 - SBR/RBS Hierarchy:
   * D1 Scale: Major SBR = {strat_dir.macro_sbr_d1} | Major RBS = {strat_dir.macro_rbs_d1}
@@ -1947,7 +1984,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_status or 'N/A'}
 - H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
-- Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_used_val*100:.1f}%
+- Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_display_pct:.1f}%
 - Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%
 {meta_block}
 
@@ -1971,7 +2008,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 ## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
 - Scanner Raw SL: {fp(float(candidate.suggested_sl))} | Scanner Raw TP: {fp(float(candidate.suggested_tp))} | R:R: {candidate.risk_reward_ratio:.2f}:1
 - Atlas DNA-Anchored Reference: SL = {fp(atlas_sl_ref) if atlas_sl_ref else 'N/A'} | TP = {fp(atlas_tp_ref) if atlas_tp_ref else 'N/A'}
-  (TP snapped to nearest Station {'-' if direction_str == 'BUY' else '+'}[0.15xATR+Spread]; SL anchored behind opposing Station {'+ ' if direction_str == 'BUY' else '- '}[0.35xATR+Spread])
+  ({formula_desc if formula_desc else 'Station-anchored calculation'})
 {candles_block}
 ## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
