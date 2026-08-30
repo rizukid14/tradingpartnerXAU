@@ -9,10 +9,10 @@
 
 | Komponen Evaluasi | Karakter | Kata | Token (o200k: OpenAI o4-mini) | Token (cl100k: DeepSeek/Claude) | Estimasi Biaya API |
 |---|---|---|---|---|---|
-| **Pass 1 Dossier (OpenAI)** | 11,538 | 1,644 | **3,036** | 3,118 | ~$0.0006 |
-| **Pass 1 Dossier (Gemini)** | 11,538 | 1,644 | **3,036** | 3,118 | ~$0.0001 |
-| **Pass 2 Devil's CRO (DeepSeek)** | 13,595 | 1,921 | 3,577 | **3,674** | ~$0.0003 |
-| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **36,671** | **5,209** | **~9,649 Token Total** | **~9,910 Token Total** | **~$0.0010 per Setup** |
+| **Pass 1 Dossier (OpenAI)** | 8,163 | 1,110 | **2,148** | 2,206 | ~$0.0006 |
+| **Pass 1 Dossier (Gemini)** | 8,163 | 1,110 | **2,148** | 2,206 | ~$0.0001 |
+| **Pass 2 Devil's CRO (DeepSeek)** | 10,220 | 1,387 | 2,689 | **2,762** | ~$0.0003 |
+| **🏆 TOTAL PER SETUP A+ (3-AI JURY)** | **26,546** | **3,607** | **~6,985 Token Total** | **~7,174 Token Total** | **~$0.0010 per Setup** |
 
 > [!NOTE]
 > Karena arsitektur **2-Stage Quant Funnel** kita hanya memicu Stage 2 pada **8–15 setup A+ per hari** (sisanya disaring radar lokal 0 token), maka total biaya API harian adalah **~$0.015 / hari (kurang dari Rp 250,- per hari)**!
@@ -25,25 +25,15 @@
 # INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup (TREND_ALIGNED_PULLBACK) on EURUSD (H1).
-Your task is to objectively evaluate this proposal against the raw market data:
-1. Macro Sentiment & Price Flow: Compare proposed direction against recent D1/H4/H1/M5 momentum, M30/M15 micro frames, and Currency Strength Flow.
-2. Order Optimization: Choose to APPROVE as proposed, REVISE entry to a better structural level/pending limit, or REJECT if risk is high.
-3. Invalidation & Target: Verify SL is behind structural barriers and TP has clear room (Mandatory R:R >= 1.25).
 
-## 1. INSTITUTIONAL BATTLEFIELD & MACRO CONFLUENCE
+## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: EURUSD | Asset: Forex Currency Pair (EURUSD)
-- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL
-- Current Trigger Price: 1.088
-- Macro Compass: 
-- H4 Structural Status: BEARISH (-1)
-- H1 Wave State & Permission:  ()
-- Previous Day Levels (D1): PDH = 1.0945 | PDL = 1.082
-- Previous Week Levels (H4): PWH = 1.099 | PWL = 1.078
-- Daily Open (DO): 1.0865 | ADR Used %: 6850.0%
-- Multi-Month Macro Ranges: 50-Day D1 = High: 1.09500 | Low: 1.06500 | Fib 50%: 1.08000 | 100-Day D1 = High: 1.10200 | Low: 1.05500 | Fib 50%: 1.07850 | Monthly H4 = High: 1.09900 | Low: 1.07000
-- Intraday Dealing Range (100-bar H1): 50.0% (EQUILIBRIUM)
-- Rejection Wick Ratio: 0.0%
-- Volatility: ATR(14) = 0.0 pts | Current Spread = 20 pts
+- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.088
+- Macro Compass:  | H4 Status: BEARISH (-1)
+- H1 Wave State:  ()
+- Intraday Dealing Range: 50.0% (EQUILIBRIUM)
+- Key Levels: PDH=1.0945 | PDL=1.082 | PWH=1.099 | PWL=1.078 | DO=1.0865 | ADR Used: 6850.0%
+- Volatility: ATR(14)=0.0 pts | Current Spread=20 pts | Rejection Wick: 0.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
 - Compression Duration / Range Age: 18 hours (MATURE_COMPRESSION_ARMED)
@@ -76,42 +66,35 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - CRITICAL: These psychological stations are natural magnets/barriers where institutional orders cluster. Use them to INDEPENDENTLY determine your TP (next station in YOUR assessed trend direction) and SL (behind the opposing station + 0.35x ATR anti-wick buffer). Do NOT blindly follow the proposed direction.
 
 
-## 2. MACRO STRUCTURAL LANDSCAPE & 5-TIER ACTION COMPASS
-- Macro Probabilistic Score: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY
-- Operational Action Tier: FULL_ALLOW | Circuit Breaker: CLEAR
-- Structural Phase: FRONTIER_EXHAUSTION_AT_1.16000
-- Multi-Scale Zonal Boundaries:
-  * Macro D1 Scale: Major SBR Resistance = 1.16552 | Major RBS Support = 1.14826
-  * Intermediate H4 Scale: SBR Resistance = 1.16366 | RBS Support = 1.14826
-  * Micro Precision H1 Scale: SBR Resistance = 1.16366 | RBS Support = 1.14826
-- Dual-Grid 50-Pip Sub-Stations: Sub-Floor [1.155] <---> Sub-Ceiling [1.16]
-- Structural Reference Anchor: SBR/RBS Level = 1.16366 | Baseline Floor SL = 1.16666
-- Station Target Landscape: Intermediate Station = 1.15942 | Macro Target Station = 1.15026
-- Macro Invalidation Point: 1.17207 | Contingency Target: 1.17304
+## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
+- Macro Bias: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY | Phase: FRONTIER_EXHAUSTION_AT_1.16000
+- Action Tier: FULL_ALLOW | Circuit Breaker: CLEAR
+- SBR/RBS Hierarchy:
+  * D1 Scale: Major SBR = 1.16552 | Major RBS = 1.14826
+  * H4 Scale: SBR = 1.16366 | RBS = 1.14826
+  * H1 Scale: SBR = 1.16366 | RBS = 1.14826
+- 50-Pip Sub-Stations: Sub-Floor [1.155] <---> Sub-Ceiling [1.16]
+- Target Landscape: TP1 (Proximal Station) = 1.15942 | TP2 (Macro Target) = 1.15026
+- Baseline Floor SL: 1.16666 | Macro Invalidation: 1.17207
 
 ## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): 0.0
-- Structural Ceiling (Strong High): 0.0
-- Nearest Bullish Order Block (OB): None active nearby
-- Nearest Bearish Order Block (OB): None active nearby
-- Nearest Fair Value Gap (FVG Magnet): None active nearby
+- Structural Floor (Strong Low): 0.0 | Ceiling (Strong High): 0.0
+- Nearest Bullish OB: None nearby | Nearest Bearish OB: None nearby
+- Nearest Fair Value Gap (FVG Magnet): None nearby
 - Liquidity Pools: Clear of immediate EQH/EQL traps
 - Fixed Range Volume Profile (FRVP): Standard Institutional Liquidity
 
-## 3. STRUCTURAL PROPOSAL & STATION-ANCHORED LEVELS
-- Key Support: 0.0
-- Key Resistance: 0.0
-- Proposed Technical SL: 1.091 (Must be anchored BEHIND a structural station/OB + 0.35x ATR anti-wick buffer, NOT calculated from entry price)
-- Proposed Technical TP: 1.082 (Target: nearest station in SELL direction from Atlas DNA step grid above)
-- Risk:Reward Ratio: 2.00:1
-- Station Context: Your SL and TP MUST reference the Atlas DNA station ladder. If you REVISE, snap your TP to the nearest favorable station and anchor SL behind the nearest opposing station.
+## 3. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Proposed Technical SL: 1.091 (Anchor behind structural station/OB + 0.35x ATR anti-wick buffer)
+- Proposed Technical TP: 1.082 (Target: nearest station in SELL direction)
+- Risk:Reward Ratio: 2.00:1 (Mandatory >= 1.25)
 
-### RECENT D1 CANDLES (Daily Context - Last 3 days OHLC):
+- D1 Daily Context (Last 3 days OHLC):
 - [04:00] 1.16728/1.16770/1.16420/1.16534
 - [04:00] 1.16463/1.16599/1.16366/1.16513
 - [04:00] 1.16519/1.16593/1.15779/1.15813
 
-### RECENT H4 CANDLES (Structural 4-Hour - Last 24 hours OHLC):
+- H4 Structural (Last 6 bars OHLC):
 - [04:00] 1.16519/1.16549/1.16464/1.16533
 - [08:00] 1.16532/1.16555/1.16451/1.16455
 - [12:00] 1.16455/1.16492/1.16418/1.16445
@@ -119,7 +102,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - [20:00] 1.16489/1.16593/1.15847/1.15868
 - [00:00] 1.15868/1.15891/1.15779/1.15813
 
-### RECENT H1 CANDLES (Execution Timeframe - Last 15 hours OHLC):
+- H1 Execution (Last 12 bars OHLC):
 - [13:00] 1.16446/1.16492/1.16431/1.16483
 - [14:00] 1.16483/1.16488/1.16418/1.16465
 - [15:00] 1.16466/1.16488/1.16420/1.16445
@@ -136,7 +119,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - [02:00] 1.15804/1.15876/1.15798/1.15860
 - [03:00] 1.15859/1.15867/1.15793/1.15813
 
-### RECENT M5 MICRO FLOW (Candle Flow - Last 2 hours intra-period):
+- M5 Micro Flow (Last 24 bars OHLC):
 - [02:00] 1.15804/1.15820/1.15798/1.15803
 - [02:05] 1.15803/1.15821/1.15800/1.15820
 - [02:10] 1.15819/1.15831/1.15817/1.15818
@@ -175,32 +158,12 @@ Your task is to objectively evaluate this proposal against the raw market data:
 • [Reuters] Europe's central bankers fear more turbulence in testy U.S. relations (0.0h ago)
 • [Binance News] Dollar Rises After Fed Chair Warsh Remarks as Markets Await U.S. Jobs Data (0.0h ago)
 
-- Calendar Context: No High-Impact News releases within +/- 6 hours
+- Economic Calendar Context: No High-Impact News releases within +/- 6 hours
 
-## 5. EVALUATION DIRECTIVE
-Trade Permission & Confluence Hierarchy:
-- Trend & Direction: Defined by D1/H4 Macro Compass & Apex Paragon Fundamental Scorecard.
-- Wave State Permission: H1 Wave State Machine ensures we never chase running impulses (Phase 1) or catch falling knives (Phase 2). Trade is only permitted in Mature Basing (Phase 3) or Base Reclaim (Phase 4).
-- POI Location: H1 Dealing Range Discount (<= 0.50) / Deep Discount (<= 0.382) & SMC Order Blocks / FRVP POC.
-- Reaction Timing: M5 live wicks/displacement at the POI confirm that reaction has started before pulling trigger.
-- Currency Flow (CSM): Asymmetric flow filter. Veto BUY only if base currency is being systemically dumped (Delta <= -2.0). Mild or neutral CSM is completely normal during healthy discount pullbacks.
-
-Indicator Hierarchy & Nature:
-- Moving Averages (EMA), RSI, ADX, and Currency Strength Matrix (CSM) are LAGGING mathematical derivatives of past price/flow history.
-- Live Candlestick Price Action (rejection wicks, structural liquidity sweeps, Order Block/FVG reactions) is LEADING.
-- Use lagging indicators and CSM frames to assess macro alignment and regime maturity, but prioritize live price action structure and clear invalidation for exact trigger timing.
-
-Evaluate the proposal with full institutional depth:
+## 5. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
-- If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type (MUST be a realistic shallow retest within 0.1x to 1.0x ATR from trigger price; do NOT pick deep or obsolete multi-day Order Blocks)
-- If market is plunging/surging with strong opposing momentum, instant fake-break (< 2 bars), or trapped in chop -> select "REJECT"
-
-## 6. JURY OUTPUT FORMAT (STRICT JSON)
-You must submit your assessment with:
-1. Verdict: "APPROVE", "REVISE", or "REJECT"
-2. Suggested entry type, entry price, SL, TP (mandatory R:R >= 1.25)
-3. M5 micro-flow audit (absence of falling knife, presence of rejection wicks)
-4. Definite trade thesis and exact SL/TP placement justification
+- If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
+- If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
 
 Respond strictly in valid JSON:
 {
@@ -212,9 +175,9 @@ Respond strictly in valid JSON:
     "sl_price": float (exact absolute price),
     "tp_price": float (exact absolute price)
   },
-  "veto_reason": null | string (max 20 words if REJECT),
+  "veto_reason": null | string (max 15 words if REJECT),
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
-  "reasoning": "Detailed 3-5 sentence institutional thesis covering: (1) D1/H4 macro alignment, (2) SMC Order Block/FVG validity, (3) M5 micro flow & wick confirmation, and (4) precise mathematical justification for chosen SL and TP."
+  "reasoning": "2-3 concise sentences justifying macro alignment, OB/station confluence, M5 micro flow, and exact SL/TP."
 }
 
 ```
@@ -227,25 +190,15 @@ Respond strictly in valid JSON:
 # INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup (TREND_ALIGNED_PULLBACK) on EURUSD (H1).
-Your task is to objectively evaluate this proposal against the raw market data:
-1. Macro Sentiment & Price Flow: Compare proposed direction against recent D1/H4/H1/M5 momentum, M30/M15 micro frames, and Currency Strength Flow.
-2. Order Optimization: Choose to APPROVE as proposed, REVISE entry to a better structural level/pending limit, or REJECT if risk is high.
-3. Invalidation & Target: Verify SL is behind structural barriers and TP has clear room (Mandatory R:R >= 1.25).
 
-## 1. INSTITUTIONAL BATTLEFIELD & MACRO CONFLUENCE
+## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: EURUSD | Asset: Forex Currency Pair (EURUSD)
-- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL
-- Current Trigger Price: 1.088
-- Macro Compass: 
-- H4 Structural Status: BEARISH (-1)
-- H1 Wave State & Permission:  ()
-- Previous Day Levels (D1): PDH = 1.0945 | PDL = 1.082
-- Previous Week Levels (H4): PWH = 1.099 | PWL = 1.078
-- Daily Open (DO): 1.0865 | ADR Used %: 6850.0%
-- Multi-Month Macro Ranges: 50-Day D1 = High: 1.09500 | Low: 1.06500 | Fib 50%: 1.08000 | 100-Day D1 = High: 1.10200 | Low: 1.05500 | Fib 50%: 1.07850 | Monthly H4 = High: 1.09900 | Low: 1.07000
-- Intraday Dealing Range (100-bar H1): 50.0% (EQUILIBRIUM)
-- Rejection Wick Ratio: 0.0%
-- Volatility: ATR(14) = 0.0 pts | Current Spread = 20 pts
+- Setup Type: TREND_ALIGNED_PULLBACK | Proposed Direction: SELL | Current Price: 1.088
+- Macro Compass:  | H4 Status: BEARISH (-1)
+- H1 Wave State:  ()
+- Intraday Dealing Range: 50.0% (EQUILIBRIUM)
+- Key Levels: PDH=1.0945 | PDL=1.082 | PWH=1.099 | PWL=1.078 | DO=1.0865 | ADR Used: 6850.0%
+- Volatility: ATR(14)=0.0 pts | Current Spread=20 pts | Rejection Wick: 0.0%
 - Proposed Execution Method: MARKET @ 1.088
 - Structural Zone Touch Count: 3 touches in last 40 bars
 - Compression Duration / Range Age: 18 hours (MATURE_COMPRESSION_ARMED)
@@ -278,42 +231,35 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - CRITICAL: These psychological stations are natural magnets/barriers where institutional orders cluster. Use them to INDEPENDENTLY determine your TP (next station in YOUR assessed trend direction) and SL (behind the opposing station + 0.35x ATR anti-wick buffer). Do NOT blindly follow the proposed direction.
 
 
-## 2. MACRO STRUCTURAL LANDSCAPE & 5-TIER ACTION COMPASS
-- Macro Probabilistic Score: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY
-- Operational Action Tier: FULL_ALLOW | Circuit Breaker: CLEAR
-- Structural Phase: FRONTIER_EXHAUSTION_AT_1.16000
-- Multi-Scale Zonal Boundaries:
-  * Macro D1 Scale: Major SBR Resistance = 1.16552 | Major RBS Support = 1.14826
-  * Intermediate H4 Scale: SBR Resistance = 1.16366 | RBS Support = 1.14826
-  * Micro Precision H1 Scale: SBR Resistance = 1.16366 | RBS Support = 1.14826
-- Dual-Grid 50-Pip Sub-Stations: Sub-Floor [1.155] <---> Sub-Ceiling [1.16]
-- Structural Reference Anchor: SBR/RBS Level = 1.16366 | Baseline Floor SL = 1.16666
-- Station Target Landscape: Intermediate Station = 1.15942 | Macro Target Station = 1.15026
-- Macro Invalidation Point: 1.17207 | Contingency Target: 1.17304
+## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
+- Macro Bias: -0.85 (BEARISH_PULLBACK) | Stability: HIGH_VOLATILITY | Phase: FRONTIER_EXHAUSTION_AT_1.16000
+- Action Tier: FULL_ALLOW | Circuit Breaker: CLEAR
+- SBR/RBS Hierarchy:
+  * D1 Scale: Major SBR = 1.16552 | Major RBS = 1.14826
+  * H4 Scale: SBR = 1.16366 | RBS = 1.14826
+  * H1 Scale: SBR = 1.16366 | RBS = 1.14826
+- 50-Pip Sub-Stations: Sub-Floor [1.155] <---> Sub-Ceiling [1.16]
+- Target Landscape: TP1 (Proximal Station) = 1.15942 | TP2 (Macro Target) = 1.15026
+- Baseline Floor SL: 1.16666 | Macro Invalidation: 1.17207
 
 ## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): 0.0
-- Structural Ceiling (Strong High): 0.0
-- Nearest Bullish Order Block (OB): None active nearby
-- Nearest Bearish Order Block (OB): None active nearby
-- Nearest Fair Value Gap (FVG Magnet): None active nearby
+- Structural Floor (Strong Low): 0.0 | Ceiling (Strong High): 0.0
+- Nearest Bullish OB: None nearby | Nearest Bearish OB: None nearby
+- Nearest Fair Value Gap (FVG Magnet): None nearby
 - Liquidity Pools: Clear of immediate EQH/EQL traps
 - Fixed Range Volume Profile (FRVP): Standard Institutional Liquidity
 
-## 3. STRUCTURAL PROPOSAL & STATION-ANCHORED LEVELS
-- Key Support: 0.0
-- Key Resistance: 0.0
-- Proposed Technical SL: 1.091 (Must be anchored BEHIND a structural station/OB + 0.35x ATR anti-wick buffer, NOT calculated from entry price)
-- Proposed Technical TP: 1.082 (Target: nearest station in SELL direction from Atlas DNA step grid above)
-- Risk:Reward Ratio: 2.00:1
-- Station Context: Your SL and TP MUST reference the Atlas DNA station ladder. If you REVISE, snap your TP to the nearest favorable station and anchor SL behind the nearest opposing station.
+## 3. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Proposed Technical SL: 1.091 (Anchor behind structural station/OB + 0.35x ATR anti-wick buffer)
+- Proposed Technical TP: 1.082 (Target: nearest station in SELL direction)
+- Risk:Reward Ratio: 2.00:1 (Mandatory >= 1.25)
 
-### RECENT D1 CANDLES (Daily Context - Last 3 days OHLC):
+- D1 Daily Context (Last 3 days OHLC):
 - [04:00] 1.16728/1.16770/1.16420/1.16534
 - [04:00] 1.16463/1.16599/1.16366/1.16513
 - [04:00] 1.16519/1.16593/1.15779/1.15813
 
-### RECENT H4 CANDLES (Structural 4-Hour - Last 24 hours OHLC):
+- H4 Structural (Last 6 bars OHLC):
 - [04:00] 1.16519/1.16549/1.16464/1.16533
 - [08:00] 1.16532/1.16555/1.16451/1.16455
 - [12:00] 1.16455/1.16492/1.16418/1.16445
@@ -321,7 +267,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - [20:00] 1.16489/1.16593/1.15847/1.15868
 - [00:00] 1.15868/1.15891/1.15779/1.15813
 
-### RECENT H1 CANDLES (Execution Timeframe - Last 15 hours OHLC):
+- H1 Execution (Last 12 bars OHLC):
 - [13:00] 1.16446/1.16492/1.16431/1.16483
 - [14:00] 1.16483/1.16488/1.16418/1.16465
 - [15:00] 1.16466/1.16488/1.16420/1.16445
@@ -338,7 +284,7 @@ Your task is to objectively evaluate this proposal against the raw market data:
 - [02:00] 1.15804/1.15876/1.15798/1.15860
 - [03:00] 1.15859/1.15867/1.15793/1.15813
 
-### RECENT M5 MICRO FLOW (Candle Flow - Last 2 hours intra-period):
+- M5 Micro Flow (Last 24 bars OHLC):
 - [02:00] 1.15804/1.15820/1.15798/1.15803
 - [02:05] 1.15803/1.15821/1.15800/1.15820
 - [02:10] 1.15819/1.15831/1.15817/1.15818
@@ -377,32 +323,12 @@ Your task is to objectively evaluate this proposal against the raw market data:
 • [Reuters] Europe's central bankers fear more turbulence in testy U.S. relations (0.0h ago)
 • [Binance News] Dollar Rises After Fed Chair Warsh Remarks as Markets Await U.S. Jobs Data (0.0h ago)
 
-- Calendar Context: No High-Impact News releases within +/- 6 hours
+- Economic Calendar Context: No High-Impact News releases within +/- 6 hours
 
-## 5. EVALUATION DIRECTIVE
-Trade Permission & Confluence Hierarchy:
-- Trend & Direction: Defined by D1/H4 Macro Compass & Apex Paragon Fundamental Scorecard.
-- Wave State Permission: H1 Wave State Machine ensures we never chase running impulses (Phase 1) or catch falling knives (Phase 2). Trade is only permitted in Mature Basing (Phase 3) or Base Reclaim (Phase 4).
-- POI Location: H1 Dealing Range Discount (<= 0.50) / Deep Discount (<= 0.382) & SMC Order Blocks / FRVP POC.
-- Reaction Timing: M5 live wicks/displacement at the POI confirm that reaction has started before pulling trigger.
-- Currency Flow (CSM): Asymmetric flow filter. Veto BUY only if base currency is being systemically dumped (Delta <= -2.0). Mild or neutral CSM is completely normal during healthy discount pullbacks.
-
-Indicator Hierarchy & Nature:
-- Moving Averages (EMA), RSI, ADX, and Currency Strength Matrix (CSM) are LAGGING mathematical derivatives of past price/flow history.
-- Live Candlestick Price Action (rejection wicks, structural liquidity sweeps, Order Block/FVG reactions) is LEADING.
-- Use lagging indicators and CSM frames to assess macro alignment and regime maturity, but prioritize live price action structure and clear invalidation for exact trigger timing.
-
-Evaluate the proposal with full institutional depth:
+## 5. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
-- If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type (MUST be a realistic shallow retest within 0.1x to 1.0x ATR from trigger price; do NOT pick deep or obsolete multi-day Order Blocks)
-- If market is plunging/surging with strong opposing momentum, instant fake-break (< 2 bars), or trapped in chop -> select "REJECT"
-
-## 6. JURY OUTPUT FORMAT (STRICT JSON)
-You must submit your assessment with:
-1. Verdict: "APPROVE", "REVISE", or "REJECT"
-2. Suggested entry type, entry price, SL, TP (mandatory R:R >= 1.25)
-3. M5 micro-flow audit (absence of falling knife, presence of rejection wicks)
-4. Definite trade thesis and exact SL/TP placement justification
+- If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
+- If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
 
 Respond strictly in valid JSON:
 {
@@ -414,9 +340,9 @@ Respond strictly in valid JSON:
     "sl_price": float (exact absolute price),
     "tp_price": float (exact absolute price)
   },
-  "veto_reason": null | string (max 20 words if REJECT),
+  "veto_reason": null | string (max 15 words if REJECT),
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
-  "reasoning": "Detailed 3-5 sentence institutional thesis covering: (1) D1/H4 macro alignment, (2) SMC Order Block/FVG validity, (3) M5 micro flow & wick confirmation, and (4) precise mathematical justification for chosen SL and TP."
+  "reasoning": "2-3 concise sentences justifying macro alignment, OB/station confluence, M5 micro flow, and exact SL/TP."
 }
 
 

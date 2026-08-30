@@ -107,7 +107,7 @@ class TestMarketScanner(unittest.TestCase):
         )
         prompt = build_high_density_dossier_prompt(cand)
         self.assertIn("INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER", prompt)
-        self.assertIn("EVALUATION DIRECTIVE", prompt)
+        self.assertIn("EVALUATION", prompt)
         self.assertIn("veto_reason", prompt)
         self.assertIn("risk_flag", prompt)
         self.assertIn("APPROVE", prompt)

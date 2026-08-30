@@ -1787,13 +1787,13 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     
     candles_block = ""
     if recent_d1_str:
-        candles_block += f"\n### RECENT D1 CANDLES (Daily Context - Last 3 days OHLC):\n{recent_d1_str}\n"
+        candles_block += f"\n- D1 Daily Context (Last 3 days OHLC):\n{recent_d1_str}\n"
     if recent_h4_str:
-        candles_block += f"\n### RECENT H4 CANDLES (Structural 4-Hour - Last 24 hours OHLC):\n{recent_h4_str}\n"
+        candles_block += f"\n- H4 Structural (Last 6 bars OHLC):\n{recent_h4_str}\n"
     if recent_h1_str:
-        candles_block += f"\n### RECENT H1 CANDLES (Execution Timeframe - Last 15 hours OHLC):\n{recent_h1_str}\n"
+        candles_block += f"\n- H1 Execution (Last 12 bars OHLC):\n{recent_h1_str}\n"
     if recent_m5_str:
-        candles_block += f"\n### RECENT M5 MICRO FLOW (Candle Flow - Last 2 hours intra-period):\n{recent_m5_str}\n"
+        candles_block += f"\n- M5 Micro Flow (Last 24 bars OHLC):\n{recent_m5_str}\n"
     
     meta_lines = []
     if meta.get("entry_type"):
@@ -1874,18 +1874,16 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         if strat_dir:
-            strat_block = f"""\n## 2. MACRO STRUCTURAL LANDSCAPE & 5-TIER ACTION COMPASS
-- Macro Probabilistic Score: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability}
-- Operational Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
-- Structural Phase: {strat_dir.structural_stage}
-- Multi-Scale Zonal Boundaries:
-  * Macro D1 Scale: Major SBR Resistance = {strat_dir.macro_sbr_d1} | Major RBS Support = {strat_dir.macro_rbs_d1}
-  * Intermediate H4 Scale: SBR Resistance = {strat_dir.inter_sbr_h4} | RBS Support = {strat_dir.inter_rbs_h4}
-  * Micro Precision H1 Scale: SBR Resistance = {strat_dir.micro_sbr_h1} | RBS Support = {strat_dir.micro_rbs_h1}
-- Dual-Grid 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
-- Structural Reference Anchor: SBR/RBS Level = {strat_dir.entry_limit_anchor} | Baseline Floor SL = {strat_dir.intraday_sl_price}
-- Station Target Landscape: Intermediate Station = {strat_dir.tp1_price} | Macro Target Station = {strat_dir.tp2_price}
-- Macro Invalidation Point: {strat_dir.invalidation_stop_price} | Contingency Target: {strat_dir.contingency_target}\n"""
+            strat_block = f"""\n## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE)
+- Macro Bias: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability} | Phase: {strat_dir.structural_stage}
+- Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
+- SBR/RBS Hierarchy:
+  * D1 Scale: Major SBR = {strat_dir.macro_sbr_d1} | Major RBS = {strat_dir.macro_rbs_d1}
+  * H4 Scale: SBR = {strat_dir.inter_sbr_h4} | RBS = {strat_dir.inter_rbs_h4}
+  * H1 Scale: SBR = {strat_dir.micro_sbr_h1} | RBS = {strat_dir.micro_rbs_h1}
+- 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
+- Target Landscape: TP1 (Proximal Station) = {strat_dir.tp1_price} | TP2 (Macro Target) = {strat_dir.tp2_price}
+- Baseline Floor SL: {strat_dir.intraday_sl_price} | Macro Invalidation: {strat_dir.invalidation_stop_price}\n"""
     except Exception:
         strat_block = ""
 
@@ -1911,75 +1909,40 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
-Your task is to objectively evaluate this proposal against the raw market data:
-1. Macro Sentiment & Price Flow: Compare proposed direction against recent D1/H4/H1/M5 momentum, M30/M15 micro frames, and Currency Strength Flow.
-2. Order Optimization: Choose to APPROVE as proposed, REVISE entry to a better structural level/pending limit, or REJECT if risk is high.
-3. Invalidation & Target: Verify SL is behind structural barriers and TP has clear room (Mandatory R:R >= 1.25).
 
-## 1. INSTITUTIONAL BATTLEFIELD & MACRO CONFLUENCE
+## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: {sym} | Asset: {asset_desc(sym)}
-- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str}
-- Current Trigger Price: {candidate.trigger_price}
-- Macro Compass: {candidate.macro_compass}
-- H4 Structural Status: {h4_status}
-- H1 Wave State & Permission: {getattr(candidate, 'wave_state', 'BASE_RECLAIM_ENABLE')} ({getattr(candidate, 'wave_summary', 'Permitted')})
-- Previous Day Levels (D1): PDH = {pdh_val} | PDL = {pdl_val}
-- Previous Week Levels (H4): PWH = {pwh_val} | PWL = {pwl_val}
-- Daily Open (DO): {do_val} | ADR Used %: {adr_used_val*100:.1f}%
-- Multi-Month Macro Ranges: 50-Day D1 = {d1_50_str} | 100-Day D1 = {d1_100_str} | Monthly H4 = {h4_m_str}
-- Intraday Dealing Range (100-bar H1): {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
-- Rejection Wick Ratio: {candidate.rejection_wick_ratio*100:.1f}%
-- Volatility: ATR(14) = {candidate.current_atr_pts:.1f} pts | Current Spread = {candidate.current_spread_pts} pts
+- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {candidate.trigger_price}
+- Macro Compass: {candidate.macro_compass} | H4 Status: {h4_status}
+- H1 Wave State: {getattr(candidate, 'wave_state', 'DEMAND_REACTION_GO')} ({getattr(candidate, 'wave_summary', 'Permitted')})
+- Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
+- Key Levels: PDH={pdh_val} | PDL={pdl_val} | PWH={pwh_val} | PWL={pwl_val} | DO={do_val} | ADR Used: {adr_used_val*100:.1f}%
+- Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%
 {meta_block}
 {micro_frames_block}
 {csm_block}
 {atlas_dna_block}
 {strat_block}
 ## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
-- Structural Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
-- Nearest Bullish Order Block (OB): {getattr(candidate, 'bullish_ob_zone', '') or 'None active nearby'}
-- Nearest Bearish Order Block (OB): {getattr(candidate, 'bearish_ob_zone', '') or 'None active nearby'}
-- Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None active nearby'}
+- Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support} | Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
+- Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None nearby'} | Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None nearby'}
+- Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None nearby'}
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
-## 3. STRUCTURAL PROPOSAL & STATION-ANCHORED LEVELS
-- Key Support: {candidate.key_support}
-- Key Resistance: {candidate.key_resistance}
-- Proposed Technical SL: {candidate.suggested_sl} (Must be anchored BEHIND a structural station/OB + 0.35x ATR anti-wick buffer, NOT calculated from entry price)
-- Proposed Technical TP: {candidate.suggested_tp} (Target: nearest station in {direction_str} direction from Atlas DNA step grid above)
-- Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1
-- Station Context: Your SL and TP MUST reference the Atlas DNA station ladder. If you REVISE, snap your TP to the nearest favorable station and anchor SL behind the nearest opposing station.
+## 3. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Proposed Technical SL: {candidate.suggested_sl} (Anchor behind structural station/OB + 0.35x ATR anti-wick buffer)
+- Proposed Technical TP: {candidate.suggested_tp} (Target: nearest station in {direction_str} direction)
+- Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1 (Mandatory >= 1.25)
 {candles_block}
 ## 4. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT
 {fund_block}
-- Calendar Context: {calendar_text}
+- Economic Calendar Context: {calendar_text}
 
-## 5. EVALUATION DIRECTIVE
-Trade Permission & Confluence Hierarchy:
-- Trend & Direction: Defined by D1/H4 Macro Compass & Apex Paragon Fundamental Scorecard.
-- Wave State Permission: H1 Wave State Machine ensures we never chase running impulses (Phase 1) or catch falling knives (Phase 2). Trade is only permitted in Mature Basing (Phase 3) or Base Reclaim (Phase 4).
-- POI Location: H1 Dealing Range Discount (<= 0.50) / Deep Discount (<= 0.382) & SMC Order Blocks / FRVP POC.
-- Reaction Timing: M5 live wicks/displacement at the POI confirm that reaction has started before pulling trigger.
-- Currency Flow (CSM): Asymmetric flow filter. Veto BUY only if base currency is being systemically dumped (Delta <= -2.0). Mild or neutral CSM is completely normal during healthy discount pullbacks.
-
-Indicator Hierarchy & Nature:
-- Moving Averages (EMA), RSI, ADX, and Currency Strength Matrix (CSM) are LAGGING mathematical derivatives of past price/flow history.
-- Live Candlestick Price Action (rejection wicks, structural liquidity sweeps, Order Block/FVG reactions) is LEADING.
-- Use lagging indicators and CSM frames to assess macro alignment and regime maturity, but prioritize live price action structure and clear invalidation for exact trigger timing.
-
-Evaluate the proposal with full institutional depth:
+## 5. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
-- If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type (MUST be a realistic shallow retest within 0.1x to 1.0x ATR from trigger price; do NOT pick deep or obsolete multi-day Order Blocks)
-- If market is plunging/surging with strong opposing momentum, instant fake-break (< 2 bars), or trapped in chop -> select "REJECT"
-
-## 6. JURY OUTPUT FORMAT (STRICT JSON)
-You must submit your assessment with:
-1. Verdict: "APPROVE", "REVISE", or "REJECT"
-2. Suggested entry type, entry price, SL, TP (mandatory R:R >= 1.25)
-3. M5 micro-flow audit (absence of falling knife, presence of rejection wicks)
-4. Definite trade thesis and exact SL/TP placement justification
+- If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
+- If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
 
 Respond strictly in valid JSON:
 {{
@@ -1991,12 +1954,42 @@ Respond strictly in valid JSON:
     "sl_price": float (exact absolute price),
     "tp_price": float (exact absolute price)
   }},
-  "veto_reason": null | string (max 20 words if REJECT),
+  "veto_reason": null | string (max 15 words if REJECT),
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
-  "reasoning": "Detailed 3-5 sentence institutional thesis covering: (1) D1/H4 macro alignment, (2) SMC Order Block/FVG validity, (3) M5 micro flow & wick confirmation, and (4) precise mathematical justification for chosen SL and TP."
+  "reasoning": "2-3 concise sentences justifying macro alignment, OB/station confluence, M5 micro flow, and exact SL/TP."
 }}
 """
     return _strip_emoji(prompt)
+
+
+def get_static_jury_system_prompt():
+    """
+    Returns the Static System Directives for 3-LLM Jury.
+    Cached across all setup calls in OpenAI/DeepSeek prefix cache.
+    """
+    return """You are the Chief Investment Officer (CIO) and Chief Risk Officer (CRO) of an institutional quantitative hedge fund.
+Your mission is to evaluate candidate setups proposed by the Python Quantitative Engine with zero emotional bias.
+
+### 1. CORE OPERATIONAL DIRECTIVES:
+1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
+2. Mandatory R:R Gate: Minimum R:R >= 1.25. Anchor SL behind physical structural barriers (MSE SBR/RBS, SMC Order Block, or Atlas DNA station + 0.35x ATR anti-wick buffer).
+3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
+4. Symmetrical Wave State Permission:
+   - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
+   - SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
+5. 4-Grade Quality Matrix:
+   - GRADE_S (God-Tier, 1.0x Lot, 3.0x ATR TP) | GRADE_A_PLUS (High Conviction, 1.0x Lot, 2.0x ATR TP)
+   - GRADE_A (Standard, 1.0x Lot, 1.5x ATR TP) | GRADE_B (Defensive Scalp TP1 Only, 0.50x Lot, 1.25x ATR TP).
+
+### 2. MASTER INSTITUTIONAL HARD RISK VETO FLAGS:
+If any of these conditions are present, you MUST reject the trade (Verdict: REJECT or Signal: HOLD):
+- COUNTER_TREND_MOMENTUM: Counter-trend against H4/D1 trend or unmitigated falling knife.
+- LIQUIDITY_TRAP: Entry directly in front of Equal Highs/Lows (EQH/EQL) or structural ceiling.
+- IMPULSE_CHASE: FOMO chase of extended candle without basing -> select REVISE to Pending Limit.
+- SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
+- HIGH_IMPACT_NEWS: Active The Storm window (+/- 15-30 min of Tier-1 release).
+- SEVERE_CURRENCY_CONFLICT: Both currencies have extreme magnitude scores (|S| >= 0.50) with Net Delta < 0.15.
+- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window."""
 
 
 def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m5_str=None):
