@@ -59,8 +59,8 @@ def send_message(text):
 
 def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None,
                        ticket=None, entry_price=None, sl_price=None, tp_price=None, models="", confidence=0.0,
-                       setup="", reason="", invalidation=""):
-    """Send trade entry alert with full technical and AI context."""
+                       setup="", reason="", invalidation="", setup_grade=""):
+    """Send trade entry alert with full technical, fundamental grade, and AI context."""
     emoji = "🟢" if signal == "BUY" else "🔴"
     mode_tag = " RECOVERY" if recovery_mode else (" DRY RUN" if config.DRY_RUN else " LIVE")
     sym = symbol or config.SYMBOL
@@ -71,6 +71,19 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
 
     sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
     tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
+
+    # Evaluate Fundamental Setup Grade if not passed explicitly
+    grade_line = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_eval = apex_fundamental_engine.evaluate_pair(sym)
+        if fund_eval and fund_eval.base:
+            g_name = setup_grade or fund_eval.setup_grade
+            g_icon = "👑" if "GRADE_S" in g_name else ("💎" if "GRADE_A_PLUS" in g_name else "🎯")
+            grade_line = f"• *Setup Grade*: `{g_name}` {g_icon} (Delta `{fund_eval.fundamental_delta:+.2f}` │ Carry `{fund_eval.carry_spread:+.2f}%`)"
+    except Exception:
+        if setup_grade:
+            grade_line = f"• *Setup Grade*: `{setup_grade}`"
 
     lines = [
         f"{emoji} *Trade {signal} Dibuka (Market Order)*",
@@ -83,6 +96,8 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
     lines.append(f"• *Lot Size*: `{lot}` (session x{session_multiplier})")
     lines.append(f"• *Stop Loss*: {sl_str}")
     lines.append(f"• *Take Profit*: {tp_str}")
+    if grade_line:
+        lines.append(grade_line)
     lines.append(f"• *Mode*: `{mode_tag}`")
 
     if models:
@@ -100,7 +115,7 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
 
 def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_points, tp_points,
                                sl_price=None, tp_price=None, models="", confidence=0.0,
-                               setup="", reason="", invalidation="", expiration_minutes=120):
+                               setup="", reason="", invalidation="", expiration_minutes=120, setup_grade=""):
     """Send rich notification when a pending order (buy_stop, sell_stop, buy_limit, sell_limit) is placed."""
     emoji = "⏳"
     etype_upper = (entry_type or "pending").upper()
@@ -113,6 +128,18 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
     sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
     tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
 
+    grade_line = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_eval = apex_fundamental_engine.evaluate_pair(sym)
+        if fund_eval and fund_eval.base:
+            g_name = setup_grade or fund_eval.setup_grade
+            g_icon = "👑" if "GRADE_S" in g_name else ("💎" if "GRADE_A_PLUS" in g_name else "🎯")
+            grade_line = f"• *Setup Grade*: `{g_name}` {g_icon} (Delta `{fund_eval.fundamental_delta:+.2f}` │ Carry `{fund_eval.carry_spread:+.2f}%`)"
+    except Exception:
+        if setup_grade:
+            grade_line = f"• *Setup Grade*: `{setup_grade}`"
+
     lines = [
         f"{emoji} *Pending Order Terpasang: {etype_upper}*",
         f"• *Symbol*: `{sym}`",
@@ -122,6 +149,8 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
         f"• *Stop Loss*: {sl_str}",
         f"• *Take Profit*: {tp_str}",
     ]
+    if grade_line:
+        lines.append(grade_line)
 
     if models:
         conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
@@ -482,12 +511,10 @@ def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, 
 
     lines = [
         header_title,
-        f"🕒 `{now_str}` │ Sesi: `{status_sub}`",
-        "━" * 28,
-        "",
-        "💼 *PERFORMA KEUANGAN HARI INI*",
-        f"• Realized Net P/L : {pnl_emoji} *${pnl:+.2f}*",
-        f"• Total Eksekusi   : `{trades_count} Trades`",
+        f"• *Waktu*: `{now_str}` │ Sesi: `{status_sub}`",
+        f"• *Realized Net P/L*: {pnl_emoji} *${pnl:+.2f}*",
+        f"• *Total Eksekusi*: `{trades_count} Trades`",
+        "----------------------------------------",
     ]
 
     try:
@@ -515,53 +542,49 @@ def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, 
                     total_loss += 1
 
             wr_total = (total_win / (trades_count - total_bep)) * 100 if (trades_count - total_bep) > 0 else 0.0
-            lines[-1] += f" ({total_win}W - {total_loss}L │ WR {wr_total:.0f}%)"
-            if total_bep:
-                lines[-1] += f" (+{total_bep} BEP)"
+            lines[3] = f"• *Total Eksekusi*: `{trades_count} Trades` ({total_win}W - {total_loss}L │ WR {wr_total:.0f}%)" + (f" (+{total_bep} BEP)" if total_bep else "")
 
             sym_lines = []
             for sym, b in sorted(by_symbol.items(), key=lambda kv: -abs(kv[1]["pnl"])):
                 wr = (b["wins"] / (b["n"] - b["bep"])) * 100 if (b["n"] - b["bep"]) > 0 else 0.0
                 sym_clean = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
                 sym_lines.append(
-                    f"• `{sym_clean}` : {b['n']}T ({b['wins']}W-{b['losses']}L"
+                    f"• `{sym_clean}`: {b['n']}T ({b['wins']}W-{b['losses']}L"
                     + (f", {b['bep']}BEP" if b["bep"] else "")
                     + f" │ WR {wr:.0f}%) Net `${b['pnl']:+.2f}`"
                 )
             if sym_lines:
-                lines.append("")
-                lines.append("📊 *BREAKDOWN PER INSTRUMEN*")
+                lines.append("📊 *Breakdown Instrumen:*")
                 lines.extend(sym_lines)
+                lines.append("----------------------------------------")
     except Exception:
         pass
 
     # Status Posisi Terakhir
-    lines.append("")
-    lines.append("📌 *STATUS POSISI TERAKHIR*")
+    lines.append("📌 *Status Posisi Terakhir:*")
     if open_positions:
         try:
             total_float = sum(p.get("profit", 0.0) for p in open_positions)
             f_emoji = "🟢" if total_float >= 0 else "🔴"
-            lines.append(f"• Posisi Terbuka : `{len(open_positions)} Tiket` │ Floating: {f_emoji} `${total_float:+.2f}`")
+            lines.append(f"• *Posisi Terbuka*: `{len(open_positions)} Tiket` │ Floating: {f_emoji} `${total_float:+.2f}`")
             for p in open_positions[:6]:
                 sym_clean = p.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
                 lines.append(f"  └─ `{sym_clean}` {p.get('type')} {p.get('volume')} lot `${p.get('profit', 0.0):+.2f}`")
         except Exception:
             pass
     else:
-        lines.append("• Posisi Terbuka : `Nihil (Semua Tiket Bersih / Flat)`")
-        lines.append("• Floating P/L   : `$0.00`")
+        lines.append("• *Posisi Terbuka*: `Nihil (Semua Tiket Bersih / Flat)`")
 
     # Risk Status
-    lines.append("")
-    lines.append("🛡️ *STATUS KEAMANAN & RISIKO*")
+    lines.append("----------------------------------------")
+    lines.append("🛡️ *Keamanan & Modal:*")
     rec_mode = "Aktif" if risk_status and risk_status.get('recovery_mode') else "Tidak Aktif"
     streak = risk_status.get('consecutive_losses', 0) if risk_status else 0
-    lines.append(f"• Max Daily Loss : `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` ➔ Terjaga Aman")
-    lines.append(f"• Loss Streak    : `{streak}` (Recovery: `{rec_mode}`)")
-    lines.append(f"• MT5 Protection : Magic `{getattr(config, 'MAGIC_NUMBER', 20260625)}` Offline")
-    lines.append("━" * 28)
-    lines.append("_Sistem berhenti dengan aman. Posisi dan modal terlindungi._")
+    lines.append(f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` (Terjaga)")
+    lines.append(f"• *Loss Streak*: `{streak}` (Recovery: `{rec_mode}`)")
+    lines.append(f"• *MT5 Status*: Magic `{getattr(config, 'MAGIC_NUMBER', 20260625)}` Offline")
+    lines.append("----------------------------------------")
+    lines.append("_Sistem berhenti dengan aman. Posisi & modal terlindungi._")
 
     return send_message("\n".join(lines))
 

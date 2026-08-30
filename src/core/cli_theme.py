@@ -276,6 +276,21 @@ def render_candidate_alert_box(candidate):
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
         (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
+
+    # Fetch Real-time Apex Fundamental Evaluation
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_eval = apex_fundamental_engine.evaluate_pair(candidate.symbol)
+        if fund_eval and fund_eval.base:
+            badge_c = UI.GREEN if "ALIGNED" in fund_eval.status_badge else (UI.RED if "CONFLICT" in fund_eval.status_badge else UI.YELLOW)
+            items.append((f"• Apex FE Bias : ", f"{badge_c}{fund_eval.status_badge}{UI.RST} (Delta: {fund_eval.fundamental_delta:+.2f})"))
+            grade_c = UI.GREEN if "GRADE_S" in fund_eval.setup_grade or "GRADE_A_PLUS" in fund_eval.setup_grade else UI.CYAN
+            items.append((f"• Setup Grade  : ", f"{UI.BOLD}{grade_c}{fund_eval.setup_grade}{UI.RST} (Carry: {fund_eval.carry_spread:+.2f}% | Sizing: {fund_eval.sizing_modifier}x)"))
+            if fund_eval.hard_veto_flag:
+                items.append((f"• Veto Alert   : ", f"{UI.BG_RED} {fund_eval.hard_veto_flag} {UI.RST} ({fund_eval.hard_veto_reason})"))
+    except Exception:
+        pass
+
     return UI.make_box(f"QUANT SETUP DETECTED: {candidate.symbol} [{tf_str} | {t_wib}]", items, width=76, border_color=UI.PURPLE)
 
 
@@ -483,6 +498,19 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             
             t3_lines.append(f" 24h Macro (H1)  : {UI.CYAN}{h1_str}{UI.RST}")
             t3_lines.append(f" 4h Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
+            try:
+                from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+                f_scores = apex_fundamental_engine.compute_scores()
+                if f_scores:
+                    sorted_fund = sorted(f_scores.items(), key=lambda x: x[1].composite_fundamental_score, reverse=True)
+                    fund_str = " > ".join([f"{c}" for c, sc in sorted_fund[:5]])
+                    top_s = sorted_fund[0][0]
+                    top_w = sorted_fund[-1][0]
+                    delta_val = sorted_fund[0][1].composite_fundamental_score - sorted_fund[-1][1].composite_fundamental_score
+                    t3_lines.append(f" Apex Fund Rank  : {UI.CYAN}{fund_str}...{UI.RST}")
+                    t3_lines.append(f" Top Convergent  : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} ➔ Grade S/A+)")
+            except Exception:
+                pass
             t3_lines.append(f" Macro Compass   : {UI.GREEN}26 FX Majors & Crosses (H1/M30 Native){UI.RST}")
             t3_lines.append(f" News Ticker     : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
         except Exception:
@@ -542,7 +570,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini 3.1-Flash{UI.RST} (Speed)",
         f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Hard Risk Veto)",
         f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife Guard)",
-        f" News Shield  : {UI.GREEN}ForexFactory + TV Dual-Source (±6h Gate){UI.RST}"
+        f" News Shield  : {UI.GREEN}ForexFactory + TV Dual-Source (±6h Gate){UI.RST}",
+        f" Apex Confluence : {UI.CYAN}Institutional 8-Currency Regime Filter (Active){UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
