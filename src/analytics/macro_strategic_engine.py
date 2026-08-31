@@ -89,6 +89,9 @@ class MacroStrategicDirective:
     contingency_target: float = 0.0
     fundamental_backing: str = ""
     fundamental_grade: str = "GRADE_A"
+    current_bid: float = 0.0
+    current_ask: float = 0.0
+    current_mid: float = 0.0
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -708,6 +711,34 @@ class MacroStrategicEngine:
         except Exception:
             pass
 
+        target_d1_sbr = macro_sbr_d1 if macro_sbr_d1 > sub_ceiling else round(sub_ceiling + psych_step_micro, digits)
+        target_d1_rbs = macro_rbs_d1 if macro_rbs_d1 < sub_floor else round(sub_floor - psych_step_micro, digits)
+
+        base_up = next_macro_target if ('BUY' in primary_directive or 'BULLISH' in macro_bias) else ceiling_station
+        base_down = target_station_final if ('SELL' in primary_directive or 'BEARISH' in macro_bias) else floor_station
+
+        target_up = max(base_up, round(target_d1_sbr + psych_step_micro, digits))
+        target_down = min(base_down, round(target_d1_rbs - psych_step_micro, digits))
+
+        inval_floor = macro_invalidation if macro_invalidation < target_d1_rbs else round(target_d1_rbs - (0.20 * atr_d1), digits)
+        contingency_demand_val = contingency_demand if contingency_demand < inval_floor else round(inval_floor - psych_step_macro, digits)
+        contingency_supply_val = contingency_supply if contingency_supply > target_up else round(target_up + psych_step_macro, digits)
+
+        bull_roadmap = (
+            f"▲ BULLISH PATH: Hold > Immediate Floor {sub_floor:.{digits}f} -> Tests {sub_ceiling:.{digits}f} │ "
+            f"Breakout > {sub_ceiling:.{digits}f} -> Targets SBR {target_d1_sbr:.{digits}f} -> Extension to {target_up:.{digits}f} / W1 Supply {contingency_supply_val:.{digits}f}"
+        )
+        bear_roadmap = (
+            f"▼ BEARISH PATH: Reject < Immediate Ceiling {sub_ceiling:.{digits}f} -> Retests {sub_floor:.{digits}f} │ "
+            f"Step-1 (Breakdown < {sub_floor:.{digits}f}) -> Drops to D1 RBS {target_d1_rbs:.{digits}f} -> Slips to {inval_floor:.{digits}f} │ "
+            f"Step-2 (W1 Breakdown < {inval_floor:.{digits}f}) -> Deep Sweep to W1 Demand {contingency_demand_val:.{digits}f}"
+        )
+
+        if "BUY" in primary_directive or "BULLISH" in macro_bias:
+            full_future_roadmap = f"{bull_roadmap}\n{bear_roadmap}"
+        else:
+            full_future_roadmap = f"{bear_roadmap}\n{bull_roadmap}"
+
         directive = MacroStrategicDirective(
             symbol=symbol,
             calculation_time_ms=calc_ms,
@@ -731,11 +762,7 @@ class MacroStrategicEngine:
             confidence_score=confidence_score,
             structural_stage=stage_label,
             daily_mandate_thesis=thesis,
-            future_macro_roadmap=(
-                f"Hold above RBS {macro_rbs_d1:.{digits}f} -> Target {next_macro_target:.{digits}f} │ Contingency: Breakdown below {macro_invalidation:.{digits}f} triggers deep sweep to W1 Demand at {contingency_demand:.{digits}f}"
-                if ("BUY" in primary_directive or "BULLISH" in macro_bias) else
-                f"Rejection at SBR {macro_sbr_d1:.{digits}f} -> Target {target_station_final:.{digits}f} │ Contingency: Breakout above {macro_invalidation:.{digits}f} triggers expansion to W1 Supply at {contingency_supply:.{digits}f}"
-            ),
+            future_macro_roadmap=full_future_roadmap,
             macro_rbs_d1=macro_rbs_d1,
             macro_sbr_d1=macro_sbr_d1,
             inter_rbs_h4=inter_rbs_h4,
@@ -759,6 +786,9 @@ class MacroStrategicEngine:
             contingency_target=contingency_target_val,
             fundamental_backing=fundamental_backing,
             fundamental_grade=fundamental_grade,
+            current_bid=curr_bid,
+            current_ask=curr_ask,
+            current_mid=curr_mid,
             raw_payload={
                 "symbol": symbol,
                 "calculation_time_ms": calc_ms,

@@ -783,6 +783,7 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
                     f"- Station Targets      : TP1 = {strat_dir.tp1_price} | TP2 = {strat_dir.tp2_price}\n"
                     f"- Strategic Directive  : {strat_dir.primary_execution_directive}\n"
                     f"- Invalidation Point   : {strat_dir.invalidation_stop_price} | Contingency Target: {strat_dir.contingency_target}\n"
+                    f"- Future Macro Roadmap :\n{strat_dir.future_macro_roadmap}\n"
                 )
             else:
                 macro_ctx = ""

@@ -2294,15 +2294,16 @@ Tuliskan memo briefing narasi pasar institusional (Market Story & Execution Narr
 - Future Roadmap: {directive.future_macro_roadmap}
 
 [INSTRUKSI PENULISAN WAJIB]
-1. Header: 🧭 *TOP-DOWN MACRO BRIEFING: {clean_sym}*
+1. Header: [TOP-DOWN MACRO BRIEFING: {clean_sym}]
 2. Tulis dalam bentuk **NARASI PARAGRAF CERITA PASAR YANG MENGALIR**, BUKAN sekadar mengulang daftar bullet points kaku!
 3. Jelaskan secara mengalir:
    - **Konteks & Sentimen Pasar**: Mengapa harga terdorong ke arah ini dan bagaimana struktur institusi menekan/menopang harga.
    - **Taktik Reload & Perlindungan Modal**: Di mana kita menunggu peluru ditembakkan (**Reload Zone**), mengapa **SL** ditempatkan di level tersebut.
    - **Manajemen Cuan Bertahap**: Jelaskan aksi penguncian profit 50% di **TP1** + geser ke BEP, serta potensi lanjutan menuju **TP2**.
+   - **Roadmap Kontingensi Bertingkat (Step-1 & Step-2)**: Jelaskan skenario jika skenario utama gagal secara bertahap (apa yang terjadi jika level D1 jebol lebih dulu ke Dealing Range Low, dan apa konsekuensinya jika level W1 sampai tertembus).
 4. Di bagian akhir, buat sub-heading tegas:
-   - ⚠️ *PANTANGAN & JEBAKAN MEMATIKAN*: Peringatan keras apa yang dilarang dilakukan trader agar tidak menjadi likuiditas bandar.
-5. Gunakan format Markdown tebal pada angka-angka kunci agar mudah dibaca cepat. Tulis dalam Bahasa Indonesia institusional yang elegan dan percaya diri."""
+   - [PANTANGAN & JEBAKAN MEMATIKAN]: Peringatan keras apa yang dilarang dilakukan trader agar tidak menjadi likuiditas bandar.
+5. Gunakan format Markdown tebal pada angka-angka kunci agar mudah dibaca cepat. Tulis dalam Bahasa Indonesia institusional yang elegan, tajam, dan percaya diri."""
 
     try:
         model_name = getattr(config, "MACRO_NARRATIVE_MODEL", "gpt-4o-mini")

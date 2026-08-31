@@ -4,23 +4,29 @@ Selamat datang di pusat dokumentasi bot trading MetaTrader 5 dengan arsitektur *
 
 ---
 
-## 🗂️ Direktori Dokumentasi
+# Dokumentasi Proyek Trading Bot Multi-LLM
+
+Selamat datang di pusat dokumentasi bot trading MetaTrader 5 dengan arsitektur **Multi-LLM Consensus**. Seluruh materi, riset kuantitatif, rancangan arsitektur, dan referensi telah dikelompokkan ke dalam direktori tematik berikut:
+
+---
+
+## Direktori Dokumentasi
 
 ```
 docs/
-├── 📂 architecture/   # Desain teknis sistem, skema prompt LLM, blueprint, & estimasi biaya
-├── 📂 research/       # Riset statistik 3-4 tahun, temuan edge, perankingan pair, & hasil backtest
-├── 📂 plans/          # RFC fitur baru, rancangan eksperimen, & rencana implementasi aktif
-├── 📂 deployment/     # Panduan operasional dan panduan deployment bot ke VPS
-├── 📂 reference/      # Buku trading (PDF), Expert Advisor MT5 (.mq5/.ex5), & spesifikasi UI
-└── 📂 archive/        # Arsip histori changelog (8-15 Agustus) dan dokumen lawas
+├── architecture/   # Desain teknis sistem, skema prompt LLM, blueprint, & estimasi biaya
+├── research/       # Riset statistik 3-4 tahun, temuan edge, perankingan pair, & hasil backtest
+├── plans/          # RFC fitur baru, rancangan eksperimen, & rencana implementasi aktif
+├── deployment/     # Panduan operasional dan panduan deployment bot ke VPS
+├── reference/      # Buku trading (PDF), Expert Advisor MT5 (.mq5/.ex5), & spesifikasi UI
+└── archive/        # Arsip histori changelog (8-15 Agustus) dan dokumen lawas
 ```
 
 ---
 
-## 📚 Daftar Dokumen Lengkap
+## Daftar Dokumen Lengkap
 
-### 1. 🏗️ Architecture (`docs/architecture/` & `docs/`)
+### 1. Architecture (`docs/architecture/` & `docs/`)
 * [FOLDER_CONVENTIONS.md](file:///c:/Vibe/tradingpartner/docs/architecture/FOLDER_CONVENTIONS.md) — **Konvensi Arsitektur & Struktur Folder Proyek**: Standar grouping modular untuk `src/`, `docs/`, `scratch/`, dan `data/` serta aturan penempatan file.
 * [FULL_SYSTEM_PROMPTS_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/architecture/FULL_SYSTEM_PROMPTS_AUGUST_2026.md) — **Full System Prompts Master Specification (Agustus 2026)**: Spesifikasi verbatim lengkap Stage 2 High-Density Verification Dossier Prompt, Smart Money Concepts (SMC) & Liquidity Map, 2-Pass Sequential Cross-Examination, dan Qualified Hard Risk Veto.
 * [PROMPT_SPECIFICATION_V2.md](file:///c:/Vibe/tradingpartner/docs/PROMPT_SPECIFICATION_V2.md) — **Master Prompt Specification V2 (Streamlined State Machine Protocol)**: Blueprint lengkap System Prompt V2 (< 400 token), Decision Framework 7-langkah, 3 Playbook, dan contoh payload data masukan live.
@@ -30,16 +36,17 @@ docs/
 * [prompt_claude.md](file:///c:/Vibe/tradingpartner/docs/architecture/prompt_claude.md) — Referensi skema prompt khusus Claude Sonnet / Haiku.
 * [LLM_COST_ESTIMATION.md](file:///c:/Vibe/tradingpartner/docs/architecture/LLM_COST_ESTIMATION.md) — Simulasi kuota token, frekuensi call harian, dan perbandingan biaya API bulanan (DeepSeek vs Claude).
 
-### 2. 📊 Research (`docs/research/`)
-* [APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md) — **Spesifikasi Lengkap Apex Paragon Macro Fundamental Engine (40% Weight)**: Kalender Dual-Source (ForexFactory + TV), Peluruhan Eksponensial Half-Life (4h/12h/36h), 8-Currency Composite Scorecard, Matriks Konflik 4-Tingkat, 4-Grade Quality System (Grade S/A+/A/B), dan 7 Master Risk Veto Flags.
-* [WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md) — **Audit Live Spread Weekend & Daily Rollover (26 FX + BTC)**: Data empiris akun live VTMarkets, rasio pelebaran spread (1.0x-10.1x), implikasi Pre-Rollover Shield, Dead Zone, dan kalibrasi lebar Reload Zone.
-* [MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md) — **Laporan Riset Macro Psych Levels & Delivery Engine**: Eliminasi Lagging CHoCH, Dynamic ATR Zonal Bands (+-0.35 ATR), M3 Compass Navigator + Trio H1 (M1 Sweep, M2 Pullback, M4 Retest), dan Validasi Multi-Tahun 29 Simbol (+1.378R).
-* [MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md) — **Laporan Riset Master Atlas DNA & Dual-Reaction Protocols**: Klasifikasi 22 Simbol MT5, Major 100-pip vs Sub-Stations 50-pip, Skenario A Reversal Fade vs Skenario B Breakout Upgrade, dan Formula Intraday SL/TP Anchoring.
-* [QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md) — **Master Quant Dossier V3 (10 Juta Candle / 29 Simbol)**: 4-Dimensional Adaptive Market State, Causal Direction Persistence (41.3 bar), Correction Anatomy Type A Waterfall vs Type B Coil, Conditional CSM Pressure, dan Event Reclaim Layer.
-* [METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md) — **Master Quant Dossier 16.2 Tahun (Dataset MetaQuotes 2010–2026)**: Validasi 723k Bar H1 / 29 Simbol, 4-Layer Permission FSM, Eliminasi NY ADR Reversal, Integrasi M3 HTF Weekly Wall Reversal (+586.1R), dan Atlas DNA 29 Simbol.
+### 2. Research (`docs/research/`)
+* [APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md) — **Spesifikasi Lengkap Apex Paragon Macro Fundamental Engine (40% Weight)**: Kalender Dual-Source (ForexFactory + TV), Peluruhan Eksponensial Half-Life (4h/12h/36h), 8-Currency Composite Scorecard, Matriks Konflik 4-Tingkat, 4-Grade Quality System (Grade S/A+/A/B), dan 7 Master Risk Veto Flags.
+* [WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md](file:///c:/Vibe/tradingpartner/docs/research/WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md) — **Audit Live Spread Weekend & Daily Rollover (26 FX + BTC)**: Data empiris akun live VTMarkets, rasio pelebaran spread (1.0x-10.1x), implikasi Pre-Rollover Shield, Dead Zone, dan kalibrasi lebar Reload Zone.
+* [MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md) — **Laporan Riset Macro Psych Levels & Delivery Engine**: Eliminasi Lagging CHoCH, Dynamic ATR Zonal Bands (+-0.35 ATR), M3 Compass Navigator + Trio H1 (M1 Sweep, M2 Pullback, M4 Retest), dan Validasi Multi-Tahun 29 Simbol (+1.378R).
+* [MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md) — **Laporan Riset Master Atlas DNA & Dual-Reaction Protocols**: Klasifikasi 22 Simbol MT5, Major 100-pip vs Sub-Stations 50-pip, Skenario A Reversal Fade vs Skenario B Breakout Upgrade, dan Formula Intraday SL/TP Anchoring.
+* [QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md) — **Master Quant Dossier V3 (10 Juta Candle / 29 Simbol)**: 4-Dimensional Adaptive Market State, Causal Direction Persistence (41.3 bar), Correction Anatomy Type A Waterfall vs Type B Coil, Conditional CSM Pressure, dan Event Reclaim Layer.
+* [METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md) — **Master Quant Dossier 16.2 Tahun (Dataset MetaQuotes 2010–2026)**: Validasi 723k Bar H1 / 29 Simbol, 4-Layer Permission FSM, Eliminasi NY ADR Reversal, Integrasi M3 HTF Weekly Wall Reversal (+586.1R), dan Atlas DNA 29 Simbol.
 * [FRVP_SMC_RESEARCH_2026.md](file:///c:/Vibe/tradingpartner/docs/research/FRVP_SMC_RESEARCH_2026.md) — **Riset & Validasi Kuantitatif FRVP + SMC**: Pengujian 110.460 trade (24 simbol, 4.3 thn MT5). Validasi kegagalan FRVP standalone vs sinergi SMC + FRVP (+104% Expected Value & pemangkasan 59% false OB).
 * [INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md) — **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support).
-* [report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/report.html) — **Laporan Visual Interaktif Backtest 10.7 Tahun (Master Quant Dossier 15 Bab)**: Dokumen institusional komprehensif 396k+ trade, komparasi H1 vs M30 vs H4 vs D1, master atlas DNA ranking 22 simbol, Universal 8-Currency Basket Gate, dan visualisasi arsitektur 2-Stage Quant Funnel.
+* [report.html](file:///c:/Vibe/tradingpartner/docs/report.html) — **Laporan Visual Interaktif Backtest 10.7 Tahun (Master Quant Dossier 15 Bab)**: Dokumen institusional komprehensif 396k+ trade, komparasi H1 vs M30 vs H4 vs D1, master atlas DNA ranking 22 simbol, Universal 8-Currency Basket Gate, dan visualisasi arsitektur 2-Stage Quant Funnel.
+* [technical_specification.html](file:///c:/Vibe/tradingpartner/docs/technical_specification.html) — **Master Technical Specification Document (HTML 14 Bab)**: Dokumen spesifikasi teknis lengkap 14 Bab mencakup arsitektur 2-stage funnel, 6-TF MSE, 4D Wave State, Apex Fundamental Engine (40%), dan 5 Lapisan Kontrol Portofolio.
 * [MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md) — **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Pengujian 396.183 trade pada 22 simbol (10.7 tahun H1 & 4.6 tahun M30). Komparasi head-to-head H1 vs M30 (+22.8% PF), evaluasi 4 arketipe, validasi Smart Money Concepts (SMC CHoCH/OB/Liquidity Sweep), dan perankingan pool simbol.
 * [LLM_PROMPT_BENCHMARK_EXPERIMENTS.md](file:///c:/Vibe/tradingpartner/docs/research/LLM_PROMPT_BENCHMARK_EXPERIMENTS.md) — **Riset & Eksperimen Benchmark LLM (Agustus 2026)**: Hasil pengujian empiris diagnostik 4 model AI (o4-mini, Gemini, Claude, DeepSeek), perbandingan Structured JSON CoT vs Anti-Paralysis Directive, dan Master Matrix 36 evaluasi di pool bot.
 * [DAILY_RANGE_VOLATILITY.md](file:///c:/Vibe/tradingpartner/docs/research/DAILY_RANGE_VOLATILITY.md) — **Riset Volatilitas Harian D1 (365 hari, 29 pair)**: Mean & Median daily range pips untuk semua Major + Minor/Cross + XAUUSD. Ranking volatilitas, analisis CHF crosses di pool bot, kandidat upgrade pair.
@@ -47,7 +54,7 @@ docs/
 * [backtest_augustus_2026.md](file:///c:/Vibe/tradingpartner/docs/research/backtest_augustus_2026.md) — Hasil backtest 10 strategi buku (NotebookLM), erratum S9 Horn, dan verifikasi S9 HTF Structural Target pada GBPUSD.
 * [hasilnotebooklm.md](file:///c:/Vibe/tradingpartner/docs/research/hasilnotebooklm.md) — Ekstraksi 10 strategi teknikal dari literatur buku trading via Google NotebookLM.
 
-### 3. 💡 Plans & RFCs (`docs/plans/`)
+### 3. Plans & RFCs (`docs/plans/`)
 * [GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md) — **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table.
 * [IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md) — **Backlog Ide & RFC**:
   * **RFC 1**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt Makro H4/D1 & M15).
@@ -59,13 +66,13 @@ docs/
   * **RFC 10**: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Trigger vs Devil's Advocate / Risk Auditor).
 * [implementation_plan_pattern_whisper.md](file:///c:/Vibe/tradingpartner/docs/plans/implementation_plan_pattern_whisper.md) — Rencana implementasi integrasi bisikan pola kuantitatif ke dalam prompt LLM.
 
-### 4. 🚀 Deployment (`docs/deployment/`)
+### 4. Deployment (`docs/deployment/`)
 * [vps_deployment.md](file:///c:/Vibe/tradingpartner/docs/deployment/vps_deployment.md) — Panduan lengkap konfigurasi dan deployment bot serta MetaTrader 5 di server VPS.
 
-### 5. 📖 Reference (`docs/reference/`)
+### 5. Reference (`docs/reference/`)
 * **`books/`** — Kumpulan 11 e-book trading referensi (Candlestick Bible, Rayner Teo Trend Line/Breakout/Price Action, S&D, dll).
 * **`specs/`** — [2026-08-09-trading-dashboard-design.md](file:///c:/Vibe/tradingpartner/docs/reference/specs/2026-08-09-trading-dashboard-design.md) (Spesifikasi desain UI/UX Dashboard monitoring).
 * **`trading-robots/`** — Kode sumber Expert Advisor MT5 (.mq5, .ex5) dan panduan optimasi EA.
 
-### 6. 📜 Archive (`docs/archive/`)
+### 6. Archive (`docs/archive/`)
 * [CHANGELOG_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/archive/CHANGELOG_AUGUST_2026.md) — Arsip detail perubahan historis bot periode 8–15 Agustus 2026 (FASE 1–7, pemisahan mode SL/TP, evolusi lot sizing).

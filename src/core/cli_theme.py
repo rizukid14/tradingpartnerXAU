@@ -46,8 +46,8 @@ class UI:
     BG_BLUE = "\033[44m\033[97m\033[1m"
     BG_MAGENTA = "\033[45m\033[97m\033[1m"
     BG_PURPLE = "\033[45m\033[97m\033[1m"
-    BG_CYAN = "\033[46m\033[30m\033[1m"
-    BG_DARK = "\033[100m\033[97m"
+    BG_CYAN = "\033[46m\033[97m\033[1m"
+    BG_DARK = "\033[100m\033[97m\033[1m"
 
     @classmethod
     def badge_live(cls):
@@ -267,7 +267,7 @@ def render_candidate_alert_box(candidate):
     )
     
     items = [
-        f"{UI.BOLD}{direction_color}⚡ STAGE 1 QUANT RADAR TRIGGER: {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
+        f"{UI.BOLD}{direction_color}[RADAR TRIGGER] {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
         "---",
         (f"• Trigger Time : ", f"{UI.CYAN}{t_wib}{UI.RST}"),
         (f"• Setup Type   : ", f"{UI.WHITE}{candidate.setup_type} ({tf_str}){UI.RST}"),
@@ -381,20 +381,20 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             pass
 
         w_state_str = "MATURE_BASING"
-        w_perm_str = f"{UI.CYAN}ARMED 🎯 (Menunggu Sentuh Reload Zone){UI.RST}"
+        w_perm_str = f"{UI.CYAN}◆ ARMED (Menunggu Sentuh Reload Zone){UI.RST}"
         if macro_cache:
             for k, v in macro_cache.items():
                 if active_sym in k:
                     w_st = v.get('wave_state', 'MATURE_BASING')
                     w_pm = v.get('permission_state', 'ARM')
                     if w_pm == "GO":
-                        w_perm_str = f"{UI.GREEN}GO 🚀 (Pelatuk Aktif / Reclaim Confirmed){UI.RST}"
+                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Reclaim Confirmed){UI.RST}"
                     elif w_pm == "ARM":
-                        w_perm_str = f"{UI.CYAN}ARMED 🎯 (Menunggu Sentuh Reload Zone){UI.RST}"
+                        w_perm_str = f"{UI.CYAN}◆ ARMED (Menunggu Sentuh Reload Zone){UI.RST}"
                     elif w_pm == "WAIT":
-                        w_perm_str = f"{UI.GRAY}WAIT ⏳ (Anti-FOMO / Di Pucuk Ekspansi){UI.RST}"
+                        w_perm_str = f"{UI.GRAY}○ WAIT (Anti-FOMO / Di Pucuk Ekspansi){UI.RST}"
                     elif w_pm == "LOCK":
-                        w_perm_str = f"{UI.RED}LOCK 🔒 (Anti-Falling Knife){UI.RST}"
+                        w_perm_str = f"{UI.RED}■ LOCK (Anti-Falling Knife){UI.RST}"
                     w_state_str = w_st
                     break
 
@@ -421,34 +421,32 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                         perm_st = v.get('permission_state', 'WAIT')
                         
                         if "IMPULSE" in wave_st or "CHASE" in wave_st:
-                            badge = f"{UI.PURPLE}⚡{UI.RST}"
+                            badge = f"{UI.PURPLE}▶{UI.RST}"
                         elif "LOCK" in wave_st or perm_st == "LOCK":
-                            badge = f"{UI.RED}🔒{UI.RST}"
+                            badge = f"{UI.RED}■{UI.RST}"
                         elif "RECLAIM" in wave_st or "GO" in wave_st or perm_st == "GO":
-                            badge = f"{UI.GREEN}🟢{UI.RST}"
-                            in_zone_pairs.append(f"{sym_prefix} 🟢")
+                            badge = f"{UI.GREEN}●{UI.RST}"
+                            in_zone_pairs.append(f"{sym_prefix} ●")
                         elif "ARMED" in wave_st or "RELOAD" in wave_st or "MATURE" in wave_st or perm_st == "ARM":
-                            badge = f"{UI.CYAN}🎯{UI.RST}"
-                            in_zone_pairs.append(f"{sym_prefix} 🎯")
+                            badge = f"{UI.CYAN}◆{UI.RST}"
+                            in_zone_pairs.append(f"{sym_prefix} ◆")
                         elif perm_st == "WATCH":
-                            badge = f"{UI.YELLOW}👁️{UI.RST}"
+                            badge = f"{UI.YELLOW}▲{UI.RST}"
                         elif "WAIT" in perm_st or "EXPANSION" in wave_st:
-                            badge = f"{UI.GRAY}⏳{UI.RST}"
-                        elif pos <= 0.382 or pos >= 0.618:
-                            badge = f"{UI.YELLOW}💎{UI.RST}"
+                            badge = f"{UI.GRAY}○{UI.RST}"
                         else:
-                            badge = f"{UI.GRAY}●{UI.RST}"
+                            badge = f"{UI.GRAY}○{UI.RST}"
                             
                         if is_bull:
                             arrow = f"{UI.GREEN}▲{UI.RST}"
                         elif is_bear:
                             arrow = f"{UI.RED}▼{UI.RST}"
                         else:
-                            arrow = f"{UI.GRAY}●{UI.RST}"
+                            arrow = f"{UI.GRAY}·{UI.RST}"
                             
                         pos_str = f"{int(pos*100):02d}%"
                         return f"{sym_prefix} {arrow}{pos_str} {badge}"
-                return f"{sym_prefix} {UI.GRAY}●--%{UI.RST}  "
+                return f"{sym_prefix} {UI.GRAY}·--%{UI.RST}  "
 
             # Render 3 pairs per row (9 rows for 26 pairs)
             for r in range(0, len(all_symbols), 3):
@@ -462,7 +460,16 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 t1_lines.append(f" {c1} │ {c2} │ {c3}")
                 
             t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
-            t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 👁️Watch │ ⏳Wait │ 🔒Lock │ 💎SMC Zone{UI.RST}")
+            legend_parts = [
+                f"{UI.GREEN}▲{UI.RST}/{UI.RED}▼{UI.WHITE}Trend{UI.RST}",
+                f"{UI.GREEN}0%FL{UI.RST}~{UI.RED}100%CE{UI.RST}",
+                f"{UI.GREEN}●GO{UI.RST}",
+                f"{UI.CYAN}◆ARM{UI.RST}",
+                f"{UI.RED}■LOCK{UI.RST}",
+                f"{UI.YELLOW}▲WATCH{UI.RST}",
+                f"{UI.GRAY}○WAIT{UI.RST}"
+            ]
+            t1_lines.append(" " + f" {UI.DIM}│{UI.RST} ".join(legend_parts))
         else:
             t1_lines = [
                 f" {UI.YELLOW}● Inisialisasi {len(all_symbols)}-Pair Macro Compass...{UI.RST}",
@@ -509,7 +516,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     top_w = sorted_fund[-1][0]
                     delta_val = sorted_fund[0][1].composite_fundamental_score - sorted_fund[-1][1].composite_fundamental_score
                     t3_lines.append(f" Apex Fund Rank   : {UI.RED}{fund_str}{UI.RST}")
-                    t3_lines.append(f" Top Convergent   : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} ➔ Grade S/A+)")
+                    t3_lines.append(f" Top Convergent   : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} -> Grade S/A+)")
             except Exception:
                 pass
 
@@ -561,8 +568,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     else:
         t2_lines.append(f" Positions  : {UI.GRAY}No active positions (Flat / Ready){UI.RST}")
         
-    hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else ("BTCUSD (27% Disc) 🔥" if is_single_asset_mode else "None (Normal Vol)")
-    in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else ("BTCUSD 🎯" if is_single_asset_mode else "None (Mid-Range)")
+    hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else ("BTCUSD (27% Disc) [HOT]" if is_single_asset_mode else "None (Normal Vol)")
+    in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else ("BTCUSD ◆" if is_single_asset_mode else "None (Mid-Range)")
     
     t2_lines.append(f" Top Hot    : {UI.YELLOW}{hot_str}{UI.RST}")
     t2_lines.append(f" Wave Armed : {UI.GREEN}{in_zone_str}{UI.RST}")
@@ -582,11 +589,11 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     out = []
     
     # Top Header
-    h1_title = f"+-- [ {UI.BOLD}{UI.WHITE}{h1_title_text}{UI.RST}{c_cyan} ] "
+    h1_title = f"+-- [ {UI.BG_CYAN} {h1_title_text} {UI.RST}{c_cyan} ] "
     d1 = max(0, lw - UI.disp_width(h1_title) + 1)
     h1_bar = f"{c_cyan}{h1_title}{'-' * d1}+{c_rst}"
     
-    h2_title = f"-- [ {UI.BOLD}{UI.WHITE}LIVE ACCOUNT & RISK INTELLIGENCE{UI.RST}{c_cyan} ] "
+    h2_title = f"-- [ {UI.BG_GREEN} LIVE ACCOUNT & RISK INTELLIGENCE {UI.RST}{c_cyan} ] "
     d2 = max(0, rw - UI.disp_width(h2_title) + 1)
     h2_bar = f"{c_cyan}{h2_title}{'-' * d2}+{c_rst}"
     
@@ -602,11 +609,11 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         out.append(f"{c_cyan}|{c_rst}{l_pad}{c_cyan}|{c_rst}{r_pad}{c_cyan}|{c_rst}")
         
     # Middle Divider
-    m1_title = f"+-- [ {UI.BOLD}{UI.WHITE}{m1_title_text}{UI.RST}{c_cyan} ] "
+    m1_title = f"+-- [ {UI.BG_PURPLE} {m1_title_text} {UI.RST}{c_cyan} ] "
     md1 = max(0, lw - UI.disp_width(m1_title) + 1)
     m1_bar = f"{c_cyan}{m1_title}{'-' * md1}+{c_rst}"
     
-    m2_title = f"-- [ {UI.BOLD}{UI.WHITE}2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL{UI.RST}{c_cyan} ] "
+    m2_title = f"-- [ {UI.BG_BLUE} 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL {UI.RST}{c_cyan} ] "
     md2 = max(0, rw - UI.disp_width(m2_title) + 1)
     m2_bar = f"{c_cyan}{m2_title}{'-' * md2}+{c_rst}"
     
@@ -700,8 +707,17 @@ def render_macro_directive_card(directive, width=95):
     circuit_breaker = getattr(directive, 'hard_circuit_breaker', False)
     tier_color = c_green if action_tier == "FULL_ALLOW" else (c_yellow if action_tier == "REDUCED_CONFIDENCE" else (c_purple if action_tier == "TP1_ONLY_SCALP" else c_red))
 
-    lines.append(f" {c_bold}{c_white}SYMBOL{c_rst}       : {c_yellow}{clean_sym}{c_rst} | Komputasi: {c_cyan}{directive.calculation_time_ms:.1f} ms{c_rst} (0 Token) | {c_white}Total: {total_bars_str} Bars Native MT5{c_rst}")
-    lines.append(f" {c_bold}{c_white}SOCKETS 6-TF{c_rst} : {c_cyan}MN1: 50b (4.1y) │ W1: 100b (1.9y) │ D1: 350b (1.4y) │ H4: 400b │ H1: 250b │ M30: 200b{c_rst}")
+    bid_val = getattr(directive, 'current_bid', 0.0)
+    ask_val = getattr(directive, 'current_ask', 0.0)
+    bid_s = fmt.format(bid_val) if bid_val > 0 else "N/A"
+    ask_s = fmt.format(ask_val) if ask_val > 0 else "N/A"
+    spread_pips_val = (directive.current_spread_pts / 10.0) if ("JPY" in clean_sym or is_jpy or not is_crypto_or_gold) else directive.current_spread_pts
+    spread_s = f"{spread_pips_val:.1f}p" if not is_crypto_or_gold else f"{directive.current_spread_pts}pts"
+    
+    price_info = f"Bid: {c_green}{c_bold}{bid_s}{c_rst} │ Ask: {c_red}{c_bold}{ask_s}{c_rst} ({c_yellow}Spr: {spread_s}{c_rst})" if bid_val > 0 else f"0 Token"
+
+    lines.append(f" {c_bold}{c_white}SYMBOL{c_rst}       : {c_yellow}{c_bold}{clean_sym}{c_rst} │ {price_info} │ Komp: {c_cyan}{directive.calculation_time_ms:.1f}ms{c_rst} (0 Token)")
+    lines.append(f" {c_bold}{c_white}SOCKETS 6-TF{c_rst} : {c_cyan}MN1: 50b (4.1y) │ W1: 100b (1.9y) │ D1: 350b (1.4y) │ H4: 400b │ H1: 250b │ Total: {total_bars_str}b{c_rst}")
     lines.append(f" {c_bold}{c_white}MACRO BIAS{c_rst}   : {bias_color}{c_bold}{directive.daily_macro_bias}{c_rst} ({bias_score:+.2f}) | Stability: {c_purple}{stability}{c_rst} | Tier: {tier_color}{c_bold}{action_tier}{c_rst}")
     if circuit_breaker:
         lines.append(f" {c_bold}{c_red}[!] HARD CIRCUIT BREAKER ACTIVE (Extreme Trap / Structure Invalidation){c_rst}")
@@ -777,8 +793,12 @@ def render_macro_directive_card(directive, width=95):
             
     if directive.future_macro_roadmap:
         lines.append(f" {c_bold}{c_cyan}FUTURE MACRO ROADMAP{c_rst}:")
-        for wline in textwrap.wrap(directive.future_macro_roadmap, width=width - 6):
-            lines.append(f"  {c_white}{wline}{c_rst}")
+        for sub_r in str(directive.future_macro_roadmap).split("\n"):
+            sub_r = sub_r.strip()
+            if not sub_r:
+                continue
+            for wline in textwrap.wrap(sub_r, width=width - 6):
+                lines.append(f"  {c_white}{wline}{c_rst}")
 
     title = f"TOP-DOWN MACRO STRATEGIC DIRECTIVE: {clean_sym}"
     return UI.make_box(title, lines, width=width, border_color=c_cyan)
