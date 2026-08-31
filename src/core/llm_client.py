@@ -1942,6 +1942,7 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     pip_div = 10 if sym_dec in (3, 5) else 1
     dist_pips = dist_pts / pip_div
     atr_pips = atr_pts / pip_div
+    atr_mult = dist_pts / atr_pts if atr_pts > 0 else 0.0
     proximity_label = f"{atr_mult:.2f}x ATR H1 from proposed anchor"
     # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (PROBABILISTIC & OBJECTIVE) ===
     strat_block = ""

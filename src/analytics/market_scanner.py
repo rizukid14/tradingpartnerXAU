@@ -647,9 +647,10 @@ class MarketScanner:
                     val_val = af.get('val', 0.0)
                     vah_val = af.get('vah', 0.0)
                     cur_atr_safe = max(cur_atr, 1e-5)
-                    loc_note = "At POC High Volume Node" if abs(mid - poc_val) <= 0.15 * cur_atr_safe else (
-                        "Inside Value Area (VAH-VAL)" if val_val <= mid <= vah_val else (
-                            "Above Value Area (Extreme Premium VAH Extension)" if mid > vah_val else "Below Value Area (Discount VAL)"
+                    mid_px = float(df['close'].iloc[-1]) if len(df) > 0 else 0.0
+                    loc_note = "At POC High Volume Node" if abs(mid_px - poc_val) <= 0.15 * cur_atr_safe else (
+                        "Inside Value Area (VAH-VAL)" if val_val <= mid_px <= vah_val else (
+                            "Above Value Area (Extreme Premium VAH Extension)" if mid_px > vah_val else "Below Value Area (Discount VAL)"
                         )
                     )
                     frvp_summary_str = f"POC: {poc_val:.5f} | VAL: {val_val:.5f} | VAH: {vah_val:.5f} ({loc_note})"
