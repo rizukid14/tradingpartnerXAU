@@ -466,6 +466,21 @@ class MacroStrategicEngine:
             market_state = "NEUTRAL_CHAMBER"
 
         # ── 4. EXECUTION LAYER ("Market State" != "Trade Signal") ──
+        # Calibrate Minimum & Maximum Intraday Stop Loss Distances
+        if is_crypto:
+            min_sl_dist = max(1.20 * atr_h1, 300.0)
+            max_sl_dist = max(2.50 * atr_h1, 800.0)
+        elif "XAU" in symbol:
+            min_sl_dist = max(1.20 * atr_h1, 3.5)
+            max_sl_dist = max(2.50 * atr_h1, 10.0)
+        elif clean_sym in MOMENTUM_RUNNER_PAIRS or "NZD" in clean_sym or "JPY" in clean_sym or "GBP" in clean_sym:
+            # High-volatility cross pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)
+            min_sl_dist = max(1.20 * atr_h1, max(0.25 * atr_d1, 35 * pt * pip_div))
+            max_sl_dist = max(2.50 * atr_h1, 75 * pt * pip_div)
+        else:
+            min_sl_dist = max(1.00 * atr_h1, 18 * pt * pip_div)
+            max_sl_dist = min(2.50 * atr_h1, 40 * pt * pip_div)
+
         if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
@@ -477,7 +492,13 @@ class MacroStrategicEngine:
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
             structural_floor = deep_floor_f2 if deep_floor_f2 < entry_anchor else (macro_rbs_d1 if macro_rbs_d1 < entry_anchor else entry_anchor - 1.25 * atr_h1)
             calculated_sl = structural_floor - anti_wick_buffer
+            
+            if (entry_anchor - calculated_sl) < min_sl_dist:
+                calculated_sl = entry_anchor - min_sl_dist
+            elif (entry_anchor - calculated_sl) > max_sl_dist:
+                calculated_sl = entry_anchor - max_sl_dist
             intraday_sl = round(calculated_sl, digits)
+
             macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
             hard_circuit_breaker = bool((curr_mid <= imm_floor_f1 - (0.25 * atr_h1)) or (curr_mid < macro_invalidation))
@@ -503,7 +524,13 @@ class MacroStrategicEngine:
                 entry_zone_proximal = round(entry_anchor - reload_width, digits)
                 structural_roof = deep_ceiling_c2 if deep_ceiling_c2 > entry_anchor else (macro_sbr_d1 if macro_sbr_d1 > entry_anchor else entry_anchor + 1.25 * atr_h1)
                 calculated_sl = structural_roof + anti_wick_buffer
+                
+                if (calculated_sl - entry_anchor) < min_sl_dist:
+                    calculated_sl = entry_anchor + min_sl_dist
+                elif (calculated_sl - entry_anchor) > max_sl_dist:
+                    calculated_sl = entry_anchor + max_sl_dist
                 intraday_sl = round(calculated_sl, digits)
+
                 macro_invalidation = round(deep_ceiling_c2 + (0.20 * atr_d1), digits)
                 target_station_final = floor_station
                 hard_circuit_breaker = bool((curr_mid >= imm_ceiling_c1 + (0.25 * atr_h1)) or (curr_mid > macro_invalidation))
@@ -524,7 +551,7 @@ class MacroStrategicEngine:
                 macro_bias_score = 0.0
                 entry_anchor = imm_ceiling_c1
                 entry_zone_proximal = round(entry_anchor - reload_width, digits)
-                intraday_sl = round(deep_ceiling_c2 + anti_wick_buffer, digits)
+                intraday_sl = round(entry_anchor + min_sl_dist, digits)
                 tp1_price = round(imm_floor_f1, digits)
                 tp2_price = round(deep_floor_f2, digits)
                 stage_label = f"TESTING_CEILING_{imm_ceiling_c1:.{digits}f}"
@@ -544,6 +571,8 @@ class MacroStrategicEngine:
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
             structural_floor = imm_floor_f1
             calculated_sl = structural_floor - anti_wick_buffer
+            if (entry_anchor - calculated_sl) < min_sl_dist:
+                calculated_sl = entry_anchor - min_sl_dist
             intraday_sl = round(calculated_sl, digits)
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
@@ -568,6 +597,8 @@ class MacroStrategicEngine:
             entry_zone_proximal = round(entry_anchor - reload_width, digits)
             structural_roof = imm_ceiling_c1
             calculated_sl = structural_roof + anti_wick_buffer
+            if (calculated_sl - entry_anchor) < min_sl_dist:
+                calculated_sl = entry_anchor + min_sl_dist
             intraday_sl = round(calculated_sl, digits)
             sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
@@ -594,6 +625,8 @@ class MacroStrategicEngine:
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
             structural_floor = deep_floor_f2
             calculated_sl = structural_floor - anti_wick_buffer
+            if (entry_anchor - calculated_sl) < min_sl_dist:
+                calculated_sl = entry_anchor - min_sl_dist
             intraday_sl = round(calculated_sl, digits)
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
