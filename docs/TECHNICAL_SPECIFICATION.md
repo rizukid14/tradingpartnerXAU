@@ -15,21 +15,77 @@
 
 # 📚 Master Glossary & Standarisasi Istilah Proyek
 
-Untuk mencegah kerancuan dan menjaga konsistensi di seluruh antarmuka (Terminal Bento HUD, Telegram Bot, Prompt LLM, dan Kode Sumber), berikut adalah glosarium istilah resmi tunggal:
+Untuk mencegah kerancuan dan menjaga konsistensi di seluruh antarmuka (Terminal Bento HUD, Telegram Bot, Prompt LLM, dan Kode Sumber), berikut adalah glosarium istilah resmi komprehensif yang dikelompokkan ke dalam 5 pilar arsitektur:
 
-| Istilah Resmi Tunggal | Istilah Lama / Variasi yang Dihapus | Definisi & Makna Teknis | Contoh Angka / Format |
+### 1. Arsitektur Sistem & Multi-LLM Consensus
+| Istilah Resmi | Komponen & Kepanjangan | Definisi & Makna Teknis | Peran & Parameter Sistem |
 |---|---|---|---|
-| 📍 **`Reload Zone`** | `Delivery Anchor`, `Institutional Anchor`, `Entry Anchor` | Area lelang harga diskon/pullback di mana institusi mengisi ulang posisi (*reload*) sebelum ekspansi lanjutan. | `Reload Zone : $78,993.88` atau `0.93550 ➔ 0.93480` |
-| 🛡️ **`Baseline Floor SL`** | `Intraday SL (Anti-Hunt)`, `Structural SL` | Level Stop Loss fisik berbasis struktur support/resistance terdekat + buffer anti-wick + safety floor ATR. | `SL $79,443.88 (SL $450 USD)` atau `160 pts` |
-| 🎁 **`TP1 (Partial Close)`** | `Take Profit 1`, `Target Estafet 1` | Target profit stasiun pertama. Saat tersentuh: bot mencairkan 50% lot dan menggeser SL ke titik aman (Risk-Free BEP). | `TP1 $78,318.88 (+1.50R)` |
-| 🏆 **`TP2 (Extended Runner)`** | `Target Estafet 2`, `Macro Target` | Target profit koridor makro lanjutan yang dikawal dengan 2-Stage Dynamic Trailing Stop. | `TP2 $77,259.58 (+3.85R)` |
-| 🧱 **`SBR (Support-Become-Resistance)`** | `Resistance Zone`, `Ceiling Wall` | Bekas lantai support yang telah ditembus ke bawah dan kini beralih fungsi menjadi atap plafon lelang SELL. | `D1 SBR 1.35500` |
-| 🏗️ **`RBS (Resistance-Become-Support)`** | `Support Zone`, `Floor Wall` | Bekas atap resistance yang telah ditembus ke atas dan kini beralih fungsi menjadi lantai lelang BUY. | `H4 RBS 1.34800` |
-| 🧭 **`Sub-Floor` & `Sub-Ceiling`** | `Dynamic Stations`, `Psychological Grid` | Garis halte harga bulat psikologis (step 50/100 pips) dari Atlas DNA hasil riset 16.2 tahun MetaQuotes. | `Floor [1.34500] <-> Ceil [1.35000]` |
-| 🌊 **`Wave State`** | `4D Market State`, `Wave Regime` | Klasifikasi anatomi pasar 4-Dimensi: `TYPE_A_WATERFALL_LOCK` (pisau jatuh), `TYPE_B_COMPRESSION_ARMED` (kompresi coil), atau `BASE_RECLAIM` (reclaim). | `TYPE_B_COMPRESSION_ARMED` |
-| 🚦 **`Permission State`** | `Trade State Permission` | Izin eksekusi radar: `GO` (reclaim valid), `ARM` (siaga limit), `WAIT` (tunggu diskon/anti-FOMO), `LOCK` (dilarang trade). | `Permission : WAIT ⏳` |
-| 🎛️ **`Action Tier`** | `Operational Tier Matrix` | 5-Tier matriks risiko makro: `FULL_ALLOW`, `REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`, `WATCH_ONLY`, `HARD_BLOCK`. | `Tier : FULL_ALLOW` |
-| 🌐 **`Boitoki CSM`** | `Currency Strength Matrix` | Kekuatan relatif 8 mata uang global berbasis 7 USD Majors untuk mencegah jebakan manipulasi pair tunggal. | `CSM: USD > JPY > EUR` |
+| ⚡ **`2-Stage Quant Funnel`** | Dua Tahap Penyaringan Kuantitatif | Arsitektur pemisahan antara pemindaian kuantitatif lokal 60s (Stage 1) dan audit AI berbayar (Stage 2). | Hemat ~85% token API; hanya 8–15 setup A+/hari lolos ke LLM. |
+| 👥 **`Pass 1 & Pass 2`** | 2-Pass Sequential Cross-Examination | Protokol juri 3 AI: Pass 1 (o4-mini + Gemini Flash) analisis struktur; Pass 2 (DeepSeek CRO) audit Devil's Advocate + 24 bar M5. | Latensi total $\le 5.5\text{s}$; eliminasi halusinasi model tunggal. |
+| ⚖️ **`Strict Unanimous 3/3`** | Konsensus Bulat 100% | Aturan mutlak di mana 3 model aktif wajib sepakat searah (3/3 BUY atau 3/3 SELL). | 2/3 atau Split Vote otomatis **HOLD** (Zero Tolerance Split). |
+| 🚀 **`Split Boost (+25%)`** | Unanimous High-Confidence Split | Fitur pembagian 2 tiket posisi saat 3 AI sepakat bulat dengan keyakinan $\ge 75\%$. | 2 tiket @ $0.625\times$ base lot (Tiket 1 target standar, Tiket 2 trailing TP2). |
+| 🛑 **`Hard Risk Veto`** | Hak Veto Mutlak CRO | 11 bendera penolakan instan oleh DeepSeek CRO (`COUNTER_TREND_MOMENTUM`, `FALLING_KNIFE_WATERFALL`, dll.). | Langsung membatalkan eksekusi jika mendeteksi anomali likuiditas. |
+| 📝 **`CoT JSON Protocol`** | Chain-of-Thought JSON Protocol | Format respon JSON super-kompak: `trend ➔ velocity ➔ rr_valid ➔ signal ➔ confidence`. | Membatasi output ke ~35 token; respons <5s/simbol. |
+
+### 2. Finite State Machine (FSM) & Symmetrical 4D Market State (V3)
+| Istilah Resmi | Komponen & Kepanjangan | Definisi & Makna Teknis | Kondisi & Logika Pemicu |
+|---|---|---|---|
+| ⚙️ **`FSM`** | **Finite State Machine** | Model komputasi matematika status transisi terbatas yang mengontrol siklus hidup pasar secara deterministik. | Mengatur Direction, Phase, dan Permission (`BUY LOCKED != SELL ENABLED`). |
+| 🧭 **`Direction FSM`** | Identitas Tren Makro (D1+H4) | Penentu arah tren utama menggunakan filter EMA dan histeresis 2-bar untuk mencegah *false flip*. | Output: `BULL`, `BEAR`, `NEUTRAL`. |
+| 🔄 **`Phase FSM`** | Fase Gelombang Retracement (H1) | Klasifikasi posisi harga dalam gelombang tren: `EXPANSION`, `EARLY_CORRECTION`, `MATURE_CORRECTION`, `RECLAIM`. | Dihitung dari jarak harga ke EMA20 dan posisi Dealing Range ($DR$). |
+| 🟢 **`EXPANSION_WAIT_BULL`** | Bullish Expansion (FSM: WAIT) | Harga bergerak ekspansif ke atas ($DR \ge 65\%$, jarak EMA20 $> 0.90\times\text{ATR}$). Dilarang FOMO buy di pucuk. | `Permission: WAIT ⏳` |
+| 🔴 **`EXPANSION_WAIT_BEAR`** | Bearish Expansion (FSM: WAIT) | Harga bergerak ekspansif ke bawah ($DR \le 35\%$, jarak EMA20 $< -0.90\times\text{ATR}$). Dilarang FOMO sell di dasar. | `Permission: WAIT ⏳` |
+| 🔪 **`WATERFALL_LOCK`** | Type A Waterfall (FSM: LOCK) | Koreksi agresif lilin merah beruntun tanpa sumbu bawah saat tren Bull. Blokade keras anti-pisau jatuh. | `Permission: LOCK 🔒` |
+| 🚀 **`VERTICAL_SPIKE_LOCK`** | Type A Spike (FSM: LOCK) | Koreksi agresif lilin hijau vertikal tanpa sumbu atas saat tren Bear. Blokade keras anti-short squeeze. | `Permission: LOCK 🔒` |
+| 🎯 **`DISCOUNT_RELOAD_ARMED`** | Type B Coil Bullish (FSM: ARM) | Kompresi sehat di area diskon ($DR \le 50\%$ / RBS) dengan CSM selaras. Siaga pasang buy limit retest. | `Permission: ARMED 🎯` |
+| 🎯 **`PREMIUM_RELOAD_ARMED`** | Type B Coil Bearish (FSM: ARM) | Kompresi sehat di area premium ($DR \ge 50\%$ / SBR) dengan CSM selaras. Siaga pasang sell limit retest. | `Permission: ARMED 🎯` |
+| 🟢 **`DEMAND_REACTION_GO`** | Demand Reclaim (FSM: GO) | Reclaim terkonfirmasi di lantai demand (sumbu bawah $\ge 20\%$ atau close menembus EMA20). Izin eksekusi BUY 100%. | `Permission: GO 🟢` |
+| 🔴 **`SUPPLY_REACTION_GO`** | Supply Reclaim (FSM: GO) | Reclaim terkonfirmasi di atap supply (sumbu atas $\ge 20\%$ atau close menembus EMA20). Izin eksekusi SELL 100%. | `Permission: GO 🟢` |
+| 👁️ **`WATCH`** | **CSM Flow Watch** (FSM) | Status siaga saat chart struktural sudah diskon/premium, namun aliran mata uang (*Boitoki CSM*) masih berlawanan arah. | `Permission: WATCH 👁️` |
+| 💥 **`Displacement Candle`** | Lilin Impulsif Institusi | Lilin bervolume besar dengan rasio badan (*body ratio*) $\ge 50\% - 55\%$ yang menembus struktur. | Syarat mutlak transisi `ARM 🎯` &rarr; `GO 🟢`. |
+| 📏 **`Dealing Range (DR)`** | Rentang Lelang Aktif (0% - 100%) | Pemetaan posisi harga relatif terhadap titik terendah (0% / Discount) dan tertinggi (100% / Premium). | Diskon: $DR \le 38.2\%$ (Golden Pocket). |
+
+### 3. Smart Money Concepts (SMC) & Volume Profile (FRVP)
+| Istilah Resmi | Komponen & Kepanjangan | Definisi & Makna Teknis | Peran dalam Penempatan Order |
+|---|---|---|---|
+| 🏛️ **`SMC`** | **Smart Money Concepts** | Metodologi analisis jejak likuiditas institusional (LuxAlgo Pine v5 Porting). | Fondasi penentuan zona lelang bernilai tinggi (*Value Area*). |
+| 🧱 **`OB (Order Block)`** | Blok Pesanan Institusi | Lilin berlawanan terakhir sebelum pergerakan impulsif besar yang belum termitigasi (*Unmitigated OB*). | Titik jangkar penempatan SL fisik teraman. |
+| 🕳️ **`FVG`** | **Fair Value Gap** / Imbalance | Celah ketidakseimbangan harga antara 3 lilin beruntun yang menjadi area magnet harga. | Digunakan sebagai target Take Profit alami (TP1 / TP2). |
+| ⚡ **`BOS & CHoCH`** | Break of Structure / Change of Character | Penembusan level swing terluar searah tren (**BOS**) atau pembalikan struktur awal (**CHoCH**). | Konfirmasi pergeseran momentum institusi. |
+| 🎯 **`EQH / EQL`** | Equal Highs / Equal Lows | Puncak atau lembah kembar tempat berkumpulnya kolam likuiditas stop-loss trader ritel. | Target empuk mekanisme sapuan likuiditas (*Judas Sweep*). |
+| 📊 **`FRVP`** | **Fixed Range Volume Profile** | Profil distribusi volume transaksi pada rentang harga tertentu untuk menemukan konsentrasi transaksi institusi. | Sinergi dengan SMC untuk menyaring 59.2% sinyal palsu. |
+| 🔴 **`POC`** | **Point of Control** (FRVP) | Level harga tunggal dengan volume transaksi terpadat pada rentang yang dianalisis. | Area magnet harga dan lantai pantulan terkuat. |
+| 📐 **`VAH / VAL`** | Value Area High / Low (70% Volume) | Batas atas (VAH) dan bawah (VAL) yang mencakup 70% total volume lelang lelang institusi. | Area *Mean-Reversion* saat harga berada di luar rentang nilai wajar. |
+
+### 4. Macro Strategic Engine (MSE) & Station DNA
+| Istilah Resmi | Komponen & Kepanjangan | Definisi & Makna Teknis | Contoh Angka / Formulasi |
+|---|---|---|---|
+| 🧠 **`MSE`** | **Macro Strategic Engine** | Engine kuantitatif 6 timeframe native MT5 (`MN1`, `W1`, `D1`, `H4`, `H1`, `M30`) untuk mandat harian (0 token, $<50\text{ ms}$). | Menghitung Zonal Band, SBR/RBS, dan matriks aksi 5-Tier. |
+| 📍 **`Reload Zone`** | Delivery Anchor / Institutional Anchor | Area lelang harga diskon/pullback di mana institusi mengisi ulang posisi (*reload*) sebelum ekspansi lanjutan. | `Reload Zone: 1.08400` atau `0.93550 ➔ 0.93480` |
+| 🧱 **`SBR`** | **Support-Become-Resistance** | Bekas lantai support yang telah ditembus ke bawah dan kini beralih fungsi menjadi atap plafon lelang SELL. | `D1 SBR 1.35500` |
+| 🏗️ **`RBS`** | **Resistance-Become-Support** | Bekas atap resistance yang telah ditembus ke atas dan kini beralih fungsi menjadi lantai lelang BUY. | `H4 RBS 1.34800` |
+| 📉 **`DBD & RBR`** | Drop-Base-Drop & Rally-Base-Rally | Pola kelanjutan suplai/permintaan institusional di mana harga rehat sejenak sebelum melanjutkan tren. | Digunakan sebagai anchor entri pullback. |
+| 🧭 **`Dynamic Stations`** | Halte Harga Bulat (Atlas DNA) | Garis halte harga psikologis alami berbasis DNA volatilitas historis 16.2 tahun MetaQuotes (step 100/50/25 pips). | `Floor [1.34500] <-> Ceil [1.35000]` |
+| 🎛️ **`5-Tier Action Matrix`** | Matriks Aksi Operasional 5 Tingkat | Klasifikasi izin risiko dari MSE: `FULL_ALLOW`, `REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`, `WATCH_ONLY`, `HARD_BLOCK`. | `HARD_BLOCK` jika harga menabrak plafon atau invalidasi. |
+| 🌐 **`Boitoki CSM`** | **Currency Strength Matrix** | Perhitungan kekuatan relatif 8 mata uang utama berbasis log return 7 USD Majors secara real-time. | `CSM: USD > JPY > EUR (Delta: +2.44)` |
+| 🛑 **`Systemic Basket Lock`** | Pemutus Sirkuit Mata Uang Global | Proteksi sistemik jika salah satu mata uang mengalami lonjakan (*surge*) atau pembuangan (*dump*) $\ge \pm 20.0$. | Mencegah trade melawan arus likuiditas global. |
+
+### 5. Trio Mekanisme Radar, Eksekusi & Manajemen Risiko
+| Istilah Resmi | Komponen & Kepanjangan | Definisi & Makna Teknis | Parameter & Ambang Batas |
+|---|---|---|---|
+| 🗡️ **`M1 (Judas Sweep)`** | London Judas Swing Failure Pattern | Mekanisme perangkap likuiditas dengan memanfaatkan manipulasi false-breakout di Asian H/L atau PDH/PDL. | Sweep $\ge 0.15\times\text{ATR}$ + Reclaim $\le 3\text{ bar}$ + Wick $\ge 35\%$. |
+| 🎣 **`M2 (Pullback Retest)`** | Trend-Aligned Pullback Limit | Mekanisme entri berdiskon searah tren makro dengan memasang *Delayed Limit Order* saat retest ke EMA20. | Limit Entry di $\text{Mid} \mp (0.20\times\text{ATR})$ di $DR \le 0.50$. |
+| 🏰 **`M3 (Weekly Wall)`** | HTF Weekly Wall Reversal | Mekanisme pembalikan arah saat harga membentur dinding ekstrim mingguan/bulanan (PWH/PWL/MN1). | Target pengantaran stasiun ke 50% Equilibrium koridor. |
+| 🛡️ **`Baseline Floor SL`** | Intraday SL (Anti-Hunt) | Level Stop Loss fisik berbasis struktur support/resistance terdekat + buffer anti-wick + safety floor ATR. | `SL = Anchor \mp (0.35\times\text{ATR} + \text{Spread})` |
+| 🎁 **`TP1 (Partial Close)`** | Take Profit 1 (50% Cair) | Target profit stasiun pertama di mana bot mencairkan 50% lot dan menggeser sisa posisi ke Risk-Free BEP. | Aktif di 45%–55% target TP penuh. |
+| 🏆 **`TP2 (Extended Runner)`** | Take Profit 2 (Macro Target) | Target profit koridor makro lanjutan yang dikawal dengan 2-Stage Dynamic Trailing Stop. | `TP2 = Target Stasiun / 50% Equilibrium` |
+| 🔒 **`BEP + Pocket Profit`** | Break-Even Point + Pocket Profit | Penggeseran SL ke titik impas + padding komisi round-trip broker + **Pocket Profit 15 pts (1.5 pips)**. | Mengunci keuntungan minimum saat BEP tercapai. |
+| 📈 **`2-Stage Trailing Stop`** | Trailing Stop Dinamis 2 Tahap | Pengawalan profit: **Stage 1 (Breathing)** di 65%–90% TP ($0.75\times\text{ATR H1}$, floor 80 pts); **Stage 2 (Terminal Lock)** di $\ge 90\%$ TP ($0.50\times\text{ATR M30}$, floor 30 pts). | Mengunci runner tanpa terkena wick noise. |
+| ⏱️ **`Time-Decay Stagnation`** | Peak-Aware Stagnation Exit | Penutupan paksa posisi yang stagnan $\ge 4\text{ jam}$ di rentang $[-0.20R, +0.20R]$ jika *Peak MFE* $< +0.30R$. | Mencegah modal terikat pada pasar mati. |
+| 🛡️ **`Pre-Rollover Shield`** | Perisai Rollover MT5 (03:50 WIB) | Penutupan posisi secara selektif tepat jam 03:50 WIB (10 menit sebelum rollover 04:00 WIB) jika jarak ke SL $\le$ ambang bahaya. | Melindungi akun dari lonjakan spread rollover. |
+| ⛔ **`Dead Zone`** | Jendela Waktu Dilarang Trade | Periode pukul **00:00 – 08:00 WIB** di mana seluruh eksekusi baru dibekukan mutlak. | Likuiditas tipis dan spread lebar. |
+| 🌪️ **`The Storm`** | Jendela Badai Berita High-Impact | Jendela waktu $[-15\text{ menit}, +30\text{ menit}]$ di sekitar rilis berita ekonomi bintang 3 (ForexFactory / TradingView). | Pembekuan eksekusi untuk menghindari slippage ekstrim. |
+| 📊 **`MFE & MAE`** | Max Favorable / Adverse Excursion | Metrik kuantitatif pengukur jarak profit terjauh (**MFE**) dan floating minus terdalam (**MAE**) selama posisi berjalan. | Digunakan untuk evaluasi efisiensi trailing stop. |
 
 ---
 
@@ -58,7 +114,7 @@ Bot trading beroperasi dengan arsitektur **2-Stage Quant Funnel** yang memisahka
 +-----------------------------------------------------------------------------------+
 |               STAGE 1: FAST QUANTITATIVE RADAR (Lokal di MT5 • 60 Detik • 0 Token)|
 |  Universe: 26 Simbol Paralel | Sockets: MN1, W1, D1, H4, H1, M30                  |
-|  [M1: Judas Sweep SFP]  [M2: Pullback Retest]    [M3: HTF Weekly Wall Reversal]   |
+|  [M1: Judas Sweep SFP]  [M2: Pullback Retest]    [M3: Multi-Touch Breakout Retest]|
 |  [BUY: Diskon + RBS]    [SELL: Premium + SBR]    [CSM 8-Basket Dual-Horizon Flow] |
 |  [Wave State FSM: ARM / GO / WAIT / LOCK]       [MSE 5-Tier Action Matrix]        |
 +-----------------------------------------+-----------------------------------------+
@@ -105,8 +161,8 @@ Bot trading beroperasi dengan arsitektur **2-Stage Quant Funnel** yang memisahka
 
 ## Bab 3: Stage 1 Radar — Trio Mekanisme Presisi (M1, M2, M3)
 
-### 3.1 Mekanisme 1: London Judas Swing Failure (M1)
-* **Konsep**: Menjebak *trapped traders* yang mengejar breakout palsu di level likuiditas makro (Asian High/Low, Previous Day High/Low, PWH/PWL).
+### 3.1 Mekanisme 1: Universal Liquidity Sweep & SFP (M1)
+* **Konsep**: Menjebak *trapped traders* yang mengejar breakout palsu di level likuiditas makro (Asian High/Low, Previous Day High/Low, PWH/PWL, EQH/EQL).
 * **Syarat**:
   - Penembusan $\ge 0.15\times\text{ATR}(14)$ di luar level ekstrim.
   - Reclaim kembali ke dalam rentang dalam $\le 3\text{ candle}$.
@@ -114,18 +170,21 @@ Bot trading beroperasi dengan arsitektur **2-Stage Quant Funnel** yang memisahka
   - Anti-Waterfall: Dilarang BUY jika marubozu merah solid tanpa sumbu bawah.
 
 ### 3.2 Mekanisme 2: Trend-Aligned Pullback & Delayed Limit Retest (M2)
-* **Konsep**: Entri berdiskon searah ekspansi makro D1/H4 di dalam Reload Zone.
+* **Konsep**: Entri berdiskon searah ekspansi makro D1/H4 di dalam Reload Zone dengan retest dinamis ke EMA20.
 * **Syarat**:
   - Arah tren selaras: Macro Bias Aligned + EMA50 slope searah.
   - Berada di Zona Diskon ($\le 0.50$ Dealing Range, optimal $\le 0.382$).
-  - Entri limit tertunda: dipasang pada level $\text{Anchor} \pm (0.20\times\text{ATR})$.
+  - Entri limit tertunda: dipasang pada level $\text{Mid} \mp (0.20\times\text{ATR})$.
   - SL fisik di belakang lantai RBS / atap SBR $+ 0.35\times\text{ATR} + \text{Spread}$.
 
-### 3.3 Mekanisme 3: HTF Weekly Wall Reversal & Corridor Delivery (M3)
-* **Konsep**: Menabrak dinding batas mingguan/bulanan (PWH/PWL/MN1) lalu mengantar harga kembali ke 50% Equilibrium atau stasiun halte seberang.
+### 3.3 Mekanisme 3: Multi-Touch Cluster Breakout & Delayed Retest (M3)
+* **Konsep**: Entri *Breakout Continuation* setelah level cluster support/resistance disentuh $\ge 2\times$ dan ditembus dengan lilin momentum ($\ge 55\%$ body ratio), lalu memasang *Delayed Limit Order* saat harga melakukan retest (delay 3–4 bar). *(Catatan: Weekly Wall + Psych Price adalah confluence batas makro, bukan nama mekanisme M3)*.
 * **Syarat**:
-  - Tabrakan stasiun makro terkonfirmasi.
-  - Target TP1 di 50% Equilibrium koridor dan TP2 di stasiun seberang.
+  - Level cluster disentuh $\ge 2\times$ (`touches_res` $\ge 2$ atau `touches_sup` $\ge 2$).
+  - Penembusan bervolume/momentum di atas cluster resistance atau di bawah cluster support.
+  - Limit retest dipasang di level cluster yang tertembus ($c_{res} / c_{sup}$).
+  - SL fisik dipasang di balik origin cluster $+ 0.35\times\text{ATR} + \text{Spread}$.
+  - Target TP1 di halte stasiun berikutnya (R:R $\ge 1.50$) dan TP2 di koridor makro lanjutan.
 
 ---
 

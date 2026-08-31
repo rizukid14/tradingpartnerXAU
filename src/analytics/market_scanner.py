@@ -671,11 +671,44 @@ class MarketScanner:
                 # CSM Net Delta for Symbol
                 csm_delta_val = get_csm_delta_for_symbol(valid_sym)
 
-                # Quant V3 4-Dimensional Market State Engine & M3 Macro Compass Corridor
-                h4_dir = 1 if (d1_is_bull or h4_is_bull) else (-1 if (d1_is_bear or h4_is_bear) else 0)
+                # ── 1. TOP-DOWN LAYER 1: PURE QUANT MACRO STRATEGIC ENGINE (MSE 6-TF) ──
+                strat_dir = None
+                try:
+                    strat_dir = macro_strategic_engine.get_directive(valid_sym, mt5_connector=mt5_connector)
+                except Exception as e_strat:
+                    logger.debug(f"[STRAT ENGINE] Error computing directive for {valid_sym}: {e_strat}")
+
+                # Resolusi Arah Tunggal dari MSE 6-TF (Single Source of Macro Truth)
+                if strat_dir is not None:
+                    prim_dir = getattr(strat_dir, 'primary_execution_directive', '')
+                    bias_sc = getattr(strat_dir, 'macro_bias_score', 0.0)
+                    if "HUNT_BUY" in prim_dir or bias_sc >= 0.35:
+                        raw_dir = Direction.BULL
+                    elif "HUNT_SELL" in prim_dir or bias_sc <= -0.35:
+                        raw_dir = Direction.BEAR
+                    else:
+                        raw_dir = Direction.NEUTRAL
+                else:
+                    # Fallback jika MSE data kosong
+                    raw_dir = Direction.BULL if (d1_is_bull and (h4_is_bull or (h4_c >= h4_ema50 if 'h4_c' in locals() else True))) else (
+                        Direction.BEAR if (d1_is_bear and (h4_is_bear or (h4_c <= h4_ema50 if 'h4_c' in locals() else True))) else Direction.NEUTRAL
+                    )
+
+                dir_tracker = self._direction_states.setdefault(valid_sym, {"state": raw_dir, "pending": raw_dir, "confirm": 2})
+                if raw_dir == dir_tracker["pending"]:
+                    dir_tracker["confirm"] += 1
+                    if dir_tracker["confirm"] >= 2:
+                        dir_tracker["state"] = raw_dir
+                else:
+                    dir_tracker["pending"] = raw_dir
+                    dir_tracker["confirm"] = 1
+                curr_direction = dir_tracker["state"]
+
+                # ── 2. TOP-DOWN LAYER 2: SYMMETRICAL WAVE STATE & PHASE FSM (H1 + CSM) ──
+                mse_trend_dir = 1 if curr_direction == Direction.BULL else (-1 if curr_direction == Direction.BEAR else 0)
                 wave_res = evaluate_wave_state(
                     df,
-                    h4_trend_direction=h4_dir,
+                    h4_trend_direction=mse_trend_dir,
                     current_price=cur_close,
                     atr_pts=(cur_atr / pt) if pd.notna(cur_atr) else 300,
                     point_val=pt,
@@ -687,22 +720,7 @@ class MarketScanner:
                     macro_low=d1_anchor_low
                 )
 
-                # ── 4-LAYER TREND-ALIGNED PERMISSION ENGINE ──
-                # Layer 1: Direction FSM (D1 + H4 confirmation with hysteresis)
-                raw_dir = Direction.BULL if (d1_is_bull and (h4_is_bull or (h4_c >= h4_ema50 if 'h4_c' in locals() else True))) else (
-                    Direction.BEAR if (d1_is_bear and (h4_is_bear or (h4_c <= h4_ema50 if 'h4_c' in locals() else True))) else Direction.NEUTRAL
-                )
-                dir_tracker = self._direction_states.setdefault(valid_sym, {"state": raw_dir, "pending": raw_dir, "confirm": 2})
-                if raw_dir == dir_tracker["pending"]:
-                    dir_tracker["confirm"] += 1
-                    if dir_tracker["confirm"] >= 2:
-                        dir_tracker["state"] = raw_dir
-                else:
-                    dir_tracker["pending"] = raw_dir
-                    dir_tracker["confirm"] = 1
-                curr_direction = dir_tracker["state"]
-
-                # Layer 2: Phase FSM (H1 Wave Retracement & Basing)
+                # Phase FSM: Retracement & Basing evaluation aligned with MSE direction
                 curr_bar_range = max(df['high'].iloc[-1] - df['low'].iloc[-1], 1e-5)
                 l_wick = max(0.0, min(df['open'].iloc[-1], cur_close) - df['low'].iloc[-1])
                 u_wick = max(0.0, df['high'].iloc[-1] - max(df['open'].iloc[-1], cur_close))
@@ -760,15 +778,7 @@ class MarketScanner:
                     htf_delivery = "BULLISH_DELIVERY_FROM_FLOOR"
 
                 # Layer 3 & 4: CSM Pressure & Permission Matrix
-                csm_delta_val = get_csm_delta_for_symbol(valid_sym)
                 perm = resolve_permission(curr_direction, curr_phase, csm_delta_val)
-
-                # Pure Quant Hierarchical Strategic Directive (6 Timeframes + Multi-Scale SBR/RBS + Dual-Grid)
-                strat_dir = None
-                try:
-                    strat_dir = macro_strategic_engine.get_directive(valid_sym, mt5_connector=mt5_connector)
-                except Exception as e_strat:
-                    logger.debug(f"[STRAT ENGINE] Error computing directive for {valid_sym}: {e_strat}")
 
                 self.macro_cache[valid_sym] = {
                     'symbol': valid_sym,
