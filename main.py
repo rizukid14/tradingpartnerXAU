@@ -1689,11 +1689,11 @@ def run_scanner_trading_cycle(cand, risk):
             point = tick_live.get("point", 0.00001)
             ref_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
             
-            # Stale price protection (~4.5s latency guard)
+            # Stale price protection (~8s multi-LLM jury latency guard)
             price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
-            max_allowed_drift = max(15.0, (cand.current_atr_pts or 50) * 0.20)
+            max_allowed_drift = max(60.0, (cand.current_atr_pts or 100) * 0.65)
             if entry_type == "market" and price_diff_pts > max_allowed_drift:
-                print(f" {UI.YELLOW}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order.{UI.RST}")
+                print(f"\n {UI.YELLOW}{UI.BOLD}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order agar tidak chase harga.{UI.RST}\n")
                 return False
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
