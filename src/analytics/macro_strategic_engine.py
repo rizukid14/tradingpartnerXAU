@@ -79,10 +79,18 @@ class MacroStrategicDirective:
     micro_sbr_h1: float
     sub_floor_50: float
     sub_ceiling_50: float
-    atr_d1_pips: float
-    atr_h1_pips: float
-    atr_m30_pips: float
-    current_spread_pts: int
+    immediate_ceiling_c1: float = 0.0
+    immediate_floor_f1: float = 0.0
+    deep_target_floor_f2: float = 0.0
+    deep_target_ceiling_c2: float = 0.0
+    chamber_position_pct: float = 0.50
+    retest_touch_count: int = 1
+    bullish_contingency_path: str = ""
+    bearish_contingency_path: str = ""
+    atr_d1_pips: float = 0.0
+    atr_h1_pips: float = 0.0
+    atr_m30_pips: float = 0.0
+    current_spread_pts: int = 0
     entry_zone_proximal: float = 0.0
     total_bars_computed: int = 0
     w1_key_demand: float = 0.0
@@ -370,12 +378,10 @@ class MacroStrategicEngine:
 
         # 11. Station Collision & Dual-Reaction Synthesis
         last_d1_bearish = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
+        # 11. Station Collision & State Machine Engine
         last_d1_bullish = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
         h1_momentum_down = not df_h1.empty and len(df_h1) >= 12 and (df_h1['close'].iloc[-1] < df_h1['close'].iloc[-12])
         h1_momentum_up = not df_h1.empty and len(df_h1) >= 12 and (df_h1['close'].iloc[-1] > df_h1['close'].iloc[-12])
-
-        # Active Rejection from Ceiling / Supply Wall (delivering pullback to discount floor)
-        is_ceiling_pullback_active = (not is_near_floor) and (is_near_ceiling or (recent_tested_ceiling and curr_mid > (sub_floor + zone_boundary_tol) and curr_mid < recent_frontier_high - (0.20 * atr_h1))) and (peak_u_wick_pct >= 30 or last_d1_bearish or h1_momentum_down)
 
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         if clean_sym in SWEEP_SPECIALIST_PAIRS:
@@ -388,340 +394,161 @@ class MacroStrategicEngine:
             sweep_offset = 4.0 * pt * pip_div
             pair_profile_tag = "STANDARD"
 
-        # Skenario A: Ceiling Rejection / Frontier Exhaustion (Price is AT CEILING or Pulling Back from Ceiling)
-        if is_ceiling_pullback_active:
-            macro_bias = "BEARISH_PULLBACK"
-            primary_directive = "HUNT_SELL_PULLBACK"
-            macro_bias_score = -0.75
-            if peak_u_wick_pct >= 40:
-                macro_bias_score -= 0.15
-            if last_d1_bearish:
-                macro_bias_score -= 0.10
-            macro_bias_score = round(max(-1.0, min(-0.40, macro_bias_score)), 2)
+        # ── LAYER 1: CONFLUENCE CLUSTER ASSEMBLY (Mesh Mapping) ──
+        psych_cands_up = [sub_ceiling, ceiling_station, next_macro_target]
+        sbr_cands_up = [v for v in [micro_sbr_h1, inter_sbr_h4, macro_sbr_d1, dbd_entry] if v and v > curr_mid + (0.05 * atr_h1)]
+        bear_obs_up = [ob.get('bottom', 0.0) for ob in bear_obs if ob.get('bottom', 0.0) > curr_mid + (0.05 * atr_h1)]
+        all_ceilings = sorted(list(set([round(v, digits) for v in (psych_cands_up + sbr_cands_up + bear_obs_up) if v > curr_mid])))
+        
+        imm_ceiling_c1 = all_ceilings[0] if all_ceilings else sub_ceiling
+        deep_ceiling_c2 = all_ceilings[1] if len(all_ceilings) > 1 else round(imm_ceiling_c1 + psych_step_micro, digits)
 
-            # Pick proximal ceiling resistance (DBD supply -> H4 SBR -> Sub-Ceiling -> H1 SBR)
-            ceiling_cands = [v for v in [dbd_entry, inter_sbr_h4, sub_ceiling, micro_sbr_h1] if v and v >= curr_mid - (0.20 * atr_h1)]
-            base_entry = min(ceiling_cands) if ceiling_cands else sub_ceiling
-            # For Sweep Specialists, offset entry upward into the sweep wick
-            entry_anchor = round(base_entry + (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
-            entry_zone_proximal = round(entry_anchor - reload_width, digits)
-            structural_roof = inter_sbr_h4 if (inter_sbr_h4 and inter_sbr_h4 > entry_anchor) else (macro_sbr_d1 if (macro_sbr_d1 and macro_sbr_d1 > entry_anchor) else dbd_roof if dbd_roof else recent_frontier_high)
-            
-            calculated_sl = structural_roof + anti_wick_buffer
-            if is_crypto:
-                min_sl_dist = max(1.20 * atr_h1, 300.0)
-                max_sl_dist = max(1.80 * atr_h1, 450.0)
-            elif "XAU" in symbol:
-                min_sl_dist = max(1.0 * atr_h1, 3.0)
-                max_sl_dist = 2.5 * atr_h1
-            else:
-                min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
+        psych_cands_down = [sub_floor, floor_station, round(floor_station - psych_step_macro, digits)]
+        rbs_cands_down = [v for v in [micro_rbs_h1, inter_rbs_h4, macro_rbs_d1, rbr_entry] if v and v < curr_mid - (0.05 * atr_h1)]
+        bull_obs_down = [ob.get('top', 0.0) for ob in bull_obs if ob.get('top', 0.0) < curr_mid - (0.05 * atr_h1)]
+        all_floors = sorted(list(set([round(v, digits) for v in (psych_cands_down + rbs_cands_down + bull_obs_down) if v < curr_mid])), reverse=True)
+        
+        imm_floor_f1 = all_floors[0] if all_floors else sub_floor
+        deep_floor_f2 = all_floors[1] if len(all_floors) > 1 else round(imm_floor_f1 - psych_step_micro, digits)
 
-            if (calculated_sl - entry_anchor) < min_sl_dist:
-                calculated_sl = entry_anchor + min_sl_dist
-            elif (calculated_sl - entry_anchor) > max_sl_dist:
-                calculated_sl = entry_anchor + max_sl_dist
-            intraday_sl = round(calculated_sl, digits)
+        # ── LAYER 2: ACTIVE CHAMBER RESOLUTION ──
+        chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
+        chamber_pos = min(1.0, max(0.0, (curr_mid - imm_floor_f1) / chamber_width))
+        dist_to_c1 = abs(imm_ceiling_c1 - curr_mid)
+        dist_to_f1 = abs(curr_mid - imm_floor_f1)
 
-            macro_invalidation = round(recent_frontier_high + (0.20 * atr_d1), digits)
-            target_station_final = floor_station
-            hard_circuit_breaker = bool((curr_mid >= sub_ceiling - (0.15 * atr_h1)) or (curr_mid > macro_invalidation))
-            action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
-            
-            sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
-            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-            tp1_price = round(entry_anchor - (1.25 * sl_dist) + front_pad, digits)
-            
-            # STATION HIERARCHY FOR TP2: 1. Real Structural RBS -> 2. 50-pip Sub-Station
-            target_station_cand = None
-            if inter_rbs_h4 and inter_rbs_h4 < entry_anchor - (1.25 * sl_dist) and (entry_anchor - inter_rbs_h4) <= 3.0 * sl_dist:
-                target_station_cand = inter_rbs_h4
-            elif macro_rbs_d1 and macro_rbs_d1 < entry_anchor - (1.25 * sl_dist) and (entry_anchor - macro_rbs_d1) <= 3.0 * sl_dist:
-                target_station_cand = macro_rbs_d1
-            else:
-                nearest_psych_tp = round((entry_anchor - 1.50 * sl_dist) / psych_step_micro) * psych_step_micro
-                if nearest_psych_tp >= entry_anchor - (1.15 * sl_dist):
-                    nearest_psych_tp = round((entry_anchor - 2.00 * sl_dist) / psych_step_micro) * psych_step_micro
-                target_station_cand = nearest_psych_tp
+        # ── LAYER 3: MULTI-NODE PING-PONG & RETEST STATE ENGINE ──
+        h4_hl = len(h4_sl) >= 2 and (h4_sl[-1][1] > h4_sl[-2][1])
+        h4_lh = len(h4_sh) >= 2 and (h4_sh[-1][1] < h4_sh[-2][1])
 
-            tp2_raw = target_station_cand + front_pad
-            min_tp = entry_anchor - (1.25 * sl_dist)
-            max_tp = entry_anchor - min(2.50 * sl_dist, max(1.8 * atr_h1, 35 * pt * pip_div))
-            tp2_price = round(min(min_tp, max(tp2_raw, max_tp)), digits)
-
-            if is_crypto:
-                sl_pips = round(abs(intraday_sl - entry_anchor), 1)
-                tp1_pips = round(abs(entry_anchor - tp1_price), 1)
-                tp2_pips = round(abs(entry_anchor - tp2_price), 1)
-            else:
-                sl_pips = round(abs(intraday_sl - entry_anchor) / pt / pip_div, 1)
-                tp1_pips = round(abs(entry_anchor - tp1_price) / pt / pip_div, 1)
-                tp2_pips = round(abs(entry_anchor - tp2_price) / pt / pip_div, 1)
-            rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
-            max_allowed_buy = round(curr_mid + (0.15 * atr_d1), digits)
-            min_allowed_sell = round(curr_mid + (0.10 * atr_d1), digits)
-            forbidden_traps = [
-                f"Do NOT BUY above {max_allowed_buy:.{digits}f} (Ceiling Trap into {sub_ceiling:.{digits}f})",
-                f"Do NOT chase breakdown below {sub_floor:.{digits}f} without H1 confirmation"
-            ]
-            confidence_score = 88
-            stage_label = f"FRONTIER_EXHAUSTION_AT_{sub_ceiling:.{digits}f}"
-            thesis = (
-                f"{symbol} reached psychological ceiling {sub_ceiling:.{digits}f} with selling pressure (Peak Upper Wick: {peak_u_wick_pct}%). "
-                f"Institutional thesis requires a Mean-Reversion Pullback targeting the D1 RBS zone at {macro_rbs_d1:.{digits}f} "
-                f"(with intermediate H4 RBS at {inter_rbs_h4:.{digits}f}) to reload before attempting {next_macro_target:.{digits}f}."
-            )
-
-        # Skenario B: RBS Retest / Sub-Floor Bouncing (Price is AT FLOOR - Bullish Pullback Reload)
-        elif is_near_floor and (peak_l_wick_pct >= 35 or last_d1_bullish or curr_mid >= sub_floor):
+        # Node A: At/Near Floor F1 (Bouncing off F1)
+        if dist_to_f1 <= max(0.35 * atr_h1, 8 * pt * pip_div) or chamber_pos <= 0.35:
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
-            macro_bias_score = +0.75
-            if peak_l_wick_pct >= 40:
-                macro_bias_score += 0.15
-            if last_d1_bullish:
+            macro_bias_score = +0.85
+            if h4_hl or last_d1_bullish:
                 macro_bias_score += 0.10
-            macro_bias_score = round(max(0.40, min(1.0, macro_bias_score)), 2)
+            macro_bias_score = round(min(1.0, macro_bias_score), 2)
 
-            # Pick proximal support floor (RBR demand -> H4 RBS -> Sub-Floor -> H1 RBS)
-            floor_cands = [v for v in [rbr_entry, inter_rbs_h4, sub_floor, micro_rbs_h1] if v and v <= curr_mid + (0.20 * atr_h1)]
-            base_entry = max(floor_cands) if floor_cands else sub_floor
-            # For Sweep Specialists, offset entry downward into the sweep wick
-            entry_anchor = round(base_entry - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
+            entry_anchor = round(imm_floor_f1 - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
-            structural_floor = inter_rbs_h4 if (inter_rbs_h4 and inter_rbs_h4 < entry_anchor) else (macro_rbs_d1 if (macro_rbs_d1 and macro_rbs_d1 < entry_anchor) else rbr_floor if rbr_floor else recent_frontier_low)
+            structural_floor = deep_floor_f2 if deep_floor_f2 < entry_anchor else (macro_rbs_d1 if macro_rbs_d1 < entry_anchor else entry_anchor - 1.25 * atr_h1)
             
             calculated_sl = structural_floor - anti_wick_buffer
-            if is_crypto:
-                min_sl_dist = max(1.20 * atr_h1, 300.0)
-                max_sl_dist = max(1.80 * atr_h1, 450.0)
-            elif "XAU" in symbol:
-                min_sl_dist = max(1.0 * atr_h1, 3.0)
-                max_sl_dist = 2.5 * atr_h1
-            else:
-                min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
-
-            if (entry_anchor - calculated_sl) < min_sl_dist:
-                calculated_sl = entry_anchor - min_sl_dist
-            elif (entry_anchor - calculated_sl) > max_sl_dist:
-                calculated_sl = entry_anchor - max_sl_dist
             intraday_sl = round(calculated_sl, digits)
 
-            macro_invalidation = round(recent_frontier_low - (0.20 * atr_d1), digits)
+            macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
-            hard_circuit_breaker = bool((curr_mid <= sub_floor + (0.15 * atr_h1)) or (curr_mid < macro_invalidation))
+            hard_circuit_breaker = bool((curr_mid <= imm_floor_f1 - (0.25 * atr_h1)) or (curr_mid < macro_invalidation))
             action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-            tp1_price = round(entry_anchor + (1.25 * sl_dist) - front_pad, digits)
             
-            # STATION HIERARCHY FOR TP2: 1. Real Structural SBR -> 2. 50-pip Sub-Station
-            target_station_cand = None
-            if inter_sbr_h4 and inter_sbr_h4 > entry_anchor + (1.25 * sl_dist) and (inter_sbr_h4 - entry_anchor) <= 3.0 * sl_dist:
-                target_station_cand = inter_sbr_h4
-            elif macro_sbr_d1 and macro_sbr_d1 > entry_anchor + (1.25 * sl_dist) and (macro_sbr_d1 - entry_anchor) <= 3.0 * sl_dist:
-                target_station_cand = macro_sbr_d1
-            else:
-                nearest_psych_tp = round((entry_anchor + 1.50 * sl_dist) / psych_step_micro) * psych_step_micro
-                if nearest_psych_tp <= entry_anchor + (1.15 * sl_dist):
-                    nearest_psych_tp = round((entry_anchor + 2.00 * sl_dist) / psych_step_micro) * psych_step_micro
-                target_station_cand = nearest_psych_tp
-
-            tp2_raw = target_station_cand - front_pad
-            min_tp = entry_anchor + (1.25 * sl_dist)
-            max_tp = entry_anchor + min(2.50 * sl_dist, max(1.8 * atr_h1, 35 * pt * pip_div))
-            tp2_price = round(max(min_tp, min(tp2_raw, max_tp)), digits)
-
-            if is_crypto:
-                sl_pips = round(abs(entry_anchor - intraday_sl), 1)
-                tp1_pips = round(abs(tp1_price - entry_anchor), 1)
-                tp2_pips = round(abs(tp2_price - entry_anchor), 1)
-            else:
-                sl_pips = round(abs(entry_anchor - intraday_sl) / pt / pip_div, 1)
-                tp1_pips = round(abs(tp1_price - entry_anchor) / pt / pip_div, 1)
-                tp2_pips = round(abs(tp2_price - entry_anchor) / pt / pip_div, 1)
-            rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
+            tp1_price = round(imm_ceiling_c1 - front_pad, digits)
+            tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+            
+            stage_label = f"RBS_SUPPORT_RETEST_AT_{imm_floor_f1:.{digits}f}"
+            thesis = f"{symbol} landed on structural RBS support at {imm_floor_f1:.{digits}f}. Reload targeting {imm_ceiling_c1:.{digits}f} with breakout extension to {deep_ceiling_c2:.{digits}f}."
+            confidence_score = 88
             max_allowed_buy = round(entry_anchor + (0.25 * atr_d1), digits)
             min_allowed_sell = 0.0
-            forbidden_traps = [
-                f"Do NOT short into fresh confirmed RBS support at {sub_floor:.{digits}f}",
-                f"Do NOT BUY above {round(curr_mid + (0.20 * atr_d1), digits):.{digits}f} (Impulse Chase)"
-            ]
-            confidence_score = 85
-            stage_label = f"RBS_SUPPORT_RETEST_AT_{sub_floor:.{digits}f}"
-            thesis = f"{symbol} is retesting primary structural RBS support at {sub_floor:.{digits}f}. Favorable Bull Flag reload zone towards {sub_ceiling:.{digits}f}."
+            forbidden_traps = [f"Do NOT short into fresh confirmed RBS support at {imm_floor_f1:.{digits}f}"]
 
-        # Skenario C: Open Corridor Expansion (Structural Priority Engine)
-        else:
-            # ── STRUCTURAL H4/D1 RBS/SBR POSITIONING PRIORITY ──
-            has_active_h4_rbs = bool(inter_rbs_h4 and inter_rbs_h4 > 0 and curr_mid >= inter_rbs_h4 - (0.25 * atr_h1))
-            has_active_h4_sbr = bool(inter_sbr_h4 and inter_sbr_h4 > 0 and curr_mid <= inter_sbr_h4 + (0.25 * atr_h1))
-            
-            if has_active_h4_rbs and not has_active_h4_sbr:
-                is_macro_bear = False # Confirmed H4 RBS Floor takes priority!
-            elif has_active_h4_sbr and not has_active_h4_rbs:
-                is_macro_bear = True  # Confirmed H4 SBR Ceiling takes priority!
-            else:
-                is_macro_bear = (last_d1_bearish and df_h1['close'].iloc[-1] < df_h1['ema20'].iloc[-1]) if ('ema20' in df_h1.columns and not df_h1.empty) else last_d1_bearish
-            
-            if is_macro_bear:
-                macro_bias = "BEARISH_EXPANSION"
-                primary_directive = "HUNT_SELL_CONTINUATION"
-                macro_bias_score = -0.85
-                if peak_u_wick_pct >= 40:
-                    macro_bias_score -= 0.10
-                macro_bias_score = round(max(-1.0, macro_bias_score), 2)
-
-                ceiling_cands = [v for v in [dbd_entry, inter_sbr_h4, sub_ceiling, micro_sbr_h1] if v and v >= curr_mid - (0.20 * atr_h1)]
-                base_entry = min(ceiling_cands) if ceiling_cands else (round(curr_mid + (0.25 * atr_h1), digits))
-                entry_anchor = round(base_entry + (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
+        # Node B: At/Near Ceiling C1 (Testing Ceiling)
+        elif dist_to_c1 <= max(0.35 * atr_h1, 8 * pt * pip_div) or chamber_pos >= 0.70:
+            is_exhaustion = peak_u_wick_pct >= 30 or h4_lh or (not df_h1.empty and df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
+            if is_exhaustion:
+                macro_bias = "BEARISH_PULLBACK"
+                primary_directive = "HUNT_SELL_PULLBACK"
+                macro_bias_score = -0.80
+                entry_anchor = round(imm_ceiling_c1 + (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
                 entry_zone_proximal = round(entry_anchor - reload_width, digits)
-                structural_roof = inter_sbr_h4 if (inter_sbr_h4 and inter_sbr_h4 > entry_anchor) else (macro_sbr_d1 if (macro_sbr_d1 and macro_sbr_d1 > entry_anchor) else dbd_roof if dbd_roof else (entry_anchor + 1.25 * atr_h1))
-                
+                structural_roof = deep_ceiling_c2 if deep_ceiling_c2 > entry_anchor else (macro_sbr_d1 if macro_sbr_d1 > entry_anchor else entry_anchor + 1.25 * atr_h1)
                 calculated_sl = structural_roof + anti_wick_buffer
-                if is_crypto:
-                    min_sl_dist = max(1.20 * atr_h1, 300.0)
-                    max_sl_dist = max(1.80 * atr_h1, 450.0)
-                elif "XAU" in symbol:
-                    min_sl_dist = max(1.0 * atr_h1, 3.0)
-                    max_sl_dist = 2.5 * atr_h1
-                else:
-                    min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                    max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
-
-                if (calculated_sl - entry_anchor) < min_sl_dist:
-                    calculated_sl = entry_anchor + min_sl_dist
-                elif (calculated_sl - entry_anchor) > max_sl_dist:
-                    calculated_sl = entry_anchor + max_sl_dist
                 intraday_sl = round(calculated_sl, digits)
-
-                macro_invalidation = round(ceiling_station + (0.20 * atr_d1), digits)
+                macro_invalidation = round(deep_ceiling_c2 + (0.20 * atr_d1), digits)
                 target_station_final = floor_station
-                hard_circuit_breaker = bool((curr_mid >= ceiling_station) or (curr_mid > macro_invalidation))
+                hard_circuit_breaker = bool((curr_mid >= imm_ceiling_c1 + (0.25 * atr_h1)) or (curr_mid > macro_invalidation))
                 action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
-
                 sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
                 front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_price = round(entry_anchor - (1.25 * sl_dist) + front_pad, digits)
-                
-                # STATION HIERARCHY FOR TP2: 1. Real Structural RBS -> 2. 50-pip Sub-Station
-                target_station_cand = None
-                if inter_rbs_h4 and inter_rbs_h4 < entry_anchor - (1.25 * sl_dist) and (entry_anchor - inter_rbs_h4) <= 3.0 * sl_dist:
-                    target_station_cand = inter_rbs_h4
-                elif macro_rbs_d1 and macro_rbs_d1 < entry_anchor - (1.25 * sl_dist) and (entry_anchor - macro_rbs_d1) <= 3.0 * sl_dist:
-                    target_station_cand = macro_rbs_d1
-                else:
-                    nearest_psych_tp = round((entry_anchor - 1.50 * sl_dist) / psych_step_micro) * psych_step_micro
-                    if nearest_psych_tp >= entry_anchor - (1.15 * sl_dist):
-                        nearest_psych_tp = round((entry_anchor - 2.00 * sl_dist) / psych_step_micro) * psych_step_micro
-                    target_station_cand = nearest_psych_tp
-
-                tp2_raw = target_station_cand + front_pad
-                min_tp = entry_anchor - (1.25 * sl_dist)
-                max_tp = entry_anchor - min(2.50 * sl_dist, max(1.8 * atr_h1, 35 * pt * pip_div))
-                tp2_price = round(min(min_tp, max(tp2_raw, max_tp)), digits)
-
-                if is_crypto:
-                    sl_pips = round(abs(intraday_sl - entry_anchor), 1)
-                    tp1_pips = round(abs(entry_anchor - tp1_price), 1)
-                    tp2_pips = round(abs(entry_anchor - tp2_price), 1)
-                else:
-                    sl_pips = round(abs(intraday_sl - entry_anchor) / pt / pip_div, 1)
-                    tp1_pips = round(abs(entry_anchor - tp1_price) / pt / pip_div, 1)
-                    tp2_pips = round(abs(entry_anchor - tp2_price) / pt / pip_div, 1)
-                rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
+                tp1_price = round(imm_floor_f1 + front_pad, digits)
+                tp2_price = round(deep_floor_f2 + front_pad, digits)
+                stage_label = f"FRONTIER_EXHAUSTION_AT_{imm_ceiling_c1:.{digits}f}"
+                thesis = f"{symbol} reached psychological ceiling {imm_ceiling_c1:.{digits}f} with upper rejection pressure. Mean-reversion targeting primary RBS {imm_floor_f1:.{digits}f}."
+                confidence_score = 85
                 max_allowed_buy = 0.0
                 min_allowed_sell = round(curr_mid - (0.20 * atr_d1), digits)
-                forbidden_traps = [
-                    f"Do NOT BUY during unmitigated bearish expansion corridor",
-                    f"Do NOT chase SELL if price enters {sub_floor:.{digits}f} without pullback"
-                ]
-                confidence_score = 80
-                stage_label = f"BEARISH_CORRIDOR_EXPANSION_TOWARDS_{floor_station:.{digits}f}"
-                thesis = f"{symbol} is in a bearish expansion corridor (D1 Bearish). Retest of micro SBR at {micro_sbr_h1:.{digits}f} offers high-probability trend continuation towards {floor_station:.{digits}f}."
-
+                forbidden_traps = [f"Do NOT BUY above {round(curr_mid + (0.15 * atr_d1), digits):.{digits}f}"]
             else:
                 macro_bias = "BULLISH_EXPANSION"
                 primary_directive = "HUNT_BUY_CONTINUATION"
                 macro_bias_score = +0.85
-                if peak_l_wick_pct >= 40:
-                    macro_bias_score += 0.10
-                macro_bias_score = round(min(1.0, macro_bias_score), 2)
-
-                floor_cands = [v for v in [rbr_entry, inter_rbs_h4, sub_floor, micro_rbs_h1] if v and v <= curr_mid + (0.20 * atr_h1)]
-                base_entry = max(floor_cands) if floor_cands else (round(curr_mid - (0.25 * atr_h1), digits))
-                entry_anchor = round(base_entry - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
+                entry_anchor = imm_ceiling_c1
                 entry_zone_proximal = round(entry_anchor + reload_width, digits)
-                structural_floor = inter_rbs_h4 if (inter_rbs_h4 and inter_rbs_h4 < entry_anchor) else (macro_rbs_d1 if (macro_rbs_d1 and macro_rbs_d1 < entry_anchor) else rbr_floor if rbr_floor else (entry_anchor - 1.25 * atr_h1))
-                
+                structural_floor = imm_floor_f1
                 calculated_sl = structural_floor - anti_wick_buffer
-                if is_crypto:
-                    min_sl_dist = max(1.20 * atr_h1, 300.0)
-                    max_sl_dist = max(1.80 * atr_h1, 450.0)
-                elif "XAU" in symbol:
-                    min_sl_dist = max(1.0 * atr_h1, 3.0)
-                    max_sl_dist = 2.5 * atr_h1
-                else:
-                    min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                    max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
-
-                if (entry_anchor - calculated_sl) < min_sl_dist:
-                    calculated_sl = entry_anchor - min_sl_dist
-                elif (entry_anchor - calculated_sl) > max_sl_dist:
-                    calculated_sl = entry_anchor - max_sl_dist
                 intraday_sl = round(calculated_sl, digits)
-
-                macro_invalidation = round(floor_station - (0.20 * atr_d1), digits)
-                target_station_final = ceiling_station
-                hard_circuit_breaker = bool((curr_mid <= floor_station) or (curr_mid < macro_invalidation))
-                action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
-
                 sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
                 front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_price = round(entry_anchor + (1.25 * sl_dist) - front_pad, digits)
-                
-                # STATION HIERARCHY FOR TP2: 1. Real Structural SBR -> 2. 50-pip Sub-Station
-                target_station_cand = None
-                if inter_sbr_h4 and inter_sbr_h4 > entry_anchor + (1.25 * sl_dist) and (inter_sbr_h4 - entry_anchor) <= 3.0 * sl_dist:
-                    target_station_cand = inter_sbr_h4
-                elif macro_sbr_d1 and macro_sbr_d1 > entry_anchor + (1.25 * sl_dist) and (macro_sbr_d1 - entry_anchor) <= 3.0 * sl_dist:
-                    target_station_cand = macro_sbr_d1
-                else:
-                    nearest_psych_tp = round((entry_anchor + 1.50 * sl_dist) / psych_step_micro) * psych_step_micro
-                    if nearest_psych_tp <= entry_anchor + (1.15 * sl_dist):
-                        nearest_psych_tp = round((entry_anchor + 2.00 * sl_dist) / psych_step_micro) * psych_step_micro
-                    target_station_cand = nearest_psych_tp
-
-                tp2_raw = target_station_cand - front_pad
-                min_tp = entry_anchor + (1.25 * sl_dist)
-                max_tp = entry_anchor + min(2.50 * sl_dist, max(1.8 * atr_h1, 35 * pt * pip_div))
-                tp2_price = round(max(min_tp, min(tp2_raw, max_tp)), digits)
-
-                if is_crypto:
-                    sl_pips = round(abs(entry_anchor - intraday_sl), 1)
-                    tp1_pips = round(abs(tp1_price - entry_anchor), 1)
-                    tp2_pips = round(abs(tp2_price - entry_anchor), 1)
-                else:
-                    sl_pips = round(abs(entry_anchor - intraday_sl) / pt / pip_div, 1)
-                    tp1_pips = round(abs(tp1_price - entry_anchor) / pt / pip_div, 1)
-                    tp2_pips = round(abs(tp2_price - entry_anchor) / pt / pip_div, 1)
-                rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
+                tp1_price = round(deep_ceiling_c2 - front_pad, digits)
+                tp2_price = round(deep_ceiling_c2 + (1.5 * sl_dist) - front_pad, digits)
+                stage_label = f"BREAKOUT_EXPANSION_ABOVE_{imm_ceiling_c1:.{digits}f}"
+                thesis = f"{symbol} is breaking out above psychological ceiling {imm_ceiling_c1:.{digits}f}."
+                confidence_score = 82
                 max_allowed_buy = round(curr_mid + (0.20 * atr_d1), digits)
                 min_allowed_sell = 0.0
-                forbidden_traps = [
-                    f"Do NOT short during unmitigated bullish expansion corridor",
-                    f"Do NOT chase BUY if price enters {sub_ceiling:.{digits}f} without pullback"
-                ]
+                forbidden_traps = [f"Do NOT short during unmitigated bullish breakout"]
+
+        # Node C: Mid-Chamber Corridor
+        else:
+            is_corridor_bear = h4_lh or (last_d1_bullish == False)
+            if is_corridor_bear:
+                macro_bias = "BEARISH_EXPANSION"
+                primary_directive = "HUNT_SELL_CONTINUATION"
+                macro_bias_score = -0.75
+                entry_anchor = round(imm_ceiling_c1, digits)
+                entry_zone_proximal = round(entry_anchor - reload_width, digits)
+                structural_roof = deep_ceiling_c2
+                calculated_sl = structural_roof + anti_wick_buffer
+                intraday_sl = round(calculated_sl, digits)
+                sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
+                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                tp1_price = round(imm_floor_f1 + front_pad, digits)
+                tp2_price = round(deep_floor_f2 + front_pad, digits)
+                stage_label = f"BEARISH_CHAMBER_ROTATION_TO_{imm_floor_f1:.{digits}f}"
+                thesis = f"{symbol} is rotating down within dealing chamber (Range: {chamber_pos:.0%})."
                 confidence_score = 78
-                stage_label = f"OPEN_EXPANSION_TOWARDS_{ceiling_station:.{digits}f}"
-                thesis = f"{symbol} is in a clear bullish expansion corridor. Retest of micro RBS at {micro_rbs_h1:.{digits}f} offers high-probability trend reload towards {ceiling_station:.{digits}f}."
+                max_allowed_buy = 0.0
+                min_allowed_sell = round(curr_mid - (0.20 * atr_d1), digits)
+            else:
+                macro_bias = "BULLISH_EXPANSION"
+                primary_directive = "HUNT_BUY_CONTINUATION"
+                macro_bias_score = +0.75
+                entry_anchor = round(imm_floor_f1, digits)
+                entry_zone_proximal = round(entry_anchor + reload_width, digits)
+                structural_floor = deep_floor_f2
+                calculated_sl = structural_floor - anti_wick_buffer
+                intraday_sl = round(calculated_sl, digits)
+                sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                tp1_price = round(imm_ceiling_c1 - front_pad, digits)
+                tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+                stage_label = f"BULLISH_CHAMBER_ROTATION_TO_{imm_ceiling_c1:.{digits}f}"
+                thesis = f"{symbol} is rotating up within dealing chamber (Range: {chamber_pos:.0%})."
+                confidence_score = 78
+                max_allowed_buy = round(curr_mid + (0.20 * atr_d1), digits)
+
+        if is_crypto:
+            sl_pips = round(abs(intraday_sl - entry_anchor), 1)
+            tp1_pips = round(abs(entry_anchor - tp1_price), 1)
+            tp2_pips = round(abs(entry_anchor - tp2_price), 1)
+        else:
+            sl_pips = round(abs(intraday_sl - entry_anchor) / pt / pip_div, 1)
+            tp1_pips = round(abs(entry_anchor - tp1_price) / pt / pip_div, 1)
+            tp2_pips = round(abs(entry_anchor - tp2_price) / pt / pip_div, 1)
+        rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
 
         calc_ms = round((time.perf_counter() - t0) * 1000, 2)
         total_bars_cnt = (
@@ -733,16 +560,37 @@ class MacroStrategicEngine:
             (len(rates_m30) if rates_m30 is not None else 0)
         )
 
-        # Contingency Targets (Strictly beyond invalidation point across D1 + W1)
+        # Contingency Targets
         contingency_demand_cands = [_get_ob_core(ob) for ob in macro_bull_obs if _get_ob_core(ob) < (macro_invalidation - 0.15 * atr_d1)]
         contingency_demand = round(max(contingency_demand_cands), digits) if contingency_demand_cands else round(floor_station - psych_step_macro, digits)
-
         contingency_supply_cands = [_get_ob_core(ob) for ob in macro_bear_obs if _get_ob_core(ob) > (macro_invalidation + 0.15 * atr_d1)]
         contingency_supply = round(min(contingency_supply_cands), digits) if contingency_supply_cands else next_macro_target
 
-        contingency_target_val = contingency_demand if ("BUY" in primary_directive or "BULLISH" in macro_bias) else contingency_supply
+        inval_floor = macro_invalidation if macro_invalidation < deep_floor_f2 else round(deep_floor_f2 - (0.20 * atr_d1), digits)
+        contingency_demand_val = contingency_demand if contingency_demand < inval_floor else round(inval_floor - psych_step_macro, digits)
+        contingency_supply_val = contingency_supply if contingency_supply > deep_ceiling_c2 else round(deep_ceiling_c2 + psych_step_macro, digits)
 
-        # Determine Regime Stability
+        bull_roadmap = (
+            f"▲ BULLISH PATH: Hold > Immediate Floor {imm_floor_f1:.{digits}f} -> Tests Ceiling {imm_ceiling_c1:.{digits}f} │ "
+            f"Breakout > {imm_ceiling_c1:.{digits}f} -> Extension {deep_ceiling_c2:.{digits}f} / W1 Supply {contingency_supply_val:.{digits}f}"
+        )
+        bear_roadmap = (
+            f"▼ BEARISH PATH: Reject < Immediate Ceiling {imm_ceiling_c1:.{digits}f} -> Retests Floor {imm_floor_f1:.{digits}f} │ "
+            f"Breakdown < {imm_floor_f1:.{digits}f} -> Slips to Deep FVG {deep_floor_f2:.{digits}f} -> W1 Demand {contingency_demand_val:.{digits}f}"
+        )
+
+        # Fundamental Engine
+        fundamental_backing, fundamental_grade = "", "GRADE_A"
+        try:
+            from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+            fund_eval = apex_fundamental_engine.evaluate_pair(symbol)
+            fundamental_backing = fund_eval.action_directive
+            fundamental_grade = fund_eval.setup_grade
+            if fund_eval.hard_veto_flag:
+                hard_circuit_breaker = True
+                action_tier = "HARD_BLOCK"
+        except Exception: pass
+
         vol_ratio = atr_h1 / max((atr_d1 / 24.0), 1e-6)
         if vol_ratio > 2.0:
             regime_stability = "HIGH_VOLATILITY"
@@ -752,61 +600,6 @@ class MacroStrategicEngine:
             regime_stability = "EXPANSION"
         else:
             regime_stability = "STABLE"
-
-        # Integrate Apex Paragon Macro Fundamental Engine Confluence
-        fundamental_backing = ""
-        fundamental_grade = "GRADE_A"
-        try:
-            from src.analytics.apex_fundamental_engine import apex_fundamental_engine
-            fund_eval = apex_fundamental_engine.evaluate_pair(symbol)
-            fundamental_backing = fund_eval.action_directive
-            fundamental_grade = fund_eval.setup_grade
-
-            # Check alignment boost
-            if ("BUY" in primary_directive or "BULLISH" in macro_bias) and fund_eval.fundamental_delta > 0.15:
-                confidence_score = min(95, confidence_score + 10)
-                if fund_eval.setup_grade == "GRADE_A_PLUS" and action_tier == "TIER_1_ACTION_EXECUTE":
-                    fundamental_grade = "GRADE_S"
-            elif ("SELL" in primary_directive or "BEARISH" in macro_bias) and fund_eval.fundamental_delta < -0.15:
-                confidence_score = min(95, confidence_score + 10)
-                if fund_eval.setup_grade == "GRADE_A_PLUS" and action_tier == "TIER_1_ACTION_EXECUTE":
-                    fundamental_grade = "GRADE_S"
-
-            if fund_eval.hard_veto_flag:
-                forbidden_traps.append(f"CRITICAL VETO [{fund_eval.hard_veto_flag}]: {fund_eval.hard_veto_reason}")
-                if fund_eval.hard_veto_flag in ("HIGH_IMPACT_NEWS", "CURRENCY_CONFLICT"):
-                    hard_circuit_breaker = True
-                    action_tier = "TIER_5_CIRCUIT_BREAKER_HALT"
-        except Exception:
-            pass
-
-        target_d1_sbr = macro_sbr_d1 if macro_sbr_d1 > sub_ceiling else round(sub_ceiling + psych_step_micro, digits)
-        target_d1_rbs = macro_rbs_d1 if macro_rbs_d1 < sub_floor else round(sub_floor - psych_step_micro, digits)
-
-        base_up = next_macro_target if ('BUY' in primary_directive or 'BULLISH' in macro_bias) else ceiling_station
-        base_down = target_station_final if ('SELL' in primary_directive or 'BEARISH' in macro_bias) else floor_station
-
-        target_up = max(base_up, round(target_d1_sbr + psych_step_micro, digits))
-        target_down = min(base_down, round(target_d1_rbs - psych_step_micro, digits))
-
-        inval_floor = macro_invalidation if macro_invalidation < target_d1_rbs else round(target_d1_rbs - (0.20 * atr_d1), digits)
-        contingency_demand_val = contingency_demand if contingency_demand < inval_floor else round(inval_floor - psych_step_macro, digits)
-        contingency_supply_val = contingency_supply if contingency_supply > target_up else round(target_up + psych_step_macro, digits)
-
-        bull_roadmap = (
-            f"▲ BULLISH PATH: Hold > Immediate Floor {sub_floor:.{digits}f} -> Tests {sub_ceiling:.{digits}f} │ "
-            f"Breakout > {sub_ceiling:.{digits}f} -> Targets SBR {target_d1_sbr:.{digits}f} -> Extension to {target_up:.{digits}f} / W1 Supply {contingency_supply_val:.{digits}f}"
-        )
-        bear_roadmap = (
-            f"▼ BEARISH PATH: Reject < Immediate Ceiling {sub_ceiling:.{digits}f} -> Retests {sub_floor:.{digits}f} │ "
-            f"Step-1 (Breakdown < {sub_floor:.{digits}f}) -> Drops to D1 RBS {target_d1_rbs:.{digits}f} -> Slips to {inval_floor:.{digits}f} │ "
-            f"Step-2 (W1 Breakdown < {inval_floor:.{digits}f}) -> Deep Sweep to W1 Demand {contingency_demand_val:.{digits}f}"
-        )
-
-        if "BUY" in primary_directive or "BULLISH" in macro_bias:
-            full_future_roadmap = f"{bull_roadmap}\n{bear_roadmap}"
-        else:
-            full_future_roadmap = f"{bear_roadmap}\n{bull_roadmap}"
 
         directive = MacroStrategicDirective(
             symbol=symbol,
@@ -831,7 +624,7 @@ class MacroStrategicEngine:
             confidence_score=confidence_score,
             structural_stage=stage_label,
             daily_mandate_thesis=thesis,
-            future_macro_roadmap=full_future_roadmap,
+            future_macro_roadmap=f"{bull_roadmap}\n{bear_roadmap}",
             macro_rbs_d1=macro_rbs_d1,
             macro_sbr_d1=macro_sbr_d1,
             inter_rbs_h4=inter_rbs_h4,
@@ -840,6 +633,14 @@ class MacroStrategicEngine:
             micro_sbr_h1=micro_sbr_h1,
             sub_floor_50=sub_floor,
             sub_ceiling_50=sub_ceiling,
+            immediate_ceiling_c1=imm_ceiling_c1,
+            immediate_floor_f1=imm_floor_f1,
+            deep_target_floor_f2=deep_floor_f2,
+            deep_target_ceiling_c2=deep_ceiling_c2,
+            chamber_position_pct=round(chamber_pos, 2),
+            retest_touch_count=1,
+            bullish_contingency_path=bull_roadmap,
+            bearish_contingency_path=bear_roadmap,
             atr_d1_pips=round(atr_d1, 1) if is_crypto else round(atr_d1 / pt / pip_div, 1),
             atr_h1_pips=round(atr_h1, 1) if is_crypto else round(atr_h1 / pt / pip_div, 1),
             atr_m30_pips=round(atr_m30, 1) if is_crypto else round(atr_m30 / pt / pip_div, 1),
@@ -852,19 +653,13 @@ class MacroStrategicEngine:
             regime_stability=regime_stability,
             hard_circuit_breaker=hard_circuit_breaker,
             action_tier=action_tier,
-            contingency_target=contingency_target_val,
+            contingency_target=0.0,
             fundamental_backing=fundamental_backing,
             fundamental_grade=fundamental_grade,
-            current_bid=curr_bid,
-            current_ask=curr_ask,
-            current_mid=curr_mid,
+            current_bid=round(curr_bid, digits),
+            current_ask=round(curr_ask, digits),
+            current_mid=round(curr_mid, digits),
             raw_payload={
-                "symbol": symbol,
-                "calculation_time_ms": calc_ms,
-                "engine_token_cost": 0,
-                "macro_bias_score": macro_bias_score,
-                "fundamental_grade": fundamental_grade,
-                "fundamental_backing": fundamental_backing,
                 "regime_stability": regime_stability,
                 "hard_circuit_breaker": hard_circuit_breaker,
                 "action_tier": action_tier,
