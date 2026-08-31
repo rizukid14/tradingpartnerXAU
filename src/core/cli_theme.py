@@ -271,6 +271,8 @@ def render_candidate_alert_box(candidate):
     prop_price = meta.get('entry_price', candidate.trigger_price)
     entry_label = f"{UI.YELLOW}{prop_type} @ {prop_price}{UI.RST}" if "LIMIT" in prop_type or "STOP" in prop_type else f"{UI.GREEN}INSTANT MARKET ORDER{UI.RST}"
 
+    wick_side = "Upper Wick" if candidate.direction == -1 else "Lower Wick"
+    
     items = [
         f"{UI.BOLD}{direction_color}[RADAR TRIGGER] {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
         "---",
@@ -278,7 +280,7 @@ def render_candidate_alert_box(candidate):
         (f"• Setup Type   : ", f"{UI.WHITE}{candidate.setup_type} ({tf_str}){UI.RST}"),
         (f"• Proposed Entry: ", f"{entry_label}"),
         (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
-        (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (Wick {candidate.rejection_wick_ratio*100:.0f}%)"),
+        (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (M15 {wick_side} {candidate.rejection_wick_ratio*100:.0f}%)"),
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
         (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]

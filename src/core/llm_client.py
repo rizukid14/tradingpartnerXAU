@@ -1982,6 +1982,12 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         fund_block = ""
 
+    wick_ratio_val = float(candidate.rejection_wick_ratio or 0.0) * 100.0
+    if direction_str == "SELL":
+        wick_desc = f"Upper Rejection Wick = {wick_ratio_val:.1f}% of M15 range (Bearish rejection pressure defending the ceiling/resistance)"
+    else:
+        wick_desc = f"Lower Rejection Wick = {wick_ratio_val:.1f}% of M15 range (Bullish rejection pressure defending the floor/support)"
+
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
@@ -1993,7 +1999,8 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
 - Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_display_pct:.1f}%
-- Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%
+- Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts
+- Micro Rejection Wick (M15 Frame): {wick_desc}
 {meta_block}
 
 ## 2. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT (40% Weight — Read Before Evaluating Technicals)
