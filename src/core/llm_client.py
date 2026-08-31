@@ -1943,7 +1943,10 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     dist_pips = dist_pts / pip_div
     atr_pips = atr_pts / pip_div
     atr_mult = dist_pts / atr_pts if atr_pts > 0 else 0.0
-    proximity_label = f"{atr_mult:.2f}x ATR H1 from proposed anchor"
+    if dist_pts == 0:
+        proximity_label = "0.00x ATR H1 (Current Live Price IS the Entry — Instant Market Execution)"
+    else:
+        proximity_label = f"{atr_mult:.2f}x ATR H1 from proposed pending limit anchor ({dist_pips:.1f} pips away)"
     # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (PROBABILISTIC & OBJECTIVE) ===
     strat_block = ""
     try:
@@ -2021,9 +2024,9 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
 ## 6. PROPOSED EXECUTION & QUANTITATIVE ATR PROXIMITY METRICS
-- Live Market Price: {fp(trigger_px)} | Proposed Entry Anchor: {fp(proposed_entry)}
+- Live Market Price: {fp(trigger_px)} | Proposed Entry: {fp(proposed_entry)} ({'INSTANT MARKET' if dist_pts == 0 else f'PENDING LIMIT {dist_pips:.1f} pips away'})
 - Quant Distance to Anchor: {dist_pips:.1f} pips ({dist_pts:,} pts) | ATR(14) H1: {atr_pips:.1f} pips ({int(atr_pts):,} pts)
-- Proximity Ratio: {atr_mult:.2f}x ATR H1 ({proximity_label})
+- Proximity Status: {proximity_label}
 - Scanner Raw SL: {fp(float(candidate.suggested_sl))} | Scanner Raw TP: {fp(float(candidate.suggested_tp))} | R:R: {candidate.risk_reward_ratio:.2f}:1
 - Atlas DNA-Anchored Reference: SL = {fp(atlas_sl_ref) if atlas_sl_ref else 'N/A'} | TP = {fp(atlas_tp_ref) if atlas_tp_ref else 'N/A'}
   ({formula_desc if formula_desc else 'Station-anchored calculation'})
