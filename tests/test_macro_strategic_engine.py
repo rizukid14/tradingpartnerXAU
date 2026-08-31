@@ -158,10 +158,33 @@ class TestMacroStrategicEngine(unittest.TestCase):
 
         prim_breakout = PrimitiveState(
             location=Location.OUTSIDE_ABOVE,
-            event=StructuralEvent.BREAKOUT,
+            event=StructuralEvent.BREAK,
             trajectory=Trajectory.UP
         )
         self.assertEqual(derive_semantic_state(prim_breakout), "CEILING_BREAKOUT")
+
+        prim_breakdown = PrimitiveState(
+            location=Location.OUTSIDE_BELOW,
+            event=StructuralEvent.BREAK,
+            trajectory=Trajectory.DOWN
+        )
+        self.assertEqual(derive_semantic_state(prim_breakdown), "FLOOR_BREAKDOWN")
+
+    def test_diversity_bonus_cap(self):
+        from src.analytics.macro_strategic_engine import MSEHyperparameters
+        # Test custom diversity cap 0.20
+        params = MSEHyperparameters(diversity_bonus_cap=0.20)
+        raw_elements = [
+            (1.39000, 5.0, "W1_SBR"),
+            (1.39000, 4.5, "D1_SBR"),
+            (1.39000, 3.5, "H4_SBR"),
+            (1.39000, 2.0, "H1_SBR"),
+        ]
+        clusters = MacroStrategicEngine._cluster_merge_orthogonal(raw_elements, 0.0010, 5, params, is_ascending=True)
+        cl = clusters[0]
+        # Should be capped at 0.20
+        self.assertAlmostEqual(cl["d_tf"], 0.20, places=2)
+        self.assertAlmostEqual(cl["q_score"], 6.00, places=2)
 
 
 if __name__ == "__main__":

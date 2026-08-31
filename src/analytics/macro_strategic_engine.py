@@ -49,7 +49,8 @@ class MSEHyperparameters:
     structural_validity_threshold: float = 2.5  # Q_min: Min structural qualification threshold for C1/F1
     frvp_volume_weight: float = 1.0             # alpha: Weight for FRVP Volume Evidence (V)
     liquidity_pool_weight: float = 1.0          # beta: Weight for Liquidity Pool Evidence (L)
-    diversity_bonus_per_tf: float = 0.15        # Timeframe diversity multiplier (max 0.35)
+    diversity_bonus_per_tf: float = 0.15        # Timeframe diversity multiplier
+    diversity_bonus_cap: float = 0.35           # Max cap for timeframe diversity bonus
 
 
 class Location(str, Enum):
@@ -61,10 +62,10 @@ class Location(str, Enum):
 
 
 class StructuralEvent(str, Enum):
+    TOUCH = "TOUCH"
     REJECTION = "REJECTION"
     SWEEP = "SWEEP"
-    BREAKOUT = "BREAKOUT"
-    BREAKDOWN = "BREAKDOWN"
+    BREAK = "BREAK"
     RETEST = "RETEST"
     COMPRESSION = "COMPRESSION"
 
@@ -106,10 +107,11 @@ def derive_semantic_state(primitive: PrimitiveState) -> str:
     """
     loc = primitive.location
     evt = primitive.event
+    traj = primitive.trajectory
 
-    if loc == Location.OUTSIDE_ABOVE and evt == StructuralEvent.BREAKOUT:
+    if loc == Location.OUTSIDE_ABOVE and (evt == StructuralEvent.BREAK or traj == Trajectory.UP):
         return "CEILING_BREAKOUT"
-    elif loc == Location.OUTSIDE_BELOW and evt == StructuralEvent.BREAKDOWN:
+    elif loc == Location.OUTSIDE_BELOW and (evt == StructuralEvent.BREAK or traj == Trajectory.DOWN):
         return "FLOOR_BREAKDOWN"
     elif loc == Location.CEILING:
         if evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
@@ -276,7 +278,7 @@ class MacroStrategicEngine:
 
             # 2. Timeframe Diversity Multiplier
             n_tfs = len(tfs_detected)
-            d_tf = min(max(0, n_tfs - 1) * params.diversity_bonus_per_tf, 0.35)
+            d_tf = min(max(0, n_tfs - 1) * params.diversity_bonus_per_tf, params.diversity_bonus_cap)
 
             # 3. Structural Qualification (Q)
             q_score = round(s_structure * (1.0 + d_tf), 2)
@@ -848,7 +850,7 @@ class MacroStrategicEngine:
         dist_to_c1 = abs(imm_ceiling_c1 - curr_mid)
         dist_to_f1 = abs(curr_mid - imm_floor_f1)
 
-        # ── 2. BARRIER INTERACTION SEQUENCE TRACKER ──
+        # ── 2. BARRIER INTERACTION SEQUENCE TRACKER (Bounded Rolling Window maxlen=8) ──
         interaction_seq: List[str] = []
         if not df_h1.empty:
             for i in range(min(8, len(df_h1)), 0, -1):
@@ -859,13 +861,14 @@ class MacroStrategicEngine:
                 l_wick = (min(b_open, b_close) - b_low) / b_rng
                 
                 if b_high >= imm_ceiling_c1 - (0.15 * atr_h1):
-                    tag = "C1_SWEEP" if u_wick >= 0.25 else "C1_TOUCH"
+                    tag = "C1:SWEEP" if u_wick >= 0.25 else "C1:TOUCH"
                     if not interaction_seq or interaction_seq[-1] != tag:
                         interaction_seq.append(tag)
                 elif b_low <= imm_floor_f1 + (0.15 * atr_h1):
-                    tag = "F1_SWEEP" if l_wick >= 0.25 else "F1_TOUCH"
+                    tag = "F1:SWEEP" if l_wick >= 0.25 else "F1:TOUCH"
                     if not interaction_seq or interaction_seq[-1] != tag:
                         interaction_seq.append(tag)
+            interaction_seq = interaction_seq[-8:]
 
         # ── 3. FACTORIZED PRIMITIVE STATE MACHINE (LOCATION × EVENT × TRAJECTORY) ──
         h4_hl = len(h4_sl) >= 2 and (h4_sl[-1][1] > h4_sl[-2][1])
@@ -892,22 +895,24 @@ class MacroStrategicEngine:
             location = Location.MID
 
         # Vector 2: Structural Event
-        if location == Location.OUTSIDE_ABOVE:
-            event = StructuralEvent.BREAKOUT
-        elif location == Location.OUTSIDE_BELOW:
-            event = StructuralEvent.BREAKDOWN
+        if location in (Location.OUTSIDE_ABOVE, Location.OUTSIDE_BELOW):
+            event = StructuralEvent.BREAK
         elif location == Location.CEILING:
-            if "C1_SWEEP" in interaction_seq[-2:]:
+            if any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
             elif peak_u_wick_pct >= 25 or last_h1_bear or h4_lh:
                 event = StructuralEvent.REJECTION
+            elif any("TOUCH" in s for s in interaction_seq[-2:]):
+                event = StructuralEvent.TOUCH
             else:
                 event = StructuralEvent.RETEST
         elif location == Location.FLOOR:
-            if "F1_SWEEP" in interaction_seq[-2:]:
+            if any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
             elif peak_l_wick_pct >= 25 or last_h1_bull or h4_hl:
                 event = StructuralEvent.REJECTION
+            elif any("TOUCH" in s for s in interaction_seq[-2:]):
+                event = StructuralEvent.TOUCH
             else:
                 event = StructuralEvent.RETEST
         else:
