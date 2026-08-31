@@ -71,14 +71,18 @@ class MacroStrategicDirective:
     structural_stage: str
     daily_mandate_thesis: str
     future_macro_roadmap: str
-    macro_rbs_d1: float
-    macro_sbr_d1: float
-    inter_rbs_h4: float
-    inter_sbr_h4: float
-    micro_rbs_h1: float
-    micro_sbr_h1: float
-    sub_floor_50: float
-    sub_ceiling_50: float
+    macro_rbs_w1: Optional[float] = None
+    macro_sbr_w1: Optional[float] = None
+    macro_rbs_d1: float = 0.0
+    macro_sbr_d1: float = 0.0
+    inter_rbs_h4: float = 0.0
+    inter_sbr_h4: float = 0.0
+    micro_rbs_h1: float = 0.0
+    micro_sbr_h1: float = 0.0
+    d1_annual_high: float = 0.0
+    d1_annual_low: float = 0.0
+    sub_floor_50: float = 0.0
+    sub_ceiling_50: float = 0.0
     market_state: str = "NEUTRAL_CHAMBER"
     immediate_ceiling_c1: float = 0.0
     immediate_floor_f1: float = 0.0
@@ -315,12 +319,18 @@ class MacroStrategicEngine:
             sub_floor = round(micro_base - psych_step_micro, digits)
             sub_ceiling = micro_base
 
-        # 5. Multi-Scale SBR & RBS Calculator (D1, H4, H1)
-        d1_sh, d1_sl = self._find_swings(df_d1, 90, 2)
+        # 5. Multi-Scale SBR & RBS Calculator (W1, D1, H4, H1)
+        w1_sh, w1_sl = self._find_swings(df_w1, min(len(df_w1), 100), 2)
+        rbs_w1_cand = [sh[1] for sh in w1_sh if sh[1] < curr_mid - (0.35 * atr_d1)]
+        macro_rbs_w1 = round(max(rbs_w1_cand), digits) if rbs_w1_cand else None
+        sbr_w1_cand = [sl[1] for sl in w1_sl if sl[1] > curr_mid + (0.35 * atr_d1)]
+        macro_sbr_w1 = round(min(sbr_w1_cand), digits) if sbr_w1_cand else None
+
+        d1_sh, d1_sl = self._find_swings(df_d1, min(len(df_d1), 250), 2)
         rbs_d1_cand = [sh[1] for sh in d1_sh if sh[1] < curr_mid - (0.25 * atr_d1)]
-        macro_rbs_d1 = round(max(rbs_d1_cand), digits) if rbs_d1_cand else floor_station
+        macro_rbs_d1 = round(max(rbs_d1_cand), digits) if rbs_d1_cand else (macro_rbs_w1 or floor_station)
         sbr_d1_cand = [sl[1] for sl in d1_sl if sl[1] > curr_mid + (0.25 * atr_d1)]
-        macro_sbr_d1 = round(min(sbr_d1_cand), digits) if sbr_d1_cand else ceiling_station
+        macro_sbr_d1 = round(min(sbr_d1_cand), digits) if sbr_d1_cand else (macro_sbr_w1 or ceiling_station)
 
         h4_sh, h4_sl = self._find_swings(df_h4, 60, 2)
         rbs_h4_cand = [sh[1] for sh in h4_sh if sh[1] < curr_mid - (0.20 * atr_h4)]
@@ -338,7 +348,23 @@ class MacroStrategicEngine:
         dbd_entry, dbd_roof = self._detect_drop_base_drop(df_h1, digits)
         rbr_entry, rbr_floor = self._detect_rally_base_rally(df_h1, digits)
 
-        # 7. Equal Lows / Equal Highs Sweep Detection
+        # 7. Multi-Month Equal Lows / Equal Highs Sweep Detection
+        eqh_d1_cands: List[float] = []
+        for i in range(len(d1_sh)):
+            for j in range(i + 1, len(d1_sh)):
+                t1, h1_lvl = d1_sh[i]
+                t2, h2_lvl = d1_sh[j]
+                if abs(h1_lvl - h2_lvl) <= (0.20 * atr_d1):
+                    eqh_d1_cands.append(round(max(h1_lvl, h2_lvl), digits))
+
+        eql_d1_cands: List[float] = []
+        for i in range(len(d1_sl)):
+            for j in range(i + 1, len(d1_sl)):
+                t1, l1_lvl = d1_sl[i]
+                t2, l2_lvl = d1_sl[j]
+                if abs(l1_lvl - l2_lvl) <= (0.20 * atr_d1):
+                    eql_d1_cands.append(round(min(l1_lvl, l2_lvl), digits))
+
         eq_low_price = d1_annual_low
         eq_low_date_str = ""
         for i in range(len(d1_sl)):
@@ -479,6 +505,21 @@ class MacroStrategicEngine:
             if p > curr_mid:
                 raw_up_elements.append((round(p, digits), sc, tag))
 
+        # W1 & Multi-Year Upper Resistance Structures
+        if macro_sbr_w1 and macro_sbr_w1 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(macro_sbr_w1, digits), 5.0, "W1_SBR"))
+        if w1_key_supply and w1_key_supply > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(w1_key_supply, digits), 4.0, "W1_SUPPLY"))
+        if d1_annual_high and d1_annual_high > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(d1_annual_high, digits), 4.5, "ANNUAL_HIGH"))
+        if mn1_high and mn1_high > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(mn1_high, digits), 5.0, "MN1_HIGH"))
+
+        # Multi-Month Equal Highs (EQH) Liquidity Pools
+        for eqh_p in eqh_d1_cands:
+            if eqh_p > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(eqh_p, digits), 3.5, "D1_EQH_POOL"))
+
         # SBR Structures with Multi-TF Weighting
         if macro_sbr_d1 and macro_sbr_d1 > curr_mid + (0.01 * atr_h1):
             raw_up_elements.append((round(macro_sbr_d1, digits), 4.5, "D1_SBR"))
@@ -522,6 +563,21 @@ class MacroStrategicEngine:
         ]:
             if p < curr_mid:
                 raw_down_elements.append((round(p, digits), sc, tag))
+
+        # W1 & Multi-Year Lower Support Structures
+        if macro_rbs_w1 and macro_rbs_w1 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(macro_rbs_w1, digits), 5.0, "W1_RBS"))
+        if w1_key_demand and w1_key_demand < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(w1_key_demand, digits), 4.0, "W1_DEMAND"))
+        if d1_annual_low and d1_annual_low < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(d1_annual_low, digits), 4.5, "ANNUAL_LOW"))
+        if mn1_low and mn1_low < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(mn1_low, digits), 5.0, "MN1_LOW"))
+
+        # Multi-Month Equal Lows (EQL) Liquidity Pools
+        for eql_p in eql_d1_cands:
+            if eql_p < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(eql_p, digits), 3.5, "D1_EQL_POOL"))
 
         # RBS Structures with Multi-TF Weighting
         if macro_rbs_d1 and macro_rbs_d1 < curr_mid - (0.01 * atr_h1):
@@ -904,12 +960,16 @@ class MacroStrategicEngine:
             structural_stage=stage_label,
             daily_mandate_thesis=thesis,
             future_macro_roadmap=f"{bull_roadmap}\n{bear_roadmap}",
+            macro_rbs_w1=macro_rbs_w1,
+            macro_sbr_w1=macro_sbr_w1,
             macro_rbs_d1=macro_rbs_d1,
             macro_sbr_d1=macro_sbr_d1,
             inter_rbs_h4=inter_rbs_h4,
             inter_sbr_h4=inter_sbr_h4,
             micro_rbs_h1=micro_rbs_h1,
             micro_sbr_h1=micro_sbr_h1,
+            d1_annual_high=round(d1_annual_high, digits),
+            d1_annual_low=round(d1_annual_low, digits),
             sub_floor_50=sub_floor,
             sub_ceiling_50=sub_ceiling,
             market_state=market_state,

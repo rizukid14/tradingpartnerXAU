@@ -688,6 +688,10 @@ def render_macro_directive_card(directive, width=95):
     is_crypto_or_gold = "BTC" in clean_sym or "XAU" in clean_sym or "GOLD" in clean_sym
     fmt = "{:.2f}" if is_crypto_or_gold else ("{:.3f}" if is_jpy else "{:.5f}")
 
+    rbs_w1_val = getattr(directive, 'macro_rbs_w1', None)
+    sbr_w1_val = getattr(directive, 'macro_sbr_w1', None)
+    rbs_w1_s = fmt.format(rbs_w1_val) if rbs_w1_val and rbs_w1_val > 0 else "N/A"
+    sbr_w1_s = fmt.format(sbr_w1_val) if sbr_w1_val and sbr_w1_val > 0 else "N/A"
     rbs_d1_s = fmt.format(directive.macro_rbs_d1) if directive.macro_rbs_d1 > 0 else "N/A"
     sbr_d1_s = fmt.format(directive.macro_sbr_d1) if directive.macro_sbr_d1 > 0 else "N/A"
     rbs_h4_s = fmt.format(directive.inter_rbs_h4) if directive.inter_rbs_h4 > 0 else "N/A"
@@ -750,8 +754,10 @@ def render_macro_directive_card(directive, width=95):
             lines.append(f"  {c_green}{wline}{c_rst}")
     lines.append("---")
 
-    # ── Section 2: Structural Zones SBR & RBS (D1 / H4 / H1) ──
-    lines.append(f" {c_bold}{c_cyan}[+] HIRARKI ZONA STRUKTURAL SBR & RBS (D1 / H4 / H1){c_rst}")
+    # ── Section 2: Structural Zones SBR & RBS (W1 / D1 / H4 / H1) ──
+    lines.append(f" {c_bold}{c_cyan}[+] HIRARKI ZONA STRUKTURAL SBR & RBS (W1 / D1 / H4 / H1){c_rst}")
+    if rbs_w1_s != "N/A" or sbr_w1_s != "N/A":
+        lines.append(f"  • {c_white}Macro W1 (100 bars / 1.9y){c_rst}    : RBS {c_green}{rbs_w1_s}{c_rst} │ SBR {c_red}{sbr_w1_s}{c_rst}")
     lines.append(f"  • {c_white}Macro D1 (350 bars / 1.4y){c_rst}    : RBS {c_green}{rbs_d1_s}{c_rst} │ SBR {c_red}{sbr_d1_s}{c_rst}")
     lines.append(f"  • {c_white}Inter H4 (400 bars / 66 days){c_rst} : RBS {c_green}{rbs_h4_s}{c_rst} │ SBR {c_red}{sbr_h4_s}{c_rst}")
     lines.append(f"  • {c_white}Micro H1 (250 bars / 10 days){c_rst} : RBS {c_green}{rbs_h1_s}{c_rst} │ SBR {c_red}{sbr_h1_s}{c_rst}")
