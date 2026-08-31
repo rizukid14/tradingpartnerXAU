@@ -1953,16 +1953,24 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         if strat_dir:
+            f1_tags = strat_dir.raw_payload.get("f1_structure_tags", "STRUCTURAL")
+            c1_tags = strat_dir.raw_payload.get("c1_structure_tags", "STRUCTURAL")
+            seq_str = " -> ".join(strat_dir.interaction_sequence[-4:]) if strat_dir.interaction_sequence else "Initial Observation"
+            traps_str = " | ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
             strat_block = f"""
-- MSE Macro Bias: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability} | Phase: {strat_dir.structural_stage}
-- Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
-- SBR/RBS Hierarchy:
-  * D1 Scale: Major SBR = {strat_dir.macro_sbr_d1} | Major RBS = {strat_dir.macro_rbs_d1}
-  * H4 Scale: SBR = {strat_dir.inter_sbr_h4} | RBS = {strat_dir.inter_rbs_h4}
-  * H1 Scale: SBR = {strat_dir.micro_sbr_h1} | RBS = {strat_dir.micro_rbs_h1}
-- 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
-- Target Landscape: TP1 (Proximal Station) = {strat_dir.tp1_price} | TP2 (Macro Target) = {strat_dir.tp2_price}
-- Baseline Floor SL: {strat_dir.intraday_sl_price} | Macro Invalidation: {strat_dir.invalidation_stop_price}\n"""
+- MSE Market State: [{strat_dir.market_state}] (Chamber Range: {strat_dir.chamber_position_pct:.0%}) | Stability: {strat_dir.regime_stability}
+- Macro Bias & Directive: {strat_dir.daily_macro_bias} ({strat_dir.macro_bias_score:+.2f}) -> {strat_dir.primary_execution_directive} (Confidence: {strat_dir.confidence_score}%)
+- Action Tier: {getattr(candidate, 'action_tier', strat_dir.action_tier)} | Circuit Breaker: {'ACTIVE (BLOCKED)' if strat_dir.hard_circuit_breaker else 'CLEAR'}
+- Barrier Chamber Bounds (FRVP + SBR/RBS + Psych Confluence):
+  * Floor F1: {strat_dir.immediate_floor_f1} ({strat_dir.f1_fortress_tag} {strat_dir.f1_density_score:.1f}p: {f1_tags})
+  * Ceiling C1: {strat_dir.immediate_ceiling_c1} ({strat_dir.c1_fortress_tag} {strat_dir.c1_density_score:.1f}p: {c1_tags})
+  * Deep Extension Target Bounds: F2={strat_dir.deep_target_floor_f2} | C2={strat_dir.deep_target_ceiling_c2}
+- Interaction Sequence (8-Bar Path): {seq_str}
+- SBR/RBS Hierarchy: D1 SBR={strat_dir.macro_sbr_d1} / RBS={strat_dir.macro_rbs_d1} | H4 SBR={strat_dir.inter_sbr_h4} / RBS={strat_dir.inter_rbs_h4}
+- Target Landscape: TP1 (Proximal Retest) = {strat_dir.tp1_price} | TP2 (Deep Macro Station) = {strat_dir.tp2_price}
+- Execution Anchor & Protection: Reload Limit = {strat_dir.entry_limit_anchor} | Intraday SL = {strat_dir.intraday_sl_price} ({strat_dir.intraday_sl_pips:.1f} pips) | Invalidation = {strat_dir.invalidation_stop_price}
+- Mandate Thesis: {strat_dir.daily_mandate_thesis}
+- Forbidden Traps: {traps_str}\n"""
     except Exception:
         strat_block = ""
 
