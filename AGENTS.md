@@ -2,7 +2,7 @@
 
 > Ringkasan cepat untuk sesi coding. Baca ini dulu sebelum ngapa-ngapain.
 
-## ⚠️ ATURAN WAJIB AI AGENT (MANDATORY AGENT RULES)
+## ATURAN WAJIB AI AGENT (MANDATORY AGENT RULES)
  
 1. **SELALU MINTA KONFIRMASI SEBELUM MENGUBAH KODE (ALWAYS ASK BEFORE EDITING CODE)**:
    - Sebelum melakukan edit/perubahan file kode apa pun, AI WAJIB menjelaskan masalah dan menampilkan rencana/perubahan yang diusulkan.
@@ -53,7 +53,7 @@
 
 ## Apa ini
 
-Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-flash-lite + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
+Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
 
 - **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest) — dengan timeframe struktural **H1 untuk FX majors & NZD, M30 untuk JPY Crosses**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
 - **BTCUSD.c (Bitcoin)**: Tidak masuk scanner universe. Mode `ENABLE_BTC_ROTATION=False` (default) = BTC off.
@@ -62,7 +62,7 @@ Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-flash-lite + De
 - **Mode AI**: `AI_MODE_POLICY = "fixed"` + `AI_FIXED_MODE = "triple"` → **selalu 3-LLM jury** (OpenAI + Gemini + DeepSeek). Tidak ada schedule dual/triple berdasarkan jam.
 - **Akun**: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic `20260625`, balance ~$6000, Waktu **WIB** (Asia/Jakarta).
 
-> **Tidak ada konsep "default pair" di scanner mode**. Semua 27 simbol setara, diproses paralel oleh radar.
+> **Tidak ada konsep "default pair" di scanner mode**. Semua 26 simbol FX setara, diproses paralel oleh radar.
 
 ---
 
@@ -73,7 +73,7 @@ python main.py
 ```
 - `config.DRY_RUN = False` $\rightarrow$ **LIVE trading** (order beneran dikirim). Jangan ubah tanpa izin user.
 - Log: `data/trading_bot.log` (auto-rotate 2MB, keep 5000 baris). Untuk verifikasi akurat profit, query MT5 langsung via `scratch/` script (hapus setelah dipakai).
-- Mode scanner = bot **tidak** memilih 1 simbol aktif. Semua 27 simbol di-pindai paralel. Stage 2 hanya panggil 3-LLM saat setup A+ lolos filter Stage 1.
+- Mode scanner = bot **tidak** memilih 1 simbol aktif. Semua 26 simbol FX di-pindai paralel. Stage 2 hanya panggil 3-LLM saat setup A+ lolos filter Stage 1.
 
 ---
 
@@ -101,15 +101,14 @@ python main.py
 
 ## Alur cycle (scanner mode)
 
-1. **HTF Macro Cache Refresh** (tiap ~60 detik, 0 token): fetch D1+H4+W1 untuk 27 simbol → simpan `macro_cache`.
-2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 3 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk XAU/JPY) → cek Wave State permission (`GO/ARM` only) → kalau ada setup A+ lolos → **Stage 2 trigger**.
+1. **HTF Macro Cache Refresh** (tiap ~60 detik, 0 token): fetch D1+H4+W1 untuk 26 simbol FX → simpan `macro_cache`.
+2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 3 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk JPY) → cek Wave State permission (`GO/ARM` only) → kalau ada setup A+ lolos → **Stage 2 trigger**.
 3. **Stage 2 — 3-LLM Consensus Jury** (per setup A+, ~5.5 detik):
-   - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-flash-lite menganalisis dossier independen.
+   - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-Flash menganalisis dossier independen.
    - **Pass 2** (cross-examination, ~1.5s): DeepSeek V4-Flash (Devil's Advocate CRO) mengaudit proposal + 24 candle M5 micro.
    - **Hard Risk Veto**: reject otomatis kalau flag `COUNTER_TREND_MOMENTUM/LIQUIDITY_TRAP/HIGH_IMPACT_NEWS/SPREAD_SPIKE/FALLING_KNIFE_WATERFALL`.
 4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 75\%$ memicu split 2 posisi (+25% boost).
 5. **`_apply_sltp_rules` floor**:
-   - XAU: $\text{SL} \ge \max(2 \times \text{spread}, 1.60 \times \text{ATR M30})$. Fallback statis 600 pts kalau ATR gagal.
    - JPY Crosses (M30): $\text{SL} \ge \max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$.
    - FX Majors & Crosses (H1): $\text{SL} \ge \max(2 \times \text{spread} + 15\text{ pts}, 0.68 \times \text{ATR H1})$. Fallback statis 250 pts kalau ATR gagal.
    - NZD Alpha: $+20\text{ pts}$ anti-wick padding.
@@ -155,7 +154,7 @@ python main.py
 5. **Paket Anti-FOMC & High-Impact News (TradingView API)**: Fetch kalender dinamis (cache 6 jam, filter US/GB/EU/CH/JP/AU/CA). Window 6 jam sebelum/sesudah rilis. Conditional rule: larang keras fade momentum breakout saat ada event.
 6. **Indikator ADX(14) & Slope EMA50**: deteksi kekuatan tren real-time + Critical Trend Filter anti counter-tren.
 7. **Top-Down Attention Flow Prompt**: Macro H4/D1 $\rightarrow$ Key Levels $\rightarrow$ Tech Indicators $\rightarrow$ Structure 50/100-bar $\rightarrow$ Recent Candles $\rightarrow$ Execution Directives.
-8. **Telegram 2-Way Interactive Controller**: Menu institusional `[ ☰ Menu ]` + on-demand 3-AI analysis (`/analisa <symbol>`) + `/status` `/posisi` `/scan` `/closeall` `/news`. Fast POST polling via Vercel proxy.
+8. **Telegram 2-Way Interactive Controller**: Menu institusional `[ Menu ]` + on-demand 3-AI analysis (`/analisa <symbol>`) + `/status` `/posisi` `/scan` `/closeall` `/news`. Fast POST polling via Vercel proxy.
 9. **Peak-Aware Time-Decay Stagnation Exit + Pre-Rollover Shield**: Perlindungan modal dari time-decay & lonjakan spread rollover.
 10. **Dynamic Volatility Scaling (ATR Percentile)**: Low `0.75x` / Normal `1.00x` / High `1.15x` sizing. Injeksi Peak MFE ke AI Re-evaluator.
 11. **Ultra-Compact Chain-of-Thought JSON Protocol**: Locked CoT sequence `trend $\rightarrow$ velocity $\rightarrow$ rr_valid $\rightarrow$ signal $\rightarrow$ confidence`. Output ~35 token, respons <5 detik/simbol.
@@ -164,7 +163,7 @@ python main.py
 14. **Master Quant Dossier HTML (Book-Grade)**: `docs/report.html` & `docs/technical_specification.html` (Buku putih 15 Bab + visual 2-stage screener + atlas DNA 22 simbol).
 15. **2-Pass Sequential Cross-Examination 3-LLM Jury + Hard Risk Veto**: Pass 1 paralel OpenAI + Gemini (~3s). Pass 2 DeepSeek CRO audit + 24 candle M5 (~1.5s). Total <5.5s. Veto flags: `COUNTER_TREND_MOMENTUM`, `HIGH_IMPACT_NEWS`, `LIQUIDITY_TRAP`, `SPREAD_SPIKE`, `FALLING_KNIFE_WATERFALL`, `UNMITIGATED_IMPULSE_CHASE`, `SYSTEMIC_CURRENCY_DUMP`.
 16. **LuxAlgo SMC + Liquidity Map** (`src/indicators/lux_smc.py`): Porting 1:1 LuxAlgo Pine v5 → Python. Unmitigated OB, FVG, Strong Low/High, EQH/EQL. Injeksi ke dossier prompt agar SL presisi di belakang OB, TP di FVG/Weak High.
-17. **Hourly SMC Radar & Market Pulse Telegram Digest**: Recap tiap jam (pergantian jam WIB) — Market Compass 27 pair (BULL/BEAR/SIDEWAYS), Dealing Range SMC (Top Discount/Premium watch), portofolio MT5 (floating/realized P/L).
+17. **Hourly SMC Radar & Market Pulse Telegram Digest**: Recap tiap jam (pergantian jam WIB) — Market Compass 26 pair FX (BULL/BEAR/SIDEWAYS), Dealing Range SMC (Top Discount/Premium watch), portofolio MT5 (floating/realized P/L).
 18. **Strict HTF Execution Hierarchy (H1 & M30 only)**: Stage 1 Radar HANYA scan H1 & M30. M5 DILARANG trigger eksekusi langsung (anti overtrading + fee churn).
 19. **M5 Candlestick Micro-Microscope** (Pass 2 audit eksklusif): 25 candle M5 live → DeepSeek CRO deteksi falling knife.
 20. **Unanimous 3/3 High Confidence Split (+25% Boost)**: 3 AI sepakat $\ge 75\%$ confidence + $\ge 2$ slot MT5 → eksekusi 2 posisi @ $0.625\times$ base lot (Pos #1 target standar, Pos #2 target extended 1.2× TP2 + trailing).
@@ -178,7 +177,7 @@ python main.py
 28. **Dynamic MT5 Point Resolution + Live Economic News + FRVP Injection** (28 Agustus): `_get_point(sym)` ambil dari `symbol_info.point` MT5 (fallback JPY 0.001, XAU/BTC 0.01, FX 0.00001). Live fetch berita TradingView/Investing.com di `build_high_density_dossier_prompt`. FRVP POC/VAL/VAH diinjeksi ke 8 kandidat radar.
 29. **Telegram Interactive `/news` + Cyberpunk Bento HUD News Ticker** (28 Agustus): Command `/news` (alias `/kalender`, `/berita`, `/event`) + live ticker di Bento HUD Tile 3 & 4 dengan countdown rilis.
 30. **Intraday Entry-Anchored SL/TP + Anti-Wick Padding + Safety Ceiling** (28 Agustus): SL/TP intraday berbasis harga entri + Anti-Wick Padding +15 pts (1.5 pips). Hard Intraday Ceiling di `_apply_sltp_rules` (FX max SL = $\min(2.0\times\text{ATR}, 160\text{ pts})$; Gold max SL = $2.5\times\text{ATR}$).
-31. **4-Layer Trend-Aligned Permission Engine + NZD Alpha Expansion** (28 Agustus): Direction FSM (D1+H4) → Phase FSM (H1 Wave) → CSM Gauge → Permission Matrix. Prinsip `BUY LOCKED != SELL ENABLED`. Delayed Limit Retest $0.20\times\text{ATR}$ + SL anchor $0.35\times\text{ATR} + \text{Spread}$. Universe 27 simbol dengan 6 NZD pair (PF 1.34). 93.3% hari ada peluang.
+31. **4-Layer Trend-Aligned Permission Engine + NZD Alpha Expansion** (28 Agustus): Direction FSM (D1+H4) → Phase FSM (H1 Wave) → CSM Gauge → Permission Matrix. Prinsip `BUY LOCKED != SELL ENABLED`. Delayed Limit Retest $0.20\times\text{ATR}$ + SL anchor $0.35\times\text{ATR} + \text{Spread}$. Universe 26 simbol FX dengan 6 NZD pair (PF 1.34). 93.3% hari ada peluang.
 32. **Mechanism 3 (M6) HTF Weekly Wall Reversal & Foothold Targeting** (28 Agustus): Ganti NY ADR Reversal (-3.637,3R) dengan HTF_WEEKLY_WALL_REVERSAL (tabrak dinding H4/D1/W1 → foothold 50% Equilibrium). Validasi 16.011 trade, Net +$586,1R.
 33. **Quant Research V3: 4-Dimensional Adaptive Market State + Conditional Timing** (29 Agustus): Hapus mitos 4-candle exhaustion ($P(\text{Rev}|n=4)=53.19\%$, hanya +2.3% koin acak). Dim 1 Direction Identity (False Flip 70.86% → 12.61%, persistence 41.3 bar). Dim 2 Anatomy Type A vs Type B. Dim 3 CSM Pressure (aligned +68.44% continuation, opposed 64.04% fail). Dim 4 Event Layer (Displacement $P(\text{Cont})=75.22\%$, EV +0.166R/trade, PF 1.14).
 34. **Macro Psychological Levels + Station-to-Station Corridor Delivery Engine** (29 Agustus): 3 Trigger Fisik Zona Dinamis ($\pm 0.35\times\text{ATR}$): angka bulat psikologis (1.2000, 160.00, $2500), sapuan EQH/EQL, Fib 50–61.8% Golden Pocket. M3 Compass Navigator (GPS koridor) + Trio H1 Executor (M1 Sweep, M2 Pullback, M4 Retest). 7 pair bintang: EURJPY +371R, EURUSD +297.8R, AUDUSD +233.9R, USDJPY +218.3R, XAUUSD +165.9R, EURAUD +64.1R, GBPUSD +27.3R. Total +$1.378,3R Net Profit.
@@ -190,15 +189,15 @@ python main.py
 40. **Probabilistic Macro Strategic Engine & 5-Tier Operational Action Matrix** (30 Agustus):
     - **Pemisahan Peran Arsitektural**: MSE = Kompas Arah, Koridor, Invalidation, & Macro Bias Continuous Score ($\in [-1.0, +1.0]$); SMC = Trigger SFP, Liquidity Sweep, & Structure Event; FRVP = Disambiguator Lelang (`ACCEPTANCE` vs `REJECTION`) + *Thin-Volume Danger* filter (cap rating di Grade B jika berada di Low Volume Node / vacuum).
     - **5-Tier Operational Action Matrix & End-to-End Risk Modifiers**:
-      1. 🟢 `FULL_ALLOW`: Setup searah makro ($|\text{score}| \ge 0.35$), ukuran penuh $100\%$ lot, target koridor penuh TP1 + TP2 runner (+25% boost multi-position jika 3 AI unanimous $\ge 75\%$).
-      2. 🟡 `REDUCED_CONFIDENCE`: Setup valid saat makro netral/moderat ($-0.25 \le \text{score} \le +0.35$), **pengali risiko numerik $0.75\times$ lot size** di `risk_engine.py`, dan pembatasan $\text{TP} \le 2.00 \times \text{SL}$ di `consensus.py`.
-      3. 🟠 `TP1_ONLY_SCALP`: Setup counter-trend berkualitas tinggi (M1 Judas Sweep / SFP) melawan makro moderat ($|\text{score}| \le 0.70$). Wajib sweep bersih + reclaim + wick $\ge 35\%$ + ruang ke TP1 $\ge 1.25\times\text{SL}$ + zero hard trap. Pembatasan $\text{TP} \le 1.50 \times \text{SL}$ dan **larangan keras 2-posisi split** di `main.py` (**100% posisi ditutup di TP1 tunggal**).
-      4. 🔵 `WATCH_ONLY`: Harga di dalam Reload Zone namun trigger belum terkonfirmasi $\rightarrow$ monitor saja, 0 order MT5.
-      5. 🔴 `HARD_BLOCK`: Tabrak hard trap (jarak ke atap/lantai $< 1.0\times\text{ATR H1}$), jebol invalidasi makro, atau waterfall 25-candle M5 $\rightarrow$ hard lock mutlak (0 token LLM).
+      1. `FULL_ALLOW`: Setup searah makro ($|\text{score}| \ge 0.35$), ukuran penuh $100\%$ lot, target koridor penuh TP1 + TP2 runner (+25% boost multi-position jika 3 AI unanimous $\ge 75\%$).
+      2. `REDUCED_CONFIDENCE`: Setup valid saat makro netral/moderat ($-0.25 \le \text{score} \le +0.35$), **pengali risiko numerik $0.75\times$ lot size** di `risk_engine.py`, dan pembatasan $\text{TP} \le 2.00 \times \text{SL}$ di `consensus.py`.
+      3. `TP1_ONLY_SCALP`: Setup counter-trend berkualitas tinggi (M1 Judas Sweep / SFP) melawan makro moderat ($|\text{score}| \le 0.70$). Wajib sweep bersih + reclaim + wick $\ge 35\%$ + ruang ke TP1 $\ge 1.25\times\text{SL}$ + zero hard trap. Pembatasan $\text{TP} \le 1.50 \times \text{SL}$ dan **larangan keras 2-posisi split** di `main.py` (**100% posisi ditutup di TP1 tunggal**).
+      4. `WATCH_ONLY`: Harga di dalam Reload Zone namun trigger belum terkonfirmasi $\rightarrow$ monitor saja, 0 order MT5.
+      5. `HARD_BLOCK`: Tabrak hard trap (jarak ke atap/lantai $< 1.0\times\text{ATR H1}$), jebol invalidasi makro, atau waterfall 25-candle M5 $\rightarrow$ hard lock mutlak (0 token LLM).
     - **Smart 60-Second TTL Cache & Direct Fast Telegram**: Cache memori sub-detik untuk komputasi intraday $\le\text{H4}$ serta pengiriman format quant instan (<100ms, 0 token) di Telegram `/macro`.
 41. **Real-Time State Transition Hook & Smart High-Impact Telegram Alert Gate** (30 Agustus):
     - **Live State Change Tracker**: Di setiap siklus scan 60 detik (`main.py`), sistem membandingkan status Permission (`ARM/WAIT/GO/LOCK`) dan Mandat Makro tiap simbol terhadap state sebelumnya.
-    - **Auto Re-render Bento Box Terminal**: Jika terjadi transisi state pada pair apa pun (misal: `WAIT -> ARMED` atau `BEARISH_PULLBACK -> BULLISH_EXPANSION`), terminal langsung mencetak log transisi `[⚡ STATE TRANSITION DETECTED]` dan me-render ulang Bento Box HUD seketika tanpa menunggu pergantian jam.
+    - **Auto Re-render Bento Box Terminal**: Jika terjadi transisi state pada pair apa pun (misal: `WAIT -> ARMED` atau `BEARISH_PULLBACK -> BULLISH_EXPANSION`), terminal langsung mencetak log transisi `[STATE TRANSITION DETECTED]` dan me-render ulang Bento Box HUD seketika tanpa menunggu pergantian jam.
     - **Smart High-Impact Telegram Gate**: Menghindari spam 26 pair di HP dengan HANYA mengirim notifikasi Telegram pada status kritis **`Permission GO`** (`alert_radar_go_transition` saat reclaim valid terkonfirmasi).
 42. **Full MSE On-Demand Integration & Single OpenAI o4-mini Dedicated Engine** (30 Agustus):
     - **Total Deletion of `macro_analyst.py`**: Modul usang `src/analytics/macro_analyst.py` dihapus total dari arsitektur.
@@ -211,12 +210,12 @@ python main.py
     - **Dual-Source Provider**: ForexFactory Official JSON CDN (Primary) + TradingView API (Fallback) + Deteksi Hari Libur Bank (*Bank Holiday Guard*).
     - **Tiered Half-Life Exponential Decay Engine**: Peluruhan eksponensial dampak katalis ekonomi ($4\text{h} / 12\text{h} / 36\text{h}$) tanpa batasan *cliff* biner artifisial.
     - **8-Currency Composite Fundamental Scorecard**: Skor dinamis $[-1.00, +1.00]$ dan divergensi *Carry Spread* untuk 8 mata uang utama global.
-    - **4-Tier Setup Quality & Dynamic Sizing System**: 👑 **GRADE S** (Super Convergence), 🟢 **GRADE A+** (High Conviction), 🟡 **GRADE A** (Pure Technical Flat), ⚪ **GRADE B** (Defensive $0.50\times$ lot).
+    - **4-Tier Setup Quality & Dynamic Sizing System**: GRADE S (Super Convergence), GRADE A+ (High Conviction), GRADE A (Pure Technical Flat), GRADE B (Defensive $0.50\times$ lot).
     - **7 Master Institutional Hard Risk Veto Flags**: `COUNTER_TREND_MOMENTUM`, `LIQUIDITY_TRAP`, `IMPULSE_CHASE`, `SYSTEMIC_CURRENCY_DUMP`, `HIGH_IMPACT_NEWS`, `CURRENCY_CONFLICT` (Grade B), `MACRO_HEADWIND` (Grade B).
     - **Telegram 2-Way Interactive Controller**: Fitur `/fundamental` & `/fund <pair>` menampilkan heatmap 8 mata uang dan rincian katalis.
 45. **Hybrid Confluence Framework, Symmetrical Wave State & Risk-Weighted Slot Allocation** (30 Agustus):
-    - **Symmetrical Dual-Directional Wave State Engine**: Menghapus total bias long-only/istilah basi ritel. BUY beroperasi di Lantai Diskon (`EXPANSION_WAIT_BULL` -> `WATERFALL_LOCK` -> `DISCOUNT_RELOAD_ARMED` -> **`DEMAND_REACTION_GO 🟢`**); SELL beroperasi di Atap SBR (`EXPANSION_WAIT_BEAR` -> `VERTICAL_SPIKE_LOCK` -> `PREMIUM_RELOAD_ARMED` -> **`SUPPLY_REACTION_GO 🟢`**).
-    - **Kuantifikasi Konflik**: Severe Conflict ($|S| \ge 0.50$ di kedua sisi / Carry Headwind $\ge 3.0\%$) memicu **`REJECT_VETO` (Hard Veto)**; Mild Conflict ($|S| < 0.50$) memicu **`GRADE_B` ($0.50\times$ Lot / TP1 Scalp)**.
+    - **Symmetrical Dual-Directional Wave State Engine**: Menghapus total bias long-only/istilah basi ritel. BUY beroperasi di Lantai Diskon (`EXPANSION_WAIT_BULL` -> `WATERFALL_LOCK` -> `DISCOUNT_RELOAD_ARMED` -> `DEMAND_REACTION_GO`); SELL beroperasi di Atap SBR (`EXPANSION_WAIT_BEAR` -> `VERTICAL_SPIKE_LOCK` -> `PREMIUM_RELOAD_ARMED` -> `SUPPLY_REACTION_GO`).
+    - **Kuantifikasi Konflik**: Severe Conflict ($|S| \ge 0.50$ di kedua sisi / Carry Headwind $\ge 3.0\%$) memicu `REJECT_VETO` (Hard Veto); Mild Conflict ($|S| < 0.50$) memicu `GRADE_B` ($0.50\times$ Lot / TP1 Scalp).
     - **Hybrid Confluence Targeting**: Target TP selalu *snapped* ke level stasiun fisik MSE terdekat di dalam amplop ATR Grade + *Front-Running Pad ($0.15\times\text{ATR} + \text{Spread}$)*.
     - **Milestone-Driven Data-Backed BEP & Trailing**: BEP Grade S ditunda ke 65-70% TP + Trailing lebar $1.25\times\text{ATR H1}$ (floor 120 pts FX) + Imun dari Time-Decay Stagnation 4 jam; Grade B BEP cepat 35-40% TP + Trailing $0.40\times\text{ATR M30}$.
     - **Risk-Weighted Slot Allocation dengan 5 Lapisan Kontrol Portofolio**:
@@ -239,31 +238,31 @@ python main.py
 
 ---
 
-## 📚 Indeks Dokumentasi & Riset Lengkap
+## Indeks Dokumentasi & Riset Lengkap
 
 Dokumentasi lengkap telah dikelompokkan ke dalam direktori tematik di [docs/README.md](file:///c:/Vibe/tradingpartner/docs/README.md):
 
 | Kategori | Dokumen | Deskripsi Isi |
 |---|---|---|
-| 📊 **Research** | **[docs/research/APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md)** | **Spesifikasi Lengkap Apex Paragon Macro Fundamental Engine (40% Weight)**: Kalender Dual-Source (ForexFactory + TV), Peluruhan Eksponensial Half-Life (4h/12h/36h), 8-Currency Composite Scorecard, Matriks Konflik 4-Tingkat, 4-Grade Quality System (Grade S/A+/A/B), dan 7 Master Risk Veto Flags. |
-| 📊 **Research** | **[docs/research/WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md)** | **Audit Live Spread Weekend & Daily Rollover (26 FX + BTC)**: Data empiris akun live VTMarkets, rasio pelebaran spread (1.0x-10.1x), implikasi Pre-Rollover Shield, Dead Zone, dan kalibrasi lebar Reload Zone. |
-| 📊 **Research** | **[docs/research/MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md)** | **Laporan Riset Macro Psych Levels & Delivery Engine**: Eliminasi Lagging CHoCH, Dynamic ATR Zonal Bands (+-0.35 ATR), M3 Compass Navigator + Trio H1 (M1 Sweep, M2 Pullback, M4 Retest), dan Validasi Multi-Tahun 29 Simbol (+1.378R). |
-| 📊 **Research** | **[docs/research/MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md)** | **Laporan Riset Master Atlas DNA & Dual-Reaction Protocols**: Klasifikasi 22 Simbol MT5, Major 100-pip vs Sub-Stations 50-pip, Skenario A Reversal Fade vs Skenario B Breakout Upgrade, dan Formula Intraday SL/TP Anchoring. |
-| 📊 **Research** | **[docs/research/QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/research/QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md)** | **Master Quant Dossier V3 (10 Juta Candle / 29 Simbol)**: 4-Dimensional Adaptive Market State, Causal Direction Persistence (41.3 bar), Correction Anatomy Type A Waterfall vs Type B Coil, Conditional CSM Pressure, dan Event Reclaim Layer. |
-| 📊 **Research** | **[docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md)** | **Master Quant Dossier 16.2 Tahun (Dataset MetaQuotes 2010–2026)**: Validasi 723k Bar H1 / 29 Simbol, 4-Layer Permission FSM, Eliminasi NY ADR Reversal, Integrasi M3 HTF Weekly Wall Reversal (+586.1R), dan Atlas DNA 29 Simbol. |
-| 📊 **Research** | **[docs/report.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/report.html)** | **Master Quant Dossier (HTML Book Report 15 Bab)**: Laporan buku putih interaktif 15 Bab dalam 4 Bagian: Riset dataset FBS 3.78M bar, 4 Arketipe, Boitoki CSM & Basket Gate, LuxSMC + FRVP, 4D Wave State, Pure Quant MSE 6-TF, Atlas DNA 22 Simbol, 3-LLM Jury, dan Validasi Live Replay. |
-| 📑 **Technical Spec** | **[docs/technical_specification.html](file:///c:/Data%20%28D%29/Vibecoding/tradingpartnerXAU/docs/technical_specification.html)** | **Master Technical Specification Document (HTML 14 Bab)**: Dokumen spesifikasi teknis lengkap 14 Bab mencakup arsitektur 2-stage funnel, 6-TF MSE, 4D Wave State, Apex Fundamental Engine (40%), dan 5 Lapisan Kontrol Portofolio. |
-| 📊 **Research** | **[docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md)** | **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support). |
-| 📊 **Research** | **[docs/research/MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md)** | **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Validasi 396.183 trade (10.7 thn H1, 55.6 thn H4, 16.6 thn D1). Komparasi head-to-head, evaluasi 4 arketipe, validasi SMC CHoCH/Order Block, dan ranking 22 simbol. |
-| 💡 **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate, **RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)**. |
-| 🔴 **Plans & RFC** | **[docs/plans/GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md)** | **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table. |
-| 📊 **Research** | **[docs/research/QUANT_RESEARCH_EDGES.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_EDGES.md)** | **Riset Statistik Bebas Bias (3–4 Tahun)**: Temuan 112 Edge Pola Bearish NY, Ranking Pair Forex, Riset CAD/EUR/GBP & JPY, Riset Donchian XAU BUY NY, Confluence. |
-| 📊 **Research** | **[docs/research/DAILY_RANGE_VOLATILITY.md](file:///c:/Vibe/tradingpartner/docs/research/DAILY_RANGE_VOLATILITY.md)** | **Riset Volatilitas Harian D1 (365 hari, 29 pair)**: Mean & Median daily range pips untuk semua Major + Minor/Cross + XAUUSD. Ranking volatilitas, analisis CHF crosses di pool bot, kandidat upgrade pair. |
-| 📈 **Research** | **[docs/research/backtest_augustus_2026.md](file:///c:/Vibe/tradingpartner/docs/research/backtest_augustus_2026.md)** | **Hasil Backtest Agustus 2026**: Evaluasi 10 strategi buku (NotebookLM), Erratum S9 Horn, Verifikasi S9 + Target Struktural GBPUSD. |
-| 🏗️ **Architecture** | **[docs/architecture/LLM_COST_ESTIMATION.md](file:///c:/Vibe/tradingpartner/docs/architecture/LLM_COST_ESTIMATION.md)** | **Estimasi Frekuensi & Biaya LLM**: Simulasi kuota token, perbandingan opsi DeepSeek vs Claude Sonnet per bulan. |
-| 🏗️ **Architecture** | **[docs/architecture/PROMPT_COMPARISON.md](file:///c:/Vibe/tradingpartner/docs/architecture/PROMPT_COMPARISON.md)** | Perbandingan skema prompt antar iterasi versi bot. |
-| 🚀 **Deployment** | **[docs/deployment/vps_deployment.md](file:///c:/Vibe/tradingpartner/docs/deployment/vps_deployment.md)** | Panduan deployment production bot ke VPS. |
-| 🏗️ **Architecture** | **[docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md](file:///c:/Vibe/tradingpartner/docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md)** | **Analisis Broker & Keamanan Dana**: Bedah VT Markets (Mauritius FSC, LD4 ECN), A-Book vs B-Book Algo, Roadmap Broker Multi-Tier (Swissquote, IBKR, Bappebti). |
-| 📜 **Archive** | **[docs/archive/CHANGELOG_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/archive/CHANGELOG_AUGUST_2026.md)** | **Arsip Changelog Detail (8–15 Agustus 2026)**: FASE 1–7, pemisahan mode SL/TP, evolusi lot sizing, dan perbaikan historis. |
-| 🗂️ **Master Index** | **[docs/README.md](file:///c:/Vibe/tradingpartner/docs/README.md)** | Indeks lengkap seluruh file dokumentasi, buku trading (PDF), dan spesifikasi. |
+| **Research** | **[docs/research/APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/APEX_PARAGON_MACRO_FUNDAMENTAL_SPEC.md)** | **Spesifikasi Lengkap Apex Paragon Macro Fundamental Engine (40% Weight)**: Kalender Dual-Source (ForexFactory + TV), Peluruhan Eksponensial Half-Life (4h/12h/36h), 8-Currency Composite Scorecard, Matriks Konflik 4-Tingkat, 4-Grade Quality System (Grade S/A+/A/B), dan 7 Master Risk Veto Flags. |
+| **Research** | **[docs/research/WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md](file:///c:/Vibe/tradingpartner/docs/research/WEEKEND_AND_ROLLOVER_SPREAD_AUDIT.md)** | **Audit Live Spread Weekend & Daily Rollover (26 FX + BTC)**: Data empiris akun live VTMarkets, rasio pelebaran spread (1.0x-10.1x), implikasi Pre-Rollover Shield, Dead Zone, dan kalibrasi lebar Reload Zone. |
+| **Research** | **[docs/research/MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/MACRO_PSYCH_LEVELS_AND_DELIVERY_ENGINE_REPORT.md)** | **Laporan Riset Macro Psych Levels & Delivery Engine**: Eliminasi Lagging CHoCH, Dynamic ATR Zonal Bands (+-0.35 ATR), M3 Compass Navigator + Trio H1 (M1 Sweep, M2 Pullback, M4 Retest), dan Validasi Multi-Tahun 29 Simbol (+1.378R). |
+| **Research** | **[docs/research/MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/MASTER_ATLAS_DNA_AND_DUAL_REACTION_REPORT.md)** | **Laporan Riset Master Atlas DNA & Dual-Reaction Protocols**: Klasifikasi 22 Simbol MT5, Major 100-pip vs Sub-Stations 50-pip, Skenario A Reversal Fade vs Skenario B Breakout Upgrade, dan Formula Intraday SL/TP Anchoring. |
+| **Research** | **[docs/research/QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_V3_MARKET_STATE_ENGINE.md)** | **Master Quant Dossier V3 (10 Juta Candle / 29 Simbol)**: 4-Dimensional Adaptive Market State, Causal Direction Persistence (41.3 bar), Correction Anatomy Type A Waterfall vs Type B Coil, Conditional CSM Pressure, dan Event Reclaim Layer. |
+| **Research** | **[docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md](file:///c:/Vibe/tradingpartner/docs/research/METAQUOTES_16YEAR_MASTER_BACKTEST_REPORT.md)** | **Master Quant Dossier 16.2 Tahun (Dataset MetaQuotes 2010–2026)**: Validasi 723k Bar H1 / 29 Simbol, 4-Layer Permission FSM, Eliminasi NY ADR Reversal, Integrasi M3 HTF Weekly Wall Reversal (+586.1R), dan Atlas DNA 29 Simbol. |
+| **Research** | **[docs/report.html](file:///c:/Vibe/tradingpartner/docs/report.html)** | **Master Quant Dossier (HTML Book Report 15 Bab)**: Laporan buku putih interaktif 15 Bab dalam 4 Bagian: Riset dataset FBS 3.78M bar, 4 Arketipe, Boitoki CSM & Basket Gate, LuxSMC + FRVP, 4D Wave State, Pure Quant MSE 6-TF, Atlas DNA 22 Simbol, 3-LLM Jury, dan Validasi Live Replay. |
+| **Technical Spec** | **[docs/technical_specification.html](file:///c:/Vibe/tradingpartner/docs/technical_specification.html)** | **Master Technical Specification Document (HTML 14 Bab)**: Dokumen spesifikasi teknis lengkap 14 Bab mencakup arsitektur 2-stage funnel, 6-TF MSE, 4D Wave State, Apex Fundamental Engine (40%), dan 5 Lapisan Kontrol Portofolio. |
+| **Research** | **[docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md](file:///c:/Vibe/tradingpartner/docs/research/INTRADAY_CSM_AND_DAILY_CYCLE_SPEC.md)** | **Spesifikasi Intraday Market Cycle & Boitoki CSM**: Dokumen arsitektur lengkap 3 pilar: Macro Anchor D1, Boitoki CSM 7 USD Majors, Intraday Phase & 2 Exception Rules (Flow Shock & Retracement to D1 Support). |
+| **Research** | **[docs/research/MULTIYEAR_FBS_BACKTEST_2026.md](file:///c:/Vibe/tradingpartner/docs/research/MULTIYEAR_FBS_BACKTEST_2026.md)** | **Hasil Riset & Backtest Multi-Tahun (Dataset FBS MT5)**: Validasi 396.183 trade (10.7 thn H1, 55.6 thn H4, 16.6 thn D1). Komparasi head-to-head, evaluasi 4 arketipe, validasi SMC CHoCH/Order Block, dan ranking 22 simbol. |
+| **Plans & RFC** | **[docs/plans/IDEAS_AND_PLANS.md](file:///c:/Vibe/tradingpartner/docs/plans/IDEAS_AND_PLANS.md)** | **Daftar Ide & RFC Fitur Baru**: One-Shot Emergency Drawdown Re-Evaluator (80% SL + High-Density Prompt), Refaktor Pending Consensus, Parabolic Filter, Anti-Hedge Gate, **RFC 10: Asymmetric 3-LLM Specialized Roles (Structure Analyst vs Price Action Validator vs Devil's Advocate)**. |
+| **Plans & RFC** | **[docs/plans/GLM_CRITICAL_REVIEW.md](file:///c:/Vibe/tradingpartner/docs/plans/GLM_CRITICAL_REVIEW.md)** | **GLM Critical Review — Structural Holes & Research Priorities**: 6 temuan kritis (korelasi eksposur currency, spread-to-ATR ratio, asimetri Dual/Triple consensus, swap cost, validasi momentum feature, session multiplier). Priority stack + action table. |
+| **Research** | **[docs/research/QUANT_RESEARCH_EDGES.md](file:///c:/Vibe/tradingpartner/docs/research/QUANT_RESEARCH_EDGES.md)** | **Riset Statistik Bebas Bias (3–4 Tahun)**: Temuan 112 Edge Pola Bearish NY, Ranking Pair Forex, Riset CAD/EUR/GBP & JPY, Riset Donchian XAU BUY NY, Confluence. |
+| **Research** | **[docs/research/DAILY_RANGE_VOLATILITY.md](file:///c:/Vibe/tradingpartner/docs/research/DAILY_RANGE_VOLATILITY.md)** | **Riset Volatilitas Harian D1 (365 hari, 29 pair)**: Mean & Median daily range pips untuk semua Major + Minor/Cross + XAUUSD. Ranking volatilitas, analisis CHF crosses di pool bot, kandidat upgrade pair. |
+| **Research** | **[docs/research/backtest_augustus_2026.md](file:///c:/Vibe/tradingpartner/docs/research/backtest_augustus_2026.md)** | **Hasil Backtest Agustus 2026**: Evaluasi 10 strategi buku (NotebookLM), Erratum S9 Horn, Verifikasi S9 + Target Struktural GBPUSD. |
+| **Architecture** | **[docs/architecture/LLM_COST_ESTIMATION.md](file:///c:/Vibe/tradingpartner/docs/architecture/LLM_COST_ESTIMATION.md)** | **Estimasi Frekuensi & Biaya LLM**: Simulasi kuota token, perbandingan opsi DeepSeek vs Claude Sonnet per bulan. |
+| **Architecture** | **[docs/architecture/PROMPT_COMPARISON.md](file:///c:/Vibe/tradingpartner/docs/architecture/PROMPT_COMPARISON.md)** | Perbandingan skema prompt antar iterasi versi bot. |
+| **Deployment** | **[docs/deployment/vps_deployment.md](file:///c:/Vibe/tradingpartner/docs/deployment/vps_deployment.md)** | Panduan deployment production bot ke VPS. |
+| **Architecture** | **[docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md](file:///c:/Vibe/tradingpartner/docs/architecture/BROKER_INFRASTRUCTURE_AND_SAFETY.md)** | **Analisis Broker & Keamanan Dana**: Bedah VT Markets (Mauritius FSC, LD4 ECN), A-Book vs B-Book Algo, Roadmap Broker Multi-Tier (Swissquote, IBKR, Bappebti). |
+| **Archive** | **[docs/archive/CHANGELOG_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/archive/CHANGELOG_AUGUST_2026.md)** | **Arsip Changelog Detail (8–15 Agustus 2026)**: FASE 1–7, pemisahan mode SL/TP, evolusi lot sizing, dan perbaikan historis. |
+| **Master Index** | **[docs/README.md](file:///c:/Vibe/tradingpartner/docs/README.md)** | Indeks lengkap seluruh file dokumentasi, buku trading (PDF), dan spesifikasi. |
 

@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <style>
         :root {
             --bg-base: #080b11;
@@ -818,9 +819,9 @@ Net Delta Spread = Effective_Score(Base) - Effective_Score(Quote)</pre>
                         <strong>Universal Basket Circuit Breaker</strong> memblokir transaksi counter-trend secara deterministik di Stage 1 (0 Token LLM):
                     </p>
                     <ul style="color: var(--text-secondary); padding-left: 20px; line-height: 1.8;">
-                        <li><strong>Systemic Dump (&le; -20.0 pts)</strong>: 🔒 <strong>LOCK BUY</strong> pada seluruh pair dengan Base tersebut.</li>
-                        <li><strong>Systemic Surge (&ge; +20.0 pts)</strong>: 🔒 <strong>LOCK SELL</strong> pada seluruh pair dengan Base tersebut.</li>
-                        <li><strong>Quote Systemic Surge (&ge; +20.0 pts)</strong>: 🔒 <strong>LOCK BUY</strong> pada seluruh pair dengan Quote tersebut (cth: USD Surge me-lock BUY GBPUSD & EURUSD).</li>
+                        <li><strong>Systemic Dump (&le; -20.0 pts)</strong>: <strong>LOCK BUY</strong> pada seluruh pair dengan Base tersebut.</li>
+                        <li><strong>Systemic Surge (&ge; +20.0 pts)</strong>: <strong>LOCK SELL</strong> pada seluruh pair dengan Base tersebut.</li>
+                        <li><strong>Quote Systemic Surge (&ge; +20.0 pts)</strong>: <strong>LOCK BUY</strong> pada seluruh pair dengan Quote tersebut (cth: USD Surge me-lock BUY GBPUSD & EURUSD).</li>
                         <li><strong>Relative Delta Spread (|&Delta;| &ge; 18.0 pts)</strong>: Mengunci order jika selisih kekuatan Base dan Quote melawan arah aliran dana.</li>
                     </ul>
                 </div>
@@ -1250,10 +1251,10 @@ Body_Ratio       = abs(Close - Open) / (High - Low)</pre>
                         <strong>Sistem Kualitas Setup 4-Grade (Setup Quality & Dynamic ATR Multipliers)</strong>:
                     </p>
                     <ul style="color: var(--text-secondary); padding-left: 20px; line-height: 1.8;">
-                        <li><strong>👑 GRADE S (God-Tier Setup)</strong>: MSE Sockets + SMC + CSM + Fundamental 100% Selaras &rarr; Full Size ($1.0\times$) + Multiplier TP $3.0\times\text{ATR}$ (Multi-Day Swing Hold).</li>
-                        <li><strong>🟢 GRADE A+ (High Conviction)</strong>: Setup Teknikal + Angin Fundamental Mendukung &rarr; Full Size ($1.0\times$) + Multiplier TP $2.0\times\text{ATR}$.</li>
-                        <li><strong>🟡 GRADE A (Pure Technical)</strong>: Pasar Tenang / Priced-In Equilibrium (Flat) &rarr; Standard Size ($1.0\times$) + Multiplier TP $1.5\times\text{ATR}$.</li>
-                        <li><strong>⚪ GRADE B (Defensive Sizing)</strong>: Ada friksi makro (Currency Conflict / Macro Headwind / Bank Holiday) &rarr; Reduced Size ($0.50\times$) + Multiplier TP $1.25\times\text{ATR}$ (Scalp TP1 Only).</li>
+                        <li><strong>GRADE S (Super Confluence)</strong>: MSE Sockets + SMC + CSM + Fundamental 100% Selaras &rarr; Full Size ($1.0\times$) + Multiplier TP $3.0\times\text{ATR}$ (Multi-Day Swing Hold).</li>
+                        <li><strong>GRADE A+ (High Conviction)</strong>: Setup Teknikal + Angin Fundamental Mendukung &rarr; Full Size ($1.0\times$) + Multiplier TP $2.0\times\text{ATR}$.</li>
+                        <li><strong>GRADE A (Pure Technical)</strong>: Pasar Tenang / Priced-In Equilibrium (Flat) &rarr; Standard Size ($1.0\times$) + Multiplier TP $1.5\times\text{ATR}$.</li>
+                        <li><strong>GRADE B (Defensive Sizing)</strong>: Ada friksi makro (Currency Conflict / Macro Headwind / Bank Holiday) &rarr; Reduced Size ($0.50\times$) + Multiplier TP $1.25\times\text{ATR}$ (Scalp TP1 Only).</li>
                     </ul>
                 </div>
             </div>
@@ -1348,37 +1349,37 @@ Body_Ratio       = abs(Close - Open) / (High - Low)</pre>
                                 <td><strong style="color: var(--accent-cyan);">GBPUSD</strong></td>
                                 <td class="mono" style="color: var(--accent-rose); font-weight: 700;">-$82.69 (1W / 2L)</td>
                                 <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+2.25 R (+$135.00)</td>
-                                <td>✅ <strong>Kebocoran USD Tuntas</strong>. 3/3 Trade SELL Pullback menang 100% amankan Partial TP1.</td>
+                                <td><strong>Kebocoran USD Tuntas</strong>. 3/3 Trade SELL Pullback menang 100% amankan Partial TP1.</td>
                             </tr>
                             <tr>
                                 <td><strong style="color: var(--accent-cyan);">EURUSD</strong></td>
                                 <td class="mono" style="color: var(--accent-emerald);">+$5.54 (1W / 1L)</td>
                                 <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+2.00 R (+$120.00)</td>
-                                <td>✅ 2 Full TP2 (+56 pips & +54 pips) mengkompensasi SL tipis.</td>
+                                <td>2 Full TP2 (+56 pips & +54 pips) mengkompensasi SL tipis.</td>
                             </tr>
                             <tr>
                                 <td><strong style="color: var(--accent-cyan);">GBPCHF</strong></td>
                                 <td class="mono" style="color: var(--text-muted);">-</td>
                                 <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+2.15 R (+$129.00)</td>
-                                <td>🌟 1 Full TP2 (Station Target +45.5 pips) + 1 BEP (+15 pts).</td>
+                                <td>1 Full TP2 (Station Target +45.5 pips) + 1 BEP (+15 pts).</td>
                             </tr>
                             <tr>
                                 <td><strong style="color: var(--accent-cyan);">EURCHF</strong></td>
                                 <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+$116.50 (2W / 0L)</td>
                                 <td class="mono" style="color: var(--accent-emerald); font-weight: 700;">+0.30 R (+$18.00)</td>
-                                <td>✅ Konsisten menang. Mengamankan Partial TP1 dan BEP lock.</td>
+                                <td>Konsisten menang. Mengamankan Partial TP1 dan BEP lock.</td>
                             </tr>
                             <tr>
                                 <td><strong style="color: var(--accent-cyan);">XAUUSD</strong></td>
                                 <td class="mono" style="color: var(--accent-rose); font-weight: 700;">-$116.96 (0W / 2L)</td>
                                 <td class="mono" style="color: var(--accent-amber); font-weight: 700;">-1.85 R (-$111.00)</td>
-                                <td>🛡️ Veto CRO aktif di sesi malam, memangkas floating drawdown.</td>
+                                <td>Veto CRO aktif di sesi malam, memangkas floating drawdown.</td>
                             </tr>
                             <tr style="background: rgba(16, 185, 129, 0.08); font-weight: 700;">
                                 <td><strong>TOTAL AGREGAT</strong></td>
                                 <td class="mono" style="color: var(--accent-emerald);">+$72.52 Net Realized</td>
                                 <td class="mono" style="color: var(--accent-emerald); font-size: 1.05rem;">+2.85 R (+$171.00)</td>
-                                <td>📈 <strong>Profit Bersih Meningkat +135%</strong> dengan Zero Blind Spot.</td>
+                                <td><strong>Profit Bersih Meningkat +135%</strong> dengan Zero Blind Spot.</td>
                             </tr>
                         </tbody>
                     </table>

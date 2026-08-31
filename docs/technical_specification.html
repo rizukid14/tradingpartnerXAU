@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
@@ -67,7 +68,8 @@
             --font-display: 'Plus Jakarta Sans', var(--font-sans);
             --font-mono: 'JetBrains Mono', monospace;
             
-            --sidebar-width: 280px;
+            --sidebar-width-expanded: 280px;
+            --sidebar-width-collapsed: 64px;
             --radius-sm: 6px;
             --radius-md: 10px;
             --radius-lg: 14px;
@@ -89,6 +91,17 @@
             min-height: 100vh;
         }
 
+        /* Material Symbols Global Config */
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+            font-size: 18px;
+            vertical-align: middle;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
         #progress-bar {
             position: fixed;
             top: 0;
@@ -100,9 +113,9 @@
             transition: width 0.1s ease-out;
         }
 
-        /* ── SIDEBAR NAVIGATION ── */
+        /* ── COLLAPSIBLE SIDEBAR NAVIGATION ── */
         .sidebar {
-            width: var(--sidebar-width);
+            width: var(--sidebar-width-expanded);
             background-color: var(--bg-surface);
             border-right: 1px solid var(--border-light);
             position: fixed;
@@ -110,23 +123,55 @@
             bottom: 0;
             left: 0;
             overflow-y: auto;
-            padding: 24px 16px;
+            overflow-x: hidden;
+            padding: 20px 14px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 14px;
             z-index: 100;
+            transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
+        }
+
+        body.sidebar-collapsed .sidebar {
+            width: var(--sidebar-width-collapsed);
+            padding: 20px 8px;
+        }
+
+        body.sidebar-collapsed .brand-text,
+        body.sidebar-collapsed .search-box,
+        body.sidebar-collapsed .nav-label,
+        body.sidebar-collapsed .nav-text {
+            display: none;
+        }
+
+        body.sidebar-collapsed .brand {
+            justify-content: center;
+            padding: 0 0 12px 0;
+        }
+
+        body.sidebar-collapsed .nav-link {
+            justify-content: center;
+            padding: 10px 0;
         }
 
         .brand {
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 0 8px 12px 8px;
+            justify-content: space-between;
+            padding: 0 4px 12px 4px;
             border-bottom: 1px solid var(--border-light);
+            min-height: 48px;
+        }
+        .brand-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            overflow: hidden;
+            text-decoration: none;
         }
         .brand-icon {
-            width: 36px;
-            height: 36px;
+            width: 34px;
+            height: 34px;
             background: linear-gradient(135deg, var(--primary), var(--cyan));
             color: #fff;
             border-radius: var(--radius-md);
@@ -134,29 +179,52 @@
             align-items: center;
             justify-content: center;
             font-weight: 800;
-            font-size: 18px;
+            font-size: 16px;
             font-family: var(--font-display);
+            flex-shrink: 0;
         }
         .brand-text h1 {
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 700;
             font-family: var(--font-display);
             color: var(--text-primary);
             letter-spacing: -0.02em;
+            white-space: nowrap;
         }
         .brand-text span {
-            font-size: 11px;
+            font-size: 10.5px;
             color: var(--text-muted);
             font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .toggle-btn {
+            background: transparent;
+            border: 1px solid var(--border-light);
+            color: var(--text-secondary);
+            width: 28px;
+            height: 28px;
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }
+        .toggle-btn:hover {
+            color: var(--primary);
+            border-color: var(--primary-border);
+            background: var(--primary-dim);
         }
 
         .search-box {
             position: relative;
-            margin: 4px 0;
+            margin: 2px 0;
         }
         .search-input {
             width: 100%;
-            padding: 8px 12px 8px 32px;
+            padding: 7px 10px 7px 32px;
             font-size: 12px;
             border: 1px solid var(--border-light);
             border-radius: var(--radius-sm);
@@ -171,25 +239,26 @@
         }
         .search-icon {
             position: absolute;
-            left: 10px;
+            left: 9px;
             top: 50%;
             transform: translateY(-50%);
-            font-size: 12px;
             color: var(--text-muted);
+            pointer-events: none;
         }
 
         .nav-group {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 3px;
         }
         .nav-label {
-            font-size: 10.5px;
+            font-size: 10px;
             text-transform: uppercase;
             font-weight: 700;
             color: var(--text-muted);
-            letter-spacing: 0.05em;
+            letter-spacing: 0.06em;
             padding: 8px 8px 4px 8px;
+            white-space: nowrap;
         }
         .nav-link {
             display: flex;
@@ -202,6 +271,7 @@
             font-weight: 500;
             border-radius: var(--radius-sm);
             transition: all 0.15s ease;
+            white-space: nowrap;
         }
         .nav-link:hover {
             background-color: var(--bg-surface-elevated);
@@ -212,19 +282,33 @@
             color: var(--primary);
             font-weight: 600;
         }
-        .nav-num {
-            font-family: var(--font-mono);
-            font-size: 11px;
+        .nav-link .material-symbols-outlined {
+            font-size: 18px;
             color: var(--text-muted);
-            min-width: 18px;
+            transition: color 0.15s ease;
+            flex-shrink: 0;
+        }
+        .nav-link:hover .material-symbols-outlined,
+        .nav-link.active .material-symbols-outlined {
+            color: var(--primary);
+        }
+        .nav-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         /* ── MAIN CONTENT WRAPPER ── */
         .main-wrapper {
-            margin-left: var(--sidebar-width);
+            margin-left: var(--sidebar-width-expanded);
             flex: 1;
-            padding: 40px 48px 80px 48px;
-            max-width: 1180px;
+            padding: 36px 44px 140px 44px;
+            max-width: 1200px;
+            transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.25s ease;
+        }
+
+        body.sidebar-collapsed .main-wrapper {
+            margin-left: var(--sidebar-width-collapsed);
+            max-width: 1400px;
         }
 
         .spec-hero {
@@ -433,43 +517,50 @@
     <div id="progress-bar"></div>
 
     <!-- ── SIDEBAR NAVIGATION ── -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
         <div class="brand">
-            <div class="brand-icon">Q</div>
-            <div class="brand-text">
-                <h1>Quant Funnel V2</h1>
-                <span>Master Technical Spec</span>
-            </div>
+            <a href="#glossary" class="brand-left">
+                <div class="brand-icon">
+                    <span class="material-symbols-outlined" style="color: #fff; font-size: 20px;">terminal</span>
+                </div>
+                <div class="brand-text">
+                    <h1>Quant Funnel V2</h1>
+                    <span>Master Technical Spec</span>
+                </div>
+            </a>
+            <button class="toggle-btn" id="sidebar-toggle" title="Toggle Sidebar (Tekan [)">
+                <span class="material-symbols-outlined" id="toggle-icon">left_panel_close</span>
+            </button>
         </div>
 
         <div class="search-box">
-            <span class="search-icon">🔍</span>
+            <span class="material-symbols-outlined search-icon">search</span>
             <input type="text" class="search-input" id="search-nav" placeholder="Filter bab & subjek...">
         </div>
 
         <nav class="nav-group" id="nav-list">
             <div class="nav-label">Part I • Fondasi & Eksekusi</div>
-            <a href="#glossary" class="nav-link"><span class="nav-num">📚</span> Master Glossary</a>
-            <a href="#bab-1" class="nav-link active"><span class="nav-num">01</span> Executive Architecture</a>
-            <a href="#bab-2" class="nav-link"><span class="nav-num">02</span> Fractal MTF & 26 FX Universe</a>
-            <a href="#bab-3" class="nav-link"><span class="nav-num">03</span> Stage 1 Radar (M1/M2/M3)</a>
-            <a href="#bab-4" class="nav-link"><span class="nav-num">04</span> 4D Symmetrical Wave State</a>
+            <a href="#glossary" class="nav-link" title="Master Glossary"><span class="material-symbols-outlined">menu_book</span> <span class="nav-text">Master Glossary</span></a>
+            <a href="#bab-1" class="nav-link active" title="01 Executive Architecture"><span class="material-symbols-outlined">account_tree</span> <span class="nav-text">01 Executive Architecture</span></a>
+            <a href="#bab-2" class="nav-link" title="02 Fractal MTF & 26 FX Universe"><span class="material-symbols-outlined">public</span> <span class="nav-text">02 Fractal MTF & 26 FX</span></a>
+            <a href="#bab-3" class="nav-link" title="03 Stage 1 Radar (M1/M2/M3)"><span class="material-symbols-outlined">radar</span> <span class="nav-text">03 Stage 1 Radar</span></a>
+            <a href="#bab-4" class="nav-link" title="04 4D Symmetrical Wave State"><span class="material-symbols-outlined">waves</span> <span class="nav-text">04 4D Wave State</span></a>
 
             <div class="nav-label" style="margin-top: 8px;">Part II • Sensor Arus & Struktur</div>
-            <a href="#bab-5" class="nav-link"><span class="nav-num">05</span> Boitoki 8-Currency CSM</a>
-            <a href="#bab-6" class="nav-link"><span class="nav-num">06</span> MSE 6-TF & Zonal SBR/RBS</a>
-            <a href="#bab-7" class="nav-link"><span class="nav-num">07</span> LuxAlgo SMC & FRVP Profile</a>
-            <a href="#bab-8" class="nav-link"><span class="nav-num">08</span> Apex Paragon FE (40% Weight)</a>
+            <a href="#bab-5" class="nav-link" title="05 Boitoki 8-Currency CSM"><span class="material-symbols-outlined">currency_exchange</span> <span class="nav-text">05 Boitoki CSM</span></a>
+            <a href="#bab-6" class="nav-link" title="06 MSE 6-TF & Zonal SBR/RBS"><span class="material-symbols-outlined">analytics</span> <span class="nav-text">06 MSE 6-TF & Zonal</span></a>
+            <a href="#bab-7" class="nav-link" title="07 LuxAlgo SMC & FRVP Profile"><span class="material-symbols-outlined">candlestick_chart</span> <span class="nav-text">07 LuxAlgo SMC & FRVP</span></a>
+            <a href="#bab-8" class="nav-link" title="08 Apex Paragon FE (40% Weight)"><span class="material-symbols-outlined">balance</span> <span class="nav-text">08 Apex Paragon FE</span></a>
 
             <div class="nav-label" style="margin-top: 8px;">Part III • Konsensus & Risiko</div>
-            <a href="#bab-9" class="nav-link"><span class="nav-num">09</span> Stage 2 Jury & 7 Master Veto</a>
-            <a href="#bab-10" class="nav-link"><span class="nav-num">10</span> Hybrid Confluence Targeting</a>
-            <a href="#bab-11" class="nav-link"><span class="nav-num">11</span> Risk Engine & 5-Layer Slots</a>
-            <a href="#bab-12" class="nav-link"><span class="nav-num">12</span> Dynamic Position Manager</a>
+            <a href="#bab-9" class="nav-link" title="09 Stage 2 Jury & 7 Master Veto"><span class="material-symbols-outlined">gavel</span> <span class="nav-text">09 Stage 2 Jury & Veto</span></a>
+            <a href="#bab-10" class="nav-link" title="10 Hybrid Confluence Targeting"><span class="material-symbols-outlined">adjust</span> <span class="nav-text">10 Confluence Targeting</span></a>
+            <a href="#bab-11" class="nav-link" title="11 Risk Engine & 5-Layer Slots"><span class="material-symbols-outlined">shield</span> <span class="nav-text">11 Risk Engine & Slots</span></a>
+            <a href="#bab-12" class="nav-link" title="12 Dynamic Position Manager"><span class="material-symbols-outlined">tune</span> <span class="nav-text">12 Position Manager</span></a>
 
             <div class="nav-label" style="margin-top: 8px;">Part IV • Operasional & Kontrol</div>
-            <a href="#bab-13" class="nav-link"><span class="nav-num">13</span> Telegram 2-Way Bot & HUD</a>
-            <a href="#bab-14" class="nav-link"><span class="nav-num">14</span> System Archiver & Ops</a>
+            <a href="#bab-13" class="nav-link" title="13 Telegram 2-Way Bot & HUD"><span class="material-symbols-outlined">smart_toy</span> <span class="nav-text">13 Telegram Bot & HUD</span></a>
+            <a href="#bab-14" class="nav-link" title="14 System Archiver & Ops"><span class="material-symbols-outlined">archive</span> <span class="nav-text">14 System Archiver & Ops</span></a>
         </nav>
     </aside>
 
@@ -513,155 +604,179 @@
         <!-- ══════════════════════════════════════════════════════════════ -->
         <section id="glossary" class="chapter">
             <div class="chapter-header">
-                <span class="chapter-num">📚</span>
+                <span class="chapter-num"><span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">menu_book</span></span>
                 <h2 class="chapter-title">Master Glossary & Glosarium Resmi Proyek</h2>
             </div>
             <p>Untuk mencegah kerancuan dan menjaga konsistensi di seluruh antarmuka (Terminal Bento HUD, Telegram Bot, Prompt LLM, dan Kode Sumber), berikut adalah glosarium istilah resmi komprehensif yang dikelompokkan ke dalam 5 pilar arsitektur:</p>
 
-            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 16px;">1. Arsitektur Sistem & Multi-LLM Consensus</h3>
+            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 15px; display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">account_tree</span>
+                1. Arsitektur Sistem & Multi-LLM Consensus
+            </h3>
             <div class="table-container" style="margin-bottom: 25px;">
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 22%;">Istilah Resmi</th>
-                            <th style="width: 28%;">Komponen & Kepanjangan</th>
+                            <th style="width: 24%;">Istilah Resmi</th>
+                            <th style="width: 26%;">Komponen & Kepanjangan</th>
                             <th style="width: 32%;">Definisi & Makna Teknis</th>
                             <th style="width: 18%;">Peran & Parameter</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>⚡ 2-Stage Quant Funnel</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">filter_alt</span> 2-Stage Quant Funnel</strong></td>
                             <td>Dua Tahap Penyaringan Kuantitatif</td>
                             <td>Arsitektur pemisahan antara pemindaian kuantitatif lokal 60s (Stage 1) dan audit AI berbayar (Stage 2).</td>
                             <td>Hemat ~85% API token (8-15 setup A+/hari)</td>
                         </tr>
                         <tr>
-                            <td><strong>👥 Pass 1 & Pass 2</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">group</span> Pass 1 & Pass 2</strong></td>
                             <td>2-Pass Sequential Cross-Examination</td>
                             <td>Protokol juri 3 AI: Pass 1 (o4-mini + Gemini Flash) analisis struktur; Pass 2 (DeepSeek CRO) audit Devil's Advocate + 24 bar M5.</td>
                             <td>Latensi \(\le 5.5\text{s}\); 0 halusinasi</td>
                         </tr>
                         <tr>
-                            <td><strong>⚖️ Strict Unanimous 3/3</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">gavel</span> Strict Unanimous 3/3</strong></td>
                             <td>Konsensus Bulat 100%</td>
                             <td>Aturan mutlak di mana 3 model aktif wajib sepakat searah (3/3 BUY atau 3/3 SELL).</td>
                             <td>Split Vote = <code>HOLD</code> (Zero Tolerance)</td>
                         </tr>
                         <tr>
-                            <td><strong>🚀 Split Boost (+25%)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">rocket_launch</span> Split Boost (+25%)</strong></td>
                             <td>Unanimous High-Confidence Split</td>
                             <td>Fitur pembagian 2 tiket posisi saat 3 AI sepakat bulat dengan keyakinan \(\ge 75\%\).</td>
                             <td>2 tiket @ \(0.625\times\) lot (Tiket 2 Trailing TP2)</td>
                         </tr>
                         <tr>
-                            <td><strong>🛑 Hard Risk Veto</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">block</span> Hard Risk Veto</strong></td>
                             <td>Hak Veto Mutlak CRO</td>
                             <td>11 bendera penolakan instan oleh DeepSeek CRO (<code>COUNTER_TREND_MOMENTUM</code>, <code>FALLING_KNIFE_WATERFALL</code>, dll.).</td>
                             <td>Batalkan eksekusi seketika</td>
                         </tr>
                         <tr>
-                            <td><strong>📝 CoT JSON Protocol</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--text-muted);">code</span> CoT JSON Protocol</strong></td>
                             <td>Chain-of-Thought JSON Protocol</td>
                             <td>Format respon JSON super-kompak: <code>trend &rarr; velocity &rarr; rr_valid &rarr; signal &rarr; confidence</code>.</td>
                             <td>Output ~35 token; respons &lt;5s</td>
+                        </tr>
+                        <tr>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">workspace_premium</span> Apex Paragon / Fund Rank</strong></td>
+                            <td>Institutional Macro Fundamental Engine (40% Weight)</td>
+                            <td>Perankingan kekuatan 8 mata uang global berbasis baseline bank sentral, peluruhan eksponensial kejutan ekonomi (half-life), dan live headline TradingView.</td>
+                            <td>Skor Komposit \([-1.0, +1.0]\)</td>
+                        </tr>
+                        <tr>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">crisis_alert</span> Top Convergent Pair</strong></td>
+                            <td>Pasangan Konvergensi Ekstrem</td>
+                            <td>Pasangan mata uang hasil pertemuan mata uang paling kuat vs paling lemah dengan divergensi delta fundamental tertinggi.</td>
+                            <td>e.g. USDNZD (\(\Delta +0.36\) &rarr; Grade S/A+)</td>
+                        </tr>
+                        <tr>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--amber);">verified</span> Setup Quality Grades</strong></td>
+                            <td>4-Tier Setup Quality System</td>
+                            <td>Sistem grading kualitas setup: <strong>Grade S</strong> (Super Confluence, TP \(3.0\times\text{ATR}\)), <strong>Grade A+</strong> (High Conviction), <strong>Grade A</strong> (Pure Technical), <strong>Grade B</strong> (Defensive \(0.5\times\) lot).</td>
+                            <td>Penentu sizing &amp; batas trailing</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
 
-            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 16px;">2. Finite State Machine (FSM) & Symmetrical 4D Market State (V3)</h3>
+            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 15px; display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">waves</span>
+                2. Finite State Machine (FSM) & Symmetrical 4D Market State (V3)
+            </h3>
             <div class="table-container" style="margin-bottom: 25px;">
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 22%;">Istilah Resmi</th>
-                            <th style="width: 28%;">Komponen & Kepanjangan</th>
+                            <th style="width: 24%;">Istilah Resmi</th>
+                            <th style="width: 26%;">Komponen & Kepanjangan</th>
                             <th style="width: 32%;">Definisi & Makna Teknis</th>
                             <th style="width: 18%;">Kondisi & Pemicu</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>⚙️ FSM</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">settings</span> FSM</strong></td>
                             <td><strong>Finite State Machine</strong></td>
                             <td>Model matematika transisi status terbatas yang mengontrol siklus hidup pasar secara deterministik.</td>
                             <td><code>BUY LOCKED != SELL ENABLED</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🧭 Direction FSM</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">explore</span> Direction FSM</strong></td>
                             <td>Identitas Tren Makro (D1+H4)</td>
                             <td>Penentu arah tren utama menggunakan filter EMA dan histeresis 2-bar untuk mencegah <em>false flip</em>.</td>
                             <td><code>BULL</code>, <code>BEAR</code>, <code>NEUTRAL</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🔄 Phase FSM</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">sync</span> Phase FSM</strong></td>
                             <td>Fase Gelombang Retracement (H1)</td>
                             <td>Klasifikasi posisi harga dalam gelombang tren: <code>EXPANSION</code>, <code>EARLY_CORRECTION</code>, <code>MATURE_CORRECTION</code>, <code>RECLAIM</code>.</td>
                             <td>Jarak ke EMA20 &amp; Dealing Range</td>
                         </tr>
                         <tr>
-                            <td><strong>🟢 EXPANSION_WAIT_BULL</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">trending_up</span> EXPANSION_WAIT_BULL</strong></td>
                             <td>Bullish Expansion (FSM: WAIT)</td>
                             <td>Harga bergerak ekspansif ke atas (\(DR \ge 65\%\), jarak EMA20 &gt; \(0.90\times\text{ATR}\)). Dilarang FOMO buy di pucuk.</td>
-                            <td><code>Permission: WAIT ⏳</code></td>
+                            <td><code>Permission: WAIT</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🔴 EXPANSION_WAIT_BEAR</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">trending_down</span> EXPANSION_WAIT_BEAR</strong></td>
                             <td>Bearish Expansion (FSM: WAIT)</td>
                             <td>Harga bergerak ekspansif ke bawah (\(DR \le 35\%\), jarak EMA20 &lt; \(-0.90\times\text{ATR}\)). Dilarang FOMO sell di dasar.</td>
-                            <td><code>Permission: WAIT ⏳</code></td>
+                            <td><code>Permission: WAIT</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🔪 WATERFALL_LOCK</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">lock</span> WATERFALL_LOCK</strong></td>
                             <td>Type A Waterfall (FSM: LOCK)</td>
                             <td>Koreksi agresif lilin merah beruntun tanpa sumbu bawah saat tren Bull. Blokade keras anti-pisau jatuh.</td>
-                            <td><code>Permission: LOCK 🔒</code></td>
+                            <td><code>Permission: LOCK</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🚀 VERTICAL_SPIKE_LOCK</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">lock</span> VERTICAL_SPIKE_LOCK</strong></td>
                             <td>Type A Spike (FSM: LOCK)</td>
                             <td>Koreksi agresif lilin hijau vertikal tanpa sumbu atas saat tren Bear. Blokade keras anti-short squeeze.</td>
-                            <td><code>Permission: LOCK 🔒</code></td>
+                            <td><code>Permission: LOCK</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🎯 DISCOUNT_RELOAD_ARMED</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">track_changes</span> DISCOUNT_RELOAD_ARMED</strong></td>
                             <td>Type B Coil Bullish (FSM: ARM)</td>
                             <td>Kompresi sehat di area diskon (\(DR \le 50\%\) / RBS) dengan CSM selaras. Siaga pasang buy limit retest.</td>
-                            <td><code>Permission: ARMED 🎯</code></td>
+                            <td><code>Permission: ARMED</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🎯 PREMIUM_RELOAD_ARMED</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">track_changes</span> PREMIUM_RELOAD_ARMED</strong></td>
                             <td>Type B Coil Bearish (FSM: ARM)</td>
                             <td>Kompresi sehat di area premium (\(DR \ge 50\%\) / SBR) dengan CSM selaras. Siaga pasang sell limit retest.</td>
-                            <td><code>Permission: ARMED 🎯</code></td>
+                            <td><code>Permission: ARMED</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🟢 DEMAND_REACTION_GO</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">play_circle</span> DEMAND_REACTION_GO</strong></td>
                             <td>Demand Reclaim (FSM: GO)</td>
-                            <td>Reclaim terkonfirmasi di lantai demand (sumbu bawah \(\ge 20\%\) atau close menembus EMA20). Izin eksekusi BUY 100%.</td>
-                            <td><code>Permission: GO 🟢</code></td>
+                            <td>Reclaim terkonfirmasi di lantai demand (sumbu bawah \(\ge 20\%\) atau close menembus EMA20). Izin eksekusi BUY aktif.</td>
+                            <td><code>Permission: GO</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🔴 SUPPLY_REACTION_GO</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">play_circle</span> SUPPLY_REACTION_GO</strong></td>
                             <td>Supply Reclaim (FSM: GO)</td>
-                            <td>Reclaim terkonfirmasi di atap supply (sumbu atas \(\ge 20\%\) atau close menembus EMA20). Izin eksekusi SELL 100%.</td>
-                            <td><code>Permission: GO 🟢</code></td>
+                            <td>Reclaim terkonfirmasi di atap supply (sumbu atas \(\ge 20\%\) atau close menembus EMA20). Izin eksekusi SELL aktif.</td>
+                            <td><code>Permission: GO</code></td>
                         </tr>
                         <tr>
-                            <td><strong>👁️ WATCH</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--amber);">visibility</span> WATCH</strong></td>
                             <td><strong>CSM Flow Watch</strong> (FSM)</td>
                             <td>Status siaga saat chart struktural sudah diskon/premium, namun aliran mata uang (<em>Boitoki CSM</em>) masih berlawanan arah.</td>
-                            <td><code>Permission: WATCH 👁️</code></td>
+                            <td><code>Permission: WATCH</code></td>
                         </tr>
                         <tr>
-                            <td><strong>💥 Displacement</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">bolt</span> Displacement</strong></td>
                             <td>Lilin Impulsif Institusi</td>
                             <td>Lilin bervolume besar dengan rasio badan (<em>body ratio</em>) \(\ge 50\% - 55\%\) yang menembus struktur.</td>
                             <td>Transisi <code>ARM</code> &rarr; <code>GO</code></td>
                         </tr>
                         <tr>
-                            <td><strong>📏 Dealing Range (DR)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">straighten</span> Dealing Range (DR)</strong></td>
                             <td>Rentang Lelang Aktif (0% - 100%)</td>
                             <td>Pemetaan posisi harga relatif terhadap titik terendah (0% / Discount) dan tertinggi (100% / Premium).</td>
                             <td>Diskon: \(DR \le 38.2\%\) (Golden Pocket)</td>
@@ -670,62 +785,65 @@
                 </table>
             </div>
 
-            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 16px;">3. Smart Money Concepts (SMC) & Volume Profile (FRVP)</h3>
+            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 15px; display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">candlestick_chart</span>
+                3. Smart Money Concepts (SMC) & Volume Profile (FRVP)
+            </h3>
             <div class="table-container" style="margin-bottom: 25px;">
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 22%;">Istilah Resmi</th>
-                            <th style="width: 28%;">Komponen & Kepanjangan</th>
+                            <th style="width: 24%;">Istilah Resmi</th>
+                            <th style="width: 26%;">Komponen & Kepanjangan</th>
                             <th style="width: 32%;">Definisi & Makna Teknis</th>
                             <th style="width: 18%;">Peran Penempatan Order</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>🏛️ SMC</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">account_balance</span> SMC</strong></td>
                             <td><strong>Smart Money Concepts</strong></td>
                             <td>Metodologi analisis jejak likuiditas institusional (LuxAlgo Pine v5 Porting).</td>
                             <td>Fondasi penentuan Value Area</td>
                         </tr>
                         <tr>
-                            <td><strong>🧱 OB (Order Block)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--text-secondary);">layers</span> OB (Order Block)</strong></td>
                             <td>Blok Pesanan Institusi</td>
                             <td>Lilin berlawanan terakhir sebelum pergerakan impulsif besar yang belum termitigasi (<em>Unmitigated OB</em>).</td>
                             <td>Jangkar penempatan SL fisik teraman</td>
                         </tr>
                         <tr>
-                            <td><strong>🕳️ FVG</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">space_dashboard</span> FVG</strong></td>
                             <td><strong>Fair Value Gap</strong> / Imbalance</td>
                             <td>Celah ketidakseimbangan harga antara 3 lilin beruntun yang menjadi area magnet harga.</td>
                             <td>Target Take Profit alami (TP1 / TP2)</td>
                         </tr>
                         <tr>
-                            <td><strong>⚡ BOS &amp; CHoCH</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">conversion_path</span> BOS &amp; CHoCH</strong></td>
                             <td>Break of Structure &amp; Change of Character</td>
                             <td>Penembusan level swing terluar searah tren (<strong>BOS</strong>) atau pembalikan struktur awal (<strong>CHoCH</strong>).</td>
                             <td>Konfirmasi pergeseran tren</td>
                         </tr>
                         <tr>
-                            <td><strong>🎯 EQH / EQL</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--amber);">hub</span> EQH / EQL</strong></td>
                             <td>Equal Highs / Equal Lows</td>
                             <td>Puncak atau lembah kembar tempat berkumpulnya kolam likuiditas stop-loss trader ritel.</td>
                             <td>Target sapuan <em>Judas Sweep</em></td>
                         </tr>
                         <tr>
-                            <td><strong>📊 FRVP</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">bar_chart</span> FRVP</strong></td>
                             <td><strong>Fixed Range Volume Profile</strong></td>
                             <td>Profil distribusi volume transaksi pada rentang harga tertentu untuk menemukan konsentrasi transaksi institusi.</td>
                             <td>Pangkas 59.2% sinyal palsu</td>
                         </tr>
                         <tr>
-                            <td><strong>🔴 POC</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">adjust</span> POC</strong></td>
                             <td><strong>Point of Control</strong> (FRVP)</td>
                             <td>Level harga tunggal dengan volume transaksi terpadat pada rentang yang dianalisis.</td>
                             <td>Lantai/atap pantulan terkuat</td>
                         </tr>
                         <tr>
-                            <td><strong>📐 VAH / VAL</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">height</span> VAH / VAL</strong></td>
                             <td>Value Area High / Low (70% Volume)</td>
                             <td>Batas atas (VAH) dan bawah (VAL) yang mencakup 70% total volume lelang institusi.</td>
                             <td>Batas area Mean-Reversion</td>
@@ -734,68 +852,71 @@
                 </table>
             </div>
 
-            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 16px;">4. Macro Strategic Engine (MSE) & Station DNA</h3>
+            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 15px; display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">analytics</span>
+                4. Macro Strategic Engine (MSE) & Station DNA
+            </h3>
             <div class="table-container" style="margin-bottom: 25px;">
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 22%;">Istilah Resmi</th>
-                            <th style="width: 28%;">Komponen & Kepanjangan</th>
+                            <th style="width: 24%;">Istilah Resmi</th>
+                            <th style="width: 26%;">Komponen & Kepanjangan</th>
                             <th style="width: 32%;">Definisi & Makna Teknis</th>
                             <th style="width: 18%;">Contoh Format / Nilai</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>🧠 MSE</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">analytics</span> MSE</strong></td>
                             <td><strong>Macro Strategic Engine</strong></td>
                             <td>Engine kuantitatif 6 timeframe native MT5 (<code>MN1</code>, <code>W1</code>, <code>D1</code>, <code>H4</code>, <code>H1</code>, <code>M30</code>) untuk mandat harian (0 token, &lt;50ms).</td>
                             <td>Peta jalan 6-TF &amp; Zonal Bands</td>
                         </tr>
                         <tr>
-                            <td><strong>📍 Reload Zone</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">pin_drop</span> Reload Zone</strong></td>
                             <td>Delivery Anchor / Institutional Anchor</td>
                             <td>Area lelang harga diskon/pullback di mana institusi mengisi ulang posisi (<em>reload</em>) sebelum ekspansi lanjutan.</td>
                             <td><code>Reload Zone: 1.08400</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🧱 SBR</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">horizontal_rule</span> SBR</strong></td>
                             <td><strong>Support-Become-Resistance</strong></td>
                             <td>Bekas lantai support yang telah ditembus ke bawah dan kini beralih fungsi menjadi atap plafon lelang SELL.</td>
                             <td><code>D1 SBR: 1.35500</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🏗️ RBS</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">horizontal_rule</span> RBS</strong></td>
                             <td><strong>Resistance-Become-Support</strong></td>
                             <td>Bekas atap resistance yang telah ditembus ke atas dan kini beralih fungsi menjadi lantai lelang BUY.</td>
                             <td><code>H4 RBS: 1.34800</code></td>
                         </tr>
                         <tr>
-                            <td><strong>📉 DBD &amp; RBR</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">waterfall_chart</span> DBD &amp; RBR</strong></td>
                             <td>Drop-Base-Drop &amp; Rally-Base-Rally</td>
                             <td>Pola kelanjutan suplai/permintaan institusional di mana harga rehat sejenak sebelum melanjutkan tren.</td>
                             <td>Anchor entri pullback</td>
                         </tr>
                         <tr>
-                            <td><strong>🧭 Dynamic Stations</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">alt_route</span> Dynamic Stations</strong></td>
                             <td>Halte Harga Bulat (Atlas DNA)</td>
                             <td>Garis halte harga psikologis alami berbasis DNA volatilitas historis 16.2 tahun MetaQuotes (step 100/50/25 pips).</td>
                             <td><code>Floor [1.3450] &lt;-&gt; Ceil [1.3500]</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🎛️ 5-Tier Action Matrix</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--text-secondary);">tune</span> 5-Tier Action Matrix</strong></td>
                             <td>Matriks Aksi Operasional 5 Tingkat</td>
                             <td>Klasifikasi izin risiko dari MSE: <code>FULL_ALLOW</code>, <code>REDUCED_CONFIDENCE</code>, <code>TP1_ONLY_SCALP</code>, <code>WATCH_ONLY</code>, <code>HARD_BLOCK</code>.</td>
                             <td><code>Tier: FULL_ALLOW</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🌐 Boitoki CSM</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">currency_exchange</span> Boitoki CSM</strong></td>
                             <td><strong>Currency Strength Matrix</strong></td>
                             <td>Perhitungan kekuatan relatif 8 mata uang utama berbasis log return 7 USD Majors secara real-time.</td>
                             <td><code>CSM: USD &gt; JPY &gt; EUR (Delta +2.44)</code></td>
                         </tr>
                         <tr>
-                            <td><strong>🛑 Systemic Basket Lock</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">lock_reset</span> Systemic Basket Lock</strong></td>
                             <td>Pemutus Sirkuit Mata Uang Global</td>
                             <td>Proteksi sistemik jika salah satu mata uang mengalami lonjakan (<em>surge</em>) atau pembuangan (<em>dump</em>) \(\ge \pm 20.0\).</td>
                             <td>Cegah trade lawan arus likuiditas</td>
@@ -804,95 +925,116 @@
                 </table>
             </div>
 
-            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 16px;">5. Trio Mekanisme Radar, Eksekusi & Manajemen Risiko</h3>
+            <h3 style="margin: 20px 0 10px 0; color: var(--primary); font-size: 15px; display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">shield</span>
+                5. Trio Mekanisme Radar, Eksekusi & Manajemen Risiko
+            </h3>
             <div class="table-container" style="margin-bottom: 25px;">
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 22%;">Istilah Resmi</th>
-                            <th style="width: 28%;">Komponen & Kepanjangan</th>
+                            <th style="width: 24%;">Istilah Resmi</th>
+                            <th style="width: 26%;">Komponen & Kepanjangan</th>
                             <th style="width: 32%;">Definisi & Makna Teknis</th>
                             <th style="width: 18%;">Parameter & Batas</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>🗡️ M1 (Judas Sweep)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">flare</span> M1 (Judas Sweep)</strong></td>
                             <td>London Judas Swing Failure Pattern</td>
                             <td>Mekanisme perangkap likuiditas dengan memanfaatkan manipulasi false-breakout di Asian H/L atau PDH/PDL.</td>
                             <td>Sweep \(\ge 0.15\times\text{ATR}\) + Wick \(\ge 35\%\)</td>
                         </tr>
                         <tr>
-                            <td><strong>🎣 M2 (Pullback Retest)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">replay</span> M2 (Pullback Retest)</strong></td>
                             <td>Trend-Aligned Pullback Limit</td>
                             <td>Mekanisme entri berdiskon searah tren makro dengan memasang <em>Delayed Limit Order</em> saat retest ke EMA20.</td>
                             <td>Limit di \(\text{Mid} \mp (0.20\times\text{ATR})\) di \(DR \le 0.50\)</td>
                         </tr>
                         <tr>
-                            <td><strong>🏰 M3 (Cluster Breakout)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">domain</span> M3 (HTF Wall &amp; Cluster Retest)</strong></td>
                             <td>Multi-Touch Cluster Breakout &amp; Delayed Retest</td>
                             <td>Mekanisme kelanjutan tren setelah cluster support/resistance disentuh \(\ge 2\times\) dan ditembus dengan lilin momentum (\(\ge 55\%\) body), lalu pasang delayed limit retest.</td>
                             <td>Limit Retest di broken level (\(c_{res}/c_{sup}\))</td>
                         </tr>
                         <tr>
-                            <td><strong>🛡️ Baseline Floor SL</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">shield</span> Baseline Floor SL</strong></td>
                             <td>Intraday SL (Anti-Hunt)</td>
                             <td>Level Stop Loss fisik berbasis struktur support/resistance terdekat + buffer anti-wick + safety floor ATR.</td>
                             <td>\(\text{Anchor} \mp (0.35\times\text{ATR} + \text{Spread})\)</td>
                         </tr>
                         <tr>
-                            <td><strong>🎁 TP1 (Partial Close)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">check_circle</span> TP1 (Partial Close)</strong></td>
                             <td>Take Profit 1 (50% Cair)</td>
                             <td>Target profit stasiun pertama di mana bot mencairkan 50% lot dan menggeser sisa posisi ke Risk-Free BEP.</td>
                             <td>Aktif di 45%–55% target TP</td>
                         </tr>
                         <tr>
-                            <td><strong>🏆 TP2 (Extended Runner)</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">emoji_events</span> TP2 (Extended Runner)</strong></td>
                             <td>Take Profit 2 (Macro Target)</td>
                             <td>Target profit koridor makro lanjutan yang dikawal dengan 2-Stage Dynamic Trailing Stop.</td>
                             <td>Stasiun seberang / 50% Eq</td>
                         </tr>
                         <tr>
-                            <td><strong>🔒 BEP + Pocket Profit</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">lock</span> BEP + Pocket Profit</strong></td>
                             <td>Break-Even Point + Pocket Profit</td>
                             <td>Penggeseran SL ke titik impas + padding komisi round-trip broker + <strong>Pocket Profit 15 pts (1.5 pips)</strong>.</td>
                             <td>Kunci profit saat BEP tercapai</td>
                         </tr>
                         <tr>
-                            <td><strong>📈 2-Stage Trailing Stop</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">trending_up</span> 2-Stage Trailing Stop</strong></td>
                             <td>Trailing Stop Dinamis 2 Tahap</td>
                             <td>Pengawalan profit: <strong>Stage 1 (Breathing)</strong> di 65%–90% TP (\(0.75\times\text{ATR H1}\), floor 80 pts); <strong>Stage 2 (Terminal Lock)</strong> di \(\ge 90\%\) TP (\(0.50\times\text{ATR M30}\), floor 30 pts).</td>
                             <td>Kunci runner bebas wick noise</td>
                         </tr>
                         <tr>
-                            <td><strong>⏱️ Time-Decay Stagnation</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--amber);">timer</span> Time-Decay Stagnation</strong></td>
                             <td>Peak-Aware Stagnation Exit</td>
                             <td>Penutupan paksa posisi yang stagnan \(\ge 4\text{ jam}\) di rentang \([-0.20R, +0.20R]\) jika <em>Peak MFE</em> &lt; \(+0.30R\).</td>
                             <td>Cegah modal terikat pasar mati</td>
                         </tr>
                         <tr>
-                            <td><strong>🛡️ Pre-Rollover Shield</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">security</span> Pre-Rollover Shield</strong></td>
                             <td>Perisai Rollover MT5 (03:50 WIB)</td>
                             <td>Penutupan posisi secara selektif tepat jam 03:50 WIB jika jarak fisik ke SL \(\le\) ambang bahaya.</td>
                             <td>Proteksi spread spike 04:00 WIB</td>
                         </tr>
                         <tr>
-                            <td><strong>⛔ Dead Zone</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">do_not_disturb_on</span> Dead Zone</strong></td>
                             <td>Jendela Dilarang Trade</td>
                             <td>Periode pukul <strong>00:00 – 08:00 WIB</strong> di mana seluruh eksekusi baru dibekukan mutlak.</td>
                             <td>Spread rollover &amp; likuiditas tipis</td>
                         </tr>
                         <tr>
-                            <td><strong>🌪️ The Storm</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--rose);">thunderstorm</span> The Storm</strong></td>
                             <td>Jendela Badai Berita High-Impact</td>
                             <td>Jendela waktu \([-15\text{m}, +30\text{m}]\) di sekitar rilis berita ekonomi Tier-1 bintang 3.</td>
                             <td>Pembekuan eksekusi mutlak</td>
                         </tr>
                         <tr>
-                            <td><strong>📊 MFE &amp; MAE</strong></td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--cyan);">ssid_chart</span> MFE &amp; MAE</strong></td>
                             <td>Max Favorable / Adverse Excursion</td>
                             <td>Metrik kuantitatif pengukur jarak profit terjauh (<strong>MFE</strong>) dan floating minus terdalam (<strong>MAE</strong>) saat posisi aktif.</td>
                             <td>Audit efisiensi SL/TP &amp; trailing</td>
+                        </tr>
+                        <tr>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">timelapse</span> Reaction Phase Regimes</strong></td>
+                            <td>4-Fase Transisi Reaksi Berita Makro</td>
+                            <td>Pembagian bobot reaksi berita ekonomi: <strong>The Storm</strong> (\([-15\text{m}, +30\text{m}]\), 100% News Gate), <strong>The Calm</strong> (\([30\text{m}, 6\text{h}]\), 60% Econ / 40% Headline), <strong>Regime Extension</strong> (\([6\text{h}, 72\text{h}]\), 40% Econ / 60% Headline), dan <strong>Priced-In Equilibrium</strong> (\(&gt;72\text{h}\), 20% Econ / 80% Baseline).</td>
+                            <td>Pemisahan bobot dinamis per jam</td>
+                        </tr>
+                        <tr>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--emerald);">view_quilt</span> 5-Layer Slot Allocation</strong></td>
+                            <td>Risk-Weighted Portfolio Allocation</td>
+                            <td>5 aturan pembatas risiko akun: (1) Kuota At-Risk \(\le 6\) posisi, (2) Free Runner bebas kuota, (3) Plafon MT5 \(\le 8\) tiket, (4) Free Margin \(\ge 60\%\), (5) Maksimal 3 posisi per cluster mata uang.</td>
+                            <td>Proteksi modal multi-lapisan</td>
+                        </tr>
+                        <tr>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">dashboard</span> Cyberpunk Bento HUD</strong></td>
+                            <td>Dual-Horizon Real-Time Terminal UI</td>
+                            <td>Antarmuka terminal modular berlatar hitam ANSI dengan auto re-render seketika saat terjadi transisi state permission (<code>ARM / GO / LOCK</code>).</td>
+                            <td>Monitoring latensi &lt;50ms (0 token)</td>
                         </tr>
                     </tbody>
                 </table>
@@ -912,7 +1054,7 @@
             </p>
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title">⚡ Stage 1: Fast Execution Radar (0 Token API)</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">bolt</span> Stage 1: Fast Execution Radar (0 Token API)</div>
                     <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
                         Berjalan lokal di Python setiap 60 detik memindai seluruh <strong>26 Simbol Forex</strong> secara paralel.
                     </p>
@@ -923,12 +1065,12 @@
                     </ul>
                 </div>
                 <div class="card">
-                    <div class="card-title">🧠 Stage 2: 3-LLM Consensus Jury (~5.5 detik)</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--purple);">psychology</span> Stage 2: 3-LLM Consensus Jury (~5.5 detik)</div>
                     <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
                         Hanya dipicu saat ada <strong>8–15 setup A+ per hari</strong> yang lolos dari Stage 1.
                     </p>
                     <ul style="font-size: 12px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
-                        <li><strong>Pass 1 Paralel</strong>: OpenAI o4-mini (Struktur) + Gemini 3.1-Flash-Lite (Price Action).</li>
+                        <li><strong>Pass 1 Paralel</strong>: OpenAI o4-mini (Struktur) + Gemini 3.1-Flash (Specialist / Price Action).</li>
                         <li><strong>Pass 2 Devil's CRO</strong>: DeepSeek V4-Flash mengaudit dengan mikroskop 24 Candle M5.</li>
                         <li><strong>Unanimous 3/3 Rule</strong>: Wajib kesepakatan bulat 3 model untuk eksekusi.</li>
                     </ul>
@@ -963,31 +1105,31 @@
                             <td><strong>USD Majors (7)</strong></td>
                             <td>EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY</td>
                             <td>H1 (M30 USDJPY)</td>
-                            <td>Likuiditas tinggi, spread tipis (10–18 pts), SL floor \(0.68\times\text{ATR}\)</td>
+                            <td>Likuiditas tertinggi institusional, spread tipis (7–15 pts), SL floor \(0.68\times\text{ATR}\)</td>
                         </tr>
                         <tr>
-                            <td><strong>EUR Crosses (5)</strong></td>
-                            <td>EURGBP, EURAUD, EURCAD, EURCHF, EURJPY</td>
-                            <td>H1 (M30 EURJPY)</td>
-                            <td>Mean-reversion kuat di zona SBR/RBS, FRVP POC akurat</td>
+                            <td><strong>EUR Crosses (4)</strong></td>
+                            <td>EURGBP, EURAUD, EURCAD, EURCHF</td>
+                            <td>H1</td>
+                            <td>Mean-reversion kuat di zona SBR/RBS makro, FRVP POC/VAL/VAH akurat</td>
                         </tr>
                         <tr>
-                            <td><strong>GBP Crosses (4)</strong></td>
-                            <td>GBPAUD, GBPCAD, GBPCHF, GBPJPY</td>
-                            <td>H1 (M30 GBPJPY)</td>
-                            <td>Volatilitas tinggi, buffer anti-wick +15 pts</td>
+                            <td><strong>GBP Crosses (3)</strong></td>
+                            <td>GBPAUD, GBPCAD, GBPCHF</td>
+                            <td>H1</td>
+                            <td>Volatilitas impulsif tinggi, buffer anti-wick +15 pts</td>
                         </tr>
                         <tr>
-                            <td><strong>NZD Alpha (4)</strong></td>
-                            <td>EURNZD, GBPNZD, NZDCAD, NZDCHF, NZDJPY</td>
-                            <td>H1 (M30 NZDJPY)</td>
-                            <td>Kandidat swing runner Grade S (PF 1.34), buffer +20 pts</td>
+                            <td><strong>JPY Crosses (5)</strong></td>
+                            <td>EURJPY, GBPJPY, AUDJPY, CADJPY, CHFJPY</td>
+                            <td>M30</td>
+                            <td>Sensitifitas momentum carry trade, time-decay M30, SL floor \(1.00\times\text{ATR M30}\)</td>
                         </tr>
                         <tr>
-                            <td><strong>AUD & CAD Crosses (6)</strong></td>
-                            <td>AUDCAD, AUDCHF, AUDJPY, AUDNZD, CADCHF, CADJPY</td>
-                            <td>H1 (M30 Cross JPY)</td>
-                            <td>Sensitif komoditas & arus Boitoki CSM</td>
+                            <td><strong>AUD, CAD & NZD Crosses (7)</strong></td>
+                            <td>AUDCAD, AUDCHF, CADCHF, AUDNZD, NZDCAD, NZDCHF, GBPNZD, EURNZD</td>
+                            <td>H1</td>
+                            <td>Komoditas & NZD Alpha swing runners (PF 1.34), sensitif aliran Boitoki CSM, buffer +20 pts</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1043,8 +1185,8 @@
                     <thead>
                         <tr>
                             <th>Fase Siklus</th>
-                            <th>🟢 Siklus BUY (Lantai Diskon)</th>
-                            <th>🔴 Siklus SELL (Atap SBR)</th>
+                            <th><span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle; color: var(--emerald);">arrow_upward</span> Siklus BUY (Lantai Diskon)</th>
+                            <th><span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle; color: var(--rose);">arrow_downward</span> Siklus SELL (Atap SBR)</th>
                             <th>Tindakan Operasional Sistem</th>
                         </tr>
                     </thead>
@@ -1069,8 +1211,8 @@
                         </tr>
                         <tr>
                             <td><strong>4. Trigger</strong></td>
-                            <td><strong><code>DEMAND_REACTION_GO 🟢</code></strong></td>
-                            <td><strong><code>SUPPLY_REACTION_GO 🟢</code></strong></td>
+                            <td><strong><code>DEMAND_REACTION_GO</code></strong></td>
+                            <td><strong><code>SUPPLY_REACTION_GO</code></strong></td>
                             <td>Reaksi lilin tegas terkonfirmasi & CSM mendukung, <strong>GAS EKSEKUSI (GO)</strong>.</td>
                         </tr>
                     </tbody>
@@ -1091,13 +1233,13 @@
             </p>
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title">🌊 Dual-Horizon Basket Flow</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--cyan);">waves</span> Dual-Horizon Basket Flow</div>
                     <p style="font-size: 13px; color: var(--text-secondary);">
                         Menggabungkan bobot H1 (40%) dan M15 (60%) untuk menangkap pergeseran modal sebelum terlihat di grafik candlestick individu.
                     </p>
                 </div>
                 <div class="card">
-                    <div class="card-title">⚡ Systemic Basket Circuit Breaker</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--rose);">power_settings_new</span> Systemic Basket Circuit Breaker</div>
                     <p style="font-size: 13px; color: var(--text-secondary);">
                         Jika mata uang Base sedang dibuang massal di seluruh pair (Skor \(\le -20.0\)), sistem mengaktifkan <code>VETO: SYSTEMIC_CURRENCY_DUMP</code>.
                     </p>
@@ -1136,13 +1278,13 @@
             </p>
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title">💎 Unmitigated Order Blocks & FVGs</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">layers</span> Unmitigated Order Blocks & FVGs</div>
                     <p style="font-size: 13px; color: var(--text-secondary);">
                         SL selalu ditaruh dengan perlindungan fisik di belakang batas Distal Order Block / Strong Pivot.
                     </p>
                 </div>
                 <div class="card">
-                    <div class="card-title">📊 Institutional Point of Control (POC)</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--purple);">bar_chart</span> Institutional Point of Control (POC)</div>
                     <p style="font-size: 13px; color: var(--text-secondary);">
                         Mengukur konsentrasi volume transaksi terbesar untuk memastikan target TP1 dipasang sebelum dinding likuiditas masif.
                     </p>
@@ -1173,32 +1315,32 @@
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>Konvergen Sempurna</strong> (Teknikal + Fundamental Selaras)</td>
-                            <td><span class="badge badge-purple">👑 GRADE S (GOD-TIER)</span></td>
+                            <td><strong>Konvergen Kuat</strong> (Teknikal + Fundamental Selaras)</td>
+                            <td><span class="badge badge-purple">GRADE S (SUPER CONFLUENCE)</span></td>
                             <td>Full Size (\(1.0\times\))</td>
                             <td>TP \(3.0\times\text{ATR}\) (Multi-Day Hold, Imun Stagnasi 4 Jam)</td>
                         </tr>
                         <tr>
                             <td><strong>Angin Fundamental Mendukung</strong></td>
-                            <td><span class="badge badge-emerald">🟢 GRADE A+ (HIGH CONVICTION)</span></td>
+                            <td><span class="badge badge-emerald">GRADE A+ (HIGH CONVICTION)</span></td>
                             <td>Full Size (\(1.0\times\))</td>
                             <td>TP \(2.0\times\text{ATR}\) (Standar Intraday)</td>
                         </tr>
                         <tr>
                             <td><strong>Pasar Tenang / Priced-In</strong></td>
-                            <td><span class="badge badge-primary">🟡 GRADE A (PURE TECHNICAL)</span></td>
+                            <td><span class="badge badge-primary">GRADE A (PURE TECHNICAL)</span></td>
                             <td>Standard Size (\(1.0\times\))</td>
                             <td>TP \(1.5\times\text{ATR}\)</td>
                         </tr>
                         <tr>
                             <td><strong>Friksi Makro Ringan / Bank Holiday</strong></td>
-                            <td><span class="badge badge-cyan">⚪ GRADE B (DEFENSIVE)</span></td>
+                            <td><span class="badge badge-cyan">GRADE B (DEFENSIVE)</span></td>
                             <td>Reduced Size (\(0.50\times\))</td>
                             <td>TP \(1.25\times\text{ATR}\) (Scalp TP1 Only, BEP 35% TP)</td>
                         </tr>
                         <tr>
                             <td><strong>The Storm ([-15m, +30m]) / Severe Conflict</strong></td>
-                            <td><span class="badge badge-rose">🔴 REJECT_VETO (HARD BLOCK)</span></td>
+                            <td><span class="badge badge-rose">REJECT_VETO (HARD BLOCK)</span></td>
                             <td>Zero Size (\(0.0\times\))</td>
                             <td>Dibatalkan Mutlak (0 Token Risk)</td>
                         </tr>
@@ -1216,7 +1358,7 @@
                 <h2 class="chapter-title">Stage 2 Triple-LLM Jury & 7 Master Hard Risk Veto Flags</h2>
             </div>
             <p>
-                Sidang 3-LLM Consensus Jury (OpenAI o4-mini + Gemini 3.1-Flash-Lite + DeepSeek V4-Flash CRO) mematuhi 7 Master Hard Risk Veto Flags:
+                Sidang 3-LLM Consensus Jury (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4-Flash CRO) mematuhi 7 Master Hard Risk Veto Flags:
             </p>
             <div class="table-container">
                 <table>
@@ -1253,7 +1395,7 @@
             </p>
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title">🎯 Formula Front-Running Pad</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">straighten</span> Formula Front-Running Pad</div>
                     <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
                         Mencegah skenario tragis harga berbalik arah 3 pips sebelum menyentuh angka bulat:
                     </p>
@@ -1263,7 +1405,7 @@
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-title">🛡️ Plafon Keamanan SL Intraday</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--rose);">shield</span> Plafon Keamanan SL Intraday</div>
                     <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
                         <li><strong>FX Majors & Crosses</strong>: Floor \(\ge \max(2\times\text{spread}+15\text{ pts}, 0.68\times\text{ATR H1})\), Ceiling \(\le 16.0\text{ pips (160 pts)}\).</li>
                         <li><strong>JPY Crosses</strong>: Floor \(\ge 1.0\times\text{ATR M30}\), Ceiling \(\le 20.0\text{ pips (200 pts)}\).</li>
@@ -1343,15 +1485,15 @@
             </p>
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title">👑 Grade S (Swing Multi-Day Hold)</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--purple);">workspace_premium</span> Grade S (Swing Multi-Day Hold)</div>
                     <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
                         <li><strong>Break-Even</strong>: Ditunda ke 65%–70% TP (memberi nafas retest).</li>
                         <li><strong>Trailing Stop</strong>: Lebar \(1.25\times\text{ATR H1}\) (floor 12.0 pips).</li>
-                        <li><strong>Stagnasi Exit</strong>: **100% IMUN** dari cut off time-decay 4 jam.</li>
+                        <li><strong>Stagnasi Exit</strong>: Imun penuh dari cut off time-decay 4 jam.</li>
                     </ul>
                 </div>
                 <div class="card">
-                    <div class="card-title">⚪ Grade B (Defensive Scalp)</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--cyan);">shield</span> Grade B (Defensive Scalp)</div>
                     <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
                         <li><strong>Break-Even</strong>: Cepat di 35%–40% TP (kunci modal).</li>
                         <li><strong>Trailing Stop</strong>: Ketat \(0.40\times\text{ATR M30}\) (floor 3.0 pips).</li>
@@ -1360,7 +1502,7 @@
                 </div>
             </div>
             <div class="card" style="margin-top: 16px;">
-                <div class="card-title">🛡️ Pre-Rollover Shield (03:50–04:15 WIB / 00:00 Server)</div>
+                <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--rose);">security</span> Pre-Rollover Shield (03:50–04:15 WIB / 00:00 Server)</div>
                 <p style="font-size: 13px; color: var(--text-secondary);">
                     Menutup bersih posisi sebelum pergantian hari MT5 JIKA jarak fisik ke SL \(\le\) ambang pelebaran spread rollover per simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, USDJPY 150 pts). Posisi aman / profit tebal dibiarkan jalan.
                 </p>
@@ -1411,7 +1553,7 @@
             </p>
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title">💰 Estimasi Biaya Token AI</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--emerald);">payments</span> Estimasi Biaya Token AI</div>
                     <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
                         <li><strong>Stage 1 Radar</strong>: 0 Token (Gratis di Python Lokal).</li>
                         <li><strong>Stage 2 (3-AI Jury)</strong>: ~9,649 token (~$0.0010) per setup A+.</li>
@@ -1419,7 +1561,7 @@
                     </ul>
                 </div>
                 <div class="card">
-                    <div class="card-title">📦 Rotasi Log & Database</div>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">inventory_2</span> Rotasi Log & Database</div>
                     <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
                         <li>Log file <code>data/trading_bot.log</code> auto-rotate di 2MB (keep 5,000 baris).</li>
                         <li>State tiket BEP/Trailing tersimpan aman di <code>data/position_manager_state.json</code>.</li>
@@ -1431,6 +1573,7 @@
     </main>
 
     <script>
+        // Reading Progress Bar
         window.addEventListener('scroll', () => {
             const winScroll = document.documentElement.scrollTop || document.body.scrollTop;
             const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
@@ -1438,32 +1581,92 @@
             document.getElementById('progress-bar').style.width = scrolled + '%';
         });
 
+        // Scrollspy Active Navigation
         const sections = document.querySelectorAll('section.chapter');
         const navLinks = document.querySelectorAll('.nav-link');
 
-        window.addEventListener('scroll', () => {
+        function updateActiveNav() {
             let current = '';
-            sections.forEach(section => {
-                const sectionTop = section.offsetTop - 100;
-                if (pageYOffset >= sectionTop) {
-                    current = section.getAttribute('id');
-                }
-            });
+            const scrollPos = window.pageYOffset || document.documentElement.scrollTop;
+            const isBottom = (window.innerHeight + scrollPos) >= (document.documentElement.scrollHeight - 80);
 
-            navLinks.forEach(link => {
-                link.classList.remove('active');
-                if (link.getAttribute('href') === `#${current}`) {
-                    link.classList.add('active');
-                }
+            if (isBottom && sections.length > 0) {
+                current = sections[sections.length - 1].getAttribute('id');
+            } else {
+                sections.forEach(section => {
+                    const sectionTop = section.offsetTop - 140;
+                    if (scrollPos >= sectionTop) {
+                        current = section.getAttribute('id');
+                    }
+                });
+            }
+
+            if (current) {
+                navLinks.forEach(link => {
+                    link.classList.remove('active');
+                    if (link.getAttribute('href') === `#${current}`) {
+                        link.classList.add('active');
+                    }
+                });
+            }
+        }
+
+        window.addEventListener('scroll', updateActiveNav);
+
+        // Click handler for instant active state on click
+        navLinks.forEach(link => {
+            link.addEventListener('click', function() {
+                navLinks.forEach(l => l.classList.remove('active'));
+                this.classList.add('active');
             });
         });
 
+        // Search Filter Nav Links
         document.getElementById('search-nav').addEventListener('input', function(e) {
             const val = e.target.value.toLowerCase();
             navLinks.forEach(link => {
                 const text = link.textContent.toLowerCase();
                 link.style.display = text.includes(val) ? 'flex' : 'none';
             });
+        });
+
+        // Collapsible Sidebar Controller
+        const sidebarToggleBtn = document.getElementById('sidebar-toggle');
+        const toggleIcon = document.getElementById('toggle-icon');
+
+        function setSidebarState(isCollapsed) {
+            if (isCollapsed) {
+                document.body.classList.add('sidebar-collapsed');
+                if (toggleIcon) toggleIcon.textContent = 'right_panel_open';
+                localStorage.setItem('tsd_sidebar_collapsed', 'true');
+            } else {
+                document.body.classList.remove('sidebar-collapsed');
+                if (toggleIcon) toggleIcon.textContent = 'left_panel_close';
+                localStorage.setItem('tsd_sidebar_collapsed', 'false');
+            }
+        }
+
+        // Init from localStorage
+        const savedState = localStorage.getItem('tsd_sidebar_collapsed');
+        if (savedState === 'true') {
+            setSidebarState(true);
+        }
+
+        if (sidebarToggleBtn) {
+            sidebarToggleBtn.addEventListener('click', () => {
+                const isCurrentlyCollapsed = document.body.classList.contains('sidebar-collapsed');
+                setSidebarState(!isCurrentlyCollapsed);
+            });
+        }
+
+        // Keyboard Shortcut: '[' to toggle sidebar
+        window.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.key === '[' || (e.ctrlKey && e.key.toLowerCase() === 'b')) {
+                e.preventDefault();
+                const isCurrentlyCollapsed = document.body.classList.contains('sidebar-collapsed');
+                setSidebarState(!isCurrentlyCollapsed);
+            }
         });
     </script>
 </body>

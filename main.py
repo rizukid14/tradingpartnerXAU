@@ -1057,7 +1057,7 @@ def run_trading_cycle():
         active_news = econ_cal.get_context()
         if active_news and active_news.strip():
             news_lines = [f"{UI.YELLOW}{l}{UI.RST}" for l in active_news.strip().split("\n")]
-            print("\n" + UI.make_box("📒 [ECONOMIC NEWS ALERT - 6H WINDOW]", news_lines, width=74, border_color=UI.YELLOW))
+            print("\n" + UI.make_box("[ECONOMIC NEWS ALERT - 6H WINDOW]", news_lines, width=74, border_color=UI.YELLOW))
     except Exception as e:
         print(f"[NEWS BANNER ERROR] {e}")
 
@@ -1585,14 +1585,14 @@ def _detect_filled_pending(scanner=None):
 
             # Check if this ticket exists in open positions (filled)
             if t in open_tickets:
-                print(f" {UI.GREEN}🎯 [PENDING FILLED] Pending order #{t} {sym} ({ptype}) ter-fill menjadi posisi aktif!{UI.RST}")
+                print(f" {UI.GREEN}[PENDING FILLED] Pending order #{t} {sym} ({ptype}) ter-fill menjadi posisi aktif!{UI.RST}")
                 try:
                     tg.alert_pending_order_filled(t, sym, ptype, price, pos_id=t, sl_price=info.get("sl"), tp_price=info.get("tp"))
                 except Exception as e:
                     print(f"[PENDING ALERT ERROR] {e}")
             else:
                 # Cancelled or expired -> Apply 30-minute cooldown
-                print(f" {UI.YELLOW}🗑️ [PENDING CANCELLED/EXPIRED] Pending order #{t} {sym} ({ptype}) dibatalkan / expired. Mengaktifkan cooldown 30 menit.{UI.RST}")
+                print(f" {UI.YELLOW}[PENDING CANCELLED/EXPIRED] Pending order #{t} {sym} ({ptype}) dibatalkan / expired. Mengaktifkan cooldown 30 menit.{UI.RST}")
                 if scanner is not None and hasattr(scanner, "mark_symbol_cancelled"):
                     scanner.mark_symbol_cancelled(sym, cooldown_seconds=1800)
                 try:
@@ -1611,7 +1611,6 @@ def run_scanner_trading_cycle(cand, risk):
     """
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
-    _reset_status_lines()
     print("\n" + render_candidate_alert_box(cand))
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
@@ -1619,8 +1618,10 @@ def run_scanner_trading_cycle(cand, risk):
         macro_dir = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
         if macro_dir:
             print("\n" + render_macro_directive_card(macro_dir))
+        else:
+            print(f" {UI.YELLOW}[MACRO NOTICE] Macro directive unavailable for {sym}{UI.RST}")
     except Exception as e:
-        pass
+        print(f" {UI.RED}[MACRO CARD ERROR] {e}{UI.RST}")
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
@@ -1731,7 +1732,7 @@ def run_scanner_trading_cycle(cand, risk):
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
                 min_v = getattr(si, "volume_min", 0.01) if si else 0.01
                 effective_lot = max(effective_lot, min_v)
-                print(f" {UI.GREEN}🚀 [HIGH CONFIDENCE 3/3 JURY] 3 AI sepakat {trade_signal} (Avg Conf {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos) [Tier: {action_tier_val}]!{UI.RST}")
+                print(f" {UI.GREEN}[HIGH CONFIDENCE 3/3 JURY] 3 AI sepakat {trade_signal} (Avg Conf {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos) [Tier: {action_tier_val}]!{UI.RST}")
             else:
                 effective_lot = base_lot
             
@@ -1762,9 +1763,9 @@ def run_scanner_trading_cycle(cand, risk):
                     )
                     if pending_res.get("status") == "SUCCESS":
                         if config.DRY_RUN:
-                            print(f" {UI.YELLOW}✓ [STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
+                            print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
                         else:
-                            print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
+                            print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
                         risk.record_trade_opened()
                         record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                         _recent_trihourly_opened.append({
@@ -1812,9 +1813,9 @@ def run_scanner_trading_cycle(cand, risk):
                 )
                 if order_res.get("status") == "SUCCESS":
                     if config.DRY_RUN:
-                        print(f" {UI.YELLOW}✓ [STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
+                        print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
                     else:
-                        print(f" {UI.GREEN}✓ [STAGE 2 JURY SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
+                        print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
                     risk.record_trade_opened()
                     record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                     _recent_trihourly_opened.append({
@@ -1971,7 +1972,7 @@ def main():
         
     acc_info = connector.get_account_info()
     acc_login = f"Login #{acc_info.get('login', 'Live')}" if acc_info else "Connected"
-    print(f"\n {UI.GREEN}✓{UI.RST} Terhubung ke MT5 Terminal ({acc_login})")
+    print(f"\n {UI.GREEN}[OK]{UI.RST} Terhubung ke MT5 Terminal ({acc_login})")
     
     # Background post-mortem check for closed trades
     try:
@@ -2202,13 +2203,13 @@ def main():
 
                                     diff_list = []
                                     if p_prev != p_st:
-                                        diff_list.append(f"Perm: {p_prev or 'INIT'} ➔ {p_st}")
+                                        diff_list.append(f"Perm: {p_prev or 'INIT'} -> {p_st}")
                                     if w_prev != w_st:
-                                        diff_list.append(f"Wave: {w_prev or 'INIT'} ➔ {w_st}")
+                                        diff_list.append(f"Wave: {w_prev or 'INIT'} -> {w_st}")
                                     if b_prev != b_st:
-                                        diff_list.append(f"Directive: {b_prev or 'INIT'} ➔ {b_st}")
+                                        diff_list.append(f"Directive: {b_prev or 'INIT'} -> {b_st}")
                                     
-                                    diff_summary = " │ ".join(diff_list) if diff_list else f"{p_prev or 'INIT'} ➔ {p_st}"
+                                    diff_summary = " │ ".join(diff_list) if diff_list else f"{p_prev or 'INIT'} -> {p_st}"
                                     changed_details.append(f"{clean_s} ({diff_summary})")
 
                                     # Trigger Telegram high-impact alert ONLY when transitioning to GO
@@ -2230,7 +2231,7 @@ def main():
                         # If state changed, immediately re-render Bento Box HUD in terminal
                         if state_changed:
                             _reset_status_lines()
-                            print(f"\n {UI.CYAN}{UI.BOLD}[⚡ STATE TRANSITION DETECTED]{UI.RST} " + ", ".join(changed_details[:3]))
+                            print(f"\n {UI.CYAN}{UI.BOLD}[STATE TRANSITION DETECTED]{UI.RST} " + ", ".join(changed_details[:3]))
                             acc_info = connector.get_account_info()
                             open_pos = connector.get_all_open_positions()
                             print("\n" + render_hacker_bento_hud(
@@ -2324,7 +2325,7 @@ def main():
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
 
             if config.SCANNER_MODE:
-                _radar_frames = ["📡 ◌", "📡 ◔", "📡 ◑", "📡 ◕", "📡 ●"]
+                _radar_frames = ["[RADAR] ◌", "[RADAR] ◔", "[RADAR] ◑", "[RADAR] ◕", "[RADAR] ●"]
                 _radar_anim_idx = (_radar_anim_idx + 1) % len(_radar_frames)
                 anim_icon = _radar_frames[_radar_anim_idx]
                 n_active = len(scanner.macro_cache) if scanner else 22
