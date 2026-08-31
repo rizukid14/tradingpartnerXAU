@@ -221,19 +221,58 @@ Porting 1:1 algoritma Boitoki CSM untuk 8 mata uang utama (USD, EUR, GBP, JPY, C
 
 MSE 6-TF Native mengintegrasikan **Barrier Chamber State Machine** 3-layer modular untuk memetakan ruang lelang institusional secara deterministik:
 
-### 1. Structural Model: Density-Ranked Barrier Resolver
-Memetakan dinding lelang aktif tanpa jebakan boolean AND yang kaku menggunakan pembobotan bukti (*Evidence Weights*):
-* $\text{Score} = \text{Structural RBS/SBR (3.5)} + \text{SMC Order Block (2.5)} + \text{Psychological Stations (2.0)} + \text{FVG (2.0)}$
-* **Batas Atas**: $C_1$ (*Immediate Ceiling*) dan $C_2$ (*Macro Extension Target*).
-* **Batas Bawah**: $F_1$ (*Immediate Floor*) dan $F_2$ (*Deep Structural Support Target*).
-* **Chamber Position**: Mengukur posisi harga di dalam ruang lelang ($0\% - 100\%$).
+### 1. Peta Distribusi Dealing Chamber (% Koridor Lelang)
+Struktur ruangan lelang vertikal ($0\% - 100\%$) tempat bot memutuskan izin entri atau larangan trading:
 
-### 2. Path-Dependent Interaction Sequence Tracker
+```
+[ 100% ] ── ATAP C1 (Zona Jual / Premium) ─────────────► [ CEILING_REJECTION: SIAP SELL ]
+         │  (Harga sudah mahal, cari peluang SELL)
+[  75% ] ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
+         │  
+         │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+         │  ░░░░░  ZONA TENGAH (25% - 75%)        ░░░░░
+[  50% ] │  ░░░░░  "NO MAN'S LAND" / ZONA ABU-ABU ░░░░░ ──► [ RANGE_BOUND / WATCH_ONLY ]
+         │  ░░░░░  (DILARANG ENTRY APA PUN!)     ░░░░░
+         │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+         │  
+[  25% ] ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
+         │  (Harga sudah murah, cari peluang BUY)
+[   0% ] ── LANTAI F1 (Zona Beli / Diskon) ────────────► [ FLOOR_REJECTION: SIAP BUY ]
+```
+
+### 2. Structural Model: Density-Ranked Barrier Resolver & Fortress Tiers
+Memetakan dinding lelang aktif tanpa jebakan boolean AND yang kaku menggunakan pembobotan bukti multi-sumber (*Evidence Weights*):
+* **Bobot Elemen Struktur**:
+  - `MN1_HIGH / MN1_LOW`: $+5.0\text{ Poin}$ (Multi-Year Envelope)
+  - `W1_SBR / W1_RBS`: $+5.0\text{ Poin}$ (100-Bar Weekly Macro Barrier)
+  - `D1_SBR / D1_RBS (250-Bar)`: $+4.5\text{ Poin}$ (Annual Macro Barrier)
+  - `W1_SUPPLY / W1_DEMAND`: $+4.0\text{ Poin}$ (Weekly SMC Order Blocks)
+  - `H4_SBR / H4_RBS`: $+3.5\text{ Poin}$ (Intermediate Structure)
+  - `D1_EQH_POOL / D1_EQL_POOL`: $+3.5\text{ Poin}$ (Multi-Month Equal Swings)
+  - `D1_POC / H4_POC (FRVP)`: $+3.0 - 3.5\text{ Poin}$ (Institutional Volume Acceptance)
+  - `BEAR_OB / BULL_OB (H1)`: $+2.5\text{ Poin}$ (Intraday Order Blocks)
+  - `PSYCH_100 / PSYCH_50`: $+1.5 - 2.5\text{ Poin}$ (Atlas DNA Halte Bulat)
+
+* **Tabel Peringkat Benteng (Fortress Tier Ranking)**:
+  | Fortress Tag | Rentang Skor Kepadatan | Makna & Kekuatan Pertahanan |
+  |---|---|---|
+  | 🏰 **`SUPER_FORTRESS`** | $\ge 12.0\text{ Poin}$ | Konfluensi masif multi-tahun (W1 + D1 + FRVP POC + Halte Bulat). Dinding beton institusi tak tertembus. |
+  | 🛡️ **`MAJOR_FORTRESS`** | $8.0 - 11.9\text{ Poin}$ | Konfluensi kuat (D1 SBR/RBS + H4 + SMC OB). Area pantulan probabilitas sangat tinggi. |
+  | 🧱 **`SOLID_BARRIER`** | $5.0 - 7.9\text{ Poin}$ | Struktur solid harian / intermediate support-resistance. |
+  | 🪨 **`MODERATE`** | $3.0 - 4.9\text{ Poin}$ | Level intraday H1/H4 atau titik FRVP HVN standar. |
+  | 🪵 **`MINOR`** | $< 3.0\text{ Poin}$ | Halte psikologis tunggal atau order block minor. |
+
+* **Aturan Minimum Chamber Height**:
+  - Dilarang membuat ruang lelang kerdil ($< 15\text{ pips}$).
+  - Tinggi kamar Dealing Chamber wajib memenuhi $\text{Height} \ge \max(0.60\times\text{ATR H1}, 0.40\times\text{Psych Step}, 12\text{ pips})$.
+  - Titik volume intraday mikro yang berjarak $< 0.40\times\text{ATR H1}$ dari harga saat ini diklasifikasikan sebagai *Intra-Chamber Volume Node*, bukan batas dinding kamar.
+
+### 3. Path-Dependent Interaction Sequence Tracker
 Menganalisis riwayat 8 lilin H1 terhadap barrier $C_1$ dan $F_1$ untuk merekam kompresi sejati:
 * Contoh: `interaction_sequence = ['F1_TOUCH', 'F1_SWEEP', 'C1_TOUCH', 'C1_SWEEP']`
 
-### 3. Lean 7-State Machine Engine
-1. **`NEUTRAL_CHAMBER`**: Harga mengambang di koridor tengah ($20\% - 80\%$) $\rightarrow$ `RANGE_BOUND (WATCH_ONLY)` anti-overtrading.
+### 4. Lean 7-State Machine Engine
+1. **`NEUTRAL_CHAMBER`**: Harga mengambang di koridor tengah ($25\% - 75\%$) $\rightarrow$ `RANGE_BOUND (WATCH_ONLY)` anti-overtrading.
 2. **`CHAMBER_CEILING_TEST`**: Menguji $C_1$ tanpa konfirmasi penolakan.
 3. **`CHAMBER_FLOOR_TEST`**: Menguji $F_1$ tanpa konfirmasi penolakan.
 4. **`CEILING_REJECTION`**: Terkonfirmasi ekor penolakan atas $\ge 25\%$ di $C_1$ $\rightarrow$ `BEARISH_PULLBACK (HUNT_SELL_PULLBACK)`.
@@ -241,11 +280,13 @@ Menganalisis riwayat 8 lilin H1 terhadap barrier $C_1$ dan $F_1$ untuk merekam k
 6. **`CEILING_BREAKOUT`**: Penutupan body lilin solid menembus $C_1$ $\rightarrow$ `BULLISH_EXPANSION`.
 7. **`FLOOR_BREAKDOWN`**: Penutupan body lilin solid menembus $F_1$ $\rightarrow$ `BEARISH_EXPANSION`.
 
-### 4. Pair-Calibrated Minimum SL Floor
-Mencegah Stop Loss ketipisan pada pair ber-volatilitas tinggi:
-* **Volatile Cross Pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)**: $\text{SL} \ge \max(1.20\times\text{ATR H1}, 0.25\times\text{ATR D1}, 35\text{ pips})$.
-* **Standard Majors (EURUSD, USDCAD, EURGBP)**: $\text{SL} \ge \max(1.00\times\text{ATR H1}, 18\text{ pips})$.
-* **Gold (XAUUSD)**: $\text{SL} \ge \max(1.20\times\text{ATR H1}, \$3.50)$.
+### 5. Sniper SL Calibration & Chamber Boundary Anchoring
+Stop Loss intraday di-anchor ketat di belakang dinding kamar aktif terdekat ($C_1$ untuk SELL, $F_1$ untuk BUY) untuk memotong floating drawdown:
+* **Volatile Cross Pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)**: $\text{SL} = 15 - 35\text{ pips}$ ($\max(0.80\times\text{ATR H1}, 15\text{ pips})$).
+* **Standard Majors (EURUSD, GBPUSD, USDCAD, USDJPY)**: $\text{SL} = 10 - 25\text{ pips}$ ($\max(0.80\times\text{ATR H1}, 10\text{ pips})$).
+* **Gold (XAUUSD)**: $\text{SL} = \$2.50 - \$6.00$ ($\max(1.00\times\text{ATR H1}, \$2.50)$).
+* **Crypto (BTCUSD)**: $\text{SL} = \$200 - \$500$ ($\max(1.00\times\text{ATR H1}, \$200)$).
+* **Prinsip Validitas**: *Jika dinding $C_1$ atau $F_1$ ditembus, posisi langsung ditutup dengan kerugian kecil (SL terpicu), dilarang menahan floating drawdown sampai dinding makro jauh!*
 
 ---
 
