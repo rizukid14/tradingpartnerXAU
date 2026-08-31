@@ -1612,16 +1612,6 @@ def run_scanner_trading_cycle(cand, risk):
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
     print("\n" + render_candidate_alert_box(cand))
-    try:
-        from src.analytics.macro_strategic_engine import macro_strategic_engine
-        from src.core.cli_theme import render_macro_directive_card
-        macro_dir = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
-        if macro_dir:
-            print("\n" + render_macro_directive_card(macro_dir))
-        else:
-            print(f" {UI.YELLOW}[MACRO NOTICE] Macro directive unavailable for {sym}{UI.RST}")
-    except Exception as e:
-        print(f" {UI.RED}[MACRO CARD ERROR] {e}{UI.RST}")
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
