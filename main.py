@@ -1635,7 +1635,7 @@ def run_scanner_trading_cycle(cand, risk):
             
             # Stale price protection (~8s multi-LLM jury latency guard)
             price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
-            max_allowed_drift = max(60.0, (cand.current_atr_pts or 100) * 0.65)
+            max_allowed_drift = (cand.current_atr_pts or 100) * 0.20
             if entry_type == "market" and price_diff_pts > max_allowed_drift:
                 print(f"\n {UI.YELLOW}{UI.BOLD}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order agar tidak chase harga.{UI.RST}\n")
                 return False
