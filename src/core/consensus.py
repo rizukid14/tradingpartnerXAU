@@ -1,4 +1,5 @@
 import json
+import statistics
 import config
 from src.analytics import dynamic_config
 from src.core.cli_theme import UI
@@ -501,16 +502,16 @@ def calculate_consensus(decisions):
         final_entry_type = "market"
     if consensus_signal == "SELL" and final_entry_type not in ("sell_stop", "sell_limit"):
         final_entry_type = "market"
-    final_entry_price = float(sum(entry_price_list) / len(entry_price_list)) if entry_price_list else None
+    final_entry_price = float(statistics.median(entry_price_list)) if entry_price_list else None
     if final_entry_type != "market" and not final_entry_price:
         final_entry_type = "market"
 
     avg_confidence = float(sum(conf_list) / len(conf_list)) if conf_list else 0.0
-    final_inv = sum(inv_list) / len(inv_list) if inv_list else None
-    final_tgt = sum(tgt_list) / len(tgt_list) if tgt_list else None
+    final_inv = statistics.median(inv_list) if inv_list else None
+    final_tgt = statistics.median(tgt_list) if tgt_list else None
 
-    final_sl = int(sum(sl_list) / len(sl_list)) if sl_list else config.default_sl_points_for(config.SYMBOL)
-    final_tp = int(sum(tp_list) / len(tp_list)) if tp_list else config.default_tp_points_for(config.SYMBOL)
+    final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
+    final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
 
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
 

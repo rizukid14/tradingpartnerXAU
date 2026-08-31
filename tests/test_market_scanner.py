@@ -435,6 +435,53 @@ class TestMarketScanner(unittest.TestCase):
         self.assertTrue(allowed)
         self.assertIn("PASSED ALL GATES", reason)
 
+    def test_watch_only_action_tier_hard_blocks_radar(self):
+        """Verify symbols with action_tier == 'WATCH_ONLY' are 100% hard blocked from generating candidates."""
+        from unittest.mock import MagicMock
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+
+        mock_directive = MagicMock(spec=MacroStrategicDirective)
+        mock_directive.action_tier = "WATCH_ONLY"
+        mock_directive.macro_bias_score = 0.0
+        mock_directive.hard_circuit_breaker = False
+        mock_directive.forbidden_traps = ["Do NOT execute market orders in mid-chamber consolidation zone"]
+
+        self.scanner.macro_cache["GBPUSD-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'dealing_range_pos': 0.34,
+            'dealing_range_low': 1.2900,
+            'dealing_range_high': 1.3100,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.5,
+            'strat_dir': mock_directive,
+            'action_tier': 'WATCH_ONLY',
+            'macro_bias_score': 0.0,
+            'macro_corridor': 'BULLISH_CORRIDOR',
+            'immediate_floor_f1': 1.2920,
+            'immediate_ceiling_c1': 1.3080
+        }
+
+        # Mock tick in middle of chamber (1.3000)
+        mock_connector = MagicMock()
+        mock_connector.get_live_tick.return_value = {'ask': 1.3001, 'bid': 1.2999, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 1.2998, 'high': 1.3005, 'low': 1.2995, 'close': 1.3000, 'time': 1700000000}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 14, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    # All candidates must be blocked because action_tier is WATCH_ONLY
+                    gbp_candidates = [c for c in candidates if c.symbol == "GBPUSD-ECNc"]
+                    self.assertEqual(len(gbp_candidates), 0, "WATCH_ONLY symbol must not produce candidates!")
+
 
 if __name__ == "__main__":
     unittest.main()

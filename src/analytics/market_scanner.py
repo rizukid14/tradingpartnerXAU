@@ -896,6 +896,8 @@ class MarketScanner:
                     'tp1_price': getattr(strat_dir, 'tp1_price', 0.0) if strat_dir else 0.0,
                     'tp2_price': getattr(strat_dir, 'tp2_price', 0.0) if strat_dir else 0.0,
                     'forbidden_traps': getattr(strat_dir, 'forbidden_traps', []) if strat_dir else [],
+                    'immediate_ceiling_c1': getattr(strat_dir, 'immediate_ceiling_c1', 0.0) if strat_dir else 0.0,
+                    'immediate_floor_f1': getattr(strat_dir, 'immediate_floor_f1', 0.0) if strat_dir else 0.0,
                     'daily_mandate_thesis': getattr(strat_dir, 'daily_mandate_thesis', '') if strat_dir else '',
                     'structural_stage': getattr(strat_dir, 'structural_stage', '') if strat_dir else '',
                     'strategic_raw_payload': getattr(strat_dir, 'raw_payload', {}) if strat_dir else {},
@@ -1010,6 +1012,10 @@ class MarketScanner:
                     if strat_dir_sym is None:
                         return True, "FULL_ALLOW", "ALLOWED (NO_MSE)"
 
+                    strat_tier = getattr(strat_dir_sym, 'action_tier', 'FULL_ALLOW')
+                    if strat_tier in ("WATCH_ONLY", "HARD_BLOCK"):
+                        return False, "HARD_BLOCK", f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})"
+
                     bias_score = getattr(strat_dir_sym, 'macro_bias_score', 0.0)
                     circuit_breaker = getattr(strat_dir_sym, 'hard_circuit_breaker', False)
 
@@ -1022,9 +1028,12 @@ class MarketScanner:
 
                     if strat_dir_sym.forbidden_traps:
                         for trap in strat_dir_sym.forbidden_traps:
-                            if target_dir == 1 and ("DO NOT BUY" in trap.upper() or "DON'T BUY" in trap.upper()):
+                            trap_u = trap.upper()
+                            if "DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u:
+                                return False, "HARD_BLOCK", f"[MSE TRAP VETO] Trade forbidden in consolidation: {trap}"
+                            if target_dir == 1 and ("DO NOT BUY" in trap_u or "DON'T BUY" in trap_u):
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] BUY forbidden: {trap}"
-                            if target_dir == -1 and ("DO NOT SELL" in trap.upper() or "DO NOT SHORT" in trap.upper() or "DON'T SELL" in trap.upper()):
+                            if target_dir == -1 and ("DO NOT SELL" in trap_u or "DO NOT SHORT" in trap_u or "DON'T SELL" in trap_u):
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] SELL forbidden: {trap}"
 
                     # 3. Macro Bias Alignment & Action Tier Resolution
@@ -1065,8 +1074,8 @@ class MarketScanner:
                     dr_pos_val = macro.get('dealing_range_pos', 0.5)
 
                     # Bearish Liquidity Sweep (SFP High): Sweep above Asian High, PDH, EQH, or Psychological Ceiling
-                    ref_top_cands = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0]
-                    ref_top = max(ref_top_cands) if ref_top_cands else asian_h
+                    valid_tops = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0 and 0 < (v - mid) <= 1.0 * atr_price_val]
+                    ref_top = min(valid_tops) if valid_tops else (macro.get('immediate_ceiling_c1') or asian_h or (mid + atr_price_val))
                     if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
                         allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
                         if not allowed_m1_s:
@@ -1097,7 +1106,8 @@ class MarketScanner:
                                 
                                 if has_rejection and not is_bull_breakout:
                                     # Delayed Limit Retest Entry at discount/retest zone with empirical sweep offset
-                                    limit_entry = min(ref_top + sweep_buffer, mid + (0.20 * atr_price_val)) - (spread_pts * 0.5 * pt)
+                                    raw_limit_s = min(ref_top + sweep_buffer, mid + (0.20 * atr_price_val))
+                                    limit_entry = min(raw_limit_s, mid + (1.0 * atr_price_val)) - (spread_pts * 0.5 * pt)
                                     sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
                                         entry_price=limit_entry,
@@ -1115,7 +1125,9 @@ class MarketScanner:
                                     if action_tier_m1_s == "TP1_ONLY_SCALP":
                                         tp = sl_tp.get('tp1', round(limit_entry - (1.25 * abs(limit_entry - sl)), 5 if pt < 0.01 else 2))
                                     rr_val = sl_tp['risk_reward']
-                                    if abs(limit_entry - sl) / pt >= 15:
+                                    if abs(limit_entry - mid) > 1.0 * atr_price_val:
+                                        logger.debug(f"[M1 SELL DISTANCE GUARD] {sym} SKIP: limit_entry {limit_entry:.5f} too far from mid {mid:.5f}")
+                                    elif abs(limit_entry - sl) / pt >= 15:
                                         candidates.append(CandidateSetup(
                                             symbol=sym,
                                             setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
@@ -1169,8 +1181,8 @@ class MarketScanner:
                                         continue
 
                     # Bullish Liquidity Sweep (SFP Low): Sweep below Asian Low, PDL, EQL, or Psychological Floor
-                    ref_bot_cands = [v for v in [asian_l, pdl_val, eql_val, p_floor] if v > 0]
-                    ref_bot = min(ref_bot_cands) if ref_bot_cands else asian_l
+                    valid_bots = [v for v in [asian_l, pdl_val, eql_val, p_floor] if v > 0 and 0 < (mid - v) <= 1.0 * atr_price_val]
+                    ref_bot = max(valid_bots) if valid_bots else (macro.get('immediate_floor_f1') or asian_l or (mid - atr_price_val))
                     if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
                         allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
                         if not allowed_m1_b:
@@ -1201,7 +1213,8 @@ class MarketScanner:
                                 
                                 if has_rejection and not is_bear_breakdown:
                                     # Delayed Limit Retest Entry at premium/retest zone with empirical sweep offset
-                                    limit_entry = max(ref_bot - sweep_buffer, mid - (0.20 * atr_price_val)) + (spread_pts * 0.5 * pt)
+                                    raw_limit_b = max(ref_bot - sweep_buffer, mid - (0.20 * atr_price_val))
+                                    limit_entry = max(raw_limit_b, mid - (1.0 * atr_price_val)) + (spread_pts * 0.5 * pt)
                                     sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
                                         entry_price=limit_entry,
@@ -1219,7 +1232,9 @@ class MarketScanner:
                                     if action_tier_m1_b == "TP1_ONLY_SCALP":
                                         tp = sl_tp.get('tp1', round(limit_entry + (1.25 * abs(limit_entry - sl)), 5 if pt < 0.01 else 2))
                                     rr_val = sl_tp['risk_reward']
-                                    if abs(limit_entry - sl) / pt >= 15:
+                                    if abs(limit_entry - mid) > 1.0 * atr_price_val:
+                                        logger.debug(f"[M1 BUY DISTANCE GUARD] {sym} SKIP: limit_entry {limit_entry:.5f} too far from mid {mid:.5f}")
+                                    elif abs(limit_entry - sl) / pt >= 15:
                                         candidates.append(CandidateSetup(
                                             symbol=sym,
                                             setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
@@ -1278,15 +1293,18 @@ class MarketScanner:
                     pos_in_range = macro['dealing_range_pos']
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     
-                    # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to EMA20 in Discount
+                    # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to Support Floor in Action Zone
                     allowed_m2_b, action_tier_m2_b, reason_m2_b = _is_direction_allowed(1, "BUY_PULLBACK")
                     can_buy_m2 = allowed_m2_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
                     if not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
                     elif can_buy_m2 and pos_in_range <= 0.65:
-                        if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
-                            lim_entry = mid - (atr_pts * 0.20 * pt)
-                            base_floor = macro['dealing_range_low']
+                        base_floor = macro.get('immediate_floor_f1') or macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4') or macro.get('strong_low') or macro['dealing_range_low']
+                        atr_val = atr_pts * pt
+                        in_action_zone = (abs(mid - base_floor) <= 0.20 * atr_val) or (live_l <= base_floor + 0.05 * atr_val)
+                        has_support_hold = (mid >= base_floor) or (c_qual['max_lower_wick'] >= 0.15) or (c_qual['sweep_side'] == 'bottom')
+                        if in_action_zone and has_support_hold and base_floor > 0:
+                            lim_entry = base_floor + (spread_pts * 0.5 * pt)
                             sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,
                                 entry_price=lim_entry,
@@ -1304,7 +1322,9 @@ class MarketScanner:
                             if action_tier_m2_b == "TP1_ONLY_SCALP":
                                 tp = sl_tp.get('tp1', round(lim_entry + (1.25 * abs(lim_entry - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
-                            if abs(lim_entry - sl) / pt >= 15:
+                            if abs(lim_entry - mid) > 1.0 * atr_val:
+                                logger.debug(f"[M2 BUY DISTANCE GUARD] {sym} SKIP: lim_entry {lim_entry:.5f} too far from mid {mid:.5f}")
+                            elif abs(lim_entry - sl) / pt >= 15:
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
@@ -1359,20 +1379,23 @@ class MarketScanner:
                                 ))
                                 continue
 
-                    # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to EMA20 in Premium
+                    # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to Resistance Ceiling in Action Zone
                     allowed_m2_s, action_tier_m2_s, reason_m2_s = _is_direction_allowed(-1, "SELL_PULLBACK")
                     can_sell_m2 = allowed_m2_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
                     if not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
                     elif can_sell_m2 and pos_in_range >= 0.35:
-                        if abs(mid - ema20) <= (atr_pts * 0.45 * pt):
-                            lim_entry = mid + (atr_pts * 0.20 * pt)
-                            base_floor = macro['dealing_range_high']
+                        base_ceiling = macro.get('immediate_ceiling_c1') or macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4') or macro.get('strong_high') or macro['dealing_range_high']
+                        atr_val = atr_pts * pt
+                        in_action_zone = (abs(mid - base_ceiling) <= 0.20 * atr_val) or (live_h >= base_ceiling - 0.05 * atr_val)
+                        has_res_hold = (mid <= base_ceiling) or (c_qual['max_upper_wick'] >= 0.15) or (c_qual['sweep_side'] == 'top')
+                        if in_action_zone and has_res_hold and base_ceiling > 0:
+                            lim_entry = base_ceiling - (spread_pts * 0.5 * pt)
                             sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,
                                 entry_price=lim_entry,
                                 direction=-1,
-                                origin_level=base_floor,
+                                origin_level=base_ceiling,
                                 atr_h1=atr_pts * pt,
                                 pwl=macro.get('pwl', 0.0),
                                 pwh=macro.get('pwh', 0.0),
@@ -1385,7 +1408,9 @@ class MarketScanner:
                             if action_tier_m2_s == "TP1_ONLY_SCALP":
                                 tp = sl_tp.get('tp1', round(lim_entry - (1.25 * abs(lim_entry - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
-                            if abs(sl - lim_entry) / pt >= 15:
+                            if abs(lim_entry - mid) > 1.0 * atr_val:
+                                logger.debug(f"[M2 SELL DISTANCE GUARD] {sym} SKIP: lim_entry {lim_entry:.5f} too far from mid {mid:.5f}")
+                            elif abs(sl - lim_entry) / pt >= 15:
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="TREND_ALIGNED_PULLBACK",
@@ -1430,7 +1455,7 @@ class MarketScanner:
                                     metadata={
                                         "entry_type": "sell_limit",
                                         "entry_price": round(lim_entry, 5 if pt < 0.01 else 2),
-                                        "base_floor": base_floor,
+                                        "base_floor": base_ceiling,
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
@@ -1474,7 +1499,9 @@ class MarketScanner:
                             if action_tier_m3_b == "TP1_ONLY_SCALP":
                                 tp = sl_tp.get('tp1', round(entry_lim + (1.25 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
-                            if abs(entry_lim - sl) / pt >= 15:
+                            if abs(entry_lim - mid) > 1.0 * atr_val:
+                                logger.debug(f"[M3 BUY DISTANCE GUARD] {sym} SKIP: entry_lim {entry_lim:.5f} too far from mid {mid:.5f}")
+                            elif abs(entry_lim - sl) / pt >= 15:
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
@@ -1557,7 +1584,9 @@ class MarketScanner:
                             if action_tier_m3_s == "TP1_ONLY_SCALP":
                                 tp = sl_tp.get('tp1', round(entry_lim - (1.25 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
-                            if abs(sl - entry_lim) / pt >= 15:
+                            if abs(entry_lim - mid) > 1.0 * atr_val:
+                                logger.debug(f"[M3 SELL DISTANCE GUARD] {sym} SKIP: entry_lim {entry_lim:.5f} too far from mid {mid:.5f}")
+                            elif abs(sl - entry_lim) / pt >= 15:
                                 candidates.append(CandidateSetup(
                                     symbol=sym,
                                     setup_type="MULTI_TOUCH_BREAKOUT_RETEST",

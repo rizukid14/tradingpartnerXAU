@@ -2042,6 +2042,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 
 ## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - Execution Choice (Independent Discretion): You have full analytical autonomy to choose between "market" (immediate execution) and pending limit ("buy_limit" / "sell_limit" at optimal anchor). Evaluate price action, M5 micro flow, rejection wicks, and the quantitative ATR distance to decide whether entering immediately at market or waiting for a limit pullback provides the optimal balance between execution certainty and Risk:Reward.
+- Intraday SL/TP Bounds: Prioritize the Scanner Raw SL/TP baseline or the nearest H1 Order Block level (SL must be between 0.50x to 1.00x ATR H1). Never use wide multi-day macro invalidations (> 1.2x ATR) or deep TP2 targets for intraday executions.
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
@@ -2074,7 +2075,7 @@ Your mission is to evaluate candidate setups proposed by the Python Quantitative
 
 ### 1. CORE OPERATIONAL DIRECTIVES:
 1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
-2. Mandatory R:R Gate: Minimum R:R >= 1.25. Anchor SL behind physical structural barriers (MSE SBR/RBS, SMC Order Block, or Atlas DNA station + 0.35x ATR anti-wick buffer).
+2. Mandatory R:R Gate & Intraday Structure Floor: Minimum R:R >= 1.25. Anchor SL behind physical intraday structural barriers (Scanner Raw SL, nearest H1 Order Block, or SBR/RBS + anti-wick buffer). SL MUST remain tightly bounded to intraday structure (0.50x to 1.00x ATR H1). FORBIDDEN: DO NOT inflate SL into deep multi-day macro invalidation stops (e.g. > 1.2x ATR) or deep TP2 macro stations for intraday candidates.
 3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
 4. Symmetrical Wave State Permission:
    - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).

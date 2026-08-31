@@ -1637,7 +1637,22 @@ def run_scanner_trading_cycle(cand, risk):
             price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
             max_allowed_drift = (cand.current_atr_pts or 100) * 0.20
             if entry_type == "market" and price_diff_pts > max_allowed_drift:
-                print(f"\n {UI.YELLOW}{UI.BOLD}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order agar tidak chase harga.{UI.RST}\n")
+                agree_models = result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                print(f"\n {UI.YELLOW}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}║ [STALE PRICE GUARD] EKSEKUSI MARKET {sym} {trade_signal.upper()} DIBATALKAN!                               ║{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}║ • Pergeseran Harga : {price_diff_pts:.1f} pts (Batas Toleransi: {max_allowed_drift:.1f} pts max drift)                  ║{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}║ • Alasan           : Harga telah bergeser saat AI berdiskusi. Batalkan agar tidak chase harga!║{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
+                tg.alert_trade_aborted(
+                    symbol=sym,
+                    signal=trade_signal,
+                    reason_code="STALE_PRICE_DRIFT",
+                    details=f"Harga bergeser {price_diff_pts:.1f} pts melebihi toleransi {max_allowed_drift:.1f} pts saat 3 AI berdiskusi.",
+                    price_drift_pts=price_diff_pts,
+                    max_drift_pts=max_allowed_drift,
+                    confidence=result.get("confidence", 0.0),
+                    models=agree_models
+                )
                 return False
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
@@ -1647,6 +1662,14 @@ def run_scanner_trading_cycle(cand, risk):
             )
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
+                tg.alert_trade_aborted(
+                    symbol=sym,
+                    signal=trade_signal,
+                    reason_code="SLTP_RULES_INVALID",
+                    details=sltp_reason,
+                    confidence=result.get("confidence", 0.0),
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                )
                 return False
                 
             # High Confidence Multi-Position sizing:
@@ -1677,6 +1700,14 @@ def run_scanner_trading_cycle(cand, risk):
             can_trade_ok, risk_msg = risk.can_trade(sym)
             if not can_trade_ok:
                 print(f" {UI.YELLOW}[PRE-DISPATCH BLOCKED] Trade {sym} dibatalkan: {risk_msg}{UI.RST}")
+                tg.alert_trade_aborted(
+                    symbol=sym,
+                    signal=trade_signal,
+                    reason_code="PRE_DISPATCH_RISK_BLOCKED",
+                    details=risk_msg,
+                    confidence=result.get("confidence", 0.0),
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                )
                 return False
 
             # If pending order

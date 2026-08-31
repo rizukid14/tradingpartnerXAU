@@ -229,6 +229,11 @@ python main.py
       4. Free Margin Buffer $\ge 60\%$.
       5. Konsentrasi Keranjang Valas $\le 3$ posisi per mata uang (USD, EUR, JPY, dll).
       6. Strict 1-Trade per Symbol.
+46. **Stage 1 Mechanical Action Zone Gating & Pure Physical Level Anchoring** (31 Agustus):
+    - **Mechanical `WATCH_ONLY` Hard Gate**: Simbol yang berstatus `WATCH_ONLY` dari MSE (misal di area Mid-Chamber 30–70% Dealing Range tanpa konfluensi batas) langsung di-drop total (`HARD_BLOCK` di `_is_direction_allowed()`) pada Stage 1 Fast Radar (0 token).
+    - **Eliminasi Total Formula Sintetis `mid - 0.20*ATR`**: Menghapus seluruh formula floating/buatan di M1 dan M2.
+    - **M2 Physical Action Zone Requirement**: M2 (`TREND_ALIGNED_PULLBACK`) wajib memvalidasi sentuhan fisik Action Zone $F_1$ Floor (BUY) atau $C_1$ Ceiling (SELL) dengan toleransi $\le 0.20\times\text{ATR}$ + konfirmasi penahanan support/rejection wick. Penempatan entry limit dijangkarkan 100% pada level fisik struktural ($F_1/C_1/\text{RBS}/\text{SBR}$).
+    - **M1 Pure Swept Level Retest Anchor**: Entry limit M1 (`UNIVERSAL_LIQUIDITY_SWEEP`) dijangkarkan murni pada level fisik yang baru saja disapu (`ref_bot` / `ref_top`), tanpa rumus jarak sintetis.
 
 ---
 

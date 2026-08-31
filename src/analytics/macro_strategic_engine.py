@@ -43,7 +43,7 @@ class MSEHyperparameters:
     Configurable Hyperparameters for MSE (Tuned via Empirical Backtest / Out-of-Sample).
     Eliminates hardcoded magic numbers and enforces orthogonal evidence weighting.
     """
-    candidate_dist_min_atr_mult: float = 0.25   # k_d: Min distance from current mid to candidate barrier
+    candidate_dist_min_atr_mult: float = 0.02   # k_d: Min distance from current mid to candidate barrier (~0.2 pips precision)
     min_chamber_height_atr_mult: float = 0.60   # k_h: Min chamber height (C1 - F1) in ATR H1 multiples
     cluster_merge_atr_mult: float = 0.15        # k_merge: Cluster tolerance in ATR H1 multiples
     structural_validity_threshold: float = 2.5  # Q_min: Min structural qualification threshold for C1/F1
@@ -492,7 +492,7 @@ class MacroStrategicEngine:
         sbr_h4_cand = [sl[1] for sl in h4_sl if sl[1] > curr_mid + (0.20 * atr_h4)]
         inter_sbr_h4 = round(min(sbr_h4_cand), digits) if sbr_h4_cand else macro_sbr_d1
 
-        h1_sh, h1_sl = self._find_swings(df_h1, 48, 2)
+        h1_sh, h1_sl = self._find_swings(df_h1, 120, 2)
         rbs_h1_cand = [sh[1] for sh in h1_sh if sh[1] < curr_mid - (0.15 * atr_h1)]
         micro_rbs_h1 = round(max(rbs_h1_cand), digits) if rbs_h1_cand else inter_rbs_h4
         sbr_h1_cand = [sl[1] for sl in h1_sl if sl[1] > curr_mid + (0.15 * atr_h1)]
