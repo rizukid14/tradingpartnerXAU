@@ -217,9 +217,9 @@ Porting 1:1 algoritma Boitoki CSM untuk 8 mata uang utama (USD, EUR, GBP, JPY, C
 
 ---
 
-## Bab 6: Barrier Chamber State Machine & Macro Strategic Engine (MSE)
+## Bab 6: Stateful Market-Structure Engine (MSE) & Barrier Chamber
 
-MSE 6-TF Native mengintegrasikan **Barrier Chamber State Machine** 3-layer modular untuk memetakan ruang lelang institusional secara deterministik:
+MSE 6-TF Native mengintegrasikan **Stateful Market-Structure Engine** berbasis geometri ruang lelang (*Barrier Chamber*) dan *Factorized Primitive State Machine* untuk memetakan dinamika institusional secara deterministik dan bebas dari *double-counting*:
 
 ### 1. Peta Distribusi Dealing Chamber (% Koridor Lelang)
 Struktur ruangan lelang vertikal ($0\% - 100\%$) tempat bot memutuskan izin entri atau larangan trading:
@@ -240,53 +240,50 @@ Struktur ruangan lelang vertikal ($0\% - 100\%$) tempat bot memutuskan izin entr
 [   0% ] ── LANTAI F1 (Zona Beli / Diskon) ────────────► [ FLOOR_REJECTION: SIAP BUY ]
 ```
 
-### 2. Structural Model: Density-Ranked Barrier Resolver & Fortress Tiers
-Memetakan dinding lelang aktif tanpa jebakan boolean AND yang kaku menggunakan pembobotan bukti multi-sumber (*Evidence Weights*):
-* **Bobot Elemen Struktur**:
-  - `MN1_HIGH / MN1_LOW`: $+5.0\text{ Poin}$ (Multi-Year Envelope)
-  - `W1_SBR / W1_RBS`: $+5.0\text{ Poin}$ (100-Bar Weekly Macro Barrier)
-  - `D1_SBR / D1_RBS (250-Bar)`: $+4.5\text{ Poin}$ (Annual Macro Barrier)
-  - `W1_SUPPLY / W1_DEMAND`: $+4.0\text{ Poin}$ (Weekly SMC Order Blocks)
-  - `H4_SBR / H4_RBS`: $+3.5\text{ Poin}$ (Intermediate Structure)
-  - `D1_EQH_POOL / D1_EQL_POOL`: $+3.5\text{ Poin}$ (Multi-Month Equal Swings)
-  - `D1_POC / H4_POC (FRVP)`: $+3.0 - 3.5\text{ Poin}$ (Institutional Volume Acceptance)
-  - `BEAR_OB / BULL_OB (H1)`: $+2.5\text{ Poin}$ (Intraday Order Blocks)
-  - `PSYCH_100 / PSYCH_50`: $+1.5 - 2.5\text{ Poin}$ (Atlas DNA Halte Bulat)
+### 2. Orthogonal Multi-Dimensional Evidence Formulation (Anti-Double-Counting)
+Untuk mencegah ilusi konfluensi semu (*collinear timeframe redundancy*), skoring dinding lelang dipisahkan secara tegas antara **Kualifikasi Struktural ($Q$)** dan **Peringkat Komposit ($R$)**:
+
+$$\mathbf{Structural\ Qualification\ (Q)} = S_{\text{structure}} \times \left(1 + D_{\text{TF}}\right)$$
+
+$$\mathbf{Composite\ Ranking\ Score\ (R)} = Q + \alpha V_{\text{Volume}} + \beta L_{\text{Liquidity}}$$
+
+* **Dimensi Bukti Ortogonal**:
+  1. **$S_{\text{structure}}$ (Anchor Struktural Terkuat)**: Mengambil bobot tunggal tertinggi dari elemen struktur dalam kluster ($\text{MN1} = 5.0, \text{W1} = 5.0, \text{D1} = 4.5, \text{H4} = 3.5, \text{H1} = 2.0, \text{Psych 100} = 2.5$).
+  2. **$D_{\text{TF}}$ (Timeframe Diversity Multiplier)**: Bonus konfluensi terdiskon ($\min((N_{\text{TF}} - 1) \times 0.15, 0.35)$).
+  3. **$V_{\text{Volume}}$ (Evidence FRVP Independen)**: Akumulasi titik transaksi padat POC ($+3.5$), VAH/VAL ($+2.0$), HVN ($+1.5$).
+  4. **$L_{\text{Liquidity}}$ (Evidence Kolam Stop Loss)**: Akumulasi likuiditas ekstrim EQH/EQL ($+3.5$), Asian H/L ($+2.0$), PWH/PWL ($+2.0$).
+* **Syarat Kualifikasi Dinding $C_1 / F_1$**:
+  - Hanya kandidat dengan $Q \ge Q_{\text{min}} (2.5)$ yang berhak menjadi dinding aktif $C_1$ atau $F_1$. Level remah-remah intraday atau volume POC tanpa anchor struktur kuat otomatis didiskualifikasi!
 
 * **Tabel Peringkat Benteng (Fortress Tier Ranking)**:
-  | Fortress Tag | Rentang Skor Kepadatan | Makna & Kekuatan Pertahanan |
+  | Fortress Tag | Rentang Skor Komposit ($R$) | Makna & Kekuatan Pertahanan |
   |---|---|---|
-  | 🏰 **`SUPER_FORTRESS`** | $\ge 12.0\text{ Poin}$ | Konfluensi masif multi-tahun (W1 + D1 + FRVP POC + Halte Bulat). Dinding beton institusi tak tertembus. |
-  | 🛡️ **`MAJOR_FORTRESS`** | $8.0 - 11.9\text{ Poin}$ | Konfluensi kuat (D1 SBR/RBS + H4 + SMC OB). Area pantulan probabilitas sangat tinggi. |
-  | 🧱 **`SOLID_BARRIER`** | $5.0 - 7.9\text{ Poin}$ | Struktur solid harian / intermediate support-resistance. |
-  | 🪨 **`MODERATE`** | $3.0 - 4.9\text{ Poin}$ | Level intraday H1/H4 atau titik FRVP HVN standar. |
-  | 🪵 **`MINOR`** | $< 3.0\text{ Poin}$ | Halte psikologis tunggal atau order block minor. |
+  | 🏰 **`SUPER_FORTRESS`** | $\ge 10.0\text{ Poin}$ | Konfluensi masif multi-tahun (W1 + D1 + FRVP POC + Halte Bulat). Dinding beton institusi tak tertembus. |
+  | 🛡️ **`MAJOR_FORTRESS`** | $7.0 - 9.9\text{ Poin}$ | Konfluensi kuat (D1 SBR/RBS + H4 + SMC OB). Area pantulan probabilitas sangat tinggi. |
+  | 🧱 **`SOLID_BARRIER`** | $4.5 - 6.9\text{ Poin}$ | Struktur solid harian / intermediate support-resistance. |
+  | 🪨 **`MODERATE`** | $2.5 - 4.4\text{ Poin}$ | Level intraday H1/H4 atau titik FRVP HVN standar. |
+  | 🪵 **`MINOR`** | $< 2.5\text{ Poin}$ | Halte psikologis tunggal atau order block minor. |
 
-* **Aturan Minimum Chamber Height**:
-  - Dilarang membuat ruang lelang kerdil ($< 15\text{ pips}$).
-  - Tinggi kamar Dealing Chamber wajib memenuhi $\text{Height} \ge \max(0.60\times\text{ATR H1}, 0.40\times\text{Psych Step}, 12\text{ pips})$.
-  - Titik volume intraday mikro yang berjarak $< 0.40\times\text{ATR H1}$ dari harga saat ini diklasifikasikan sebagai *Intra-Chamber Volume Node*, bukan batas dinding kamar.
+### 3. Hyperparameter Konfigurasi Terstandarisasi (`MSEHyperparameters`)
+Semua ambang batas matematis dikelola secara tersentralisasi sebagai hyperparameter yang siap dioptimasi out-of-sample:
+* $k_d$ (`candidate_dist_min_atr_mult`): $0.25 \times \text{ATR H1}$ (Jarak minimum kandidat dari mid price).
+* $k_h$ (`min_chamber_height_atr_mult`): $0.60 \times \text{ATR H1}$ (Tinggi minimum kamar lelang).
+* $k_{\text{merge}}$ (`cluster_merge_atr_mult`): $0.15 \times \text{ATR H1}$ (Radius toleransi penggabungan kluster).
+* $Q_{\text{min}}$ (`structural_validity_threshold`): $2.5\text{ Poin}$ (Ambang batas kelayakan struktural).
+* $\alpha$ (`frvp_volume_weight`): $1.0$.
+* $\beta$ (`liquidity_pool_weight`): $1.0$.
 
-### 3. Path-Dependent Interaction Sequence Tracker
-Menganalisis riwayat 8 lilin H1 terhadap barrier $C_1$ dan $F_1$ untuk merekam kompresi sejati:
-* Contoh: `interaction_sequence = ['F1_TOUCH', 'F1_SWEEP', 'C1_TOUCH', 'C1_SWEEP']`
+### 4. Factorized Primitive State Machine ($\text{Location} \otimes \text{Event} \otimes \text{Trajectory}$)
+Source of truth status pasar disimpan sebagai vektor primitif independen dan rekam jejak jalur (*Path Dependency*):
+* **Location Vector**: `CEILING`, `FLOOR`, `MID`, `OUTSIDE_ABOVE`, `OUTSIDE_BELOW`.
+* **Event Vector**: `REJECTION`, `SWEEP`, `BREAKOUT`, `BREAKDOWN`, `RETEST`, `COMPRESSION`.
+* **Trajectory Vector**: `UP`, `DOWN`, `ROTATION`.
+* **Derived Semantic State**: Dihasilkan secara deterministik via `derive_semantic_state(primitive)`.
+* **State Persistence**: Merekam riwayat `last_barrier`, `previous_barrier`, `interaction_sequence`, dan `sweep_history` lintas tick/bar.
 
-### 4. Lean 7-State Machine Engine
-1. **`NEUTRAL_CHAMBER`**: Harga mengambang di koridor tengah ($25\% - 75\%$) $\rightarrow$ `RANGE_BOUND (WATCH_ONLY)` anti-overtrading.
-2. **`CHAMBER_CEILING_TEST`**: Menguji $C_1$ tanpa konfirmasi penolakan.
-3. **`CHAMBER_FLOOR_TEST`**: Menguji $F_1$ tanpa konfirmasi penolakan.
-4. **`CEILING_REJECTION`**: Terkonfirmasi ekor penolakan atas $\ge 25\%$ di $C_1$ $\rightarrow$ `BEARISH_PULLBACK (HUNT_SELL_PULLBACK)`.
-5. **`FLOOR_REJECTION`**: Terkonfirmasi ekor penolakan bawah $\ge 25\%$ di $F_1$ $\rightarrow$ `BULLISH_PULLBACK (HUNT_BUY_AT_RBS)`.
-6. **`CEILING_BREAKOUT`**: Penutupan body lilin solid menembus $C_1$ $\rightarrow$ `BULLISH_EXPANSION`.
-7. **`FLOOR_BREAKDOWN`**: Penutupan body lilin solid menembus $F_1$ $\rightarrow$ `BEARISH_EXPANSION`.
-
-### 5. Sniper SL Calibration & Chamber Boundary Anchoring
-Stop Loss intraday di-anchor ketat di belakang dinding kamar aktif terdekat ($C_1$ untuk SELL, $F_1$ untuk BUY) untuk memotong floating drawdown:
-* **Volatile Cross Pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)**: $\text{SL} = 15 - 35\text{ pips}$ ($\max(0.80\times\text{ATR H1}, 15\text{ pips})$).
-* **Standard Majors (EURUSD, GBPUSD, USDCAD, USDJPY)**: $\text{SL} = 10 - 25\text{ pips}$ ($\max(0.80\times\text{ATR H1}, 10\text{ pips})$).
-* **Gold (XAUUSD)**: $\text{SL} = \$2.50 - \$6.00$ ($\max(1.00\times\text{ATR H1}, \$2.50)$).
-* **Crypto (BTCUSD)**: $\text{SL} = \$200 - \$500$ ($\max(1.00\times\text{ATR H1}, \$200)$).
-* **Prinsip Validitas**: *Jika dinding $C_1$ atau $F_1$ ditembus, posisi langsung ditutup dengan kerugian kecil (SL terpicu), dilarang menahan floating drawdown sampai dinding makro jauh!*
+### 5. Dual-Rail Contingency Roadmap & Sniper SL Guardrails
+* **Contingency Graph**: Menyediakan jalur rel ganda (*Bullish Rail* vs *Bearish Rail*) lengkap dengan level invalidasi fisik untuk diaudit oleh 3-LLM Jury.
+* **Stop Loss Sniper**: Di-anchor langsung di belakang dinding kamar aktif ($C_1 + \text{Room}$ untuk SELL, $F_1 - \text{Room}$ untuk BUY): $10\text{–}25\text{ pips}$ (Majors), $15\text{–}35\text{ pips}$ (Crosses). Jika dinding jebol, posisi langsung cut loss kecil!
 
 ---
 

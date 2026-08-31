@@ -1248,15 +1248,15 @@
         </section>
 
         <!-- ══════════════════════════════════════════════════════════════ -->
-        <!-- BAB 6: BARRIER CHAMBER STATE MACHINE & MACRO STRATEGIC ENGINE   -->
+        <!-- BAB 6: STATEFUL MARKET-STRUCTURE ENGINE (MSE) & BARRIER CHAMBER -->
         <!-- ══════════════════════════════════════════════════════════════ -->
         <section id="bab-6" class="chapter">
             <div class="chapter-header">
                 <span class="chapter-num">06</span>
-                <h2 class="chapter-title">Barrier Chamber State Machine & Pure Quant 6-TF MSE</h2>
+                <h2 class="chapter-title">Stateful Market-Structure Engine (MSE) & Barrier Chamber</h2>
             </div>
             <p>
-                MSE 6-TF Native mengintegrasikan <strong>Barrier Chamber State Machine</strong> 3-layer modular untuk memetakan ruang lelang institusional secara deterministik:
+                MSE 6-TF Native mengintegrasikan <strong>Stateful Market-Structure Engine</strong> berbasis geometri ruang lelang (<em>Barrier Chamber</em>) dan <em>Factorized Primitive State Machine</em> untuk memetakan dinamika institusional secara deterministik dan bebas dari <em>double-counting</em>:
             </p>
 
             <h3 style="margin-top: 18px; margin-bottom: 10px; font-size: 15px; color: var(--text-primary);">1. Peta Distribusi Dealing Chamber (% Koridor Lelang)</h3>
@@ -1276,40 +1276,45 @@
 [   0% ] ── LANTAI F1 (Zona Beli / Diskon) ────────────► [ FLOOR_REJECTION: SIAP BUY ]
             </pre>
 
-            <h3 style="margin-top: 18px; margin-bottom: 10px; font-size: 15px; color: var(--text-primary);">2. Tabel Peringkat Benteng Pertahanan (Fortress Tier Ranking)</h3>
+            <h3 style="margin-top: 18px; margin-bottom: 10px; font-size: 15px; color: var(--text-primary);">2. Orthogonal Evidence Scoring (Anti-Double-Counting)</h3>
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
+                Memisahkan <strong>Kualifikasi Struktural (\(Q\))</strong> dan <strong>Peringkat Komposit (\(R\))</strong>:
+                \[Q = S_{\text{structure}} \times (1 + D_{\text{TF}}), \quad R = Q + \alpha V_{\text{Volume}} + \beta L_{\text{Liquidity}}\]
+                Syarat kualifikasi dinding \(C_1 / F_1\): wajib memiliki \(Q \ge 2.5\) (level tanpa anchor struktural kuat otomatis didiskualifikasi).
+            </p>
             <div class="table-container" style="margin-bottom: 16px;">
                 <table>
                     <thead>
                         <tr>
                             <th>Fortress Tag</th>
-                            <th>Skor Kepadatan</th>
+                            <th>Skor Komposit (\(R\))</th>
                             <th>Elemen Konfluensi & Makna Pertahanan</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
                             <td><span class="badge badge-purple">SUPER_FORTRESS</span></td>
-                            <td>\(\ge 12.0\text{ Poin}\)</td>
+                            <td>\(\ge 10.0\text{ Poin}\)</td>
                             <td>Konfluensi masif multi-tahun (W1 + D1 + FRVP POC + Halte Bulat). Dinding beton institusi tak tertembus.</td>
                         </tr>
                         <tr>
                             <td><span class="badge badge-emerald">MAJOR_FORTRESS</span></td>
-                            <td>\(8.0 - 11.9\text{ Poin}\)</td>
+                            <td>\(7.0 - 9.9\text{ Poin}\)</td>
                             <td>Konfluensi kuat (D1 SBR/RBS + H4 + SMC OB). Area pantulan probabilitas sangat tinggi.</td>
                         </tr>
                         <tr>
                             <td><span class="badge badge-primary">SOLID_BARRIER</span></td>
-                            <td>\(5.0 - 7.9\text{ Poin}\)</td>
+                            <td>\(4.5 - 6.9\text{ Poin}\)</td>
                             <td>Struktur solid harian / intermediate support-resistance.</td>
                         </tr>
                         <tr>
                             <td><span class="badge badge-amber">MODERATE</span></td>
-                            <td>\(3.0 - 4.9\text{ Poin}\)</td>
+                            <td>\(2.5 - 4.4\text{ Poin}\)</td>
                             <td>Level intraday H1/H4 atau titik FRVP HVN standar.</td>
                         </tr>
                         <tr>
                             <td><span class="badge badge-rose">MINOR</span></td>
-                            <td>\(&lt; 3.0\text{ Poin}\)</td>
+                            <td>\(&lt; 2.5\text{ Poin}\)</td>
                             <td>Halte psikologis tunggal atau order block minor.</td>
                         </tr>
                     </tbody>
@@ -1318,16 +1323,22 @@
 
             <div class="grid-2">
                 <div class="card">
-                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">straighten</span> Minimum Chamber Height Rule</div>
-                    <p style="font-size: 13px; color: var(--text-secondary);">
-                        Tinggi dealing chamber wajib memenuhi \(\text{Height} \ge \max(0.60\times\text{ATR H1}, 0.40\times\text{Psych Step}, 12\text{ pips})\) untuk mengeliminasi kamar kerdil (&lt;15 pips).
-                    </p>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">tune</span> Configurable Hyperparameters (MSE)</div>
+                    <ul style="font-size: 12px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
+                        <li><code>k_d = 0.25 × ATR H1</code>: Jarak minimum kandidat dari harga.</li>
+                        <li><code>k_h = 0.60 × ATR H1</code>: Tinggi minimum dealing chamber.</li>
+                        <li><code>k_merge = 0.15 × ATR H1</code>: Toleransi penggabungan kluster.</li>
+                        <li><code>Q_min = 2.5</code>: Ambang batas kelayakan dinding \(C_1/F_1\).</li>
+                    </ul>
                 </div>
                 <div class="card">
-                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--rose);">security</span> Sniper SL & Chamber Anchoring</div>
-                    <p style="font-size: 13px; color: var(--text-secondary);">
-                        SL intraday di-anchor langsung di belakang dinding kamar aktif terdekat (\(C_1\) untuk SELL, \(F_1\) untuk BUY): 10–25 pips (Majors), 15–35 pips (Crosses). Jika jebol, posisi langsung cut loss kecil!
-                    </p>
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--purple);">account_tree</span> Factorized Primitive State Machine</div>
+                    <ul style="font-size: 12px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
+                        <li><strong>Location</strong>: <code>CEILING, FLOOR, MID, OUTSIDE</code></li>
+                        <li><strong>Event</strong>: <code>REJECTION, SWEEP, BREAKOUT, RETEST</code></li>
+                        <li><strong>Trajectory</strong>: <code>UP, DOWN, ROTATION</code></li>
+                        <li><strong>Persisted State</strong>: Rekam jejak interaksi lintas bar.</li>
+                    </ul>
                 </div>
             </div>
         </section>
