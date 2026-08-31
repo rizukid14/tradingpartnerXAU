@@ -547,11 +547,14 @@ class RiskEngine:
 
         # 3. Free Margin Buffer Safety Check (>= 60%)
         account = connector.get_account_info()
-        if account and account.equity > 0:
-            margin_free_ratio = float(account.margin_free) / float(account.equity)
-            min_free_margin = getattr(config, "MIN_FREE_MARGIN_RATIO", 0.60)
-            if margin_free_ratio < min_free_margin:
-                return False, f" [RISK] Free margin buffer terlalu rendah ({margin_free_ratio*100:.1f}% < {min_free_margin*100:.0f}%). Menunggu..."
+        if account:
+            eq_val = account.get("equity", 0.0) if isinstance(account, dict) else getattr(account, "equity", 0.0)
+            mf_val = account.get("free_margin", account.get("margin_free", 0.0)) if isinstance(account, dict) else getattr(account, "margin_free", 0.0)
+            if eq_val > 0:
+                margin_free_ratio = float(mf_val) / float(eq_val)
+                min_free_margin = getattr(config, "MIN_FREE_MARGIN_RATIO", 0.60)
+                if margin_free_ratio < min_free_margin:
+                    return False, f" [RISK] Free margin buffer terlalu rendah ({margin_free_ratio*100:.1f}% < {min_free_margin*100:.0f}%). Menunggu..."
 
         # 4. Strict 1-trade limit per symbol
         if symbol:

@@ -417,20 +417,23 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                         pos = v.get('dealing_range_pos', 0.5)
                         is_bull = v.get('is_bull', False)
                         is_bear = v.get('is_bear', False)
-                        
                         wave_st = v.get('wave_state', '')
-                        is_perm = v.get('wave_permitted', True)
+                        perm_st = v.get('permission_state', 'WAIT')
                         
-                        if "IMPULSE" in wave_st:
+                        if "IMPULSE" in wave_st or "CHASE" in wave_st:
                             badge = f"{UI.PURPLE}⚡{UI.RST}"
-                        elif not is_perm or "LOCK" in wave_st:
+                        elif "LOCK" in wave_st or perm_st == "LOCK":
                             badge = f"{UI.RED}🔒{UI.RST}"
-                        elif "BASE_RECLAIM" in wave_st:
+                        elif "RECLAIM" in wave_st or "GO" in wave_st or perm_st == "GO":
                             badge = f"{UI.GREEN}🟢{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} 🟢")
-                        elif "MATURE" in wave_st or "ARMED" in wave_st:
+                        elif "ARMED" in wave_st or "RELOAD" in wave_st or "MATURE" in wave_st or perm_st == "ARM":
                             badge = f"{UI.CYAN}🎯{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} 🎯")
+                        elif perm_st == "WATCH":
+                            badge = f"{UI.YELLOW}👁️{UI.RST}"
+                        elif "WAIT" in perm_st or "EXPANSION" in wave_st:
+                            badge = f"{UI.GRAY}⏳{UI.RST}"
                         elif pos <= 0.382 or pos >= 0.618:
                             badge = f"{UI.YELLOW}💎{UI.RST}"
                         else:
@@ -459,7 +462,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 t1_lines.append(f" {c1} │ {c2} │ {c3}")
                 
             t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
-            t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 💎SMC Zone{UI.RST}")
+            t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 👁️Watch │ ⏳Wait │ 🔒Lock │ 💎SMC Zone{UI.RST}")
         else:
             t1_lines = [
                 f" {UI.YELLOW}● Inisialisasi {len(all_symbols)}-Pair Macro Compass...{UI.RST}",
