@@ -71,12 +71,12 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             if atr_points > 0:
                 min_sl = max(spread_pts * 2 + 20, int(jpy_mult * atr_points))
             else:
-                min_sl = max(spread_pts * 2 + 20, config.LLM_SAFETY_FLOOR_FX_PTS)
+                min_sl = max(spread_pts * 2 + 20, config.default_sl_points_for(sym))
         else:
             if atr_points > 0:
                 min_sl = max(spread_pts * 2 + 15, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
             else:
-                min_sl = max(spread_pts * 2 + 15, config.LLM_SAFETY_FLOOR_FX_PTS)
+                min_sl = max(spread_pts * 2 + 15, config.default_sl_points_for(sym))
             
         if sl_points < min_sl:
             _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")

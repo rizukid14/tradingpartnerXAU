@@ -918,15 +918,31 @@ def get_timeframe(symbol=None, now_wib=None):
 
 
 def default_sl_points_for(symbol):
-    if is_crypto(symbol): return DEFAULT_SL_POINTS_BTC
-    if "XAU" not in symbol.upper(): return 100
-    return DEFAULT_SL_POINTS_XAU
+    """Fallback default SL points if ATR/LLM calculation is missing."""
+    s_clean = (symbol or "").replace("-ECNc", "").replace(".c", "").upper()
+    if is_crypto(s_clean):
+        return DEFAULT_SL_POINTS_BTC  # 50,000 pts ($500)
+    if "XAU" in s_clean or "GOLD" in s_clean:
+        return DEFAULT_SL_POINTS_XAU  # 500 pts ($5.00)
+    if "JPY" in s_clean:
+        return 250  # 25 pips for JPY crosses
+    if any(k in s_clean for k in ("GBPNZD", "EURNZD", "GBPAUD", "EURAUD", "GBPCAD", "AUDNZD")):
+        return 300  # 30 pips for volatile exotic crosses
+    return 200  # 20 pips for standard FX majors (EURUSD, GBPUSD, USDCHF, AUDUSD)
 
 
 def default_tp_points_for(symbol):
-    if is_crypto(symbol): return DEFAULT_TP_POINTS_BTC
-    if "XAU" not in symbol.upper(): return 200
-    return DEFAULT_TP_POINTS_XAU
+    """Fallback default TP points if ATR/LLM calculation is missing (R:R 2.0:1 benchmark)."""
+    s_clean = (symbol or "").replace("-ECNc", "").replace(".c", "").upper()
+    if is_crypto(s_clean):
+        return DEFAULT_TP_POINTS_BTC  # 100,000 pts ($1000)
+    if "XAU" in s_clean or "GOLD" in s_clean:
+        return DEFAULT_TP_POINTS_XAU  # 1000 pts ($10.00)
+    if "JPY" in s_clean:
+        return 500  # 50 pips for JPY crosses
+    if any(k in s_clean for k in ("GBPNZD", "EURNZD", "GBPAUD", "EURAUD", "GBPCAD", "AUDNZD")):
+        return 600  # 60 pips for volatile exotic crosses
+    return 400  # 40 pips for standard FX majors
 
 
 def max_spread_points_for(symbol, atr_h1_pts=None):
