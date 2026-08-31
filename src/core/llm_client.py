@@ -1070,12 +1070,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     whisper_str = whisper_str or ""
 
     lessons_str = ""
-    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        try:
-            from src.analytics import trade_evaluator
-            lessons_str = trade_evaluator.evaluator.get_lessons_context()
-        except Exception:
-            pass
 
     recent_outcomes_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):

@@ -12,7 +12,7 @@ from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
 from src.core.cli_theme import UI, render_banner, render_scanner_banner, render_candidate_alert_box, render_hacker_bento_hud
-from src.analytics import position_manager, trade_evaluator, dynamic_config, decision_memory
+from src.analytics import position_manager, dynamic_config, decision_memory
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 
 import re
@@ -1004,9 +1004,8 @@ def run_trading_cycle():
 
 
     box_items = []
-    # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
+    # 2.5 Daily WinRate Summary (Run before any early exits)
     try:
-        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
         if getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
             dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
@@ -1197,10 +1196,6 @@ def _run_cycle_for_current_symbol():
         except Exception as e:
             print(f"[WHISPER ERROR {config.SYMBOL}] {e}")
 
-    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
-        if lessons_ctx:
-            print("Menyertakan Lesson Learned & Memori Trading untuk LLM...")
 
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
@@ -1966,12 +1961,7 @@ def main():
     acc_info = connector.get_account_info()
     acc_login = f"Login #{acc_info.get('login', 'Live')}" if acc_info else "Connected"
     print(f"\n {UI.GREEN}[OK]{UI.RST} Terhubung ke MT5 Terminal ({acc_login})")
-    
-    # Background post-mortem check for closed trades
-    try:
-        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
-    except Exception:
-        pass
+
     
     # Send startup alert (in background thread so terminal boots instantly)
     import threading
@@ -2090,16 +2080,6 @@ def main():
                         except Exception as e:
                             print(f"[DECISION MEMORY WARNING] update_result: {e}")
 
-                    if new_closed:
-                        try:
-                            _pm_deals = list(new_closed)
-                            threading.Thread(
-                                target=trade_evaluator.evaluator.check_and_evaluate_closed_trades,
-                                args=(_pm_deals,),
-                                daemon=True,
-                            ).start()
-                        except Exception as e:
-                            print(f"[POST-MORTEM ERROR] Gagal evaluasi tiket baru: {e}")
                 except Exception as e:
                     print(f"[CLOSE SYNC ERROR] {e}")
                 
