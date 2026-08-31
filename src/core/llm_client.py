@@ -222,7 +222,7 @@ A valid trade requires structure + location + actionable setup + valid invalidat
 - BUY only when bullish setup exists. SELL only when bearish setup exists. HOLD when setup is absent/unclear.
 - Proximity Traps: Avoid blind BUY market orders directly below major resistance (< 0.3x ATR away) unless closed above it. Avoid blind SELL market orders directly above major support (< 0.3x ATR away) unless closed below it.
 - Mid-range entries are normally HOLD unless a defined limit setup offers verified clearance and R:R >= 1.25.
-- Pending Rules: Entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: buy_stop/buy_limit. SELL: sell_stop/sell_limit.
+- Execution Choice & ATR Proximity: If current live price is already inside the Reload Zone or within <= 0.20x ATR of the optimal retest/entry anchor and you have high conviction, favor "market" for instant execution so we do not miss the impulse move. Use pending limit (buy_limit/sell_limit) ONLY when optimal entry is further away (> 0.20x ATR) where waiting for a pullback provides significantly superior R:R. Pending entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: market/buy_stop/buy_limit. SELL: market/sell_stop/sell_limit.
 - Unit Definition: sl_points & tp_points are broker POINTS from ENTRY PRICE.
   * {{POINTS_EXPLANATION}}
 - Safety Floors: Give your honest structural levels; the bot engine automatically widens SL/TP to meet broker safety floors (>= 1.3x ATR {{TIMEFRAME}}) and enforces min R:R 1.25.
@@ -775,15 +775,15 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
             "HOLD if conviction is low."
         )
         pending_rules_block = (
-            "\n### PENDING ORDER RULES (the bot has pending orders enabled)\n"
-            "Your thesis determines the entry type -- do not pick one arbitrarily:\n"
-            "- Thesis is a BREAKOUT / momentum continuation beyond a level: use buy_stop (BUY) or sell_stop (SELL). entry_price = the breakout level (beyond current price).\n"
-            "- Thesis is a RETEST / pullback to a level: use buy_limit (BUY) or sell_limit (SELL). entry_price = the retest level (below current price for BUY, above for SELL).\n"
-            "- Thesis is valid at the CURRENT price: use \"market\" (default) -- no entry_price needed.\n"
-            "- Direction consistency is mandatory: BUY -> buy_stop/buy_limit only; SELL -> sell_stop/sell_limit only.\n"
+            "\n### PENDING VS MARKET EXECUTION RULES (ATR-Based Proximity)\n"
+            "Your thesis and distance to the optimal entry anchor determine the execution mode:\n"
+            "- PROXIMITY & INSTANT MARKET RULE: If the current live price is already inside the Reload Zone or within <= 0.20x ATR H1 of the optimal retest/entry anchor, and you are confident the thesis is valid, FAVOR \"market\" order for immediate execution so we do not miss the impulse move (Zero Missed Trade).\n"
+            "- PENDING LIMIT RULE: Use buy_limit (BUY) or sell_limit (SELL) ONLY when the optimal entry anchor is still further away (> 0.20x ATR H1 from current price) where waiting for a deeper pullback/discount provides significantly superior Risk:Reward.\n"
+            "- PENDING STOP RULE: Thesis is a BREAKOUT / momentum continuation beyond a level: use buy_stop (BUY) or sell_stop (SELL). entry_price = the breakout level (beyond current price).\n"
+            "- Direction consistency is mandatory: BUY -> market/buy_stop/buy_limit only; SELL -> market/sell_stop/sell_limit only.\n"
             "- entry_price must be at least 2x current spread away from the current price, and no further than ~1.5x ATR from it. If your level is outside this band, the bot rejects the pending order (or falls back to market).\n"
             "- An executed pending order becomes a normal position with your sl_points/tp_points -- same risk rules apply.\n"
-            "- If you are not confident the level will trigger, output \"market\" or HOLD instead."
+            "- If you are not confident the level will trigger or pullback will reach, output \"market\" or HOLD instead."
         )
         pending_fields = (
             '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",\n'
