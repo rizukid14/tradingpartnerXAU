@@ -12,8 +12,7 @@ from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
 from src.core.cli_theme import UI, render_banner, render_scanner_banner, render_candidate_alert_box, render_hacker_bento_hud
-from src.analytics import position_manager, trade_evaluator, dynamic_config, forecast_engine, decision_memory
-from src.analytics.macro_analyst import MacroAnalyst
+from src.analytics import position_manager, trade_evaluator, dynamic_config, decision_memory
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 
 import re
@@ -483,9 +482,6 @@ def _render_status_lines(lines, vt_ok=True):
 # Initialize risk engine
 risk = RiskEngine()
 
-# Initialize macro analyst
-macro = MacroAnalyst()
-
 
 def _tpsl_rules_arg(value):
     """Parser argparse untuk --tpsl-rules: terima 'ATR-Based'/'LLM' (case-insensitive)."""
@@ -536,6 +532,8 @@ def parse_cli_overrides(argv=None):
                    help="Pending order (LIMIT/STOP dari AI) on/off - default dari .env PENDING_ORDERS_ENABLED")
     p.add_argument("--account", choices=["live", "demo"],
                    help="Pilih akun MT5: 'live' (real money) atau 'demo' (virtual)")
+    p.add_argument("--macro", type=str, nargs="?", const="all",
+                   help="Tampilkan Top-Down Macro Strategic Directive (MSE) di CLI untuk simbol tertentu (mis. BTCUSD, EURUSD) atau 'all'")
     p.add_argument("--yes", "-y", action="store_true",
                    help="Lewati prompt interaktif saat startup (cocok untuk Docker/non-interactive)")
     args = p.parse_args(argv)
@@ -616,6 +614,9 @@ def parse_cli_overrides(argv=None):
         config.MT5_ACCOUNT_MODE = args.account
         config.refresh_mt5_credentials()
         applied.append(f"MT5_ACCOUNT_MODE={config.MT5_ACCOUNT_MODE}")
+    if getattr(args, "macro", None) is not None:
+        setattr(config, "CLI_MACRO_ARG", args.macro)
+        applied.append(f"MACRO_INSPECT={args.macro}")
 
     return applied, getattr(args, "yes", False)
 
@@ -813,19 +814,41 @@ def interactive_setup():
 class TeeLogger(object):
     """Redirects stdout and stderr to both the console (with full ANSI colors)
     and a clean, timestamped log file for easy AI parsing and historical analysis.
+    Auto-archives logs by week and month into logs/YYYY-MM/trading_bot_Week<W>_<timestamp>.log
     """
     def __init__(self, filepath, max_bytes=2000000):
         self.terminal = sys.stdout
         self.filepath = filepath
         self._buffer = ""
-        # Rotate log if size exceeds max_bytes (keep last 5000 lines)
-        if os.path.exists(filepath) and os.path.getsize(filepath) > max_bytes:
+        
+        # ── AUTO WEEKLY / MONTHLY LOG ARCHIVER ──
+        # Struktur: logs/YYYY-MM/trading_bot_Week<W>_<timestamp>.log
+        if os.path.exists(filepath):
             try:
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                    lines = f.readlines()
-                keep_lines = lines[-5000:]
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.writelines(keep_lines)
+                mtime = os.path.getmtime(filepath)
+                file_dt = datetime.fromtimestamp(mtime, tz=_WIB)
+                now_dt = datetime.now(_WIB)
+                
+                file_cal = file_dt.isocalendar()  # (year, week, weekday)
+                now_cal = now_dt.isocalendar()
+                
+                is_new_week = (file_cal[0] != now_cal[0]) or (file_cal[1] != now_cal[1])
+                is_oversize = os.path.getsize(filepath) > max_bytes
+                
+                if (is_new_week or is_oversize) and os.path.getsize(filepath) > 1000:
+                    archive_folder = os.path.join("logs", file_dt.strftime("%Y-%m"))
+                    os.makedirs(archive_folder, exist_ok=True)
+                    
+                    ts_str = file_dt.strftime("%Y%m%d_%H%M%S")
+                    archive_filename = f"trading_bot_Week{file_cal[1]:02d}_{ts_str}.log"
+                    archive_path = os.path.join(archive_folder, archive_filename)
+                    
+                    shutil.copy2(filepath, archive_path)
+                    
+                    # Bersihkan file aktif untuk sesi baru (kosongkan)
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(f"=== TRADING BOT SESSION LOG (Started {now_dt.strftime('%Y-%m-%d %H:%M:%S WIB')}) ===\n")
+                        f.write(f"=== Archived previous log to: {archive_path} ===\n\n")
             except Exception:
                 pass
         self.log = open(filepath, "a", encoding="utf-8")
@@ -1138,35 +1161,6 @@ def _run_cycle_for_current_symbol():
     print(f"\n{UI.tag('SCAN ASSET', UI.CYAN)} {UI.BOLD}{config.SYMBOL}{UI.RST} ({tf_name}) | Bid: {tick['bid']:.2f} | Ask: {tick['ask']:.2f} | Spread: {tick['spread']} pts")
 
 
-    # 2.1 Calculate Market Randomness & Micro Fat Tails
-    if getattr(config, "QUANT_ANALYSIS_ENABLED", True):
-        try:
-            from src.analytics import market_randomness
-            rand_info = market_randomness.analyze_market_randomness(df, symbol=config.SYMBOL)
-            ft = rand_info.get('fat_tail', {})
-            tf_micro = ft.get('tf', 'M5' if config.is_crypto(config.SYMBOL) else 'M1')
-            print(f"[QUANT MATH] Hurst: {rand_info['hurst']:.2f} ({rand_info['regime']}) | "
-                  f"Kurtosis({tf_micro}): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | "
-                  f"Skew({tf_micro}): {ft.get('skewness', 0.0):+.2f} | "
-                  f"Status: {' BLOCKED (Pure Random Walk)' if rand_info['is_random'] else ' PASSED'}")
-        except Exception as e:
-            print(f"[QUANT MATH ERROR] {e}")
-
-    # 2.2 Calculate Quant Monte Carlo Probabilities & Time Horizon
-    if getattr(config, "MONTE_CARLO_ENABLED", False):
-        try:
-            from src.analytics import quant_probability
-            tf_mins = 30 if config.is_crypto(config.SYMBOL) else (60 if "XAU" not in config.SYMBOL.upper() else 15)
-            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-            print(f"[QUANT PROB] Monte Carlo (1000 paths): "
-                  f" UP {q_res['prob_up_pct']}% (${q_res['expected_target_up']}) | "
-                  f" DOWN {q_res['prob_down_pct']}% (${q_res['expected_target_down']}) | "
-                  f"Est. Horizon: {q_res['estimated_time_str']}")
-        except Exception as e:
-            print(f"[QUANT PROB ERROR] {e}")
-    
-
-
 
     # 3. Check for existing open positions
     open_positions = connector.get_open_positions(config.SYMBOL)
@@ -1204,15 +1198,6 @@ def _run_cycle_for_current_symbol():
         lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
         if lessons_ctx:
             print("Menyertakan Lesson Learned & Memori Trading untuk LLM...")
-
-    # Pre-warm forecast: synchronous refresh ONLY if cache is stale (15 min XAU /
-    # 30 min BTC). Kalau cache masih fresh, langsung return tanpa nge-block.
-    # Hasil forecast di-print SEBELUM "Mengirim data..." biar urutan log rapi.
-    if getattr(config, "FORECAST_ENABLED", True):
-        try:
-            forecast_engine.forecaster.refresh_if_stale(config.SYMBOL, df, tick, macro_context)
-        except Exception as e:
-            print(f"[FORECAST WARNING] {e}")
 
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
@@ -1625,6 +1610,14 @@ def run_scanner_trading_cycle(cand, risk):
     tf_str = getattr(cand, "timeframe", "H1")
     _reset_status_lines()
     print("\n" + render_candidate_alert_box(cand))
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        from src.core.cli_theme import render_macro_directive_card
+        macro_dir = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
+        if macro_dir:
+            print("\n" + render_macro_directive_card(macro_dir))
+    except Exception as e:
+        pass
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
@@ -1709,13 +1702,15 @@ def run_scanner_trading_cycle(cand, risk):
                 print(f" {UI.YELLOW}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order.{UI.RST}")
                 return False
             
-            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points, symbol=sym)
+            action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points, symbol=sym, action_tier=action_tier_val)
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False
                 
             # High Confidence Multi-Position sizing:
             # If 3/3 AI agree and confidence >= 0.75 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
+            # CRITICAL: If action_tier == "TP1_ONLY_SCALP", enforce single position only (no 2nd extended runner against macro)
             positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
             orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
             total_active = len(positions or []) + len(orders or [])
@@ -1724,16 +1719,16 @@ def run_scanner_trading_cycle(cand, risk):
             
             agreeing_count = result.get("agreeing_count", 0)
             avg_conf = result.get("confidence", 0.0)
-            is_high_conf = (agreeing_count >= 3 and avg_conf >= 0.75 and remaining_slots >= 2)
+            is_high_conf = (agreeing_count >= 3 and avg_conf >= 0.75 and remaining_slots >= 2 and action_tier_val != "TP1_ONLY_SCALP")
             num_positions = 2 if is_high_conf else 1
             
-            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym)
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val)
             if num_positions == 2:
                 effective_lot = round(base_lot * 0.625, 2)
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
                 min_v = getattr(si, "volume_min", 0.01) if si else 0.01
                 effective_lot = max(effective_lot, min_v)
-                print(f" {UI.GREEN}🚀 [HIGH CONFIDENCE 3/3 JURY] 3 AI sepakat {trade_signal} (Avg Conf {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos)!{UI.RST}")
+                print(f" {UI.GREEN}🚀 [HIGH CONFIDENCE 3/3 JURY] 3 AI sepakat {trade_signal} (Avg Conf {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos) [Tier: {action_tier_val}]!{UI.RST}")
             else:
                 effective_lot = base_lot
             
@@ -1847,9 +1842,49 @@ def run_scanner_trading_cycle(cand, risk):
         config.SYMBOL = old_sym
 
 
+def execute_cli_macro_command(symbol_arg: str):
+    """
+    Kalkulasi dan tampilkan Top-Down Macro Strategic Directive di CLI Terminal.
+    Jika symbol_arg == 'all', tampilkan tabel ringkasan 26 simbol FX + BTC.
+    Jika symbol_arg == specific symbol, tampilkan kartu detail bergaya ANSI Cyberpunk.
+    """
+    from src.analytics.macro_strategic_engine import macro_strategic_engine
+    from src.core.cli_theme import render_macro_directive_card, render_macro_summary_table
+    
+    print(f"\n {UI.CYAN}[MT5 CONNECT]{UI.RST} Menginisialisasi koneksi MT5 untuk kalkulasi Macro Strategic Engine...")
+    if not connector.initialize_mt5():
+        print(f" {UI.RED}[ERROR]{UI.RST} Gagal terhubung ke terminal MT5.")
+        return
+    
+    sym_clean = (symbol_arg or "all").strip().upper()
+    if sym_clean == "ALL":
+        symbols = config.get_scanner_symbols()
+        if "BTCUSD.c" not in symbols and "BTCUSD" not in symbols:
+            symbols = symbols + ["BTCUSD.c"]
+        print(f" {UI.GREEN}[CALCULATING]{UI.RST} Menghitung 6-TF Native Directive untuk {len(symbols)} simbol...\n")
+        directives = []
+        for s in symbols:
+            valid_s = connector.get_valid_trade_symbol(s)
+            d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+            directives.append(d)
+        print(render_macro_summary_table(directives))
+    else:
+        valid_s = connector.get_valid_trade_symbol(sym_clean)
+        print(f" {UI.GREEN}[CALCULATING]{UI.RST} Menghitung 6-TF Native Directive untuk {valid_s}...\n")
+        d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+        print(render_macro_directive_card(d))
+    print("")
+
+
 def main():
     # Apply CLI overrides (sesi saja) sebelum bot jalan
     cli_applied, skip_prompt = parse_cli_overrides()
+
+    # Eksekusi on-demand CLI Macro Inspector jika diminta flag --macro
+    macro_arg = getattr(config, "CLI_MACRO_ARG", None)
+    if macro_arg is not None:
+        execute_cli_macro_command(macro_arg)
+        return
 
     # Prompt interaktif setting - di-bypass di mode Scanner (semua konfigurasi via .env)
     if not skip_prompt and sys.stdin.isatty() and not config.SCANNER_MODE:
@@ -1884,7 +1919,7 @@ def main():
             total_symbols=len(config.get_scanner_symbols())
         ))
         print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
-        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (21 FX Crosses + Gold H1/D1){UI.RST}")
+        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (26 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
     else:
         print(render_banner(
             account_info=getattr(config, "MT5_LOGIN", None),
@@ -1899,21 +1934,19 @@ def main():
             pool = config.get_rotation_pool()
             print(f"  {UI.BOLD}Pool Scan   :{UI.RST} {UI.CYAN}{' -> '.join(pool)}{UI.RST} ({len(pool)} simbol)")
             if getattr(config, "DYNAMIC_SESSION_TIMEFRAME", False):
-                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (M30 24/7) - Smart Rotation")
+                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs: Dynamic ({config.ASIA_TIMEFRAME} Tokyo / {config.LONDON_NY_TIMEFRAME} London-NY) | BTC (H1 Weekend) - Smart Rotation")
             else:
-                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (M30 24/7) - Smart Rotation")
+                print(f"  {UI.BOLD}Timeframe   :{UI.RST} FX Pairs ({config.TIMEFRAME}) | BTC (H1 Weekend) - Smart Rotation")
         else:
             print(f"  {UI.BOLD}Trading Mode:{UI.RST} {UI.CYAN}SINGLE SYMBOL ONLY{UI.RST}")
 
     if config.TP_SL_RULES != "LLM":
         sltp_desc = f"{config.TP_SL_RULES} (force semua)"
-    elif config.TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR, min R:R {config.LLM_MIN_RR_RATIO}) | BTC: ATR-Based (fix)"
     else:
-        sltp_desc = f"XAU: LLM Structure (floor {config.LLM_SAFETY_FLOOR_XAU_PTS} pts) | BTC: ATR-Based (fix)"
+        sltp_desc = f"FX: LLM Structure (floor {config.LLM_FX_FLOOR_ATR_MULT}xATR, min R:R {config.LLM_MIN_RR_RATIO}) | BTC: Dynamic ATR (H1)"
 
     loss_desc = f"{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%"
-    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} Risk {config.risk_percent_for(config.SYMBOL)}% | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
+    print(f"  {UI.BOLD}Risk & Rules:{UI.RST} FX Risk {config.RISK_PERCENT_FX}% | BTC Weekend Risk {config.RISK_PERCENT_BTC}% (Max 2 Pos) | SL/TP: {sltp_desc} | Max Daily Loss: {loss_desc} | Target Profit: {config.DAILY_PROFIT_TARGET_PERCENT}%")
     print(f"  {UI.BOLD}Proteksi    :{UI.RST} Trailing [{'ON' if config.TRAILING_STOP_ENABLED else 'OFF'} ({int(config.TRAILING_ACTIVATION_TP_PCT*100)}% TP)], BEP [{'ON' if config.BREAK_EVEN_ENABLED else 'OFF'} ({int(config.BREAK_EVEN_TRIGGER_TP_PCT*100)}% TP)], Partial [{'ON' if config.PARTIAL_CLOSE_ENABLED else 'OFF'} ({int(config.PARTIAL_CLOSE_TRIGGER_TP_PCT*100)}% TP)], Recovery [{'ON' if config.RECOVERY_MODE_ENABLED else 'OFF'}]")
     print(f"{UI.DIM}------------------------------------------------------------------------{UI.RST}")
 
@@ -1976,15 +2009,15 @@ def main():
         except Exception as e:
             print(f"[STARTUP SCANNER WARNING] {e}\n")
 
-    # Run initial macro and MTF analysis (forced on startup to ensure we have data immediately)
-    if not config.SCANNER_MODE and (config.MTF_ANALYSIS_ENABLED or config.FUNDAMENTAL_ANALYSIS_ENABLED):
-        print("\n [STARTUP] Menjalankan analisa Multi-Timeframe & Fundamental awal...")
-        try:
-            macro.check_and_update_analysis(force=True)
-            print("Analisa Multi-Timeframe & Fundamental awal selesai.\n")
-        except Exception as e:
-            print(f"[STARTUP ERROR] Gagal menjalankan analisa awal: {e}\n")
-            
+    _last_known_macro_states = {}
+    if config.SCANNER_MODE and scanner is not None and scanner.macro_cache:
+        for sym_k, m_v in scanner.macro_cache.items():
+            p_st = m_v.get('permission_state', 'WAIT')
+            w_st = m_v.get('wave_state', '')
+            s_dir = m_v.get('strat_dir')
+            b_st = s_dir.primary_execution_directive if s_dir else m_v.get('direction_state', 'NEUTRAL')
+            _last_known_macro_states[sym_k] = (p_st, w_st, b_st)
+
     last_candle_time = None
     startup_run = True
     last_symbol = config.SYMBOL
@@ -2144,6 +2177,67 @@ def main():
                     _last_radar_scan = cur_t
                     try:
                         candidates = scanner.scan_fast_radar(connector)
+
+                        # Detect State Transitions across all symbols
+                        state_changed = False
+                        changed_details = []
+                        if scanner.macro_cache:
+                            for s_name, m_data in scanner.macro_cache.items():
+                                p_st = m_data.get('permission_state', 'WAIT')
+                                w_st = m_data.get('wave_state', '')
+                                strat_d = m_data.get('strat_dir')
+                                b_st = strat_d.primary_execution_directive if strat_d else m_data.get('direction_state', 'NEUTRAL')
+                                curr_tuple = (p_st, w_st, b_st)
+                                prev_tuple = _last_known_macro_states.get(s_name)
+
+                                if prev_tuple is not None and prev_tuple != curr_tuple:
+                                    state_changed = True
+                                    clean_s = s_name.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+                                    p_prev = prev_tuple[0] if len(prev_tuple) > 0 else "WAIT"
+                                    w_prev = prev_tuple[1] if len(prev_tuple) > 1 else ""
+                                    b_prev = prev_tuple[2] if len(prev_tuple) > 2 else ""
+
+                                    diff_list = []
+                                    if p_prev != p_st:
+                                        diff_list.append(f"Perm: {p_prev or 'INIT'} ➔ {p_st}")
+                                    if w_prev != w_st:
+                                        diff_list.append(f"Wave: {w_prev or 'INIT'} ➔ {w_st}")
+                                    if b_prev != b_st:
+                                        diff_list.append(f"Directive: {b_prev or 'INIT'} ➔ {b_st}")
+                                    
+                                    diff_summary = " │ ".join(diff_list) if diff_list else f"{p_prev or 'INIT'} ➔ {p_st}"
+                                    changed_details.append(f"{clean_s} ({diff_summary})")
+
+                                    # Trigger Telegram high-impact alert ONLY when transitioning to GO
+                                    if p_st == "GO" and p_prev != "GO":
+                                        try:
+                                            tg.alert_radar_go_transition(
+                                                symbol=s_name,
+                                                setup_type="RECLAIM_CONFIRMED_GO",
+                                                trigger_price=m_data.get('dealing_range_low', 0.0),
+                                                dr_pos=m_data.get('dealing_range_pos', 0.5),
+                                                action_tier=m_data.get('action_tier', 'FULL_ALLOW'),
+                                                bias_score=m_data.get('macro_bias_score', 0.0)
+                                            )
+                                        except Exception as e:
+                                            print(f"[TG GO ALERT ERROR] {e}")
+
+                                _last_known_macro_states[s_name] = curr_tuple
+
+                        # If state changed, immediately re-render Bento Box HUD in terminal
+                        if state_changed:
+                            _reset_status_lines()
+                            print(f"\n {UI.CYAN}{UI.BOLD}[⚡ STATE TRANSITION DETECTED]{UI.RST} " + ", ".join(changed_details[:3]))
+                            acc_info = connector.get_account_info()
+                            open_pos = connector.get_all_open_positions()
+                            print("\n" + render_hacker_bento_hud(
+                                macro_cache=scanner.macro_cache,
+                                account_info=acc_info,
+                                daily_pnl=risk.get_daily_pnl(),
+                                open_positions=open_pos,
+                                active_models=config.active_ai_model_names()
+                            ) + "\n")
+
                         if candidates:
                             # Process at most 1 top setup per 60s cycle to prevent LLM burst
                             for cand in candidates[:1]:

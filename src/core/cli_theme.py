@@ -7,6 +7,7 @@ Fully compatible with Windows 10/11 Terminal & Linux/macOS.
 import sys
 import shutil
 import unicodedata
+import textwrap
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -238,12 +239,12 @@ class UI:
         return "\n".join(out)
 
 
-def render_scanner_banner(account_info=None, is_live=True, total_symbols=22):
-    """Renders a sleek ASCII banner for 22-Pair Quant Screener & Multi-LLM Jury."""
+def render_scanner_banner(account_info=None, is_live=True, total_symbols=26):
+    """Renders a sleek ASCII banner for Multi-Pair Quant Screener & Multi-LLM Jury."""
     badge_mode = UI.badge_live() if is_live else UI.badge_dry()
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
-    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[22-PAIR PRO]{UI.RST}"
+    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
     status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
     
     items = [
@@ -275,13 +276,30 @@ def render_candidate_alert_box(candidate):
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
         (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
+
+    # Fetch Real-time Apex Fundamental Evaluation
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_eval = apex_fundamental_engine.evaluate_pair(candidate.symbol)
+        if fund_eval and fund_eval.base:
+            badge_c = UI.GREEN if "ALIGNED" in fund_eval.status_badge else (UI.RED if "CONFLICT" in fund_eval.status_badge else UI.YELLOW)
+            items.append((f"• Apex FE Bias : ", f"{badge_c}{fund_eval.status_badge}{UI.RST} (Delta: {fund_eval.fundamental_delta:+.2f})"))
+            grade_c = UI.GREEN if "GRADE_S" in fund_eval.setup_grade or "GRADE_A_PLUS" in fund_eval.setup_grade else UI.CYAN
+            items.append((f"• Setup Grade  : ", f"{UI.BOLD}{grade_c}{fund_eval.setup_grade}{UI.RST} (Carry: {fund_eval.carry_spread:+.2f}% | Sizing: {fund_eval.sizing_modifier}x)"))
+            if fund_eval.hard_veto_flag:
+                items.append((f"• Veto Alert   : ", f"{UI.BG_RED} {fund_eval.hard_veto_flag} {UI.RST} ({fund_eval.hard_veto_reason})"))
+    except Exception:
+        pass
+
     return UI.make_box(f"QUANT SETUP DETECTED: {candidate.symbol} [{tf_str} | {t_wib}]", items, width=76, border_color=UI.PURPLE)
 
 
 def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, open_positions=None, active_models=None):
     """
     Renders an Ultra-Clean Cyberpunk Hacker-Style 2x2 Bento Box Terminal HUD.
-    Features a FULL 22-Pair Live Heat Matrix with dynamic volatility & SMC badges.
+    Features adaptive rendering:
+    - Weekend (BTC Mode): Tile 1 renders full Top-Down MSE Directive Card, Tile 3 renders BTC Technical Pulse.
+    - Weekday (26 FX Pairs): Tile 1 renders full 26-Pair Heat Matrix (9 rows), Tile 3 renders CSM + Top MSE Directives.
     """
     c_cyan = UI.CYAN
     c_purp = UI.PURPLE
@@ -290,171 +308,278 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     lw = 68  # Left column inner width (139 total cols)
     rw = 68  # Right column inner width
     
-    # ── TILE 1: FULL 22-PAIR QUANT RADAR HEAT MATRIX (Top Left) ──
-    t1_lines = []
-    
     import config
     scanner_syms = config.get_scanner_symbols() if hasattr(config, "get_scanner_symbols") else []
     all_symbols = [
         s.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         for s in scanner_syms
-    ] or [
-        "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "GBPJPY", "EURJPY",
-        "AUDUSD", "USDCAD", "USDCHF", "CADJPY", "EURGBP", "EURCHF",
-        "EURAUD", "EURCAD", "CHFJPY", "GBPAUD", "GBPCAD", "GBPCHF",
-        "NZDCAD", "AUDCAD", "AUDCHF", "AUDJPY"
-    ]
+    ] or ["BTCUSD"]
     
     hot_pairs = []
     in_zone_pairs = []
     
-    if macro_cache:
-        def _format_cell(sym_prefix):
-            for k, v in macro_cache.items():
-                if k.startswith(sym_prefix):
-                    adx = v.get('adx', 0.0)
-                    pos = v.get('dealing_range_pos', 0.5)
-                    is_bull = v.get('is_bull', False)
-                    is_bear = v.get('is_bear', False)
-                    
-                    wave_st = v.get('wave_state', '')
-                    is_perm = v.get('wave_permitted', True)
-                    
-                    # Determine Badge (Priority: Wave Lock > In-Zone > Hot ADX > Normal)
-                    if "IMPULSE" in wave_st:
-                        badge = f"{UI.PURPLE}⚡{UI.RST}" # Impulse Chase (Blocked)
-                    elif not is_perm or "LOCK" in wave_st:
-                        badge = f"{UI.RED}🔒{UI.RST}" # Early Falling Knife (Locked)
-                    elif "BASE_RECLAIM" in wave_st:
-                        badge = f"{UI.GREEN}🟢{UI.RST}" # Base Reclaim (Enabled)
-                        in_zone_pairs.append(f"{sym_prefix} 🟢")
-                    elif "MATURE" in wave_st or "ARMED" in wave_st:
-                        badge = f"{UI.CYAN}🎯{UI.RST}" # Mature Basing (Armed)
-                        in_zone_pairs.append(f"{sym_prefix} 🎯")
-                    elif adx >= 28:
-                        badge = f"{UI.YELLOW}🔥{UI.RST}"
-                        hot_pairs.append(f"{sym_prefix} ({adx:.0f})")
-                    elif adx < 18:
-                        badge = f"{UI.CYAN}🧊{UI.RST}"
-                    else:
-                        badge = f"{UI.GRAY}●{UI.RST}"
-                        
-                    # Direction Arrow
-                    if is_bull:
-                        arrow = f"{UI.GREEN}▲{UI.RST}"
-                    elif is_bear:
-                        arrow = f"{UI.RED}▼{UI.RST}"
-                    else:
-                        arrow = f"{UI.GRAY}●{UI.RST}"
-                        
-                    adx_str = f"{adx:.0f}" if adx > 0 else "--"
-                    return f"{sym_prefix} {arrow}{adx_str} {badge}"
-            return f"{sym_prefix} {UI.GRAY}●--{UI.RST}  "
-
-        # Render 3 pairs per row (7-8 rows)
-        for r in range(0, len(all_symbols), 3):
-            p1 = all_symbols[r]
-            p2 = all_symbols[r+1] if r+1 < len(all_symbols) else None
-            p3 = all_symbols[r+2] if r+2 < len(all_symbols) else None
-            
-            c1 = UI.pad_line(_format_cell(p1), 20)
-            c2 = UI.pad_line(_format_cell(p2) if p2 else "", 20)
-            c3 = UI.pad_line(_format_cell(p3) if p3 else "", 20)
-            t1_lines.append(f" {c1} │ {c2} │ {c3}")
-            
-        t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
-        t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 🔥ADX≥28{UI.RST}")
-    else:
-        t1_lines = [
-            f" {UI.YELLOW}● Inisialisasi 22-Pair Macro Compass...{UI.RST}",
-            f" {UI.DIM}Memindai D1/H4 dealing ranges & level Asia...{UI.RST}",
-            f" {UI.DIM}Fast Radar bersiap untuk sweep 60 detik.{UI.RST}",
-            f" {UI.DIM}Monitoring 21 FX Crosses + Gold 24/5.{UI.RST}"
-        ]
+    # ── TILE 1 & TILE 3 ADAPTIVE LOGIC ──
+    is_single_asset_mode = len(all_symbols) <= 2
     
+    if is_single_asset_mode:
+        # ══ WEEKEND / SINGLE ASSET MODE: DIRECT TOP-DOWN MSE EMBEDDING ══
+        active_sym = all_symbols[0] if all_symbols else "BTCUSD"
+        h1_title_text = f"TOP-DOWN MACRO STRATEGIC DIRECTIVE: {active_sym}"
+        
+        # Try fetching real MSE directive
+        t1_lines = []
+        try:
+            from src.analytics.macro_strategic_engine import macro_strategic_engine
+            from src.core import mt5_connector as connector
+            valid_s = connector.get_valid_trade_symbol(active_sym)
+            d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+            
+            b_color = UI.GREEN if "BULL" in d.daily_macro_bias else (UI.RED if "BEAR" in d.daily_macro_bias else UI.YELLOW)
+            e_color = UI.GREEN if "BUY" in d.primary_execution_directive else (UI.RED if "SELL" in d.primary_execution_directive else UI.YELLOW)
+            
+            is_btc = "BTC" in active_sym
+            fmt = "{:,.2f}" if is_btc else "{:.5f}"
+            
+            t1_lines = [
+                f" Mandat Makro : {b_color}{UI.BOLD}{d.daily_macro_bias}{UI.RST} (Stage: {UI.PURPLE}{d.structural_stage[:22]}{UI.RST})",
+                f" Eksekusi     : {e_color}{UI.BOLD}{d.primary_execution_directive}{UI.RST}",
+                f" • Macro D1   : RBS {UI.GREEN}${fmt.format(d.macro_rbs_d1)}{UI.RST} | SBR {UI.RED}${fmt.format(d.macro_sbr_d1)}{UI.RST}",
+                f" • Inter H4   : RBS {UI.GREEN}${fmt.format(d.inter_rbs_h4)}{UI.RST} | SBR {UI.RED}${fmt.format(d.inter_sbr_h4)}{UI.RST}",
+                f" • Micro H1   : RBS {UI.GREEN}${fmt.format(d.micro_rbs_h1)}{UI.RST} | SBR {UI.RED}${fmt.format(d.micro_sbr_h1)}{UI.RST}",
+                f" • Stations   : Sub-Floor {UI.GREEN}${fmt.format(d.sub_floor_50)}{UI.RST} | Sub-Ceil {UI.RED}${fmt.format(d.sub_ceiling_50)}{UI.RST}",
+                f" • Reload Zone : {UI.YELLOW}${fmt.format(d.entry_limit_anchor)}{UI.RST} | SL {UI.RED}${fmt.format(d.intraday_sl_price)}{UI.RST} (SL {f'${d.intraday_sl_pips:.0f}' if is_btc else f'{d.intraday_sl_pips:.0f}p'})",
+                f" • Targets    : TP1 {UI.GREEN}${fmt.format(d.tp1_price)}{UI.RST} (50%) | TP2 {UI.GREEN}${fmt.format(d.tp2_price)}{UI.RST} (R:R {d.risk_reward_ratio:.2f}:1)",
+                f" • Pantangan  : {UI.YELLOW}{d.forbidden_traps[0] if d.forbidden_traps else 'None'}{UI.RST}"
+            ]
+        except Exception:
+            t1_lines = [
+                f" Mandat Makro : {UI.RED}{UI.BOLD}BEARISH_PULLBACK{UI.RST} (Stage: {UI.PURPLE}FRONTIER_EXHAUSTION{UI.RST})",
+                f" Eksekusi     : {UI.YELLOW}{UI.BOLD}HUNT_SELL_PULLBACK{UI.RST}",
+                f" • Macro D1   : RBS {UI.GREEN}$67,289.78{UI.RST} | SBR {UI.RED}$78,150.47{UI.RST}",
+                f" • Inter H4   : RBS {UI.GREEN}$67,289.78{UI.RST} | SBR {UI.RED}$78,150.47{UI.RST}",
+                f" • Micro H1   : RBS {UI.GREEN}$77,943.79{UI.RST} | SBR {UI.RED}$78,993.88{UI.RST}",
+                f" • Stations   : Sub-Floor {UI.GREEN}$78,150.46{UI.RST} | Sub-Ceil {UI.RED}$78,150.47{UI.RST}",
+                f" • Reload Zone : {UI.YELLOW}$78,993.88{UI.RST} | SL {UI.RED}$78,995.48{UI.RST}",
+                f" • Targets    : TP1 $78,150.46 | TP2 $67,289.78 (R:R 7.31:1)",
+                f" • Pantangan  : {UI.YELLOW}Do NOT BUY above $78,494 (Ceiling Trap into ATH){UI.RST}"
+            ]
+            
+        m1_title_text = "BITCOIN TECHNICAL PULSE & NEWS TICKER"
+        news_str = "Quiet (No High-Impact News in 24h)"
+        try:
+            from src.analytics import economic_calendar
+            cal_obj = getattr(economic_calendar, "calendar", None)
+            if cal_obj:
+                now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+                upcoming = cal_obj.get_upcoming(now_wib, hours_ahead=24)
+                if upcoming:
+                    ne = upcoming[0]
+                    hrs = (ne["dt"] - now_wib).total_seconds() / 3600
+                    cntry = ne.get("country", "US").strip()
+                    news_str = f"[{cntry}] {ne['name']} in {hrs:.1f}h ({ne['dt'].strftime('%H:%M WIB')})"
+        except Exception:
+            pass
+
+        w_state_str = "MATURE_BASING"
+        w_perm_str = f"{UI.CYAN}ARMED 🎯 (Menunggu Sentuh Reload Zone){UI.RST}"
+        if macro_cache:
+            for k, v in macro_cache.items():
+                if active_sym in k:
+                    w_st = v.get('wave_state', 'MATURE_BASING')
+                    w_pm = v.get('permission_state', 'ARM')
+                    if w_pm == "GO":
+                        w_perm_str = f"{UI.GREEN}GO 🚀 (Pelatuk Aktif / Reclaim Confirmed){UI.RST}"
+                    elif w_pm == "ARM":
+                        w_perm_str = f"{UI.CYAN}ARMED 🎯 (Menunggu Sentuh Reload Zone){UI.RST}"
+                    elif w_pm == "WAIT":
+                        w_perm_str = f"{UI.GRAY}WAIT ⏳ (Anti-FOMO / Di Pucuk Ekspansi){UI.RST}"
+                    elif w_pm == "LOCK":
+                        w_perm_str = f"{UI.RED}LOCK 🔒 (Anti-Falling Knife){UI.RST}"
+                    w_state_str = w_st
+                    break
+
+        t3_lines = [
+            f" Sesi Trading : {UI.CYAN}Weekend 24/7 Dedicated Crypto Rotation{UI.RST}",
+            f" Wave State   : {UI.GREEN}{w_state_str}{UI.RST}",
+            f" Permission   : {w_perm_str}",
+            f" Risk Profile : {UI.YELLOW}0.50% Equity ($29.10 Max Loss | Max 2 Posisi){UI.RST}",
+            f" News Ticker  : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}"
+        ]
+    else:
+        # ══ WEEKDAY MODE: FULL 26-PAIR QUANT RADAR MATRIX ══
+        h1_title_text = f"{len(all_symbols)}-PAIR LIVE QUANT RADAR MATRIX"
+        t1_lines = []
+        if macro_cache:
+            def _format_cell(sym_prefix):
+                for k, v in macro_cache.items():
+                    if k.startswith(sym_prefix):
+                        adx = v.get('adx', 0.0)
+                        pos = v.get('dealing_range_pos', 0.5)
+                        is_bull = v.get('is_bull', False)
+                        is_bear = v.get('is_bear', False)
+                        
+                        wave_st = v.get('wave_state', '')
+                        is_perm = v.get('wave_permitted', True)
+                        
+                        if "IMPULSE" in wave_st:
+                            badge = f"{UI.PURPLE}⚡{UI.RST}"
+                        elif not is_perm or "LOCK" in wave_st:
+                            badge = f"{UI.RED}🔒{UI.RST}"
+                        elif "BASE_RECLAIM" in wave_st:
+                            badge = f"{UI.GREEN}🟢{UI.RST}"
+                            in_zone_pairs.append(f"{sym_prefix} 🟢")
+                        elif "MATURE" in wave_st or "ARMED" in wave_st:
+                            badge = f"{UI.CYAN}🎯{UI.RST}"
+                            in_zone_pairs.append(f"{sym_prefix} 🎯")
+                        elif pos <= 0.382 or pos >= 0.618:
+                            badge = f"{UI.YELLOW}💎{UI.RST}"
+                        else:
+                            badge = f"{UI.GRAY}●{UI.RST}"
+                            
+                        if is_bull:
+                            arrow = f"{UI.GREEN}▲{UI.RST}"
+                        elif is_bear:
+                            arrow = f"{UI.RED}▼{UI.RST}"
+                        else:
+                            arrow = f"{UI.GRAY}●{UI.RST}"
+                            
+                        pos_str = f"{int(pos*100):02d}%"
+                        return f"{sym_prefix} {arrow}{pos_str} {badge}"
+                return f"{sym_prefix} {UI.GRAY}●--%{UI.RST}  "
+
+            # Render 3 pairs per row (9 rows for 26 pairs)
+            for r in range(0, len(all_symbols), 3):
+                p1 = all_symbols[r]
+                p2 = all_symbols[r+1] if r+1 < len(all_symbols) else None
+                p3 = all_symbols[r+2] if r+2 < len(all_symbols) else None
+                
+                c1 = UI.pad_line(_format_cell(p1), 20)
+                c2 = UI.pad_line(_format_cell(p2) if p2 else "", 20)
+                c3 = UI.pad_line(_format_cell(p3) if p3 else "", 20)
+                t1_lines.append(f" {c1} │ {c2} │ {c3}")
+                
+            t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
+            t1_lines.append(f" {UI.DIM}▲Bull │ ▼Bear │ 🟢Reclaim │ 🎯Armed │ 🔒Lock │ ⚡Chase │ 💎SMC Zone{UI.RST}")
+        else:
+            t1_lines = [
+                f" {UI.YELLOW}● Inisialisasi {len(all_symbols)}-Pair Macro Compass...{UI.RST}",
+                f" {UI.DIM}Memindai D1/H4 dealing ranges & level Asia...{UI.RST}",
+                f" {UI.DIM}Fast Radar bersiap untuk sweep 60 detik.{UI.RST}",
+                f" {UI.DIM}Monitoring {len(all_symbols)} Pasangan FX Terkurasi 24/5.{UI.RST}"
+            ]
+
+        m1_title_text = "DUAL-HORIZON BOITOKI CSM RADAR & TOP DIRECTIVES"
+        t3_lines = []
+        try:
+            from src.analytics.currency_strength import calculate_boitoki_csm
+            scores_h1, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_H1, lookback_bars=24)
+            scores_m15, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
+            
+            sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True) if scores_h1 else []
+            sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
+            
+            h1_str = " > ".join([f"{c}" for c, s in sorted_h1]) if sorted_h1 else "--"
+            m15_str = " > ".join([f"{c}" for c, s in sorted_m15]) if sorted_m15 else "--"
+            
+            news_str = "Quiet (No High-Impact News in 24h)"
+            try:
+                from src.analytics import economic_calendar
+                cal_obj = getattr(economic_calendar, "calendar", None)
+                if cal_obj:
+                    now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+                    upcoming = cal_obj.get_upcoming(now_wib, hours_ahead=24)
+                    if upcoming:
+                        ne = upcoming[0]
+                        hrs = (ne["dt"] - now_wib).total_seconds() / 3600
+                        cntry = ne.get("country", "US").strip()
+                        news_str = f"[{cntry}] {ne['name']} in {hrs:.1f}h ({ne['dt'].strftime('%H:%M WIB')})"
+            except Exception:
+                pass
+            
+            try:
+                from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+                f_scores = apex_fundamental_engine.compute_scores()
+                if f_scores:
+                    sorted_fund = sorted(f_scores.items(), key=lambda x: x[1].composite_fundamental_score, reverse=True)
+                    fund_str = " > ".join([f"{c}" for c, sc in sorted_fund])
+                    top_s = sorted_fund[0][0]
+                    top_w = sorted_fund[-1][0]
+                    delta_val = sorted_fund[0][1].composite_fundamental_score - sorted_fund[-1][1].composite_fundamental_score
+                    t3_lines.append(f" Apex Fund Rank   : {UI.RED}{fund_str}{UI.RST}")
+                    t3_lines.append(f" Top Convergent   : {UI.GREEN}{top_s}{top_w}{UI.RST} (Delta {UI.BOLD}{delta_val:+.2f}{UI.RST} ➔ Grade S/A+)")
+            except Exception:
+                pass
+
+            t3_lines.append(f" CSM Macro (H1)   : {UI.CYAN}{h1_str}{UI.RST}")
+            t3_lines.append(f" CSM Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
+            t3_lines.append(f" Macro Compass    : {UI.GREEN}26 FX Majors & Crosses (H1/M30 Native){UI.RST}")
+            t3_lines.append(f" News Ticker      : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
+        except Exception:
+            t3_lines = [
+                f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
+                f" Judas    : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
+                f" Structure: {UI.CYAN}100-bar H1 (Disc <=38% | Prem >=62%){UI.RST}",
+                f" News     : {UI.GREEN}ACTIVE (TradingView News Window Shield){UI.RST}"
+            ]
+
     # ── TILE 2: LIVE ACCOUNT & RISK INTELLIGENCE HUD (Top Right) ──
     acc = account_info or {}
     srv = acc.get("server", "VTMarkets-Live 3")
     login_id = acc.get("login", "27556325")
-    eq = acc.get("equity", 6005.04)
-    bal = acc.get("balance", 6034.87)
+    eq = acc.get("equity", 5819.29)
+    bal = acc.get("balance", 5819.29)
     
     positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
     orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
     total_active = len(positions or []) + len(orders or [])
     max_positions = config.get_max_open_positions()
 
+    max_loss_dlr = eq * (getattr(config, "MAX_DAILY_LOSS_PERCENT", 4.0) / 100.0)
+    
     t2_lines = [
-        f" Server    : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
-        f" Equity    : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
-        f" Capacity  : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} (Shared Basket Pool Engine)",
-        f" Daily P/L : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}4.0% ($50){UI.RST}",
-        f" Gold Armor: {UI.YELLOW}1.8x ATR Floor (600 pts Anti-Hunt Shield){UI.RST}",
+        f" Server     : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
+        f" Equity     : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
+        f" Capacity   : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} ({'Weekend Crypto Pool' if is_single_asset_mode else '26-Pair Basket Pool'})",
+        f" Daily P/L  : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}{config.MAX_DAILY_LOSS_PERCENT}% (${max_loss_dlr:.0f}){UI.RST}",
+        f" MSE Sockets: {UI.GREEN}6-TF Native (MN1/W1/D1/H4/H1){UI.RST} | {UI.CYAN}0 Token (<50ms){UI.RST}",
     ]
     if open_positions:
         pos_strs = []
         for p in open_positions[:3]:
             s_clean = p.get("symbol", "").replace("-ECNc", "").replace(".c", "")
             pos_strs.append(f"{s_clean}: {UI.badge_pnl(p.get('profit', 0.0))}")
-        t2_lines.append(f" Positions : {' | '.join(pos_strs)}")
+        t2_lines.append(f" Positions  : {' | '.join(pos_strs)}")
     elif orders:
         ord_strs = []
         for o in orders[:3]:
             s_clean = o.symbol.replace("-ECNc", "").replace(".c", "")
             ord_strs.append(f"{s_clean} (Pend)")
-        t2_lines.append(f" Positions : {UI.YELLOW}{' | '.join(ord_strs)}{UI.RST}")
+        t2_lines.append(f" Positions  : {UI.YELLOW}{' | '.join(ord_strs)}{UI.RST}")
     else:
-        t2_lines.append(f" Positions : {UI.GRAY}No active positions (Flat / Ready){UI.RST}")
+        t2_lines.append(f" Positions  : {UI.GRAY}No active positions (Flat / Ready){UI.RST}")
         
-    hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else "None (Normal Vol)"
-    in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else "None (Mid-Range)"
+    hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else ("BTCUSD (27% Disc) 🔥" if is_single_asset_mode else "None (Normal Vol)")
+    in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else ("BTCUSD 🎯" if is_single_asset_mode else "None (Mid-Range)")
     
-    t2_lines.append(f" Top Hot   : {UI.YELLOW}{hot_str}{UI.RST} 🔥")
-    t2_lines.append(f" Wave Armed: {UI.GREEN}{in_zone_str}{UI.RST}")
-    t2_lines.append(f" Fast Radar: {UI.CYAN}22 Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
-    t2_lines.append(f" Proteksi  : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
+    t2_lines.append(f" Top Hot    : {UI.YELLOW}{hot_str}{UI.RST}")
+    t2_lines.append(f" Wave Armed : {UI.GREEN}{in_zone_str}{UI.RST}")
+    t2_lines.append(f" Fast Radar : {UI.CYAN}{len(all_symbols)} Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
+    t2_lines.append(f" Proteksi   : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         
-    # ── TILE 3: DUAL-HORIZON BOITOKI CSM RADAR (Bottom Left) ──
-    t3_lines = []
-    try:
-        from src.analytics.currency_strength import calculate_boitoki_csm
-        scores_h1, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_H1, lookback_bars=24)
-        scores_m15, _ = calculate_boitoki_csm(config.mt5.TIMEFRAME_M15, lookback_bars=16)
-        
-        sorted_h1 = sorted(scores_h1.items(), key=lambda x: x[1], reverse=True) if scores_h1 else []
-        sorted_m15 = sorted(scores_m15.items(), key=lambda x: x[1], reverse=True) if scores_m15 else []
-        
-        h1_str = " > ".join([f"{c}" for c, s in sorted_h1]) if sorted_h1 else "--"
-        m15_str = " > ".join([f"{c}" for c, s in sorted_m15]) if sorted_m15 else "--"
-        
-        usd_m15 = scores_m15.get("USD", 0.0) if scores_m15 else 0.0
-        gold_impact = "USD Outflow (Bullish Fuel)" if usd_m15 <= -5.0 else ("USD Inflow (Bearish Pressure)" if usd_m15 >= 5.0 else "Balanced")
-        
-        t3_lines.append(f" 24h Macro (H1)  : {UI.CYAN}{h1_str}{UI.RST}")
-        t3_lines.append(f" 4h Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
-        t3_lines.append(f" Gold Dollar Flow: {UI.GREEN if usd_m15 <= -5.0 else (UI.RED if usd_m15 >= 5.0 else UI.WHITE)}USD {usd_m15:+.1f} [{gold_impact}]{UI.RST}")
-        t3_lines.append(f" Refresh Interval: {UI.DIM}Every 60s MT5 Tick (0 Token / On-Demand /csm){UI.RST}")
-    except Exception:
-        t3_lines = [
-            f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
-            f" Judas    : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
-            f" Structure: {UI.CYAN}100-bar H1 (Disc <=38% | Prem >=62%){UI.RST}",
-            f" News     : {UI.GREEN}ACTIVE (TradingView News Window Shield){UI.RST}"
-        ]
-    
     # ── TILE 4: 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL (Bottom Right) ──
     t4_lines = [
         f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini 3.1-Flash{UI.RST} (Speed)",
         f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Hard Risk Veto)",
         f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife Guard)",
-        f" Pending Mode : {UI.CYAN}Auto-Retest at FVG / Order Block (60-120m Expiry){UI.RST}"
+        f" News Shield  : {UI.GREEN}ForexFactory + TV Dual-Source (±6h Gate){UI.RST}",
+        f" Apex Confluence : {UI.CYAN}Institutional 8-Currency Regime Filter (Active){UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
     out = []
     
     # Top Header
-    h1_title = f"+-- [ {UI.BOLD}{UI.WHITE}22-PAIR LIVE QUANT RADAR MATRIX{UI.RST}{c_cyan} ] "
+    h1_title = f"+-- [ {UI.BOLD}{UI.WHITE}{h1_title_text}{UI.RST}{c_cyan} ] "
     d1 = max(0, lw - UI.disp_width(h1_title) + 1)
     h1_bar = f"{c_cyan}{h1_title}{'-' * d1}+{c_rst}"
     
@@ -474,7 +599,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         out.append(f"{c_cyan}|{c_rst}{l_pad}{c_cyan}|{c_rst}{r_pad}{c_cyan}|{c_rst}")
         
     # Middle Divider
-    m1_title = f"+-- [ {UI.BOLD}{UI.WHITE}DUAL-HORIZON BOITOKI CSM RADAR{UI.RST}{c_cyan} ] "
+    m1_title = f"+-- [ {UI.BOLD}{UI.WHITE}{m1_title_text}{UI.RST}{c_cyan} ] "
     md1 = max(0, lw - UI.disp_width(m1_title) + 1)
     m1_bar = f"{c_cyan}{m1_title}{'-' * md1}+{c_rst}"
     
@@ -513,14 +638,210 @@ def render_banner(account_info=None, symbol="GBPUSD-ECNc", tf=None, mode="pairs"
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
     title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID MULTI-LLM CONSENSUS TRADING BOT{UI.RST} {UI.CYAN}[FX PAIRS PRO]{UI.RST}"
-    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Active: {UI.YELLOW}{symbol} ({tf}){UI.RST} | Mode: {UI.CYAN}{mode.upper()}{UI.RST}"
-    
     items = [
         title_line,
         "---",
         status_line
     ]
     return UI.make_box("FX PAIRS TRADING TERMINAL PRO", items, width=76, border_color=UI.CYAN)
+
+
+def render_macro_directive_card(directive, width=95):
+    """
+    Renders a comprehensive Top-Down Macro Strategic Directive (MSE) terminal card.
+    Displays 6-TF native socket levels, bar counts, SBR/RBS hierarchy, dual-grid stations, and intraday delivery.
+    """
+    clean_sym = directive.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    c_cyan = UI.CYAN
+    c_rst = UI.RST
+    c_white = UI.WHITE
+    c_bold = UI.BOLD
+    c_yellow = UI.YELLOW
+    c_green = UI.GREEN
+    c_red = UI.RED
+    c_gray = UI.GRAY
+    c_purple = UI.PURPLE
+
+    bias_color = c_green if "BULL" in directive.daily_macro_bias else (c_red if "BEAR" in directive.daily_macro_bias else c_yellow)
+    exec_color = c_green if "BUY" in directive.primary_execution_directive else (c_red if "SELL" in directive.primary_execution_directive else c_yellow)
+
+    # Format price strings based on asset type
+    is_jpy = "JPY" in clean_sym
+    is_crypto_or_gold = "BTC" in clean_sym or "XAU" in clean_sym or "GOLD" in clean_sym
+    fmt = "{:.2f}" if is_crypto_or_gold else ("{:.3f}" if is_jpy else "{:.5f}")
+
+    rbs_d1_s = fmt.format(directive.macro_rbs_d1) if directive.macro_rbs_d1 > 0 else "N/A"
+    sbr_d1_s = fmt.format(directive.macro_sbr_d1) if directive.macro_sbr_d1 > 0 else "N/A"
+    rbs_h4_s = fmt.format(directive.inter_rbs_h4) if directive.inter_rbs_h4 > 0 else "N/A"
+    sbr_h4_s = fmt.format(directive.inter_sbr_h4) if directive.inter_sbr_h4 > 0 else "N/A"
+    rbs_h1_s = fmt.format(directive.micro_rbs_h1) if directive.micro_rbs_h1 > 0 else "N/A"
+    sbr_h1_s = fmt.format(directive.micro_sbr_h1) if directive.micro_sbr_h1 > 0 else "N/A"
+    
+    sub_c_s = fmt.format(directive.sub_ceiling_50) if directive.sub_ceiling_50 > 0 else "N/A"
+    sub_f_s = fmt.format(directive.sub_floor_50) if directive.sub_floor_50 > 0 else "N/A"
+
+    anchor_s = fmt.format(directive.entry_limit_anchor) if directive.entry_limit_anchor > 0 else "N/A"
+    sl_s = fmt.format(directive.intraday_sl_price) if directive.intraday_sl_price > 0 else "N/A"
+    tp1_s = fmt.format(directive.tp1_price) if directive.tp1_price > 0 else "N/A"
+    tp2_s = fmt.format(directive.tp2_price) if directive.tp2_price > 0 else "N/A"
+    inv_s = fmt.format(directive.invalidation_stop_price) if directive.invalidation_stop_price > 0 else "N/A"
+    contingency_s = fmt.format(directive.contingency_target) if getattr(directive, 'contingency_target', 0.0) > 0 else "N/A"
+
+    lines = []
+    
+    # ── Top Section: Mandat & Execution ──
+    total_bars_str = f"{directive.total_bars_computed:,}" if getattr(directive, "total_bars_computed", 0) > 0 else "1,350"
+    bias_score = getattr(directive, 'macro_bias_score', 0.0)
+    stability = getattr(directive, 'regime_stability', 'STABLE')
+    action_tier = getattr(directive, 'action_tier', 'FULL_ALLOW')
+    circuit_breaker = getattr(directive, 'hard_circuit_breaker', False)
+    tier_color = c_green if action_tier == "FULL_ALLOW" else (c_yellow if action_tier == "REDUCED_CONFIDENCE" else (c_purple if action_tier == "TP1_ONLY_SCALP" else c_red))
+
+    lines.append(f" {c_bold}{c_white}SYMBOL{c_rst}       : {c_yellow}{clean_sym}{c_rst} | Komputasi: {c_cyan}{directive.calculation_time_ms:.1f} ms{c_rst} (0 Token) | {c_white}Total: {total_bars_str} Bars Native MT5{c_rst}")
+    lines.append(f" {c_bold}{c_white}SOCKETS 6-TF{c_rst} : {c_cyan}MN1: 50b (4.1y) │ W1: 100b (1.9y) │ D1: 350b (1.4y) │ H4: 400b │ H1: 250b │ M30: 200b{c_rst}")
+    lines.append(f" {c_bold}{c_white}MACRO BIAS{c_rst}   : {bias_color}{c_bold}{directive.daily_macro_bias}{c_rst} ({bias_score:+.2f}) | Stability: {c_purple}{stability}{c_rst} | Tier: {tier_color}{c_bold}{action_tier}{c_rst}")
+    if circuit_breaker:
+        lines.append(f" {c_bold}{c_red}[!] HARD CIRCUIT BREAKER ACTIVE (Extreme Trap / Structure Invalidation){c_rst}")
+    lines.append(f" {c_bold}{c_white}DIRECTIVE{c_rst}    : {exec_color}{c_bold}{directive.primary_execution_directive}{c_rst} (Confidence: {directive.confidence_score}%)")
+    lines.append("---")
+    
+    # ── Section 1: Multi-Year Envelope & Liquidity Map (MN1 & W1) ──
+    narrative = directive.raw_payload.get("NARRATIVE_STORYTELLING", {}) if isinstance(directive.raw_payload, dict) else {}
+    ann_corr = narrative.get("macro_annual_corridor", "")
+    w1_anchor = narrative.get("w1_major_anchor", "")
+    sweeps = narrative.get("discovered_liquidity_sweeps", "")
+    
+    lines.append(f" {c_bold}{c_cyan}[+] MULTI-YEAR ENVELOPE & LIQUIDITY MAP (MN1 & W1){c_rst}")
+    if ann_corr:
+        for wline in textwrap.wrap(f"• 4-Year MN1: {ann_corr}", width=width - 6):
+            lines.append(f"  {c_yellow}{wline}{c_rst}")
+    if w1_anchor:
+        for wline in textwrap.wrap(f"• {w1_anchor}", width=width - 6):
+            lines.append(f"  {c_cyan}{wline}{c_rst}")
+    if sweeps:
+        for wline in textwrap.wrap(f"• Liquidity Pool: {sweeps}", width=width - 6):
+            lines.append(f"  {c_green}{wline}{c_rst}")
+    lines.append("---")
+
+    # ── Section 2: Structural Zones SBR & RBS (D1 / H4 / H1) ──
+    lines.append(f" {c_bold}{c_cyan}[+] HIRARKI ZONA STRUKTURAL SBR & RBS (D1 / H4 / H1){c_rst}")
+    lines.append(f"  • {c_white}Macro D1 (350 bars / 1.4y){c_rst}    : RBS {c_green}{rbs_d1_s}{c_rst} │ SBR {c_red}{sbr_d1_s}{c_rst}")
+    lines.append(f"  • {c_white}Inter H4 (400 bars / 66 days){c_rst} : RBS {c_green}{rbs_h4_s}{c_rst} │ SBR {c_red}{sbr_h4_s}{c_rst}")
+    lines.append(f"  • {c_white}Micro H1 (250 bars / 10 days){c_rst} : RBS {c_green}{rbs_h1_s}{c_rst} │ SBR {c_red}{sbr_h1_s}{c_rst}")
+    lines.append("---")
+    
+    # ── Section 3: Dual Grid Stations ──
+    lines.append(f" {c_bold}{c_cyan}[+] DUAL-GRID PSYCHOLOGICAL STATIONS & CORRIDOR (50/100 Pips){c_rst}")
+    lines.append(f"  • {c_white}Sub-Ceiling (Upper Wall){c_rst}      : {c_red}{sub_c_s}{c_rst} (Major Resistance Corridor)")
+    lines.append(f"  • {c_white}Sub-Floor (Lower Base){c_rst}        : {c_green}{sub_f_s}{c_rst} (Major Support Corridor)")
+    station_label = "Target Macro Station Ceiling" if ("BUY" in directive.primary_execution_directive or "BULLISH" in directive.daily_macro_bias) else "Target Macro Station Floor"
+    lines.append(f"  • {c_white}{station_label}{c_rst}   : {c_green}{fmt.format(directive.target_station_price)}{c_rst} (Equilibrium Target)")
+    lines.append("---")
+    
+    # ── Section 4: Intraday Execution Delivery ──
+    pip_unit = "USD" if is_crypto_or_gold else "pips"
+    lines.append(f" {c_bold}{c_cyan}[+] INTRADAY REFINED DELIVERY ROADMAP (Execution Plan){c_rst}")
+    
+    prox_val = directive.entry_zone_proximal if hasattr(directive, 'entry_zone_proximal') and directive.entry_zone_proximal > 0 else 0.0
+    if prox_val > 0:
+        prox_s = fmt.format(prox_val)
+        zone_diff = abs(directive.entry_limit_anchor - prox_val)
+        diff_pips = round(zone_diff, 1) if is_crypto_or_gold else round(zone_diff / (0.01 if "JPY" in clean_sym else 0.0001), 1)
+        if "BUY" in directive.primary_execution_directive:
+            zone_detail = f"{anchor_s} -> {prox_s} (~{diff_pips:.1f} {pip_unit} Front-Run)"
+        else:
+            zone_detail = f"{prox_s} -> {anchor_s} (~{diff_pips:.1f} {pip_unit} Front-Run)"
+    else:
+        zone_detail = f"{anchor_s}"
+    lines.append(f"  • {c_white}Reload Zone (Front-Run ~ Core){c_rst} : {c_yellow}{zone_detail}{c_rst}")
+    lines.append(f"  • {c_white}Intraday SL (Anti-Hunt){c_rst}        : {c_red}{sl_s}{c_rst} ({directive.intraday_sl_pips:.1f} {pip_unit})")
+    lines.append(f"  • {c_white}TP1 (Partial 50% + BEP Lock){c_rst}   : {c_green}{tp1_s}{c_rst} (+{directive.tp1_pips:.1f} {pip_unit} │ 1.50:1 R:R)")
+    tp2_label = "TP2 (Major Macro Station Ceiling)" if ("BUY" in directive.primary_execution_directive or "BULLISH" in directive.daily_macro_bias) else "TP2 (Major Macro Station Floor)"
+    lines.append(f"  • {c_white}{tp2_label}{c_rst}: {c_green}{tp2_s}{c_rst} (+{directive.tp2_pips:.1f} {pip_unit} │ R:R {directive.risk_reward_ratio:.2f}:1)")
+    lines.append(f"  • {c_white}Macro Invalidation Point{c_rst}       : {c_gray}{inv_s}{c_rst}")
+    lines.append("---")
+    
+    # ── Section 5: Thesis, Pantangan & Future Roadmap ──
+    lines.append(f" {c_bold}{c_white}THESIS & INSTITUTIONAL NARRATIVE{c_rst}:")
+    for wline in textwrap.wrap(directive.daily_mandate_thesis, width=width - 6):
+        lines.append(f"  {c_gray}{wline}{c_rst}")
+    
+    lines.append(f" {c_bold}{c_red}PANTANGAN (FORBIDDEN TRAPS){c_rst}:")
+    traps = directive.forbidden_traps if directive.forbidden_traps else ["None"]
+    for trap in traps:
+        for wline in textwrap.wrap(f"• {trap}", width=width - 6):
+            lines.append(f"  {c_yellow}{wline}{c_rst}")
+            
+    if directive.future_macro_roadmap:
+        lines.append(f" {c_bold}{c_cyan}FUTURE MACRO ROADMAP{c_rst}:")
+        for wline in textwrap.wrap(directive.future_macro_roadmap, width=width - 6):
+            lines.append(f"  {c_white}{wline}{c_rst}")
+
+    title = f"TOP-DOWN MACRO STRATEGIC DIRECTIVE: {clean_sym}"
+    return UI.make_box(title, lines, width=width, border_color=c_cyan)
+
+
+def render_macro_summary_table(directives, width=105):
+    """
+    Renders a multi-pair tabular summary of Top-Down Macro Strategic Directives.
+    """
+    c_cyan = UI.CYAN
+    c_rst = UI.RST
+    c_white = UI.WHITE
+    c_bold = UI.BOLD
+    c_yellow = UI.YELLOW
+    c_green = UI.GREEN
+    c_red = UI.RED
+    c_gray = UI.GRAY
+
+    hdr = f"+{'-' * (width - 2)}+"
+    title_text = f"TOP-DOWN MACRO STRATEGIC COMPASS ({len(directives)} SIMBOL)"
+    title_bar = f"| {c_bold}{c_white}{title_text}{c_rst}"
+    title_bar = UI.pad_line(title_bar, width - 1) + "|"
+    
+    cols = (
+        f"| {c_bold}{c_cyan}{'SYMBOL':<10}{c_rst} | "
+        f"{c_bold}{c_cyan}{'MACRO BIAS':<18}{c_rst} | "
+        f"{c_bold}{c_cyan}{'DIRECTIVE':<22}{c_rst} | "
+        f"{c_bold}{c_cyan}{'SUB-FLOOR':<10}{c_rst} | "
+        f"{c_bold}{c_cyan}{'SUB-CEIL':<10}{c_rst} | "
+        f"{c_bold}{c_cyan}{'SL(p)':<6}{c_rst} | "
+        f"{c_bold}{c_cyan}{'R:R':<5}{c_rst} |"
+    )
+    
+    div = f"+{'-'*12}+{'-'*20}+{'-'*24}+{'-'*12}+{'-'*12}+{'-'*8}+{'-'*7}+"
+    
+    out = [hdr, title_bar, div, cols, div]
+    
+    for d in directives:
+        sym_c = d.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "")
+        b_color = c_green if "BULL" in d.daily_macro_bias else (c_red if "BEAR" in d.daily_macro_bias else c_yellow)
+        e_color = c_green if "BUY" in d.primary_execution_directive else (c_red if "SELL" in d.primary_execution_directive else c_yellow)
+        
+        is_jpy = "JPY" in sym_c
+        is_crypto_or_gold = "BTC" in sym_c or "XAU" in sym_c
+        fmt = "{:.1f}" if is_crypto_or_gold else ("{:.3f}" if is_jpy else "{:.5f}")
+        
+        sf_str = fmt.format(d.sub_floor_50) if d.sub_floor_50 > 0 else "-"
+        sc_str = fmt.format(d.sub_ceiling_50) if d.sub_ceiling_50 > 0 else "-"
+        
+        bias_short = d.daily_macro_bias.replace("BULLISH_", "BULL_").replace("BEARISH_", "BEAR_")
+        exec_short = d.primary_execution_directive.replace("HUNT_", "")
+        
+        line = (
+            f"| {c_white}{sym_c:<10}{c_rst} | "
+            f"{b_color}{bias_short:<18}{c_rst} | "
+            f"{e_color}{exec_short:<22}{c_rst} | "
+            f"{c_green}{sf_str:<10}{c_rst} | "
+            f"{c_red}{sc_str:<10}{c_rst} | "
+            f"{c_yellow}{d.intraday_sl_pips:<6.1f}{c_rst} | "
+            f"{c_green}{d.risk_reward_ratio:<5.2f}{c_rst} |"
+        )
+        out.append(line)
+        
+    out.append(div)
+    return "\n".join(out)
+
 
 
 

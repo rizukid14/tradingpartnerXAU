@@ -228,14 +228,14 @@ SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
 TRADING_MODE = os.getenv("TRADING_MODE", "scanner").strip().lower()
 SCANNER_MODE = _getenv_bool("SCANNER_MODE", True)
 
-# Universe 22 Simbol Terkurasi (21 Pasangan FX + Gold)
+# Universe 26 Simbol Terkurasi (Murni 26 Pasangan FX Tanpa Gold)
 ALL_SCANNER_SYMBOLS = [
     "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
     "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
     "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
     "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
     "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc",
-    "XAUUSD-ECNc"
+    "NZDCHF-ECNc", "NZDUSD-ECNc", "GBPNZD-ECNc", "AUDNZD-ECNc", "EURNZD-ECNc"
 ]
 
 SCANNER_SYMBOLS = [
@@ -254,8 +254,17 @@ ENABLE_WAVE_STATE_PERMISSION = _getenv_bool("ENABLE_WAVE_STATE_PERMISSION", True
 WAVE_STATE_LOCK_PHASE2 = _getenv_bool("WAVE_STATE_LOCK_PHASE2", True)
 CSM_ANTI_DUMP_THRESHOLD = _getenv_float("CSM_ANTI_DUMP_THRESHOLD", -2.0)
 
+# Pure Quant Hierarchical Top-Down Macro Strategic Engine
+ENABLE_MACRO_STRATEGIC_ENGINE = _getenv_bool("ENABLE_MACRO_STRATEGIC_ENGINE", True)
+MACRO_STRATEGIC_REFRESH_SECONDS = _getenv_int("MACRO_STRATEGIC_REFRESH_SECONDS", 3600)
+ENABLE_MSE_HARD_STAGE1_GATE = _getenv_bool("ENABLE_MSE_HARD_STAGE1_GATE", True)
 
-
+# Systemic Currency Basket Circuit Breaker (Global M15/H1 CSM 8 Currencies)
+ENABLE_SYSTEMIC_BASKET_LOCK = _getenv_bool("ENABLE_SYSTEMIC_BASKET_LOCK", True)
+SYSTEMIC_BASKET_USD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_USD_THRESHOLD", 2.0)
+SYSTEMIC_BASKET_JPY_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_JPY_THRESHOLD", 2.0)
+SYSTEMIC_BASKET_CROSS_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_CROSS_THRESHOLD", 2.0)
+SYSTEMIC_BASKET_SPREAD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_SPREAD_THRESHOLD", 1.8)
 
 FX_PAIR_SYMBOLS = [
     s.strip()
@@ -268,7 +277,7 @@ FX_PAIR_SYMBOLS = [
     ).split(",")
     if s.strip()
 ]
-MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 22 if SCANNER_MODE else 4)  # max symbols in rotation pool
+MAX_ROTATION_SYMBOLS = _getenv_int("MAX_ROTATION_SYMBOLS", 26 if SCANNER_MODE else 4)  # max symbols in rotation pool
 
 TIMEFRAME_STR = os.getenv("TIMEFRAME", "H1").upper()
 TIMEFRAME_MAP = {
@@ -295,7 +304,7 @@ LOT_SIZE = _getenv_float("LOT_SIZE", 0.01)
 LOT_SIZE_XAU = _getenv_float("LOT_SIZE_XAU", LOT_SIZE)
 LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
-RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 1.5)
+RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 0.50)
 RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
 RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.0)
 DEVIATION = _getenv_int("DEVIATION", 30)
@@ -359,8 +368,9 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     15 Agustus - user minta "floor 1x atr secara lunak", final 1.2x; SL tipis 0.8x ATR
 #     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
-LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 1.3)
-LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.8)  # 1.8x ATR buffer agar kebal dari spike hunting di sesi NY
+LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 0.50)   # 0.50x ATR H1 untuk FX majors
+LLM_JPY_FLOOR_ATR_MULT = _getenv_float("LLM_JPY_FLOOR_ATR_MULT", 1.00)  # 1.00x ATR M30 untuk JPY crosses
+LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.25)  # 1.25x ATR H1 buffer Gold H1
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 600)  # fallback kalau ATR gagal (6 USD)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
@@ -399,7 +409,7 @@ ERA_PRESETS = {
         "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
         "RISK_PERCENT_XAU": 1.0,
-        "RISK_PERCENT_BTC": 1.5,
+        "RISK_PERCENT_BTC": 0.25,
         "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
         "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     }
@@ -410,6 +420,8 @@ DYNAMIC_CONFIG_ENABLED = _getenv_bool("DYNAMIC_CONFIG_ENABLED", False)
 
 CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.2)
 CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2)
+# FIX 29 Agu: orphan env var - sekarang dibaca oleh confidence_threshold_for()
+CONFIDENCE_CONSENSUS_THRESHOLD_FX = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_FX", 1.2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
@@ -431,9 +443,6 @@ AI_MODE_SCHEDULE = [
 AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
-QUANT_ANALYSIS_ENABLED = _getenv_bool("QUANT_ANALYSIS_ENABLED", False)
-MONTE_CARLO_ENABLED = _getenv_bool("MONTE_CARLO_ENABLED", False)
-FORECAST_ENABLED = _getenv_bool("FORECAST_ENABLED", False)
 MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: lesson learned & recent outcomes TIDAK di-inject ke prompt LLM (lesson M5-scalp toxic, bikin HOLD terus). Kode tetap ada, tinggal set True kalau mau aktif lagi.
 
 # --- ECONOMIC NEWS (kalender ekonomi, 20 Agustus) ---
@@ -446,8 +455,10 @@ ECONOMIC_NEWS_TTL_HOURS = _getenv_int("ECONOMIC_NEWS_TTL_HOURS", 6)  # fetch tia
 ECONOMIC_NEWS_COUNTRIES = [
     c.strip().upper() for c in os.getenv("ECONOMIC_NEWS_COUNTRIES", "US,GB,EU,CH,JP,AU,CA").split(",") if c.strip()
 ]
-# Event global: US high-impact yang mempengaruhi SEMUA pair (bukan cuma pair USD)
-ECONOMIC_NEWS_GLOBAL_KEYWORDS = ("FOMC", "NFP", "Non Farm", "Powell", "Trump", "Fed Chair", "Fed Rate")
+ECONOMIC_NEWS_GLOBAL_KEYWORDS = (
+    "FOMC", "NFP", "Non Farm", "Payroll", "Payrolls", "Powell", "Trump",
+    "Warsh", "Fed Chair", "Fed Chairman", "Fed Rate", "Benchmark Payrolls"
+)
 # Event US lain (CPI, PCE, Retail Sales, Unemployment, GDP US, ISM, dst) =
 # pair-specific USD -> hanya GBPUSD yang kena.
 
@@ -525,11 +536,13 @@ MAX_OPEN_POSITIONS = _getenv_int("MAX_OPEN_POSITIONS", 6)
 BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
+MAX_OPEN_POSITIONS_BTC = _getenv_int("MAX_OPEN_POSITIONS_BTC", 2)        # Weekend BTC trading max 2 posisi
 
 
-def get_max_open_positions(in_recovery_mode=False, now=None):
+def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
     """Maksimum open posisi agregat (semua simbol):
-    - Normal (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
+    - Weekend Trading / Crypto: MAX_OPEN_POSITIONS_BTC (2 posisi)
+    - Normal Weekday (11:00 - 23:00 WIB): MAX_OPEN_POSITIONS (6)
     - Recovery Mode: MAX_OPEN_POSITIONS_RECOVERY (3)
     - Late NY (23:00 - 02:00 WIB): MAX_OPEN_POSITIONS_LATE_NY (2)
       (kalau recovery mode aktif di jam late NY, tetap min(2, 3) = 2).
@@ -538,6 +551,10 @@ def get_max_open_positions(in_recovery_mode=False, now=None):
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
+    is_weekend = now.weekday() in (5, 6)
+    if is_weekend or (symbol and is_crypto(symbol)):
+        return MAX_OPEN_POSITIONS_BTC
+
     cur_min = now.hour * 60 + now.minute
 
     # 23:00 s.d. 02:00 WIB
@@ -552,13 +569,14 @@ def get_max_open_positions(in_recovery_mode=False, now=None):
     if in_recovery_mode:
         return min(base, MAX_OPEN_POSITIONS_RECOVERY)
     return base
+# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
+# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
+# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
 # --- DAILY PROFIT TARGET (14 Agustus) ---
 # Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
 # (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
 DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
-MAX_DAILY_LOSS_PERCENT      = _getenv_float("MAX_DAILY_LOSS_PERCENT", 4.0)
-MAX_DAILY_LOSS_USD          = _getenv_float("MAX_DAILY_LOSS_USD", 250.0)
 DAILY_LOSS_OPENED_TODAY_ONLY = _getenv_bool("DAILY_LOSS_OPENED_TODAY_ONLY", True)
 
 
@@ -823,32 +841,44 @@ def sltp_mode_for(symbol):
     return "LLM"
 
 
-def get_scanner_symbols():
-    """Returns the curated universe of 22 symbols for 2-Stage Quant Screener."""
-    return [s for s in SCANNER_SYMBOLS]
-
-
-def get_rotation_pool(now=None):
-    """
-    Returns the ordered list of symbols currently in the rotation pool:
-    - TRADING_MODE == "scanner" (2-Stage Quant Funnel): SCANNER_SYMBOLS (22 pairs)
-    - TRADING_MODE == "xau" (default): [WEEKDAY_SYMBOL] (weekend -> WEEKEND if ENABLE_BTC_ROTATION)
-    - TRADING_MODE == "xau_pairs" / "pairs": [WEEKDAY_SYMBOL] + FX_PAIR_SYMBOLS, truncated to MAX_ROTATION_SYMBOLS.
+def get_scanner_symbols(now=None):
+    """Returns the curated universe of symbols for 2-Stage Quant Screener:
+    - Weekday: Murni 26 FX symbols (BTC selalu OFF di hari kerja)
+    - Weekend (Sabtu-Minggu): [WEEKEND_SYMBOL] jika ENABLE_BTC_ROTATION=True, else []
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
-    is_weekend = (now.weekday() == 4 and now.hour >= 22) or now.weekday() in (5, 6)
+    is_weekend = now.weekday() in (5, 6)
     if is_weekend:
-        # FX pairs market closed on weekend -> BTC or fallback
+        if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
+            return [WEEKEND_SYMBOL]
+        return []
+    # Weekday: Murni 26 FX pairs (BTC selalu OFF di hari kerja)
+    return [s for s in SCANNER_SYMBOLS if not is_crypto(s)]
+
+
+def get_rotation_pool(now=None):
+    """
+    Returns the ordered list of symbols currently in the rotation pool:
+    - Weekend (Sabtu-Minggu): [WEEKEND_SYMBOL] jika ENABLE_BTC_ROTATION=True, else [WEEKDAY_SYMBOL]
+    - Weekday: Murni 26 FX pairs (BTC selalu OFF di hari kerja)
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+    now = now or datetime.now(WIB)
+    is_weekend = now.weekday() in (5, 6)  # Sabtu (5) + Minggu (6). Cutoff Sabtu 00:00 WIB.
+    if is_weekend:
+        # FX pairs market closed on weekend -> BTC if enabled
         if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
             return [WEEKEND_SYMBOL]
         return [WEEKDAY_SYMBOL]
     if TRADING_MODE == "scanner" or SCANNER_MODE:
-        return [s for s in SCANNER_SYMBOLS]
+        return [s for s in SCANNER_SYMBOLS if not is_crypto(s)]
     if TRADING_MODE in ("xau_pairs", "pairs", "fx_pairs"):
-        pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL]
+        pool = [WEEKDAY_SYMBOL] + [s for s in FX_PAIR_SYMBOLS if s != WEEKDAY_SYMBOL and not is_crypto(s)]
         return pool[:MAX_ROTATION_SYMBOLS]
     return [WEEKDAY_SYMBOL]
 
@@ -896,9 +926,8 @@ def lot_size_for(symbol):
 def get_timeframe_str(symbol=None, now_wib=None):
     """Returns the active trading timeframe string ('H1' or 'M30') taking into account
     Dynamic Session Timeframe (H1 in Tokyo 08:00-14:00, M30 in London/NY 14:00-00:00).
+    Crypto (BTC) pakai TIMEFRAME_STR apa adanya (default H1, bukan short-circuit ke M30).
     """
-    if symbol and is_crypto(symbol):
-        return "M30"
     if DYNAMIC_SESSION_TIMEFRAME:
         if now_wib is None:
             now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
@@ -915,19 +944,6 @@ def get_timeframe(symbol=None, now_wib=None):
     """Returns the MT5 timeframe integer corresponding to the current active session."""
     tf_str = get_timeframe_str(symbol, now_wib)
     return TIMEFRAME_MAP.get(tf_str, TIMEFRAME)
-
-
-def risk_percent_for(symbol):
-    """Returns the risk per trade percentage for a symbol.
-    BTC: RISK_PERCENT_BTC (1.5%)
-    XAU: RISK_PERCENT_XAU (1.0%)
-    FX: RISK_PERCENT_FX (1.0%)
-    """
-    if is_crypto(symbol):
-        return RISK_PERCENT_BTC
-    if is_gold(symbol):
-        return RISK_PERCENT_XAU
-    return RISK_PERCENT_FX
 
 
 def default_sl_points_for(symbol):
@@ -968,9 +984,13 @@ def sl_padding_for(symbol):
 
 def confidence_threshold_for(symbol):
     """Weighted-confidence consensus threshold per symbol.
-    BTC (M30, moderate entries) needs higher conviction than XAU (M15, frequent).
+    BTC (H1 swing, moderate entries) needs higher conviction than FX/XAU (M15/H1, frequent).
     """
-    return CONFIDENCE_CONSENSUS_THRESHOLD_BTC if is_crypto(symbol) else CONFIDENCE_CONSENSUS_THRESHOLD_XAU
+    if is_crypto(symbol):
+        return CONFIDENCE_CONSENSUS_THRESHOLD_BTC
+    if is_forex(symbol):
+        return CONFIDENCE_CONSENSUS_THRESHOLD_FX
+    return CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 
 
 def get_ai_mode(now=None):
@@ -1190,3 +1210,4 @@ def trailing_activation_params_for(symbol):
             getattr(sys.modules[__name__], "TRAILING_DISTANCE_POINTS_XAU", 150),
             getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
         )
+

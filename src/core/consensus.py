@@ -18,9 +18,9 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
-def _apply_sltp_rules(sl_points, tp_points, symbol=None):
+def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup_grade=None):
     """
-    SL/TP final sesuai config.TP_SL_RULES.
+    SL/TP final sesuai config.TP_SL_RULES, 5-Tier Action Matrix, dan Setup Quality Grade.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
     """
     global _last_sltp_adjustments
@@ -58,41 +58,87 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
     mode = config.sltp_mode_for(sym)
 
     if mode == "LLM":
-        is_xau = "XAU" in sym.upper() or "GOLD" in sym.upper()
+        is_xau = ("XAU" in sym.upper())
+        is_btc = config.is_crypto(sym)
+        is_jpy = ("JPY" in sym.upper())
 
-        if is_xau:
+        if is_btc:
+            min_sl = max(spread_pts * 2, int(1.20 * atr_points), 30000) if atr_points > 0 else 30000
+        elif is_xau:
+            min_sl = max(spread_pts * 2, int(config.LLM_SAFETY_FLOOR_ATR_MULT * atr_points)) if atr_points > 0 else config.LLM_SAFETY_FLOOR_STATIC_PTS
+        elif is_jpy:
+            jpy_mult = getattr(config, "LLM_JPY_FLOOR_ATR_MULT", 1.00)
             if atr_points > 0:
-                min_sl = max(spread_pts * 2, int(config.LLM_XAU_FLOOR_ATR_MULT * atr_points))
+                min_sl = max(spread_pts * 2 + 20, int(jpy_mult * atr_points))
             else:
-                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_XAU_PTS)
+                min_sl = max(spread_pts * 2 + 20, config.LLM_SAFETY_FLOOR_FX_PTS)
         else:
             if atr_points > 0:
-                min_sl = max(spread_pts * 2, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
+                min_sl = max(spread_pts * 2 + 15, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
             else:
-                min_sl = max(spread_pts * 2, config.LLM_SAFETY_FLOOR_FX_PTS)
+                min_sl = max(spread_pts * 2 + 15, config.LLM_SAFETY_FLOOR_FX_PTS)
             
         if sl_points < min_sl:
             _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
             sl_points = min_sl
 
         # Anti-wick padding untuk pair silang (misal NZD +20 pts)
-        nzd_padding = config.sl_padding_for(config.SYMBOL)
+        nzd_padding = config.sl_padding_for(sym)
         if nzd_padding > 0:
             sl_points += nzd_padding
-            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {config.SYMBOL} (SL -> {sl_points} pts).")
+            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {sym} (SL -> {sl_points} pts).")
+
+        # Hard Intraday Ceiling Cap (mencegah SL runaway / swing level)
+        if is_btc:
+            max_sl = min(int(atr_points * 1.80), 45000) if atr_points > 0 else 45000
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon BTC ($450 USD). Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
+        elif is_xau:
+            max_sl = int(atr_points * 2.5) if atr_points > 0 else 800
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon Gold. Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
+        elif is_jpy:
+            max_sl = min(int(atr_points * 2.0), 200) if atr_points > 0 else 200
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon JPY (200 pts). Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
+        else:
+            max_sl = min(int(atr_points * 2.0), 160) if atr_points > 0 else 160
+            if sl_points > max_sl:
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon FX (160 pts). Menyesuaikan SL ke {max_sl} pts.")
+                sl_points = max_sl
 
         if tp_points <= 0:
-            tp_points = config.default_tp_points_for(config.SYMBOL)
+            tp_points = config.default_tp_points_for(sym)
 
         min_rr = config.LLM_MIN_RR_RATIO
         max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
+
+        # Dynamic Grade-Aware Multipliers
+        grade_str = str(setup_grade or "").upper()
+        if "GRADE_S" in grade_str:
+            max_rr = 3.50
+        elif "GRADE_B" in grade_str:
+            max_rr = 1.25
+        elif "GRADE_A_PLUS" in grade_str:
+            max_rr = 2.50
+
+        # 5-Tier Action Matrix R:R constraints
+        if action_tier == "TP1_ONLY_SCALP":
+            max_rr = min(max_rr, 1.25)
+        elif action_tier == "REDUCED_CONFIDENCE":
+            max_rr = min(max_rr, 2.00)
+
         min_tp = int(sl_points * min_rr)
         max_tp = int(sl_points * max_rr)
         if tp_points < min_tp:
             _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
             tp_points = min_tp
         elif tp_points > max_tp:
-            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
+            tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""
+            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL{tier_msg}. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
             tp_points = max_tp
 
         try:
@@ -101,13 +147,13 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None):
                 from config import mt5 as _mt5
                 account = _mt5.account_info()
             equity = float(account.equity) if account else 0.0
-            si = mt5.symbol_info(config.SYMBOL) if 'mt5' in dir() else None
+            si = mt5.symbol_info(sym) if 'mt5' in dir() else None
             if si is None:
                 from config import mt5 as _mt5
-                si = _mt5.symbol_info(config.SYMBOL)
+                si = _mt5.symbol_info(sym)
             vol_min = getattr(si, "volume_min", 0.01) if si else 0.01
             usd_pt = (si.trade_tick_value * (si.point / si.trade_tick_size)) if si and si.trade_tick_size else 0.0
-            risk_pct = config.risk_percent_for(config.SYMBOL)
+            risk_pct = config.risk_percent_for(sym)
             gate_pct = max(risk_pct, float(config.OVER_RISK_MAX_PERCENT))
             if equity > 0 and usd_pt > 0 and vol_min > 0:
                 max_sl = (equity * gate_pct / 100.0) / (vol_min * usd_pt)
@@ -177,7 +223,12 @@ def _drop_standalone_outlier(values, label):
 
 def calculate_consensus(decisions):
     box_items = []
-    
+
+    # FIX 29 Agu: ai_mode harus di-set di awal karena dipakai di multiple return paths
+    # (HOLD branch + consensus accepted branch). Sebelumnya di-set inline di loop
+    # weighted-confidence yang sudah di-drop.
+    ai_mode = getattr(config, "get_ai_mode", lambda: "triple")()
+
     point = 0.00001
     ref_price = 0.0
     try:
@@ -321,45 +372,30 @@ def calculate_consensus(decisions):
         box_items.append("---")
         box_items.extend(pos_re_eval_notes)
 
-    # Dynamic weighted-confidence consensus
-    direction_scores = {"BUY": 0.0, "SELL": 0.0}
-    direction_models = {"BUY": [], "SELL": []}
-    for model_name, dec in decisions.items():
-        sig = dec.get("signal") or "HOLD"
-        conf = dec.get("confidence") if dec.get("confidence") is not None else 0.0
-        if sig in direction_scores:
-            direction_scores[sig] += conf
-            direction_models[sig].append(model_name)
-
-    min_models = getattr(config, "MIN_CONSENSUS_MODELS", 2)
-    base_threshold = config.confidence_threshold_for(config.SYMBOL)
-    if getattr(config, "FORCE_ACTIVE_ENTRY", False):
-        base_threshold *= 0.7
-
-    ai_mode = getattr(config, "get_ai_mode", lambda: "triple")()
-    if ai_mode in ("single", "single_gemini") or n_models == 1:
-        min_models = 1
-        threshold = base_threshold * 0.6
-    else:
-        min_models = min(min_models, len(decisions))
-        eff_count = min(_effective_consensus_threshold(), len(decisions))
-        threshold = base_threshold * (eff_count / min_models)
+    # FIX 29 Agu: Simplified 3-LLM consensus.
+    # Rule baru: entry HANYA kalau SEMUA model yang aktif searah (3/3 BUY atau 3/3 SELL).
+    # 2/3 atau split → HOLD. Weighted-confidence scoring + threshold 1.2 + min_models di-drop.
+    # Hard Risk Veto (di bawah) tetap berlaku sebagai safety override.
+    # Avg confidence (line 464) dihitung hanya dari model yang searah (loop di agreeing_models).
+    n_decisions = len(decisions)
+    buy_voters = [m for m, d in decisions.items() if (d.get("signal") or "HOLD") == "BUY"]
+    sell_voters = [m for m, d in decisions.items() if (d.get("signal") or "HOLD") == "SELL"]
 
     consensus_signal = "HOLD"
     agreeing_models = []
-    best_score = threshold
-    for sig in ["BUY", "SELL"]:
-        if len(direction_models[sig]) >= min_models and direction_scores[sig] >= best_score:
-            consensus_signal = sig
-            agreeing_models = direction_models[sig]
-            best_score = direction_scores[sig]
+    if buy_voters and len(buy_voters) == n_decisions and n_decisions >= 3:
+        consensus_signal = "BUY"
+        agreeing_models = buy_voters
+    elif sell_voters and len(sell_voters) == n_decisions and n_decisions >= 3:
+        consensus_signal = "SELL"
+        agreeing_models = sell_voters
+    # else: split atau <3 model → HOLD, agreeing_models tetap []
 
     # Qualified Hard Risk Veto Engine (Preserves Capital against Critical Traps)
     hard_veto_models = []
     VALID_HARD_VETO_FLAGS = (
-        "COUNTER_TREND_MOMENTUM", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
-        "SPREAD_SPIKE", "INSTANT_RETEST", "NEAR_EQH_EQL", "ROLLOVER_WINDOW",
-        "FALLING_KNIFE_WATERFALL", "UNMITIGATED_IMPULSE_CHASE", "SYSTEMIC_CURRENCY_DUMP"
+        "COUNTER_TREND_MOMENTUM", "LIQUIDITY_TRAP", "IMPULSE_CHASE",
+        "SYSTEMIC_CURRENCY_DUMP", "HIGH_IMPACT_NEWS", "CURRENCY_CONFLICT", "MACRO_HEADWIND"
     )
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")
@@ -379,10 +415,9 @@ def calculate_consensus(decisions):
     if consensus_signal == "HOLD":
         box_items.append("---")
         box_items.append(f"{UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")
-        box_items.append((f"  {UI.DIM}Skor Arah:{UI.RST} ", f"BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f} (Threshold: {threshold:.2f})"))
+        box_items.append((f"  {UI.DIM}Voting:{UI.RST} ", f"BUY={len(buy_voters)}/{n_decisions}, SELL={len(sell_voters)}/{n_decisions} (Rule: perlu 3/3 searah)"))
         print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
-        
-        any_trade_intent = any(dec.get("signal") in ("BUY", "SELL") for dec in decisions.values())
+
         return {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -391,12 +426,12 @@ def calculate_consensus(decisions):
             "agreeing_count": 0,
             "agreeing_models": [],
             "tickets_to_close": tickets_to_close,
-            "hold_type": "low_confidence" if ai_mode in ("single", "single_gemini") else "split_vote",
-            "threshold": threshold,
-            "direction_scores": direction_scores,
+            "hold_type": "split_vote" if n_decisions >= 3 else "low_confidence",
+            "buy_voters": len(buy_voters),
+            "sell_voters": len(sell_voters),
             "decisions": decisions,
             "ai_mode": ai_mode,
-            "details": f"Consensus failed (BUY={direction_scores['BUY']:.2f}, SELL={direction_scores['SELL']:.2f})"
+            "details": f"3/3 rule failed: BUY={len(buy_voters)}/{n_decisions}, SELL={len(sell_voters)}/{n_decisions}"
         }
 
     # Calculate average SL, TP, Confidence
@@ -584,7 +619,7 @@ def calculate_consensus(decisions):
     agreeing_models_str = ", ".join(agreeing_details)
 
     badge = UI.badge_signal(consensus_signal)
-    box_items.append(f"{UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(Skor {best_score:.2f} >= {threshold:.2f}){UI.RST}")
+    box_items.append(f"{UI.GREEN}[+] KONSENSUS DISETUJUI:{UI.RST} {badge} {UI.BOLD}(3/3 rule: {len(agreeing_models)}/{n_decisions} model searah){UI.RST}")
     box_items.append((f"  {UI.BOLD}Model Sepakat :{UI.RST} ", f"{agreeing_models_str} (Avg Conf: {avg_confidence*100:.1f}%)"))
     
     setup_state_str = f"[{best_setup} | {best_state}]" if (best_setup and best_state) else (best_setup or best_state or "")

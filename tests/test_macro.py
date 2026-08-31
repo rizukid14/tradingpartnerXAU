@@ -8,14 +8,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 import config
 from src.core import mt5_connector as connector
-from src.analytics.macro_analyst import MacroAnalyst
-
-
+from src.analytics.macro_strategic_engine import macro_strategic_engine
 
 
 def main():
     print("=" * 60)
-    print("             TEST RUN: MACRO & TIMEFRAME ANALYST          ")
+    print("       TEST RUN: PURE QUANT MACRO STRATEGIC ENGINE (MSE)   ")
     print("=" * 60)
     
     # Initialize connection to MT5
@@ -26,36 +24,17 @@ def main():
     print("[OK]  Terhubung ke MT5.")
     
     try:
-        # Instantiate MacroAnalyst
-        analyst = MacroAnalyst()
-        
-        print("\n--- 1. Check Session ---")
-        current_session = analyst.get_current_session()
-        print(f"Sesi trading aktif saat ini (WIB): {current_session}")
-        
-        print("\n--- 2. Running forced macro analysis updates (queries LLMs) ---")
-        # Run and force update cache
-        analyst.check_and_update_analysis(force=True)
-        
-        print("\n--- 3. Check cached analysis outcomes ---")
-        print(f"Cached session analyzed: {analyst.cache.get('last_fundamental_session')}")
-        print("Timeframe analyses cache contents:")
-        for tf_name, tf_data in analyst.cache.get("timeframe_analysis", {}).items():
-            print(f"- {tf_name} (Last candle time: {tf_data.get('last_candle_time')}):")
-            print(f"  Analysis: {tf_data.get('analysis')}")
-            
-        print("\n--- 4. Formatted Macro Context String for M5 Execution ---")
-        context_str = analyst.get_macro_context()
-        print(context_str if context_str else "[WARN]  Macro context is empty!")
-        
-        print("\n--- 5. Verify caching persistency on disk ---")
-        cache_path = os.path.join(config.DATA_DIR, "analysis_cache.json")
-
-        if os.path.exists(cache_path):
-            print(f"[OK]  Cache file successfully written to disk at: {cache_path}")
-            print(f"Cache file size: {os.path.getsize(cache_path)} bytes")
+        sym = "GBPUSD"
+        print(f"\n--- 1. Calculate MSE 6-TF Directive for {sym} ---")
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        if strat_dir:
+            print(f"[OK] Directive calculated: {strat_dir.daily_macro_bias} ({strat_dir.macro_bias_score:+.2f})")
+            print(f"Action Tier: {strat_dir.action_tier} | Circuit Breaker: {strat_dir.hard_circuit_breaker}")
+            print(f"SBR/RBS: D1 SBR {strat_dir.macro_sbr_d1} / RBS {strat_dir.macro_rbs_d1}")
+            print(f"Stations: Floor {strat_dir.sub_floor_50} / Ceil {strat_dir.sub_ceiling_50}")
+            print(f"TP1: {strat_dir.tp1_price} | TP2: {strat_dir.tp2_price} | SL: {strat_dir.intraday_sl_price}")
         else:
-            print("[X]  Cache file not found on disk!")
+            print("[WARN] Directive returned None")
             
     except Exception as e:
         print(f"[X]  Terjadi error selama pengujian: {e}")

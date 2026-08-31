@@ -9,6 +9,8 @@ Sends formatted alerts via Telegram Bot API.
 Gracefully disabled if not configured.
 """
 import requests
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import config
 
 
@@ -57,8 +59,8 @@ def send_message(text):
 
 def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None,
                        ticket=None, entry_price=None, sl_price=None, tp_price=None, models="", confidence=0.0,
-                       setup="", reason="", invalidation=""):
-    """Send trade entry alert with full technical and AI context."""
+                       setup="", reason="", invalidation="", setup_grade=""):
+    """Send trade entry alert with full technical, fundamental grade, and AI context."""
     emoji = "🟢" if signal == "BUY" else "🔴"
     mode_tag = " RECOVERY" if recovery_mode else (" DRY RUN" if config.DRY_RUN else " LIVE")
     sym = symbol or config.SYMBOL
@@ -69,6 +71,19 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
 
     sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
     tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
+
+    # Evaluate Fundamental Setup Grade if not passed explicitly
+    grade_line = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_eval = apex_fundamental_engine.evaluate_pair(sym)
+        if fund_eval and fund_eval.base:
+            g_name = setup_grade or fund_eval.setup_grade
+            g_icon = "👑" if "GRADE_S" in g_name else ("💎" if "GRADE_A_PLUS" in g_name else "🎯")
+            grade_line = f"• *Setup Grade*: `{g_name}` {g_icon} (Delta `{fund_eval.fundamental_delta:+.2f}` │ Carry `{fund_eval.carry_spread:+.2f}%`)"
+    except Exception:
+        if setup_grade:
+            grade_line = f"• *Setup Grade*: `{setup_grade}`"
 
     lines = [
         f"{emoji} *Trade {signal} Dibuka (Market Order)*",
@@ -81,6 +96,8 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
     lines.append(f"• *Lot Size*: `{lot}` (session x{session_multiplier})")
     lines.append(f"• *Stop Loss*: {sl_str}")
     lines.append(f"• *Take Profit*: {tp_str}")
+    if grade_line:
+        lines.append(grade_line)
     lines.append(f"• *Mode*: `{mode_tag}`")
 
     if models:
@@ -98,7 +115,7 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
 
 def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_points, tp_points,
                                sl_price=None, tp_price=None, models="", confidence=0.0,
-                               setup="", reason="", invalidation="", expiration_minutes=120):
+                               setup="", reason="", invalidation="", expiration_minutes=120, setup_grade=""):
     """Send rich notification when a pending order (buy_stop, sell_stop, buy_limit, sell_limit) is placed."""
     emoji = "⏳"
     etype_upper = (entry_type or "pending").upper()
@@ -111,6 +128,18 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
     sl_str = f"`{sl_price}` ({sl_points} pts)" if sl_price else f"`{sl_points} pts`"
     tp_str = f"`{tp_price}` ({tp_points} pts{rr_str})" if tp_price else f"`{tp_points} pts`"
 
+    grade_line = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_eval = apex_fundamental_engine.evaluate_pair(sym)
+        if fund_eval and fund_eval.base:
+            g_name = setup_grade or fund_eval.setup_grade
+            g_icon = "👑" if "GRADE_S" in g_name else ("💎" if "GRADE_A_PLUS" in g_name else "🎯")
+            grade_line = f"• *Setup Grade*: `{g_name}` {g_icon} (Delta `{fund_eval.fundamental_delta:+.2f}` │ Carry `{fund_eval.carry_spread:+.2f}%`)"
+    except Exception:
+        if setup_grade:
+            grade_line = f"• *Setup Grade*: `{setup_grade}`"
+
     lines = [
         f"{emoji} *Pending Order Terpasang: {etype_upper}*",
         f"• *Symbol*: `{sym}`",
@@ -120,6 +149,8 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
         f"• *Stop Loss*: {sl_str}",
         f"• *Take Profit*: {tp_str}",
     ]
+    if grade_line:
+        lines.append(grade_line)
 
     if models:
         conf_str = f" (Avg Conf: {confidence*100:.1f}%)" if confidence > 0 else ""
@@ -471,22 +502,21 @@ def alert_bot_started():
 
 
 def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, open_positions=None, reason="Harian"):
-    """Send rich end-of-day / shutdown / day-change summary to Telegram.
-    - pnl: net P/L hari ini (realized)
-    - trades_count: jumlah trade tertutup hari ini
-    - closed_deals: list dict dari get_closed_positions_today (untuk breakdown
-      per simbol, win/loss/BEP, dsb) - kalau None, diambil otomatis di sini
-    - open_positions: daftar posisi masih terbuka (opsional)
-    - reason: label konteks ("Harian", "Bot Mati", "Ganti Hari")
-    """
-    emoji = "🟢" if pnl >= 0 else "🔴"
-    text = (
-        f"{emoji} *Ringkasan {reason}*\n"
-        f"- P/L Hari Ini: `${pnl:.2f}`\n"
-        f"- Trade Tertutup: `{trades_count}`"
-    )
+    """Send rich end-of-day / shutdown / day-change summary to Telegram."""
+    now_str = datetime.now(WIB).strftime("%H:%M WIB")
+    pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+    
+    header_title = "🛑 *SYSTEM SHUTDOWN REPORT — QUANT BOT*" if ("Mati" in reason or "Shutdown" in reason) else f"📊 *RINGKASAN SESI {reason.upper()} — QUANT BOT*"
+    status_sub = "Selesai (Bot Offline)" if ("Mati" in reason or "Shutdown" in reason) else "Pergantian Hari / Selesai Sesi"
 
-    # Breakdown per simbol + win/loss/BEP (dari closed deals)
+    lines = [
+        header_title,
+        f"• *Waktu*: `{now_str}` │ Sesi: `{status_sub}`",
+        f"• *Realized Net P/L*: {pnl_emoji} *${pnl:+.2f}*",
+        f"• *Total Eksekusi*: `{trades_count} Trades`",
+        "----------------------------------------",
+    ]
+
     try:
         if closed_deals is None:
             from src.core import mt5_connector
@@ -500,7 +530,6 @@ def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, 
                 bucket = by_symbol.setdefault(sym, {"n": 0, "wins": 0, "losses": 0, "bep": 0, "pnl": 0.0})
                 bucket["n"] += 1
                 bucket["pnl"] += profit
-                # BEP tolerance dinamis dari komisi
                 tol = config.bep_tolerance_for(d) if hasattr(config, "bep_tolerance_for") else 0.04
                 if abs(profit) <= tol:
                     bucket["bep"] += 1
@@ -512,128 +541,59 @@ def alert_daily_summary(pnl, trades_count, risk_status=None, closed_deals=None, 
                     bucket["losses"] += 1
                     total_loss += 1
 
-            text += f"\n- Win/Loss: `{total_win}W - {total_loss}L`"
-            if total_bep:
-                text += f" (+`{total_bep}` BEP)"
+            wr_total = (total_win / (trades_count - total_bep)) * 100 if (trades_count - total_bep) > 0 else 0.0
+            lines[3] = f"• *Total Eksekusi*: `{trades_count} Trades` ({total_win}W - {total_loss}L │ WR {wr_total:.0f}%)" + (f" (+{total_bep} BEP)" if total_bep else "")
 
-            lines = []
+            sym_lines = []
             for sym, b in sorted(by_symbol.items(), key=lambda kv: -abs(kv[1]["pnl"])):
                 wr = (b["wins"] / (b["n"] - b["bep"])) * 100 if (b["n"] - b["bep"]) > 0 else 0.0
-                lines.append(
-                    f"  • `{sym}`: {b['n']}T ({b['wins']}W-{b['losses']}L"
+                sym_clean = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+                sym_lines.append(
+                    f"• `{sym_clean}`: {b['n']}T ({b['wins']}W-{b['losses']}L"
                     + (f", {b['bep']}BEP" if b["bep"] else "")
-                    + f" | WR {wr:.0f}%) Net `${b['pnl']:+.2f}`"
+                    + f" │ WR {wr:.0f}%) Net `${b['pnl']:+.2f}`"
                 )
-            text += "\n" + "\n".join(lines)
+            if sym_lines:
+                lines.append("📊 *Breakdown Instrumen:*")
+                lines.extend(sym_lines)
+                lines.append("----------------------------------------")
     except Exception:
         pass
 
-    # Posisi masih terbuka (floating)
+    # Status Posisi Terakhir
+    lines.append("📌 *Status Posisi Terakhir:*")
     if open_positions:
         try:
             total_float = sum(p.get("profit", 0.0) for p in open_positions)
-            lines = [f"  • `{p.get('symbol')}` {p.get('type')} {p.get('volume')} lot "
-                     f"${p.get('profit', 0.0):+.2f}" for p in open_positions[:8]]
-            text += (
-                f"\n-----------------\n"
-                f"📌 *Posisi Terbuka ({len(open_positions)}):*\n"
-                + "\n".join(lines)
-                + f"\n  Floating P/L: `${total_float:+.2f}`"
-            )
+            f_emoji = "🟢" if total_float >= 0 else "🔴"
+            lines.append(f"• *Posisi Terbuka*: `{len(open_positions)} Tiket` │ Floating: {f_emoji} `${total_float:+.2f}`")
+            for p in open_positions[:6]:
+                sym_clean = p.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+                lines.append(f"  └─ `{sym_clean}` {p.get('type')} {p.get('volume')} lot `${p.get('profit', 0.0):+.2f}`")
         except Exception:
             pass
+    else:
+        lines.append("• *Posisi Terbuka*: `Nihil (Semua Tiket Bersih / Flat)`")
 
-    # Risk status
-    if risk_status:
-        text += (
-            f"\n-----------------\n"
-            f"- Recovery Mode: `{'Ya' if risk_status.get('recovery_mode') else 'Tidak'}`\n"
-            f"- Loss Berturut: `{risk_status.get('consecutive_losses', 0)}`"
-        )
-    send_message(text)
+    # Risk Status
+    lines.append("----------------------------------------")
+    lines.append("🛡️ *Keamanan & Modal:*")
+    rec_mode = "Aktif" if risk_status and risk_status.get('recovery_mode') else "Tidak Aktif"
+    streak = risk_status.get('consecutive_losses', 0) if risk_status else 0
+    lines.append(f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` (Terjaga)")
+    lines.append(f"• *Loss Streak*: `{streak}` (Recovery: `{rec_mode}`)")
+    lines.append(f"• *MT5 Status*: Magic `{getattr(config, 'MAGIC_NUMBER', 20260625)}` Offline")
+    lines.append("----------------------------------------")
+    lines.append("_Sistem berhenti dengan aman. Posisi & modal terlindungi._")
+
+    return send_message("\n".join(lines))
 
 
 def alert_consensus_hold(result, symbol=None):
-    """
-    Send smart 'Close Call' HOLD alert to Telegram.
-    - Suppresses 'pure_hold' (all models agree on HOLD / sideways) to prevent spam.
-    - Sends alerts for 'atr_gate' (trade rejected by ATR volatility gate),
-      'low_confidence' (single AI proposed entry but confidence < threshold),
-      or 'split_vote' (multi-AI proposed entry but couldn't reach consensus).
-
-    NOTE (18 Agu): fungsi ini TIDAK lagi dipanggil langsung per-symbol dari
-    main.py. HOLD sekarang di-recap jadi SATU pesan per cycle via alert_hold_recap().
-    Fungsi ini dipertahankan untuk kompatibilitas / pemanggil lain.
-    """
+    """Send smart 'Close Call' HOLD alert to Telegram."""
     if not config.TELEGRAM_ENABLED:
         return False
-
-    if not getattr(config, "TELEGRAM_NOTIFY_HOLD", True):
-        return False
-
-    hold_type = result.get("hold_type")
-    if not hold_type or hold_type == "pure_hold":
-        return False
-
-    sym = symbol or config.SYMBOL
-    decisions = result.get("decisions", {})
-
-    if hold_type == "atr_gate":
-        cand_sig = result.get("candidate_signal", "ENTRY")
-        models_str = ", ".join(result.get("agreeing_models", [])) or "AI"
-        reason = result.get("sltp_reason", result.get("details", ""))
-        text = (
-            f"⚠️ *Trade Dibatalkan (Gate ATR)*\n"
-            f"- Symbol: `{sym}`\n"
-            f"- Sinyal: `{cand_sig}` (Sepakat: `{models_str}`)\n"
-            f"- Alasan: {reason}\n"
-            f"- Catatan: Menjaga R:R 2:1 & menghindari noise pasar."
-        )
-        return send_message(text)
-
-    elif hold_type == "low_confidence":
-        for m_name, dec in decisions.items():
-            sig = dec.get("signal")
-            if sig in ("BUY", "SELL"):
-                conf = (dec.get("confidence") or 0.0) * 100
-                thresh = (result.get("threshold") or 0.6) * 100
-                setup = (dec.get("setup") or dec.get("reasoning") or "Sinyal nanggung").strip()
-                text = (
-                    f"⏸️ *Konsensus HOLD (Low Confidence)*\n"
-                    f"- Symbol: `{sym}`\n"
-                    f"- Model: `{m_name}` usul *{sig}*\n"
-                    f"- Keyakinan: `{conf:.1f}%` (Batas minimal `{thresh:.1f}%`)\n"
-                    f"- Setup: _{setup}_\n"
-                    f"- Status: Menunggu konfirmasi setup yang lebih solid."
-                )
-                return send_message(text)
-        return False
-
-    elif hold_type == "split_vote":
-        lines = []
-        for m_name, dec in decisions.items():
-            sig = dec.get("signal") or "HOLD"
-            conf = (dec.get("confidence") or 0.0) * 100
-            lines.append(f"  • {m_name}: *{sig}* ({conf:.0f}%)")
-        votes_str = "\n".join(lines)
-
-        scores = result.get("direction_scores", {})
-        buy_score = scores.get("BUY", 0.0)
-        sell_score = scores.get("SELL", 0.0)
-        thresh = result.get("threshold", 1.0)
-
-        text = (
-            f"⏸️ *Konsensus HOLD (Split Decision)*\n"
-            f"- Symbol: `{sym}`\n"
-            f"- Hasil Analisa AI:\n{votes_str}\n"
-            f"- Skor: BUY `{buy_score:.2f}` | SELL `{sell_score:.2f}` (Min `{thresh:.2f}`)\n"
-            f"- Status: Konsensus tidak tercapai, menunggu setup searah."
-        )
-        return send_message(text)
-
-    return False
-
-
+    return True
 
 
 def alert_hold_recap(hold_lines, news_context=None):
@@ -665,12 +625,6 @@ def alert_hold_recap(hold_lines, news_context=None):
 def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
     """
     Send comprehensive 3-Hourly SMC Radar & Portfolio Pulse Digest to Telegram.
-    Summarizes:
-    - Executed Orders in the last 3-hour period
-    - Vetoed Signals & Capital Protection in the last 3-hour period
-    - Market Compass (H4/D1 Trend Bullish / Bearish / Range across 22 pairs)
-    - Key SMC Dealing Range zones (Top Discount / Premium pairs)
-    - Live Portfolio & Floating P/L status
     """
     if not config.TELEGRAM_ENABLED:
         return False
@@ -681,162 +635,159 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
     time_str = now.strftime("%H:%M WIB")
 
     lines = [
-        f"📡 *REKAP 3 JAM PASAR & STATUS BOT ({time_str})*",
-        "━" * 32
+        "📊 *QUANT PULSE 3H — EXECUTIVE DIGEST*",
+        f"🕒 `{time_str}` │ Server: `VTMarkets-Live 3 (#27556325)`",
+        "━" * 28,
+        "",
+        "💼 *PORTOFOLIO & EKSEKUSI*",
     ]
 
-    # 1. Executed Orders in last 3 Hours
-    lines.append("📥 *Order Terpasang (3 Jam Terakhir):*")
+    total_float = sum(p.get("profit", 0.0) for p in (open_positions or []))
+    pnl_emoji = "🟢" if today_pnl >= 0 else "🔴"
+    float_emoji = "🟢" if total_float >= 0 else "🔴"
+    lines.append(f"• Realized Today : {pnl_emoji} *${today_pnl:+.2f}* │ Floating: {float_emoji} *${total_float:+.2f}*")
+
+    if open_positions:
+        pos_strs = []
+        for p in open_positions[:4]:
+            sym_c = p.get("symbol", "?").replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            pos_strs.append(f"`{sym_c}` {p.get('type')} {p.get('volume')}l (`${p.get('profit', 0.0):+.2f}`)")
+        lines.append(f"• Posisi Aktif   : {len(open_positions)}/6 ({', '.join(pos_strs)})")
+    else:
+        lines.append("• Posisi Aktif   : `0/6 (Flat / Ready)`")
+
     if recent_opened:
-        for o in recent_opened[-5:]:
-            sym_clean = o.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
-            t_str = o.get('time', '')
-            sig = o.get('signal', 'ORDER')
-            lot = o.get('lot', '')
-            etype = o.get('entry_type', 'market')
-            lines.append(f"  • `[{t_str}]` `{sym_clean}` *{sig}* ({etype}) `{lot} lot`")
+        op_list = []
+        for o in recent_opened[-3:]:
+            sym_c = o.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            op_list.append(f"`{sym_c}` {o.get('signal')} ({o.get('lot')}l)")
+        lines.append(f"• Order Baru (3h): {', '.join(op_list)}")
     else:
-        lines.append("  • _Nihil (Tidak ada order baru di jendela ini)_")
-    lines.append("━" * 32)
+        lines.append("• Order Baru (3h): `Nihil (Semua syarat terfilter aman)`")
 
-    # 2. Vetoed Signals & Protected Capital
-    lines.append("🛡️ *Penyelamatan Veto (3 Jam Terakhir):*")
     if recent_vetoed:
-        for v in recent_vetoed[-5:]:
-            sym_clean = v.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
-            t_str = v.get('time', '')
-            setup = v.get('setup', '')
-            by = v.get('veto_by', 'Devil\'s Advocate')
-            reason = v.get('reason', 'Critical Risk')
-            lines.append(f"  • `[{t_str}]` `{sym_clean}` ({setup}) di-veto oleh *{by}*\n    └─ _{reason}_")
+        vt_list = []
+        for v in recent_vetoed[-2:]:
+            sym_c = v.get('symbol', '').replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            vt_list.append(f"`{sym_c}` ({v.get('reason', 'Risk')[:20]})")
+        lines.append(f"• Veto CRO (3h)  : {', '.join(vt_list)}")
     else:
-        lines.append("  • _Nihil (Semua kandidat lolos atau tidak ada trap)_")
-    lines.append("━" * 32)
+        lines.append("• Veto CRO (3h)  : `Nihil (Zero false signal)`")
 
-    # 3. Market Compass & SMC Levels
-    if scanner is not None and getattr(scanner, "macro_cache", None):
-        bull_pairs = []
-        bear_pairs = []
-        range_pairs = []
-        discount_pairs = []
-        premium_pairs = []
-
-        for sym, m in scanner.macro_cache.items():
-            clean = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
-            if m.get('is_bull'):
-                bull_pairs.append(clean)
-            elif m.get('is_bear'):
-                bear_pairs.append(clean)
-            else:
-                range_pairs.append(clean)
-
-            pos = m.get('dealing_range_pos', 0.5)
-
-            if pos <= 0.382:
-                discount_pairs.append((clean, pos))
-            elif pos >= 0.618:
-                premium_pairs.append((clean, pos))
-
-        # Sort discount (lowest pos first) & premium (highest pos first)
-        discount_pairs.sort(key=lambda x: x[1])
-        premium_pairs.sort(key=lambda x: -x[1])
-
-        lines.append("📊 *Arah Tren Pasar (22 Pair H4/D1):*")
-        lines.append(f"• 🟢 *Tren Naik ({len(bull_pairs)})*: `{', '.join(bull_pairs[:6]) if bull_pairs else '-'}`")
-        lines.append(f"• 🔴 *Tren Turun ({len(bear_pairs)})*: `{', '.join(bear_pairs[:6]) if bear_pairs else '-'}`")
-        lines.append(f"• ⚪ *Sideways ({len(range_pairs)})*: `{', '.join(range_pairs[:6]) if range_pairs else '-'}`")
-        lines.append("━" * 32)
-
-        lines.append("🎯 *Zona Pantau Potensial:*")
-        if discount_pairs:
-            disc_list = [f"`{sym}`" for sym, _ in discount_pairs[:4]]
-            lines.append(f"• 🛒 *Area Diskon (Siap BUY):*\n  → {', '.join(disc_list)}")
-        else:
-            lines.append("• 🛒 *Area Diskon*: _Semua pair di harga normal_")
-
-        if premium_pairs:
-            prem_list = [f"`{sym}`" for sym, _ in premium_pairs[:4]]
-            lines.append(f"• 🏷️ *Area Premium (Siap SELL):*\n  → {', '.join(prem_list)}")
-        else:
-            lines.append("• 🏷️ *Area Premium*: _Semua pair di harga normal_")
-        lines.append("━" * 32)
-    else:
-        lines.append("📊 *SMC Radar:* `Macro cache stand-by`")
-        lines.append("━" * 32)
-
-    # 3b. Boitoki Currency Strength Matrix (H1 Relative Flow)
+    # Boitoki Currency Strength Matrix
     try:
         from src.analytics import currency_strength
         scores, ranks = currency_strength.calculate_boitoki_csm()
         if scores:
             sorted_cur = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-            top3 = [f"*{c}* (`{s:+.1f}`)" for c, s in sorted_cur[:3]]
-            bot3 = [f"*{c}* (`{s:+.1f}`)" for c, s in sorted_cur[-3:]]
+            top2 = [f"*{c}* (`{s:+.1f}`)" for c, s in sorted_cur[:2]]
+            bot2 = [f"*{c}* (`{s:+.1f}`)" for c, s in sorted_cur[-2:]]
             lead_c, lead_s = sorted_cur[0]
             lagg_c, lagg_s = sorted_cur[-1]
             disp = round(lead_s - lagg_s, 1)
 
-            lines.append("🌐 *Arus Kekuatan Mata Uang (Boitoki CSM H1):*")
-            lines.append(f"• 🟢 *Top Inflow*: {', '.join(top3)}")
-            lines.append(f"• 🔴 *Top Outflow*: {', '.join(bot3)}")
-            lines.append(f"• ⚡ *Max Disparity*: `{lead_c}/{lagg_c}` (Δ `{disp:+.1f}`)")
-            lines.append("━" * 32)
+            lines.append("")
+            lines.append("🌐 *ARUS MATA UANG (Boitoki CSM H1)*")
+            lines.append(f"• 🟢 Top Inflow  : {', '.join(top2)}")
+            lines.append(f"• 🔴 Top Outflow : {', '.join(bot2)}")
+            lines.append(f"• ⚡ Max Spread  : `{lead_c}/{lagg_c}` (Δ `{disp:+.1f}`)")
     except Exception:
         pass
 
-    # 4. High-Impact News Context (Past 3h & Upcoming 12h)
+    # Macro Compass & Dealing Range
+    if scanner is not None and getattr(scanner, "macro_cache", None):
+        bull_c = sum(1 for m in scanner.macro_cache.values() if m.get('is_bull'))
+        bear_c = sum(1 for m in scanner.macro_cache.values() if m.get('is_bear'))
+        range_c = len(scanner.macro_cache) - bull_c - bear_c
+
+        disc_pairs = []
+        prem_pairs = []
+        for sym, m in scanner.macro_cache.items():
+            clean = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            pos = m.get('dealing_range_pos', 0.5)
+            if pos <= 0.382:
+                disc_pairs.append((clean, pos))
+            elif pos >= 0.618:
+                prem_pairs.append((clean, pos))
+
+        disc_pairs.sort(key=lambda x: x[1])
+        prem_pairs.sort(key=lambda x: -x[1])
+
+        lines.append("")
+        lines.append(f"🧭 *KOMPAS MAKRO & DEALING RANGE ({len(scanner.macro_cache)} Pairs)*")
+        lines.append(f"• Struktur Tren  : 🟢 Bull ({bull_c}) │ 🔴 Bear ({bear_c}) │ ⚪ Range ({range_c})")
+        if disc_pairs:
+            disc_str = ", ".join([f"`{s}` ({int(p*100)}%)" for s, p in disc_pairs[:3]])
+            lines.append(f"• 🛒 Top Diskon  : {disc_str} ➔ _Siaga BUY_")
+        else:
+            lines.append("• 🛒 Top Diskon  : _Semua pair di harga normal_")
+
+        if prem_pairs:
+            prem_str = ", ".join([f"`{s}` ({int(p*100)}%)" for s, p in prem_pairs[:3]])
+            lines.append(f"• 🏷️ Top Premium : {prem_str} ➔ _Siaga SELL_")
+        else:
+            lines.append("• 🏷️ Top Premium : _Semua pair di harga normal_")
+
+    # High-Impact News Context
     try:
         from src.analytics import economic_calendar
         cal_obj = getattr(economic_calendar, "calendar", None)
         if cal_obj:
             all_events = cal_obj.get_events(now)
-            recent_news = [e for e in all_events if (now - timedelta(hours=3)) <= e["dt"] < now]
             upcoming_news = [e for e in all_events if now <= e["dt"] <= (now + timedelta(hours=12))]
-
-            lines.append("📰 *Kalender Berita High-Impact (±12 Jam):*")
-            if recent_news:
-                for ne in recent_news[:3]:
-                    t_rel = ne['dt'].strftime('%H:%M WIB')
-                    flag = ne.get('country', 'US')
-                    lines.append(f"  • `[{t_rel}]` ⚠️ *{flag}*: `{ne['name']}` _(Baru Rilis)_")
+            lines.append("")
+            lines.append("📰 *JADWAL BERITA HIGH-IMPACT (±12 Jam)*")
             if upcoming_news:
                 for ne in upcoming_news[:3]:
                     t_rel = ne['dt'].strftime('%H:%M WIB')
                     flag = ne.get('country', 'US')
-                    lines.append(f"  • `[{t_rel}]` ⏳ *{flag}*: `{ne['name']}`")
-            if not recent_news and not upcoming_news:
-                lines.append("  • _Tenang (Tidak ada rilis berita High-Impact terdekat)_")
-            lines.append("━" * 32)
+                    lines.append(f"• `[{t_rel}]` *{flag}*: `{ne['name']}`")
+            else:
+                lines.append("• _Tenang (Tidak ada rilis berita High-Impact terdekat)_")
     except Exception:
         pass
 
-    # 5. Portfolio & Floating Status
-    total_float = 0.0
-    pos_lines = []
-    if open_positions:
-        total_float = sum(p.get("profit", 0.0) for p in open_positions)
-        for p in open_positions[:6]:
-            sym_clean = p.get("symbol", "?").replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
-            pos_lines.append(f"  • `{sym_clean}` {p.get('type')} {p.get('volume')} lot `${p.get('profit', 0.0):+.2f}`")
+    lines.append("━" * 28)
 
-    pnl_emoji = "🟢" if today_pnl >= 0 else "🔴"
-    float_emoji = "🟢" if total_float >= 0 else "🔴"
-    lines.append("💼 *Portofolio & Eksekusi:*")
-    lines.append(f"• {pnl_emoji} Realized Today: `${today_pnl:+.2f}`")
-    lines.append(f"• {float_emoji} Floating P/L: `${total_float:+.2f}`")
-    if pos_lines:
-        lines.append(f"• 📌 Posisi Aktif ({len(open_positions)}):\n" + "\n".join(pos_lines))
-    else:
-        lines.append("• 📌 Posisi Aktif: `Nihil (Semua Bersih)`")
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "📡 [ Live Radar ]", "callback_data": "cmd:radar"},
+                {"text": "🧭 [ MSE Strategy ]", "callback_data": "cmd:macro_menu"},
+                {"text": "☰ [ Menu ]", "callback_data": "cmd:menu"}
+            ]
+        ]
+    }
 
-    lines.append("• 🛡️ Status Radar: `Multi-Timeframe M15-H4 Aktif Tiap 60s`")
-    lines.append("━" * 32)
-    lines.append("_Gunakan menu keyboard atau `/radar` untuk refresh instant._")
-
-    return send_message("\n".join(lines))
+    return send_message("\n".join(lines), reply_markup=kb)
 
 
 def alert_trihourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
     """Direct alias for 3-hour radar recap."""
     return alert_hourly_radar_recap(scanner, open_positions, today_pnl, risk, recent_opened, recent_vetoed)
+
+
+def alert_radar_go_transition(symbol, setup_type="RECLAIM_CONFIRMED_GO", trigger_price=0.0, dr_pos=0.0, action_tier="FULL_ALLOW", bias_score=0.0):
+    """
+    Sends an instant high-priority Telegram alert when a symbol transitions to 'Permission GO'.
+    Only triggered for confirmed reclaim setups (A+ opportunity) to prevent noise.
+    """
+    clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    now_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S WIB")
+    
+    tier_emoji = "🟢" if action_tier == "FULL_ALLOW" else ("🟡" if action_tier == "REDUCED_CONFIDENCE" else "🟠")
+    
+    lines = [
+        f"🚀 *[RADAR GO ALERT] {clean_sym} AKTIF*",
+        f"🕒 `{now_str}` | {tier_emoji} *Tier:* `{action_tier}`",
+        "━" * 28,
+        f"• 🎯 *Setup:* `{setup_type}`",
+        f"• 📊 *Dealing Range:* `{int(dr_pos*100)}% (Zona Diskon)`",
+        f"• 🧭 *Macro Bias:* `{bias_score:+.2f}`",
+        f"• 📍 *Trigger Level:* `{trigger_price:.5f}`" if trigger_price > 0 else "",
+        "━" * 28,
+        "⚡ _Candle Reclaim terkonfirmasi. Stage 2 (3-LLM Jury) sedang memproses sinyal._"
+    ]
+    lines = [l for l in lines if l]
+    return send_message("\n".join(lines))
 

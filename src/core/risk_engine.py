@@ -270,7 +270,7 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None):
+    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
@@ -279,10 +279,12 @@ class RiskEngine:
         unanimous -> 2 posisi), risk dibagi N supaya TOTAL risk per sinyal
         tetap risk_pct, bukan N x risk_pct.
 
+        action_tier: 5-Tier Operational Action Matrix modifier ("REDUCED_CONFIDENCE" -> 0.75x).
+
         Order of operations (important):
           1. Compute risk-based lot from the (already floored) SL distance,
              dibagi split_count.
-          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2).
+          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2, action_tier x0.75).
           3. Clamp to broker volume_min/max and round DOWN to volume_step
              LAST (floor, bukan round - round() bisa naikkan lot MELEBIHI
              risk target), so multipliers are not distorted by rounding.
@@ -300,12 +302,16 @@ class RiskEngine:
         if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
             # No SL given -> fall back to the static per-symbol lot
             lot = config.lot_size_for(symbol)
+            if action_tier == "REDUCED_CONFIDENCE":
+                lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
         # USD value of a 1-point move for 1.0 lot
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
         if usd_per_pt_1lot <= 0:
             lot = config.lot_size_for(symbol)
+            if action_tier == "REDUCED_CONFIDENCE":
+                lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
         split_count = max(1, int(split_count))
@@ -314,6 +320,8 @@ class RiskEngine:
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
+            if action_tier == "REDUCED_CONFIDENCE":
+                lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
@@ -324,6 +332,11 @@ class RiskEngine:
         # Apply recovery/session multipliers BEFORE clamping so rounding cannot
         # erase the intended reduction.
         lot = self._apply_lot_multipliers(lot_raw, symbol)
+
+        # Apply 5-Tier Action Matrix modifier (REDUCED_CONFIDENCE -> 0.75x risk)
+        if action_tier == "REDUCED_CONFIDENCE":
+            lot *= 0.75
+            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE multiplier (x0.75) applied -> {lot:.4f}")
 
         # Clamp to broker volume bounds and round DOWN to step (floor - jangan
         # pakai round(), itu bisa NAIKKAN lot di atas risk target).
@@ -496,17 +509,51 @@ class RiskEngine:
 
     def _check_max_positions(self, symbol=None):
         """Check if max open positions + pending orders reached - aggregated across ALL
-        symbols, and ensures strict 1-position/order limit per symbol."""
+        symbols, with Risk-Weighted Slot Allocation (Risk-Free BEP positions don't consume at-risk quota),
+        and ensures strict 1-position/order limit per symbol."""
         positions = mt5.positions_get() or []
         orders = mt5.orders_get() or []
         
-        # 1. Total aggregate capacity (Open Positions + Pending Orders) across entire MT5 account
-        total_active = len(positions) + len(orders)
-        max_positions = config.get_max_open_positions(self._in_recovery_mode)
-        if total_active >= max_positions:
-            return False, f" [RISK] Total order aktif (open+pending) di MT5 sudah {total_active}/{max_positions}."
+        # 1. Total Absolute Account Ceiling (hard safeguard to prevent margin bloat)
+        total_open = len(positions) + len(orders)
+        absolute_max_ceiling = getattr(config, "MAX_ABSOLUTE_OPEN_POSITIONS", 8)
+        if total_open >= absolute_max_ceiling:
+            return False, f" [RISK] Total posisi terbuka di akun MT5 sudah mencapai batas absolut ({total_open}/{absolute_max_ceiling})."
 
-        # 3. Strict 1-trade limit per symbol
+        # 2. Risk-Weighted Slot Accounting: Count only At-Risk positions
+        at_risk_count = 0
+        try:
+            from src.analytics.position_manager import _break_even_tickets, _partial_closed_tickets
+            for p in positions:
+                is_risk_free = False
+                if p.ticket in _break_even_tickets or p.ticket in _partial_closed_tickets:
+                    is_risk_free = True
+                elif p.sl and p.sl > 0:
+                    if p.type == mt5.ORDER_TYPE_BUY and p.sl >= p.price_open:
+                        is_risk_free = True
+                    elif p.type == mt5.ORDER_TYPE_SELL and p.sl <= p.price_open:
+                        is_risk_free = True
+
+                if not is_risk_free:
+                    at_risk_count += 1
+        except Exception:
+            at_risk_count = len(positions)
+
+        # Pending orders are always At-Risk
+        total_at_risk = at_risk_count + len(orders)
+        max_at_risk = config.get_max_open_positions(self._in_recovery_mode)
+        if total_at_risk >= max_at_risk:
+            return False, f" [RISK] Kuota posisi berisiko (At-Risk) di MT5 sudah {total_at_risk}/{max_at_risk} (Total open: {total_open})."
+
+        # 3. Free Margin Buffer Safety Check (>= 60%)
+        account = connector.get_account_info()
+        if account and account.equity > 0:
+            margin_free_ratio = float(account.margin_free) / float(account.equity)
+            min_free_margin = getattr(config, "MIN_FREE_MARGIN_RATIO", 0.60)
+            if margin_free_ratio < min_free_margin:
+                return False, f" [RISK] Free margin buffer terlalu rendah ({margin_free_ratio*100:.1f}% < {min_free_margin*100:.0f}%). Menunggu..."
+
+        # 4. Strict 1-trade limit per symbol
         if symbol:
             clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
             for p in positions:
@@ -517,6 +564,25 @@ class RiskEngine:
                 o_sym = o.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
                 if clean_sym == o_sym:
                     return False, f" [RISK] Simbol {symbol} sudah memiliki pending order aktif (Ticket #{o.ticket})."
+
+            # 5. Currency Basket Concentration Limit (Max 3 open positions containing the same currency)
+            if len(clean_sym) >= 6:
+                base_curr = clean_sym[:3]
+                quote_curr = clean_sym[3:6]
+                base_count = 0
+                quote_count = 0
+                for p in positions:
+                    p_clean = p.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+                    if base_curr in p_clean:
+                        base_count += 1
+                    if quote_curr in p_clean:
+                        quote_count += 1
+                
+                max_curr_exposure = getattr(config, "MAX_CURRENCY_BASKET_EXPOSURE", 3)
+                if base_count >= max_curr_exposure:
+                    return False, f" [RISK] Konsentrasi mata uang {base_curr} di MT5 sudah mencapai batas ({base_count}/{max_curr_exposure} posisi)."
+                if quote_count >= max_curr_exposure:
+                    return False, f" [RISK] Konsentrasi mata uang {quote_curr} di MT5 sudah mencapai batas ({quote_count}/{max_curr_exposure} posisi)."
 
         return True, ""
 
@@ -583,9 +649,9 @@ class RiskEngine:
         if config.WEEKEND_TRADING_ENABLED:
             return True, ""
         now_wib = datetime.now(WIB)
-        if now_wib.weekday() == 4 and now_wib.hour >= 22:  # Friday night
-            return False, " [RISK] Weekend entry blocked: Jumat >= 22:00 WIB. Menunggu Senin 00:00 WIB."
-        if now_wib.weekday() in (5, 6):  # Saturday or Sunday
+        # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 WIB.
+        # Jumat 23:59 masih boleh trading; Sabtu 00:00 langsung block.
+        if now_wib.weekday() in (5, 6):
             return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         return True, ""
 

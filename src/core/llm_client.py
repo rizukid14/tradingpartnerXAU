@@ -189,29 +189,6 @@ def query_primary_model(prompt, search_grounding=False):
     return None
 
 
-def analyze_fundamentals(symbol):
-    """
-    Queries Gemini using Google Search Grounding to summarize the latest
-    macroeconomic SENTIMENT affecting the asset (news, outlook, positioning).
-    Event SCHEDULING is handled deterministically by economic_calendar.py -
-    search grounding is only a qualitative complement, never the schedule source.
-    """
-    if config.is_crypto(symbol):
-        execution_style = "30-minute intraday (M30) swing"
-    elif "XAU" not in symbol.upper():
-        execution_style = "1-hour (H1) swing"
-    else:
-        execution_style = "30-minute (M30) swing"
-    prompt = f"""
-What is the latest macroeconomic news and market sentiment affecting {symbol} ({asset_desc(symbol)}) prices right now?
-Summarize the main themes, current market sentiment, and any notable macro drivers (central bank policy expectations, geopolitical risk, dollar/yield moves, commodity flows, or crypto-specific factors like ETF flows or regulatory news).
-
-Your response must be extremely brief (maximum 3-4 sentences) as it will be used as background context for a {execution_style} execution model. Focus on DIRECTIONAL macro bias, not event schedules.
-"""
-    # Force search grounding tool
-    return query_primary_model(prompt, search_grounding=True)
-
-
 # ================================================================
 # SYSTEM PROMPT TEMPLATE (docs/prompt_claude.md)
 # "We set guardrails, the LLM sets strategy."
@@ -254,7 +231,6 @@ A valid trade requires structure + location + actionable setup + valid invalidat
 - Pending Rules: Entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: buy_stop/buy_limit. SELL: sell_stop/sell_limit.
 - Unit Definition: sl_points & tp_points are broker POINTS from ENTRY PRICE.
   * {{POINTS_EXPLANATION}}
-  * CRITICAL UNIT WARNING: Double check units! If you want 15 pips SL, you MUST return 150 points, NOT 15. Single/double-digit SLs inside spread will be rejected.
 - Safety Floors: Give your honest structural levels; the bot engine automatically widens SL/TP to meet broker safety floors (>= 1.3x ATR {{TIMEFRAME}}) and enforces min R:R 1.25.
 - Confidence: Represents structural setup validity (0.00 to 1.00), NOT statistical win probability.
 
@@ -337,19 +313,6 @@ def _structure_block(df, current_tick, atr_points=0, tf_label="M30"):
         rel_ema20 = (close - ema20) / point
         pos = "ABOVE" if rel_ema20 > 0 else "BELOW"
         ind_lines.append(f"- EMA20 {_fmt_price(ema20, point)} | EMA50 {_fmt_price(ema50, point)} (gap {int(abs(gap))} pts) | close is {int(abs(rel_ema20))} pts {pos} EMA20")
-    if "rsi_14" in df.columns:
-        rsi = float(df["rsi_14"].iloc[-1])
-        ind_lines.append(f"- RSI14 {rsi:.2f}")
-    if "adx_14" in df.columns:
-        adx = float(df["adx_14"].iloc[-1])
-        if adx == adx:  # NaN guard (NaN != NaN)
-            if adx >= 25:
-                adx_label = "strong trend expansion"
-            elif adx >= 20:
-                adx_label = "trend building"
-            else:
-                adx_label = "weak/ranging"
-            ind_lines.append(f"- ADX14 {adx:.1f} ({adx_label})")
     if "ema_200" in df.columns and len(df) >= 200:
         ema200 = float(df["ema_200"].iloc[-1])
         rel200 = (close - ema200) / point
@@ -1026,36 +989,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
 
     atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
 
-    # Market Randomness & Micro Fat-Tail Analysis (Hurst, Kurtosis, Skewness)
-    randomness_str = ""
-    if getattr(config, "QUANT_ANALYSIS_ENABLED", False):
-        try:
-            from src.analytics import market_randomness
-            rand_info = market_randomness.analyze_market_randomness(df, symbol=symbol)
-            ft = rand_info.get('fat_tail', {})
-            tf_micro = ft.get('tf', 'M5' if config.is_crypto(symbol) else 'M1')
-            randomness_str = (
-                f"- Hurst Exponent (H): {rand_info['hurst']:.2f} ({rand_info['regime']})\n"
-                f"- Excess Kurtosis ({tf_micro} Fat Tails): {ft.get('kurtosis', 0.0):+.2f} ({ft.get('label', 'NORMAL')}) | Skewness ({tf_micro}): {ft.get('skewness', 0.0):+.2f}\n"
-            )
-        except Exception:
-            pass
-
-    quant_prob_str = ""
-    if getattr(config, "MONTE_CARLO_ENABLED", False):
-        try:
-            from src.analytics import quant_probability
-            tf_mins = 30 if config.is_crypto(symbol) else 5
-            q_res = quant_probability.calculate_quant_probabilities(df, timeframe_minutes=tf_mins)
-            quant_prob_str = (
-                f"- Quant Monte Carlo Probabilities (1,000 paths): "
-                f"UP: {q_res['prob_up_pct']}% (Target: ${q_res['expected_target_up']}) | "
-                f"DOWN: {q_res['prob_down_pct']}% (Target: ${q_res['expected_target_down']}) | "
-                f"Est. Time: {q_res['estimated_time_str']}\n"
-            )
-        except Exception:
-            pass
-
     # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
     # reflects real 30-minute volatility. XAU df is M15 (swing) - ATR M15 ~819 pts.
 
@@ -1088,18 +1021,57 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     except Exception:
         pass
 
+    m3_compass_str = ""
+    if not macro_context:
+        try:
+            from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
+            from src.indicators.wave_state import evaluate_macro_compass_corridor
+            
+            cur_price = float(df["close"].iloc[-1])
+            st_info = calculate_dynamic_stations(symbol, cur_price)
+            step_val = st_info["step"]
+            
+            roll_h = float(df["high"].tail(50).max())
+            roll_l = float(df["low"].tail(50).min())
+            pwh_val = float(df["high"].tail(120).max()) if len(df) >= 120 else roll_h
+            pwl_val = float(df["low"].tail(120).min()) if len(df) >= 120 else roll_l
+            
+            last_h = float(df["high"].iloc[-1])
+            last_l = float(df["low"].iloc[-1])
+            last_o = float(df["open"].iloc[-1])
+            last_c = float(df["close"].iloc[-1])
+            
+            m_corr, target_st, psych_step, is_ceil_rej, is_flr_rej = evaluate_macro_compass_corridor(
+                symbol=symbol, current_price=cur_price, pwh=pwh_val, pwl=pwl_val,
+                macro_high=roll_h, macro_low=roll_l, cur_atr=atr_points * point_size,
+                last_high=last_h, last_low=last_l, last_open=last_o, last_close=last_c
+            )
+            
+            rng_50 = max(roll_h - roll_l, 1e-5)
+            dr_pct = round(((cur_price - roll_l) / rng_50) * 100, 1)
+            dr_label = "DISCOUNT ZONE (Favorable for BUY)" if dr_pct <= 38.2 else ("PREMIUM ZONE (Favorable for SELL)" if dr_pct >= 61.8 else "EQUILIBRIUM (Middle Range)")
+            
+            pt = point_size or 0.00001
+            step_pts = int(round(step_val / pt))
+            
+            m3_compass_str = (
+                "\n### M3 MACRO COMPASS & ATLAS DNA DYNAMIC STATIONS\n"
+                f"- Active Macro Corridor: {m_corr} (Target Estafet: {_fmt_price(target_st, pt)})\n"
+                f"- Calibrated Step DNA: {_fmt_price(step_val, pt)} ({step_pts} pts / {step_pts//10} pips)\n"
+                f"- Immediate Dynamic Stations:\n"
+                f"  * Upper Station (+1 Step): {_fmt_price(st_info['upper_station'], pt)}\n"
+                f"  * Base Station (Nearest) : {_fmt_price(st_info['base_station'], pt)}\n"
+                f"  * Lower Station (-1 Step): {_fmt_price(st_info['lower_station'], pt)}\n"
+                f"- 50-Bar Dealing Range: {_fmt_price(roll_l, pt)} <-> {_fmt_price(roll_h, pt)} (Position: {dr_pct}% - {dr_label})\n"
+            )
+        except Exception:
+            pass
+
     usd_context = ""
 
     macro_str = ""
     if macro_context:
-        macro_str = (
-            "\n### HIGHER-TIMEFRAME STRUCTURE & MACRO CONTEXT\n"
-            f"{macro_context}\n"
-            "(The MULTI-TIMEFRAME ANALYSIS section is COMPUTED from actual higher-timeframe "
-            "candles (EMA20/50, RSI, ATR, swing levels) -- use it as directional context to determine whether the "
-            "current move is a trend continuation, a pullback, or an exhaustion reversal at extremes. NOTE: HTF close/EMA values "
-            "reflect the last CLOSED bar and may lag current price slightly -- the live Bid/Ask and active candles are the current reference.)\n"
-        )
+        macro_str = f"\n{macro_context.strip()}\n"
 
     whisper_str = whisper_str or ""
 
@@ -1131,21 +1103,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
                 recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"
         except Exception:
             pass
-
-    forecast_str = ""
-    if getattr(config, "FORECAST_ENABLED", False) and getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        try:
-            from src.analytics import forecast_engine
-            forecast_str = forecast_engine.forecaster.get_forecast_context()
-        except Exception:
-            pass
-    if forecast_str:
-        forecast_str = (
-            "\n### MULTI-HORIZON FORECAST (separate model - informational only, not a rule)\n"
-            f"{forecast_str}\n"
-            "(NEUTRAL or disagreeing forecast does not require HOLD; aligned forecast "
-            "does not by itself justify a trade.)\n"
-        )
 
     calendar_str = ""
     news_guard_str = ""
@@ -1279,14 +1236,14 @@ Current Bid: {_fmt_price(current_tick['bid'], point_size)}
 Current Ask: {_fmt_price(current_tick['ask'], point_size)}
 Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
 Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD.
-{csm_context_str}{macro_str}
+{csm_context_str}{m3_compass_str}{macro_str}
 {key_levels_str}
 {structure_str}
 {delta_main_str}
 {micro_candles_str}
 {momentum_summary_str}
 {atr_gate_str}
-{randomness_str}{quant_prob_str}{whisper_str}{lessons_str}{recent_outcomes_str}{forecast_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
+{whisper_str}{lessons_str}{recent_outcomes_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
 {usd_context}"""
 
     # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
@@ -1768,24 +1725,24 @@ def compute_micro_objective_frames(symbol, point=None):
             ema50 = float(EMAIndicator(c30, window=50).ema_indicator().iloc[-1])
             ema200 = float(EMAIndicator(c30, window=min(200, len(c30))).ema_indicator().iloc[-1]) if len(c30) >= 60 else ema50
 
-            rsi30 = float(RSIIndicator(c30, window=14).rsi().iloc[-1])
-            adx30_obj = ADXIndicator(h30, l30, c30, window=14)
-            adx30 = float(adx30_obj.adx().iloc[-1])
-            dip30 = float(adx30_obj.adx_pos().iloc[-1])
-            dim30 = float(adx30_obj.adx_neg().iloc[-1])
             atr30_pts = float(AverageTrueRange(h30, l30, c30, window=14).average_true_range().iloc[-1] / point)
+
+            # Dynamic precision
+            s_u = symbol.upper()
+            dp = 3 if any(x in s_u for x in ("JPY", "HUF", "DKK", "NOK", "SEK", "CZK", "HKD")) else (2 if any(x in s_u for x in ("XAU", "GOLD", "BTC", "ETH")) else 5)
+            f_px = lambda x: f"{x:.{dp}f}"
 
             if ema20 > ema50 > ema200:
                 align30 = "EMA20 > EMA50 > EMA200 (Bullish Alignment)"
             elif ema20 < ema50 < ema200:
                 align30 = "EMA20 < EMA50 < EMA200 (Bearish Alignment)"
             else:
-                align30 = f"EMA20={ema20:.5f}, EMA50={ema50:.5f}, EMA200={ema200:.5f}"
+                align30 = f"EMA20={f_px(ema20)}, EMA50={f_px(ema50)}, EMA200={f_px(ema200)}"
 
             lines.append("- M30 Structural Frame (50-bar / 24h Window):")
-            lines.append(f"  * 50-Bar High: {w50_h:.5f} | 50-Bar Low: {w50_l:.5f} | Position: {pos50_pct:.1f}% of Range")
-            lines.append(f"  * Moving Averages: EMA20 = {ema20:.5f} | EMA50 = {ema50:.5f} | EMA200 = {ema200:.5f} ({align30})")
-            lines.append(f"  * Indicators: RSI(14) = {rsi30:.1f} | ADX(14) = {adx30:.1f} (DI+: {dip30:.1f}, DI-: {dim30:.1f}) | ATR(14) = {atr30_pts:.1f} pts")
+            lines.append(f"  * 50-Bar High: {f_px(w50_h)} | 50-Bar Low: {f_px(w50_l)} | Position: {pos50_pct:.1f}% of Range")
+            lines.append(f"  * Moving Averages: EMA20 = {f_px(ema20)} | EMA50 = {f_px(ema50)} | EMA200 = {f_px(ema200)} ({align30})")
+            lines.append(f"  * Volatility Meter: ATR(14) = {atr30_pts:.1f} pts")
 
         # 2. M15 (32-bar / 8h Window)
         rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 50)
@@ -1805,11 +1762,6 @@ def compute_micro_objective_frames(symbol, point=None):
             ema21 = float(EMAIndicator(c15, window=21).ema_indicator().iloc[-1])
             ema50_15 = float(EMAIndicator(c15, window=min(50, len(c15))).ema_indicator().iloc[-1])
 
-            rsi15 = float(RSIIndicator(c15, window=14).rsi().iloc[-1])
-            adx15_obj = ADXIndicator(h15, l15, c15, window=14)
-            adx15 = float(adx15_obj.adx().iloc[-1])
-            dip15 = float(adx15_obj.adx_pos().iloc[-1])
-            dim15 = float(adx15_obj.adx_neg().iloc[-1])
             atr15_pts = float(AverageTrueRange(h15, l15, c15, window=14).average_true_range().iloc[-1] / point)
 
             last3_bodies = [abs(float(df15['close'].iloc[-i]) - float(df15['open'].iloc[-i])) / point for i in range(1, 4)]
@@ -1821,12 +1773,12 @@ def compute_micro_objective_frames(symbol, point=None):
             elif ema9 < ema21 < ema50_15:
                 align15 = "EMA9 < EMA21 < EMA50 (Bearish Momentum Stack)"
             else:
-                align15 = f"EMA9={ema9:.5f}, EMA21={ema21:.5f}, EMA50={ema50_15:.5f}"
+                align15 = f"EMA9={f_px(ema9)}, EMA21={f_px(ema21)}, EMA50={f_px(ema50_15)}"
 
             lines.append("- M15 Micro Flow Frame (32-bar / 8h Session Window):")
-            lines.append(f"  * 32-Bar High: {w32_h:.5f} | 32-Bar Low: {w32_l:.5f} | Position: {pos32_pct:.1f}% of Range")
-            lines.append(f"  * Moving Averages: EMA9 = {ema9:.5f} | EMA21 = {ema21:.5f} | EMA50 = {ema50_15:.5f} ({align15})")
-            lines.append(f"  * Indicators: RSI(14) = {rsi15:.1f} | ADX(14) = {adx15:.1f} (DI+: {dip15:.1f}, DI-: {dim15:.1f}) | ATR(14) = {atr15_pts:.1f} pts")
+            lines.append(f"  * 32-Bar High: {f_px(w32_h)} | 32-Bar Low: {f_px(w32_l)} | Position: {pos32_pct:.1f}% of Range")
+            lines.append(f"  * Moving Averages: EMA9 = {f_px(ema9)} | EMA21 = {f_px(ema21)} | EMA50 = {f_px(ema50_15)} ({align15})")
+            lines.append(f"  * Volatility Meter: ATR(14) = {atr15_pts:.1f} pts")
             lines.append(f"  * Micro Velocity: Last 3 bars avg candle body = {avg_body_pts:.1f} pts ({body_atr_ratio:.2f}x ATR M15)")
 
         return "\n".join(lines) if lines else ""
@@ -1846,13 +1798,13 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     
     candles_block = ""
     if recent_d1_str:
-        candles_block += f"\n### RECENT D1 CANDLES (Daily Context - Last 3 days OHLC):\n{recent_d1_str}\n"
+        candles_block += f"\n- D1 Daily Context (Last 3 days OHLC):\n{recent_d1_str}\n"
     if recent_h4_str:
-        candles_block += f"\n### RECENT H4 CANDLES (Structural 4-Hour - Last 24 hours OHLC):\n{recent_h4_str}\n"
+        candles_block += f"\n- H4 Structural (Last 6 bars OHLC):\n{recent_h4_str}\n"
     if recent_h1_str:
-        candles_block += f"\n### RECENT H1 CANDLES (Execution Timeframe - Last 15 hours OHLC):\n{recent_h1_str}\n"
+        candles_block += f"\n- H1 Execution (Last 12 bars OHLC):\n{recent_h1_str}\n"
     if recent_m5_str:
-        candles_block += f"\n### RECENT M5 MICRO FLOW (Candle Flow - Last 2 hours intra-period):\n{recent_m5_str}\n"
+        candles_block += f"\n- M5 Micro Flow (Last 24 bars OHLC):\n{recent_m5_str}\n"
     
     meta_lines = []
     if meta.get("entry_type"):
@@ -1888,74 +1840,186 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         csm_block = ""
 
+    # === SYMBOL DECIMAL PRECISION & PIPS/POINTS HELPERS ===
+    def _sym_dec(s):
+        """Returns correct decimal places for a symbol's price display."""
+        s_upper = s.upper()
+        if any(x in s_upper for x in ("JPY", "HUF", "DKK", "NOK", "SEK", "CZK", "HKD")):
+            return 3
+        if any(x in s_upper for x in ("XAU", "GOLD", "BTC", "ETH")):
+            return 2
+        return 5
+
+    def _format_step_label(s, step_val):
+        """Formats calibrated psychological step size correctly in pips and points."""
+        s_u = s.upper()
+        if "BTC" in s_u:
+            return f"${step_val:,.0f} ({int(step_val * 100):,} pts)"
+        if "XAU" in s_u or "GOLD" in s_u:
+            return f"${step_val:.0f} ({int(step_val * 100):,} pts)"
+        if "JPY" in s_u:
+            pips = int(round(step_val * 100))
+            pts = int(round(step_val * 1000))
+            return f"{step_val:.0f} JPY ({pips} pips / {pts:,} pts)"
+        # Standard Forex (5-digit): 0.0100 = 100 pips = 1,000 pts
+        pips = int(round(step_val * 10000))
+        pts = int(round(step_val * 100000))
+        return f"{pips} pips ({pts:,} pts)"
+
+    sym_dec = _sym_dec(sym)
+    P = sym_dec  # shorthand
+
+    def fp(x):
+        """Format price with correct decimal precision for this symbol."""
+        if x is None:
+            return "N/A"
+        try:
+            return f"{float(x):.{P}f}"
+        except (ValueError, TypeError):
+            return str(x)
+
+    # Format ADR used safely (handles both 0.685 ratio and 68.5% percent)
+    adr_display_pct = adr_used_val * 100.0 if (0.0 <= adr_used_val <= 1.5) else adr_used_val
+
+    # === ATLAS DNA DYNAMIC STATION CALCULATION ===
+    atlas_dna_block = ""
+    atlas_tp_ref = None      # Atlas DNA-anchored TP reference price
+    atlas_sl_ref = None      # Atlas DNA-anchored SL reference price
+    formula_desc = ""
+    try:
+        from src.indicators.atlas_dna import calculate_dynamic_stations
+        trigger_px = float(candidate.trigger_price)
+        stations = calculate_dynamic_stations(sym, trigger_px)
+        step_val = stations['step']
+        base_st = stations['base_station']
+        upper_st = stations['upper_station']
+        lower_st = stations['lower_station']
+        upper_2 = round(upper_st + step_val, P)
+        lower_2 = round(lower_st - step_val, P)
+
+        dist_to_upper = abs(upper_st - trigger_px)
+        dist_to_lower = abs(trigger_px - lower_st)
+        dist_to_base = abs(trigger_px - base_st)
+
+        step_label = _format_step_label(sym, step_val)
+
+        station_range = upper_st - lower_st
+        position_in_range = ((trigger_px - lower_st) / station_range * 100) if station_range > 0 else 50.0
+
+        # Determine exact immediate structural ceiling (above price) and floor (below price)
+        if trigger_px < base_st:
+            ceiling_st = base_st
+            floor_st = lower_st
+        elif trigger_px > base_st:
+            ceiling_st = upper_st
+            floor_st = base_st
+        else:  # exactly at base_st
+            ceiling_st = upper_st
+            floor_st = lower_st
+
+        # Convert ATR and Spread points to absolute price difference
+        atr_px = candidate.current_atr_pts * (10 ** -P) if candidate.current_atr_pts > 0 else 0.0
+        spread_px = candidate.current_spread_pts * (10 ** -P) if candidate.current_spread_pts > 0 else 0.0
+        pad = 0.15 * atr_px + spread_px
+        anti_wick = 0.35 * atr_px + spread_px
+
+        if candidate.direction == 1:  # BUY
+            atlas_tp_ref = round(ceiling_st - pad, P)
+            atlas_sl_ref = round(floor_st - anti_wick, P)
+            formula_desc = f"TP = Ceiling [{fp(ceiling_st)}] - [0.15xATR+Spread], SL = Floor [{fp(floor_st)}] - [0.35xATR+Spread]"
+        else:  # SELL
+            atlas_tp_ref = round(floor_st + pad, P)
+            atlas_sl_ref = round(ceiling_st + anti_wick, P)
+            formula_desc = f"TP = Floor [{fp(floor_st)}] + [0.15xATR+Spread], SL = Ceiling [{fp(ceiling_st)}] + [0.35xATR+Spread]"
+
+        atlas_dna_block = f"""
+### Atlas DNA Psychological Station Map (16.2-Year Calibrated Grid)
+- Step Grid: {step_label} per station | Position in Range: {position_in_range:.1f}%
+- Station Ladder: ... {fp(lower_2)} -> [{fp(lower_st)}] -> [{fp(base_st)}] <CURRENT {fp(trigger_px)}> -> [{fp(upper_st)}] -> {fp(upper_2)} ...
+- Distances: to Lower {fp(dist_to_lower)} | to Base {fp(dist_to_base)} | to Upper {fp(dist_to_upper)}
+- DNA-Anchored Reference ({direction_str}): TP = {fp(atlas_tp_ref)} | SL = {fp(atlas_sl_ref)} ({formula_desc})
+"""
+    except Exception:
+        atlas_dna_block = ""
+
+    # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (PROBABILISTIC & OBJECTIVE) ===
+    strat_block = ""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        if strat_dir:
+            strat_block = f"""
+- MSE Macro Bias: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability} | Phase: {strat_dir.structural_stage}
+- Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
+- SBR/RBS Hierarchy:
+  * D1 Scale: Major SBR = {strat_dir.macro_sbr_d1} | Major RBS = {strat_dir.macro_rbs_d1}
+  * H4 Scale: SBR = {strat_dir.inter_sbr_h4} | RBS = {strat_dir.inter_rbs_h4}
+  * H1 Scale: SBR = {strat_dir.micro_sbr_h1} | RBS = {strat_dir.micro_rbs_h1}
+- 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
+- Target Landscape: TP1 (Proximal Station) = {strat_dir.tp1_price} | TP2 (Macro Target) = {strat_dir.tp2_price}
+- Baseline Floor SL: {strat_dir.intraday_sl_price} | Macro Invalidation: {strat_dir.invalidation_stop_price}\n"""
+    except Exception:
+        strat_block = ""
+
+    calendar_block = getattr(candidate, 'economic_context', '')
+    if not calendar_block:
+        try:
+            from src.analytics import economic_calendar
+            calendar_block = economic_calendar.calendar.get_context(symbol=sym)
+        except Exception:
+            calendar_block = ""
+    calendar_text = calendar_block.strip() if calendar_block else "No High-Impact News releases within +/- 6 hours"
+
+    # === APEX PARAGON MACRO FUNDAMENTAL SCORECARD ===
+    fund_block = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fund_block = apex_fundamental_engine.generate_llm_dossier_block(sym)
+        if fund_block:
+            fund_block = f"\n{fund_block.strip()}\n"
+    except Exception:
+        fund_block = ""
+
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
-Your task is to objectively evaluate this proposal against the raw market data:
-1. Macro Sentiment & Price Flow: Compare proposed direction against recent D1/H4/H1/M5 momentum, M30/M15 micro frames, and Currency Strength Flow.
-2. Order Optimization: Choose to APPROVE as proposed, REVISE entry to a better structural level/pending limit, or REJECT if risk is high.
-3. Invalidation & Target: Verify SL is behind structural barriers and TP has clear room (Mandatory R:R >= 1.25).
 
-## 1. INSTITUTIONAL BATTLEFIELD & MACRO CONFLUENCE
+## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: {sym} | Asset: {asset_desc(sym)}
-- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str}
-- Current Trigger Price: {candidate.trigger_price}
-- Macro Compass: {candidate.macro_compass}
-- H4 Structural Status: {h4_status}
-- H1 Wave State & Permission: {getattr(candidate, 'wave_state', 'BASE_RECLAIM_ENABLE')} ({getattr(candidate, 'wave_summary', 'Permitted')})
-- Previous Day Levels (D1): PDH = {pdh_val} | PDL = {pdl_val}
-- Previous Week Levels (H4): PWH = {pwh_val} | PWL = {pwl_val}
-- Daily Open (DO): {do_val} | ADR Used %: {adr_used_val*100:.1f}%
-- Multi-Month Macro Ranges: 50-Day D1 = {d1_50_str} | 100-Day D1 = {d1_100_str} | Monthly H4 = {h4_m_str}
-- Intraday Dealing Range (100-bar H1): {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
-- Rejection Wick Ratio: {candidate.rejection_wick_ratio*100:.1f}%
-- Volatility: ATR(14) = {candidate.current_atr_pts:.1f} pts | Current Spread = {candidate.current_spread_pts} pts
+- Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {fp(float(candidate.trigger_price))}
+- Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_status or 'N/A'}
+- H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
+- Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
+- Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_display_pct:.1f}%
+- Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%
 {meta_block}
+
+## 2. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT (40% Weight — Read Before Evaluating Technicals)
+{fund_block}
+- Economic Calendar Context: {calendar_text}
+
+## 3. CURRENCY FLOW & WAVE STATE CONFIRMATION
 {micro_frames_block}
 {csm_block}
-## 2. SMART MONEY CONCEPTS (SMC) & LIQUIDITY MAP
-- Structural Floor (Strong Low): {candidate.strong_low or candidate.key_support}
-- Structural Ceiling (Strong High): {candidate.strong_high or candidate.key_resistance}
-- Nearest Bullish Order Block (OB): {getattr(candidate, 'bullish_ob_zone', '') or 'None active nearby'}
-- Nearest Bearish Order Block (OB): {getattr(candidate, 'bearish_ob_zone', '') or 'None active nearby'}
-- Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None active nearby'}
+## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
+{atlas_dna_block}
+{strat_block}
+## 5. SMART MONEY CONCEPTS (SMC) & FRVP LIQUIDITY MAP
+- Structural Floor (Strong Low): {fp(candidate.strong_low) if candidate.strong_low else fp(candidate.key_support)} | Ceiling (Strong High): {fp(candidate.strong_high) if candidate.strong_high else fp(candidate.key_resistance)}
+- Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None nearby'} | Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None nearby'}
+- Nearest Fair Value Gap (FVG Magnet): {getattr(candidate, 'fvg_zone', '') or 'None nearby'}
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
-## 3. STRUCTURAL PROPOSAL
-- Key Support: {candidate.key_support}
-- Key Resistance: {candidate.key_resistance}
-- Proposed Technical SL: {candidate.suggested_sl}
-- Proposed Technical TP: {candidate.suggested_tp}
-- Risk:Reward Ratio: {candidate.risk_reward_ratio:.2f}:1
+## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+- Scanner Raw SL: {fp(float(candidate.suggested_sl))} | Scanner Raw TP: {fp(float(candidate.suggested_tp))} | R:R: {candidate.risk_reward_ratio:.2f}:1
+- Atlas DNA-Anchored Reference: SL = {fp(atlas_sl_ref) if atlas_sl_ref else 'N/A'} | TP = {fp(atlas_tp_ref) if atlas_tp_ref else 'N/A'}
+  ({formula_desc if formula_desc else 'Station-anchored calculation'})
 {candles_block}
-## 4. ECONOMIC CONTEXT & NEWS SHIELD
-- Calendar Context: {candidate.economic_context or "No High-Impact News releases within +/- 6 hours"}
-
-## 5. EVALUATION DIRECTIVE
-Trade Permission & Confluence Hierarchy:
-- Trend & Direction: Defined by D1/H4 Macro Compass.
-- Wave State Permission: H1 Wave State Machine ensures we never chase running impulses (Phase 1) or catch falling knives (Phase 2). Trade is only permitted in Mature Basing (Phase 3) or Base Reclaim (Phase 4).
-- POI Location: H1 Dealing Range Discount (<= 0.50) / Deep Discount (<= 0.382) & SMC Order Blocks / FRVP POC.
-- Reaction Timing: M5 live wicks/displacement at the POI confirm that reaction has started before pulling trigger.
-- Currency Flow (CSM): Asymmetric flow filter. Veto BUY only if base currency is being systemically dumped (Delta <= -2.0). Mild or neutral CSM is completely normal during healthy discount pullbacks.
-
-Indicator Hierarchy & Nature:
-- Moving Averages (EMA), RSI, ADX, and Currency Strength Matrix (CSM) are LAGGING mathematical derivatives of past price/flow history.
-- Live Candlestick Price Action (rejection wicks, structural liquidity sweeps, Order Block/FVG reactions) is LEADING.
-- Use lagging indicators and CSM frames to assess macro alignment and regime maturity, but prioritize live price action structure and clear invalidation for exact trigger timing.
-
-Evaluate the proposal with full institutional depth:
+## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
 - If setup is solid and actionable now -> select "APPROVE"
-- If direction is sound but waiting for a retest/pullback limit is safer -> select "REVISE" with optimal entry_price / entry_type (MUST be a realistic shallow retest within 0.1x to 1.0x ATR from trigger price; do NOT pick deep or obsolete multi-day Order Blocks)
-- If market is plunging/surging with strong opposing momentum, instant fake-break (< 2 bars), or trapped in chop -> select "REJECT"
-
-## 6. RESPONSE FORMAT (MANDATORY STRICT JSON ONLY)
-Provide a comprehensive, high-conviction analysis detailing:
-1. Macro & D1/H4 context (50/100-day position, ADR room, PWH/PWL interaction)
-2. SMC structure & Liquidity (OB/FVG targets, avoidance of EQH/EQL traps)
-3. M5 micro-flow audit (absence of falling knife, presence of rejection wicks)
-4. Definite trade thesis and exact SL/TP placement justification
+- If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
+- If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
 
 Respond strictly in valid JSON:
 {{
@@ -1964,15 +2028,45 @@ Respond strictly in valid JSON:
   "execution": {{
     "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
     "entry_price": float (null if market, required if pending),
-    "sl_price": float (exact absolute price),
-    "tp_price": float (exact absolute price)
+    "sl_price": float (exact absolute price, {P} decimal places),
+    "tp_price": float (exact absolute price, {P} decimal places)
   }},
-  "veto_reason": null | string (max 20 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW" | "FALLING_KNIFE_WATERFALL" | "UNMITIGATED_IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP",
-  "reasoning": "Detailed 3-5 sentence institutional thesis covering: (1) D1/H4 macro alignment, (2) SMC Order Block/FVG validity, (3) M5 micro flow & wick confirmation, and (4) precise mathematical justification for chosen SL and TP."
+  "veto_reason": null | string (max 15 words if REJECT),
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
+  "reasoning": "2-3 concise sentences justifying macro alignment, OB/station confluence, M5 micro flow, and exact SL/TP."
 }}
 """
     return _strip_emoji(prompt)
+
+
+def get_static_jury_system_prompt():
+    """
+    Returns the Static System Directives for 3-LLM Jury.
+    Cached across all setup calls in OpenAI/DeepSeek prefix cache.
+    """
+    return """You are the Chief Investment Officer (CIO) and Chief Risk Officer (CRO) of an institutional quantitative hedge fund.
+Your mission is to evaluate candidate setups proposed by the Python Quantitative Engine with zero emotional bias.
+
+### 1. CORE OPERATIONAL DIRECTIVES:
+1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
+2. Mandatory R:R Gate: Minimum R:R >= 1.25. Anchor SL behind physical structural barriers (MSE SBR/RBS, SMC Order Block, or Atlas DNA station + 0.35x ATR anti-wick buffer).
+3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
+4. Symmetrical Wave State Permission:
+   - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
+   - SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
+5. 4-Grade Quality Matrix:
+   - GRADE_S (God-Tier, 1.0x Lot, 3.0x ATR TP) | GRADE_A_PLUS (High Conviction, 1.0x Lot, 2.0x ATR TP)
+   - GRADE_A (Standard, 1.0x Lot, 1.5x ATR TP) | GRADE_B (Defensive Scalp TP1 Only, 0.50x Lot, 1.25x ATR TP).
+
+### 2. MASTER INSTITUTIONAL HARD RISK VETO FLAGS:
+If any of these conditions are present, you MUST reject the trade (Verdict: REJECT or Signal: HOLD):
+- COUNTER_TREND_MOMENTUM: Counter-trend against H4/D1 trend or unmitigated falling knife.
+- LIQUIDITY_TRAP: Entry directly in front of Equal Highs/Lows (EQH/EQL) or structural ceiling.
+- IMPULSE_CHASE: FOMO chase of extended candle without basing -> select REVISE to Pending Limit.
+- SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
+- HIGH_IMPACT_NEWS: Active The Storm window (+/- 15-30 min of Tier-1 release).
+- SEVERE_CURRENCY_CONFLICT: Both currencies have extreme magnitude scores (|S| >= 0.50) with Net Delta < 0.15.
+- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window."""
 
 
 def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m5_str=None):
@@ -2063,7 +2157,7 @@ Respond strictly in the same JSON format:
     "tp_price": float (exact absolute price)
   }},
   "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "HIGH_IMPACT_NEWS" | "LIQUIDITY_TRAP" | "SPREAD_SPIKE" | "COUNTER_TREND_MOMENTUM" | "INSTANT_RETEST" | "NEAR_EQH_EQL" | "ROLLOVER_WINDOW" | "FALLING_KNIFE_WATERFALL" | "UNMITIGATED_IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP",
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
   "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
 }}
 """
@@ -2169,4 +2263,62 @@ def get_multi_llm_decisions(symbol, df, current_tick, macro_context=None, open_p
     lat_str = " | ".join([f"{m}: {latencies.get(m, 0.0):.2f}s" for m in active_models if m in latencies])
     print(f" {UI.tag('AI LATENCY', UI.CYAN)} mode={mode} ({len(results)} model) | {lat_str} (Total: {total_elapsed:.2f}s)")
     return results
+
+
+def generate_macro_narrative(directive) -> str:
+    """
+    Synthesizes pure quantitative MacroStrategicDirective into a rich, high-level
+    institutional executive narrative for Telegram using OpenAI (gpt-4o-mini).
+    """
+    if not openai_client:
+        return ""
+
+    clean_sym = getattr(directive, 'symbol', 'UNKNOWN').replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
+    
+    prompt = f"""Anda adalah Kepala Strategis Makro (Head Macro Strategist) di Quantitative Hedge Fund Institusional.
+Tuliskan memo briefing narasi pasar institusional (Market Story & Execution Narrative) dalam Bahasa Indonesia yang tajam, profesional, dan mengalir seperti memo trader Wall Street untuk Telegram.
+
+[DATA KUANTITATIF KITA]
+- Simbol: {clean_sym}
+- Mandat Makro: {directive.daily_macro_bias} ({directive.primary_execution_directive}) | Kepercayaan: {directive.confidence_score}%
+- Fase Struktur: {directive.structural_stage}
+- Hirarki SBR/RBS: D1 [RBS {directive.macro_rbs_d1} | SBR {directive.macro_sbr_d1}], H4 [RBS {directive.inter_rbs_h4} | SBR {directive.inter_sbr_h4}], H1 [RBS {directive.micro_rbs_h1} | SBR {directive.micro_sbr_h1}]
+- Sub-Stations (50p): Atap {directive.sub_ceiling_50} -> Lantai {directive.sub_floor_50} (Target Stasiun Akhir: {directive.target_station_price})
+- Reload Zone (Limit): {directive.entry_zone_proximal} s/d {directive.entry_limit_anchor}
+- Intraday SL (Anti-Hunt): {directive.intraday_sl_price} ({directive.intraday_sl_pips} pips di balik zona fisik)
+- TP1 (Partial 50% + BEP Lock): {directive.tp1_price} (+{directive.tp1_pips} pips | R:R 1.50:1)
+- TP2 (Milestone Target): {directive.tp2_price} (+{directive.tp2_pips} pips | R:R {directive.risk_reward_ratio}:1 ke Unmitigated OB/Stasiun)
+- Invalidation Point: {directive.invalidation_stop_price}
+- Thesis: {directive.daily_mandate_thesis}
+- Pantangan: {', '.join(directive.forbidden_traps) if directive.forbidden_traps else '-'}
+- Future Roadmap: {directive.future_macro_roadmap}
+
+[INSTRUKSI PENULISAN WAJIB]
+1. Header: 🧭 *TOP-DOWN MACRO BRIEFING: {clean_sym}*
+2. Tulis dalam bentuk **NARASI PARAGRAF CERITA PASAR YANG MENGALIR**, BUKAN sekadar mengulang daftar bullet points kaku!
+3. Jelaskan secara mengalir:
+   - **Konteks & Sentimen Pasar**: Mengapa harga terdorong ke arah ini dan bagaimana struktur institusi menekan/menopang harga.
+   - **Taktik Reload & Perlindungan Modal**: Di mana kita menunggu peluru ditembakkan (**Reload Zone**), mengapa **SL** ditempatkan di level tersebut.
+   - **Manajemen Cuan Bertahap**: Jelaskan aksi penguncian profit 50% di **TP1** + geser ke BEP, serta potensi lanjutan menuju **TP2**.
+4. Di bagian akhir, buat sub-heading tegas:
+   - ⚠️ *PANTANGAN & JEBAKAN MEMATIKAN*: Peringatan keras apa yang dilarang dilakukan trader agar tidak menjadi likuiditas bandar.
+5. Gunakan format Markdown tebal pada angka-angka kunci agar mudah dibaca cepat. Tulis dalam Bahasa Indonesia institusional yang elegan dan percaya diri."""
+
+    try:
+        model_name = getattr(config, "MACRO_NARRATIVE_MODEL", "gpt-4o-mini")
+        resp = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "Anda adalah Lead Macro Strategist institusional. Tulis narasi pasar mengalir, tajam, dan actionable dalam Bahasa Indonesia."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.35,
+            max_tokens=650,
+            timeout=12.0
+        )
+        narrative = resp.choices[0].message.content.strip()
+        return narrative
+    except Exception as e:
+        print(f"[LLM WARNING] generate_macro_narrative error: {e}")
+        return ""
 

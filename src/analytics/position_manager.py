@@ -27,7 +27,7 @@ STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
 
 
 def _load_state():
-    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl, trail_active, peak_mfe)."""
+    """Load persisted tickets from disk. Returns (partial_set, be_set, extremes, original_sl, trail_active, peak_mfe, setup_grades)."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
@@ -38,13 +38,14 @@ def _load_state():
             extremes = {int(k): float(v) for k, v in data.get("trailing_extremes", {}).items()}
             original_sl = {int(k): float(v) for k, v in data.get("original_sl_points", {}).items()}
             peak_mfe = {int(k): float(v) for k, v in data.get("peak_mfe_points", {}).items()}
-            return partial, be, extremes, original_sl, trail_active, peak_mfe
+            setup_grades = {int(k): str(v) for k, v in data.get("ticket_setup_grades", {}).items()}
+            return partial, be, extremes, original_sl, trail_active, peak_mfe, setup_grades
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal memuat position_manager_state.json: {e}")
-    return set(), set(), {}, {}, set(), {}
+    return set(), set(), {}, {}, set(), {}, {}
 
 
-def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=None, peak_mfe=None):
+def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=None, peak_mfe=None, setup_grades=None):
     """Persist tickets to disk so restart can recover state."""
     if original_sl is None:
         original_sl = _original_sl
@@ -52,6 +53,8 @@ def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=No
         trail_active = _trailing_active_tickets
     if peak_mfe is None:
         peak_mfe = _peak_mfe_points
+    if setup_grades is None:
+        setup_grades = _ticket_setup_grades
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({
@@ -61,13 +64,20 @@ def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=No
                 "trailing_extremes": {str(k): v for k, v in extremes.items()},
                 "original_sl_points": {str(k): v for k, v in original_sl.items()},
                 "peak_mfe_points": {str(k): v for k, v in peak_mfe.items()},
+                "ticket_setup_grades": {str(k): v for k, v in setup_grades.items()},
             }, f)
     except Exception as e:
         print(f"[POS MANAGER WARNING] Gagal menyimpan position_manager_state.json: {e}")
 
 
 # Module-level state, loaded once at import (survives within a process)
-_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets, _peak_mfe_points = _load_state()
+_partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets, _peak_mfe_points, _ticket_setup_grades = _load_state()
+
+
+def set_ticket_setup_grade(ticket: int, setup_grade: str):
+    """Sets and persists the setup grade for an open ticket."""
+    _ticket_setup_grades[int(ticket)] = str(setup_grade).upper()
+    _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
 
 
 def get_peak_mfe_info(ticket, point=0.00001, volume=0.01, symbol=""):
@@ -344,6 +354,10 @@ def _check_time_decay_stagnation(pos, symbol, profit_points, point, symbol_info,
     if not pos_open_time or pos_open_time <= 0:
         return False
 
+    grade = _ticket_setup_grades.get(pos.ticket, "GRADE_A")
+    if "GRADE_S" in grade:
+        return False  # Grade S swing positions are immune from 4h time-decay exit
+
     holding_hours = max(0.0, (now - pos_open_time) / 3600.0)
     max_hold_hours = getattr(config, "TIME_DECAY_HOURS", 4.0)
     if holding_hours < max_hold_hours:
@@ -457,18 +471,17 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 
     min_trigger = 30 if config.is_fx(symbol) else 100
 
-    # Break-even trigger (GLOBAL single path, 20 Agustus malam):
-    # BEP aktif saat profit >= 58% TP (BREAK_EVEN_TRIGGER_TP_PCT) standar,
-    # atau adaptif 45% TP pada rezim low-volatility (Ide 4).
-    bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
-    if getattr(config, "VOL_REGIME_SCALING_ENABLED", True):
-        # Cek jika volatilitas sedang rendah
-        try:
-            from src.core.risk_engine import RiskEngine
-            # Fallback ke ratio dinamis
-            pass
-        except Exception:
-            pass
+    # Break-even trigger: Grade-Aware Dynamic Threshold
+    # Grade S: 65% TP (Give breathing room to swing)
+    # Grade B: 35% TP (Fast defensive lock)
+    # Grade A+/A: 50% TP (Standard)
+    grade = _ticket_setup_grades.get(pos.ticket, "GRADE_A")
+    if "GRADE_S" in grade:
+        bep_tp_ratio = 0.65
+    elif "GRADE_B" in grade:
+        bep_tp_ratio = 0.35
+    else:
+        bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
 
     if tp_points > 0:
         be_trigger = max(min_trigger, int(tp_points * bep_tp_ratio))
@@ -608,9 +621,17 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 
     min_act = 30 if config.is_fx(symbol) else 100
 
+    grade = _ticket_setup_grades.get(pos.ticket, "GRADE_A")
+    if "GRADE_S" in grade:
+        act_tp_pct = 0.75
+    elif "GRADE_B" in grade:
+        act_tp_pct = 0.50
+    else:
+        act_tp_pct = config.TRAILING_ACTIVATION_TP_PCT
+
     # Activation GLOBAL % TP (fallback SL-based kalau posisi tanpa TP)
     if tp_points > 0:
-        activation = max(int(tp_points * config.TRAILING_ACTIVATION_TP_PCT), min_act)
+        activation = max(int(tp_points * act_tp_pct), min_act)
         tp_progress = profit_points / tp_points if tp_points > 0 else 0.0
     elif sl_points > 0:
         activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), min_act)
@@ -623,20 +644,40 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     is_terminal = (tp_progress >= getattr(config, "TRAILING_TERMINAL_TP_PCT", 0.90))
 
     if config.is_fx(symbol):
-        if is_terminal:
-            # Stage 2: Terminal Tightening (ATR M30 lock)
+        if "GRADE_S" in grade:
+            if is_terminal:
+                atr_tf = mt5.TIMEFRAME_M30
+                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+                dist_mult = 0.75
+                min_dist_pts = 60
+                stage_label = "GRADE-S-TERMINAL"
+            else:
+                atr_tf = mt5.TIMEFRAME_H1
+                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+                dist_mult = 1.25
+                min_dist_pts = 120  # 12 pips FX floor
+                stage_label = "GRADE-S-BREATHING"
+        elif "GRADE_B" in grade:
             atr_tf = mt5.TIMEFRAME_M30
             atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-            dist_mult = 0.50
-            min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)
-            stage_label = "TERMINAL-M30"
+            dist_mult = 0.40
+            min_dist_pts = 30
+            stage_label = "GRADE-B-TIGHT"
         else:
-            # Stage 1: Swing Breathing (ATR H1 breathing)
-            atr_tf = mt5.TIMEFRAME_H1
-            atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-            dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
-            min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
-            stage_label = "SWING-H1"
+            if is_terminal:
+                # Stage 2: Terminal Tightening (ATR M30 lock)
+                atr_tf = mt5.TIMEFRAME_M30
+                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+                dist_mult = 0.50
+                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)
+                stage_label = "TERMINAL-M30"
+            else:
+                # Stage 1: Swing Breathing (ATR H1 breathing)
+                atr_tf = mt5.TIMEFRAME_H1
+                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+                dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
+                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
+                stage_label = "SWING-H1"
     elif config.is_crypto(symbol):
         atr_pts = _get_dynamic_atr_points(symbol, point)
         dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
