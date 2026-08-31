@@ -25,6 +25,11 @@ import pandas as pd  # type: ignore
 
 import config
 from src.indicators.atlas_dna import get_symbol_step, calculate_dynamic_stations
+
+# ── 3-PROFILE PAIR DNA (Based on 4.3-Year Multi-TF Empirical Research) ──
+CLEAN_RESPECT_PAIRS = {"EURGBP", "AUDCHF", "NZDCHF", "EURCHF", "AUDUSD"}
+SWEEP_SPECIALIST_PAIRS = {"USDCAD", "EURUSD", "GBPUSD", "USDJPY", "NZDCAD", "CADJPY", "GBPCHF", "GBPCAD", "EURCAD"}
+MOMENTUM_RUNNER_PAIRS = {"GBPNZD", "GBPJPY", "EURNZD", "XAUUSD", "BTCUSD"}
 from src.indicators.lux_smc import LuxSMCAnalyzer
 
 logger = logging.getLogger("macro_strategic_engine")
@@ -66,18 +71,36 @@ class MacroStrategicDirective:
     structural_stage: str
     daily_mandate_thesis: str
     future_macro_roadmap: str
-    macro_rbs_d1: float
-    macro_sbr_d1: float
-    inter_rbs_h4: float
-    inter_sbr_h4: float
-    micro_rbs_h1: float
-    micro_sbr_h1: float
-    sub_floor_50: float
-    sub_ceiling_50: float
-    atr_d1_pips: float
-    atr_h1_pips: float
-    atr_m30_pips: float
-    current_spread_pts: int
+    macro_rbs_w1: Optional[float] = None
+    macro_sbr_w1: Optional[float] = None
+    macro_rbs_d1: float = 0.0
+    macro_sbr_d1: float = 0.0
+    inter_rbs_h4: float = 0.0
+    inter_sbr_h4: float = 0.0
+    micro_rbs_h1: float = 0.0
+    micro_sbr_h1: float = 0.0
+    d1_annual_high: float = 0.0
+    d1_annual_low: float = 0.0
+    sub_floor_50: float = 0.0
+    sub_ceiling_50: float = 0.0
+    market_state: str = "NEUTRAL_CHAMBER"
+    immediate_ceiling_c1: float = 0.0
+    immediate_floor_f1: float = 0.0
+    deep_target_floor_f2: float = 0.0
+    deep_target_ceiling_c2: float = 0.0
+    c1_density_score: float = 0.0
+    f1_density_score: float = 0.0
+    c1_fortress_tag: str = ""
+    f1_fortress_tag: str = ""
+    chamber_position_pct: float = 0.50
+    retest_touch_count: int = 1
+    interaction_sequence: List[str] = field(default_factory=list)
+    bullish_contingency_path: str = ""
+    bearish_contingency_path: str = ""
+    atr_d1_pips: float = 0.0
+    atr_h1_pips: float = 0.0
+    atr_m30_pips: float = 0.0
+    current_spread_pts: int = 0
     entry_zone_proximal: float = 0.0
     total_bars_computed: int = 0
     w1_key_demand: float = 0.0
@@ -100,6 +123,59 @@ class MacroStrategicEngine:
     Pure Quant Hierarchical State Engine:
     Computes top-down macro directives and structural zones across 6 native MT5 timeframes.
     """
+
+    @staticmethod
+    def _cluster_merge(
+        elements: List[Tuple[float, float, str]],
+        cluster_tol: float,
+        digits: int,
+        is_ascending: bool = True
+    ) -> List[Tuple[float, float, str]]:
+        """
+        Groups nearby barrier elements within cluster_tol into weighted composite clusters.
+        Returns: List of (composite_price, total_score, composite_tags_str)
+        """
+        if not elements:
+            return []
+        sorted_elems = sorted(elements, key=lambda x: x[0], reverse=not is_ascending)
+        clusters: List[Dict[str, Any]] = []
+
+        for p, sc, tag in sorted_elems:
+            merged = False
+            for cl in clusters:
+                if abs(cl['rep_price'] - p) <= cluster_tol:
+                    cl['prices'].append((p, sc))
+                    cl['total_score'] += sc
+                    cl['tags'].append(tag)
+                    total_w = sum(w for _, w in cl['prices'])
+                    cl['rep_price'] = sum(pr * w for pr, w in cl['prices']) / max(total_w, 1e-6)
+                    merged = True
+                    break
+            if not merged:
+                clusters.append({
+                    'rep_price': p,
+                    'total_score': sc,
+                    'prices': [(p, sc)],
+                    'tags': [tag]
+                })
+
+        res = []
+        for cl in clusters:
+            comp_price = round(cl['rep_price'], digits)
+            score = round(cl['total_score'], 1)
+            unique_tags = sorted(list(set(cl['tags'])))
+            tag_str = "+".join(unique_tags)
+            res.append((comp_price, score, tag_str))
+
+        res.sort(key=lambda x: x[0], reverse=not is_ascending)
+        return res
+
+    @staticmethod
+    def _get_fortress_tag(score: float) -> str:
+        if score >= 8.0: return "SUPER_FORTRESS"
+        if score >= 5.0: return "FORTRESS"
+        if score >= 3.0: return "MODERATE"
+        return "MINOR"
 
     def __init__(self, cache_ttl_sec: float = 60.0):
         self._cache: Dict[str, MacroStrategicDirective] = {}
@@ -243,12 +319,18 @@ class MacroStrategicEngine:
             sub_floor = round(micro_base - psych_step_micro, digits)
             sub_ceiling = micro_base
 
-        # 5. Multi-Scale SBR & RBS Calculator (D1, H4, H1)
-        d1_sh, d1_sl = self._find_swings(df_d1, 90, 2)
+        # 5. Multi-Scale SBR & RBS Calculator (W1, D1, H4, H1)
+        w1_sh, w1_sl = self._find_swings(df_w1, min(len(df_w1), 100), 2)
+        rbs_w1_cand = [sh[1] for sh in w1_sh if sh[1] < curr_mid - (0.35 * atr_d1)]
+        macro_rbs_w1 = round(max(rbs_w1_cand), digits) if rbs_w1_cand else None
+        sbr_w1_cand = [sl[1] for sl in w1_sl if sl[1] > curr_mid + (0.35 * atr_d1)]
+        macro_sbr_w1 = round(min(sbr_w1_cand), digits) if sbr_w1_cand else None
+
+        d1_sh, d1_sl = self._find_swings(df_d1, min(len(df_d1), 250), 2)
         rbs_d1_cand = [sh[1] for sh in d1_sh if sh[1] < curr_mid - (0.25 * atr_d1)]
-        macro_rbs_d1 = round(max(rbs_d1_cand), digits) if rbs_d1_cand else floor_station
+        macro_rbs_d1 = round(max(rbs_d1_cand), digits) if rbs_d1_cand else (macro_rbs_w1 or floor_station)
         sbr_d1_cand = [sl[1] for sl in d1_sl if sl[1] > curr_mid + (0.25 * atr_d1)]
-        macro_sbr_d1 = round(min(sbr_d1_cand), digits) if sbr_d1_cand else ceiling_station
+        macro_sbr_d1 = round(min(sbr_d1_cand), digits) if sbr_d1_cand else (macro_sbr_w1 or ceiling_station)
 
         h4_sh, h4_sl = self._find_swings(df_h4, 60, 2)
         rbs_h4_cand = [sh[1] for sh in h4_sh if sh[1] < curr_mid - (0.20 * atr_h4)]
@@ -266,7 +348,23 @@ class MacroStrategicEngine:
         dbd_entry, dbd_roof = self._detect_drop_base_drop(df_h1, digits)
         rbr_entry, rbr_floor = self._detect_rally_base_rally(df_h1, digits)
 
-        # 7. Equal Lows / Equal Highs Sweep Detection
+        # 7. Multi-Month Equal Lows / Equal Highs Sweep Detection
+        eqh_d1_cands: List[float] = []
+        for i in range(len(d1_sh)):
+            for j in range(i + 1, len(d1_sh)):
+                t1, h1_lvl = d1_sh[i]
+                t2, h2_lvl = d1_sh[j]
+                if abs(h1_lvl - h2_lvl) <= (0.20 * atr_d1):
+                    eqh_d1_cands.append(round(max(h1_lvl, h2_lvl), digits))
+
+        eql_d1_cands: List[float] = []
+        for i in range(len(d1_sl)):
+            for j in range(i + 1, len(d1_sl)):
+                t1, l1_lvl = d1_sl[i]
+                t2, l2_lvl = d1_sl[j]
+                if abs(l1_lvl - l2_lvl) <= (0.20 * atr_d1):
+                    eql_d1_cands.append(round(min(l1_lvl, l2_lvl), digits))
+
         eq_low_price = d1_annual_low
         eq_low_date_str = ""
         for i in range(len(d1_sl)):
@@ -363,296 +461,442 @@ class MacroStrategicEngine:
         else:
             reload_width = max(0.55 * atr_h1, 6 * pt * pip_div)
 
-        # 11. Station Collision & Dual-Reaction Synthesis
-        last_d1_bearish = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
-        last_d1_bullish = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
-        h1_momentum_down = not df_h1.empty and len(df_h1) >= 12 and (df_h1['close'].iloc[-1] < df_h1['close'].iloc[-12])
-        h1_momentum_up = not df_h1.empty and len(df_h1) >= 12 and (df_h1['close'].iloc[-1] > df_h1['close'].iloc[-12])
+        # 11. Structural Model: Density-Ranked Barrier Chamber Resolver
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        if clean_sym in SWEEP_SPECIALIST_PAIRS:
+            sweep_offset = 8.0 * pt * pip_div
+            pair_profile_tag = "SWEEP_SPECIALIST"
+        elif clean_sym in CLEAN_RESPECT_PAIRS:
+            sweep_offset = 1.5 * pt * pip_div
+            pair_profile_tag = "CLEAN_RESPECT"
+        else:
+            sweep_offset = 4.0 * pt * pip_div
+            pair_profile_tag = "STANDARD"
 
-        # Active Rejection from Ceiling / Supply Wall (delivering pullback to discount floor)
-        is_ceiling_pullback_active = (not is_near_floor) and (is_near_ceiling or (recent_tested_ceiling and curr_mid > (sub_floor + zone_boundary_tol) and curr_mid < recent_frontier_high - (0.20 * atr_h1))) and (peak_u_wick_pct >= 30 or last_d1_bearish or h1_momentum_down)
+        # ── 1. STRUCTURAL MODEL: DENSITY-RANKED CLUSTER RESOLVER WITH FRVP ──
+        # FRVP Calculation (D1 60-bar rolling & H4 100-bar rolling)
+        vp_d1, vp_h4 = None, None
+        try:
+            from src.indicators.volume_profile import compute_fixed_range_volume_profile
+            if rates_d1 is not None and len(rates_d1) >= 20:
+                s_i = max(0, len(rates_d1) - 60)
+                e_i = len(rates_d1) - 1
+                vp_d1 = compute_fixed_range_volume_profile(
+                    rates_d1['high'], rates_d1['low'], closes=rates_d1['close'], volumes=rates_d1['tick_volume'],
+                    start_idx=s_i, end_idx=e_i, num_bins=50
+                )
+            if rates_h4 is not None and len(rates_h4) >= 20:
+                s_i = max(0, len(rates_h4) - 100)
+                e_i = len(rates_h4) - 1
+                vp_h4 = compute_fixed_range_volume_profile(
+                    rates_h4['high'], rates_h4['low'], closes=rates_h4['close'], volumes=rates_h4['tick_volume'],
+                    start_idx=s_i, end_idx=e_i, num_bins=50
+                )
+        except Exception as e:
+            logger.debug(f"FRVP calculation bypass for {symbol}: {e}")
 
-        # Skenario A: Ceiling Rejection / Frontier Exhaustion (Price is AT CEILING or Pulling Back from Ceiling)
-        if is_ceiling_pullback_active:
-            macro_bias = "BEARISH_PULLBACK"
-            primary_directive = "HUNT_SELL_PULLBACK"
-            macro_bias_score = -0.75
-            if peak_u_wick_pct >= 40:
-                macro_bias_score -= 0.15
-            if last_d1_bearish:
-                macro_bias_score -= 0.10
-            macro_bias_score = round(max(-1.0, min(-0.40, macro_bias_score)), 2)
+        # Candidate Upper Barriers
+        raw_up_elements: List[Tuple[float, float, str]] = []
+        for p, sc, tag in [
+            (sub_ceiling, 1.5, "PSYCH_50"),
+            (ceiling_station, 2.5, "PSYCH_100"),
+            (next_macro_target, 2.5, "PSYCH_200")
+        ]:
+            if p > curr_mid:
+                raw_up_elements.append((round(p, digits), sc, tag))
 
-            entry_anchor = dbd_entry if (dbd_entry and dbd_entry > curr_mid) else micro_sbr_h1
-            entry_zone_proximal = round(entry_anchor - reload_width, digits)
-            structural_roof = dbd_roof if dbd_roof else recent_frontier_high
-            
-            calculated_sl = structural_roof + anti_wick_buffer
-            if is_crypto:
-                min_sl_dist = max(1.20 * atr_h1, 300.0)
-                max_sl_dist = max(1.80 * atr_h1, 450.0)
-            elif "XAU" in symbol:
-                min_sl_dist = max(1.0 * atr_h1, 3.0)
-                max_sl_dist = 2.5 * atr_h1
-            else:
-                min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
+        # W1 & Multi-Year Upper Resistance Structures
+        if macro_sbr_w1 and macro_sbr_w1 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(macro_sbr_w1, digits), 5.0, "W1_SBR"))
+        if w1_key_supply and w1_key_supply > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(w1_key_supply, digits), 4.0, "W1_SUPPLY"))
+        if d1_annual_high and d1_annual_high > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(d1_annual_high, digits), 4.5, "ANNUAL_HIGH"))
+        if mn1_high and mn1_high > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(mn1_high, digits), 5.0, "MN1_HIGH"))
 
-            if (calculated_sl - entry_anchor) < min_sl_dist:
-                calculated_sl = entry_anchor + min_sl_dist
-            elif (calculated_sl - entry_anchor) > max_sl_dist:
-                calculated_sl = entry_anchor + max_sl_dist
-            intraday_sl = round(calculated_sl, digits)
+        # Multi-Month Equal Highs (EQH) Liquidity Pools
+        for eqh_p in eqh_d1_cands:
+            if eqh_p > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(eqh_p, digits), 3.5, "D1_EQH_POOL"))
 
-            macro_invalidation = round(recent_frontier_high + (0.20 * atr_d1), digits)
-            target_station_final = floor_station
-            hard_circuit_breaker = bool((curr_mid >= sub_ceiling - (0.15 * atr_h1)) or (curr_mid > macro_invalidation))
-            action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
-            
-            sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
-            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-            tp1_price = round(entry_anchor - max(1.25 * sl_dist, 1.5 * sl_dist) + front_pad, digits)
-            
-            # Look for SMC Bullish Order Block or H4 RBS hurdle as intermediate TP2 milestone
-            valid_bull_obs = [ob.get('top', 0.0) for ob in bull_obs if ob.get('top', 0.0) < tp1_price and (entry_anchor - ob.get('top', 0.0)) <= 5.0 * sl_dist and (entry_anchor - ob.get('top', 0.0)) >= 2.0 * sl_dist]
-            if valid_bull_obs:
-                tp2_price = round(max(valid_bull_obs) + front_pad, digits)
-            elif inter_rbs_h4 < tp1_price and (entry_anchor - inter_rbs_h4) <= 5.0 * sl_dist and (entry_anchor - inter_rbs_h4) >= 2.0 * sl_dist:
-                tp2_price = round(inter_rbs_h4 + front_pad, digits)
-            elif floor_station < tp1_price and (entry_anchor - floor_station) <= 6.0 * sl_dist:
-                tp2_price = round(floor_station + front_pad, digits)
-            else:
-                tp2_price = round(entry_anchor - (3.0 * sl_dist), digits)
+        # SBR Structures with Multi-TF Weighting
+        if macro_sbr_d1 and macro_sbr_d1 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(macro_sbr_d1, digits), 4.5, "D1_SBR"))
+        if inter_sbr_h4 and inter_sbr_h4 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(inter_sbr_h4, digits), 3.5, "H4_SBR"))
+        if micro_sbr_h1 and micro_sbr_h1 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(micro_sbr_h1, digits), 2.0, "H1_SBR"))
+        if dbd_entry and dbd_entry > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(dbd_entry, digits), 2.0, "DBD_SUPPLY"))
 
-            if is_crypto:
-                sl_pips = round(abs(intraday_sl - entry_anchor), 1)
-                tp1_pips = round(abs(entry_anchor - tp1_price), 1)
-                tp2_pips = round(abs(entry_anchor - tp2_price), 1)
-            else:
-                sl_pips = round(abs(intraday_sl - entry_anchor) / pt / pip_div, 1)
-                tp1_pips = round(abs(entry_anchor - tp1_price) / pt / pip_div, 1)
-                tp2_pips = round(abs(entry_anchor - tp2_price) / pt / pip_div, 1)
-            rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
+        # SMC Bearish Order Blocks
+        for ob in bear_obs:
+            bot = ob.get('bottom', 0.0)
+            if bot > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(bot, digits), 2.5, "BEAR_OB"))
 
-            max_allowed_buy = round(curr_mid + (0.15 * atr_d1), digits)
-            min_allowed_sell = round(curr_mid + (0.10 * atr_d1), digits)
-            forbidden_traps = [
-                f"Do NOT BUY above {max_allowed_buy:.{digits}f} (Ceiling Trap into {sub_ceiling:.{digits}f})",
-                f"Do NOT chase breakdown below {sub_floor:.{digits}f} without H1 confirmation"
-            ]
-            confidence_score = 88
-            stage_label = f"FRONTIER_EXHAUSTION_AT_{sub_ceiling:.{digits}f}"
-            thesis = (
-                f"{symbol} reached psychological ceiling {sub_ceiling:.{digits}f} with selling pressure (Peak Upper Wick: {peak_u_wick_pct}%). "
-                f"Institutional thesis requires a Mean-Reversion Pullback targeting the D1 RBS zone at {macro_rbs_d1:.{digits}f} "
-                f"(with intermediate H4 RBS at {inter_rbs_h4:.{digits}f}) to reload before attempting {next_macro_target:.{digits}f}."
-            )
+        # FRVP Upper Resistance Anchors
+        if vp_d1:
+            if vp_d1.poc > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_d1.poc, digits), 3.5, "D1_POC"))
+            if vp_d1.vah > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_d1.vah, digits), 2.5, "D1_VAH"))
+            for hvn in getattr(vp_d1, 'hvn_nodes', []):
+                if hvn > curr_mid + (0.01 * atr_h1):
+                    raw_up_elements.append((round(hvn, digits), 2.0, "D1_HVN"))
+        if vp_h4:
+            if vp_h4.poc > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_h4.poc, digits), 3.0, "H4_POC"))
+            if vp_h4.vah > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_h4.vah, digits), 2.0, "H4_VAH"))
+            for hvn in getattr(vp_h4, 'hvn_nodes', []):
+                if hvn > curr_mid + (0.01 * atr_h1):
+                    raw_up_elements.append((round(hvn, digits), 1.5, "H4_HVN"))
 
-        # Skenario B: RBS Retest / Sub-Floor Bouncing (Price is AT FLOOR - Bullish Pullback Reload)
-        elif is_near_floor and (peak_l_wick_pct >= 35 or last_d1_bullish or curr_mid >= sub_floor):
+        # Candidate Lower Barriers
+        raw_down_elements: List[Tuple[float, float, str]] = []
+        for p, sc, tag in [
+            (sub_floor, 1.5, "PSYCH_50"),
+            (floor_station, 2.5, "PSYCH_100"),
+            (round(floor_station - psych_step_macro, digits), 2.5, "PSYCH_200")
+        ]:
+            if p < curr_mid:
+                raw_down_elements.append((round(p, digits), sc, tag))
+
+        # W1 & Multi-Year Lower Support Structures
+        if macro_rbs_w1 and macro_rbs_w1 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(macro_rbs_w1, digits), 5.0, "W1_RBS"))
+        if w1_key_demand and w1_key_demand < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(w1_key_demand, digits), 4.0, "W1_DEMAND"))
+        if d1_annual_low and d1_annual_low < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(d1_annual_low, digits), 4.5, "ANNUAL_LOW"))
+        if mn1_low and mn1_low < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(mn1_low, digits), 5.0, "MN1_LOW"))
+
+        # Multi-Month Equal Lows (EQL) Liquidity Pools
+        for eql_p in eql_d1_cands:
+            if eql_p < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(eql_p, digits), 3.5, "D1_EQL_POOL"))
+
+        # RBS Structures with Multi-TF Weighting
+        if macro_rbs_d1 and macro_rbs_d1 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(macro_rbs_d1, digits), 4.5, "D1_RBS"))
+        if inter_rbs_h4 and inter_rbs_h4 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(inter_rbs_h4, digits), 3.5, "H4_RBS"))
+        if micro_rbs_h1 and micro_rbs_h1 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(micro_rbs_h1, digits), 2.0, "H1_RBS"))
+        if rbr_entry and rbr_entry < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(rbr_entry, digits), 2.0, "RBR_DEMAND"))
+
+        # SMC Bullish Order Blocks
+        for ob in bull_obs:
+            top = ob.get('top', 0.0)
+            if top < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(top, digits), 2.5, "BULL_OB"))
+
+        # FRVP Lower Support Anchors
+        if vp_d1:
+            if vp_d1.poc < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_d1.poc, digits), 3.5, "D1_POC"))
+            if vp_d1.val < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_d1.val, digits), 2.5, "D1_VAL"))
+            for hvn in getattr(vp_d1, 'hvn_nodes', []):
+                if hvn < curr_mid - (0.01 * atr_h1):
+                    raw_down_elements.append((round(hvn, digits), 2.0, "D1_HVN"))
+        if vp_h4:
+            if vp_h4.poc < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_h4.poc, digits), 3.0, "H4_POC"))
+            if vp_h4.val < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_h4.val, digits), 2.0, "H4_VAL"))
+            for hvn in getattr(vp_h4, 'hvn_nodes', []):
+                if hvn < curr_mid - (0.01 * atr_h1):
+                    raw_down_elements.append((round(hvn, digits), 1.5, "H4_HVN"))
+
+        # Cluster Merging with tolerance = 0.15 * atr_h1
+        cl_tol = max(0.15 * atr_h1, 3 * pt * pip_div)
+        up_clusters = self._cluster_merge(raw_up_elements, cl_tol, digits, is_ascending=True)
+        down_clusters = self._cluster_merge(raw_down_elements, cl_tol, digits, is_ascending=False)
+
+        # Elect C1, C2
+        if up_clusters:
+            imm_ceiling_c1 = up_clusters[0][0]
+            c1_density_score = up_clusters[0][1]
+            c1_tag = up_clusters[0][2]
+        else:
+            imm_ceiling_c1 = sub_ceiling
+            c1_density_score = 2.0
+            c1_tag = "FALLBACK_PSYCH"
+
+        deep_ceiling_c2 = round(imm_ceiling_c1 + max(psych_step_macro, 1.50 * atr_h1), digits)
+        c2_density_score = 2.0
+        c2_tag = "EXTENSION_TARGET"
+        for cand_p, cand_sc, cand_tag in up_clusters[1:]:
+            if cand_p >= imm_ceiling_c1 + max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                deep_ceiling_c2 = cand_p
+                c2_density_score = cand_sc
+                c2_tag = cand_tag
+                break
+
+        # Elect F1, F2
+        if down_clusters:
+            imm_floor_f1 = down_clusters[0][0]
+            f1_density_score = down_clusters[0][1]
+            f1_tag = down_clusters[0][2]
+        else:
+            imm_floor_f1 = sub_floor
+            f1_density_score = 2.0
+            f1_tag = "FALLBACK_PSYCH"
+
+        deep_floor_f2 = round(imm_floor_f1 - max(psych_step_macro, 1.50 * atr_h1), digits)
+        f2_density_score = 2.0
+        f2_tag = "DEEP_SUPPORT_TARGET"
+        for cand_p, cand_sc, cand_tag in down_clusters[1:]:
+            if cand_p <= imm_floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                deep_floor_f2 = cand_p
+                f2_density_score = cand_sc
+                f2_tag = cand_tag
+                break
+
+        c1_fortress_tag = self._get_fortress_tag(c1_density_score)
+        f1_fortress_tag = self._get_fortress_tag(f1_density_score)
+
+        # Chamber Metrics
+        chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
+        chamber_pos = min(1.0, max(0.0, (curr_mid - imm_floor_f1) / chamber_width))
+        dist_to_c1 = abs(imm_ceiling_c1 - curr_mid)
+        dist_to_f1 = abs(curr_mid - imm_floor_f1)
+
+        # ── 2. BARRIER INTERACTION SEQUENCE TRACKER ──
+        interaction_seq: List[str] = []
+        if not df_h1.empty:
+            for i in range(min(8, len(df_h1)), 0, -1):
+                bar = df_h1.iloc[-i]
+                b_high, b_low, b_open, b_close = bar['high'], bar['low'], bar['open'], bar['close']
+                b_rng = max(b_high - b_low, 1e-5)
+                u_wick = (b_high - max(b_open, b_close)) / b_rng
+                l_wick = (min(b_open, b_close) - b_low) / b_rng
+                
+                if b_high >= imm_ceiling_c1 - (0.15 * atr_h1):
+                    tag = "C1_SWEEP" if u_wick >= 0.25 else "C1_TOUCH"
+                    if not interaction_seq or interaction_seq[-1] != tag:
+                        interaction_seq.append(tag)
+                elif b_low <= imm_floor_f1 + (0.15 * atr_h1):
+                    tag = "F1_SWEEP" if l_wick >= 0.25 else "F1_TOUCH"
+                    if not interaction_seq or interaction_seq[-1] != tag:
+                        interaction_seq.append(tag)
+
+        # ── 3. LEAN 7-STATE MACHINE CLASSIFIER ──
+        h4_hl = len(h4_sl) >= 2 and (h4_sl[-1][1] > h4_sl[-2][1])
+        h4_lh = len(h4_sh) >= 2 and (h4_sh[-1][1] < h4_sh[-2][1])
+        last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
+        last_h1_bull = not df_h1.empty and (df_h1['close'].iloc[-1] > df_h1['open'].iloc[-1])
+        last_d1_bull = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
+        last_d1_bear = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
+
+        # Boundary threshold: in outer 25% of chamber OR within 0.35 ATR H1 of boundary
+        at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.35 * atr_h1)
+        at_extreme_floor = (chamber_pos <= 0.25) or (dist_to_f1 <= 0.35 * atr_h1)
+
+        if curr_mid > imm_ceiling_c1 + (0.10 * atr_h1):
+            market_state = "CEILING_BREAKOUT"
+        elif curr_mid < imm_floor_f1 - (0.10 * atr_h1):
+            market_state = "FLOOR_BREAKDOWN"
+        elif at_extreme_ceiling:
+            market_state = "CEILING_REJECTION" if (peak_u_wick_pct >= 25 or last_h1_bear or h4_lh) else "CHAMBER_CEILING_TEST"
+        elif at_extreme_floor:
+            market_state = "FLOOR_REJECTION" if (peak_l_wick_pct >= 25 or last_h1_bull or h4_hl) else "CHAMBER_FLOOR_TEST"
+        else:
+            market_state = "NEUTRAL_CHAMBER"
+
+        # ── 4. EXECUTION LAYER ("Market State" != "Trade Signal") ──
+        # Calibrate Minimum & Maximum Intraday Stop Loss Distances
+        if is_crypto:
+            min_sl_dist = max(1.20 * atr_h1, 300.0)
+            max_sl_dist = max(2.50 * atr_h1, 800.0)
+        elif "XAU" in symbol:
+            min_sl_dist = max(1.20 * atr_h1, 3.5)
+            max_sl_dist = max(2.50 * atr_h1, 10.0)
+        elif clean_sym in MOMENTUM_RUNNER_PAIRS or "NZD" in clean_sym or "JPY" in clean_sym or "GBP" in clean_sym:
+            # High-volatility cross pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)
+            min_sl_dist = max(1.20 * atr_h1, max(0.25 * atr_d1, 35 * pt * pip_div))
+            max_sl_dist = max(2.50 * atr_h1, 75 * pt * pip_div)
+        else:
+            min_sl_dist = max(1.00 * atr_h1, 18 * pt * pip_div)
+            max_sl_dist = min(2.50 * atr_h1, 40 * pt * pip_div)
+
+        if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
-            macro_bias_score = +0.75
-            if peak_l_wick_pct >= 40:
-                macro_bias_score += 0.15
-            if last_d1_bullish:
-                macro_bias_score += 0.10
-            macro_bias_score = round(max(0.40, min(1.0, macro_bias_score)), 2)
+            macro_bias_score = +0.85 if market_state == "FLOOR_REJECTION" else +0.70
+            if h4_hl or last_d1_bull: macro_bias_score += 0.10
+            macro_bias_score = round(min(1.0, macro_bias_score), 2)
 
-            entry_anchor = rbr_entry if (rbr_entry and rbr_entry < curr_mid) else micro_rbs_h1
+            entry_anchor = round(imm_floor_f1 - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
-            structural_floor = rbr_floor if rbr_floor else recent_frontier_low
-            
+            structural_floor = deep_floor_f2 if deep_floor_f2 < entry_anchor else (macro_rbs_d1 if macro_rbs_d1 < entry_anchor else entry_anchor - 1.25 * atr_h1)
             calculated_sl = structural_floor - anti_wick_buffer
-            if is_crypto:
-                min_sl_dist = max(1.20 * atr_h1, 300.0)
-                max_sl_dist = max(1.80 * atr_h1, 450.0)
-            elif "XAU" in symbol:
-                min_sl_dist = max(1.0 * atr_h1, 3.0)
-                max_sl_dist = 2.5 * atr_h1
-            else:
-                min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
-
+            
             if (entry_anchor - calculated_sl) < min_sl_dist:
                 calculated_sl = entry_anchor - min_sl_dist
             elif (entry_anchor - calculated_sl) > max_sl_dist:
                 calculated_sl = entry_anchor - max_sl_dist
             intraday_sl = round(calculated_sl, digits)
 
-            macro_invalidation = round(recent_frontier_low - (0.20 * atr_d1), digits)
+            macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
-            hard_circuit_breaker = bool((curr_mid <= sub_floor + (0.15 * atr_h1)) or (curr_mid < macro_invalidation))
+            hard_circuit_breaker = bool((curr_mid <= imm_floor_f1 - (0.25 * atr_h1)) or (curr_mid < macro_invalidation))
             action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-            tp1_price = round(entry_anchor + max(1.25 * sl_dist, 1.5 * sl_dist) - front_pad, digits)
-            
-            # Look for SMC Bearish Order Block or H4 SBR hurdle as intermediate TP2 milestone
-            valid_bear_obs = [ob.get('bottom', 0.0) for ob in bear_obs if ob.get('bottom', 0.0) > tp1_price and (ob.get('bottom', 0.0) - entry_anchor) <= 5.0 * sl_dist and (ob.get('bottom', 0.0) - entry_anchor) >= 2.0 * sl_dist]
-            if valid_bear_obs:
-                tp2_price = round(min(valid_bear_obs) - front_pad, digits)
-            elif inter_sbr_h4 > tp1_price and (inter_sbr_h4 - entry_anchor) <= 5.0 * sl_dist and (inter_sbr_h4 - entry_anchor) >= 2.0 * sl_dist:
-                tp2_price = round(inter_sbr_h4 - front_pad, digits)
-            elif ceiling_station > tp1_price and (ceiling_station - entry_anchor) <= 6.0 * sl_dist:
-                tp2_price = round(ceiling_station - front_pad, digits)
-            else:
-                tp2_price = round(entry_anchor + (3.0 * sl_dist), digits)
-
-            if is_crypto:
-                sl_pips = round(abs(entry_anchor - intraday_sl), 1)
-                tp1_pips = round(abs(tp1_price - entry_anchor), 1)
-                tp2_pips = round(abs(tp2_price - entry_anchor), 1)
-            else:
-                sl_pips = round(abs(entry_anchor - intraday_sl) / pt / pip_div, 1)
-                tp1_pips = round(abs(tp1_price - entry_anchor) / pt / pip_div, 1)
-                tp2_pips = round(abs(tp2_price - entry_anchor) / pt / pip_div, 1)
-            rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
+            tp1_price = round(imm_ceiling_c1 - front_pad, digits)
+            tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+            stage_label = f"RBS_SUPPORT_RETEST_AT_{imm_floor_f1:.{digits}f}"
+            thesis = f"{symbol} in {market_state} at floor {imm_floor_f1:.{digits}f}. Reload targeting ceiling {imm_ceiling_c1:.{digits}f} with breakout extension to {deep_ceiling_c2:.{digits}f}."
+            confidence_score = 88
             max_allowed_buy = round(entry_anchor + (0.25 * atr_d1), digits)
             min_allowed_sell = 0.0
-            forbidden_traps = [
-                f"Do NOT short into fresh confirmed RBS support at {sub_floor:.{digits}f}",
-                f"Do NOT BUY above {round(curr_mid + (0.20 * atr_d1), digits):.{digits}f} (Impulse Chase)"
-            ]
-            confidence_score = 85
-            stage_label = f"RBS_SUPPORT_RETEST_AT_{sub_floor:.{digits}f}"
-            thesis = f"{symbol} is retesting primary structural RBS support at {sub_floor:.{digits}f}. Favorable Bull Flag reload zone towards {sub_ceiling:.{digits}f}."
+            forbidden_traps = [f"Do NOT short into confirmed RBS support at {imm_floor_f1:.{digits}f}"]
 
-        # Skenario C: Open Corridor Expansion (Trend-Aware Corridor Dynamics)
-        else:
-            is_macro_bear = last_d1_bearish or (not df_h1.empty and len(df_h1) >= 24 and df_h1['close'].iloc[-1] < df_h1['close'].iloc[-24])
-            
-            if is_macro_bear:
-                macro_bias = "BEARISH_EXPANSION"
-                primary_directive = "HUNT_SELL_CONTINUATION"
-                macro_bias_score = -0.85
-                if peak_u_wick_pct >= 40:
-                    macro_bias_score -= 0.10
-                macro_bias_score = round(max(-1.0, macro_bias_score), 2)
-
-                entry_anchor = micro_sbr_h1 if (micro_sbr_h1 and micro_sbr_h1 > curr_mid) else dbd_entry if (dbd_entry and dbd_entry > curr_mid) else (round(curr_mid + (0.35 * atr_h1), digits))
+        elif market_state in ("CEILING_REJECTION", "CHAMBER_CEILING_TEST"):
+            if market_state == "CEILING_REJECTION":
+                macro_bias = "BEARISH_PULLBACK"
+                primary_directive = "HUNT_SELL_PULLBACK"
+                macro_bias_score = -0.80
+                entry_anchor = round(imm_ceiling_c1 + (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
                 entry_zone_proximal = round(entry_anchor - reload_width, digits)
-                structural_roof = inter_sbr_h4 if (inter_sbr_h4 and inter_sbr_h4 > entry_anchor) else dbd_roof if (dbd_roof and dbd_roof > entry_anchor) else (entry_anchor + 1.25 * atr_h1)
-                
+                structural_roof = deep_ceiling_c2 if deep_ceiling_c2 > entry_anchor else (macro_sbr_d1 if macro_sbr_d1 > entry_anchor else entry_anchor + 1.25 * atr_h1)
                 calculated_sl = structural_roof + anti_wick_buffer
-                if is_crypto:
-                    min_sl_dist = max(1.20 * atr_h1, 300.0)
-                    max_sl_dist = max(1.80 * atr_h1, 450.0)
-                elif "XAU" in symbol:
-                    min_sl_dist = max(1.0 * atr_h1, 3.0)
-                    max_sl_dist = 2.5 * atr_h1
-                else:
-                    min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                    max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
-
+                
                 if (calculated_sl - entry_anchor) < min_sl_dist:
                     calculated_sl = entry_anchor + min_sl_dist
                 elif (calculated_sl - entry_anchor) > max_sl_dist:
                     calculated_sl = entry_anchor + max_sl_dist
                 intraday_sl = round(calculated_sl, digits)
 
-                macro_invalidation = round(ceiling_station + (0.20 * atr_d1), digits)
+                macro_invalidation = round(deep_ceiling_c2 + (0.20 * atr_d1), digits)
                 target_station_final = floor_station
-                hard_circuit_breaker = bool((curr_mid >= ceiling_station) or (curr_mid > macro_invalidation))
+                hard_circuit_breaker = bool((curr_mid >= imm_ceiling_c1 + (0.25 * atr_h1)) or (curr_mid > macro_invalidation))
                 action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
-
                 sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
-                tp1_price = round(entry_anchor - (1.5 * sl_dist), digits)
-                
-                valid_bull_obs = [ob.get('top', 0.0) for ob in bull_obs if ob.get('top', 0.0) < tp1_price and (entry_anchor - ob.get('top', 0.0)) <= 5.0 * sl_dist and (entry_anchor - ob.get('top', 0.0)) >= 2.0 * sl_dist]
-                if valid_bull_obs:
-                    tp2_price = round(max(valid_bull_obs) + (spread_pts * pt), digits)
-                elif floor_station < tp1_price and (entry_anchor - floor_station) <= 6.0 * sl_dist:
-                    tp2_price = floor_station
-                else:
-                    tp2_price = round(entry_anchor - (3.0 * sl_dist), digits)
-
-                if is_crypto:
-                    sl_pips = round(abs(intraday_sl - entry_anchor), 1)
-                    tp1_pips = round(abs(entry_anchor - tp1_price), 1)
-                    tp2_pips = round(abs(entry_anchor - tp2_price), 1)
-                else:
-                    sl_pips = round(abs(intraday_sl - entry_anchor) / pt / pip_div, 1)
-                    tp1_pips = round(abs(entry_anchor - tp1_price) / pt / pip_div, 1)
-                    tp2_pips = round(abs(entry_anchor - tp2_price) / pt / pip_div, 1)
-                rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
+                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                tp1_price = round(imm_floor_f1 + front_pad, digits)
+                tp2_price = round(deep_floor_f2 + front_pad, digits)
+                stage_label = f"FRONTIER_EXHAUSTION_AT_{imm_ceiling_c1:.{digits}f}"
+                thesis = f"{symbol} in {market_state} at ceiling {imm_ceiling_c1:.{digits}f}. Mean-reversion targeting primary floor {imm_floor_f1:.{digits}f}."
+                confidence_score = 85
                 max_allowed_buy = 0.0
                 min_allowed_sell = round(curr_mid - (0.20 * atr_d1), digits)
-                forbidden_traps = [
-                    f"Do NOT BUY during unmitigated bearish expansion corridor",
-                    f"Do NOT chase SELL if price enters {sub_floor:.{digits}f} without pullback"
-                ]
-                confidence_score = 80
-                stage_label = f"BEARISH_CORRIDOR_EXPANSION_TOWARDS_{floor_station:.{digits}f}"
-                thesis = f"{symbol} is in a bearish expansion corridor (D1 Bearish). Retest of micro SBR at {micro_sbr_h1:.{digits}f} offers high-probability trend continuation towards {floor_station:.{digits}f}."
-
+                forbidden_traps = [f"Do NOT BUY into ceiling resistance {imm_ceiling_c1:.{digits}f}"]
             else:
-                macro_bias = "BULLISH_EXPANSION"
-                primary_directive = "HUNT_BUY_CONTINUATION"
-                macro_bias_score = +0.85
-                if peak_l_wick_pct >= 40:
-                    macro_bias_score += 0.10
-                macro_bias_score = round(min(1.0, macro_bias_score), 2)
-
-                entry_anchor = micro_rbs_h1 if (micro_rbs_h1 and micro_rbs_h1 < curr_mid) else rbr_entry if (rbr_entry and rbr_entry < curr_mid) else (round(curr_mid - (0.35 * atr_h1), digits))
-                entry_zone_proximal = round(entry_anchor + reload_width, digits)
-                structural_floor = inter_rbs_h4 if (inter_rbs_h4 and inter_rbs_h4 < entry_anchor) else rbr_floor if (rbr_floor and rbr_floor < entry_anchor) else (entry_anchor - 1.25 * atr_h1)
-                
-                calculated_sl = structural_floor - anti_wick_buffer
-                if is_crypto:
-                    min_sl_dist = max(1.20 * atr_h1, 300.0)
-                    max_sl_dist = max(1.80 * atr_h1, 450.0)
-                elif "XAU" in symbol:
-                    min_sl_dist = max(1.0 * atr_h1, 3.0)
-                    max_sl_dist = 2.5 * atr_h1
-                else:
-                    min_sl_dist = max(1.0 * atr_h1, 15 * pt * pip_div)
-                    max_sl_dist = min(2.5 * atr_h1, 30 * pt * pip_div)
-
-                if (entry_anchor - calculated_sl) < min_sl_dist:
-                    calculated_sl = entry_anchor - min_sl_dist
-                elif (entry_anchor - calculated_sl) > max_sl_dist:
-                    calculated_sl = entry_anchor - max_sl_dist
-                intraday_sl = round(calculated_sl, digits)
-
-                macro_invalidation = round(floor_station - (0.20 * atr_d1), digits)
-                target_station_final = ceiling_station
-                hard_circuit_breaker = bool((curr_mid <= floor_station) or (curr_mid < macro_invalidation))
-                action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
-
-                sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
-                tp1_price = round(entry_anchor + (1.5 * sl_dist), digits)
-                
-                valid_bear_obs = [ob.get('bottom', 0.0) for ob in bear_obs if ob.get('bottom', 0.0) > tp1_price and (ob.get('bottom', 0.0) - entry_anchor) <= 5.0 * sl_dist and (ob.get('bottom', 0.0) - entry_anchor) >= 2.0 * sl_dist]
-                if valid_bear_obs:
-                    tp2_price = round(min(valid_bear_obs) - (spread_pts * pt), digits)
-                elif ceiling_station > tp1_price and (ceiling_station - entry_anchor) <= 6.0 * sl_dist:
-                    tp2_price = ceiling_station
-                else:
-                    tp2_price = round(entry_anchor + (3.0 * sl_dist), digits)
-
-                if is_crypto:
-                    sl_pips = round(abs(entry_anchor - intraday_sl), 1)
-                    tp1_pips = round(abs(tp1_price - entry_anchor), 1)
-                    tp2_pips = round(abs(tp2_price - entry_anchor), 1)
-                else:
-                    sl_pips = round(abs(entry_anchor - intraday_sl) / pt / pip_div, 1)
-                    tp1_pips = round(abs(tp1_price - entry_anchor) / pt / pip_div, 1)
-                    tp2_pips = round(abs(tp2_price - entry_anchor) / pt / pip_div, 1)
-                rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
-
-                max_allowed_buy = round(curr_mid + (0.20 * atr_d1), digits)
+                macro_bias = "RANGE_BOUND"
+                primary_directive = "FADE_CORRIDOR_EXTREMES"
+                macro_bias_score = 0.0
+                entry_anchor = imm_ceiling_c1
+                entry_zone_proximal = round(entry_anchor - reload_width, digits)
+                intraday_sl = round(entry_anchor + min_sl_dist, digits)
+                tp1_price = round(imm_floor_f1, digits)
+                tp2_price = round(deep_floor_f2, digits)
+                stage_label = f"TESTING_CEILING_{imm_ceiling_c1:.{digits}f}"
+                thesis = f"{symbol} is testing ceiling {imm_ceiling_c1:.{digits}f}. Wait for breakout or rejection confirmation."
+                confidence_score = 75
+                hard_circuit_breaker = False
+                action_tier = "WATCH_ONLY"
+                max_allowed_buy = 0.0
                 min_allowed_sell = 0.0
-                forbidden_traps = [
-                    f"Do NOT short during unmitigated bullish expansion corridor",
-                    f"Do NOT chase BUY if price enters {sub_ceiling:.{digits}f} without pullback"
-                ]
-                confidence_score = 78
-                stage_label = f"OPEN_EXPANSION_TOWARDS_{ceiling_station:.{digits}f}"
-                thesis = f"{symbol} is in a clear bullish expansion corridor. Retest of micro RBS at {micro_rbs_h1:.{digits}f} offers high-probability trend reload towards {ceiling_station:.{digits}f}."
+                forbidden_traps = ["Wait for test resolution"]
+
+        elif market_state == "CEILING_BREAKOUT":
+            macro_bias = "BULLISH_EXPANSION"
+            primary_directive = "HUNT_BUY_CONTINUATION"
+            macro_bias_score = +0.85
+            entry_anchor = imm_ceiling_c1
+            entry_zone_proximal = round(entry_anchor + reload_width, digits)
+            structural_floor = imm_floor_f1
+            calculated_sl = structural_floor - anti_wick_buffer
+            if (entry_anchor - calculated_sl) < min_sl_dist:
+                calculated_sl = entry_anchor - min_sl_dist
+            intraday_sl = round(calculated_sl, digits)
+            sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_price = round(deep_ceiling_c2 - front_pad, digits)
+            tp2_price = round(deep_ceiling_c2 + (1.5 * sl_dist) - front_pad, digits)
+            macro_invalidation = round(imm_floor_f1 - (0.20 * atr_d1), digits)
+            target_station_final = next_macro_target
+            hard_circuit_breaker = False
+            action_tier = "FULL_ALLOW"
+            stage_label = f"BREAKOUT_ABOVE_{imm_ceiling_c1:.{digits}f}"
+            thesis = f"{symbol} confirmed breakout above {imm_ceiling_c1:.{digits}f} targeting extension {deep_ceiling_c2:.{digits}f}."
+            confidence_score = 82
+            max_allowed_buy = round(curr_mid + (0.20 * atr_d1), digits)
+            min_allowed_sell = 0.0
+            forbidden_traps = ["Do NOT short into confirmed breakout"]
+
+        elif market_state == "FLOOR_BREAKDOWN":
+            macro_bias = "BEARISH_EXPANSION"
+            primary_directive = "HUNT_SELL_CONTINUATION"
+            macro_bias_score = -0.85
+            entry_anchor = imm_floor_f1
+            entry_zone_proximal = round(entry_anchor - reload_width, digits)
+            structural_roof = imm_ceiling_c1
+            calculated_sl = structural_roof + anti_wick_buffer
+            if (calculated_sl - entry_anchor) < min_sl_dist:
+                calculated_sl = entry_anchor + min_sl_dist
+            intraday_sl = round(calculated_sl, digits)
+            sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_price = round(deep_floor_f2 + front_pad, digits)
+            tp2_price = round(deep_floor_f2 - (1.5 * sl_dist) + front_pad, digits)
+            macro_invalidation = round(imm_ceiling_c1 + (0.20 * atr_d1), digits)
+            target_station_final = floor_station
+            hard_circuit_breaker = False
+            action_tier = "FULL_ALLOW"
+            stage_label = f"BREAKDOWN_BELOW_{imm_floor_f1:.{digits}f}"
+            thesis = f"{symbol} broke down below {imm_floor_f1:.{digits}f} targeting deep support {deep_floor_f2:.{digits}f}."
+            confidence_score = 82
+            max_allowed_buy = 0.0
+            min_allowed_sell = round(curr_mid - (0.20 * atr_d1), digits)
+            forbidden_traps = ["Do NOT buy into confirmed breakdown"]
+
+        else: # NEUTRAL_CHAMBER (Mid-Range Consolidation / Chop Zone)
+            macro_bias = "RANGE_BOUND"
+            primary_directive = "FADE_CORRIDOR_EXTREMES"
+            macro_bias_score = 0.0
+            last_event = interaction_seq[-1] if interaction_seq else ""
+            
+            entry_anchor = round(imm_floor_f1, digits)
+            entry_zone_proximal = round(entry_anchor + reload_width, digits)
+            structural_floor = deep_floor_f2
+            calculated_sl = structural_floor - anti_wick_buffer
+            if (entry_anchor - calculated_sl) < min_sl_dist:
+                calculated_sl = entry_anchor - min_sl_dist
+            intraday_sl = round(calculated_sl, digits)
+            sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_price = round(imm_ceiling_c1 - front_pad, digits)
+            tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+            
+            stage_label = f"CHAMBER_CONSOLIDATION_[{imm_floor_f1:.{digits}f}-{imm_ceiling_c1:.{digits}f}]"
+            thesis = f"{symbol} is consolidating inside dealing chamber (Range: {chamber_pos:.0%}). Discipline requires waiting for extreme boundary touch at {imm_floor_f1:.{digits}f} or {imm_ceiling_c1:.{digits}f}."
+            confidence_score = 70
+            hard_circuit_breaker = False
+            action_tier = "WATCH_ONLY"
+            max_allowed_buy = round(imm_floor_f1 + (0.15 * atr_h1), digits)
+            min_allowed_sell = round(imm_ceiling_c1 - (0.15 * atr_h1), digits)
+            forbidden_traps = [f"Do NOT execute market orders in mid-chamber consolidation zone (Range: {chamber_pos:.0%})"]
+            macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
+            target_station_final = ceiling_station
+
+        if is_crypto:
+            sl_pips = round(abs(intraday_sl - entry_anchor), 1)
+            tp1_pips = round(abs(entry_anchor - tp1_price), 1)
+            tp2_pips = round(abs(entry_anchor - tp2_price), 1)
+        else:
+            sl_pips = round(abs(intraday_sl - entry_anchor) / pt / pip_div, 1)
+            tp1_pips = round(abs(entry_anchor - tp1_price) / pt / pip_div, 1)
+            tp2_pips = round(abs(entry_anchor - tp2_price) / pt / pip_div, 1)
+        rr_ratio = round(tp2_pips / max(sl_pips, 1.0), 2)
 
         calc_ms = round((time.perf_counter() - t0) * 1000, 2)
         total_bars_cnt = (
@@ -664,80 +908,33 @@ class MacroStrategicEngine:
             (len(rates_m30) if rates_m30 is not None else 0)
         )
 
-        # Contingency Targets (Strictly beyond invalidation point across D1 + W1)
-        contingency_demand_cands = [_get_ob_core(ob) for ob in macro_bull_obs if _get_ob_core(ob) < (macro_invalidation - 0.15 * atr_d1)]
-        contingency_demand = round(max(contingency_demand_cands), digits) if contingency_demand_cands else round(floor_station - psych_step_macro, digits)
+        # ── 5. NARRATIVE OUTPUT LAYER (Pure Consumer String Formatting) ──
+        bull_roadmap = (
+            f"▲ BULLISH PATH: Hold > Immediate Floor {imm_floor_f1:.{digits}f} -> Tests Ceiling {imm_ceiling_c1:.{digits}f} │ "
+            f"Breakout > {imm_ceiling_c1:.{digits}f} -> Extension {deep_ceiling_c2:.{digits}f}"
+        )
+        bear_roadmap = (
+            f"▼ BEARISH PATH: Reject < Immediate Ceiling {imm_ceiling_c1:.{digits}f} -> Retests Floor {imm_floor_f1:.{digits}f} │ "
+            f"Breakdown < {imm_floor_f1:.{digits}f} -> Slips to Deep Support {deep_floor_f2:.{digits}f}"
+        )
 
-        contingency_supply_cands = [_get_ob_core(ob) for ob in macro_bear_obs if _get_ob_core(ob) > (macro_invalidation + 0.15 * atr_d1)]
-        contingency_supply = round(min(contingency_supply_cands), digits) if contingency_supply_cands else next_macro_target
-
-        contingency_target_val = contingency_demand if ("BUY" in primary_directive or "BULLISH" in macro_bias) else contingency_supply
-
-        # Determine Regime Stability
-        vol_ratio = atr_h1 / max((atr_d1 / 24.0), 1e-6)
-        if vol_ratio > 2.0:
-            regime_stability = "HIGH_VOLATILITY"
-        elif vol_ratio < 0.6:
-            regime_stability = "COMPRESSION"
-        elif abs(macro_bias_score) >= 0.70:
-            regime_stability = "EXPANSION"
-        else:
-            regime_stability = "STABLE"
-
-        # Integrate Apex Paragon Macro Fundamental Engine Confluence
-        fundamental_backing = ""
-        fundamental_grade = "GRADE_A"
+        # Fundamental Engine
+        fundamental_backing, fundamental_grade = "", "GRADE_A"
         try:
             from src.analytics.apex_fundamental_engine import apex_fundamental_engine
             fund_eval = apex_fundamental_engine.evaluate_pair(symbol)
             fundamental_backing = fund_eval.action_directive
             fundamental_grade = fund_eval.setup_grade
-
-            # Check alignment boost
-            if ("BUY" in primary_directive or "BULLISH" in macro_bias) and fund_eval.fundamental_delta > 0.15:
-                confidence_score = min(95, confidence_score + 10)
-                if fund_eval.setup_grade == "GRADE_A_PLUS" and action_tier == "TIER_1_ACTION_EXECUTE":
-                    fundamental_grade = "GRADE_S"
-            elif ("SELL" in primary_directive or "BEARISH" in macro_bias) and fund_eval.fundamental_delta < -0.15:
-                confidence_score = min(95, confidence_score + 10)
-                if fund_eval.setup_grade == "GRADE_A_PLUS" and action_tier == "TIER_1_ACTION_EXECUTE":
-                    fundamental_grade = "GRADE_S"
-
             if fund_eval.hard_veto_flag:
-                forbidden_traps.append(f"CRITICAL VETO [{fund_eval.hard_veto_flag}]: {fund_eval.hard_veto_reason}")
-                if fund_eval.hard_veto_flag in ("HIGH_IMPACT_NEWS", "CURRENCY_CONFLICT"):
-                    hard_circuit_breaker = True
-                    action_tier = "TIER_5_CIRCUIT_BREAKER_HALT"
-        except Exception:
-            pass
+                hard_circuit_breaker = True
+                action_tier = "HARD_BLOCK"
+        except Exception: pass
 
-        target_d1_sbr = macro_sbr_d1 if macro_sbr_d1 > sub_ceiling else round(sub_ceiling + psych_step_micro, digits)
-        target_d1_rbs = macro_rbs_d1 if macro_rbs_d1 < sub_floor else round(sub_floor - psych_step_micro, digits)
-
-        base_up = next_macro_target if ('BUY' in primary_directive or 'BULLISH' in macro_bias) else ceiling_station
-        base_down = target_station_final if ('SELL' in primary_directive or 'BEARISH' in macro_bias) else floor_station
-
-        target_up = max(base_up, round(target_d1_sbr + psych_step_micro, digits))
-        target_down = min(base_down, round(target_d1_rbs - psych_step_micro, digits))
-
-        inval_floor = macro_invalidation if macro_invalidation < target_d1_rbs else round(target_d1_rbs - (0.20 * atr_d1), digits)
-        contingency_demand_val = contingency_demand if contingency_demand < inval_floor else round(inval_floor - psych_step_macro, digits)
-        contingency_supply_val = contingency_supply if contingency_supply > target_up else round(target_up + psych_step_macro, digits)
-
-        bull_roadmap = (
-            f"▲ BULLISH PATH: Hold > Immediate Floor {sub_floor:.{digits}f} -> Tests {sub_ceiling:.{digits}f} │ "
-            f"Breakout > {sub_ceiling:.{digits}f} -> Targets SBR {target_d1_sbr:.{digits}f} -> Extension to {target_up:.{digits}f} / W1 Supply {contingency_supply_val:.{digits}f}"
-        )
-        bear_roadmap = (
-            f"▼ BEARISH PATH: Reject < Immediate Ceiling {sub_ceiling:.{digits}f} -> Retests {sub_floor:.{digits}f} │ "
-            f"Step-1 (Breakdown < {sub_floor:.{digits}f}) -> Drops to D1 RBS {target_d1_rbs:.{digits}f} -> Slips to {inval_floor:.{digits}f} │ "
-            f"Step-2 (W1 Breakdown < {inval_floor:.{digits}f}) -> Deep Sweep to W1 Demand {contingency_demand_val:.{digits}f}"
-        )
-
-        if "BUY" in primary_directive or "BULLISH" in macro_bias:
-            full_future_roadmap = f"{bull_roadmap}\n{bear_roadmap}"
-        else:
-            full_future_roadmap = f"{bear_roadmap}\n{bull_roadmap}"
+        vol_ratio = atr_h1 / max((atr_d1 / 24.0), 1e-6)
+        if vol_ratio > 2.0: regime_stability = "HIGH_VOLATILITY"
+        elif vol_ratio < 0.6: regime_stability = "COMPRESSION"
+        elif abs(macro_bias_score) >= 0.70: regime_stability = "EXPANSION"
+        else: regime_stability = "STABLE"
 
         directive = MacroStrategicDirective(
             symbol=symbol,
@@ -762,15 +959,33 @@ class MacroStrategicEngine:
             confidence_score=confidence_score,
             structural_stage=stage_label,
             daily_mandate_thesis=thesis,
-            future_macro_roadmap=full_future_roadmap,
+            future_macro_roadmap=f"{bull_roadmap}\n{bear_roadmap}",
+            macro_rbs_w1=macro_rbs_w1,
+            macro_sbr_w1=macro_sbr_w1,
             macro_rbs_d1=macro_rbs_d1,
             macro_sbr_d1=macro_sbr_d1,
             inter_rbs_h4=inter_rbs_h4,
             inter_sbr_h4=inter_sbr_h4,
             micro_rbs_h1=micro_rbs_h1,
             micro_sbr_h1=micro_sbr_h1,
+            d1_annual_high=round(d1_annual_high, digits),
+            d1_annual_low=round(d1_annual_low, digits),
             sub_floor_50=sub_floor,
             sub_ceiling_50=sub_ceiling,
+            market_state=market_state,
+            immediate_ceiling_c1=imm_ceiling_c1,
+            immediate_floor_f1=imm_floor_f1,
+            deep_target_floor_f2=deep_floor_f2,
+            deep_target_ceiling_c2=deep_ceiling_c2,
+            c1_density_score=c1_density_score,
+            f1_density_score=f1_density_score,
+            c1_fortress_tag=c1_fortress_tag,
+            f1_fortress_tag=f1_fortress_tag,
+            chamber_position_pct=round(chamber_pos, 2),
+            retest_touch_count=len(interaction_seq),
+            interaction_sequence=interaction_seq,
+            bullish_contingency_path=bull_roadmap,
+            bearish_contingency_path=bear_roadmap,
             atr_d1_pips=round(atr_d1, 1) if is_crypto else round(atr_d1 / pt / pip_div, 1),
             atr_h1_pips=round(atr_h1, 1) if is_crypto else round(atr_h1 / pt / pip_div, 1),
             atr_m30_pips=round(atr_m30, 1) if is_crypto else round(atr_m30 / pt / pip_div, 1),
@@ -783,48 +998,33 @@ class MacroStrategicEngine:
             regime_stability=regime_stability,
             hard_circuit_breaker=hard_circuit_breaker,
             action_tier=action_tier,
-            contingency_target=contingency_target_val,
+            contingency_target=0.0,
             fundamental_backing=fundamental_backing,
             fundamental_grade=fundamental_grade,
-            current_bid=curr_bid,
-            current_ask=curr_ask,
-            current_mid=curr_mid,
+            current_bid=round(curr_bid, digits),
+            current_ask=round(curr_ask, digits),
+            current_mid=round(curr_mid, digits),
             raw_payload={
-                "symbol": symbol,
-                "calculation_time_ms": calc_ms,
-                "engine_token_cost": 0,
-                "macro_bias_score": macro_bias_score,
-                "fundamental_grade": fundamental_grade,
-                "fundamental_backing": fundamental_backing,
-                "regime_stability": regime_stability,
-                "hard_circuit_breaker": hard_circuit_breaker,
-                "action_tier": action_tier,
+                "market_state": market_state,
+                "chamber_pos": chamber_pos,
+                "c1": imm_ceiling_c1,
+                "f1": imm_floor_f1,
+                "c1_density_score": c1_density_score,
+                "f1_density_score": f1_density_score,
+                "c1_fortress_tag": c1_fortress_tag,
+                "f1_fortress_tag": f1_fortress_tag,
+                "c1_structure_tags": c1_tag,
+                "f1_structure_tags": f1_tag,
+                "f2_deep": deep_floor_f2,
+                "c2_deep": deep_ceiling_c2,
+                "interaction_sequence": interaction_seq,
+                "sweep_offset": sweep_offset,
                 "NARRATIVE_STORYTELLING": {
-                    "macro_annual_corridor": f"Annual Range: [{d1_annual_low:.{digits}f} - {d1_annual_high:.{digits}f}] (4-Year: [{mn1_low:.{digits}f} - {mn1_high:.{digits}f}])",
+                    "macro_annual_corridor": f"Annual Range: [{d1_annual_low:.{digits}f} - {d1_annual_high:.{digits}f}]",
                     "w1_major_anchor": f"W1 Key Demand: {w1_key_demand:.{digits}f} │ W1 Key Supply: {w1_key_supply:.{digits}f}",
-                    "discovered_liquidity_sweeps": f"Equal Lows swept at {eq_low_price:.{digits}f} ({eq_low_date_str}) -> +{pips_rallied} pips",
                     "current_structural_stage": stage_label,
                     "daily_mandate_thesis": thesis,
-                    "future_macro_roadmap": f"Hold above RBS {macro_rbs_d1:.{digits}f} -> Target {next_macro_target:.{digits}f}"
-                },
-                "QUANT_DIRECTIVE_VALUES": {
-                    "daily_macro_bias": macro_bias,
-                    "macro_bias_score": macro_bias_score,
-                    "action_tier": action_tier,
-                    "regime_stability": regime_stability,
-                    "hard_circuit_breaker": hard_circuit_breaker,
-                    "primary_execution_directive": primary_directive,
-                    "entry_limit_anchor": entry_anchor,
-                    "intraday_sl_price": intraday_sl,
-                    "sl_distance_pips": sl_pips,
-                    "tp1_partial_50_pct": tp1_price,
-                    "tp1_pips": tp1_pips,
-                    "tp2_station_target": tp2_price,
-                    "tp2_pips": tp2_pips,
-                    "risk_reward_ratio": f"1 : {rr_ratio}",
-                    "invalidation_stop_price": macro_invalidation,
-                    "forbidden_traps": forbidden_traps,
-                    "confidence_score": confidence_score
+                    "future_macro_roadmap": f"{bull_roadmap}\n{bear_roadmap}"
                 }
             }
         )

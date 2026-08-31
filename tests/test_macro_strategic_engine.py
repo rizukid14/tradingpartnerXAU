@@ -25,11 +25,11 @@ class TestMacroStrategicEngine(unittest.TestCase):
         self.assertEqual(dual_ej["sub_ceiling_50"], 185.500)
 
     def test_intraday_sl_safety_ceiling(self):
-        # SL calculation must never exceed 160 pts (0.00160) for FX
+        # SL calculation must respect pair-calibrated max SL ceiling (75 pips for GBP cross)
         atr_h1 = 0.00300 # 30 pips
         res = calculate_intraday_sl_tp("GBPUSD", 1.35000, 1, 1.34000, atr_h1)
-        self.assertAlmostEqual(res["sl"], 1.34840, places=5)
-        self.assertAlmostEqual(abs(res["sl"] - 1.35000), 0.00160, places=5)
+        self.assertAlmostEqual(res["sl"], 1.34250, places=5)
+        self.assertAlmostEqual(abs(res["sl"] - 1.35000), 0.00750, places=5)
 
     def test_drop_base_drop_detection(self):
         # Create synthetic DBD candles

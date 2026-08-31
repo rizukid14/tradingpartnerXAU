@@ -46,9 +46,13 @@
    - **Pemisahan Konteks Struktur vs Candle Count**:
      * Jangan mengatribusikan edge ke hitungan lilin murni jika efeknya hanya muncul saat menabrak *HTF Structure / Liquidity Key Levels*.
      * Struktur HTF (PWH/PWL, Dealing Range Origin Anchor, Order Blocks) adalah fondasi primer, bukan jumlah bar.
-   - **Syarat Validitas Backtest & Verifikasi**:
-     * Dilarang mengklaim sistem baru "valid/superior" hanya berdasarkan $\le 20$ trade dalam rentang waktu sempit ($\le 7$ hari).
-     * Minimal sample size untuk klaim edge statistik adalah $\ge 60 - 100+$ trade dengan *Out-of-Sample Holdout* atau *Walk-Forward Validation*, dilengkapi evaluasi Max Drawdown, Profit Factor, Sharpe Ratio, dan Slippage-Adjusted Return.
+    - **Syarat Validitas Backtest & Verifikasi**:
+      * Dilarang mengklaim sistem baru "valid/superior" hanya berdasarkan $\le 20$ trade dalam rentang waktu sempit ($\le 7$ hari).
+      * Minimal sample size untuk klaim edge statistik adalah $\ge 60 - 100+$ trade dengan *Out-of-Sample Holdout* atau *Walk-Forward Validation*, dilengkapi evaluasi Max Drawdown, Profit Factor, Sharpe Ratio, dan Slippage-Adjusted Return.
+
+7. **ATURAN TERMINOLOGI WAJIB (UNIVERSAL LIQUIDITY SWEEP)**:
+   - DILARANG menggunakan istilah *"Judas Sweep"*, *"London Judas Sweep"*, atau istilah turunan Judas di seluruh codebase, file dokumentasi, prompt LLM, alert Telegram, dan percakapan.
+   - Gunakan selalu terminologi kuantitatif resmi: **"Universal Liquidity Sweep"**, **"Universal Sweep"**, atau **`UNIVERSAL_LIQUIDITY_SWEEP`**.
 ---
 
 ## Apa ini
@@ -83,7 +87,7 @@ python main.py
 |---|---|
 | `main.py` | Looping: trigger Stage 1 radar tiap 60 detik + Stage 2 LLM saat ada setup A+ lolos + manage posisi tiap 3 detik (BEP/trailing/partial) |
 | `config.py` | Parameter konfigurasi global + helper per-simbol + universe `SCANNER_SYMBOLS` |
-| `src/analytics/market_scanner.py` | **Stage 1 Radar** — 3 mekanisme (M1 Judas Sweep, M2 Pullback, M3 HTF Weekly Wall) + HTF cache (D1/H4/W1) + wave state permission |
+| `src/analytics/market_scanner.py` | **Stage 1 Radar** — 3 mekanisme (M1 Universal Liquidity Sweep, M2 Pullback, M3 HTF Weekly Wall) + HTF cache (D1/H4/W1) + wave state permission |
 | `src/indicators/wave_state.py` | **4-Dimensional Market State Engine**: Direction FSM + Phase FSM + CSM Pressure + Event Layer → Permission (`WAIT/LOCK/WATCH/ARM/GO`) |
 | `src/indicators/lux_smc.py` | LuxAlgo Smart Money Concepts (OB/FVG/Strong Low/PWH-PWL) + FRVP confluence |
 | `src/indicators/atlas_dna.py` | Symbol-specific psychological step (50/100/200 pips) + dynamic stations calculator |
@@ -95,7 +99,7 @@ python main.py
 | `src/core/economic_calendar.py` | Dynamic fetch kalender ekonomi (TradingView/Investing.com) + anti-FOMC/news context |
 | `src/core/telegram_bot.py` | 2-Way Interactive Telegram Controller + on-demand 3-AI analysis + `/radar` `/levels` `/smc` |
 | `src/analytics/position_manager.py` | 2-Stage Trailing (H1 Breathing 65-90% TP, M30 Terminal Lock $\ge$90% TP), BEP 45-55%, partial close 50%, time-decay stagnation, pre-rollover shield |
-| `src/analytics/macro_strategic_engine.py` | Pure Quant 6-TF Native Sockets (`MN1/W1/D1/H4/H1/M30`), SBR/RBS Hierarchy, 5-Tier Action Matrix, Continuous Probabilistic Score |
+| `src/analytics/macro_strategic_engine.py` | **Barrier Chamber State Machine** (6-TF Native `MN1/W1/D1/H4/H1/M30`), Density Cluster Scoring ($C_1, C_2, F_1, F_2$), Interaction Sequence Tracking (`['F1_SWEEP', 'C1_SWEEP']`), 7-State Engine, Pair-Calibrated SL Floor (35p Crosses) |
 
 ---
 
@@ -167,13 +171,13 @@ python main.py
 18. **Strict HTF Execution Hierarchy (H1 & M30 only)**: Stage 1 Radar HANYA scan H1 & M30. M5 DILARANG trigger eksekusi langsung (anti overtrading + fee churn).
 19. **M5 Candlestick Micro-Microscope** (Pass 2 audit eksklusif): 25 candle M5 live → DeepSeek CRO deteksi falling knife.
 20. **Unanimous 3/3 High Confidence Split (+25% Boost)**: 3 AI sepakat $\ge 75\%$ confidence + $\ge 2$ slot MT5 → eksekusi 2 posisi @ $0.625\times$ base lot (Pos #1 target standar, Pos #2 target extended 1.2× TP2 + trailing).
-21. **Multi-Touch Cluster Breakout & Delayed Retest** (M5 — 27 Agustus): Level cluster disentuh $\ge 2 \times$ + tembus candle momentum $\ge 55\%$ body → Pending Limit Order saat retest (delay 3–4 bar). Anti Judas Sweep. Validasi 10.7 tahun FBS (23.173 trade, PF 1.11).
+21. **Multi-Touch Cluster Breakout & Delayed Retest** (M5 — 27 Agustus): Level cluster disentuh $\ge 2 \times$ + tembus candle momentum $\ge 55\%$ body → Pending Limit Order saat retest (delay 3–4 bar). Anti False Sweep. Validasi 10.7 tahun FBS (23.173 trade, PF 1.11).
 22. **Boitoki CSM + Prompt Relative Flow** (H1 — 27 Agustus): Porting 1:1 algoritma 7 USD Majors. Eliminasi Macro Bias Trap. Injeksi blok `GLOBAL CURRENCY STRENGTH MATRIX` (8-currency ranking, Net Delta). Validasi 31.161 trade: $-7.333\text{R} \rightarrow +7.333\text{R}$ (+92% loss dipangkas).
 23. **2-Stage Dynamic Trailing Stop**: Stage 1 (Swing Breathing 65–90% TP) $0.75\times\text{ATR H1}$ floor 80 pts. Stage 2 (Terminal Lock $\ge$90% TP) $0.50\times\text{ATR M30}$ floor 30 pts.
 24. **Fixed Range Volume Profile (FRVP) + Institutional Confluence** (28 Agustus): SMC + FRVP sinergi memangkas 59.2% trade noise + EV +104% R. Pair bintang: EURCHF PF 1.79, GBPCHF PF 1.53.
 25. **Wave State Machine + 4-Layer Permission Engine** (H1 — 28 Agustus): Pemisahan Direction (D1+H4) vs Trade Permission (H1 Wave + CSM + Event). Eliminasi Impulse Chase (PF 0.52) + Falling Knife (PF 0.97). Hanya `MATURE_BASING` (PF 1.30) + `BASE_RECLAIM` (PF 1.42) di zona diskon ($\le 0.50$, Golden Pocket $\le 0.382$) yang boleh trade.
 26. **Anti-Wick Buffer + Structural SL Anchoring** (M30 — 28 Agustus): SL jangkar di balik support/OB fisik + Anti-Wick Buffer $0.35\times\text{ATR} + \text{Spread}$. Win Rate Trend-Aligned Retest naik ke 57.2–58.1% (PF 1.17–1.23).
-27. **Real Candlestick Wick Measurement + Anti-Waterfall Judas Sweep** (28 Agustus): Ganti static `rejection_wick_ratio` dengan real `classify_candle`. Filter Anti-Breakdown Waterfall di `LONDON_JUDAS_SWEEP` — larang BUY jika marubozu merah tanpa sumbu bawah.
+27. **Real Candlestick Wick Measurement + Anti-Waterfall Universal Sweep** (28 Agustus): Ganti static `rejection_wick_ratio` dengan real `classify_candle`. Filter Anti-Breakdown Waterfall di `UNIVERSAL_LIQUIDITY_SWEEP` — larang BUY jika marubozu merah tanpa sumbu bawah.
 28. **Dynamic MT5 Point Resolution + Live Economic News + FRVP Injection** (28 Agustus): `_get_point(sym)` ambil dari `symbol_info.point` MT5 (fallback JPY 0.001, XAU/BTC 0.01, FX 0.00001). Live fetch berita TradingView/Investing.com di `build_high_density_dossier_prompt`. FRVP POC/VAL/VAH diinjeksi ke 8 kandidat radar.
 29. **Telegram Interactive `/news` + Cyberpunk Bento HUD News Ticker** (28 Agustus): Command `/news` (alias `/kalender`, `/berita`, `/event`) + live ticker di Bento HUD Tile 3 & 4 dengan countdown rilis.
 30. **Intraday Entry-Anchored SL/TP + Anti-Wick Padding + Safety Ceiling** (28 Agustus): SL/TP intraday berbasis harga entri + Anti-Wick Padding +15 pts (1.5 pips). Hard Intraday Ceiling di `_apply_sltp_rules` (FX max SL = $\min(2.0\times\text{ATR}, 160\text{ pts})$; Gold max SL = $2.5\times\text{ATR}$).
@@ -191,7 +195,7 @@ python main.py
     - **5-Tier Operational Action Matrix & End-to-End Risk Modifiers**:
       1. `FULL_ALLOW`: Setup searah makro ($|\text{score}| \ge 0.35$), ukuran penuh $100\%$ lot, target koridor penuh TP1 + TP2 runner (+25% boost multi-position jika 3 AI unanimous $\ge 75\%$).
       2. `REDUCED_CONFIDENCE`: Setup valid saat makro netral/moderat ($-0.25 \le \text{score} \le +0.35$), **pengali risiko numerik $0.75\times$ lot size** di `risk_engine.py`, dan pembatasan $\text{TP} \le 2.00 \times \text{SL}$ di `consensus.py`.
-      3. `TP1_ONLY_SCALP`: Setup counter-trend berkualitas tinggi (M1 Judas Sweep / SFP) melawan makro moderat ($|\text{score}| \le 0.70$). Wajib sweep bersih + reclaim + wick $\ge 35\%$ + ruang ke TP1 $\ge 1.25\times\text{SL}$ + zero hard trap. Pembatasan $\text{TP} \le 1.50 \times \text{SL}$ dan **larangan keras 2-posisi split** di `main.py` (**100% posisi ditutup di TP1 tunggal**).
+      3. `TP1_ONLY_SCALP`: Setup counter-trend berkualitas tinggi (M1 Universal Liquidity Sweep / SFP) melawan makro moderat ($|\text{score}| \le 0.70$). Wajib sweep bersih + reclaim + wick $\ge 35\%$ + ruang ke TP1 $\ge 1.25\times\text{SL}$ + zero hard trap. Pembatasan $\text{TP} \le 1.50 \times \text{SL}$ dan **larangan keras 2-posisi split** di `main.py` (**100% posisi ditutup di TP1 tunggal**).
       4. `WATCH_ONLY`: Harga di dalam Reload Zone namun trigger belum terkonfirmasi $\rightarrow$ monitor saja, 0 order MT5.
       5. `HARD_BLOCK`: Tabrak hard trap (jarak ke atap/lantai $< 1.0\times\text{ATR H1}$), jebol invalidasi makro, atau waterfall 25-candle M5 $\rightarrow$ hard lock mutlak (0 token LLM).
     - **Smart 60-Second TTL Cache & Direct Fast Telegram**: Cache memori sub-detik untuk komputasi intraday $\le\text{H4}$ serta pengiriman format quant instan (<100ms, 0 token) di Telegram `/macro`.

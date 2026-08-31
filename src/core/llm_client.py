@@ -227,8 +227,7 @@ A valid trade requires structure + location + actionable setup + valid invalidat
 - Independent Roles: `signal` is strictly for NEW entries; `position_actions` is strictly for managing existing open tickets (`signal: HOLD` does NOT force close open positions).
 - BUY only when bullish setup exists. SELL only when bearish setup exists. HOLD when setup is absent/unclear.
 - Proximity Traps: Avoid blind BUY market orders directly below major resistance (< 0.3x ATR away) unless closed above it. Avoid blind SELL market orders directly above major support (< 0.3x ATR away) unless closed below it.
-- Mid-range entries are normally HOLD unless a defined limit setup offers verified clearance and R:R >= 1.25.
-- Pending Rules: Entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: buy_stop/buy_limit. SELL: sell_stop/sell_limit.
+- Execution Choice (Independent Discretion): Decide independently between "market" (instant execution at live price) and pending limit ("buy_limit"/"sell_limit" at optimal anchor) based on current momentum, candle wicks, and Risk:Reward. If price is already reacting strongly or at the optimal level, market execution captures the move immediately. If price has not reached the optimal discount/premium level and waiting for a pullback provides superior R:R, use a pending limit order. Pending entry must be at least 2x spread and within ~1.5x ATR from current price. BUY: market/buy_stop/buy_limit. SELL: market/sell_stop/sell_limit.
 - Unit Definition: sl_points & tp_points are broker POINTS from ENTRY PRICE.
   * {{POINTS_EXPLANATION}}
 - Safety Floors: Give your honest structural levels; the bot engine automatically widens SL/TP to meet broker safety floors (>= 1.3x ATR {{TIMEFRAME}}) and enforces min R:R 1.25.
@@ -781,15 +780,16 @@ def build_system_prompt(symbol, timeframe, asset_description, point_size=0.01):
             "HOLD if conviction is low."
         )
         pending_rules_block = (
-            "\n### PENDING ORDER RULES (the bot has pending orders enabled)\n"
-            "Your thesis determines the entry type -- do not pick one arbitrarily:\n"
-            "- Thesis is a BREAKOUT / momentum continuation beyond a level: use buy_stop (BUY) or sell_stop (SELL). entry_price = the breakout level (beyond current price).\n"
-            "- Thesis is a RETEST / pullback to a level: use buy_limit (BUY) or sell_limit (SELL). entry_price = the retest level (below current price for BUY, above for SELL).\n"
-            "- Thesis is valid at the CURRENT price: use \"market\" (default) -- no entry_price needed.\n"
-            "- Direction consistency is mandatory: BUY -> buy_stop/buy_limit only; SELL -> sell_stop/sell_limit only.\n"
+            "\n### ORDER TYPE SELECTION (Independent Discretion)\n"
+            "You have full analytical autonomy to select 'market' for immediate execution or 'buy_limit'/'sell_limit' for a pending order:\n"
+            "- Evaluate live price action, candle wicks, micro momentum, and the quantitative distance to optimal entry.\n"
+            "- Choose 'market' if the setup is actively moving and waiting for a deeper pullback risks missing the move.\n"
+            "- Choose 'buy_limit' or 'sell_limit' if price is extended from the optimal structural anchor and waiting for a discount pullback offers superior Risk:Reward.\n"
+            "- PENDING STOP RULE: Thesis is a BREAKOUT / momentum continuation beyond a level: use buy_stop (BUY) or sell_stop (SELL). entry_price = the breakout level (beyond current price).\n"
+            "- Direction consistency is mandatory: BUY -> market/buy_stop/buy_limit only; SELL -> market/sell_stop/sell_limit only.\n"
             "- entry_price must be at least 2x current spread away from the current price, and no further than ~1.5x ATR from it. If your level is outside this band, the bot rejects the pending order (or falls back to market).\n"
             "- An executed pending order becomes a normal position with your sl_points/tp_points -- same risk rules apply.\n"
-            "- If you are not confident the level will trigger, output \"market\" or HOLD instead."
+            "- If you are not confident the level will trigger or pullback will reach, output 'market' or HOLD instead."
         )
         pending_fields = (
             '  "entry_type": "market" | "buy_stop" | "sell_stop" | "buy_limit" | "sell_limit",\n'
@@ -1076,12 +1076,6 @@ def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=
     whisper_str = whisper_str or ""
 
     lessons_str = ""
-    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        try:
-            from src.analytics import trade_evaluator
-            lessons_str = trade_evaluator.evaluator.get_lessons_context()
-        except Exception:
-            pass
 
     recent_outcomes_str = ""
     if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
@@ -1942,22 +1936,47 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         atlas_dna_block = ""
 
+    # === DETERMINISTIC ATR-BASED PROXIMITY & EXECUTION HINT COMPUTATION ===
+    trigger_px = float(candidate.trigger_price)
+    proposed_entry = float(meta.get("entry_price") or trigger_px)
+    atr_pts = candidate.current_atr_pts if candidate.current_atr_pts > 0 else 100.0
+    pt_size = 10 ** -sym_dec
+    
+    # Distance in price, points, pips, and ATR multiple
+    dist_price = abs(trigger_px - proposed_entry)
+    dist_pts = int(round(dist_price / pt_size)) if pt_size > 0 else 0
+    pip_div = 10 if sym_dec in (3, 5) else 1
+    dist_pips = dist_pts / pip_div
+    atr_pips = atr_pts / pip_div
+    atr_mult = dist_pts / atr_pts if atr_pts > 0 else 0.0
+    if dist_pts == 0:
+        proximity_label = "0.00x ATR H1 (Current Live Price IS the Entry — Instant Market Execution)"
+    else:
+        proximity_label = f"{atr_mult:.2f}x ATR H1 from proposed pending limit anchor ({dist_pips:.1f} pips away)"
     # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (PROBABILISTIC & OBJECTIVE) ===
     strat_block = ""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         if strat_dir:
+            f1_tags = strat_dir.raw_payload.get("f1_structure_tags", "STRUCTURAL")
+            c1_tags = strat_dir.raw_payload.get("c1_structure_tags", "STRUCTURAL")
+            seq_str = " -> ".join(strat_dir.interaction_sequence[-4:]) if strat_dir.interaction_sequence else "Initial Observation"
+            traps_str = " | ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
             strat_block = f"""
-- MSE Macro Bias: {strat_dir.macro_bias_score:+.2f} ({strat_dir.daily_macro_bias}) | Stability: {strat_dir.regime_stability} | Phase: {strat_dir.structural_stage}
-- Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Circuit Breaker: {'ACTIVE' if strat_dir.hard_circuit_breaker else 'CLEAR'}
-- SBR/RBS Hierarchy:
-  * D1 Scale: Major SBR = {strat_dir.macro_sbr_d1} | Major RBS = {strat_dir.macro_rbs_d1}
-  * H4 Scale: SBR = {strat_dir.inter_sbr_h4} | RBS = {strat_dir.inter_rbs_h4}
-  * H1 Scale: SBR = {strat_dir.micro_sbr_h1} | RBS = {strat_dir.micro_rbs_h1}
-- 50-Pip Sub-Stations: Sub-Floor [{strat_dir.sub_floor_50}] <---> Sub-Ceiling [{strat_dir.sub_ceiling_50}]
-- Target Landscape: TP1 (Proximal Station) = {strat_dir.tp1_price} | TP2 (Macro Target) = {strat_dir.tp2_price}
-- Baseline Floor SL: {strat_dir.intraday_sl_price} | Macro Invalidation: {strat_dir.invalidation_stop_price}\n"""
+- MSE Market State: [{strat_dir.market_state}] (Chamber Range: {strat_dir.chamber_position_pct:.0%}) | Stability: {strat_dir.regime_stability}
+- Macro Bias & Directive: {strat_dir.daily_macro_bias} ({strat_dir.macro_bias_score:+.2f}) -> {strat_dir.primary_execution_directive} (Confidence: {strat_dir.confidence_score}%)
+- Action Tier: {getattr(candidate, 'action_tier', strat_dir.action_tier)} | Circuit Breaker: {'ACTIVE (BLOCKED)' if strat_dir.hard_circuit_breaker else 'CLEAR'}
+- Barrier Chamber Bounds (FRVP + SBR/RBS + Psych Confluence):
+  * Floor F1: {strat_dir.immediate_floor_f1} ({strat_dir.f1_fortress_tag} {strat_dir.f1_density_score:.1f}p: {f1_tags})
+  * Ceiling C1: {strat_dir.immediate_ceiling_c1} ({strat_dir.c1_fortress_tag} {strat_dir.c1_density_score:.1f}p: {c1_tags})
+  * Deep Extension Target Bounds: F2={strat_dir.deep_target_floor_f2} | C2={strat_dir.deep_target_ceiling_c2}
+- Interaction Sequence (8-Bar Path): {seq_str}
+- SBR/RBS Hierarchy: D1 SBR={strat_dir.macro_sbr_d1} / RBS={strat_dir.macro_rbs_d1} | H4 SBR={strat_dir.inter_sbr_h4} / RBS={strat_dir.inter_rbs_h4}
+- Target Landscape: TP1 (Proximal Retest) = {strat_dir.tp1_price} | TP2 (Deep Macro Station) = {strat_dir.tp2_price}
+- Execution Anchor & Protection: Reload Limit = {strat_dir.entry_limit_anchor} | Intraday SL = {strat_dir.intraday_sl_price} ({strat_dir.intraday_sl_pips:.1f} pips) | Invalidation = {strat_dir.invalidation_stop_price}
+- Mandate Thesis: {strat_dir.daily_mandate_thesis}
+- Forbidden Traps: {traps_str}\n"""
     except Exception:
         strat_block = ""
 
@@ -1980,6 +1999,12 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         fund_block = ""
 
+    wick_ratio_val = float(candidate.rejection_wick_ratio or 0.0) * 100.0
+    if direction_str == "SELL":
+        wick_desc = f"Upper Rejection Wick = {wick_ratio_val:.1f}% of M15 range (Bearish rejection pressure defending the ceiling/resistance)"
+    else:
+        wick_desc = f"Lower Rejection Wick = {wick_ratio_val:.1f}% of M15 range (Bullish rejection pressure defending the floor/support)"
+
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
@@ -1991,7 +2016,8 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
 - Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_display_pct:.1f}%
-- Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts | Rejection Wick: {candidate.rejection_wick_ratio*100:.1f}%
+- Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts
+- Micro Rejection Wick (M15 Frame): {wick_desc}
 {meta_block}
 
 ## 2. APEX PARAGON MACRO FUNDAMENTAL & ECONOMIC CONTEXT (40% Weight — Read Before Evaluating Technicals)
@@ -2011,12 +2037,17 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
-## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+## 6. PROPOSED EXECUTION & QUANTITATIVE ATR PROXIMITY METRICS
+- Live Market Price: {fp(trigger_px)} | Proposed Entry: {fp(proposed_entry)} ({'INSTANT MARKET' if dist_pts == 0 else f'PENDING LIMIT {dist_pips:.1f} pips away'})
+- Quant Distance to Anchor: {dist_pips:.1f} pips ({dist_pts:,} pts) | ATR(14) H1: {atr_pips:.1f} pips ({int(atr_pts):,} pts)
+- Proximity Status: {proximity_label}
 - Scanner Raw SL: {fp(float(candidate.suggested_sl))} | Scanner Raw TP: {fp(float(candidate.suggested_tp))} | R:R: {candidate.risk_reward_ratio:.2f}:1
 - Atlas DNA-Anchored Reference: SL = {fp(atlas_sl_ref) if atlas_sl_ref else 'N/A'} | TP = {fp(atlas_tp_ref) if atlas_tp_ref else 'N/A'}
   ({formula_desc if formula_desc else 'Station-anchored calculation'})
 {candles_block}
+
 ## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
+- Execution Choice (Independent Discretion): You have full analytical autonomy to choose between "market" (immediate execution) and pending limit ("buy_limit" / "sell_limit" at optimal anchor). Evaluate price action, M5 micro flow, rejection wicks, and the quantitative ATR distance to decide whether entering immediately at market or waiting for a limit pullback provides the optimal balance between execution certainty and Risk:Reward.
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag

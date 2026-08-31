@@ -266,13 +266,21 @@ def render_candidate_alert_box(candidate):
         "Premium Zone (Expensive)" if candidate.dealing_range_pos >= 0.62 else "Equilibrium (Mid-Range)"
     )
     
+    meta = getattr(candidate, 'metadata', {}) or {}
+    prop_type = meta.get('entry_type', 'market').upper()
+    prop_price = meta.get('entry_price', candidate.trigger_price)
+    entry_label = f"{UI.YELLOW}{prop_type} @ {prop_price}{UI.RST}" if "LIMIT" in prop_type or "STOP" in prop_type else f"{UI.GREEN}INSTANT MARKET ORDER{UI.RST}"
+
+    wick_side = "Upper Wick" if candidate.direction == -1 else "Lower Wick"
+    
     items = [
         f"{UI.BOLD}{direction_color}[RADAR TRIGGER] {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
         "---",
         (f"• Trigger Time : ", f"{UI.CYAN}{t_wib}{UI.RST}"),
         (f"• Setup Type   : ", f"{UI.WHITE}{candidate.setup_type} ({tf_str}){UI.RST}"),
+        (f"• Proposed Entry: ", f"{entry_label}"),
         (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
-        (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (Wick {candidate.rejection_wick_ratio*100:.0f}%)"),
+        (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (M15 {wick_side} {candidate.rejection_wick_ratio*100:.0f}%)"),
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
         (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
@@ -527,7 +535,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         except Exception:
             t3_lines = [
                 f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
-                f" Judas    : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
+                f" London   : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
                 f" Structure: {UI.CYAN}100-bar H1 (Disc <=38% | Prem >=62%){UI.RST}",
                 f" News     : {UI.GREEN}ACTIVE (TradingView News Window Shield){UI.RST}"
             ]
@@ -680,6 +688,10 @@ def render_macro_directive_card(directive, width=95):
     is_crypto_or_gold = "BTC" in clean_sym or "XAU" in clean_sym or "GOLD" in clean_sym
     fmt = "{:.2f}" if is_crypto_or_gold else ("{:.3f}" if is_jpy else "{:.5f}")
 
+    rbs_w1_val = getattr(directive, 'macro_rbs_w1', None)
+    sbr_w1_val = getattr(directive, 'macro_sbr_w1', None)
+    rbs_w1_s = fmt.format(rbs_w1_val) if rbs_w1_val and rbs_w1_val > 0 else "N/A"
+    sbr_w1_s = fmt.format(sbr_w1_val) if sbr_w1_val and sbr_w1_val > 0 else "N/A"
     rbs_d1_s = fmt.format(directive.macro_rbs_d1) if directive.macro_rbs_d1 > 0 else "N/A"
     sbr_d1_s = fmt.format(directive.macro_sbr_d1) if directive.macro_sbr_d1 > 0 else "N/A"
     rbs_h4_s = fmt.format(directive.inter_rbs_h4) if directive.inter_rbs_h4 > 0 else "N/A"
@@ -742,8 +754,10 @@ def render_macro_directive_card(directive, width=95):
             lines.append(f"  {c_green}{wline}{c_rst}")
     lines.append("---")
 
-    # ── Section 2: Structural Zones SBR & RBS (D1 / H4 / H1) ──
-    lines.append(f" {c_bold}{c_cyan}[+] HIRARKI ZONA STRUKTURAL SBR & RBS (D1 / H4 / H1){c_rst}")
+    # ── Section 2: Structural Zones SBR & RBS (W1 / D1 / H4 / H1) ──
+    lines.append(f" {c_bold}{c_cyan}[+] HIRARKI ZONA STRUKTURAL SBR & RBS (W1 / D1 / H4 / H1){c_rst}")
+    if rbs_w1_s != "N/A" or sbr_w1_s != "N/A":
+        lines.append(f"  • {c_white}Macro W1 (100 bars / 1.9y){c_rst}    : RBS {c_green}{rbs_w1_s}{c_rst} │ SBR {c_red}{sbr_w1_s}{c_rst}")
     lines.append(f"  • {c_white}Macro D1 (350 bars / 1.4y){c_rst}    : RBS {c_green}{rbs_d1_s}{c_rst} │ SBR {c_red}{sbr_d1_s}{c_rst}")
     lines.append(f"  • {c_white}Inter H4 (400 bars / 66 days){c_rst} : RBS {c_green}{rbs_h4_s}{c_rst} │ SBR {c_red}{sbr_h4_s}{c_rst}")
     lines.append(f"  • {c_white}Micro H1 (250 bars / 10 days){c_rst} : RBS {c_green}{rbs_h1_s}{c_rst} │ SBR {c_red}{sbr_h1_s}{c_rst}")
@@ -755,6 +769,29 @@ def render_macro_directive_card(directive, width=95):
     lines.append(f"  • {c_white}Sub-Floor (Lower Base){c_rst}        : {c_green}{sub_f_s}{c_rst} (Major Support Corridor)")
     station_label = "Target Macro Station Ceiling" if ("BUY" in directive.primary_execution_directive or "BULLISH" in directive.daily_macro_bias) else "Target Macro Station Floor"
     lines.append(f"  • {c_white}{station_label}{c_rst}   : {c_green}{fmt.format(directive.target_station_price)}{c_rst} (Equilibrium Target)")
+    lines.append("---")
+    
+    # ── Section 3B: Barrier Chamber & State Machine Path ──
+    m_state = getattr(directive, 'market_state', 'NEUTRAL_CHAMBER')
+    f1_val = getattr(directive, 'immediate_floor_f1', 0.0)
+    c1_val = getattr(directive, 'immediate_ceiling_c1', 0.0)
+    f2_val = getattr(directive, 'deep_target_floor_f2', 0.0)
+    c2_val = getattr(directive, 'deep_target_ceiling_c2', 0.0)
+    ch_pos = getattr(directive, 'chamber_position_pct', 0.50)
+    seq_list = getattr(directive, 'interaction_sequence', [])
+    seq_str = " -> ".join(seq_list[-4:]) if seq_list else "None (Initial Observation)"
+
+    f1_sc = getattr(directive, 'f1_density_score', 0.0)
+    c1_sc = getattr(directive, 'c1_density_score', 0.0)
+    f1_tag = getattr(directive, 'f1_fortress_tag', 'MODERATE')
+    c1_tag = getattr(directive, 'c1_fortress_tag', 'MODERATE')
+
+    state_color = c_green if "FLOOR" in m_state else (c_red if "CEILING" in m_state or "BREAKDOWN" in m_state else (c_yellow if "BREAKOUT" in m_state else c_purple))
+    lines.append(f" {c_bold}{c_cyan}[+] BARRIER CHAMBER & STATE MACHINE PATHWAY{c_rst}")
+    lines.append(f"  • {c_white}Active Market State{c_rst}        : {state_color}{c_bold}[{m_state}]{c_rst} (Chamber Range: {c_yellow}{ch_pos:.0%}{c_rst})")
+    lines.append(f"  • {c_white}Dealing Chamber Bounds{c_rst}     : F1 {c_green}{fmt.format(f1_val)}{c_rst} ({f1_tag} {f1_sc:.1f}p) <---> C1 {c_red}{fmt.format(c1_val)}{c_rst} ({c1_tag} {c1_sc:.1f}p)")
+    lines.append(f"  • {c_white}Deep Target Boundaries{c_rst}     : F2 {c_gray}{fmt.format(f2_val)}{c_rst} │ C2 {c_gray}{fmt.format(c2_val)}{c_rst}")
+    lines.append(f"  • {c_white}Interaction Sequence{c_rst}       : {c_cyan}{seq_str}{c_rst}")
     lines.append("---")
     
     # ── Section 4: Intraday Execution Delivery ──

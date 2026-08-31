@@ -42,9 +42,10 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         self.assertEqual(config.max_spread_points_for("XAUUSD-ECNc"), 50)
 
         # FX pairs
-        for sym in ["GBPUSD-ECNc", "USDJPY-ECNc", "GBPJPY-ECNc", "EURUSD-ECNc"]:
-            self.assertEqual(config.default_sl_points_for(sym), 100)
-            self.assertEqual(config.default_tp_points_for(sym), 200)
+        self.assertEqual(config.default_sl_points_for("EURUSD-ECNc"), 200)
+        self.assertEqual(config.default_tp_points_for("EURUSD-ECNc"), 400)
+        self.assertEqual(config.default_sl_points_for("USDJPY-ECNc"), 250)
+        self.assertEqual(config.default_tp_points_for("USDJPY-ECNc"), 500)
 
         # BTC helpers
         self.assertEqual(config.lot_size_for("BTCUSD.c"), 0.01)

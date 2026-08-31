@@ -12,7 +12,7 @@ from config import mt5
 from src.core import mt5_connector as connector, llm_client as llm, consensus, telegram_alerts as tg
 from src.core.risk_engine import RiskEngine
 from src.core.cli_theme import UI, render_banner, render_scanner_banner, render_candidate_alert_box, render_hacker_bento_hud
-from src.analytics import position_manager, trade_evaluator, dynamic_config, decision_memory
+from src.analytics import position_manager, dynamic_config, decision_memory
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 
 import re
@@ -1001,9 +1001,8 @@ def run_trading_cycle(force=False):
 
 
     box_items = []
-    # 2.5 Post-Mortem Trade Evaluation & Daily WinRate Summary (Run before any early exits)
+    # 2.5 Daily WinRate Summary (Run before any early exits)
     try:
-        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
         closed_deals = connector.get_closed_positions_today()
         if getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
             dynamic_config.dynamic_rules.adapt_from_performance(closed_deals)
@@ -1105,26 +1104,12 @@ def _run_cycle_for_current_symbol():
     """
     # 0. Risk gate - check all conditions before trading
     can_trade, reason = risk.can_trade()
-    entry_blocked = False  # True = posisi sudah max: re-evaluator tetap jalan, entry ditahan
     if not can_trade:
-        # Kasus khusus: posisi sudah MAX (aggregate semua simbol). Jangan skip cycle —
-        # lanjut ambil data + LLM + consensus + AI RE-EVALUATOR (bisa rekomendasi CLOSE
-        # posisi lemah buat buka slot). Hanya entry baru yang ditahan (entry_blocked).
-        # Simbol yang TIDAK punya posisi terbuka di-skip: re-evaluator gak ada kerjaan,
-        # entry juga diblokir -> LLM call sia-sia.
-        max_pos_now = config.get_max_open_positions(risk.is_recovery_mode)
-        if len(connector.get_all_open_positions()) >= max_pos_now:
-            if not connector.get_open_positions(config.SYMBOL):
-                print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai & {config.SYMBOL} tanpa posisi terbuka — skip (re-evaluator kosong).")
-                return True
-            entry_blocked = True
-            print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai — lanjut AI re-evaluator utk {config.SYMBOL} (entry ditahan).")
-        else:
-            clean_reason = reason.strip()
-            if clean_reason.startswith("[RISK]"):
-                clean_reason = clean_reason[6:].strip()
-            print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
-            return True  # Not an error, just skipping
+        clean_reason = reason.strip()
+        if clean_reason.startswith("[RISK]"):
+            clean_reason = clean_reason[6:].strip()
+        print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
+        return True  # Not an error, just skipping
     
     # 0.5 Pending order lifecycle: expired/cap/contra cleanup (hanya kalau enabled)
     _manage_pending_orders()    
@@ -1194,10 +1179,6 @@ def _run_cycle_for_current_symbol():
         except Exception as e:
             print(f"[WHISPER ERROR {config.SYMBOL}] {e}")
 
-    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        lessons_ctx = trade_evaluator.evaluator.get_lessons_context()
-        if lessons_ctx:
-            print("Menyertakan Lesson Learned & Memori Trading untuk LLM...")
 
     ai_mode = config.get_ai_mode()
     active_models = config.active_ai_model_names()
@@ -1210,50 +1191,13 @@ def _run_cycle_for_current_symbol():
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
 
-    # 5.1 Execute AI Position Re-Evaluator Close Actions
-    tickets_to_close = result.get("tickets_to_close", [])
-    for close_req in tickets_to_close:
-        t_ticket = close_req["ticket"]
-        t_reason = close_req["reason"]
-        t_models = close_req.get("models", "AI Consensus")
-        print(f"[AI RE-EVALUATOR] {t_models} sepakat CLOSE order #{t_ticket}: {t_reason}")
-        # Capture pre-close profit so daily P/L + loss streak stay accurate.
-        # Net profit = profit + swap + komisi IN+OUT (query deals lengkap, bukan position.profit
-        # yang TIDAK include komisi - akun ECN charge $3/sisi, XAU 0.01 lot = -$0.06 round-trip).
-        pre_profit = 0.0
-        try:
-            pos_pre = mt5.positions_get(ticket=t_ticket)
-            if pos_pre and len(pos_pre) > 0:
-                pre_profit = pos_pre[0].profit + pos_pre[0].swap + pos_pre[0].commission
-        except Exception:
-            pass
-        close_res = connector.close_position(t_ticket)
-        if close_res:
-            # Setelah close, deal OUT sudah ada di history - hitung netto komisi IN+OUT.
-            net_profit = connector.get_position_net_profit(t_ticket)
-            if net_profit is not None:
-                pre_profit = net_profit
-            print(f"Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
-            # Komisi aktual trade (IN+OUT) buat BEP tolerance dinamis - trade yang
-            # kalah cuma sebesar komisi (0.06 utk 0.01 lot, 0.60 utk 0.10 lot)
-            # dianggap BEP, bukan loss.
-            trade_cost = connector.get_position_total_cost(t_ticket)
-            risk.record_position_closed(t_ticket, pre_profit, trade_cost)
-
-    # 5.5 Multi-Horizon Forecast Context - INFORMATIONAL ONLY (tidak memblokir eksekusi).
-    # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
-    # counter-trend di sini. Konsensus LLM yang menentukan entry.
-
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap; late NY: max 2)
     max_positions = config.get_max_open_positions(risk.is_recovery_mode)
-    if entry_blocked or len(open_positions) >= max_positions:
-        if entry_blocked:
-            print(f"-> Entry ditahan: posisi bot sudah {max_positions} (aggregate semua simbol). Re-evaluator tetap jalan.")
-        else:
-            print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
-            for pos in open_positions:
-                print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-            print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
+    if len(open_positions) >= max_positions:
+        print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
+        for pos in open_positions:
+            print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
+        print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
         return True
 
 
@@ -1609,16 +1553,6 @@ def run_scanner_trading_cycle(cand, risk):
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
     print("\n" + render_candidate_alert_box(cand))
-    try:
-        from src.analytics.macro_strategic_engine import macro_strategic_engine
-        from src.core.cli_theme import render_macro_directive_card
-        macro_dir = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
-        if macro_dir:
-            print("\n" + render_macro_directive_card(macro_dir))
-        else:
-            print(f" {UI.YELLOW}[MACRO NOTICE] Macro directive unavailable for {sym}{UI.RST}")
-    except Exception as e:
-        print(f" {UI.RED}[MACRO CARD ERROR] {e}{UI.RST}")
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
@@ -1696,15 +1630,18 @@ def run_scanner_trading_cycle(cand, risk):
             point = tick_live.get("point", 0.00001)
             ref_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
             
-            # Stale price protection (~4.5s latency guard)
+            # Stale price protection (~8s multi-LLM jury latency guard)
             price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
-            max_allowed_drift = max(15.0, (cand.current_atr_pts or 50) * 0.20)
+            max_allowed_drift = (cand.current_atr_pts or 100) * 0.20
             if entry_type == "market" and price_diff_pts > max_allowed_drift:
-                print(f" {UI.YELLOW}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order.{UI.RST}")
+                print(f"\n {UI.YELLOW}{UI.BOLD}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order agar tidak chase harga.{UI.RST}\n")
                 return False
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
-            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points, symbol=sym, action_tier=action_tier_val)
+            setup_grade_val = getattr(cand, "setup_grade", "GRADE_A")
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
+                sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
+            )
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False
@@ -1970,12 +1907,7 @@ def main():
     acc_info = connector.get_account_info()
     acc_login = f"Login #{acc_info.get('login', 'Live')}" if acc_info else "Connected"
     print(f"\n {UI.GREEN}[OK]{UI.RST} Terhubung ke MT5 Terminal ({acc_login})")
-    
-    # Background post-mortem check for closed trades
-    try:
-        trade_evaluator.evaluator.check_and_evaluate_closed_trades()
-    except Exception:
-        pass
+
     
     # Send startup alert (in background thread so terminal boots instantly)
     import threading
@@ -2094,16 +2026,6 @@ def main():
                         except Exception as e:
                             print(f"[DECISION MEMORY WARNING] update_result: {e}")
 
-                    if new_closed:
-                        try:
-                            _pm_deals = list(new_closed)
-                            threading.Thread(
-                                target=trade_evaluator.evaluator.check_and_evaluate_closed_trades,
-                                args=(_pm_deals,),
-                                daemon=True,
-                            ).start()
-                        except Exception as e:
-                            print(f"[POST-MORTEM ERROR] Gagal evaluasi tiket baru: {e}")
                 except Exception as e:
                     print(f"[CLOSE SYNC ERROR] {e}")
                 

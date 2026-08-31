@@ -19,7 +19,13 @@ from src.indicators.wave_regime import evaluate_wave_regime
 from src.indicators.wave_state import evaluate_wave_state, WaveState, WaveStateResult
 from src.indicators.atlas_dna import calculate_intraday_sl_tp, calculate_dynamic_stations, calculate_dual_grid_stations, get_symbol_step
 from src.analytics.currency_strength import get_csm_delta_for_symbol, evaluate_systemic_basket_lock
-from src.analytics.macro_strategic_engine import macro_strategic_engine, MacroStrategicDirective
+from src.analytics.macro_strategic_engine import (
+    macro_strategic_engine, 
+    MacroStrategicDirective,
+    CLEAN_RESPECT_PAIRS,
+    SWEEP_SPECIALIST_PAIRS,
+    MOMENTUM_RUNNER_PAIRS
+)
 
 logger = logging.getLogger("market_scanner")
 WIB = ZoneInfo("Asia/Jakarta")
@@ -74,7 +80,7 @@ def resolve_permission(direction: Direction, phase: Phase, csm_delta: float = 0.
     return Permission.WAIT
 
 
-def evaluate_judas_sweep_gates(
+def evaluate_universal_sweep_gates(
     signal_type: str,             # 'BUY' or 'SELL'
     dealing_range_pos: float,     # 0.0 (PWL) to 1.0 (PWH)
     dist_to_htf_floor: float,     # Distance in price to PWL or H4 Bullish OB
@@ -87,7 +93,7 @@ def evaluate_judas_sweep_gates(
     macro_trend: str              # 'BULLISH', 'BEARISH', or 'NEUTRAL'
 ) -> Tuple[bool, str]:
     """
-    3-Gate Hierarchical Structural Validator for LONDON_JUDAS_SWEEP.
+    3-Gate Hierarchical Structural Validator for UNIVERSAL_LIQUIDITY_SWEEP.
     Eliminates 'Catching a Falling Knife' when Bearish Delivery from HTF Ceiling is active.
     
     Returns:
@@ -120,19 +126,19 @@ def evaluate_judas_sweep_gates(
     # GATE C: Asymmetric Trend-Aligned Permission
     # =========================================================================
     if macro_trend == 'BEARISH' and signal_type == 'BUY':
-        # In Bearish Macro Trend, Judas BUY is locked unless at extreme PWL floor (DR <= 0.20)
+        # In Bearish Macro Trend, Universal Sweep BUY is locked unless at extreme PWL floor (DR <= 0.20)
         if dealing_range_pos > 0.20 and dist_to_htf_floor > atr_threshold:
             return False, (
                 f"LOCKED BY GATE C [Macro Asymmetry]: Macro trend is BEARISH. "
-                f"Judas BUY locked outside extreme PWL floor (DR {dealing_range_pos*100:.1f}% > 20%)."
+                f"Universal Sweep BUY locked outside extreme PWL floor (DR {dealing_range_pos*100:.1f}% > 20%)."
             )
 
     elif macro_trend == 'BULLISH' and signal_type == 'SELL':
-        # In Bullish Macro Trend, Judas SELL is locked unless at extreme PWH ceiling (DR >= 0.80)
+        # In Bullish Macro Trend, Universal Sweep SELL is locked unless at extreme PWH ceiling (DR >= 0.80)
         if dealing_range_pos < 0.80 and dist_to_htf_ceiling > atr_threshold:
             return False, (
                 f"LOCKED BY GATE C [Macro Asymmetry]: Macro trend is BULLISH. "
-                f"Judas SELL locked outside extreme PWH ceiling (DR {dealing_range_pos*100:.1f}% < 80%)."
+                f"Universal Sweep SELL locked outside extreme PWH ceiling (DR {dealing_range_pos*100:.1f}% < 80%)."
             )
 
     # =========================================================================
@@ -146,7 +152,7 @@ def evaluate_judas_sweep_gates(
                 f"LOCKED BY GATE A [HTF Anchor]: Asian Low sweep at DR {dealing_range_pos*100:.1f}% "
                 f"lacks HTF Support Floor (Requires Deep Discount DR <= 35% or Floor Distance <= {atr_threshold:.5f})."
             )
-        return True, f"PASSED ALL GATES: Valid Judas BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
+        return True, f"PASSED ALL GATES: Valid Universal Sweep BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
 
     elif signal_type == 'SELL':
         is_extreme_premium = dealing_range_pos >= 0.65
@@ -156,9 +162,13 @@ def evaluate_judas_sweep_gates(
                 f"LOCKED BY GATE A [HTF Anchor]: Asian High sweep at DR {dealing_range_pos*100:.1f}% "
                 f"lacks HTF Resistance Ceiling (Requires Extreme Premium DR >= 65% or Ceiling Distance <= {atr_threshold:.5f})."
             )
-        return True, f"PASSED ALL GATES: Valid Judas SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
+        return True, f"PASSED ALL GATES: Valid Universal Sweep SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
 
     return False, "LOCKED: Default Fallback."
+
+
+# Backward compatibility alias
+evaluate_judas_sweep_gates = evaluate_universal_sweep_gates
 
 
 # Point and pip multipliers per category
@@ -643,7 +653,17 @@ class MarketScanner:
                 frvp_summary_str = ""
                 if smc_sig.active_frvp:
                     af = smc_sig.active_frvp
-                    frvp_summary_str = f"POC: {af.get('poc', 0.0):.5f} | VAL: {af.get('val', 0.0):.5f} | VAH: {af.get('vah', 0.0):.5f}"
+                    poc_val = af.get('poc', 0.0)
+                    val_val = af.get('val', 0.0)
+                    vah_val = af.get('vah', 0.0)
+                    cur_atr_safe = max(cur_atr, 1e-5)
+                    mid_px = float(df['close'].iloc[-1]) if len(df) > 0 else 0.0
+                    loc_note = "At POC High Volume Node" if abs(mid_px - poc_val) <= 0.15 * cur_atr_safe else (
+                        "Inside Value Area (VAH-VAL)" if val_val <= mid_px <= vah_val else (
+                            "Above Value Area (Extreme Premium VAH Extension)" if mid_px > vah_val else "Below Value Area (Discount VAL)"
+                        )
+                    )
+                    frvp_summary_str = f"POC: {poc_val:.5f} | VAL: {val_val:.5f} | VAH: {vah_val:.5f} ({loc_note})"
 
                 # ── H1 CLUSTER ZONE & MULTI-TOUCH CALCULATION (40 bars) ──
                 lb_bars = min(40, len(df))
@@ -1064,15 +1084,20 @@ class MarketScanner:
                                 close_above_ema20=(mid > ema20_val),
                                 macro_trend=macro_trend_str
                             )
+                            clean_s = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+                            is_sweep_pair = clean_s in SWEEP_SPECIALIST_PAIRS
+                            sweep_buffer = (8.0 * pt * 10) if is_sweep_pair else 0.0
+
                             if not gate_ok:
                                 logger.debug(f"[SWEEP SELL GATE] {sym} SKIP: {gate_reason}")
                             else:
                                 is_bull_breakout = (c_qual['direction'] == 'bullish' and c_qual['body_ratio'] >= 0.50 and c_qual['upper_wick_pct'] < 0.20 and mid > ref_top)
-                                has_rejection = (mid <= ref_top) or (c_qual['max_upper_wick'] >= 0.25) or (c_qual['sweep_side'] == 'top') or c_qual['is_bearish_engulf']
+                                # Anti-Premature Filter: Require rejection wick or sweep confirmation
+                                has_rejection = (mid <= ref_top) or (c_qual['max_upper_wick'] >= 0.20) or (c_qual['sweep_side'] == 'top') or c_qual['is_bearish_engulf']
                                 
                                 if has_rejection and not is_bull_breakout:
-                                    # Delayed Limit Retest Entry at discount/retest zone
-                                    limit_entry = min(ref_top, mid + (0.20 * atr_price_val)) - (spread_pts * 0.5 * pt)
+                                    # Delayed Limit Retest Entry at discount/retest zone with empirical sweep offset
+                                    limit_entry = min(ref_top + sweep_buffer, mid + (0.20 * atr_price_val)) - (spread_pts * 0.5 * pt)
                                     sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
                                         entry_price=limit_entry,
@@ -1080,7 +1105,10 @@ class MarketScanner:
                                         origin_level=ref_top,
                                         atr_h1=atr_pts * pt,
                                         pwl=pwl_val,
-                                        pwh=pwh_val
+                                        pwh=pwh_val,
+                                        rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                        sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                        spread_pts=spread_pts
                                     )
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
@@ -1160,15 +1188,20 @@ class MarketScanner:
                                 close_above_ema20=(mid > macro.get('ema20', mid)),
                                 macro_trend=macro_trend_str
                             )
+                            clean_s = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+                            is_sweep_pair = clean_s in SWEEP_SPECIALIST_PAIRS
+                            sweep_buffer = (8.0 * pt * 10) if is_sweep_pair else 0.0
+
                             if not gate_ok:
                                 logger.debug(f"[SWEEP BUY GATE] {sym} SKIP: {gate_reason}")
                             else:
                                 is_bear_breakdown = (c_qual['direction'] == 'bearish' and c_qual['body_ratio'] >= 0.50 and c_qual['lower_wick_pct'] < 0.20 and mid < ref_bot)
-                                has_rejection = (mid >= ref_bot) or (c_qual['max_lower_wick'] >= 0.25) or (c_qual['sweep_side'] == 'bottom') or c_qual['is_bullish_engulf']
+                                # Anti-Premature Filter: Require rejection wick or sweep confirmation
+                                has_rejection = (mid >= ref_bot) or (c_qual['max_lower_wick'] >= 0.20) or (c_qual['sweep_side'] == 'bottom') or c_qual['is_bullish_engulf']
                                 
                                 if has_rejection and not is_bear_breakdown:
-                                    # Delayed Limit Retest Entry at premium/retest zone
-                                    limit_entry = max(ref_bot, mid - (0.20 * atr_price_val)) + (spread_pts * 0.5 * pt)
+                                    # Delayed Limit Retest Entry at premium/retest zone with empirical sweep offset
+                                    limit_entry = max(ref_bot - sweep_buffer, mid - (0.20 * atr_price_val)) + (spread_pts * 0.5 * pt)
                                     sl_tp = calculate_intraday_sl_tp(
                                         symbol=sym,
                                         entry_price=limit_entry,
@@ -1176,7 +1209,10 @@ class MarketScanner:
                                         origin_level=ref_bot,
                                         atr_h1=atr_pts * pt,
                                         pwl=pwl_val,
-                                        pwh=pwh_val
+                                        pwh=pwh_val,
+                                        rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                        sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                        spread_pts=spread_pts
                                     )
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
@@ -1258,7 +1294,10 @@ class MarketScanner:
                                 origin_level=base_floor,
                                 atr_h1=atr_pts * pt,
                                 pwl=macro.get('pwl', 0.0),
-                                pwh=macro.get('pwh', 0.0)
+                                pwh=macro.get('pwh', 0.0),
+                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                spread_pts=spread_pts
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
@@ -1336,7 +1375,10 @@ class MarketScanner:
                                 origin_level=base_floor,
                                 atr_h1=atr_pts * pt,
                                 pwl=macro.get('pwl', 0.0),
-                                pwh=macro.get('pwh', 0.0)
+                                pwh=macro.get('pwh', 0.0),
+                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                spread_pts=spread_pts
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
@@ -1422,7 +1464,10 @@ class MarketScanner:
                                 origin_level=c_res,
                                 atr_h1=atr_val,
                                 pwl=macro.get('pwl', 0.0),
-                                pwh=macro.get('pwh', 0.0)
+                                pwh=macro.get('pwh', 0.0),
+                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                spread_pts=spread_pts
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
@@ -1502,7 +1547,10 @@ class MarketScanner:
                                 origin_level=c_sup,
                                 atr_h1=atr_val,
                                 pwl=macro.get('pwl', 0.0),
-                                pwh=macro.get('pwh', 0.0)
+                                pwh=macro.get('pwh', 0.0),
+                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                spread_pts=spread_pts
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']

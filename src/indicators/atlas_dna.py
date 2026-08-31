@@ -119,59 +119,91 @@ def calculate_dual_grid_stations(symbol: str, current_price: float) -> dict:
 
 
 def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int, 
-                             origin_level: float, atr_h1: float, pwl: float = None, pwh: float = None) -> dict:
+                             origin_level: float, atr_h1: float, pwl: float = None, pwh: float = None,
+                             rbs: float = None, sbr: float = None, spread_pts: float = 0.0) -> dict:
     """
-    Calculates precise intraday Stop Loss and Take Profit:
-    - SL: Anchored behind origin level + Anti-Wick Buffer (0.35x ATR H1) capped by Safety Ceiling
-    - TP: Target at immediate next sub-station / station with minimum R:R >= 1.25:1
+    Calculates precise intraday Stop Loss and Take Profit anchored to Physical Stations:
+    1. Primary Target Station: Real Structural RBS (for SELL) or SBR (for BUY)
+    2. Secondary Target Station: Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
+    - Front-running pad: [Spread + 0.15x ATR] deducted from target station
+    - Realistic Intraday R:R: Min 1.25:1 to Max 2.5:1 (Never stretches unrealistically to 100+ pips)
     """
     step = get_symbol_step(symbol)
+    sub_step = step * 0.50 # 50-pip Sub-Station
     digits = 2 if 'XAU' in symbol else (3 if 'JPY' in symbol else 5)
     stations = calculate_dynamic_stations(symbol, entry_price)
     
-    # Maximum SL Safety Ceiling (160 pts FX, 2.5x ATR Gold)
     pt = 0.001 if 'JPY' in symbol else (0.01 if 'XAU' in symbol or 'BTC' in symbol else 0.00001)
-    max_sl_dist = min(2.0 * atr_h1, 160 * pt) if 'XAU' not in symbol else (2.5 * atr_h1)
+    max_sl_dist = 2.5 * atr_h1 if atr_h1 > 0 else (160 * pt)
+    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
     
     if direction == 1: # BUY
-        # SL behind support origin level
-        sl_anchor = origin_level if origin_level and origin_level < entry_price else (entry_price - 1.2 * atr_h1)
+        # SL behind support origin level / RBS
+        sl_anchor = origin_level if origin_level and origin_level < entry_price else (
+            rbs if rbs and rbs < entry_price else (entry_price - 1.2 * atr_h1)
+        )
         sl = sl_anchor - (0.35 * atr_h1)
         
         # Apply Safety Ceiling
         if (entry_price - sl) > max_sl_dist:
             sl = entry_price - max_sl_dist
-        risk = max(abs(entry_price - sl), 0.5 * atr_h1)
+        risk = max(abs(entry_price - sl), 0.50 * atr_h1 if atr_h1 > 0 else 15 * pt)
         
-        # Candidate TP: Next upper station or 50% weekly equilibrium
-        target_station = stations["upper_station"] if stations["upper_station"] > entry_price else (entry_price + step)
-        if pwh and pwl and pwh > pwl:
+        # TARGET HIERARCHY: 1. SBR Ceiling -> 2. Psychological Sub-Station (50-pip)
+        target_station = None
+        if sbr and sbr > entry_price + 1.25 * risk and (sbr - entry_price) <= 3.0 * risk:
+            target_station = sbr
+        elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 > entry_price and abs(weekly_50 - entry_price) >= 1.25 * risk:
+            if weekly_50 > entry_price + 1.25 * risk and (weekly_50 - entry_price) <= 3.0 * risk:
                 target_station = weekly_50
                 
-        tp_dist = max(risk * 1.5, abs(target_station - entry_price))
-        tp = entry_price + tp_dist
+        if target_station is None:
+            # Nearest 50-pip Psychological Sub-Station
+            nearest_psych = round((entry_price + 1.35 * risk) / sub_step) * sub_step
+            if nearest_psych <= entry_price + 1.15 * risk:
+                nearest_psych = round((entry_price + 1.80 * risk) / sub_step) * sub_step
+            target_station = nearest_psych
+            
+        tp_target = target_station - front_pad
+        # Enforce realistic intraday clamp (min 1.25x risk, max 2.5x risk / 1.8x ATR)
+        min_tp = entry_price + (1.25 * risk)
+        max_tp = entry_price + min(2.50 * risk, max(1.8 * atr_h1, 35 * pt * 10))
+        tp = max(min_tp, min(tp_target, max_tp))
             
     else: # SELL
-        # SL behind resistance origin level
-        sl_anchor = origin_level if origin_level and origin_level > entry_price else (entry_price + 1.2 * atr_h1)
+        # SL behind resistance origin level / SBR
+        sl_anchor = origin_level if origin_level and origin_level > entry_price else (
+            sbr if sbr and sbr > entry_price else (entry_price + 1.2 * atr_h1)
+        )
         sl = sl_anchor + (0.35 * atr_h1)
         
         # Apply Safety Ceiling
         if (sl - entry_price) > max_sl_dist:
             sl = entry_price + max_sl_dist
-        risk = max(abs(sl - entry_price), 0.5 * atr_h1)
+        risk = max(abs(sl - entry_price), 0.50 * atr_h1 if atr_h1 > 0 else 15 * pt)
         
-        # Candidate TP: Next lower station or 50% weekly equilibrium
-        target_station = stations["lower_station"] if stations["lower_station"] < entry_price else (entry_price - step)
-        if pwh and pwl and pwh > pwl:
+        # TARGET HIERARCHY: 1. RBS Floor -> 2. Psychological Sub-Station (50-pip)
+        target_station = None
+        if rbs and rbs < entry_price - 1.25 * risk and (entry_price - rbs) <= 3.0 * risk:
+            target_station = rbs
+        elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 < entry_price and abs(entry_price - weekly_50) >= 1.25 * risk:
+            if weekly_50 < entry_price - 1.25 * risk and (entry_price - weekly_50) <= 3.0 * risk:
                 target_station = weekly_50
                 
-        tp_dist = max(risk * 1.5, abs(entry_price - target_station))
-        tp = entry_price - tp_dist
+        if target_station is None:
+            # Nearest 50-pip Psychological Sub-Station
+            nearest_psych = round((entry_price - 1.35 * risk) / sub_step) * sub_step
+            if nearest_psych >= entry_price - 1.15 * risk:
+                nearest_psych = round((entry_price - 1.80 * risk) / sub_step) * sub_step
+            target_station = nearest_psych
+            
+        tp_target = target_station + front_pad
+        # Enforce realistic intraday clamp (min 1.25x risk, max 2.5x risk / 1.8x ATR)
+        min_tp = entry_price - (1.25 * risk)
+        max_tp = entry_price - min(2.50 * risk, max(1.8 * atr_h1, 35 * pt * 10))
+        tp = min(min_tp, max(tp_target, max_tp))
             
     rr = abs(tp - entry_price) / max(risk, 1e-5)
     
