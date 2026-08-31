@@ -200,8 +200,8 @@ class TestMarketScanner(unittest.TestCase):
         self.assertIn("max_upper_wick", res)
         self.assertEqual(res["direction"], "bearish")
 
-    def test_judas_sweep_anti_waterfall_rejection(self):
-        """Ensure falling knife / bearish waterfall is rejected in Judas Sweep, while real rejection wick is accepted."""
+    def test_universal_sweep_anti_waterfall_rejection(self):
+        """Ensure falling knife / bearish waterfall is rejected in Universal Sweep, while real rejection wick is accepted."""
         # 1. Bearish waterfall (falling knife with 0 lower wick breaking below Asian low 0.9380)
         waterfall_rates = [
             {'open': 0.9400, 'high': 0.9410, 'low': 0.9380, 'close': 0.9385, 'tick_volume': 100},
@@ -217,7 +217,7 @@ class TestMarketScanner(unittest.TestCase):
         self.assertTrue(is_bear_breakdown, "Waterfall marubozu should be flagged as bear breakdown")
         self.assertFalse(has_rejection, "Waterfall should not have valid rejection confirmation")
 
-        # 2. Real Judas Sweep Reversal (Hammer candle with 60% lower wick sweeping Asian low and bouncing)
+        # 2. Real Universal Sweep Reversal (Hammer candle with 60% lower wick sweeping Asian low and bouncing)
         sweep_rates = [
             {'open': 0.9400, 'high': 0.9410, 'low': 0.9380, 'close': 0.9385, 'tick_volume': 100},
             {'open': 0.9380, 'high': 0.9382, 'low': 0.9350, 'close': 0.9378, 'tick_volume': 100} # Strong pinbar / hammer
@@ -379,10 +379,10 @@ class TestMarketScanner(unittest.TestCase):
         sl_pts, tp_pts, ok, reason = _apply_sltp_rules(50, 100, symbol="USDJPY-ECNc")
         self.assertTrue(ok)
         self.assertGreaterEqual(sl_pts, 50)
-    def test_judas_sweep_gates_locked_during_bearish_delivery(self):
-        """Verify Gate B locks Judas BUY when price is in Bearish Delivery from PWH Ceiling."""
-        from src.analytics.market_scanner import evaluate_judas_sweep_gates
-        allowed, reason = evaluate_judas_sweep_gates(
+    def test_universal_sweep_gates_locked_during_bearish_delivery(self):
+        """Verify Gate B locks Universal Sweep BUY when price is in Bearish Delivery from PWH Ceiling."""
+        from src.analytics.market_scanner import evaluate_universal_sweep_gates
+        allowed, reason = evaluate_universal_sweep_gates(
             signal_type='BUY',
             dealing_range_pos=0.65,
             dist_to_htf_floor=0.0050,
@@ -398,10 +398,10 @@ class TestMarketScanner(unittest.TestCase):
         self.assertIn("GATE B", reason)
         self.assertIn("Bearish Delivery", reason)
 
-    def test_judas_sweep_gates_locked_without_htf_anchor(self):
-        """Verify Gate A locks Judas BUY when sweep occurs in mid-range without HTF Floor anchor."""
-        from src.analytics.market_scanner import evaluate_judas_sweep_gates
-        allowed, reason = evaluate_judas_sweep_gates(
+    def test_universal_sweep_gates_locked_without_htf_anchor(self):
+        """Verify Gate A locks Universal Sweep BUY when sweep occurs in mid-range without HTF Floor anchor."""
+        from src.analytics.market_scanner import evaluate_universal_sweep_gates
+        allowed, reason = evaluate_universal_sweep_gates(
             signal_type='BUY',
             dealing_range_pos=0.55,  # Mid range
             dist_to_htf_floor=0.0060,
@@ -417,10 +417,10 @@ class TestMarketScanner(unittest.TestCase):
         self.assertIn("GATE A", reason)
         self.assertIn("HTF Support Floor", reason)
 
-    def test_judas_sweep_gates_allowed_at_htf_deep_discount(self):
-        """Verify Judas BUY passes when anchored at HTF Deep Discount Floor (DR <= 0.35)."""
-        from src.analytics.market_scanner import evaluate_judas_sweep_gates
-        allowed, reason = evaluate_judas_sweep_gates(
+    def test_universal_sweep_gates_allowed_at_htf_deep_discount(self):
+        """Verify Universal Sweep BUY passes when anchored at HTF Deep Discount Floor (DR <= 0.35)."""
+        from src.analytics.market_scanner import evaluate_universal_sweep_gates
+        allowed, reason = evaluate_universal_sweep_gates(
             signal_type='BUY',
             dealing_range_pos=0.28,  # Deep Discount <= 35%
             dist_to_htf_floor=0.0002,  # Very close to floor

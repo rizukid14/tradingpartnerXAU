@@ -123,7 +123,7 @@ def detect(
         evidence.append(f"MATURE_SQUEEZE sqz={eff_sqz}b → moderate breakout bias")
     else:  # YOUNG_OSCILLATION
         score_sweep += 15
-        evidence.append(f"YOUNG_OSCILLATION → elevated Judas sweep probability")
+        evidence.append(f"YOUNG_OSCILLATION → elevated liquidity sweep probability")
 
     # ── 2. Candle Quality & Breakout Sequence ──────────────────────────────────
     bars_dicts = [{"o": opens[i], "h": highs[i], "l": lows[i], "c": closes[i]}

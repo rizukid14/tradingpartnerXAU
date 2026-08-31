@@ -6,9 +6,9 @@ Combines:
 3. LazyBear Squeeze Momentum Integration
 
 Classifies Market Regime:
-- YOUNG_OSCILLATION (< 24h): High-probability intraday sweeps (Judas Sweep H1 Active).
+- YOUNG_OSCILLATION (< 24h): High-probability intraday sweeps (Universal Sweep H1 Active).
 - MATURE_SQUEEZE (24-72h): Compression building, requires H4 SL anchor.
-- SUPER_COMPRESSION_THRUST (> 72h): Wave 4 Triangle -> PROHIBIT Judas Sweep, Wave 5 Breakout.
+- SUPER_COMPRESSION_THRUST (> 72h): Wave 4 Triangle -> PROHIBIT Universal Sweep, Wave 5 Breakout.
 
 Changelog:
 - FIX: range_age_bars uses MOST RECENT extreme (min distance), not max index.
@@ -252,16 +252,16 @@ def evaluate_wave_regime(
 
     if is_super:
         regime      = "SUPER_COMPRESSION_THRUST"
-        allow_judas = False
+        allow_universal = False
         sl_mode     = "BREAKOUT_ONLY"
         tri_note    = ", Triangle" if is_triangle else ""
         narrative   = (
             f"Super-Kompresi Wave 4 jenuh ({range_age_hours}h, sqz {effective_sqz_bars} bars{tri_note}). "
-            "Dilarang Judas Sweep! Bersiap Wave 5 Breakout."
+            "Dilarang Universal Sweep! Bersiap Wave 5 Breakout."
         )
     elif is_mature:
         regime      = "MATURE_SQUEEZE"
-        allow_judas = True
+        allow_universal = True
         sl_mode     = "H4_STRUCTURAL_EXPANSION"
         narrative   = (
             f"Kompresi menengah ({range_age_hours}h, sqz {effective_sqz_bars} bars). "
@@ -269,15 +269,15 @@ def evaluate_wave_regime(
         )
     else:
         regime      = "YOUNG_OSCILLATION"
-        allow_judas = True
+        allow_universal = True
         sl_mode     = "STANDARD"
         narrative   = (
             f"Wave pendek aktif ({range_age_hours}h). "
-            "Osilasi sesi normal, Judas Sweep H1 valid."
+            "Osilasi sesi normal, Universal Sweep H1 valid."
         )
 
     if is_grind:
-        allow_judas = False
+        allow_universal = False
         narrative  += " [BLOCKED: Momentum SQZ Bearish Grind aktif]."
 
     return {
@@ -287,7 +287,8 @@ def evaluate_wave_regime(
         "effective_sqz_bars":      effective_sqz_bars,
         "is_triangle_compression": is_triangle,
         "squeeze_state":           sqz_info,
-        "allow_judas_sweep":       allow_judas,
+        "allow_universal_sweep":   allow_universal,
+        "allow_judas_sweep":       allow_universal,
         "required_sl_mode":        sl_mode,
         "narrative":               narrative,
     }

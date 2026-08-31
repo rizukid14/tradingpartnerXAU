@@ -52,7 +52,7 @@ Untuk mencegah kerancuan dan menjaga konsistensi di seluruh antarmuka (Terminal 
 | 🧱 **`OB (Order Block)`** | Blok Pesanan Institusi | Lilin berlawanan terakhir sebelum pergerakan impulsif besar yang belum termitigasi (*Unmitigated OB*). | Titik jangkar penempatan SL fisik teraman. |
 | 🕳️ **`FVG`** | **Fair Value Gap** / Imbalance | Celah ketidakseimbangan harga antara 3 lilin beruntun yang menjadi area magnet harga. | Digunakan sebagai target Take Profit alami (TP1 / TP2). |
 | ⚡ **`BOS & CHoCH`** | Break of Structure / Change of Character | Penembusan level swing terluar searah tren (**BOS**) atau pembalikan struktur awal (**CHoCH**). | Konfirmasi pergeseran momentum institusi. |
-| 🎯 **`EQH / EQL`** | Equal Highs / Equal Lows | Puncak atau lembah kembar tempat berkumpulnya kolam likuiditas stop-loss trader ritel. | Target empuk mekanisme sapuan likuiditas (*Judas Sweep*). |
+| 🎯 **`EQH / EQL`** | Equal Highs / Equal Lows | Puncak atau lembah kembar tempat berkumpulnya kolam likuiditas stop-loss trader ritel. | Target empuk mekanisme sapuan likuiditas (*Universal Sweep*). |
 | 📊 **`FRVP`** | **Fixed Range Volume Profile** | Profil distribusi volume transaksi pada rentang harga tertentu untuk menemukan konsentrasi transaksi institusi. | Sinergi dengan SMC untuk menyaring 59.2% sinyal palsu. |
 | 🔴 **`POC`** | **Point of Control** (FRVP) | Level harga tunggal dengan volume transaksi terpadat pada rentang yang dianalisis. | Area magnet harga dan lantai pantulan terkuat. |
 | 📐 **`VAH / VAL`** | Value Area High / Low (70% Volume) | Batas atas (VAH) dan bawah (VAL) yang mencakup 70% total volume lelang lelang institusi. | Area *Mean-Reversion* saat harga berada di luar rentang nilai wajar. |
@@ -73,7 +73,7 @@ Untuk mencegah kerancuan dan menjaga konsistensi di seluruh antarmuka (Terminal 
 ### 5. Trio Mekanisme Radar, Eksekusi & Manajemen Risiko
 | Istilah Resmi | Komponen & Kepanjangan | Definisi & Makna Teknis | Parameter & Ambang Batas |
 |---|---|---|---|
-| 🗡️ **`M1 (Judas Sweep)`** | London Judas Swing Failure Pattern | Mekanisme perangkap likuiditas dengan memanfaatkan manipulasi false-breakout di Asian H/L atau PDH/PDL. | Sweep $\ge 0.15\times\text{ATR}$ + Reclaim $\le 3\text{ bar}$ + Wick $\ge 35\%$. |
+| 🗡️ **`M1 (Universal Sweep)`** | Universal Liquidity Sweep SFP | Mekanisme perangkap likuiditas dengan memanfaatkan manipulasi false-breakout di Asian H/L, EQH/EQL, atau PDH/PDL. | Sweep $\ge 0.15\times\text{ATR}$ + Reclaim $\le 3\text{ bar}$ + Wick $\ge 35\%$. |
 | 🎣 **`M2 (Pullback Retest)`** | Trend-Aligned Pullback Limit | Mekanisme entri berdiskon searah tren makro dengan memasang *Delayed Limit Order* saat retest ke EMA20. | Limit Entry di $\text{Mid} \mp (0.20\times\text{ATR})$ di $DR \le 0.50$. |
 | 🏰 **`M3 (Weekly Wall)`** | HTF Weekly Wall Reversal | Mekanisme pembalikan arah saat harga membentur dinding ekstrim mingguan/bulanan (PWH/PWL/MN1). | Target pengantaran stasiun ke 50% Equilibrium koridor. |
 | 🛡️ **`Baseline Floor SL`** | Intraday SL (Anti-Hunt) | Level Stop Loss fisik berbasis struktur support/resistance terdekat + buffer anti-wick + safety floor ATR. | `SL = Anchor \mp (0.35\times\text{ATR} + \text{Spread})` |
@@ -114,7 +114,7 @@ Bot trading beroperasi dengan arsitektur **2-Stage Quant Funnel** yang memisahka
 +-----------------------------------------------------------------------------------+
 |               STAGE 1: FAST QUANTITATIVE RADAR (Lokal di MT5 • 60 Detik • 0 Token)|
 |  Universe: 26 Simbol Paralel | Sockets: MN1, W1, D1, H4, H1, M30                  |
-|  [M1: Judas Sweep SFP]  [M2: Pullback Retest]    [M3: Multi-Touch Breakout Retest]|
+|  [M1: Universal Sweep SFP]  [M2: Pullback Retest]    [M3: Multi-Touch Breakout Retest]|
 |  [BUY: Diskon + RBS]    [SELL: Premium + SBR]    [CSM 8-Basket Dual-Horizon Flow] |
 |  [Wave State FSM: ARM / GO / WAIT / LOCK]       [MSE 5-Tier Action Matrix]        |
 +-----------------------------------------+-----------------------------------------+

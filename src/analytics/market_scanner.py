@@ -80,7 +80,7 @@ def resolve_permission(direction: Direction, phase: Phase, csm_delta: float = 0.
     return Permission.WAIT
 
 
-def evaluate_judas_sweep_gates(
+def evaluate_universal_sweep_gates(
     signal_type: str,             # 'BUY' or 'SELL'
     dealing_range_pos: float,     # 0.0 (PWL) to 1.0 (PWH)
     dist_to_htf_floor: float,     # Distance in price to PWL or H4 Bullish OB
@@ -93,7 +93,7 @@ def evaluate_judas_sweep_gates(
     macro_trend: str              # 'BULLISH', 'BEARISH', or 'NEUTRAL'
 ) -> Tuple[bool, str]:
     """
-    3-Gate Hierarchical Structural Validator for LONDON_JUDAS_SWEEP.
+    3-Gate Hierarchical Structural Validator for UNIVERSAL_LIQUIDITY_SWEEP.
     Eliminates 'Catching a Falling Knife' when Bearish Delivery from HTF Ceiling is active.
     
     Returns:
@@ -126,19 +126,19 @@ def evaluate_judas_sweep_gates(
     # GATE C: Asymmetric Trend-Aligned Permission
     # =========================================================================
     if macro_trend == 'BEARISH' and signal_type == 'BUY':
-        # In Bearish Macro Trend, Judas BUY is locked unless at extreme PWL floor (DR <= 0.20)
+        # In Bearish Macro Trend, Universal Sweep BUY is locked unless at extreme PWL floor (DR <= 0.20)
         if dealing_range_pos > 0.20 and dist_to_htf_floor > atr_threshold:
             return False, (
                 f"LOCKED BY GATE C [Macro Asymmetry]: Macro trend is BEARISH. "
-                f"Judas BUY locked outside extreme PWL floor (DR {dealing_range_pos*100:.1f}% > 20%)."
+                f"Universal Sweep BUY locked outside extreme PWL floor (DR {dealing_range_pos*100:.1f}% > 20%)."
             )
 
     elif macro_trend == 'BULLISH' and signal_type == 'SELL':
-        # In Bullish Macro Trend, Judas SELL is locked unless at extreme PWH ceiling (DR >= 0.80)
+        # In Bullish Macro Trend, Universal Sweep SELL is locked unless at extreme PWH ceiling (DR >= 0.80)
         if dealing_range_pos < 0.80 and dist_to_htf_ceiling > atr_threshold:
             return False, (
                 f"LOCKED BY GATE C [Macro Asymmetry]: Macro trend is BULLISH. "
-                f"Judas SELL locked outside extreme PWH ceiling (DR {dealing_range_pos*100:.1f}% < 80%)."
+                f"Universal Sweep SELL locked outside extreme PWH ceiling (DR {dealing_range_pos*100:.1f}% < 80%)."
             )
 
     # =========================================================================
@@ -152,7 +152,7 @@ def evaluate_judas_sweep_gates(
                 f"LOCKED BY GATE A [HTF Anchor]: Asian Low sweep at DR {dealing_range_pos*100:.1f}% "
                 f"lacks HTF Support Floor (Requires Deep Discount DR <= 35% or Floor Distance <= {atr_threshold:.5f})."
             )
-        return True, f"PASSED ALL GATES: Valid Judas BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
+        return True, f"PASSED ALL GATES: Valid Universal Sweep BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
 
     elif signal_type == 'SELL':
         is_extreme_premium = dealing_range_pos >= 0.65
@@ -162,9 +162,13 @@ def evaluate_judas_sweep_gates(
                 f"LOCKED BY GATE A [HTF Anchor]: Asian High sweep at DR {dealing_range_pos*100:.1f}% "
                 f"lacks HTF Resistance Ceiling (Requires Extreme Premium DR >= 65% or Ceiling Distance <= {atr_threshold:.5f})."
             )
-        return True, f"PASSED ALL GATES: Valid Judas SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
+        return True, f"PASSED ALL GATES: Valid Universal Sweep SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
 
     return False, "LOCKED: Default Fallback."
+
+
+# Backward compatibility alias
+evaluate_judas_sweep_gates = evaluate_universal_sweep_gates
 
 
 # Point and pip multipliers per category

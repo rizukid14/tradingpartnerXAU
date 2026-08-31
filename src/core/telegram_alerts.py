@@ -470,7 +470,7 @@ def alert_bot_started():
             "----------------------------------------\n"
             "🛡️ *Proteksi & Filter Otomatis:*\n"
             "• *Stage 1 Radar*: `60s Sweep on SMC Levels & Dealing Range`\n"
-            "• *5 Core Archetypes*: `M1 Judas + M2 Trend Pullback + M3 ADR + M4 SMC + M5 Retest`\n"
+            "• *5 Core Archetypes*: `M1 Universal Sweep + M2 Trend Pullback + M3 HTF Wall + M4 SMC + M5 Retest`\n"
             "• *Dealing Range*: `100-bar H1 (Discount <=38% | Premium >=62%)`\n"
             "• *News Shield*: `TradingView News Window Guard Active (±6h)`\n"
             "• *Trailing Stop*: `ON (75% TP | Dist: 0.5x ATR, floor 60 pts)`\n"
