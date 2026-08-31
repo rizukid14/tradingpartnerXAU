@@ -18,7 +18,7 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
-def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup_grade=None):
+def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup_grade=None, candidate=None):
     """
     SL/TP final sesuai config.TP_SL_RULES, 5-Tier Action Matrix, dan Setup Quality Grade.
     Returns: (sl_points, tp_points, ok: bool, reason: str)
@@ -138,8 +138,22 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             tp_points = min_tp
         elif tp_points > max_tp:
             tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""
-            _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL{tier_msg}. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
-            tp_points = max_tp
+            
+            # Fallback ke Quant Station TP asli jika tersedia dan berada dalam batas wajar
+            cand_tp_pts = getattr(candidate, 'suggested_tp_pts', 0) if candidate else 0
+            if not cand_tp_pts and candidate and getattr(candidate, 'suggested_tp', 0.0) and getattr(candidate, 'trigger_price', 0.0):
+                try:
+                    pt_val = si.point if si and si.point else (0.001 if "JPY" in str(sym) else (0.01 if "XAU" in str(sym) or "BTC" in str(sym) else 0.00001))
+                    cand_tp_pts = int(round(abs(candidate.suggested_tp - candidate.trigger_price) / pt_val))
+                except Exception:
+                    cand_tp_pts = 0
+            
+            if cand_tp_pts > 0 and min_tp <= cand_tp_pts <= int(max_tp * 1.20):
+                _last_sltp_adjustments.append(f"TP {tp_points} pts melebihi batas. Fallback ke Quant Station TP ({cand_tp_pts} pts | R:R {cand_tp_pts/sl_points:.2f}:1).")
+                tp_points = cand_tp_pts
+            else:
+                _last_sltp_adjustments.append(f"TP {tp_points} pts > {max_rr}x SL{tier_msg}. Membatasi TP ke {max_tp} pts (R:R {max_rr}:1).")
+                tp_points = max_tp
 
         try:
             account = mt5.account_info() if 'mt5' in dir() else None

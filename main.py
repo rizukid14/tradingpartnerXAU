@@ -1697,7 +1697,10 @@ def run_scanner_trading_cycle(cand, risk):
                 return False
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
-            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(sl_points, tp_points, symbol=sym, action_tier=action_tier_val)
+            setup_grade_val = getattr(cand, "setup_grade", "GRADE_A")
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
+                sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
+            )
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 return False
