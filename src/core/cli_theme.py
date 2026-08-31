@@ -775,10 +775,15 @@ def render_macro_directive_card(directive, width=95):
     seq_list = getattr(directive, 'interaction_sequence', [])
     seq_str = " -> ".join(seq_list[-4:]) if seq_list else "None (Initial Observation)"
 
+    f1_sc = getattr(directive, 'f1_density_score', 0.0)
+    c1_sc = getattr(directive, 'c1_density_score', 0.0)
+    f1_tag = getattr(directive, 'f1_fortress_tag', 'MODERATE')
+    c1_tag = getattr(directive, 'c1_fortress_tag', 'MODERATE')
+
     state_color = c_green if "FLOOR" in m_state else (c_red if "CEILING" in m_state or "BREAKDOWN" in m_state else (c_yellow if "BREAKOUT" in m_state else c_purple))
     lines.append(f" {c_bold}{c_cyan}[+] BARRIER CHAMBER & STATE MACHINE PATHWAY{c_rst}")
     lines.append(f"  • {c_white}Active Market State{c_rst}        : {state_color}{c_bold}[{m_state}]{c_rst} (Chamber Range: {c_yellow}{ch_pos:.0%}{c_rst})")
-    lines.append(f"  • {c_white}Dealing Chamber Bounds{c_rst}     : F1 {c_green}{fmt.format(f1_val)}{c_rst} <---> C1 {c_red}{fmt.format(c1_val)}{c_rst}")
+    lines.append(f"  • {c_white}Dealing Chamber Bounds{c_rst}     : F1 {c_green}{fmt.format(f1_val)}{c_rst} ({f1_tag} {f1_sc:.1f}p) <---> C1 {c_red}{fmt.format(c1_val)}{c_rst} ({c1_tag} {c1_sc:.1f}p)")
     lines.append(f"  • {c_white}Deep Target Boundaries{c_rst}     : F2 {c_gray}{fmt.format(f2_val)}{c_rst} │ C2 {c_gray}{fmt.format(c2_val)}{c_rst}")
     lines.append(f"  • {c_white}Interaction Sequence{c_rst}       : {c_cyan}{seq_str}{c_rst}")
     lines.append("---")

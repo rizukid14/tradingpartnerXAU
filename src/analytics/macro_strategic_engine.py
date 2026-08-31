@@ -84,6 +84,10 @@ class MacroStrategicDirective:
     immediate_floor_f1: float = 0.0
     deep_target_floor_f2: float = 0.0
     deep_target_ceiling_c2: float = 0.0
+    c1_density_score: float = 0.0
+    f1_density_score: float = 0.0
+    c1_fortress_tag: str = ""
+    f1_fortress_tag: str = ""
     chamber_position_pct: float = 0.50
     retest_touch_count: int = 1
     interaction_sequence: List[str] = field(default_factory=list)
@@ -115,6 +119,59 @@ class MacroStrategicEngine:
     Pure Quant Hierarchical State Engine:
     Computes top-down macro directives and structural zones across 6 native MT5 timeframes.
     """
+
+    @staticmethod
+    def _cluster_merge(
+        elements: List[Tuple[float, float, str]],
+        cluster_tol: float,
+        digits: int,
+        is_ascending: bool = True
+    ) -> List[Tuple[float, float, str]]:
+        """
+        Groups nearby barrier elements within cluster_tol into weighted composite clusters.
+        Returns: List of (composite_price, total_score, composite_tags_str)
+        """
+        if not elements:
+            return []
+        sorted_elems = sorted(elements, key=lambda x: x[0], reverse=not is_ascending)
+        clusters: List[Dict[str, Any]] = []
+
+        for p, sc, tag in sorted_elems:
+            merged = False
+            for cl in clusters:
+                if abs(cl['rep_price'] - p) <= cluster_tol:
+                    cl['prices'].append((p, sc))
+                    cl['total_score'] += sc
+                    cl['tags'].append(tag)
+                    total_w = sum(w for _, w in cl['prices'])
+                    cl['rep_price'] = sum(pr * w for pr, w in cl['prices']) / max(total_w, 1e-6)
+                    merged = True
+                    break
+            if not merged:
+                clusters.append({
+                    'rep_price': p,
+                    'total_score': sc,
+                    'prices': [(p, sc)],
+                    'tags': [tag]
+                })
+
+        res = []
+        for cl in clusters:
+            comp_price = round(cl['rep_price'], digits)
+            score = round(cl['total_score'], 1)
+            unique_tags = sorted(list(set(cl['tags'])))
+            tag_str = "+".join(unique_tags)
+            res.append((comp_price, score, tag_str))
+
+        res.sort(key=lambda x: x[0], reverse=not is_ascending)
+        return res
+
+    @staticmethod
+    def _get_fortress_tag(score: float) -> str:
+        if score >= 8.0: return "SUPER_FORTRESS"
+        if score >= 5.0: return "FORTRESS"
+        if score >= 3.0: return "MODERATE"
+        return "MINOR"
 
     def __init__(self, cache_ttl_sec: float = 60.0):
         self._cache: Dict[str, MacroStrategicDirective] = {}
@@ -390,42 +447,163 @@ class MacroStrategicEngine:
             sweep_offset = 4.0 * pt * pip_div
             pair_profile_tag = "STANDARD"
 
-        # ── 1. STRUCTURAL MODEL: DENSITY-RANKED CLUSTER RESOLVER ──
-        # Assemble candidate upper barriers with evidence scoring (no rigid boolean AND gates)
-        up_cands: Dict[float, float] = {}
-        for p in [sub_ceiling, ceiling_station, next_macro_target]:
-            if p > curr_mid: up_cands[round(p, digits)] = up_cands.get(round(p, digits), 0.0) + 2.0
-        for s in [micro_sbr_h1, inter_sbr_h4, macro_sbr_d1, dbd_entry]:
-            if s and s > curr_mid + (0.05 * atr_h1): up_cands[round(s, digits)] = up_cands.get(round(s, digits), 0.0) + 3.5
+        # ── 1. STRUCTURAL MODEL: DENSITY-RANKED CLUSTER RESOLVER WITH FRVP ──
+        # FRVP Calculation (D1 60-bar rolling & H4 100-bar rolling)
+        vp_d1, vp_h4 = None, None
+        try:
+            from src.indicators.volume_profile import compute_fixed_range_volume_profile
+            if rates_d1 is not None and len(rates_d1) >= 20:
+                s_i = max(0, len(rates_d1) - 60)
+                e_i = len(rates_d1) - 1
+                vp_d1 = compute_fixed_range_volume_profile(
+                    rates_d1['high'], rates_d1['low'], closes=rates_d1['close'], volumes=rates_d1['tick_volume'],
+                    start_idx=s_i, end_idx=e_i, num_bins=50
+                )
+            if rates_h4 is not None and len(rates_h4) >= 20:
+                s_i = max(0, len(rates_h4) - 100)
+                e_i = len(rates_h4) - 1
+                vp_h4 = compute_fixed_range_volume_profile(
+                    rates_h4['high'], rates_h4['low'], closes=rates_h4['close'], volumes=rates_h4['tick_volume'],
+                    start_idx=s_i, end_idx=e_i, num_bins=50
+                )
+        except Exception as e:
+            logger.debug(f"FRVP calculation bypass for {symbol}: {e}")
+
+        # Candidate Upper Barriers
+        raw_up_elements: List[Tuple[float, float, str]] = []
+        for p, sc, tag in [
+            (sub_ceiling, 1.5, "PSYCH_50"),
+            (ceiling_station, 2.5, "PSYCH_100"),
+            (next_macro_target, 2.5, "PSYCH_200")
+        ]:
+            if p > curr_mid:
+                raw_up_elements.append((round(p, digits), sc, tag))
+
+        # SBR Structures with Multi-TF Weighting
+        if macro_sbr_d1 and macro_sbr_d1 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(macro_sbr_d1, digits), 4.5, "D1_SBR"))
+        if inter_sbr_h4 and inter_sbr_h4 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(inter_sbr_h4, digits), 3.5, "H4_SBR"))
+        if micro_sbr_h1 and micro_sbr_h1 > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(micro_sbr_h1, digits), 2.0, "H1_SBR"))
+        if dbd_entry and dbd_entry > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(dbd_entry, digits), 2.0, "DBD_SUPPLY"))
+
+        # SMC Bearish Order Blocks
         for ob in bear_obs:
             bot = ob.get('bottom', 0.0)
-            if bot > curr_mid + (0.05 * atr_h1): up_cands[round(bot, digits)] = up_cands.get(round(bot, digits), 0.0) + 2.5
+            if bot > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(bot, digits), 2.5, "BEAR_OB"))
 
-        sorted_up = sorted(up_cands.keys())
-        imm_ceiling_c1 = sorted_up[0] if sorted_up else sub_ceiling
-        deep_ceiling_c2 = round(imm_ceiling_c1 + max(psych_step_micro, 1.25 * atr_h1), digits)
-        for cand in sorted_up[1:]:
-            if cand >= imm_ceiling_c1 + (0.60 * atr_h1):
-                deep_ceiling_c2 = cand
-                break
+        # FRVP Upper Resistance Anchors
+        if vp_d1:
+            if vp_d1.poc > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_d1.poc, digits), 3.5, "D1_POC"))
+            if vp_d1.vah > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_d1.vah, digits), 2.5, "D1_VAH"))
+            for hvn in getattr(vp_d1, 'hvn_nodes', []):
+                if hvn > curr_mid + (0.01 * atr_h1):
+                    raw_up_elements.append((round(hvn, digits), 2.0, "D1_HVN"))
+        if vp_h4:
+            if vp_h4.poc > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_h4.poc, digits), 3.0, "H4_POC"))
+            if vp_h4.vah > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(vp_h4.vah, digits), 2.0, "H4_VAH"))
+            for hvn in getattr(vp_h4, 'hvn_nodes', []):
+                if hvn > curr_mid + (0.01 * atr_h1):
+                    raw_up_elements.append((round(hvn, digits), 1.5, "H4_HVN"))
 
-        # Assemble candidate lower barriers with evidence scoring
-        down_cands: Dict[float, float] = {}
-        for p in [sub_floor, floor_station, round(floor_station - psych_step_macro, digits)]:
-            if p < curr_mid: down_cands[round(p, digits)] = down_cands.get(round(p, digits), 0.0) + 2.0
-        for r in [micro_rbs_h1, inter_rbs_h4, macro_rbs_d1, rbr_entry]:
-            if r and r < curr_mid - (0.05 * atr_h1): down_cands[round(r, digits)] = down_cands.get(round(r, digits), 0.0) + 3.5
+        # Candidate Lower Barriers
+        raw_down_elements: List[Tuple[float, float, str]] = []
+        for p, sc, tag in [
+            (sub_floor, 1.5, "PSYCH_50"),
+            (floor_station, 2.5, "PSYCH_100"),
+            (round(floor_station - psych_step_macro, digits), 2.5, "PSYCH_200")
+        ]:
+            if p < curr_mid:
+                raw_down_elements.append((round(p, digits), sc, tag))
+
+        # RBS Structures with Multi-TF Weighting
+        if macro_rbs_d1 and macro_rbs_d1 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(macro_rbs_d1, digits), 4.5, "D1_RBS"))
+        if inter_rbs_h4 and inter_rbs_h4 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(inter_rbs_h4, digits), 3.5, "H4_RBS"))
+        if micro_rbs_h1 and micro_rbs_h1 < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(micro_rbs_h1, digits), 2.0, "H1_RBS"))
+        if rbr_entry and rbr_entry < curr_mid - (0.01 * atr_h1):
+            raw_down_elements.append((round(rbr_entry, digits), 2.0, "RBR_DEMAND"))
+
+        # SMC Bullish Order Blocks
         for ob in bull_obs:
             top = ob.get('top', 0.0)
-            if top < curr_mid - (0.05 * atr_h1): down_cands[round(top, digits)] = down_cands.get(round(top, digits), 0.0) + 2.5
+            if top < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(top, digits), 2.5, "BULL_OB"))
 
-        sorted_down = sorted(down_cands.keys(), reverse=True)
-        imm_floor_f1 = sorted_down[0] if sorted_down else sub_floor
-        deep_floor_f2 = round(imm_floor_f1 - max(psych_step_micro, 1.25 * atr_h1), digits)
-        for cand in sorted_down[1:]:
-            if cand <= imm_floor_f1 - (0.60 * atr_h1):
-                deep_floor_f2 = cand
+        # FRVP Lower Support Anchors
+        if vp_d1:
+            if vp_d1.poc < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_d1.poc, digits), 3.5, "D1_POC"))
+            if vp_d1.val < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_d1.val, digits), 2.5, "D1_VAL"))
+            for hvn in getattr(vp_d1, 'hvn_nodes', []):
+                if hvn < curr_mid - (0.01 * atr_h1):
+                    raw_down_elements.append((round(hvn, digits), 2.0, "D1_HVN"))
+        if vp_h4:
+            if vp_h4.poc < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_h4.poc, digits), 3.0, "H4_POC"))
+            if vp_h4.val < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(vp_h4.val, digits), 2.0, "H4_VAL"))
+            for hvn in getattr(vp_h4, 'hvn_nodes', []):
+                if hvn < curr_mid - (0.01 * atr_h1):
+                    raw_down_elements.append((round(hvn, digits), 1.5, "H4_HVN"))
+
+        # Cluster Merging with tolerance = 0.15 * atr_h1
+        cl_tol = max(0.15 * atr_h1, 3 * pt * pip_div)
+        up_clusters = self._cluster_merge(raw_up_elements, cl_tol, digits, is_ascending=True)
+        down_clusters = self._cluster_merge(raw_down_elements, cl_tol, digits, is_ascending=False)
+
+        # Elect C1, C2
+        if up_clusters:
+            imm_ceiling_c1 = up_clusters[0][0]
+            c1_density_score = up_clusters[0][1]
+            c1_tag = up_clusters[0][2]
+        else:
+            imm_ceiling_c1 = sub_ceiling
+            c1_density_score = 2.0
+            c1_tag = "FALLBACK_PSYCH"
+
+        deep_ceiling_c2 = round(imm_ceiling_c1 + max(psych_step_macro, 1.50 * atr_h1), digits)
+        c2_density_score = 2.0
+        c2_tag = "EXTENSION_TARGET"
+        for cand_p, cand_sc, cand_tag in up_clusters[1:]:
+            if cand_p >= imm_ceiling_c1 + max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                deep_ceiling_c2 = cand_p
+                c2_density_score = cand_sc
+                c2_tag = cand_tag
                 break
+
+        # Elect F1, F2
+        if down_clusters:
+            imm_floor_f1 = down_clusters[0][0]
+            f1_density_score = down_clusters[0][1]
+            f1_tag = down_clusters[0][2]
+        else:
+            imm_floor_f1 = sub_floor
+            f1_density_score = 2.0
+            f1_tag = "FALLBACK_PSYCH"
+
+        deep_floor_f2 = round(imm_floor_f1 - max(psych_step_macro, 1.50 * atr_h1), digits)
+        f2_density_score = 2.0
+        f2_tag = "DEEP_SUPPORT_TARGET"
+        for cand_p, cand_sc, cand_tag in down_clusters[1:]:
+            if cand_p <= imm_floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                deep_floor_f2 = cand_p
+                f2_density_score = cand_sc
+                f2_tag = cand_tag
+                break
+
+        c1_fortress_tag = self._get_fortress_tag(c1_density_score)
+        f1_fortress_tag = self._get_fortress_tag(f1_density_score)
 
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
@@ -457,6 +635,8 @@ class MacroStrategicEngine:
         h4_lh = len(h4_sh) >= 2 and (h4_sh[-1][1] < h4_sh[-2][1])
         last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
         last_h1_bull = not df_h1.empty and (df_h1['close'].iloc[-1] > df_h1['open'].iloc[-1])
+        last_d1_bull = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
+        last_d1_bear = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
 
         # Boundary threshold: in outer 25% of chamber OR within 0.35 ATR H1 of boundary
         at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.35 * atr_h1)
@@ -493,7 +673,7 @@ class MacroStrategicEngine:
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
             macro_bias_score = +0.85 if market_state == "FLOOR_REJECTION" else +0.70
-            if h4_hl or last_d1_bullish: macro_bias_score += 0.10
+            if h4_hl or last_d1_bull: macro_bias_score += 0.10
             macro_bias_score = round(min(1.0, macro_bias_score), 2)
 
             entry_anchor = round(imm_floor_f1 - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
@@ -737,6 +917,10 @@ class MacroStrategicEngine:
             immediate_floor_f1=imm_floor_f1,
             deep_target_floor_f2=deep_floor_f2,
             deep_target_ceiling_c2=deep_ceiling_c2,
+            c1_density_score=c1_density_score,
+            f1_density_score=f1_density_score,
+            c1_fortress_tag=c1_fortress_tag,
+            f1_fortress_tag=f1_fortress_tag,
             chamber_position_pct=round(chamber_pos, 2),
             retest_touch_count=len(interaction_seq),
             interaction_sequence=interaction_seq,
@@ -765,6 +949,12 @@ class MacroStrategicEngine:
                 "chamber_pos": chamber_pos,
                 "c1": imm_ceiling_c1,
                 "f1": imm_floor_f1,
+                "c1_density_score": c1_density_score,
+                "f1_density_score": f1_density_score,
+                "c1_fortress_tag": c1_fortress_tag,
+                "f1_fortress_tag": f1_fortress_tag,
+                "c1_structure_tags": c1_tag,
+                "f1_structure_tags": f1_tag,
                 "f2_deep": deep_floor_f2,
                 "c2_deep": deep_ceiling_c2,
                 "interaction_sequence": interaction_seq,
