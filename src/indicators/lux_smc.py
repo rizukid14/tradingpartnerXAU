@@ -339,6 +339,14 @@ class LuxSMCAnalyzer:
         sig.trend_bias = "bullish" if trend_state == 1 else ("bearish" if trend_state == -1 else "neutral")
         sig.bos = last_bos
         sig.choch = last_choch
+        
+        # Always guarantee an active FRVP over the recent 50-bar dealing range if no impulse BOS triggered
+        if latest_frvp is None and n >= 20:
+            start_frvp = max(0, n - 50)
+            frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_frvp, n - 1)
+            if frvp_res:
+                latest_frvp = frvp_res.to_dict()
+                
         if latest_frvp is not None:
             sig.active_frvp = latest_frvp
 

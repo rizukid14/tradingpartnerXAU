@@ -643,7 +643,16 @@ class MarketScanner:
                 frvp_summary_str = ""
                 if smc_sig.active_frvp:
                     af = smc_sig.active_frvp
-                    frvp_summary_str = f"POC: {af.get('poc', 0.0):.5f} | VAL: {af.get('val', 0.0):.5f} | VAH: {af.get('vah', 0.0):.5f}"
+                    poc_val = af.get('poc', 0.0)
+                    val_val = af.get('val', 0.0)
+                    vah_val = af.get('vah', 0.0)
+                    cur_atr_safe = max(cur_atr, 1e-5)
+                    loc_note = "At POC High Volume Node" if abs(mid - poc_val) <= 0.15 * cur_atr_safe else (
+                        "Inside Value Area (VAH-VAL)" if val_val <= mid <= vah_val else (
+                            "Above Value Area (Extreme Premium VAH Extension)" if mid > vah_val else "Below Value Area (Discount VAL)"
+                        )
+                    )
+                    frvp_summary_str = f"POC: {poc_val:.5f} | VAL: {val_val:.5f} | VAH: {vah_val:.5f} ({loc_note})"
 
                 # ── H1 CLUSTER ZONE & MULTI-TOUCH CALCULATION (40 bars) ──
                 lb_bars = min(40, len(df))
