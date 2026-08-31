@@ -1972,7 +1972,7 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
   * Ceiling C1: {strat_dir.immediate_ceiling_c1} ({strat_dir.c1_fortress_tag} {strat_dir.c1_density_score:.1f}p: {c1_tags})
   * Deep Extension Target Bounds: F2={strat_dir.deep_target_floor_f2} | C2={strat_dir.deep_target_ceiling_c2}
 - Interaction Sequence (8-Bar Path): {seq_str}
-- SBR/RBS Hierarchy: D1 SBR={strat_dir.macro_sbr_d1} / RBS={strat_dir.macro_rbs_d1} | H4 SBR={strat_dir.inter_sbr_h4} / RBS={strat_dir.inter_rbs_h4}
+- SBR/RBS Hierarchy: W1 SBR={strat_dir.macro_sbr_w1} / RBS={strat_dir.macro_rbs_w1} | D1 SBR={strat_dir.macro_sbr_d1} / RBS={strat_dir.macro_rbs_d1} | H4 SBR={strat_dir.inter_sbr_h4} / RBS={strat_dir.inter_rbs_h4}
 - Target Landscape: TP1 (Proximal Retest) = {strat_dir.tp1_price} | TP2 (Deep Macro Station) = {strat_dir.tp2_price}
 - Execution Anchor & Protection: Reload Limit = {strat_dir.entry_limit_anchor} | Intraday SL = {strat_dir.intraday_sl_price} ({strat_dir.intraday_sl_pips:.1f} pips) | Invalidation = {strat_dir.invalidation_stop_price}
 - Mandate Thesis: {strat_dir.daily_mandate_thesis}
