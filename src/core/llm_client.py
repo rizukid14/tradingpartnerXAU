@@ -1936,6 +1936,27 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         atlas_dna_block = ""
 
+    # === DETERMINISTIC ATR-BASED PROXIMITY & EXECUTION HINT COMPUTATION ===
+    trigger_px = float(candidate.trigger_price)
+    proposed_entry = float(meta.get("entry_price") or trigger_px)
+    atr_pts = candidate.current_atr_pts if candidate.current_atr_pts > 0 else 100.0
+    pt_size = 10 ** -sym_dec
+    
+    # Distance in price, points, pips, and ATR multiple
+    dist_price = abs(trigger_px - proposed_entry)
+    dist_pts = int(round(dist_price / pt_size)) if pt_size > 0 else 0
+    pip_div = 10 if sym_dec in (3, 5) else 1
+    dist_pips = dist_pts / pip_div
+    atr_pips = atr_pts / pip_div
+    atr_mult = dist_pts / atr_pts if atr_pts > 0 else 0.0
+    
+    if dist_pts == 0 or atr_mult <= 0.20:
+        exec_rec = "MARKET (Immediate Action)"
+        exec_reason = f"Current live price ({fp(trigger_px)}) is already within PROXIMAL RANGE (Distance: {dist_pips:.1f} pips / {atr_mult:.2f}x ATR <= 0.20x ATR) -> INSTANT MARKET ORDER RECOMMENDED"
+    else:
+        exec_rec = f"{meta.get('entry_type', 'LIMIT').upper()} @ {fp(proposed_entry)}"
+        exec_reason = f"Optimal entry is FURTHER AWAY (Distance: {dist_pips:.1f} pips / {atr_mult:.2f}x ATR > 0.20x ATR) -> PENDING LIMIT ORDER RECOMMENDED"
+
     # === TOP-DOWN MACRO STRATEGIC LANDSCAPE INJECTION (PROBABILISTIC & OBJECTIVE) ===
     strat_block = ""
     try:
@@ -2005,12 +2026,18 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - Liquidity Pools: {getattr(candidate, 'liquidity_pools', '') or 'Clear of immediate EQH/EQL traps'}
 - Fixed Range Volume Profile (FRVP): {getattr(candidate, 'frvp_confluence', '') or 'Standard Institutional Liquidity'}
 
-## 6. PROPOSED EXECUTION & STATION-ANCHORED LEVELS
+## 6. PROPOSED EXECUTION & QUANTITATIVE ATR PROXIMITY MATRIX (Pre-Computed by Python Engine)
+- Live Market Price: {fp(trigger_px)} | Proposed Entry Anchor: {fp(proposed_entry)}
+- Quant Distance to Anchor: {dist_pips:.1f} pips ({dist_pts:,} pts) | ATR(14) H1: {atr_pips:.1f} pips ({int(atr_pts):,} pts)
+- Proximity Ratio: {atr_mult:.2f}x ATR H1 (Threshold: <= 0.20x ATR for Instant Market, > 0.20x ATR for Pending Limit)
+- Quantitative Execution Recommendation: [{exec_rec}]
+  * Deterministic Reason: {exec_reason}
 - Scanner Raw SL: {fp(float(candidate.suggested_sl))} | Scanner Raw TP: {fp(float(candidate.suggested_tp))} | R:R: {candidate.risk_reward_ratio:.2f}:1
 - Atlas DNA-Anchored Reference: SL = {fp(atlas_sl_ref) if atlas_sl_ref else 'N/A'} | TP = {fp(atlas_tp_ref) if atlas_tp_ref else 'N/A'}
   ({formula_desc if formula_desc else 'Station-anchored calculation'})
 {candles_block}
 ## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
+- Execution Mode Guidance: The Python Engine pre-calculated the exact distance ({dist_pips:.1f} pips = {atr_mult:.2f}x ATR H1). Follow the Quantitative Recommendation [{exec_rec}] unless your specific structural thesis demands an alternative level.
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
