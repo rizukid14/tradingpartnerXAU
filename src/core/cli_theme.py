@@ -811,7 +811,8 @@ def render_macro_directive_card(directive, width=95):
         zone_detail = f"{anchor_s}"
     lines.append(f"  • {c_white}Reload Zone (Front-Run ~ Core){c_rst} : {c_yellow}{zone_detail}{c_rst}")
     lines.append(f"  • {c_white}Intraday SL (Anti-Hunt){c_rst}        : {c_red}{sl_s}{c_rst} ({directive.intraday_sl_pips:.1f} {pip_unit})")
-    lines.append(f"  • {c_white}TP1 (Partial 50% + BEP Lock){c_rst}   : {c_green}{tp1_s}{c_rst} (+{directive.tp1_pips:.1f} {pip_unit} │ 1.50:1 R:R)")
+    tp1_rr_val = round(directive.tp1_pips / max(directive.intraday_sl_pips, 0.1), 2)
+    lines.append(f"  • {c_white}TP1 (Partial 50% + BEP Lock){c_rst}   : {c_green}{tp1_s}{c_rst} (+{directive.tp1_pips:.1f} {pip_unit} │ R:R {tp1_rr_val:.2f}:1)")
     tp2_label = "TP2 (Major Macro Station Ceiling)" if ("BUY" in directive.primary_execution_directive or "BULLISH" in directive.daily_macro_bias) else "TP2 (Major Macro Station Floor)"
     lines.append(f"  • {c_white}{tp2_label}{c_rst}: {c_green}{tp2_s}{c_rst} (+{directive.tp2_pips:.1f} {pip_unit} │ R:R {directive.risk_reward_ratio:.2f}:1)")
     lines.append(f"  • {c_white}Macro Invalidation Point{c_rst}       : {c_gray}{inv_s}{c_rst}")

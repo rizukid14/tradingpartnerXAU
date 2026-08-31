@@ -618,7 +618,10 @@ class MacroStrategicEngine:
         up_clusters = self._cluster_merge(raw_up_elements, cl_tol, digits, is_ascending=True)
         down_clusters = self._cluster_merge(raw_down_elements, cl_tol, digits, is_ascending=False)
 
-        # Elect C1, C2
+        # Minimum Chamber Height to eliminate micro-chambers (e.g. 4.7 pips)
+        min_chamber_height = max(0.60 * atr_h1, 0.40 * psych_step_macro, 12 * pt * pip_div)
+
+        # Elect C1
         if up_clusters:
             imm_ceiling_c1 = up_clusters[0][0]
             c1_density_score = up_clusters[0][1]
@@ -628,6 +631,24 @@ class MacroStrategicEngine:
             c1_density_score = 2.0
             c1_tag = "FALLBACK_PSYCH"
 
+        # Elect F1 (Ensuring separation from C1 >= min_chamber_height)
+        imm_floor_f1 = sub_floor
+        f1_density_score = 2.0
+        f1_tag = "FALLBACK_PSYCH"
+        if down_clusters:
+            for cand_p, cand_sc, cand_tag in down_clusters:
+                if (imm_ceiling_c1 - cand_p) >= min_chamber_height:
+                    imm_floor_f1 = cand_p
+                    f1_density_score = cand_sc
+                    f1_tag = cand_tag
+                    break
+            else:
+                imm_floor_f1 = sub_floor
+
+        if (imm_ceiling_c1 - imm_floor_f1) < min_chamber_height:
+            imm_floor_f1 = round(imm_ceiling_c1 - min_chamber_height, digits)
+
+        # Elect C2 (Deep Ceiling Extension)
         deep_ceiling_c2 = round(imm_ceiling_c1 + max(psych_step_macro, 1.50 * atr_h1), digits)
         c2_density_score = 2.0
         c2_tag = "EXTENSION_TARGET"
@@ -638,20 +659,11 @@ class MacroStrategicEngine:
                 c2_tag = cand_tag
                 break
 
-        # Elect F1, F2
-        if down_clusters:
-            imm_floor_f1 = down_clusters[0][0]
-            f1_density_score = down_clusters[0][1]
-            f1_tag = down_clusters[0][2]
-        else:
-            imm_floor_f1 = sub_floor
-            f1_density_score = 2.0
-            f1_tag = "FALLBACK_PSYCH"
-
+        # Elect F2 (Deep Floor Extension)
         deep_floor_f2 = round(imm_floor_f1 - max(psych_step_macro, 1.50 * atr_h1), digits)
         f2_density_score = 2.0
         f2_tag = "DEEP_SUPPORT_TARGET"
-        for cand_p, cand_sc, cand_tag in down_clusters[1:]:
+        for cand_p, cand_sc, cand_tag in down_clusters:
             if cand_p <= imm_floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
                 deep_floor_f2 = cand_p
                 f2_density_score = cand_sc
@@ -710,20 +722,20 @@ class MacroStrategicEngine:
             market_state = "NEUTRAL_CHAMBER"
 
         # ── 4. EXECUTION LAYER ("Market State" != "Trade Signal") ──
-        # Calibrate Minimum & Maximum Intraday Stop Loss Distances
+        # Calibrate Minimum & Maximum Intraday Stop Loss Distances (Sniper Precision)
         if is_crypto:
-            min_sl_dist = max(1.20 * atr_h1, 300.0)
-            max_sl_dist = max(2.50 * atr_h1, 800.0)
+            min_sl_dist = max(1.00 * atr_h1, 200.0)
+            max_sl_dist = max(2.00 * atr_h1, 500.0)
         elif "XAU" in symbol:
-            min_sl_dist = max(1.20 * atr_h1, 3.5)
-            max_sl_dist = max(2.50 * atr_h1, 10.0)
+            min_sl_dist = max(1.00 * atr_h1, 2.5)
+            max_sl_dist = max(2.00 * atr_h1, 6.0)
         elif clean_sym in MOMENTUM_RUNNER_PAIRS or "NZD" in clean_sym or "JPY" in clean_sym or "GBP" in clean_sym:
             # High-volatility cross pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)
-            min_sl_dist = max(1.20 * atr_h1, max(0.25 * atr_d1, 35 * pt * pip_div))
-            max_sl_dist = max(2.50 * atr_h1, 75 * pt * pip_div)
+            min_sl_dist = max(0.80 * atr_h1, 15 * pt * pip_div) # ~16-20 pips
+            max_sl_dist = max(1.50 * atr_h1, 35 * pt * pip_div) # ~35 pips
         else:
-            min_sl_dist = max(1.00 * atr_h1, 18 * pt * pip_div)
-            max_sl_dist = min(2.50 * atr_h1, 40 * pt * pip_div)
+            min_sl_dist = max(0.80 * atr_h1, 10 * pt * pip_div) # ~10-15 pips
+            max_sl_dist = min(1.50 * atr_h1, 25 * pt * pip_div) # ~25 pips
 
         if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
             macro_bias = "BULLISH_PULLBACK"
@@ -734,23 +746,23 @@ class MacroStrategicEngine:
 
             entry_anchor = round(imm_floor_f1 - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
-            structural_floor = deep_floor_f2 if deep_floor_f2 < entry_anchor else (macro_rbs_d1 if macro_rbs_d1 < entry_anchor else entry_anchor - 1.25 * atr_h1)
-            calculated_sl = structural_floor - anti_wick_buffer
-            
+            # Shield is the Immediate Floor F1
+            calculated_sl = imm_floor_f1 - anti_wick_buffer
             if (entry_anchor - calculated_sl) < min_sl_dist:
                 calculated_sl = entry_anchor - min_sl_dist
             elif (entry_anchor - calculated_sl) > max_sl_dist:
                 calculated_sl = entry_anchor - max_sl_dist
             intraday_sl = round(calculated_sl, digits)
 
-            macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
+            macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
             target_station_final = ceiling_station
             hard_circuit_breaker = bool((curr_mid <= imm_floor_f1 - (0.25 * atr_h1)) or (curr_mid < macro_invalidation))
             action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
             sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-            tp1_price = round(imm_ceiling_c1 - front_pad, digits)
+            tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(imm_ceiling_c1 - entry_anchor))
+            tp1_price = round(min(tp1_target, imm_ceiling_c1 - front_pad), digits)
             tp2_price = round(deep_ceiling_c2 - front_pad, digits)
             stage_label = f"RBS_SUPPORT_RETEST_AT_{imm_floor_f1:.{digits}f}"
             thesis = f"{symbol} in {market_state} at floor {imm_floor_f1:.{digits}f}. Reload targeting ceiling {imm_ceiling_c1:.{digits}f} with breakout extension to {deep_ceiling_c2:.{digits}f}."
@@ -766,22 +778,22 @@ class MacroStrategicEngine:
                 macro_bias_score = -0.80
                 entry_anchor = round(imm_ceiling_c1 + (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
                 entry_zone_proximal = round(entry_anchor - reload_width, digits)
-                structural_roof = deep_ceiling_c2 if deep_ceiling_c2 > entry_anchor else (macro_sbr_d1 if macro_sbr_d1 > entry_anchor else entry_anchor + 1.25 * atr_h1)
-                calculated_sl = structural_roof + anti_wick_buffer
-                
+                # Shield is the Immediate Ceiling C1
+                calculated_sl = imm_ceiling_c1 + anti_wick_buffer
                 if (calculated_sl - entry_anchor) < min_sl_dist:
                     calculated_sl = entry_anchor + min_sl_dist
                 elif (calculated_sl - entry_anchor) > max_sl_dist:
                     calculated_sl = entry_anchor + max_sl_dist
                 intraday_sl = round(calculated_sl, digits)
 
-                macro_invalidation = round(deep_ceiling_c2 + (0.20 * atr_d1), digits)
+                macro_invalidation = round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
                 target_station_final = floor_station
                 hard_circuit_breaker = bool((curr_mid >= imm_ceiling_c1 + (0.25 * atr_h1)) or (curr_mid > macro_invalidation))
                 action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
                 sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
                 front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_price = round(imm_floor_f1 + front_pad, digits)
+                tp1_target = entry_anchor - max(1.25 * sl_dist, 0.50 * abs(entry_anchor - imm_floor_f1))
+                tp1_price = round(max(tp1_target, imm_floor_f1 + front_pad), digits)
                 tp2_price = round(deep_floor_f2 + front_pad, digits)
                 stage_label = f"FRONTIER_EXHAUSTION_AT_{imm_ceiling_c1:.{digits}f}"
                 thesis = f"{symbol} in {market_state} at ceiling {imm_ceiling_c1:.{digits}f}. Mean-reversion targeting primary floor {imm_floor_f1:.{digits}f}."
@@ -813,8 +825,8 @@ class MacroStrategicEngine:
             macro_bias_score = +0.85
             entry_anchor = imm_ceiling_c1
             entry_zone_proximal = round(entry_anchor + reload_width, digits)
-            structural_floor = imm_floor_f1
-            calculated_sl = structural_floor - anti_wick_buffer
+            # Shield is the broken ceiling (now flipped to RBS support)
+            calculated_sl = imm_ceiling_c1 - anti_wick_buffer
             if (entry_anchor - calculated_sl) < min_sl_dist:
                 calculated_sl = entry_anchor - min_sl_dist
             intraday_sl = round(calculated_sl, digits)
@@ -822,7 +834,7 @@ class MacroStrategicEngine:
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
             tp1_price = round(deep_ceiling_c2 - front_pad, digits)
             tp2_price = round(deep_ceiling_c2 + (1.5 * sl_dist) - front_pad, digits)
-            macro_invalidation = round(imm_floor_f1 - (0.20 * atr_d1), digits)
+            macro_invalidation = round(imm_ceiling_c1 - (0.20 * atr_d1), digits)
             target_station_final = next_macro_target
             hard_circuit_breaker = False
             action_tier = "FULL_ALLOW"
@@ -839,8 +851,8 @@ class MacroStrategicEngine:
             macro_bias_score = -0.85
             entry_anchor = imm_floor_f1
             entry_zone_proximal = round(entry_anchor - reload_width, digits)
-            structural_roof = imm_ceiling_c1
-            calculated_sl = structural_roof + anti_wick_buffer
+            # Shield is the broken floor (now flipped to SBR resistance)
+            calculated_sl = imm_floor_f1 + anti_wick_buffer
             if (calculated_sl - entry_anchor) < min_sl_dist:
                 calculated_sl = entry_anchor + min_sl_dist
             intraday_sl = round(calculated_sl, digits)
@@ -848,7 +860,7 @@ class MacroStrategicEngine:
             front_pad = (0.15 * atr_h1) + (spread_pts * pt)
             tp1_price = round(deep_floor_f2 + front_pad, digits)
             tp2_price = round(deep_floor_f2 - (1.5 * sl_dist) + front_pad, digits)
-            macro_invalidation = round(imm_ceiling_c1 + (0.20 * atr_d1), digits)
+            macro_invalidation = round(imm_floor_f1 + (0.20 * atr_d1), digits)
             target_station_final = floor_station
             hard_circuit_breaker = False
             action_tier = "FULL_ALLOW"
