@@ -403,7 +403,11 @@ class MacroStrategicEngine:
 
         sorted_up = sorted(up_cands.keys())
         imm_ceiling_c1 = sorted_up[0] if sorted_up else sub_ceiling
-        deep_ceiling_c2 = sorted_up[1] if len(sorted_up) > 1 else round(imm_ceiling_c1 + psych_step_micro, digits)
+        deep_ceiling_c2 = round(imm_ceiling_c1 + max(psych_step_micro, 1.25 * atr_h1), digits)
+        for cand in sorted_up[1:]:
+            if cand >= imm_ceiling_c1 + (0.60 * atr_h1):
+                deep_ceiling_c2 = cand
+                break
 
         # Assemble candidate lower barriers with evidence scoring
         down_cands: Dict[float, float] = {}
@@ -417,7 +421,11 @@ class MacroStrategicEngine:
 
         sorted_down = sorted(down_cands.keys(), reverse=True)
         imm_floor_f1 = sorted_down[0] if sorted_down else sub_floor
-        deep_floor_f2 = sorted_down[1] if len(sorted_down) > 1 else round(imm_floor_f1 - psych_step_micro, digits)
+        deep_floor_f2 = round(imm_floor_f1 - max(psych_step_micro, 1.25 * atr_h1), digits)
+        for cand in sorted_down[1:]:
+            if cand <= imm_floor_f1 - (0.60 * atr_h1):
+                deep_floor_f2 = cand
+                break
 
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
@@ -450,9 +458,9 @@ class MacroStrategicEngine:
         last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
         last_h1_bull = not df_h1.empty and (df_h1['close'].iloc[-1] > df_h1['open'].iloc[-1])
 
-        # Strict boundary threshold (extreme 15% or within 0.25 ATR H1 of boundary)
-        at_extreme_ceiling = (dist_to_c1 <= 0.25 * atr_h1) and (chamber_pos >= 0.80)
-        at_extreme_floor = (dist_to_f1 <= 0.25 * atr_h1) and (chamber_pos <= 0.20)
+        # Boundary threshold: in outer 25% of chamber OR within 0.35 ATR H1 of boundary
+        at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.35 * atr_h1)
+        at_extreme_floor = (chamber_pos <= 0.25) or (dist_to_f1 <= 0.35 * atr_h1)
 
         if curr_mid > imm_ceiling_c1 + (0.10 * atr_h1):
             market_state = "CEILING_BREAKOUT"
