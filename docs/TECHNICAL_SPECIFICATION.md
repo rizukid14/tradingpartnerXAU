@@ -217,21 +217,35 @@ Porting 1:1 algoritma Boitoki CSM untuk 8 mata uang utama (USD, EUR, GBP, JPY, C
 
 ---
 
-## Bab 6: Macro Strategic Engine (MSE) & 5-Tier Action Matrix
+## Bab 6: Barrier Chamber State Machine & Macro Strategic Engine (MSE)
 
-MSE 6-TF Native menghitung struktur makro, level SBR/RBS, dan menghasilkan **Continuous Probabilistic Score** ($\text{Score} \in [-1.0, +1.0]$) dengan 5-Tier Action Matrix:
+MSE 6-TF Native mengintegrasikan **Barrier Chamber State Machine** 3-layer modular untuk memetakan ruang lelang institusional secara deterministik:
 
-```mermaid
-flowchart TD
-    Trigger[Trigger Setup Intraday Lolos: M1 / M2 / M3] --> ScoreCheck{Evaluasi Macro Bias Score}
-    
-    ScoreCheck -- Searah: Score >= +0.35 --> Tier1[🟢 FULL_ALLOW: Ukuran Standar + TP1 & TP2 Koridor Penuh]
-    ScoreCheck -- Netral: -0.25 s/d +0.35 --> Tier2[🟡 REDUCED_CONFIDENCE: TP2 Dibatasi <= 2.0x SL + Trailing Cepat]
-    ScoreCheck -- Melawan: Score <= -0.35 --> CounterCheck{Apakah M1 Judas SFP?}
-    
-    CounterCheck -- Ya: Sweep + Reclaim Valid --> Tier3[🟠 TP1_ONLY_SCALP: 100% Posisi Ditutup di TP1 Tunggal]
-    CounterCheck -- Bukan --> Block[🔴 HARD_BLOCK: Tolak 0 Token]
-```
+### 1. Structural Model: Density-Ranked Barrier Resolver
+Memetakan dinding lelang aktif tanpa jebakan boolean AND yang kaku menggunakan pembobotan bukti (*Evidence Weights*):
+* $\text{Score} = \text{Structural RBS/SBR (3.5)} + \text{SMC Order Block (2.5)} + \text{Psychological Stations (2.0)} + \text{FVG (2.0)}$
+* **Batas Atas**: $C_1$ (*Immediate Ceiling*) dan $C_2$ (*Macro Extension Target*).
+* **Batas Bawah**: $F_1$ (*Immediate Floor*) dan $F_2$ (*Deep Structural Support Target*).
+* **Chamber Position**: Mengukur posisi harga di dalam ruang lelang ($0\% - 100\%$).
+
+### 2. Path-Dependent Interaction Sequence Tracker
+Menganalisis riwayat 8 lilin H1 terhadap barrier $C_1$ dan $F_1$ untuk merekam kompresi sejati:
+* Contoh: `interaction_sequence = ['F1_TOUCH', 'F1_SWEEP', 'C1_TOUCH', 'C1_SWEEP']`
+
+### 3. Lean 7-State Machine Engine
+1. **`NEUTRAL_CHAMBER`**: Harga mengambang di koridor tengah ($20\% - 80\%$) $\rightarrow$ `RANGE_BOUND (WATCH_ONLY)` anti-overtrading.
+2. **`CHAMBER_CEILING_TEST`**: Menguji $C_1$ tanpa konfirmasi penolakan.
+3. **`CHAMBER_FLOOR_TEST`**: Menguji $F_1$ tanpa konfirmasi penolakan.
+4. **`CEILING_REJECTION`**: Terkonfirmasi ekor penolakan atas $\ge 25\%$ di $C_1$ $\rightarrow$ `BEARISH_PULLBACK (HUNT_SELL_PULLBACK)`.
+5. **`FLOOR_REJECTION`**: Terkonfirmasi ekor penolakan bawah $\ge 25\%$ di $F_1$ $\rightarrow$ `BULLISH_PULLBACK (HUNT_BUY_AT_RBS)`.
+6. **`CEILING_BREAKOUT`**: Penutupan body lilin solid menembus $C_1$ $\rightarrow$ `BULLISH_EXPANSION`.
+7. **`FLOOR_BREAKDOWN`**: Penutupan body lilin solid menembus $F_1$ $\rightarrow$ `BEARISH_EXPANSION`.
+
+### 4. Pair-Calibrated Minimum SL Floor
+Mencegah Stop Loss ketipisan pada pair ber-volatilitas tinggi:
+* **Volatile Cross Pairs (GBPNZD, GBPJPY, EURNZD, GBPAUD, CADJPY)**: $\text{SL} \ge \max(1.20\times\text{ATR H1}, 0.25\times\text{ATR D1}, 35\text{ pips})$.
+* **Standard Majors (EURUSD, USDCAD, EURGBP)**: $\text{SL} \ge \max(1.00\times\text{ATR H1}, 18\text{ pips})$.
+* **Gold (XAUUSD)**: $\text{SL} \ge \max(1.20\times\text{ATR H1}, \$3.50)$.
 
 ---
 

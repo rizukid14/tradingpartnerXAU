@@ -765,6 +765,24 @@ def render_macro_directive_card(directive, width=95):
     lines.append(f"  • {c_white}{station_label}{c_rst}   : {c_green}{fmt.format(directive.target_station_price)}{c_rst} (Equilibrium Target)")
     lines.append("---")
     
+    # ── Section 3B: Barrier Chamber & State Machine Path ──
+    m_state = getattr(directive, 'market_state', 'NEUTRAL_CHAMBER')
+    f1_val = getattr(directive, 'immediate_floor_f1', 0.0)
+    c1_val = getattr(directive, 'immediate_ceiling_c1', 0.0)
+    f2_val = getattr(directive, 'deep_target_floor_f2', 0.0)
+    c2_val = getattr(directive, 'deep_target_ceiling_c2', 0.0)
+    ch_pos = getattr(directive, 'chamber_position_pct', 0.50)
+    seq_list = getattr(directive, 'interaction_sequence', [])
+    seq_str = " -> ".join(seq_list[-4:]) if seq_list else "None (Initial Observation)"
+
+    state_color = c_green if "FLOOR" in m_state else (c_red if "CEILING" in m_state or "BREAKDOWN" in m_state else (c_yellow if "BREAKOUT" in m_state else c_purple))
+    lines.append(f" {c_bold}{c_cyan}[+] BARRIER CHAMBER & STATE MACHINE PATHWAY{c_rst}")
+    lines.append(f"  • {c_white}Active Market State{c_rst}        : {state_color}{c_bold}[{m_state}]{c_rst} (Chamber Range: {c_yellow}{ch_pos:.0%}{c_rst})")
+    lines.append(f"  • {c_white}Dealing Chamber Bounds{c_rst}     : F1 {c_green}{fmt.format(f1_val)}{c_rst} <---> C1 {c_red}{fmt.format(c1_val)}{c_rst}")
+    lines.append(f"  • {c_white}Deep Target Boundaries{c_rst}     : F2 {c_gray}{fmt.format(f2_val)}{c_rst} │ C2 {c_gray}{fmt.format(c2_val)}{c_rst}")
+    lines.append(f"  • {c_white}Interaction Sequence{c_rst}       : {c_cyan}{seq_str}{c_rst}")
+    lines.append("---")
+    
     # ── Section 4: Intraday Execution Delivery ──
     pip_unit = "USD" if is_crypto_or_gold else "pips"
     lines.append(f" {c_bold}{c_cyan}[+] INTRADAY REFINED DELIVERY ROADMAP (Execution Plan){c_rst}")
