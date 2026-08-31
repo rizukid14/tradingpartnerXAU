@@ -100,14 +100,14 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                 _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon Gold. Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
         elif is_jpy:
-            max_sl = min(int(atr_points * 2.0), 200) if atr_points > 0 else 200
+            max_sl = int(atr_points * 2.5) if atr_points > 0 else 350
             if sl_points > max_sl:
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon JPY (200 pts). Menyesuaikan SL ke {max_sl} pts.")
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon JPY (2.5x ATR). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
         else:
-            max_sl = min(int(atr_points * 2.0), 160) if atr_points > 0 else 160
+            max_sl = int(atr_points * 2.5) if atr_points > 0 else 350
             if sl_points > max_sl:
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon FX (160 pts). Menyesuaikan SL ke {max_sl} pts.")
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon FX (2.5x ATR). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
 
         if tp_points <= 0:
