@@ -450,13 +450,17 @@ class MacroStrategicEngine:
         last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
         last_h1_bull = not df_h1.empty and (df_h1['close'].iloc[-1] > df_h1['open'].iloc[-1])
 
+        # Strict boundary threshold (extreme 15% or within 0.25 ATR H1 of boundary)
+        at_extreme_ceiling = (dist_to_c1 <= 0.25 * atr_h1) and (chamber_pos >= 0.80)
+        at_extreme_floor = (dist_to_f1 <= 0.25 * atr_h1) and (chamber_pos <= 0.20)
+
         if curr_mid > imm_ceiling_c1 + (0.10 * atr_h1):
             market_state = "CEILING_BREAKOUT"
         elif curr_mid < imm_floor_f1 - (0.10 * atr_h1):
             market_state = "FLOOR_BREAKDOWN"
-        elif dist_to_c1 <= max(0.30 * atr_h1, 8 * pt * pip_div) or chamber_pos >= 0.75:
+        elif at_extreme_ceiling:
             market_state = "CEILING_REJECTION" if (peak_u_wick_pct >= 25 or last_h1_bear or h4_lh) else "CHAMBER_CEILING_TEST"
-        elif dist_to_f1 <= max(0.30 * atr_h1, 8 * pt * pip_div) or chamber_pos <= 0.30:
+        elif at_extreme_floor:
             market_state = "FLOOR_REJECTION" if (peak_l_wick_pct >= 25 or last_h1_bull or h4_hl) else "CHAMBER_FLOOR_TEST"
         else:
             market_state = "NEUTRAL_CHAMBER"
@@ -580,53 +584,32 @@ class MacroStrategicEngine:
             min_allowed_sell = round(curr_mid - (0.20 * atr_d1), digits)
             forbidden_traps = ["Do NOT buy into confirmed breakdown"]
 
-        else: # NEUTRAL_CHAMBER
-            # Check interaction trajectory to assign rotation bias
+        else: # NEUTRAL_CHAMBER (Mid-Range Consolidation / Chop Zone)
+            macro_bias = "RANGE_BOUND"
+            primary_directive = "FADE_CORRIDOR_EXTREMES"
+            macro_bias_score = 0.0
             last_event = interaction_seq[-1] if interaction_seq else ""
-            if "F1" in last_event:
-                macro_bias = "BULLISH_EXPANSION"
-                primary_directive = "HUNT_BUY_CONTINUATION"
-                macro_bias_score = +0.70
-                entry_anchor = round(imm_floor_f1, digits)
-                entry_zone_proximal = round(entry_anchor + reload_width, digits)
-                structural_floor = deep_floor_f2
-                calculated_sl = structural_floor - anti_wick_buffer
-                intraday_sl = round(calculated_sl, digits)
-                sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
-                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_price = round(imm_ceiling_c1 - front_pad, digits)
-                tp2_price = round(deep_ceiling_c2 - front_pad, digits)
-                stage_label = f"ROTATING_UP_TO_{imm_ceiling_c1:.{digits}f}"
-                thesis = f"{symbol} rotating upward within dealing chamber (Range: {chamber_pos:.0%})."
-                confidence_score = 78
-                hard_circuit_breaker = False
-                action_tier = "FULL_ALLOW"
-                max_allowed_buy = round(curr_mid + (0.20 * atr_d1), digits)
-                min_allowed_sell = 0.0
-                forbidden_traps = [f"Do NOT short during upward chamber rotation"]
-            else:
-                macro_bias = "BEARISH_EXPANSION"
-                primary_directive = "HUNT_SELL_CONTINUATION"
-                macro_bias_score = -0.70
-                entry_anchor = round(imm_ceiling_c1, digits)
-                entry_zone_proximal = round(entry_anchor - reload_width, digits)
-                structural_roof = deep_ceiling_c2
-                calculated_sl = structural_roof + anti_wick_buffer
-                intraday_sl = round(calculated_sl, digits)
-                sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
-                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_price = round(imm_floor_f1 + front_pad, digits)
-                tp2_price = round(deep_floor_f2 + front_pad, digits)
-                stage_label = f"ROTATING_DOWN_TO_{imm_floor_f1:.{digits}f}"
-                thesis = f"{symbol} rotating downward within dealing chamber (Range: {chamber_pos:.0%})."
-                confidence_score = 78
-                hard_circuit_breaker = False
-                action_tier = "FULL_ALLOW"
-                max_allowed_buy = 0.0
-                min_allowed_sell = round(curr_mid - (0.20 * atr_d1), digits)
-                forbidden_traps = [f"Do NOT buy during downward chamber rotation"]
-            macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits) if macro_bias_score > 0 else round(deep_ceiling_c2 + (0.20 * atr_d1), digits)
-            target_station_final = ceiling_station if macro_bias_score > 0 else floor_station
+            
+            entry_anchor = round(imm_floor_f1, digits)
+            entry_zone_proximal = round(entry_anchor + reload_width, digits)
+            structural_floor = deep_floor_f2
+            calculated_sl = structural_floor - anti_wick_buffer
+            intraday_sl = round(calculated_sl, digits)
+            sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_price = round(imm_ceiling_c1 - front_pad, digits)
+            tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+            
+            stage_label = f"CHAMBER_CONSOLIDATION_[{imm_floor_f1:.{digits}f}-{imm_ceiling_c1:.{digits}f}]"
+            thesis = f"{symbol} is consolidating inside dealing chamber (Range: {chamber_pos:.0%}). Discipline requires waiting for extreme boundary touch at {imm_floor_f1:.{digits}f} or {imm_ceiling_c1:.{digits}f}."
+            confidence_score = 70
+            hard_circuit_breaker = False
+            action_tier = "WATCH_ONLY"
+            max_allowed_buy = round(imm_floor_f1 + (0.15 * atr_h1), digits)
+            min_allowed_sell = round(imm_ceiling_c1 - (0.15 * atr_h1), digits)
+            forbidden_traps = [f"Do NOT execute market orders in mid-chamber consolidation zone (Range: {chamber_pos:.0%})"]
+            macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
+            target_station_final = ceiling_station
 
         if is_crypto:
             sl_pips = round(abs(intraday_sl - entry_anchor), 1)
