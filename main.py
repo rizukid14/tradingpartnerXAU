@@ -1107,26 +1107,12 @@ def _run_cycle_for_current_symbol():
     """
     # 0. Risk gate - check all conditions before trading
     can_trade, reason = risk.can_trade()
-    entry_blocked = False  # True = posisi sudah max: re-evaluator tetap jalan, entry ditahan
     if not can_trade:
-        # Kasus khusus: posisi sudah MAX (aggregate semua simbol). Jangan skip cycle —
-        # lanjut ambil data + LLM + consensus + AI RE-EVALUATOR (bisa rekomendasi CLOSE
-        # posisi lemah buat buka slot). Hanya entry baru yang ditahan (entry_blocked).
-        # Simbol yang TIDAK punya posisi terbuka di-skip: re-evaluator gak ada kerjaan,
-        # entry juga diblokir -> LLM call sia-sia.
-        max_pos_now = config.get_max_open_positions(risk.is_recovery_mode)
-        if len(connector.get_all_open_positions()) >= max_pos_now:
-            if not connector.get_open_positions(config.SYMBOL):
-                print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai & {config.SYMBOL} tanpa posisi terbuka — skip (re-evaluator kosong).")
-                return True
-            entry_blocked = True
-            print(f" {UI.tag('RISK GATE', UI.YELLOW)} Max posisi {max_pos_now} tercapai — lanjut AI re-evaluator utk {config.SYMBOL} (entry ditahan).")
-        else:
-            clean_reason = reason.strip()
-            if clean_reason.startswith("[RISK]"):
-                clean_reason = clean_reason[6:].strip()
-            print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
-            return True  # Not an error, just skipping
+        clean_reason = reason.strip()
+        if clean_reason.startswith("[RISK]"):
+            clean_reason = clean_reason[6:].strip()
+        print(f" {UI.tag('RISK GATE', UI.YELLOW)} {clean_reason}")
+        return True  # Not an error, just skipping
     
     # 0.5 Pending order lifecycle: expired/cap/contra cleanup (hanya kalau enabled)
     _manage_pending_orders()    
@@ -1208,50 +1194,13 @@ def _run_cycle_for_current_symbol():
     # 5. Calculate consensus
     result = consensus.calculate_consensus(decisions)
 
-    # 5.1 Execute AI Position Re-Evaluator Close Actions
-    tickets_to_close = result.get("tickets_to_close", [])
-    for close_req in tickets_to_close:
-        t_ticket = close_req["ticket"]
-        t_reason = close_req["reason"]
-        t_models = close_req.get("models", "AI Consensus")
-        print(f"[AI RE-EVALUATOR] {t_models} sepakat CLOSE order #{t_ticket}: {t_reason}")
-        # Capture pre-close profit so daily P/L + loss streak stay accurate.
-        # Net profit = profit + swap + komisi IN+OUT (query deals lengkap, bukan position.profit
-        # yang TIDAK include komisi - akun ECN charge $3/sisi, XAU 0.01 lot = -$0.06 round-trip).
-        pre_profit = 0.0
-        try:
-            pos_pre = mt5.positions_get(ticket=t_ticket)
-            if pos_pre and len(pos_pre) > 0:
-                pre_profit = pos_pre[0].profit + pos_pre[0].swap + pos_pre[0].commission
-        except Exception:
-            pass
-        close_res = connector.close_position(t_ticket)
-        if close_res:
-            # Setelah close, deal OUT sudah ada di history - hitung netto komisi IN+OUT.
-            net_profit = connector.get_position_net_profit(t_ticket)
-            if net_profit is not None:
-                pre_profit = net_profit
-            print(f"Sukses menutup posisi #{t_ticket} berdasarkan rekomendasi AI Re-Evaluator!")
-            # Komisi aktual trade (IN+OUT) buat BEP tolerance dinamis - trade yang
-            # kalah cuma sebesar komisi (0.06 utk 0.01 lot, 0.60 utk 0.10 lot)
-            # dianggap BEP, bukan loss.
-            trade_cost = connector.get_position_total_cost(t_ticket)
-            risk.record_position_closed(t_ticket, pre_profit, trade_cost)
-
-    # 5.5 Multi-Horizon Forecast Context - INFORMATIONAL ONLY (tidak memblokir eksekusi).
-    # Forecast bias/target di-inject ke prompt LLM oleh llm_client; tidak ada gate
-    # counter-trend di sini. Konsensus LLM yang menentukan entry.
-
     # Check if max open positions reached for NEW trades (recovery mode: tighter cap; late NY: max 2)
     max_positions = config.get_max_open_positions(risk.is_recovery_mode)
-    if entry_blocked or len(open_positions) >= max_positions:
-        if entry_blocked:
-            print(f"-> Entry ditahan: posisi bot sudah {max_positions} (aggregate semua simbol). Re-evaluator tetap jalan.")
-        else:
-            print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
-            for pos in open_positions:
-                print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
-            print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
+    if len(open_positions) >= max_positions:
+        print(f"Posisi terbuka terdeteksi untuk {config.SYMBOL}:")
+        for pos in open_positions:
+            print(f"  - Ticket #{pos['ticket']}: {pos['type']} {pos['volume']} lot | Profit: {pos['profit']} USD")
+        print(f"-> Melewatkan pembukaan posisi baru karena sudah mencapai batas maks ({max_positions}).")
         return True
 
 
