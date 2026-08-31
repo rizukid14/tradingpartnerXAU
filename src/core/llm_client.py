@@ -1570,10 +1570,11 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
 
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=None):
-    """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
-    'deepseek/' prefix (e.g. 'deepseek-v4-flash').
-    reasoning_effort: "low"/"medium"/"high" -> thinking mode; None/"" -> fast mode tanpa reasoning (deepseek-chat, 2-3s)."""
-    raw_model = model_name.split("/", 1)[1] if "/" in model_name else model_name
+    """Query DeepSeek / CMC / OpenRouter (OpenAI-compatible API).
+    model_name is passed intact without stripping provider prefixes (e.g. 'cmc/deepseek/deepseek-v4-flash').
+    reasoning_effort: "low"/"medium"/"high" -> thinking mode; None/"" -> fast mode tanpa reasoning.
+    """
+    raw_model = model_name
     if reasoning_effort is None:
         if "chat" in raw_model.lower():
             reasoning_effort = ""
@@ -1594,8 +1595,6 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
         kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
     else:
         kwargs["temperature"] = 0.2
-        # DeepSeek API format to completely disable reasoning thinking CoT
-        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
     response = deepseek_client.chat.completions.create(**kwargs)
     return clean_json_response(response.choices[0].message.content)

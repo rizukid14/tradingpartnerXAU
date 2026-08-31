@@ -1,7 +1,6 @@
 .git
 .gitignore
 .gitattributes
-.env
 data/
 docs/
 tests/

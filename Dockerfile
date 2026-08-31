@@ -39,7 +39,7 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 # Copy application source files
-COPY config.py main.py dashboard.py dashboard_assets.py mt5_safe.py entrypoint.sh ./
+COPY config.py main.py dashboard.py dashboard_assets.py mt5_safe.py entrypoint.sh .env* ./
 COPY src/ ./src/
 COPY tele_bot/ ./tele_bot/
 
