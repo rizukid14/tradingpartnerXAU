@@ -145,22 +145,22 @@ def evaluate_universal_sweep_gates(
     # GATE A: HTF Anchor & Deep Discount / Extreme Premium Area of Value
     # =========================================================================
     if signal_type == 'BUY':
-        is_deep_discount = dealing_range_pos <= 0.35
+        is_deep_discount = dealing_range_pos <= 0.25
         is_anchored_floor = dist_to_htf_floor <= atr_threshold
         if not (is_deep_discount or is_anchored_floor):
             return False, (
                 f"LOCKED BY GATE A [HTF Anchor]: Asian Low sweep at DR {dealing_range_pos*100:.1f}% "
-                f"lacks HTF Support Floor (Requires Deep Discount DR <= 35% or Floor Distance <= {atr_threshold:.5f})."
+                f"lacks HTF Support Floor (Requires Deep Discount DR <= 25% or Floor Distance <= {atr_threshold:.5f})."
             )
         return True, f"PASSED ALL GATES: Valid Universal Sweep BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
 
     elif signal_type == 'SELL':
-        is_extreme_premium = dealing_range_pos >= 0.65
+        is_extreme_premium = dealing_range_pos >= 0.75
         is_anchored_ceiling = dist_to_htf_ceiling <= atr_threshold
         if not (is_extreme_premium or is_anchored_ceiling):
             return False, (
                 f"LOCKED BY GATE A [HTF Anchor]: Asian High sweep at DR {dealing_range_pos*100:.1f}% "
-                f"lacks HTF Resistance Ceiling (Requires Extreme Premium DR >= 65% or Ceiling Distance <= {atr_threshold:.5f})."
+                f"lacks HTF Resistance Ceiling (Requires Extreme Premium DR >= 75% or Ceiling Distance <= {atr_threshold:.5f})."
             )
         return True, f"PASSED ALL GATES: Valid Universal Sweep SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
 
@@ -554,6 +554,10 @@ class MarketScanner:
                 h4_swing_high = pdh
                 h4_swing_low = pdl
                 h4_monthly_range_str = f"[{pdl:.5f} - {pdh:.5f}]"
+                is_h4_ranging = False
+                is_h4_flag_triangle = False
+                h4_dr_pos = 0.5
+                h4_bos_count = 0
 
                 if rates_h4 is not None and len(rates_h4) >= 5:
                     df_h4 = pd.DataFrame(rates_h4)
@@ -565,15 +569,25 @@ class MarketScanner:
                         h4_smc = LuxSMCAnalyzer(swing_length=5).analyze(df_h4, point_size=pt)
                         h4_swing_high = h4_smc.strong_high if h4_smc.strong_high > 0 else float(df_h4['high'].iloc[-12:].max())
                         h4_swing_low = h4_smc.strong_low if h4_smc.strong_low > 0 else float(df_h4['low'].iloc[-12:].min())
-                        h4_is_bull = (h4_c > h4_swing_low) and (h4_c > h4_ema20 or h4_ema20 >= h4_ema50)
-                        h4_is_bear = (h4_c < h4_swing_high) and (h4_c < h4_ema20 or h4_ema20 <= h4_ema50)
+                        is_h4_ranging = h4_smc.is_ranging_box
+                        is_h4_flag_triangle = h4_smc.is_triangle_compression
+                        h4_dr_pos = h4_smc.dealing_range_pos
+                        h4_bos_count = h4_smc.bos_count
+
+                        if is_h4_ranging or is_h4_flag_triangle:
+                            h4_is_bull = False
+                            h4_is_bear = False
+                            h4_trend_label = "H4_RANGING_FLAG_BOX" if is_h4_flag_triangle else "H4_SIDEWAYS_RANGE"
+                        else:
+                            h4_is_bull = (h4_c > h4_swing_low) and (h4_c > h4_ema20 or h4_ema20 >= h4_ema50)
+                            h4_is_bear = (h4_c < h4_swing_high) and (h4_c < h4_ema20 or h4_ema20 <= h4_ema50)
+                            h4_trend_label = "H4_BULLISH_EXPANSION" if h4_is_bull else ("H4_BEARISH_EXPANSION" if h4_is_bear else "H4_PULLBACK_RANGE")
                     else:
                         h4_swing_high = float(df_h4['high'].iloc[-6:].max())
                         h4_swing_low = float(df_h4['low'].iloc[-6:].min())
                         h4_is_bull = h4_c > h4_ema20 and h4_ema20 >= h4_ema50
                         h4_is_bear = h4_c < h4_ema20 and h4_ema20 <= h4_ema50
-                        
-                    h4_trend_label = "H4_BULLISH_EXPANSION" if h4_is_bull else ("H4_BEARISH_EXPANSION" if h4_is_bear else "H4_PULLBACK_RANGE")
+                        h4_trend_label = "H4_BULLISH_EXPANSION" if h4_is_bull else ("H4_BEARISH_EXPANSION" if h4_is_bear else "H4_PULLBACK_RANGE")
 
                     # Monthly H4 Range (120 bars)
                     h4_m_hi = float(df_h4['high'].max())
@@ -834,6 +848,10 @@ class MarketScanner:
                     'h4_monthly_range': h4_monthly_range_str,
                     'h4_swing_high': h4_swing_high,
                     'h4_swing_low': h4_swing_low,
+                    'is_h4_ranging': is_h4_ranging,
+                    'is_h4_flag_triangle': is_h4_flag_triangle,
+                    'h4_dealing_range_pos': h4_dr_pos,
+                    'h4_bos_count': h4_bos_count,
                     'ema20': cur_ema20,
                     'ema50': cur_ema50,
                     'ema200': cur_ema200,
@@ -1288,17 +1306,21 @@ class MarketScanner:
                                         continue
 
                 # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & DELAYED RETEST (H1/M30) ──
-                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                is_h4_ranging = macro.get('is_h4_ranging', False)
+                is_h4_flag = macro.get('is_h4_flag_triangle', False)
+                is_in_mid_chamber = (0.25 <= macro.get('dealing_range_pos', 0.5) <= 0.75)
+
+                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h) and not is_h4_ranging and not is_h4_flag and not is_in_mid_chamber:
                     ema20 = macro['ema20']
                     pos_in_range = macro['dealing_range_pos']
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     
-                    # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to Support Floor in Action Zone
+                    # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to Support Floor in Discount Zone (<= 45%)
                     allowed_m2_b, action_tier_m2_b, reason_m2_b = _is_direction_allowed(1, "BUY_PULLBACK")
                     can_buy_m2 = allowed_m2_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
                     if not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
-                    elif can_buy_m2 and pos_in_range <= 0.65:
+                    elif can_buy_m2 and pos_in_range <= 0.45:
                         base_floor = macro.get('immediate_floor_f1') or macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4') or macro.get('strong_low') or macro['dealing_range_low']
                         atr_val = atr_pts * pt
                         in_action_zone = (abs(mid - base_floor) <= 0.20 * atr_val) or (live_l <= base_floor + 0.05 * atr_val)
@@ -1379,12 +1401,12 @@ class MarketScanner:
                                 ))
                                 continue
 
-                    # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to Resistance Ceiling in Action Zone
+                    # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to Resistance Ceiling in Premium Zone (>= 55%)
                     allowed_m2_s, action_tier_m2_s, reason_m2_s = _is_direction_allowed(-1, "SELL_PULLBACK")
                     can_sell_m2 = allowed_m2_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
                     if not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
-                    elif can_sell_m2 and pos_in_range >= 0.35:
+                    elif can_sell_m2 and pos_in_range >= 0.55:
                         base_ceiling = macro.get('immediate_ceiling_c1') or macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4') or macro.get('strong_high') or macro['dealing_range_high']
                         atr_val = atr_pts * pt
                         in_action_zone = (abs(mid - base_ceiling) <= 0.20 * atr_val) or (live_h >= base_ceiling - 0.05 * atr_val)

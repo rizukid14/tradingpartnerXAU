@@ -878,9 +878,9 @@ class MacroStrategicEngine:
         last_d1_bull = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
         last_d1_bear = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
 
-        # Boundary threshold: in outer 25% of chamber OR within 0.35 ATR H1 of boundary
-        at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.35 * atr_h1)
-        at_extreme_floor = (chamber_pos <= 0.25) or (dist_to_f1 <= 0.35 * atr_h1)
+        # Boundary threshold: in outer 25% of chamber OR (within 0.15 ATR H1 of barrier AND in outer 35% of chamber)
+        at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.15 * atr_h1 and chamber_pos >= 0.65)
+        at_extreme_floor = (chamber_pos <= 0.25) or (dist_to_f1 <= 0.15 * atr_h1 and chamber_pos <= 0.35)
 
         # Vector 1: Location
         if curr_mid > imm_ceiling_c1 + (0.10 * atr_h1):

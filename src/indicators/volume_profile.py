@@ -111,7 +111,7 @@ def compute_fixed_range_volume_profile(
         b_vol = float(volumes[idx]) if volumes is not None else 1.0
         
         if b_high <= b_low:
-            b_idx = min(int((b_high - range_low) / (range_high - range_low) * num_bins), num_bins - 1)
+            b_idx = max(0, min(int((b_high - range_low) / (range_high - range_low) * num_bins), num_bins - 1))
             bin_volumes[b_idx] += b_vol
             continue
             
