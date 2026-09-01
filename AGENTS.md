@@ -234,6 +234,14 @@ python main.py
     - **Eliminasi Total Formula Sintetis `mid - 0.20*ATR`**: Menghapus seluruh formula floating/buatan di M1 dan M2.
     - **M2 Physical Action Zone Requirement**: M2 (`TREND_ALIGNED_PULLBACK`) wajib memvalidasi sentuhan fisik Action Zone $F_1$ Floor (BUY) atau $C_1$ Ceiling (SELL) dengan toleransi $\le 0.20\times\text{ATR}$ + konfirmasi penahanan support/rejection wick. Penempatan entry limit dijangkarkan 100% pada level fisik struktural ($F_1/C_1/\text{RBS}/\text{SBR}$).
     - **M1 Pure Swept Level Retest Anchor**: Entry limit M1 (`UNIVERSAL_LIQUIDITY_SWEEP`) dijangkarkan murni pada level fisik yang baru saja disapu (`ref_bot` / `ref_top`), tanpa rumus jarak sintetis.
+47. **H4 SMC Dynamic Consolidation Flag Gating & Mid-Chamber Protection** (31 Agustus 2026):
+    - **120-Bar H4 LuxSMC Engine**: Evaluasi dinamis 120 bar H4 mendeteksi pola konvergensi flag/triangle (`is_triangle_compression` via Lower Highs + Higher Lows) dan stationary ranging box (`is_ranging_box` via $\le 1$ BOS atau dealing range pos $30\% - 70\%$).
+    - **Hard Block M2 di Pasar Ranging**: M2 (`TREND_ALIGNED_PULLBACK`) dikunci total (**0 token, otomatis dilewati**) saat simbol berstatus `is_h4_ranging` atau `is_h4_flag_triangle` guna mencegah open posisi ceroboh di area konsolidasi (kasus EURGBP).
+    - **Mid-Chamber Inaction Zone Protection ($25\% - 75\%$)**: Area tengah $25\% - 75\%$ dealing range H4 dipaksa berstatus `WATCH_ONLY` di MSE dan diblokir dari seluruh entry pullback.
+    - **Strict Active Zone Enforcements**: M2 Pullback BUY hanya diizinkan di $\le 45\%$ (Discount) dan SELL di $\ge 55\%$ (Premium) pada tren ekspansi; M1 Universal Sweep diperketat hanya di Extreme Active Zone ($\le 25\%$ BUY / $\ge 75\%$ SELL).
+48. **Unified Stage 1 Macro Direction & CSM Flow Gate Refactoring** (1 September 2026):
+    - **Konsolidasi Pengecekan Arah Makro**: Menyatukan pengecekan *Macro Bias Alignment*, *CSM Flow Opposition* (Net Delta $\le -1.0$ BUY / $\ge +1.0$ SELL), dan *Systemic Basket Lock* ke dalam satu gerbang terpadu `_is_direction_allowed()`.
+    - **Eliminasi Redundansi Gate C M1 Sweep**: Menghapus `Gate C (Macro Asymmetry)` dari `evaluate_universal_sweep_gates()`, memfokuskan M1 murni pada *Gate A (Area of Value Anchor)* dan *Gate B (Anti-Ceiling/Floor Vector Memory)* dengan zero-conflict log.
 
 ---
 
