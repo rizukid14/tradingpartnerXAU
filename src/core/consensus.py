@@ -236,7 +236,7 @@ def _drop_standalone_outlier(values, label):
     return values, None
 
 
-def calculate_consensus(decisions):
+def calculate_consensus(decisions, candidate=None):
     box_items = []
 
     # FIX 29 Agu: ai_mode harus di-set di awal karena dipakai di multiple return paths
@@ -510,10 +510,54 @@ def calculate_consensus(decisions):
     final_inv = statistics.median(inv_list) if inv_list else None
     final_tgt = statistics.median(tgt_list) if tgt_list else None
 
-    final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
-    final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+    # ── BOUNDED MICRO-PRECISION REFINEMENT (QUANT ANCHOR + LLM M5/M15 MICRO-TWEAK) ──
+    cand_sym = getattr(candidate, 'symbol', config.SYMBOL)
+    cand_pip_div = 10 if ("JPY" in cand_sym or point < 0.001) else 1
+    if candidate and getattr(candidate, 'suggested_sl', 0.0) and getattr(candidate, 'suggested_tp', 0.0):
+        prop_sl = float(candidate.suggested_sl)
+        prop_tp = float(candidate.suggested_tp)
+        cand_atr_pts = float(getattr(candidate, 'current_atr_pts', 0.0) or 0.0)
+        atr_p = (cand_atr_pts * point) if cand_atr_pts > 0 else (15 * point * cand_pip_div)
+        micro_bound = max(0.25 * atr_p, 30 * point) # e.g. ~3 to 5 pips
 
-    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(final_sl, final_tp)
+        # 1. Invalidation / SL Validation
+        if final_inv is not None and abs(final_inv - prop_sl) <= micro_bound:
+            # LLM refined within allowed micro bound -> ACCEPTED
+            diff_pts = abs(final_inv - prop_sl) / point if point > 0 else 0
+            outlier_notes.append(f"SL Micro-Refined by LLM M5/M15 wicks: {prop_sl} -> {final_inv} (Δ {diff_pts:.1f} pts)")
+        else:
+            if final_inv is not None:
+                outlier_notes.append(f"LLM SL ({final_inv}) deviated > {micro_bound/point:.0f} pts from Quant Anchor ({prop_sl}) -> Clamped to Quant Anchor")
+            final_inv = prop_sl
+
+        # 2. Target / TP Validation
+        if final_tgt is not None and abs(final_tgt - prop_tp) <= micro_bound * 1.5:
+            diff_tp_pts = abs(final_tgt - prop_tp) / point if point > 0 else 0
+            outlier_notes.append(f"TP Micro-Refined by LLM M5/M15 wicks: {prop_tp} -> {final_tgt} (Δ {diff_tp_pts:.1f} pts)")
+        else:
+            if final_tgt is not None:
+                outlier_notes.append(f"LLM TP ({final_tgt}) deviated > Quant Anchor ({prop_tp}) -> Clamped to Quant Anchor")
+            final_tgt = prop_tp
+
+        # Recalculate precise points from validated price coordinates
+        base_calc_p = final_entry_price if (final_entry_type != "market" and final_entry_price) else ref_price
+        if base_calc_p > 0 and point > 0:
+            final_sl = int(round(abs(base_calc_p - final_inv) / point))
+            final_tp = int(round(abs(final_tgt - base_calc_p) / point))
+        else:
+            final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
+            final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+    else:
+        final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
+        final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+
+    final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(
+        final_sl, final_tp,
+        symbol=config.SYMBOL,
+        action_tier=getattr(candidate, 'action_tier', None),
+        setup_grade=getattr(candidate, 'setup_grade', None),
+        candidate=candidate
+    )
 
     # Guardrail entry pending (Filosofi: Percayakan pada LLM, No Trade is Better)
     if final_entry_type != "market" and final_entry_price is not None:

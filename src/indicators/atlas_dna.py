@@ -120,13 +120,15 @@ def calculate_dual_grid_stations(symbol: str, current_price: float) -> dict:
 
 def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int, 
                              origin_level: float, atr_h1: float, pwl: float = None, pwh: float = None,
-                             rbs: float = None, sbr: float = None, spread_pts: float = 0.0) -> dict:
+                             rbs: float = None, sbr: float = None, spread_pts: float = 0.0,
+                             c1: float = None, f1: float = None) -> dict:
     """
     Calculates precise intraday Stop Loss and Take Profit anchored to Physical Stations:
-    1. Primary Target Station: Real Structural RBS (for SELL) or SBR (for BUY)
-    2. Secondary Target Station: Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
+    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL)
+    2. Secondary Target Station: Real Structural SBR/RBS
+    3. Tertiary Target Station: Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
     - Front-running pad: [Spread + 0.15x ATR] deducted from target station
-    - Realistic Intraday R:R: Min 1.25:1 to Max 2.5:1 (Never stretches unrealistically to 100+ pips)
+    - Realistic Intraday R:R: Min 1.25:1 to Max 2.5:1
     """
     step = get_symbol_step(symbol)
     sub_step = step * 0.50 # 50-pip Sub-Station
@@ -149,13 +151,15 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             sl = entry_price - max_sl_dist
         risk = max(abs(entry_price - sl), 0.50 * atr_h1 if atr_h1 > 0 else 15 * pt)
         
-        # TARGET HIERARCHY: 1. SBR Ceiling -> 2. Psychological Sub-Station (50-pip)
+        # TARGET HIERARCHY: 1. Next Structure C1 -> 2. SBR Ceiling -> 3. Psychological Sub-Station (50-pip)
         target_station = None
-        if sbr and sbr > entry_price + 1.25 * risk and (sbr - entry_price) <= 3.0 * risk:
+        if c1 and c1 > entry_price + 1.20 * risk and (c1 - entry_price) <= 3.2 * risk:
+            target_station = c1
+        elif sbr and sbr > entry_price + 1.20 * risk and (sbr - entry_price) <= 3.2 * risk:
             target_station = sbr
         elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 > entry_price + 1.25 * risk and (weekly_50 - entry_price) <= 3.0 * risk:
+            if weekly_50 > entry_price + 1.20 * risk and (weekly_50 - entry_price) <= 3.2 * risk:
                 target_station = weekly_50
                 
         if target_station is None:
@@ -183,13 +187,15 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             sl = entry_price + max_sl_dist
         risk = max(abs(sl - entry_price), 0.50 * atr_h1 if atr_h1 > 0 else 15 * pt)
         
-        # TARGET HIERARCHY: 1. RBS Floor -> 2. Psychological Sub-Station (50-pip)
+        # TARGET HIERARCHY: 1. Next Structure F1 -> 2. RBS Floor -> 3. Psychological Sub-Station (50-pip)
         target_station = None
-        if rbs and rbs < entry_price - 1.25 * risk and (entry_price - rbs) <= 3.0 * risk:
+        if f1 and f1 < entry_price - 1.20 * risk and (entry_price - f1) <= 3.2 * risk:
+            target_station = f1
+        elif rbs and rbs < entry_price - 1.20 * risk and (entry_price - rbs) <= 3.2 * risk:
             target_station = rbs
         elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 < entry_price - 1.25 * risk and (entry_price - weekly_50) <= 3.0 * risk:
+            if weekly_50 < entry_price - 1.20 * risk and (entry_price - weekly_50) <= 3.2 * risk:
                 target_station = weekly_50
                 
         if target_station is None:

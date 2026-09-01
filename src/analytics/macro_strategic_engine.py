@@ -177,10 +177,22 @@ class MacroStrategicDirective:
     immediate_floor_f1: float = 0.0
     deep_target_floor_f2: float = 0.0
     deep_target_ceiling_c2: float = 0.0
+    floor_f1: float = 0.0
+    floor_f2: Optional[float] = None
+    floor_f3: Optional[float] = None
+    floor_f4: Optional[float] = None
+    ceiling_c1: float = 0.0
+    ceiling_c2: Optional[float] = None
+    ceiling_c3: Optional[float] = None
+    ceiling_c4: Optional[float] = None
+    layered_floors: List[Dict[str, Any]] = field(default_factory=list)
+    layered_ceilings: List[Dict[str, Any]] = field(default_factory=list)
     c1_density_score: float = 0.0
     f1_density_score: float = 0.0
     c1_fortress_tag: str = ""
     f1_fortress_tag: str = ""
+    c1_reaction_grade: str = "GRADE_1_MICRO"
+    f1_reaction_grade: str = "GRADE_1_MICRO"
     chamber_position_pct: float = 0.50
     retest_touch_count: int = 1
     interaction_sequence: List[str] = field(default_factory=list)
@@ -649,6 +661,60 @@ class MacroStrategicEngine:
         except Exception as e:
             logger.debug(f"FRVP calculation bypass for {symbol}: {e}")
 
+        # Multi-Timeframe Moving Averages (MN1, W1, D1, H4, H1)
+        ema_elements: List[Tuple[float, float, str]] = []
+        if not df_mn1.empty and len(df_mn1) >= 15:
+            e50 = float(df_mn1['close'].ewm(span=min(50, len(df_mn1)), adjust=False).mean().iloc[-1])
+            e20 = float(df_mn1['close'].ewm(span=min(20, len(df_mn1)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 4.5, "MN1_EMA50"))
+            ema_elements.append((e20, 3.5, "MN1_EMA20"))
+        if not df_w1.empty and len(df_w1) >= 15:
+            if len(df_w1) >= 50:
+                e200 = float(df_w1['close'].ewm(span=min(200, len(df_w1)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 4.5, "W1_EMA200"))
+            e50 = float(df_w1['close'].ewm(span=min(50, len(df_w1)), adjust=False).mean().iloc[-1])
+            e20 = float(df_w1['close'].ewm(span=min(20, len(df_w1)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 3.5, "W1_EMA50"))
+            ema_elements.append((e20, 2.5, "W1_EMA20"))
+        if not df_d1.empty and len(df_d1) >= 20:
+            if len(df_d1) >= 50:
+                e200 = float(df_d1['close'].ewm(span=min(200, len(df_d1)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 4.0, "D1_EMA200"))
+            e50 = float(df_d1['close'].ewm(span=min(50, len(df_d1)), adjust=False).mean().iloc[-1])
+            e20 = float(df_d1['close'].ewm(span=20, adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 3.0, "D1_EMA50"))
+            ema_elements.append((e20, 2.0, "D1_EMA20"))
+        if not df_h4.empty and len(df_h4) >= 20:
+            if len(df_h4) >= 50:
+                e200 = float(df_h4['close'].ewm(span=min(200, len(df_h4)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 3.0, "H4_EMA200"))
+            e50 = float(df_h4['close'].ewm(span=min(50, len(df_h4)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 2.5, "H4_EMA50"))
+        if not df_h1.empty and len(df_h1) >= 20:
+            if len(df_h1) >= 50:
+                e200 = float(df_h1['close'].ewm(span=min(200, len(df_h1)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 2.5, "H1_EMA200"))
+            e50 = float(df_h1['close'].ewm(span=min(50, len(df_h1)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 2.0, "H1_EMA50"))
+
+        # Multi-Year & Previous Year Extremes (PYH/PYL, 2-Year High/Low, 52W High/Low)
+        macro_extremes: List[Tuple[float, float, str]] = []
+        if not df_w1.empty:
+            w1_high_2yr = float(df_w1['high'].tail(min(104, len(df_w1))).max())
+            w1_low_2yr = float(df_w1['low'].tail(min(104, len(df_w1))).min())
+            macro_extremes.append((w1_high_2yr, 4.5, "HIGH_2YR"))
+            macro_extremes.append((w1_low_2yr, 4.5, "LOW_2YR"))
+            if len(df_w1) >= 52:
+                w1_high_52w = float(df_w1['high'].tail(52).max())
+                w1_low_52w = float(df_w1['low'].tail(52).min())
+                macro_extremes.append((w1_high_52w, 4.0, "52W_HIGH"))
+                macro_extremes.append((w1_low_52w, 4.0, "52W_LOW"))
+        if not df_d1.empty and len(df_d1) >= 250:
+            py_high = float(df_d1['high'].iloc[:-250].max()) if len(df_d1) > 260 else float(df_d1['high'].tail(250).max())
+            py_low = float(df_d1['low'].iloc[:-250].min()) if len(df_d1) > 260 else float(df_d1['low'].tail(250).min())
+            macro_extremes.append((py_high, 4.0, "PYH"))
+            macro_extremes.append((py_low, 4.0, "PYL"))
+
         # Candidate Upper Barriers
         raw_up_elements: List[Tuple[float, float, str]] = []
         for p, sc, tag in [
@@ -658,6 +724,11 @@ class MacroStrategicEngine:
         ]:
             if p > curr_mid:
                 raw_up_elements.append((round(p, digits), sc, tag))
+
+        # Add EMAs and Macro Extremes to Upper Barriers if above mid
+        for p_lvl, sc, tag in (ema_elements + macro_extremes):
+            if p_lvl > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(p_lvl, digits), sc, tag))
 
         # W1 & Multi-Year Upper Resistance Structures
         if macro_sbr_w1 and macro_sbr_w1 > curr_mid + (0.01 * atr_h1):
@@ -717,6 +788,11 @@ class MacroStrategicEngine:
         ]:
             if p < curr_mid:
                 raw_down_elements.append((round(p, digits), sc, tag))
+
+        # Add EMAs and Macro Extremes to Lower Barriers if below mid
+        for p_lvl, sc, tag in (ema_elements + macro_extremes):
+            if p_lvl < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(p_lvl, digits), sc, tag))
 
         # W1 & Multi-Year Lower Support Structures
         if macro_rbs_w1 and macro_rbs_w1 < curr_mid - (0.01 * atr_h1):
@@ -843,6 +919,135 @@ class MacroStrategicEngine:
 
         c1_fortress_tag = self._get_fortress_tag(c1_density_score)
         f1_fortress_tag = self._get_fortress_tag(f1_density_score)
+
+        # ── PURE DYNAMIC LAYER EXTRACTION (VARIABLE LENGTH N >= 1, ZERO FAKE PADDING) ──
+        # Dynamic separation tolerance delta_tol based on ATR and Step
+        delta_tol = max(0.30 * atr_h1, 0.25 * psych_step_macro, 5 * pt * pip_div)
+
+        def _compute_reaction_grade(score: float, tag_str: str) -> str:
+            if score >= 6.5 or any(t in tag_str for t in ('MN1', 'W1', 'D1', 'PWH', 'PWL', 'ANNUAL', 'HIGH_2YR', 'LOW_2YR', 'PYH', 'PYL', '52W')):
+                return "GRADE_3_MACRO"
+            if score >= 3.5 or any(t in tag_str for t in ('H4', 'POC', 'VAH', 'VAL', 'PSYCH', 'EMA50', 'EMA200')):
+                return "GRADE_2_INTERMEDIATE"
+            return "GRADE_1_MICRO"
+
+        def _compute_displacement_thresh(grade: str, atr: float) -> float:
+            if grade == "GRADE_3_MACRO": return 0.60 * atr
+            if grade == "GRADE_2_INTERMEDIATE": return 0.35 * atr
+            return 0.15 * atr
+
+        def _compute_wick_band(grade: str, atr: float) -> float:
+            if grade == "GRADE_3_MACRO": return 0.50 * atr
+            if grade == "GRADE_2_INTERMEDIATE": return 0.35 * atr
+            return 0.20 * atr
+
+        def _classify_distance(p: float, mid: float, atr: float) -> Tuple[str, float, float]:
+            dist_pts = abs(p - mid) / pt
+            dist_pips = round(dist_pts / pip_div, 1)
+            dist_atr = round(abs(p - mid) / max(atr, 1e-5), 2)
+            if dist_atr <= 1.0:
+                zone = "TERDEKAT"
+            elif dist_atr <= 2.5:
+                zone = "AGAK_DEKAT"
+            elif dist_atr <= 5.0:
+                zone = "MID"
+            elif dist_atr <= 10.0:
+                zone = "JAUH"
+            else:
+                zone = "TERJAUH"
+            return zone, dist_pips, dist_atr
+
+        # 1. Floor Layers (Dynamic N >= 1, No Artificial Capping/Padding)
+        layered_floors = []
+        last_f_price = curr_mid
+        for cand in down_clusters:
+            if (last_f_price - cand['price']) >= delta_tol:
+                grade = _compute_reaction_grade(cand['r_score'], cand['tag_str'])
+                zone, d_pips, d_atr = _classify_distance(cand['price'], curr_mid, atr_h1)
+                layered_floors.append({
+                    'tier': f"F{len(layered_floors)+1}",
+                    'index': len(layered_floors)+1,
+                    'price': cand['price'],
+                    'density_score': cand['r_score'],
+                    'reaction_grade': grade,
+                    'fortress_tag': self._get_fortress_tag(cand['r_score']),
+                    'tag_str': cand['tag_str'],
+                    'distance_zone': zone,
+                    'dist_pips': d_pips,
+                    'dist_atr': d_atr,
+                    'displacement_thresh': round(_compute_displacement_thresh(grade, atr_h1), digits),
+                    'wick_band': round(_compute_wick_band(grade, atr_h1), digits)
+                })
+                last_f_price = cand['price']
+
+        # Fallback if no down_clusters detected at all
+        if not layered_floors:
+            zone, d_pips, d_atr = _classify_distance(sub_floor, curr_mid, atr_h1)
+            layered_floors.append({
+                'tier': "F1",
+                'index': 1,
+                'price': sub_floor,
+                'density_score': 2.0,
+                'reaction_grade': "GRADE_1_MICRO",
+                'fortress_tag': "MODERATE",
+                'tag_str': "FALLBACK_PSYCH",
+                'distance_zone': zone,
+                'dist_pips': d_pips,
+                'dist_atr': d_atr,
+                'displacement_thresh': round(0.15 * atr_h1, digits),
+                'wick_band': round(0.20 * atr_h1, digits)
+            })
+
+        # 2. Ceiling Layers (Dynamic M >= 1, No Artificial Capping/Padding)
+        layered_ceilings = []
+        last_c_price = curr_mid
+        for cand in up_clusters:
+            if (cand['price'] - last_c_price) >= delta_tol:
+                grade = _compute_reaction_grade(cand['r_score'], cand['tag_str'])
+                zone, d_pips, d_atr = _classify_distance(cand['price'], curr_mid, atr_h1)
+                layered_ceilings.append({
+                    'tier': f"C{len(layered_ceilings)+1}",
+                    'index': len(layered_ceilings)+1,
+                    'price': cand['price'],
+                    'density_score': cand['r_score'],
+                    'reaction_grade': grade,
+                    'fortress_tag': self._get_fortress_tag(cand['r_score']),
+                    'tag_str': cand['tag_str'],
+                    'distance_zone': zone,
+                    'dist_pips': d_pips,
+                    'dist_atr': d_atr,
+                    'displacement_thresh': round(_compute_displacement_thresh(grade, atr_h1), digits),
+                    'wick_band': round(_compute_wick_band(grade, atr_h1), digits)
+                })
+                last_c_price = cand['price']
+
+        if not layered_ceilings:
+            zone, d_pips, d_atr = _classify_distance(sub_ceiling, curr_mid, atr_h1)
+            layered_ceilings.append({
+                'tier': "C1",
+                'index': 1,
+                'price': sub_ceiling,
+                'density_score': 2.0,
+                'reaction_grade': "GRADE_1_MICRO",
+                'fortress_tag': "MODERATE",
+                'tag_str': "FALLBACK_PSYCH",
+                'distance_zone': zone,
+                'dist_pips': d_pips,
+                'dist_atr': d_atr,
+                'displacement_thresh': round(0.15 * atr_h1, digits),
+                'wick_band': round(0.20 * atr_h1, digits)
+            })
+
+        # Null-Safe Layer Assignments (None if index out of range)
+        floor_f1 = layered_floors[0]['price']
+        floor_f2 = layered_floors[1]['price'] if len(layered_floors) > 1 else None
+        floor_f3 = layered_floors[2]['price'] if len(layered_floors) > 2 else None
+        floor_f4 = layered_floors[3]['price'] if len(layered_floors) > 3 else None
+
+        ceiling_c1 = layered_ceilings[0]['price']
+        ceiling_c2 = layered_ceilings[1]['price'] if len(layered_ceilings) > 1 else None
+        ceiling_c3 = layered_ceilings[2]['price'] if len(layered_ceilings) > 2 else None
+        ceiling_c4 = layered_ceilings[3]['price'] if len(layered_ceilings) > 3 else None
 
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
@@ -1223,10 +1428,22 @@ class MacroStrategicEngine:
             immediate_floor_f1=imm_floor_f1,
             deep_target_floor_f2=deep_floor_f2,
             deep_target_ceiling_c2=deep_ceiling_c2,
+            floor_f1=floor_f1,
+            floor_f2=floor_f2,
+            floor_f3=floor_f3,
+            floor_f4=floor_f4,
+            ceiling_c1=ceiling_c1,
+            ceiling_c2=ceiling_c2,
+            ceiling_c3=ceiling_c3,
+            ceiling_c4=ceiling_c4,
+            layered_floors=layered_floors,
+            layered_ceilings=layered_ceilings,
             c1_density_score=c1_density_score,
             f1_density_score=f1_density_score,
             c1_fortress_tag=c1_fortress_tag,
             f1_fortress_tag=f1_fortress_tag,
+            c1_reaction_grade=(layered_ceilings[0].get('reaction_grade', 'GRADE_1_MICRO') if layered_ceilings else 'GRADE_1_MICRO'),
+            f1_reaction_grade=(layered_floors[0].get('reaction_grade', 'GRADE_1_MICRO') if layered_floors else 'GRADE_1_MICRO'),
             chamber_position_pct=round(chamber_pos, 2),
             retest_touch_count=len(interaction_seq),
             interaction_sequence=interaction_seq,
