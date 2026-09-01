@@ -255,6 +255,7 @@ def handle_macro_command(chat_id, symbol_input=None):
         
         is_crypto_or_gold = ("BTC" in clean_sym or "XAU" in clean_sym)
         pip_unit = "USD" if is_crypto_or_gold else "pips"
+        fmt = "{:,.2f}" if is_crypto_or_gold else ("{:.3f}" if "JPY" in clean_sym else "{:.5f}")
         
         # Calculate reload zone difference in pips
         prox_val = directive.entry_zone_proximal if hasattr(directive, 'entry_zone_proximal') and directive.entry_zone_proximal > 0 else 0.0
@@ -268,11 +269,31 @@ def handle_macro_command(chat_id, symbol_input=None):
         traps_list = "\n".join([f"• {t}" for t in directive.forbidden_traps]) if directive.forbidden_traps else "• Tidak ada jebakan ekstrem."
         circuit_str = " 🚨 *CIRCUIT BREAKER*" if getattr(directive, 'hard_circuit_breaker', False) else ""
 
+        # Chamber Bounds with G-grade notation
+        f1_val = getattr(directive, 'immediate_floor_f1', 0.0)
+        c1_val = getattr(directive, 'immediate_ceiling_c1', 0.0)
+        f2_val = getattr(directive, 'deep_target_floor_f2', 0.0)
+        c2_val = getattr(directive, 'deep_target_ceiling_c2', 0.0)
+        ch_pos = getattr(directive, 'chamber_position_pct', 0.5)
+        f1_react_raw = getattr(directive, 'f1_reaction_grade', 'GRADE_1_MICRO')
+        c1_react_raw = getattr(directive, 'c1_reaction_grade', 'GRADE_1_MICRO')
+        f1_react = "G3-Macro" if f1_react_raw == "GRADE_3_MACRO" else ("G2-Inter" if f1_react_raw == "GRADE_2_INTERMEDIATE" else "G1-Micro")
+        c1_react = "G3-Macro" if c1_react_raw == "GRADE_3_MACRO" else ("G2-Inter" if c1_react_raw == "GRADE_2_INTERMEDIATE" else "G1-Micro")
+        f1_tag = getattr(directive, 'f1_fortress_tag', '')
+        c1_tag = getattr(directive, 'c1_fortress_tag', '')
+        m_state = getattr(directive, 'market_state', 'NEUTRAL_CHAMBER')
+        bull_rmap = getattr(directive, 'bullish_contingency_path', '')
+        bear_rmap = getattr(directive, 'bearish_contingency_path', '')
+
         lines = [
             f"🧭 *TOP-DOWN MACRO: {clean_sym}*",
             f"🎯 *Mandat*: `{directive.daily_macro_bias}` ({directive.macro_bias_score:+.2f}) │ *Tier*: `{directive.action_tier}`{circuit_str}",
             f"⚡ *Aksi*: `{directive.primary_execution_directive}` (Conf: {directive.confidence_score}%)\n",
             f"💡 *Gameplan*:\n_{directive.daily_mandate_thesis}_\n",
+            f"🏰 *Barrier Chamber*: `{m_state}` (Range: {ch_pos:.0%})",
+            f"• 🔺 *F1 Lantai*: `{fmt.format(f1_val)}` ({f1_react} │ {f1_tag})",
+            f"• 🔻 *C1 Plafon*: `{fmt.format(c1_val)}` ({c1_react} │ {c1_tag})",
+            f"• 📊 *F2 Deep*: `{fmt.format(f2_val)}` │ *C2 Deep*: `{fmt.format(c2_val)}`\n",
             "🎯 *Eksekusi Taktis*:",
             f"• 📍 *Reload Zone*: {reload_str}",
             f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips:.1f} {pip_unit})",
@@ -280,6 +301,9 @@ def handle_macro_command(chat_id, symbol_input=None):
             f"• 🏆 *TP2 (Target)*: `{directive.tp2_price}` (+{directive.tp2_pips:.1f} {pip_unit} │ {directive.risk_reward_ratio:.2f}:1 R:R)",
             f"• 🚫 *Invalidasi*: `{directive.invalidation_stop_price}`\n",
             f"⚠️ *Pantangan*:\n{traps_list}\n",
+            f"🗺️ *Future Macro Roadmap*:\n`{bull_rmap}`\n`{bear_rmap}`\n",
+            f"🔣 *Format Struktur*: `C1/C2 vs F1/F2` │ Grade `G1/G2/G3`\n",
+            f"🔣 *Format Struktur*: `C1/C2 vs F1/F2` │ Grade `G1/G2/G3`\n",
             f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ Komputasi: `{directive.calculation_time_ms:.1f} ms` (0 Token)"
         ]
         msg_text = "\n".join(lines)
@@ -295,6 +319,48 @@ def handle_macro_command(chat_id, symbol_input=None):
     except Exception as e:
         print(f"[TG BOT ERROR] handle_macro_command: {e}")
         send_telegram_msg(f"Error computing macro directive for `{symbol_input}`: `{e}`", chat_id=chat_id)
+
+
+def handle_macro_all_command(chat_id):
+    """Sends compact 26-pair macro compass table as Telegram message (/macro all)."""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        symbols = config.get_scanner_symbols()
+        send_telegram_msg(
+            f"🧭 *TOP-DOWN MACRO COMPASS — 26 PASANG FX*\n_Menghitung 6-TF Native Directive untuk {len(symbols)} simbol... (<50ms, 0 Token)_",
+            chat_id=chat_id
+        )
+        lines_bull, lines_bear, lines_range = [], [], []
+        for s in symbols:
+            valid_s = connector.get_valid_trade_symbol(s)
+            d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+            clean = d.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            f1_raw = getattr(d, 'f1_reaction_grade', 'GRADE_1_MICRO')
+            c1_raw = getattr(d, 'c1_reaction_grade', 'GRADE_1_MICRO')
+            f1_g = "G3" if f1_raw == "GRADE_3_MACRO" else ("G2" if f1_raw == "GRADE_2_INTERMEDIATE" else "G1")
+            c1_g = "G3" if c1_raw == "GRADE_3_MACRO" else ("G2" if c1_raw == "GRADE_2_INTERMEDIATE" else "G1")
+            f1_v = getattr(d, 'immediate_floor_f1', 0.0)
+            c1_v = getattr(d, 'immediate_ceiling_c1', 0.0)
+            is_jpy = "JPY" in clean
+            fmt_pair = "{:.3f}" if is_jpy else "{:.5f}"
+            entry = f"`{clean:<10}` │ `{d.daily_macro_bias:<20}` │ F1 {fmt_pair.format(f1_v)} {f1_g} / C1 {fmt_pair.format(c1_v)} {c1_g}"
+            if "BULL" in d.daily_macro_bias:
+                lines_bull.append(f"🟢 {entry}")
+            elif "BEAR" in d.daily_macro_bias:
+                lines_bear.append(f"🔴 {entry}")
+            else:
+                lines_range.append(f"⚪ {entry}")
+
+        msg = ["🟢 *BULLISH BIAS:*\n" + "\n".join(lines_bull)] if lines_bull else []
+        if lines_bear:
+            msg.append("🔴 *BEARISH BIAS:*\n" + "\n".join(lines_bear))
+        if lines_range:
+            msg.append("⚪ *RANGE / NEUTRAL:*\n" + "\n".join(lines_range))
+        msg.append(f"\n🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ 0 Token")
+        send_telegram_msg("\n\n".join(msg), chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_macro_all_command: {e}")
+        send_telegram_msg(f"Error computing macro all: `{e}`", chat_id=chat_id)
 
 
 def handle_help_command(chat_id):
@@ -1036,7 +1102,11 @@ def _process_update(update):
             handle_indicators_command(target_chat, symbol_input=sym)
         elif cmd in ("/macro", "/directive", "/kompas"):
             if args:
-                handle_macro_command(target_chat, symbol_input=args[0])
+                sym_arg = args[0].strip().upper()
+                if sym_arg == "ALL":
+                    handle_macro_all_command(target_chat)
+                else:
+                    handle_macro_command(target_chat, symbol_input=sym_arg)
             else:
                 handle_macro_picker_menu(target_chat)
         elif cmd in ("/status", "/akun"):
