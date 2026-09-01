@@ -19,6 +19,107 @@ def _effective_consensus_threshold():
 _last_sltp_adjustments = []
 
 
+def calculate_2d_confluence_tier(quant_grade: str, decisions: dict, candidate=None) -> dict:
+    """
+    Computes the 2D Confluence Matrix combining Stage 1 Quant Engine Grade (S, A, B)
+    with Stage 2 3-AI Specialized Score:
+      Composite Score S = 0.35 * S_OpenAI + 0.35 * S_Gemini + 0.30 * S_DeepSeek
+    
+    Tiers:
+      - APEX_SUPER_CONVICTION (Quant S + AI >= 80%): 1.25x lot (Split 2 tickets), Multi-Day TP2
+      - HIGH_CONVICTION (Quant S + AI 70-79% or Quant A + AI >= 80%): 1.00x lot, Standard TP1+TP2
+      - STANDARD_TRADE (Quant A + AI 70-79%): 1.00x lot, Standard TP1+BEP
+      - REDUCED_SCALP (Quant B or AI 60-69%): 0.50x lot, Tight TP1 Only Scalp (1.0 - 1.25x ATR)
+      - SKIP_VETO (Quant B + AI 60-69% or AI < 60% or Any Reject/Veto): 0.0x (HOLD)
+    """
+    w_openai = 0.35
+    w_gemini = 0.35
+    w_deepseek = 0.30
+
+    o_dec = decisions.get("OpenAI", {})
+    g_dec = decisions.get("Gemini", {})
+    d_dec = decisions.get("DeepSeek", {})
+
+    o_conf = float(o_dec.get("confidence", 0.70))
+    g_conf = float(g_dec.get("confidence", 0.70))
+    d_conf = float(d_dec.get("confidence", 0.70))
+
+    o_verdict = str(o_dec.get("verdict", "PASS")).upper()
+    g_verdict = str(g_dec.get("verdict", "PASS")).upper()
+    d_verdict = str(d_dec.get("verdict", "APPROVE")).upper()
+    d_risk = str(d_dec.get("risk_verdict", "CLEARED")).upper()
+
+    if o_conf > 1.0: o_conf /= 100.0
+    if g_conf > 1.0: g_conf /= 100.0
+    if d_conf > 1.0: d_conf /= 100.0
+
+    composite_score = (w_openai * o_conf) + (w_gemini * g_conf) + (w_deepseek * d_conf)
+
+    q_grade = str(quant_grade or getattr(candidate, 'setup_grade', None) or getattr(candidate, 'action_tier', 'GRADE_A')).upper()
+    is_quant_s = ("GRADE_S" in q_grade or "APEX" in q_grade)
+    is_quant_b = ("GRADE_B" in q_grade or "MICRO" in q_grade or "TP1_ONLY" in str(getattr(candidate, 'action_tier', '')))
+    is_quant_a = not is_quant_s and not is_quant_b
+
+    has_hard_reject = (o_verdict == "REJECT" or g_verdict == "REJECT" or d_verdict == "REJECT" or d_risk == "HARD_VETO")
+
+    if has_hard_reject or composite_score < 0.60:
+        return {
+            "tier": "SKIP_VETO",
+            "sizing_multiplier": 0.0,
+            "composite_score": composite_score,
+            "tp_mode": "NONE",
+            "is_split_ticket": False,
+            "status": "VETO"
+        }
+
+    if is_quant_b and composite_score < 0.70:
+        return {
+            "tier": "SKIP_NOISE",
+            "sizing_multiplier": 0.0,
+            "composite_score": composite_score,
+            "tp_mode": "NONE",
+            "is_split_ticket": False,
+            "status": "VETO_NOISE"
+        }
+
+    if is_quant_s and composite_score >= 0.80 and o_verdict in ("PASS", "APPROVE") and g_verdict in ("PASS", "APPROVE"):
+        return {
+            "tier": "APEX_SUPER_CONVICTION",
+            "sizing_multiplier": 1.25,
+            "composite_score": composite_score,
+            "tp_mode": "EXTENDED_RUNNER",
+            "is_split_ticket": True,
+            "status": "EXECUTE"
+        }
+    elif (is_quant_s and composite_score >= 0.70) or (is_quant_a and composite_score >= 0.80):
+        return {
+            "tier": "HIGH_CONVICTION",
+            "sizing_multiplier": 1.00,
+            "composite_score": composite_score,
+            "tp_mode": "STANDARD_TP1_TP2",
+            "is_split_ticket": False,
+            "status": "EXECUTE"
+        }
+    elif is_quant_a and composite_score >= 0.70:
+        return {
+            "tier": "STANDARD_TRADE",
+            "sizing_multiplier": 1.00,
+            "composite_score": composite_score,
+            "tp_mode": "STANDARD_TP1_BEP",
+            "is_split_ticket": False,
+            "status": "EXECUTE"
+        }
+    else:
+        return {
+            "tier": "REDUCED_SCALP",
+            "sizing_multiplier": 0.50,
+            "composite_score": composite_score,
+            "tp_mode": "TIGHT_TP1_ONLY",
+            "is_split_ticket": False,
+            "status": "EXECUTE"
+        }
+
+
 def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup_grade=None, candidate=None):
     """
     SL/TP final sesuai config.TP_SL_RULES, 5-Tier Action Matrix, dan Setup Quality Grade.
@@ -119,16 +220,18 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
 
         # Dynamic Grade-Aware Multipliers
         grade_str = str(setup_grade or "").upper()
+        act_str = str(action_tier or "").upper()
         if "GRADE_S" in grade_str:
             max_rr = 3.50
-        elif "GRADE_B" in grade_str:
+        elif "GRADE_B" in grade_str or "REDUCED_SCALP" in grade_str or "REDUCED_SCALP" in act_str:
             max_rr = 1.25
         elif "GRADE_A_PLUS" in grade_str:
             max_rr = 2.50
 
         # 5-Tier Action Matrix R:R constraints
-        if action_tier == "TP1_ONLY_SCALP":
+        if action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP") or "REDUCED_SCALP" in grade_str or "TP1_ONLY" in act_str:
             max_rr = min(max_rr, 1.25)
+            min_rr = min(min_rr, 1.00)
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
@@ -507,6 +610,31 @@ def calculate_consensus(decisions, candidate=None):
         final_entry_type = "market"
 
     avg_confidence = float(sum(conf_list) / len(conf_list)) if conf_list else 0.0
+    
+    # ── 2D CONFLUENCE MATRIX EVALUATION (QUANT GRADE × AI COMPOSITE SCORE) ──
+    quant_grade = getattr(candidate, 'setup_grade', None) or getattr(candidate, 'action_tier', 'GRADE_A')
+    confluence = calculate_2d_confluence_tier(quant_grade, decisions, candidate=candidate)
+    
+    if confluence.get("status") in ("VETO", "VETO_NOISE"):
+        box_items.append("---")
+        box_items.append(f"{UI.RED}[⛔ 2D CONFLUENCE VETO] Trade {consensus_signal} Dibatalkan: {confluence.get('tier')} (Score: {confluence.get('composite_score', 0.0)*100:.1f}%){UI.RST}")
+        print("\n" + UI.make_box("ANALISIS KONSENSUS MULTI-LLM", box_items, width=100, border_color=UI.CYAN) + "\n")
+        return {
+            "signal": "HOLD",
+            "confidence": confluence.get("composite_score", 0.0),
+            "sl_points": config.default_sl_points_for(config.SYMBOL),
+            "tp_points": config.default_tp_points_for(config.SYMBOL),
+            "agreeing_count": len(agreeing_models),
+            "agreeing_models": list(agreeing_models),
+            "tickets_to_close": tickets_to_close,
+            "hold_type": "confluence_veto",
+            "confluence_tier": confluence.get("tier"),
+            "decisions": decisions,
+            "ai_mode": ai_mode,
+            "details": f"2D Confluence VETO ({confluence.get('tier')})"
+        }
+
+    avg_confidence = confluence.get("composite_score", avg_confidence)
     final_inv = statistics.median(inv_list) if inv_list else None
     final_tgt = statistics.median(tgt_list) if tgt_list else None
 
@@ -530,10 +658,15 @@ def calculate_consensus(decisions, candidate=None):
                 outlier_notes.append(f"LLM SL ({final_inv}) deviated > {micro_bound/point:.0f} pts from Quant Anchor ({prop_sl}) -> Clamped to Quant Anchor")
             final_inv = prop_sl
 
-        # 2. Target / TP Validation
-        if final_tgt is not None and abs(final_tgt - prop_tp) <= micro_bound * 1.5:
+        # 2. Target / TP Validation (Permits structural expansion into FVG / Key Stations within 1.25x - 3.0x RR)
+        tp_micro_bound = max(micro_bound * 1.5, 0.65 * atr_p)
+        is_valid_dir_tp = (consensus_signal == "BUY" and final_tgt > ref_price) or (consensus_signal == "SELL" and final_tgt < ref_price) if (final_tgt and ref_price) else False
+        curr_cand_risk = abs(ref_price - final_inv) if (ref_price and final_inv) else 0.0
+        llm_rr = (abs(final_tgt - ref_price) / curr_cand_risk) if (curr_cand_risk > 0 and final_tgt and ref_price) else 0.0
+
+        if final_tgt is not None and is_valid_dir_tp and (abs(final_tgt - prop_tp) <= tp_micro_bound or (1.25 <= llm_rr <= 3.0)):
             diff_tp_pts = abs(final_tgt - prop_tp) / point if point > 0 else 0
-            outlier_notes.append(f"TP Micro-Refined by LLM M5/M15 wicks: {prop_tp} -> {final_tgt} (Δ {diff_tp_pts:.1f} pts)")
+            outlier_notes.append(f"TP Refined to Structural Station/FVG: {prop_tp} -> {final_tgt} (Δ {diff_tp_pts:.1f} pts, R:R {llm_rr:.2f}:1)")
         else:
             if final_tgt is not None:
                 outlier_notes.append(f"LLM TP ({final_tgt}) deviated > Quant Anchor ({prop_tp}) -> Clamped to Quant Anchor")
@@ -704,10 +837,15 @@ def calculate_consensus(decisions, candidate=None):
         "agreeing_count": len(agreeing_models),
         "agreeing_models": list(agreeing_models),
         "agreeing_models_str": agreeing_models_str,
+        "confluence_tier": confluence.get("tier", "STANDARD_TRADE"),
+        "sizing_multiplier": confluence.get("sizing_multiplier", 1.0),
+        "is_split_ticket": confluence.get("is_split_ticket", False),
+        "tp_mode": confluence.get("tp_mode", "STANDARD_TP1_TP2"),
+        "composite_score": avg_confidence,
         "setup": best_setup,
         "state": best_state,
         "reason": best_reason,
         "invalidation_text": best_invalidation,
         "tickets_to_close": tickets_to_close,
-        "details": f"Consensus by: {agreeing_models}"
+        "details": f"Consensus by: {agreeing_models} [{confluence.get('tier')}]"
     }

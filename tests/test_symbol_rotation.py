@@ -60,6 +60,24 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         self.assertEqual(config.risk_percent_for("GBPUSD-ECNc"), config.RISK_PERCENT_FX)
         self.assertEqual(config.risk_percent_for("BTCUSD.c"), config.RISK_PERCENT_BTC)
 
+    def test_session_aware_helpers(self):
+        # Asian session pairs should include JPY, AUD, NZD
+        self.assertTrue(config.is_asian_session_pair("AUDNZD-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("USDJPY-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("NZDCAD-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("AUDCAD-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("GBPJPY-ECNc"))
+        
+        # Pure European / American pairs should NOT be Asian session pairs
+        self.assertFalse(config.is_asian_session_pair("EURUSD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("GBPUSD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("EURGBP-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("EURCHF-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("GBPCHF-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("GBPCAD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("USDCAD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("USDCHF-ECNc"))
+
 
 if __name__ == "__main__":
     unittest.main()

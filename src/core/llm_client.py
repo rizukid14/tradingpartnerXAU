@@ -2104,20 +2104,305 @@ If any of these conditions are present, you MUST reject the trade (Verdict: REJE
 - MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window."""
 
 
+def format_micro_tape(symbol: str, timeframe, count: int = 15) -> str:
+    """
+    Formats micro candlestick tape into clean, high-density OHLC lines with body & wick metrics.
+    """
+    try:
+        from config import mt5
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+        if rates is None or len(rates) == 0:
+            return "  * No candle data available."
+        si = mt5.symbol_info(symbol)
+        pt = si.point if si and si.point > 0 else 0.00001
+        p_div = 10 if (si and getattr(si, 'digits', 5) in (3, 5)) else 1
+        P = getattr(si, 'digits', 5) if si else 5
+
+        lines = []
+        for r in rates:
+            dt_wib = datetime.fromtimestamp(r['time'], tz=WIB)
+            t_str = dt_wib.strftime("%H:%M")
+            o, h, l, c = float(r['open']), float(r['high']), float(r['low']), float(r['close'])
+            body_p = abs(c - o) / (pt * p_div)
+            wick_u = (h - max(o, c)) / (pt * p_div)
+            wick_l = (min(o, c) - l) / (pt * p_div)
+            c_tag = "BULL" if c >= o else "BEAR"
+            lines.append(f"  [{t_str}] {c_tag:<4} | O:{o:.{P}f} H:{h:.{P}f} L:{l:.{P}f} C:{c:.{P}f} | Body:{body_p:.1f}p WickU:{wick_u:.1f}p WickL:{wick_l:.1f}p")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"  * Tape error: {e}"
+
+
+def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None) -> str:
+    """
+    Builds the Strategic Structure & Macro Corridor Dossier for OpenAI (o4-mini).
+    Focuses 100% on: 6-TF Macro Sockets, C1/C2/F1/F2 Barrier Chamber, Atlas DNA Station Corridor,
+    EMA Alignment, Boitoki CSM, and Apex Paragon Fundamentals.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    P = 3 if "JPY" in sym.upper() else (2 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 5)
+    fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
+
+    # Fetch Pure Quant MSE Directive
+    strat_block = ""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        c_lines = [f"  * {c.get('tier')}: {fp(c.get('price'))} ({c.get('tag_str')}, Score: {c.get('density_score')})" for c in getattr(strat_dir, 'layered_ceilings', [])[:4]]
+        f_lines = [f"  * {f.get('tier')}: {fp(f.get('price'))} ({f.get('tag_str')}, Score: {f.get('density_score')})" for f in getattr(strat_dir, 'layered_floors', [])[:4]]
+        traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+        strat_block = f"""### Pure Quant 6-TF Macro Strategic Directive (MSE)
+- Dealing Chamber: Floor F1={fp(strat_dir.immediate_floor_f1)} │ Ceiling C1={fp(strat_dir.immediate_ceiling_c1)} │ Chamber Pos: {strat_dir.chamber_position_pct*100:.1f}%
+- Structural Stage: {strat_dir.structural_stage} | Market State: {strat_dir.market_state}
+- Macro Bias: {strat_dir.daily_macro_bias} ({strat_dir.macro_bias_score:+.2f}) -> {strat_dir.primary_execution_directive}
+- Layered Resistance Ceilings (C1-C4):\n{chr(10).join(c_lines)}
+- Layered Support Floors (F1-F4):\n{chr(10).join(f_lines)}
+- Mandate Thesis: {strat_dir.daily_mandate_thesis}
+- Forbidden Traps: {traps_str}"""
+    except Exception:
+        strat_block = ""
+
+    # Atlas DNA Station Calculation
+    atlas_block = ""
+    try:
+        from src.indicators.atlas_dna import calculate_dynamic_stations
+        trig = float(candidate.trigger_price)
+        st = calculate_dynamic_stations(sym, trig)
+        atlas_block = f"""### Atlas DNA Psychological Station Corridor
+- Current Station Anchor: Base [{fp(st['base_station'])}] -> Next Upper Target [{fp(st['upper_station'])}] │ Next Lower Floor [{fp(st['lower_station'])}]
+- Corridor Step Size: {st['step']} ({st['step_points']} pts) | Live Price: {fp(trig)}"""
+    except Exception:
+        atlas_block = ""
+
+    # CSM Currency Strength
+    csm_block = ""
+    try:
+        from src.analytics import currency_strength
+        csm_payload = currency_strength.get_csm_prompt_payload(sym)
+        if csm_payload: csm_block = f"### Global Currency Strength Matrix (CSM)\n{csm_payload.strip()}"
+    except Exception:
+        csm_block = ""
+
+    # Fundamental & News
+    fund_block = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fb = apex_fundamental_engine.generate_llm_dossier_block(sym)
+        if fb: fund_block = f"### Apex Paragon Macro Fundamental Scorecard\n{fb.strip()}"
+    except Exception:
+        fund_block = ""
+
+    calendar_text = getattr(candidate, 'economic_context', '') or "No High-Impact News releases within +/- 6 hours"
+
+    prompt = f"""# ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
+You are the Chief Quantitative Macro Strategist of an institutional hedge fund.
+Your SOLE RESPONSIBILITY is to evaluate the HTF Structural Dealing Range, Macro Corridor Alignment, and Multi-Day Trend Regime for {sym}.
+You DO NOT evaluate micro candlestick wicks.
+
+## 1. STRATEGIC CONTEXT & CORRIDORS:
+- Symbol: {sym} | Proposed Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
+- Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {getattr(candidate, 'h4_trend', 'Aligned with Macro')}
+- Wave State: {getattr(candidate, 'wave_state', 'UNCLASSIFIED')} — {getattr(candidate, 'wave_summary', 'No summary')}
+- Intraday Dealing Range Position: {candidate.dealing_range_pos*100:.1f}% ({'DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('PREMIUM' if candidate.dealing_range_pos >= 0.55 else 'EQUILIBRIUM')})
+- Volatility: ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
+
+{strat_block}
+
+{atlas_block}
+
+{csm_block}
+
+{fund_block}
+- Economic Calendar: {calendar_text}
+
+## 2. STRATEGIC MANDATE & DECISION LOGIC:
+1. Classify the Market Regime: Is this TRUE EXPANSION (Trend Continuation / Absorption), ACCUMULATION / COMPRESSION, or RANGE MEAN-REVERSION (Chamber Bounce)?
+2. Corridor Delivery: Has the price established structural acceptance above the base station to deliver price to the next macro target?
+3. Decide whether the macro environment warrants "APPROVE" (immediate/trend aligned), "REVISE" (wait for pullback/retest limit), or "REJECT" (counter-trend/structural trap).
+
+Respond strictly in valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "signal": "{direction_str}" | "HOLD",
+  "confidence": float (0.00 to 1.00),
+  "role": "STRATEGIC_STRUCTURE",
+  "regime": "EXPANSION_TREND" | "ABSORPTION_PRE_BREAKOUT" | "RANGE_BOUND" | "EXHAUSTION_REVERSAL",
+  "station_corridor": "string describing delivery path e.g. 1.09500 -> 1.10020",
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit",
+    "entry_price": float (null if market, exact price if pending),
+    "sl_price": float (exact price behind structural invalidation, {P} decimals),
+    "tp_price": float (exact price at next macro station/barrier, {P} decimals)
+  }},
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS",
+  "reasoning": "2-3 concise sentences justifying HTF structural corridor alignment, dealing chamber state, and station targets."
+}}"""
+    return _strip_emoji(prompt)
+
+
+def build_gemini_price_action_dossier_prompt(candidate, recent_m1_str=None, recent_m5_str=None, recent_m15_str=None, recent_h1_str=None) -> str:
+    """
+    Builds the Dedicated Price Action & Retest Execution Dossier for Gemini (3.1-Flash).
+    Focuses 100% on: Candlestick Anatomy (M1, M5, M15, H1), SBR/RBS Flip Validation,
+    Order Flow Displacement, Wick Absorption, and SMC Order Blocks / FVG.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    P = 3 if "JPY" in sym.upper() else (2 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 5)
+    fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
+
+    from config import mt5
+    # Auto-fetch live candlestick tapes if not supplied
+    m1_tape = recent_m1_str or format_micro_tape(sym, mt5.TIMEFRAME_M1, count=15)
+    m5_tape = recent_m5_str or format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
+    m15_tape = recent_m15_str or format_micro_tape(sym, mt5.TIMEFRAME_M15, count=12)
+    h1_tape = recent_h1_str or format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
+
+    wick_ratio_val = float(candidate.rejection_wick_ratio or 0.0) * 100.0
+    wick_desc = f"Upper Wick = {wick_ratio_val:.1f}% (Bearish defense/wick)" if direction_str == "SELL" else f"Lower Wick = {wick_ratio_val:.1f}% (Bullish defense/absorption)"
+
+    prompt = f"""# ROLE: MASTER PRICE ACTION & RETEST TACTICIAN (GEMINI 3.1-Flash)
+You are the Lead Price Action and Order Flow Tactician of an institutional quantitative hedge fund.
+Your SOLE RESPONSIBILITY is Candlestick Anatomy, Breakout/Retest Dynamics, SBR/RBS Flips, and Order Flow Absorption for {sym}.
+You DO NOT worry about macro economics.
+
+## 1. PRICE ACTION BATTLEFIELD & CANDLE TAPE:
+- Symbol: {sym} | Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str}
+- Live Price: {fp(candidate.trigger_price)} | Quant Baseline SL: {fp(candidate.suggested_sl)} | Baseline TP: {fp(candidate.suggested_tp)}
+- Micro Rejection Wick Metric: {wick_desc}
+
+### [TIMEFRAME M1] Live Micro Scalp Tape (Last 15 Bars):
+{m1_tape}
+
+### [TIMEFRAME M5] Live Execution Flow Tape (Last 24 Bars):
+{m5_tape}
+
+### [TIMEFRAME M15] Intraday Session Context (Last 12 Bars):
+{m15_tape}
+
+### [TIMEFRAME H1] Structural Close Context (Last 6 Bars):
+{h1_tape}
+
+## 2. SMART MONEY CONCEPTS (SMC) & ORDER FLOW CONFLUENCE:
+- Structural Strong Low: {fp(candidate.strong_low or candidate.key_support)} │ Strong High: {fp(candidate.strong_high or candidate.key_resistance)}
+- Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
+- Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'} │ FRVP: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}
+
+## 3. TACTICAL MANDATE & DECISION LOGIC:
+1. Retest Quality: If price broke a barrier, is the current retest bar showing institutional absorption (defending the flip) or a false breakout failure?
+2. Candlestick Energy: Are the M1/M5/M15 candle bodies displacing with volume, or is price printing exhaustive chop?
+3. Entry Precision: Recommend the cleanest entry_price (instant market or tight limit retest) and tight SL anchored behind the physical swing/OB.
+
+Respond strictly in valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "signal": "{direction_str}" | "HOLD",
+  "confidence": float (0.00 to 1.00),
+  "role": "PRICE_ACTION_TACTICIAN",
+  "retest_quality": "PRISTINE_RETEST" | "LIQUIDITY_ABSORPTION" | "DIRTY_SWEEP" | "FAILED_BREAKOUT",
+  "order_flow_energy": "BULLISH_DISPLACEMENT" | "BEARISH_DISPLACEMENT" | "INDECISION_DOJI" | "REJECTION_WICK",
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit",
+    "entry_price": float (null if market, exact price if pending),
+    "sl_price": float (exact price behind physical micro swing, {P} decimals),
+    "tp_price": float (exact price at target resistance/FVG, {P} decimals)
+  }},
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE",
+  "reasoning": "2-3 concise sentences detailing candle body displacement, wick absorption, and exact retest safety."
+}}"""
+    return _strip_emoji(prompt)
+
+
+def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_m5_str=None, calendar_text=None) -> str:
+    """
+    Builds the Devil's Advocate & Chief Risk Officer Arbiter Prompt for DeepSeek (V4-Flash).
+    Cross-examines OpenAI's Macro Structure Thesis + Gemini's Price Action Verdict against
+    the live 24-bar M5 tape, news calendar, spread spikes, and R:R floors to produce the final VETO or CLEARANCE.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    P = 3 if "JPY" in sym.upper() else (2 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 5)
+    fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
+
+    from config import mt5
+    m5_tape = recent_m5_str or format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
+    cal_str = calendar_text or getattr(candidate, 'economic_context', '') or "No High-Impact News releases within +/- 6 hours"
+
+    # Format OpenAI and Gemini findings
+    o_v = openai_res.get("verdict", "HOLD") if openai_res else "N/A"
+    o_c = openai_res.get("confidence", 0.0) if openai_res else 0.0
+    o_reg = openai_res.get("regime", "N/A") if openai_res else "N/A"
+    o_thesis = openai_res.get("reasoning", "") if openai_res else "No thesis provided"
+    o_exec = openai_res.get("execution", {}) if openai_res else {}
+
+    g_v = gemini_res.get("verdict", "HOLD") if gemini_res else "N/A"
+    g_c = gemini_res.get("confidence", 0.0) if gemini_res else 0.0
+    g_ret = gemini_res.get("retest_quality", "N/A") if gemini_res else "N/A"
+    g_notes = gemini_res.get("reasoning", "") if gemini_res else "No notes provided"
+    g_exec = gemini_res.get("execution", {}) if gemini_res else {}
+
+    prompt = f"""# ROLE: CHIEF RISK OFFICER & MASTER VETO ARBITER (DEEPSEEK V4-Flash)
+You hold MASTER VETO POWER over this trade proposal.
+You have received the Macro Structural Analysis from OpenAI (o4-mini) and the Micro Price Action Analysis from Gemini (3.1-Flash).
+Your mission is to cross-examine their claims with cold mathematical rigor against the live 24-bar M5 tape, news calendar, and risk floors.
+
+## 1. CANDIDATE PROPOSAL & JURY FINDINGS:
+- Asset: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
+- ATR(14) H1: {candidate.current_atr_pts:.1f} pts | Current Spread: {candidate.current_spread_pts} pts
+
+### OPENAI FINDINGS (Strategic Structure & Macro Corridor):
+- Verdict: {o_v} (Confidence: {o_c:.2f}) | Regime: {o_reg}
+- Proposed Execution: {o_exec}
+- Macro Thesis: "{o_thesis}"
+
+### GEMINI FINDINGS (Price Action & Retest Tactician):
+- Verdict: {g_v} (Confidence: {g_c:.2f}) | Retest Quality: {g_ret}
+- Proposed Execution: {g_exec}
+- Price Action Summary: "{g_notes}"
+
+## 2. LIVE 24-BAR M5 CANDLESTICK TAPE (Ground Truth Verification):
+{m5_tape}
+
+## 3. RISK CONSTRAINTS & CALENDAR:
+- Economic News Window: {cal_str}
+- Hard Gate: Minimum R:R >= 1.25:1. Strict Unanimous Agreement Required.
+
+## 4. MASTER VETO AUDIT DIRECTIVE:
+1. Fallacy & Trap Check: Is OpenAI or Gemini falling into a liquidity trap, unmitigated impulse chase, or buying into a failed breakdown?
+2. M5 Tape Audit: Does the live M5 tape confirm clean absorption, or is there a waterfall / sudden opposing spike?
+3. Synthesize the final definitive trade execution or issue a HARD VETO.
+
+Respond strictly in valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "signal": "{direction_str}" | "HOLD",
+  "confidence": float (0.00 to 1.00),
+  "role": "CHIEF_RISK_OFFICER",
+  "risk_verdict": "CLEARED" | "REVISE_ENTRY_SL" | "HARD_VETO",
+  "veto_flags": ["NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "POOR_RR_RATIO"],
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit",
+    "entry_price": float (null if market, exact price if pending),
+    "sl_price": float (exact price, {P} decimals),
+    "tp_price": float (exact price, {P} decimals)
+  }},
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS",
+  "veto_reason": null | string (max 15 words if REJECT),
+  "reasoning": "2-3 concise sentences giving the final authoritative risk audit and trade verdict."
+}}"""
+    return _strip_emoji(prompt)
+
+
 def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m15_str=None, recent_m5_str=None):
     """
-    Evaluates a candidate setup from Stage 1 using 2-Pass Sequential Cross-Examination 3-LLM Jury:
-    - Pass 1 (Parallel Investigation): OpenAI (Structure) + Gemini (Momentum) evaluate candidate dossier.
-    - Pass 2 (Cross-Examination Audit): DeepSeek (Devil's Advocate) audits Pass 1 arguments against live M15/M5 micro flow data.
+    Evaluates a candidate setup from Stage 1 using Specialized 2-Pass Institutional 3-LLM Jury:
+    - Pass 1 (Parallel Specialized Investigation):
+      * OpenAI (o4-mini) evaluates Strategic Structure & Macro Corridor
+      * Gemini (3.1-Flash) evaluates Micro Price Action & Retest Dynamics (M1, M5, M15, H1)
+    - Pass 2 (Cross-Examination & Master Veto Arbiter):
+      * DeepSeek (V4-Flash) cross-examines Pass 1 results against live M5 tape and risk constraints.
     """
-    prompt_base = build_high_density_dossier_prompt(
-        candidate,
-        recent_d1_str=recent_d1_str,
-        recent_h4_str=recent_h4_str,
-        recent_h1_str=recent_h1_str,
-        recent_m15_str=recent_m15_str,
-        recent_m5_str=recent_m5_str
-    )
     direction_str = "BUY" if candidate.direction == 1 else "SELL"
     active_models = config.active_ai_model_names()
 
@@ -2125,10 +2410,6 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
     latencies = {}
     start_total = time.time()
 
-    # ─────────────────────────────────────────────────────────────
-    # PASS 1: PARALLEL INVESTIGATION (OPENAI & GEMINI)
-    # ─────────────────────────────────────────────────────────────
-    pass1_targets = [m for m in ("OpenAI", "Gemini") if m in active_models]
     model_fns = {
         "OpenAI": query_openai,
         "Gemini": query_gemini,
@@ -2136,10 +2417,32 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
         "Claude": query_claude,
     }
 
-    if pass1_targets:
+    # ─────────────────────────────────────────────────────────────
+    # PASS 1: PARALLEL SPECIALIZED INVESTIGATION (OPENAI & GEMINI)
+    # ─────────────────────────────────────────────────────────────
+    prompt_openai = build_openai_structure_dossier_prompt(
+        candidate,
+        recent_d1_str=recent_d1_str,
+        recent_h4_str=recent_h4_str,
+        recent_h1_str=recent_h1_str
+    )
+    prompt_gemini = build_gemini_price_action_dossier_prompt(
+        candidate,
+        recent_m5_str=recent_m5_str,
+        recent_m15_str=recent_m15_str,
+        recent_h1_str=recent_h1_str
+    )
+
+    pass1_tasks = {}
+    if "OpenAI" in active_models:
+        pass1_tasks["OpenAI"] = prompt_openai
+    if "Gemini" in active_models:
+        pass1_tasks["Gemini"] = prompt_gemini
+
+    if pass1_tasks:
         start_pass1 = time.time()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass1_targets)) as executor:
-            futs = {executor.submit(model_fns[m], prompt_base): m for m in pass1_targets}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass1_tasks)) as executor:
+            futs = {executor.submit(model_fns[m], pass1_tasks[m]): m for m in pass1_tasks}
             for fut in concurrent.futures.as_completed(futs):
                 model_name = futs[fut]
                 try:
@@ -2161,48 +2464,16 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
                     latencies[model_name] = 0.0
 
     # ─────────────────────────────────────────────────────────────
-    # PASS 2: DEVIL'S ADVOCATE CROSS-EXAMINATION AUDIT (DEEPSEEK / CLAUDE)
+    # PASS 2: MASTER CRO & DEVIL'S ADVOCATE ARBITER (DEEPSEEK / CLAUDE)
     # ─────────────────────────────────────────────────────────────
     auditor_model = "DeepSeek" if "DeepSeek" in active_models else ("Claude" if "Claude" in active_models else None)
     if auditor_model and auditor_model in model_fns:
-        pass1_summary_lines = []
-        for name in pass1_targets:
-            if name in results:
-                r = results[name]
-                pass1_summary_lines.append(
-                    f"- Model [{name}]: Verdict = {r.get('verdict')} (Conf {r.get('confidence', 0.0):.2f})\n"
-                    f"  Proposed Execution: {r.get('execution')}\n"
-                    f"  Thesis / Rationale: \"{r.get('reasoning')}\""
-                )
-        pass1_text = "\n".join(pass1_summary_lines) if pass1_summary_lines else "No previous findings available."
-
-        prompt_pass2 = f"""{prompt_base}
-
-## 7. PREVIOUS JURY PROPOSALS (TARGET OF YOUR CROSS-EXAMINATION)
-The first-round panel members have analyzed this setup and submitted the following findings:
-{pass1_text}
-
-## 8. DEVIL'S ADVOCATE AUDIT DIRECTIVE
-You are the Chief Risk Officer & Devil's Advocate. Your mission is to scrutinize their arguments against the raw M5/H1 candle data:
-1. Examine if their thesis ignores recent counter-trend momentum, lack of rejection wicks, or structural traps.
-2. If you find a critical flaw, liquidity trap, or news risk -> VETO by selecting "REJECT" with an explicit veto_reason and risk_flag.
-3. If their thesis is mathematically solid and accounts for risks (e.g. valid pending limit) -> select "APPROVE" or "REVISE".
-
-Respond strictly in the same JSON format:
-{{
-  "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "confidence": float (0.00 to 1.00),
-  "execution": {{
-    "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
-    "entry_price": float (null if market, required if pending),
-    "sl_price": float (exact absolute price),
-    "tp_price": float (exact absolute price)
-  }},
-  "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
-  "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
-}}
-"""
+        prompt_pass2 = build_deepseek_cro_arbiter_prompt(
+            candidate,
+            openai_res=results.get("OpenAI"),
+            gemini_res=results.get("Gemini"),
+            recent_m5_str=recent_m5_str
+        )
         try:
             t0 = time.time()
             res_audit = model_fns[auditor_model](_strip_emoji(prompt_pass2))

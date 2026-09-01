@@ -584,13 +584,28 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     t2_lines.append(f" Fast Radar : {UI.CYAN}{len(all_symbols)} Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
     t2_lines.append(f" Proteksi   : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         
-    # ── TILE 4: 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL (Bottom Right) ──
+    # ── TILE 4: 2D CONFLUENCE MATRIX & THESIS SENTINEL (Bottom Right) ──
+    now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+    srv_h = (now_wib.hour - 4) % 24
+    srv_str = f"{srv_h:02d}:{now_wib.strftime('%M')} GMT+3"
+    wib_str = f"{now_wib.strftime('%H:%M')} WIB"
+
+    # Pre-Rollover Shield status (03:50 - 04:15 WIB / 23:50 - 00:15 Server)
+    if (now_wib.hour == 3 and now_wib.minute >= 50) or (now_wib.hour == 4 and now_wib.minute <= 15):
+        shield_str = f"{UI.RED}{UI.BOLD}ACTIVE{UI.RST}"
+    else:
+        shield_str = f"{UI.GREEN}ARMED (03:50){UI.RST}"
+
+    pend_cnt = len(orders or [])
+    sentinel_str = f"{UI.GREEN}ACTIVE ({pend_cnt} Pending Audited){UI.RST}" if pend_cnt > 0 else f"{UI.CYAN}ACTIVE (M15 C1/F1 Guard){UI.RST}"
+
     t4_lines = [
-        f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini 3.1-Flash{UI.RST} (Speed)",
-        f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Hard Risk Veto)",
-        f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife Guard)",
-        f" News Shield  : {UI.GREEN}ForexFactory + TV Dual-Source (±6h Gate){UI.RST}",
-        f" Apex Confluence : {UI.CYAN}Institutional 8-Currency Regime Filter (Active){UI.RST}"
+        f" 3-AI Jury    : {UI.WHITE}OpenAI o4-mini + Gemini 3.1 + DeepSeek V4{UI.RST}",
+        f" Consensus    : {UI.GREEN}3/3 Unanimous Only{UI.RST} (Zero-Tolerance Split)",
+        f" 2D Sizing    : {UI.GREEN}S (1.25x){UI.RST} | {UI.CYAN}A (1.00x){UI.RST} | {UI.YELLOW}B (0.50x TP1 Scalp){UI.RST}",
+        f" Thesis Guard : {sentinel_str} | {UI.YELLOW}Hard Veto Armed{UI.RST}",
+        f" Time Sync    : {UI.WHITE}{srv_str}{UI.RST} -> {UI.BOLD}{UI.CYAN}{wib_str}{UI.RST} | Shield: {shield_str}",
+        f" SL Floor     : {UI.DIM}ATR Floor (0.68x H1 / 1.0x M30) | Max SL <=160p{UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
@@ -621,7 +636,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     md1 = max(0, lw - UI.disp_width(m1_title) + 1)
     m1_bar = f"{c_cyan}{m1_title}{'-' * md1}+{c_rst}"
     
-    m2_title = f"-- [ {UI.BG_BLUE} 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL {UI.RST}{c_cyan} ] "
+    m2_title = f"-- [ {UI.BG_BLUE} 2D CONFLUENCE MATRIX & THESIS SENTINEL {UI.RST}{c_cyan} ] "
     md2 = max(0, rw - UI.disp_width(m2_title) + 1)
     m2_bar = f"{c_cyan}{m2_title}{'-' * md2}+{c_rst}"
     

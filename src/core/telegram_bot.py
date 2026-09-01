@@ -25,8 +25,6 @@ from zoneinfo import ZoneInfo
 import config
 from src.core import mt5_connector as connector
 from src.core.risk_engine import RiskEngine
-from src.core import llm_client
-from src.core import consensus
 from src.analytics.macro_strategic_engine import macro_strategic_engine
 
 _risk_engine = RiskEngine()
@@ -843,6 +841,7 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
             open_pos = connector.get_open_positions(symbol=sym)
             all_open_pos = connector.get_open_positions()
 
+            from src.core import llm_client
             prompt = llm_client.prepare_prompt(
                 sym, df, tick_live,
                 macro_context=macro_ctx,
@@ -1279,17 +1278,25 @@ def register_bot_commands():
     return False
 
 
+def _listener_worker():
+    """Background worker that registers commands and enters polling loop asynchronously."""
+    try:
+        register_bot_commands()
+    except Exception as e:
+        print(f"[TG BOT WARNING] Could not register bot commands: {e}")
+    _poll_loop()
+
+
 def start_telegram_listener():
-    """Starts the background Telegram listener thread."""
+    """Starts the background Telegram listener thread (0ms main thread blocking)."""
     global _listener_thread
     if not config.TELEGRAM_ENABLED:
         return
-    register_bot_commands()
     if _listener_thread and _listener_thread.is_alive():
         return
 
     _stop_event.clear()
-    _listener_thread = threading.Thread(target=_poll_loop, daemon=True, name="TelegramListener")
+    _listener_thread = threading.Thread(target=_listener_worker, daemon=True, name="TelegramListener")
     _listener_thread.start()
 
 

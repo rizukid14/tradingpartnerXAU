@@ -1677,19 +1677,23 @@ def run_scanner_trading_cycle(cand, risk):
             
             agreeing_count = result.get("agreeing_count", 0)
             avg_conf = result.get("confidence", 0.0)
-            split_thresh = getattr(config, "HIGH_CONFIDENCE_SPLIT_THRESHOLD", 0.80)
-            is_high_conf = (agreeing_count >= 3 and avg_conf >= split_thresh and remaining_slots >= 2 and action_tier_val != "TP1_ONLY_SCALP")
-            num_positions = 2 if is_high_conf else 1
+            confluence_tier = result.get("confluence_tier", "STANDARD_TRADE")
+            sizing_mult = result.get("sizing_multiplier", 1.0)
+            is_split_tix = result.get("is_split_ticket", False)
+            tp_mode = result.get("tp_mode", "STANDARD_TP1_TP2")
+
+            num_positions = 2 if (is_split_tix and remaining_slots >= 2 and action_tier_val not in ("TP1_ONLY_SCALP", "REDUCED_SCALP")) else 1
             
-            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val)
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult)
             if num_positions == 2:
                 effective_lot = round(base_lot * 0.625, 2)
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
                 min_v = getattr(si, "volume_min", 0.01) if si else 0.01
                 effective_lot = max(effective_lot, min_v)
-                print(f" {UI.GREEN}[HIGH CONFIDENCE 3/3 JURY] 3 AI sepakat {trade_signal} (Avg Conf {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos) [Tier: {action_tier_val}]!{UI.RST}")
+                print(f" {UI.GREEN}[2D CONFLUENCE: {confluence_tier}] 3 AI sepakat {trade_signal} (Score {avg_conf*100:.1f}%)! Membuka 2 posisi ({effective_lot} lot each, +25% boost per pos) [Mode: {tp_mode}]!{UI.RST}")
             else:
                 effective_lot = base_lot
+                print(f" {UI.GREEN}[2D CONFLUENCE: {confluence_tier}] Trade {trade_signal} ({effective_lot} lot, multiplier x{sizing_mult:.2f}) [Mode: {tp_mode}]!{UI.RST}")
             
             # Final Pre-Dispatch Risk Check (guards against positions opened while LLM was reasoning)
             can_trade_ok, risk_msg = risk.can_trade(sym)

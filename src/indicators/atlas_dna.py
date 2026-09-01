@@ -138,28 +138,30 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
     pt = 0.001 if 'JPY' in symbol else (0.01 if 'XAU' in symbol or 'BTC' in symbol else 0.00001)
     max_sl_dist = 2.5 * atr_h1 if atr_h1 > 0 else (160 * pt)
     front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+    min_sl_buffer = (100 * pt) if 'JPY' in symbol else ((150 * pt) if ('XAU' in symbol or 'BTC' in symbol) else (65 * pt))
+    sl_buffer = max(0.55 * atr_h1, min_sl_buffer)
     
     if direction == 1: # BUY
-        # SL behind support origin level / RBS
+        # SL behind support origin level / RBS with calibrated buffer
         sl_anchor = origin_level if origin_level and origin_level < entry_price else (
             rbs if rbs and rbs < entry_price else (entry_price - 1.2 * atr_h1)
         )
-        sl = sl_anchor - (0.35 * atr_h1)
+        sl = sl_anchor - sl_buffer
         
         # Apply Safety Ceiling
         if (entry_price - sl) > max_sl_dist:
             sl = entry_price - max_sl_dist
-        risk = max(abs(entry_price - sl), 0.50 * atr_h1 if atr_h1 > 0 else 15 * pt)
+        risk = max(abs(entry_price - sl), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_buffer)
         
         # TARGET HIERARCHY: 1. Next Structure C1 -> 2. SBR Ceiling -> 3. Psychological Sub-Station (50-pip)
         target_station = None
-        if c1 and c1 > entry_price + 1.20 * risk and (c1 - entry_price) <= 3.2 * risk:
+        if c1 and c1 > entry_price + 1.15 * risk and (c1 - entry_price) <= 3.5 * risk:
             target_station = c1
-        elif sbr and sbr > entry_price + 1.20 * risk and (sbr - entry_price) <= 3.2 * risk:
+        elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
             target_station = sbr
         elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 > entry_price + 1.20 * risk and (weekly_50 - entry_price) <= 3.2 * risk:
+            if weekly_50 > entry_price + 1.15 * risk and (weekly_50 - entry_price) <= 3.5 * risk:
                 target_station = weekly_50
                 
         if target_station is None:
@@ -172,30 +174,30 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         tp_target = target_station - front_pad
         # Enforce realistic intraday clamp (min 1.25x risk, max 2.5x risk / 1.8x ATR)
         min_tp = entry_price + (1.25 * risk)
-        max_tp = entry_price + min(2.50 * risk, max(1.8 * atr_h1, 35 * pt * 10))
+        max_tp = entry_price + max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10))
         tp = max(min_tp, min(tp_target, max_tp))
             
     else: # SELL
-        # SL behind resistance origin level / SBR
+        # SL behind resistance origin level / SBR with calibrated buffer
         sl_anchor = origin_level if origin_level and origin_level > entry_price else (
             sbr if sbr and sbr > entry_price else (entry_price + 1.2 * atr_h1)
         )
-        sl = sl_anchor + (0.35 * atr_h1)
+        sl = sl_anchor + sl_buffer
         
         # Apply Safety Ceiling
         if (sl - entry_price) > max_sl_dist:
             sl = entry_price + max_sl_dist
-        risk = max(abs(sl - entry_price), 0.50 * atr_h1 if atr_h1 > 0 else 15 * pt)
+        risk = max(abs(sl - entry_price), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_buffer)
         
         # TARGET HIERARCHY: 1. Next Structure F1 -> 2. RBS Floor -> 3. Psychological Sub-Station (50-pip)
         target_station = None
-        if f1 and f1 < entry_price - 1.20 * risk and (entry_price - f1) <= 3.2 * risk:
+        if f1 and f1 < entry_price - 1.15 * risk and (entry_price - f1) <= 3.5 * risk:
             target_station = f1
-        elif rbs and rbs < entry_price - 1.20 * risk and (entry_price - rbs) <= 3.2 * risk:
+        elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
             target_station = rbs
         elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 < entry_price - 1.20 * risk and (entry_price - weekly_50) <= 3.2 * risk:
+            if weekly_50 < entry_price - 1.15 * risk and (entry_price - weekly_50) <= 3.5 * risk:
                 target_station = weekly_50
                 
         if target_station is None:
@@ -208,7 +210,7 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         tp_target = target_station + front_pad
         # Enforce realistic intraday clamp (min 1.25x risk, max 2.5x risk / 1.8x ATR)
         min_tp = entry_price - (1.25 * risk)
-        max_tp = entry_price - min(2.50 * risk, max(1.8 * atr_h1, 35 * pt * 10))
+        max_tp = entry_price - max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10))
         tp = min(min_tp, max(tp_target, max_tp))
             
     rr = abs(tp - entry_price) / max(risk, 1e-5)

@@ -609,6 +609,21 @@ DANGER_ZONES_WIB = [
      "reason": "Dead Zone rollover & sepi likuiditas (00:00 - 08:00 WIB)"},
 ]
 
+# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session) ---
+SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
+ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 8)
+ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
+
+def is_asian_session_pair(symbol: str) -> bool:
+    """
+    True if the symbol contains Asian / Pacific currencies (JPY, AUD, NZD).
+    During Asian Session (08:00 - 14:00 WIB), pure European/American pairs
+    (EURUSD, GBPUSD, EURGBP, EURCHF, GBPCHF, GBPCAD, EURCAD, USDCAD, USDCHF)
+    are locked to avoid low-liquidity whipsaw noise.
+    """
+    s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+    return any(c in s for c in ("JPY", "AUD", "NZD"))
+
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
 WEEKEND_CLOSE_PROFIT_MIN_USD = _getenv_float("WEEKEND_CLOSE_PROFIT_MIN_USD", 1.0)

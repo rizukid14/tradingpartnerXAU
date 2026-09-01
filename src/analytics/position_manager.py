@@ -207,6 +207,9 @@ def manage_all_positions():
     if changed:
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
 
+    # --- 6. REAL-TIME THESIS FAILURE AUDIT FOR PENDING ORDERS ---
+    audit_pending_orders_thesis()
+
 
 # =============================================================================
 #  PARTIAL CLOSE (from XAU-60 trade_executor.py)
@@ -747,4 +750,102 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     else:
         comment = result.comment if result else "Unknown error"
         print(f"\r\x1b[2K[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")
+
+
+# =============================================================================
+#  REAL-TIME THESIS FAILURE INVALIDATION ENGINE (Pending Orders Auto-Cancel)
+# =============================================================================
+
+def audit_pending_orders_thesis():
+    """
+    Real-Time Thesis Failure Invalidation Engine for Active Pending Orders.
+    Monitors all pending orders in MT5. If the underlying market structure fails
+    (e.g., M15 candle closes back inside the chamber across C1/F1, MSE state flips to REJECTION,
+    or CSM inverts sharply), the pending order is cancelled immediately to prevent catching a falling knife.
+    """
+    try:
+        orders = mt5.orders_get()
+        if not orders:
+            return
+
+        for ord_item in orders:
+            # Only manage bot's own orders
+            if ord_item.magic != config.MAGIC_NUMBER:
+                continue
+
+            # Check if pending order
+            if ord_item.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT,
+                                     mt5.ORDER_TYPE_BUY_STOP, mt5.ORDER_TYPE_SELL_STOP):
+                continue
+
+            sym = ord_item.symbol
+            si = mt5.symbol_info(sym)
+            if not si or not si.point:
+                continue
+            pt = si.point
+
+            # 1. Fetch MSE directive
+            from src.analytics.macro_strategic_engine import macro_strategic_engine
+            strat_dir = macro_strategic_engine.get_directive(sym)
+            if not strat_dir:
+                continue
+
+            c1 = strat_dir.immediate_ceiling_c1
+            f1 = strat_dir.immediate_floor_f1
+            m_state = strat_dir.market_state
+            prim_dir = strat_dir.primary_execution_directive
+            bias_score = strat_dir.macro_bias_score
+
+            # 2. Fetch latest M15 rates
+            rates_m15 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M15, 0, 3)
+            last_m15_close = rates_m15[-1]['close'] if (rates_m15 is not None and len(rates_m15) > 0) else ord_item.price_open
+            atr_pts = _get_dynamic_atr_points(sym, pt)
+            atr_val = (atr_pts * pt) if atr_pts > 0 else (20 * pt)
+
+            cancel_reason = None
+
+            # 3. Check Thesis Invalidation for BUY Pending Orders
+            if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
+                # Condition A: Re-entry breakdown below C1 - 0.25x ATR (if it was a breakout retest above C1)
+                if c1 > 0 and ord_item.price_open >= c1 - (0.15 * atr_val):
+                    if last_m15_close < c1 - (0.25 * atr_val):
+                        cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber below C1 ({c1:.5f})"
+                # Condition B: MSE flipped to Bearish Pullback or Ceiling Rejection
+                if bias_score <= -0.40 or "HUNT_SELL" in prim_dir or "REJECTION" in m_state:
+                    cancel_reason = f"MSE flipped to Bearish ({m_state} / {prim_dir})"
+
+            # 4. Check Thesis Invalidation for SELL Pending Orders
+            elif ord_item.type in (mt5.ORDER_TYPE_SELL_LIMIT, mt5.ORDER_TYPE_SELL_STOP):
+                # Condition A: Re-entry breakout above F1 + 0.25x ATR (if it was a breakdown retest below F1)
+                if f1 > 0 and ord_item.price_open <= f1 + (0.15 * atr_val):
+                    if last_m15_close > f1 + (0.25 * atr_val):
+                        cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber above F1 ({f1:.5f})"
+                # Condition B: MSE flipped to Bullish Expansion or Floor Rejection
+                if bias_score >= 0.40 or "HUNT_BUY" in prim_dir or "REJECTION" in m_state:
+                    cancel_reason = f"MSE flipped to Bullish ({m_state} / {prim_dir})"
+
+            # 5. Cancel order if thesis failed
+            if cancel_reason:
+                req = {
+                    "action": mt5.TRADE_ACTION_REMOVE,
+                    "order": ord_item.ticket,
+                    "magic": config.MAGIC_NUMBER,
+                    "comment": "Thesis Failure Cancel"
+                }
+                res = mt5.order_send(req)
+                if is_order_success(res):
+                    print(f"\r\x1b[2K{UI.RED}[THESIS FAILURE CANCEL]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
+                    try:
+                        tg.alert_trade_aborted(
+                            symbol=sym,
+                            signal="BUY" if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP) else "SELL",
+                            reason_code="THESIS_FAILURE_INVALIDATED",
+                            details=cancel_reason,
+                            confidence=0.0,
+                            models="Thesis Failure Engine"
+                        )
+                    except Exception:
+                        pass
+    except Exception as e:
+        pass
 

@@ -115,10 +115,12 @@ class LuxSMCAnalyzer:
         swing_length: int = 5,
         eq_threshold_atr: float = 0.10,
         ob_max_display: int = 10,
+        compute_frvp: bool = True,
     ):
         self.swing_length = swing_length
         self.eq_threshold_atr = eq_threshold_atr
         self.ob_max_display = ob_max_display
+        self.compute_frvp = compute_frvp
 
     def analyze(self, df: pd.DataFrame, point_size: float = 0.0001) -> SMCSignal:
         """
@@ -233,19 +235,28 @@ class LuxSMCAnalyzer:
                     trend_state = 1
                     last_bos = {"direction": "bullish", "level": round(float(active_sh[1]), 5), "index": int(i)}
 
-                # Extract Bullish Order Block (Lowest candle before the up-break)
+                # Extract Bullish Order Block (Last down-candle before the up-break, clamped to max 1.0*ATR)
                 start_search = max(0, active_sh[0])
                 if i > start_search:
-                    min_idx = start_search + int(np.argmin(lows[start_search:i+1]))
+                    bear_candles = [k for k in range(start_search, i) if closes[k] < opens[k]]
+                    if bear_candles:
+                        min_idx = bear_candles[-1]
+                    else:
+                        min_idx = start_search + int(np.argmin(lows[start_search:i+1]))
+                        
                     t_str = times[min_idx].strftime("%H:%M") if hasattr(times[min_idx], 'strftime') else str(times[min_idx])
+                    raw_top = float(highs[min_idx])
+                    raw_bot = float(lows[min_idx])
+                    if raw_top - raw_bot > 1.0 * current_atr:
+                        raw_top = min(raw_top, raw_bot + 1.0 * current_atr)
                     
                     # Compute FRVP on the impulse leg (start_search -> i)
-                    frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_search, i)
+                    frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_search, i) if self.compute_frvp else None
                     if frvp_res:
                         latest_frvp = frvp_res.to_dict()
                         conf = check_ob_frvp_confluence(
-                            ob_top=float(highs[min_idx]),
-                            ob_bottom=float(lows[min_idx]),
+                            ob_top=raw_top,
+                            ob_bottom=raw_bot,
                             ob_direction="bullish",
                             frvp=frvp_res,
                             atr=current_atr
@@ -264,8 +275,8 @@ class LuxSMCAnalyzer:
                         ob_rating = "B"
 
                     bullish_obs_raw.append(SMCOrderBlock(
-                        top=round(float(highs[min_idx]), 5),
-                        bottom=round(float(lows[min_idx]), 5),
+                        top=round(raw_top, 5),
+                        bottom=round(raw_bot, 5),
                         index=int(min_idx),
                         direction="bullish",
                         mitigated=False,
@@ -293,19 +304,28 @@ class LuxSMCAnalyzer:
                     trend_state = -1
                     last_bos = {"direction": "bearish", "level": round(float(active_sl[1]), 5), "index": int(i)}
 
-                # Extract Bearish Order Block (Highest candle before the down-break)
+                # Extract Bearish Order Block (Last up-candle before the down-break, clamped to max 1.0*ATR)
                 start_search = max(0, active_sl[0])
                 if i > start_search:
-                    max_idx = start_search + int(np.argmax(highs[start_search:i+1]))
+                    bull_candles = [k for k in range(start_search, i) if closes[k] > opens[k]]
+                    if bull_candles:
+                        max_idx = bull_candles[-1]
+                    else:
+                        max_idx = start_search + int(np.argmax(highs[start_search:i+1]))
+                        
                     t_str = times[max_idx].strftime("%H:%M") if hasattr(times[max_idx], 'strftime') else str(times[max_idx])
+                    raw_top = float(highs[max_idx])
+                    raw_bot = float(lows[max_idx])
+                    if raw_top - raw_bot > 1.0 * current_atr:
+                        raw_bot = max(raw_bot, raw_top - 1.0 * current_atr)
                     
                     # Compute FRVP on the impulse leg (start_search -> i)
-                    frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_search, i)
+                    frvp_res = compute_fixed_range_volume_profile(highs, lows, closes, vols, start_search, i) if self.compute_frvp else None
                     if frvp_res:
                         latest_frvp = frvp_res.to_dict()
                         conf = check_ob_frvp_confluence(
-                            ob_top=float(highs[max_idx]),
-                            ob_bottom=float(lows[max_idx]),
+                            ob_top=raw_top,
+                            ob_bottom=raw_bot,
                             ob_direction="bearish",
                             frvp=frvp_res,
                             atr=current_atr
@@ -324,8 +344,8 @@ class LuxSMCAnalyzer:
                         ob_rating = "B"
 
                     bearish_obs_raw.append(SMCOrderBlock(
-                        top=round(float(highs[max_idx]), 5),
-                        bottom=round(float(lows[max_idx]), 5),
+                        top=round(raw_top, 5),
+                        bottom=round(raw_bot, 5),
                         index=int(max_idx),
                         direction="bearish",
                         mitigated=False,
