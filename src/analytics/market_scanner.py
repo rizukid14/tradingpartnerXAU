@@ -123,25 +123,6 @@ def evaluate_universal_sweep_gates(
             )
 
     # =========================================================================
-    # GATE C: Asymmetric Trend-Aligned Permission
-    # =========================================================================
-    if macro_trend == 'BEARISH' and signal_type == 'BUY':
-        # In Bearish Macro Trend, Universal Sweep BUY is locked unless at extreme PWL floor (DR <= 0.20)
-        if dealing_range_pos > 0.20 and dist_to_htf_floor > atr_threshold:
-            return False, (
-                f"LOCKED BY GATE C [Macro Asymmetry]: Macro trend is BEARISH. "
-                f"Universal Sweep BUY locked outside extreme PWL floor (DR {dealing_range_pos*100:.1f}% > 20%)."
-            )
-
-    elif macro_trend == 'BULLISH' and signal_type == 'SELL':
-        # In Bullish Macro Trend, Universal Sweep SELL is locked unless at extreme PWH ceiling (DR >= 0.80)
-        if dealing_range_pos < 0.80 and dist_to_htf_ceiling > atr_threshold:
-            return False, (
-                f"LOCKED BY GATE C [Macro Asymmetry]: Macro trend is BULLISH. "
-                f"Universal Sweep SELL locked outside extreme PWH ceiling (DR {dealing_range_pos*100:.1f}% < 80%)."
-            )
-
-    # =========================================================================
     # GATE A: HTF Anchor & Deep Discount / Extreme Premium Area of Value
     # =========================================================================
     if signal_type == 'BUY':
@@ -1054,9 +1035,15 @@ class MarketScanner:
                             if target_dir == -1 and ("DO NOT SELL" in trap_u or "DO NOT SHORT" in trap_u or "DON'T SELL" in trap_u):
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] SELL forbidden: {trap}"
 
-                    # 3. Macro Bias Alignment & Action Tier Resolution
+                    # 3. CSM Flow Opposition Check (Systemic Currency Pressure)
+                    is_csm_opposed = (target_dir == 1 and csm_delta_val <= -1.0) or (target_dir == -1 and csm_delta_val >= 1.0)
+
+                    # 4. Macro Bias Alignment & Action Tier Resolution
                     is_aligned = (target_dir == 1 and bias_score >= 0.35) or (target_dir == -1 and bias_score <= -0.35)
                     is_counter = (target_dir == 1 and bias_score <= -0.35) or (target_dir == -1 and bias_score >= 0.35)
+
+                    if is_csm_opposed and not is_aligned:
+                        return False, "HARD_BLOCK", f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction"
 
                     if is_aligned:
                         return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f})"
