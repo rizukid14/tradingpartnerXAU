@@ -833,9 +833,6 @@ class MarketScanner:
             elif recent_floor_touch and cur_close > cur_ema20:
                 htf_delivery = "BULLISH_DELIVERY_FROM_FLOOR"
 
-            # Layer 3 & 4: CSM Pressure & Permission Matrix
-            perm = resolve_permission(curr_direction, curr_phase, csm_delta_val)
-
             return valid_sym, {
                 'symbol': valid_sym,
                 'trend_label': combined_trend_label,
@@ -850,7 +847,7 @@ class MarketScanner:
                 'is_bear': d1_is_bear,
                 'direction_state': curr_direction.name,
                 'phase_state': curr_phase.name,
-                'permission_state': perm.name,
+                'permission_state': wave_res.permission,
                 'csm_delta': csm_delta_val,
                 'recent_ceiling_touch': recent_ceiling_touch,
                 'recent_floor_touch': recent_floor_touch,
@@ -908,8 +905,8 @@ class MarketScanner:
                 'overlap_ratio': wave_res.overlap_ratio,
                 'correction_velocity': wave_res.correction_velocity,
                 'body_efficiency': wave_res.body_efficiency,
-                'wave_permitted': (perm in (Permission.GO, Permission.ARM)),
-                'wave_summary': f"[{curr_direction.name} | {curr_phase.name} | {wave_res.correction_type} | CSM {csm_delta_val:+.2f}] -> {wave_res.permission}",
+                'wave_permitted': wave_res.is_trade_permitted,
+                'wave_summary': f"[{curr_direction.name} | {wave_res.state} | CSM {csm_delta_val:+.2f}] -> {wave_res.permission}",
                 'wave_pullback_atr': wave_res.pullback_depth_atr,
                 'wave_zigzag_legs': wave_res.bars_since_pivot,
                 'macro_corridor': wave_res.macro_corridor,
@@ -1041,12 +1038,12 @@ class MarketScanner:
                 live_h = c_qual.get('live_high', max(ask, mid))
                 live_l = c_qual.get('live_low', min(bid, mid))
 
-                # ── 4-LAYER TRADE PERMISSION GATE (Lock / Wait Enforcement) ──
-                perm_state = macro.get('permission_state', 'GO')
+                # ── 4-LAYER TRADE PERMISSION GATE (Hard Lockout Enforcement) ──
+                perm_state = macro.get('permission_state', 'ARM')
                 csm_delta_val = macro.get('csm_delta', 0.0)
                 if getattr(config, 'ENABLE_WAVE_STATE_PERMISSION', True):
-                    if perm_state in ("LOCK", "WAIT") and getattr(config, 'WAVE_STATE_LOCK_PHASE2', True):
-                        logger.debug(f"[RADAR] {sym} SKIP: Permission state is {perm_state} ({macro.get('wave_summary', '')}).")
+                    if perm_state == "LOCK" and getattr(config, 'WAVE_STATE_LOCK_PHASE2', True):
+                        logger.debug(f"[RADAR] {sym} SKIP: Hard Lockout {macro.get('wave_state', 'LOCK')} ({macro.get('wave_summary', '')}).")
                         continue
 
                 # ── DIRECTIONAL 5-TIER OPERATIONAL ACTION MATRIX & CIRCUIT BREAKER ──

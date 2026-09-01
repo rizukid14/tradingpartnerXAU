@@ -435,7 +435,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                         elif "RECLAIM" in wave_st or "GO" in wave_st or perm_st == "GO":
                             badge = f"{UI.GREEN}●{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ●")
-                        elif "ARMED" in wave_st or "RELOAD" in wave_st or "MATURE" in wave_st or perm_st == "ARM":
+                        elif "ARM" in perm_st or "ARMED" in wave_st or "RELOAD" in wave_st or "MATURE" in wave_st or "RANGING" in wave_st:
                             badge = f"{UI.CYAN}◆{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ◆")
                         elif perm_st == "WATCH":
