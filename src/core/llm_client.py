@@ -1713,6 +1713,10 @@ def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_
     d1_tape = recent_d1_str or format_micro_tape(sym, mt5.TIMEFRAME_D1, count=5)
     h4_tape = recent_h4_str or format_micro_tape(sym, mt5.TIMEFRAME_H4, count=8)
 
+    w_state = getattr(candidate, 'wave_state', '') or 'ARM'
+    w_sum = getattr(candidate, 'wave_summary', '') or 'Trading Chamber Active'
+    h4_st = getattr(candidate, 'h4_trend', '') or 'Aligned with Macro'
+
     prompt = f"""# ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
 You are the Chief Quantitative Macro Strategist of an institutional hedge fund.
 Your SOLE RESPONSIBILITY is to evaluate the HTF Structural Dealing Range, Macro Corridor Alignment, and Multi-Day Trend Regime for {sym}.
@@ -1720,8 +1724,8 @@ You DO NOT evaluate micro candlestick wicks.
 
 ## 1. STRATEGIC CONTEXT & CANDLESTICK TAPES:
 - Symbol: {sym} | Proposed Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
-- Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {getattr(candidate, 'h4_trend', 'Aligned with Macro')}
-- Wave State: {getattr(candidate, 'wave_state', 'UNCLASSIFIED')} — {getattr(candidate, 'wave_summary', 'No summary')}
+- Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_st}
+- Wave State: {w_state} — {w_sum}
 - Intraday Dealing Range Position: {candidate.dealing_range_pos*100:.1f}% ({'DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('PREMIUM' if candidate.dealing_range_pos >= 0.55 else 'EQUILIBRIUM')})
 - Volatility: ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
 
@@ -1789,6 +1793,11 @@ def build_gemini_price_action_dossier_prompt(candidate, recent_m1_str=None, rece
 
     calendar_text = _get_symbol_news_context(sym, candidate)
 
+    s_low = candidate.strong_low or candidate.key_support or candidate.suggested_sl
+    s_high = candidate.strong_high or candidate.key_resistance or candidate.suggested_tp
+    s_low_str = fp(s_low) if s_low and float(s_low) > 0 else "None"
+    s_high_str = fp(s_high) if s_high and float(s_high) > 0 else "None"
+
     prompt = f"""# ROLE: MASTER PRICE ACTION & RETEST TACTICIAN (GEMINI 3.1-Flash)
 You are the Lead Price Action and Order Flow Tactician of an institutional quantitative hedge fund.
 Your SOLE RESPONSIBILITY is Candlestick Anatomy, Breakout/Retest Dynamics, SBR/RBS Flips, and Order Flow Absorption for {sym}.
@@ -1812,7 +1821,7 @@ You DO NOT worry about macro economics.
 {h1_tape}
 
 ## 2. SMART MONEY CONCEPTS (SMC) & ORDER FLOW CONFLUENCE:
-- Structural Strong Low: {fp(candidate.strong_low or candidate.key_support)} │ Strong High: {fp(candidate.strong_high or candidate.key_resistance)}
+- Structural Strong Low: {s_low_str} │ Strong High: {s_high_str}
 - Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
 - Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'} │ FRVP: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}
 
@@ -1869,18 +1878,55 @@ def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_
     o_thesis = openai_res.get("reasoning", "") if openai_res else "No thesis provided"
     o_exec = openai_res.get("execution", {}) if openai_res else {}
 
+    # Format Gemini findings (Pass 1)
     g_v = gemini_res.get("verdict", "HOLD") if gemini_res else "N/A"
     g_c = gemini_res.get("confidence", 0.0) if gemini_res else 0.0
     g_ret = gemini_res.get("retest_quality", "N/A") if gemini_res else "N/A"
     g_notes = gemini_res.get("reasoning", "") if gemini_res else "No notes provided"
     g_exec = gemini_res.get("execution", {}) if gemini_res else {}
 
+    # Fetch Pure Quant MSE Directive for DeepSeek Master Arbiter
+    strat_block = ""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        c_lines = [f"  * {c.get('tier')}: {fp(c.get('price'))} ({c.get('tag_str')}, Score: {c.get('density_score')})" for c in getattr(strat_dir, 'layered_ceilings', [])[:4]]
+        f_lines = [f"  * {f.get('tier')}: {fp(f.get('price'))} ({f.get('tag_str')}, Score: {f.get('density_score')})" for f in getattr(strat_dir, 'layered_floors', [])[:4]]
+        traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+        strat_block = f"""### Pure Quant 6-TF Macro Strategic Directive (MSE)
+- Dealing Chamber: Floor F1={fp(strat_dir.immediate_floor_f1)} │ Ceiling C1={fp(strat_dir.immediate_ceiling_c1)} │ Chamber Pos: {strat_dir.chamber_position_pct*100:.1f}%
+- Structural Stage: {strat_dir.structural_stage} | Market State: {strat_dir.market_state}
+- Layered Resistance Ceilings (C1-C4):\n{chr(10).join(c_lines)}
+- Layered Support Floors (F1-F4):\n{chr(10).join(f_lines)}
+- Forbidden Traps: {traps_str}"""
+    except Exception:
+        strat_block = ""
+
+    # CSM Currency Strength
+    csm_block = ""
+    try:
+        from src.analytics import currency_strength
+        csm_payload = currency_strength.get_csm_prompt_payload(sym)
+        if csm_payload: csm_block = f"### Global Currency Strength Matrix (CSM)\n{csm_payload.strip()}"
+    except Exception:
+        csm_block = ""
+
+    # SMC Order Flow
+    s_low = candidate.strong_low or candidate.key_support or candidate.suggested_sl
+    s_high = candidate.strong_high or candidate.key_resistance or candidate.suggested_tp
+    s_low_str = fp(s_low) if s_low and float(s_low) > 0 else "None"
+    s_high_str = fp(s_high) if s_high and float(s_high) > 0 else "None"
+    smc_block = f"""### Smart Money Concepts (SMC) & Volume Profile
+- Structural Strong Low: {s_low_str} │ Strong High: {s_high_str}
+- Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
+- Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'} │ FRVP: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}"""
+
     prompt = f"""# ROLE: CHIEF RISK OFFICER & MASTER VETO ARBITER (DEEPSEEK V4-Flash)
 You hold MASTER VETO POWER over this trade proposal.
 You have received the Macro Structural Analysis from OpenAI (o4-mini) and the Micro Price Action Analysis from Gemini (3.1-Flash).
-Your mission is to cross-examine their claims with cold mathematical rigor against the live Multi-TF candlestick tapes, news calendar, and risk floors.
+Your mission is to cross-examine their claims with cold mathematical rigor against the full Macro MSE Directive, CSM Flow, SMC Levels, live Multi-TF candlestick tapes, and news calendar.
 
-## 1. CANDIDATE PROPOSAL & JURY FINDINGS:
+## 1. CANDIDATE PROPOSAL & PASS 1 JURY FINDINGS:
 - Asset: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
 - ATR(14) H1: {candidate.current_atr_pts:.1f} pts | Current Spread: {candidate.current_spread_pts} pts
 - Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'EXTREME_PREMIUM' if candidate.dealing_range_pos >= 0.85 else ('EXTREME_DISCOUNT' if candidate.dealing_range_pos <= 0.15 else 'NORMAL')})
@@ -1895,7 +1941,14 @@ Your mission is to cross-examine their claims with cold mathematical rigor again
 - Proposed Execution: {g_exec}
 - Price Action Summary: "{g_notes}"
 
-## 2. MULTI-TIMEFRAME CANDLESTICK TAPES (Ground Truth Multi-Scale Verification):
+## 2. STRUCTURAL MSE, CSM & SMC GROUND TRUTH:
+{strat_block}
+
+{csm_block}
+
+{smc_block}
+
+## 3. MULTI-TIMEFRAME CANDLESTICK TAPES (Multi-Scale Price Action Verification):
 ### [TIMEFRAME H4] Structural Wave & Trend Context (Last 6 Bars):
 {h4_tape}
 
@@ -1905,11 +1958,11 @@ Your mission is to cross-examine their claims with cold mathematical rigor again
 ### [TIMEFRAME M5] Micro Execution Flow Tape (Last 24 Bars):
 {m5_tape}
 
-## 3. RISK CONSTRAINTS & CALENDAR:
+## 4. RISK CONSTRAINTS & CALENDAR:
 - Economic News Window: {cal_str}
 - Hard Gate: Minimum R:R >= 1.25:1. Strict Unanimous Agreement Required.
 
-## 4. MASTER VETO AUDIT DIRECTIVE:
+## 5. MASTER VETO AUDIT DIRECTIVE:
 1. Fallacy & Trap Check: Is OpenAI or Gemini falling into a liquidity trap, unmitigated impulse chase, or buying into a failed breakdown?
 2. Multi-TF Tape Audit: Do the H4, H1, and M5 tapes confirm clean basing/absorption, or is there an over-extended vertical spike / waterfall?
 3. Anti-Chase Override: If Pass 1 proposes a Market Order into an extended candle at Dealing Range >= 85% (BUY) or <= 15% (SELL), you MUST convert the execution to a Pending Limit Order ('buy_limit' / 'sell_limit') at the retest anchor or issue a HARD VETO ('IMPULSE_CHASE').
