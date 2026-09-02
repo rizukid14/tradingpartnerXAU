@@ -1723,6 +1723,7 @@ def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_
     w_state = getattr(candidate, 'wave_state', '') or 'ARM'
     w_sum = getattr(candidate, 'wave_summary', '') or 'Trading Chamber Active'
     h4_st = getattr(candidate, 'h4_trend', '') or 'Aligned with Macro'
+    tier_st = getattr(candidate, 'action_tier', 'FULL_ALLOW')
 
     prompt = f"""# ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
 ## MISSION BRIEF

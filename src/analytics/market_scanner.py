@@ -4,7 +4,6 @@ import time
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum, auto
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -28,55 +27,6 @@ from src.analytics.macro_strategic_engine import (
 
 logger = logging.getLogger("market_scanner")
 WIB = ZoneInfo("Asia/Jakarta")
-
-
-class Direction(Enum):
-    BULL = 1
-    BEAR = -1
-    NEUTRAL = 0
-
-
-class Phase(Enum):
-    EXPANSION = 1
-    EARLY_CORRECTION = 2
-    MATURE_CORRECTION = 3
-    RECLAIM = 4
-
-
-class Permission(Enum):
-    WAIT = auto()
-    LOCK = auto()
-    WATCH = auto()
-    ARM = auto()
-    GO = auto()
-
-
-def resolve_permission(direction: Direction, phase: Phase, csm_delta: float = 0.0) -> Permission:
-    """
-    4-Layer Trend-Aligned Permission Matrix with default fallback to Permission.WAIT.
-    Enforces BUY LOCKED != SELL ENABLED.
-    """
-    if direction == Direction.BULL:
-        if phase == Phase.EXPANSION:
-            return Permission.WAIT  # Don't chase top
-        elif phase == Phase.EARLY_CORRECTION:
-            return Permission.LOCK  # Anti-falling knife
-        elif phase == Phase.MATURE_CORRECTION:
-            return Permission.ARM if csm_delta >= -0.5 else Permission.WATCH
-        elif phase == Phase.RECLAIM:
-            return Permission.GO if csm_delta >= -1.5 else Permission.WATCH
-
-    elif direction == Direction.BEAR:
-        if phase == Phase.EXPANSION:
-            return Permission.WAIT  # Don't chase bottom
-        elif phase == Phase.EARLY_CORRECTION:
-            return Permission.LOCK  # Anti-short squeeze
-        elif phase == Phase.MATURE_CORRECTION:
-            return Permission.ARM if csm_delta <= 0.5 else Permission.WATCH
-        elif phase == Phase.RECLAIM:
-            return Permission.GO if csm_delta <= 1.5 else Permission.WATCH
-
-    return Permission.WAIT
 
 
 def evaluate_universal_sweep_gates(
@@ -233,6 +183,7 @@ class CandidateSetup:
     macro_bias_score: float = 0.0
     regime_stability: str = "STABLE"
     metadata: Dict[str, Any] = field(default_factory=dict)
+    scan_mid: float = 0.0
 
     def to_payload_dict(self) -> Dict[str, Any]:
         """Convert setup to high-density JSON payload for 3-LLM Consensus Jury."""
@@ -301,8 +252,6 @@ class MarketScanner:
         self.last_candidates: List[CandidateSetup] = []
         self._last_radar_scan_time: float = 0.0
         self._symbol_last_trigger: Dict[str, float] = {}
-        self._direction_states: Dict[str, Dict[str, Any]] = {}
-        self._phase_states: Dict[str, Dict[str, Any]] = {}
         MarketScanner._instance = self
 
     def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: int = 1800):
@@ -738,83 +687,12 @@ class MarketScanner:
             except Exception as e_strat:
                 logger.debug(f"[STRAT ENGINE] Error computing directive for {valid_sym}: {e_strat}")
 
-            # Resolusi Arah Tunggal dari MSE 6-TF (Single Source of Macro Truth)
-            if strat_dir is not None:
-                prim_dir = getattr(strat_dir, 'primary_execution_directive', '')
-                bias_sc = getattr(strat_dir, 'macro_bias_score', 0.0)
-                if "HUNT_BUY" in prim_dir or bias_sc >= 0.35:
-                    raw_dir = Direction.BULL
-                elif "HUNT_SELL" in prim_dir or bias_sc <= -0.35:
-                    raw_dir = Direction.BEAR
-                else:
-                    raw_dir = Direction.NEUTRAL
-            else:
-                # Fallback jika MSE data kosong
-                raw_dir = Direction.BULL if (d1_is_bull and (h4_is_bull or (h4_c >= h4_ema50 if 'h4_c' in locals() else True))) else (
-                    Direction.BEAR if (d1_is_bear and (h4_is_bear or (h4_c <= h4_ema50 if 'h4_c' in locals() else True))) else Direction.NEUTRAL
-                )
-
-            dir_tracker = self._direction_states.setdefault(valid_sym, {"state": raw_dir, "pending": raw_dir, "confirm": 2})
-            if raw_dir == dir_tracker["pending"]:
-                dir_tracker["confirm"] += 1
-                if dir_tracker["confirm"] >= 2:
-                    dir_tracker["state"] = raw_dir
-            else:
-                dir_tracker["pending"] = raw_dir
-                dir_tracker["confirm"] = 1
-            curr_direction = dir_tracker["state"]
-
-            # ── 2. TOP-DOWN LAYER 2: PHASE FSM (H1 Retracement & Basing) ──
-            mse_trend_dir = 1 if curr_direction == Direction.BULL else (-1 if curr_direction == Direction.BEAR else 0)
-
-            # Phase FSM: Retracement & Basing evaluation aligned with MSE direction
-            curr_bar_range = max(df['high'].iloc[-1] - df['low'].iloc[-1], 1e-5)
-            l_wick = max(0.0, min(df['open'].iloc[-1], cur_close) - df['low'].iloc[-1])
-            u_wick = max(0.0, df['high'].iloc[-1] - max(df['open'].iloc[-1], cur_close))
-            l_wick_ratio = l_wick / curr_bar_range
-            u_wick_ratio = u_wick / curr_bar_range
-            dist_ema_atr = (cur_close - cur_ema20) / (cur_atr if cur_atr > 0 else 1e-5)
-
-            raw_phase = Phase.EXPANSION
-            if curr_direction == Direction.BULL:
-                if dist_ema_atr > 0.90 and pos_in_range > 0.65:
-                    raw_phase = Phase.EXPANSION
-                elif dist_ema_atr <= 0.60:
-                    if pos_in_range <= 0.50:
-                        if l_wick_ratio >= 0.20 or cur_close > cur_ema20:
-                            raw_phase = Phase.RECLAIM
-                        else:
-                            raw_phase = Phase.MATURE_CORRECTION
-                    else:
-                        raw_phase = Phase.EARLY_CORRECTION
-            elif curr_direction == Direction.BEAR:
-                if dist_ema_atr < -0.90 and pos_in_range < 0.35:
-                    raw_phase = Phase.EXPANSION
-                elif dist_ema_atr >= -0.60:
-                    if pos_in_range >= 0.50:
-                        if u_wick_ratio >= 0.20 or cur_close < cur_ema20:
-                            raw_phase = Phase.RECLAIM
-                        else:
-                            raw_phase = Phase.MATURE_CORRECTION
-                    else:
-                        raw_phase = Phase.EARLY_CORRECTION
-
-            phase_tracker = self._phase_states.setdefault(valid_sym, {"state": raw_phase, "pending": raw_phase, "confirm": 2})
-            if raw_phase == phase_tracker["pending"]:
-                phase_tracker["confirm"] += 1
-                if phase_tracker["confirm"] >= 2:
-                    phase_tracker["state"] = raw_phase
-            else:
-                phase_tracker["pending"] = raw_phase
-                phase_tracker["confirm"] = 1
-            curr_phase = phase_tracker["state"]
-
             # HTF Delivery Vector Memory (Gate B for Judas Sweep)
             recent_ceiling_touch = False
             recent_floor_touch = False
             if pwh > 0 and pwl > 0:
-                h4_tail_hi = float(df_h4['high'].iloc[-8:].max()) if (rates_h4 is not None and len(df_h4) >= 8) else float(df['high'].iloc[-24:].max())
-                h4_tail_lo = float(df_h4['low'].iloc[-8:].min()) if (rates_h4 is not None and len(df_h4) >= 8) else float(df['low'].iloc[-24:].min())
+                h4_tail_hi = float(df_h4['high'].iloc[-8:].max()) if (rates_h4 is not None and len(rates_h4) >= 8 and len(df_h4) >= 8) else float(df['high'].iloc[-24:].max())
+                h4_tail_lo = float(df_h4['low'].iloc[-8:].min()) if (rates_h4 is not None and len(rates_h4) >= 8 and len(df_h4) >= 8) else float(df['low'].iloc[-24:].min())
                 recent_ceiling_touch = (h4_tail_hi >= (pwh - (cur_atr * 0.25))) or (pos_in_range >= 0.85)
                 recent_floor_touch = (h4_tail_lo <= (pwl + (cur_atr * 0.25))) or (pos_in_range <= 0.15)
 
@@ -849,8 +727,6 @@ class MarketScanner:
                 'is_h4_bear': h4_is_bear,
                 'is_bull': d1_is_bull,
                 'is_bear': d1_is_bear,
-                'direction_state': curr_direction.name,
-                'phase_state': curr_phase.name,
                 'permission_state': derived_perm,
                 'csm_delta': csm_delta_val,
                 'recent_ceiling_touch': recent_ceiling_touch,
@@ -897,6 +773,10 @@ class MarketScanner:
                 'bearish_ob_zone': bear_ob_str,
                 'bullish_ob_top': smc_sig.order_blocks_bullish[-1]['top'] if (smc_sig and getattr(smc_sig, 'order_blocks_bullish', None) and len(smc_sig.order_blocks_bullish) > 0) else 0.0,
                 'bearish_ob_bot': smc_sig.order_blocks_bearish[-1]['bottom'] if (smc_sig and getattr(smc_sig, 'order_blocks_bearish', None) and len(smc_sig.order_blocks_bearish) > 0) else 0.0,
+                'bullish_fvg_top': smc_sig.fvg_bullish[-1]['top'] if (smc_sig and getattr(smc_sig, 'fvg_bullish', None) and len(smc_sig.fvg_bullish) > 0) else 0.0,
+                'bullish_fvg_bot': smc_sig.fvg_bullish[-1]['bottom'] if (smc_sig and getattr(smc_sig, 'fvg_bullish', None) and len(smc_sig.fvg_bullish) > 0) else 0.0,
+                'bearish_fvg_top': smc_sig.fvg_bearish[-1]['top'] if (smc_sig and getattr(smc_sig, 'fvg_bearish', None) and len(smc_sig.fvg_bearish) > 0) else 0.0,
+                'bearish_fvg_bot': smc_sig.fvg_bearish[-1]['bottom'] if (smc_sig and getattr(smc_sig, 'fvg_bearish', None) and len(smc_sig.fvg_bearish) > 0) else 0.0,
                 'fvg_zone': fvg_str,
                 'liquidity_pools': liq_str,
                 'frvp_summary': frvp_summary_str,
@@ -915,7 +795,7 @@ class MarketScanner:
                 'correction_velocity': 0.0,
                 'body_efficiency': 0.0,
                 'wave_permitted': (derived_perm in ("ARM", "GO")),
-                'wave_summary': f"[{curr_direction.name} | MSE: {mse_tier} | CSM {csm_delta_val:+.2f}] -> {derived_perm}",
+                'wave_summary': f"[{getattr(strat_dir, 'primary_execution_directive', 'NEUTRAL') if strat_dir else 'NEUTRAL'} | MSE: {mse_tier} | CSM {csm_delta_val:+.2f}] -> {derived_perm}",
                 'wave_pullback_atr': 0.0,
                 'wave_zigzag_legs': 0,
                 'macro_corridor': getattr(strat_dir, 'primary_execution_directive', 'NEUTRAL') if strat_dir else 'NEUTRAL',
@@ -946,6 +826,12 @@ class MarketScanner:
                 'forbidden_traps': getattr(strat_dir, 'forbidden_traps', []) if strat_dir else [],
                 'immediate_ceiling_c1': getattr(strat_dir, 'immediate_ceiling_c1', 0.0) if strat_dir else 0.0,
                 'immediate_floor_f1': getattr(strat_dir, 'immediate_floor_f1', 0.0) if strat_dir else 0.0,
+                'ceiling_c1': getattr(strat_dir, 'immediate_ceiling_c1', 0.0) if strat_dir else 0.0,
+                'floor_f1': getattr(strat_dir, 'immediate_floor_f1', 0.0) if strat_dir else 0.0,
+                'ceiling_c2': (strat_dir.ceiling_c2 if (strat_dir and getattr(strat_dir, 'ceiling_c2', None)) else (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if strat_dir else 0.0)),
+                'floor_f2': (strat_dir.floor_f2 if (strat_dir and getattr(strat_dir, 'floor_f2', None)) else (getattr(strat_dir, 'deep_target_floor_f2', 0.0) if strat_dir else 0.0)),
+                'deep_target_ceiling_c2': getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if strat_dir else 0.0,
+                'deep_target_floor_f2': getattr(strat_dir, 'deep_target_floor_f2', 0.0) if strat_dir else 0.0,
                 'c1_reaction_grade': getattr(strat_dir, 'c1_reaction_grade', 'GRADE_1_MICRO') if strat_dir else 'GRADE_1_MICRO',
                 'f1_reaction_grade': getattr(strat_dir, 'f1_reaction_grade', 'GRADE_1_MICRO') if strat_dir else 'GRADE_1_MICRO',
                 'c1_fortress_tag': getattr(strat_dir, 'c1_fortress_tag', 'MODERATE') if strat_dir else 'MODERATE',
@@ -1090,7 +976,7 @@ class MarketScanner:
                         return False, "HARD_BLOCK", "[MSE GATING] Missing MSE Directive -> Defensive WATCH_ONLY"
 
                     strat_tier = getattr(strat_dir_sym, 'action_tier', 'FULL_ALLOW')
-                    if strat_tier in ("WATCH_ONLY", "HARD_BLOCK"):
+                    if strat_tier in ("INACTION_ZONE", "CHAMBER_MID_BLOCK", "HARD_LOCK") and "PULLBACK" not in setup_label.upper():
                         return False, "HARD_BLOCK", f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})"
 
                     bias_score = getattr(strat_dir_sym, 'macro_bias_score', 0.0)
@@ -1106,7 +992,7 @@ class MarketScanner:
                     if strat_dir_sym.forbidden_traps:
                         for trap in strat_dir_sym.forbidden_traps:
                             trap_u = trap.upper()
-                            if "DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u:
+                            if ("DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u) and "PULLBACK" not in setup_label.upper():
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] Trade forbidden in consolidation: {trap}"
                             if target_dir == 1 and ("DO NOT BUY" in trap_u or "DON'T BUY" in trap_u):
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] BUY forbidden: {trap}"
@@ -1470,17 +1356,17 @@ class MarketScanner:
                     fvg_bull_top = macro.get('bullish_fvg_top', 0.0)
                     ob_bull_top = macro.get('bullish_ob_top', 0.0)
                     f1_floor = macro.get('immediate_floor_f1', 0.0)
-                    has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.35 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.35 * atr_val)
-                    has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.35 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.35 * atr_val)
-                    is_valid_pullback_range_b = (pos_in_range <= 0.55) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b
+                    has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.50 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.50 * atr_val)
+                    has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.50 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.50 * atr_val)
+                    is_valid_pullback_range_b = (pos_in_range <= 0.58) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b
 
                     if not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
                     elif can_buy_m2 and is_valid_pullback_range_b:
-                        base_floor = fvg_bull_top if (fvg_bull_top > 0 and mid >= fvg_bull_top - 0.25 * atr_val) else (
-                            ob_bull_top if (ob_bull_top > 0 and mid >= ob_bull_top - 0.25 * atr_val) else (
-                                f1_floor if (f1_floor > 0 and mid >= f1_floor - 0.25 * atr_val) else (
-                                    ema50 if (abs(mid - ema50) <= 0.35 * atr_val) else (
+                        base_floor = fvg_bull_top if (fvg_bull_top > 0 and mid >= fvg_bull_top - 0.35 * atr_val) else (
+                            ob_bull_top if (ob_bull_top > 0 and mid >= ob_bull_top - 0.35 * atr_val) else (
+                                f1_floor if (f1_floor > 0 and mid >= f1_floor - 0.35 * atr_val) else (
+                                    ema50 if (abs(mid - ema50) <= 0.50 * atr_val) else (
                                         macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4') or macro.get('strong_low') or macro['dealing_range_low']
                                     )
                                 )
@@ -1488,13 +1374,13 @@ class MarketScanner:
                         )
 
                         # Dynamic EMA Corridor: Price must NOT be collapsed far below EMA50, and must be in healthy pullback value area
-                        is_ema_pullback_valid = (mid >= ema50 - 0.25 * atr_val) and (mid <= ema20 + 0.35 * atr_val)
+                        is_ema_pullback_valid = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
                         if not is_ema_pullback_valid:
-                            logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.25*atr_val:.5f} <= mid <= {ema20 + 0.35*atr_val:.5f}]")
+                            logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
                             continue
 
-                        in_action_zone = (abs(mid - base_floor) <= 0.35 * atr_val) or (live_l <= base_floor + 0.10 * atr_val)
-                        has_support_hold = (mid >= base_floor - 0.05 * atr_val) or (c_qual['max_lower_wick'] >= 0.15) or (c_qual['sweep_side'] == 'bottom')
+                        in_action_zone = (abs(mid - base_floor) <= 0.50 * atr_val) or (live_l <= base_floor + 0.15 * atr_val) or (base_floor <= mid <= base_floor + 0.65 * atr_val)
+                        has_support_hold = (mid >= base_floor - 0.15 * atr_val) or (c_qual['max_lower_wick'] >= 0.10) or (c_qual['sweep_side'] == 'bottom')
                         if in_action_zone and has_support_hold and base_floor > 0:
                             lim_entry = base_floor + (spread_pts * 0.5 * pt)
                             sl_tp = calculate_intraday_sl_tp(
@@ -1581,17 +1467,17 @@ class MarketScanner:
                     fvg_bear_bot = macro.get('bearish_fvg_bot', 0.0)
                     ob_bear_bot = macro.get('bearish_ob_bot', 0.0)
                     c1_ceiling = macro.get('immediate_ceiling_c1', 0.0)
-                    has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.35 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.35 * atr_val)
-                    has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.35 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.35 * atr_val)
-                    is_valid_pullback_range_s = (pos_in_range >= 0.45) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s
+                    has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.50 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.50 * atr_val)
+                    has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.50 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.50 * atr_val)
+                    is_valid_pullback_range_s = (pos_in_range >= 0.42) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s
 
                     if not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
                     elif can_sell_m2 and is_valid_pullback_range_s:
-                        base_ceiling = fvg_bear_bot if (fvg_bear_bot > 0 and mid <= fvg_bear_bot + 0.25 * atr_val) else (
-                            ob_bear_bot if (ob_bear_bot > 0 and mid <= ob_bear_bot + 0.25 * atr_val) else (
-                                c1_ceiling if (c1_ceiling > 0 and mid <= c1_ceiling + 0.25 * atr_val) else (
-                                    ema50 if (abs(mid - ema50) <= 0.35 * atr_val) else (
+                        base_ceiling = fvg_bear_bot if (fvg_bear_bot > 0 and mid <= fvg_bear_bot + 0.35 * atr_val) else (
+                            ob_bear_bot if (ob_bear_bot > 0 and mid <= ob_bear_bot + 0.35 * atr_val) else (
+                                c1_ceiling if (c1_ceiling > 0 and mid <= c1_ceiling + 0.35 * atr_val) else (
+                                    ema50 if (abs(mid - ema50) <= 0.50 * atr_val) else (
                                         macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4') or macro.get('strong_high') or macro['dealing_range_high']
                                     )
                                 )
@@ -1599,13 +1485,13 @@ class MarketScanner:
                         )
 
                         # Dynamic EMA Corridor: Price must NOT be blown up far above EMA50, and must be in healthy pullback value area
-                        is_ema_pullback_valid = (mid <= ema50 + 0.25 * atr_val) and (mid >= ema20 - 0.35 * atr_val)
+                        is_ema_pullback_valid = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
                         if not is_ema_pullback_valid:
-                            logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.35*atr_val:.5f} <= mid <= {ema50 + 0.25*atr_val:.5f}]")
+                            logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
                             continue
 
-                        in_action_zone = (abs(mid - base_ceiling) <= 0.35 * atr_val) or (live_h >= base_ceiling - 0.10 * atr_val)
-                        has_res_hold = (mid <= base_ceiling + 0.05 * atr_val) or (c_qual['max_upper_wick'] >= 0.15) or (c_qual['sweep_side'] == 'top')
+                        in_action_zone = (abs(mid - base_ceiling) <= 0.50 * atr_val) or (live_h >= base_ceiling - 0.15 * atr_val) or (base_ceiling - 0.65 * atr_val <= mid <= base_ceiling)
+                        has_res_hold = (mid <= base_ceiling + 0.15 * atr_val) or (c_qual['max_upper_wick'] >= 0.10) or (c_qual['sweep_side'] == 'top')
                         if in_action_zone and has_res_hold and base_ceiling > 0:
                             lim_entry = base_ceiling - (spread_pts * 0.5 * pt)
                             sl_tp = calculate_intraday_sl_tp(
@@ -1731,7 +1617,7 @@ class MarketScanner:
                                 rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
                                 sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
                                 spread_pts=spread_pts,
-                                c1=macro.get('ceiling_c2') or macro.get('immediate_ceiling_c1'),
+                                c1=((macro.get('ceiling_c1') or 0.0) if ((macro.get('ceiling_c1') or 0.0) > entry_lim) else ((macro.get('ceiling_c2') or 0.0) if ((macro.get('ceiling_c2') or 0.0) > entry_lim) else 0.0)) or (macro.get('immediate_ceiling_c1') or 0.0),
                                 f1=target_res
                             )
                             sl = sl_tp['sl']
@@ -1838,7 +1724,7 @@ class MarketScanner:
                                 sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
                                 spread_pts=spread_pts,
                                 c1=target_sup,
-                                f1=macro.get('floor_f2') or macro.get('immediate_floor_f1')
+                                f1=((macro.get('floor_f1') or 0.0) if ((macro.get('floor_f1') or 0.0) > 0.0 and (macro.get('floor_f1') or 0.0) < entry_lim) else ((macro.get('floor_f2') or 0.0) if ((macro.get('floor_f2') or 0.0) > 0.0 and (macro.get('floor_f2') or 0.0) < entry_lim) else 0.0)) or (macro.get('immediate_floor_f1') or 0.0)
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
@@ -1910,6 +1796,18 @@ class MarketScanner:
                 logger.debug(f"Radar check error on {sym}: {e}")
 
         for c in candidates:
+            # --- A5 FIX: bind scan-time market price as drift baseline for stale-guard (trigger_price = limit anchor, not market) ---
+            if c.scan_mid <= 0.0 and c.symbol:
+                try:
+                    _tk = None
+                    if mt5_connector is not None and hasattr(mt5_connector, 'get_live_tick'):
+                        _tk = mt5_connector.get_live_tick(c.symbol)
+                    elif hasattr(config.mt5, 'symbol_info_tick'):
+                        _tk = config.mt5.symbol_info_tick(c.symbol)
+                    if _tk is not None and hasattr(_tk, 'bid') and hasattr(_tk, 'ask'):
+                        c.scan_mid = float((_tk.bid + _tk.ask) / 2.0)
+                except Exception:
+                    pass
             c_clean = c.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
             self._symbol_last_trigger[c_clean] = now_ts
 
@@ -1998,12 +1896,11 @@ class MarketScanner:
         for sym, m in self.macro_cache.items():
             clean = sym.replace("-ECNc", "").replace("-ECN", "")
             perm = m.get('permission_state', 'WAIT')
-            d_st = m.get('direction_state', 'NEUTRAL')
-            p_st = m.get('phase_state', 'EXPANSION')
+            d_st = "BULLISH" if m.get('is_bull') else ("BEARISH" if m.get('is_bear') else "NEUTRAL")
             pos_p = int(m.get('dealing_range_pos', 0.5) * 100)
             
             if perm == "GO":
-                go_pairs.append(f"{clean} ({d_st}/{p_st} {pos_p}%)")
+                go_pairs.append(f"{clean} ({d_st} {pos_p}%)")
             elif perm == "ARM":
                 arm_pairs.append(f"{clean} ({pos_p}%)")
             elif perm == "LOCK":
