@@ -742,6 +742,17 @@ class MacroStrategicEngine:
             macro_extremes.append((py_high, 4.0, "PYH"))
             macro_extremes.append((py_low, 4.0, "PYL"))
 
+        # Previous Week & Day Key Liquidity Extremes
+        pwh_val = float(df_w1['high'].iloc[-2]) if len(df_w1) >= 2 else 0.0
+        pwl_val = float(df_w1['low'].iloc[-2]) if len(df_w1) >= 2 else 0.0
+        pdh_val = float(df_d1['high'].iloc[-2]) if len(df_d1) >= 2 else 0.0
+        pdl_val = float(df_d1['low'].iloc[-2]) if len(df_d1) >= 2 else 0.0
+
+        if pwh_val > 0: macro_extremes.append((round(pwh_val, digits), 4.5, "PWH"))
+        if pwl_val > 0: macro_extremes.append((round(pwl_val, digits), 4.5, "PWL"))
+        if pdh_val > 0: macro_extremes.append((round(pdh_val, digits), 4.0, "PDH"))
+        if pdl_val > 0: macro_extremes.append((round(pdl_val, digits), 4.0, "PDL"))
+
         # Candidate Upper Barriers
         raw_up_elements: List[Tuple[float, float, str]] = []
         for p, sc, tag in [
@@ -879,7 +890,7 @@ class MacroStrategicEngine:
         candidate_dist_min = self.params.candidate_dist_min_atr_mult * atr_h1
 
         # Minimum Chamber Height to eliminate micro-chambers (k_h * ATR H1)
-        min_chamber_height = max(self.params.min_chamber_height_atr_mult * atr_h1, 0.40 * psych_step_macro, 12 * pt * pip_div)
+        min_chamber_height = max(self.params.min_chamber_height_atr_mult * atr_h1, 0.08 * psych_step_macro, 8 * pt * pip_div)
 
         # Elect C1 (Nearest Structurally Valid Ceiling)
         # Filter 1: Structural qualification (Q >= Q_min)
@@ -949,7 +960,7 @@ class MacroStrategicEngine:
 
         # ── PURE DYNAMIC LAYER EXTRACTION (VARIABLE LENGTH N >= 1, ZERO FAKE PADDING) ──
         # Dynamic separation tolerance delta_tol based on ATR and Step
-        delta_tol = max(0.30 * atr_h1, 0.25 * psych_step_macro, 5 * pt * pip_div)
+        delta_tol = max(0.35 * atr_h1, 0.04 * psych_step_macro, 3 * pt * pip_div)
 
         def _compute_reaction_grade(score: float, tag_str: str) -> str:
             if score >= 6.5 or any(t in tag_str for t in ('MN1', 'W1', 'D1', 'PWH', 'PWL', 'ANNUAL', 'HIGH_2YR', 'LOW_2YR', 'PYH', 'PYL', '52W')):
