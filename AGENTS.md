@@ -271,6 +271,16 @@ python main.py
     - **Deterministic Decision Hierarchy**: Matriks keputusan 4-Tier mutual exclusive (`SURGE_OVERRIDE_Y/X`, `SYSTEMIC_EXPANSION`, `PURE_CATCHUP_LEAD_LAG`, `NEUTRAL_ROTATION`).
     - **Strict Leader Wall Hit Anchoring**: `(pos >= 0.90 or pos <= 0.10) AND (dist <= 0.35 ATR)`.
     - **Zero-Risk Informational Ingestion**: Mode shadow metric diinjeksi ke Stage 2 LLM Dossier prompt (`llm_client.py`), Stage 1 Radar hard gating (`market_scanner.py`) 100% tidak disentuh.
+56. **Multi-Timeframe Candlestick Spectrum Distribution Across 3-LLM Jury** (2 September 2026):
+    - **OpenAI o4-mini (Macro)**: Injeksi Tape D1 (5 bar) dan Tape H4 (8 bar).
+    - **Gemini 3.1-Flash (Price Action)**: Injeksi Tape M1 (15 bar), M5 (24 bar), M15 (12 bar), dan H1 (6 bar).
+    - **DeepSeek V4-Flash (CRO Arbiter)**: Injeksi Tape H4 (6 bar), H1 (6 bar), dan M5 (24 bar).
+57. **Anti-FOMO Execution Directive & Hard Pending Limit Intercept** (2 September 2026):
+    - Penembusan Breakout di area ekstrem (Dealing Range $\ge 85\%$ BUY / $\le 15\%$ SELL) **dilarang keras** dieksekusi via Market Order; wajib menggunakan `buy_limit` / `sell_limit` di jangkar retest sejati ($F_1 / RBS$ atau $C_1 / SBR$).
+    - `consensus.py` otomatis mengonversi order market menjadi pending limit order jika kandidat berada di area ekstrem.
+58. **Dynamic Real-Time Economic Calendar Ingestion & Exported Markdown Dossiers** (2 September 2026):
+    - Integrasi otomatis `_get_symbol_news_context()` untuk menarik live event berdampak tinggi (BOC Rate Statement, FOMC, ECB, NFP) ke seluruh 3 model AI.
+    - Ekspor verbatim prompt lengkap ke `docs/prompt/` (`openai_prompt.md`, `gemini_prompt.md`, `deepseek_prompt.md`).
 
 ---
 

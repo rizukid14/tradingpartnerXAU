@@ -297,19 +297,24 @@ Source of truth status pasar disimpan sebagai vektor primitif independen dan rek
 ## Bab 8: Stage 2 Multi-LLM Consensus Jury & Strict 3/3 Protocol
 
 1. **2-Pass Sequential Cross-Examination (<5.5s)**:
-   - **Pass 1 (~3.0s)**: OpenAI `o4-mini` (Struktur Makro) + Gemini `3.1-flash-lite` (Momentum & Candlestick) menganalisis berkas secara independen.
-   - **Pass 2 (~1.5s)**: DeepSeek `V4-Flash CRO` (Chief Risk Officer) mengaudit proposal Pass 1 berbekal 24 candle M5 mikro live.
+   - **Pass 1 (~3.0s)**: OpenAI `o4-mini` (Struktur Makro + Tape D1 5b / H4 8b) + Gemini `3.1-Flash` (Price Action & Retest + Tape M1 15b / M5 24b / M15 12b / H1 6b) menganalisis berkas secara independen.
+   - **Pass 2 (~1.5s)**: DeepSeek `V4-Flash CRO` (Chief Risk Officer) mengaudit proposal Pass 1 berbekal rekaman Tape H4 (6b), H1 (6b), dan M5 (24b) live.
 2. **Strict Unanimous 3/3 Rule (Zero Tolerance Split)**:
    - Wajib 100% kesepakatan bulat 3 model (3/3 BUY atau 3/3 SELL).
    - Jika 1 model saja memilih HOLD atau berlawanan arah $\rightarrow$ **OTOMATIS HOLD**.
 3. **High-Confidence Split (+25% Boost)**:
-   - Jika 3 model sepakat bulat dengan rata-rata Confidence $\ge 75\%$, bot membuka 2 tiket posisi sekaligus @ $0.625\times\text{Base Lot}$ (Total $1.25\times$).
-4. **7 Master Institutional Hard Risk Veto Flags**:
+   - Jika 3 model sepakat bulat dengan rata-rata Confidence $\ge 80\%$, bot membuka 2 tiket posisi sekaligus @ $0.625\times\text{Base Lot}$ (Total $1.25\times$).
+4. **Mandat Eksekusi Anti-FOMO (Extreme Territory Breakout Intercept)**:
+   - Jika harga mengalami penembusan (*breakout*) di area ekstrem (Dealing Range $\ge 85\%$ untuk BUY atau $\le 15\%$ untuk SELL), juri 3-LLM **DILARANG KERAS** menggunakan entri *Market Order*. Model wajib mengusulkan **`buy_limit` / `sell_limit` di garis retest struktural**, atau memilih **`HOLD`**.
+   - `consensus.py` otomatis mengonversi order market menjadi pending limit order jika kandidat berada di area ekstrem.
+5. **Dynamic Real-Time Economic Calendar Ingestion**:
+   - Seluruh 3 model AI menerima jadwal berita ekonomi berdampak tinggi (BOC, FOMC, ECB, NFP) secara real-time via `economic_calendar.calendar.get_context(symbol=sym)`.
+6. **7 Master Institutional Hard Risk Veto Flags**:
    - `COUNTER_TREND_MOMENTUM`: Melawan tren H4/D1 atau air terjun *falling knife*.
    - `LIQUIDITY_TRAP`: Jebakan sapuan likuiditas di pucuk EQH/EQL atau beli di SBR.
    - `IMPULSE_CHASE`: FOMO mengejar candle panjang tanpa retest ke zona diskon.
    - `SYSTEMIC_CURRENCY_DUMP`: Keranjang mata uang sedang dibuang di 7 pair CSM.
-   - `HIGH_IMPACT_NEWS`: Berada tepat di tengah badai rilis berita Tier-1 (*The Storm* $\pm 15-30$ menit).
+   - `HIGH_IMPACT_NEWS`: Berada tepat di tengah badai rilis berita Tier-1 (*The Storm* $\pm 15-30$ menit / Suku Bunga).
    - `CURRENCY_CONFLICT`: Perang tarik tambang kedua mata uang (*Tug-of-War / Choppy Sideways*).
    - `MACRO_HEADWIND`: Melawan arah divergensi suku bunga Bank Sentral / *Carry Spread* ekstrem.
 

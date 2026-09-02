@@ -134,3 +134,34 @@
 - **Generator Script Produksi**:
   - Menempatkan script generator resmi di **[`scripts/generate_macro_dashboard.py`](file:///c:/Vibe/tradingpartner/scripts/generate_macro_dashboard.py)** dan membuka *tracking* git untuk `macro_dashboard.html`.
 
+---
+
+## 8. Perubahan 2 September 2026 — Multi-TF Candle Tapes Distribution, Anti-FOMO Pending Limit Retest, M2 Pullback Optimization & Dynamic Economic News Schedule
+
+### 🎯 Komponen & Arsitektur Utama:
+
+1. **Distribusi Spektrum Candlestick Multi-Timeframe Independen (`llm_client.py`)**:
+   - Menghilangkan *Candlestick Blindspot* antar model dengan mendistribusikan rekaman bar OHLC native MT5 secara spesifik:
+     * **OpenAI o4-mini (Chief Macro Strategist)**: Diinjeksi **Tape D1 (5 Bar)** dan **Tape H4 (8 Bar)** untuk memverifikasi tren makro multi-hari.
+     * **Gemini 3.1-Flash (Chief Price Action Tactician)**: Diinjeksi **Tape M1 (15 Bar), M5 (24 Bar), M15 (12 Bar), dan H1 (6 Bar)** untuk menganalisis anatomi sumbu, penolakan support/resisten, dan kualitas retest.
+     * **DeepSeek V4-Flash (Chief Risk Officer & Arbiter)**: Diinjeksi **Tape H4 (6 Bar), H1 (6 Bar), dan M5 (24 Bar)** untuk audit independen silang (*Pass 2 Cross-Examination*).
+
+2. **Mandat Eksekusi Anti-FOMO & Intersep Breakout Ekstrim (`consensus.py` & `llm_client.py`)**:
+   - Menambahkan klausul aturan baku di seluruh prompt juri 3-AI: Jika harga mengalami penembusan (*breakout*) di area ekstrem (Dealing Range $\ge 85\%$ untuk BUY atau $\le 15\%$ untuk SELL), **DILARANG KERAS** menggunakan entri *Market Order*. Model wajib mengusulkan **`buy_limit` / `sell_limit` di garis retest struktural**, atau memilih **`HOLD`**.
+   - **Hard Anti-FOMO Intercept (`consensus.py`)**: Jika kandidat berstatus Breakout di area ekstrem namun output AI menghasilkan *Market Order*, engine konsensus otomatis mengonversinya menjadi **`BUY_LIMIT` / `SELL_LIMIT`** pada level jangkar $F_1 / RBS$ atau $C_1 / SBR$.
+
+3. **Optimalisasi Mekanisme 2 (Trend-Aligned Pullback & Delayed Retest) (`market_scanner.py`)**:
+   - **Pembebasan Hambatan Equilibrium ($45\% - 55\%$)**: Menghapus pemblokiran kaku pada mid-chamber di M2 jika harga sedang menyentuh level struktural valid (Order Block, FVG, EMA50 Dinamis, atau Lantai MSE $F_1$). Mengizinkan setup M2 aktif di rentang diskon sehat ($\le 55\%$ untuk BUY, $\ge 45\%$ untuk SELL).
+   - **Standardisasi Zona Aksi ($0.35\times\text{ATR}$)**: Memperluas toleransi zona aksi dari $0.20\times\text{ATR}$ menjadi $0.35\times\text{ATR}$ (selaras dengan M1 dan M3).
+
+4. **Injeksi Kalender Berita Ekonomi Live Otomatis (`llm_client.py` & `market_scanner.py`)**:
+   - Mengintegrasikan helper `_get_symbol_news_context(sym, candidate)` yang otomatis menarik rilis berita berdampak tinggi dari `economic_calendar.calendar.get_context(symbol=sym)` jika data di objek kandidat kosong.
+   - Menyuntikkan jadwal berita ekonomi terkini secara real-time ke **ketiga model AI** (OpenAI, Gemini, DeepSeek), memastikan tidak ada lagi kebutaan model terhadap event suku bunga / NFP (seperti BoC Rate Statement).
+
+5. **Ekspor Full Prompt Markdown (`docs/prompt/`)**:
+   - Menyediakan dokumen prompt lengkap (verbatim) untuk setiap model di direktori `docs/prompt/`:
+     * [`docs/prompt/openai_prompt.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/prompt/openai_prompt.md)
+     * [`docs/prompt/gemini_prompt.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/prompt/gemini_prompt.md)
+     * [`docs/prompt/deepseek_prompt.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/prompt/deepseek_prompt.md)
+
+
