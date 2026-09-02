@@ -4,10 +4,14 @@ import time
 import sys
 import threading
 import concurrent.futures
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from openai import OpenAI
 from google import genai
 import config
 from src.core.cli_theme import UI
+
+_WIB = ZoneInfo("Asia/Jakarta")
 
 # Regex untuk menghapus emoji dari prompt yang dikirim ke LLM.
 # User requirement: prompt LLM harus bebas emoji (UI/CLI boleh).
@@ -844,418 +848,14 @@ def format_positions(positions):
         )
     return "\n".join(lines)
 
-
-def summarize_recent_outcomes(decisions, n=6):
-    """
-    Strip directional narrative out of decision history, keep outcome
-    stats only -- so the current cycle isn't anchored to the previous
-    cycle's directional story (this was likely a contributor to the bot
-    holding a stale bullish read for hours during a correction).
-
-    decisions: list of dicts, most recent last, e.g.
-        {"signal": "BUY", "result": "TP" | "SL" | "SL-BEP" | "SL-trailing" | "OPEN" | "N/A",
-         "profit": float (NET, sudah termasuk komisi) | None, "commission": float}
-    Klasifikasi win/loss pakai PROFIT NET kalau ada (paling akurat - BEP
-    tolerance dinamis dari komisi aktual), fallback ke label result.
-    """
-    recent = decisions[-n:]
-    if not recent:
-        return "No recent decision history for this symbol."
-
-    hold_count = sum(1 for d in recent if d["signal"] == "HOLD")
-    trade_count = len(recent) - hold_count
-    win_count = 0
-    loss_count = 0
-    bep_count = 0
-    open_count = 0
-    for d in recent:
-        if d["signal"] == "HOLD":
-            continue
-        result = d.get("result", "N/A")
-        if result == "OPEN":
-            open_count += 1
-            continue
-        profit = d.get("profit")
-        if profit is not None:
-            tol = config.bep_tolerance_for({"commission": d.get("commission", 0.0)})
-            if profit > tol:
-                win_count += 1
-            elif profit < -tol:
-                loss_count += 1
-            else:
-                bep_count += 1
-        else:
-            # Fallback label (tanpa profit): SL-trailing = profit terkunci = win
-            if result in ("TP", "SL-trailing"):
-                win_count += 1
-            elif result == "SL":
-                loss_count += 1
-            else:  # SL-BEP, manual, N/A
-                bep_count += 1
-
-    stats = f"{trade_count} trade(s) taken ({win_count} win, {loss_count} loss, {bep_count} BEP)"
-    if open_count:
-        stats += f", {open_count} still open"
-    return (
-        f"Recent outcomes ({len(recent)} cycles): {stats}, {hold_count} HOLD. "
-        f"(Outcome only -- not a directional signal for this cycle.)"
-    )
-
-
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None,
-                   whisper_str=None, all_open_positions=None):
-    """
-    Constructs a rich prompt for LLM models containing price action,
-    multi-timeframe technical indicators, MTF macro analysis, and active open positions.
-    whisper_str: optional pattern research stats (validated edge) — informational only.
-    all_open_positions: all open bot positions across all symbols for cross-portfolio awareness.
-    """
-
-    # Dynamic timeframe label resolved from dataframe or fallback to config
-    tf_label = None
-    if len(df) >= 2:
-        try:
-            diff_sec = int(abs((df['time'].iloc[-1] - df['time'].iloc[-2]).total_seconds()))
-            sec_to_tf = {300: "M5", 900: "M15", 1800: "M30", 3600: "H1", 14400: "H4", 86400: "D1"}
-            tf_label = sec_to_tf.get(diff_sec)
-        except Exception:
-            pass
-    if not tf_label:
-        tf_val = config.get_timeframe(symbol)
-        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
-        tf_label = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
-
-    # Compact price action: STRUCTURE block (level terhitung) + delta candles
-    # (shape). Ganti 50 candle OHLC mentah (~560 token) -> STRUCTURE + 15 delta
-    # (~200 token). Shape price action tetap kebaca (body/wick/urutan), semua
-    # level absolut tetap ada sebagai angka di STRUCTURE.
-    latest = df.iloc[-1]
-    point_size = current_tick.get("point", 0.01) or 0.01
-    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
-
-    structure_str = _structure_block(df, current_tick, atr_points, tf_label=tf_label)
-    delta_main = _delta_candle_lines(df, n=15, point_size=point_size)
-    delta_main_str = ""
-    if delta_main:
-        delta_main_str = (
-            f"\n### RECENT PRICE ACTION (last {len(delta_main)} {tf_label} candles, "
-            f"OHLC absolute prices)\n" + "\n".join(delta_main) + "\n"
-        )
-
-    # Micro price action: M5, delta juga. XAU/BTC 18 (1.5 jam), FX 24 (2 jam).
-    # Micro M5 adalah satu-satunya price action granular intra-period utk
-    # timeframe lambat (M30/H1) - TIDAK dihapus, cuma dikompres.
-    # Fix 21 Agustus: tambah M15/M5 MOMENTUM SUMMARY (murni data, dihitung
-    # lokal) di bawah blok M5 — biar AI bisa lihat kontras momentum micro vs
-    # ADX timeframe aktif yang lagging. M5 FX tetap 24 (2 jam = 2 candle H1).
-    micro_candles_str = ""
-    momentum_summary_str = ""
-    try:
-        from src.core import mt5_connector
-        micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-        micro_tf_name = "M5"
-        if tf_label == "H1":
-            num_micro_send = 24  # 24 candle M5 = 120 menit (2 jam = 2 candle H1)
-            duration_label = "2h"
-        else:
-            num_micro_send = 12  # 12 candle M5 = 60 menit (1 jam = 2 candle M30)
-            duration_label = "1h"
-
-        # Fetch enough candles so ta indicators (window 14) don't raise IndexError
-        num_fetch = max(35, num_micro_send + 15)
-        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
-        if micro_df is not None and len(micro_df) > 0:
-            micro_delta = _delta_candle_lines(micro_df, n=num_micro_send, point_size=point_size)
-            if micro_delta:
-                micro_candles_str = (
-                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period {duration_label}, "
-                    f"OHLC absolute prices)\n" + "\n".join(micro_delta) + "\n"
-                )
-        # ---- M5 MOMENTUM SUMMARY (computed locally) ----
-        if micro_df is not None and len(micro_df) >= 10:
-            momentum_summary_str = _momentum_summary(
-                micro_df, df, point_size, "M5", tf_label
-            )
-            if momentum_summary_str:
-                momentum_summary_str = "\n" + momentum_summary_str.strip() + "\n"
-    except Exception as e:
-        pass
-
-    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
-
-    # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
-    # reflects real 30-minute volatility. XAU df is M15 (swing) - ATR M15 ~819 pts.
-
-    # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
-    # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
-    # jelek di aritmetika). Kalau proposal SL/TP di bawah angka ini,
-    # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
-    # biar AI gak buang cycle buat sinyal yang pasti ditolak.
-    atr_gate_str = ""
-    # Inject ATR Gate information ONLY if the symbol's mode is ATR-Based
-    # (BTC fix ATR-Based; XAU/FX ikut mode LLM kecuali TP_SL_RULES di-force ATR-Based)
-    if atr_points > 0 and config.sltp_mode_for(symbol) == "ATR-Based":
-        ai_mode = config.get_ai_mode()
-        sl_mult = config.atr_sl_multiplier()
-        tp_mult = config.atr_tp_multiplier()
-        min_sl_pts = int(atr_points * sl_mult)
-        min_tp_pts = int(atr_points * tp_mult)
-        atr_gate_str = (
-            f"ATR HARD GATE (non-negotiable, AI mode: {ai_mode}): minimum SL = {min_sl_pts} pts "
-            f"({sl_mult}x ATR) and minimum TP = {min_tp_pts} pts ({tp_mult}x ATR). "
-            f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
-        )
-
-    csm_context_str = ""
-    try:
-        from src.analytics import currency_strength
-        csm_payload = currency_strength.get_csm_prompt_payload(symbol)
-        if csm_payload:
-            csm_context_str = "\n" + csm_payload.strip() + "\n"
-    except Exception:
-        pass
-
-    m3_compass_str = ""
-    if not macro_context:
-        try:
-            from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
-            from src.indicators.wave_state import evaluate_macro_compass_corridor
-            
-            cur_price = float(df["close"].iloc[-1])
-            st_info = calculate_dynamic_stations(symbol, cur_price)
-            step_val = st_info["step"]
-            
-            roll_h = float(df["high"].tail(50).max())
-            roll_l = float(df["low"].tail(50).min())
-            pwh_val = float(df["high"].tail(120).max()) if len(df) >= 120 else roll_h
-            pwl_val = float(df["low"].tail(120).min()) if len(df) >= 120 else roll_l
-            
-            last_h = float(df["high"].iloc[-1])
-            last_l = float(df["low"].iloc[-1])
-            last_o = float(df["open"].iloc[-1])
-            last_c = float(df["close"].iloc[-1])
-            
-            m_corr, target_st, psych_step, is_ceil_rej, is_flr_rej = evaluate_macro_compass_corridor(
-                symbol=symbol, current_price=cur_price, pwh=pwh_val, pwl=pwl_val,
-                macro_high=roll_h, macro_low=roll_l, cur_atr=atr_points * point_size,
-                last_high=last_h, last_low=last_l, last_open=last_o, last_close=last_c
-            )
-            
-            rng_50 = max(roll_h - roll_l, 1e-5)
-            dr_pct = round(((cur_price - roll_l) / rng_50) * 100, 1)
-            dr_label = "DISCOUNT ZONE (Favorable for BUY)" if dr_pct <= 38.2 else ("PREMIUM ZONE (Favorable for SELL)" if dr_pct >= 61.8 else "EQUILIBRIUM (Middle Range)")
-            
-            pt = point_size or 0.00001
-            step_pts = int(round(step_val / pt))
-            
-            m3_compass_str = (
-                "\n### M3 MACRO COMPASS & ATLAS DNA DYNAMIC STATIONS\n"
-                f"- Active Macro Corridor: {m_corr} (Target Estafet: {_fmt_price(target_st, pt)})\n"
-                f"- Calibrated Step DNA: {_fmt_price(step_val, pt)} ({step_pts} pts / {step_pts//10} pips)\n"
-                f"- Immediate Dynamic Stations:\n"
-                f"  * Upper Station (+1 Step): {_fmt_price(st_info['upper_station'], pt)}\n"
-                f"  * Base Station (Nearest) : {_fmt_price(st_info['base_station'], pt)}\n"
-                f"  * Lower Station (-1 Step): {_fmt_price(st_info['lower_station'], pt)}\n"
-                f"- 50-Bar Dealing Range: {_fmt_price(roll_l, pt)} <-> {_fmt_price(roll_h, pt)} (Position: {dr_pct}% - {dr_label})\n"
-            )
-        except Exception:
-            pass
-
-    usd_context = ""
-
-    macro_str = ""
-    if macro_context:
-        macro_str = f"\n{macro_context.strip()}\n"
-
-    whisper_str = whisper_str or ""
-
-    lessons_str = ""
-
-    recent_outcomes_str = ""
-    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        try:
-            from src.analytics import decision_memory
-            # Convert stored decisions into {signal, result, profit, commission}
-            # for summarize_recent_outcomes. result di-set pas close (TP/SL/
-            # SL-BEP/SL-trailing/manual), profit NET (sudah termasuk komisi) -
-            # biar win/loss count AKURAT, bukan selalu "N/A".
-            entries = decision_memory.memory._decisions.get(symbol, [])
-            decisions = [{
-                "signal": e.get("signal", "HOLD"),
-                "result": e.get("result", "N/A"),
-                "profit": e.get("profit"),
-                "commission": e.get("commission", 0.0),
-            } for e in entries]
-            recent_outcomes_str = summarize_recent_outcomes(decisions)
-            if recent_outcomes_str:
-                recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"
-        except Exception:
-            pass
-
-    calendar_str = ""
-    news_guard_str = ""
-    try:
-        from src.analytics import economic_calendar
-        # Filter per-pair (20 Agustus): FOMC/NFP/Powell/Trump = semua symbol;
-        # event negara lain (ECB/BoJ/RBA/SNB/CPI GB/Unemployment US, dst) hanya
-        # untuk pair yang mengandung mata uang negara tsb.
-        calendar_str = economic_calendar.calendar.get_context(symbol=symbol)
-        if calendar_str:
-            # Conditional News Anti-Fade Rule (20 Agustus): hanya muncul saat ada
-            # high-impact event imminent/recently-released. Hari tenang = prompt
-            # identik dengan sebelumnya (tidak mengubah perilaku normal).
-            news_guard_str = (
-                "\nNEWS WINDOW GUARD (high-impact event imminent or just released):\n"
-                "A major scheduled news event (FOMC/CPI/NFP/etc) is within the warning "
-                "window. DO NOT fade breakout momentum or attempt counter-trend "
-                "mean-reversion during/after it. Ignore RSI oversold/overbought as an "
-                "entry trigger during news windows. Wait for post-news volatility to "
-                f"settle and a confirmed {tf_label} candle close before entering.\n"
-            )
-    except Exception:
-        pass
-
-    # Global portfolio context across all symbols
-    global_portfolio_str = ""
-    if all_open_positions and len(all_open_positions) > 0:
-        gp_lines = []
-        total_pnl = sum(p.get('profit', 0.0) for p in all_open_positions)
-        for ap in all_open_positions:
-            s_name = ap.get('symbol', '?')
-            gp_lines.append(f"- {s_name}: {ap.get('type')} {ap.get('volume')} lot @ {ap.get('price_open')} (Floating P/L: ${ap.get('profit', 0.0):+.2f} USD)")
-        global_portfolio_str = (
-            "\n### GLOBAL PORTFOLIO CONTEXT (All active bot positions across symbols)\n"
-            f"Total Active Positions: {len(all_open_positions)} | Net Floating P/L: ${total_pnl:+.2f} USD\n"
-            + "\n".join(gp_lines) + "\n"
-            "(Use this cross-asset awareness to detect conflicting currency exposures -- e.g. opposing CHF/EUR/GBP trades -- and take profit or cut exposure accordingly.)\n"
-        )
-
-    positions_str = ""
-    if open_positions and len(open_positions) > 0:
-        pos_lines = []
-        now_ts = time.time()
-        for pos in open_positions:
-            p_ticket = pos.get('ticket')
-            p_type = pos.get('type')
-            p_vol = pos.get('volume')
-            p_open = pos.get('price_open')
-            p_sl = pos.get('sl', 0.0)
-            p_tp = pos.get('tp', 0.0)
-            p_swap = pos.get('swap', 0.0)
-            p_profit = pos.get('profit', 0.0)
-            p_time = pos.get('time')
-
-            time_str = ""
-            if p_time and p_time > 0:
-                try:
-                    from src.core import mt5_connector
-                    wib_dt = mt5_connector.server_to_wib(p_time)
-                    hours_held = max(0.0, (now_ts - wib_dt.timestamp()) / 3600.0)
-                    time_str = f" | Opened: {wib_dt.strftime('%Y-%m-%d %H:%M')} WIB (held for {hours_held:.1f}h)"
-                except Exception:
-                    pass
-
-            swap_str = f" | Swap: ${p_swap:.2f} USD" if p_swap != 0.0 else ""
-            sl_tp_str = f" (SL: {p_sl}, TP: {p_tp})" if (p_sl or p_tp) else ""
-
-            # Peak MFE & Current R calculation (Ide 1 & Enhanced Re-evaluator)
-            peak_str = ""
-            r_str = ""
-            try:
-                from src.analytics import position_manager
-                pt_val = point_size if point_size > 0 else 0.00001
-                peak_pts, peak_r = position_manager.get_peak_mfe_info(p_ticket, point=pt_val)
-                if peak_pts > 0 and peak_r > 0:
-                    peak_str = f" | Peak: +{peak_r:.2f}R (+{peak_pts:.0f} pts)"
-
-                if p_sl and p_open and pt_val > 0:
-                    init_sl_dist = abs(p_open - p_sl) / pt_val
-                    if init_sl_dist > 0:
-                        bid_px = current_tick.get('bid', p_open)
-                        ask_px = current_tick.get('ask', p_open)
-                        curr_pts = ((bid_px - p_open) / pt_val) if p_type == 'BUY' else ((p_open - ask_px) / pt_val)
-                        curr_r = curr_pts / init_sl_dist
-                        r_str = f" ({curr_r:+.2f}R)"
-            except Exception:
-                pass
-
-            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open}{sl_tp_str}{time_str}{peak_str}{swap_str} | Floating P/L: ${p_profit:.2f} USD{r_str}")
-        positions_str = (
-            "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
-            "\n".join(pos_lines) + "\n" +
-            "For EACH open position above, make an explicit decision:\n" +
-            f"- 'CLOSE' if:\n" +
-            f"  (a) INVALIDATION / THESIS BROKEN: The technical invalidation level is breached, a clear counter-trend reversal structure formed on {tf_label}, or momentum is failing.\n" +
-            f"  (b) EARLY PROFIT TAKE / EXHAUSTION: The trade has captured substantial profit (e.g. >= 1R or near major opposing swing structure), is showing momentum exhaustion/divergence, OR conflicts with a stronger broad-market currency trend.\n" +
-            f"- 'HOLD' if the thesis remains intact, the move is within normal healthy {tf_label} fluctuations, and has clear room to reach the full target.\n" +
-            f"Do NOT recommend CLOSE for minor healthy pullbacks when the underlying trend structure is still fully intact.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: Invalidation breached at 1.0965', 'CLOSE: Secure +$10 profit near H1 resistance with momentum divergence', or 'HOLD: Healthy pullback, thesis intact'). Never leave a ticket without an action.\n"
-        )
-
-    # Explicitly separate the two decisions so the LLM does not mix them:
-    # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
-    separation_note = ""
-    if open_positions and len(open_positions) > 0:
-        separation_note = (
-            "\nIMPORTANT - TWO SEPARATE DECISIONS:\n"
-            "1. The 'signal' field above is ONLY about opening a NEW trade. "
-            "It must be BUY/SELL/HOLD based purely on whether a NEW entry is attractive now.\n"
-            "2. The 'position_actions' list is ONLY about the EXISTING positions listed above. "
-            "Do NOT let your opinion about existing positions change your 'signal', and do NOT "
-            "let your entry bias change your position_actions. Evaluate each independently.\n"
-        )
-
-    # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
-    # Cached 5 min (D1 berubah sekali sehari) - murah, nggak nambah lag cycle.
-    key_levels_str = _get_key_levels_str(symbol, current_tick.get('bid'))
-
-    # ================================================================
-    # PROMPT - 2 blok:
-    #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
-    #     cache_control (lihat _execute_claude_single). Harus >= 1024
-    #     token biar Anthropic benar-benar meng-cache.
-    #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
-    # ================================================================
-    # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
-    market_data_block = f"""### MARKET DATA CONTEXT
-Symbol: {symbol}
-Timeframe: {tf_label}
-Current Bid: {_fmt_price(current_tick['bid'], point_size)}
-Current Ask: {_fmt_price(current_tick['ask'], point_size)}
-Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
-Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD.
-{csm_context_str}{m3_compass_str}{macro_str}
-{key_levels_str}
-{structure_str}
-{delta_main_str}
-{micro_candles_str}
-{momentum_summary_str}
-{atr_gate_str}
-{whisper_str}{lessons_str}{recent_outcomes_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
-{usd_context}"""
-
-    # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
-    # Dipakai dari template docs/prompt_claude.md (ANALYSIS FREEDOM +
-    # RISK CONSTRAINTS). Statis = bisa di-cache provider (>= 1024 token).
-    static_block = build_system_prompt(symbol, tf_label, asset_desc(symbol), point_size)
-
-    # Gabung: statis dulu (cache), lalu data (dinamis)
-    prompt = static_block + "\n\n" + market_data_block + "\n"
-    # User requirement: prompt LLM bebas emoji (UI/CLI boleh). Strip semua
-    # emoji dari sumber mana pun (macro, forecast, lessons, calendar, dll).
-    return _strip_emoji(prompt)
-
-
 def clean_json_response(text):
     """Cleans markdown JSON wrappers (```json ... ```) and parses the JSON."""
     try:
-        # Search for content between ```json and ``` or ``` and ```
         text_clean = text.strip()
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text_clean, re.DOTALL)
         if match:
             text_clean = match.group(1)
         else:
-            # Fallback: find the first '{' and last '}'
             start = text_clean.find('{')
             end = text_clean.rfind('}')
             if start != -1 and end != -1:
@@ -1264,8 +864,6 @@ def clean_json_response(text):
         try:
             parsed = json.loads(text_clean)
         except json.JSONDecodeError:
-            # Truncated/incomplete JSON (Claude sometimes cuts mid-string).
-            # Recover whatever fields were already emitted line by line.
             parsed = {}
             for line in text_clean.splitlines():
                 m = re.match(r'\s*"(\w+)":\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|null|true|false)', line)
@@ -1275,20 +873,18 @@ def clean_json_response(text):
                         parsed[key] = json.loads(val)
                     except json.JSONDecodeError:
                         parsed[key] = val.strip('"')
-        # Validate keys (including Streamlined V2 schema keys)
+
         for key in [
             "signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price",
             "reasoning", "setup", "state", "market_regime", "entry_type", "entry_price",
-            "rr_valid", "trend", "velocity", "position_actions"
+            "rr_valid", "trend", "velocity", "position_actions", "verdict", "risk_flag", "veto_reason"
         ]:
             if key not in parsed:
                 parsed[key] = None
 
-        # Fallback: jika model menghasilkan "direction" alih-alih "signal"
         if not parsed.get("signal") and parsed.get("direction"):
             parsed["signal"] = parsed["direction"]
 
-        # Ensure signal is upper case
         if parsed.get("signal"):
             parsed["signal"] = str(parsed["signal"]).upper()
             if parsed["signal"] not in ["BUY", "SELL", "HOLD"]:
@@ -1296,12 +892,10 @@ def clean_json_response(text):
         else:
             parsed["signal"] = "HOLD"
 
-        # Ensure setup & state & market_regime are upper case strings if present
-        for str_key in ["setup", "state", "market_regime", "trend", "velocity"]:
+        for str_key in ["setup", "state", "market_regime", "trend", "velocity", "verdict", "risk_flag"]:
             if parsed.get(str_key):
                 parsed[str_key] = str(parsed[str_key]).upper()
 
-        # Ensure confidence is float
         try:
             if parsed.get("confidence") is not None:
                 parsed["confidence"] = float(parsed["confidence"])
@@ -1310,7 +904,6 @@ def clean_json_response(text):
         except (ValueError, TypeError):
             parsed["confidence"] = 0.0 if parsed["signal"] == "HOLD" else 0.5
 
-        # Ensure points are int if present
         for pt_key in ["sl_points", "tp_points"]:
             if parsed.get(pt_key) is not None:
                 try:
@@ -1332,11 +925,7 @@ def clean_json_response(text):
             "confidence": 0.0,
             "sl_points": None,
             "tp_points": None,
-            "invalidation_price": None,
-            "target_price": None,
-            "trend": None,
-            "velocity": None,
-            "rr_valid": None,
+            "verdict": "REJECT",
             "reasoning": f"Gagal memparsing respon: {str(e)}"
         }
 
@@ -1348,7 +937,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         kwargs = {
             "model": model_name,
             "messages": [
-                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Always respond with valid JSON only.\n\n" + prompt}
             ],
             "response_format": {"type": "json_object"},
             "timeout": timeout_sec
@@ -1367,7 +956,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -1378,76 +967,20 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
-def query_forecast(prompt):
-    """Queries forecast engine with 1 AI: gpt-5.4 (bukan mini) primary,
-    fallback gemini-3.5-flash (bukan lite). Returns parsed JSON dict or None."""
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
-    primary_model = getattr(config, "FORECAST_MODEL", None) or config.OPENAI_MODEL
-    fallback_model = getattr(config, "FORECAST_FALLBACK_MODEL", None) or config.GEMINI_MODEL
-
-    # 1. Primary: OpenAI gpt-5.4
-    if openai_client:
-        try:
-            res = _execute_openai_single(primary_model, prompt, timeout_sec)
-            if isinstance(res, dict) and "forecast_bias" in res:
-                return res
-            print(f"[FORECAST WARNING] Response {primary_model} tidak punya forecast_bias: {str(res)[:120]}")
-        except Exception as e:
-            print(f" [FORECAST FALLBACK] {primary_model} error ({e}). Switching ke {fallback_model}...")
-
-    # 2. Fallback: Gemini gemini-3.5-flash
-    if gemini_client:
-        try:
-            from google.genai import types
-            res = gemini_client.models.generate_content(
-                model=fallback_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            if res and res.text:
-                parsed = clean_json_response(res.text)
-                if isinstance(parsed, dict) and "forecast_bias" in parsed:
-                    return parsed
-        except Exception as e:
-            print(f"[FORECAST FALLBACK ERROR] {e}")
-
-    return None
-
-
-def _resolve_openai_primary():
-    """gpt-5.2 (kuota free 250k/hari) dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB
-    (default 15:00-19:30 WIB, London session single mode); di luar window pakai
-    OPENAI_DEFAULT_MODEL (gpt-4o-mini) biar kuota besar tidak habis di jam sepi
-    (14 Agustus). OPENAI_FALLBACK_MODEL (o3-mini) = fallback error, dipisah."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
-    cur_min = wib_now.hour * 60 + wib_now.minute
-    windows = getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", []) or []
-    for start_min, end_min in windows:
-        if start_min <= end_min:
-            if start_min <= cur_min < end_min:
-                return config.OPENAI_MODEL
-        else:  # window lintas tengah malam (mis. 21:00-02:00)
-            if cur_min >= start_min or cur_min < end_min:
-                return config.OPENAI_MODEL
-    return config.OPENAI_DEFAULT_MODEL
-
-
 def query_openai(prompt):
-    """Queries OpenAI API with timeout and fallback model support."""
+    """Queries OpenAI API with timeout and fallback support."""
+    primary_model = getattr(config, "OPENAI_MODEL", "o4-mini")
+    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", "o3-mini")
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
+
     if not openai_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
-
-    primary_model = _resolve_openai_primary()
-    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)  # o3-mini (fallback error)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
     try:
         return _execute_openai_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [OPENAI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [OPENAI FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 return _execute_openai_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
@@ -1459,31 +992,42 @@ def query_openai(prompt):
 
 
 def _execute_gemini_single(model_name, prompt, timeout_sec, thinking_budget=None):
-    """Execute a single Gemini call with strict JSON and thinking budget."""
-    if not gemini_client:
-        raise RuntimeError("Gemini client is not initialized.")
     from google.genai import types
+
     if thinking_budget is None:
         thinking_budget = getattr(config, "GEMINI_THINKING_BUDGET", 1024)
-    cfg_kwargs = dict(response_mime_type="application/json")
-    if thinking_budget and thinking_budget > 0:
-        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
 
     def _call(mod):
-        res = gemini_client.models.generate_content(
+        cfg_kwargs = dict(
+            response_mime_type="application/json",
+            temperature=0.2,
+        )
+        if thinking_budget and thinking_budget > 0:
+            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+        cfg = types.GenerateContentConfig(**cfg_kwargs)
+        return gemini_client.models.generate_content(
             model=mod,
             contents=prompt,
-            config=types.GenerateContentConfig(**cfg_kwargs)
+            config=cfg
         )
-        return clean_json_response(res.text)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(_call, model_name)
-        return fut.result(timeout=timeout_sec)
+    try:
+        res = _call(model_name)
+    except Exception as e_tb:
+        if "thinking_config" in str(e_tb).lower() or "budget" in str(e_tb).lower() or "unsupported" in str(e_tb).lower():
+            cfg_fb = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+            res = gemini_client.models.generate_content(model=model_name, contents=prompt, config=cfg_fb)
+        else:
+            raise e_tb
+
+    if res and res.text:
+        return clean_json_response(res.text)
+    return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Respon kosong dari Gemini"}
 
 
 def query_gemini(prompt):
-    """Queries Gemini API with timeout and fallback model support."""
+    """Queries Gemini API with timeout and fallback support."""
     if not gemini_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Gemini API Key tidak diset."}
 
@@ -1495,7 +1039,7 @@ def query_gemini(prompt):
         return _execute_gemini_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [GEMINI FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 return _execute_gemini_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
@@ -1507,51 +1051,8 @@ def query_gemini(prompt):
 
 
 def _execute_claude_single(model_name, prompt, timeout_sec):
-    system_text = (
-        "You are a professional financial trading assistant. "
-        "Always respond with valid JSON only. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); "
-        "if HOLD, keep it to 1 short sentence (max 20 words) citing the single key "
-        "level/indicator. Never enumerate."
-    )
-    # Prompt caching: pecah prompt jadi blok statis (instruksi, DI DEPAN) +
-    # dinamis (data pasar, DI BELAKANG). cache_control ditaruh di AKHIR blok
-    # statis - prefix yang identik antar request. System terlalu pendek
-    # (< 1024 token) untuk di-cache, jadi breakpoint di user block.
-    split_marker = "### MARKET DATA CONTEXT"
-    if split_marker in prompt:
-        static_part, dynamic_part = prompt.split(split_marker, 1)
-        dynamic_part = split_marker + dynamic_part
-        user_blocks = [
-            {"type": "text", "text": static_part,
-             "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": dynamic_part},
-        ]
-    else:
-        # Tidak ketemu marker - fallback: cache seluruh prompt (kalau statis)
-        user_blocks = [{"type": "text", "text": prompt,
-                        "cache_control": {"type": "ephemeral"}}]
-    # Enable Anthropic Prompt Caching via cache_control and prompt-caching header
+    system_text = "You are a professional financial trading assistant. Always respond with valid JSON only."
     try:
-        response = claude_client.messages.create(
-            model=model_name,
-            max_tokens=2000,
-            system=[
-                {
-                    "type": "text",
-                    "text": system_text,
-                }
-            ],
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_blocks,
-                }
-            ],
-            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-            timeout=timeout_sec
-        )
-    except Exception:
-        # Fallback for standard call if prompt caching header or structure is not supported
         response = claude_client.messages.create(
             model=model_name,
             max_tokens=2000,
@@ -1559,20 +1060,16 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
             messages=[{"role": "user", "content": prompt}],
             timeout=timeout_sec
         )
-    content = "".join(b.text for b in response.content if b.type == "text")
-    return clean_json_response(content)
+        content = "".join(b.text for b in response.content if b.type == "text")
+        return clean_json_response(content)
+    except Exception as e:
+        raise e
 
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=None):
-    """Query DeepSeek (OpenAI-compatible API). model_name passed WITHOUT the
-    'deepseek/' prefix (e.g. 'deepseek-v4-flash').
-    reasoning_effort: "low"/"medium"/"high" -> thinking mode; None/"" -> fast mode tanpa reasoning (deepseek-chat, 2-3s)."""
     raw_model = model_name.split("/", 1)[1] if "/" in model_name else model_name
     if reasoning_effort is None:
-        if "chat" in raw_model.lower():
-            reasoning_effort = ""
-        else:
-            reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "none") or "").strip()
+        reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "none") or "").strip()
 
     kwargs = dict(
         model=raw_model,
@@ -1588,7 +1085,6 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
         kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
     else:
         kwargs["temperature"] = 0.2
-        # DeepSeek API format to completely disable reasoning thinking CoT
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
     response = deepseek_client.chat.completions.create(**kwargs)
@@ -1596,7 +1092,7 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
 
 
 def query_deepseek(prompt):
-    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support (e.g. Gemini 2.5 Flash Lite)."""
+    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support."""
     primary_model = getattr(config, "DEEPSEEK_MODEL", "deepseek-v4-flash")
     fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
@@ -1610,7 +1106,7 @@ def query_deepseek(prompt):
         return _execute_deepseek_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [DEEPSEEK FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if "gemini" in fallback_model.lower():
                     return _execute_gemini_single(fallback_model, prompt, timeout_sec, thinking_budget=1024)
@@ -1625,8 +1121,8 @@ def query_deepseek(prompt):
 
 
 def query_claude(prompt):
-    """Queries Anthropic Claude API (claude-sonnet-4-6) with timeout and fallback support."""
-    primary_model = getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-6")
+    """Queries Anthropic Claude API with timeout and fallback support."""
+    primary_model = getattr(config, "CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", "deepseek/deepseek-v4-flash")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
@@ -1641,7 +1137,7 @@ def query_claude(prompt):
         return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [CLAUDE FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if fallback_model.startswith("deepseek/"):
                     return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="none")
@@ -1673,7 +1169,6 @@ def query_all_models_parallel(prompt, models=("OpenAI", "Gemini", "DeepSeek")):
             except Exception as e:
                 results[name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Error: {e}"}
     return results
-
 
 
 def compute_micro_objective_frames(symbol, point=None):
@@ -2120,7 +1615,7 @@ def format_micro_tape(symbol: str, timeframe, count: int = 15) -> str:
 
         lines = []
         for r in rates:
-            dt_wib = datetime.fromtimestamp(r['time'], tz=WIB)
+            dt_wib = datetime.fromtimestamp(r['time'], tz=_WIB)
             t_str = dt_wib.strftime("%H:%M")
             o, h, l, c = float(r['open']), float(r['high']), float(r['low']), float(r['close'])
             body_p = abs(c - o) / (pt * p_div)
@@ -2131,6 +1626,25 @@ def format_micro_tape(symbol: str, timeframe, count: int = 15) -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"  * Tape error: {e}"
+
+
+def _get_symbol_news_context(sym: str, candidate=None) -> str:
+    """
+    Fetches real-time economic calendar schedule for the given symbol (US/GB/EU/CH/JP/AU/CA/NZ).
+    Falls back gracefully if no calendar releases are found.
+    """
+    ctx = getattr(candidate, 'economic_context', '') if candidate else ''
+    if not ctx or "No High-Impact News releases" in ctx:
+        try:
+            from src.analytics import economic_calendar
+            cal_obj = getattr(economic_calendar, "calendar", None)
+            if cal_obj:
+                live_ctx = cal_obj.get_context(symbol=sym)
+                if live_ctx and live_ctx.strip():
+                    return live_ctx.strip()
+        except Exception:
+            pass
+    return ctx.strip() if ctx and ctx.strip() else "No High-Impact News releases within +/- 6 hours"
 
 
 def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None) -> str:
@@ -2193,19 +1707,29 @@ def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_
     except Exception:
         fund_block = ""
 
-    calendar_text = getattr(candidate, 'economic_context', '') or "No High-Impact News releases within +/- 6 hours"
+    calendar_text = _get_symbol_news_context(sym, candidate)
+
+    from config import mt5
+    d1_tape = recent_d1_str or format_micro_tape(sym, mt5.TIMEFRAME_D1, count=5)
+    h4_tape = recent_h4_str or format_micro_tape(sym, mt5.TIMEFRAME_H4, count=8)
 
     prompt = f"""# ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
 You are the Chief Quantitative Macro Strategist of an institutional hedge fund.
 Your SOLE RESPONSIBILITY is to evaluate the HTF Structural Dealing Range, Macro Corridor Alignment, and Multi-Day Trend Regime for {sym}.
 You DO NOT evaluate micro candlestick wicks.
 
-## 1. STRATEGIC CONTEXT & CORRIDORS:
+## 1. STRATEGIC CONTEXT & CANDLESTICK TAPES:
 - Symbol: {sym} | Proposed Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
 - Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {getattr(candidate, 'h4_trend', 'Aligned with Macro')}
 - Wave State: {getattr(candidate, 'wave_state', 'UNCLASSIFIED')} — {getattr(candidate, 'wave_summary', 'No summary')}
 - Intraday Dealing Range Position: {candidate.dealing_range_pos*100:.1f}% ({'DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('PREMIUM' if candidate.dealing_range_pos >= 0.55 else 'EQUILIBRIUM')})
 - Volatility: ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
+
+### [TIMEFRAME D1] Multi-Day Macro Context (Last 5 Daily Bars):
+{d1_tape}
+
+### [TIMEFRAME H4] Structural Trend & Expansion Wave (Last 8 H4 Bars):
+{h4_tape}
 
 {strat_block}
 
@@ -2219,7 +1743,8 @@ You DO NOT evaluate micro candlestick wicks.
 ## 2. STRATEGIC MANDATE & DECISION LOGIC:
 1. Classify the Market Regime: Is this TRUE EXPANSION (Trend Continuation / Absorption), ACCUMULATION / COMPRESSION, or RANGE MEAN-REVERSION (Chamber Bounce)?
 2. Corridor Delivery: Has the price established structural acceptance above the base station to deliver price to the next macro target?
-3. Decide whether the macro environment warrants "APPROVE" (immediate/trend aligned), "REVISE" (wait for pullback/retest limit), or "REJECT" (counter-trend/structural trap).
+3. STRICT ANTI-FOMO EXECUTION: If price is breaking out in Extreme Territory (Dealing Range >= 85% for BUY or <= 15% for SELL), you are FORBIDDEN from choosing 'market' entry. You MUST choose 'buy_limit' / 'sell_limit' at the broken SBR/RBS level, or select 'REJECT' / 'HOLD' if the move is over-extended without a resting anchor.
+4. Decide whether the macro environment warrants "APPROVE" (immediate/trend aligned), "REVISE" (wait for pullback/retest limit), or "REJECT" (counter-trend/structural trap).
 
 Respond strictly in valid JSON:
 {{
@@ -2262,6 +1787,8 @@ def build_gemini_price_action_dossier_prompt(candidate, recent_m1_str=None, rece
     wick_ratio_val = float(candidate.rejection_wick_ratio or 0.0) * 100.0
     wick_desc = f"Upper Wick = {wick_ratio_val:.1f}% (Bearish defense/wick)" if direction_str == "SELL" else f"Lower Wick = {wick_ratio_val:.1f}% (Bullish defense/absorption)"
 
+    calendar_text = _get_symbol_news_context(sym, candidate)
+
     prompt = f"""# ROLE: MASTER PRICE ACTION & RETEST TACTICIAN (GEMINI 3.1-Flash)
 You are the Lead Price Action and Order Flow Tactician of an institutional quantitative hedge fund.
 Your SOLE RESPONSIBILITY is Candlestick Anatomy, Breakout/Retest Dynamics, SBR/RBS Flips, and Order Flow Absorption for {sym}.
@@ -2289,10 +1816,14 @@ You DO NOT worry about macro economics.
 - Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
 - Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'} │ FRVP: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}
 
-## 3. TACTICAL MANDATE & DECISION LOGIC:
+## 3. ECONOMIC NEWS SCHEDULE:
+- Economic Events: {calendar_text}
+
+## 4. TACTICAL MANDATE & DECISION LOGIC:
 1. Retest Quality: If price broke a barrier, is the current retest bar showing institutional absorption (defending the flip) or a false breakout failure?
 2. Candlestick Energy: Are the M1/M5/M15 candle bodies displacing with volume, or is price printing exhaustive chop?
-3. Entry Precision: Recommend the cleanest entry_price (instant market or tight limit retest) and tight SL anchored behind the physical swing/OB.
+3. STRICT ANTI-FOMO EXECUTION: If price is breaking out in Extreme Territory (Dealing Range >= 85% for BUY or <= 15% for SELL), you are FORBIDDEN from choosing 'market' entry to chase the spike. You MUST choose 'buy_limit' / 'sell_limit' anchored at the broken SBR/RBS level, or select 'HOLD' if price has already ran without a resting retest.
+4. Entry Precision: Recommend the cleanest entry_price (pending limit retest or instant market if basing in discount/pullback) and tight SL anchored behind the physical swing/OB.
 
 Respond strictly in valid JSON:
 {{
@@ -2314,7 +1845,7 @@ Respond strictly in valid JSON:
     return _strip_emoji(prompt)
 
 
-def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_m5_str=None, calendar_text=None) -> str:
+def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_m5_str=None, calendar_text=None, recent_h4_str=None, recent_h1_str=None) -> str:
     """
     Builds the Devil's Advocate & Chief Risk Officer Arbiter Prompt for DeepSeek (V4-Flash).
     Cross-examines OpenAI's Macro Structure Thesis + Gemini's Price Action Verdict against
@@ -2326,8 +1857,10 @@ def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_
     fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
 
     from config import mt5
+    h4_tape = recent_h4_str or format_micro_tape(sym, mt5.TIMEFRAME_H4, count=6)
+    h1_tape = recent_h1_str or format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
     m5_tape = recent_m5_str or format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
-    cal_str = calendar_text or getattr(candidate, 'economic_context', '') or "No High-Impact News releases within +/- 6 hours"
+    cal_str = calendar_text or _get_symbol_news_context(sym, candidate)
 
     # Format OpenAI and Gemini findings
     o_v = openai_res.get("verdict", "HOLD") if openai_res else "N/A"
@@ -2345,11 +1878,12 @@ def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_
     prompt = f"""# ROLE: CHIEF RISK OFFICER & MASTER VETO ARBITER (DEEPSEEK V4-Flash)
 You hold MASTER VETO POWER over this trade proposal.
 You have received the Macro Structural Analysis from OpenAI (o4-mini) and the Micro Price Action Analysis from Gemini (3.1-Flash).
-Your mission is to cross-examine their claims with cold mathematical rigor against the live 24-bar M5 tape, news calendar, and risk floors.
+Your mission is to cross-examine their claims with cold mathematical rigor against the live Multi-TF candlestick tapes, news calendar, and risk floors.
 
 ## 1. CANDIDATE PROPOSAL & JURY FINDINGS:
 - Asset: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
 - ATR(14) H1: {candidate.current_atr_pts:.1f} pts | Current Spread: {candidate.current_spread_pts} pts
+- Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'EXTREME_PREMIUM' if candidate.dealing_range_pos >= 0.85 else ('EXTREME_DISCOUNT' if candidate.dealing_range_pos <= 0.15 else 'NORMAL')})
 
 ### OPENAI FINDINGS (Strategic Structure & Macro Corridor):
 - Verdict: {o_v} (Confidence: {o_c:.2f}) | Regime: {o_reg}
@@ -2361,7 +1895,14 @@ Your mission is to cross-examine their claims with cold mathematical rigor again
 - Proposed Execution: {g_exec}
 - Price Action Summary: "{g_notes}"
 
-## 2. LIVE 24-BAR M5 CANDLESTICK TAPE (Ground Truth Verification):
+## 2. MULTI-TIMEFRAME CANDLESTICK TAPES (Ground Truth Multi-Scale Verification):
+### [TIMEFRAME H4] Structural Wave & Trend Context (Last 6 Bars):
+{h4_tape}
+
+### [TIMEFRAME H1] Intermediate Session Context (Last 6 Bars):
+{h1_tape}
+
+### [TIMEFRAME M5] Micro Execution Flow Tape (Last 24 Bars):
 {m5_tape}
 
 ## 3. RISK CONSTRAINTS & CALENDAR:
@@ -2370,8 +1911,10 @@ Your mission is to cross-examine their claims with cold mathematical rigor again
 
 ## 4. MASTER VETO AUDIT DIRECTIVE:
 1. Fallacy & Trap Check: Is OpenAI or Gemini falling into a liquidity trap, unmitigated impulse chase, or buying into a failed breakdown?
-2. M5 Tape Audit: Does the live M5 tape confirm clean absorption, or is there a waterfall / sudden opposing spike?
-3. Synthesize the final definitive trade execution or issue a HARD VETO.
+2. Multi-TF Tape Audit: Do the H4, H1, and M5 tapes confirm clean basing/absorption, or is there an over-extended vertical spike / waterfall?
+3. Anti-Chase Override: If Pass 1 proposes a Market Order into an extended candle at Dealing Range >= 85% (BUY) or <= 15% (SELL), you MUST convert the execution to a Pending Limit Order ('buy_limit' / 'sell_limit') at the retest anchor or issue a HARD VETO ('IMPULSE_CHASE').
+4. Execution Arbiter: If OpenAI and Gemini agree on direction (e.g. BUY) but propose different entry types (one Market, one Limit), you MUST determine the single optimal execution rather than vetoing for entry style differences.
+5. Synthesize the final definitive trade execution or issue a HARD VETO.
 
 Respond strictly in valid JSON:
 {{
@@ -2472,7 +2015,9 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
             candidate,
             openai_res=results.get("OpenAI"),
             gemini_res=results.get("Gemini"),
-            recent_m5_str=recent_m5_str
+            recent_m5_str=recent_m5_str,
+            recent_h4_str=recent_h4_str,
+            recent_h1_str=recent_h1_str
         )
         try:
             t0 = time.time()

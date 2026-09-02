@@ -20,11 +20,11 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         pool = config.get_rotation_pool(wednesday)
         if config.SCANNER_MODE:
             self.assertEqual(len(pool), len(config.get_scanner_symbols(wednesday)))
-            self.assertIn("GBPUSD-ECNc", pool)
-            self.assertNotIn("XAUUSD-ECNc", pool)
+            self.assertTrue(any("GBPUSD" in s for s in pool))
+            self.assertTrue(all("XAUUSD" not in s for s in pool))
             self.assertNotIn("BTCUSD.c", pool)  # BTC must be OFF on weekdays
-            self.assertIn("EURJPY-ECNc", pool)
-            self.assertIn("USDJPY-ECNc", pool)
+            self.assertTrue(any("EURJPY" in s for s in pool))
+            self.assertTrue(any("USDJPY" in s for s in pool))
             self.assertEqual(config.get_max_open_positions(now=wednesday), config.MAX_OPEN_POSITIONS)
 
     def test_weekend_switch(self):

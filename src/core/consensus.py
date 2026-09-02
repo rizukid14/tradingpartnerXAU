@@ -1,19 +1,12 @@
 import json
 import statistics
 import config
-from src.analytics import dynamic_config
 from src.core.cli_theme import UI
 
 
 def _effective_consensus_threshold():
-    """Returns the active consensus threshold. Dynamic rules only apply when
-    DYNAMIC_CONFIG_ENABLED; otherwise fall back to static config (2/3)."""
-    if not getattr(config, "DYNAMIC_CONFIG_ENABLED", False):
-        return config.CONSENSUS_THRESHOLD
-    try:
-        return int(dynamic_config.dynamic_rules.consensus_threshold)
-    except Exception:
-        return config.CONSENSUS_THRESHOLD
+    """Returns the active consensus threshold (from config)."""
+    return config.CONSENSUS_THRESHOLD
 
 
 _last_sltp_adjustments = []
@@ -594,18 +587,45 @@ def calculate_consensus(decisions, candidate=None):
 
     outlier_notes = []
 
-    # entry_type: mayoritas dari model yang setuju arah; seri -> market
-    final_entry_type = "market"
-    if entry_type_votes:
-        top_type, top_count = max(entry_type_votes.items(), key=lambda kv: kv[1])
-        if top_count >= max(1, len(agreeing_models) // 2):
-            final_entry_type = top_type
+    # 1. Prioritaskan keputusan eksekusi DeepSeek CRO (Master Arbiter) jika aktif dan setuju
+    ds_dec = decisions.get("DeepSeek") or decisions.get("deepseek")
+    ds_exec = (ds_dec.get("execution") or {}) if ds_dec else {}
+    ds_entry_type = (ds_exec.get("entry_type") or ds_dec.get("entry_type", "")).strip().lower() if ds_dec else ""
+    ds_ep = ds_exec.get("entry_price") or (ds_dec.get("entry_price") if ds_dec else None)
+
+    if ds_entry_type in ("buy_limit", "sell_limit", "market", "buy_stop", "sell_stop") and "DeepSeek" in agreeing_models:
+        final_entry_type = ds_entry_type
+        final_entry_price = float(ds_ep) if (isinstance(ds_ep, (int, float)) and ds_ep > 0) else (float(statistics.median(entry_price_list)) if entry_price_list else None)
+    else:
+        # entry_type: mayoritas dari model yang setuju arah; seri -> market
+        final_entry_type = "market"
+        if entry_type_votes:
+            top_type, top_count = max(entry_type_votes.items(), key=lambda kv: kv[1])
+            if top_count >= max(1, len(agreeing_models) // 2):
+                final_entry_type = top_type
+        final_entry_price = float(statistics.median(entry_price_list)) if entry_price_list else None
+
+    # 2. Hard Anti-FOMO Intercept: Pada Breakout Retest di Range Ekstrem (>=85% BUY / <=15% SELL), wajib Limit Order di Anchor Retest
+    if candidate is not None:
+        c_st = getattr(candidate, 'setup_type', '')
+        dr_pos = getattr(candidate, 'dealing_range_pos', 0.5)
+        c_trig = getattr(candidate, 'trigger_price', 0.0)
+        
+        if c_st == "MULTI_TOUCH_BREAKOUT_RETEST" or "BREAKOUT" in c_st:
+            if consensus_signal == "BUY" and dr_pos >= 0.85 and final_entry_type == "market":
+                final_entry_type = "buy_limit"
+                final_entry_price = float(c_trig) if (c_trig > 0) else final_entry_price
+                outlier_notes.append(f"Anti-FOMO Guard: Breakout di {dr_pos*100:.1f}% Range dikonversi dari Market ke BUY_LIMIT @ {final_entry_price}")
+            elif consensus_signal == "SELL" and dr_pos <= 0.15 and final_entry_type == "market":
+                final_entry_type = "sell_limit"
+                final_entry_price = float(c_trig) if (c_trig > 0) else final_entry_price
+                outlier_notes.append(f"Anti-FOMO Guard: Breakdown di {dr_pos*100:.1f}% Range dikonversi dari Market ke SELL_LIMIT @ {final_entry_price}")
+
     # Konsistensi arah: BUY -> buy_stop/buy_limit, SELL -> sell_stop/sell_limit
     if consensus_signal == "BUY" and final_entry_type not in ("buy_stop", "buy_limit"):
         final_entry_type = "market"
     if consensus_signal == "SELL" and final_entry_type not in ("sell_stop", "sell_limit"):
         final_entry_type = "market"
-    final_entry_price = float(statistics.median(entry_price_list)) if entry_price_list else None
     if final_entry_type != "market" and not final_entry_price:
         final_entry_type = "market"
 

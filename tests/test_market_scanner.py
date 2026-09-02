@@ -547,6 +547,13 @@ class TestMarketScanner(unittest.TestCase):
                     sweep_cands = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
                     self.assertEqual(len(sweep_cands), 0, "G1 Micro level in trending market must NOT produce M1 Sweep candidate!")
 
+    def test_scan_all_alias(self):
+        """Verify scan_all alias calls scan_fast_radar properly."""
+        with patch.object(self.scanner, 'scan_fast_radar', return_value=[]) as mock_fast:
+            res = self.scanner.scan_all(self.connector)
+            self.assertEqual(res, [])
+            mock_fast.assert_called_once_with(mt5_connector=self.connector)
+
 
 if __name__ == "__main__":
     unittest.main()

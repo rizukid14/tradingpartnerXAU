@@ -622,7 +622,7 @@ def alert_hold_recap(hold_lines, news_context=None):
     return send_message(text)
 
 
-def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
+def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None, macro_cache=None, **kwargs):
     """
     Send comprehensive 3-Hourly SMC Radar & Portfolio Pulse Digest to Telegram.
     """
@@ -695,7 +695,8 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
         pass
 
     # Macro Compass & Dealing Range
-    if scanner is not None and getattr(scanner, "macro_cache", None):
+    m_cache = scanner.macro_cache if (scanner is not None and getattr(scanner, "macro_cache", None)) else macro_cache
+    if m_cache:
         bull_c = sum(1 for m in scanner.macro_cache.values() if m.get('is_bull'))
         bear_c = sum(1 for m in scanner.macro_cache.values() if m.get('is_bear'))
         range_c = len(scanner.macro_cache) - bull_c - bear_c
@@ -762,9 +763,14 @@ def alert_hourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, r
     return send_message("\n".join(lines), reply_markup=kb)
 
 
-def alert_trihourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None):
+def alert_trihourly_radar_recap(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None, **kwargs):
     """Direct alias for 3-hour radar recap."""
-    return alert_hourly_radar_recap(scanner, open_positions, today_pnl, risk, recent_opened, recent_vetoed)
+    return alert_hourly_radar_recap(scanner=scanner, open_positions=open_positions, today_pnl=today_pnl, risk=risk, recent_opened=recent_opened, recent_vetoed=recent_vetoed, **kwargs)
+
+
+def alert_hourly_market_pulse(scanner=None, open_positions=None, today_pnl=0.0, risk=None, recent_opened=None, recent_vetoed=None, **kwargs):
+    """Direct alias for hourly market pulse recap."""
+    return alert_hourly_radar_recap(scanner=scanner, open_positions=open_positions, today_pnl=today_pnl, risk=risk, recent_opened=recent_opened, recent_vetoed=recent_vetoed, **kwargs)
 
 
 def alert_radar_go_transition(symbol, setup_type="RECLAIM_CONFIRMED_GO", trigger_price=0.0, dr_pos=0.0, action_tier="FULL_ALLOW", bias_score=0.0):

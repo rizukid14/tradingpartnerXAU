@@ -659,7 +659,7 @@ class RiskEngine:
         Existing open positions are NOT affected (still managed by the 5s loop);
         only new entries are blocked.
         """
-        if config.WEEKEND_TRADING_ENABLED:
+        if getattr(config, 'WEEKEND_TRADING_ENABLED', False):
             return True, ""
         now_wib = datetime.now(WIB)
         # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 WIB.

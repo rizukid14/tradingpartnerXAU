@@ -164,12 +164,61 @@ def handle_csm_command(chat_id):
         send_telegram_msg(f"Error fetching CSM: `{e}`", chat_id=chat_id)
 
 
+def handle_rotasi_command(chat_id):
+    """Sends the Global Capital Rotation Matrix (ARRIVED, ON_HOLD, EN_ROUTE)."""
+    try:
+        from src.analytics.market_scanner import MarketScanner
+        from src.analytics.currency_strength import get_global_journey_matrix
+        
+        scanner_inst = getattr(MarketScanner, '_instance', None)
+        if not scanner_inst or not hasattr(scanner_inst, 'macro_cache') or not scanner_inst.macro_cache:
+            send_telegram_msg("⚠️ Macro Cache initializing... Please try again in 1 minute.", chat_id=chat_id)
+            return
+            
+        journey = get_global_journey_matrix(scanner_inst.macro_cache)
+        if not journey:
+            send_telegram_msg("⚠️ Rotation Matrix empty. Please wait for radar cycle.", chat_id=chat_id)
+            return
+            
+        arrived = [s for s, d in journey.items() if d['state'] == 'ARRIVED']
+        on_hold = [s for s, d in journey.items() if d['state'] == 'ON_HOLD']
+        en_route = [s for s, d in journey.items() if d['state'] == 'EN_ROUTE']
+        
+        msg = "🔄 *GLOBAL CAPITAL ROTATION MATRIX*\n\n"
+        
+        msg += "🧱 *ARRIVED (Hit Wall / Sampai Target):*\n"
+        msg += f"_{len(arrived)} Pairs_\n"
+        for s in arrived:
+            loc = "dasar" if journey[s]['pos'] <= 0.10 else "pucuk"
+            msg += f"• {s} (Di {loc})\n"
+        if not arrived: msg += "• None\n"
+        msg += "\n"
+        
+        msg += "⏳ *ON_HOLD (Ranging / Nunggu Giliran):*\n"
+        msg += f"_{len(on_hold)} Pairs_\n"
+        for s in on_hold:
+            msg += f"• {s} (Pos: {journey[s]['pos']*100:.0f}%)\n"
+        if not on_hold: msg += "• None\n"
+        msg += "\n"
+        
+        msg += "🚀 *EN_ROUTE (Lagi Jalan / Ekspansi):*\n"
+        msg += f"_{len(en_route)} Pairs_\n"
+        msg += f"{', '.join(en_route) if en_route else 'None'}\n"
+        
+        send_telegram_msg(msg, chat_id=chat_id)
+    except Exception as e:
+        send_telegram_msg(f"⚠️ Error generating Rotation Matrix: {e}", chat_id=chat_id)
+
+
+
 def handle_radar_command(chat_id):
     """Sends the 22-pair Market Structure & SMC Radar report."""
     try:
         from src.analytics.market_scanner import MarketScanner
-        scanner = MarketScanner()
-        scanner.update_macro_context(connector, force=False)
+        scanner = getattr(MarketScanner, '_instance', None)
+        if not scanner or not scanner.macro_cache:
+            send_telegram_msg("?? Macro Cache initializing... Please try again in 10 seconds.", chat_id=chat_id)
+            return
         report = scanner.get_market_structure_report()
         kb = {
             "inline_keyboard": [
@@ -190,8 +239,10 @@ def handle_indicators_command(chat_id, symbol_input=None):
         sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
         clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         
-        scanner = MarketScanner()
-        scanner.update_macro_context(connector, force=False)
+        scanner = getattr(MarketScanner, '_instance', None)
+        if not scanner or not scanner.macro_cache:
+            send_telegram_msg("?? Macro Cache initializing... Please try again in 10 seconds.", chat_id=chat_id)
+            return
         smc = scanner.get_symbol_smc_levels(clean_sym)
         
         tick = connector.get_current_tick(sym)
@@ -375,6 +426,7 @@ def handle_help_command(chat_id):
         "  _Contoh_: `/fund GBPUSD` atau `/fundamental`",
         "• `/radar` ➔ Fast Radar Live Heatmap 26 Pairs (M1/M2/M3 A+ setups)",
         "• `/csm` ➔ Boitoki Currency Strength Matrix & Net Basket Delta",
+        "• `/rotasi` ➔ Global Capital Rotation Matrix (Leader/Laggard Flow)",
         "• `/levels <pair>` ➔ Level teknikal LuxAlgo SMC, FRVP POC/VAL/VAH",
         "",
         "📰 *BERITA & SENTIMEN:*",
@@ -1094,6 +1146,8 @@ def _process_update(update):
             handle_help_command(target_chat)
         elif cmd in ("/csm", "/strength", "/currency"):
             handle_csm_command(target_chat)
+        elif cmd in ("/rotasi", "/matrix", "/journey"):
+            handle_rotasi_command(target_chat)
         elif cmd in ("/radar", "/scan", "/scanner"):
             handle_radar_command(target_chat)
         elif cmd in ("/indicators", "/indikator", "/levels", "/smc"):

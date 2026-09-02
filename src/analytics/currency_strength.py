@@ -314,12 +314,24 @@ def get_dual_basket_context(symbol: str, macro_cache: dict = None) -> str:
     leader_X_str = leader_details.get(base_curr, "None") if leader_wall_hit.get(base_curr) else "No Wall Hit"
     leader_Y_str = leader_details.get(quote_curr, "None") if leader_wall_hit.get(quote_curr) else "No Wall Hit"
 
+    journey_matrix = get_global_journey_matrix(macro_cache)
+    
+    def format_basket_journey(curr: str) -> str:
+        basket = {s: d for s, d in journey_matrix.items() if curr in s}
+        arr = [s for s, d in basket.items() if d['state'] == 'ARRIVED']
+        onh = [s for s, d in basket.items() if d['state'] == 'ON_HOLD']
+        enr = [s for s, d in basket.items() if d['state'] == 'EN_ROUTE']
+        return f"{len(arr)} ARRIVED ({','.join(arr) or 'None'}), {len(enr)} EN_ROUTE, {len(onh)} ON_HOLD ({','.join(onh) or 'None'})"
+        
+    b_journey = format_basket_journey(base_curr)
+    q_journey = format_basket_journey(quote_curr)
+
     lines = [
-        "### RESEARCH SHADOW METRIC — EXPERIMENTAL DUAL-BASKET CONFLUENCE",
+        "### RESEARCH SHADOW METRIC — CAPITAL ROTATION & DUAL-BASKET CONFLUENCE",
         "(Note: Exploratory shadow metric for supplementary context only — do NOT override core technical structure)",
         f"- Dual-Basket Classification ({symbol}): [{classification}]",
-        f"- Base ({base_curr}) Basket Dispersion: σ={sigma_X:.2f} (N={n_X} pairs) | Leader Status: {leader_X_str}",
-        f"- Quote ({quote_curr}) Basket Dispersion: σ={sigma_Y:.2f} (N={n_Y} pairs) | Leader Status: {leader_Y_str}",
+        f"- Base ({base_curr}) Basket Status: {b_journey} | Leader: {leader_X_str}",
+        f"- Quote ({quote_curr}) Basket Status: {q_journey} | Leader: {leader_Y_str}",
         f"- Analytical Confluence Directive: {directive}"
     ]
 
@@ -453,3 +465,28 @@ def evaluate_systemic_basket_lock(
             return True, f"EXTREME BASKET DELTA ({base_curr}-{quote_curr} {net_delta:+.1f}): Hard Lock BUY on {clean_sym} (Relative flow strongly bearish).", quote_curr
 
     return False, "CLEAR", ""
+
+
+def get_global_journey_matrix(macro_cache: dict) -> dict:
+    matrix = {}
+    if not macro_cache: return matrix
+    for sym_key, m in macro_cache.items():
+        csym = sym_key.replace('-ECNc', '').replace('.c', '').replace('-ECN', '').replace('_i', '').upper()
+        if len(csym) < 6 or 'BTC' in csym or 'XAU' in csym or 'GOLD' in csym: continue
+        pos = m.get('dealing_range_pos', 0.5)
+        pos = max(0.0, min(1.0, float(pos)))
+        atr = m.get('atr_h1', 0.0010)
+        mid = m.get('current_mid', m.get('current_price', 0.0))
+        c1 = m.get('immediate_ceiling_c1', m.get('cluster_resistance', mid))
+        f1 = m.get('immediate_floor_f1', m.get('cluster_support', mid))
+        c1_dist = abs(c1 - mid) / atr if atr > 0 else 99.0
+        f1_dist = abs(mid - f1) / atr if atr > 0 else 99.0
+        min_dist_atr = min(c1_dist, f1_dist)
+        wave_state = m.get('wave_state', 'NEUTRAL')
+        
+        if (pos >= 0.90 or pos <= 0.10) and min_dist_atr <= 0.35: state = 'ARRIVED'
+        elif 'COMPRESSION' in wave_state or 'RANGING' in wave_state or (0.35 <= pos <= 0.65): state = 'ON_HOLD'
+        else: state = 'EN_ROUTE'
+            
+        matrix[csym] = {'state': state, 'pos': pos, 'min_dist_atr': min_dist_atr, 'wave': wave_state}
+    return matrix

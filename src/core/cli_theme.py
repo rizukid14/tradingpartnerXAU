@@ -54,6 +54,10 @@ class UI:
         return f"{cls.BG_GREEN} LIVE {cls.RST}"
 
     @classmethod
+    def badge_demo(cls):
+        return f"{cls.BG_CYAN} DEMO {cls.RST}"
+
+    @classmethod
     def badge_dry(cls):
         return f"{cls.BG_YELLOW} DRY RUN {cls.RST}"
 
@@ -239,10 +243,18 @@ class UI:
         return "\n".join(out)
 
 
-def render_scanner_banner(account_info=None, is_live=True, total_symbols=26):
+def render_scanner_banner(account_info=None, is_live=True, total_symbols=26, account_mode="live"):
     """Renders a sleek ASCII banner for Multi-Pair Quant Screener & Multi-LLM Jury."""
-    badge_mode = UI.badge_live() if is_live else UI.badge_dry()
-    acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
+    mode_upper = str(account_mode).upper()
+    if not is_live:
+        badge_mode = UI.badge_dry()
+    elif mode_upper == "DEMO":
+        badge_mode = UI.badge_demo()
+    else:
+        badge_mode = UI.badge_live()
+    
+    acc_label = "Demo Account" if mode_upper == "DEMO" else "Live Account"
+    acc_text = f"{acc_label} #{account_info}" if account_info else "Trading Terminal"
     
     title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
     status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
@@ -318,10 +330,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     
     import config
     scanner_syms = config.get_scanner_symbols() if hasattr(config, "get_scanner_symbols") else []
-    all_symbols = [
+    all_symbols = sorted([
         s.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         for s in scanner_syms
-    ] or ["BTCUSD"]
+    ]) or ["BTCUSD"]
     
     hot_pairs = []
     in_zone_pairs = []
@@ -425,25 +437,19 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                         pos = v.get('dealing_range_pos', 0.5)
                         is_bull = v.get('is_bull', False)
                         is_bear = v.get('is_bear', False)
-                        wave_st = v.get('wave_state', '')
+                        action_tier = v.get('action_tier', 'FULL_ALLOW')
                         perm_st = v.get('permission_state', 'WAIT')
                         
-                        if "IMPULSE" in wave_st or "CHASE" in wave_st:
-                            badge = f"{UI.PURPLE}▶{UI.RST}"
-                        elif "LOCK" in wave_st or perm_st == "LOCK":
-                            badge = f"{UI.RED}■{UI.RST}"
-                        elif "RECLAIM" in wave_st or "GO" in wave_st or perm_st == "GO":
+                        if perm_st == "GO" or (action_tier == "FULL_ALLOW" and (pos <= 0.20 or pos >= 0.80)):
                             badge = f"{UI.GREEN}●{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ●")
-                        elif "ARM" in perm_st or "ARMED" in wave_st or "RELOAD" in wave_st or "MATURE" in wave_st or "RANGING" in wave_st:
+                        elif action_tier == "HARD_BLOCK" or perm_st == "LOCK":
+                            badge = f"{UI.RED}■{UI.RST}"
+                        elif perm_st == "ARM" or action_tier in ("FULL_ALLOW", "TP1_ONLY_SCALP", "REDUCED_CONFIDENCE"):
                             badge = f"{UI.CYAN}◆{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ◆")
-                        elif perm_st == "WATCH":
-                            badge = f"{UI.YELLOW}▲{UI.RST}"
-                        elif "WAIT" in perm_st or "EXPANSION" in wave_st:
-                            badge = f"{UI.GRAY}○{UI.RST}"
                         else:
-                            badge = f"{UI.GRAY}○{UI.RST}"
+                            badge = f"{UI.YELLOW}▲{UI.RST}"
                             
                         if is_bull:
                             arrow = f"{UI.GREEN}▲{UI.RST}"
@@ -473,9 +479,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 f"{UI.GREEN}0%FL{UI.RST}~{UI.RED}100%CE{UI.RST}",
                 f"{UI.GREEN}●GO{UI.RST}",
                 f"{UI.CYAN}◆ARM{UI.RST}",
-                f"{UI.RED}■LOCK{UI.RST}",
                 f"{UI.YELLOW}▲WATCH{UI.RST}",
-                f"{UI.GRAY}○WAIT{UI.RST}"
+                f"{UI.RED}■LOCK{UI.RST}"
             ]
             t1_lines.append(" " + f" {UI.DIM}│{UI.RST} ".join(legend_parts))
         else:
@@ -578,9 +583,31 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         
     hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else ("BTCUSD (27% Disc) [HOT]" if is_single_asset_mode else "None (Normal Vol)")
     in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else ("BTCUSD ◆" if is_single_asset_mode else "None (Mid-Range)")
+
+    # Volatility Squeeze & Wave Regime Summary
+    sqz_pairs = []
+    thrust_pairs = []
+    if macro_cache:
+        for s, m_info in macro_cache.items():
+            s_clean = s.replace("-ECNc", "").replace(".c", "")
+            r_name = m_info.get("wave_regime_name", "YOUNG_OSCILLATION")
+            sqz_cnt = m_info.get("effective_sqz_bars", 0)
+            age_h = m_info.get("range_age_hours", 24.0)
+            if "THRUST" in r_name or r_name == "SUPER_COMPRESSION_THRUST":
+                thrust_pairs.append(f"{s_clean}({age_h:.0f}h)")
+            elif "SQUEEZE" in r_name or sqz_cnt > 0:
+                sqz_pairs.append(f"{s_clean}({age_h:.0f}h)")
+
+    if sqz_pairs:
+        vol_str = f"{UI.YELLOW}⚡ Sqz: {', '.join(sqz_pairs[:3])}{UI.RST}"
+    elif thrust_pairs:
+        vol_str = f"{UI.RED}🚀 Thrust: {', '.join(thrust_pairs[:3])}{UI.RST}"
+    else:
+        vol_str = f"{UI.GREEN}Normal (Young Osc <24h){UI.RST}"
     
     t2_lines.append(f" Top Hot    : {UI.YELLOW}{hot_str}{UI.RST}")
-    t2_lines.append(f" Wave Armed : {UI.GREEN}{in_zone_str}{UI.RST}")
+    t2_lines.append(f" MSE Armed  : {UI.GREEN}{in_zone_str}{UI.RST}")
+    t2_lines.append(f" Vol Regime : {vol_str}")
     t2_lines.append(f" Fast Radar : {UI.CYAN}{len(all_symbols)} Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
     t2_lines.append(f" Proteksi   : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         
@@ -671,6 +698,7 @@ def render_banner(account_info=None, symbol="GBPUSD-ECNc", tf=None, mode="pairs"
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
     title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID MULTI-LLM CONSENSUS TRADING BOT{UI.RST} {UI.CYAN}[FX PAIRS PRO]{UI.RST}"
+    status_line = f" Mode: {badge_mode} | Account: {acc_text} | Symbol: {symbol} ({tf}) | Mode: {mode}"
     items = [
         title_line,
         "---",
