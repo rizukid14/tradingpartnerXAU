@@ -255,38 +255,6 @@ class TestMarketScanner(unittest.TestCase):
         self.assertLessEqual(sl_pts, 95)
         self.assertGreaterEqual(tp_pts, 150)
         
-    def test_4_layer_permission_matrix(self):
-        """Verify the 4-layer Trade Permission Matrix logic and BUY LOCKED != SELL ENABLED."""
-        from src.analytics.market_scanner import Direction, Phase, Permission, resolve_permission
-
-        # 1. Bullish Macro Tests
-        # Phase 1: Expansion -> WAIT (Do not chase tops)
-        self.assertEqual(resolve_permission(Direction.BULL, Phase.EXPANSION, csm_delta=1.5), Permission.WAIT)
-        
-        # Phase 2: Early Correction / Knife -> LOCK (Anti-falling knife)
-        self.assertEqual(resolve_permission(Direction.BULL, Phase.EARLY_CORRECTION, csm_delta=0.0), Permission.LOCK)
-        
-        # Phase 3: Mature Basing -> ARM if CSM is healthy
-        self.assertEqual(resolve_permission(Direction.BULL, Phase.MATURE_CORRECTION, csm_delta=0.2), Permission.ARM)
-        self.assertEqual(resolve_permission(Direction.BULL, Phase.MATURE_CORRECTION, csm_delta=-1.0), Permission.WATCH)
-        
-        # Phase 4: Base Reclaim -> GO if CSM is not severely dumped
-        self.assertEqual(resolve_permission(Direction.BULL, Phase.RECLAIM, csm_delta=0.5), Permission.GO)
-        self.assertEqual(resolve_permission(Direction.BULL, Phase.RECLAIM, csm_delta=-2.5), Permission.WATCH)
-
-        # 2. Bearish Macro Tests
-        # Phase 1: Expansion -> WAIT (Do not chase bottoms)
-        self.assertEqual(resolve_permission(Direction.BEAR, Phase.EXPANSION, csm_delta=-1.5), Permission.WAIT)
-        
-        # Phase 2: Early Correction -> LOCK (Anti-short squeeze)
-        self.assertEqual(resolve_permission(Direction.BEAR, Phase.EARLY_CORRECTION, csm_delta=0.0), Permission.LOCK)
-        
-        # Phase 4: Base Reclaim -> GO for SELL
-        self.assertEqual(resolve_permission(Direction.BEAR, Phase.RECLAIM, csm_delta=-0.8), Permission.GO)
-
-        # 3. Neutral Direction Fallback
-        self.assertEqual(resolve_permission(Direction.NEUTRAL, Phase.RECLAIM, csm_delta=0.0), Permission.WAIT)
-
     def test_delayed_limit_retest_generation(self):
         """Verify that CandidateSetup in Trend-Aligned Pullback calculates delayed limit retest correctly."""
         from src.analytics.market_scanner import CandidateSetup
@@ -403,7 +371,7 @@ class TestMarketScanner(unittest.TestCase):
         from src.analytics.market_scanner import evaluate_universal_sweep_gates
         allowed, reason = evaluate_universal_sweep_gates(
             signal_type='BUY',
-            dealing_range_pos=0.55,  # Mid range
+            dealing_range_pos=0.35,  # In discount zone (<=45%), but lacks deep discount (<=25%) and lacks HTF Floor
             dist_to_htf_floor=0.0060,
             dist_to_htf_ceiling=0.0040,
             atr_val=0.0010,

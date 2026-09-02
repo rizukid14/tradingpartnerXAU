@@ -96,21 +96,25 @@ def evaluate_universal_sweep_gates(
     # GATE A: HTF Anchor & Deep Discount / Extreme Premium Area of Value
     # =========================================================================
     if signal_type == 'BUY':
+        if dealing_range_pos > 0.45:
+            return False, f"LOCKED BY GATE A [Range Discipline]: Bullish Sweep forbidden in Premium/Equilibrium (DR {dealing_range_pos*100:.1f}% > 45%)."
         is_deep_discount = dealing_range_pos <= 0.25
         is_anchored_floor = dist_to_htf_floor <= atr_threshold
         if not (is_deep_discount or is_anchored_floor):
             return False, (
-                f"LOCKED BY GATE A [HTF Anchor]: Asian Low sweep at DR {dealing_range_pos*100:.1f}% "
+                f"LOCKED BY GATE A [HTF Anchor]: Low sweep at DR {dealing_range_pos*100:.1f}% "
                 f"lacks HTF Support Floor (Requires Deep Discount DR <= 25% or Floor Distance <= {atr_threshold:.5f})."
             )
         return True, f"PASSED ALL GATES: Valid Universal Sweep BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
 
     elif signal_type == 'SELL':
+        if dealing_range_pos < 0.55:
+            return False, f"LOCKED BY GATE A [Range Discipline]: Bearish Sweep forbidden in Discount/Equilibrium (DR {dealing_range_pos*100:.1f}% < 55%)."
         is_extreme_premium = dealing_range_pos >= 0.75
         is_anchored_ceiling = dist_to_htf_ceiling <= atr_threshold
         if not (is_extreme_premium or is_anchored_ceiling):
             return False, (
-                f"LOCKED BY GATE A [HTF Anchor]: Asian High sweep at DR {dealing_range_pos*100:.1f}% "
+                f"LOCKED BY GATE A [HTF Anchor]: High sweep at DR {dealing_range_pos*100:.1f}% "
                 f"lacks HTF Resistance Ceiling (Requires Extreme Premium DR >= 75% or Ceiling Distance <= {atr_threshold:.5f})."
             )
         return True, f"PASSED ALL GATES: Valid Universal Sweep SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
@@ -1064,10 +1068,10 @@ class MarketScanner:
                     ema20_val = macro.get('ema20', mid)
                     dr_pos_val = macro.get('dealing_range_pos', 0.5)
 
-                    # Bearish Liquidity Sweep (SFP High): Sweep above Asian High, PDH, EQH, or Psychological Ceiling
+                    # Bearish Liquidity Sweep (SFP High): Sweep above Asian High, PDH, EQH, or Psychological Ceiling (PREMIUM ZONE ONLY)
                     valid_tops = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0 and 0 < (v - mid) <= 1.0 * atr_price_val]
                     ref_top = min(valid_tops) if valid_tops else (macro.get('immediate_ceiling_c1') or asian_h or (mid + atr_price_val))
-                    if (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
+                    if dr_pos_val >= 0.55 and (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
                         allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
                         if not allowed_m1_s:
                             logger.debug(f"[SWEEP SELL GATE] {sym} SKIP ({action_tier_m1_s}): {reason_m1_s}")
@@ -1211,10 +1215,10 @@ class MarketScanner:
                                         ))
                                         continue
 
-                    # Bullish Liquidity Sweep (SFP Low): Sweep below Asian Low, PDL, EQL, or Psychological Floor
+                    # Bullish Liquidity Sweep (SFP Low): Sweep below Asian Low, PDL, EQL, or Psychological Floor (DISCOUNT ZONE ONLY)
                     valid_bots = [v for v in [asian_l, pdl_val, eql_val, p_floor] if v > 0 and 0 < (mid - v) <= 1.0 * atr_price_val]
                     ref_bot = max(valid_bots) if valid_bots else (macro.get('immediate_floor_f1') or asian_l or (mid - atr_price_val))
-                    if (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
+                    if dr_pos_val <= 0.45 and (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
                         allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
                         if not allowed_m1_b:
                             logger.debug(f"[SWEEP BUY GATE] {sym} SKIP ({action_tier_m1_b}): {reason_m1_b}")
