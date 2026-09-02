@@ -251,16 +251,36 @@ class MarketScanner:
         self.last_macro_update: Optional[datetime] = None
         self.last_candidates: List[CandidateSetup] = []
         self._last_radar_scan_time: float = 0.0
-        self._symbol_last_trigger: Dict[str, float] = {}
+        self._cooldown_file = os.path.join(config.DATA_DIR, "scanner_cooldowns.json")
+        self._symbol_last_trigger: Dict[str, float] = self._load_cooldowns()
         MarketScanner._instance = self
+
+    def _load_cooldowns(self) -> Dict[str, float]:
+        try:
+            if os.path.exists(self._cooldown_file):
+                with open(self._cooldown_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    now_ts = time.time()
+                    return {k: float(v) for k, v in data.items() if (now_ts - float(v)) < 1800}
+        except Exception:
+            pass
+        return {}
+
+    def _save_cooldowns(self):
+        try:
+            now_ts = time.time()
+            valid_cd = {k: v for k, v in self._symbol_last_trigger.items() if (now_ts - v) < 1800}
+            with open(self._cooldown_file, "w", encoding="utf-8") as f:
+                json.dump(valid_cd, f, indent=2)
+        except Exception:
+            pass
 
     def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: int = 1800):
         """Applies a 30-minute cooldown when a pending order is cancelled or expired."""
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         now_ts = time.time()
-        # Cooldown check in scan_fast_radar is `now_ts - last_trigger < 900`.
-        # Setting timestamp to now_ts + (cooldown_seconds - 900) ensures cooldown duration of cooldown_seconds.
         self._symbol_last_trigger[clean_sym] = now_ts + max(0, cooldown_seconds - 900)
+        self._save_cooldowns()
         logger.info(f"⏳ Cooldown {cooldown_seconds // 60}m diaktifkan untuk {clean_sym} (Pending Cancelled/Expired).")
 
     def _get_point(self, symbol: str) -> float:
@@ -1579,6 +1599,7 @@ class MarketScanner:
                     t_sup = macro.get('touches_support', 0)
                     atr_val = atr_pts * pt
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
+                    dr_pos = macro.get('dealing_range_pos', 0.5)
 
                     # Bullish Breakout Retest: Broke above structural resistance (F1/PDH/PWH/BOS H1/Cluster), now acting as RBS floor
                     f1_barrier = macro.get('immediate_floor_f1', 0.0)
@@ -1600,8 +1621,8 @@ class MarketScanner:
                         in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
                         if not in_retest_window_b:
                             logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
-                        elif pos_in_range > 0.72:
-                            logger.debug(f"[BREAKOUT BUY EXTREME] {sym} SKIP: dealing range {pos_in_range*100:.1f}% too high for retest buy")
+                        elif dr_pos > 0.72:
+                            logger.debug(f"[BREAKOUT BUY EXTREME] {sym} SKIP: dealing range {dr_pos*100:.1f}% too high for retest buy")
                         else:
                             entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
                             sl_tp = calculate_intraday_sl_tp(
@@ -1704,8 +1725,8 @@ class MarketScanner:
                         in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
                         if not in_retest_window_s:
                             logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
-                        elif pos_in_range < 0.28:
-                            logger.debug(f"[BREAKOUT SELL EXTREME] {sym} SKIP: dealing range {pos_in_range*100:.1f}% too low for retest sell")
+                        elif dr_pos < 0.28:
+                            logger.debug(f"[BREAKOUT SELL EXTREME] {sym} SKIP: dealing range {dr_pos*100:.1f}% too low for retest sell")
                         else:
                             entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
                             sl_tp = calculate_intraday_sl_tp(
@@ -1806,6 +1827,8 @@ class MarketScanner:
                     pass
             c_clean = c.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
             self._symbol_last_trigger[c_clean] = now_ts
+        if candidates:
+            self._save_cooldowns()
 
         self.last_candidates = candidates
         return candidates
