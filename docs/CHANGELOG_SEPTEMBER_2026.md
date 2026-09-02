@@ -318,5 +318,34 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 - **Runbook Operasional Lapis 4**: Panduan observasi log-driven live cent tersedia di [`docs/plans/ZCE_LAPIS4_LIVE_VALIDATION_RUNBOOK.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/plans/ZCE_LAPIS4_LIVE_VALIDATION_RUNBOOK.md) dengan penanda audit per-trade `[ZCE-AUDIT]` di `main.py`.
 - Kandidat follow-up: investigasi kenapa ZCE tidak menangkap psych station dekat (USDJPY 159.0) yang justru ditemukan MSE — berpotensi memperluas cakupan override ZCE di masa depan.
 
+---
+
+## 14. 2 September 2026 — Fix Koneksi ZCE→Radar: Stale Cache + Resync Deep Target (Patch #1 & #2)
+
+**Konfirmasi independen 3 temuan Gemini** (sebelum eksekusi, verifikasi baca kode langsung):
+1. **Stale Cache Disconnect** — BENAR: `macro_cache` hanya di-refresh saat kosong/`>3600s` dan `_refresh_zce_rotation` hanya menulis `self._zce_maps` (tidak pernah `macro_cache`); cold start/rebuild pertama setelah dead zone → seluruh cache dibangun tanpa `zce_walls` (ZCE mati total ±1 jam, basi ≤60 mnt di steady state).
+2. **F2 inversion** — SEBAGIAN: jalur yang dikutip Gemini (`market_scanner.py:947`) sudah disembuhkan oleh enforcement monotonik 1146-1149 + eff-blend 837-840 (29ab6fb); sisa edge nyata hanya di `deep_target_floor_f2/deep_ceiling_c2` (raw) saat ZCE F1 override lebih dalam dari deep baseline & ZCE deep F2 kosong → deep target ter-inversi terhadap F1/C1.
+3. **SCALE_CONFLICT → gate** — SUBSTANSI BENAR, detail salah: token `"SCALE_CONFLICT"` tidak pernah di-assign (nilai riil `LOCAL_DISCOUNT_MACRO_PREMIUM`/`LOCAL_PREMIUM_MACRO_DISCOUNT`); cek di `_suggest_method` adalah dead code. Tidak di-wire (keputusan: JANGAN di-wire ke gate sebelum tervalidasi).
+
+**Patch #1 — Stale Cache Disconnect** (`market_scanner.py`, `config.py`, `.env`):
+- `update_macro_context`: hour-gate → **elapsed-gate** `_zce_refresh_due_seconds()` (900s saat ZCE legacy/full; `MACRO_STRATEGIC_REFRESH_SECONDS`/3600s default).
+- `_build_single_macro_context`: bila peta ZCE simbol belum ada di `_zce_maps` → **compute inline** (`_compute_zce_map_for`, engine lokal per thread) → cache TIDAK PERNAH dibangun tanpa dinding ZCE (cold start, boot `force`, Senin pagi).
+- `_refresh_zce_rotation`: refactor ke helper `_compute_zce_map_for()` + parameter `full_sweep=True` → refresh SEMUA simbol tepat sebelum rebuild macro_cache (menggantikan peta basi lintas weekend/dead zone).
+- `scan_fast_radar`: gate refresh dinamis — saat due: **full-sweep ZCE dulu, baru rebuild**.
+- Konfigurasi baru: `ZCE_REFRESH_INTERVAL_SECONDS` (config.py default 900, `.env` = 900).
+
+**Patch #2 — Resync Deep Target vs F1/C1 Override** (`macro_strategic_engine.py` 1151-1184):
+- Setelah enforcement monotonik: bila `deep_floor_f2 >= floor_f1` (ter-inversi) → resync `deep_floor_f2 = F1 - max(psych_step_macro, 1.5×ATR)` + snap ke cluster struktural terdekat (mirror baseline 941-960); simetris untuk `deep_ceiling_c2`.
+- Pulihkan `floor_f2`/`ceiling_c2` = None yang sempat ditetapkan enforcement karena deep lama ter-inversi → tangga retest tetap tersedia.
+
+### 🧪 Regresi
+- `py -m py_compile` ketiga file (scanner, MSE, config) hijau.
+- Full suite: **86 passed + 6 failed pre-existing** (test_dashboard ×4, test_prompt_v2 ×2) — identik baseline, tanpa regresi baru.
+- File berubah: `src/analytics/market_scanner.py`, `src/analytics/macro_strategic_engine.py`, `config.py`, `.env`, `AGENTS.md`.
+
+### ⏭️ Langkah berikut
+- #3 (wire konflik ZCE ke gate) sengaja TIDAK dieksekusi — sinyal belum pernah aktif & belum divalidasi; berisiko memangkas setup tanpa bukti edge.
+- Observasi Lapis 4 live cent lanjut; pantau log `[ZCE]` + dinding override agar umur peta ≤15 mnt.
+
 
 

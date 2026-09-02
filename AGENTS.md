@@ -291,6 +291,10 @@ python main.py
     - `.env`: `ZCE_ENABLED=true`, `ZCE_MODE=full` — dinding C1/F1 dari peta zona 6-TF menggantikan dinding internal MSE (bukan shadow). Berlaku untuk test di akun live cent; logika produksi akun live utama tidak diubah.
     - Jalur ZCE di `consensus.py` kini aktif: SL anchor > ceiling → `ANCHOR_TOO_WIDE` (skip), ATR gagal → `ATR_UNAVAILABLE` (reject), fallback statis nonaktif.
     - Test legacy yang menguji jalur non-ZCE di-patch `ZCE_ENABLED=False`/`ZCE_MODE=shadow` agar deterministik (`test_confluence...` & `test_market_scanner...`). Suite: 86 passed, 6 failed pre-existing.
+61. **Fix Koneksi ZCE→Radar: Stale Cache + Resync Deep Target** (2 September 2026):
+    - **Patch #1 Stale Cache Disconnect** (`market_scanner.py` + `config.py` + `.env`): `update_macro_context` ganti hour-gate → **elapsed-gate** `_zce_refresh_due_seconds()` (900s saat ZCE legacy/full, `MACRO_STRATEGIC_REFRESH_SECONDS` default). `_build_single_macro_context` kini **compute inline peta ZCE** bila belum ada di `_zce_maps` → macro_cache TIDAK PERNAH dibangun tanpa dinding ZCE (cold start / boot force / Senin pagi). `_refresh_zce_rotation` di-refactor ke helper `_compute_zce_map_for()` + mode `full_sweep=True` (refresh SEMUA simbol) yang dipanggil SEBELUM rebuild → dinding ZCE tidak pernah basi lintas weekend/dead zone; umur peta ≤15 mnt. Parameter baru `ZCE_REFRESH_INTERVAL_SECONDS` (default 900).
+    - **Patch #2 Resync Deep Target vs F1/C1 Override** (`macro_strategic_engine.py` 1151-1184): bila `deep_floor_f2 >= floor_f1` / `deep_ceiling_c2 <= ceiling_c1` (ter-inversi saat ZCE F1 override dalam & ZCE deep F2 kosong) → resync ulang memakai formula baseline + snap cluster, lalu pulihkan `floor_f2`/`ceiling_c2` yang sempat di-None-kan enforcement monotonik.
+    - Verifikasi independen: 3 temuan Gemini dikonfirmasi (Bug #1 benar; #2 sebagian-sudah-disembuhkan-29ab6fb + edge deep target; #3 substansi benar tapi token `SCALE_CONFLICT` = dead code, **sengaja TIDAK di-wire ke gate**). Suite: 86 passed, 6 failed pre-existing.
 
 ---
 

@@ -1148,6 +1148,41 @@ class MacroStrategicEngine:
         if ceiling_c2 is not None and ceiling_c2 <= ceiling_c1:
             ceiling_c2 = deep_ceiling_c2 if (deep_ceiling_c2 is not None and deep_ceiling_c2 > ceiling_c1) else None
 
+        # ── RESYNC DEEP TARGET vs F1/C1 HASIL OVERRIDE ZCE (Patch #2, 2 Sep 2026) ──
+        # Override ZCE (blok 1108-1143) hanya mengganti deep_floor_f2/deep_ceiling_c2 bila ZCE
+        # menyuplai deep F2/C2 sendiri. Bila ZCE F1/C1 override menembus DI BAWAH/DI ATAS deep
+        # baseline & ZCE deep kosong -> deep target ter-inversi (deep >= F1 / deep <= C1) yang
+        # mengotori has_runway_*/TP2/macro_invalidation & payload raw. Resync ulang deep dari
+        # F1/C1 override memakai formula baseline (max psych_step_macro, 1.5*ATR) + snap ke
+        # cluster struktural terdekat (mirror 941-960).
+        if deep_floor_f2 is not None and floor_f1 is not None and deep_floor_f2 >= floor_f1:
+            deep_floor_f2 = round(floor_f1 - max(psych_step_macro, 1.50 * atr_h1), digits)
+            f2_density_score = 2.0
+            f2_tag = "DEEP_SUPPORT_TARGET"
+            for cand in down_clusters:
+                if cand['price'] <= floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                    deep_floor_f2 = cand['price']
+                    f2_density_score = cand['r_score']
+                    f2_tag = cand['tag_str']
+                    break
+        if deep_ceiling_c2 is not None and ceiling_c1 is not None and deep_ceiling_c2 <= ceiling_c1:
+            deep_ceiling_c2 = round(ceiling_c1 + max(psych_step_macro, 1.50 * atr_h1), digits)
+            c2_density_score = 2.0
+            c2_tag = "EXTENSION_TARGET"
+            for cand in up_clusters:
+                if cand['price'] >= ceiling_c1 + max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                    deep_ceiling_c2 = cand['price']
+                    c2_density_score = cand['r_score']
+                    c2_tag = cand['tag_str']
+                    break
+
+        # Enforcement 1146-1149 bisa menetapkan floor_f2/ceiling_c2 = None karena deep lama
+        # ter-inversi. Deep sudah di-resync valid di atas -> pulihkan tangga retest.
+        if floor_f2 is None and deep_floor_f2 is not None and floor_f1 is not None and deep_floor_f2 < floor_f1:
+            floor_f2 = deep_floor_f2
+        if ceiling_c2 is None and deep_ceiling_c2 is not None and ceiling_c1 is not None and deep_ceiling_c2 > ceiling_c1:
+            ceiling_c2 = deep_ceiling_c2
+
         if layered_floors:
             layered_floors = [layered_floors[0]] + [f for f in layered_floors[1:] if f.get('price', 0.0) < imm_floor_f1]
         if layered_ceilings:
