@@ -300,8 +300,18 @@ def render_candidate_alert_box(candidate):
         (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
         (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (M15 {wick_side} {candidate.rejection_wick_ratio*100:.0f}%)"),
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
-        (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
+
+    zce_cls = meta.get('zce_class')
+    if zce_cls:
+        f1_s = meta.get('zce_f1_src', 'MSE')
+        c1_s = meta.get('zce_c1_src', 'MSE')
+        f1_p = meta.get('zce_f1_price', 0.0)
+        c1_p = meta.get('zce_c1_price', 0.0)
+        zce_color = UI.GREEN if zce_cls == "ZCE_FULL" else (UI.CYAN if zce_cls == "ZCE_MIXED" else UI.WHITE)
+        items.append((f"• ZCE Anchor   : ", f"{zce_color}{zce_cls}{UI.RST} (F1: {f1_s} @ {f1_p} | C1: {c1_s} @ {c1_p})"))
+
+    items.append((f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"))
 
     # Fetch Real-time Apex Fundamental Evaluation
     try:

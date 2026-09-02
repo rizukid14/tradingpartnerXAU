@@ -720,6 +720,32 @@ class MarketScanner:
             except Exception as e_strat:
                 logger.debug(f"[STRAT ENGINE] Error computing directive for {valid_sym}: {e_strat}")
 
+            # Determine ZCE wall attribution for this symbol (Lapis 4 audit)
+            zce_class = "MSE_BASE"
+            zce_f1_src = "MSE"
+            zce_c1_src = "MSE"
+            if zce_walls is not None and strat_dir is not None:
+                _zw_f1 = zce_walls.get("imm_floor_f1")
+                _zw_c1 = zce_walls.get("imm_ceiling_c1")
+                _sd_f1 = getattr(strat_dir, 'immediate_floor_f1', None)
+                _sd_c1 = getattr(strat_dir, 'immediate_ceiling_c1', None)
+                if _zw_f1 is not None and _sd_f1 == _zw_f1:
+                    zce_f1_src = "ZCE"
+                if _zw_c1 is not None and _sd_c1 == _zw_c1:
+                    zce_c1_src = "ZCE"
+                if zce_f1_src == "ZCE" and zce_c1_src == "ZCE":
+                    zce_class = "ZCE_FULL"
+                elif zce_f1_src == "ZCE" or zce_c1_src == "ZCE":
+                    zce_class = "ZCE_MIXED"
+
+            zce_meta = {
+                "zce_class": zce_class,
+                "zce_f1_src": zce_f1_src,
+                "zce_c1_src": zce_c1_src,
+                "zce_f1_price": round(float(getattr(strat_dir, 'immediate_floor_f1', 0.0) or 0.0), 5 if pt < 0.01 else 3),
+                "zce_c1_price": round(float(getattr(strat_dir, 'immediate_ceiling_c1', 0.0) or 0.0), 5 if pt < 0.01 else 3),
+            }
+
             # HTF Delivery Vector Memory (Gate B for Judas Sweep)
             recent_ceiling_touch = False
             recent_floor_touch = False
@@ -1282,7 +1308,8 @@ class MarketScanner:
                                                 "ref_top": ref_top,
                                                 "target_station": sl_tp.get('target_station', 0.0),
                                                 "action_tier": action_tier_m1_s,
-                                                "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
+                                                "macro_corridor": macro.get('macro_corridor', 'NEUTRAL'),
+                                                **zce_meta
                                             }
                                         ))
                                         continue
@@ -1429,7 +1456,8 @@ class MarketScanner:
                                                 "ref_bot": ref_bot,
                                                 "target_station": sl_tp.get('target_station', 0.0),
                                                 "action_tier": action_tier_m1_b,
-                                                "macro_corridor": macro.get('macro_corridor', 'NEUTRAL')
+                                                "macro_corridor": macro.get('macro_corridor', 'NEUTRAL'),
+                                                **zce_meta
                                             }
                                         ))
                                         continue
@@ -1551,7 +1579,8 @@ class MarketScanner:
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
                                         "action_tier": action_tier_m2_b,
-                                        "macro_corridor": m_corr
+                                        "macro_corridor": m_corr,
+                                        **zce_meta
                                     }
                                 ))
                                 continue
@@ -1662,7 +1691,8 @@ class MarketScanner:
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
                                         "action_tier": action_tier_m2_s,
-                                        "macro_corridor": m_corr
+                                        "macro_corridor": m_corr,
+                                        **zce_meta
                                     }
                                 ))
                                 continue
@@ -1775,7 +1805,8 @@ class MarketScanner:
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
                                         "action_tier": action_tier_m3_b,
-                                        "macro_corridor": m_corr
+                                        "macro_corridor": m_corr,
+                                        **zce_meta
                                     }
                                 ))
                                 continue
@@ -1878,7 +1909,8 @@ class MarketScanner:
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
                                         "action_tier": action_tier_m3_s,
-                                        "macro_corridor": m_corr
+                                        "macro_corridor": m_corr,
+                                        **zce_meta
                                     }
                                 ))
                                 continue

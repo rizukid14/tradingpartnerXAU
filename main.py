@@ -651,8 +651,14 @@ def run_scanner_trading_cycle(cand, risk):
     Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
     """
     sym = cand.symbol
-    tf_str = getattr(cand, "timeframe", "H1")
     print("\n" + render_candidate_alert_box(cand))
+    meta = getattr(cand, 'metadata', {}) or {}
+    zce_cls = meta.get('zce_class', 'MSE_BASE')
+    f1_s = meta.get('zce_f1_src', 'MSE')
+    c1_s = meta.get('zce_c1_src', 'MSE')
+    f1_p = meta.get('zce_f1_price', 0.0)
+    c1_p = meta.get('zce_c1_price', 0.0)
+    print(f" [ZCE-RADAR] {sym} [{cand.setup_type}] | Anchor: {zce_cls} (F1: {f1_s} @ {f1_p} | C1: {c1_s} @ {c1_p})")
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
     # 1. Check risk gates for candidate symbol
