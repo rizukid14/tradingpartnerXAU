@@ -1239,6 +1239,10 @@ class MacroStrategicEngine:
             min_sl_dist = max(0.80 * atr_h1, 10 * pt * pip_div) # ~10-15 pips
             max_sl_dist = min(1.50 * atr_h1, 25 * pt * pip_div) # ~25 pips
 
+        # Default fallbacks to prevent UnboundLocalError across all branches
+        target_station_final = ceiling_station if last_d1_bull else floor_station
+        macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits) if last_d1_bull else round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
+
         if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
