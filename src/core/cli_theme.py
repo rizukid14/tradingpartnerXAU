@@ -643,7 +643,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         f" 2D Sizing    : {UI.GREEN}S (1.25x){UI.RST} | {UI.CYAN}A (1.00x){UI.RST} | {UI.YELLOW}B (0.50x TP1 Scalp){UI.RST}",
         f" Thesis Guard : {sentinel_str} | {UI.YELLOW}Hard Veto Armed{UI.RST}",
         f" Time Sync    : {UI.WHITE}{srv_str}{UI.RST} -> {UI.BOLD}{UI.CYAN}{wib_str}{UI.RST} | Shield: {shield_str}",
-        f" SL Floor     : {UI.DIM}ATR Floor (0.68x H1 / 1.0x M30) | Max SL <=160p{UI.RST}"
+        f" SL Anchor   : {UI.CYAN}ZCE (Max 2.5xATR){UI.RST} | Floor 0.50x H1 / 1.0x M30 | {UI.YELLOW}Wide→SKIP{UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──

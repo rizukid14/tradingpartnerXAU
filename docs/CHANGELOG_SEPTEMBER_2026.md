@@ -315,6 +315,7 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 
 ### ⏭️ Langkah berikut
 - **Lapis 4 (validasi eksekusi live cent ≥7 hari/≥60 sampel)** kini LAYAK dijalankan — syarat koordinat sudah terpenuhi.
+- **Runbook Operasional Lapis 4**: Panduan observasi log-driven live cent tersedia di [`docs/plans/ZCE_LAPIS4_LIVE_VALIDATION_RUNBOOK.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/plans/ZCE_LAPIS4_LIVE_VALIDATION_RUNBOOK.md) dengan penanda audit per-trade `[ZCE-AUDIT]` di `main.py`.
 - Kandidat follow-up: investigasi kenapa ZCE tidak menangkap psych station dekat (USDJPY 159.0) yang justru ditemukan MSE — berpotensi memperluas cakupan override ZCE di masa depan.
 
 

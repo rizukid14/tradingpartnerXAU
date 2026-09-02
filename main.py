@@ -856,6 +856,7 @@ def run_scanner_trading_cycle(cand, risk):
                             print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
                         else:
                             print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
+                        print(f" [ZCE-AUDIT] Ticket #{pending_res.get('ticket')} | {sym} {entry_type.upper()} | Entry={entry_price} SL={p_sl_price} ({sl_points}pts) TP={p_tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
                         risk.record_trade_opened()
                         record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                         _recent_trihourly_opened.append({
@@ -906,6 +907,7 @@ def run_scanner_trading_cycle(cand, risk):
                         print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
                     else:
                         print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
+                    print(f" [ZCE-AUDIT] Ticket #{order_res.get('ticket')} | {sym} {trade_signal} | Entry={ref_price} SL={sl_price} ({sl_points}pts) TP={tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
                     risk.record_trade_opened()
                     record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                     _recent_trihourly_opened.append({
