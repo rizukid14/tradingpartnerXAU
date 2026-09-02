@@ -31,7 +31,7 @@
      5. **`src/analytics/macro_strategic_engine.py`**: Pure Quant 6-TF Native Sockets (`MN1/W1/D1/H4/H1/M30`), SBR/RBS zone hierarchy, 5-Tier Operational Action Matrix, dan zero-token on-demand context injection.
      6. **`src/core/risk_engine.py` & `position_manager.py`**: Filter spread, dead zone, ATR-based safety floor, time-decay stagnation, dan pre-rollover shield.
      7. **`tests/test_*.py`**: Unit test suite (`test_symbol_rotation.py`, `test_time_decay_and_vol_regime.py`, `test_macro.py`) wajib diupdate dan dipastikan **100% PASS**.
-     8. **`docs/archive/CHANGELOG_AUGUST_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
+     8. **`docs/CHANGELOG_SEPTEMBER_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
 5. **GAYA KOMUNIKASI & ZERO FLATTERY / ZERO OVERCLAIM**:
    - Dilarang membuka respon dengan frasa validasi basi atau persetujuan emosional (*"Kamu benar 100%"*, *"Sangat tepat"*, *"Penemuan brilian"*, dll).
    - Dilarang membuat klaim statistik absolut (*"Reversal 94%"*, *"Pasti membalik"*, *"100% terbukti"*) tanpa menyajikan uji *Conditional Probability* dan *Confidence Interval*.
@@ -266,6 +266,11 @@ python main.py
     - **M1 Wall Rank Gate & Strict Reclaim**: Di pasar yang sedang trending, sapuan intrahari (Asian High/PDH) **hanya boleh di-fade jika bertabrakan langsung dengan Dinding Makro Sejati $C_1/F_1$ ber-Grade $\ge G_2$ (Intermediate / Macro Fortress)**; level $G_1$ (Micro) 100% diblokir. Harga live wajib sudah reclaim ke dalam (`mid < ref_top` / `mid > ref_bot`).
     - **M2 Dynamic EMA Corridor**: Variabel `ema20` dan `ema50` H1 diaktifkan sebagai koridor nilai dinamis. Pullback BUY wajib bertahan di atas $\text{EMA50} - 0.15\times\text{ATR}$ dan tidak mengejar harga di atas $\text{EMA20} + 0.25\times\text{ATR}$. Pullback SELL wajib bertahan di bawah $\text{EMA50} + 0.15\times\text{ATR}$ dan di atas $\text{EMA20} - 0.25\times\text{ATR}$.
     - **M3 Confirmed Closed Bar Outside**: Retest pada dinding $C_1/F_1$ hanya disiapkan jika **candle sebelumnya terkonfirmasi close di luar dinding** dengan impuls body $\ge 40\%$, membuktikan dinding telah resmi jebol sebelum di-retest dari sisi luar (New RBS/SBR).
+55. **Dual-Basket Confluence & Dispersion Matrix Engine** (2 September 2026):
+    - **Dual-Basket Structural Mapping**: Mengukur deviasi standar posisi relatif ($\sigma_X$ dan $\sigma_Y$) yang dinormalisasi ke skala $[0.0, 1.0]$ pada 26 simbol FX terkurasi ($N \ge 6$ pair per basket).
+    - **Deterministic Decision Hierarchy**: Matriks keputusan 4-Tier mutual exclusive (`SURGE_OVERRIDE_Y/X`, `SYSTEMIC_EXPANSION`, `PURE_CATCHUP_LEAD_LAG`, `NEUTRAL_ROTATION`).
+    - **Strict Leader Wall Hit Anchoring**: `(pos >= 0.90 or pos <= 0.10) AND (dist <= 0.35 ATR)`.
+    - **Zero-Risk Informational Ingestion**: Mode shadow metric diinjeksi ke Stage 2 LLM Dossier prompt (`llm_client.py`), Stage 1 Radar hard gating (`market_scanner.py`) 100% tidak disentuh.
 
 ---
 
