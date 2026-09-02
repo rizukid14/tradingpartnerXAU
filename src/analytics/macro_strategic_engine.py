@@ -1142,6 +1142,17 @@ class MacroStrategicEngine:
                     if layered_floors:
                         layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
 
+        # Enforce strict monotonic ladder ordering (F2 < F1 and C2 > C1)
+        if floor_f2 is not None and floor_f2 >= floor_f1:
+            floor_f2 = deep_floor_f2 if (deep_floor_f2 is not None and deep_floor_f2 < floor_f1) else None
+        if ceiling_c2 is not None and ceiling_c2 <= ceiling_c1:
+            ceiling_c2 = deep_ceiling_c2 if (deep_ceiling_c2 is not None and deep_ceiling_c2 > ceiling_c1) else None
+
+        if layered_floors:
+            layered_floors = [layered_floors[0]] + [f for f in layered_floors[1:] if f.get('price', 0.0) < imm_floor_f1]
+        if layered_ceilings:
+            layered_ceilings = [layered_ceilings[0]] + [c for c in layered_ceilings[1:] if c.get('price', 0.0) > imm_ceiling_c1]
+
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
         chamber_pos = min(1.0, max(0.0, (curr_mid - imm_floor_f1) / chamber_width))

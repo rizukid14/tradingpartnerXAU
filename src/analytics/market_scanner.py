@@ -530,18 +530,45 @@ class MarketScanner:
                 d1_ema_short = df_d1['close'].ewm(span=20, adjust=False).mean().iloc[-1]
                 d1_ema_long = df_d1['close'].ewm(span=50, adjust=False).mean().iloc[-1] if len(df_d1) >= 30 else d1_ema_short
                 
-                # SMC Structural Anchor on D1
+                # SMC Structural Anchor on D1: Mutually exclusive & responsive to breakdowns
                 if len(df_d1) >= 20:
                     d1_smc = LuxSMCAnalyzer(swing_length=3).analyze(df_d1, point_size=pt)
                     d1_anchor_low = d1_smc.strong_low if d1_smc.strong_low > 0 else d1_50_lo
                     d1_anchor_high = d1_smc.strong_high if d1_smc.strong_high > 0 else d1_50_hi
-                    d1_is_bull = (d1_c > d1_anchor_low) and (d1_c > d1_ema_long or d1_ema_short > d1_ema_long)
-                    d1_is_bear = (d1_c < d1_anchor_high) and (d1_c < d1_ema_long or d1_ema_short < d1_ema_long)
-                else:
-                    d1_is_bull = d1_c > d1_ema_long and d1_ema_short > d1_ema_long
-                    d1_is_bear = d1_c < d1_ema_long and d1_ema_short < d1_ema_long
                     
-                d1_trend_label = "D1_BULLISH_EXPANSION" if d1_is_bull else ("D1_BEARISH_EXPANSION" if d1_is_bear else "D1_SIDEWAYS")
+                    if (d1_c >= d1_ema_short and d1_c >= d1_ema_long) and (d1_c > d1_anchor_low):
+                        d1_is_bull = True
+                        d1_is_bear = False
+                        d1_trend_label = "D1_BULLISH_EXPANSION"
+                    elif (d1_c <= d1_ema_short and d1_c <= d1_ema_long) and (d1_c < d1_anchor_high):
+                        d1_is_bull = False
+                        d1_is_bear = True
+                        d1_trend_label = "D1_BEARISH_EXPANSION"
+                    elif d1_c < d1_ema_short and d1_ema_short > d1_ema_long:
+                        d1_is_bull = False
+                        d1_is_bear = True
+                        d1_trend_label = "D1_BEARISH_PULLBACK"
+                    elif d1_c > d1_ema_short and d1_ema_short < d1_ema_long:
+                        d1_is_bull = True
+                        d1_is_bear = False
+                        d1_trend_label = "D1_BULLISH_PULLBACK"
+                    else:
+                        d1_is_bull = False
+                        d1_is_bear = False
+                        d1_trend_label = "D1_SIDEWAYS"
+                else:
+                    if d1_c > d1_ema_long and d1_ema_short >= d1_ema_long:
+                        d1_is_bull = True
+                        d1_is_bear = False
+                        d1_trend_label = "D1_BULLISH_EXPANSION"
+                    elif d1_c < d1_ema_long and d1_ema_short <= d1_ema_long:
+                        d1_is_bull = False
+                        d1_is_bear = True
+                        d1_trend_label = "D1_BEARISH_EXPANSION"
+                    else:
+                        d1_is_bull = False
+                        d1_is_bear = False
+                        d1_trend_label = "D1_SIDEWAYS"
 
             cur_day_move = abs(cur_close - daily_open)
             adr_used_pct = (cur_day_move / adr20) if (adr20 > 0) else 0.5
@@ -578,9 +605,26 @@ class MarketScanner:
                         h4_is_bear = False
                         h4_trend_label = "H4_RANGING_FLAG_BOX" if is_h4_flag_triangle else "H4_SIDEWAYS_RANGE"
                     else:
-                        h4_is_bull = (h4_c > h4_swing_low) and (h4_c > h4_ema20 or h4_ema20 >= h4_ema50)
-                        h4_is_bear = (h4_c < h4_swing_high) and (h4_c < h4_ema20 or h4_ema20 <= h4_ema50)
-                        h4_trend_label = "H4_BULLISH_EXPANSION" if h4_is_bull else ("H4_BEARISH_EXPANSION" if h4_is_bear else "H4_PULLBACK_RANGE")
+                        if (h4_c >= h4_ema20 and h4_c >= h4_ema50) and (h4_c > h4_swing_low):
+                            h4_is_bull = True
+                            h4_is_bear = False
+                            h4_trend_label = "H4_BULLISH_EXPANSION"
+                        elif (h4_c <= h4_ema20 and h4_c <= h4_ema50) and (h4_c < h4_swing_high):
+                            h4_is_bull = False
+                            h4_is_bear = True
+                            h4_trend_label = "H4_BEARISH_EXPANSION"
+                        elif h4_c < h4_ema20 and h4_ema20 >= h4_ema50:
+                            h4_is_bull = False
+                            h4_is_bear = True
+                            h4_trend_label = "H4_BEARISH_PULLBACK"
+                        elif h4_c > h4_ema20 and h4_ema20 <= h4_ema50:
+                            h4_is_bull = True
+                            h4_is_bear = False
+                            h4_trend_label = "H4_BULLISH_PULLBACK"
+                        else:
+                            h4_is_bull = False
+                            h4_is_bear = False
+                            h4_trend_label = "H4_PULLBACK_RANGE"
                 else:
                     h4_swing_high = float(df_h4['high'].iloc[-6:].max())
                     h4_swing_low = float(df_h4['low'].iloc[-6:].min())
@@ -774,18 +818,39 @@ class MarketScanner:
             else:
                 derived_perm = "WATCH"
 
+            # Harmonize D1 trend label and directional flags with MSE Macro Bias (Single Source of Truth)
+            mse_bias_score = getattr(strat_dir, 'macro_bias_score', 0.0) if strat_dir else 0.0
+            if mse_bias_score <= -0.35:
+                d1_is_bull = False
+                d1_is_bear = True
+                d1_trend_label = "D1_BEARISH_EXPANSION" if d1_c <= d1_ema_long else "D1_BEARISH_PULLBACK"
+            elif mse_bias_score >= 0.35:
+                d1_is_bull = True
+                d1_is_bear = False
+                d1_trend_label = "D1_BULLISH_EXPANSION" if d1_c >= d1_ema_long else "D1_BULLISH_PULLBACK"
+
+            combined_trend_label = f"{d1_trend_label} | {h4_trend_label}"
+
+            # Monotonic levels guarantee: F2 < F1 < C1 < C2
+            eff_f1 = getattr(strat_dir, 'immediate_floor_f1', 0.0) if strat_dir else 0.0
+            eff_c1 = getattr(strat_dir, 'immediate_ceiling_c1', 0.0) if strat_dir else 0.0
+            raw_c2 = (strat_dir.ceiling_c2 if (strat_dir and getattr(strat_dir, 'ceiling_c2', None)) else (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if strat_dir else 0.0))
+            raw_f2 = (strat_dir.floor_f2 if (strat_dir and getattr(strat_dir, 'floor_f2', None)) else (getattr(strat_dir, 'deep_target_floor_f2', 0.0) if strat_dir else 0.0))
+            eff_c2 = raw_c2 if (raw_c2 and raw_c2 > eff_c1) else (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) > eff_c1) else 0.0)
+            eff_f2 = raw_f2 if (raw_f2 and raw_f2 < eff_f1) else (getattr(strat_dir, 'deep_target_floor_f2', 0.0) if (getattr(strat_dir, 'deep_target_floor_f2', 0.0) < eff_f1) else 0.0)
+
             return valid_sym, {
                 'symbol': valid_sym,
                 'trend_label': combined_trend_label,
                 'w1_trend_label': w1_trend_label,
                 'd1_trend_label': d1_trend_label,
                 'h4_trend_label': h4_trend_label,
-                'is_d1_bull': d1_is_bull,
-                'is_d1_bear': d1_is_bear,
-                'is_h4_bull': h4_is_bull,
-                'is_h4_bear': h4_is_bear,
-                'is_bull': d1_is_bull,
-                'is_bear': d1_is_bear,
+                'is_d1_bull': d1_is_bull and not d1_is_bear,
+                'is_d1_bear': d1_is_bear and not d1_is_bull,
+                'is_h4_bull': h4_is_bull and not h4_is_bear,
+                'is_h4_bear': h4_is_bear and not h4_is_bull,
+                'is_bull': d1_is_bull and not d1_is_bear,
+                'is_bear': d1_is_bear and not d1_is_bull,
                 'permission_state': derived_perm,
                 'csm_delta': csm_delta_val,
                 'recent_ceiling_touch': recent_ceiling_touch,
@@ -882,13 +947,12 @@ class MarketScanner:
                 'intraday_sl_price': getattr(strat_dir, 'intraday_sl_price', 0.0) if strat_dir else 0.0,
                 'tp1_price': getattr(strat_dir, 'tp1_price', 0.0) if strat_dir else 0.0,
                 'tp2_price': getattr(strat_dir, 'tp2_price', 0.0) if strat_dir else 0.0,
-                'forbidden_traps': getattr(strat_dir, 'forbidden_traps', []) if strat_dir else [],
-                'immediate_ceiling_c1': getattr(strat_dir, 'immediate_ceiling_c1', 0.0) if strat_dir else 0.0,
-                'immediate_floor_f1': getattr(strat_dir, 'immediate_floor_f1', 0.0) if strat_dir else 0.0,
-                'ceiling_c1': getattr(strat_dir, 'immediate_ceiling_c1', 0.0) if strat_dir else 0.0,
-                'floor_f1': getattr(strat_dir, 'immediate_floor_f1', 0.0) if strat_dir else 0.0,
-                'ceiling_c2': (strat_dir.ceiling_c2 if (strat_dir and getattr(strat_dir, 'ceiling_c2', None)) else (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if strat_dir else 0.0)),
-                'floor_f2': (strat_dir.floor_f2 if (strat_dir and getattr(strat_dir, 'floor_f2', None)) else (getattr(strat_dir, 'deep_target_floor_f2', 0.0) if strat_dir else 0.0)),
+                'immediate_ceiling_c1': eff_c1,
+                'immediate_floor_f1': eff_f1,
+                'ceiling_c1': eff_c1,
+                'floor_f1': eff_f1,
+                'ceiling_c2': eff_c2,
+                'floor_f2': eff_f2,
                 'deep_target_ceiling_c2': getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if strat_dir else 0.0,
                 'deep_target_floor_f2': getattr(strat_dir, 'deep_target_floor_f2', 0.0) if strat_dir else 0.0,
                 'c1_reaction_grade': getattr(strat_dir, 'c1_reaction_grade', 'GRADE_1_MICRO') if strat_dir else 'GRADE_1_MICRO',
@@ -1482,7 +1546,7 @@ class MarketScanner:
                     f1_floor = macro.get('immediate_floor_f1', 0.0)
                     has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.50 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.50 * atr_val)
                     has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.50 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.50 * atr_val)
-                    is_valid_pullback_range_b = (pos_in_range <= 0.58) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b
+                    is_valid_pullback_range_b = (pos_in_range <= 0.65) and ((pos_in_range <= 0.55) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b)
 
                     if not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
@@ -1594,7 +1658,7 @@ class MarketScanner:
                     c1_ceiling = macro.get('immediate_ceiling_c1', 0.0)
                     has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.50 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.50 * atr_val)
                     has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.50 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.50 * atr_val)
-                    is_valid_pullback_range_s = (pos_in_range >= 0.42) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s
+                    is_valid_pullback_range_s = (pos_in_range >= 0.35) and ((pos_in_range >= 0.45) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s)
 
                     if not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
