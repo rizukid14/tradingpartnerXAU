@@ -517,6 +517,28 @@ class EconomicCalendar:
 
         return "\n".join(lines) + "\n"
 
+    def is_high_impact_imminent(self, symbol: str = None, window_minutes: int = 30) -> tuple[bool, str]:
+        """
+        Returns (True, event_description) if there is an active high-impact event
+        within the next `window_minutes` or released within the last 10 minutes.
+        """
+        now = datetime.now(WIB)
+        events = self.get_events(now, symbol=symbol)
+        for e in events:
+            if e.get("impact") not in ("HIGH", "CRITICAL"):
+                continue
+            event_dt = e["dt"]
+            diff_sec = (event_dt - now).total_seconds()
+            # 1. Upcoming within window_minutes
+            if 0 <= diff_sec <= (window_minutes * 60):
+                mins = int(diff_sec / 60)
+                return True, f"{e.get('name')} in {mins}m [{e.get('country', '')}]"
+            # 2. Released very recently (< 10m ago) during violent post-news spike
+            elif -(10 * 60) <= diff_sec < 0:
+                mins = int(abs(diff_sec) / 60)
+                return True, f"{e.get('name')} released {mins}m ago [{e.get('country', '')}]"
+        return False, ""
+
 
 # Singleton instance
 calendar = EconomicCalendar()

@@ -972,6 +972,11 @@ class MarketScanner:
                     cal_obj = getattr(economic_calendar, "calendar", None)
                     if cal_obj:
                         cal_text = cal_obj.get_context(symbol=sym) or ""
+                        # Stage 1 High-Impact News Shield: Skip symbol if high-impact news is within 30m or just released (<10m)
+                        is_news_imminent, news_desc = cal_obj.is_high_impact_imminent(symbol=sym, window_minutes=30)
+                        if is_news_imminent:
+                            logger.debug(f"[RADAR NEWS SHIELD] {sym} SKIP: Imminent high-impact event ({news_desc})")
+                            continue
                 except Exception:
                     cal_text = ""
 
@@ -1605,15 +1610,14 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     dr_pos = macro.get('dealing_range_pos', 0.5)
 
-                    # Bullish Breakout Retest: Broke above structural resistance (F1/PDH/PWH/BOS H1/Cluster), now acting as RBS floor
-                    f1_barrier = macro.get('immediate_floor_f1', 0.0)
+                    # Bullish Breakout Retest: Broke above structural resistance (PDH/PWH/BOS H1/Cluster), now acting as RBS floor
                     pdh_barrier = macro.get('pdh', 0.0)
                     pwh_barrier = macro.get('pwh', 0.0)
                     bos_barrier = macro.get('h1_bos_level', 0.0) if macro.get('h1_bos_direction') == 'bullish' else 0.0
                     rbs_barrier = macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4') or 0.0
 
                     # Broken resistance candidate levels (must be physically below current mid price)
-                    cand_res_list = [lvl for lvl in (f1_barrier, pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, (c_res if t_res >= 2 else 0.0)) if (lvl > 0 and lvl < mid)]
+                    cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, (c_res if t_res >= 2 else 0.0)) if (lvl > 0 and lvl < mid)]
                     target_res = max(cand_res_list) if cand_res_list else 0.0
 
                     allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST")
@@ -1709,15 +1713,14 @@ class MarketScanner:
                                 ))
                                 continue
 
-                    # Bearish Breakout Retest: Broke below structural support (C1/PDL/PWL/BOS H1/Cluster), now acting as SBR ceiling
-                    c1_barrier = macro.get('immediate_ceiling_c1', 0.0)
+                    # Bearish Breakout Retest: Broke below structural support (PDL/PWL/BOS H1/Cluster), now acting as SBR ceiling
                     pdl_barrier = macro.get('pdl', 0.0)
                     pwl_barrier = macro.get('pwl', 0.0)
                     bos_sup_barrier = macro.get('h1_bos_level', 0.0) if macro.get('h1_bos_direction') == 'bearish' else 0.0
                     sbr_barrier = macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4') or 0.0
 
                     # Broken support candidate levels (must be physically above current mid price)
-                    cand_sup_list = [lvl for lvl in (c1_barrier, pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, (c_sup if t_sup >= 2 else 0.0)) if (lvl > 0 and lvl > mid)]
+                    cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, (c_sup if t_sup >= 2 else 0.0)) if (lvl > 0 and lvl > mid)]
                     target_sup = min(cand_sup_list) if cand_sup_list else 0.0
 
                     allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST")
