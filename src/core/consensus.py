@@ -523,6 +523,21 @@ def calculate_consensus(decisions, candidate=None):
         consensus_signal = "HOLD"
         agreeing_models = []
 
+    # Per-Model Minimum Confidence Floor (60%) — jika ada 1 model < 0.60 → HOLD
+    if consensus_signal in ("BUY", "SELL"):
+        low_conf_models = [
+            (m, float(decisions[m].get("confidence", 0.0)))
+            for m in agreeing_models
+            if float(decisions[m].get("confidence", 0.0)) < 0.60
+        ]
+        if low_conf_models:
+            names_str = ", ".join([f"{m} ({c*100:.0f}%)" for m, c in low_conf_models])
+            box_items.append("---")
+            box_items.append(f"{UI.YELLOW}{UI.BOLD}[⚠ CONFIDENCE FLOOR GATE] HOLD — {names_str} di bawah minimum 60%{UI.RST}")
+            box_items.append((f"  {UI.DIM}Rule{UI.RST} : ", "Semua model wajib >= 60% confidence. Trade dibatalkan."))
+            consensus_signal = "HOLD"
+            agreeing_models = []
+
     if consensus_signal == "HOLD":
         box_items.append("---")
         box_items.append(f"{UI.YELLOW}[*] HASIL: TIDAK ADA KONSENSUS (HOLD){UI.RST}")

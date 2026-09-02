@@ -1554,7 +1554,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "confidence": float (0.00 to 1.00),
+  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
   "execution": {{
     "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
     "entry_price": float (null if market, required if pending),
@@ -1596,7 +1596,14 @@ If any of these conditions are present, you MUST reject the trade (Verdict: REJE
 - SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
 - HIGH_IMPACT_NEWS: Active The Storm window (+/- 15-30 min of Tier-1 release).
 - SEVERE_CURRENCY_CONFLICT: Both currencies have extreme magnitude scores (|S| >= 0.50) with Net Delta < 0.15.
-- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window."""
+- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window.
+
+### 3. CONFIDENCE CALIBRATION MANDATE (CRITICAL):
+- Your confidence score represents your TRUE conviction in this exact setup at this exact moment.
+- MINIMUM THRESHOLD: If your conviction is below 60% (0.60), you MUST output signal: "HOLD" and confidence accordingly. DO NOT output a directional BUY/SELL with confidence < 0.60.
+- The consensus engine enforces a hard floor: any model below 60% confidence blocks the entire trade.
+- Score 0.60-0.69 = Marginal (borderline, prefer REVISE to limit order) | 0.70-0.79 = Good | 0.80+ = High Conviction (APPROVE)
+- FORBIDDEN: outputting confidence 0.40-0.59 alongside a directional BUY/SELL signal. If you're that uncertain, say HOLD."""
 
 
 def format_micro_tape(symbol: str, timeframe, count: int = 15) -> str:
@@ -1838,7 +1845,7 @@ Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
   "signal": "{direction_str}" | "HOLD",
-  "confidence": float (0.00 to 1.00),
+  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
   "role": "PRICE_ACTION_TACTICIAN",
   "retest_quality": "PRISTINE_RETEST" | "LIQUIDITY_ABSORPTION" | "DIRTY_SWEEP" | "FAILED_BREAKOUT",
   "order_flow_energy": "BULLISH_DISPLACEMENT" | "BEARISH_DISPLACEMENT" | "INDECISION_DOJI" | "REJECTION_WICK",
@@ -1973,7 +1980,7 @@ Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
   "signal": "{direction_str}" | "HOLD",
-  "confidence": float (0.00 to 1.00),
+  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
   "role": "CHIEF_RISK_OFFICER",
   "risk_verdict": "CLEARED" | "REVISE_ENTRY_SL" | "HARD_VETO",
   "veto_flags": ["NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "POOR_RR_RATIO"],
