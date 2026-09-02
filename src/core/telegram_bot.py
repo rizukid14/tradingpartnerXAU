@@ -728,6 +728,7 @@ def handle_status_command(chat_id):
             f"• *Net Floating P/L*: `${total_floating:+.2f}` ({len(open_pos)} positions)\n"
             f"• *Architecture*: `2-Stage Quant Funnel (26 Pairs FX | Weekend BTC H1)`\n"
             f"• *Fast Radar*: `60s Sweep Active (0 Token)`\n"
+            f"• *ZCE Zone Map*: `{str(getattr(config, 'ZCE_MODE', 'shadow')).upper() if getattr(config, 'ZCE_ENABLED', False) else 'OFF'}` (Override `{'ON' if getattr(config, 'ZCE_ENABLED', False) and getattr(config, 'ZCE_MODE', 'shadow') in ('legacy', 'full') else 'OFF'}` | `0 Token`)\n"
             f"• *3-AI Jury*: `Full 3-AI (OpenAI + Gemini + DeepSeek)`\n"
             f"• *Risk per Trade*: `FX {config.RISK_PERCENT_FX}% | BTC {config.RISK_PERCENT_BTC}%` (Max: Weekday `{config.MAX_OPEN_POSITIONS}` / Weekend `{config.MAX_OPEN_POSITIONS_BTC}`)\n"
             f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` | *Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"

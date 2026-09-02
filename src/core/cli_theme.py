@@ -11,6 +11,8 @@ import textwrap
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import config
+
 # Ensure stdout uses UTF-8 on Windows
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     try:
@@ -256,8 +258,12 @@ def render_scanner_banner(account_info=None, is_live=True, total_symbols=26, acc
     acc_label = "Demo Account" if mode_upper == "DEMO" else "Live Account"
     acc_text = f"{acc_label} #{account_info}" if account_info else "Trading Terminal"
     
+    zce_enabled = getattr(config, "ZCE_ENABLED", False)
+    zce_mode = str(getattr(config, "ZCE_MODE", "shadow")).upper() if zce_enabled else "OFF"
+    zce_color = UI.GREEN if zce_mode in ("FULL", "LEGACY") else (UI.YELLOW if zce_mode == "SHADOW" else UI.GRAY)
+    
     title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
-    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
+    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | ZCE: {zce_color}{zce_mode}{UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
     
     items = [
         title_line,
@@ -400,27 +406,27 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         except Exception:
             pass
 
-        w_state_str = "MATURE_BASING"
-        w_perm_str = f"{UI.CYAN}◆ ARMED (Menunggu Sentuh Reload Zone){UI.RST}"
+        mse_tier_str = "FULL_ALLOW"
+        w_perm_str = f"{UI.CYAN}◆ ARMED (Standby Reload / Scalp Only){UI.RST}"
         if macro_cache:
             for k, v in macro_cache.items():
                 if active_sym in k:
-                    w_st = v.get('wave_state', 'MATURE_BASING')
+                    raw_tier = v.get('action_tier') or v.get('wave_state', 'FULL_ALLOW')
+                    mse_tier_str = str(raw_tier).replace('MSE_', '')
                     w_pm = v.get('permission_state', 'ARM')
                     if w_pm == "GO":
-                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Reclaim Confirmed){UI.RST}"
+                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Full Allow){UI.RST}"
                     elif w_pm == "ARM":
-                        w_perm_str = f"{UI.CYAN}◆ ARMED (Menunggu Sentuh Reload Zone){UI.RST}"
+                        w_perm_str = f"{UI.CYAN}◆ ARMED (Standby Reload / Scalp Only){UI.RST}"
                     elif w_pm == "WAIT":
-                        w_perm_str = f"{UI.GRAY}○ WAIT (Anti-FOMO / Di Pucuk Ekspansi){UI.RST}"
+                        w_perm_str = f"{UI.GRAY}○ WAIT (Mid-Chamber / Inaction Zone){UI.RST}"
                     elif w_pm == "LOCK":
-                        w_perm_str = f"{UI.RED}■ LOCK (Anti-Falling Knife){UI.RST}"
-                    w_state_str = w_st
+                        w_perm_str = f"{UI.RED}■ LOCK (Hard Block / Extreme Trap){UI.RST}"
                     break
 
         t3_lines = [
             f" Sesi Trading : {UI.CYAN}Weekend 24/7 Dedicated Crypto Rotation{UI.RST}",
-            f" Wave State   : {UI.GREEN}{w_state_str}{UI.RST}",
+            f" MSE Tier     : {UI.GREEN}{mse_tier_str}{UI.RST}",
             f" Permission   : {w_perm_str}",
             f" Risk Profile : {UI.YELLOW}0.50% Equity ($29.10 Max Loss | Max 2 Posisi){UI.RST}",
             f" News Ticker  : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}"
@@ -559,12 +565,17 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
 
     max_loss_dlr = eq * (getattr(config, "MAX_DAILY_LOSS_PERCENT", 4.0) / 100.0)
     
+    zce_enabled = getattr(config, "ZCE_ENABLED", False)
+    zce_mode = str(getattr(config, "ZCE_MODE", "shadow")).upper() if zce_enabled else "OFF"
+    zce_color = UI.GREEN if zce_mode in ("FULL", "LEGACY") else (UI.YELLOW if zce_mode == "SHADOW" else UI.GRAY)
+    zce_ov_str = "Override ON" if (zce_enabled and zce_mode in ("FULL", "LEGACY")) else ("Shadow Log" if zce_mode == "SHADOW" else "OFF")
+
     t2_lines = [
         f" Server     : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
         f" Equity     : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
         f" Capacity   : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} ({'Weekend Crypto Pool' if is_single_asset_mode else '26-Pair Basket Pool'})",
         f" Daily P/L  : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}{config.MAX_DAILY_LOSS_PERCENT}% (${max_loss_dlr:.0f}){UI.RST}",
-        f" MSE Sockets: {UI.GREEN}6-TF Native (MN1/W1/D1/H4/H1){UI.RST} | {UI.CYAN}0 Token (<50ms){UI.RST}",
+        f" ZCE Engine : {zce_color}{zce_mode}{UI.RST} ({zce_ov_str}) | {UI.CYAN}0 Token (<50ms){UI.RST}",
     ]
     if open_positions:
         pos_strs = []

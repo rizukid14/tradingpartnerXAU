@@ -1,6 +1,6 @@
 # OpenAI Prompt Dossier (o4-mini — Chief Quantitative Macro Strategist)
 
-> **Timestamp**: `2026-09-02 18:10:54 WIB` | **Asset**: `EURCAD-ECNc` | **Timeframe**: `H1` | **Architecture**: `Stage 2 Pass 1`
+> **Timestamp**: `2026-09-02 18:16:19 WIB` | **Asset**: `EURCAD-ECNc` | **Timeframe**: `H1` | **Architecture**: `Stage 2 Pass 1`
 
 ```markdown
 # ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
@@ -9,18 +9,18 @@ Your SOLE RESPONSIBILITY is to evaluate the HTF Structural Dealing Range, Macro 
 You DO NOT evaluate micro candlestick wicks.
 
 ## 1. STRATEGIC CONTEXT & CANDLESTICK TAPES:
-- Symbol: EURCAD-ECNc | Proposed Direction: BUY | Live Price: 1.61175
-- Macro Compass: D1_BULLISH_EXPANSION | H4_RANGING_FLAG_BOX | H4 Status: 
-- Wave State:  — 
-- Intraday Dealing Range Position: 39.9% (DISCOUNT)
-- Volatility: ATR(14) H1 = 93.0 pts | Spread = 2 pts
+- Symbol: EURCAD-ECNc | Proposed Direction: BUY | Live Price: 1.61240
+- Macro Compass: D1_BULLISH_EXPANSION | H4_RANGING_FLAG_BOX | FADE_CORRIDOR_EXTREMES | H4 Status: H4_RANGING_FLAG_BOX
+- Wave State: MSE_WATCH_ONLY — [NEUTRAL | MSE: WATCH_ONLY | CSM +2.05] -> WATCH
+- Intraday Dealing Range Position: 46.2% (EQUILIBRIUM)
+- Volatility: ATR(14) H1 = 96.0 pts | Spread = 2 pts
 
 ### [TIMEFRAME D1] Multi-Day Macro Context (Last 5 Daily Bars):
   [07:00] BEAR | O:1.61612 H:1.61855 L:1.61340 C:1.61426 | Body:18.6p WickU:24.3p WickL:8.6p
   [07:00] BEAR | O:1.61384 H:1.61452 L:1.61008 C:1.61059 | Body:32.5p WickU:6.8p WickL:5.1p
   [07:00] BEAR | O:1.61011 H:1.61225 L:1.60869 C:1.60941 | Body:7.0p WickU:21.4p WickL:7.2p
   [07:00] BULL | O:1.60930 H:1.61247 L:1.60754 C:1.61093 | Body:16.3p WickU:15.4p WickL:17.6p
-  [07:00] BULL | O:1.61073 H:1.61368 L:1.60917 C:1.61172 | Body:9.9p WickU:19.6p WickL:15.6p
+  [07:00] BULL | O:1.61073 H:1.61368 L:1.60917 C:1.61236 | Body:16.3p WickU:13.2p WickL:15.6p
 
 ### [TIMEFRAME H4] Structural Trend & Expansion Wave (Last 8 H4 Bars):
   [15:00] BEAR | O:1.60925 H:1.60969 L:1.60754 C:1.60815 | Body:11.0p WickU:4.4p WickL:6.1p
@@ -30,42 +30,42 @@ You DO NOT evaluate micro candlestick wicks.
   [07:00] BEAR | O:1.61073 H:1.61137 L:1.60928 C:1.60990 | Body:8.3p WickU:6.4p WickL:6.2p
   [11:00] BULL | O:1.60990 H:1.61153 L:1.60917 C:1.61150 | Body:16.0p WickU:0.3p WickL:7.3p
   [15:00] BULL | O:1.61150 H:1.61368 L:1.61038 C:1.61280 | Body:13.0p WickU:8.8p WickL:11.2p
-  [19:00] BEAR | O:1.61280 H:1.61330 L:1.61158 C:1.61172 | Body:10.8p WickU:5.0p WickL:1.4p
+  [19:00] BEAR | O:1.61280 H:1.61330 L:1.61158 C:1.61236 | Body:4.4p WickU:5.0p WickL:7.8p
 
 ### Pure Quant 6-TF Macro Strategic Directive (MSE)
-- Dealing Chamber: Floor F1=1.60956 │ Ceiling C1=1.61178 │ Chamber Pos: 98.0%
-- Structural Stage: FRONTIER_EXHAUSTION_AT_1.61178 | Market State: CEILING_REJECTION
-- Macro Bias: BEARISH_PULLBACK (-0.80) -> HUNT_SELL_PULLBACK
+- Dealing Chamber: Floor F1=1.61172 │ Ceiling C1=1.61334 │ Chamber Pos: 44.0%
+- Structural Stage: CHAMBER_CONSOLIDATION_[1.61172-1.61334] | Market State: NEUTRAL_CHAMBER
+- Macro Bias: RANGE_BOUND (+0.00) -> FADE_CORRIDOR_EXTREMES
 - Layered Resistance Ceilings (C1-C4):
-  * C1: 1.61249 (H1_SBR+PDH+PSYCH_50, Score: 6.0)
-  * C2: 1.61294 (H4_VAH, Score: 3.5)
-  * C3: 1.61380 (BEAR_OB+D1_SBR+H4_SBR+W1_SBR, Score: 6.5)
-  * C4: 1.61419 (BEAR_OB, Score: 2.5)
+  * C1: 1.61294 (H4_VAH, Score: 3.5)
+  * C2: 1.61334 (BEAR_OB+H1_SBR, Score: 2.5)
+  * C3: 1.61380 (BEAR_OB+D1_SBR+H4_SBR, Score: 5.17)
+  * C4: 1.61489 (BEAR_OB+D1_EQH_POOL+PSYCH_100+W1_SUPPLY, Score: 7.5)
 - Layered Support Floors (F1-F4):
-  * F1: 1.61130 (BULL_OB+D1_EMA20+D1_EMA50+H1_RBS+H4_HVN, Score: 4.95)
-  * F2: 1.61091 (H1_EMA50, Score: 2.0)
-  * F3: 1.61039 (H4_HVN, Score: 3.0)
-  * F4: 1.60998 (PSYCH_50+PWL, Score: 6.0)
-- Mandate Thesis: EURCAD-ECNc in CEILING_REJECTION at ceiling 1.61178. Mean-reversion targeting primary floor 1.60956.
-- Forbidden Traps: Do NOT BUY into ceiling resistance 1.61178
+  * F1: 1.61172 (H1_EMA200+H4_EMA200+H4_EMA50, Score: 3.45)
+  * F2: 1.61133 (BULL_OB+D1_EMA20+D1_EMA50+H4_HVN, Score: 4.5)
+  * F3: 1.61094 (H1_EMA50, Score: 2.0)
+  * F4: 1.61039 (H4_HVN, Score: 3.0)
+- Mandate Thesis: EURCAD-ECNc is consolidating inside dealing chamber (Range: 44%). Discipline requires waiting for extreme boundary touch at 1.61172 or 1.61334.
+- Forbidden Traps: Do NOT execute market orders in mid-chamber consolidation zone (Range: 44%)
 
 
 
 ### Global Currency Strength Matrix (CSM)
 ### GLOBAL CURRENCY STRENGTH MATRIX (Dual-Horizon Flow)
-- 24-Hour Macro Flow (H1): [JPY: +49.4, USD: +35.2, AUD: +19.6, EUR: +17.6, CAD: +1.2, GBP: -3.1, CHF: -26.7, NZD: -93.2]
-- 4-Hour Session Velocity (M15): [USD: +11.5, EUR: +10.8, CAD: +9.7, JPY: +0.1, GBP: +0.0, AUD: -1.4, CHF: -12.3, NZD: -18.5]
+- 24-Hour Macro Flow (H1): [JPY: +51.5, USD: +33.2, AUD: +21.0, EUR: +18.1, CAD: -2.4, GBP: -3.1, CHF: -25.4, NZD: -92.8]
+- 4-Hour Session Velocity (M15): [EUR: +10.8, USD: +8.6, CAD: +6.4, AUD: +1.3, JPY: +0.1, GBP: -2.8, CHF: -10.1, NZD: -14.3]
 - Cross-Currency Relative Velocity (EURCAD-ECNc):
-  * Base (EUR): 24h = +17.57 (Rank #4/8) | 4h Session = +10.76 (Rank #2/8)
-  * Quote (CAD): 24h = +1.24 (Rank #5/8) | 4h Session = +9.67 (Rank #3/8)
-  * Net 4-Hour Session Delta (EUR minus CAD): +1.09 (BALANCED / SESSION COMPRESSION) | Net 24h Delta: +16.33
+  * Base (EUR): 24h = +18.06 (Rank #4/8) | 4h Session = +10.81 (Rank #1/8)
+  * Quote (CAD): 24h = -2.43 (Rank #5/8) | 4h Session = +6.41 (Rank #3/8)
+  * Net 4-Hour Session Delta (EUR minus CAD): +4.40 (BALANCED / SESSION COMPRESSION) | Net 24h Delta: +20.49
 
 ### RESEARCH SHADOW METRIC — CAPITAL ROTATION & DUAL-BASKET CONFLUENCE
 (Note: Exploratory shadow metric for supplementary context only — do NOT override core technical structure)
 - Dual-Basket Classification (EURCAD-ECNc): [PURE_CATCHUP_LEAD_LAG]
-- Base (EUR) Basket Status: 1 ARRIVED (EURCHF), 5 EN_ROUTE, 1 ON_HOLD (EURCAD) | Leader: EURCHF (99% pos, 0.00x ATR to wall)
-- Quote (CAD) Basket Status: 0 ARRIVED (None), 4 EN_ROUTE, 2 ON_HOLD (EURCAD,AUDCAD) | Leader: No Wall Hit
-- Analytical Confluence Directive: Base EUR Leader (EURCHF (99% pos, 0.00x ATR to wall)) hit wall while EURCAD-ECNc is lagging at 40% range. High-probability catch-up candidate.
+- Base (EUR) Basket Status: 1 ARRIVED (EURCHF), 5 EN_ROUTE, 1 ON_HOLD (EURCAD) | Leader: EURCHF (98% pos, 0.00x ATR to wall)
+- Quote (CAD) Basket Status: 0 ARRIVED (None), 4 EN_ROUTE, 2 ON_HOLD (EURCAD,AUDCAD) | Leader: USDCAD (10% pos, 0.00x ATR to wall)
+- Analytical Confluence Directive: Base EUR Leader (EURCHF (98% pos, 0.00x ATR to wall)) hit wall while EURCAD-ECNc is lagging at 46% range. High-probability catch-up candidate.
 
 ### Apex Paragon Macro Fundamental Scorecard
 ### APEX PARAGON MACRO FUNDAMENTAL BRIEFING (40% Weight)
@@ -79,11 +79,11 @@ You DO NOT evaluate micro candlestick wicks.
 • [Dow Jones Newswires] Euro Falls, Deemed Vulnerable Due to High Energy Prices — Market Talk (0.0h ago)
 • [Reuters] Canadian dollar weakens ahead of BoC rate decision, 10-year yield hits a 2-year high (0.0h ago)
 - Economic Calendar: ### UPCOMING HIGH-IMPACT ECONOMIC EVENTS (next 6h)
-- [CAD] BOC Rate Statement in 2.6h (Wed 02 Sep 20:45 WIB) [HIGH]
-- [CAD] Overnight Rate in 2.6h (Wed 02 Sep 20:45 WIB) [HIGH]
-- [CAD] BOC Press Conference in 3.3h (Wed 02 Sep 21:30 WIB) [HIGH]
+- [CAD] BOC Rate Statement in 2.5h (Wed 02 Sep 20:45 WIB) [HIGH]
+- [CAD] Overnight Rate in 2.5h (Wed 02 Sep 20:45 WIB) [HIGH]
+- [CAD] BOC Press Conference in 3.2h (Wed 02 Sep 21:30 WIB) [HIGH]
 ### RECENTLY RELEASED HIGH-IMPACT EVENTS (last 6h) -- volatility may persist, do not fade the move
-- [EUR] Spanish Unemployment Change 4.2h ago (Wed 02 Sep 14:00 WIB) [MEDIUM]
+- [EUR] Spanish Unemployment Change 4.3h ago (Wed 02 Sep 14:00 WIB) [MEDIUM]
 
 ## 2. STRATEGIC MANDATE & DECISION LOGIC:
 1. Classify the Market Regime: Is this TRUE EXPANSION (Trend Continuation / Absorption), ACCUMULATION / COMPRESSION, or RANGE MEAN-REVERSION (Chamber Bounce)?

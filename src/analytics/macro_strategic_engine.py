@@ -435,9 +435,13 @@ class MacroStrategicEngine:
                 return round(float(h[i]), digits), round(float(l[i]), digits)
         return None, None
 
-    def compute_directive(self, symbol: str, mt5_connector=None) -> MacroStrategicDirective:
+    def compute_directive(self, symbol: str, mt5_connector=None, zce_walls=None) -> MacroStrategicDirective:
         """
         Calculates the complete Pure Quant Top-Down Strategic Directive for a symbol.
+        zce_walls (optional, RFC 11 Phase-2): dict hasil Zone Confluence Engine berisi
+        dinding override {enable, imm_ceiling_c1, imm_floor_f1, deep_ceiling_c2, deep_floor_f2}.
+        Jika valid (f1 < c1), dinding MSE diganti SEBELUM chamber metrics / state machine
+        sehingga seluruh turunan (state, SL/TP, tier, traps) konsisten dengan dinding ZCE.
         """
         t0 = time.perf_counter()
         from config import mt5
@@ -1087,6 +1091,57 @@ class MacroStrategicEngine:
         ceiling_c3 = layered_ceilings[2]['price'] if len(layered_ceilings) > 2 else None
         ceiling_c4 = layered_ceilings[3]['price'] if len(layered_ceilings) > 3 else None
 
+        # ── ZCE WALL OVERRIDE (RFC 11 Phase-2) ─────────────────────────────────────
+        # Dinding dari Zone Confluence Engine menggantikan elekt internal MSE SEBELUM
+        # chamber metrics (1091+) sehingga state machine & eksekusi konsisten otomatis.
+        # ── Override PER-SISI (fix INV-2, 2 Sep 2026) ─────────────────────────────
+        # ZCE hanya menimpa sisi yang memiliki zona konfluensi dekat (F1/C1 non-None;
+        # sisi > cap 2.0x ATR_H1 sudah di-None-kan di _elect_walls). Sisi yang kosong
+        # TETAP memakai baseline MSE (FALLBACK_PSYCH/struktur internal) — tidak di-drop
+        # penuh seperti guard lama (F1&C1 keduanya harus non-None) yang justru membuat
+        # fallback memilih sisi MSE yang LEBIH JAUH (kasus USDJPY F1 3.5x ATR).
+        if zce_walls is not None and zce_walls.get("enable"):
+            _c1 = zce_walls.get("imm_ceiling_c1")
+            _f1 = zce_walls.get("imm_floor_f1")
+            c1_valid = _c1 is not None and float(_c1) > curr_mid
+            f1_valid = _f1 is not None and float(_f1) < curr_mid
+            if c1_valid and f1_valid and float(_c1) > float(_f1):
+                # Kedua sisi valid & chamber sehat -> override penuh (perilaku lama)
+                imm_ceiling_c1 = float(_c1)
+                imm_floor_f1 = float(_f1)
+                ceiling_c1 = imm_ceiling_c1
+                floor_f1 = imm_floor_f1
+                _c2 = zce_walls.get("deep_ceiling_c2")
+                _f2 = zce_walls.get("deep_floor_f2")
+                if _c2 is not None and float(_c2) > imm_ceiling_c1:
+                    deep_ceiling_c2 = float(_c2)
+                if _f2 is not None and float(_f2) < imm_floor_f1:
+                    deep_floor_f2 = float(_f2)
+                if layered_ceilings:
+                    layered_ceilings[0] = {**layered_ceilings[0], "price": imm_ceiling_c1}
+                if layered_floors:
+                    layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
+            else:
+                # Per-sisi: timpa hanya sisi yang valid; sisi lain biarkan MSE baseline.
+                # Harga live selalu menjadi pemisah (F1 < mid < C1) sehingga chamber
+                # campuran ZCE+MSE tidak pernah inverted.
+                if c1_valid and float(_c1) > imm_floor_f1:
+                    imm_ceiling_c1 = float(_c1)
+                    ceiling_c1 = imm_ceiling_c1
+                    _c2 = zce_walls.get("deep_ceiling_c2")
+                    if _c2 is not None and float(_c2) > imm_ceiling_c1:
+                        deep_ceiling_c2 = float(_c2)
+                    if layered_ceilings:
+                        layered_ceilings[0] = {**layered_ceilings[0], "price": imm_ceiling_c1}
+                if f1_valid and float(_f1) < imm_ceiling_c1:
+                    imm_floor_f1 = float(_f1)
+                    floor_f1 = imm_floor_f1
+                    _f2 = zce_walls.get("deep_floor_f2")
+                    if _f2 is not None and float(_f2) < imm_floor_f1:
+                        deep_floor_f2 = float(_f2)
+                    if layered_floors:
+                        layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
+
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
         chamber_pos = min(1.0, max(0.0, (curr_mid - imm_floor_f1) / chamber_width))
@@ -1631,15 +1686,16 @@ class MacroStrategicEngine:
         self._cache_ts[symbol] = time.time()
         return directive
 
-    def get_directive(self, symbol: str, mt5_connector=None, force_refresh: bool = False) -> MacroStrategicDirective:
+    def get_directive(self, symbol: str, mt5_connector=None, force_refresh: bool = False, zce_walls=None) -> MacroStrategicDirective:
         """
         Retrieves cached directive or recomputes if missing / expired (>60s) / forced.
+        zce_walls: optional RFC 11 Phase-2 dict dari Zone Confluence Engine (diteruskan ke compute_directive).
         """
         now = time.time()
         if not force_refresh and symbol in self._cache:
             if (now - self._cache_ts.get(symbol, 0.0)) < self._cache_ttl_sec:
                 return self._cache[symbol]
-        return self.compute_directive(symbol, mt5_connector=mt5_connector)
+        return self.compute_directive(symbol, mt5_connector=mt5_connector, zce_walls=zce_walls)
 
     def refresh_all_symbols(self, symbols: List[str], mt5_connector=None) -> Dict[str, MacroStrategicDirective]:
         """

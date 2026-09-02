@@ -184,25 +184,38 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {sym} (SL -> {sl_points} pts).")
 
         # Hard Intraday Ceiling Cap (mencegah SL runaway / swing level)
+        # ZCE anchor mode: ceiling = batas VALIDITAS anchor struktural (bukan alat clamp).
+        # Jika SL anchor > ceiling -> SKIP ANCHOR_TOO_WIDE (clamp akan memarkir SL di
+        # tengah struktur = stop prematur). Hanya aktif saat ZCE supply walls ke MSE
+        # (mode legacy/full); saat shadow/off perilaku clamp lama dipertahankan 1:1.
+        zce_wall_mode = bool(getattr(config, "ZCE_ENABLED", False)) and str(
+            getattr(config, "ZCE_MODE", "shadow")).lower() in ("legacy", "full")
+        sl_max_mult = float(getattr(config, "SL_MAX_ATR_MULT", 2.5))
+
         if is_btc:
             max_sl = min(int(atr_points * 1.80), 45000) if atr_points > 0 else 45000
             if sl_points > max_sl:
                 _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon BTC ($450 USD). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
-        elif is_xau:
-            max_sl = int(atr_points * 2.5) if atr_points > 0 else 800
-            if sl_points > max_sl:
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon Gold. Menyesuaikan SL ke {max_sl} pts.")
-                sl_points = max_sl
-        elif is_jpy:
-            max_sl = int(atr_points * 2.5) if atr_points > 0 else 350
-            if sl_points > max_sl:
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon JPY (2.5x ATR). Menyesuaikan SL ke {max_sl} pts.")
-                sl_points = max_sl
         else:
-            max_sl = int(atr_points * 2.5) if atr_points > 0 else 350
+            # Aset non-BTC (FX/JPY/Gold): ceiling berbasis ATR (default SL_MAX_ATR_MULT=2.5x)
+            static_fallback = 800 if is_xau else 350
+            if atr_points <= 0:
+                if zce_wall_mode:
+                    note = "ATR_UNAVAILABLE: data ATR MT5 gagal dimuat (mode ZCE anchor). REJECT tanpa fallback statis."
+                    _last_sltp_adjustments.append(note)
+                    return sl_points, tp_points, False, note
+                max_sl = static_fallback
+            else:
+                max_sl = int(atr_points * sl_max_mult)
             if sl_points > max_sl:
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon FX (2.5x ATR). Menyesuaikan SL ke {max_sl} pts.")
+                if zce_wall_mode:
+                    note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {max_sl} pts "
+                            f"({sl_max_mult}x ATR). SKIP trade — clamp akan memarkir SL di tengah struktur.")
+                    _last_sltp_adjustments.append(note)
+                    return sl_points, tp_points, False, note
+                label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")
+                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon {label} ({sl_max_mult}x ATR). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
 
         if tp_points <= 0:

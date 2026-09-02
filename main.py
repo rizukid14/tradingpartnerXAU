@@ -749,7 +749,9 @@ def run_scanner_trading_cycle(cand, risk):
             ref_price = tick_live["ask"] if trade_signal == "BUY" else tick_live["bid"]
             
             # Stale price protection (~8s multi-LLM jury latency guard)
-            price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
+            # A5 FIX: baseline drift = harga pasar saat setup di-scan (bukan anchor limit trigger_price)
+            drift_ref = getattr(cand, "scan_mid", 0.0) or cand.trigger_price
+            price_diff_pts = abs(ref_price - drift_ref) / point if point > 0 else 0
             max_allowed_drift = (cand.current_atr_pts or 100) * 0.20
             if entry_type == "market" and price_diff_pts > max_allowed_drift:
                 agree_models = result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
@@ -1102,7 +1104,7 @@ def main():
             p_st = m_v.get('permission_state', 'WAIT')
             w_st = m_v.get('wave_state', '')
             s_dir = m_v.get('strat_dir')
-            b_st = s_dir.primary_execution_directive if s_dir else m_v.get('direction_state', 'NEUTRAL')
+            b_st = s_dir.primary_execution_directive if s_dir else ("BULLISH" if m_v.get('is_bull') else ("BEARISH" if m_v.get('is_bear') else "NEUTRAL"))
             _last_known_macro_states[sym_k] = (p_st, w_st, b_st)
 
     last_candle_time = None

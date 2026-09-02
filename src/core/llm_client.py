@@ -1510,7 +1510,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - Symbol: {sym} | Asset: {asset_desc(sym)}
 - Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {fp(float(candidate.trigger_price))}
 - Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_status or 'N/A'}
-- H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
+- MSE Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Permission: {getattr(candidate, 'permission_state', 'ARM')} — {getattr(candidate, 'wave_summary', '') or 'Chamber Active'}
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
 - Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_display_pct:.1f}%
 - Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts
@@ -1521,7 +1521,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 {fund_block}
 - Economic Calendar Context: {calendar_text}
 
-## 3. CURRENCY FLOW & WAVE STATE CONFIRMATION
+## 3. CURRENCY FLOW & MULTI-TIMEFRAME CONFIRMATION
 {micro_frames_block}
 {csm_block}
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
@@ -1581,7 +1581,7 @@ Your mission is to evaluate candidate setups proposed by the Python Quantitative
 1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
 2. Mandatory R:R Gate & Intraday Structure Floor: Minimum R:R >= 1.25. Anchor SL behind physical intraday structural barriers (Scanner Raw SL, nearest H1 Order Block, or SBR/RBS + anti-wick buffer). SL MUST remain tightly bounded to intraday structure (0.50x to 1.00x ATR H1). FORBIDDEN: DO NOT inflate SL into deep multi-day macro invalidation stops (e.g. > 1.2x ATR) or deep TP2 macro stations for intraday candidates.
 3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
-4. Symmetrical Wave State Permission:
+4. Symmetrical 5-Tier Action Matrix Permission:
    - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
    - SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
 5. 4-Grade Quality Matrix:
@@ -1600,10 +1600,13 @@ If any of these conditions are present, you MUST reject the trade (Verdict: REJE
 
 ### 3. CONFIDENCE CALIBRATION MANDATE (CRITICAL):
 - Your confidence score represents your TRUE conviction in this exact setup at this exact moment.
-- MINIMUM THRESHOLD: If your conviction is below 60% (0.60), you MUST output signal: "HOLD" and confidence accordingly. DO NOT output a directional BUY/SELL with confidence < 0.60.
-- The consensus engine enforces a hard floor: any model below 60% confidence blocks the entire trade.
-- Score 0.60-0.69 = Marginal (borderline, prefer REVISE to limit order) | 0.70-0.79 = Good | 0.80+ = High Conviction (APPROVE)
-- FORBIDDEN: outputting confidence 0.40-0.59 alongside a directional BUY/SELL signal. If you're that uncertain, say HOLD."""
+- HARD FLOOR GATE (>= 0.60): If your conviction is below 60% (0.60), or if you identify risk flags like IMPULSE_CHASE, COUNTER_TREND_MOMENTUM, or unmitigated opposing pressure, YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING A DIRECTIONAL BUY/SELL SIGNAL.
+- In all uncertain or sub-threshold cases (< 0.60 conviction or unconfirmed displacement), you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+- Permitted directional confidence tiers (BUY/SELL only):
+  * 0.60 - 0.69: Marginal / Borderline (prefer REVISE to Pending Limit Order)
+  * 0.70 - 0.79: High Conviction (APPROVE)
+  * 0.80 - 1.00: Institutional God-Tier (APPROVE)
+- FORBIDDEN: Outputting signal BUY or SELL with confidence < 0.60 (e.g. 0.40-0.59). If you are that uncertain, you MUST set signal to "HOLD"."""
 
 
 def format_micro_tape(symbol: str, timeframe, count: int = 15) -> str:
@@ -1779,13 +1782,13 @@ Classify the current market structure into ONE of:
 1. **Corridor Delivery**: Has price shown structural acceptance ABOVE base station (BUY) or BELOW resistance station (SELL)? Station-to-Station delivery requires a clear close, not just a wick touch.
 2. **Anti-FOMO Gate**: Dealing Range >= 85% (BUY) or <= 15% (SELL) → FORBIDDEN market order. MUST use 'buy_limit'/'sell_limit' at retest level, or REJECT if no retest anchor exists.
 3. **Macro Headwind Check**: If D1 trend direction opposes proposed trade, and H4 lacks a clear CHoCH structure flip — output REJECT with COUNTER_TREND_MOMENTUM flag.
-4. **Confidence Calibration**: Only APPROVE if you have >= 70% conviction in macro alignment. If 60-69% conviction → REVISE with Pending Limit. If < 60% → HOLD.
+4. **Confidence Calibration (Hard Floor >= 0.60)**: Only APPROVE if you have >= 70% conviction in macro alignment. If 60-69% conviction → REVISE with Pending Limit. If conviction is < 60% OR if opposing macro momentum is present, you are STRICTLY FORBIDDEN from issuing a BUY/SELL signal — you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
 
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "signal": "{direction_str}" | "HOLD",
-  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60,
+  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
   "role": "STRATEGIC_STRUCTURE",
   "regime": "EXPANSION_TREND" | "ABSORPTION_PRE_BREAKOUT" | "RANGE_BOUND" | "EXHAUSTION_REVERSAL",
   "station_corridor": "e.g. '1.09500 -> 1.10020 (Base Station -> C1 Ceiling)' describing price delivery path",
@@ -1897,14 +1900,13 @@ RULE: HIGH-impact event within 30 minutes → output HOLD/REJECT. Wicks and spre
 3. **SL Anchoring**:
    - BUY: SL below the last unmitigated Bullish OB lower boundary + 0.3x ATR anti-wick buffer
    - SELL: SL above the last unmitigated Bearish OB upper boundary + 0.3x ATR anti-wick buffer
-4. **TP Precision**: Snap TP to nearest opposing structural level minus front-run pad (0.15x ATR for BUY; + 0.15x ATR for SELL). Never set TP past an unmitigated opposing FVG.
-5. **Confidence Floor**: APPROVE only if absorption confirmed by ≥2 M5 bars. REVISE if still approaching zone. <60% conviction → HOLD.
+5. **Confidence Floor (Hard Floor >= 0.60)**: APPROVE only if absorption confirmed by ≥2 M5 bars (conviction ≥ 70%). REVISE if pending limit at FVG/OB is viable (conviction 60–69%). If conviction is < 60% OR if you detect IMPULSE_CHASE / opposing momentum without rejection wicks, you are STRICTLY FORBIDDEN from issuing a BUY/SELL signal — you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
 
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "signal": "{direction_str}" | "HOLD",
-  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60 or if IMPULSE_CHASE detected,
+  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
   "role": "PRICE_ACTION_TACTICIAN",
   "retest_quality": "PRISTINE_RETEST" | "LIQUIDITY_ABSORPTION" | "DIRTY_SWEEP" | "FAILED_BREAKOUT",
   "order_flow_energy": "BULLISH_DISPLACEMENT" | "BEARISH_DISPLACEMENT" | "INDECISION_DOJI" | "REJECTION_WICK" | "CHOP_ZONE",
@@ -2086,12 +2088,13 @@ If no HARD VETO is warranted:
 2. Set SL behind the most conservative physical structural barrier (OpenAI or Gemini's choice, whichever is safer)
 3. Set TP at the nearest confirmed opposing structural station (OpenAI's macro target or Gemini's micro FVG, whichever is closer)
 4. Verify final R:R >= 1.25:1. If not, widen TP to next structural level or REJECT.
+5. Confidence Calibration (Hard Floor >= 0.60): Output directional BUY/SELL only if synthesized conviction >= 60%. If conviction < 60% OR if any unmitigated risk flag remains, you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
 
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "signal": "{direction_str}" | "HOLD",
-  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60,
+  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
   "role": "CHIEF_RISK_OFFICER",
   "risk_verdict": "CLEARED" | "REVISE_ENTRY_SL" | "HARD_VETO",
   "jury_synthesis": "UNANIMOUS_ALIGNED" | "ENTRY_ARBITER_REQUIRED" | "CONFIDENCE_GAP_RESOLVED" | "CONTRADICTION_VETOED",

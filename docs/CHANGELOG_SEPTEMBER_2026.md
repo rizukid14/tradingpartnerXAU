@@ -164,4 +164,158 @@
      * [`docs/prompt/gemini_prompt.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/prompt/gemini_prompt.md)
      * [`docs/prompt/deepseek_prompt.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/prompt/deepseek_prompt.md)
 
+## 9. Perubahan 2 September 2026 — Dokumentasi: Sinkronisasi Realita SL/TP + RFC 11 Zone Confluence Engine
+
+### 📄 Dokumentasi (tanpa perubahan perilaku kode)
+
+1. **Koreksi drift dokumentasi SL/TP** (`AGENTS.md` & komentar `config.py`):
+   - AGENTS.md sebelumnya menuliskan ceiling statis "FX ≤ 160 pts / JPY ≤ 200 pts" dan floor FX "0.68×ATR H1" — **tidak cocok dengan kode aktual**.
+   - Realita `consensus.py:155-206` (2 Sep 2026): floor FX = $\max(2\times\text{spread}+15, 0.50\times\text{ATR H1})$ (`LLM_FX_FLOOR_ATR_MULT=0.50`), floor JPY = $\max(2\times\text{spread}+20, 1.00\times\text{ATR M30})$, fallback 250 pts kalau ATR gagal; **ceiling dinamis anti-runaway** = $2.5\times\text{ATR}$ FX/JPY/Gold (fallback 350/350/800 pts) dan $1.8\times\text{ATR}$ BTC (fallback 45000) — hardcode, bukan dari `.env`.
+   - Komentar `config.py` (3 lokasi) "1.5x ATR H1" → "0.50x ATR H1".
+   - Verifikasi: tidak ditemukan sisa logika ceiling statis 160/200 pts di seluruh `src/` (`max_sl` hanya dari `atr × 2.5/1.8`).
+
+2. **RFC 11: Zone Confluence Engine (ZCE)** — [`docs/plans/ZONE_CONFLUENCE_ENGINE_SPEC.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/plans/ZONE_CONFLUENCE_ENGINE_SPEC.md) & [`docs/plans/ZONE_CONFLUENCE_ENGINE_IMPLEMENTATION_PLAN.md`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/docs/plans/ZONE_CONFLUENCE_ENGINE_IMPLEMENTATION_PLAN.md):
+   - Peta zona multi-TF × multi-horizon (OB/FVG/SBR/RBS/DBD/RBR/EQH/EQL/FRVP/psych/macro extremes) + skoring konfluensi + scale ladder 50–500 + flag `SCALE_CONFLICT` + deteksi `COLD`/`VACUUM`.
+   - Serah-terima dari MSE: Blok A/B (deteksi & pemilihan zona, baris 464–1077) → ZCE; MSE tetap pemilik state machine, arah, izin, eksekusi.
+   - **Keputusan terkunci user**: J1 horizon = penguat bobot (bukan saksi konfluensi); J2 bobot default + forward test; payload LLM per peran (Gemini raw OHLC banyak M1–M30, OpenAI sedikit, DeepSeek zone table lengkap); refresh rotasi ≤ 5 menit.
+   - Fase 3 rencana ditambah: SL/TP berbasis anchor struktural ZCE (`consensus.py`) — `SL_MAX_ATR_MULT` configurable, skip `ANCHOR_TOO_WIDE`, fallback statis → reject. Menunggu persetujuan batch pertama eksekusi.
+
+---
+
+## 10. 2 September 2026 — Eksekusi Fase 1-2 & Task #7 ZCE (Zone Confluence Engine)
+
+> Implementasi engine ZCE + integrasi MSE + gate SL/TP anchor struktural. Seluruh perubahan **flag-gated**: `ZCE_ENABLED=false` + `ZCE_MODE=shadow` (default) → perilaku produksi identik (diverifikasi 86 test pass).
+
+### Fase 1: Engine ZCE + Unit Test (10/10 PASS)
+- `src/analytics/zone_confluence_engine.py` (BARU): grid 6-TF x multi-horizon, merge primitives (toleransi max(0.25xATR H1, 6x point)), finalize cluster (J1 greedy dedupe), freshness stamping (touch count, COLD > 21 hari), elect walls (F1/C1 chamber >= 0.60xATR / 8 pips), scale ladder (pos_50/pos_250), suggest method, readiness, build zone table text.
+- `tests/test_zone_confluence_engine.py` (BARU): 10 test sintetik (merge, J1 no double-count, width/grade, ladder LOCAL_DISCOUNT_MACRO_PREMIUM, COLD flag, E2E) — 10/10 PASS.
+
+### Bug Fix Parity: Eksponen Konversi Pips di `_elect_walls`
+- Sebelum: `min_ch = max(0.60*ATR, 8.0*10^(-digits+3))` → untuk 5-digit menghasilkan **800 pips** (bukan 8) → SEMUA pasangan F1/C1 dianggap terlalu dekat → `F1=None` → wall override mati diam-diam.
+- Sesudah: `8.0*10^(-digits+1)` → 5-digit = 0.0008 (8 pips), JPY 3-digit = 0.08. Parity live EURUSD kini menghasilkan F1/C1 valid.
+
+### Fase 2: Hook MSE (Zero Consumer Break)
+- `src/analytics/macro_strategic_engine.py`: parameter `zce_walls` di `compute_directive`/`get_directive`; blok override menimpa `immediate_ceiling_c1`/`immediate_floor_f1`/deep/layered SEBELUM Chamber Metrics → state machine & branch konsisten.
+- Parity live EURUSD (read-only): ZCE C1=1.16108/F1=1.15780; MSE baseline C1=1.16153/F1=1.15845; MSE+ZCE C1/F1 = persis ZCE → override applied: True.
+- `_refresh_zce_rotation` di `market_scanner.py` + `zce_walls` diteruskan ke `get_directive` saat mode legacy/full.
+
+### Task #7: SL/TP Anchor Struktural ZCE (`consensus.py`) — flag-gated
+- `SL_MAX_ATR_MULT` configurable dari `.env` (default 2.5) menggantikan hardcode `atr_points * 2.5` di ceiling XAU/JPY/FX. BTC tetap 1.80/45000.
+- Mode ZCE legacy/full: SL anchor > ceiling → SKIP `ANCHOR_TOO_WIDE` (bukan clamp yang memarkir SL di tengah struktur); ATR gagal → REJECT `ATR_UNAVAILABLE` (bukan fallback statis 350/800).
+- Floor ATR + R:R gate invariant (tidak diubah).
+- `tests/test_zce_sltp_anchor.py` (BARU): 4 test sintetik (clamp lama di mode off; ANCHOR_TOO_WIDE; ATR_UNAVAILABLE; fallback statis mode off) — 4/4 PASS.
+
+### Verifikasi
+- `compileall config.py src main.py` → OK.
+- `pytest tests/ -q` → **86 passed, 6 failed (pre-existing, bukan dari ZCE)**. Enam kegagalan (test_dashboard x4, test_prompt_v2 x2) diverifikasi pre-existing via worktree HEAD bersih `0ecf652` — modul `dashboard` lama & ekspektasi voting 2/3 vs aturan unanimouse 3/3 (sengaja tidak disentuh sesuai instruksi).
+
+---
+
+## 11. 2 September 2026 — Aktivasi ZCE Mode FULL untuk Test Live Cent
+
+Perintah user: aktifkan ZCE tanpa shadow agar bisa langsung ditest di akun **live cent** (bukan akun live utama).
+
+- `.env`: `ZCE_ENABLED=true`, `ZCE_MODE=full` (sebelumnya `false`/`shadow`).
+- Definisi mode (dari RFC): `legacy` = window single-horizon identik MSE (parity); `full` = elekt dinding dari klaster grid multi-horizon (ZCE sesungguhnya). Tidak ada kode yang membedakan keduanya saat ini — `market_scanner.py` meneruskan `zce_walls` ke `get_directive` di kedua mode bila `ZCE_ENABLED`.
+- Konsekuensi aktif (dihitung & diuji): dinding C1/F1 ZCE menggantikan dinding internal MSE → state machine & SL/TP mengikuti peta zona 6-TF; `_apply_sltp_rules` di jalur ZCE menolak SL > ceiling (`ANCHOR_TOO_WIDE`) dan menolak saat ATR gagal (`ATR_UNAVAILABLE`) tanpa fallback statis.
+- **Regresi test yang diperbaiki**: `ZCE_ENABLED=true` global membuat 2 test legacy (yang menguji jalur SL/TP non-ZCE tanpa data MT5 live) gagal. Solusi: patch `config.ZCE_ENABLED=False` + `ZCE_MODE=shadow` di `test_confluence_and_thesis_invalidation.py::test_tight_sltp_rules_for_reduced_scalp` dan `test_market_scanner.py::test_consensus_apply_sltp_symbol_specific` — test tetap menguji jalur legacy deterministik, logika produksi tidak disentuh.
+- Verifikasi live read-only (akun terhubung, tanpa order):
+  - Parity EURUSD mode full: override applied=True, state MSE ikut dinding ZCE.
+  - `_refresh_zce_rotation` 6 simbol: 2.5s; 4 simbol: 0.3s → 26 simbol penuh ~2-11s per rotasi, aman untuk siklus 60 detik.
+  - `scan_all` 4 simbol: 1.3s, 0 exception, 0 kandidat (normal — setup A+ tidak muncul tiap cycle).
+- Suite: `pytest tests/ -q` → **86 passed, 6 failed pre-existing** (sama seperti sebelum aktivasi, tidak ada regresi baru).
+- **Catatan keselamatan**: bot tetap membaca akun dari `.env` (login live). Untuk test di akun live cent, pastikan `.env`/terminal MT5 diarahkan ke akun cent yang dimaksud + `DRY_RUN` tidak diubah tanpa persetujuan.
+
+---
+
+## 12. 2 September 2026 — Koreksi AGENTS.md (Referensi `wave_state.py`/CSM) + Spec Verifikasi Koordinat ZCE/MSE
+
+### 🧹 Koreksi AGENTS.md (perintah: "perbaiki agents md")
+
+Latar: AGENTS.md masih mereferensikan `src/indicators/wave_state.py` (file sudah dihapus) sebagai engine CSM/wave state — menyesatkan pembaca & agent baru.
+
+1. **Tabel arsitektur**:
+   - Baris `market_scanner.py` diperluas: `permission_state` dihitung DI SINI dari mapping MSE action tier (`FULL_ALLOW→GO/ARM`, `TP1_ONLY_SCALP→ARM`, `WATCH_ONLY→WATCH`, `HARD_BLOCK→LOCK`) + gate arah terpadu `_is_direction_allowed()` (Macro Bias + CSM Flow Opposition + Systemic Basket Lock) + meneruskan `zce_walls` ZCE ke MSE.
+   - `wave_state.py` diganti `wave_regime.py` (regime & umur kompresi — pengganti resmi).
+   - `currency_strength.py` diklarifikasi: **modul mandiri** (8 mata uang dari 7 USD majors, cache 30 detik), dibaca scanner/llm/UI — BUKAN bagian MSE/ZCE.
+   - Ditambah row `zone_confluence_engine.py` (status `ZCE_ENABLED=true`, `ZCE_MODE=full`, test akun live cent).
+2. **Alur cycle langkah 2**: "cek Wave State permission (`GO/ARM` only)" → "cek `permission_state` hasil mapping MSE action tier (`FULL_ALLOW→GO/ARM` only; `HARD_BLOCK`/`WATCH_ONLY` = 0 token) + gate arah terpadu `_is_direction_allowed()`".
+3. **Entri changelog historis 25 & 45**: tidak dihapus (catatan kronologis tetap akurat), ditambah anotasi *italik* bahwa model FSM Wave State lama (state `EXPANSION_WAIT_BULL`/`WATERFALL_LOCK`/dst.) sejak 1 September telah dilebur ke MSE Barrier State Machine + action tier 5-Tier (lihat entri 40 & 48) — mencegah pembaca mencari modul yang sudah tidak ada di kode aktif.
+
+### 🧭 Klarifikasi Arsitektur CSM vs MSE/ZCE (dari penelusuran kode)
+
+- **Zero coupling**: `macro_strategic_engine.py` dan `zone_confluence_engine.py` TIDAK mengimpor `currency_strength`. `action_tier`, `macro_bias_score`, dinding C1/F1, dan SL/TP anchor **0% dipengaruhi CSM**.
+- CSM hanya dikonsumsi di `market_scanner.py`: (a) baris 705 `csm_delta_val` → macro dict (info/prompt); (b) baris 1064 `evaluate_systemic_basket_lock` di dalam gate `_is_direction_allowed()` yang dipakai M1/M2/M3.
+- **Hierarki keputusan aktual**: MSE = kompas & tier → ZCE override dinding (mengubah tier & SL/TP) → CSM = **veto eksternal di gate** (allow/block arah, TIDAK mengubah koordinat). Urutan veto gate: (1) Systemic Basket Lock CSM ±18–20 → `HARD_BLOCK` bahkan sebelum MSE dicek; (2) MSE tier gate; (3) circuit breaker + forbidden traps MSE; (4) CSM Flow Opposition (delta ≤ −1.0 lawan BUY / ≥ +1.0 lawan SELL) → block hanya jika tidak aligned MSE; (5) resolusi tier: aligned → `FULL_ALLOW`, counter → `TP1_ONLY_SCALP`, netral → `REDUCED_CONFIDENCE`.
+- **Shadow yang masih hidup**: Dual-Basket Confluence & Dispersion Matrix di `currency_strength.py` — sengaja informational-only (hanya ke dossier LLM), tidak menyentuh hard gate Stage 1. Jalur promosi ke hard gate = titik yang sama (`_is_direction_allowed`), bukan MSE/ZCE.
+
+### 📐 Spec Verifikasi Koordinat ZCE/MSE (Lapis 1–3) — `docs/plans/ZCE_COORD_VERIFICATION_SPEC.md`
+
+Latar: bug eksponen pips (`8.0×10^(-digits+3)` = 800 pips, bukan 8 pips) yang baru diperbaiki membuktikan bahwa "baca koordinat" bisa salah DIAM-DIAM tanpa error — perlu verifikasi eksplisit level fisik, bukan asumsi.
+
+- Spec siap-eksekusi untuk agent lain (bukan perubahan produksi): script `scratch/verify_zce_coords.py` read-only (0 order MT5), 8 simbol uji (major/JPY/cross/CHF/NZD).
+- Konvensi unit WAJIB dari `atlas_dna.py` + `symbol_info` (EURUSD 5-digit: 100 poin = 10 pips, `pip_div = 10`) — tanpa hardcode.
+- **Lapis 1 Parity**: dump F1/C1/F2/C2 (MSE-baseline vs ZCE-map vs MSE+ZCE) + jarak pips + grade → spot-check manual 3 simbol di chart MT5 (level harus = dinding fisik nyata).
+- **Lapis 2 Invariant (hard assert, 0 toleransi)**: INV-1 `F2 < F1 < harga < C1 < C2`; INV-2 jarak ≤ 2.0×ATR_H1 (jebakan bug 800-pips); INV-3 deep layer ≥ 0.5×ATR_H1; INV-4 override benar-benar applied; INV-5 tier konsisten dengan dinding valid. 1 FAIL = BUG → stop, lapor planner.
+- **Lapis 3 Hierarki TF**: horizon asal tiap klaster (`horizon_max`) — mikro (M30/H1) bersarang di dalam makro (D1/W1/MN1); loncat horizon = FAIL, konflik skor = WARN.
+- Kriteria lolos: INV 100% + spot-check 3/8 valid → baru layak Lapis 4 (validasi eksekusi live cent ≥7 hari/≥60 sampel).
+- Catatan agent di spec: panggil `compute_directive` langsung (bukan `get_directive`) agar tidak kena cache; baca definisi dataclass `ZoneMapResult`/`MacroStrategicDirective` sebelum akses field.
+
+---
+
+## 13. 2 September 2026 — Eksekusi Verifikasi Koordinat ZCE/MSE Lapis 1–3 + FIX BUG KRITIS Pemilihan Dinding (INV-2)
+
+### 🚨 Hasil Uji Awal (eksekutor, sebelum fix)
+
+Uji live 8 simbol di akun **VTMarkets-Live 3** → **TIDAK LOLOS, STOP sesuai spec**:
+
+| Invariant | Hasil |
+|---|---|
+| INV-1 (Ladder `F2<F1<harga<C1<C2`) | 7/8 PASS |
+| INV-2 (Proximity ≤ 2.0×ATR) | **1/8 PASS (7 FAIL)** 🚨 |
+| INV-3 (Deep spacing ≥ 0.5×ATR) | 6/8 PASS |
+| INV-4 (Override applied) | 8/8 ✅ |
+| INV-5 (Tier konsisten) | 8/8 ✅ |
+| INV-H1/H2 (Hierarki TF) | 8/8 ✅ |
+
+Gejala: level "kabur jauh" — EURUSD C1=1.16494 (6.1×ATR), GBPUSD C1=1.35811 (6.2×ATR), USDJPY C1=160.266 (5.8×ATR), EURJPY F1=182.261 (7.9×ATR).
+
+### 🔍 Akar Masalah 1 — `_elect_walls` membuang zona yang MERENTANGI harga
+
+`zone_confluence_engine.py:378-381`:
+```python
+floors = [c for c in clusters if c.band_high < cur_price - eps]     # salah
+ceilings = [c for c in clusters if c.band_low > cur_price + eps]
+```
+Klaster yang berisi harga (`band_low ≤ harga ≤ band_high`, contoh EURUSD cluster 1.15727–1.16000 berisi OB+FVG+EQL+Psych) gagal kedua kondisi → **dieliminasi total** → ZCE melompat ke klaster jauh berikutnya.
+
+**Fix**: zona merentangi harga TIDAK dibuang — menyumbang DUA dinding: `band_low` sebagai floor-edge & `band_high` sebagai ceiling-edge. Sorting diubah dari `-band_high` → **jarak ke harga naik** (mencegah salah urut saat zona merentangi punya band_high di atas harga). Verifikasi awal setelah fix: F1 mayoritas dekat, tetapi pola baru muncul.
+
+### 🔍 Akar Masalah 2 — Dinding immediate > cap jarak (INV-2)
+
+Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi atas** (USDJPY psych 159.0 ada di MSE tapi tidak tertangkap ZCE; C1 ZCE terdekat = 160.266 = 5.9×ATR). Ini bukan bug filter lagi — memang gap zona.
+
+**Fix**:
+1. `_elect_walls`: parameter baru `max_imm_atr` (default **2.0×ATR_H1**, spec INV-2). Sisi immediate > cap → di-None-kan → tidak layak override.
+2. Override ZCE→MSE (`macro_strategic_engine.py`) diubah dari guard **penuh** (`F1 & C1 keduanya non-None`) menjadi **override PER-SISI**: ZCE menimpa hanya sisi yang valid; sisi kosong TETAP memakai baseline MSE (`FALLBACK_PSYCH`/struktur internal). Sebelumnya fallback penuh justru memilih sisi MSE yang lebih jauh (kasus USDJPY: ZCE F1=158.5 / 1.3×ATR bagus dibuang, MSE F1=157.974 / 3.5×ATR yang dipakai).
+3. Guard di `market_scanner.py`: terima `zce_walls` jika **minimal SATU sisi** non-None (sebelumnya harus dua-duanya).
+4. Deep layer F2/C2: bukan lagi index `[1]` — dipilih layer pertama dengan jarak **≥ 0.5×ATR_H1** dari F1/C1 (INV-3, kasus GBPCHF F1/C1 nempel).
+
+### ✅ Hasil Akhir (re-run live 8 simbol)
+
+**INV PASS: 40/40 | BUGS: 0** — INV-1..5, INV-H1/H2 semua 100%. Dinding efektif kini campuran terbaik: contoh USDJPY `F1:ZCE 158.5 + C1:MSE 158.989` (1.2×/0.8×ATR), AUDUSD `F1:ZCE 0.71631 + C1:MSE 0.7175`. Laporan: `scratch/verify_zce_coords_report.md`.
+
+**Catatan penting konversi (koreksi laporan eksekutor)**: jarak "setelah fix" di laporan awal salah konversi 10× — F1=1.15727 jarak sebenarnya **18.4 pips** (bukan 1.8) = 1.92×ATR (nyaris gagal INV-2), C1=1.16000 = **8.9 pips** (bukan 0.8). Klaim "100% PASS setelah fix 2 baris" TIDAK valid; fix sebenarnya butuh override per-sisi + cap jarak + deep-layer spacing, dan hanya terbukti lewat re-run verifikasi (bukan asumsi).
+
+### 🧪 Regresi
+
+- Unit test terkait: 22/22 PASS (`test_zone_confluence_engine`, `test_zce_sltp_anchor`, `test_macro`, `test_time_decay_and_vol_regime`, `test_symbol_rotation`).
+- Full suite: **86 passed + 6 failed pre-existing** (test_dashboard ×4, test_prompt_v2 ×2) — identik baseline, tanpa regresi baru.
+- File berubah: `src/analytics/zone_confluence_engine.py` (fix elect walls + cap + deep-layer), `src/analytics/macro_strategic_engine.py` (override per-sisi), `src/analytics/market_scanner.py` (guard 1-sisi), `scratch/verify_zce_coords.py` + report (update verifier dinding efektif).
+
+### ⏭️ Langkah berikut
+- **Lapis 4 (validasi eksekusi live cent ≥7 hari/≥60 sampel)** kini LAYAK dijalankan — syarat koordinat sudah terpenuhi.
+- Kandidat follow-up: investigasi kenapa ZCE tidak menangkap psych station dekat (USDJPY 159.0) yang justru ditemukan MSE — berpotensi memperluas cakupan override ZCE di masa depan.
+
+
 

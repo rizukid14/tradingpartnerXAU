@@ -88,13 +88,15 @@ class Test2DConfluenceAndThesisInvalidation(unittest.TestCase):
 
     def test_tight_sltp_rules_for_reduced_scalp(self):
         """Verify that REDUCED_SCALP caps TP at max 1.25x SL (Tight Scalp)"""
-        sl, tp, ok, reason = _apply_sltp_rules(
-            sl_points=100,
-            tp_points=800,
-            symbol="EURUSD-ECNc",
-            action_tier="REDUCED_SCALP",
-            setup_grade="GRADE_B"
-        )
+        import config
+        with patch.object(config, "ZCE_ENABLED", False), patch.object(config, "ZCE_MODE", "shadow"):
+            sl, tp, ok, reason = _apply_sltp_rules(
+                sl_points=100,
+                tp_points=800,
+                symbol="EURUSD-ECNc",
+                action_tier="REDUCED_SCALP",
+                setup_grade="GRADE_B"
+            )
         self.assertTrue(ok)
         # Should be clamped to max 1.25x of floored SL
         self.assertLessEqual(tp, int(sl * 1.25))

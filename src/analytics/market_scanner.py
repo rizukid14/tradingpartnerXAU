@@ -707,7 +707,16 @@ class MarketScanner:
             # ── 1. TOP-DOWN LAYER 1: PURE QUANT MACRO STRATEGIC ENGINE (MSE 6-TF) ──
             strat_dir = None
             try:
-                strat_dir = macro_strategic_engine.get_directive(valid_sym, mt5_connector=mt5_connector)
+                zce_walls = None
+                if getattr(config, "ZCE_ENABLED", False) and getattr(config, "ZCE_MODE", "shadow") in ("legacy", "full"):
+                    zm = getattr(self, "_zce_maps", {}).get(valid_sym)
+                    if zm is not None:
+                        w = zm.wall_override
+                        # Override PER-SISI (fix INV-2): cukup SATU sisi non-None —
+                        # MSE mengisi sisi yang kosong dengan baseline-nya sendiri.
+                        if w.get("imm_floor_f1") is not None or w.get("imm_ceiling_c1") is not None:
+                            zce_walls = w  # dinding ZCE (RFC 11 Phase-2)
+                strat_dir = macro_strategic_engine.get_directive(valid_sym, mt5_connector=mt5_connector, zce_walls=zce_walls)
             except Exception as e_strat:
                 logger.debug(f"[STRAT ENGINE] Error computing directive for {valid_sym}: {e_strat}")
 
@@ -869,6 +878,63 @@ class MarketScanner:
             logger.warning(f"Error updating macro context for {valid_sym}: {e}")
             return None
 
+    # ── ZCE (RFC 11) rotation refresh — dipanggil per siklus scan, ZCE_ENABLED off = no-op ──
+    def _refresh_zce_rotation(self, mt5_connector=None) -> None:
+        """Refresh peta zona ZCE untuk ZCE_REFRESH_ROTATION simbol per siklus (rotasi).
+        Default config.ZCE_ENABLED=False -> metode ini no-op (0 biaya runtime)."""
+        if not getattr(config, "ZCE_ENABLED", False):
+            return
+        try:
+            from src.analytics.zone_confluence_engine import ZoneConfluenceEngine
+        except Exception as e:
+            logger.debug(f"[ZCE] engine import gagal: {e}")
+            return
+        eng = getattr(self, "_zce_engine", None)
+        if eng is None:
+            eng = ZoneConfluenceEngine()
+            self._zce_engine = eng
+        maps = getattr(self, "_zce_maps", {})
+        syms = self.symbols
+        if not syms:
+            return
+        rot = int(getattr(self, "_zce_rot", 0)) % len(syms)
+        n = max(1, int(getattr(config, "ZCE_REFRESH_ROTATION", 6)))
+        tf_cfg = [("MN1", getattr(config.mt5, "TIMEFRAME_MN1", 49167), 100),
+                  ("W1", getattr(config.mt5, "TIMEFRAME_W1", 32769), 200),
+                  ("D1", getattr(config.mt5, "TIMEFRAME_D1", 16408), 350),
+                  ("H4", getattr(config.mt5, "TIMEFRAME_H4", 16388), 400),
+                  ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 520),
+                  ("M30", getattr(config.mt5, "TIMEFRAME_M30", 16386), 600)]
+        for k in range(n):
+            sym = syms[(rot + k) % len(syms)]
+            valid = sym
+            if mt5_connector is not None and hasattr(mt5_connector, "get_valid_trade_symbol"):
+                valid = mt5_connector.get_valid_trade_symbol(sym)
+            try:
+                if hasattr(config.mt5, "symbol_select"):
+                    config.mt5.symbol_select(valid, True)
+                dfs = {}
+                for name, tfid, cnt in tf_cfg:
+                    rr = config.mt5.copy_rates_from_pos(valid, tfid, 0, cnt)
+                    if rr is None or len(rr) == 0:
+                        continue
+                    dfs[name] = pd.DataFrame(rr)
+                h1 = dfs.get("H1")
+                if h1 is None or len(h1) < 60:
+                    continue
+                pt = self._get_point(valid)
+                digits = 5
+                try:
+                    import math as _m
+                    digits = int(round(-_m.log10(pt))) if pt > 0 else 5
+                except Exception:
+                    digits = 5
+                maps[valid] = eng.compute_zone_map(valid, dfs, point_size=pt, digits=digits)
+            except Exception as e:
+                logger.debug(f"[ZCE] peta zona gagal untuk {valid}: {e}")
+        self._zce_maps = maps
+        self._zce_rot = (rot + n) % len(syms)
+
     def scan_all(self, mt5_connector=None) -> List[CandidateSetup]:
         """Alias untuk scan_fast_radar guna memindai seluruh 26 simbol universe."""
         return self.scan_fast_radar(mt5_connector=mt5_connector)
@@ -896,6 +962,7 @@ class MarketScanner:
         # Ensure macro cache is initialized
         if not self.macro_cache or (self.last_macro_update and (now - self.last_macro_update).total_seconds() > 3600):
             self.update_macro_context(mt5_connector=mt5_connector)
+        self._refresh_zce_rotation(mt5_connector=mt5_connector)
 
         candidates: List[CandidateSetup] = []
         is_london_open = (14 <= h <= 18)

@@ -246,6 +246,22 @@ ENABLE_MACRO_STRATEGIC_ENGINE = _getenv_bool("ENABLE_MACRO_STRATEGIC_ENGINE", Tr
 MACRO_STRATEGIC_REFRESH_SECONDS = _getenv_int("MACRO_STRATEGIC_REFRESH_SECONDS", 3600)
 ENABLE_MSE_HARD_STAGE1_GATE = _getenv_bool("ENABLE_MSE_HARD_STAGE1_GATE", True)
 
+# ---------- Zone Confluence Engine (ZCE, RFC 11: docs/plans/ZONE_CONFLUENCE_ENGINE_SPEC.md) ----------
+# Peta zona multi-TF x multi-horizon (OB/FVG/EQH/EQL/FRVP/psych/last swing) + scale ladder + SCALE_CONFLICT.
+# Mode: "shadow" = hitung + log tanpa efek eksekusi; "legacy"/"full" = supply walls ke MSE.
+ZCE_ENABLED = _getenv_bool("ZCE_ENABLED", False)
+ZCE_MODE = os.getenv("ZCE_MODE", "shadow")
+ZCE_REFRESH_ROTATION = _getenv_int("ZCE_REFRESH_ROTATION", 6)          # simbol diproses per siklus 60s
+ZCE_TP_REACH_ATR_MULT = _getenv_float("ZCE_TP_REACH_ATR_MULT", 3.0)    # reachability TP1 intraday (x ATR H1)
+ZCE_COLD_DAYS = _getenv_int("ZCE_COLD_DAYS", 21)                       # tidak tersentuh > N hari -> COLD
+ZCE_VACUUM_DAYS = _getenv_int("ZCE_VACUUM_DAYS", 60)                   # COLD + tanpa aktivitas H1 -> VACUUM
+ZCE_CONFLICT_GAP = _getenv_float("ZCE_CONFLICT_GAP", 0.45)             # selisih posisi antar-horizon -> SCALE_CONFLICT
+ZCE_CLUSTER_MERGE_ATR_MULT = _getenv_float("ZCE_CLUSTER_MERGE_ATR_MULT", 0.25)
+ZCE_GRADE_G2 = _getenv_float("ZCE_GRADE_G2", 3.5)
+ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
+# Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
+SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
+
 # Systemic Currency Basket Circuit Breaker (Global M15/H1 CSM 8 Currencies)
 ENABLE_SYSTEMIC_BASKET_LOCK = _getenv_bool("ENABLE_SYSTEMIC_BASKET_LOCK", True)
 SYSTEMIC_BASKET_USD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_USD_THRESHOLD", 2.0)
@@ -318,7 +334,7 @@ def deviation_for(symbol):
 # - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
 #   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
 #   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
-# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 0.50x ATR H1)
 #   via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts kalau ATR gagal; R:R min 1.25:1) - cocok utk H1 swing.
 # - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
 #   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
@@ -342,7 +358,7 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # Mode LLM (XAU & FX): SL/TP bebas struktur LLM, tapi dibatasi safety floor minimal
 # (mencegah SL mikro 5 pips yang membengkakkan lot) + gate R:R minimum.
 # Safety floor SL/TP mode LLM (14 Agustus):
-#   - FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
+#   - FX pairs: floor berbasis ATR aktif (default 0.50x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
 #     Fallback statis 250 pts (25 pips) dipakai kalau ATR gagal dihitung.
 #     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
 #     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
@@ -808,7 +824,7 @@ def sltp_mode_for(symbol):
       min lot) di consensus/main. Max lot cap (0.01) dihapus 14 Agustus - lot murni
       risk-based, volume_max broker yang membatasi.
     - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
-    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 0.50x ATR H1)
       via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts / 25 pips kalau ATR gagal; R:R min 1.25:1).
       Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
     """

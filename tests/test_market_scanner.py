@@ -344,7 +344,8 @@ class TestMarketScanner(unittest.TestCase):
     def test_consensus_apply_sltp_symbol_specific(self):
         """Verify consensus _apply_sltp_rules executes for non-default symbol."""
         from src.core.consensus import _apply_sltp_rules
-        sl_pts, tp_pts, ok, reason = _apply_sltp_rules(50, 100, symbol="USDJPY-ECNc")
+        with patch.object(config, "ZCE_ENABLED", False), patch.object(config, "ZCE_MODE", "shadow"):
+            sl_pts, tp_pts, ok, reason = _apply_sltp_rules(50, 100, symbol="USDJPY-ECNc")
         self.assertTrue(ok)
         self.assertGreaterEqual(sl_pts, 50)
     def test_universal_sweep_gates_locked_during_bearish_delivery(self):
