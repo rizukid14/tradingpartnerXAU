@@ -1596,15 +1596,13 @@ class MarketScanner:
                     if not allowed_m3_b:
                         logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP ({action_tier_m3_b}): {reason_m3_b}")
                     elif can_buy_m3 and (target_res > 0):
-                        # Verified Breakout Bar Requirement:
-                        # A completed bar must have closed above target_res with a solid body (impulsive displacement)!
-                        has_closed_above = (c_qual.get('prev_close', 0.0) >= target_res - 0.05 * atr_val)
-                        is_impulsive_break = (c_qual.get('prev_body_ratio', 0.0) >= req_body) or (c_qual.get('body_ratio', 0.0) >= req_body)
-                        if not (has_closed_above and is_impulsive_break):
-                            logger.debug(f"[BREAKOUT BUY CONFIRM] {sym} SKIP: Barrier {target_res:.5f} lacks confirmed closed breakout bar (prev_c {c_qual.get('prev_close', 0.0):.5f}, body {c_qual.get('prev_body_ratio', 0.0):.2f})")
-                            continue
-
-                        if (target_res + atr_val * 0.05) <= mid <= (target_res + atr_val * 0.65):
+                        # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_res
+                        in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
+                        if not in_retest_window_b:
+                            logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
+                        elif pos_in_range > 0.72:
+                            logger.debug(f"[BREAKOUT BUY EXTREME] {sym} SKIP: dealing range {pos_in_range*100:.1f}% too high for retest buy")
+                        else:
                             entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
                             sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,
@@ -1702,15 +1700,13 @@ class MarketScanner:
                     if not allowed_m3_s:
                         logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP ({action_tier_m3_s}): {reason_m3_s}")
                     elif can_sell_m3 and (target_sup > 0):
-                        # Verified Breakdown Bar Requirement:
-                        # A completed bar must have closed below target_sup with a solid body (impulsive displacement)!
-                        has_closed_below = (c_qual.get('prev_close', 9999.0) <= target_sup + 0.05 * atr_val)
-                        is_impulsive_break = (c_qual.get('prev_body_ratio', 0.0) >= req_body) or (c_qual.get('body_ratio', 0.0) >= req_body)
-                        if not (has_closed_below and is_impulsive_break):
-                            logger.debug(f"[BREAKOUT SELL CONFIRM] {sym} SKIP: Barrier {target_sup:.5f} lacks confirmed closed breakdown bar (prev_c {c_qual.get('prev_close', 0.0):.5f}, body {c_qual.get('prev_body_ratio', 0.0):.2f})")
-                            continue
-
-                        if (target_sup - atr_val * 0.65) <= mid <= (target_sup - atr_val * 0.05):
+                        # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_sup
+                        in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
+                        if not in_retest_window_s:
+                            logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
+                        elif pos_in_range < 0.28:
+                            logger.debug(f"[BREAKOUT SELL EXTREME] {sym} SKIP: dealing range {pos_in_range*100:.1f}% too low for retest sell")
+                        else:
                             entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
                             sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,
@@ -1746,12 +1742,12 @@ class MarketScanner:
                                     current_spread_pts=spread_pts,
                                     current_atr_pts=atr_pts,
                                     key_support=macro['dealing_range_low'],
-                                    key_resistance=c_sup,
+                                    key_resistance=target_sup,
                                     suggested_sl=sl,
                                     suggested_tp=tp,
                                     risk_reward_ratio=rr_val,
                                     strong_low=macro.get('strong_low', 0.0),
-                                    strong_high=c_sup,
+                                    strong_high=target_sup,
                                     bullish_ob_zone=macro.get('bullish_ob_zone', ""),
                                     bearish_ob_zone=macro.get('bearish_ob_zone', ""),
                                     fvg_zone=macro.get('fvg_zone', ""),
@@ -1779,7 +1775,7 @@ class MarketScanner:
                                     metadata={
                                         "entry_type": "sell_limit",
                                         "entry_price": round(entry_lim, 5 if pt < 0.01 else 2),
-                                        "zone_level": c_sup,
+                                        "zone_level": target_sup,
                                         "zone_touches": t_sup,
                                         "range_age_hours": macro.get('range_age_hours', 24),
                                         "wave_regime": macro.get('wave_regime_name', 'YOUNG_OSCILLATION'),
