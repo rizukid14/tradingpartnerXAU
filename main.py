@@ -716,26 +716,30 @@ def run_scanner_trading_cycle(cand, risk):
             })
             print(f" {UI.RED}[PASS 2 VETO] Trade {sym} di-veto oleh DeepSeek Devil's Advocate: {result.get('reason')}{UI.RST}")
             
-            # CEGAH TOKEN BLEEDING: Cooldown 15 menit agar tidak di-scan berulang
+            # 1 EPISODE RETEST DEBOUNCE (3 Sep 2026): Kunci level retest agar tidak memicu panggilan LLM berulang
             try:
                 from src.analytics.market_scanner import MarketScanner
                 scanner_inst = getattr(MarketScanner, '_instance', None)
                 if scanner_inst:
-                    scanner_inst.mark_symbol_cancelled(sym, cooldown_seconds=900)
-                    print(f" {UI.YELLOW}[COOLDOWN] {sym} diistirahatkan 15 menit setelah VETO.{UI.RST}")
+                    rej_level = getattr(cand, 'trigger_price', 0.0) or getattr(cand, 'scan_mid', 0.0)
+                    rej_atr = getattr(cand, 'current_atr_pts', 0.0)
+                    scanner_inst.record_retest_rejection(sym, level=rej_level, current_atr=rej_atr)
+                    print(f" {UI.YELLOW}[RETEST LOCK] {sym} dikunci pada level {rej_level:.5f} (2 jam / displacement >0.50x ATR) setelah VETO.{UI.RST}")
             except Exception:
                 pass
             
             return False
             
         elif trade_signal == "HOLD":
-            # CEGAH TOKEN BLEEDING: Cooldown 15 menit untuk normal HOLD / Split vote
+            # 1 EPISODE RETEST DEBOUNCE (3 Sep 2026): Kunci level retest agar tidak memicu panggilan LLM berulang
             try:
                 from src.analytics.market_scanner import MarketScanner
                 scanner_inst = getattr(MarketScanner, '_instance', None)
                 if scanner_inst:
-                    scanner_inst.mark_symbol_cancelled(sym, cooldown_seconds=900)
-                    print(f" {UI.YELLOW}[COOLDOWN] {sym} diistirahatkan 15 menit setelah HOLD.{UI.RST}")
+                    rej_level = getattr(cand, 'trigger_price', 0.0) or getattr(cand, 'scan_mid', 0.0)
+                    rej_atr = getattr(cand, 'current_atr_pts', 0.0)
+                    scanner_inst.record_retest_rejection(sym, level=rej_level, current_atr=rej_atr)
+                    print(f" {UI.YELLOW}[RETEST LOCK] {sym} dikunci pada level {rej_level:.5f} (2 jam / displacement >0.50x ATR) setelah HOLD.{UI.RST}")
             except Exception:
                 pass
             

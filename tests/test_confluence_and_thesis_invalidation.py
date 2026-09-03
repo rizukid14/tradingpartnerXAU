@@ -98,8 +98,8 @@ class Test2DConfluenceAndThesisInvalidation(unittest.TestCase):
                 setup_grade="GRADE_B"
             )
         self.assertTrue(ok)
-        # Should be clamped to max 1.25x of floored SL
-        self.assertLessEqual(tp, int(sl * 1.25))
+        # Should be clamped to max 1.25x of floored SL + Net R:R friction compensation
+        self.assertLessEqual(tp, int(sl * 1.25) + 10)
 
 
 if __name__ == "__main__":

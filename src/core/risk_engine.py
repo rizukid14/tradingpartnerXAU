@@ -333,6 +333,21 @@ class RiskEngine:
               + (f" ({split_count} posisi -> ${risk_usd:.2f}/posisi)" if split_count > 1 else "")
               + f", SL {sl_points} pts = ${sl_usd_per_lot:.2f}/lot -> raw lot {lot_raw:.4f}")
 
+        # Friction Ratio Audit (3 Sep 2026):
+        # Periksa apakah biaya transaksi (Spread + Komisi) memakan porsi berlebih dari jarak SL fisik
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            spread_pts = int(round((tick.ask - tick.bid) / si.point)) if (tick and si.point) else 0
+            comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
+            comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
+            total_friction_pts = spread_pts + comm_pts
+            friction_ratio = total_friction_pts / max(sl_points, 1)
+            max_ratio = getattr(config, "MAX_FRICTION_TO_SL_RATIO", 0.20)
+            if friction_ratio > max_ratio:
+                print(f" {UI.tag('FRICTION WARNING', UI.YELLOW)} {symbol}: Friksi transaksi ({total_friction_pts} pts / {friction_ratio*100:.1f}%) > {max_ratio*100:.0f}% jarak SL ({sl_points} pts).")
+        except Exception:
+            pass
+
         # Apply recovery/session multipliers BEFORE clamping so rounding cannot
         # erase the intended reduction.
         lot = self._apply_lot_multipliers(lot_raw, symbol)

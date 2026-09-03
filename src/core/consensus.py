@@ -125,15 +125,32 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     # SL = M4_SL_ATR_MULT × ATR(H1) dari level (0.45), TP = M4_TP_R_MULT × R (1.1R).
     # Divalidasi studi (scratch/study_surge_retest.py & study_mirror_flow.py) → bypass total
     # floor/ceiling/grade/RR default karena nilai tsb BUKAN thesis LLM, melainkan anchor mekanis.
+    # M4: Systemic Flow Continuation (3 Sep 2026)
+    # SL = M4_SL_ATR_MULT × ATR(H1) dari level (0.45), TP = M4_TP_R_MULT × R (1.1R).
+    # Catatan 3 Sep: M4 kini TIDAK LAGI bypass safety floor total agar tidak membuka
+    # SL mikro (misal 29 pts pada EURCHF) yang memicu lot raksasa > 1.0 lot.
+    # Nilai M4 di-clamp ke Segmented Safety Floor dan Net R:R (menutup komisi + spread).
     if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
         _md = getattr(candidate, "metadata", None) or {}
         _m4_sl = int(_md.get("m4_sl_pts") or 0)
         _m4_tp = int(_md.get("m4_tp_pts") or 0)
         if _m4_sl > 0 and _m4_tp > 0:
+            sym_m4 = symbol or config.SYMBOL
+            min_sl_m4 = config.get_sl_floor_points(sym_m4, spread_pts=0, atr_points=0)
+            if _m4_sl < min_sl_m4:
+                _last_sltp_adjustments.append(f"M4 SL {_m4_sl} pts < safety floor ({min_sl_m4} pts). Menyesuaikan ke {min_sl_m4} pts.")
+                _m4_sl = min_sl_m4
+            
+            comm_pts = 5
+            min_tp_m4 = int(_m4_sl * config.LLM_MIN_RR_RATIO) + comm_pts
+            if _m4_tp < min_tp_m4:
+                _last_sltp_adjustments.append(f"M4 TP {_m4_tp} pts < Net R:R ({config.LLM_MIN_RR_RATIO}x + {comm_pts} pts comm). Menyesuaikan ke {min_tp_m4} pts.")
+                _m4_tp = min_tp_m4
+
             _last_sltp_adjustments.append(
-                f"M4 struktural: SL {_m4_sl} pts (0.45×ATR), TP {_m4_tp} pts (1.1R) — anchor beku, bypass floor/RR."
+                f"M4 struktural: SL {_m4_sl} pts, TP {_m4_tp} pts — anchor floored (Net R:R)."
             )
-            return _m4_sl, _m4_tp, True, "M4_STRUCTURAL_FIXED"
+            return _m4_sl, _m4_tp, True, "M4_STRUCTURAL_FLOORED"
 
     sym = symbol or config.SYMBOL
 
@@ -175,27 +192,13 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             min_sl = max(spread_pts * 2, int(1.20 * atr_points), 30000) if atr_points > 0 else 30000
         elif is_xau:
             min_sl = max(spread_pts * 2, int(config.LLM_SAFETY_FLOOR_ATR_MULT * atr_points)) if atr_points > 0 else config.LLM_SAFETY_FLOOR_STATIC_PTS
-        elif is_jpy:
-            jpy_mult = getattr(config, "LLM_JPY_FLOOR_ATR_MULT", 1.00)
-            if atr_points > 0:
-                min_sl = max(spread_pts * 2 + 20, int(jpy_mult * atr_points))
-            else:
-                min_sl = max(spread_pts * 2 + 20, config.default_sl_points_for(sym))
         else:
-            if atr_points > 0:
-                min_sl = max(spread_pts * 2 + 15, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
-            else:
-                min_sl = max(spread_pts * 2 + 15, config.default_sl_points_for(sym))
+            # Segmented Safety Floors (3 Sep 2026): Low-Beta (120 pts), High-Beta (180 pts), JPY (200 pts / 1.00x ATR)
+            min_sl = config.get_sl_floor_points(sym, spread_pts=spread_pts, atr_points=atr_points)
             
         if sl_points < min_sl:
-            _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
+            _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor ({min_sl} pts). Menyesuaikan SL ke {min_sl} pts.")
             sl_points = min_sl
-
-        # Anti-wick padding untuk pair silang (misal NZD +20 pts)
-        nzd_padding = config.sl_padding_for(sym)
-        if nzd_padding > 0:
-            sl_points += nzd_padding
-            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {sym} (SL -> {sl_points} pts).")
 
         # Hard Intraday Ceiling Cap (mencegah SL runaway / swing level)
         # ZCE anchor mode: ceiling = batas VALIDITAS anchor struktural (bukan alat clamp).
@@ -255,10 +258,21 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
-        min_tp = int(sl_points * min_rr)
-        max_tp = int(sl_points * max_rr)
+        # Net R:R Commission & Spread Compensation (3 Sep 2026):
+        # Biaya transaksi (Spread + Round-Turn Komisi) dihitung ke dalam target TP minimal
+        # agar Net R:R setelah potongan broker tetap murni >= min_rr : 1.
+        usd_per_pt_1lot = 0.0
+        if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
+            usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
+        
+        comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
+        comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
+        friction_pts = spread_pts + comm_pts
+
+        min_tp = int(sl_points * min_rr) + friction_pts
+        max_tp = int(sl_points * max_rr) + friction_pts
         if tp_points < min_tp:
-            _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
+            _last_sltp_adjustments.append(f"TP {tp_points} pts < Net R:R ({min_rr}x SL + {friction_pts} pts friksi). Menyesuaikan TP ke {min_tp} pts.")
             tp_points = min_tp
         elif tp_points > max_tp:
             tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""

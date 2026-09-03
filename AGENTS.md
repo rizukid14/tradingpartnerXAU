@@ -127,12 +127,17 @@ python main.py
 ## Gate eksekusi aktif (Hard Rules)
 
 - **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 80\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
-- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 2 Sep 2026)**:
-  - **XAU (non-aktif permanen)**: floor SL = $\max(2 \times \text{spread}, 1.25 \times \text{ATR})$ (`LLM_XAU_FLOOR_ATR_MULT`), fallback 600 pts; ceiling $2.5 \times \text{ATR}$ (fallback 800).
-  - **JPY Crosses**: floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$; ceiling $2.5 \times \text{ATR}$ (fallback 350 pts) — **bukan** 200 pts statis.
-  - **FX Majors/Crosses**: floor SL = $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1})$ (`LLM_FX_FLOOR_ATR_MULT`); fallback 250 pts kalau ATR gagal; ceiling $2.5 \times \text{ATR H1}$ (fallback 350 pts) — **bukan** 160 pts statis.
-  - **BTC** (legacy mode only): mode `ATR-Based` fix R:R 2:1; ceiling $1.8 \times \text{ATR}$ (fallback 45000).
-  - **R:R**: TP $\in [1.25\times, 3.0\times]$ SL (grade-aware).
+- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 3 Sep 2026)**:
+  - **Segmented Safety Floors (3 Sep 2026)**:
+    * **Quiet & Standard FX**: $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1}, 120\text{ pts floor / 12 pips})$. Mengunci lot akun $5.8k $\le 0.40 - 0.45$ lot (eliminasi lot 1.27 / 1.60).
+    * **High-Beta FX** (`GBPAUD`, `GBPNZD`, `EURNZD`, `GBPCHF`): $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 180\text{ pts floor / 18 pips})$.
+    * **JPY Crosses** (M30): $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30}, 200\text{ pts floor / 20 pips})$; ceiling $2.5 \times \text{ATR}$ (fallback 350 pts).
+    * **NZD Crosses**: Tambahan $+20\text{ pts}$ anti-wick padding.
+    * **M4 Systemic Flow**: Tunduk pada segmented safety floor & Net R:R (`M4_STRUCTURAL_FLOORED`).
+  - **Friction-Aware Net R:R**: Target $\text{TP} = (\text{SL} \times R) + \text{Spread} + \text{Round-turn Commission}$ (memastikan net profit riil $\ge 1.25R$ bersih).
+  - **M3 Fresh Breakout Law & Debounce**: Breakout recency $\le 4$ bar H1, displacement body $\ge 55\%$. Rejection di-lock 2 jam / sampai displacement $>0.50\times\text{ATR}$.
+  - **Ceiling (anti-runaway)**: FX/JPY/Gold = $2.5 \times \text{ATR}$ (fallback 350 pts FX/JPY, 800 Gold); BTC = $1.8 \times \text{ATR}$ (fallback 45000).
+  - **R:R**: Net TP $\in [1.25\times, 3.0\times]$ SL + friction (grade-aware).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 00:00–08:00 WIB (FX & XAU skip; BTC 24/7 di legacy mode).
 - **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders.

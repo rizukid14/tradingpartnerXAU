@@ -266,6 +266,7 @@ class MarketScanner:
         self._m4_feed_updated: float = 0.0                     # wall-clock terakhir feed di-refresh
         self._m4_feed_hour: Optional[int] = None               # jam WIB refresh feed (sekali per jam)
         self._last_snapshot_ts: float = 0.0                    # wall-clock snapshot 5-menit ke gate_debug.log
+        self._retest_rejected_levels: Dict[str, Dict[str, Any]] = {} # sym -> {level, rejected_at, entry_atr} (1 Episode Retest Debounce)
         MarketScanner._instance = self
 
     def _load_cooldowns(self) -> Dict[str, float]:
@@ -289,12 +290,55 @@ class MarketScanner:
             pass
 
     def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: int = 1800):
-        """Applies a 30-minute cooldown when a pending order is cancelled or expired."""
+        """Applies a cooldown when a pending order is cancelled or expired."""
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         now_ts = time.time()
         self._symbol_last_trigger[clean_sym] = now_ts + max(0, cooldown_seconds - 900)
         self._save_cooldowns()
         logger.info(f"⏳ Cooldown {cooldown_seconds // 60}m diaktifkan untuk {clean_sym} (Pending Cancelled/Expired).")
+
+    def record_retest_rejection(self, symbol: str, level: float, current_atr: float = 0.0):
+        """
+        Mencatat level retest yang di-reject atau di-hold oleh 3-LLM Jury (1 Episode Retest Debounce).
+        Kunci level tersebut dari trigger ulang sampai harga keluar (>0.5x ATR) atau 2 jam berlalu.
+        """
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        now_ts = time.time()
+        self._retest_rejected_levels[clean_sym] = {
+            "level": float(level),
+            "rejected_at": now_ts,
+            "entry_atr": float(current_atr)
+        }
+        # Naikkan juga symbol trigger cooldown ke minimal 45 menit
+        self._symbol_last_trigger[clean_sym] = now_ts + 1800 # 45 min cooldown total
+        self._save_cooldowns()
+        logger.info(f"🔒 [RETEST REJECTION MEMORY] {clean_sym} dikunci pada level {level:.5f} (2 jam / displacement >0.50x ATR).")
+
+    def is_retest_locked(self, symbol: str, current_mid: float, current_atr: float) -> Tuple[bool, str]:
+        """
+        True jika level masih terkunci dalam 1 Episode Retest Debounce:
+        - Terkunci selama 2 jam (7200s), KECUALI harga bergerak keluar sejauh > 0.50x ATR.
+        """
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        rej = self._retest_rejected_levels.get(clean_sym)
+        if not rej:
+            return False, ""
+        
+        now_ts = time.time()
+        elapsed = now_ts - rej["rejected_at"]
+        max_duration = getattr(config, "M3_RETEST_DEBOUNCE_HOURS", 2.0) * 3600.0 # 7200s
+        
+        if elapsed >= max_duration:
+            del self._retest_rejected_levels[clean_sym]
+            return False, ""
+            
+        atr_ref = current_atr if current_atr > 0 else rej.get("entry_atr", 0.0)
+        dist = abs(current_mid - rej["level"])
+        if atr_ref > 0 and (dist > 0.50 * atr_ref):
+            del self._retest_rejected_levels[clean_sym]
+            return False, ""
+            
+        return True, f"level {rej['level']:.5f} previously rejected ({dist/atr_ref:.2f}x ATR <= 0.50x ATR, elapsed {elapsed/60:.1f}m < {max_duration/60:.0f}m)"
 
     def _get_point(self, symbol: str) -> float:
         try:
@@ -1173,6 +1217,7 @@ class MarketScanner:
                 'frvp_summary': frvp_summary_str,
                 'cluster_resistance': cluster_res,
                 'cluster_support': cluster_sup,
+                'df': df,
                 'touches_resistance': touches_res,
                 'touches_support': touches_sup,
                 'range_age_hours': regime_res.get('range_age_hours', 24.0),
@@ -1430,6 +1475,7 @@ class MarketScanner:
                 pt = macro['point']
                 spread_pts = int(round(abs(ask - bid) / pt))
                 atr_pts = macro.get('atr_pts') or (int(round(macro.get('current_atr', 0.0020) / pt)) if pt > 0 else 300)
+                df = macro.get('df')
 
                 # Evaluate live candle quality for real wick measurement & waterfall detection
                 c_qual = self._evaluate_live_candle_quality(sym, mid, atr_pts, pt, mt5_connector=mt5_connector)
@@ -2118,14 +2164,41 @@ class MarketScanner:
 
                     allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST", entry_price=target_res)
                     can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
-                    if not allowed_m3_b:
+                    
+                    is_locked_b, lock_reason_b = self.is_retest_locked(clean_sym, mid, atr_val)
+                    if is_locked_b:
+                        logger.debug(f"[BREAKOUT BUY DEBOUNCE] {sym} SKIP: {lock_reason_b}")
+                    elif not allowed_m3_b:
                         logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP ({action_tier_m3_b}): {reason_m3_b}")
                     elif can_buy_m3 and (target_res > 0):
-                        # 15-Bar Recency Guard (Instant Retest Law - FBS 10.7yr Research)
-                        # Level must have been crossed within the last 15 H1 bars to qualify as a fresh breakout retest
-                        has_recent_break_b = any(df['low'].iloc[-16:] <= target_res) if (df is not None and len(df) >= 16) else True
-                        if not has_recent_break_b:
-                            logger.debug(f"[BREAKOUT BUY RECENCY] {sym} SKIP: target_res {target_res:.5f} was broken > 15 bars ago (stale level)")
+                        # Fresh Breakout Law & Displacement Guard (3 Sep 2026 - Branch 1 & 2)
+                        # Breakout wajib terjadi dalam 3-4 bar H1 terakhir dan candle breakout wajib memiliki body >= 55%
+                        recency_bars = getattr(config, "M3_BREAKOUT_RECENCY_BARS", 4)
+                        min_disp_body = getattr(config, "M3_MIN_DISPLACEMENT_BODY", 0.55)
+                        
+                        has_fresh_break_b = False
+                        is_displacement_b = False
+                        
+                        if df is not None and len(df) >= (recency_bars + 2):
+                            recent_df = df.iloc[-(recency_bars + 1):]
+                            for idx in range(1, len(recent_df)):
+                                prev_bar = recent_df.iloc[idx - 1]
+                                curr_bar = recent_df.iloc[idx]
+                                crossed_up = (prev_bar['close'] <= target_res and curr_bar['close'] > target_res) or \
+                                             (curr_bar['low'] <= target_res and curr_bar['close'] > target_res)
+                                if crossed_up:
+                                    has_fresh_break_b = True
+                                    bar_range = curr_bar['high'] - curr_bar['low']
+                                    bar_body = abs(curr_bar['close'] - curr_bar['open'])
+                                    body_ratio = (bar_body / bar_range) if bar_range > 0 else 0.0
+                                    if body_ratio >= min_disp_body and curr_bar['close'] > curr_bar['open']:
+                                        is_displacement_b = True
+                                        break
+                        
+                        if not has_fresh_break_b:
+                            logger.debug(f"[BREAKOUT BUY RECENCY] {sym} SKIP: target_res {target_res:.5f} has no fresh breakout in last {recency_bars} H1 bars")
+                        elif not is_displacement_b:
+                            logger.debug(f"[BREAKOUT BUY DISPLACEMENT] {sym} SKIP: breakout candle body < {min_disp_body*100:.0f}% (no momentum displacement)")
                         else:
                             # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_res
                             in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
@@ -2133,7 +2206,7 @@ class MarketScanner:
                                 logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
                             else:
                                 # Runaway Flash Spike Guard: Excursion must not exceed 2.50x ATR
-                                max_push_b = (max(df['high'].iloc[-16:]) - target_res) / atr_val if (df is not None and len(df) >= 16 and atr_val > 0) else 0.0
+                                max_push_b = (max(df['high'].iloc[-(recency_bars + 2):]) - target_res) / atr_val if (df is not None and len(df) >= (recency_bars + 2) and atr_val > 0) else 0.0
                                 if max_push_b > 2.50:
                                     logger.debug(f"[BREAKOUT BUY RUNAWAY] {sym} SKIP: excursion {max_push_b:.2f}x ATR > 2.50x ATR (flash spike exhaustion)")
                                 else:
@@ -2237,14 +2310,41 @@ class MarketScanner:
 
                     allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST", entry_price=target_sup)
                     can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
-                    if not allowed_m3_s:
+                    
+                    is_locked_s, lock_reason_s = self.is_retest_locked(clean_sym, mid, atr_val)
+                    if is_locked_s:
+                        logger.debug(f"[BREAKOUT SELL DEBOUNCE] {sym} SKIP: {lock_reason_s}")
+                    elif not allowed_m3_s:
                         logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP ({action_tier_m3_s}): {reason_m3_s}")
                     elif can_sell_m3 and (target_sup > 0):
-                        # 15-Bar Recency Guard (Instant Retest Law - FBS 10.7yr Research)
-                        # Level must have been crossed within the last 15 H1 bars to qualify as a fresh breakout retest
-                        has_recent_break_s = any(df['high'].iloc[-16:] >= target_sup) if (df is not None and len(df) >= 16) else True
-                        if not has_recent_break_s:
-                            logger.debug(f"[BREAKOUT SELL RECENCY] {sym} SKIP: target_sup {target_sup:.5f} was broken > 15 bars ago (stale level)")
+                        # Fresh Breakout Law & Displacement Guard (3 Sep 2026 - Branch 1 & 2)
+                        # Breakdown wajib terjadi dalam 3-4 bar H1 terakhir dan candle breakdown wajib memiliki body >= 55%
+                        recency_bars = getattr(config, "M3_BREAKOUT_RECENCY_BARS", 4)
+                        min_disp_body = getattr(config, "M3_MIN_DISPLACEMENT_BODY", 0.55)
+                        
+                        has_fresh_break_s = False
+                        is_displacement_s = False
+                        
+                        if df is not None and len(df) >= (recency_bars + 2):
+                            recent_df = df.iloc[-(recency_bars + 1):]
+                            for idx in range(1, len(recent_df)):
+                                prev_bar = recent_df.iloc[idx - 1]
+                                curr_bar = recent_df.iloc[idx]
+                                crossed_down = (prev_bar['close'] >= target_sup and curr_bar['close'] < target_sup) or \
+                                               (curr_bar['high'] >= target_sup and curr_bar['close'] < target_sup)
+                                if crossed_down:
+                                    has_fresh_break_s = True
+                                    bar_range = curr_bar['high'] - curr_bar['low']
+                                    bar_body = abs(curr_bar['close'] - curr_bar['open'])
+                                    body_ratio = (bar_body / bar_range) if bar_range > 0 else 0.0
+                                    if body_ratio >= min_disp_body and curr_bar['close'] < curr_bar['open']:
+                                        is_displacement_s = True
+                                        break
+                        
+                        if not has_fresh_break_s:
+                            logger.debug(f"[BREAKOUT SELL RECENCY] {sym} SKIP: target_sup {target_sup:.5f} has no fresh breakdown in last {recency_bars} H1 bars")
+                        elif not is_displacement_s:
+                            logger.debug(f"[BREAKOUT SELL DISPLACEMENT] {sym} SKIP: breakdown candle body < {min_disp_body*100:.0f}% (no momentum displacement)")
                         else:
                             # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_sup
                             in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
@@ -2252,7 +2352,7 @@ class MarketScanner:
                                 logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
                             else:
                                 # Runaway Flash Dump Guard: Excursion must not exceed 2.50x ATR
-                                max_push_s = (target_sup - min(df['low'].iloc[-16:])) / atr_val if (df is not None and len(df) >= 16 and atr_val > 0) else 0.0
+                                max_push_s = (target_sup - min(df['low'].iloc[-(recency_bars + 2):])) / atr_val if (df is not None and len(df) >= (recency_bars + 2) and atr_val > 0) else 0.0
                                 if max_push_s > 2.50:
                                     logger.debug(f"[BREAKOUT SELL RUNAWAY] {sym} SKIP: excursion {max_push_s:.2f}x ATR > 2.50x ATR (flash dump exhaustion)")
                                 else:

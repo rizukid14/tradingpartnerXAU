@@ -408,6 +408,18 @@ LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 600)  # fallb
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 
+# Segmented Safety Floors (3 September 2026)
+SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 120)       # 120 pts (12 pips) untuk Low-Beta & Standard FX
+SL_FLOOR_HIGH_BETA_PTS = _getenv_int("SL_FLOOR_HIGH_BETA_PTS", 180)     # 180 pts (18 pips) untuk High-Beta Crosses (GBPAUD, GBPNZD, EURNZD, GBPCHF)
+SL_FLOOR_JPY_PTS = _getenv_int("SL_FLOOR_JPY_PTS", 200)                 # 200 pts (20 pips) untuk JPY Crosses (M30)
+COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0) # $6.00 round turn ($3/side)
+MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
+
+# M3 Fresh Breakout & Displacement Rules
+M3_BREAKOUT_RECENCY_BARS = _getenv_int("M3_BREAKOUT_RECENCY_BARS", 4)   # Max 4 bar H1 sejak breakout
+M3_MIN_DISPLACEMENT_BODY = _getenv_float("M3_MIN_DISPLACEMENT_BODY", 0.55) # Minimal 55% body ratio pada breakout candle
+M3_RETEST_DEBOUNCE_HOURS = _getenv_float("M3_RETEST_DEBOUNCE_HOURS", 2.0) # 2 bar H1 (120 menit) lock jika direject
+
 # Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
 # per-trade) TIDAK otomatis ditolak di risk_pct — masih diterima selama risk aktual
 # di min lot <= OVER_RISK_MAX_PERCENT (14 Agustus malam: user minta SL >1000 pts
@@ -671,6 +683,31 @@ def is_asian_session_pair(symbol: str) -> bool:
     """
     s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
     return any(c in s for c in ("JPY", "AUD", "NZD"))
+
+def is_high_beta_pair(symbol: str) -> bool:
+    """True if symbol belongs to high-beta / wild crosses category (GBPAUD, GBPNZD, EURNZD, GBPCHF)."""
+    s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    return s in ("GBPAUD", "GBPNZD", "EURNZD", "GBPCHF")
+
+def get_sl_floor_points(symbol: str, spread_pts: int = 0, atr_points: int = 0) -> int:
+    """
+    Kalkulasi Segmented Safety Floor Stop Loss (3 September 2026):
+    - JPY Crosses (M30): max(2*spread + 20, int(1.00 * atr_points), SL_FLOOR_JPY_PTS)
+    - High-Beta Crosses (H1): max(2*spread + 20, int(0.50 * atr_points), SL_FLOOR_HIGH_BETA_PTS)
+    - Quiet & Standard FX (H1): max(2*spread + 15, int(0.50 * atr_points), SL_FLOOR_QUIET_FX_PTS)
+    - Anti-wick padding NZD (+20 pts)
+    """
+    clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    if "JPY" in clean:
+        floor = max(spread_pts * 2 + 20, int(LLM_JPY_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_JPY_PTS, SL_FLOOR_JPY_PTS)
+    elif is_high_beta_pair(clean):
+        floor = max(spread_pts * 2 + 20, int(LLM_FX_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_HIGH_BETA_PTS, SL_FLOOR_HIGH_BETA_PTS)
+    else:
+        floor = max(spread_pts * 2 + 15, int(LLM_FX_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_QUIET_FX_PTS, SL_FLOOR_QUIET_FX_PTS)
+    
+    if "NZD" in clean:
+        floor += SL_PADDING_NZD_POINTS
+    return floor
 
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)

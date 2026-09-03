@@ -41,9 +41,9 @@ class TestM4FlowContinuation(unittest.TestCase):
             candidate=cand
         )
         self.assertTrue(ok)
-        self.assertEqual(reason, "M4_STRUCTURAL_FIXED")
-        self.assertEqual(sl, 180)
-        self.assertEqual(tp, 198)
+        self.assertEqual(reason, "M4_STRUCTURAL_FLOORED")
+        self.assertEqual(sl, 200)
+        self.assertEqual(tp, int(200 * config.LLM_MIN_RR_RATIO) + 5)
 
     def test_m4_anchor_broken_uses_cand_sym_not_gbpusd(self):
         """Ensure M4 anchor-broken check evaluates candidate symbol tick (AUDJPY ~98.50) NOT config.SYMBOL (GBPUSD ~1.33)."""
@@ -87,8 +87,8 @@ class TestM4FlowContinuation(unittest.TestCase):
             # If bug was present (comparing 98.50 against GBPUSD 1.33), it would have marked anchor broken and returned HOLD!
             # With fix (comparing 98.50 against AUDJPY ask 98.55), buy_limit @ 98.50 < ask 98.55 is VALID!
             self.assertEqual(res["signal"], "BUY")
-            self.assertEqual(res["sl_points"], 150)
-            self.assertEqual(res["tp_points"], 165)
+            self.assertEqual(res["sl_points"], 200)
+            self.assertEqual(res["tp_points"], 255)
 
     def test_m4_anchor_broken_aborts_when_market_penetrates_past_anchor(self):
         """If market for SELL has dropped below entry level (or BUY rose above limit), M4 must abort."""
