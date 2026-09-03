@@ -526,6 +526,80 @@ class TestMarketScanner(unittest.TestCase):
             self.assertEqual(res, [])
             mock_fast.assert_called_once_with(mt5_connector=self.connector)
 
+    def test_get_radar_standbys_bearish_and_bullish(self):
+        """Verify get_radar_standbys extracts 1:1 levels: bearish M2 at EMA/resistance, bullish at EMA/support."""
+        # 1. Bearish Case (EURAUD style)
+        macro_bear = {
+            'is_bear': True,
+            'is_bull': False,
+            'immediate_floor_f1': 1.61114,
+            'immediate_ceiling_c1': 1.61574,
+            'ema20': 1.61626,
+            'ema50': 1.61779,
+            'dealing_range_low': 1.61343,
+            'dealing_range_high': 1.62524,
+            'micro_sbr_h1': 1.61550,
+            'asian_high': 1.61900
+        }
+        standbys_bear = self.scanner.get_radar_standbys("EURAUD-ECNc", mid=1.61450, macro=macro_bear)
+        m2_bear = next((s for s in standbys_bear if s['type'] == 'M2'), None)
+        self.assertIsNotNone(m2_bear)
+        # M2 in bearish must be at or above price (near EMA / C1 ceiling), NEVER at swing low 1.61344!
+        self.assertGreaterEqual(m2_bear['price'], 1.61450)
+        self.assertNotEqual(m2_bear['price'], 1.61344)
+        self.assertIn("Bearish", m2_bear['label'])
+
+        # 2. Bullish Case
+        macro_bull = {
+            'is_bear': False,
+            'is_bull': True,
+            'immediate_floor_f1': 1.10000,
+            'immediate_ceiling_c1': 1.10800,
+            'ema20': 1.10300,
+            'ema50': 1.10200,
+            'dealing_range_low': 1.09800,
+            'dealing_range_high': 1.10900,
+            'micro_rbs_h1': 1.10150,
+            'asian_low': 1.09900
+        }
+        standbys_bull = self.scanner.get_radar_standbys("EURUSD-ECNc", mid=1.10400, macro=macro_bull)
+        m2_bull = next((s for s in standbys_bull if s['type'] == 'M2'), None)
+        self.assertIsNotNone(m2_bull)
+        # M2 in bullish must be at or below price (near EMA / F1 floor)
+        self.assertLessEqual(m2_bull['price'], 1.10400)
+        self.assertIn("Bullish", m2_bull['label'])
+
+    def test_find_ema_confluence_anchor_and_temporal_tracking(self):
+        """Verify M2 anchors to institutional confluence (Psych, OB, FVG, F1) and standbys include temporal tracking."""
+        macro = {
+            'is_bull': True,
+            'is_bear': False,
+            'ema20': 0.71866,
+            'ema50': 0.71731,
+            'current_atr': 0.00100,
+            'dealing_range_pos': 0.85,
+            'bullish_ob_top': 0.71686,
+            'immediate_floor_f1': 0.71844,
+            'cluster_resistance': 0.71844,
+            'touches_resistance': 2
+        }
+        # 1. Test EMA Confluence Anchor
+        price, desc = self.scanner.find_ema_confluence_anchor("AUDUSD-ECNc", mid=0.72050, direction=1, macro=macro, pt=0.00001, atr_val=0.00100)
+        self.assertGreater(price, 0.0)
+        self.assertLess(price, 0.72050)
+        self.assertIn("Confluence", desc)
+
+        # 2. Test Temporal Tracking fields in Standbys
+        standbys = self.scanner.get_radar_standbys("AUDUSD-ECNc", mid=0.72050, macro=macro, pt=0.00001, atr_val=0.00100)
+        for s in standbys:
+            self.assertIn("type", s)
+            self.assertIn("price", s)
+            self.assertIn("label", s)
+            self.assertIn("event_time", s)
+            self.assertIn("status", s)
+            self.assertIn("bar_age", s)
+            self.assertIn("direction", s)
+
 
 if __name__ == "__main__":
     unittest.main()
