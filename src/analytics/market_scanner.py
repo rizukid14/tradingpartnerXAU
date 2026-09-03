@@ -846,9 +846,26 @@ class MarketScanner:
         m1_event_time = 0
         m1_bar_age = 0
         m1_status = "WAITING_SWEEP"
-        m1_dir = -1 if (dr_pos >= 0.50 or is_bear) else 1
 
-        if dr_pos >= 0.50 or is_bear:
+        # M1: Universal Liquidity Sweep & SFP
+        # When price tests Floor F1 (or deep discount <=0.30), sweep targets SFP Low (Floor Rebound).
+        # When price tests Ceiling C1 (or deep premium >=0.70), sweep targets SFP High (Ceiling Rejection).
+        # Otherwise, aligns with structural bias.
+        is_near_floor = (f1_val > 0 and abs(mid - f1_val) <= 0.50 * atr_val) or (dr_pos <= 0.30)
+        is_near_ceiling = (c1_val > 0 and abs(mid - c1_val) <= 0.50 * atr_val) or (dr_pos >= 0.70)
+
+        if is_near_floor and not is_near_ceiling:
+            m1_dir = 1
+        elif is_near_ceiling and not is_near_floor:
+            m1_dir = -1
+        elif is_bear:
+            m1_dir = -1
+        elif is_bull:
+            m1_dir = 1
+        else:
+            m1_dir = -1 if dr_pos >= 0.50 else 1
+
+        if m1_dir == -1:
             valid_tops = [v for v in [asian_h, pdh_val, pwh_val, c1_val] if v > 0 and v >= mid - 0.15 * atr_val]
             m1_price = min(valid_tops) if valid_tops else (c1_val or asian_h or (mid + 0.5 * atr_val))
             m1_lbl = "Bearish Sweep Resistance (SFP High)"
@@ -887,7 +904,10 @@ class MarketScanner:
             })
 
         # ── 2. M2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & RETEST (CONFLUENCE) ──
-        m2_dir = 1 if (is_bull or m_corr == "BULLISH_CORRIDOR") else -1
+        # M2 is strictly pro-trend:
+        # In a Bearish trend, M2 seeks a pullback UP into resistance (>= mid).
+        # In a Bullish trend, M2 seeks a pullback DOWN into support (<= mid).
+        m2_dir = -1 if is_bear else (1 if is_bull else (-1 if dr_pos >= 0.50 else 1))
         m2_price, m2_lbl = self.find_ema_confluence_anchor(symbol, mid, m2_dir, macro, pt, atr_val)
 
         if m2_price > 0:
@@ -1443,16 +1463,27 @@ class MarketScanner:
             else:
                 derived_perm = "WATCH"
 
-            # Harmonize D1 trend label and directional flags with MSE Macro Bias (Single Source of Truth)
-            mse_bias_score = getattr(strat_dir, 'macro_bias_score', 0.0) if strat_dir else 0.0
-            if mse_bias_score <= -0.35:
-                d1_is_bull = False
-                d1_is_bear = True
-                d1_trend_label = "D1_BEARISH_EXPANSION" if d1_c <= d1_ema_long else "D1_BEARISH_PULLBACK"
-            elif mse_bias_score >= 0.35:
-                d1_is_bull = True
-                d1_is_bear = False
-                d1_trend_label = "D1_BULLISH_EXPANSION" if d1_c >= d1_ema_long else "D1_BULLISH_PULLBACK"
+            # Pure Structural Trend from D1 and H4 (do not let tactical floor tests hijack structural trend)
+            is_d1_bull = d1_is_bull and not d1_is_bear
+            is_d1_bear = d1_is_bear and not d1_is_bull
+            is_h4_bull = h4_is_bull and not h4_is_bear
+            is_h4_bear = h4_is_bear and not h4_is_bull
+
+            if is_d1_bear and is_h4_bear:
+                combined_is_bear = True
+                combined_is_bull = False
+            elif is_d1_bull and is_h4_bull:
+                combined_is_bull = True
+                combined_is_bear = False
+            elif is_h4_bear:
+                combined_is_bear = True
+                combined_is_bull = False
+            elif is_h4_bull:
+                combined_is_bull = True
+                combined_is_bear = False
+            else:
+                combined_is_bull = is_d1_bull
+                combined_is_bear = is_d1_bear
 
             combined_trend_label = f"{d1_trend_label} | {h4_trend_label}"
 
@@ -1464,18 +1495,33 @@ class MarketScanner:
             eff_c2 = raw_c2 if (raw_c2 and raw_c2 > eff_c1) else (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) if (getattr(strat_dir, 'deep_target_ceiling_c2', 0.0) > eff_c1) else 0.0)
             eff_f2 = raw_f2 if (raw_f2 and raw_f2 < eff_f1) else (getattr(strat_dir, 'deep_target_floor_f2', 0.0) if (getattr(strat_dir, 'deep_target_floor_f2', 0.0) < eff_f1) else 0.0)
 
+            # Chamber Tactical State: Tactical action at extreme boundary vs baseline flow
+            digits = 3 if "JPY" in valid_sym else 5
+            tactical_state = "BALANCED_FLOW"
+            tactical_desc = ""
+            mse_state = getattr(strat_dir, 'market_state', '') if strat_dir else ''
+            if mse_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST") or (eff_f1 > 0 and abs(cur_close - eff_f1) <= 0.35 * cur_atr) or pos_in_range <= 0.20:
+                tactical_state = "REBOUND_WATCH_AT_FLOOR"
+                tactical_desc = f"REBOUND @ {eff_f1:.{digits}f}" if eff_f1 > 0 else "REBOUND WATCH"
+            elif mse_state in ("CEILING_ABSORPTION", "CHAMBER_CEILING_TEST") or (eff_c1 > 0 and abs(cur_close - eff_c1) <= 0.35 * cur_atr) or pos_in_range >= 0.80:
+                tactical_state = "REJECTION_WATCH_AT_CEILING"
+                tactical_desc = f"REJECT @ {eff_c1:.{digits}f}" if eff_c1 > 0 else "REJECTION WATCH"
+
             return valid_sym, {
                 'symbol': valid_sym,
                 'trend_label': combined_trend_label,
                 'w1_trend_label': w1_trend_label,
                 'd1_trend_label': d1_trend_label,
                 'h4_trend_label': h4_trend_label,
-                'is_d1_bull': d1_is_bull and not d1_is_bear,
-                'is_d1_bear': d1_is_bear and not d1_is_bull,
-                'is_h4_bull': h4_is_bull and not h4_is_bear,
-                'is_h4_bear': h4_is_bear and not h4_is_bull,
-                'is_bull': d1_is_bull and not d1_is_bear,
-                'is_bear': d1_is_bear and not d1_is_bull,
+                'is_d1_bull': is_d1_bull,
+                'is_d1_bear': is_d1_bear,
+                'is_h4_bull': is_h4_bull,
+                'is_h4_bear': is_h4_bear,
+                'is_bull': combined_is_bull,
+                'is_bear': combined_is_bear,
+                'tactical_state': tactical_state,
+                'tactical_desc': tactical_desc,
+                'macro_bias_score': getattr(strat_dir, 'macro_bias_score', 0.0) if strat_dir else 0.0,
                 'permission_state': derived_perm,
                 'csm_delta': csm_delta_val,
                 'recent_ceiling_touch': recent_ceiling_touch,

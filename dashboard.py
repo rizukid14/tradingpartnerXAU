@@ -313,14 +313,22 @@ class CockpitDataEngine:
             # Extract Levels
             f1 = macro.get("immediate_floor_f1") or macro.get("floor_f1") or 0.0
             c1 = macro.get("immediate_ceiling_c1") or macro.get("ceiling_c1") or 0.0
-            bias_label = str(macro.get("trend_label") or macro.get("trend_compass") or "SIDEWAYS").upper()
-            if "BULL" in bias_label:
-                bias = "BULLISH"
-            elif "BEAR" in bias_label:
-                bias = "BEARISH"
-            else:
-                bias = "NEUTRAL"
 
+            # Bias extraction: Prioritize structural flags is_bear / is_bull from macro context
+            if macro.get("is_bear") and not macro.get("is_bull"):
+                bias = "BEARISH"
+            elif macro.get("is_bull") and not macro.get("is_bear"):
+                bias = "BULLISH"
+            else:
+                bias_label = str(macro.get("trend_label") or macro.get("trend_compass") or "SIDEWAYS").upper()
+                if "BEAR" in bias_label and "BULL" not in bias_label:
+                    bias = "BEARISH"
+                elif "BULL" in bias_label and "BEAR" not in bias_label:
+                    bias = "BULLISH"
+                else:
+                    bias = "NEUTRAL"
+
+            tactical_tag = str(macro.get("tactical_desc") or "")
             csm_delta = float(macro.get("csm_delta", 0.0) or 0.0)
             tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
             perm_label = macro.get("permission_state", "GO")
@@ -362,6 +370,7 @@ class CockpitDataEngine:
                 "dist_desc": dist_desc,
                 "is_near": is_near,
                 "bias": bias,
+                "tactical_tag": tactical_tag,
                 "csm_delta": round(csm_delta, 2),
                 "tier": tier,
                 "perm_label": perm_label,
@@ -650,6 +659,8 @@ class CockpitDataEngine:
             "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0),
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
             "perm_label": macro.get("permission_state", "GO"),
+            "tactical_state": macro.get("tactical_state", "BALANCED_FLOW"),
+            "tactical_desc": macro.get("tactical_desc", ""),
             "candles": candles,
             "zce_walls": zce_walls,
             "zce_ladder": zce_ladder,

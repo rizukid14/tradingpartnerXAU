@@ -601,6 +601,39 @@ class TestMarketScanner(unittest.TestCase):
             self.assertIn("direction", s)
 
 
+    def test_structural_trend_and_tactical_chamber_separation(self):
+        """Verify structural trend remains BEARISH during dump, while tactical floor state captures REBOUND WATCH."""
+        macro = {
+            'symbol': 'EURJPY-ECNc',
+            'trend_label': 'D1_BEARISH_EXPANSION | H4_BEARISH_EXPANSION',
+            'is_bull': False,
+            'is_bear': True,
+            'dealing_range_pos': 0.10,
+            'immediate_floor_f1': 181.000,
+            'immediate_ceiling_c1': 181.426,
+            'ema20': 181.731,
+            'ema50': 183.074,
+            'current_atr': 0.438,
+            'tactical_state': 'REBOUND_WATCH_AT_FLOOR',
+            'tactical_desc': 'REBOUND @ 181.000'
+        }
+        standbys = self.scanner.get_radar_standbys("EURJPY-ECNc", mid=181.042, macro=macro, pt=0.001, atr_val=0.438)
+        
+        # M1 must test the floor (Bullish Sweep SFP Low @ 181.000)
+        m1 = next((s for s in standbys if s['type'] == 'M1'), None)
+        self.assertIsNotNone(m1)
+        self.assertEqual(m1['direction'], 1)
+        self.assertIn("Bullish Sweep Support", m1['label'])
+        self.assertLessEqual(m1['price'], 181.050)
+        
+        # M2 must be pro-trend (Bearish Pullback retesting resistance >= mid)
+        m2 = next((s for s in standbys if s['type'] == 'M2'), None)
+        self.assertIsNotNone(m2)
+        self.assertEqual(m2['direction'], -1)
+        self.assertIn("Bearish Pullback", m2['label'])
+        self.assertGreaterEqual(m2['price'], 181.042)
+
+
 if __name__ == "__main__":
     unittest.main()
 

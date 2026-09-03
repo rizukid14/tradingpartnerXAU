@@ -1306,7 +1306,10 @@ function renderWatchlist(pairs) {
         </div>
         <div class="pair-meta">
           <div class="pair-dist-text">${p.dist_desc}</div>
-          <div style="font-size:9px;font-weight:600;color:${biasColor};font-family:var(--font-mono);letter-spacing:0.3px;">${p.bias}</div>
+          <div style="font-size:9px;font-weight:600;color:${biasColor};font-family:var(--font-mono);letter-spacing:0.3px;display:flex;align-items:center;gap:4px;">
+            <span>${p.bias}</span>
+            ${p.tactical_tag ? `<span style="background:rgba(255,183,3,0.15);color:var(--amber);border:1px solid rgba(255,183,3,0.3);padding:0px 4px;border-radius:3px;font-size:8px;">${p.tactical_tag}</span>` : ''}
+          </div>
         </div>
         <div class="pair-right">
           <span class="tier-badge ${tierClass}">${p.perm_label}</span>
@@ -1343,7 +1346,7 @@ function renderSymbolHeader(d) {
   document.getElementById("strip-tier").textContent = `${d.action_tier} (${d.perm_label})`;
 
   // Render Multi-TF Compass & State HUD
-  document.getElementById("hud-sym-tag").textContent = `${clean} ${currentTF}`;
+  document.getElementById("hud-sym-tag").textContent = d.tactical_desc ? `${clean} ${currentTF} • ${d.tactical_desc}` : `${clean} ${currentTF}`;
   if (d.intel) {
     const it = d.intel;
     setCompassPill("pill-w1", "W1", it.w1_trend);
