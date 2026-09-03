@@ -347,5 +347,75 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 - #3 (wire konflik ZCE ke gate) sengaja TIDAK dieksekusi — sinyal belum pernah aktif & belum divalidasi; berisiko memangkas setup tanpa bukti edge.
 - Observasi Lapis 4 live cent lanjut; pantau log `[ZCE]` + dinding override agar umur peta ≤15 mnt.
 
+---
 
+## 15. 3 September 2026 — M4 SYSTEMIC FLOW CONTINUATION + Circuit Breaker Calibration
 
+### 🎯 Latar Belakang (Studi #1 & #1b Mirror)
+- **Studi #1 & #1b**: Systemic currency flow (rolling 24-bar H1 log-return warm 720, z >= 1.5) -> breakdown swing 120-bar -> pending limit retest di level. Validasi empiris 15 tahun FBS (N=650, P(win) 59.4% vs 51.8% control, chi-sq=8.74). SL struktural 0.45xATR, TP 1.1R. Exclude USDJPY (48.1% < netral).
+
+### 🔬 Implementasi & Penyelarasan Menyeluruh (/grill-me)
+1. **Parameter M4**: `M4_ENABLED=True`, `M4_TRIGGER_Z=1.5`, `M4_CONT_Z=0.75`, `M4_FLOW_LOOKBACK_BARS=24`, `M4_LOOKBACK_BARS=120`, `M4_MIN_EPISODE_BARS=6`, `M4_MIN_GAP_BARS=240`, `M4_SL_ATR_MULT=0.45`, `M4_TP_R_MULT=1.1`, `M4_PENDING_EXPIRY_MINUTES=120`.
+2. **All-or-Nothing Position Management**: Posisi M4 di `position_manager.py` dibebaskan dari Partial Close, BEP, dan Trailing Stop — menjaga integritas target struktural 1.1R, sembari mempertahankan Pre-Rollover Shield & Time-Decay Stagnation.
+3. **Thesis Invalidation Bypass**: Pending M4 dikecualikan dari pembatalan bias MSE D1/H4 di `position_manager.py:audit_pending_orders_thesis()`.
+4. **Fix Fatal Bug Symbol Collision**: `cand_sym = getattr(candidate, 'symbol', None) or config.SYMBOL` di seluruh alur konsensus multi-LLM, menghapus risiko pembatalan cross JPY/EUR akibat salah banding harga vs GBPUSD.
+5. **Unifikasi Filter Sesi Tokyo (08:00 - 14:00 WIB)**: `TOKYO_PROVEN_SYMBOLS` usang dihapus. `is_symbol_allowed_for_session` diselaraskan 100% dengan `config.is_asian_session_pair(symbol)`. Semua pair ber-driver aktif Asia/Pasifik (mengandung JPY, AUD, atau NZD) diizinkan; pair tanpa JPY/AUD/NZD dikunci.
+6. **Fix Silent TypeError di `_m4_refresh_z` (`market_scanner.py:414`)**:
+   - Mengganti `part.mean(axis=1, min_periods=minp)` (di mana `DataFrame.mean()` tidak menerima parameter `min_periods`) dengan `part.mean(axis=1).where(part.count(axis=1) >= minp)`.
+   - Memulihkan 27 episode flow aktif di scanner.
+7. **Kalibrasi Threshold Systemic Currency Basket Circuit Breaker ke 35.0 bps**:
+   - Menaikkan `SYSTEMIC_BASKET_USD_THRESHOLD`, `JPY_THRESHOLD`, `CROSS_THRESHOLD`, dan `SPREAD_THRESHOLD` dari 2.0 (20 bps) ke 3.5 (35 bps) di `config.py` dan `.env`.
+   - Membebaskan pergerakan tren harian wajar (USD -33.4 bps dan EUR -21.8 bps) agar setup trend-following (seperti GBPUSD SELL M4) dapat dieksekusi, sembari tetap mengunci ketat counter-trend pada shock ekstrem (seperti JPY Surge +67.5 bps).
+   - Seluruh unit test suite 75 tests lulus 100% PASS.
+8. **Periodic Quant Funnel Snapshot Logger (5-Menit)**:
+   - Menambahkan `_log_periodic_quant_snapshot()` di `market_scanner.py` yang mencatat ringkasan spasial 26 pair (`[ZCE F1/C1 | MSE State & Tier | Dealing Range Pos | M4 Standbys]`) tiap 300 detik ke `data/gate_debug.log` (<0.0005 detik, 0 token, 0 beban MT5).
+9. **Graceful MT5 Shutdown (`atexit` Protection)**:
+   - Menambahkan registrasi `atexit.register(_safe_mt5_shutdown)` di `src/core/mt5_connector.py`.
+   - Menjamin bahwa saat proses Python dimatikan via `Ctrl+C` atau selesai, koneksi terminal MT5 ditutup secara bersih dan tidak pernah meninggalkan *zombie process headless* (`terminal64.exe` tanpa GUI window) yang mengunci file disk dan membuat laptop ngelag.
+10. **Penyelarasan Menu & Command Telegram (`telegram_bot.py`)**:
+    - `/macro [pair]`: Sekarang memprioritaskan pembacaan direktif dari `scanner.macro_cache` sehingga level lantai F1 dan plafon C1 di Telegram **100% sinkron dengan dinding konfluensi ZCE** yang digunakan oleh bot eksekusi live.
+    - `/macro all`: Terhubung langsung ke cache scanner untuk menghasilkan ringkasan kompas 26 pair instan (<1ms).
+    - Macro Picker Menu: Ditambahkan tombol inline `🧭 [ All 26 Pairs Compass ]` (memanggil `cmd:macro_ALL`), serta mengganti pair non-aktif `BTCUSD` dengan pair FX aktif (`EURCHF` dan `AUDCAD`).
+    - `/levels` & `/smc`: Diperkaya dengan tampilan **🏰 ZCE FORTRESS WALLS** (F1 Lantai dan C1 Plafon multi-TF beserta Grade G2/G3 dan Fortress Tag).
+11. **Eliminasi False-Positive Gate Stacking (M3 Runway & M4 Contextual Trap Veto)**:
+    - **Diagnosa Masalah**: Audit `data/gate_debug.log` membuktikan bahwa filter kaku $dr\_pos < 0.28$ (disalin dari M2 Pullback) membunuh 100% setup M3 Breakdown Retest pada broken support (seperti EURCAD menembus support dan retest SBR di `1.60278` dengan target lantai Daily `1.60032`). Selain itu, trap MSE untuk harga pasar (`Do NOT short into support at F1`) memblokir membabi buta Limit Order M4 yang berada di plafon (seperti `CADJPY SELL_LIMIT @ 113.816` dengan target $F_1$ `113.302`).
+    - **Perbaikan Kode (`market_scanner.py`)**:
+      - `_is_direction_allowed(target_dir, setup_label, entry_price=None)`: Menambahkan *Contextual Limit Awareness*. Jika limit order sell berada $\ge 0.40\times\text{ATR}$ di atas support $F_1$, trap larangan short di support diabaikan karena $F_1$ adalah Take Profit target. Sebaliknya untuk buy limit di bawah resisten $C_1$.
+      - **M3 Breakdown Retest Runway**: Mengganti filter kaku $dr\_pos < 0.28$ dengan perhitungan Runway ke lantai target: $\text{Runway to } F_1 = (target\_sup - \text{immediate\_floor\_f1}) \ge 0.80\times\text{ATR}_{H1}$. Peluang breakdown retest dengan ruang gerak lebar kini diizinkan.
+12. **Perbaikan NameError `zce_meta` & Validasi Live Setup EURCAD (`market_scanner.py`)**:
+    - **Diagnosa Masalah**: Setelah filter runway M3 membuka blokir pada EURCAD, kode eksekusi mencapai tahap pembentukan `CandidateSetup`. Di sana terjadi `NameError: name 'zce_meta' is not defined` karena dictionary `zce_meta` yang dibuat di `_build_macro_context()` lupa disimpan ke return dict `macro`, dan belum diinisialisasi di scope `scan_all()`.
+    - **Perbaikan Kode**:
+      - Menyimpan `'zce_meta': zce_meta` ke dalam dictionary hasil return `_build_macro_context()`.
+      - Menginisialisasi `zce_meta = macro.get('zce_meta') or {...}` dengan fallback lengkap per-simbol di awal pemrosesan `scan_all()`.
+13. **Penyelarasan Mid-Chamber Gate untuk Limit Order Retest (`market_scanner.py`)**:
+    - **Diagnosa Masalah**: Trap MSE `Do NOT execute market orders in mid-chamber consolidation zone` menargetkan market order spekulatif di tengah kamar. Namun karena omisi kata kunci `"BREAKOUT"` di baris 1485 & 1507, Pending Limit Order M3 Breakout Retest (seperti pada CADJPY di range 73%) diblokir secara keliru padahal setup memiliki level SBR struktural dan runway ke lantai target.
+    - **Perbaikan Kode**:
+      - Menyatukan definisi `is_limit_retest = any(k in setup_label.upper() for k in ("PULLBACK", "SYSTEMIC", "BREAKOUT", "RETEST"))`.
+      - Membebaskan seluruh limit order retest ber-runway dari pemblokiran `INACTION_ZONE` dan trap `MID-CHAMBER / CONSOLIDATION ZONE`. Market order liar tetap diblokir 100%.
+    - **Verifikasi Kuantitatif Langsung**:
+      - Radar mendeteksi **6 setup A+ terkurasi** dengan runway lebar dan arah selaras CSM:
+        * `USDJPY-ECNc` SELL LIMIT @ 156.3505 (CSM Delta -22.41)
+        * `EURAUD-ECNc` SELL LIMIT @ 1.61567 (CSM Delta -4.40)
+        * `EURCAD-ECNc` SELL LIMIT @ 1.60281 (CSM Delta -5.82)
+        * `GBPAUD-ECNc` SELL LIMIT @ 1.87932 (CSM Delta -6.26)
+        * `AUDCHF-ECNc` BUY LIMIT @ 0.58142 (CSM Delta +0.39)
+        * `AUDCAD-ECNc` SELL LIMIT @ 0.99216 (CSM Delta -1.42)
+      - Full test suite: **75/75 tests PASSED (100% OK)** dalam 1.447s.
+14. **Penyelarasan Konteks ZCE Retest Chamber pada Prompt Gemini (`llm_client.py`)**:
+    - **Diagnosa Masalah**: Gemini 3.1-Flash (Lead Price Action Tactician) menolak setup EURCAD SELL LIMIT dengan flag `LIQUIDITY_TRAP` karena prompt hanya menyajikan `Dealing Range Position: 2.5% (DISCOUNT)`. Mengacu pada aturan baku SMC, melakukan short di area diskon 2.5% dianggap perangkap ritel. Padahal secara struktural, harga sedang melakukan retest di plafon kamar ZCE lokal ($C_1 = 1.60306$, posisi 89%) menuju lantai $F_1 = 1.60032$.
+    - **Perbaikan Kode**:
+      - Menginjeksi `- Local ZCE Execution Chamber: Floor F1 = ... │ Ceiling C1 = ... │ Local Position: ...%` ke dalam blok Context Gemini.
+      - Memperjelas Anti-FOMO Gate (Aturan 2) bahwa untuk Limit Retest Order (M2, M3, M4), retest di broken support (SBR) pada plafon kamar lokal adalah kelanjutan tren yang sah, bukan jebakan diskon.
+      - Menjaga spesialisasi 100% utuh: Gemini tetap fokus penuh mengaudit micro tape (M1/M5/M15/H1), wick rejection, dan displacement, sementara OpenAI fokus pada makroekonomi D1/H4.
+    - **Verifikasi**:
+      - `py_compile` bersih tanpa error.
+      - Full test suite: **75/75 tests PASSED (100% OK)**.
+15. **Implementasi 15-Bar Recency Guard & 2.5x ATR Flash Runaway Guard pada M3 (`market_scanner.py`)**:
+    - **Diagnosa Masalah**: Mekanisme M3 Multi-Touch Breakout Retest berpotensi meloloskan level-level kadaluarsa jika harga telah menjauh berhari-hari lalu berbalik sebagai counter-trend rally atau flash crash rebound.
+    - **Perbaikan Kode Kuantitatif (Berdasarkan Riset FBS 10.7 Tahun / 23.173 Trade)**:
+      - *15-Bar Recency Guard*: Level support/resistance yang ditembus WAJIB pernah dilewati/disentuh dalam 15 bar H1 terakhir (`has_recent_break`). Jika level ditembus >15 bar lalu tanpa retest, setup dianggap stale/hangus.
+      - *2.5x ATR Runaway Flash Crash Guard*: Pergerakan maksimal harga sejak breakout tidak boleh melebihi $2.50\times\text{ATR}$ (`max_push <= 2.50 * atr_val`). Ambang batas ini terbukti aman meloloskan pergerakan intraday normal (1.0x–1.92x ATR seperti GBPCAD yang sukses), namun secara tegas memfilter anomali flash crash / waterfall rebound.
+      - Desain zero-deadlock: Jika riwayat lilin < 16 bar (cold start / test harness), pengaman gracefully default ke True.
+    - **Verifikasi**:
+      - `py_compile` 100% OK.
+      - Full test suite: **75/75 tests PASSED (100% OK)** dalam 1.325s.

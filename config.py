@@ -262,13 +262,45 @@ ZCE_GRADE_G2 = _getenv_float("ZCE_GRADE_G2", 3.5)
 ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
 # Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
 SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
+# Toleransi is_macro_wall M1 (market_scanner): selisih ref_top/ref_bot vs dinding C1/F1 agar
+# dianggap "dinding yang sama". Default 0.15x ATR H1 ~1.2 pips EURUSD — terlalu sempit vs
+# rounding 5-digit + midpoint ZCE (2-3 pips). .env aktif 0.30; syarat grade G2/G3 TIDAK berubah.
+SWEEP_WALL_MATCH_ATR_MULT = _getenv_float("SWEEP_WALL_MATCH_ATR_MULT", 0.15)
+
+# ---------- M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026) ----------
+# Studi #1 (JPY surge, scratch/study_surge_retest.py) + #1b mirror 26 pair dua arah
+# (scratch/study_mirror_flow.py) membuktikan edge continuation saat currency z >= 1.5
+# (z-score rolling 24-bar log-return, warm 720 bar H1):
+#   SELL: quote surge (zQ >= +1.5) ATAU base dump (zB <= -1.5) -> breakdown swing-low 120 bar
+#   BUY : base surge (zB >= +1.5) ATAU quote dump (zQ <= -1.5) -> breakdown swing-high 120 bar
+# Entry = retest level (pending limit), SL = level +/- M4_SL_ATR_MULT x ATR(H1) (STRUKTURAL,
+# keputusan user "ikut data"), TP = M4_TP_R_MULT x R (1.1R; bukan 1.0R studi, bukan >=1.25R default).
+# Forward test AKTIF di akun live cent (ZCE_MODE=full). USDJPY di-exclude (studi #1: 48.1% < netral).
+M4_ENABLED = _getenv_bool("M4_ENABLED", True)
+M4_SETUP_TYPE = "SYSTEMIC_FLOW_CONTINUATION"
+M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 1.5)      # EP_Z studi: ambang episode (z quote surge / base dump)
+M4_CONT_Z = _getenv_float("M4_CONT_Z", 0.75)           # episode bertahan selama |z| >= 0.75 salah satu sisi
+M4_FLOW_WARM_BARS = _getenv_int("M4_FLOW_WARM_BARS", 720)   # warm rolling z-score (studi WARM)
+M4_FLOW_LOOKBACK_BARS = _getenv_int("M4_FLOW_LOOKBACK_BARS", 24)  # jendela akumulasi flow 24-bar (studi idx24)
+M4_LOOKBACK_BARS = _getenv_int("M4_LOOKBACK_BARS", 120)     # jendela swing level [ep-LOOK:ep] (studi LOOK)
+M4_MIN_EPISODE_BARS = _getenv_int("M4_MIN_EPISODE_BARS", 6) # breakdown baru dievaluasi saat episode >= 6 bar
+M4_MAX_WAIT_BARS = _getenv_int("M4_MAX_WAIT_BARS", 120)     # jendela tunggu retest sejak break (studi MAX_WAIT)
+M4_MIN_GAP_BARS = _getenv_int("M4_MIN_GAP_BARS", 240)       # anti re-entry antar break (studi MIN_GAP)
+M4_SL_ATR_MULT = _getenv_float("M4_SL_ATR_MULT", 0.45)      # SL struktural = 0.45 x ATR H1 (user: ikut data)
+M4_TP_R_MULT = _getenv_float("M4_TP_R_MULT", 1.1)           # TP = 1.1R (R = jarak SL dari level)
+M4_HIST_KEEP_BARS = _getenv_int("M4_HIST_KEEP_BARS", 2600)  # buffer OHLC H1 tertahan per simbol (bar)
+M4_FETCH_BARS = _getenv_int("M4_FETCH_BARS", 250)           # closed-H1 di-fetch tiap refresh (tahan gap weekend)
+M4_COLD_FETCH_BARS = _getenv_int("M4_COLD_FETCH_BARS", 900)  # fetch awal (butuh warm 720 + lookback + buffer)
+M4_EMIT_BAND_ATR = _getenv_float("M4_EMIT_BAND_ATR", 0.35)  # lebar band pendekatan retest sebelum emisi
+M4_PENDING_EXPIRY_MINUTES = _getenv_int("M4_PENDING_EXPIRY_MINUTES", 120)  # Expiry pending order M4 (2 jam / 2 bar H1)
+M4_EXCLUDED_PAIRS = os.getenv("M4_EXCLUDED_PAIRS", "USDJPY").split(",")  # USDJPY negatif (48.1% studi #1)
 
 # Systemic Currency Basket Circuit Breaker (Global M15/H1 CSM 8 Currencies)
 ENABLE_SYSTEMIC_BASKET_LOCK = _getenv_bool("ENABLE_SYSTEMIC_BASKET_LOCK", True)
-SYSTEMIC_BASKET_USD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_USD_THRESHOLD", 2.0)
-SYSTEMIC_BASKET_JPY_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_JPY_THRESHOLD", 2.0)
-SYSTEMIC_BASKET_CROSS_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_CROSS_THRESHOLD", 2.0)
-SYSTEMIC_BASKET_SPREAD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_SPREAD_THRESHOLD", 1.8)
+SYSTEMIC_BASKET_USD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_USD_THRESHOLD", 3.5)
+SYSTEMIC_BASKET_JPY_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_JPY_THRESHOLD", 3.5)
+SYSTEMIC_BASKET_CROSS_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_CROSS_THRESHOLD", 3.5)
+SYSTEMIC_BASKET_SPREAD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_SPREAD_THRESHOLD", 3.5)
 
 FX_PAIR_SYMBOLS = [
     _normalize_symbol_for_account(s.strip())

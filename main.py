@@ -3,6 +3,7 @@ import time
 import sys
 import json
 import threading
+import logging
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -811,7 +812,9 @@ def run_scanner_trading_cycle(cand, risk):
             is_split_tix = result.get("is_split_ticket", False)
             tp_mode = result.get("tp_mode", "STANDARD_TP1_TP2")
 
-            num_positions = 2 if (is_split_tix and remaining_slots >= 2 and action_tier_val not in ("TP1_ONLY_SCALP", "REDUCED_SCALP")) else 1
+            # M4 (SYSTEMIC_FLOW_CONTINUATION): struktur studi 1 tiket — larang split 2 posisi & boost TP
+            _m4_single = (cand.setup_type == config.M4_SETUP_TYPE)
+            num_positions = 2 if (not _m4_single and is_split_tix and remaining_slots >= 2 and action_tier_val not in ("TP1_ONLY_SCALP", "REDUCED_SCALP")) else 1
             
             base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult)
             if num_positions == 2:
@@ -840,6 +843,7 @@ def run_scanner_trading_cycle(cand, risk):
 
             # If pending order
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and entry_type != "market" and entry_price:
+                pending_expiry = getattr(config, "M4_PENDING_EXPIRY_MINUTES", 120) if _m4_single else config.get_pending_order_expiry_minutes()
                 for i in range(num_positions):
                     pos_tp_pts = int(tp_points * 1.20) if i == 1 else tp_points
                     p_sl_price = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)
@@ -855,7 +859,7 @@ def run_scanner_trading_cycle(cand, risk):
                         comment=f"JURY {cand.setup_type[:6]} P{i+1}",
                         sl_price=p_sl_price,
                         tp_price=p_tp_price,
-                        expiration_minutes=config.get_pending_order_expiry_minutes()
+                        expiration_minutes=pending_expiry
                     )
                     if pending_res.get("status") == "SUCCESS":
                         if config.DRY_RUN:
@@ -887,7 +891,7 @@ def run_scanner_trading_cycle(cand, risk):
                             setup=f"{cand.setup_type} ({cand.timeframe}) [Pos #{i+1}]",
                             reason=result.get("reason", ""),
                             invalidation=f"SL: {p_sl_price}",
-                            expiration_minutes=config.get_pending_order_expiry_minutes(),
+                            expiration_minutes=pending_expiry,
                         )
                 return True
             
@@ -999,6 +1003,21 @@ def main():
         sys.stdout = tee_logger
         sys.stderr = tee_logger
         print(f"Logging aktif. Semua output akan disimpan di: {config.LOG_FILE}")
+
+    # [INSTRUMENTASI 3 Sep 2026] Debug gate M1/M2/M3 -> file terpisah (skip-rate per gate).
+    # TeeLogger hanya menangkap stdout; logger.debug market_scanner selama ini TIDAK pernah
+    # tercatat (root logger default WARNING tanpa handler). Data ini untuk evaluasi empiris
+    # keketatan gate saat ZCE mode full (hipotesis: M1 under-trade di trending market).
+    try:
+        _gate_logger = logging.getLogger("market_scanner")
+        _gate_logger.setLevel(logging.DEBUG)
+        _gate_logger.propagate = False
+        _gh = logging.FileHandler(os.path.join(config.DATA_DIR, "gate_debug.log"), mode="a", encoding="utf-8")
+        _gh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        _gate_logger.addHandler(_gh)
+        print(f"[INSTRUMENTASI] Skip-rate gate M1/M2/M3 -> {os.path.join(config.DATA_DIR, 'gate_debug.log')}")
+    except Exception as _gh_err:
+        print(f"[WARN] Gagal setup gate_debug.log: {_gh_err}")
 
     # Tampilkan override CLI kalau ada
     if cli_applied:

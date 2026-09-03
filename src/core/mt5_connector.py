@@ -1,4 +1,5 @@
 import time
+import atexit
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -116,6 +117,24 @@ def server_to_wib(dt_or_ts):
     utc_ts = int(server_ts) - (offset_hours * 3600)
     # Convert UTC epoch to WIB datetime
     return datetime.fromtimestamp(utc_ts, tz=timezone.utc).astimezone(WIB)
+_mt5_atexit_registered = False
+
+
+def _safe_mt5_shutdown():
+    """Tutup koneksi MT5 terminal secara bersih saat proses Python berakhir, mencegah zombie headless."""
+    try:
+        if hasattr(mt5, "shutdown") and callable(mt5.shutdown):
+            mt5.shutdown()
+    except Exception:
+        pass
+
+
+def _register_mt5_atexit():
+    global _mt5_atexit_registered
+    if not _mt5_atexit_registered:
+        atexit.register(_safe_mt5_shutdown)
+        _mt5_atexit_registered = True
+
 
 def init_mt5():
     """Initializes connection to MT5 terminal and verifies account & symbol availability."""
@@ -136,6 +155,7 @@ def init_mt5():
             last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
             print(f"[MT5 ERROR] Could not initialize MetaTrader 5 terminal: {last_err}")
             return False
+        _register_mt5_atexit()
 
     if config.MT5_LOGIN and config.MT5_PASSWORD:
         if not mt5.login(int(config.MT5_LOGIN), password=str(config.MT5_PASSWORD), server=str(config.MT5_SERVER)):

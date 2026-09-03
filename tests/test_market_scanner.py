@@ -147,25 +147,28 @@ class TestMarketScanner(unittest.TestCase):
 
     def test_session_aware_pair_filtering(self):
         # 1. Tokyo Session (10:00 WIB)
-        # Proven pairs should be ALLOWED
+        # All pairs containing JPY, AUD, or NZD must be ALLOWED (including CAD pairs like AUDCAD, CADJPY, NZDCAD)
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 10))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDCAD", 10))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("XAUUSD-ECNc", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("CADJPY-ECNc", 10))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPJPY-ECNc", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURJPY-ECNc", 10))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDJPY", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPAUD", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("NZDCAD-ECNc", 10))
         
-        # Non-Tokyo European pairs should be BLOCKED in morning
+        # Pairs WITHOUT JPY/AUD/NZD (pure CAD like EURCAD, USDCAD, or pure EUR/GBP/USD like EURUSD, GBPUSD, EURCHF) must be BLOCKED
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURCAD-ECNc", 10))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDCAD", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURCHF-ECNc", 10))
-        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPAUD", 10))
         
         # 2. London / NY Session (15:00 WIB)
         # ALL pairs should be ALLOWED
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 15))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("XAUUSD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURCAD-ECNc", 15))
 
     def test_alert_hourly_radar_recap(self):
         from src.core import telegram_alerts as tg

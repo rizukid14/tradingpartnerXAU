@@ -173,17 +173,23 @@ def manage_all_positions():
             if _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup, lanjut ke tiket berikutnya
 
-        # --- 3. PARTIAL CLOSE at TP1 ---
-        if config.PARTIAL_CLOSE_ENABLED:
-            _check_partial_close(pos, symbol, profit_points, symbol_info)
+        # M4 (SYSTEMIC_FLOW_CONTINUATION): All-or-Nothing ke TP 1.1R atau SL 0.45xATR
+        # (bypass Partial Close, BEP, dan Trailing agar rasio R:R dan EV studi 15-tahun FBS terjaga).
+        # Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
+        is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
 
-        # --- 4. BREAK-EVEN CHECK ---
-        if config.BREAK_EVEN_ENABLED:
-            _check_break_even(pos, symbol, profit_points, point, symbol_info)
+        if not is_m4:
+            # --- 3. PARTIAL CLOSE at TP1 ---
+            if config.PARTIAL_CLOSE_ENABLED:
+                _check_partial_close(pos, symbol, profit_points, symbol_info)
 
-        # --- 5. TRAILING STOP CHECK ---
-        if config.TRAILING_STOP_ENABLED:
-            _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
+            # --- 4. BREAK-EVEN CHECK ---
+            if config.BREAK_EVEN_ENABLED:
+                _check_break_even(pos, symbol, profit_points, point, symbol_info)
+
+            # --- 5. TRAILING STOP CHECK ---
+            if config.TRAILING_STOP_ENABLED:
+                _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
     # Bersihkan state posisi yang sudah tidak open (biar dict/set gak numpuk)
     open_tickets = {p.ticket for p in positions}
@@ -803,25 +809,26 @@ def audit_pending_orders_thesis():
             atr_val = (atr_pts * pt) if atr_pts > 0 else (20 * pt)
 
             cancel_reason = None
+            is_m4_order = "SYSTEM" in (getattr(ord_item, "comment", "") or "").upper()
 
             # 3. Check Thesis Invalidation for BUY Pending Orders
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
                 # Condition A: Re-entry breakdown below C1 - 0.25x ATR (if it was a breakout retest above C1)
-                if c1 > 0 and ord_item.price_open >= c1 - (0.15 * atr_val):
+                if not is_m4_order and c1 > 0 and ord_item.price_open >= c1 - (0.15 * atr_val):
                     if last_m15_close < c1 - (0.25 * atr_val):
                         cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber below C1 ({c1:.5f})"
-                # Condition B: MSE flipped to Bearish Pullback or Ceiling Rejection
-                if bias_score <= -0.40 or "HUNT_SELL" in prim_dir or "REJECTION" in m_state:
+                # Condition B: MSE flipped to Bearish Pullback or Ceiling Rejection (bypassed untuk M4 systemic shock)
+                if not is_m4_order and (bias_score <= -0.40 or "HUNT_SELL" in prim_dir or "REJECTION" in m_state):
                     cancel_reason = f"MSE flipped to Bearish ({m_state} / {prim_dir})"
 
             # 4. Check Thesis Invalidation for SELL Pending Orders
             elif ord_item.type in (mt5.ORDER_TYPE_SELL_LIMIT, mt5.ORDER_TYPE_SELL_STOP):
                 # Condition A: Re-entry breakout above F1 + 0.25x ATR (if it was a breakdown retest below F1)
-                if f1 > 0 and ord_item.price_open <= f1 + (0.15 * atr_val):
+                if not is_m4_order and f1 > 0 and ord_item.price_open <= f1 + (0.15 * atr_val):
                     if last_m15_close > f1 + (0.25 * atr_val):
                         cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber above F1 ({f1:.5f})"
-                # Condition B: MSE flipped to Bullish Expansion or Floor Rejection
-                if bias_score >= 0.40 or "HUNT_BUY" in prim_dir or "REJECTION" in m_state:
+                # Condition B: MSE flipped to Bullish Expansion or Floor Rejection (bypassed untuk M4 systemic shock)
+                if not is_m4_order and (bias_score >= 0.40 or "HUNT_BUY" in prim_dir or "REJECTION" in m_state):
                     cancel_reason = f"MSE flipped to Bullish ({m_state} / {prim_dir})"
 
             # 5. Cancel order if thesis failed

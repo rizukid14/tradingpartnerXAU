@@ -59,7 +59,7 @@
 
 Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
 
-- **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest) — dengan timeframe struktural **H1 untuk FX majors & NZD, M30 untuk JPY Crosses**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
+- **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest), M4 (Systemic Flow Continuation) — dengan timeframe struktural **H1 untuk FX majors & NZD, M30 untuk JPY Crosses**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
 - **BTCUSD.c (Bitcoin)**: Tidak masuk scanner universe. Mode `ENABLE_BTC_ROTATION=False` (default) = BTC off.
 - **XAUUSD-ECNc (Gold)**: **DIMATIKAN TOTAL PERMANEN** (30 Agustus 2026). Audit membuktikan Gold menyebabkan $-\$1,067.79$ drawdown akun live sementara portofolio 26 FX membukukan net profit $+\$387.08$. Gold dihapus dari universe scanner `.env` dan `config.py`.
 - **HTF Macro Cache (Stage 1A)**: Struktur D1 + H4 + W1 di-fetch sekali per refresh window (~$60$ detik) lalu dipakai semua simbol → **0 token LLM**. CSM (Boitoki Currency Strength Matrix) dihitung sub-detik.
@@ -87,7 +87,7 @@ python main.py
 |---|---|
 | `main.py` | Looping: trigger Stage 1 radar tiap 60 detik + Stage 2 LLM saat ada setup A+ lolos + manage posisi tiap 3 detik (BEP/trailing/partial) |
 | `config.py` | Parameter konfigurasi global + helper per-simbol + universe `SCANNER_SYMBOLS` |
-| `src/analytics/market_scanner.py` | **Stage 1 Radar** — 3 mekanisme (M1 Universal Liquidity Sweep, M2 Pullback, M3 HTF Weekly Wall) + HTF cache (D1/H4/W1) + **`permission_state` dihitung di sini** (mapping langsung dari MSE action tier: `FULL_ALLOW→GO/ARM`, `TP1_ONLY_SCALP/REDUCED_CONFIDENCE→ARM`, `WATCH_ONLY→WATCH`, `HARD_BLOCK→LOCK`) + gate arah terpadu `_is_direction_allowed()` (Macro Bias + CSM Flow Opposition + Systemic Basket Lock) + meneruskan `zce_walls` ZCE ke MSE |
+| `src/analytics/market_scanner.py` | **Stage 1 Radar** — 4 mekanisme (M1 Universal Liquidity Sweep, M2 Pullback, M3 HTF Weekly Wall, M4 Systemic Flow Continuation) + HTF cache (D1/H4/W1) + feed currency-z M4 (rolling 24-bar H1, warm 720, 1×/jam) + **`permission_state` dihitung di sini** (mapping langsung dari MSE action tier: `FULL_ALLOW→GO/ARM`, `TP1_ONLY_SCALP/REDUCED_CONFIDENCE→ARM`, `WATCH_ONLY→WATCH`, `HARD_BLOCK→LOCK`) + gate arah terpadu `_is_direction_allowed()` (Macro Bias + CSM Flow Opposition + Systemic Basket Lock) + meneruskan `zce_walls` ZCE ke MSE |
 | `src/indicators/wave_regime.py` | Wave Regime & compression/range age (pengganti `wave_state.py` yang sudah dihapus) — `evaluate_wave_regime()` |
 | `src/indicators/lux_smc.py` | LuxAlgo Smart Money Concepts (OB/FVG/Strong Low/PWH-PWL) + FRVP confluence |
 | `src/indicators/atlas_dna.py` | Symbol-specific psychological step (50/100/200 pips) + dynamic stations calculator |
@@ -107,7 +107,7 @@ python main.py
 ## Alur cycle (scanner mode)
 
 1. **HTF Macro Cache Refresh** (tiap ~60 detik, 0 token): fetch D1+H4+W1 untuk 26 simbol FX → simpan `macro_cache`.
-2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 3 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk JPY) → cek `permission_state` hasil mapping MSE action tier (`FULL_ALLOW→GO/ARM` only — lihat tabel arsitektur; `HARD_BLOCK`/`WATCH_ONLY` = 0 token) + gate arah terpadu `_is_direction_allowed()` → kalau ada setup A+ lolos → **Stage 2 trigger**.
+2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 4 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk JPY) → cek `permission_state` hasil mapping MSE action tier (`FULL_ALLOW→GO/ARM` only — lihat tabel arsitektur; `HARD_BLOCK`/`WATCH_ONLY` = 0 token) + gate arah terpadu `_is_direction_allowed()` → kalau ada setup A+ lolos → **Stage 2 trigger**.
 3. **Stage 2 — 3-LLM Consensus Jury** (per setup A+, ~5.5 detik):
    - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-Flash menganalisis dossier independen.
    - **Pass 2** (cross-examination, ~1.5s): DeepSeek V4-Flash (Devil's Advocate CRO) mengaudit proposal + 24 candle M5 micro.
@@ -150,10 +150,11 @@ python main.py
 ## Status Terkini Sistem (Live Production — Agustus 2026)
 
 1. **2-Stage Quant Funnel (Branch `quant-trade` — 26 Agustus 2026)**: Universe 27 simbol paralel. Stage 1 radar 60-detik (0 token) + Stage 2 3-LLM jury hanya saat setup A+. Hemat ~85% biaya API vs full-cycle. Telegram `/radar` `/levels` `/smc` tampilkan live heat-table.
-2. **3 Mekanisme Eksekusi Stage 1 Radar**:
+2. **4 Mekanisme Eksekusi Stage 1 Radar**:
    - **M1: London Judas Swing Failure (M15/M30/H1)** — sapuan likuiditas di level makro + reclaim → fade trap.
    - **M2: Trend-Aligned Pullback + Delayed Limit Retest ($0.20\times\text{ATR}$)** — pullback di zona diskon H1 + entry limit tertunda.
    - **M3: HTF Weekly Wall Reversal (H1)** — tabrak dinding H4/D1/W1 → foothold di 50% Equilibrium / Order Block (ganti NY ADR Reversal yang terbukti toksik).
+   - **M4: Systemic Flow Continuation (H1 — 3 Sep 2026)** — currency z ≥1.5 (rolling 24-bar warm 720) → breakdown swing 120-bar → limit retest di level. SL struktural 0.45×ATR, TP 1.1R (anchor beku `M4_STRUCTURAL_FIXED`). Forward test akun live cent.
 3. **Trend-Aware Dual-Window Fibonacci**: Window 50-bar Intraday + 100-bar Macro Multi-Day dengan formula sadar arah tren.
 4. **Dynamic Pending Orders Prompt**: Jika `PENDING_ORDERS_ENABLED = False`, blok pending rules dan field `entry_type`/`entry_price` dihilangkan 100% dari prompt (hemat ~459 token).
 5. **Paket Anti-FOMC & High-Impact News (TradingView API)**: Fetch kalender dinamis (cache 6 jam, filter US/GB/EU/CH/JP/AU/CA). Window 6 jam sebelum/sesudah rilis. Conditional rule: larang keras fade momentum breakout saat ada event.
@@ -294,7 +295,7 @@ python main.py
 61. **Fix Koneksi ZCE→Radar: Stale Cache + Resync Deep Target** (2 September 2026):
     - **Patch #1 Stale Cache Disconnect** (`market_scanner.py` + `config.py` + `.env`): `update_macro_context` ganti hour-gate → **elapsed-gate** `_zce_refresh_due_seconds()` (900s saat ZCE legacy/full, `MACRO_STRATEGIC_REFRESH_SECONDS` default). `_build_single_macro_context` kini **compute inline peta ZCE** bila belum ada di `_zce_maps` → macro_cache TIDAK PERNAH dibangun tanpa dinding ZCE (cold start / boot force / Senin pagi). `_refresh_zce_rotation` di-refactor ke helper `_compute_zce_map_for()` + mode `full_sweep=True` (refresh SEMUA simbol) yang dipanggil SEBELUM rebuild → dinding ZCE tidak pernah basi lintas weekend/dead zone; umur peta ≤15 mnt. Parameter baru `ZCE_REFRESH_INTERVAL_SECONDS` (default 900).
     - **Patch #2 Resync Deep Target vs F1/C1 Override** (`macro_strategic_engine.py` 1151-1184): bila `deep_floor_f2 >= floor_f1` / `deep_ceiling_c2 <= ceiling_c1` (ter-inversi saat ZCE F1 override dalam & ZCE deep F2 kosong) → resync ulang memakai formula baseline + snap cluster, lalu pulihkan `floor_f2`/`ceiling_c2` yang sempat di-None-kan enforcement monotonik.
-    - Verifikasi independen: 3 temuan Gemini dikonfirmasi (Bug #1 benar; #2 sebagian-sudah-disembuhkan-29ab6fb + edge deep target; #3 substansi benar tapi token `SCALE_CONFLICT` = dead code, **sengaja TIDAK di-wire ke gate**). Suite: 86 passed, 6 failed pre-existing.
+62. **M4: Systemic Flow Continuation — Radar Mechanism 4** (3 September 2026, forward test akun live cent): Validasi studi #1/#1b mirror (`scratch/study_surge_retest.py`, `scratch/study_mirror_flow.py`) — currency z ≥1.5 (rolling 24-bar H1, warm 720) → breakdown swing 120-bar → **limit retest di level**. SELL = quote surge/base dump; BUY = base surge/quote dump (26 pair dua arah). SL **struktural 0.45×ATR H1** dari level, TP **1.1R** (keputusan user) — dibekukan via early-return `M4_STRUCTURAL_FIXED` di `consensus._apply_sltp_rules` (bypass floor/ceiling/RR; anchor-limit veto anti-chase). USDJPY excluded (48.1% < netral di studi). Feed z 1×/jam WIB, 0 token LLM. Parameter `M4_*` di `.env` + `config.py`; label `SYSTEMIC_FLOW_CONTINUATION`; larang split 2-posisi di `main.py`. Gate mid-chamber MSE di-bypass khusus M4; lookup MT5 konsensus dibersihkan dari hardcode `config.SYMBOL` ke `cand_sym`; filter sesi Tokyo diunifikasi via `is_asian_session_pair` (semua pair ber-JPY/AUD/NZD diizinkan, pure CAD/EUR/USD dikunci). Posisi M4 di `position_manager.py` berjalan mode All-or-Nothing (bypass partial close & BEP, pertahankan Pre-Rollover Shield & Time-Decay Stagnation); pending M4 dikecualikan dari pembatalan bias MSE D1/H4 dengan durasi expiry 120 menit; bug sintaksis baris 414 `_m4_refresh_z` (`min_periods` TypeError) diperbaiki. Test suite lengkap 75 tests **100% PASS**.
 
 ---
 

@@ -121,6 +121,20 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     global _last_sltp_adjustments
     _last_sltp_adjustments = []
 
+    # ── M4 SYSTEMIC FLOW CONTINUATION: SL/TP STRUKTURAL BEKU (studi #1/#1b mirror) ──
+    # SL = M4_SL_ATR_MULT × ATR(H1) dari level (0.45), TP = M4_TP_R_MULT × R (1.1R).
+    # Divalidasi studi (scratch/study_surge_retest.py & study_mirror_flow.py) → bypass total
+    # floor/ceiling/grade/RR default karena nilai tsb BUKAN thesis LLM, melainkan anchor mekanis.
+    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
+        _md = getattr(candidate, "metadata", None) or {}
+        _m4_sl = int(_md.get("m4_sl_pts") or 0)
+        _m4_tp = int(_md.get("m4_tp_pts") or 0)
+        if _m4_sl > 0 and _m4_tp > 0:
+            _last_sltp_adjustments.append(
+                f"M4 struktural: SL {_m4_sl} pts (0.45×ATR), TP {_m4_tp} pts (1.1R) — anchor beku, bypass floor/RR."
+            )
+            return _m4_sl, _m4_tp, True, "M4_STRUCTURAL_FIXED"
+
     sym = symbol or config.SYMBOL
 
     if not sl_points or sl_points <= 0:
@@ -353,12 +367,16 @@ def calculate_consensus(decisions, candidate=None):
     # weighted-confidence yang sudah di-drop.
     ai_mode = getattr(config, "get_ai_mode", lambda: "triple")()
 
+    # Simbol aktif: di scanner mode, SEMUA 26 simbol setara (tidak ada default pair).
+    # Ambil langsung dari candidate.symbol, fallback ke config.SYMBOL hanya jika None.
+    cand_sym = getattr(candidate, 'symbol', None) or config.SYMBOL
+
     point = 0.00001
     ref_price = 0.0
     try:
         from config import mt5
-        si = mt5.symbol_info(config.SYMBOL)
-        tick = mt5.symbol_info_tick(config.SYMBOL)
+        si = mt5.symbol_info(cand_sym)
+        tick = mt5.symbol_info_tick(cand_sym)
         if si and si.point:
             point = si.point
         if tick:
@@ -560,8 +578,8 @@ def calculate_consensus(decisions, candidate=None):
         return {
             "signal": "HOLD",
             "confidence": 0.0,
-            "sl_points": config.default_sl_points_for(config.SYMBOL),
-            "tp_points": config.default_tp_points_for(config.SYMBOL),
+            "sl_points": config.default_sl_points_for(cand_sym),
+            "tp_points": config.default_tp_points_for(cand_sym),
             "agreeing_count": 0,
             "agreeing_models": [],
             "tickets_to_close": tickets_to_close,
@@ -670,8 +688,8 @@ def calculate_consensus(decisions, candidate=None):
         return {
             "signal": "HOLD",
             "confidence": confluence.get("composite_score", 0.0),
-            "sl_points": config.default_sl_points_for(config.SYMBOL),
-            "tp_points": config.default_tp_points_for(config.SYMBOL),
+            "sl_points": config.default_sl_points_for(cand_sym),
+            "tp_points": config.default_tp_points_for(cand_sym),
             "agreeing_count": len(agreeing_models),
             "agreeing_models": list(agreeing_models),
             "tickets_to_close": tickets_to_close,
@@ -726,26 +744,45 @@ def calculate_consensus(decisions, candidate=None):
             final_sl = int(round(abs(base_calc_p - final_inv) / point))
             final_tp = int(round(abs(final_tgt - base_calc_p) / point))
         else:
-            final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
-            final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+            final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(cand_sym)
+            final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(cand_sym)
     else:
-        final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
-        final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+        final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(cand_sym)
+        final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(cand_sym)
 
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(
         final_sl, final_tp,
-        symbol=config.SYMBOL,
+        symbol=cand_sym,
         action_tier=getattr(candidate, 'action_tier', None),
         setup_grade=getattr(candidate, 'setup_grade', None),
         candidate=candidate
     )
 
-    # Guardrail entry pending (Filosofi: Percayakan pada LLM, No Trade is Better)
-    if final_entry_type != "market" and final_entry_price is not None:
+    # ── M4: anchor limit sudah terlewati market → BATAL (no market conversion; jangan fade struktur jebol) ──
+    _m4_anchor_broken = False
+    _m4_anchor_reason = ""
+    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
         try:
             from config import mt5
-            tick = mt5.symbol_info_tick(config.SYMBOL)
-            si = mt5.symbol_info(config.SYMBOL)
+            tick = mt5.symbol_info_tick(cand_sym)
+            si = mt5.symbol_info(cand_sym)
+            point = si.point if si else 0.00001
+            if tick and si and point and consensus_signal in ("BUY", "SELL") and final_entry_type != "market" and final_entry_price:
+                ref_price = tick.ask if consensus_signal == "BUY" else tick.bid
+                if (consensus_signal == "BUY" and final_entry_price >= ref_price) or \
+                   (consensus_signal == "SELL" and final_entry_price <= ref_price):
+                    _m4_anchor_broken = True
+                    _m4_anchor_reason = (f"M4 anchor limit {final_entry_price} vs market {ref_price:.5f}: "
+                                         f"harga sudah menembus anchor -> setup batal (no chase).")
+        except Exception:
+            pass
+
+    # Guardrail entry pending (Filosofi: Percayakan pada LLM, No Trade is Better)
+    if not _m4_anchor_broken and final_entry_type != "market" and final_entry_price is not None:
+        try:
+            from config import mt5
+            tick = mt5.symbol_info_tick(cand_sym)
+            si = mt5.symbol_info(cand_sym)
             point = si.point if si else 0.00001
             ref_price = tick.ask if consensus_signal == "BUY" else tick.bid
             dist_pts = abs(final_entry_price - ref_price) / point if (point and ref_price) else None
@@ -771,10 +808,14 @@ def calculate_consensus(decisions, candidate=None):
         except Exception:
             pass
 
+    if _m4_anchor_broken and sltp_ok:
+        sltp_ok = False
+        sltp_reason = _m4_anchor_reason
+
     try:
         from config import mt5
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        si = mt5.symbol_info(config.SYMBOL)
+        tick = mt5.symbol_info_tick(cand_sym)
+        si = mt5.symbol_info(cand_sym)
         point = si.point if si else 0.00001
         if tick and si and point:
             exec_ref = final_entry_price if (final_entry_type != "market" and final_entry_price) else (tick.ask if consensus_signal == "BUY" else tick.bid)

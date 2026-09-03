@@ -1496,6 +1496,22 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     except Exception:
         fund_block = ""
 
+    m4_ctx = ""
+    if str(getattr(candidate, "setup_type", "") or "") == config.M4_SETUP_TYPE:
+        m4_ctx = (
+            "\n## 0. M4 SYSTEMIC FLOW CONTINUATION — QUANT-ONLY MECHANISM (SL/TP ANCHOR BEKU)\n"
+            "- Kategori: mekanisme quant murni hasil studi statistik (scratch/study_surge_retest.py + "
+            "study_mirror_flow.py), BUKAN thesis discretionary. Entry WAJIB pending limit di level retest "
+            "hasil breakdown struktural 120-bar (entry_price = anchor scanner, jangan diganti market di luar anchor).\n"
+            "- SL & TP TIDAK BOLEH diubah: SL struktural = 0.45 x ATR(H1) dari level; TP = 1.1R. Scanner telah "
+            "membekukan koordinat ini (metadata m4_sl_pts/m4_tp_pts) — jangan geser, jangan usulkan floor/ceiling "
+            "lain, abaikan instruksi micro-precision refinement untuk mekanisme ini.\n"
+            "- Tugas Anda: verifikasi momentum arah (apakah systemic flow masih valid / tidak counter), deteksi "
+            "risk_flag (news/spike/trap), lalu APPROVE/REJECT. Jika ragu arah -> REJECT.\n"
+            "- Bukti studi: P(win) 56-59% vs netral 45-52% (Chi-square signifikan); edge muncul HANYA setelah "
+            "breakdown swing 120-bar pada currency z >= 1.5 (quote surge / base dump)."
+        )
+
     wick_ratio_val = float(candidate.rejection_wick_ratio or 0.0) * 100.0
     if direction_str == "SELL":
         wick_desc = f"Upper Rejection Wick = {wick_ratio_val:.1f}% of M15 range (Bearish rejection pressure defending the ceiling/resistance)"
@@ -1505,7 +1521,7 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
     prompt = f"""# INSTITUTIONAL TRADING JURY: CANDIDATE VERIFICATION & ORDER OPTIMIZER DOSSIER
 
 Python Quantitative Engine has detected a potential quantitative setup ({candidate.setup_type}) on {sym} ({candidate.timeframe}).
-
+{m4_ctx}
 ## 1. INSTITUTIONAL BATTLEFIELD & CONFLUENCE
 - Symbol: {sym} | Asset: {asset_desc(sym)}
 - Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {fp(float(candidate.trigger_price))}
@@ -1833,6 +1849,18 @@ def build_gemini_price_action_dossier_prompt(candidate, recent_m1_str=None, rece
     s_low_str = fp(s_low) if s_low and float(s_low) > 0 else "None"
     s_high_str = fp(s_high) if s_high and float(s_high) > 0 else "None"
 
+    meta = getattr(candidate, 'metadata', {}) or {}
+    zce_f1 = float(meta.get('zce_f1_price') or getattr(candidate, 'floor_f1', 0.0) or getattr(candidate, 'key_support', 0.0) or 0.0)
+    zce_c1 = float(meta.get('zce_c1_price') or getattr(candidate, 'ceiling_c1', 0.0) or getattr(candidate, 'key_resistance', 0.0) or 0.0)
+    chamber_line = ""
+    if zce_f1 > 0.0 and zce_c1 > zce_f1:
+        trig = float(candidate.trigger_price or 0.0)
+        if trig > 0.0:
+            ch_raw = (trig - zce_f1) / (zce_c1 - zce_f1)
+            ch_clamped = max(0.0, min(1.0, ch_raw))
+            ch_desc = "NEAR CEILING C1 (Resistance Retest)" if ch_clamped >= 0.70 else ("NEAR FLOOR F1 (Support Retest)" if ch_clamped <= 0.30 else "MID-CHAMBER")
+            chamber_line = f"- Local ZCE Execution Chamber: Floor F1 = {fp(zce_f1)} │ Ceiling C1 = {fp(zce_c1)} │ Local Position: {ch_clamped*100:.1f}% ({ch_desc})"
+
     prompt = f"""# ROLE: MASTER PRICE ACTION & RETEST TACTICIAN (GEMINI 3.1-Flash)
 ## MISSION BRIEF
 You are the Lead Price Action and Order Flow Tactician of an elite institutional quantitative hedge fund.
@@ -1845,8 +1873,8 @@ You DO NOT analyze D1/H4 macro economics — that is OpenAI's domain. You own th
 ### Context:
 - Symbol: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
 - Quant Baseline: SL = {fp(candidate.suggested_sl)} | TP = {fp(candidate.suggested_tp)} | R:R = {candidate.risk_reward_ratio:.2f}:1
-- Dealing Range Position: {candidate.dealing_range_pos*100:.1f}% ({'🟢 DISCOUNT' if candidate.dealing_range_pos <= 0.35 else ('🟡 LOWER DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('⚪ EQUILIBRIUM' if candidate.dealing_range_pos <= 0.55 else ('🟠 UPPER PREMIUM' if candidate.dealing_range_pos <= 0.65 else '🔴 PREMIUM')))})
-- ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
+- Macro 50-bar Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'🟢 DISCOUNT' if candidate.dealing_range_pos <= 0.35 else ('🟡 LOWER DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('⚪ EQUILIBRIUM' if candidate.dealing_range_pos <= 0.55 else ('🟠 UPPER PREMIUM' if candidate.dealing_range_pos <= 0.65 else '🔴 PREMIUM')))})
+{f"{chamber_line}\n" if chamber_line else ""}- ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
 - Rejection Wick Metric: {wick_desc}
 
 ### [M1] Live Micro Scalp Tape — Last 15 Bars (Execution-Level Flow):
@@ -1896,7 +1924,9 @@ RULE: HIGH-impact event within 30 minutes → output HOLD/REJECT. Wicks and spre
 ---
 ## 5. TACTICAL EXECUTION MANDATE
 1. **Displacement Test**: Count consecutive M5 bars closing in trade direction. ≥3 = displacement (market order viable). Alternating bull/bear = chop → prefer limit at OB/retest.
-2. **Anti-FOMO Gate**: Dealing Range ≥85% (BUY) or ≤15% (SELL) → FORBIDDEN market order. Use pending limit at SBR/RBS retest anchor or output HOLD.
+2. **Anti-FOMO & Retest Context Gate**:
+   - Market Orders: Dealing Range >=85% (BUY) or <=15% (SELL) -> FORBIDDEN market order.
+   - Limit Retest Orders (BREAKOUT_RETEST / SYSTEMIC_FLOW / PULLBACK): The order is a pending limit at a broken structural flip level (SBR/RBS). If price is retesting broken support (SBR) at the Local Ceiling C1 to target lower Floor F1, this is a valid trend-continuation retest corridor -- do NOT reject solely based on the 50-bar macro range when the retest level itself is at the local ceiling. Focus your audit on the micro tape: Does the retest level show confirmed rejection wicks and displacement in trade direction, or does it show chop and buyer/seller absorption?
 3. **SL Anchoring**:
    - BUY: SL below the last unmitigated Bullish OB lower boundary + 0.3x ATR anti-wick buffer
    - SELL: SL above the last unmitigated Bearish OB upper boundary + 0.3x ATR anti-wick buffer

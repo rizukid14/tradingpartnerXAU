@@ -137,11 +137,9 @@ POINT_MAP = {
     'CHFJPY': 0.001, 'CHFJPY-ECNc': 0.001, 'CHFJPY-ECN': 0.001,
 }
 
-# Proven positive-EV pairs for Tokyo Session (08:00 - 14:00 WIB) based on 10.7-year FBS MT5 backtest
-TOKYO_PROVEN_SYMBOLS = {
-    'USDCAD', 'AUDCAD', 'AUDUSD', 'EURCAD', 'USDCHF',
-    'GBPJPY', 'XAUUSD', 'GBPCHF', 'AUDJPY', 'CADJPY'
-}
+# Sesi Tokyo (08:00 - 14:00 WIB): Diarahkan dinamis via config.is_asian_session_pair(symbol).
+# Semua pair dengan driver mata uang aktif Asia/Pasifik (JPY, AUD, NZD) diizinkan;
+# pair tanpa JPY/AUD/NZD (seperti EURCAD, GBPCAD, USDCAD, EURUSD, GBPUSD, dll.) dikunci.
 
 @dataclass
 class CandidateSetup:
@@ -257,6 +255,17 @@ class MarketScanner:
         self._last_radar_scan_time: float = 0.0
         self._cooldown_file = os.path.join(config.DATA_DIR, "scanner_cooldowns.json")
         self._symbol_last_trigger: Dict[str, float] = self._load_cooldowns()
+        # ── M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026) ──
+        # State machine episode per simbol (2 arah) + feed z per currency (rolling 24-bar H1,
+        # z-score warm 720 — metodologi identik scratch/study_mirror_flow.py). AKTIF forward test.
+        self._m4_universe: List[str] = []                      # clean 6-huruf FX (exclude crypto + M4_EXCLUDED_PAIRS)
+        self._m4_df: Dict[str, "pd.DataFrame"] = {}            # sym -> OHLC H1 closed (index = epoch server, sorted)
+        self._m4_state: Dict[str, Dict[str, Dict[str, Any]]] = {}  # sym -> side(SELL/BUY) -> {ep, level, last_break, pending}
+        self._m4_processed_ts: Dict[str, Optional[float]] = {} # sym -> epoch bar terakhir yang diproses state machine
+        self._m4_z_last: Dict[str, float] = {}                 # currency -> z terbaru (konteks LLM/label)
+        self._m4_feed_updated: float = 0.0                     # wall-clock terakhir feed di-refresh
+        self._m4_feed_hour: Optional[int] = None               # jam WIB refresh feed (sekali per jam)
+        self._last_snapshot_ts: float = 0.0                    # wall-clock snapshot 5-menit ke gate_debug.log
         MarketScanner._instance = self
 
     def _load_cooldowns(self) -> Dict[str, float]:
@@ -304,16 +313,267 @@ class MarketScanner:
             return 0.01
         return 1e-5
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026)
+    # Studi #1 (scratch/study_surge_retest.py) & #1b mirror (scratch/study_mirror_flow.py):
+    #   SELL saat quote surge (zQ>=+1.5) / base dump (zB<=-1.5); BUY saat base surge /
+    #   quote dump. Breakdown swing 120-bar -> limit retest di level. SL struktural 0.45xATR,
+    #   TP 1.1R (keputusan user; bypass floor/ceiling default di consensus._apply_sltp_rules).
+    # ═══════════════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _m4_clean(sym: str) -> Optional[str]:
+        c = str(sym).replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        if len(c) == 6 and c.isalpha():
+            return c
+        return None
+
+    def _m4_build_universe(self):
+        """Universe M4 = seluruh simbol FX scanner (26) dua arah, minus crypto & M4_EXCLUDED_PAIRS."""
+        univ, cmap, bmap = [], {}, {}
+        for s in config.get_scanner_symbols():
+            c = self._m4_clean(s)
+            if not c:
+                continue
+            if any(k in c for k in ("XAU", "GOLD", "XAG", "BTC", "SILVER", "US500", "NAS", "GER")):
+                continue
+            if c in config.M4_EXCLUDED_PAIRS:
+                continue
+            if c not in cmap:
+                univ.append(c)
+                cmap[c] = (c[:3], c[3:])
+                bmap[c] = s  # nama broker asli untuk MT5 fetch
+        self._m4_universe = univ
+        self._m4_cur_map = cmap
+        self._m4_broker = bmap
+
+    def _m4_fetch_merge(self, sym_clean: str, cold: bool = False):
+        """Fetch bar H1 CLOSED (pos=1 skip forming bar) lalu merge ke buffer per simbol."""
+        broker = self._m4_broker.get(sym_clean, sym_clean)
+        count = config.M4_COLD_FETCH_BARS if cold else config.M4_FETCH_BARS
+        rates = None
+        try:
+            mt = getattr(config, "mt5", None)
+            if mt is not None and hasattr(mt, "copy_rates_from_pos"):
+                rates = mt.copy_rates_from_pos(broker, getattr(mt, "TIMEFRAME_H1", 16385), 1, count)
+        except Exception:
+            rates = None
+        if rates is None or len(rates) == 0:
+            return
+        try:
+            d = pd.DataFrame(rates)
+            d = d[["time", "high", "low", "close"]].astype({"time": np.int64, "high": float, "low": float, "close": float})
+            d = d.set_index("time").sort_index()
+        except Exception:
+            return
+        prev = self._m4_df.get(sym_clean)
+        merged = d if (prev is None or len(prev) == 0) else pd.concat([prev, d])
+        merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+        self._m4_df[sym_clean] = merged.tail(max(config.M4_HIST_KEEP_BARS, config.M4_FLOW_WARM_BARS + 200))
+
+    @staticmethod
+    def _m4_wilder_atr(hi: np.ndarray, lo: np.ndarray, cl: np.ndarray, period: int = 14):
+        n = len(cl)
+        if n < period + 3:
+            return None
+        tr = np.empty(n)
+        tr[0] = hi[0] - lo[0]
+        for i in range(1, n):
+            tr[i] = max(hi[i] - lo[i], abs(hi[i] - cl[i - 1]), abs(lo[i] - cl[i - 1]))
+        atr = np.full(n, np.nan)
+        atr[period] = tr[1:period + 1].mean()
+        for i in range(period + 1, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+        return atr
+
+    def _m4_refresh_z(self) -> bool:
+        """Hitung z per currency (rolling 24-bar log-return, warm 720) di atas union index semua simbol."""
+        closes = {}
+        for c in self._m4_universe:
+            df = self._m4_df.get(c)
+            if df is not None and len(df) > 100:
+                closes[c] = df["close"]
+        if len(closes) < 4:
+            return False
+        all_close = pd.DataFrame(closes).sort_index()
+        ret = np.log(all_close).diff()
+        z_hist: Dict[str, "pd.Series"] = {}
+        for cur in ("USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD"):
+            legs = []
+            for c, (b, q) in getattr(self, "_m4_cur_map", {}).items():
+                if c not in all_close.columns:
+                    continue
+                if b == cur:
+                    legs.append((c, 1.0))
+                elif q == cur:
+                    legs.append((c, -1.0))
+            if len(legs) < 3:
+                continue
+            cols = [x for x, _ in legs]
+            sg = pd.Series({x: s for x, s in legs})
+            part = ret[cols].mul(sg, axis=1)
+            minp = max(3, len(cols) - 1)
+            flow = part.mean(axis=1).where(part.count(axis=1) >= minp)
+            idx24 = flow.rolling(config.M4_FLOW_LOOKBACK_BARS).sum()
+            mu = idx24.rolling(config.M4_FLOW_WARM_BARS).mean()
+            sd = idx24.rolling(config.M4_FLOW_WARM_BARS).std()
+            z_hist[cur] = (idx24 - mu) / sd
+        self._m4_z_hist = z_hist
+        if z_hist:
+            self._m4_z_last = {k: float(v.dropna().iloc[-1]) if v.notna().any() else 0.0 for k, v in z_hist.items()}
+        return True
+
+    def _m4_advance(self):
+        """Proses bar H1 closed baru per simbol: trig episode z>=1.5 -> breakdown 120-bar -> pending."""
+        for c in self._m4_universe:
+            df = self._m4_df.get(c)
+            if df is None or len(df) < 5:
+                continue
+            b, q = self._m4_cur_map.get(c, ("", ""))
+            zb_all, zq_all = self._m4_z_hist.get(b), self._m4_z_hist.get(q)
+            if zb_all is None or zq_all is None:
+                continue
+            zBser = zb_all.reindex(df.index).ffill()
+            zQser = zq_all.reindex(df.index).ffill()
+            n = len(df)
+            last_ts = self._m4_processed_ts.get(c)
+            start = 0 if last_ts is None else int(np.searchsorted(df.index.values, last_ts, side="right"))
+            if start >= n:
+                continue
+            hi = df["high"].to_numpy()
+            lo = df["low"].to_numpy()
+            cl = df["close"].to_numpy()
+            atr = self._m4_wilder_atr(hi, lo, cl, 14)
+            st_all = self._m4_state.setdefault(c, {
+                "SELL": {"ep": None, "level": None, "last_break": None, "pending": None},
+                "BUY": {"ep": None, "level": None, "last_break": None, "pending": None},
+            })
+            for p in range(start, n):
+                zbv = zBser.iloc[p]
+                zqv = zQser.iloc[p]
+                try:
+                    if np.isnan(float(zbv)) or np.isnan(float(zqv)):
+                        continue
+                except Exception:
+                    continue
+                self._m4_step_side(st_all["SELL"], -1, p, float(zbv), float(zqv), cl, lo, hi, atr)
+                self._m4_step_side(st_all["BUY"], 1, p, float(zbv), float(zqv), cl, lo, hi, atr)
+            self._m4_processed_ts[c] = float(df.index[-1])
+
+    def _m4_step_side(self, st: dict, side: int, p: int, zb: float, zq: float,
+                      cl: np.ndarray, lo: np.ndarray, hi: np.ndarray, atr):
+        """Translasi 1:1 state machine studi mirror ke bar H1 live (per sisi SELL/BUY)."""
+        EP = config.M4_TRIGGER_Z
+        CT = config.M4_CONT_Z
+        conflict = (zb >= EP and zq >= EP) or (zb <= -EP and zq <= -EP)
+        if side == -1:  # SELL: quote surge / base dump
+            trig = (not conflict) and (zb <= -EP or zq >= EP)
+            cont = (not conflict) and (zb <= -CT or zq >= CT)
+        else:           # BUY: base surge / quote dump
+            trig = (not conflict) and (zb >= EP or zq <= -EP)
+            cont = (not conflict) and (zb >= CT or zq <= -CT)
+        # 1) pending fill-wait kadaluarsa (studi MAX_WAIT)
+        if st.get("pending") is not None:
+            if (p - st["pending"]["break_pos"]) >= config.M4_MAX_WAIT_BARS:
+                st["pending"] = None
+        # 2) episode hidup?
+        if st.get("ep") is not None:
+            if not cont:
+                st["ep"] = None
+                st["level"] = None
+            elif (p - st["ep"]) >= config.M4_MIN_EPISODE_BARS:
+                level = st.get("level")
+                if level is None:
+                    st["ep"] = None
+                    return
+                broke = (cl[p] < level) if side == -1 else (cl[p] > level)
+                gap_ok = st.get("last_break") is None or (p - st["last_break"]) >= config.M4_MIN_GAP_BARS
+                if broke and gap_ok:
+                    st["last_break"] = p
+                    atr_p = None
+                    if atr is not None and p < len(atr) and not np.isnan(atr[p]):
+                        atr_p = float(atr[p])
+                    if atr_p and atr_p > 0:
+                        R = config.M4_SL_ATR_MULT * atr_p
+                        if side == -1:
+                            sl, tp = level + R, level - config.M4_TP_R_MULT * R
+                        else:
+                            sl, tp = level - R, level + config.M4_TP_R_MULT * R
+                        st["pending"] = {"break_pos": p, "level": float(level), "atr": atr_p,
+                                         "sl": float(sl), "tp": float(tp)}
+        else:
+            if trig:
+                w0 = max(0, p - config.M4_LOOKBACK_BARS)
+                st["ep"] = p
+                # level = swing 120-bar SEBELUM episode: SELL pakai lantai low, BUY pakai atap high (studi 1:1)
+                st["level"] = float(hi[w0:p].max()) if side == 1 else float(lo[w0:p].min())
+
+    def _m4_feed_refresh(self):
+        """Refresh feed currency-z M4 — sekali per jam WIB (0 token LLM, ~26x900 bar H1 cold)."""
+        if not config.M4_ENABLED:
+            return
+        now_h = datetime.now(WIB).hour
+        if self._m4_feed_updated > 0.0 and self._m4_feed_hour == now_h:
+            return
+        self._m4_feed_hour = now_h
+        try:
+            if not self._m4_universe:
+                self._m4_build_universe()
+            cold = self._m4_feed_updated <= 0.0
+            for c in self._m4_universe:
+                try:
+                    self._m4_fetch_merge(c, cold)
+                except Exception as e:
+                    logger.debug(f"M4 fetch error {c}: {e}")
+            if not self._m4_refresh_z():
+                return
+            self._m4_advance()
+        except Exception as e:
+            logger.debug(f"M4 feed refresh error: {e}")
+            return
+        self._m4_feed_updated = time.time()
+
+    def _m4_pending_ready(self, sym_clean: str, side_key: str, mid: float, atr_now: float) -> Optional[dict]:
+        """Ambil pending M4 yang valid & sedang dalam band pendekatan retest level."""
+        st = self._m4_state.get(sym_clean, {}).get(side_key)
+        if not st:
+            return None
+        pend = st.get("pending")
+        if not pend:
+            return None
+        level = pend["level"]
+        atr_ref = max(pend.get("atr", atr_now), atr_now) if atr_now > 0 else pend.get("atr", 0.0)
+        if atr_ref <= 0:
+            return None
+        band = config.M4_EMIT_BAND_ATR * atr_ref
+        tol = 0.10 * atr_ref
+        if side_key == "SELL":
+            # harga mendekati level dari bawah (retest) — belum reclaim jauh di atas level
+            if not (level - band <= mid <= level + tol):
+                return None
+        else:
+            if not (level - tol <= mid <= level + band):
+                return None
+        return pend
+
+    @staticmethod
+    def _is_m4_supported(sym_clean: str) -> bool:
+        if not sym_clean or len(sym_clean) != 6 or not sym_clean.isalpha():
+            return False
+        if any(k in sym_clean for k in ("XAU", "GOLD", "XAG", "BTC")):
+            return False
+        return sym_clean not in config.M4_EXCLUDED_PAIRS
+
     @staticmethod
     def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
         """
-        Filters symbols based on empirical expected value (EV) per trading session.
-        - Tokyo Session (08:00 - 14:00 WIB): Only allow proven positive-EV pairs (Asia/Commodities).
-        - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured 26 pairs.
+        Filters symbols based on active session currency drivers:
+        - Tokyo Session (08:00 - 14:00 WIB): Any symbol containing Asian/Pacific drivers (JPY, AUD, NZD) is allowed
+          (e.g., AUDCAD, CADJPY, NZDCAD, EURJPY, GBPJPY, CHFJPY, AUDUSD, NZDUSD, GBPAUD, EURNZD, etc.).
+          Symbols without JPY/AUD/NZD (e.g., EURCAD, GBPCAD, USDCAD, EURUSD, GBPUSD, USDCHF, EURCHF, etc.) are locked.
+        - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured pairs.
         """
-        clean_sym = symbol.replace('-ECNc', '').replace('-ECN', '').replace('.c', '').replace('m', '').replace('_', '')
         if 8 <= hour_wib < 14:
-            return clean_sym in TOKYO_PROVEN_SYMBOLS
+            return config.is_asian_session_pair(symbol)
         elif 14 <= hour_wib <= 23:
             return True
         return False
@@ -969,6 +1229,7 @@ class MarketScanner:
                 'daily_mandate_thesis': getattr(strat_dir, 'daily_mandate_thesis', '') if strat_dir else '',
                 'structural_stage': getattr(strat_dir, 'structural_stage', '') if strat_dir else '',
                 'strategic_raw_payload': getattr(strat_dir, 'raw_payload', {}) if strat_dir else {},
+                'zce_meta': zce_meta,
                 'point': pt,
             }
         except Exception as e:
@@ -1102,6 +1363,10 @@ class MarketScanner:
         else:
             self._refresh_zce_rotation(mt5_connector=mt5_connector)
 
+        # ── M4: SYSTEMIC FLOW CONTINUATION — refresh feed currency-z (sekali per jam WIB) ──
+        if config.M4_ENABLED:
+            self._m4_feed_refresh()
+
         candidates: List[CandidateSetup] = []
         is_london_open = (14 <= h <= 18)
         is_ny_session = (19 <= h <= 23)
@@ -1189,13 +1454,20 @@ class MarketScanner:
                 perm_state = macro.get('permission_state', 'ARM')
                 csm_delta_val = macro.get('csm_delta', 0.0)
                 strat_dir_sym = macro.get('strat_dir')
+                zce_meta = macro.get('zce_meta') or {
+                    "zce_class": "MSE_BASE",
+                    "zce_f1_src": "MSE",
+                    "zce_c1_src": "MSE",
+                    "zce_f1_price": round(float(macro.get('immediate_floor_f1', 0.0) or 0.0), 5 if pt < 0.01 else 3),
+                    "zce_c1_price": round(float(macro.get('immediate_ceiling_c1', 0.0) or 0.0), 5 if pt < 0.01 else 3),
+                }
                 if getattr(config, 'ENABLE_WAVE_STATE_PERMISSION', False):
                     if perm_state == "LOCK" and getattr(config, 'WAVE_STATE_LOCK_PHASE2', False):
                         logger.debug(f"[RADAR] {sym} SKIP: Hard Lockout {macro.get('wave_state', 'LOCK')} ({macro.get('wave_summary', '')}).")
                         continue
 
                 # ── DIRECTIONAL 5-TIER OPERATIONAL ACTION MATRIX & CIRCUIT BREAKER ──
-                def _is_direction_allowed(target_dir: int, setup_label: str) -> tuple:
+                def _is_direction_allowed(target_dir: int, setup_label: str, entry_price: Optional[float] = None) -> tuple:
                     """
                     Resolves the 5-Tier Operational Action Matrix:
                     Returns: (allowed: bool, action_tier: str, reason: str)
@@ -1210,8 +1482,11 @@ class MarketScanner:
                         return False, "HARD_BLOCK", "[MSE GATING] Missing MSE Directive -> Defensive WATCH_ONLY"
 
                     strat_tier = getattr(strat_dir_sym, 'action_tier', 'FULL_ALLOW')
-                    if strat_tier in ("INACTION_ZONE", "CHAMBER_MID_BLOCK", "HARD_LOCK") and "PULLBACK" not in setup_label.upper():
+                    is_limit_retest = any(k in setup_label.upper() for k in ("PULLBACK", "SYSTEMIC", "BREAKOUT", "RETEST"))
+                    if strat_tier in ("INACTION_ZONE", "CHAMBER_MID_BLOCK") and not is_limit_retest:
                         return False, "HARD_BLOCK", f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})"
+                    if strat_tier == "HARD_LOCK":
+                        return False, "HARD_BLOCK", f"[MSE GATING] Hard Lock ({strat_tier})"
 
                     bias_score = getattr(strat_dir_sym, 'macro_bias_score', 0.0)
                     circuit_breaker = getattr(strat_dir_sym, 'hard_circuit_breaker', False)
@@ -1224,13 +1499,25 @@ class MarketScanner:
                             return False, "HARD_BLOCK", f"[MSE CIRCUIT BREAKER] SELL blocked at floor trap / past invalidation"
 
                     if strat_dir_sym.forbidden_traps:
+                        is_limit_setup = is_limit_retest
+                        f1_lvl = macro.get('immediate_floor_f1') or macro.get('floor_f1') or 0.0
+                        c1_lvl = macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1') or 0.0
+
                         for trap in strat_dir_sym.forbidden_traps:
                             trap_u = trap.upper()
-                            if ("DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u) and "PULLBACK" not in setup_label.upper():
+                            if ("DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u) and not is_limit_retest:
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] Trade forbidden in consolidation: {trap}"
+
                             if target_dir == 1 and ("DO NOT BUY" in trap_u or "DON'T BUY" in trap_u):
+                                # Contextual Limit Awareness: Jika Buy Limit berada cukup jauh di bawah plafon C1 (C1 adalah target TP, bukan harga entri)
+                                if is_limit_setup and entry_price is not None and c1_lvl > 0.0 and entry_price <= (c1_lvl - 0.40 * atr_val):
+                                    continue
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] BUY forbidden: {trap}"
+
                             if target_dir == -1 and ("DO NOT SELL" in trap_u or "DO NOT SHORT" in trap_u or "DON'T SELL" in trap_u):
+                                # Contextual Limit Awareness: Jika Sell Limit berada cukup jauh di atas lantai F1 (F1 adalah target TP, bukan harga entri)
+                                if is_limit_setup and entry_price is not None and f1_lvl > 0.0 and entry_price >= (f1_lvl + 0.40 * atr_val):
+                                    continue
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] SELL forbidden: {trap}"
 
                     # 3. CSM Flow Opposition Check (Systemic Currency Pressure)
@@ -1246,8 +1533,8 @@ class MarketScanner:
                     if is_aligned:
                         return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f})"
                     elif is_counter:
-                        # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap
-                        if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper():
+                        # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap, or M4 systemic flow
+                        if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper() or "SYSTEMIC" in setup_label.upper():
                             return True, "TP1_ONLY_SCALP", f"COUNTER_TREND_SCALP_PERMITTED ({bias_score:+.2f})"
                         else:
                             return False, "HARD_BLOCK", f"[COUNTER TREND BLOCK] Non-sweep setup rejected against macro ({bias_score:+.2f})"
@@ -1307,7 +1594,7 @@ class MarketScanner:
                             is_asian_session = (8 <= h < 14)
                             c1_struct = macro.get('immediate_ceiling_c1') or 0.0
                             c1_grade = macro.get('c1_reaction_grade', 'GRADE_1_MICRO')
-                            is_macro_wall = (c1_struct > 0 and abs(ref_top - c1_struct) <= 0.15 * atr_price_val)
+                            is_macro_wall = (c1_struct > 0 and abs(ref_top - c1_struct) <= config.SWEEP_WALL_MATCH_ATR_MULT * atr_price_val)
                             is_macro_wall_g2_g3 = (is_macro_wall and c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO"))
                             is_macro_wall_g3 = (is_macro_wall and c1_grade == "GRADE_3_MACRO")
 
@@ -1455,7 +1742,7 @@ class MarketScanner:
                             is_asian_session = (8 <= h < 14)
                             f1_struct = macro.get('immediate_floor_f1') or 0.0
                             f1_grade = macro.get('f1_reaction_grade', 'GRADE_1_MICRO')
-                            is_macro_wall = (f1_struct > 0 and abs(ref_bot - f1_struct) <= 0.15 * atr_price_val)
+                            is_macro_wall = (f1_struct > 0 and abs(ref_bot - f1_struct) <= config.SWEEP_WALL_MATCH_ATR_MULT * atr_price_val)
                             is_macro_wall_g2_g3 = (is_macro_wall and f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO"))
                             is_macro_wall_g3 = (is_macro_wall and f1_grade == "GRADE_3_MACRO")
 
@@ -1829,21 +2116,36 @@ class MarketScanner:
                     cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, (c_res if t_res >= 2 else 0.0)) if (lvl > 0 and lvl < mid)]
                     target_res = max(cand_res_list) if cand_res_list else 0.0
 
-                    allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST")
+                    allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST", entry_price=target_res)
                     can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
                     if not allowed_m3_b:
                         logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP ({action_tier_m3_b}): {reason_m3_b}")
                     elif can_buy_m3 and (target_res > 0):
-                        # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_res
-                        in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
-                        if not in_retest_window_b:
-                            logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
-                        elif dr_pos > 0.72:
-                            logger.debug(f"[BREAKOUT BUY EXTREME] {sym} SKIP: dealing range {dr_pos*100:.1f}% too high for retest buy")
+                        # 15-Bar Recency Guard (Instant Retest Law - FBS 10.7yr Research)
+                        # Level must have been crossed within the last 15 H1 bars to qualify as a fresh breakout retest
+                        has_recent_break_b = any(df['low'].iloc[-16:] <= target_res) if (df is not None and len(df) >= 16) else True
+                        if not has_recent_break_b:
+                            logger.debug(f"[BREAKOUT BUY RECENCY] {sym} SKIP: target_res {target_res:.5f} was broken > 15 bars ago (stale level)")
                         else:
-                            entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
-                            sl_tp = calculate_intraday_sl_tp(
-                                symbol=sym,
+                            # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_res
+                            in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
+                            if not in_retest_window_b:
+                                logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
+                            else:
+                                # Runaway Flash Spike Guard: Excursion must not exceed 2.50x ATR
+                                max_push_b = (max(df['high'].iloc[-16:]) - target_res) / atr_val if (df is not None and len(df) >= 16 and atr_val > 0) else 0.0
+                                if max_push_b > 2.50:
+                                    logger.debug(f"[BREAKOUT BUY RUNAWAY] {sym} SKIP: excursion {max_push_b:.2f}x ATR > 2.50x ATR (flash spike exhaustion)")
+                                else:
+                                    # Cek Runway Struktural ke Plafon C1 berikutnya:
+                                    target_ceiling = (macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
+                                    has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= 0.80 * atr_val)
+                                    if not has_upward_runway and dr_pos > 0.72:
+                                        logger.debug(f"[BREAKOUT BUY EXTREME] {sym} SKIP: runway to ceiling {target_ceiling:.5f} insufficient ({target_ceiling - target_res:.5f}) and dr_pos {dr_pos*100:.1f}%")
+                                    else:
+                                        entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
+                                sl_tp = calculate_intraday_sl_tp(
+                                    symbol=sym,
                                 entry_price=entry_lim,
                                 direction=1,
                                 origin_level=target_res,
@@ -1933,20 +2235,35 @@ class MarketScanner:
                     cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, (c_sup if t_sup >= 2 else 0.0)) if (lvl > 0 and lvl > mid)]
                     target_sup = min(cand_sup_list) if cand_sup_list else 0.0
 
-                    allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST")
+                    allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST", entry_price=target_sup)
                     can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
                     if not allowed_m3_s:
                         logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP ({action_tier_m3_s}): {reason_m3_s}")
                     elif can_sell_m3 and (target_sup > 0):
-                        # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_sup
-                        in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
-                        if not in_retest_window_s:
-                            logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
-                        elif dr_pos < 0.28:
-                            logger.debug(f"[BREAKOUT SELL EXTREME] {sym} SKIP: dealing range {dr_pos*100:.1f}% too low for retest sell")
+                        # 15-Bar Recency Guard (Instant Retest Law - FBS 10.7yr Research)
+                        # Level must have been crossed within the last 15 H1 bars to qualify as a fresh breakout retest
+                        has_recent_break_s = any(df['high'].iloc[-16:] >= target_sup) if (df is not None and len(df) >= 16) else True
+                        if not has_recent_break_s:
+                            logger.debug(f"[BREAKOUT SELL RECENCY] {sym} SKIP: target_sup {target_sup:.5f} was broken > 15 bars ago (stale level)")
                         else:
-                            entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
-                            sl_tp = calculate_intraday_sl_tp(
+                            # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_sup
+                            in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
+                            if not in_retest_window_s:
+                                logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
+                            else:
+                                # Runaway Flash Dump Guard: Excursion must not exceed 2.50x ATR
+                                max_push_s = (target_sup - min(df['low'].iloc[-16:])) / atr_val if (df is not None and len(df) >= 16 and atr_val > 0) else 0.0
+                                if max_push_s > 2.50:
+                                    logger.debug(f"[BREAKOUT SELL RUNAWAY] {sym} SKIP: excursion {max_push_s:.2f}x ATR > 2.50x ATR (flash dump exhaustion)")
+                                else:
+                                    # Cek Runway Struktural ke Lantai F1 berikutnya:
+                                    target_floor = (macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
+                                    has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= 0.80 * atr_val)
+                                    if not has_downward_runway and dr_pos < 0.28:
+                                        logger.debug(f"[BREAKOUT SELL EXTREME] {sym} SKIP: runway to floor {target_floor:.5f} insufficient ({target_sup - target_floor:.5f}) and dr_pos {dr_pos*100:.1f}%")
+                                    else:
+                                        entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
+                                sl_tp = calculate_intraday_sl_tp(
                                 symbol=sym,
                                 entry_price=entry_lim,
                                 direction=-1,
@@ -2027,6 +2344,80 @@ class MarketScanner:
                                 ))
                                 continue
 
+                # ═══════════════════════════════════════════════════════════════
+                # M4: SYSTEMIC FLOW CONTINUATION (Mechanism 4 — 3 Sep 2026)
+                # Studi #1/#1b mirror: breakdown swing 120-bar mengikuti currency flow
+                # z>=1.5 -> limit retest di level. SL/TP STRUKTURAL (0.45xATR & 1.1R)
+                # dibekukan di consensus._apply_sltp_rules (bypass floor/ceiling/RR).
+                # ═══════════════════════════════════════════════════════════════
+                if (config.M4_ENABLED and (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h)
+                        and clean_sym in self._m4_universe
+                        and (now_ts - self._m4_feed_updated) < 4200.0):
+                    try:
+                        atr_now = float(macro.get('current_atr', 0.0) or 0.0)
+                        if atr_now <= 0:
+                            atr_now = atr_pts * pt
+                        for _side_key in ("SELL", "BUY"):
+                            pend = self._m4_pending_ready(clean_sym, _side_key, mid, atr_now)
+                            if pend is None:
+                                continue
+                            _dir = -1 if _side_key == "SELL" else 1
+                            _alw, _tier, _why = _is_direction_allowed(_dir, config.M4_SETUP_TYPE, entry_price=pend["level"])
+                            if not _alw:
+                                logger.debug(f"[M4] {sym} {_side_key} gate-blocked: {_why}")
+                                continue
+                            _level = pend["level"]
+                            _sl = pend["sl"]
+                            _tp = pend["tp"]
+                            _dec = 5 if pt < 0.01 else 2
+                            _r_pts = max(1, int(round(abs(_sl - _level) / pt)))
+                            _tp_pts = max(1, int(round(abs(_tp - _level) / pt)))
+                            _entry = round(_level, _dec)
+                            _etype = "sell_limit" if _side_key == "SELL" else "buy_limit"
+                            _m4_cand = CandidateSetup(
+                                symbol=sym,
+                                setup_type=config.M4_SETUP_TYPE,
+                                direction=_dir,
+                                trigger_price=_entry,
+                                timeframe="H1",
+                                macro_compass=str(macro.get('macro_compass', macro.get('trend_compass', '')) or ''),
+                                dealing_range_pos=float(macro.get('dealing_range_pos', macro.get('dr_pos', 0.5)) or 0.5),
+                                rejection_wick_ratio=0.0,
+                                current_spread_pts=int(spread_pts),
+                                current_atr_pts=int(atr_pts),
+                                suggested_sl=round(_sl, _dec),
+                                suggested_tp=round(_tp, _dec),
+                                risk_reward_ratio=round(_tp_pts / _r_pts, 2),
+                                permission=perm_state,
+                                csm_delta=csm_delta_val,
+                                timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                economic_context=cal_text or '',
+                                action_tier=_tier,
+                                macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                regime_stability=macro.get('regime_stability', 'STABLE'),
+                                scan_mid=mid,
+                                metadata={
+                                    "entry_type": _etype,
+                                    "entry_price": _entry,
+                                    "m4_level": _level,
+                                    "m4_sl_pts": _r_pts,
+                                    "m4_tp_pts": _tp_pts,
+                                    "m4_atr_price": round(pend.get("atr", 0.0), 6),
+                                    "m4_direction": _side_key,
+                                    "permission": perm_state,
+                                    "csm_delta": csm_delta_val,
+                                    "action_tier": _tier,
+                                    **zce_meta
+                                },
+                            )
+                            candidates.append(_m4_cand)
+                            self._m4_state[clean_sym][_side_key]["pending"] = None  # 1 percobaan Stage-2 per break
+                            self._symbol_last_trigger[clean_sym] = now_ts
+                            logger.info(f"[M4] {sym} {_side_key} @ {_entry} | SL {_sl:.{_dec}f} (0.45xATR) | TP {_tp:.{_dec}f} (1.1R) | tier {_tier}")
+                            break
+                    except Exception as _m4e:
+                        logger.debug(f"M4 eval error on {sym}: {_m4e}")
+
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")
 
@@ -2048,8 +2439,45 @@ class MarketScanner:
         if candidates:
             self._save_cooldowns()
 
+        # ── Periodic Quant Funnel Snapshot Logger (Dump ke gate_debug.log tiap 5 menit) ──
+        if (now_ts - getattr(self, "_last_snapshot_ts", 0.0)) >= 300.0:
+            self._log_periodic_quant_snapshot()
+            self._last_snapshot_ts = now_ts
+
         self.last_candidates = candidates
         return candidates
+
+    def _log_periodic_quant_snapshot(self) -> None:
+        """Dump ringkasan spatial grid 26-pair (ZCE walls, MSE state/tier, M4 standbys)
+        ke gate_debug.log tiap 5 menit (0% komputasi baru, hanya baca memori RAM)."""
+        try:
+            lines = ["[QUANT FUNNEL 5-MIN SNAPSHOT] 26-Pair Spatial Grid (ZCE Walls | MSE State & Tier | M4 Standby):"]
+            for sym in self.symbols:
+                clean = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+                macro = self.macro_cache.get(sym, {})
+                strat = macro.get("strat_dir")
+                tier = getattr(strat, "action_tier", macro.get("action_tier", "N/A"))
+                m_state = getattr(strat, "market_state", "N/A")
+                f1 = macro.get("immediate_floor_f1") or macro.get("floor_f1")
+                c1 = macro.get("immediate_ceiling_c1") or macro.get("ceiling_c1")
+                pos = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
+
+                m4_str = "None"
+                if hasattr(self, "_m4_state"):
+                    for s in ("SELL", "BUY"):
+                        p = self._m4_state.get(clean, {}).get(s, {}).get("pending")
+                        if p:
+                            lvl = p.get("level", 0.0)
+                            m4_str = f"{s}@{lvl:.4f}"
+                            break
+
+                f1_txt = f"F1={f1:.4f}" if f1 else "F1=None"
+                c1_txt = f"C1={c1:.4f}" if c1 else "C1=None"
+                lines.append(f"  {clean:8} | MSE: {tier:<16} ({m_state:<18}) | ZCE: {f1_txt} {c1_txt} | Pos: {pos:5.1f}% | M4: {m4_str}")
+            logger.debug("\n" + "\n".join(lines))
+        except Exception as e:
+            logger.debug(f"Snapshot logging error: {e}")
+
     def get_symbol_smc_levels(self, symbol: str) -> Dict[str, Any]:
         """Calculates and returns exact price boundaries for Dealing Range, Discount, Equilibrium, Premium, OB, and FVG."""
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
