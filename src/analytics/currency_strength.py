@@ -191,7 +191,152 @@ def get_csm_prompt_payload(symbol):
         f"  * Net 4-Hour Session Delta ({base} minus {quote}): {delta_m15:+.2f} ({session_flow}) | Net 24h Delta: {delta_h1:+.2f}"
     ]
 
+    base_payload = "\n".join(lines)
+    try:
+        dual_basket_str = get_dual_basket_context(symbol)
+        if dual_basket_str:
+            base_payload += "\n\n" + dual_basket_str
+    except Exception:
+        pass
+
+    return base_payload
+
+
+def get_dual_basket_context(symbol: str, macro_cache: dict = None) -> str:
+    """
+    Computes Dual-Basket Confluence & Dispersion Matrix for a symbol (Research Shadow Metric).
+    Determines if the setup is:
+    1. SURGE_OVERRIDE_Y / SURGE_OVERRIDE_X: Independent velocity surge in Quote or Base currency.
+    2. SYSTEMIC_EXPANSION: Cohesive low-dispersion move across both baskets (no catch-up opportunity).
+    3. PURE_CATCHUP_LEAD_LAG: Leader hit wall AND laggard is in compressed discount/premium.
+    4. NEUTRAL_ROTATION: Standard rotation.
+
+    Framed explicitly as an 'exploratory/unverified shadow metric' for LLM Jury supplementary context.
+    """
+    clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
+    if len(clean_sym) < 6 or "BTC" in clean_sym or "XAU" in clean_sym or "GOLD" in clean_sym:
+        return ""
+
+    base_curr = clean_sym[:3]
+    quote_curr = clean_sym[3:6]
+
+    if base_curr not in CURRENCIES or quote_curr not in CURRENCIES:
+        return ""
+
+    if not macro_cache:
+        try:
+            from src.analytics.market_scanner import MarketScanner
+            scanner_inst = getattr(MarketScanner, '_instance', None)
+            if scanner_inst and getattr(scanner_inst, 'macro_cache', None):
+                macro_cache = scanner_inst.macro_cache
+        except Exception:
+            pass
+
+    if not macro_cache:
+        return ""
+
+    basket_positions = {c: [] for c in CURRENCIES}
+    leader_wall_hit = {c: False for c in CURRENCIES}
+    leader_details = {c: "" for c in CURRENCIES}
+
+    for sym_key, m in macro_cache.items():
+        csym = sym_key.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
+        if len(csym) < 6:
+            continue
+        b_c = csym[:3]
+        q_c = csym[3:6]
+        pos = m.get('dealing_range_pos', 0.5)
+        pos = max(0.0, min(1.0, float(pos)))
+
+        atr = m.get('atr_h1', 0.0010)
+        mid = m.get('current_mid', 0.0)
+        c1 = m.get('c1_level', mid)
+        f1 = m.get('f1_level', mid)
+        c1_dist = abs(c1 - mid) / atr if atr > 0 else 99.0
+        f1_dist = abs(mid - f1) / atr if atr > 0 else 99.0
+        min_dist_atr = min(c1_dist, f1_dist)
+
+        if b_c in CURRENCIES:
+            basket_positions[b_c].append(pos)
+            if (pos >= 0.90 or pos <= 0.10) and min_dist_atr <= 0.35:
+                leader_wall_hit[b_c] = True
+                leader_details[b_c] = f"{csym} ({pos*100:.0f}% pos, {min_dist_atr:.2f}x ATR to wall)"
+
+        if q_c in CURRENCIES:
+            q_pos = 1.0 - pos
+            basket_positions[q_c].append(q_pos)
+            if (q_pos >= 0.90 or q_pos <= 0.10) and min_dist_atr <= 0.35:
+                leader_wall_hit[q_c] = True
+                leader_details[q_c] = f"{csym} ({q_pos*100:.0f}% pos, {min_dist_atr:.2f}x ATR to wall)"
+
+    def _calc_std(arr):
+        if len(arr) < 2:
+            return 0.0
+        mean = sum(arr) / len(arr)
+        variance = sum((x - mean) ** 2 for x in arr) / len(arr)
+        return math.sqrt(variance)
+
+    sigma_X = _calc_std(basket_positions.get(base_curr, []))
+    sigma_Y = _calc_std(basket_positions.get(quote_curr, []))
+    n_X = len(basket_positions.get(base_curr, []))
+    n_Y = len(basket_positions.get(quote_curr, []))
+
+    scores_h1, _ = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)
+    scores_m15, _ = calculate_boitoki_csm(mt5.TIMEFRAME_M15, lookback_bars=16)
+
+    delta_X = (scores_m15.get(base_curr, 0.0) - scores_h1.get(base_curr, 0.0)) if scores_m15 and scores_h1 else 0.0
+    delta_Y = (scores_m15.get(quote_curr, 0.0) - scores_h1.get(quote_curr, 0.0)) if scores_m15 and scores_h1 else 0.0
+
+    target_m = macro_cache.get(symbol) or macro_cache.get(symbol + "-ECNc") or macro_cache.get(symbol + ".c") or {}
+    target_pos = target_m.get('dealing_range_pos', 0.5) if target_m else 0.5
+
+    classification = "NEUTRAL_ROTATION"
+    directive = f"Balanced cross-basket dispersion (σ_{base_curr}={sigma_X:.2f}, σ_{quote_curr}={sigma_Y:.2f}). Standard technical rotation."
+
+    if abs(delta_Y) >= 12.0:
+        classification = f"SURGE_OVERRIDE_{quote_curr}"
+        directive = f"Quote ({quote_curr}) has independent velocity surge (|ΔY|={abs(delta_Y):.1f}). Override Base basket — {symbol} follows Quote surge."
+    elif abs(delta_X) >= 12.0:
+        classification = f"SURGE_OVERRIDE_{base_curr}"
+        directive = f"Base ({base_curr}) has independent velocity surge (|ΔX|={abs(delta_X):.1f}). Override Quote basket — {symbol} follows Base surge."
+    elif sigma_X < 0.10 and sigma_Y < 0.10:
+        classification = "SYSTEMIC_EXPANSION"
+        directive = f"Both {base_curr} & {quote_curr} baskets have low dispersion (σ_{base_curr}={sigma_X:.2f}, σ_{quote_curr}={sigma_Y:.2f}). Systemic 1-way move — Lead-lag catch-up disabled."
+    elif sigma_X >= 0.22 and leader_wall_hit.get(base_curr, False) and (0.20 <= target_pos <= 0.80):
+        classification = "PURE_CATCHUP_LEAD_LAG"
+        leader_info = leader_details.get(base_curr, "Leader hit wall")
+        directive = f"Base {base_curr} Leader ({leader_info}) hit wall while {symbol} is lagging at {target_pos*100:.0f}% range. High-probability catch-up candidate."
+    elif sigma_Y >= 0.22 and leader_wall_hit.get(quote_curr, False) and (0.20 <= target_pos <= 0.80):
+        classification = "PURE_CATCHUP_LEAD_LAG"
+        leader_info = leader_details.get(quote_curr, "Leader hit wall")
+        directive = f"Quote {quote_curr} Leader ({leader_info}) hit wall while {symbol} is lagging at {target_pos*100:.0f}% range. High-probability catch-up candidate."
+
+    leader_X_str = leader_details.get(base_curr, "None") if leader_wall_hit.get(base_curr) else "No Wall Hit"
+    leader_Y_str = leader_details.get(quote_curr, "None") if leader_wall_hit.get(quote_curr) else "No Wall Hit"
+
+    journey_matrix = get_global_journey_matrix(macro_cache)
+    
+    def format_basket_journey(curr: str) -> str:
+        basket = {s: d for s, d in journey_matrix.items() if curr in s}
+        arr = [s for s, d in basket.items() if d['state'] == 'ARRIVED']
+        onh = [s for s, d in basket.items() if d['state'] == 'ON_HOLD']
+        enr = [s for s, d in basket.items() if d['state'] == 'EN_ROUTE']
+        return f"{len(arr)} ARRIVED ({','.join(arr) or 'None'}), {len(enr)} EN_ROUTE, {len(onh)} ON_HOLD ({','.join(onh) or 'None'})"
+        
+    b_journey = format_basket_journey(base_curr)
+    q_journey = format_basket_journey(quote_curr)
+
+    lines = [
+        "### RESEARCH SHADOW METRIC — CAPITAL ROTATION & DUAL-BASKET CONFLUENCE",
+        "(Note: Exploratory shadow metric for supplementary context only — do NOT override core technical structure)",
+        f"- Dual-Basket Classification ({symbol}): [{classification}]",
+        f"- Base ({base_curr}) Basket Status: {b_journey} | Leader: {leader_X_str}",
+        f"- Quote ({quote_curr}) Basket Status: {q_journey} | Leader: {leader_Y_str}",
+        f"- Analytical Confluence Directive: {directive}"
+    ]
+
     return "\n".join(lines)
+
 
 
 def get_csm_delta_for_symbol(symbol: str) -> float:
@@ -320,3 +465,28 @@ def evaluate_systemic_basket_lock(
             return True, f"EXTREME BASKET DELTA ({base_curr}-{quote_curr} {net_delta:+.1f}): Hard Lock BUY on {clean_sym} (Relative flow strongly bearish).", quote_curr
 
     return False, "CLEAR", ""
+
+
+def get_global_journey_matrix(macro_cache: dict) -> dict:
+    matrix = {}
+    if not macro_cache: return matrix
+    for sym_key, m in macro_cache.items():
+        csym = sym_key.replace('-ECNc', '').replace('.c', '').replace('-ECN', '').replace('_i', '').upper()
+        if len(csym) < 6 or 'BTC' in csym or 'XAU' in csym or 'GOLD' in csym: continue
+        pos = m.get('dealing_range_pos', 0.5)
+        pos = max(0.0, min(1.0, float(pos)))
+        atr = m.get('atr_h1', 0.0010)
+        mid = m.get('current_mid', m.get('current_price', 0.0))
+        c1 = m.get('immediate_ceiling_c1', m.get('cluster_resistance', mid))
+        f1 = m.get('immediate_floor_f1', m.get('cluster_support', mid))
+        c1_dist = abs(c1 - mid) / atr if atr > 0 else 99.0
+        f1_dist = abs(mid - f1) / atr if atr > 0 else 99.0
+        min_dist_atr = min(c1_dist, f1_dist)
+        wave_state = m.get('wave_state', 'NEUTRAL')
+        
+        if (pos >= 0.90 or pos <= 0.10) and min_dist_atr <= 0.35: state = 'ARRIVED'
+        elif 'COMPRESSION' in wave_state or 'RANGING' in wave_state or (0.35 <= pos <= 0.65): state = 'ON_HOLD'
+        else: state = 'EN_ROUTE'
+            
+        matrix[csym] = {'state': state, 'pos': pos, 'min_dist_atr': min_dist_atr, 'wave': wave_state}
+    return matrix

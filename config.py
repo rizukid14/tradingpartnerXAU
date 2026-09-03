@@ -216,13 +216,30 @@ FORECAST_FALLBACK_MODEL = os.getenv("FORECAST_FALLBACK_MODEL", "gemini-3.5-flash
 
 
 # --- TRADING PARAMETERS ---
+MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "live").strip().lower()  # "live" | "demo"
+
+def _normalize_symbol_for_account(symbol: str) -> str:
+    """Normalizes symbol suffix based on active MT5_ACCOUNT_MODE (demo uses -ECN, live uses -ECNc)."""
+    if not symbol:
+        return symbol
+    s = symbol.strip()
+    if MT5_ACCOUNT_MODE == "demo":
+        if s.endswith("-ECNc"):
+            return s[:-1]  # -ECNc -> -ECN
+        if s.endswith(".ECNc"):
+            return s[:-1]
+    elif MT5_ACCOUNT_MODE == "live":
+        if s.endswith("-ECN") and not s.endswith("-ECNc"):
+            return s + "c"  # -ECN -> -ECNc
+    return s
+
 # Symbol rotation: XAUUSD on weekdays, BTCUSD on weekends (crypto 24/7 while FX closed)
-# Default = nama broker LIVE (suffix -ECNc). Auto-correct cuma arah demo (XAUUSD-ECNc -> XAUUSD-ECN).
-WEEKDAY_SYMBOL = os.getenv("WEEKDAY_SYMBOL", "GBPUSD-ECNc")
+# Default = nama broker LIVE (suffix -ECNc) / DEMO (suffix -ECN) via auto-normalization.
+WEEKDAY_SYMBOL = _normalize_symbol_for_account(os.getenv("WEEKDAY_SYMBOL", "GBPUSD-ECNc"))
 WEEKEND_SYMBOL = os.getenv("WEEKEND_SYMBOL", "BTCUSD.c")
 CRYPTO_SYMBOLS = {"BTCUSD.c", "BTCUSD", "BTCUSD.ecn", "BTCUSD.m", "BTCUSD.MT5", "BTCUSD.pro"}
 ENABLE_BTC_ROTATION = _getenv_bool("ENABLE_BTC_ROTATION", False)
-SYMBOL = os.getenv("SYMBOL", WEEKDAY_SYMBOL)
+SYMBOL = _normalize_symbol_for_account(os.getenv("SYMBOL", WEEKDAY_SYMBOL))
 
 # --- TRADING MODE: "scanner" (2-Stage 22-Pair Quant Funnel) | "pairs" | "xau" | "xau_pairs" ---
 TRADING_MODE = os.getenv("TRADING_MODE", "scanner").strip().lower()
@@ -230,16 +247,18 @@ SCANNER_MODE = _getenv_bool("SCANNER_MODE", True)
 
 # Universe 26 Simbol Terkurasi (Murni 26 Pasangan FX Tanpa Gold)
 ALL_SCANNER_SYMBOLS = [
-    "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
-    "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
-    "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
-    "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
-    "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc",
-    "NZDCHF-ECNc", "NZDUSD-ECNc", "GBPNZD-ECNc", "AUDNZD-ECNc", "EURNZD-ECNc"
+    _normalize_symbol_for_account(s) for s in [
+        "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
+        "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
+        "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
+        "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
+        "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc",
+        "NZDCHF-ECNc", "NZDUSD-ECNc", "GBPNZD-ECNc", "AUDNZD-ECNc", "EURNZD-ECNc"
+    ]
 ]
 
 SCANNER_SYMBOLS = [
-    s.strip()
+    _normalize_symbol_for_account(s.strip())
     for s in os.getenv("SCANNER_SYMBOLS", ",".join(ALL_SCANNER_SYMBOLS)).split(",")
     if s.strip()
 ]
@@ -249,15 +268,29 @@ RADAR_SCAN_INTERVAL_SECONDS = _getenv_int("RADAR_SCAN_INTERVAL_SECONDS", 60)
 RADAR_MIN_WICK_RATIO = _getenv_float("RADAR_MIN_WICK_RATIO", 0.30)
 ENABLE_HOURLY_RADAR_RECAP = _getenv_bool("ENABLE_HOURLY_RADAR_RECAP", True)
 
-# Wave State Machine (Trade Permission Engine: Phase 1/2 Lock, Phase 3/4 Enable)
-ENABLE_WAVE_STATE_PERMISSION = _getenv_bool("ENABLE_WAVE_STATE_PERMISSION", True)
-WAVE_STATE_LOCK_PHASE2 = _getenv_bool("WAVE_STATE_LOCK_PHASE2", True)
 CSM_ANTI_DUMP_THRESHOLD = _getenv_float("CSM_ANTI_DUMP_THRESHOLD", -2.0)
 
 # Pure Quant Hierarchical Top-Down Macro Strategic Engine
 ENABLE_MACRO_STRATEGIC_ENGINE = _getenv_bool("ENABLE_MACRO_STRATEGIC_ENGINE", True)
 MACRO_STRATEGIC_REFRESH_SECONDS = _getenv_int("MACRO_STRATEGIC_REFRESH_SECONDS", 3600)
 ENABLE_MSE_HARD_STAGE1_GATE = _getenv_bool("ENABLE_MSE_HARD_STAGE1_GATE", True)
+
+# ---------- Zone Confluence Engine (ZCE, RFC 11: docs/plans/ZONE_CONFLUENCE_ENGINE_SPEC.md) ----------
+# Peta zona multi-TF x multi-horizon (OB/FVG/EQH/EQL/FRVP/psych/last swing) + scale ladder + SCALE_CONFLICT.
+# Mode: "shadow" = hitung + log tanpa efek eksekusi; "legacy"/"full" = supply walls ke MSE.
+ZCE_ENABLED = _getenv_bool("ZCE_ENABLED", False)
+ZCE_MODE = os.getenv("ZCE_MODE", "shadow")
+ZCE_REFRESH_ROTATION = _getenv_int("ZCE_REFRESH_ROTATION", 6)          # simbol diproses per siklus 60s
+ZCE_REFRESH_INTERVAL_SECONDS = _getenv_int("ZCE_REFRESH_INTERVAL_SECONDS", 900)  # interval rebuild macro_cache saat ZCE legacy/full (15 mnt; dinding ZCE basi maks ~15 mnt, bukan 60 mnt)
+ZCE_TP_REACH_ATR_MULT = _getenv_float("ZCE_TP_REACH_ATR_MULT", 3.0)    # reachability TP1 intraday (x ATR H1)
+ZCE_COLD_DAYS = _getenv_int("ZCE_COLD_DAYS", 21)                       # tidak tersentuh > N hari -> COLD
+ZCE_VACUUM_DAYS = _getenv_int("ZCE_VACUUM_DAYS", 60)                   # COLD + tanpa aktivitas H1 -> VACUUM
+ZCE_CONFLICT_GAP = _getenv_float("ZCE_CONFLICT_GAP", 0.45)             # selisih posisi antar-horizon -> SCALE_CONFLICT
+ZCE_CLUSTER_MERGE_ATR_MULT = _getenv_float("ZCE_CLUSTER_MERGE_ATR_MULT", 0.25)
+ZCE_GRADE_G2 = _getenv_float("ZCE_GRADE_G2", 3.5)
+ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
+# Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
+SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
 
 # Systemic Currency Basket Circuit Breaker (Global M15/H1 CSM 8 Currencies)
 ENABLE_SYSTEMIC_BASKET_LOCK = _getenv_bool("ENABLE_SYSTEMIC_BASKET_LOCK", True)
@@ -267,7 +300,7 @@ SYSTEMIC_BASKET_CROSS_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_CROSS_THRESHOLD
 SYSTEMIC_BASKET_SPREAD_THRESHOLD = _getenv_float("SYSTEMIC_BASKET_SPREAD_THRESHOLD", 1.8)
 
 FX_PAIR_SYMBOLS = [
-    s.strip()
+    _normalize_symbol_for_account(s.strip())
     for s in os.getenv(
         "FX_PAIR_SYMBOLS",
         # Pool FX 4 simbol M30 Intraday (25 Agustus 2026):
@@ -293,10 +326,6 @@ TIMEFRAME = TIMEFRAME_MAP.get(TIMEFRAME_STR, mt5.TIMEFRAME_M30)
 H1_TIMEFRAME = mt5.TIMEFRAME_H1
 
 # Dynamic Session Timeframe: H1 saat Sesi Tokyo (08:00 - 14:00 WIB), M30 saat London/NY (14:00 - 00:00 WIB)
-DYNAMIC_SESSION_TIMEFRAME = _getenv_bool("DYNAMIC_SESSION_TIMEFRAME", True)
-ASIA_TIMEFRAME = os.getenv("ASIA_TIMEFRAME", "H1").upper()
-LONDON_NY_TIMEFRAME = os.getenv("LONDON_NY_TIMEFRAME", "M30").upper()
-DYNAMIC_TF_SWITCH_HOUR_WIB = _getenv_int("DYNAMIC_TF_SWITCH_HOUR_WIB", 14)
 
 STARTING_BALANCE = _getenv_float("STARTING_BALANCE", 1000.0)
 
@@ -335,7 +364,7 @@ def deviation_for(symbol):
 # - BTC: SELALU ATR-Based (fix) - anti-scalping; gate ATR R:R 2:1.
 #   SL >= SL_MULT x ATR, TP >= TP_MULT x ATR; floor 400 pts cuma 0.49x ATR M15
 #   (ATR M15 XAU ~819 pts) -> terlalu scalping utk swing M15.
-# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+# - FX pairs: LLM (bebas struktur, safety floor dinamis max(2x spread, 0.50x ATR H1)
 #   via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts kalau ATR gagal; R:R min 1.25:1) - cocok utk H1 swing.
 # - Kalau TP_SL_RULES di-set eksplisit ke "ATR-Based" (CLI --tpsl-rules / .env),
 #   SEMUA kategori ikut ATR-Based (force). Default "LLM" = per-kategori di atas.
@@ -359,7 +388,7 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 # Mode LLM (XAU & FX): SL/TP bebas struktur LLM, tapi dibatasi safety floor minimal
 # (mencegah SL mikro 5 pips yang membengkakkan lot) + gate R:R minimum.
 # Safety floor SL/TP mode LLM (14 Agustus):
-#   - FX pairs: floor berbasis ATR aktif (default 1.5x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
+#   - FX pairs: floor berbasis ATR aktif (default 0.50x ATR H1, `LLM_FX_FLOOR_ATR_MULT`).
 #     Fallback statis 250 pts (25 pips) dipakai kalau ATR gagal dihitung.
 #     Alasan (14 Agustus lanjutan): floor statis 250 pts = 2.5-2.8x ATR H1 FX
 #     (~90-100 pts) -> semua SL struktural asli (60-200 pts) di-floor paksa +
@@ -394,34 +423,24 @@ ERA_PRESETS = {
         "DRY_RUN": True,
         "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     },
     "v2": {
         "label": "V2 - legacy-2 (= v1 + state)",
         "DRY_RUN": True,
         "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 1.0,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     },
     "v3": {
         "label": "V3 - modern (Claude + quant, sekarang)",
         "DRY_RUN": False,
         "RISK_PERCENT_XAU": 1.0,
         "RISK_PERCENT_BTC": 0.25,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_XAU": 1.2,
-        "CONFIDENCE_CONSENSUS_THRESHOLD_BTC": 1.2
     }
 }
 
 CONSENSUS_THRESHOLD = _getenv_int("CONSENSUS_THRESHOLD", 2)
-DYNAMIC_CONFIG_ENABLED = _getenv_bool("DYNAMIC_CONFIG_ENABLED", False)
 
-CONFIDENCE_CONSENSUS_THRESHOLD_XAU = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_XAU", 1.2)
-CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_BTC", 1.2)
 # FIX 29 Agu: orphan env var - sekarang dibaca oleh confidence_threshold_for()
-CONFIDENCE_CONSENSUS_THRESHOLD_FX = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_FX", 1.2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 HIGH_CONFIDENCE_SPLIT_THRESHOLD = _getenv_float("HIGH_CONFIDENCE_SPLIT_THRESHOLD", 0.80)
 
@@ -444,7 +463,6 @@ AI_MODE_SCHEDULE = [
 AI_DUAL_SECOND_MODEL = os.getenv("AI_DUAL_SECOND_MODEL", "Gemini")
 
 FORCE_ACTIVE_ENTRY = _getenv_bool("FORCE_ACTIVE_ENTRY", False)
-MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: lesson learned & recent outcomes TIDAK di-inject ke prompt LLM (lesson M5-scalp toxic, bikin HOLD terus). Kode tetap ada, tinggal set True kalau mau aktif lagi.
 
 # --- ECONOMIC NEWS (kalender ekonomi, 20 Agustus) ---
 # Fetch high-impact events dari TradingView API (data Investing.com) tiap N jam,
@@ -454,7 +472,7 @@ MEMORY_CONTEXT_ENABLED = _getenv_bool("MEMORY_CONTEXT_ENABLED", False)  # OFF: l
 ECONOMIC_NEWS_ENABLED = _getenv_bool("ECONOMIC_NEWS_ENABLED", True)
 ECONOMIC_NEWS_TTL_HOURS = _getenv_int("ECONOMIC_NEWS_TTL_HOURS", 6)  # fetch tiap 6 jam
 ECONOMIC_NEWS_COUNTRIES = [
-    c.strip().upper() for c in os.getenv("ECONOMIC_NEWS_COUNTRIES", "US,GB,EU,CH,JP,AU,CA").split(",") if c.strip()
+    c.strip().upper() for c in os.getenv("ECONOMIC_NEWS_COUNTRIES", "US,GB,EU,CH,JP,AU,CA,NZ").split(",") if c.strip()
 ]
 ECONOMIC_NEWS_GLOBAL_KEYWORDS = (
     "FOMC", "NFP", "Non Farm", "Payroll", "Payrolls", "Powell", "Trump",
@@ -463,11 +481,8 @@ ECONOMIC_NEWS_GLOBAL_KEYWORDS = (
 # Event US lain (CPI, PCE, Retail Sales, Unemployment, GDP US, ISM, dst) =
 # pair-specific USD -> hanya GBPUSD yang kena.
 
-# POST_MORTEM_ENABLED = False (default): mesin post-mortem (trade_evaluator) DIMATIKAN.
-# Hasilnya (lessons) sudah tidak dipakai karena MEMORY_CONTEXT_ENABLED=False, tapi
 # mesinnya masih manggil LLM per trade close = buang biaya + nulis lesson toxic/salah
 # simbol. Kode tetap ada, tinggal set True kalau mau aktif lagi.
-POST_MORTEM_ENABLED = _getenv_bool("POST_MORTEM_ENABLED", False)
 
 # --- TRAILING STOP ---
 TRAILING_STOP_ENABLED = _getenv_bool("TRAILING_STOP_ENABLED", True)
@@ -619,12 +634,13 @@ MAX_SPREAD_POINTS_BTC = _getenv_int("MAX_SPREAD_POINTS_BTC", 2400)
 # FX spread cap: ATR-based = max(SPREAD_ATR_RATIO × ATR_H1_pts, SPREAD_ATR_FLOOR_PTS)
 # Lebih adil antar-pair: pair volatile (EURNZD, GBPJPY) dapat toleransi lebih besar,
 # pair slow-mover (EURCHF) tidak langsung kena flat-cap 50 pts yang terlalu longgar.
-SPREAD_ATR_RATIO     = float(os.getenv("SPREAD_ATR_RATIO", "0.15"))   # 15% ATR H1
+SPREAD_ATR_RATIO     = float(os.getenv("SPREAD_ATR_RATIO", "0.20"))   # 15% ATR H1
 SPREAD_ATR_FLOOR_PTS = _getenv_int("SPREAD_ATR_FLOOR_PTS", 20)        # floor minimum FX (pts)
 
 # --- SESSION FILTER ---
 # Trade Zone: 09:00 - 00:00 WIB (00:00 - 09:00 WIB Dead Zone Rollover & Sepi Likuiditas)
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
+WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 ALLOWED_SESSIONS_WIB = [
     {"name": "Tokyo / Asia Pagi", "start": (8, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
@@ -638,12 +654,26 @@ DANGER_ZONES_WIB = [
      "reason": "Dead Zone rollover & sepi likuiditas (00:00 - 08:00 WIB)"},
 ]
 
+# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session) ---
+SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
+ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 8)
+ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
+
+def is_asian_session_pair(symbol: str) -> bool:
+    """
+    True if the symbol contains Asian / Pacific currencies (JPY, AUD, NZD).
+    During Asian Session (08:00 - 14:00 WIB), pure European/American pairs
+    (EURUSD, GBPUSD, EURGBP, EURCHF, GBPCHF, GBPCAD, EURCAD, USDCAD, USDCHF)
+    are locked to avoid low-liquidity whipsaw noise.
+    """
+    s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+    return any(c in s for c in ("JPY", "AUD", "NZD"))
+
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
 WEEKEND_CLOSE_PROFIT_MIN_USD = _getenv_float("WEEKEND_CLOSE_PROFIT_MIN_USD", 1.0)
 WEEKEND_CLOSE_HOURS_BEFORE = _getenv_float("WEEKEND_CLOSE_HOURS_BEFORE", 2.0)
 WEEKEND_MAX_LOSS_TO_HOLD_USD = _getenv_float("WEEKEND_MAX_LOSS_TO_HOLD_USD", 20.0)
-WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 
 # --- TIME-DECAY STAGNATION & PRE-ROLLOVER SHIELD (Ide 1) ---
 TIME_DECAY_STAGNATION_ENABLED = _getenv_bool("TIME_DECAY_STAGNATION_ENABLED", True)
@@ -698,7 +728,6 @@ VOL_REGIME_LOW_BEP_RATIO      = _getenv_float("VOL_REGIME_LOW_BEP_RATIO", 0.45) 
 # --- PATTERN EDGE WHISPER (16 Agustus, dev-backtest) ---
 # Inject statistik pola tervalidasi (dari riset pattern_research.py) ke prompt LLM
 # kalau pola di candle terakhir match registry EDGE. Informational only.
-PATTERN_WHISPER_ENABLED = _getenv_bool("PATTERN_WHISPER_ENABLED", True)
 
 POSITION_MANAGER_MAX_TICK_AGE_SECONDS = _getenv_int("POSITION_MANAGER_MAX_TICK_AGE_SECONDS", 300)
 
@@ -767,7 +796,6 @@ def refresh_mt5_credentials():
 refresh_mt5_credentials()
 
 # --- MULTI-TIMEFRAME & FUNDAMENTAL SETTINGS ---
-MTF_ANALYSIS_ENABLED = _getenv_bool("MTF_ANALYSIS_ENABLED", True)
 HIGHER_TIMEFRAMES = {
     "H1": mt5.TIMEFRAME_H1,
     "H4": mt5.TIMEFRAME_H4
@@ -793,7 +821,6 @@ def get_higher_timeframes(symbol):
         return HIGHER_TIMEFRAMES_H1_ACTIVE
     return HIGHER_TIMEFRAMES_M30_ACTIVE
 
-FUNDAMENTAL_ANALYSIS_ENABLED = _getenv_bool("FUNDAMENTAL_ANALYSIS_ENABLED", False)
 PRIMARY_ANALYSIS_MODEL = os.getenv("PRIMARY_ANALYSIS_MODEL", "o4-mini")
 
 # --- LOGGING SETTINGS ---
@@ -827,7 +854,7 @@ def sltp_mode_for(symbol):
       min lot) di consensus/main. Max lot cap (0.01) dihapus 14 Agustus - lot murni
       risk-based, volume_max broker yang membatasi.
     - BTC: fix "ATR-Based" (SELALU) - gate ATR R:R 2:1, anti-scalping.
-    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 1.5x ATR H1)
+    - FX pairs: "LLM" (bebas struktur, safety floor dinamis max(2x spread, 0.50x ATR H1)
       via LLM_FX_FLOOR_ATR_MULT, fallback 250 pts / 25 pips kalau ATR gagal; R:R min 1.25:1).
       Kalau config.TP_SL_RULES di-set eksplisit "ATR-Based" via CLI/.env, FX ikut ATR-Based.
     """
@@ -925,20 +952,15 @@ def lot_size_for(symbol):
 
 
 def get_timeframe_str(symbol=None, now_wib=None):
-    """Returns the active trading timeframe string ('H1' or 'M30') taking into account
-    Dynamic Session Timeframe (H1 in Tokyo 08:00-14:00, M30 in London/NY 14:00-00:00).
-    Crypto (BTC) pakai TIMEFRAME_STR apa adanya (default H1, bukan short-circuit ke M30).
-    """
-    if DYNAMIC_SESSION_TIMEFRAME:
-        if now_wib is None:
-            now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
-        wib_hour = now_wib.hour
-        # Sesi Tokyo / Asia: 08:00 - 14:00 WIB
-        if 8 <= wib_hour < DYNAMIC_TF_SWITCH_HOUR_WIB:
-            return ASIA_TIMEFRAME
-        else:
-            return LONDON_NY_TIMEFRAME
-    return TIMEFRAME_STR
+    """Returns the active trading timeframe string (respects TIMEFRAME env override if set)."""
+    env_tf = os.getenv("TIMEFRAME")
+    if env_tf and env_tf.upper() in TIMEFRAME_MAP:
+        return env_tf.upper()
+    if symbol:
+        sym_clean = symbol.upper()
+        if "JPY" in sym_clean or "XAU" in sym_clean or "GOLD" in sym_clean:
+            return "M30"
+    return "H1"
 
 
 def get_timeframe(symbol=None, now_wib=None):
@@ -977,19 +999,21 @@ def default_tp_points_for(symbol):
 
 def max_spread_points_for(symbol, atr_h1_pts=None):
     """Return max spread in points for a symbol.
-    - Crypto : flat BTC cap (2400 pts)
-    - XAU    : flat XAU cap (50 pts)
-    - FX     : max(15% × ATR_H1_pts, floor 20 pts).
-                Fallback ke flat MAX_SPREAD_POINTS jika atr_h1_pts tidak tersedia.
+       Dynamic ATR Ratio: 0.20 for Asian session (08:00 - 17:00 WIB), 0.15 for EU/US.
     """
     if is_crypto(symbol):
         return MAX_SPREAD_POINTS_BTC
-    if is_gold(symbol):
+    if "XAU" in symbol or "GOLD" in symbol:
         return MAX_SPREAD_POINTS_XAU
-    # FX: ATR-based dengan floor
+    
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now_h = datetime.now(ZoneInfo("Asia/Jakarta")).hour
+    ratio = 0.20 if (8 <= now_h < 17) else 0.15
+    
     if atr_h1_pts and atr_h1_pts > 0:
-        return max(int(atr_h1_pts * SPREAD_ATR_RATIO), SPREAD_ATR_FLOOR_PTS)
-    return MAX_SPREAD_POINTS  # fallback flat jika ATR tidak tersedia
+        return max(int(atr_h1_pts * ratio), SPREAD_ATR_FLOOR_PTS)
+    return MAX_SPREAD_POINTS
 
 
 def sl_padding_for(symbol):
@@ -998,16 +1022,6 @@ def sl_padding_for(symbol):
         return globals().get("SL_PADDING_NZD_POINTS", 20)
     return 0
 
-
-def confidence_threshold_for(symbol):
-    """Weighted-confidence consensus threshold per symbol.
-    BTC (H1 swing, moderate entries) needs higher conviction than FX/XAU (M15/H1, frequent).
-    """
-    if is_crypto(symbol):
-        return CONFIDENCE_CONSENSUS_THRESHOLD_BTC
-    if is_forex(symbol):
-        return CONFIDENCE_CONSENSUS_THRESHOLD_FX
-    return CONFIDENCE_CONSENSUS_THRESHOLD_XAU
 
 
 def get_ai_mode(now=None):

@@ -16,6 +16,21 @@ Semua pembaruan, evolusi arsitektur, optimasi kuantitatif, dan bugfix sistem tra
 
 ---
 
+## Kronologi Pembaruan (September 2026)
+
+### [1–2 September 2026] — Dual-Basket Confluence & Dispersion Matrix Engine
+- **Dual-Basket Structural Progress & Dispersion Mapping**: Mengukur deviasi standar posisi relatif ($\sigma_X$ dan $\sigma_Y$) yang dinormalisasi ke skala $[0.0, 1.0]$ dari dealing range 50-bar H1 pada 26 simbol FX terkurasi ($N \ge 6$ pair per basket).
+- **Deterministic Decision Hierarchy (Mutual Exclusive Order)**: Matriks keputusan 4-Tier mutual exclusive:
+  - **Tier 1 (`SURGE_OVERRIDE_Y/X`)**: Lonjakan kecepatan 4-bar $|\Delta Y| \ge 12.0$ atau $|\Delta X| \ge 12.0$ meng-override basket lawan.
+  - **Tier 2 (`SYSTEMIC_EXPANSION`)**: $\sigma_X < 0.10 \text{ AND } \sigma_Y < 0.10$ (lead-lag catchup dimatikan).
+  - **Tier 3 (`PURE_CATCHUP_LEAD_LAG`)**: $\sigma_X \ge 0.22 \text{ AND } \text{Leader\_Hit\_Wall} \text{ AND } pos_{X/Y} \in [0.20, 0.80]$.
+  - **Tier 4 (`NEUTRAL_ROTATION`)**: Rotasi teknis standar.
+- **Strict Leader Wall Hit Anchoring**: `Leader_Hit_Wall` = `(pos >= 0.90 or pos <= 0.10) AND (dist <= 0.35 ATR)`.
+- **Zero-Risk Informational Ingestion**: Mode shadow metric diinjeksi ke Stage 2 LLM Dossier prompt (`src/core/llm_client.py`), Stage 1 Radar hard gating (`src/analytics/market_scanner.py`) 100% tidak disentuh.
+- **Detail Dokumentasi**: Penerbitan [docs/CHANGELOG_SEPTEMBER_2026.md](file:///c:/Vibe/tradingpartner/docs/CHANGELOG_SEPTEMBER_2026.md).
+
+---
+
 ## Kronologi Pembaruan (Agustus 2026)
 
 ### [30–31 Agustus 2026] — Hybrid Confluence, Apex Fundamental Engine & TSD Master

@@ -74,5 +74,7 @@ docs/
 * **`specs/`** — [2026-08-09-trading-dashboard-design.md](file:///c:/Vibe/tradingpartner/docs/reference/specs/2026-08-09-trading-dashboard-design.md) (Spesifikasi desain UI/UX Dashboard monitoring).
 * **`trading-robots/`** — Kode sumber Expert Advisor MT5 (.mq5, .ex5) dan panduan optimasi EA.
 
-### 6. Archive (`docs/archive/`)
-* [CHANGELOG_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/archive/CHANGELOG_AUGUST_2026.md) — Arsip detail perubahan historis bot periode 8–15 Agustus 2026 (FASE 1–7, pemisahan mode SL/TP, evolusi lot sizing).
+### 6. Changelog & Archive (`docs/` & `docs/archive/`)
+* [CHANGELOG_SEPTEMBER_2026.md](file:///c:/Vibe/tradingpartner/docs/CHANGELOG_SEPTEMBER_2026.md) — **Changelog September 2026**: Implementasi Dual-Basket Confluence & Dispersion Matrix Engine, 4-Tier Deterministic Decision Hierarchy, dan Injeksi Shadow Metric ke Stage 2 LLM Dossier.
+* [CHANGELOG_AUGUST_2026.md](file:///c:/Vibe/tradingpartner/docs/archive/CHANGELOG_AUGUST_2026.md) — Arsip detail perubahan historis bot periode 8–30 Agustus 2026 (FASE 1–7, pemisahan mode SL/TP, evolusi lot sizing, eliminasi Gold, Pure Quant MSE).
+

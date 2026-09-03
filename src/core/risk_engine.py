@@ -270,7 +270,7 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None):
+    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None, sizing_multiplier=None):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
@@ -279,16 +279,8 @@ class RiskEngine:
         unanimous -> 2 posisi), risk dibagi N supaya TOTAL risk per sinyal
         tetap risk_pct, bukan N x risk_pct.
 
-        action_tier: 5-Tier Operational Action Matrix modifier ("REDUCED_CONFIDENCE" -> 0.75x).
-
-        Order of operations (important):
-          1. Compute risk-based lot from the (already floored) SL distance,
-             dibagi split_count.
-          2. Apply risk multipliers (recovery x0.5, session x1.0/1.2, action_tier x0.75).
-          3. Clamp to broker volume_min/max and round DOWN to volume_step
-             LAST (floor, bukan round - round() bisa naikkan lot MELEBIHI
-             risk target), so multipliers are not distorted by rounding.
-        Falls back to config.lot_size_for() when SL is unknown.
+        action_tier: 5-Tier Operational Action Matrix modifier ("REDUCED_CONFIDENCE" -> 0.75x, "REDUCED_SCALP" -> 0.50x).
+        sizing_multiplier: Dynamic 2D Confluence Matrix multiplier (e.g. 1.25x for APEX, 0.50x for Half-Risk Scalp).
         """
         symbol = connector.get_valid_trade_symbol(symbol or config.SYMBOL)
         risk_pct = config.risk_percent_for(symbol)
@@ -302,7 +294,11 @@ class RiskEngine:
         if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
             # No SL given -> fall back to the static per-symbol lot
             lot = config.lot_size_for(symbol)
-            if action_tier == "REDUCED_CONFIDENCE":
+            if sizing_multiplier:
+                lot *= float(sizing_multiplier)
+            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+                lot *= 0.50
+            elif action_tier == "REDUCED_CONFIDENCE":
                 lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
@@ -310,7 +306,11 @@ class RiskEngine:
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
         if usd_per_pt_1lot <= 0:
             lot = config.lot_size_for(symbol)
-            if action_tier == "REDUCED_CONFIDENCE":
+            if sizing_multiplier:
+                lot *= float(sizing_multiplier)
+            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+                lot *= 0.50
+            elif action_tier == "REDUCED_CONFIDENCE":
                 lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
@@ -320,7 +320,11 @@ class RiskEngine:
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
-            if action_tier == "REDUCED_CONFIDENCE":
+            if sizing_multiplier:
+                lot *= float(sizing_multiplier)
+            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+                lot *= 0.50
+            elif action_tier == "REDUCED_CONFIDENCE":
                 lot *= 0.75
             return self._apply_lot_multipliers(lot, symbol)
 
@@ -333,8 +337,14 @@ class RiskEngine:
         # erase the intended reduction.
         lot = self._apply_lot_multipliers(lot_raw, symbol)
 
-        # Apply 5-Tier Action Matrix modifier (REDUCED_CONFIDENCE -> 0.75x risk)
-        if action_tier == "REDUCED_CONFIDENCE":
+        # Apply 5-Tier / 2D Confluence Matrix modifiers
+        if sizing_multiplier is not None and isinstance(sizing_multiplier, (int, float)) and sizing_multiplier > 0:
+            lot *= float(sizing_multiplier)
+            print(f" {UI.tag('CONFLUENCE SIZING', UI.YELLOW)} {symbol}: 2D Confluence multiplier (x{sizing_multiplier:.2f}) applied -> {lot:.4f}")
+        elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            lot *= 0.50
+            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_SCALP / Half-Risk multiplier (x0.50) applied -> {lot:.4f}")
+        elif action_tier == "REDUCED_CONFIDENCE":
             lot *= 0.75
             print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE multiplier (x0.75) applied -> {lot:.4f}")
 
@@ -649,7 +659,7 @@ class RiskEngine:
         Existing open positions are NOT affected (still managed by the 5s loop);
         only new entries are blocked.
         """
-        if config.WEEKEND_TRADING_ENABLED:
+        if getattr(config, 'WEEKEND_TRADING_ENABLED', False):
             return True, ""
         now_wib = datetime.now(WIB)
         # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 WIB.

@@ -114,11 +114,15 @@ def derive_semantic_state(primitive: PrimitiveState) -> str:
     elif loc == Location.OUTSIDE_BELOW and (evt == StructuralEvent.BREAK or traj == Trajectory.DOWN):
         return "FLOOR_BREAKDOWN"
     elif loc == Location.CEILING:
-        if evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
+        if evt == StructuralEvent.COMPRESSION or (evt == StructuralEvent.RETEST and traj == Trajectory.UP):
+            return "CEILING_ABSORPTION"
+        elif evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
             return "CEILING_REJECTION"
         return "CHAMBER_CEILING_TEST"
     elif loc == Location.FLOOR:
-        if evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP, StructuralEvent.RETEST):
+        if evt == StructuralEvent.COMPRESSION or (evt == StructuralEvent.RETEST and traj == Trajectory.DOWN):
+            return "FLOOR_ABSORPTION"
+        elif evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP, StructuralEvent.RETEST):
             return "FLOOR_REJECTION"
         return "CHAMBER_FLOOR_TEST"
     else:
@@ -374,44 +378,70 @@ class MacroStrategicEngine:
         if df.empty or len(df) < (window * 2 + 1):
             return [], []
         tail = df.tail(n_lookback)
+        h_arr = tail['high'].values
+        l_arr = tail['low'].values
+        idx = tail.index
+        n = len(h_arr)
         swings_h = []
         swings_l = []
-        for i in range(window, len(tail) - window):
-            if tail['high'].iloc[i] == tail['high'].iloc[i - window:i + window + 1].max():
-                swings_h.append((tail.index[i], float(tail['high'].iloc[i])))
-            if tail['low'].iloc[i] == tail['low'].iloc[i - window:i + window + 1].min():
-                swings_l.append((tail.index[i], float(tail['low'].iloc[i])))
+        for i in range(window, n - window):
+            val_h = h_arr[i]
+            if val_h == np.max(h_arr[i - window : i + window + 1]):
+                swings_h.append((idx[i], float(val_h)))
+            val_l = l_arr[i]
+            if val_l == np.min(l_arr[i - window : i + window + 1]):
+                swings_l.append((idx[i], float(val_l)))
         return swings_h, swings_l
 
     @staticmethod
     def _detect_drop_base_drop(df_h1: pd.DataFrame, digits: int) -> Tuple[Optional[float], Optional[float]]:
         if df_h1.empty or len(df_h1) < 5:
             return None, None
-        for i in range(len(df_h1) - 4, len(df_h1) - 1):
-            c1, c2, c3 = df_h1.iloc[i - 1], df_h1.iloc[i], df_h1.iloc[i + 1]
-            is_c1_drop = (c1['open'] - c1['close']) >= (0.45 * max(c1['high'] - c1['low'], 1e-5))
-            is_c2_base = abs(c2['open'] - c2['close']) <= (0.40 * max(c2['high'] - c2['low'], 1e-5))
-            is_c3_drop = (c3['open'] - c3['close']) >= (0.50 * max(c3['high'] - c3['low'], 1e-5))
+        tail = df_h1.tail(6)
+        o = tail['open'].values
+        h = tail['high'].values
+        l = tail['low'].values
+        c = tail['close'].values
+        n = len(o)
+        for i in range(1, n - 1):
+            rng1 = max(h[i-1] - l[i-1], 1e-5)
+            rng2 = max(h[i] - l[i], 1e-5)
+            rng3 = max(h[i+1] - l[i+1], 1e-5)
+            is_c1_drop = (o[i-1] - c[i-1]) >= (0.45 * rng1)
+            is_c2_base = abs(o[i] - c[i]) <= (0.40 * rng2)
+            is_c3_drop = (o[i+1] - c[i+1]) >= (0.50 * rng3)
             if is_c1_drop and is_c2_base and is_c3_drop:
-                return round(float(c2['low']), digits), round(float(c2['high']), digits)
+                return round(float(l[i]), digits), round(float(h[i]), digits)
         return None, None
 
     @staticmethod
     def _detect_rally_base_rally(df_h1: pd.DataFrame, digits: int) -> Tuple[Optional[float], Optional[float]]:
         if df_h1.empty or len(df_h1) < 5:
             return None, None
-        for i in range(len(df_h1) - 4, len(df_h1) - 1):
-            c1, c2, c3 = df_h1.iloc[i - 1], df_h1.iloc[i], df_h1.iloc[i + 1]
-            is_c1_rally = (c1['close'] - c1['open']) >= (0.45 * max(c1['high'] - c1['low'], 1e-5))
-            is_c2_base = abs(c2['open'] - c2['close']) <= (0.40 * max(c2['high'] - c2['low'], 1e-5))
-            is_c3_rally = (c3['close'] - c3['open']) >= (0.50 * max(c3['high'] - c3['low'], 1e-5))
+        tail = df_h1.tail(6)
+        o = tail['open'].values
+        h = tail['high'].values
+        l = tail['low'].values
+        c = tail['close'].values
+        n = len(o)
+        for i in range(1, n - 1):
+            rng1 = max(h[i-1] - l[i-1], 1e-5)
+            rng2 = max(h[i] - l[i], 1e-5)
+            rng3 = max(h[i+1] - l[i+1], 1e-5)
+            is_c1_rally = (c[i-1] - o[i-1]) >= (0.45 * rng1)
+            is_c2_base = abs(o[i] - c[i]) <= (0.40 * rng2)
+            is_c3_rally = (c[i+1] - o[i+1]) >= (0.50 * rng3)
             if is_c1_rally and is_c2_base and is_c3_rally:
-                return round(float(c2['high']), digits), round(float(c2['low']), digits)
+                return round(float(h[i]), digits), round(float(l[i]), digits)
         return None, None
 
-    def compute_directive(self, symbol: str, mt5_connector=None) -> MacroStrategicDirective:
+    def compute_directive(self, symbol: str, mt5_connector=None, zce_walls=None) -> MacroStrategicDirective:
         """
         Calculates the complete Pure Quant Top-Down Strategic Directive for a symbol.
+        zce_walls (optional, RFC 11 Phase-2): dict hasil Zone Confluence Engine berisi
+        dinding override {enable, imm_ceiling_c1, imm_floor_f1, deep_ceiling_c2, deep_floor_f2}.
+        Jika valid (f1 < c1), dinding MSE diganti SEBELUM chamber metrics / state machine
+        sehingga seluruh turunan (state, SL/TP, tier, traps) konsisten dengan dinding ZCE.
         """
         t0 = time.perf_counter()
         from config import mt5
@@ -545,11 +575,12 @@ class MacroStrategicEngine:
                         break
 
         # 8. SMC Order Blocks & FRVP Confluence Extraction
-        smc_analyzer = LuxSMCAnalyzer(swing_length=5)
-        smc_h1 = smc_analyzer.analyze(df_h1, point_size=pt) if not df_h1.empty else None
-        smc_h4 = smc_analyzer.analyze(df_h4, point_size=pt) if not df_h4.empty else None
-        smc_d1 = smc_analyzer.analyze(df_d1, point_size=pt) if not df_d1.empty else None
-        smc_w1 = smc_analyzer.analyze(df_w1, point_size=pt) if not df_w1.empty else None
+        smc_analyzer_h1 = LuxSMCAnalyzer(swing_length=5, compute_frvp=True)
+        smc_analyzer_htf = LuxSMCAnalyzer(swing_length=5, compute_frvp=False)
+        smc_h1 = smc_analyzer_h1.analyze(df_h1, point_size=pt) if not df_h1.empty else None
+        smc_h4 = smc_analyzer_htf.analyze(df_h4, point_size=pt) if not df_h4.empty else None
+        smc_d1 = smc_analyzer_htf.analyze(df_d1, point_size=pt) if not df_d1.empty else None
+        smc_w1 = smc_analyzer_htf.analyze(df_w1, point_size=pt) if not df_w1.empty else None
         
         bull_obs = []
         bear_obs = []
@@ -715,6 +746,17 @@ class MacroStrategicEngine:
             macro_extremes.append((py_high, 4.0, "PYH"))
             macro_extremes.append((py_low, 4.0, "PYL"))
 
+        # Previous Week & Day Key Liquidity Extremes
+        pwh_val = float(df_w1['high'].iloc[-2]) if len(df_w1) >= 2 else 0.0
+        pwl_val = float(df_w1['low'].iloc[-2]) if len(df_w1) >= 2 else 0.0
+        pdh_val = float(df_d1['high'].iloc[-2]) if len(df_d1) >= 2 else 0.0
+        pdl_val = float(df_d1['low'].iloc[-2]) if len(df_d1) >= 2 else 0.0
+
+        if pwh_val > 0: macro_extremes.append((round(pwh_val, digits), 4.5, "PWH"))
+        if pwl_val > 0: macro_extremes.append((round(pwl_val, digits), 4.5, "PWL"))
+        if pdh_val > 0: macro_extremes.append((round(pdh_val, digits), 4.0, "PDH"))
+        if pdl_val > 0: macro_extremes.append((round(pdl_val, digits), 4.0, "PDL"))
+
         # Candidate Upper Barriers
         raw_up_elements: List[Tuple[float, float, str]] = []
         for p, sc, tag in [
@@ -852,7 +894,7 @@ class MacroStrategicEngine:
         candidate_dist_min = self.params.candidate_dist_min_atr_mult * atr_h1
 
         # Minimum Chamber Height to eliminate micro-chambers (k_h * ATR H1)
-        min_chamber_height = max(self.params.min_chamber_height_atr_mult * atr_h1, 0.40 * psych_step_macro, 12 * pt * pip_div)
+        min_chamber_height = max(self.params.min_chamber_height_atr_mult * atr_h1, 0.08 * psych_step_macro, 8 * pt * pip_div)
 
         # Elect C1 (Nearest Structurally Valid Ceiling)
         # Filter 1: Structural qualification (Q >= Q_min)
@@ -922,7 +964,7 @@ class MacroStrategicEngine:
 
         # ── PURE DYNAMIC LAYER EXTRACTION (VARIABLE LENGTH N >= 1, ZERO FAKE PADDING) ──
         # Dynamic separation tolerance delta_tol based on ATR and Step
-        delta_tol = max(0.30 * atr_h1, 0.25 * psych_step_macro, 5 * pt * pip_div)
+        delta_tol = max(0.35 * atr_h1, 0.04 * psych_step_macro, 3 * pt * pip_div)
 
         def _compute_reaction_grade(score: float, tag_str: str) -> str:
             if score >= 6.5 or any(t in tag_str for t in ('MN1', 'W1', 'D1', 'PWH', 'PWL', 'ANNUAL', 'HIGH_2YR', 'LOW_2YR', 'PYH', 'PYL', '52W')):
@@ -1049,6 +1091,103 @@ class MacroStrategicEngine:
         ceiling_c3 = layered_ceilings[2]['price'] if len(layered_ceilings) > 2 else None
         ceiling_c4 = layered_ceilings[3]['price'] if len(layered_ceilings) > 3 else None
 
+        # ── ZCE WALL OVERRIDE (RFC 11 Phase-2) ─────────────────────────────────────
+        # Dinding dari Zone Confluence Engine menggantikan elekt internal MSE SEBELUM
+        # chamber metrics (1091+) sehingga state machine & eksekusi konsisten otomatis.
+        # ── Override PER-SISI (fix INV-2, 2 Sep 2026) ─────────────────────────────
+        # ZCE hanya menimpa sisi yang memiliki zona konfluensi dekat (F1/C1 non-None;
+        # sisi > cap 2.0x ATR_H1 sudah di-None-kan di _elect_walls). Sisi yang kosong
+        # TETAP memakai baseline MSE (FALLBACK_PSYCH/struktur internal) — tidak di-drop
+        # penuh seperti guard lama (F1&C1 keduanya harus non-None) yang justru membuat
+        # fallback memilih sisi MSE yang LEBIH JAUH (kasus USDJPY F1 3.5x ATR).
+        if zce_walls is not None and zce_walls.get("enable"):
+            _c1 = zce_walls.get("imm_ceiling_c1")
+            _f1 = zce_walls.get("imm_floor_f1")
+            c1_valid = _c1 is not None and float(_c1) > curr_mid
+            f1_valid = _f1 is not None and float(_f1) < curr_mid
+            if c1_valid and f1_valid and float(_c1) > float(_f1):
+                # Kedua sisi valid & chamber sehat -> override penuh (perilaku lama)
+                imm_ceiling_c1 = float(_c1)
+                imm_floor_f1 = float(_f1)
+                ceiling_c1 = imm_ceiling_c1
+                floor_f1 = imm_floor_f1
+                _c2 = zce_walls.get("deep_ceiling_c2")
+                _f2 = zce_walls.get("deep_floor_f2")
+                if _c2 is not None and float(_c2) > imm_ceiling_c1:
+                    deep_ceiling_c2 = float(_c2)
+                if _f2 is not None and float(_f2) < imm_floor_f1:
+                    deep_floor_f2 = float(_f2)
+                if layered_ceilings:
+                    layered_ceilings[0] = {**layered_ceilings[0], "price": imm_ceiling_c1}
+                if layered_floors:
+                    layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
+            else:
+                # Per-sisi: timpa hanya sisi yang valid; sisi lain biarkan MSE baseline.
+                # Harga live selalu menjadi pemisah (F1 < mid < C1) sehingga chamber
+                # campuran ZCE+MSE tidak pernah inverted.
+                if c1_valid and float(_c1) > imm_floor_f1:
+                    imm_ceiling_c1 = float(_c1)
+                    ceiling_c1 = imm_ceiling_c1
+                    _c2 = zce_walls.get("deep_ceiling_c2")
+                    if _c2 is not None and float(_c2) > imm_ceiling_c1:
+                        deep_ceiling_c2 = float(_c2)
+                    if layered_ceilings:
+                        layered_ceilings[0] = {**layered_ceilings[0], "price": imm_ceiling_c1}
+                if f1_valid and float(_f1) < imm_ceiling_c1:
+                    imm_floor_f1 = float(_f1)
+                    floor_f1 = imm_floor_f1
+                    _f2 = zce_walls.get("deep_floor_f2")
+                    if _f2 is not None and float(_f2) < imm_floor_f1:
+                        deep_floor_f2 = float(_f2)
+                    if layered_floors:
+                        layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
+
+        # Enforce strict monotonic ladder ordering (F2 < F1 and C2 > C1)
+        if floor_f2 is not None and floor_f2 >= floor_f1:
+            floor_f2 = deep_floor_f2 if (deep_floor_f2 is not None and deep_floor_f2 < floor_f1) else None
+        if ceiling_c2 is not None and ceiling_c2 <= ceiling_c1:
+            ceiling_c2 = deep_ceiling_c2 if (deep_ceiling_c2 is not None and deep_ceiling_c2 > ceiling_c1) else None
+
+        # ── RESYNC DEEP TARGET vs F1/C1 HASIL OVERRIDE ZCE (Patch #2, 2 Sep 2026) ──
+        # Override ZCE (blok 1108-1143) hanya mengganti deep_floor_f2/deep_ceiling_c2 bila ZCE
+        # menyuplai deep F2/C2 sendiri. Bila ZCE F1/C1 override menembus DI BAWAH/DI ATAS deep
+        # baseline & ZCE deep kosong -> deep target ter-inversi (deep >= F1 / deep <= C1) yang
+        # mengotori has_runway_*/TP2/macro_invalidation & payload raw. Resync ulang deep dari
+        # F1/C1 override memakai formula baseline (max psych_step_macro, 1.5*ATR) + snap ke
+        # cluster struktural terdekat (mirror 941-960).
+        if deep_floor_f2 is not None and floor_f1 is not None and deep_floor_f2 >= floor_f1:
+            deep_floor_f2 = round(floor_f1 - max(psych_step_macro, 1.50 * atr_h1), digits)
+            f2_density_score = 2.0
+            f2_tag = "DEEP_SUPPORT_TARGET"
+            for cand in down_clusters:
+                if cand['price'] <= floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                    deep_floor_f2 = cand['price']
+                    f2_density_score = cand['r_score']
+                    f2_tag = cand['tag_str']
+                    break
+        if deep_ceiling_c2 is not None and ceiling_c1 is not None and deep_ceiling_c2 <= ceiling_c1:
+            deep_ceiling_c2 = round(ceiling_c1 + max(psych_step_macro, 1.50 * atr_h1), digits)
+            c2_density_score = 2.0
+            c2_tag = "EXTENSION_TARGET"
+            for cand in up_clusters:
+                if cand['price'] >= ceiling_c1 + max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                    deep_ceiling_c2 = cand['price']
+                    c2_density_score = cand['r_score']
+                    c2_tag = cand['tag_str']
+                    break
+
+        # Enforcement 1146-1149 bisa menetapkan floor_f2/ceiling_c2 = None karena deep lama
+        # ter-inversi. Deep sudah di-resync valid di atas -> pulihkan tangga retest.
+        if floor_f2 is None and deep_floor_f2 is not None and floor_f1 is not None and deep_floor_f2 < floor_f1:
+            floor_f2 = deep_floor_f2
+        if ceiling_c2 is None and deep_ceiling_c2 is not None and ceiling_c1 is not None and deep_ceiling_c2 > ceiling_c1:
+            ceiling_c2 = deep_ceiling_c2
+
+        if layered_floors:
+            layered_floors = [layered_floors[0]] + [f for f in layered_floors[1:] if f.get('price', 0.0) < imm_floor_f1]
+        if layered_ceilings:
+            layered_ceilings = [layered_ceilings[0]] + [c for c in layered_ceilings[1:] if c.get('price', 0.0) > imm_ceiling_c1]
+
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
         chamber_pos = min(1.0, max(0.0, (curr_mid - imm_floor_f1) / chamber_width))
@@ -1066,11 +1205,11 @@ class MacroStrategicEngine:
                 l_wick = (min(b_open, b_close) - b_low) / b_rng
                 
                 if b_high >= imm_ceiling_c1 - (0.15 * atr_h1):
-                    tag = "C1:SWEEP" if u_wick >= 0.25 else "C1:TOUCH"
+                    tag = "C1:SWEEP" if (u_wick >= 0.333 and b_close < imm_ceiling_c1) else "C1:TOUCH"
                     if not interaction_seq or interaction_seq[-1] != tag:
                         interaction_seq.append(tag)
                 elif b_low <= imm_floor_f1 + (0.15 * atr_h1):
-                    tag = "F1:SWEEP" if l_wick >= 0.25 else "F1:TOUCH"
+                    tag = "F1:SWEEP" if (l_wick >= 0.333 and b_close > imm_floor_f1) else "F1:TOUCH"
                     if not interaction_seq or interaction_seq[-1] != tag:
                         interaction_seq.append(tag)
             interaction_seq = interaction_seq[-8:]
@@ -1099,22 +1238,50 @@ class MacroStrategicEngine:
         else:
             location = Location.MID
 
+        # Multi-timeframe EMA alignment (H1 & H4)
+        is_h1_bull = False
+        is_h1_bear = False
+        if not df_h1.empty and len(df_h1) >= 20:
+            e20_h1 = float(df_h1['close'].ewm(span=20, adjust=False).mean().iloc[-1])
+            e50_h1 = float(df_h1['close'].ewm(span=min(50, len(df_h1)), adjust=False).mean().iloc[-1])
+            is_h1_bull = e20_h1 > e50_h1
+            is_h1_bear = e20_h1 < e50_h1
+
+        is_h4_bull = False
+        is_h4_bear = False
+        if not df_h4.empty and len(df_h4) >= 20:
+            e20_h4 = float(df_h4['close'].ewm(span=20, adjust=False).mean().iloc[-1])
+            e50_h4 = float(df_h4['close'].ewm(span=min(50, len(df_h4)), adjust=False).mean().iloc[-1])
+            is_h4_bull = e20_h4 > e50_h4
+            is_h4_bear = e20_h4 < e50_h4
+
+        # Check Structural Runway (Space to expand to next macro station/barrier)
+        min_runway = max(0.80 * atr_h1, 0.35 * psych_step_macro, 10 * pt * pip_div)
+        has_runway_up = (deep_ceiling_c2 - imm_ceiling_c1) >= min_runway
+        has_runway_down = (imm_floor_f1 - deep_floor_f2) >= min_runway
+
         # Vector 2: Structural Event
         if location in (Location.OUTSIDE_ABOVE, Location.OUTSIDE_BELOW):
             event = StructuralEvent.BREAK
         elif location == Location.CEILING:
-            if any("SWEEP" in s for s in interaction_seq[-2:]):
+            # Ascending Pre-Breakout Compression (Trend Aligned Uptrend grinding at ceiling with structural runway above)
+            if is_h1_bull and is_h4_bull and curr_mid >= sub_floor and has_runway_up and (h4_hl or not last_h1_bear):
+                event = StructuralEvent.COMPRESSION
+            elif any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
-            elif peak_u_wick_pct >= 25 or last_h1_bear or h4_lh:
+            elif peak_u_wick_pct >= 33 or last_h1_bear or h4_lh:
                 event = StructuralEvent.REJECTION
             elif any("TOUCH" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.TOUCH
             else:
                 event = StructuralEvent.RETEST
         elif location == Location.FLOOR:
-            if any("SWEEP" in s for s in interaction_seq[-2:]):
+            # Descending Pre-Breakdown Compression (Trend Aligned Downtrend grinding at floor with structural runway below)
+            if is_h1_bear and is_h4_bear and curr_mid <= sub_ceiling and has_runway_down and (h4_lh or not last_h1_bull):
+                event = StructuralEvent.COMPRESSION
+            elif any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
-            elif peak_l_wick_pct >= 25 or last_h1_bull or h4_hl:
+            elif peak_l_wick_pct >= 33 or last_h1_bull or h4_hl:
                 event = StructuralEvent.REJECTION
             elif any("TOUCH" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.TOUCH
@@ -1124,7 +1291,11 @@ class MacroStrategicEngine:
             event = StructuralEvent.COMPRESSION
 
         # Vector 3: Trajectory
-        if location == Location.CEILING and event in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
+        if location == Location.CEILING and event == StructuralEvent.COMPRESSION:
+            trajectory = Trajectory.UP
+        elif location == Location.FLOOR and event == StructuralEvent.COMPRESSION:
+            trajectory = Trajectory.DOWN
+        elif location == Location.CEILING and event in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
             trajectory = Trajectory.DOWN
         elif location == Location.FLOOR and event in (StructuralEvent.REJECTION, StructuralEvent.SWEEP, StructuralEvent.RETEST):
             trajectory = Trajectory.UP
@@ -1169,6 +1340,10 @@ class MacroStrategicEngine:
             min_sl_dist = max(0.80 * atr_h1, 10 * pt * pip_div) # ~10-15 pips
             max_sl_dist = min(1.50 * atr_h1, 25 * pt * pip_div) # ~25 pips
 
+        # Default fallbacks to prevent UnboundLocalError across all branches
+        target_station_final = ceiling_station if last_d1_bull else floor_station
+        macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits) if last_d1_bull else round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
+
         if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
             macro_bias = "BULLISH_PULLBACK"
             primary_directive = "HUNT_BUY_AT_RBS"
@@ -1202,6 +1377,62 @@ class MacroStrategicEngine:
             max_allowed_buy = round(entry_anchor + (0.25 * atr_d1), digits)
             min_allowed_sell = 0.0
             forbidden_traps = [f"Do NOT short into confirmed RBS support at {imm_floor_f1:.{digits}f}"]
+
+        elif market_state == "CEILING_ABSORPTION":
+            macro_bias = "BULLISH_COMPRESSION"
+            primary_directive = "WAIT_BREAKOUT_RETEST"
+            macro_bias_score = +0.75
+            entry_anchor = imm_ceiling_c1
+            entry_zone_proximal = round(curr_mid - reload_width, digits)
+            calculated_sl = imm_floor_f1 - anti_wick_buffer
+            if (entry_anchor - calculated_sl) < min_sl_dist:
+                calculated_sl = entry_anchor - min_sl_dist
+            elif (entry_anchor - calculated_sl) > max_sl_dist:
+                calculated_sl = entry_anchor - max_sl_dist
+            intraday_sl = round(calculated_sl, digits)
+            macro_invalidation = round(imm_floor_f1 - (0.25 * atr_d1), digits)
+            target_station_final = deep_ceiling_c2
+            hard_circuit_breaker = False
+            action_tier = "FULL_ALLOW"
+            sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(deep_ceiling_c2 - entry_anchor))
+            tp1_price = round(min(tp1_target, deep_ceiling_c2 - front_pad), digits)
+            tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+            stage_label = f"ASCENDING_ABSORPTION_AT_{imm_ceiling_c1:.{digits}f}"
+            thesis = f"{symbol} in {market_state} at ceiling {imm_ceiling_c1:.{digits}f}. Ascending compression with multi-day bull alignment targeting {deep_ceiling_c2:.{digits}f}."
+            confidence_score = 82
+            max_allowed_buy = round(imm_ceiling_c1 + (0.15 * atr_h1), digits)
+            min_allowed_sell = 0.0
+            forbidden_traps = [f"Do NOT short into ascending bullish compression at {imm_ceiling_c1:.{digits}f}"]
+
+        elif market_state == "FLOOR_ABSORPTION":
+            macro_bias = "BEARISH_COMPRESSION"
+            primary_directive = "WAIT_BREAKDOWN_RETEST"
+            macro_bias_score = -0.75
+            entry_anchor = imm_floor_f1
+            entry_zone_proximal = round(curr_mid + reload_width, digits)
+            calculated_sl = imm_ceiling_c1 + anti_wick_buffer
+            if (calculated_sl - entry_anchor) < min_sl_dist:
+                calculated_sl = entry_anchor + min_sl_dist
+            elif (calculated_sl - entry_anchor) > max_sl_dist:
+                calculated_sl = entry_anchor + max_sl_dist
+            intraday_sl = round(calculated_sl, digits)
+            macro_invalidation = round(imm_ceiling_c1 + (0.25 * atr_d1), digits)
+            target_station_final = deep_floor_f2
+            hard_circuit_breaker = False
+            action_tier = "FULL_ALLOW"
+            sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
+            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+            tp1_target = entry_anchor - max(1.25 * sl_dist, 0.50 * abs(entry_anchor - deep_floor_f2))
+            tp1_price = round(max(tp1_target, deep_floor_f2 + front_pad), digits)
+            tp2_price = round(deep_floor_f2 + front_pad, digits)
+            stage_label = f"DESCENDING_ABSORPTION_AT_{imm_floor_f1:.{digits}f}"
+            thesis = f"{symbol} in {market_state} at floor {imm_floor_f1:.{digits}f}. Descending compression with multi-day bear alignment targeting {deep_floor_f2:.{digits}f}."
+            confidence_score = 82
+            max_allowed_buy = 0.0
+            min_allowed_sell = round(imm_floor_f1 - (0.15 * atr_h1), digits)
+            forbidden_traps = [f"Do NOT buy into descending bearish compression at {imm_floor_f1:.{digits}f}"]
 
         elif market_state in ("CEILING_REJECTION", "CHAMBER_CEILING_TEST"):
             if market_state == "CEILING_REJECTION":
@@ -1501,15 +1732,16 @@ class MacroStrategicEngine:
         self._cache_ts[symbol] = time.time()
         return directive
 
-    def get_directive(self, symbol: str, mt5_connector=None, force_refresh: bool = False) -> MacroStrategicDirective:
+    def get_directive(self, symbol: str, mt5_connector=None, force_refresh: bool = False, zce_walls=None) -> MacroStrategicDirective:
         """
         Retrieves cached directive or recomputes if missing / expired (>60s) / forced.
+        zce_walls: optional RFC 11 Phase-2 dict dari Zone Confluence Engine (diteruskan ke compute_directive).
         """
         now = time.time()
         if not force_refresh and symbol in self._cache:
             if (now - self._cache_ts.get(symbol, 0.0)) < self._cache_ttl_sec:
                 return self._cache[symbol]
-        return self.compute_directive(symbol, mt5_connector=mt5_connector)
+        return self.compute_directive(symbol, mt5_connector=mt5_connector, zce_walls=zce_walls)
 
     def refresh_all_symbols(self, symbols: List[str], mt5_connector=None) -> Dict[str, MacroStrategicDirective]:
         """

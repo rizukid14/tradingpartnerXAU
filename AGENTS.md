@@ -31,7 +31,7 @@
      5. **`src/analytics/macro_strategic_engine.py`**: Pure Quant 6-TF Native Sockets (`MN1/W1/D1/H4/H1/M30`), SBR/RBS zone hierarchy, 5-Tier Operational Action Matrix, dan zero-token on-demand context injection.
      6. **`src/core/risk_engine.py` & `position_manager.py`**: Filter spread, dead zone, ATR-based safety floor, time-decay stagnation, dan pre-rollover shield.
      7. **`tests/test_*.py`**: Unit test suite (`test_symbol_rotation.py`, `test_time_decay_and_vol_regime.py`, `test_macro.py`) wajib diupdate dan dipastikan **100% PASS**.
-     8. **`docs/archive/CHANGELOG_AUGUST_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
+     8. **`docs/CHANGELOG_SEPTEMBER_2026.md` & `AGENTS.md`**: Pencatatan changelog detail dan sinkronisasi ringkasan arsitektur.
 5. **GAYA KOMUNIKASI & ZERO FLATTERY / ZERO OVERCLAIM**:
    - Dilarang membuka respon dengan frasa validasi basi atau persetujuan emosional (*"Kamu benar 100%"*, *"Sangat tepat"*, *"Penemuan brilian"*, dll).
    - Dilarang membuat klaim statistik absolut (*"Reversal 94%"*, *"Pasti membalik"*, *"100% terbukti"*) tanpa menyajikan uji *Conditional Probability* dan *Confidence Interval*.
@@ -87,11 +87,12 @@ python main.py
 |---|---|
 | `main.py` | Looping: trigger Stage 1 radar tiap 60 detik + Stage 2 LLM saat ada setup A+ lolos + manage posisi tiap 3 detik (BEP/trailing/partial) |
 | `config.py` | Parameter konfigurasi global + helper per-simbol + universe `SCANNER_SYMBOLS` |
-| `src/analytics/market_scanner.py` | **Stage 1 Radar** — 3 mekanisme (M1 Universal Liquidity Sweep, M2 Pullback, M3 HTF Weekly Wall) + HTF cache (D1/H4/W1) + wave state permission |
-| `src/indicators/wave_state.py` | **4-Dimensional Market State Engine**: Direction FSM + Phase FSM + CSM Pressure + Event Layer → Permission (`WAIT/LOCK/WATCH/ARM/GO`) |
+| `src/analytics/market_scanner.py` | **Stage 1 Radar** — 3 mekanisme (M1 Universal Liquidity Sweep, M2 Pullback, M3 HTF Weekly Wall) + HTF cache (D1/H4/W1) + **`permission_state` dihitung di sini** (mapping langsung dari MSE action tier: `FULL_ALLOW→GO/ARM`, `TP1_ONLY_SCALP/REDUCED_CONFIDENCE→ARM`, `WATCH_ONLY→WATCH`, `HARD_BLOCK→LOCK`) + gate arah terpadu `_is_direction_allowed()` (Macro Bias + CSM Flow Opposition + Systemic Basket Lock) + meneruskan `zce_walls` ZCE ke MSE |
+| `src/indicators/wave_regime.py` | Wave Regime & compression/range age (pengganti `wave_state.py` yang sudah dihapus) — `evaluate_wave_regime()` |
 | `src/indicators/lux_smc.py` | LuxAlgo Smart Money Concepts (OB/FVG/Strong Low/PWH-PWL) + FRVP confluence |
 | `src/indicators/atlas_dna.py` | Symbol-specific psychological step (50/100/200 pips) + dynamic stations calculator |
-| `src/analytics/currency_strength.py` | Boitoki CSM — 7 USD majors, Net Currency Delta per detik |
+| `src/analytics/currency_strength.py` | Boitoki CSM — modul mandiri, 8 mata uang dari 7 USD majors, Net Currency Delta; dibaca market_scanner (gate arah), llm_client (payload prompt), cli_theme/telegram (display). **Tidak hidup di MSE/ZCE** |
+| `src/analytics/zone_confluence_engine.py` | **ZCE (RFC 11)** — peta zona 6-TF × multi-horizon, klaster/skor J1, wall elect F1/C1; hook `zce_walls` → MSE (`ZCE_ENABLED=true`, `ZCE_MODE=full` sejak 2 Sep 2026, test akun live cent) |
 | `src/core/llm_client.py` | High-Density Dossier Prompt (Stage 2) + 24 candle M5 untuk Pass 2 audit |
 | `src/core/consensus.py` | Weighted-confidence consensus (skor $\ge$ threshold) + `_apply_sltp_rules` floor ATR + AI re-evaluator CLOSE + Hard Risk Veto |
 | `src/core/risk_engine.py` | Filter spread, daily loss 4% equity, profit target 6%, dead zone 02:00-06:00 WIB, recovery mode, risk lot sizing |
@@ -106,18 +107,18 @@ python main.py
 ## Alur cycle (scanner mode)
 
 1. **HTF Macro Cache Refresh** (tiap ~60 detik, 0 token): fetch D1+H4+W1 untuk 26 simbol FX → simpan `macro_cache`.
-2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 3 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk JPY) → cek Wave State permission (`GO/ARM` only) → kalau ada setup A+ lolos → **Stage 2 trigger**.
+2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 3 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk JPY) → cek `permission_state` hasil mapping MSE action tier (`FULL_ALLOW→GO/ARM` only — lihat tabel arsitektur; `HARD_BLOCK`/`WATCH_ONLY` = 0 token) + gate arah terpadu `_is_direction_allowed()` → kalau ada setup A+ lolos → **Stage 2 trigger**.
 3. **Stage 2 — 3-LLM Consensus Jury** (per setup A+, ~5.5 detik):
    - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-Flash menganalisis dossier independen.
    - **Pass 2** (cross-examination, ~1.5s): DeepSeek V4-Flash (Devil's Advocate CRO) mengaudit proposal + 24 candle M5 micro.
    - **Hard Risk Veto**: reject otomatis kalau flag `COUNTER_TREND_MOMENTUM/LIQUIDITY_TRAP/HIGH_IMPACT_NEWS/SPREAD_SPIKE/FALLING_KNIFE_WATERFALL`.
 4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 80\%$ memicu split 2 posisi (+25% boost).
-5. **`_apply_sltp_rules` floor**:
-   - JPY Crosses (M30): $\text{SL} \ge \max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$.
-   - FX Majors & Crosses (H1): $\text{SL} \ge \max(2 \times \text{spread} + 15\text{ pts}, 0.68 \times \text{ATR H1})$. Fallback statis 250 pts kalau ATR gagal.
+5. **`_apply_sltp_rules` floor & ceiling** (realita kode `consensus.py:155-206`, 2 Sep 2026):
+   - JPY Crosses (M30): floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$; fallback 250 pts kalau ATR gagal.
+   - FX Majors & Crosses (H1): floor SL = $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1})$ (`LLM_FX_FLOOR_ATR_MULT` di `.env`); fallback 250 pts kalau ATR gagal.
    - NZD Alpha: $+20\text{ pts}$ anti-wick padding.
-   - Ceiling: FX max $\le 160\text{ pts}$; Gold max $\le 600\text{ pts}$.
-   - TP $\ge 1.25 \times$ SL, $\le 3.0 \times$ SL (gate R:R).
+   - Ceiling (anti-runaway, **bukan** 160 pts statis): FX/JPY/Gold = $2.5 \times \text{ATR}$ (fallback 350 pts FX/JPY, 800 Gold); BTC = $1.8 \times \text{ATR}$ (fallback 45000). Hardcode di `consensus.py:186-206`.
+   - TP $\ge 1.25 \times$ SL, $\le 3.0 \times$ SL (gate R:R; cap grade-aware di `consensus.py:214-253`).
 6. **Risk-based lot sizing**: lot = `(equity × risk%) / (SL_pts × usd_per_point)`. FX 1.0%, BTC 1.5%, XAU 1.0%.
 7. **Eksekusi MT5**: aggregate cap 6 posisi total + 4 pending aktif (shared pool). Late NY 23:00-02:00 WIB max 2 posisi. Recovery mode (≥5 loss streak) max 3 posisi.
 
@@ -126,12 +127,12 @@ python main.py
 ## Gate eksekusi aktif (Hard Rules)
 
 - **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 80\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
-- **Lantai SL/TP (`_apply_sltp_rules` di `consensus.py`)**:
-  - **XAU**: floor SL = $\max(2 \times \text{spread}, 1.60 \times \text{ATR M30})$, fallback 600 pts. Mode `LLM` (default) atau `ATR-Based` via `.env`.
-  - **JPY Crosses**: floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$, ceiling $\le 200\text{ pts}$.
-  - **FX Majors/Crosses**: floor SL = $\max(2 \times \text{spread} + 15\text{ pts}, 0.68 \times \text{ATR H1})$, fallback 250 pts, ceiling $\le 160\text{ pts}$.
-  - **BTC** (legacy mode only): mode `ATR-Based` fix R:R 2:1.
-  - **R:R**: TP $\in [1.25\times, 3.0\times]$ SL.
+- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 2 Sep 2026)**:
+  - **XAU (non-aktif permanen)**: floor SL = $\max(2 \times \text{spread}, 1.25 \times \text{ATR})$ (`LLM_XAU_FLOOR_ATR_MULT`), fallback 600 pts; ceiling $2.5 \times \text{ATR}$ (fallback 800).
+  - **JPY Crosses**: floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$; ceiling $2.5 \times \text{ATR}$ (fallback 350 pts) — **bukan** 200 pts statis.
+  - **FX Majors/Crosses**: floor SL = $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1})$ (`LLM_FX_FLOOR_ATR_MULT`); fallback 250 pts kalau ATR gagal; ceiling $2.5 \times \text{ATR H1}$ (fallback 350 pts) — **bukan** 160 pts statis.
+  - **BTC** (legacy mode only): mode `ATR-Based` fix R:R 2:1; ceiling $1.8 \times \text{ATR}$ (fallback 45000).
+  - **R:R**: TP $\in [1.25\times, 3.0\times]$ SL (grade-aware).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 00:00–08:00 WIB (FX & XAU skip; BTC 24/7 di legacy mode).
 - **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders.
@@ -175,7 +176,7 @@ python main.py
 22. **Boitoki CSM + Prompt Relative Flow** (H1 — 27 Agustus): Porting 1:1 algoritma 7 USD Majors. Eliminasi Macro Bias Trap. Injeksi blok `GLOBAL CURRENCY STRENGTH MATRIX` (8-currency ranking, Net Delta). Validasi 31.161 trade: $-7.333\text{R} \rightarrow +7.333\text{R}$ (+92% loss dipangkas).
 23. **2-Stage Dynamic Trailing Stop**: Stage 1 (Swing Breathing 65–90% TP) $0.75\times\text{ATR H1}$ floor 80 pts. Stage 2 (Terminal Lock $\ge$90% TP) $0.50\times\text{ATR M30}$ floor 30 pts.
 24. **Fixed Range Volume Profile (FRVP) + Institutional Confluence** (28 Agustus): SMC + FRVP sinergi memangkas 59.2% trade noise + EV +104% R. Pair bintang: EURCHF PF 1.79, GBPCHF PF 1.53.
-25. **Wave State Machine + 4-Layer Permission Engine** (H1 — 28 Agustus): Pemisahan Direction (D1+H4) vs Trade Permission (H1 Wave + CSM + Event). Eliminasi Impulse Chase (PF 0.52) + Falling Knife (PF 0.97). Hanya `MATURE_BASING` (PF 1.30) + `BASE_RECLAIM` (PF 1.42) di zona diskon ($\le 0.50$, Golden Pocket $\le 0.382$) yang boleh trade.
+25. **Wave State Machine + 4-Layer Permission Engine** (H1 — 28 Agustus): Pemisahan Direction (D1+H4) vs Trade Permission (H1 Wave + CSM + Event). Eliminasi Impulse Chase (PF 0.52) + Falling Knife (PF 0.97). Hanya `MATURE_BASING` (PF 1.30) + `BASE_RECLAIM` (PF 1.42) di zona diskon ($\le 0.50$, Golden Pocket $\le 0.382$) yang boleh trade. *— Model FSM Wave State lama ini sejak 1 September telah dilebur ke MSE Barrier State Machine + mapping action tier 5-Tier (`FULL_ALLOW→GO/ARM` dst., lihat entri 40 & 48). Tidak ada modul `wave_state.py` terpisah di kode aktif; permission dihitung di `market_scanner.py` dari action tier MSE.*
 26. **Anti-Wick Buffer + Structural SL Anchoring** (M30 — 28 Agustus): SL jangkar di balik support/OB fisik + Anti-Wick Buffer $0.35\times\text{ATR} + \text{Spread}$. Win Rate Trend-Aligned Retest naik ke 57.2–58.1% (PF 1.17–1.23).
 27. **Real Candlestick Wick Measurement + Anti-Waterfall Universal Sweep** (28 Agustus): Ganti static `rejection_wick_ratio` dengan real `classify_candle`. Filter Anti-Breakdown Waterfall di `UNIVERSAL_LIQUIDITY_SWEEP` — larang BUY jika marubozu merah tanpa sumbu bawah.
 28. **Dynamic MT5 Point Resolution + Live Economic News + FRVP Injection** (28 Agustus): `_get_point(sym)` ambil dari `symbol_info.point` MT5 (fallback JPY 0.001, XAU/BTC 0.01, FX 0.00001). Live fetch berita TradingView/Investing.com di `build_high_density_dossier_prompt`. FRVP POC/VAL/VAH diinjeksi ke 8 kandidat radar.
@@ -217,8 +218,8 @@ python main.py
     - **4-Tier Setup Quality & Dynamic Sizing System**: GRADE S (Super Convergence), GRADE A+ (High Conviction), GRADE A (Pure Technical Flat), GRADE B (Defensive $0.50\times$ lot).
     - **7 Master Institutional Hard Risk Veto Flags**: `COUNTER_TREND_MOMENTUM`, `LIQUIDITY_TRAP`, `IMPULSE_CHASE`, `SYSTEMIC_CURRENCY_DUMP`, `HIGH_IMPACT_NEWS`, `CURRENCY_CONFLICT` (Grade B), `MACRO_HEADWIND` (Grade B).
     - **Telegram 2-Way Interactive Controller**: Fitur `/fundamental` & `/fund <pair>` menampilkan heatmap 8 mata uang dan rincian katalis.
-45. **Hybrid Confluence Framework, Symmetrical Wave State & Risk-Weighted Slot Allocation** (30 Agustus):
-    - **Symmetrical Dual-Directional Wave State Engine**: Menghapus total bias long-only/istilah basi ritel. BUY beroperasi di Lantai Diskon (`EXPANSION_WAIT_BULL` -> `WATERFALL_LOCK` -> `DISCOUNT_RELOAD_ARMED` -> `DEMAND_REACTION_GO`); SELL beroperasi di Atap SBR (`EXPANSION_WAIT_BEAR` -> `VERTICAL_SPIKE_LOCK` -> `PREMIUM_RELOAD_ARMED` -> `SUPPLY_REACTION_GO`).
+221:45. **Hybrid Confluence Framework, Symmetrical Wave State & Risk-Weighted Slot Allocation** (30 Agustus):
+    - **Symmetrical Dual-Directional Wave State Engine**: Menghapus total bias long-only/istilah basi ritel. BUY beroperasi di Lantai Diskon (`EXPANSION_WAIT_BULL` -> `WATERFALL_LOCK` -> `DISCOUNT_RELOAD_ARMED` -> `DEMAND_REACTION_GO`); SELL beroperasi di Atap SBR (`EXPANSION_WAIT_BEAR` -> `VERTICAL_SPIKE_LOCK` -> `PREMIUM_RELOAD_ARMED` -> `SUPPLY_REACTION_GO`). *— Iterasi FSM simetris ini adalah bagian dari model Wave State lama yang kemudian dilebur ke MSE action tier 5-Tier (lihat anotasi entri 25 + entri 48).*
     - **Kuantifikasi Konflik**: Severe Conflict ($|S| \ge 0.50$ di kedua sisi / Carry Headwind $\ge 3.0\%$) memicu `REJECT_VETO` (Hard Veto); Mild Conflict ($|S| < 0.50$) memicu `GRADE_B` ($0.50\times$ Lot / TP1 Scalp).
     - **Hybrid Confluence Targeting**: Target TP selalu *snapped* ke level stasiun fisik MSE terdekat di dalam amplop ATR Grade + *Front-Running Pad ($0.15\times\text{ATR} + \text{Spread}$)*.
     - **Milestone-Driven Data-Backed BEP & Trailing**: BEP Grade S ditunda ke 65-70% TP + Trailing lebar $1.25\times\text{ATR H1}$ (floor 120 pts FX) + Imun dari Time-Decay Stagnation 4 jam; Grade B BEP cepat 35-40% TP + Trailing $0.40\times\text{ATR M30}$.
@@ -266,6 +267,34 @@ python main.py
     - **M1 Wall Rank Gate & Strict Reclaim**: Di pasar yang sedang trending, sapuan intrahari (Asian High/PDH) **hanya boleh di-fade jika bertabrakan langsung dengan Dinding Makro Sejati $C_1/F_1$ ber-Grade $\ge G_2$ (Intermediate / Macro Fortress)**; level $G_1$ (Micro) 100% diblokir. Harga live wajib sudah reclaim ke dalam (`mid < ref_top` / `mid > ref_bot`).
     - **M2 Dynamic EMA Corridor**: Variabel `ema20` dan `ema50` H1 diaktifkan sebagai koridor nilai dinamis. Pullback BUY wajib bertahan di atas $\text{EMA50} - 0.15\times\text{ATR}$ dan tidak mengejar harga di atas $\text{EMA20} + 0.25\times\text{ATR}$. Pullback SELL wajib bertahan di bawah $\text{EMA50} + 0.15\times\text{ATR}$ dan di atas $\text{EMA20} - 0.25\times\text{ATR}$.
     - **M3 Confirmed Closed Bar Outside**: Retest pada dinding $C_1/F_1$ hanya disiapkan jika **candle sebelumnya terkonfirmasi close di luar dinding** dengan impuls body $\ge 40\%$, membuktikan dinding telah resmi jebol sebelum di-retest dari sisi luar (New RBS/SBR).
+55. **Dual-Basket Confluence & Dispersion Matrix Engine** (2 September 2026):
+    - **Dual-Basket Structural Mapping**: Mengukur deviasi standar posisi relatif ($\sigma_X$ dan $\sigma_Y$) yang dinormalisasi ke skala $[0.0, 1.0]$ pada 26 simbol FX terkurasi ($N \ge 6$ pair per basket).
+    - **Deterministic Decision Hierarchy**: Matriks keputusan 4-Tier mutual exclusive (`SURGE_OVERRIDE_Y/X`, `SYSTEMIC_EXPANSION`, `PURE_CATCHUP_LEAD_LAG`, `NEUTRAL_ROTATION`).
+    - **Strict Leader Wall Hit Anchoring**: `(pos >= 0.90 or pos <= 0.10) AND (dist <= 0.35 ATR)`.
+    - **Zero-Risk Informational Ingestion**: Mode shadow metric diinjeksi ke Stage 2 LLM Dossier prompt (`llm_client.py`), Stage 1 Radar hard gating (`market_scanner.py`) 100% tidak disentuh.
+56. **Multi-Timeframe Candlestick Spectrum Distribution Across 3-LLM Jury** (2 September 2026):
+    - **OpenAI o4-mini (Macro)**: Injeksi Tape D1 (5 bar) dan Tape H4 (8 bar).
+    - **Gemini 3.1-Flash (Price Action)**: Injeksi Tape M1 (15 bar), M5 (24 bar), M15 (12 bar), dan H1 (6 bar).
+    - **DeepSeek V4-Flash (CRO Arbiter)**: Injeksi Tape H4 (6 bar), H1 (6 bar), dan M5 (24 bar).
+57. **Anti-FOMO Execution Directive & Hard Pending Limit Intercept** (2 September 2026):
+    - Penembusan Breakout di area ekstrem (Dealing Range $\ge 85\%$ BUY / $\le 15\%$ SELL) **dilarang keras** dieksekusi via Market Order; wajib menggunakan `buy_limit` / `sell_limit` di jangkar retest sejati ($F_1 / RBS$ atau $C_1 / SBR$).
+    - `consensus.py` otomatis mengonversi order market menjadi pending limit order jika kandidat berada di area ekstrem.
+58. **Dynamic Real-Time Economic Calendar Ingestion & Exported Markdown Dossiers** (2 September 2026):
+    - Integrasi otomatis `_get_symbol_news_context()` untuk menarik live event berdampak tinggi (BOC Rate Statement, FOMC, ECB, NFP) ke seluruh 3 model AI.
+    - Ekspor verbatim prompt lengkap ke `docs/prompt/` (`openai_prompt.md`, `gemini_prompt.md`, `deepseek_prompt.md`).
+59. **Zone Confluence Engine (ZCE) — RFC 11, Fase 1–2 + Task #7** (2 September 2026):
+    - **Engine baru `src/analytics/zone_confluence_engine.py`** (default `ZCE_ENABLED=false`, `ZCE_MODE=shadow`): peta zona 6-TF × multi-horizon (M30 50/150, H1 50/100/150/250, H4 50/100/150, D1 50/100/150/250, W1 50/100, MN1 50), skor J1 = bobot (kind × tf) unik × boost horizon (1.0–1.35) × freshness, grade G3 ≥6.5 / G2 ≥3.5, klaster COLD (>21 hari) & VACUUM (>60 hari, >1.0×ATR), wall elect F1/C1 (chamber ≥ 0.60×ATR / 8 pips), scale ladder + `SCALE_CONFLICT`, readiness score, method suggestion.
+    - **Hook MSE zero-break**: `compute_directive(..., zce_walls=...)` menimpa C1/F1/deep/layered SEBELUM Chamber Metrics; tanpa `zce_walls` → perilaku MSE identik. Parity live EURUSD: override applied = True.
+    - **Task #7 SL/TP** (`consensus.py`, flag-gated): `SL_MAX_ATR_MULT` configurable (default 2.5) menggantikan hardcode ceiling 2.5×ATR; mode legacy/full → SL anchor > ceiling di-**skip** (`ANCHOR_TOO_WIDE`) bukan clamp, ATR gagal di-**reject** (`ATR_UNAVAILABLE`) bukan fallback statis. Floor ATR & R:R invariant.
+    - **Bug fix**: konversi pips `8×10^(-digits+3)` → `8×10^(-digits+1)` (5-digit 0.0008 = 8 pips, bukan 800 pips). Test: `test_zone_confluence_engine.py` 10/10 + `test_zce_sltp_anchor.py` 4/4.
+60. **Aktivasi ZCE Mode FULL (Test Akun Live Cent)** (2 September 2026):
+    - `.env`: `ZCE_ENABLED=true`, `ZCE_MODE=full` — dinding C1/F1 dari peta zona 6-TF menggantikan dinding internal MSE (bukan shadow). Berlaku untuk test di akun live cent; logika produksi akun live utama tidak diubah.
+    - Jalur ZCE di `consensus.py` kini aktif: SL anchor > ceiling → `ANCHOR_TOO_WIDE` (skip), ATR gagal → `ATR_UNAVAILABLE` (reject), fallback statis nonaktif.
+    - Test legacy yang menguji jalur non-ZCE di-patch `ZCE_ENABLED=False`/`ZCE_MODE=shadow` agar deterministik (`test_confluence...` & `test_market_scanner...`). Suite: 86 passed, 6 failed pre-existing.
+61. **Fix Koneksi ZCE→Radar: Stale Cache + Resync Deep Target** (2 September 2026):
+    - **Patch #1 Stale Cache Disconnect** (`market_scanner.py` + `config.py` + `.env`): `update_macro_context` ganti hour-gate → **elapsed-gate** `_zce_refresh_due_seconds()` (900s saat ZCE legacy/full, `MACRO_STRATEGIC_REFRESH_SECONDS` default). `_build_single_macro_context` kini **compute inline peta ZCE** bila belum ada di `_zce_maps` → macro_cache TIDAK PERNAH dibangun tanpa dinding ZCE (cold start / boot force / Senin pagi). `_refresh_zce_rotation` di-refactor ke helper `_compute_zce_map_for()` + mode `full_sweep=True` (refresh SEMUA simbol) yang dipanggil SEBELUM rebuild → dinding ZCE tidak pernah basi lintas weekend/dead zone; umur peta ≤15 mnt. Parameter baru `ZCE_REFRESH_INTERVAL_SECONDS` (default 900).
+    - **Patch #2 Resync Deep Target vs F1/C1 Override** (`macro_strategic_engine.py` 1151-1184): bila `deep_floor_f2 >= floor_f1` / `deep_ceiling_c2 <= ceiling_c1` (ter-inversi saat ZCE F1 override dalam & ZCE deep F2 kosong) → resync ulang memakai formula baseline + snap cluster, lalu pulihkan `floor_f2`/`ceiling_c2` yang sempat di-None-kan enforcement monotonik.
+    - Verifikasi independen: 3 temuan Gemini dikonfirmasi (Bug #1 benar; #2 sebagian-sudah-disembuhkan-29ab6fb + edge deep target; #3 substansi benar tapi token `SCALE_CONFLICT` = dead code, **sengaja TIDAK di-wire ke gate**). Suite: 86 passed, 6 failed pre-existing.
 
 ---
 

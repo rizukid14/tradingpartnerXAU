@@ -20,11 +20,11 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         pool = config.get_rotation_pool(wednesday)
         if config.SCANNER_MODE:
             self.assertEqual(len(pool), len(config.get_scanner_symbols(wednesday)))
-            self.assertIn("GBPUSD-ECNc", pool)
-            self.assertNotIn("XAUUSD-ECNc", pool)
+            self.assertTrue(any("GBPUSD" in s for s in pool))
+            self.assertTrue(all("XAUUSD" not in s for s in pool))
             self.assertNotIn("BTCUSD.c", pool)  # BTC must be OFF on weekdays
-            self.assertIn("EURJPY-ECNc", pool)
-            self.assertIn("USDJPY-ECNc", pool)
+            self.assertTrue(any("EURJPY" in s for s in pool))
+            self.assertTrue(any("USDJPY" in s for s in pool))
             self.assertEqual(config.get_max_open_positions(now=wednesday), config.MAX_OPEN_POSITIONS)
 
     def test_weekend_switch(self):
@@ -59,6 +59,24 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         self.assertEqual(config.risk_percent_for("XAUUSD-ECNc"), config.RISK_PERCENT_XAU)
         self.assertEqual(config.risk_percent_for("GBPUSD-ECNc"), config.RISK_PERCENT_FX)
         self.assertEqual(config.risk_percent_for("BTCUSD.c"), config.RISK_PERCENT_BTC)
+
+    def test_session_aware_helpers(self):
+        # Asian session pairs should include JPY, AUD, NZD
+        self.assertTrue(config.is_asian_session_pair("AUDNZD-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("USDJPY-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("NZDCAD-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("AUDCAD-ECNc"))
+        self.assertTrue(config.is_asian_session_pair("GBPJPY-ECNc"))
+        
+        # Pure European / American pairs should NOT be Asian session pairs
+        self.assertFalse(config.is_asian_session_pair("EURUSD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("GBPUSD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("EURGBP-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("EURCHF-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("GBPCHF-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("GBPCAD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("USDCAD-ECNc"))
+        self.assertFalse(config.is_asian_session_pair("USDCHF-ECNc"))
 
 
 if __name__ == "__main__":

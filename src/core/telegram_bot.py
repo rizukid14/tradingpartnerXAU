@@ -25,8 +25,6 @@ from zoneinfo import ZoneInfo
 import config
 from src.core import mt5_connector as connector
 from src.core.risk_engine import RiskEngine
-from src.core import llm_client
-from src.core import consensus
 from src.analytics.macro_strategic_engine import macro_strategic_engine
 
 _risk_engine = RiskEngine()
@@ -180,12 +178,61 @@ def handle_csm_command(chat_id):
         send_telegram_msg(f"Error fetching CSM: `{e}`", chat_id=chat_id)
 
 
+def handle_rotasi_command(chat_id):
+    """Sends the Global Capital Rotation Matrix (ARRIVED, ON_HOLD, EN_ROUTE)."""
+    try:
+        from src.analytics.market_scanner import MarketScanner
+        from src.analytics.currency_strength import get_global_journey_matrix
+        
+        scanner_inst = getattr(MarketScanner, '_instance', None)
+        if not scanner_inst or not hasattr(scanner_inst, 'macro_cache') or not scanner_inst.macro_cache:
+            send_telegram_msg("⚠️ Macro Cache initializing... Please try again in 1 minute.", chat_id=chat_id)
+            return
+            
+        journey = get_global_journey_matrix(scanner_inst.macro_cache)
+        if not journey:
+            send_telegram_msg("⚠️ Rotation Matrix empty. Please wait for radar cycle.", chat_id=chat_id)
+            return
+            
+        arrived = [s for s, d in journey.items() if d['state'] == 'ARRIVED']
+        on_hold = [s for s, d in journey.items() if d['state'] == 'ON_HOLD']
+        en_route = [s for s, d in journey.items() if d['state'] == 'EN_ROUTE']
+        
+        msg = "🔄 *GLOBAL CAPITAL ROTATION MATRIX*\n\n"
+        
+        msg += "🧱 *ARRIVED (Hit Wall / Sampai Target):*\n"
+        msg += f"_{len(arrived)} Pairs_\n"
+        for s in arrived:
+            loc = "dasar" if journey[s]['pos'] <= 0.10 else "pucuk"
+            msg += f"• {s} (Di {loc})\n"
+        if not arrived: msg += "• None\n"
+        msg += "\n"
+        
+        msg += "⏳ *ON_HOLD (Ranging / Nunggu Giliran):*\n"
+        msg += f"_{len(on_hold)} Pairs_\n"
+        for s in on_hold:
+            msg += f"• {s} (Pos: {journey[s]['pos']*100:.0f}%)\n"
+        if not on_hold: msg += "• None\n"
+        msg += "\n"
+        
+        msg += "🚀 *EN_ROUTE (Lagi Jalan / Ekspansi):*\n"
+        msg += f"_{len(en_route)} Pairs_\n"
+        msg += f"{', '.join(en_route) if en_route else 'None'}\n"
+        
+        send_telegram_msg(msg, chat_id=chat_id)
+    except Exception as e:
+        send_telegram_msg(f"⚠️ Error generating Rotation Matrix: {e}", chat_id=chat_id)
+
+
+
 def handle_radar_command(chat_id):
     """Sends the 22-pair Market Structure & SMC Radar report."""
     try:
         from src.analytics.market_scanner import MarketScanner
-        scanner = MarketScanner()
-        scanner.update_macro_context(connector, force=False)
+        scanner = getattr(MarketScanner, '_instance', None)
+        if not scanner or not scanner.macro_cache:
+            send_telegram_msg("?? Macro Cache initializing... Please try again in 10 seconds.", chat_id=chat_id)
+            return
         report = scanner.get_market_structure_report()
         kb = {
             "inline_keyboard": [
@@ -206,8 +253,10 @@ def handle_indicators_command(chat_id, symbol_input=None):
         sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
         clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         
-        scanner = MarketScanner()
-        scanner.update_macro_context(connector, force=False)
+        scanner = getattr(MarketScanner, '_instance', None)
+        if not scanner or not scanner.macro_cache:
+            send_telegram_msg("?? Macro Cache initializing... Please try again in 10 seconds.", chat_id=chat_id)
+            return
         smc = scanner.get_symbol_smc_levels(clean_sym)
         
         tick = connector.get_current_tick(sym)
@@ -269,6 +318,7 @@ def handle_macro_command(chat_id, symbol_input=None):
         
         is_crypto_or_gold = ("BTC" in clean_sym or "XAU" in clean_sym)
         pip_unit = "USD" if is_crypto_or_gold else "pips"
+        fmt = "{:,.2f}" if is_crypto_or_gold else ("{:.3f}" if "JPY" in clean_sym else "{:.5f}")
         
         # Calculate reload zone difference in pips
         prox_val = directive.entry_zone_proximal if hasattr(directive, 'entry_zone_proximal') and directive.entry_zone_proximal > 0 else 0.0
@@ -282,11 +332,31 @@ def handle_macro_command(chat_id, symbol_input=None):
         traps_list = "\n".join([f"• {t}" for t in directive.forbidden_traps]) if directive.forbidden_traps else "• Tidak ada jebakan ekstrem."
         circuit_str = " 🚨 *CIRCUIT BREAKER*" if getattr(directive, 'hard_circuit_breaker', False) else ""
 
+        # Chamber Bounds with G-grade notation
+        f1_val = getattr(directive, 'immediate_floor_f1', 0.0)
+        c1_val = getattr(directive, 'immediate_ceiling_c1', 0.0)
+        f2_val = getattr(directive, 'deep_target_floor_f2', 0.0)
+        c2_val = getattr(directive, 'deep_target_ceiling_c2', 0.0)
+        ch_pos = getattr(directive, 'chamber_position_pct', 0.5)
+        f1_react_raw = getattr(directive, 'f1_reaction_grade', 'GRADE_1_MICRO')
+        c1_react_raw = getattr(directive, 'c1_reaction_grade', 'GRADE_1_MICRO')
+        f1_react = "G3-Macro" if f1_react_raw == "GRADE_3_MACRO" else ("G2-Inter" if f1_react_raw == "GRADE_2_INTERMEDIATE" else "G1-Micro")
+        c1_react = "G3-Macro" if c1_react_raw == "GRADE_3_MACRO" else ("G2-Inter" if c1_react_raw == "GRADE_2_INTERMEDIATE" else "G1-Micro")
+        f1_tag = getattr(directive, 'f1_fortress_tag', '')
+        c1_tag = getattr(directive, 'c1_fortress_tag', '')
+        m_state = getattr(directive, 'market_state', 'NEUTRAL_CHAMBER')
+        bull_rmap = getattr(directive, 'bullish_contingency_path', '')
+        bear_rmap = getattr(directive, 'bearish_contingency_path', '')
+
         lines = [
             f"🧭 *TOP-DOWN MACRO: {clean_sym}*",
             f"🎯 *Mandat*: `{directive.daily_macro_bias}` ({directive.macro_bias_score:+.2f}) │ *Tier*: `{directive.action_tier}`{circuit_str}",
             f"⚡ *Aksi*: `{directive.primary_execution_directive}` (Conf: {directive.confidence_score}%)\n",
             f"💡 *Gameplan*:\n_{directive.daily_mandate_thesis}_\n",
+            f"🏰 *Barrier Chamber*: `{m_state}` (Range: {ch_pos:.0%})",
+            f"• 🔺 *F1 Lantai*: `{fmt.format(f1_val)}` ({f1_react} │ {f1_tag})",
+            f"• 🔻 *C1 Plafon*: `{fmt.format(c1_val)}` ({c1_react} │ {c1_tag})",
+            f"• 📊 *F2 Deep*: `{fmt.format(f2_val)}` │ *C2 Deep*: `{fmt.format(c2_val)}`\n",
             "🎯 *Eksekusi Taktis*:",
             f"• 📍 *Reload Zone*: {reload_str}",
             f"• 🛡️ *Intraday SL*: `{directive.intraday_sl_price}` ({directive.intraday_sl_pips:.1f} {pip_unit})",
@@ -294,6 +364,9 @@ def handle_macro_command(chat_id, symbol_input=None):
             f"• 🏆 *TP2 (Target)*: `{directive.tp2_price}` (+{directive.tp2_pips:.1f} {pip_unit} │ {directive.risk_reward_ratio:.2f}:1 R:R)",
             f"• 🚫 *Invalidasi*: `{directive.invalidation_stop_price}`\n",
             f"⚠️ *Pantangan*:\n{traps_list}\n",
+            f"🗺️ *Future Macro Roadmap*:\n`{bull_rmap}`\n`{bear_rmap}`\n",
+            f"🔣 *Format Struktur*: `C1/C2 vs F1/F2` │ Grade `G1/G2/G3`\n",
+            f"🔣 *Format Struktur*: `C1/C2 vs F1/F2` │ Grade `G1/G2/G3`\n",
             f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ Komputasi: `{directive.calculation_time_ms:.1f} ms` (0 Token)"
         ]
         msg_text = "\n".join(lines)
@@ -311,6 +384,48 @@ def handle_macro_command(chat_id, symbol_input=None):
         send_telegram_msg(f"Error computing macro directive for `{symbol_input}`: `{e}`", chat_id=chat_id)
 
 
+def handle_macro_all_command(chat_id):
+    """Sends compact 26-pair macro compass table as Telegram message (/macro all)."""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        symbols = config.get_scanner_symbols()
+        send_telegram_msg(
+            f"🧭 *TOP-DOWN MACRO COMPASS — 26 PASANG FX*\n_Menghitung 6-TF Native Directive untuk {len(symbols)} simbol... (<50ms, 0 Token)_",
+            chat_id=chat_id
+        )
+        lines_bull, lines_bear, lines_range = [], [], []
+        for s in symbols:
+            valid_s = connector.get_valid_trade_symbol(s)
+            d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+            clean = d.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
+            f1_raw = getattr(d, 'f1_reaction_grade', 'GRADE_1_MICRO')
+            c1_raw = getattr(d, 'c1_reaction_grade', 'GRADE_1_MICRO')
+            f1_g = "G3" if f1_raw == "GRADE_3_MACRO" else ("G2" if f1_raw == "GRADE_2_INTERMEDIATE" else "G1")
+            c1_g = "G3" if c1_raw == "GRADE_3_MACRO" else ("G2" if c1_raw == "GRADE_2_INTERMEDIATE" else "G1")
+            f1_v = getattr(d, 'immediate_floor_f1', 0.0)
+            c1_v = getattr(d, 'immediate_ceiling_c1', 0.0)
+            is_jpy = "JPY" in clean
+            fmt_pair = "{:.3f}" if is_jpy else "{:.5f}"
+            entry = f"`{clean:<10}` │ `{d.daily_macro_bias:<20}` │ F1 {fmt_pair.format(f1_v)} {f1_g} / C1 {fmt_pair.format(c1_v)} {c1_g}"
+            if "BULL" in d.daily_macro_bias:
+                lines_bull.append(f"🟢 {entry}")
+            elif "BEAR" in d.daily_macro_bias:
+                lines_bear.append(f"🔴 {entry}")
+            else:
+                lines_range.append(f"⚪ {entry}")
+
+        msg = ["🟢 *BULLISH BIAS:*\n" + "\n".join(lines_bull)] if lines_bull else []
+        if lines_bear:
+            msg.append("🔴 *BEARISH BIAS:*\n" + "\n".join(lines_bear))
+        if lines_range:
+            msg.append("⚪ *RANGE / NEUTRAL:*\n" + "\n".join(lines_range))
+        msg.append(f"\n🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ 0 Token")
+        send_telegram_msg("\n\n".join(msg), chat_id=chat_id)
+    except Exception as e:
+        print(f"[TG BOT ERROR] handle_macro_all_command: {e}")
+        send_telegram_msg(f"Error computing macro all: `{e}`", chat_id=chat_id)
+
+
 def handle_help_command(chat_id):
     """Sends the complete interactive command reference guide."""
     lines = [
@@ -325,6 +440,7 @@ def handle_help_command(chat_id):
         "  _Contoh_: `/fund GBPUSD` atau `/fundamental`",
         "• `/radar` ➔ Fast Radar Live Heatmap 26 Pairs (M1/M2/M3 A+ setups)",
         "• `/csm` ➔ Boitoki Currency Strength Matrix & Net Basket Delta",
+        "• `/rotasi` ➔ Global Capital Rotation Matrix (Leader/Laggard Flow)",
         "• `/levels <pair>` ➔ Level teknikal LuxAlgo SMC, FRVP POC/VAL/VAH",
         "",
         "📰 *BERITA & SENTIMEN:*",
@@ -626,6 +742,7 @@ def handle_status_command(chat_id):
             f"• *Net Floating P/L*: `${total_floating:+.2f}` ({len(open_pos)} positions)\n"
             f"• *Architecture*: `2-Stage Quant Funnel (26 Pairs FX | Weekend BTC H1)`\n"
             f"• *Fast Radar*: `60s Sweep Active (0 Token)`\n"
+            f"• *ZCE Zone Map*: `{str(getattr(config, 'ZCE_MODE', 'shadow')).upper() if getattr(config, 'ZCE_ENABLED', False) else 'OFF'}` (Override `{'ON' if getattr(config, 'ZCE_ENABLED', False) and getattr(config, 'ZCE_MODE', 'shadow') in ('legacy', 'full') else 'OFF'}` | `0 Token`)\n"
             f"• *3-AI Jury*: `Full 3-AI (OpenAI + Gemini + DeepSeek)`\n"
             f"• *Risk per Trade*: `FX {config.RISK_PERCENT_FX}% | BTC {config.RISK_PERCENT_BTC}%` (Max: Weekday `{config.MAX_OPEN_POSITIONS}` / Weekend `{config.MAX_OPEN_POSITIONS_BTC}`)\n"
             f"• *Max Daily Loss*: `{getattr(config, 'MAX_DAILY_LOSS_PERCENT', 4.0)}%` | *Target*: `{config.DAILY_PROFIT_TARGET_PERCENT}%`"
@@ -791,6 +908,7 @@ def run_ondemand_analysis(symbol_input, chat_id, timeframe_input=None):
             open_pos = connector.get_open_positions(symbol=sym)
             all_open_pos = connector.get_open_positions()
 
+            from src.core import llm_client
             prompt = llm_client.prepare_prompt(
                 sym, df, tick_live,
                 macro_context=macro_ctx,
@@ -1058,6 +1176,8 @@ def _process_update(update):
             handle_help_command(target_chat)
         elif cmd in ("/csm", "/strength", "/currency"):
             handle_csm_command(target_chat)
+        elif cmd in ("/rotasi", "/matrix", "/journey"):
+            handle_rotasi_command(target_chat)
         elif cmd in ("/radar", "/scan", "/scanner"):
             handle_radar_command(target_chat)
         elif cmd in ("/indicators", "/indikator", "/levels", "/smc"):
@@ -1065,7 +1185,11 @@ def _process_update(update):
             handle_indicators_command(target_chat, symbol_input=sym)
         elif cmd in ("/macro", "/directive", "/kompas"):
             if args:
-                handle_macro_command(target_chat, symbol_input=args[0])
+                sym_arg = args[0].strip().upper()
+                if sym_arg == "ALL":
+                    handle_macro_all_command(target_chat)
+                else:
+                    handle_macro_command(target_chat, symbol_input=sym_arg)
             else:
                 handle_macro_picker_menu(target_chat)
         elif cmd in ("/status", "/akun"):
@@ -1248,17 +1372,25 @@ def register_bot_commands():
     return False
 
 
+def _listener_worker():
+    """Background worker that registers commands and enters polling loop asynchronously."""
+    try:
+        register_bot_commands()
+    except Exception as e:
+        print(f"[TG BOT WARNING] Could not register bot commands: {e}")
+    _poll_loop()
+
+
 def start_telegram_listener():
-    """Starts the background Telegram listener thread."""
+    """Starts the background Telegram listener thread (0ms main thread blocking)."""
     global _listener_thread
     if not config.TELEGRAM_ENABLED:
         return
-    register_bot_commands()
     if _listener_thread and _listener_thread.is_alive():
         return
 
     _stop_event.clear()
-    _listener_thread = threading.Thread(target=_poll_loop, daemon=True, name="TelegramListener")
+    _listener_thread = threading.Thread(target=_listener_worker, daemon=True, name="TelegramListener")
     _listener_thread.start()
 
 

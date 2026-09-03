@@ -11,6 +11,8 @@ import textwrap
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import config
+
 # Ensure stdout uses UTF-8 on Windows
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     try:
@@ -52,6 +54,10 @@ class UI:
     @classmethod
     def badge_live(cls):
         return f"{cls.BG_GREEN} LIVE {cls.RST}"
+
+    @classmethod
+    def badge_demo(cls):
+        return f"{cls.BG_CYAN} DEMO {cls.RST}"
 
     @classmethod
     def badge_dry(cls):
@@ -239,13 +245,25 @@ class UI:
         return "\n".join(out)
 
 
-def render_scanner_banner(account_info=None, is_live=True, total_symbols=26):
+def render_scanner_banner(account_info=None, is_live=True, total_symbols=26, account_mode="live"):
     """Renders a sleek ASCII banner for Multi-Pair Quant Screener & Multi-LLM Jury."""
-    badge_mode = UI.badge_live() if is_live else UI.badge_dry()
-    acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
+    mode_upper = str(account_mode).upper()
+    if not is_live:
+        badge_mode = UI.badge_dry()
+    elif mode_upper == "DEMO":
+        badge_mode = UI.badge_demo()
+    else:
+        badge_mode = UI.badge_live()
+    
+    acc_label = "Demo Account" if mode_upper == "DEMO" else "Live Account"
+    acc_text = f"{acc_label} #{account_info}" if account_info else "Trading Terminal"
+    
+    zce_enabled = getattr(config, "ZCE_ENABLED", False)
+    zce_mode = str(getattr(config, "ZCE_MODE", "shadow")).upper() if zce_enabled else "OFF"
+    zce_color = UI.GREEN if zce_mode in ("FULL", "LEGACY") else (UI.YELLOW if zce_mode == "SHADOW" else UI.GRAY)
     
     title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
-    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
+    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | ZCE: {zce_color}{zce_mode}{UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
     
     items = [
         title_line,
@@ -282,8 +300,18 @@ def render_candidate_alert_box(candidate):
         (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
         (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (M15 {wick_side} {candidate.rejection_wick_ratio*100:.0f}%)"),
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
-        (f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"),
     ]
+
+    zce_cls = meta.get('zce_class')
+    if zce_cls:
+        f1_s = meta.get('zce_f1_src', 'MSE')
+        c1_s = meta.get('zce_c1_src', 'MSE')
+        f1_p = meta.get('zce_f1_price', 0.0)
+        c1_p = meta.get('zce_c1_price', 0.0)
+        zce_color = UI.GREEN if zce_cls == "ZCE_FULL" else (UI.CYAN if zce_cls == "ZCE_MIXED" else UI.WHITE)
+        items.append((f"• ZCE Anchor   : ", f"{zce_color}{zce_cls}{UI.RST} (F1: {f1_s} @ {f1_p} | C1: {c1_s} @ {c1_p})"))
+
+    items.append((f"• Market Stats : ", f"Spread: {candidate.current_spread_pts} pts | ATR(14): {candidate.current_atr_pts:.1f} pts"))
 
     # Fetch Real-time Apex Fundamental Evaluation
     try:
@@ -318,10 +346,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     
     import config
     scanner_syms = config.get_scanner_symbols() if hasattr(config, "get_scanner_symbols") else []
-    all_symbols = [
+    all_symbols = sorted([
         s.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
         for s in scanner_syms
-    ] or ["BTCUSD"]
+    ]) or ["BTCUSD"]
     
     hot_pairs = []
     in_zone_pairs = []
@@ -388,27 +416,27 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         except Exception:
             pass
 
-        w_state_str = "MATURE_BASING"
-        w_perm_str = f"{UI.CYAN}◆ ARMED (Menunggu Sentuh Reload Zone){UI.RST}"
+        mse_tier_str = "FULL_ALLOW"
+        w_perm_str = f"{UI.CYAN}◆ ARMED (Standby Reload / Scalp Only){UI.RST}"
         if macro_cache:
             for k, v in macro_cache.items():
                 if active_sym in k:
-                    w_st = v.get('wave_state', 'MATURE_BASING')
+                    raw_tier = v.get('action_tier') or v.get('wave_state', 'FULL_ALLOW')
+                    mse_tier_str = str(raw_tier).replace('MSE_', '')
                     w_pm = v.get('permission_state', 'ARM')
                     if w_pm == "GO":
-                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Reclaim Confirmed){UI.RST}"
+                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Full Allow){UI.RST}"
                     elif w_pm == "ARM":
-                        w_perm_str = f"{UI.CYAN}◆ ARMED (Menunggu Sentuh Reload Zone){UI.RST}"
+                        w_perm_str = f"{UI.CYAN}◆ ARMED (Standby Reload / Scalp Only){UI.RST}"
                     elif w_pm == "WAIT":
-                        w_perm_str = f"{UI.GRAY}○ WAIT (Anti-FOMO / Di Pucuk Ekspansi){UI.RST}"
+                        w_perm_str = f"{UI.GRAY}○ WAIT (Mid-Chamber / Inaction Zone){UI.RST}"
                     elif w_pm == "LOCK":
-                        w_perm_str = f"{UI.RED}■ LOCK (Anti-Falling Knife){UI.RST}"
-                    w_state_str = w_st
+                        w_perm_str = f"{UI.RED}■ LOCK (Hard Block / Extreme Trap){UI.RST}"
                     break
 
         t3_lines = [
             f" Sesi Trading : {UI.CYAN}Weekend 24/7 Dedicated Crypto Rotation{UI.RST}",
-            f" Wave State   : {UI.GREEN}{w_state_str}{UI.RST}",
+            f" MSE Tier     : {UI.GREEN}{mse_tier_str}{UI.RST}",
             f" Permission   : {w_perm_str}",
             f" Risk Profile : {UI.YELLOW}0.50% Equity ($29.10 Max Loss | Max 2 Posisi){UI.RST}",
             f" News Ticker  : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}"
@@ -425,25 +453,19 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                         pos = v.get('dealing_range_pos', 0.5)
                         is_bull = v.get('is_bull', False)
                         is_bear = v.get('is_bear', False)
-                        wave_st = v.get('wave_state', '')
+                        action_tier = v.get('action_tier', 'FULL_ALLOW')
                         perm_st = v.get('permission_state', 'WAIT')
                         
-                        if "IMPULSE" in wave_st or "CHASE" in wave_st:
-                            badge = f"{UI.PURPLE}▶{UI.RST}"
-                        elif "LOCK" in wave_st or perm_st == "LOCK":
-                            badge = f"{UI.RED}■{UI.RST}"
-                        elif "RECLAIM" in wave_st or "GO" in wave_st or perm_st == "GO":
+                        if perm_st == "GO" or (action_tier == "FULL_ALLOW" and (pos <= 0.20 or pos >= 0.80)):
                             badge = f"{UI.GREEN}●{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ●")
-                        elif "ARMED" in wave_st or "RELOAD" in wave_st or "MATURE" in wave_st or perm_st == "ARM":
+                        elif action_tier == "HARD_BLOCK" or perm_st == "LOCK":
+                            badge = f"{UI.RED}■{UI.RST}"
+                        elif perm_st == "ARM" or action_tier in ("FULL_ALLOW", "TP1_ONLY_SCALP", "REDUCED_CONFIDENCE"):
                             badge = f"{UI.CYAN}◆{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ◆")
-                        elif perm_st == "WATCH":
-                            badge = f"{UI.YELLOW}▲{UI.RST}"
-                        elif "WAIT" in perm_st or "EXPANSION" in wave_st:
-                            badge = f"{UI.GRAY}○{UI.RST}"
                         else:
-                            badge = f"{UI.GRAY}○{UI.RST}"
+                            badge = f"{UI.YELLOW}▲{UI.RST}"
                             
                         if is_bull:
                             arrow = f"{UI.GREEN}▲{UI.RST}"
@@ -473,9 +495,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 f"{UI.GREEN}0%FL{UI.RST}~{UI.RED}100%CE{UI.RST}",
                 f"{UI.GREEN}●GO{UI.RST}",
                 f"{UI.CYAN}◆ARM{UI.RST}",
-                f"{UI.RED}■LOCK{UI.RST}",
                 f"{UI.YELLOW}▲WATCH{UI.RST}",
-                f"{UI.GRAY}○WAIT{UI.RST}"
+                f"{UI.RED}■LOCK{UI.RST}"
             ]
             t1_lines.append(" " + f" {UI.DIM}│{UI.RST} ".join(legend_parts))
         else:
@@ -554,12 +575,17 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
 
     max_loss_dlr = eq * (getattr(config, "MAX_DAILY_LOSS_PERCENT", 4.0) / 100.0)
     
+    zce_enabled = getattr(config, "ZCE_ENABLED", False)
+    zce_mode = str(getattr(config, "ZCE_MODE", "shadow")).upper() if zce_enabled else "OFF"
+    zce_color = UI.GREEN if zce_mode in ("FULL", "LEGACY") else (UI.YELLOW if zce_mode == "SHADOW" else UI.GRAY)
+    zce_ov_str = "Override ON" if (zce_enabled and zce_mode in ("FULL", "LEGACY")) else ("Shadow Log" if zce_mode == "SHADOW" else "OFF")
+
     t2_lines = [
         f" Server     : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
         f" Equity     : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
         f" Capacity   : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} ({'Weekend Crypto Pool' if is_single_asset_mode else '26-Pair Basket Pool'})",
         f" Daily P/L  : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}{config.MAX_DAILY_LOSS_PERCENT}% (${max_loss_dlr:.0f}){UI.RST}",
-        f" MSE Sockets: {UI.GREEN}6-TF Native (MN1/W1/D1/H4/H1){UI.RST} | {UI.CYAN}0 Token (<50ms){UI.RST}",
+        f" ZCE Engine : {zce_color}{zce_mode}{UI.RST} ({zce_ov_str}) | {UI.CYAN}0 Token (<50ms){UI.RST}",
     ]
     if open_positions:
         pos_strs = []
@@ -578,19 +604,56 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
         
     hot_str = ", ".join(hot_pairs[:4]) if hot_pairs else ("BTCUSD (27% Disc) [HOT]" if is_single_asset_mode else "None (Normal Vol)")
     in_zone_str = ", ".join(in_zone_pairs[:4]) if in_zone_pairs else ("BTCUSD ◆" if is_single_asset_mode else "None (Mid-Range)")
+
+    # Volatility Squeeze & Wave Regime Summary
+    sqz_pairs = []
+    thrust_pairs = []
+    if macro_cache:
+        for s, m_info in macro_cache.items():
+            s_clean = s.replace("-ECNc", "").replace(".c", "")
+            r_name = m_info.get("wave_regime_name", "YOUNG_OSCILLATION")
+            sqz_cnt = m_info.get("effective_sqz_bars", 0)
+            age_h = m_info.get("range_age_hours", 24.0)
+            if "THRUST" in r_name or r_name == "SUPER_COMPRESSION_THRUST":
+                thrust_pairs.append(f"{s_clean}({age_h:.0f}h)")
+            elif "SQUEEZE" in r_name or sqz_cnt > 0:
+                sqz_pairs.append(f"{s_clean}({age_h:.0f}h)")
+
+    if sqz_pairs:
+        vol_str = f"{UI.YELLOW}⚡ Sqz: {', '.join(sqz_pairs[:3])}{UI.RST}"
+    elif thrust_pairs:
+        vol_str = f"{UI.RED}🚀 Thrust: {', '.join(thrust_pairs[:3])}{UI.RST}"
+    else:
+        vol_str = f"{UI.GREEN}Normal (Young Osc <24h){UI.RST}"
     
     t2_lines.append(f" Top Hot    : {UI.YELLOW}{hot_str}{UI.RST}")
-    t2_lines.append(f" Wave Armed : {UI.GREEN}{in_zone_str}{UI.RST}")
+    t2_lines.append(f" MSE Armed  : {UI.GREEN}{in_zone_str}{UI.RST}")
+    t2_lines.append(f" Vol Regime : {vol_str}")
     t2_lines.append(f" Fast Radar : {UI.CYAN}{len(all_symbols)} Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
     t2_lines.append(f" Proteksi   : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
         
-    # ── TILE 4: 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL (Bottom Right) ──
+    # ── TILE 4: 2D CONFLUENCE MATRIX & THESIS SENTINEL (Bottom Right) ──
+    now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+    srv_h = (now_wib.hour - 4) % 24
+    srv_str = f"{srv_h:02d}:{now_wib.strftime('%M')} GMT+3"
+    wib_str = f"{now_wib.strftime('%H:%M')} WIB"
+
+    # Pre-Rollover Shield status (03:50 - 04:15 WIB / 23:50 - 00:15 Server)
+    if (now_wib.hour == 3 and now_wib.minute >= 50) or (now_wib.hour == 4 and now_wib.minute <= 15):
+        shield_str = f"{UI.RED}{UI.BOLD}ACTIVE{UI.RST}"
+    else:
+        shield_str = f"{UI.GREEN}ARMED (03:50){UI.RST}"
+
+    pend_cnt = len(orders or [])
+    sentinel_str = f"{UI.GREEN}ACTIVE ({pend_cnt} Pending Audited){UI.RST}" if pend_cnt > 0 else f"{UI.CYAN}ACTIVE (M15 C1/F1 Guard){UI.RST}"
+
     t4_lines = [
-        f" Pass 1 (~3s) : {UI.WHITE}OpenAI o4-mini{UI.RST} (Structure) + {UI.WHITE}Gemini 3.1-Flash{UI.RST} (Speed)",
-        f" Pass 2 (~1.5s): {UI.PURPLE}DeepSeek V4-Flash{UI.RST} (Chief Risk Officer & Hard Risk Veto)",
-        f" Hard Veto    : {UI.RED}QUALIFIED HARD VETO ARMED{UI.RST} (Anti-Falling Knife Guard)",
-        f" News Shield  : {UI.GREEN}ForexFactory + TV Dual-Source (±6h Gate){UI.RST}",
-        f" Apex Confluence : {UI.CYAN}Institutional 8-Currency Regime Filter (Active){UI.RST}"
+        f" 3-AI Jury    : {UI.WHITE}OpenAI o4-mini + Gemini 3.1 + DeepSeek V4{UI.RST}",
+        f" Consensus    : {UI.GREEN}3/3 Unanimous Only{UI.RST} (Zero-Tolerance Split)",
+        f" 2D Sizing    : {UI.GREEN}S (1.25x){UI.RST} | {UI.CYAN}A (1.00x){UI.RST} | {UI.YELLOW}B (0.50x TP1 Scalp){UI.RST}",
+        f" Thesis Guard : {sentinel_str} | {UI.YELLOW}Hard Veto Armed{UI.RST}",
+        f" Time Sync    : {UI.WHITE}{srv_str}{UI.RST} -> {UI.BOLD}{UI.CYAN}{wib_str}{UI.RST} | Shield: {shield_str}",
+        f" SL Anchor   : {UI.CYAN}ZCE (Max 2.5xATR){UI.RST} | Floor 0.50x H1 / 1.0x M30 | {UI.YELLOW}Wide→SKIP{UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
@@ -621,7 +684,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     md1 = max(0, lw - UI.disp_width(m1_title) + 1)
     m1_bar = f"{c_cyan}{m1_title}{'-' * md1}+{c_rst}"
     
-    m2_title = f"-- [ {UI.BG_BLUE} 2-PASS SEQUENTIAL 3-LLM JURY PROTOCOL {UI.RST}{c_cyan} ] "
+    m2_title = f"-- [ {UI.BG_BLUE} 2D CONFLUENCE MATRIX & THESIS SENTINEL {UI.RST}{c_cyan} ] "
     md2 = max(0, rw - UI.disp_width(m2_title) + 1)
     m2_bar = f"{c_cyan}{m2_title}{'-' * md2}+{c_rst}"
     
@@ -656,6 +719,7 @@ def render_banner(account_info=None, symbol="GBPUSD-ECNc", tf=None, mode="pairs"
     acc_text = f"Live Account #{account_info}" if account_info else "Trading Terminal"
     
     title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID MULTI-LLM CONSENSUS TRADING BOT{UI.RST} {UI.CYAN}[FX PAIRS PRO]{UI.RST}"
+    status_line = f" Mode: {badge_mode} | Account: {acc_text} | Symbol: {symbol} ({tf}) | Mode: {mode}"
     items = [
         title_line,
         "---",

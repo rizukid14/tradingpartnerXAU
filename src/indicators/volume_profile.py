@@ -103,30 +103,21 @@ def compute_fixed_range_volume_profile(
         return None
         
     bin_edges = np.linspace(range_low, range_high, num_bins + 1)
-    bin_volumes = np.zeros(num_bins, dtype=np.float64)
+    s_vols = volumes[start_idx:end_idx + 1] if volumes is not None else np.ones(len(slice_highs), dtype=np.float64)
     
-    for idx in range(start_idx, end_idx + 1):
-        b_high = float(highs[idx])
-        b_low = float(lows[idx])
-        b_vol = float(volumes[idx]) if volumes is not None else 1.0
-        
-        if b_high <= b_low:
-            b_idx = max(0, min(int((b_high - range_low) / (range_high - range_low) * num_bins), num_bins - 1))
-            bin_volumes[b_idx] += b_vol
-            continue
-            
-        bar_height = b_high - b_low
-        for b in range(num_bins):
-            edge_l = bin_edges[b]
-            edge_h = bin_edges[b + 1]
-            
-            overlap_l = max(b_low, edge_l)
-            overlap_h = min(b_high, edge_h)
-            
-            if overlap_h > overlap_l:
-                fraction = (overlap_h - overlap_l) / bar_height
-                bin_volumes[b] += b_vol * fraction
-                
+    # Vectorized / broadcast overlap calculation across all bars and bins simultaneously
+    e_l = bin_edges[:-1]
+    e_h = bin_edges[1:]
+    bar_h = np.maximum(slice_highs - slice_lows, 1e-9)
+    
+    o_l = np.maximum(slice_lows[:, None], e_l[None, :])
+    o_h = np.minimum(slice_highs[:, None], e_h[None, :])
+    overlap = np.maximum(0.0, o_h - o_l)
+    
+    fractions = overlap / bar_h[:, None]
+    weighted_vols = fractions * s_vols[:, None]
+    bin_volumes = np.sum(weighted_vols, axis=0)
+    
     total_vol = float(np.sum(bin_volumes))
     if total_vol <= 0:
         return None

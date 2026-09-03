@@ -525,6 +525,8 @@ def get_account_info():
         return None
         
     return {
+        "login": getattr(acc, "login", config.MT5_LOGIN),
+        "server": getattr(acc, "server", config.MT5_SERVER),
         "balance": acc.balance,
         "equity": acc.equity,
         "margin": acc.margin,

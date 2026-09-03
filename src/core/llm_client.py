@@ -4,10 +4,14 @@ import time
 import sys
 import threading
 import concurrent.futures
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from openai import OpenAI
 from google import genai
 import config
 from src.core.cli_theme import UI
+
+_WIB = ZoneInfo("Asia/Jakarta")
 
 # Regex untuk menghapus emoji dari prompt yang dikirim ke LLM.
 # User requirement: prompt LLM harus bebas emoji (UI/CLI boleh).
@@ -850,418 +854,14 @@ def format_positions(positions):
         )
     return "\n".join(lines)
 
-
-def summarize_recent_outcomes(decisions, n=6):
-    """
-    Strip directional narrative out of decision history, keep outcome
-    stats only -- so the current cycle isn't anchored to the previous
-    cycle's directional story (this was likely a contributor to the bot
-    holding a stale bullish read for hours during a correction).
-
-    decisions: list of dicts, most recent last, e.g.
-        {"signal": "BUY", "result": "TP" | "SL" | "SL-BEP" | "SL-trailing" | "OPEN" | "N/A",
-         "profit": float (NET, sudah termasuk komisi) | None, "commission": float}
-    Klasifikasi win/loss pakai PROFIT NET kalau ada (paling akurat - BEP
-    tolerance dinamis dari komisi aktual), fallback ke label result.
-    """
-    recent = decisions[-n:]
-    if not recent:
-        return "No recent decision history for this symbol."
-
-    hold_count = sum(1 for d in recent if d["signal"] == "HOLD")
-    trade_count = len(recent) - hold_count
-    win_count = 0
-    loss_count = 0
-    bep_count = 0
-    open_count = 0
-    for d in recent:
-        if d["signal"] == "HOLD":
-            continue
-        result = d.get("result", "N/A")
-        if result == "OPEN":
-            open_count += 1
-            continue
-        profit = d.get("profit")
-        if profit is not None:
-            tol = config.bep_tolerance_for({"commission": d.get("commission", 0.0)})
-            if profit > tol:
-                win_count += 1
-            elif profit < -tol:
-                loss_count += 1
-            else:
-                bep_count += 1
-        else:
-            # Fallback label (tanpa profit): SL-trailing = profit terkunci = win
-            if result in ("TP", "SL-trailing"):
-                win_count += 1
-            elif result == "SL":
-                loss_count += 1
-            else:  # SL-BEP, manual, N/A
-                bep_count += 1
-
-    stats = f"{trade_count} trade(s) taken ({win_count} win, {loss_count} loss, {bep_count} BEP)"
-    if open_count:
-        stats += f", {open_count} still open"
-    return (
-        f"Recent outcomes ({len(recent)} cycles): {stats}, {hold_count} HOLD. "
-        f"(Outcome only -- not a directional signal for this cycle.)"
-    )
-
-
-def prepare_prompt(symbol, df, current_tick, macro_context=None, open_positions=None,
-                   whisper_str=None, all_open_positions=None):
-    """
-    Constructs a rich prompt for LLM models containing price action,
-    multi-timeframe technical indicators, MTF macro analysis, and active open positions.
-    whisper_str: optional pattern research stats (validated edge) — informational only.
-    all_open_positions: all open bot positions across all symbols for cross-portfolio awareness.
-    """
-
-    # Dynamic timeframe label resolved from dataframe or fallback to config
-    tf_label = None
-    if len(df) >= 2:
-        try:
-            diff_sec = int(abs((df['time'].iloc[-1] - df['time'].iloc[-2]).total_seconds()))
-            sec_to_tf = {300: "M5", 900: "M15", 1800: "M30", 3600: "H1", 14400: "H4", 86400: "D1"}
-            tf_label = sec_to_tf.get(diff_sec)
-        except Exception:
-            pass
-    if not tf_label:
-        tf_val = config.get_timeframe(symbol)
-        tf_map_rev = {v: k for k, v in config.TIMEFRAME_MAP.items()}
-        tf_label = tf_map_rev.get(tf_val, "M30" if "XAU" in symbol.upper() else "M5")
-
-    # Compact price action: STRUCTURE block (level terhitung) + delta candles
-    # (shape). Ganti 50 candle OHLC mentah (~560 token) -> STRUCTURE + 15 delta
-    # (~200 token). Shape price action tetap kebaca (body/wick/urutan), semua
-    # level absolut tetap ada sebagai angka di STRUCTURE.
-    latest = df.iloc[-1]
-    point_size = current_tick.get("point", 0.01) or 0.01
-    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
-
-    structure_str = _structure_block(df, current_tick, atr_points, tf_label=tf_label)
-    delta_main = _delta_candle_lines(df, n=15, point_size=point_size)
-    delta_main_str = ""
-    if delta_main:
-        delta_main_str = (
-            f"\n### RECENT PRICE ACTION (last {len(delta_main)} {tf_label} candles, "
-            f"OHLC absolute prices)\n" + "\n".join(delta_main) + "\n"
-        )
-
-    # Micro price action: M5, delta juga. XAU/BTC 18 (1.5 jam), FX 24 (2 jam).
-    # Micro M5 adalah satu-satunya price action granular intra-period utk
-    # timeframe lambat (M30/H1) - TIDAK dihapus, cuma dikompres.
-    # Fix 21 Agustus: tambah M15/M5 MOMENTUM SUMMARY (murni data, dihitung
-    # lokal) di bawah blok M5 — biar AI bisa lihat kontras momentum micro vs
-    # ADX timeframe aktif yang lagging. M5 FX tetap 24 (2 jam = 2 candle H1).
-    micro_candles_str = ""
-    momentum_summary_str = ""
-    try:
-        from src.core import mt5_connector
-        micro_tf = mt5_connector.mt5.TIMEFRAME_M5
-        micro_tf_name = "M5"
-        if tf_label == "H1":
-            num_micro_send = 24  # 24 candle M5 = 120 menit (2 jam = 2 candle H1)
-            duration_label = "2h"
-        else:
-            num_micro_send = 12  # 12 candle M5 = 60 menit (1 jam = 2 candle M30)
-            duration_label = "1h"
-
-        # Fetch enough candles so ta indicators (window 14) don't raise IndexError
-        num_fetch = max(35, num_micro_send + 15)
-        micro_df = mt5_connector.get_market_data(symbol, micro_tf, num_candles=num_fetch)
-        if micro_df is not None and len(micro_df) > 0:
-            micro_delta = _delta_candle_lines(micro_df, n=num_micro_send, point_size=point_size)
-            if micro_delta:
-                micro_candles_str = (
-                    f"\n### LAST {len(micro_delta)} {micro_tf_name} CANDLES (intra-period {duration_label}, "
-                    f"OHLC absolute prices)\n" + "\n".join(micro_delta) + "\n"
-                )
-        # ---- M5 MOMENTUM SUMMARY (computed locally) ----
-        if micro_df is not None and len(micro_df) >= 10:
-            momentum_summary_str = _momentum_summary(
-                micro_df, df, point_size, "M5", tf_label
-            )
-            if momentum_summary_str:
-                momentum_summary_str = "\n" + momentum_summary_str.strip() + "\n"
-    except Exception as e:
-        pass
-
-    atr_points = int(latest["atr_14"] / point_size) if point_size > 0 else 0
-
-    # For crypto (BTC) the df is already M30 (config.get_timeframe) so the ATR
-    # reflects real 30-minute volatility. XAU df is M15 (swing) - ATR M15 ~819 pts.
-
-    # ATR-based HARD GATE (mode ATR-Based): angka minimum konkret di-inject ke
-    # market data biar LLM gak perlu kalikan ATR x 1.25 / x 2.5 manual (LLM
-    # jelek di aritmetika). Kalau proposal SL/TP di bawah angka ini,
-    # consensus.py MENOLAK trade (bukan dinaikkan) - jadi prompt harus jelas
-    # biar AI gak buang cycle buat sinyal yang pasti ditolak.
-    atr_gate_str = ""
-    # Inject ATR Gate information ONLY if the symbol's mode is ATR-Based
-    # (BTC fix ATR-Based; XAU/FX ikut mode LLM kecuali TP_SL_RULES di-force ATR-Based)
-    if atr_points > 0 and config.sltp_mode_for(symbol) == "ATR-Based":
-        ai_mode = config.get_ai_mode()
-        sl_mult = config.atr_sl_multiplier()
-        tp_mult = config.atr_tp_multiplier()
-        min_sl_pts = int(atr_points * sl_mult)
-        min_tp_pts = int(atr_points * tp_mult)
-        atr_gate_str = (
-            f"ATR HARD GATE (non-negotiable, AI mode: {ai_mode}): minimum SL = {min_sl_pts} pts "
-            f"({sl_mult}x ATR) and minimum TP = {min_tp_pts} pts ({tp_mult}x ATR). "
-            f"If your proposed SL or TP is below these, the bot REJECTS the trade -- no order is sent.\n"
-        )
-
-    csm_context_str = ""
-    try:
-        from src.analytics import currency_strength
-        csm_payload = currency_strength.get_csm_prompt_payload(symbol)
-        if csm_payload:
-            csm_context_str = "\n" + csm_payload.strip() + "\n"
-    except Exception:
-        pass
-
-    m3_compass_str = ""
-    if not macro_context:
-        try:
-            from src.indicators.atlas_dna import calculate_dynamic_stations, get_symbol_step
-            from src.indicators.wave_state import evaluate_macro_compass_corridor
-            
-            cur_price = float(df["close"].iloc[-1])
-            st_info = calculate_dynamic_stations(symbol, cur_price)
-            step_val = st_info["step"]
-            
-            roll_h = float(df["high"].tail(50).max())
-            roll_l = float(df["low"].tail(50).min())
-            pwh_val = float(df["high"].tail(120).max()) if len(df) >= 120 else roll_h
-            pwl_val = float(df["low"].tail(120).min()) if len(df) >= 120 else roll_l
-            
-            last_h = float(df["high"].iloc[-1])
-            last_l = float(df["low"].iloc[-1])
-            last_o = float(df["open"].iloc[-1])
-            last_c = float(df["close"].iloc[-1])
-            
-            m_corr, target_st, psych_step, is_ceil_rej, is_flr_rej = evaluate_macro_compass_corridor(
-                symbol=symbol, current_price=cur_price, pwh=pwh_val, pwl=pwl_val,
-                macro_high=roll_h, macro_low=roll_l, cur_atr=atr_points * point_size,
-                last_high=last_h, last_low=last_l, last_open=last_o, last_close=last_c
-            )
-            
-            rng_50 = max(roll_h - roll_l, 1e-5)
-            dr_pct = round(((cur_price - roll_l) / rng_50) * 100, 1)
-            dr_label = "DISCOUNT ZONE (Favorable for BUY)" if dr_pct <= 38.2 else ("PREMIUM ZONE (Favorable for SELL)" if dr_pct >= 61.8 else "EQUILIBRIUM (Middle Range)")
-            
-            pt = point_size or 0.00001
-            step_pts = int(round(step_val / pt))
-            
-            m3_compass_str = (
-                "\n### M3 MACRO COMPASS & ATLAS DNA DYNAMIC STATIONS\n"
-                f"- Active Macro Corridor: {m_corr} (Target Estafet: {_fmt_price(target_st, pt)})\n"
-                f"- Calibrated Step DNA: {_fmt_price(step_val, pt)} ({step_pts} pts / {step_pts//10} pips)\n"
-                f"- Immediate Dynamic Stations:\n"
-                f"  * Upper Station (+1 Step): {_fmt_price(st_info['upper_station'], pt)}\n"
-                f"  * Base Station (Nearest) : {_fmt_price(st_info['base_station'], pt)}\n"
-                f"  * Lower Station (-1 Step): {_fmt_price(st_info['lower_station'], pt)}\n"
-                f"- 50-Bar Dealing Range: {_fmt_price(roll_l, pt)} <-> {_fmt_price(roll_h, pt)} (Position: {dr_pct}% - {dr_label})\n"
-            )
-        except Exception:
-            pass
-
-    usd_context = ""
-
-    macro_str = ""
-    if macro_context:
-        macro_str = f"\n{macro_context.strip()}\n"
-
-    whisper_str = whisper_str or ""
-
-    lessons_str = ""
-
-    recent_outcomes_str = ""
-    if getattr(config, "MEMORY_CONTEXT_ENABLED", True):
-        try:
-            from src.analytics import decision_memory
-            # Convert stored decisions into {signal, result, profit, commission}
-            # for summarize_recent_outcomes. result di-set pas close (TP/SL/
-            # SL-BEP/SL-trailing/manual), profit NET (sudah termasuk komisi) -
-            # biar win/loss count AKURAT, bukan selalu "N/A".
-            entries = decision_memory.memory._decisions.get(symbol, [])
-            decisions = [{
-                "signal": e.get("signal", "HOLD"),
-                "result": e.get("result", "N/A"),
-                "profit": e.get("profit"),
-                "commission": e.get("commission", 0.0),
-            } for e in entries]
-            recent_outcomes_str = summarize_recent_outcomes(decisions)
-            if recent_outcomes_str:
-                recent_outcomes_str = f"\n### RECENT OUTCOMES (win/loss history only)\n{recent_outcomes_str}\n"
-        except Exception:
-            pass
-
-    calendar_str = ""
-    news_guard_str = ""
-    try:
-        from src.analytics import economic_calendar
-        # Filter per-pair (20 Agustus): FOMC/NFP/Powell/Trump = semua symbol;
-        # event negara lain (ECB/BoJ/RBA/SNB/CPI GB/Unemployment US, dst) hanya
-        # untuk pair yang mengandung mata uang negara tsb.
-        calendar_str = economic_calendar.calendar.get_context(symbol=symbol)
-        if calendar_str:
-            # Conditional News Anti-Fade Rule (20 Agustus): hanya muncul saat ada
-            # high-impact event imminent/recently-released. Hari tenang = prompt
-            # identik dengan sebelumnya (tidak mengubah perilaku normal).
-            news_guard_str = (
-                "\nNEWS WINDOW GUARD (high-impact event imminent or just released):\n"
-                "A major scheduled news event (FOMC/CPI/NFP/etc) is within the warning "
-                "window. DO NOT fade breakout momentum or attempt counter-trend "
-                "mean-reversion during/after it. Ignore RSI oversold/overbought as an "
-                "entry trigger during news windows. Wait for post-news volatility to "
-                f"settle and a confirmed {tf_label} candle close before entering.\n"
-            )
-    except Exception:
-        pass
-
-    # Global portfolio context across all symbols
-    global_portfolio_str = ""
-    if all_open_positions and len(all_open_positions) > 0:
-        gp_lines = []
-        total_pnl = sum(p.get('profit', 0.0) for p in all_open_positions)
-        for ap in all_open_positions:
-            s_name = ap.get('symbol', '?')
-            gp_lines.append(f"- {s_name}: {ap.get('type')} {ap.get('volume')} lot @ {ap.get('price_open')} (Floating P/L: ${ap.get('profit', 0.0):+.2f} USD)")
-        global_portfolio_str = (
-            "\n### GLOBAL PORTFOLIO CONTEXT (All active bot positions across symbols)\n"
-            f"Total Active Positions: {len(all_open_positions)} | Net Floating P/L: ${total_pnl:+.2f} USD\n"
-            + "\n".join(gp_lines) + "\n"
-            "(Use this cross-asset awareness to detect conflicting currency exposures -- e.g. opposing CHF/EUR/GBP trades -- and take profit or cut exposure accordingly.)\n"
-        )
-
-    positions_str = ""
-    if open_positions and len(open_positions) > 0:
-        pos_lines = []
-        now_ts = time.time()
-        for pos in open_positions:
-            p_ticket = pos.get('ticket')
-            p_type = pos.get('type')
-            p_vol = pos.get('volume')
-            p_open = pos.get('price_open')
-            p_sl = pos.get('sl', 0.0)
-            p_tp = pos.get('tp', 0.0)
-            p_swap = pos.get('swap', 0.0)
-            p_profit = pos.get('profit', 0.0)
-            p_time = pos.get('time')
-
-            time_str = ""
-            if p_time and p_time > 0:
-                try:
-                    from src.core import mt5_connector
-                    wib_dt = mt5_connector.server_to_wib(p_time)
-                    hours_held = max(0.0, (now_ts - wib_dt.timestamp()) / 3600.0)
-                    time_str = f" | Opened: {wib_dt.strftime('%Y-%m-%d %H:%M')} WIB (held for {hours_held:.1f}h)"
-                except Exception:
-                    pass
-
-            swap_str = f" | Swap: ${p_swap:.2f} USD" if p_swap != 0.0 else ""
-            sl_tp_str = f" (SL: {p_sl}, TP: {p_tp})" if (p_sl or p_tp) else ""
-
-            # Peak MFE & Current R calculation (Ide 1 & Enhanced Re-evaluator)
-            peak_str = ""
-            r_str = ""
-            try:
-                from src.analytics import position_manager
-                pt_val = point_size if point_size > 0 else 0.00001
-                peak_pts, peak_r = position_manager.get_peak_mfe_info(p_ticket, point=pt_val)
-                if peak_pts > 0 and peak_r > 0:
-                    peak_str = f" | Peak: +{peak_r:.2f}R (+{peak_pts:.0f} pts)"
-
-                if p_sl and p_open and pt_val > 0:
-                    init_sl_dist = abs(p_open - p_sl) / pt_val
-                    if init_sl_dist > 0:
-                        bid_px = current_tick.get('bid', p_open)
-                        ask_px = current_tick.get('ask', p_open)
-                        curr_pts = ((bid_px - p_open) / pt_val) if p_type == 'BUY' else ((p_open - ask_px) / pt_val)
-                        curr_r = curr_pts / init_sl_dist
-                        r_str = f" ({curr_r:+.2f}R)"
-            except Exception:
-                pass
-
-            pos_lines.append(f"- Ticket #{p_ticket}: {p_type} {p_vol} lot @ {p_open}{sl_tp_str}{time_str}{peak_str}{swap_str} | Floating P/L: ${p_profit:.2f} USD{r_str}")
-        positions_str = (
-            "\n### ACTIVE OPEN POSITIONS TO EVALUATE (DECISION REQUIRED)\n" +
-            "\n".join(pos_lines) + "\n" +
-            "For EACH open position above, make an explicit decision:\n" +
-            f"- 'CLOSE' if:\n" +
-            f"  (a) INVALIDATION / THESIS BROKEN: The technical invalidation level is breached, a clear counter-trend reversal structure formed on {tf_label}, or momentum is failing.\n" +
-            f"  (b) EARLY PROFIT TAKE / EXHAUSTION: The trade has captured substantial profit (e.g. >= 1R or near major opposing swing structure), is showing momentum exhaustion/divergence, OR conflicts with a stronger broad-market currency trend.\n" +
-            f"- 'HOLD' if the thesis remains intact, the move is within normal healthy {tf_label} fluctuations, and has clear room to reach the full target.\n" +
-            f"Do NOT recommend CLOSE for minor healthy pullbacks when the underlying trend structure is still fully intact.\n" +
-            "Provide a concrete quantitative reason (e.g., 'CLOSE: Invalidation breached at 1.0965', 'CLOSE: Secure +$10 profit near H1 resistance with momentum divergence', or 'HOLD: Healthy pullback, thesis intact'). Never leave a ticket without an action.\n"
-        )
-
-    # Explicitly separate the two decisions so the LLM does not mix them:
-    # "signal" = NEW ENTRY only. "position_actions" = EXISTING positions only.
-    separation_note = ""
-    if open_positions and len(open_positions) > 0:
-        separation_note = (
-            "\nIMPORTANT - TWO SEPARATE DECISIONS:\n"
-            "1. The 'signal' field above is ONLY about opening a NEW trade. "
-            "It must be BUY/SELL/HOLD based purely on whether a NEW entry is attractive now.\n"
-            "2. The 'position_actions' list is ONLY about the EXISTING positions listed above. "
-            "Do NOT let your opinion about existing positions change your 'signal', and do NOT "
-            "let your entry bias change your position_actions. Evaluate each independently.\n"
-        )
-
-    # Key levels: PDH/PDL, today open, nearest round number, active WIB session.
-    # Cached 5 min (D1 berubah sekali sehari) - murah, nggak nambah lag cycle.
-    key_levels_str = _get_key_levels_str(symbol, current_tick.get('bid'))
-
-    # ================================================================
-    # PROMPT - 2 blok:
-    #   Blok 1 (STATIS, prefix): instruksi + format. Di-cache via
-    #     cache_control (lihat _execute_claude_single). Harus >= 1024
-    #     token biar Anthropic benar-benar meng-cache.
-    #   Blok 2 (DINAMIS): data pasar yang berubah tiap cycle.
-    # ================================================================
-    # Bagian yang BERUBAH per cycle (candle, tick, posisi, forecast, dll)
-    market_data_block = f"""### MARKET DATA CONTEXT
-Symbol: {symbol}
-Timeframe: {tf_label}
-Current Bid: {_fmt_price(current_tick['bid'], point_size)}
-Current Ask: {_fmt_price(current_tick['ask'], point_size)}
-Spread: {current_tick['spread']} points (point size = {_fmt_price(current_tick['point'])})
-Spread note: Spread is normal (passed risk gate). Do NOT use spread as a reason to reject a trade or select HOLD.
-{csm_context_str}{m3_compass_str}{macro_str}
-{key_levels_str}
-{structure_str}
-{delta_main_str}
-{micro_candles_str}
-{momentum_summary_str}
-{atr_gate_str}
-{whisper_str}{lessons_str}{recent_outcomes_str}{news_guard_str}{calendar_str}{global_portfolio_str}{positions_str}{separation_note}
-{usd_context}"""
-
-    # Bagian yang RELATIF STATIS antar cycle (instruksi + format output).
-    # Dipakai dari template docs/prompt_claude.md (ANALYSIS FREEDOM +
-    # RISK CONSTRAINTS). Statis = bisa di-cache provider (>= 1024 token).
-    static_block = build_system_prompt(symbol, tf_label, asset_desc(symbol), point_size)
-
-    # Gabung: statis dulu (cache), lalu data (dinamis)
-    prompt = static_block + "\n\n" + market_data_block + "\n"
-    # User requirement: prompt LLM bebas emoji (UI/CLI boleh). Strip semua
-    # emoji dari sumber mana pun (macro, forecast, lessons, calendar, dll).
-    return _strip_emoji(prompt)
-
-
 def clean_json_response(text):
     """Cleans markdown JSON wrappers (```json ... ```) and parses the JSON."""
     try:
-        # Search for content between ```json and ``` or ``` and ```
         text_clean = text.strip()
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text_clean, re.DOTALL)
         if match:
             text_clean = match.group(1)
         else:
-            # Fallback: find the first '{' and last '}'
             start = text_clean.find('{')
             end = text_clean.rfind('}')
             if start != -1 and end != -1:
@@ -1270,8 +870,6 @@ def clean_json_response(text):
         try:
             parsed = json.loads(text_clean)
         except json.JSONDecodeError:
-            # Truncated/incomplete JSON (Claude sometimes cuts mid-string).
-            # Recover whatever fields were already emitted line by line.
             parsed = {}
             for line in text_clean.splitlines():
                 m = re.match(r'\s*"(\w+)":\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|null|true|false)', line)
@@ -1281,20 +879,18 @@ def clean_json_response(text):
                         parsed[key] = json.loads(val)
                     except json.JSONDecodeError:
                         parsed[key] = val.strip('"')
-        # Validate keys (including Streamlined V2 schema keys)
+
         for key in [
             "signal", "confidence", "sl_points", "tp_points", "invalidation_price", "target_price",
             "reasoning", "setup", "state", "market_regime", "entry_type", "entry_price",
-            "rr_valid", "trend", "velocity", "position_actions"
+            "rr_valid", "trend", "velocity", "position_actions", "verdict", "risk_flag", "veto_reason"
         ]:
             if key not in parsed:
                 parsed[key] = None
 
-        # Fallback: jika model menghasilkan "direction" alih-alih "signal"
         if not parsed.get("signal") and parsed.get("direction"):
             parsed["signal"] = parsed["direction"]
 
-        # Ensure signal is upper case
         if parsed.get("signal"):
             parsed["signal"] = str(parsed["signal"]).upper()
             if parsed["signal"] not in ["BUY", "SELL", "HOLD"]:
@@ -1302,12 +898,10 @@ def clean_json_response(text):
         else:
             parsed["signal"] = "HOLD"
 
-        # Ensure setup & state & market_regime are upper case strings if present
-        for str_key in ["setup", "state", "market_regime", "trend", "velocity"]:
+        for str_key in ["setup", "state", "market_regime", "trend", "velocity", "verdict", "risk_flag"]:
             if parsed.get(str_key):
                 parsed[str_key] = str(parsed[str_key]).upper()
 
-        # Ensure confidence is float
         try:
             if parsed.get("confidence") is not None:
                 parsed["confidence"] = float(parsed["confidence"])
@@ -1316,7 +910,6 @@ def clean_json_response(text):
         except (ValueError, TypeError):
             parsed["confidence"] = 0.0 if parsed["signal"] == "HOLD" else 0.5
 
-        # Ensure points are int if present
         for pt_key in ["sl_points", "tp_points"]:
             if parsed.get(pt_key) is not None:
                 try:
@@ -1338,11 +931,7 @@ def clean_json_response(text):
             "confidence": 0.0,
             "sl_points": None,
             "tp_points": None,
-            "invalidation_price": None,
-            "target_price": None,
-            "trend": None,
-            "velocity": None,
-            "rr_valid": None,
+            "verdict": "REJECT",
             "reasoning": f"Gagal memparsing respon: {str(e)}"
         }
 
@@ -1354,7 +943,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         kwargs = {
             "model": model_name,
             "messages": [
-                {"role": "user", "content": "System: You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate.\n\n" + prompt}
+                {"role": "user", "content": "System: You are a professional financial trading assistant. Always respond with valid JSON only.\n\n" + prompt}
             ],
             "response_format": {"type": "json_object"},
             "timeout": timeout_sec
@@ -1373,7 +962,7 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
         response = openai_client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "You are a professional financial trading assistant. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); if HOLD, keep it to 1 short sentence (max 20 words) citing the single key level/indicator. Never enumerate."},
+                {"role": "system", "content": "You are a professional financial trading assistant. Respond with valid JSON only."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -1384,76 +973,20 @@ def _execute_openai_single(model_name, prompt, timeout_sec):
     return clean_json_response(content)
 
 
-def query_forecast(prompt):
-    """Queries forecast engine with 1 AI: gpt-5.4 (bukan mini) primary,
-    fallback gemini-3.5-flash (bukan lite). Returns parsed JSON dict or None."""
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 5.0)
-    primary_model = getattr(config, "FORECAST_MODEL", None) or config.OPENAI_MODEL
-    fallback_model = getattr(config, "FORECAST_FALLBACK_MODEL", None) or config.GEMINI_MODEL
-
-    # 1. Primary: OpenAI gpt-5.4
-    if openai_client:
-        try:
-            res = _execute_openai_single(primary_model, prompt, timeout_sec)
-            if isinstance(res, dict) and "forecast_bias" in res:
-                return res
-            print(f"[FORECAST WARNING] Response {primary_model} tidak punya forecast_bias: {str(res)[:120]}")
-        except Exception as e:
-            print(f" [FORECAST FALLBACK] {primary_model} error ({e}). Switching ke {fallback_model}...")
-
-    # 2. Fallback: Gemini gemini-3.5-flash
-    if gemini_client:
-        try:
-            from google.genai import types
-            res = gemini_client.models.generate_content(
-                model=fallback_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            if res and res.text:
-                parsed = clean_json_response(res.text)
-                if isinstance(parsed, dict) and "forecast_bias" in parsed:
-                    return parsed
-        except Exception as e:
-            print(f"[FORECAST FALLBACK ERROR] {e}")
-
-    return None
-
-
-def _resolve_openai_primary():
-    """gpt-5.2 (kuota free 250k/hari) dipakai HANYA di OPENAI_PRIMARY_WINDOW_WIB
-    (default 15:00-19:30 WIB, London session single mode); di luar window pakai
-    OPENAI_DEFAULT_MODEL (gpt-4o-mini) biar kuota besar tidak habis di jam sepi
-    (14 Agustus). OPENAI_FALLBACK_MODEL (o3-mini) = fallback error, dipisah."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    wib_now = datetime.now(ZoneInfo("Asia/Jakarta"))
-    cur_min = wib_now.hour * 60 + wib_now.minute
-    windows = getattr(config, "OPENAI_PRIMARY_WINDOW_WIB", []) or []
-    for start_min, end_min in windows:
-        if start_min <= end_min:
-            if start_min <= cur_min < end_min:
-                return config.OPENAI_MODEL
-        else:  # window lintas tengah malam (mis. 21:00-02:00)
-            if cur_min >= start_min or cur_min < end_min:
-                return config.OPENAI_MODEL
-    return config.OPENAI_DEFAULT_MODEL
-
-
 def query_openai(prompt):
-    """Queries OpenAI API with timeout and fallback model support."""
+    """Queries OpenAI API with timeout and fallback support."""
+    primary_model = getattr(config, "OPENAI_MODEL", "o4-mini")
+    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", "o3-mini")
+    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
+
     if not openai_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "OpenAI API Key tidak diset."}
-
-    primary_model = _resolve_openai_primary()
-    fallback_model = getattr(config, "OPENAI_FALLBACK_MODEL", None)  # o3-mini (fallback error)
-    timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 25.0)
 
     try:
         return _execute_openai_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [OPENAI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [OPENAI FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 return _execute_openai_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
@@ -1465,31 +998,42 @@ def query_openai(prompt):
 
 
 def _execute_gemini_single(model_name, prompt, timeout_sec, thinking_budget=None):
-    """Execute a single Gemini call with strict JSON and thinking budget."""
-    if not gemini_client:
-        raise RuntimeError("Gemini client is not initialized.")
     from google.genai import types
+
     if thinking_budget is None:
         thinking_budget = getattr(config, "GEMINI_THINKING_BUDGET", 1024)
-    cfg_kwargs = dict(response_mime_type="application/json")
-    if thinking_budget and thinking_budget > 0:
-        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
 
     def _call(mod):
-        res = gemini_client.models.generate_content(
+        cfg_kwargs = dict(
+            response_mime_type="application/json",
+            temperature=0.2,
+        )
+        if thinking_budget and thinking_budget > 0:
+            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+        cfg = types.GenerateContentConfig(**cfg_kwargs)
+        return gemini_client.models.generate_content(
             model=mod,
             contents=prompt,
-            config=types.GenerateContentConfig(**cfg_kwargs)
+            config=cfg
         )
-        return clean_json_response(res.text)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(_call, model_name)
-        return fut.result(timeout=timeout_sec)
+    try:
+        res = _call(model_name)
+    except Exception as e_tb:
+        if "thinking_config" in str(e_tb).lower() or "budget" in str(e_tb).lower() or "unsupported" in str(e_tb).lower():
+            cfg_fb = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+            res = gemini_client.models.generate_content(model=model_name, contents=prompt, config=cfg_fb)
+        else:
+            raise e_tb
+
+    if res and res.text:
+        return clean_json_response(res.text)
+    return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Respon kosong dari Gemini"}
 
 
 def query_gemini(prompt):
-    """Queries Gemini API with timeout and fallback model support."""
+    """Queries Gemini API with timeout and fallback support."""
     if not gemini_client:
         return {"signal": "HOLD", "confidence": 0.0, "reasoning": "Gemini API Key tidak diset."}
 
@@ -1501,7 +1045,7 @@ def query_gemini(prompt):
         return _execute_gemini_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [GEMINI FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [GEMINI FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 return _execute_gemini_single(fallback_model, prompt, timeout_sec)
             except Exception as fb_err:
@@ -1513,51 +1057,8 @@ def query_gemini(prompt):
 
 
 def _execute_claude_single(model_name, prompt, timeout_sec):
-    system_text = (
-        "You are a professional financial trading assistant. "
-        "Always respond with valid JSON only. Reasoning: 2-3 sentences (max 60 words for BUY/SELL); "
-        "if HOLD, keep it to 1 short sentence (max 20 words) citing the single key "
-        "level/indicator. Never enumerate."
-    )
-    # Prompt caching: pecah prompt jadi blok statis (instruksi, DI DEPAN) +
-    # dinamis (data pasar, DI BELAKANG). cache_control ditaruh di AKHIR blok
-    # statis - prefix yang identik antar request. System terlalu pendek
-    # (< 1024 token) untuk di-cache, jadi breakpoint di user block.
-    split_marker = "### MARKET DATA CONTEXT"
-    if split_marker in prompt:
-        static_part, dynamic_part = prompt.split(split_marker, 1)
-        dynamic_part = split_marker + dynamic_part
-        user_blocks = [
-            {"type": "text", "text": static_part,
-             "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": dynamic_part},
-        ]
-    else:
-        # Tidak ketemu marker - fallback: cache seluruh prompt (kalau statis)
-        user_blocks = [{"type": "text", "text": prompt,
-                        "cache_control": {"type": "ephemeral"}}]
-    # Enable Anthropic Prompt Caching via cache_control and prompt-caching header
+    system_text = "You are a professional financial trading assistant. Always respond with valid JSON only."
     try:
-        response = claude_client.messages.create(
-            model=model_name,
-            max_tokens=2000,
-            system=[
-                {
-                    "type": "text",
-                    "text": system_text,
-                }
-            ],
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_blocks,
-                }
-            ],
-            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-            timeout=timeout_sec
-        )
-    except Exception:
-        # Fallback for standard call if prompt caching header or structure is not supported
         response = claude_client.messages.create(
             model=model_name,
             max_tokens=2000,
@@ -1565,8 +1066,10 @@ def _execute_claude_single(model_name, prompt, timeout_sec):
             messages=[{"role": "user", "content": prompt}],
             timeout=timeout_sec
         )
-    content = "".join(b.text for b in response.content if b.type == "text")
-    return clean_json_response(content)
+        content = "".join(b.text for b in response.content if b.type == "text")
+        return clean_json_response(content)
+    except Exception as e:
+        raise e
 
 
 def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=None):
@@ -1576,10 +1079,7 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
     """
     raw_model = model_name
     if reasoning_effort is None:
-        if "chat" in raw_model.lower():
-            reasoning_effort = ""
-        else:
-            reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "none") or "").strip()
+        reasoning_effort = (getattr(config, "DEEPSEEK_REASONING_EFFORT", "none") or "").strip()
 
     kwargs = dict(
         model=raw_model,
@@ -1595,13 +1095,14 @@ def _execute_deepseek_single(model_name, prompt, timeout_sec, reasoning_effort=N
         kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
     else:
         kwargs["temperature"] = 0.2
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
     response = deepseek_client.chat.completions.create(**kwargs)
     return clean_json_response(response.choices[0].message.content)
 
 
 def query_deepseek(prompt):
-    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support (e.g. Gemini 2.5 Flash Lite)."""
+    """Queries DeepSeek API (e.g. deepseek-v4-flash) with timeout and fallback support."""
     primary_model = getattr(config, "DEEPSEEK_MODEL", "deepseek-v4-flash")
     fallback_model = getattr(config, "DEEPSEEK_FALLBACK_MODEL", "gemini-2.5-flash-lite")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 35.0)
@@ -1615,7 +1116,7 @@ def query_deepseek(prompt):
         return _execute_deepseek_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [DEEPSEEK FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [DEEPSEEK FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if "gemini" in fallback_model.lower():
                     return _execute_gemini_single(fallback_model, prompt, timeout_sec, thinking_budget=1024)
@@ -1630,8 +1131,8 @@ def query_deepseek(prompt):
 
 
 def query_claude(prompt):
-    """Queries Anthropic Claude API (claude-sonnet-4-6) with timeout and fallback support."""
-    primary_model = getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-6")
+    """Queries Anthropic Claude API with timeout and fallback support."""
+    primary_model = getattr(config, "CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     fallback_model = getattr(config, "CLAUDE_FALLBACK_MODEL", "deepseek/deepseek-v4-flash")
     timeout_sec = getattr(config, "LLM_TIMEOUT_SECONDS", 24.0)
 
@@ -1646,7 +1147,7 @@ def query_claude(prompt):
         return _execute_claude_single(primary_model, prompt, timeout_sec)
     except Exception as e:
         if fallback_model and fallback_model != primary_model:
-            print(f" [CLAUDE FALLBACK] Model {primary_model} lambat/error ({e}). Switching ke fallback ({fallback_model})...")
+            print(f" [CLAUDE FALLBACK] Model {primary_model} error ({e}). Switching ke fallback ({fallback_model})...")
             try:
                 if fallback_model.startswith("deepseek/"):
                     return _execute_deepseek_single(fallback_model, prompt, timeout_sec, reasoning_effort="none")
@@ -1678,7 +1179,6 @@ def query_all_models_parallel(prompt, models=("OpenAI", "Gemini", "DeepSeek")):
             except Exception as e:
                 results[name] = {"signal": "HOLD", "confidence": 0.0, "reasoning": f"Error: {e}"}
     return results
-
 
 
 def compute_micro_objective_frames(symbol, point=None):
@@ -2020,7 +1520,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 - Symbol: {sym} | Asset: {asset_desc(sym)}
 - Setup Type: {candidate.setup_type} | Proposed Direction: {direction_str} | Current Price: {fp(float(candidate.trigger_price))}
 - Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_status or 'N/A'}
-- H1 Wave State: {getattr(candidate, 'wave_state', '') or 'UNCLASSIFIED'} — {getattr(candidate, 'wave_summary', '') or 'No wave summary available'}
+- MSE Action Tier: {getattr(candidate, 'action_tier', 'FULL_ALLOW')} | Permission: {getattr(candidate, 'permission_state', 'ARM')} — {getattr(candidate, 'wave_summary', '') or 'Chamber Active'}
 - Intraday Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'DEEP DISCOUNT' if candidate.dealing_range_pos <= 0.38 else ('EXTREME PREMIUM' if candidate.dealing_range_pos >= 0.62 else 'EQUILIBRIUM')})
 - Key Levels: PDH={fp(pdh_val)} | PDL={fp(pdl_val)} | PWH={fp(pwh_val)} | PWL={fp(pwl_val)} | DO={fp(do_val)} | ADR Used: {adr_display_pct:.1f}%
 - Volatility: ATR(14)={candidate.current_atr_pts:.1f} pts | Current Spread={candidate.current_spread_pts} pts
@@ -2031,7 +1531,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 {fund_block}
 - Economic Calendar Context: {calendar_text}
 
-## 3. CURRENCY FLOW & WAVE STATE CONFIRMATION
+## 3. CURRENCY FLOW & MULTI-TIMEFRAME CONFIRMATION
 {micro_frames_block}
 {csm_block}
 ## 4. PURE QUANT 6-TF MACRO STRATEGIC DIRECTIVE (MSE) & ATLAS DNA STATIONS
@@ -2064,7 +1564,7 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "confidence": float (0.00 to 1.00),
+  "confidence": float (0.00 to 1.00) — MUST be >= 0.60 if signal is BUY/SELL, else output HOLD,
   "execution": {{
     "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
     "entry_price": float (null if market, required if pending),
@@ -2091,7 +1591,7 @@ Your mission is to evaluate candidate setups proposed by the Python Quantitative
 1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
 2. Mandatory R:R Gate & Intraday Structure Floor: Minimum R:R >= 1.25. Anchor SL behind physical intraday structural barriers (Scanner Raw SL, nearest H1 Order Block, or SBR/RBS + anti-wick buffer). SL MUST remain tightly bounded to intraday structure (0.50x to 1.00x ATR H1). FORBIDDEN: DO NOT inflate SL into deep multi-day macro invalidation stops (e.g. > 1.2x ATR) or deep TP2 macro stations for intraday candidates.
 3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
-4. Symmetrical Wave State Permission:
+4. Symmetrical 5-Tier Action Matrix Permission:
    - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
    - SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
 5. 4-Grade Quality Matrix:
@@ -2106,23 +1606,531 @@ If any of these conditions are present, you MUST reject the trade (Verdict: REJE
 - SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
 - HIGH_IMPACT_NEWS: Active The Storm window (+/- 15-30 min of Tier-1 release).
 - SEVERE_CURRENCY_CONFLICT: Both currencies have extreme magnitude scores (|S| >= 0.50) with Net Delta < 0.15.
-- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window."""
+- MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window.
+
+### 3. CONFIDENCE CALIBRATION MANDATE (CRITICAL):
+- Your confidence score represents your TRUE conviction in this exact setup at this exact moment.
+- HARD FLOOR GATE (>= 0.60): If your conviction is below 60% (0.60), or if you identify risk flags like IMPULSE_CHASE, COUNTER_TREND_MOMENTUM, or unmitigated opposing pressure, YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING A DIRECTIONAL BUY/SELL SIGNAL.
+- In all uncertain or sub-threshold cases (< 0.60 conviction or unconfirmed displacement), you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+- Permitted directional confidence tiers (BUY/SELL only):
+  * 0.60 - 0.69: Marginal / Borderline (prefer REVISE to Pending Limit Order)
+  * 0.70 - 0.79: High Conviction (APPROVE)
+  * 0.80 - 1.00: Institutional God-Tier (APPROVE)
+- FORBIDDEN: Outputting signal BUY or SELL with confidence < 0.60 (e.g. 0.40-0.59). If you are that uncertain, you MUST set signal to "HOLD"."""
+
+
+def format_micro_tape(symbol: str, timeframe, count: int = 15) -> str:
+    """
+    Formats micro candlestick tape into clean, high-density OHLC lines with body & wick metrics.
+    """
+    try:
+        from config import mt5
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+        if rates is None or len(rates) == 0:
+            return "  * No candle data available."
+        si = mt5.symbol_info(symbol)
+        pt = si.point if si and si.point > 0 else 0.00001
+        p_div = 10 if (si and getattr(si, 'digits', 5) in (3, 5)) else 1
+        P = getattr(si, 'digits', 5) if si else 5
+
+        lines = []
+        for r in rates:
+            dt_wib = datetime.fromtimestamp(r['time'], tz=_WIB)
+            t_str = dt_wib.strftime("%H:%M")
+            o, h, l, c = float(r['open']), float(r['high']), float(r['low']), float(r['close'])
+            body_p = abs(c - o) / (pt * p_div)
+            wick_u = (h - max(o, c)) / (pt * p_div)
+            wick_l = (min(o, c) - l) / (pt * p_div)
+            c_tag = "BULL" if c >= o else "BEAR"
+            lines.append(f"  [{t_str}] {c_tag:<4} | O:{o:.{P}f} H:{h:.{P}f} L:{l:.{P}f} C:{c:.{P}f} | Body:{body_p:.1f}p WickU:{wick_u:.1f}p WickL:{wick_l:.1f}p")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"  * Tape error: {e}"
+
+
+def _get_symbol_news_context(sym: str, candidate=None) -> str:
+    """
+    Fetches real-time economic calendar schedule for the given symbol (US/GB/EU/CH/JP/AU/CA/NZ).
+    Falls back gracefully if no calendar releases are found.
+    """
+    ctx = getattr(candidate, 'economic_context', '') if candidate else ''
+    if not ctx or "No High-Impact News releases" in ctx:
+        try:
+            from src.analytics import economic_calendar
+            cal_obj = getattr(economic_calendar, "calendar", None)
+            if cal_obj:
+                live_ctx = cal_obj.get_context(symbol=sym)
+                if live_ctx and live_ctx.strip():
+                    return live_ctx.strip()
+        except Exception:
+            pass
+    return ctx.strip() if ctx and ctx.strip() else "No High-Impact News releases within +/- 6 hours"
+
+
+def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None) -> str:
+    """
+    Builds the Strategic Structure & Macro Corridor Dossier for OpenAI (o4-mini).
+    Focuses 100% on: 6-TF Macro Sockets, C1/C2/F1/F2 Barrier Chamber, Atlas DNA Station Corridor,
+    EMA Alignment, Boitoki CSM, and Apex Paragon Fundamentals.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    P = 3 if "JPY" in sym.upper() else (2 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 5)
+    fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
+
+    # Fetch Pure Quant MSE Directive
+    strat_block = ""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        c_lines = [f"  * {c.get('tier')}: {fp(c.get('price'))} ({c.get('tag_str')}, Score: {c.get('density_score')})" for c in getattr(strat_dir, 'layered_ceilings', [])[:4]]
+        f_lines = [f"  * {f.get('tier')}: {fp(f.get('price'))} ({f.get('tag_str')}, Score: {f.get('density_score')})" for f in getattr(strat_dir, 'layered_floors', [])[:4]]
+        traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+        strat_block = f"""### Pure Quant 6-TF Macro Strategic Directive (MSE)
+- Dealing Chamber: Floor F1={fp(strat_dir.immediate_floor_f1)} │ Ceiling C1={fp(strat_dir.immediate_ceiling_c1)} │ Chamber Pos: {strat_dir.chamber_position_pct*100:.1f}%
+- Structural Stage: {strat_dir.structural_stage} | Market State: {strat_dir.market_state}
+- Macro Bias: {strat_dir.daily_macro_bias} ({strat_dir.macro_bias_score:+.2f}) -> {strat_dir.primary_execution_directive}
+- Layered Resistance Ceilings (C1-C4):\n{chr(10).join(c_lines)}
+- Layered Support Floors (F1-F4):\n{chr(10).join(f_lines)}
+- Mandate Thesis: {strat_dir.daily_mandate_thesis}
+- Forbidden Traps: {traps_str}"""
+    except Exception:
+        strat_block = ""
+
+    # Atlas DNA Station Calculation
+    atlas_block = ""
+    try:
+        from src.indicators.atlas_dna import calculate_dynamic_stations
+        trig = float(candidate.trigger_price)
+        st = calculate_dynamic_stations(sym, trig)
+        atlas_block = f"""### Atlas DNA Psychological Station Corridor
+- Current Station Anchor: Base [{fp(st['base_station'])}] -> Next Upper Target [{fp(st['upper_station'])}] │ Next Lower Floor [{fp(st['lower_station'])}]
+- Corridor Step Size: {st['step']} ({st['step_points']} pts) | Live Price: {fp(trig)}"""
+    except Exception:
+        atlas_block = ""
+
+    # CSM Currency Strength
+    csm_block = ""
+    try:
+        from src.analytics import currency_strength
+        csm_payload = currency_strength.get_csm_prompt_payload(sym)
+        if csm_payload: csm_block = f"### Global Currency Strength Matrix (CSM)\n{csm_payload.strip()}"
+    except Exception:
+        csm_block = ""
+
+    # Fundamental & News
+    fund_block = ""
+    try:
+        from src.analytics.apex_fundamental_engine import apex_fundamental_engine
+        fb = apex_fundamental_engine.generate_llm_dossier_block(sym)
+        if fb: fund_block = f"### Apex Paragon Macro Fundamental Scorecard\n{fb.strip()}"
+    except Exception:
+        fund_block = ""
+
+    calendar_text = _get_symbol_news_context(sym, candidate)
+
+    from config import mt5
+    d1_tape = recent_d1_str or format_micro_tape(sym, mt5.TIMEFRAME_D1, count=5)
+    h4_tape = recent_h4_str or format_micro_tape(sym, mt5.TIMEFRAME_H4, count=8)
+
+    w_state = getattr(candidate, 'wave_state', '') or 'ARM'
+    w_sum = getattr(candidate, 'wave_summary', '') or 'Trading Chamber Active'
+    h4_st = getattr(candidate, 'h4_trend', '') or 'Aligned with Macro'
+    tier_st = getattr(candidate, 'action_tier', 'FULL_ALLOW')
+
+    prompt = f"""# ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
+## MISSION BRIEF
+You are the Chief Quantitative Macro Strategist of an elite institutional hedge fund.
+Your SOLE RESPONSIBILITY: Evaluate HTF Structural Dealing Range, 6-TF Macro Corridor Alignment, and Multi-Day Trend Regime for {sym}.
+You analyze D1/H4 macro delivery. You DO NOT touch micro M5/M1 wicks — that is Gemini's domain.
+
+---
+## 1. ASSET CONTEXT & MACRO POSITIONING
+- Symbol: {sym} | Proposed Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
+- Macro Compass: {candidate.macro_compass or 'N/A'} | H4 Status: {h4_st}
+- MSE Action Tier: {tier_st} | Regime Stability: {getattr(candidate, 'regime_stability', 'STABLE')}
+- Intraday Chamber Position: {candidate.dealing_range_pos*100:.1f}% ({'🟢 DISCOUNT — Buy Zone' if candidate.dealing_range_pos <= 0.35 else ('🟡 LOWER DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('⚪ EQUILIBRIUM — Avoid Market Orders' if candidate.dealing_range_pos <= 0.55 else ('🟠 UPPER PREMIUM' if candidate.dealing_range_pos <= 0.65 else '🔴 PREMIUM — Sell Zone')))})
+- Volatility Regime: ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts | Spread/ATR Ratio = {candidate.current_spread_pts / max(candidate.current_atr_pts, 1) * 100:.1f}%
+- Setup Type Proposed: {candidate.setup_type} | Baseline R:R: {candidate.risk_reward_ratio:.2f}:1
+
+---
+## 2. HTF MULTI-TIMEFRAME CANDLESTICK TAPE
+
+### [D1] Multi-Day Macro Delivery Context (Last 5 Daily Bars):
+{d1_tape}
+KEY: Are daily candles trending with expanding bodies (expansion) or compressing (accumulation/exhaustion)?
+
+### [H4] Structural Trend & Wave Context (Last 8 H4 Bars):
+{h4_tape}
+KEY: Identify the dominant H4 wave — Is it an impulse leg, a correction pullback, or a ranging channel?
+
+---
+## 3. PURE QUANT 6-TF MACRO ENGINE & CONFLUENCE
+{strat_block}
+
+{atlas_block}
+
+{csm_block}
+
+{fund_block}
+
+---
+## 4. ECONOMIC MACRO CALENDAR
+{calendar_text}
+RULE: If a Tier-1 release (Rate Decision, NFP, CPI) is within 90 minutes — default to REVISE/REJECT unless setup is structurally pristine with wide SL.
+
+---
+## 5. REGIME CLASSIFICATION FRAMEWORK
+Classify the current market structure into ONE of:
+- **EXPANSION_TREND**: Price is delivering from one station to the next in a clean impulsive wave with H4 body dominance > 60% of candle range. Continuation trades are HIGH conviction.
+- **ABSORPTION_PRE_BREAKOUT**: Price is compressing tightly above/below a key level (OB/RBS/SBR) — range contracting, spread declining — institutional accumulation before directional move.
+- **RANGE_BOUND**: Price oscillating between defined S/R with no H4 directional commitment. Mean-reversion trades only at chamber extremes (< 20% or > 80% range).
+- **EXHAUSTION_REVERSAL**: Price has run > 1.5x ATR in one direction, H4 wicks expanding, body momentum collapsing — fade the extension with a REVISE limit order at structural retest.
+
+---
+## 6. STRATEGIC EXECUTION MANDATE
+1. **Corridor Delivery**: Has price shown structural acceptance ABOVE base station (BUY) or BELOW resistance station (SELL)? Station-to-Station delivery requires a clear close, not just a wick touch.
+2. **Anti-FOMO Gate**: Dealing Range >= 85% (BUY) or <= 15% (SELL) → FORBIDDEN market order. MUST use 'buy_limit'/'sell_limit' at retest level, or REJECT if no retest anchor exists.
+3. **Macro Headwind Check**: If D1 trend direction opposes proposed trade, and H4 lacks a clear CHoCH structure flip — output REJECT with COUNTER_TREND_MOMENTUM flag.
+4. **Confidence Calibration (Hard Floor >= 0.60)**: Only APPROVE if you have >= 70% conviction in macro alignment. If 60-69% conviction → REVISE with Pending Limit. If conviction is < 60% OR if opposing macro momentum is present, you are STRICTLY FORBIDDEN from issuing a BUY/SELL signal — you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+
+Respond strictly in valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60,
+  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
+  "role": "STRATEGIC_STRUCTURE",
+  "regime": "EXPANSION_TREND" | "ABSORPTION_PRE_BREAKOUT" | "RANGE_BOUND" | "EXHAUSTION_REVERSAL",
+  "station_corridor": "e.g. '1.09500 -> 1.10020 (Base Station -> C1 Ceiling)' describing price delivery path",
+  "macro_alignment": "ALIGNED" | "PARTIAL" | "COUNTER_TREND",
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit",
+    "entry_price": float (null if market, exact price if pending),
+    "sl_price": float (exact price behind structural invalidation, {P} decimals),
+    "tp_price": float (exact price at next macro station/barrier, {P} decimals)
+  }},
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "MACRO_HEADWIND",
+  "reasoning": "3-4 sentences: (1) HTF regime classification with evidence, (2) dealing chamber position verdict, (3) station corridor delivery logic, (4) exact SL/TP structural anchoring."
+}}"""
+    return _strip_emoji(prompt)
+
+
+def build_gemini_price_action_dossier_prompt(candidate, recent_m1_str=None, recent_m5_str=None, recent_m15_str=None, recent_h1_str=None) -> str:
+    """
+    Builds the Dedicated Price Action & Retest Execution Dossier for Gemini (3.1-Flash).
+    Focuses 100% on: Candlestick Anatomy (M1, M5, M15, H1), SBR/RBS Flip Validation,
+    Order Flow Displacement, Wick Absorption, and SMC Order Blocks / FVG.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    P = 3 if "JPY" in sym.upper() else (2 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 5)
+    fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
+
+    from config import mt5
+    # Auto-fetch live candlestick tapes if not supplied
+    m1_tape = recent_m1_str or format_micro_tape(sym, mt5.TIMEFRAME_M1, count=15)
+    m5_tape = recent_m5_str or format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
+    m15_tape = recent_m15_str or format_micro_tape(sym, mt5.TIMEFRAME_M15, count=12)
+    h1_tape = recent_h1_str or format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
+
+    wick_ratio_val = float(candidate.rejection_wick_ratio or 0.0) * 100.0
+    wick_desc = f"Upper Wick = {wick_ratio_val:.1f}% (Bearish defense/wick)" if direction_str == "SELL" else f"Lower Wick = {wick_ratio_val:.1f}% (Bullish defense/absorption)"
+
+    calendar_text = _get_symbol_news_context(sym, candidate)
+
+    s_low = candidate.strong_low or candidate.key_support or candidate.suggested_sl
+    s_high = candidate.strong_high or candidate.key_resistance or candidate.suggested_tp
+    s_low_str = fp(s_low) if s_low and float(s_low) > 0 else "None"
+    s_high_str = fp(s_high) if s_high and float(s_high) > 0 else "None"
+
+    prompt = f"""# ROLE: MASTER PRICE ACTION & RETEST TACTICIAN (GEMINI 3.1-Flash)
+## MISSION BRIEF
+You are the Lead Price Action and Order Flow Tactician of an elite institutional quantitative hedge fund.
+Your SOLE RESPONSIBILITY: Candlestick Anatomy, SBR/RBS Flip Validation, OB/FVG Absorption, and Micro Order Flow for {sym}.
+You DO NOT analyze D1/H4 macro economics — that is OpenAI's domain. You own the M1, M5, M15, H1 tape.
+
+---
+## 1. LIVE PRICE ACTION BATTLEFIELD
+
+### Context:
+- Symbol: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str} | Live Price: {fp(candidate.trigger_price)}
+- Quant Baseline: SL = {fp(candidate.suggested_sl)} | TP = {fp(candidate.suggested_tp)} | R:R = {candidate.risk_reward_ratio:.2f}:1
+- Dealing Range Position: {candidate.dealing_range_pos*100:.1f}% ({'🟢 DISCOUNT' if candidate.dealing_range_pos <= 0.35 else ('🟡 LOWER DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('⚪ EQUILIBRIUM' if candidate.dealing_range_pos <= 0.55 else ('🟠 UPPER PREMIUM' if candidate.dealing_range_pos <= 0.65 else '🔴 PREMIUM')))})
+- ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
+- Rejection Wick Metric: {wick_desc}
+
+### [M1] Live Micro Scalp Tape — Last 15 Bars (Execution-Level Flow):
+{m1_tape}
+KEY: Look for absorption sequences — small-body bars with long lower wicks at support = institutional demand. Wide-body bars closing above midpoint = displacement momentum.
+
+### [M5] Live Execution Flow Tape — Last 24 Bars (Entry Confirmation Window):
+{m5_tape}
+KEY: Classify candle anatomy per bar:
+  - DISPLACEMENT: body > 60% of candle range, wicks < 20% — strong conviction directional move
+  - INDECISION: body < 30% of range, long wicks both sides — institutional contention / chop
+  - REJECTION_WICK: lower wick (BUY) or upper wick (SELL) > 40% of candle range — institutional defense at level
+
+### [M15] Intraday Session Context — Last 12 Bars (Structural Intermediate):
+{m15_tape}
+KEY: Identify SBR/RBS flip zones. Valid SBR→Support: prior resistance broken with a M15 close above → pullback retest forms a higher low without closing back below the broken level.
+
+### [H1] Structural Close Context — Last 6 Bars (Setup Validation):
+{h1_tape}
+KEY: H1 close confirms direction. Valid bullish H1 setup: last 2+ H1 bars close ABOVE the structural base, not just wick through it. Single-wick touches are NOT structural acceptance.
+
+---
+## 2. SMART MONEY CONCEPTS (SMC) & ORDER FLOW LEVELS
+- Structural Strong Low: {s_low_str} │ Strong High: {s_high_str}
+- Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
+- Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'}
+- FRVP Volume Profile: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}
+
+**OB Absorption Validation Rules:**
+- BUY: Price must touch or re-enter Bullish OB zone and show ≥2 M5 bars with lower wicks (rejection). Single wick-touch without body absorption = potential stop-run, NOT valid entry.
+- SELL: Price must touch Bearish OB zone and show ≥2 M5 bars with upper wicks. Body close THROUGH OB = OB invalidated — do NOT enter.
+- FVG Targeting: An opposing FVG between entry and TP is a natural price magnet. Set TP just before the FVG or acknowledge the obstacle in reasoning.
+
+---
+## 3. RETEST QUALITY CLASSIFICATION
+Evaluate and classify the current retest into exactly ONE:
+- **PRISTINE_RETEST**: Price returned to SBR/RBS level precisely, formed tight-bodied bars with directional wicks, then resumed trend. Ideal entry.
+- **LIQUIDITY_ABSORPTION**: Price swept slightly below (BUY) or above (SELL) a key level printing a displacement candle in return direction — stop-run liquidity grab. Entry on return bar.
+- **DIRTY_SWEEP**: Price crossed well through structure level with large-body close, then reversed. Higher-risk — require second confirmation bar.
+- **FAILED_BREAKOUT**: Price broke level convincingly but immediately reversed back through with momentum. → REJECT with COUNTER_TREND_MOMENTUM flag.
+
+---
+## 4. ECONOMIC NEWS SCHEDULE
+{calendar_text}
+RULE: HIGH-impact event within 30 minutes → output HOLD/REJECT. Wicks and spreads spike violently — no intraday entry within 30 min pre/post news.
+
+---
+## 5. TACTICAL EXECUTION MANDATE
+1. **Displacement Test**: Count consecutive M5 bars closing in trade direction. ≥3 = displacement (market order viable). Alternating bull/bear = chop → prefer limit at OB/retest.
+2. **Anti-FOMO Gate**: Dealing Range ≥85% (BUY) or ≤15% (SELL) → FORBIDDEN market order. Use pending limit at SBR/RBS retest anchor or output HOLD.
+3. **SL Anchoring**:
+   - BUY: SL below the last unmitigated Bullish OB lower boundary + 0.3x ATR anti-wick buffer
+   - SELL: SL above the last unmitigated Bearish OB upper boundary + 0.3x ATR anti-wick buffer
+5. **Confidence Floor (Hard Floor >= 0.60)**: APPROVE only if absorption confirmed by ≥2 M5 bars (conviction ≥ 70%). REVISE if pending limit at FVG/OB is viable (conviction 60–69%). If conviction is < 60% OR if you detect IMPULSE_CHASE / opposing momentum without rejection wicks, you are STRICTLY FORBIDDEN from issuing a BUY/SELL signal — you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+
+Respond strictly in valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60 or if IMPULSE_CHASE detected,
+  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
+  "role": "PRICE_ACTION_TACTICIAN",
+  "retest_quality": "PRISTINE_RETEST" | "LIQUIDITY_ABSORPTION" | "DIRTY_SWEEP" | "FAILED_BREAKOUT",
+  "order_flow_energy": "BULLISH_DISPLACEMENT" | "BEARISH_DISPLACEMENT" | "INDECISION_DOJI" | "REJECTION_WICK" | "CHOP_ZONE",
+  "candle_anatomy": "DISPLACEMENT" | "INDECISION" | "REJECTION_WICK" | "MARUBOZU",
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit",
+    "entry_price": float (null if market, exact price if pending),
+    "sl_price": float (exact price behind physical OB boundary + anti-wick buffer, {P} decimals),
+    "tp_price": float (exact price at nearest opposing structural level - front-run pad, {P} decimals)
+  }},
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "HIGH_IMPACT_NEWS",
+  "reasoning": "3-4 sentences: (1) M5/M15 candle anatomy classification with bar count evidence, (2) OB/FVG absorption quality verdict, (3) retest quality classification with specific price evidence, (4) exact SL/TP structural anchoring logic."
+}}"""
+    return _strip_emoji(prompt)
+
+
+def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_m5_str=None, calendar_text=None, recent_h4_str=None, recent_h1_str=None) -> str:
+    """
+    Builds the Devil's Advocate & Chief Risk Officer Arbiter Prompt for DeepSeek (V4-Flash).
+    Cross-examines OpenAI's Macro Structure Thesis + Gemini's Price Action Verdict against
+    the live 24-bar M5 tape, news calendar, spread spikes, and R:R floors to produce the final VETO or CLEARANCE.
+    """
+    sym = candidate.symbol
+    direction_str = "BUY" if candidate.direction == 1 else "SELL"
+    P = 3 if "JPY" in sym.upper() else (2 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 5)
+    fp = lambda x: f"{float(x):.{P}f}" if x is not None else "N/A"
+
+    from config import mt5
+    h4_tape = recent_h4_str or format_micro_tape(sym, mt5.TIMEFRAME_H4, count=6)
+    h1_tape = recent_h1_str or format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
+    m5_tape = recent_m5_str or format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
+    cal_str = calendar_text or _get_symbol_news_context(sym, candidate)
+
+    # Format OpenAI and Gemini findings
+    o_v = openai_res.get("verdict", "HOLD") if openai_res else "N/A"
+    o_c = openai_res.get("confidence", 0.0) if openai_res else 0.0
+    o_reg = openai_res.get("regime", "N/A") if openai_res else "N/A"
+    o_thesis = openai_res.get("reasoning", "") if openai_res else "No thesis provided"
+    o_exec = openai_res.get("execution", {}) if openai_res else {}
+
+    # Format Gemini findings (Pass 1)
+    g_v = gemini_res.get("verdict", "HOLD") if gemini_res else "N/A"
+    g_c = gemini_res.get("confidence", 0.0) if gemini_res else 0.0
+    g_ret = gemini_res.get("retest_quality", "N/A") if gemini_res else "N/A"
+    g_notes = gemini_res.get("reasoning", "") if gemini_res else "No notes provided"
+    g_exec = gemini_res.get("execution", {}) if gemini_res else {}
+
+    # Fetch Pure Quant MSE Directive for DeepSeek Master Arbiter
+    strat_block = ""
+    try:
+        from src.analytics.macro_strategic_engine import macro_strategic_engine
+        strat_dir = macro_strategic_engine.get_directive(sym)
+        c_lines = [f"  * {c.get('tier')}: {fp(c.get('price'))} ({c.get('tag_str')}, Score: {c.get('density_score')})" for c in getattr(strat_dir, 'layered_ceilings', [])[:4]]
+        f_lines = [f"  * {f.get('tier')}: {fp(f.get('price'))} ({f.get('tag_str')}, Score: {f.get('density_score')})" for f in getattr(strat_dir, 'layered_floors', [])[:4]]
+        traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+        strat_block = f"""### Pure Quant 6-TF Macro Strategic Directive (MSE)
+- Dealing Chamber: Floor F1={fp(strat_dir.immediate_floor_f1)} │ Ceiling C1={fp(strat_dir.immediate_ceiling_c1)} │ Chamber Pos: {strat_dir.chamber_position_pct*100:.1f}%
+- Structural Stage: {strat_dir.structural_stage} | Market State: {strat_dir.market_state}
+- Layered Resistance Ceilings (C1-C4):\n{chr(10).join(c_lines)}
+- Layered Support Floors (F1-F4):\n{chr(10).join(f_lines)}
+- Forbidden Traps: {traps_str}"""
+    except Exception:
+        strat_block = ""
+
+    # CSM Currency Strength
+    csm_block = ""
+    try:
+        from src.analytics import currency_strength
+        csm_payload = currency_strength.get_csm_prompt_payload(sym)
+        if csm_payload: csm_block = f"### Global Currency Strength Matrix (CSM)\n{csm_payload.strip()}"
+    except Exception:
+        csm_block = ""
+
+    # SMC Order Flow
+    s_low = candidate.strong_low or candidate.key_support or candidate.suggested_sl
+    s_high = candidate.strong_high or candidate.key_resistance or candidate.suggested_tp
+    s_low_str = fp(s_low) if s_low and float(s_low) > 0 else "None"
+    s_high_str = fp(s_high) if s_high and float(s_high) > 0 else "None"
+    smc_block = f"""### Smart Money Concepts (SMC) & Volume Profile
+- Structural Strong Low: {s_low_str} │ Strong High: {s_high_str}
+- Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
+- Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'} │ FRVP: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}"""
+
+    prompt = f"""# ROLE: CHIEF RISK OFFICER & MASTER VETO ARBITER (DEEPSEEK V4-Flash)
+## MISSION BRIEF
+You hold ABSOLUTE MASTER VETO POWER over this trade proposal. You are the final gatekeeper.
+You have received Pass 1 findings from two specialists:
+  - OpenAI o4-mini → Chief Quantitative MACRO Strategist (D1/H4 structure)
+  - Gemini 3.1-Flash → Master PRICE ACTION Tactician (M1/M5/M15/H1 micro flow)
+Your mission: Cross-examine their claims with cold mathematical rigor. Verify against ALL ground truth data.
+Synthesize the optimal execution or issue a HARD VETO with clear mathematical justification.
+
+---
+## 1. CANDIDATE PROPOSAL & PASS 1 JURY DOSSIER
+
+### Trade Specification:
+- Asset: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str}
+- Live Price: {fp(candidate.trigger_price)} | ATR(14) H1: {candidate.current_atr_pts:.1f} pts | Spread: {candidate.current_spread_pts} pts
+- Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'⛔ EXTREME_PREMIUM — Chase Risk!' if candidate.dealing_range_pos >= 0.85 else ('✅ EXTREME_DISCOUNT — Reload Zone' if candidate.dealing_range_pos <= 0.15 else ('🟢 DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('🔴 PREMIUM' if candidate.dealing_range_pos >= 0.55 else '⚪ EQUILIBRIUM')))})
+- Quant Baseline: SL = {fp(candidate.suggested_sl)} | TP = {fp(candidate.suggested_tp)} | R:R = {candidate.risk_reward_ratio:.2f}:1
+- Spread/ATR Ratio: {candidate.current_spread_pts / max(candidate.current_atr_pts, 1) * 100:.1f}% (Alert if > 20%)
+
+### OPENAI FINDINGS — Strategic Structure & Macro Corridor:
+- Verdict: **{o_v}** | Confidence: {o_c:.0%} | Regime: {o_reg}
+- Proposed Execution: {o_exec}
+- Macro Thesis: "{o_thesis}"
+
+### GEMINI FINDINGS — Price Action & Retest Tactician:
+- Verdict: **{g_v}** | Confidence: {g_c:.0%} | Retest Quality: {g_ret}
+- Proposed Execution: {g_exec}
+- Price Action Summary: "{g_notes}"
+
+### JURY AGREEMENT SUMMARY:
+- Direction Agreement: {'✅ UNANIMOUS — Both say ' + direction_str if o_v != 'REJECT' and g_v != 'REJECT' else '⛔ DISAGREEMENT — Check for structural conflict'}
+- Confidence Gap: {abs(o_c - g_c) * 100:.1f}% gap between OpenAI and Gemini {'(Large gap — investigate divergence)' if abs(o_c - g_c) > 0.20 else '(Normal)'}
+- Entry Type Conflict: {'⚠ DIFFERENT ENTRY TYPES — Arbiter required' if (o_exec.get('entry_type','') if isinstance(o_exec, dict) else '') != (g_exec.get('entry_type','') if isinstance(g_exec, dict) else '') else '✅ Entry type aligned'}
+
+---
+## 2. GROUND TRUTH: STRUCTURAL MSE, CSM & SMC DATA
+
+{strat_block}
+
+{csm_block}
+
+{smc_block}
+
+---
+## 3. MULTI-TIMEFRAME GROUND TRUTH TAPES
+
+### [H4] Structural Wave & Macro Trend Context (Last 6 Bars):
+{h4_tape}
+AUDIT: Does the H4 wave confirm the direction OpenAI proposed? Count bull vs bear bodies. Dominant direction = structural alignment.
+
+### [H1] Intermediate Session Context (Last 6 Bars):
+{h1_tape}
+AUDIT: Is H1 basing cleanly above the structural floor (BUY) or below resistance (SELL)? Or is it stalling in chop?
+
+### [M5] Micro Execution Flow Tape — Last 24 Bars (Anti-Waterfall / Anti-Spike Detector):
+{m5_tape}
+AUDIT: Scan for:
+  - WATERFALL: ≥4 consecutive BEAR bars with expanding bodies and no lower wicks → FALLING_KNIFE_WATERFALL flag → force HOLD
+  - VERTICAL_SPIKE: ≥4 consecutive BULL bars closing near highs → IMPULSE_CHASE flag → force Limit Order
+  - ABSORPTION: alternating bars with wicks at key level → clean basing → potential APPROVE
+  - CHOP: small bodies alternating randomly → insufficient conviction → REVISE to Limit
+
+---
+## 4. RISK CONSTRAINTS & ECONOMIC CALENDAR
+
+### Economic News Window:
+{cal_str}
+RULES:
+  - Tier-1 event (Rate Decision, NFP, CPI) within 60 min → HARD VETO unless SL > 1.5x ATR
+  - Tier-2 event within 30 min → REVISE to Limit Order minimum
+  - Spread/ATR > 25% → REJECT (cost too high relative to volatility)
+
+### R:R Audit (Hard Floor):
+- Minimum R:R = 1.25:1. If proposed SL/TP deliver R:R < 1.25 → issue POOR_RR_RATIO flag and REJECT.
+- Optimal SL for {direction_str}: Place behind last OB boundary + 0.3x ATR anti-wick buffer.
+- Optimal TP for {direction_str}: Next structural station/resistance minus 0.15x ATR front-run pad.
+
+---
+## 5. MASTER VETO AUDIT FRAMEWORK
+
+### Step 1 — Contradiction Analysis:
+Are OpenAI and Gemini contradicting each other on a critical point?
+- If OpenAI says REJECT + Gemini says APPROVE → HARD VETO (structural conflict)
+- If confidence gap > 25% → investigate the divergence before synthesizing
+- If entry types differ (Market vs Limit) → determine optimal; do NOT veto for style alone
+
+### Step 2 — Trap & Fallacy Detection:
+- LIQUIDITY_TRAP: Is price entering directly in front of Equal Highs/Lows or a structural ceiling? → REJECT
+- IMPULSE_CHASE: Is price extending > 1.0x ATR from the last base? → Convert to Limit or REJECT
+- FALLING_KNIFE_WATERFALL: ≥4 consecutive momentum bars in opposite direction? → REJECT
+- COUNTER_TREND: D1/H4 trend directly opposes the proposed direction without a CHoCH flip? → REJECT
+
+### Step 3 — Final Synthesis:
+If no HARD VETO is warranted:
+1. Determine the single best entry_type (Market or Limit) based on current price vs level proximity
+2. Set SL behind the most conservative physical structural barrier (OpenAI or Gemini's choice, whichever is safer)
+3. Set TP at the nearest confirmed opposing structural station (OpenAI's macro target or Gemini's micro FVG, whichever is closer)
+4. Verify final R:R >= 1.25:1. If not, widen TP to next structural level or REJECT.
+5. Confidence Calibration (Hard Floor >= 0.60): Output directional BUY/SELL only if synthesized conviction >= 60%. If conviction < 60% OR if any unmitigated risk flag remains, you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+
+Respond strictly in valid JSON:
+{{
+  "verdict": "APPROVE" | "REVISE" | "REJECT",
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60,
+  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
+  "role": "CHIEF_RISK_OFFICER",
+  "risk_verdict": "CLEARED" | "REVISE_ENTRY_SL" | "HARD_VETO",
+  "jury_synthesis": "UNANIMOUS_ALIGNED" | "ENTRY_ARBITER_REQUIRED" | "CONFIDENCE_GAP_RESOLVED" | "CONTRADICTION_VETOED",
+  "veto_flags": ["NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "FALLING_KNIFE_WATERFALL" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "POOR_RR_RATIO"],
+  "execution": {{
+    "entry_type": "market" | "buy_limit" | "sell_limit",
+    "entry_price": float (null if market, exact price if pending),
+    "sl_price": float (exact price behind safest physical structural barrier, {P} decimals),
+    "tp_price": float (exact price at nearest confirmed opposing structural target, {P} decimals)
+  }},
+  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "FALLING_KNIFE_WATERFALL" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS",
+  "veto_reason": null | string (max 20 words if REJECT — cite specific price evidence),
+  "reasoning": "4-5 sentences: (1) Jury agreement/conflict summary, (2) M5 tape anti-waterfall/spike audit result, (3) R:R verification with numbers, (4) entry synthesis justification or veto trigger, (5) final SL/TP structural anchor explanation."
+}}"""
+    return _strip_emoji(prompt)
 
 
 def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m15_str=None, recent_m5_str=None):
     """
-    Evaluates a candidate setup from Stage 1 using 2-Pass Sequential Cross-Examination 3-LLM Jury:
-    - Pass 1 (Parallel Investigation): OpenAI (Structure) + Gemini (Momentum) evaluate candidate dossier.
-    - Pass 2 (Cross-Examination Audit): DeepSeek (Devil's Advocate) audits Pass 1 arguments against live M15/M5 micro flow data.
+    Evaluates a candidate setup from Stage 1 using Specialized 2-Pass Institutional 3-LLM Jury:
+    - Pass 1 (Parallel Specialized Investigation):
+      * OpenAI (o4-mini) evaluates Strategic Structure & Macro Corridor
+      * Gemini (3.1-Flash) evaluates Micro Price Action & Retest Dynamics (M1, M5, M15, H1)
+    - Pass 2 (Cross-Examination & Master Veto Arbiter):
+      * DeepSeek (V4-Flash) cross-examines Pass 1 results against live M5 tape and risk constraints.
     """
-    prompt_base = build_high_density_dossier_prompt(
-        candidate,
-        recent_d1_str=recent_d1_str,
-        recent_h4_str=recent_h4_str,
-        recent_h1_str=recent_h1_str,
-        recent_m15_str=recent_m15_str,
-        recent_m5_str=recent_m5_str
-    )
     direction_str = "BUY" if candidate.direction == 1 else "SELL"
     active_models = config.active_ai_model_names()
 
@@ -2130,10 +2138,6 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
     latencies = {}
     start_total = time.time()
 
-    # ─────────────────────────────────────────────────────────────
-    # PASS 1: PARALLEL INVESTIGATION (OPENAI & GEMINI)
-    # ─────────────────────────────────────────────────────────────
-    pass1_targets = [m for m in ("OpenAI", "Gemini") if m in active_models]
     model_fns = {
         "OpenAI": query_openai,
         "Gemini": query_gemini,
@@ -2141,10 +2145,32 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
         "Claude": query_claude,
     }
 
-    if pass1_targets:
+    # ─────────────────────────────────────────────────────────────
+    # PASS 1: PARALLEL SPECIALIZED INVESTIGATION (OPENAI & GEMINI)
+    # ─────────────────────────────────────────────────────────────
+    prompt_openai = build_openai_structure_dossier_prompt(
+        candidate,
+        recent_d1_str=recent_d1_str,
+        recent_h4_str=recent_h4_str,
+        recent_h1_str=recent_h1_str
+    )
+    prompt_gemini = build_gemini_price_action_dossier_prompt(
+        candidate,
+        recent_m5_str=recent_m5_str,
+        recent_m15_str=recent_m15_str,
+        recent_h1_str=recent_h1_str
+    )
+
+    pass1_tasks = {}
+    if "OpenAI" in active_models:
+        pass1_tasks["OpenAI"] = prompt_openai
+    if "Gemini" in active_models:
+        pass1_tasks["Gemini"] = prompt_gemini
+
+    if pass1_tasks:
         start_pass1 = time.time()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass1_targets)) as executor:
-            futs = {executor.submit(model_fns[m], prompt_base): m for m in pass1_targets}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass1_tasks)) as executor:
+            futs = {executor.submit(model_fns[m], pass1_tasks[m]): m for m in pass1_tasks}
             for fut in concurrent.futures.as_completed(futs):
                 model_name = futs[fut]
                 try:
@@ -2166,48 +2192,18 @@ def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_
                     latencies[model_name] = 0.0
 
     # ─────────────────────────────────────────────────────────────
-    # PASS 2: DEVIL'S ADVOCATE CROSS-EXAMINATION AUDIT (DEEPSEEK / CLAUDE)
+    # PASS 2: MASTER CRO & DEVIL'S ADVOCATE ARBITER (DEEPSEEK / CLAUDE)
     # ─────────────────────────────────────────────────────────────
     auditor_model = "DeepSeek" if "DeepSeek" in active_models else ("Claude" if "Claude" in active_models else None)
     if auditor_model and auditor_model in model_fns:
-        pass1_summary_lines = []
-        for name in pass1_targets:
-            if name in results:
-                r = results[name]
-                pass1_summary_lines.append(
-                    f"- Model [{name}]: Verdict = {r.get('verdict')} (Conf {r.get('confidence', 0.0):.2f})\n"
-                    f"  Proposed Execution: {r.get('execution')}\n"
-                    f"  Thesis / Rationale: \"{r.get('reasoning')}\""
-                )
-        pass1_text = "\n".join(pass1_summary_lines) if pass1_summary_lines else "No previous findings available."
-
-        prompt_pass2 = f"""{prompt_base}
-
-## 7. PREVIOUS JURY PROPOSALS (TARGET OF YOUR CROSS-EXAMINATION)
-The first-round panel members have analyzed this setup and submitted the following findings:
-{pass1_text}
-
-## 8. DEVIL'S ADVOCATE AUDIT DIRECTIVE
-You are the Chief Risk Officer & Devil's Advocate. Your mission is to scrutinize their arguments against the raw M5/H1 candle data:
-1. Examine if their thesis ignores recent counter-trend momentum, lack of rejection wicks, or structural traps.
-2. If you find a critical flaw, liquidity trap, or news risk -> VETO by selecting "REJECT" with an explicit veto_reason and risk_flag.
-3. If their thesis is mathematically solid and accounts for risks (e.g. valid pending limit) -> select "APPROVE" or "REVISE".
-
-Respond strictly in the same JSON format:
-{{
-  "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "confidence": float (0.00 to 1.00),
-  "execution": {{
-    "entry_type": "market" | "buy_limit" | "sell_limit" | "buy_stop" | "sell_stop",
-    "entry_price": float (null if market, required if pending),
-    "sl_price": float (exact absolute price),
-    "tp_price": float (exact absolute price)
-  }},
-  "veto_reason": null | string (max 15 words if REJECT),
-  "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "CURRENCY_CONFLICT" | "MACRO_HEADWIND",
-  "reasoning": "2-3 concise sentences explaining whether you accept or tear down their arguments."
-}}
-"""
+        prompt_pass2 = build_deepseek_cro_arbiter_prompt(
+            candidate,
+            openai_res=results.get("OpenAI"),
+            gemini_res=results.get("Gemini"),
+            recent_m5_str=recent_m5_str,
+            recent_h4_str=recent_h4_str,
+            recent_h1_str=recent_h1_str
+        )
         try:
             t0 = time.time()
             res_audit = model_fns[auditor_model](_strip_emoji(prompt_pass2))
