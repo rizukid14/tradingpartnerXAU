@@ -435,6 +435,118 @@ class TestMarketScanner(unittest.TestCase):
         self.assertTrue(allowed)
         self.assertIn("PASSED ALL GATES", reason)
 
+    def test_watch_only_action_tier_hard_blocks_radar(self):
+        """Verify symbols with action_tier == 'WATCH_ONLY' are 100% hard blocked from generating candidates."""
+        from unittest.mock import MagicMock
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+
+        mock_directive = MagicMock(spec=MacroStrategicDirective)
+        mock_directive.action_tier = "WATCH_ONLY"
+        mock_directive.macro_bias_score = 0.0
+        mock_directive.hard_circuit_breaker = False
+        mock_directive.forbidden_traps = ["Do NOT execute market orders in mid-chamber consolidation zone"]
+
+        self.scanner.macro_cache["GBPUSD-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'dealing_range_pos': 0.34,
+            'dealing_range_low': 1.2900,
+            'dealing_range_high': 1.3100,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.5,
+            'strat_dir': mock_directive,
+            'action_tier': 'WATCH_ONLY',
+            'macro_bias_score': 0.0,
+            'macro_corridor': 'BULLISH_CORRIDOR',
+            'immediate_floor_f1': 1.2920,
+            'immediate_ceiling_c1': 1.3080
+        }
+
+        # Mock tick in middle of chamber (1.3000)
+        mock_connector = MagicMock()
+        mock_connector.get_live_tick.return_value = {'ask': 1.3001, 'bid': 1.2999, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 1.2998, 'high': 1.3005, 'low': 1.2995, 'close': 1.3000, 'time': 1700000000}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 14, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    # All candidates must be blocked because action_tier is WATCH_ONLY
+                    gbp_candidates = [c for c in candidates if c.symbol == "GBPUSD-ECNc"]
+                    self.assertEqual(len(gbp_candidates), 0, "WATCH_ONLY symbol must not produce candidates!")
+
+    def test_universal_sweep_gates_locked_during_macro_expansion(self):
+        """Verify Gate C locks M1 Sweep SELL when macro is BULLISH_EXPANSION and C1 is far above."""
+        from src.analytics.market_scanner import evaluate_universal_sweep_gates
+        allowed, reason = evaluate_universal_sweep_gates(
+            signal_type='SELL',
+            dealing_range_pos=0.988,
+            dist_to_htf_floor=0.00300,
+            dist_to_htf_ceiling=0.00199,  # 19.9 pips (> 0.35 * 0.00340 = 0.00119)
+            atr_val=0.00340,
+            recent_ceiling_touch=False,
+            recent_floor_touch=False,
+            close_below_ema20=False,
+            close_above_ema20=True,
+            macro_trend='BULLISH_EXPANSION'
+        )
+        self.assertFalse(allowed)
+        self.assertIn("GATE C", reason)
+        self.assertIn("Anti-Expansion", reason)
+
+    def test_m1_sweep_blocks_g1_in_trending_market(self):
+        """Verify M1 Sweep SELL blocks G1 Micro Level sweeps in trending markets."""
+        from unittest.mock import MagicMock
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        self.scanner.macro_cache["EURUSD-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'dealing_range_pos': 0.85,
+            'dealing_range_low': 1.0800,
+            'dealing_range_high': 1.0900,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.5,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.5,
+            'macro_corridor': 'BULLISH_CORRIDOR',
+            'daily_macro_bias': 'BULLISH_EXPANSION',
+            'immediate_floor_f1': 1.0820,
+            'immediate_ceiling_c1': 1.0950,
+            'c1_reaction_grade': 'GRADE_1_MICRO',
+            'asian_high': 1.0880,
+            'pdh': 1.0880,
+            'ema20': 1.0850,
+            'ema50': 1.0830
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_live_tick.return_value = {'ask': 1.0879, 'bid': 1.0877, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 1.0870, 'high': 1.0882, 'low': 1.0868, 'close': 1.0876, 'time': 1700000000}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB) # London session
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    sweep_cands = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                    self.assertEqual(len(sweep_cands), 0, "G1 Micro level in trending market must NOT produce M1 Sweep candidate!")
+
 
 if __name__ == "__main__":
     unittest.main()

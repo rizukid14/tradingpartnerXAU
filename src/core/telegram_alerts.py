@@ -791,3 +791,32 @@ def alert_radar_go_transition(symbol, setup_type="RECLAIM_CONFIRMED_GO", trigger
     lines = [l for l in lines if l]
     return send_message("\n".join(lines))
 
+
+def alert_trade_aborted(symbol: str, signal: str, reason_code: str, details: str = "", price_drift_pts: float = 0.0, max_drift_pts: float = 0.0, jury_duration_sec: float = 0.0, confidence: float = 0.0, models: str = ""):
+    """
+    Sends an instant notification when an AI-approved trade is safely aborted by pre-dispatch risk or stale price guards.
+    """
+    clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    now_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S WIB")
+    
+    lines = [
+        f"⚠️ *[EKSEKUSI DIBATALKAN] {clean_sym} {signal.upper()}*",
+        f"🕒 `{now_str}` | *Alasan:* `{reason_code}`",
+        "━" * 28,
+    ]
+    if models:
+        conf_str = f" ({confidence*100:.1f}%)" if confidence > 0 else ""
+        lines.append(f"• 🤖 *Konsensus AI*: `{models}{conf_str}`")
+    if jury_duration_sec > 0:
+        lines.append(f"• ⏱️ *Waktu Diskusi AI*: `{jury_duration_sec:.1f}s`")
+    if price_drift_pts > 0:
+        lines.append(f"• 📉 *Pergeseran Harga*: `{price_drift_pts:.1f} pts` (Batas Max: `{max_drift_pts:.1f} pts`)")
+    if details:
+        lines.append(f"• 🛡️ *Proteksi*: {_clean_md(details)}")
+    
+    lines.append("━" * 28)
+    lines.append("🛡️ _Order dibatalkan demi keamanan modal dan mencegah mengejar harga (Anti-Chase)._")
+    
+    return send_message("\n".join(lines))
+
+

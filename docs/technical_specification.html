@@ -828,7 +828,7 @@
                             <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--amber);">hub</span> EQH / EQL</strong></td>
                             <td>Equal Highs / Equal Lows</td>
                             <td>Puncak atau lembah kembar tempat berkumpulnya kolam likuiditas stop-loss trader ritel.</td>
-                            <td>Target sapuan <em>Judas Sweep</em></td>
+                            <td>Target sapuan <em>Universal Sweep</em></td>
                         </tr>
                         <tr>
                             <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--purple);">bar_chart</span> FRVP</strong></td>
@@ -941,9 +941,9 @@
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">flare</span> M1 (Judas Sweep)</strong></td>
-                            <td>London Judas Swing Failure Pattern</td>
-                            <td>Mekanisme perangkap likuiditas dengan memanfaatkan manipulasi false-breakout di Asian H/L atau PDH/PDL.</td>
+                            <td><strong><span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: var(--primary);">flare</span> M1 (Universal Sweep)</strong></td>
+                            <td>Universal Liquidity Sweep SFP</td>
+                            <td>Mekanisme perangkap likuiditas dengan memanfaatkan manipulasi false-breakout di Asian H/L, EQH/EQL, atau PDH/PDL.</td>
                             <td>Sweep \(\ge 0.15\times\text{ATR}\) + Wick \(\ge 35\%\)</td>
                         </tr>
                         <tr>
@@ -1059,7 +1059,7 @@
                         Berjalan lokal di Python setiap 60 detik memindai seluruh <strong>26 Simbol Forex</strong> secara paralel.
                     </p>
                     <ul style="font-size: 12px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
-                        <li>3 Mekanisme Eksekusi (M1 Judas Sweep, M2 Trend-Aligned Pullback, M3 Multi-Touch Cluster Breakout Retest).</li>
+                        <li>3 Mekanisme Eksekusi (M1 Universal Sweep, M2 Trend-Aligned Pullback, M3 Multi-Touch Cluster Breakout Retest).</li>
                         <li>Memvalidasi 4D Symmetrical Wave State permission (<code>ARM / GO</code>).</li>
                         <li>Mengeliminasi 99% noise pasar tanpa mengonsumsi kuota token LLM.</li>
                     </ul>
@@ -1248,21 +1248,99 @@
         </section>
 
         <!-- ══════════════════════════════════════════════════════════════ -->
-        <!-- BAB 6: PURE QUANT 6-TF MACRO STRATEGIC ENGINE (MSE)          -->
+        <!-- BAB 6: STATEFUL MARKET-STRUCTURE ENGINE (MSE) & BARRIER CHAMBER -->
         <!-- ══════════════════════════════════════════════════════════════ -->
         <section id="bab-6" class="chapter">
             <div class="chapter-header">
                 <span class="chapter-num">06</span>
-                <h2 class="chapter-title">Pure Quant 6-TF Macro Strategic Engine (MSE) & Zonal SBR/RBS</h2>
+                <h2 class="chapter-title">Stateful Market-Structure Engine (MSE) & Barrier Chamber</h2>
             </div>
             <p>
-                Engine makro murni kuantitatif 6 timeframe (<code>MN1 -> W1 -> D1 -> H4 -> H1 -> M30</code>) menghitung halte stasiun psikologis bulat dan zona lelang struktural:
+                MSE 6-TF Native mengintegrasikan <strong>Stateful Market-Structure Engine</strong> berbasis geometri ruang lelang (<em>Barrier Chamber</em>) dan <em>Factorized Primitive State Machine</em> untuk memetakan dinamika institusional secara deterministik dan bebas dari <em>double-counting</em>:
             </p>
-            <ul style="font-size: 13px; color: var(--text-secondary); padding-left: 20px; line-height: 1.9;">
-                <li><strong>Dual-Grid Psychological Stations</strong>: Major Station (100 pips) sebagai koridor utama & Sub-Stations (50 pips) sebagai halte transit.</li>
-                <li><strong>Zonal SBR/RBS Bands</strong>: Menghitung pita tebal Proximal Edge (pemicu entri) dan Distal Edge (titik invalidasi mutlak).</li>
-                <li><strong>Station Collision & Dual-Reaction</strong>: Skenario A (Reversal Fade) vs Skenario B (Breakout Upgrade).</li>
-            </ul>
+
+            <h3 style="margin-top: 18px; margin-bottom: 10px; font-size: 15px; color: var(--text-primary);">1. Peta Distribusi Dealing Chamber (% Koridor Lelang)</h3>
+            <pre style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text-secondary); margin-bottom: 16px;">
+[ 100% ] ── ATAP C1 (Zona Jual / Premium) ─────────────► [ CEILING_REJECTION: SIAP SELL ]
+         │  (Harga sudah mahal, cari peluang SELL)
+[  75% ] ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
+         │  
+         │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+         │  ░░░░░  ZONA TENGAH (25% - 75%)        ░░░░░
+[  50% ] │  ░░░░░  "NO MAN'S LAND" / ZONA ABU-ABU ░░░░░ ──► [ RANGE_BOUND / WATCH_ONLY ]
+         │  ░░░░░  (DILARANG ENTRY APA PUN!)     ░░░░░
+         │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+         │  
+[  25% ] ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
+         │  (Harga sudah murah, cari peluang BUY)
+[   0% ] ── LANTAI F1 (Zona Beli / Diskon) ────────────► [ FLOOR_REJECTION: SIAP BUY ]
+            </pre>
+
+            <h3 style="margin-top: 18px; margin-bottom: 10px; font-size: 15px; color: var(--text-primary);">2. Orthogonal Evidence Scoring (Anti-Double-Counting)</h3>
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
+                Memisahkan <strong>Kualifikasi Struktural (\(Q\))</strong> dan <strong>Peringkat Komposit (\(R\))</strong>:
+                \[Q = S_{\text{structure}} \times (1 + D_{\text{TF}}), \quad R = Q + \alpha V_{\text{Volume}} + \beta L_{\text{Liquidity}}\]
+                Syarat kualifikasi dinding \(C_1 / F_1\): wajib memiliki \(Q \ge 2.5\) (level tanpa anchor struktural kuat otomatis didiskualifikasi).
+            </p>
+            <div class="table-container" style="margin-bottom: 16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fortress Tag</th>
+                            <th>Skor Komposit (\(R\))</th>
+                            <th>Elemen Konfluensi & Makna Pertahanan</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge badge-purple">SUPER_FORTRESS</span></td>
+                            <td>\(\ge 10.0\text{ Poin}\)</td>
+                            <td>Konfluensi masif multi-tahun (W1 + D1 + FRVP POC + Halte Bulat). Dinding beton institusi tak tertembus.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-emerald">MAJOR_FORTRESS</span></td>
+                            <td>\(7.0 - 9.9\text{ Poin}\)</td>
+                            <td>Konfluensi kuat (D1 SBR/RBS + H4 + SMC OB). Area pantulan probabilitas sangat tinggi.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-primary">SOLID_BARRIER</span></td>
+                            <td>\(4.5 - 6.9\text{ Poin}\)</td>
+                            <td>Struktur solid harian / intermediate support-resistance.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-amber">MODERATE</span></td>
+                            <td>\(2.5 - 4.4\text{ Poin}\)</td>
+                            <td>Level intraday H1/H4 atau titik FRVP HVN standar.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-rose">MINOR</span></td>
+                            <td>\(&lt; 2.5\text{ Poin}\)</td>
+                            <td>Halte psikologis tunggal atau order block minor.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--primary);">tune</span> Configurable Hyperparameters (MSE)</div>
+                    <ul style="font-size: 12px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
+                        <li><code>k_d = 0.25 × ATR H1</code>: Jarak minimum kandidat dari harga.</li>
+                        <li><code>k_h = 0.60 × ATR H1</code>: Tinggi minimum dealing chamber.</li>
+                        <li><code>k_merge = 0.15 × ATR H1</code>: Toleransi penggabungan kluster.</li>
+                        <li><code>Q_min = 2.5</code>: Ambang batas kelayakan dinding \(C_1/F_1\).</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title"><span class="material-symbols-outlined" style="font-size: 18px; color: var(--purple);">account_tree</span> Factorized Primitive State Machine</div>
+                    <ul style="font-size: 12px; color: var(--text-secondary); padding-left: 18px; line-height: 1.8;">
+                        <li><strong>Location</strong>: <code>CEILING, FLOOR, MID, OUTSIDE</code></li>
+                        <li><strong>Event</strong>: <code>REJECTION, SWEEP, BREAKOUT, RETEST</code></li>
+                        <li><strong>Trajectory</strong>: <code>UP, DOWN, ROTATION</code></li>
+                        <li><strong>Persisted State</strong>: Rekam jejak interaksi lintas bar.</li>
+                    </ul>
+                </div>
+            </div>
         </section>
 
         <!-- ══════════════════════════════════════════════════════════════ -->

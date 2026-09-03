@@ -90,6 +90,10 @@ class SMCSignal:
     strong_high:           float = 0.0
     strong_low:            float = 0.0
     active_frvp:           Optional[Dict[str, Any]] = None
+    dealing_range_pos:     float = 0.5
+    bos_count:             int = 0
+    is_ranging_box:        bool = False
+    is_triangle_compression: bool = False
 
 
 class LuxSMCAnalyzer:
@@ -470,10 +474,14 @@ class LuxSMCAnalyzer:
         # -------------------------------------------------------------
         # 6. Authentic Dealing Range (Discount, Equilibrium, Premium)
         # -------------------------------------------------------------
-        lookback = min(100, n)
+        lookback = min(120, n)
         range_high = float(np.max(highs[-lookback:]))
         range_low = float(np.min(lows[-lookback:]))
         range_span = max(range_high - range_low, 1e-9)
+
+        cur_close = float(closes[-1])
+        dr_pos = max(0.0, min(1.0, (cur_close - range_low) / range_span))
+        sig.dealing_range_pos = round(dr_pos, 4)
 
         sig.equilibrium   = round(range_low + 0.50 * range_span, 5)
         sig.discount_zone = round(range_low + 0.382 * range_span, 5)   # Discount threshold <= 38.2%
@@ -493,6 +501,24 @@ class LuxSMCAnalyzer:
             sig.strong_low = round(float(min_sl[1]), 5)
         else:
             sig.strong_low = round(range_low, 5)
+
+        # -------------------------------------------------------------
+        # 8. Dynamic Ranging Box & Flag / Triangle Compression
+        # -------------------------------------------------------------
+        total_bos = len(sig.bullish_structures) + len(sig.bearish_structures)
+        sig.bos_count = total_bos
+
+        is_triangle = False
+        if len(swing_highs) >= 2 and len(swing_lows) >= 2:
+            sh1, sh2 = swing_highs[-2][1], swing_highs[-1][1]
+            sl1, sl2 = swing_lows[-2][1], swing_lows[-1][1]
+            # Lower Highs + Higher Lows = Converging Triangle / Flag
+            if sh2 <= sh1 and sl2 >= sl1:
+                is_triangle = True
+        sig.is_triangle_compression = is_triangle
+
+        # Ranging Box if 0-1 recent BOS or Flag Triangle with price inside Mid-Chamber (0.25 - 0.75)
+        sig.is_ranging_box = (total_bos <= 1) or is_triangle or (0.30 <= dr_pos <= 0.70 and total_bos <= 2)
 
         return sig
 

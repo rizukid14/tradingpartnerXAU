@@ -1779,25 +1779,28 @@ def compute_micro_objective_frames(symbol, point=None):
         return ""
 
 
-def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m5_str=None):
+def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m15_str=None, recent_m5_str=None):
     """
     Builds the High-Density Institutional Dossier Prompt for 3-LLM Consensus Jury.
     Injected when Stage 1 Fast Execution Radar flags a candidate setup.
-    Includes live D1, H4, H1, and M5 candlestick price action for unbiased objective verification.
+    Includes live M15 and M5 micro candlestick price action microscope for unbiased objective verification.
     """
     sym = candidate.symbol
     direction_str = "BUY" if candidate.direction == 1 else "SELL"
     meta = getattr(candidate, 'metadata', {}) or {}
     
     candles_block = ""
-    if recent_d1_str:
-        candles_block += f"\n- D1 Daily Context (Last 3 days OHLC):\n{recent_d1_str}\n"
-    if recent_h4_str:
-        candles_block += f"\n- H4 Structural (Last 6 bars OHLC):\n{recent_h4_str}\n"
-    if recent_h1_str:
-        candles_block += f"\n- H1 Execution (Last 12 bars OHLC):\n{recent_h1_str}\n"
+    if recent_m15_str:
+        candles_block += f"\n- M15 Micro Intraday Context (Last 16 bars OHLC):\n{recent_m15_str}\n"
     if recent_m5_str:
-        candles_block += f"\n- M5 Micro Flow (Last 24 bars OHLC):\n{recent_m5_str}\n"
+        candles_block += f"\n- M5 Micro Flow & Wick Microscope (Last 24 bars OHLC):\n{recent_m5_str}\n"
+    if not recent_m15_str and (recent_d1_str or recent_h4_str or recent_h1_str):
+        if recent_d1_str:
+            candles_block += f"\n- D1 Daily Context (Last 3 days OHLC):\n{recent_d1_str}\n"
+        if recent_h4_str:
+            candles_block += f"\n- H4 Structural (Last 6 bars OHLC):\n{recent_h4_str}\n"
+        if recent_h1_str:
+            candles_block += f"\n- H1 Execution (Last 12 bars OHLC):\n{recent_h1_str}\n"
     
     meta_lines = []
     if meta.get("entry_type"):
@@ -1962,14 +1965,19 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
             c1_tags = strat_dir.raw_payload.get("c1_structure_tags", "STRUCTURAL")
             seq_str = " -> ".join(strat_dir.interaction_sequence[-4:]) if strat_dir.interaction_sequence else "Initial Observation"
             traps_str = " | ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+            
+            f_layers_str = " | ".join([f"{f['tier']}:{f['price']} ({f.get('reaction_grade','G1').replace('GRADE_','G')}, {f['fortress_tag']})" for f in getattr(strat_dir, 'layered_floors', [])[:5]]) if getattr(strat_dir, 'layered_floors', []) else f"F1:{strat_dir.immediate_floor_f1}"
+            c_layers_str = " | ".join([f"{c['tier']}:{c['price']} ({c.get('reaction_grade','G1').replace('GRADE_','G')}, {c['fortress_tag']})" for c in getattr(strat_dir, 'layered_ceilings', [])[:5]]) if getattr(strat_dir, 'layered_ceilings', []) else f"C1:{strat_dir.immediate_ceiling_c1}"
+
             strat_block = f"""
 - MSE Market State: [{strat_dir.market_state}] (Chamber Range: {strat_dir.chamber_position_pct:.0%}) | Stability: {strat_dir.regime_stability}
 - Macro Bias & Directive: {strat_dir.daily_macro_bias} ({strat_dir.macro_bias_score:+.2f}) -> {strat_dir.primary_execution_directive} (Confidence: {strat_dir.confidence_score}%)
 - Action Tier: {getattr(candidate, 'action_tier', strat_dir.action_tier)} | Circuit Breaker: {'ACTIVE (BLOCKED)' if strat_dir.hard_circuit_breaker else 'CLEAR'}
-- Barrier Chamber Bounds (FRVP + SBR/RBS + Psych Confluence):
-  * Floor F1: {strat_dir.immediate_floor_f1} ({strat_dir.f1_fortress_tag} {strat_dir.f1_density_score:.1f}p: {f1_tags})
-  * Ceiling C1: {strat_dir.immediate_ceiling_c1} ({strat_dir.c1_fortress_tag} {strat_dir.c1_density_score:.1f}p: {c1_tags})
-  * Deep Extension Target Bounds: F2={strat_dir.deep_target_floor_f2} | C2={strat_dir.deep_target_ceiling_c2}
+- Barrier Chamber Multi-Scale Matrix (Confluence-Graded Floors & Ceilings):
+  * Floor Hierarchy: {f_layers_str}
+  * Ceiling Hierarchy: {c_layers_str}
+  * Immediate Bounds: F1={strat_dir.immediate_floor_f1} ({strat_dir.f1_fortress_tag}) | C1={strat_dir.immediate_ceiling_c1} ({strat_dir.c1_fortress_tag})
+  * Deep Extension Target Bounds: F_deep={strat_dir.deep_target_floor_f2} | C_deep={strat_dir.deep_target_ceiling_c2}
 - Interaction Sequence (8-Bar Path): {seq_str}
 - SBR/RBS Hierarchy: W1 SBR={strat_dir.macro_sbr_w1} / RBS={strat_dir.macro_rbs_w1} | D1 SBR={strat_dir.macro_sbr_d1} / RBS={strat_dir.macro_rbs_d1} | H4 SBR={strat_dir.inter_sbr_h4} / RBS={strat_dir.inter_rbs_h4}
 - Target Landscape: TP1 (Proximal Retest) = {strat_dir.tp1_price} | TP2 (Deep Macro Station) = {strat_dir.tp2_price}
@@ -2046,7 +2054,9 @@ Python Quantitative Engine has detected a potential quantitative setup ({candida
 {candles_block}
 
 ## 7. EVALUATION & JURY OUTPUT INSTRUCTIONS
-- Execution Choice (Independent Discretion): You have full analytical autonomy to choose between "market" (immediate execution) and pending limit ("buy_limit" / "sell_limit" at optimal anchor). Evaluate price action, M5 micro flow, rejection wicks, and the quantitative ATR distance to decide whether entering immediately at market or waiting for a limit pullback provides the optimal balance between execution certainty and Risk:Reward.
+- Analytical Autonomy: You have full analytical discretion to evaluate this setup. The Quant Engine proposes baseline SL at {candidate.suggested_sl} and TP at {candidate.suggested_tp} anchored to the next structural barrier.
+- Bounded Micro-Precision Refinement (Market Orders): For immediate market entry, you may fine-tune SL and TP by at most +/- 3 to 5 pips (max 0.25x ATR or 30 pts) to snap onto micro M5/M15 wicks. Runaway market deviations will be clamped back to the Quant Anchor.
+- Deeper Price Optimization via Limit Orders: If entering at current market price offers cramped R:R or you desire a more favorable fill, select a PENDING LIMIT ORDER ("buy_limit" / "sell_limit" at your optimal structural entry_price) rather than forcing an off-market price.
 - If setup is solid and actionable now -> select "APPROVE"
 - If direction is sound but waiting for a retest limit is safer -> select "REVISE" with optimal entry_price / entry_type
 - If market is plunging/surging with strong opposing momentum or trapped in chop -> select "REJECT" with risk_flag
@@ -2079,7 +2089,7 @@ Your mission is to evaluate candidate setups proposed by the Python Quantitative
 
 ### 1. CORE OPERATIONAL DIRECTIVES:
 1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
-2. Mandatory R:R Gate: Minimum R:R >= 1.25. Anchor SL behind physical structural barriers (MSE SBR/RBS, SMC Order Block, or Atlas DNA station + 0.35x ATR anti-wick buffer).
+2. Mandatory R:R Gate & Intraday Structure Floor: Minimum R:R >= 1.25. Anchor SL behind physical intraday structural barriers (Scanner Raw SL, nearest H1 Order Block, or SBR/RBS + anti-wick buffer). SL MUST remain tightly bounded to intraday structure (0.50x to 1.00x ATR H1). FORBIDDEN: DO NOT inflate SL into deep multi-day macro invalidation stops (e.g. > 1.2x ATR) or deep TP2 macro stations for intraday candidates.
 3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
 4. Symmetrical Wave State Permission:
    - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
@@ -2099,13 +2109,20 @@ If any of these conditions are present, you MUST reject the trade (Verdict: REJE
 - MACRO_HEADWIND: Carry spread >= 3.0% against technical direction during catalyst window."""
 
 
-def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m5_str=None):
+def get_multi_llm_decisions_for_candidate(candidate, recent_d1_str=None, recent_h4_str=None, recent_h1_str=None, recent_m15_str=None, recent_m5_str=None):
     """
     Evaluates a candidate setup from Stage 1 using 2-Pass Sequential Cross-Examination 3-LLM Jury:
     - Pass 1 (Parallel Investigation): OpenAI (Structure) + Gemini (Momentum) evaluate candidate dossier.
-    - Pass 2 (Cross-Examination Audit): DeepSeek (Devil's Advocate) audits Pass 1 arguments against raw D1/H4/H1/M5 data.
+    - Pass 2 (Cross-Examination Audit): DeepSeek (Devil's Advocate) audits Pass 1 arguments against live M15/M5 micro flow data.
     """
-    prompt_base = build_high_density_dossier_prompt(candidate, recent_d1_str=recent_d1_str, recent_h4_str=recent_h4_str, recent_h1_str=recent_h1_str, recent_m5_str=recent_m5_str)
+    prompt_base = build_high_density_dossier_prompt(
+        candidate,
+        recent_d1_str=recent_d1_str,
+        recent_h4_str=recent_h4_str,
+        recent_h1_str=recent_h1_str,
+        recent_m15_str=recent_m15_str,
+        recent_m5_str=recent_m5_str
+    )
     direction_str = "BUY" if candidate.direction == 1 else "SELL"
     active_models = config.active_ai_model_names()
 

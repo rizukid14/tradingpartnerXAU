@@ -17,6 +17,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -34,6 +35,94 @@ from src.indicators.lux_smc import LuxSMCAnalyzer
 
 logger = logging.getLogger("macro_strategic_engine")
 WIB = ZoneInfo("Asia/Jakarta")
+
+
+@dataclass
+class MSEHyperparameters:
+    """
+    Configurable Hyperparameters for MSE (Tuned via Empirical Backtest / Out-of-Sample).
+    Eliminates hardcoded magic numbers and enforces orthogonal evidence weighting.
+    """
+    candidate_dist_min_atr_mult: float = 0.02   # k_d: Min distance from current mid to candidate barrier (~0.2 pips precision)
+    min_chamber_height_atr_mult: float = 0.60   # k_h: Min chamber height (C1 - F1) in ATR H1 multiples
+    cluster_merge_atr_mult: float = 0.15        # k_merge: Cluster tolerance in ATR H1 multiples
+    structural_validity_threshold: float = 2.5  # Q_min: Min structural qualification threshold for C1/F1
+    frvp_volume_weight: float = 1.0             # alpha: Weight for FRVP Volume Evidence (V)
+    liquidity_pool_weight: float = 1.0          # beta: Weight for Liquidity Pool Evidence (L)
+    diversity_bonus_per_tf: float = 0.15        # Timeframe diversity multiplier
+    diversity_bonus_cap: float = 0.35           # Max cap for timeframe diversity bonus
+
+
+class Location(str, Enum):
+    CEILING = "CEILING"
+    FLOOR = "FLOOR"
+    MID = "MID"
+    OUTSIDE_ABOVE = "OUTSIDE_ABOVE"
+    OUTSIDE_BELOW = "OUTSIDE_BELOW"
+
+
+class StructuralEvent(str, Enum):
+    TOUCH = "TOUCH"
+    REJECTION = "REJECTION"
+    SWEEP = "SWEEP"
+    BREAK = "BREAK"
+    RETEST = "RETEST"
+    COMPRESSION = "COMPRESSION"
+
+
+class Trajectory(str, Enum):
+    UP = "UP"
+    DOWN = "DOWN"
+    ROTATION = "ROTATION"
+
+
+@dataclass
+class PrimitiveState:
+    """
+    Source of truth for the Factorized Primitive State Machine.
+    Composite semantic states are derived dynamically from these orthogonal dimensions.
+    """
+    location: Location
+    event: StructuralEvent
+    trajectory: Trajectory
+    last_barrier: str = ""
+    previous_barrier: str = ""
+    interaction_sequence: List[str] = field(default_factory=list)
+    sweep_history: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ContingencyPath:
+    """Structured Dual-Rail Roadmap for 3-LLM Jury & Risk Engine."""
+    primary_hypothesis: str
+    invalidation_level: float
+    bullish_rail: List[str] = field(default_factory=list)
+    bearish_rail: List[str] = field(default_factory=list)
+
+
+def derive_semantic_state(primitive: PrimitiveState) -> str:
+    """
+    Pure derivation function: Converts primitive vectors into semantic state string.
+    Ensures backward compatibility while maintaining primitive vectors as the source of truth.
+    """
+    loc = primitive.location
+    evt = primitive.event
+    traj = primitive.trajectory
+
+    if loc == Location.OUTSIDE_ABOVE and (evt == StructuralEvent.BREAK or traj == Trajectory.UP):
+        return "CEILING_BREAKOUT"
+    elif loc == Location.OUTSIDE_BELOW and (evt == StructuralEvent.BREAK or traj == Trajectory.DOWN):
+        return "FLOOR_BREAKDOWN"
+    elif loc == Location.CEILING:
+        if evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
+            return "CEILING_REJECTION"
+        return "CHAMBER_CEILING_TEST"
+    elif loc == Location.FLOOR:
+        if evt in (StructuralEvent.REJECTION, StructuralEvent.SWEEP, StructuralEvent.RETEST):
+            return "FLOOR_REJECTION"
+        return "CHAMBER_FLOOR_TEST"
+    else:
+        return "NEUTRAL_CHAMBER"
 
 
 @dataclass
@@ -88,10 +177,22 @@ class MacroStrategicDirective:
     immediate_floor_f1: float = 0.0
     deep_target_floor_f2: float = 0.0
     deep_target_ceiling_c2: float = 0.0
+    floor_f1: float = 0.0
+    floor_f2: Optional[float] = None
+    floor_f3: Optional[float] = None
+    floor_f4: Optional[float] = None
+    ceiling_c1: float = 0.0
+    ceiling_c2: Optional[float] = None
+    ceiling_c3: Optional[float] = None
+    ceiling_c4: Optional[float] = None
+    layered_floors: List[Dict[str, Any]] = field(default_factory=list)
+    layered_ceilings: List[Dict[str, Any]] = field(default_factory=list)
     c1_density_score: float = 0.0
     f1_density_score: float = 0.0
     c1_fortress_tag: str = ""
     f1_fortress_tag: str = ""
+    c1_reaction_grade: str = "GRADE_1_MICRO"
+    f1_reaction_grade: str = "GRADE_1_MICRO"
     chamber_position_pct: float = 0.50
     retest_touch_count: int = 1
     interaction_sequence: List[str] = field(default_factory=list)
@@ -115,6 +216,8 @@ class MacroStrategicDirective:
     current_bid: float = 0.0
     current_ask: float = 0.0
     current_mid: float = 0.0
+    primitive_state: Optional[PrimitiveState] = None
+    contingency_graph: Optional[ContingencyPath] = None
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -125,63 +228,126 @@ class MacroStrategicEngine:
     """
 
     @staticmethod
+    def _cluster_merge_orthogonal(
+        elements: List[Tuple[float, float, str]],
+        cluster_tol: float,
+        digits: int,
+        params: MSEHyperparameters,
+        is_ascending: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Groups nearby barrier elements within cluster_tol and calculates Orthogonal Multi-Dimensional Evidence:
+        1. S_structure = max(base_weight of structural tags in cluster)
+        2. D_TF = Timeframe diversity multiplier (diminishing bonus)
+        3. Structural Qualification: Q = S_structure * (1 + D_TF). Qualified if Q >= Q_min.
+        4. V = sum of FRVP volume node weights in cluster
+        5. L = sum of liquidity pool weights (EQH/EQL) in cluster
+        6. Ranking Score: R = Q + alpha*V + beta*L
+        """
+        if not elements:
+            return []
+        sorted_elems = sorted(elements, key=lambda x: x[0], reverse=not is_ascending)
+        raw_clusters: List[Dict[str, Any]] = []
+
+        for p, sc, tag in sorted_elems:
+            merged = False
+            for cl in raw_clusters:
+                if abs(cl['rep_price'] - p) <= cluster_tol:
+                    cl['elements'].append((p, sc, tag))
+                    total_w = sum(w for _, w, _ in cl['elements'])
+                    cl['rep_price'] = sum(pr * w for pr, w, _ in cl['elements']) / max(total_w, 1e-6)
+                    merged = True
+                    break
+            if not merged:
+                raw_clusters.append({
+                    'rep_price': p,
+                    'elements': [(p, sc, tag)]
+                })
+
+        res: List[Dict[str, Any]] = []
+        for cl in raw_clusters:
+            rep_price = round(cl['rep_price'], digits)
+            struct_scores = []
+            vol_scores = []
+            liq_scores = []
+            all_tags = []
+            tfs_detected = set()
+
+            for p, sc, tag in cl['elements']:
+                all_tags.append(tag)
+                if any(v in tag for v in ('POC', 'VAL', 'VAH', 'HVN')):
+                    vol_scores.append(sc)
+                elif any(l in tag for l in ('EQH', 'EQL', 'ASIAN', 'PWH', 'PWL', 'PDH', 'PDL')):
+                    liq_scores.append(sc)
+                else:
+                    struct_scores.append(sc)
+                    for tf in ('MN1', 'W1', 'D1', 'H4', 'H1', 'M30'):
+                        if tf in tag:
+                            tfs_detected.add(tf)
+
+            # 1. Structural Anchor: Highest structural weight
+            s_structure = max(struct_scores) if struct_scores else (2.0 if any('PSYCH' in t for t in all_tags) else 1.5)
+
+            # 2. Timeframe Diversity Multiplier
+            n_tfs = len(tfs_detected)
+            d_tf = min(max(0, n_tfs - 1) * params.diversity_bonus_per_tf, params.diversity_bonus_cap)
+
+            # 3. Structural Qualification (Q)
+            q_score = round(s_structure * (1.0 + d_tf), 2)
+            is_qualified = (q_score >= params.structural_validity_threshold)
+
+            # 4. Volume & Liquidity Evidence
+            v_score = sum(vol_scores)
+            l_score = sum(liq_scores)
+
+            # 5. Composite Ranking Score (R)
+            r_score = round(q_score + (params.frvp_volume_weight * v_score) + (params.liquidity_pool_weight * l_score), 2)
+
+            unique_tags = sorted(list(set(all_tags)))
+            tag_str = "+".join(unique_tags)
+
+            res.append({
+                'price': rep_price,
+                'q_score': q_score,
+                'r_score': r_score,
+                'tag_str': tag_str,
+                'is_qualified': is_qualified,
+                's_structure': s_structure,
+                'd_tf': d_tf,
+                'v_score': v_score,
+                'l_score': l_score
+            })
+
+        res.sort(key=lambda x: x['price'], reverse=not is_ascending)
+        return res
+
+    @staticmethod
     def _cluster_merge(
         elements: List[Tuple[float, float, str]],
         cluster_tol: float,
         digits: int,
         is_ascending: bool = True
     ) -> List[Tuple[float, float, str]]:
-        """
-        Groups nearby barrier elements within cluster_tol into weighted composite clusters.
-        Returns: List of (composite_price, total_score, composite_tags_str)
-        """
-        if not elements:
-            return []
-        sorted_elems = sorted(elements, key=lambda x: x[0], reverse=not is_ascending)
-        clusters: List[Dict[str, Any]] = []
-
-        for p, sc, tag in sorted_elems:
-            merged = False
-            for cl in clusters:
-                if abs(cl['rep_price'] - p) <= cluster_tol:
-                    cl['prices'].append((p, sc))
-                    cl['total_score'] += sc
-                    cl['tags'].append(tag)
-                    total_w = sum(w for _, w in cl['prices'])
-                    cl['rep_price'] = sum(pr * w for pr, w in cl['prices']) / max(total_w, 1e-6)
-                    merged = True
-                    break
-            if not merged:
-                clusters.append({
-                    'rep_price': p,
-                    'total_score': sc,
-                    'prices': [(p, sc)],
-                    'tags': [tag]
-                })
-
-        res = []
-        for cl in clusters:
-            comp_price = round(cl['rep_price'], digits)
-            score = round(cl['total_score'], 1)
-            unique_tags = sorted(list(set(cl['tags'])))
-            tag_str = "+".join(unique_tags)
-            res.append((comp_price, score, tag_str))
-
-        res.sort(key=lambda x: x[0], reverse=not is_ascending)
-        return res
+        """Backwards-compatible legacy wrapper."""
+        params = MSEHyperparameters()
+        ortho = MacroStrategicEngine._cluster_merge_orthogonal(elements, cluster_tol, digits, params, is_ascending)
+        return [(c['price'], c['r_score'], c['tag_str']) for c in ortho]
 
     @staticmethod
     def _get_fortress_tag(score: float) -> str:
-        if score >= 8.0: return "SUPER_FORTRESS"
-        if score >= 5.0: return "FORTRESS"
-        if score >= 3.0: return "MODERATE"
+        if score >= 10.0: return "SUPER_FORTRESS"
+        if score >= 7.0: return "MAJOR_FORTRESS"
+        if score >= 4.5: return "SOLID_BARRIER"
+        if score >= 2.5: return "MODERATE"
         return "MINOR"
 
-    def __init__(self, cache_ttl_sec: float = 60.0):
+    def __init__(self, cache_ttl_sec: float = 60.0, params: Optional[MSEHyperparameters] = None):
         self._cache: Dict[str, MacroStrategicDirective] = {}
         self._cache_ts: Dict[str, float] = {}
         self._cache_ttl_sec: float = cache_ttl_sec
         self._last_update_ts: float = 0.0
+        self.params: MSEHyperparameters = params or MSEHyperparameters()
+        self._symbol_state_history: Dict[str, PrimitiveState] = {}
 
     @staticmethod
     def _to_df(rates) -> pd.DataFrame:
@@ -338,7 +504,7 @@ class MacroStrategicEngine:
         sbr_h4_cand = [sl[1] for sl in h4_sl if sl[1] > curr_mid + (0.20 * atr_h4)]
         inter_sbr_h4 = round(min(sbr_h4_cand), digits) if sbr_h4_cand else macro_sbr_d1
 
-        h1_sh, h1_sl = self._find_swings(df_h1, 48, 2)
+        h1_sh, h1_sl = self._find_swings(df_h1, 120, 2)
         rbs_h1_cand = [sh[1] for sh in h1_sh if sh[1] < curr_mid - (0.15 * atr_h1)]
         micro_rbs_h1 = round(max(rbs_h1_cand), digits) if rbs_h1_cand else inter_rbs_h4
         sbr_h1_cand = [sl[1] for sl in h1_sl if sl[1] > curr_mid + (0.15 * atr_h1)]
@@ -495,6 +661,60 @@ class MacroStrategicEngine:
         except Exception as e:
             logger.debug(f"FRVP calculation bypass for {symbol}: {e}")
 
+        # Multi-Timeframe Moving Averages (MN1, W1, D1, H4, H1)
+        ema_elements: List[Tuple[float, float, str]] = []
+        if not df_mn1.empty and len(df_mn1) >= 15:
+            e50 = float(df_mn1['close'].ewm(span=min(50, len(df_mn1)), adjust=False).mean().iloc[-1])
+            e20 = float(df_mn1['close'].ewm(span=min(20, len(df_mn1)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 4.5, "MN1_EMA50"))
+            ema_elements.append((e20, 3.5, "MN1_EMA20"))
+        if not df_w1.empty and len(df_w1) >= 15:
+            if len(df_w1) >= 50:
+                e200 = float(df_w1['close'].ewm(span=min(200, len(df_w1)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 4.5, "W1_EMA200"))
+            e50 = float(df_w1['close'].ewm(span=min(50, len(df_w1)), adjust=False).mean().iloc[-1])
+            e20 = float(df_w1['close'].ewm(span=min(20, len(df_w1)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 3.5, "W1_EMA50"))
+            ema_elements.append((e20, 2.5, "W1_EMA20"))
+        if not df_d1.empty and len(df_d1) >= 20:
+            if len(df_d1) >= 50:
+                e200 = float(df_d1['close'].ewm(span=min(200, len(df_d1)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 4.0, "D1_EMA200"))
+            e50 = float(df_d1['close'].ewm(span=min(50, len(df_d1)), adjust=False).mean().iloc[-1])
+            e20 = float(df_d1['close'].ewm(span=20, adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 3.0, "D1_EMA50"))
+            ema_elements.append((e20, 2.0, "D1_EMA20"))
+        if not df_h4.empty and len(df_h4) >= 20:
+            if len(df_h4) >= 50:
+                e200 = float(df_h4['close'].ewm(span=min(200, len(df_h4)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 3.0, "H4_EMA200"))
+            e50 = float(df_h4['close'].ewm(span=min(50, len(df_h4)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 2.5, "H4_EMA50"))
+        if not df_h1.empty and len(df_h1) >= 20:
+            if len(df_h1) >= 50:
+                e200 = float(df_h1['close'].ewm(span=min(200, len(df_h1)), adjust=False).mean().iloc[-1])
+                ema_elements.append((e200, 2.5, "H1_EMA200"))
+            e50 = float(df_h1['close'].ewm(span=min(50, len(df_h1)), adjust=False).mean().iloc[-1])
+            ema_elements.append((e50, 2.0, "H1_EMA50"))
+
+        # Multi-Year & Previous Year Extremes (PYH/PYL, 2-Year High/Low, 52W High/Low)
+        macro_extremes: List[Tuple[float, float, str]] = []
+        if not df_w1.empty:
+            w1_high_2yr = float(df_w1['high'].tail(min(104, len(df_w1))).max())
+            w1_low_2yr = float(df_w1['low'].tail(min(104, len(df_w1))).min())
+            macro_extremes.append((w1_high_2yr, 4.5, "HIGH_2YR"))
+            macro_extremes.append((w1_low_2yr, 4.5, "LOW_2YR"))
+            if len(df_w1) >= 52:
+                w1_high_52w = float(df_w1['high'].tail(52).max())
+                w1_low_52w = float(df_w1['low'].tail(52).min())
+                macro_extremes.append((w1_high_52w, 4.0, "52W_HIGH"))
+                macro_extremes.append((w1_low_52w, 4.0, "52W_LOW"))
+        if not df_d1.empty and len(df_d1) >= 250:
+            py_high = float(df_d1['high'].iloc[:-250].max()) if len(df_d1) > 260 else float(df_d1['high'].tail(250).max())
+            py_low = float(df_d1['low'].iloc[:-250].min()) if len(df_d1) > 260 else float(df_d1['low'].tail(250).min())
+            macro_extremes.append((py_high, 4.0, "PYH"))
+            macro_extremes.append((py_low, 4.0, "PYL"))
+
         # Candidate Upper Barriers
         raw_up_elements: List[Tuple[float, float, str]] = []
         for p, sc, tag in [
@@ -504,6 +724,11 @@ class MacroStrategicEngine:
         ]:
             if p > curr_mid:
                 raw_up_elements.append((round(p, digits), sc, tag))
+
+        # Add EMAs and Macro Extremes to Upper Barriers if above mid
+        for p_lvl, sc, tag in (ema_elements + macro_extremes):
+            if p_lvl > curr_mid + (0.01 * atr_h1):
+                raw_up_elements.append((round(p_lvl, digits), sc, tag))
 
         # W1 & Multi-Year Upper Resistance Structures
         if macro_sbr_w1 and macro_sbr_w1 > curr_mid + (0.01 * atr_h1):
@@ -564,6 +789,11 @@ class MacroStrategicEngine:
             if p < curr_mid:
                 raw_down_elements.append((round(p, digits), sc, tag))
 
+        # Add EMAs and Macro Extremes to Lower Barriers if below mid
+        for p_lvl, sc, tag in (ema_elements + macro_extremes):
+            if p_lvl < curr_mid - (0.01 * atr_h1):
+                raw_down_elements.append((round(p_lvl, digits), sc, tag))
+
         # W1 & Multi-Year Lower Support Structures
         if macro_rbs_w1 and macro_rbs_w1 < curr_mid - (0.01 * atr_h1):
             raw_down_elements.append((round(macro_rbs_w1, digits), 5.0, "W1_RBS"))
@@ -613,65 +843,211 @@ class MacroStrategicEngine:
                 if hvn < curr_mid - (0.01 * atr_h1):
                     raw_down_elements.append((round(hvn, digits), 1.5, "H4_HVN"))
 
-        # Cluster Merging with tolerance = 0.15 * atr_h1
-        cl_tol = max(0.15 * atr_h1, 3 * pt * pip_div)
-        up_clusters = self._cluster_merge(raw_up_elements, cl_tol, digits, is_ascending=True)
-        down_clusters = self._cluster_merge(raw_down_elements, cl_tol, digits, is_ascending=False)
+        # ── 1. ORTHOGONAL CLUSTER MERGING & MULTI-DIMENSIONAL QUALIFICATION ──
+        cl_tol = max(self.params.cluster_merge_atr_mult * atr_h1, 3 * pt * pip_div)
+        up_clusters = self._cluster_merge_orthogonal(raw_up_elements, cl_tol, digits, self.params, is_ascending=True)
+        down_clusters = self._cluster_merge_orthogonal(raw_down_elements, cl_tol, digits, self.params, is_ascending=False)
 
-        # Minimum Chamber Height to eliminate micro-chambers (e.g. 4.7 pips)
-        min_chamber_height = max(0.60 * atr_h1, 0.40 * psych_step_macro, 12 * pt * pip_div)
+        # Minimum distance from current mid to barrier candidate (k_d * ATR H1)
+        candidate_dist_min = self.params.candidate_dist_min_atr_mult * atr_h1
 
-        # Elect C1
-        if up_clusters:
-            imm_ceiling_c1 = up_clusters[0][0]
-            c1_density_score = up_clusters[0][1]
-            c1_tag = up_clusters[0][2]
+        # Minimum Chamber Height to eliminate micro-chambers (k_h * ATR H1)
+        min_chamber_height = max(self.params.min_chamber_height_atr_mult * atr_h1, 0.40 * psych_step_macro, 12 * pt * pip_div)
+
+        # Elect C1 (Nearest Structurally Valid Ceiling)
+        # Filter 1: Structural qualification (Q >= Q_min)
+        # Filter 2: Distance floor (candidate_dist >= k_d * ATR H1)
+        qualified_up = [c for c in up_clusters if c['is_qualified'] and (c['price'] - curr_mid) >= candidate_dist_min]
+        if not qualified_up:
+            qualified_up = [c for c in up_clusters if c['is_qualified']] or up_clusters
+
+        if qualified_up:
+            imm_ceiling_c1 = qualified_up[0]['price']
+            c1_density_score = qualified_up[0]['r_score']
+            c1_tag = qualified_up[0]['tag_str']
         else:
             imm_ceiling_c1 = sub_ceiling
             c1_density_score = 2.0
             c1_tag = "FALLBACK_PSYCH"
 
-        # Elect F1 (Ensuring separation from C1 >= min_chamber_height)
+        # Elect F1 (Nearest Structurally Valid Floor satisfying C1 - F1 >= H_min)
+        qualified_down = [c for c in down_clusters if c['is_qualified'] and (curr_mid - c['price']) >= candidate_dist_min]
+        if not qualified_down:
+            qualified_down = [c for c in down_clusters if c['is_qualified']] or down_clusters
+
         imm_floor_f1 = sub_floor
         f1_density_score = 2.0
         f1_tag = "FALLBACK_PSYCH"
-        if down_clusters:
-            for cand_p, cand_sc, cand_tag in down_clusters:
-                if (imm_ceiling_c1 - cand_p) >= min_chamber_height:
-                    imm_floor_f1 = cand_p
-                    f1_density_score = cand_sc
-                    f1_tag = cand_tag
-                    break
+        for cand in qualified_down:
+            if (imm_ceiling_c1 - cand['price']) >= min_chamber_height:
+                imm_floor_f1 = cand['price']
+                f1_density_score = cand['r_score']
+                f1_tag = cand['tag_str']
+                break
+        else:
+            if qualified_down and (imm_ceiling_c1 - qualified_down[0]['price']) >= min_chamber_height:
+                imm_floor_f1 = qualified_down[0]['price']
+                f1_density_score = qualified_down[0]['r_score']
+                f1_tag = qualified_down[0]['tag_str']
             else:
-                imm_floor_f1 = sub_floor
+                imm_floor_f1 = round(imm_ceiling_c1 - min_chamber_height, digits)
 
         if (imm_ceiling_c1 - imm_floor_f1) < min_chamber_height:
             imm_floor_f1 = round(imm_ceiling_c1 - min_chamber_height, digits)
 
-        # Elect C2 (Deep Ceiling Extension)
+        # Elect C2 (Deep Ceiling Extension Target)
         deep_ceiling_c2 = round(imm_ceiling_c1 + max(psych_step_macro, 1.50 * atr_h1), digits)
         c2_density_score = 2.0
         c2_tag = "EXTENSION_TARGET"
-        for cand_p, cand_sc, cand_tag in up_clusters[1:]:
-            if cand_p >= imm_ceiling_c1 + max(0.60 * atr_h1, 0.40 * psych_step_macro):
-                deep_ceiling_c2 = cand_p
-                c2_density_score = cand_sc
-                c2_tag = cand_tag
+        for cand in up_clusters:
+            if cand['price'] >= imm_ceiling_c1 + max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                deep_ceiling_c2 = cand['price']
+                c2_density_score = cand['r_score']
+                c2_tag = cand['tag_str']
                 break
 
-        # Elect F2 (Deep Floor Extension)
+        # Elect F2 (Deep Floor Extension Target)
         deep_floor_f2 = round(imm_floor_f1 - max(psych_step_macro, 1.50 * atr_h1), digits)
         f2_density_score = 2.0
         f2_tag = "DEEP_SUPPORT_TARGET"
-        for cand_p, cand_sc, cand_tag in down_clusters:
-            if cand_p <= imm_floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
-                deep_floor_f2 = cand_p
-                f2_density_score = cand_sc
-                f2_tag = cand_tag
+        for cand in down_clusters:
+            if cand['price'] <= imm_floor_f1 - max(0.60 * atr_h1, 0.40 * psych_step_macro):
+                deep_floor_f2 = cand['price']
+                f2_density_score = cand['r_score']
+                f2_tag = cand['tag_str']
                 break
 
         c1_fortress_tag = self._get_fortress_tag(c1_density_score)
         f1_fortress_tag = self._get_fortress_tag(f1_density_score)
+
+        # ── PURE DYNAMIC LAYER EXTRACTION (VARIABLE LENGTH N >= 1, ZERO FAKE PADDING) ──
+        # Dynamic separation tolerance delta_tol based on ATR and Step
+        delta_tol = max(0.30 * atr_h1, 0.25 * psych_step_macro, 5 * pt * pip_div)
+
+        def _compute_reaction_grade(score: float, tag_str: str) -> str:
+            if score >= 6.5 or any(t in tag_str for t in ('MN1', 'W1', 'D1', 'PWH', 'PWL', 'ANNUAL', 'HIGH_2YR', 'LOW_2YR', 'PYH', 'PYL', '52W')):
+                return "GRADE_3_MACRO"
+            if score >= 3.5 or any(t in tag_str for t in ('H4', 'POC', 'VAH', 'VAL', 'PSYCH', 'EMA50', 'EMA200')):
+                return "GRADE_2_INTERMEDIATE"
+            return "GRADE_1_MICRO"
+
+        def _compute_displacement_thresh(grade: str, atr: float) -> float:
+            if grade == "GRADE_3_MACRO": return 0.60 * atr
+            if grade == "GRADE_2_INTERMEDIATE": return 0.35 * atr
+            return 0.15 * atr
+
+        def _compute_wick_band(grade: str, atr: float) -> float:
+            if grade == "GRADE_3_MACRO": return 0.50 * atr
+            if grade == "GRADE_2_INTERMEDIATE": return 0.35 * atr
+            return 0.20 * atr
+
+        def _classify_distance(p: float, mid: float, atr: float) -> Tuple[str, float, float]:
+            dist_pts = abs(p - mid) / pt
+            dist_pips = round(dist_pts / pip_div, 1)
+            dist_atr = round(abs(p - mid) / max(atr, 1e-5), 2)
+            if dist_atr <= 1.0:
+                zone = "TERDEKAT"
+            elif dist_atr <= 2.5:
+                zone = "AGAK_DEKAT"
+            elif dist_atr <= 5.0:
+                zone = "MID"
+            elif dist_atr <= 10.0:
+                zone = "JAUH"
+            else:
+                zone = "TERJAUH"
+            return zone, dist_pips, dist_atr
+
+        # 1. Floor Layers (Dynamic N >= 1, No Artificial Capping/Padding)
+        layered_floors = []
+        last_f_price = curr_mid
+        for cand in down_clusters:
+            if (last_f_price - cand['price']) >= delta_tol:
+                grade = _compute_reaction_grade(cand['r_score'], cand['tag_str'])
+                zone, d_pips, d_atr = _classify_distance(cand['price'], curr_mid, atr_h1)
+                layered_floors.append({
+                    'tier': f"F{len(layered_floors)+1}",
+                    'index': len(layered_floors)+1,
+                    'price': cand['price'],
+                    'density_score': cand['r_score'],
+                    'reaction_grade': grade,
+                    'fortress_tag': self._get_fortress_tag(cand['r_score']),
+                    'tag_str': cand['tag_str'],
+                    'distance_zone': zone,
+                    'dist_pips': d_pips,
+                    'dist_atr': d_atr,
+                    'displacement_thresh': round(_compute_displacement_thresh(grade, atr_h1), digits),
+                    'wick_band': round(_compute_wick_band(grade, atr_h1), digits)
+                })
+                last_f_price = cand['price']
+
+        # Fallback if no down_clusters detected at all
+        if not layered_floors:
+            zone, d_pips, d_atr = _classify_distance(sub_floor, curr_mid, atr_h1)
+            layered_floors.append({
+                'tier': "F1",
+                'index': 1,
+                'price': sub_floor,
+                'density_score': 2.0,
+                'reaction_grade': "GRADE_1_MICRO",
+                'fortress_tag': "MODERATE",
+                'tag_str': "FALLBACK_PSYCH",
+                'distance_zone': zone,
+                'dist_pips': d_pips,
+                'dist_atr': d_atr,
+                'displacement_thresh': round(0.15 * atr_h1, digits),
+                'wick_band': round(0.20 * atr_h1, digits)
+            })
+
+        # 2. Ceiling Layers (Dynamic M >= 1, No Artificial Capping/Padding)
+        layered_ceilings = []
+        last_c_price = curr_mid
+        for cand in up_clusters:
+            if (cand['price'] - last_c_price) >= delta_tol:
+                grade = _compute_reaction_grade(cand['r_score'], cand['tag_str'])
+                zone, d_pips, d_atr = _classify_distance(cand['price'], curr_mid, atr_h1)
+                layered_ceilings.append({
+                    'tier': f"C{len(layered_ceilings)+1}",
+                    'index': len(layered_ceilings)+1,
+                    'price': cand['price'],
+                    'density_score': cand['r_score'],
+                    'reaction_grade': grade,
+                    'fortress_tag': self._get_fortress_tag(cand['r_score']),
+                    'tag_str': cand['tag_str'],
+                    'distance_zone': zone,
+                    'dist_pips': d_pips,
+                    'dist_atr': d_atr,
+                    'displacement_thresh': round(_compute_displacement_thresh(grade, atr_h1), digits),
+                    'wick_band': round(_compute_wick_band(grade, atr_h1), digits)
+                })
+                last_c_price = cand['price']
+
+        if not layered_ceilings:
+            zone, d_pips, d_atr = _classify_distance(sub_ceiling, curr_mid, atr_h1)
+            layered_ceilings.append({
+                'tier': "C1",
+                'index': 1,
+                'price': sub_ceiling,
+                'density_score': 2.0,
+                'reaction_grade': "GRADE_1_MICRO",
+                'fortress_tag': "MODERATE",
+                'tag_str': "FALLBACK_PSYCH",
+                'distance_zone': zone,
+                'dist_pips': d_pips,
+                'dist_atr': d_atr,
+                'displacement_thresh': round(0.15 * atr_h1, digits),
+                'wick_band': round(0.20 * atr_h1, digits)
+            })
+
+        # Null-Safe Layer Assignments (None if index out of range)
+        floor_f1 = layered_floors[0]['price']
+        floor_f2 = layered_floors[1]['price'] if len(layered_floors) > 1 else None
+        floor_f3 = layered_floors[2]['price'] if len(layered_floors) > 2 else None
+        floor_f4 = layered_floors[3]['price'] if len(layered_floors) > 3 else None
+
+        ceiling_c1 = layered_ceilings[0]['price']
+        ceiling_c2 = layered_ceilings[1]['price'] if len(layered_ceilings) > 1 else None
+        ceiling_c3 = layered_ceilings[2]['price'] if len(layered_ceilings) > 2 else None
+        ceiling_c4 = layered_ceilings[3]['price'] if len(layered_ceilings) > 3 else None
 
         # Chamber Metrics
         chamber_width = max(imm_ceiling_c1 - imm_floor_f1, pt * 10)
@@ -679,7 +1055,7 @@ class MacroStrategicEngine:
         dist_to_c1 = abs(imm_ceiling_c1 - curr_mid)
         dist_to_f1 = abs(curr_mid - imm_floor_f1)
 
-        # ── 2. BARRIER INTERACTION SEQUENCE TRACKER ──
+        # ── 2. BARRIER INTERACTION SEQUENCE TRACKER (Bounded Rolling Window maxlen=8) ──
         interaction_seq: List[str] = []
         if not df_h1.empty:
             for i in range(min(8, len(df_h1)), 0, -1):
@@ -690,15 +1066,16 @@ class MacroStrategicEngine:
                 l_wick = (min(b_open, b_close) - b_low) / b_rng
                 
                 if b_high >= imm_ceiling_c1 - (0.15 * atr_h1):
-                    tag = "C1_SWEEP" if u_wick >= 0.25 else "C1_TOUCH"
+                    tag = "C1:SWEEP" if u_wick >= 0.25 else "C1:TOUCH"
                     if not interaction_seq or interaction_seq[-1] != tag:
                         interaction_seq.append(tag)
                 elif b_low <= imm_floor_f1 + (0.15 * atr_h1):
-                    tag = "F1_SWEEP" if l_wick >= 0.25 else "F1_TOUCH"
+                    tag = "F1:SWEEP" if l_wick >= 0.25 else "F1:TOUCH"
                     if not interaction_seq or interaction_seq[-1] != tag:
                         interaction_seq.append(tag)
+            interaction_seq = interaction_seq[-8:]
 
-        # ── 3. LEAN 7-STATE MACHINE CLASSIFIER ──
+        # ── 3. FACTORIZED PRIMITIVE STATE MACHINE (LOCATION × EVENT × TRAJECTORY) ──
         h4_hl = len(h4_sl) >= 2 and (h4_sl[-1][1] > h4_sl[-2][1])
         h4_lh = len(h4_sh) >= 2 and (h4_sh[-1][1] < h4_sh[-2][1])
         last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
@@ -706,20 +1083,75 @@ class MacroStrategicEngine:
         last_d1_bull = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
         last_d1_bear = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
 
-        # Boundary threshold: in outer 25% of chamber OR within 0.35 ATR H1 of boundary
-        at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.35 * atr_h1)
-        at_extreme_floor = (chamber_pos <= 0.25) or (dist_to_f1 <= 0.35 * atr_h1)
+        # Boundary threshold: in outer 25% of chamber OR (within 0.15 ATR H1 of barrier AND in outer 35% of chamber)
+        at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.15 * atr_h1 and chamber_pos >= 0.65)
+        at_extreme_floor = (chamber_pos <= 0.25) or (dist_to_f1 <= 0.15 * atr_h1 and chamber_pos <= 0.35)
 
+        # Vector 1: Location
         if curr_mid > imm_ceiling_c1 + (0.10 * atr_h1):
-            market_state = "CEILING_BREAKOUT"
+            location = Location.OUTSIDE_ABOVE
         elif curr_mid < imm_floor_f1 - (0.10 * atr_h1):
-            market_state = "FLOOR_BREAKDOWN"
+            location = Location.OUTSIDE_BELOW
         elif at_extreme_ceiling:
-            market_state = "CEILING_REJECTION" if (peak_u_wick_pct >= 25 or last_h1_bear or h4_lh) else "CHAMBER_CEILING_TEST"
+            location = Location.CEILING
         elif at_extreme_floor:
-            market_state = "FLOOR_REJECTION" if (peak_l_wick_pct >= 25 or last_h1_bull or h4_hl) else "CHAMBER_FLOOR_TEST"
+            location = Location.FLOOR
         else:
-            market_state = "NEUTRAL_CHAMBER"
+            location = Location.MID
+
+        # Vector 2: Structural Event
+        if location in (Location.OUTSIDE_ABOVE, Location.OUTSIDE_BELOW):
+            event = StructuralEvent.BREAK
+        elif location == Location.CEILING:
+            if any("SWEEP" in s for s in interaction_seq[-2:]):
+                event = StructuralEvent.SWEEP
+            elif peak_u_wick_pct >= 25 or last_h1_bear or h4_lh:
+                event = StructuralEvent.REJECTION
+            elif any("TOUCH" in s for s in interaction_seq[-2:]):
+                event = StructuralEvent.TOUCH
+            else:
+                event = StructuralEvent.RETEST
+        elif location == Location.FLOOR:
+            if any("SWEEP" in s for s in interaction_seq[-2:]):
+                event = StructuralEvent.SWEEP
+            elif peak_l_wick_pct >= 25 or last_h1_bull or h4_hl:
+                event = StructuralEvent.REJECTION
+            elif any("TOUCH" in s for s in interaction_seq[-2:]):
+                event = StructuralEvent.TOUCH
+            else:
+                event = StructuralEvent.RETEST
+        else:
+            event = StructuralEvent.COMPRESSION
+
+        # Vector 3: Trajectory
+        if location == Location.CEILING and event in (StructuralEvent.REJECTION, StructuralEvent.SWEEP):
+            trajectory = Trajectory.DOWN
+        elif location == Location.FLOOR and event in (StructuralEvent.REJECTION, StructuralEvent.SWEEP, StructuralEvent.RETEST):
+            trajectory = Trajectory.UP
+        elif last_h1_bull and curr_mid >= (imm_floor_f1 + imm_ceiling_c1) / 2.0:
+            trajectory = Trajectory.UP
+        elif last_h1_bear and curr_mid <= (imm_floor_f1 + imm_ceiling_c1) / 2.0:
+            trajectory = Trajectory.DOWN
+        else:
+            trajectory = Trajectory.ROTATION
+
+        prev_state = self._symbol_state_history.get(symbol)
+        prev_barrier = prev_state.last_barrier if prev_state else ""
+        current_barrier = f"C1:{imm_ceiling_c1}" if location == Location.CEILING else (f"F1:{imm_floor_f1}" if location == Location.FLOOR else "")
+
+        primitive = PrimitiveState(
+            location=location,
+            event=event,
+            trajectory=trajectory,
+            last_barrier=current_barrier or prev_barrier,
+            previous_barrier=prev_barrier,
+            interaction_sequence=interaction_seq,
+            sweep_history={"peak_u_wick": peak_u_wick_pct, "peak_l_wick": peak_l_wick_pct}
+        )
+        self._symbol_state_history[symbol] = primitive
+
+        # Derive composite semantic state
+        market_state = derive_semantic_state(primitive)
 
         # ── 4. EXECUTION LAYER ("Market State" != "Trade Signal") ──
         # Calibrate Minimum & Maximum Intraday Stop Loss Distances (Sniper Precision)
@@ -920,7 +1352,7 @@ class MacroStrategicEngine:
             (len(rates_m30) if rates_m30 is not None else 0)
         )
 
-        # ── 5. NARRATIVE OUTPUT LAYER (Pure Consumer String Formatting) ──
+        # ── 5. NARRATIVE & CONTINGENCY GRAPH LAYER ──
         bull_roadmap = (
             f"▲ BULLISH PATH: Hold > Immediate Floor {imm_floor_f1:.{digits}f} -> Tests Ceiling {imm_ceiling_c1:.{digits}f} │ "
             f"Breakout > {imm_ceiling_c1:.{digits}f} -> Extension {deep_ceiling_c2:.{digits}f}"
@@ -928,6 +1360,13 @@ class MacroStrategicEngine:
         bear_roadmap = (
             f"▼ BEARISH PATH: Reject < Immediate Ceiling {imm_ceiling_c1:.{digits}f} -> Retests Floor {imm_floor_f1:.{digits}f} │ "
             f"Breakdown < {imm_floor_f1:.{digits}f} -> Slips to Deep Support {deep_floor_f2:.{digits}f}"
+        )
+
+        contingency_graph = ContingencyPath(
+            primary_hypothesis=f"{symbol} in {market_state} at {'ceiling ' + str(imm_ceiling_c1) if location == Location.CEILING else ('floor ' + str(imm_floor_f1) if location == Location.FLOOR else 'mid-chamber')}",
+            invalidation_level=round(imm_ceiling_c1 + (0.20 * atr_d1), digits) if "SELL" in primary_directive else round(imm_floor_f1 - (0.20 * atr_d1), digits),
+            bullish_rail=[f"Hold > {imm_floor_f1:.{digits}f}", f"Test {imm_ceiling_c1:.{digits}f}", f"Breakout > {imm_ceiling_c1:.{digits}f} to {deep_ceiling_c2:.{digits}f}"],
+            bearish_rail=[f"Reject < {imm_ceiling_c1:.{digits}f}", f"Retest {imm_floor_f1:.{digits}f}", f"Breakdown < {imm_floor_f1:.{digits}f} to {deep_floor_f2:.{digits}f}"]
         )
 
         # Fundamental Engine
@@ -989,10 +1428,22 @@ class MacroStrategicEngine:
             immediate_floor_f1=imm_floor_f1,
             deep_target_floor_f2=deep_floor_f2,
             deep_target_ceiling_c2=deep_ceiling_c2,
+            floor_f1=floor_f1,
+            floor_f2=floor_f2,
+            floor_f3=floor_f3,
+            floor_f4=floor_f4,
+            ceiling_c1=ceiling_c1,
+            ceiling_c2=ceiling_c2,
+            ceiling_c3=ceiling_c3,
+            ceiling_c4=ceiling_c4,
+            layered_floors=layered_floors,
+            layered_ceilings=layered_ceilings,
             c1_density_score=c1_density_score,
             f1_density_score=f1_density_score,
             c1_fortress_tag=c1_fortress_tag,
             f1_fortress_tag=f1_fortress_tag,
+            c1_reaction_grade=(layered_ceilings[0].get('reaction_grade', 'GRADE_1_MICRO') if layered_ceilings else 'GRADE_1_MICRO'),
+            f1_reaction_grade=(layered_floors[0].get('reaction_grade', 'GRADE_1_MICRO') if layered_floors else 'GRADE_1_MICRO'),
             chamber_position_pct=round(chamber_pos, 2),
             retest_touch_count=len(interaction_seq),
             interaction_sequence=interaction_seq,
@@ -1016,8 +1467,13 @@ class MacroStrategicEngine:
             current_bid=round(curr_bid, digits),
             current_ask=round(curr_ask, digits),
             current_mid=round(curr_mid, digits),
+            primitive_state=primitive,
+            contingency_graph=contingency_graph,
             raw_payload={
                 "market_state": market_state,
+                "primitive_location": primitive.location.value,
+                "primitive_event": primitive.event.value,
+                "primitive_trajectory": primitive.trajectory.value,
                 "chamber_pos": chamber_pos,
                 "c1": imm_ceiling_c1,
                 "f1": imm_floor_f1,

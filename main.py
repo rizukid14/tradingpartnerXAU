@@ -1561,13 +1561,11 @@ def run_scanner_trading_cycle(cand, risk):
         print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         return False
     
-    # 2. Fetch live candles (D1, H4, H1 & M5) from MT5
+    # 2. Fetch live candles (M15 & M5 Micro Microscope) from MT5
     try:
         from config import mt5
-        rates_d1 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_D1, 0, 4)
-        rates_h4 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_H4, 0, 7)
-        rates_h1 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_H1, 0, 16)
-        rates_m5 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 25)
+        rates_m15 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M15, 0, 17) # 16 completed bars (~4 hours)
+        rates_m5 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 25)   # 24 completed bars (~2 hours)
         
         def _fmt(rates):
             if rates is None or len(rates) == 0:
@@ -1578,12 +1576,10 @@ def run_scanner_trading_cycle(cand, risk):
                 lines.append(f"- [{t_s}] Open: {r['open']:.5f} | High: {r['high']:.5f} | Low: {r['low']:.5f} | Close: {r['close']:.5f}")
             return "\n".join(lines)
             
-        d1_str = _fmt(rates_d1[:-1]) if rates_d1 is not None and len(rates_d1) > 1 else None
-        h4_str = _fmt(rates_h4[:-1]) if rates_h4 is not None and len(rates_h4) > 1 else None
-        h1_str = _fmt(rates_h1[:-1]) if rates_h1 is not None and len(rates_h1) > 1 else None
+        m15_str = _fmt(rates_m15[:-1]) if rates_m15 is not None and len(rates_m15) > 1 else None
         m5_str = _fmt(rates_m5[:-1]) if rates_m5 is not None and len(rates_m5) > 1 else None
     except Exception as e:
-        d1_str, h4_str, h1_str, m5_str = None, None, None, None
+        m15_str, m5_str = None, None
         
     # 3. Call 2-Pass Sequential Cross-Examination Jury
     old_sym = config.SYMBOL
@@ -1591,12 +1587,10 @@ def run_scanner_trading_cycle(cand, risk):
     try:
         decisions = llm.get_multi_llm_decisions_for_candidate(
             cand,
-            recent_d1_str=d1_str,
-            recent_h4_str=h4_str,
-            recent_h1_str=h1_str,
+            recent_m15_str=m15_str,
             recent_m5_str=m5_str
         )
-        result = consensus.calculate_consensus(decisions)
+        result = consensus.calculate_consensus(decisions, candidate=cand)
         
         trade_signal = result.get("signal", "HOLD")
         
@@ -1634,7 +1628,22 @@ def run_scanner_trading_cycle(cand, risk):
             price_diff_pts = abs(ref_price - cand.trigger_price) / point if point > 0 else 0
             max_allowed_drift = (cand.current_atr_pts or 100) * 0.20
             if entry_type == "market" and price_diff_pts > max_allowed_drift:
-                print(f"\n {UI.YELLOW}{UI.BOLD}[STALE PRICE GUARD] Harga telah bergerak {price_diff_pts:.1f} pts dari trigger ({max_allowed_drift:.1f} pts max drift). Batalkan market order agar tidak chase harga.{UI.RST}\n")
+                agree_models = result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                print(f"\n {UI.YELLOW}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}║ [STALE PRICE GUARD] EKSEKUSI MARKET {sym} {trade_signal.upper()} DIBATALKAN!                               ║{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}║ • Pergeseran Harga : {price_diff_pts:.1f} pts (Batas Toleransi: {max_allowed_drift:.1f} pts max drift)                  ║{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}║ • Alasan           : Harga telah bergeser saat AI berdiskusi. Batalkan agar tidak chase harga!║{UI.RST}")
+                print(f" {UI.YELLOW}{UI.BOLD}╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
+                tg.alert_trade_aborted(
+                    symbol=sym,
+                    signal=trade_signal,
+                    reason_code="STALE_PRICE_DRIFT",
+                    details=f"Harga bergeser {price_diff_pts:.1f} pts melebihi toleransi {max_allowed_drift:.1f} pts saat 3 AI berdiskusi.",
+                    price_drift_pts=price_diff_pts,
+                    max_drift_pts=max_allowed_drift,
+                    confidence=result.get("confidence", 0.0),
+                    models=agree_models
+                )
                 return False
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
@@ -1644,10 +1653,18 @@ def run_scanner_trading_cycle(cand, risk):
             )
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
+                tg.alert_trade_aborted(
+                    symbol=sym,
+                    signal=trade_signal,
+                    reason_code="SLTP_RULES_INVALID",
+                    details=sltp_reason,
+                    confidence=result.get("confidence", 0.0),
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                )
                 return False
                 
             # High Confidence Multi-Position sizing:
-            # If 3/3 AI agree and confidence >= 0.75 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
+            # If 3/3 AI agree and confidence >= 0.80 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
             # CRITICAL: If action_tier == "TP1_ONLY_SCALP", enforce single position only (no 2nd extended runner against macro)
             positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
             orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
@@ -1657,7 +1674,8 @@ def run_scanner_trading_cycle(cand, risk):
             
             agreeing_count = result.get("agreeing_count", 0)
             avg_conf = result.get("confidence", 0.0)
-            is_high_conf = (agreeing_count >= 3 and avg_conf >= 0.75 and remaining_slots >= 2 and action_tier_val != "TP1_ONLY_SCALP")
+            split_thresh = getattr(config, "HIGH_CONFIDENCE_SPLIT_THRESHOLD", 0.80)
+            is_high_conf = (agreeing_count >= 3 and avg_conf >= split_thresh and remaining_slots >= 2 and action_tier_val != "TP1_ONLY_SCALP")
             num_positions = 2 if is_high_conf else 1
             
             base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val)
@@ -1674,6 +1692,14 @@ def run_scanner_trading_cycle(cand, risk):
             can_trade_ok, risk_msg = risk.can_trade(sym)
             if not can_trade_ok:
                 print(f" {UI.YELLOW}[PRE-DISPATCH BLOCKED] Trade {sym} dibatalkan: {risk_msg}{UI.RST}")
+                tg.alert_trade_aborted(
+                    symbol=sym,
+                    signal=trade_signal,
+                    reason_code="PRE_DISPATCH_RISK_BLOCKED",
+                    details=risk_msg,
+                    confidence=result.get("confidence", 0.0),
+                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                )
                 return False
 
             # If pending order

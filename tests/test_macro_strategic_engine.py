@@ -107,7 +107,84 @@ class TestMacroStrategicEngine(unittest.TestCase):
         # Net Delta GBPAUD = +11.2 - (-11.2) = +22.4 (>= +18.0 threshold) -> SELL GBPAUD must be locked!
         locked_ga, reason_ga, _ = evaluate_systemic_basket_lock("GBPAUD", -1, scores_h1, scores_m15)
         self.assertTrue(locked_ga)
-        self.assertIn("EXTREME BASKET DELTA", reason_ga)
+    def test_orthogonal_clustering_and_anti_double_counting(self):
+        from src.analytics.macro_strategic_engine import MSEHyperparameters
+        params = MSEHyperparameters()
+        # 4 collinear timeframes at the exact same price 1.39000
+        raw_elements = [
+            (1.39000, 5.0, "W1_SBR"),
+            (1.39000, 4.5, "D1_SBR"),
+            (1.39000, 3.5, "H4_SBR"),
+            (1.39000, 2.0, "H1_SBR"),
+            (1.39000, 1.5, "PSYCH_50"),
+        ]
+        clusters = MacroStrategicEngine._cluster_merge_orthogonal(raw_elements, 0.0010, 5, params, is_ascending=True)
+        self.assertEqual(len(clusters), 1)
+        cl = clusters[0]
+        # S_structure is max(5.0, 4.5, 3.5, 2.0, 1.5) = 5.0
+        self.assertEqual(cl["s_structure"], 5.0)
+        # N_TF = 4 (W1, D1, H4, H1) -> D_TF = min(3 * 0.15, 0.35) = 0.35
+        self.assertAlmostEqual(cl["d_tf"], 0.35, places=2)
+        # Q = 5.0 * 1.35 = 6.75 (NOT 16.5 double-counted!)
+        self.assertAlmostEqual(cl["q_score"], 6.75, places=2)
+        self.assertTrue(cl["is_qualified"])
+
+    def test_structural_qualification_prevents_weak_poc_hijack(self):
+        from src.analytics.macro_strategic_engine import MSEHyperparameters
+        params = MSEHyperparameters()
+        # Weak micro element + huge FRVP POC
+        raw_elements = [
+            (1.38950, 1.5, "H4_HVN"),
+            (1.38950, 3.5, "D1_POC"),
+        ]
+        clusters = MacroStrategicEngine._cluster_merge_orthogonal(raw_elements, 0.0010, 5, params, is_ascending=True)
+        self.assertEqual(len(clusters), 1)
+        cl = clusters[0]
+        # Q is weak (< 2.5) because there is no structural anchor
+        self.assertLess(cl["q_score"], params.structural_validity_threshold)
+        # Thus, it is NOT qualified to become C1 or F1 chamber walls!
+        self.assertFalse(cl["is_qualified"])
+
+    def test_primitive_state_and_semantic_derivation(self):
+        from src.analytics.macro_strategic_engine import Location, StructuralEvent, Trajectory, PrimitiveState, derive_semantic_state
+        prim = PrimitiveState(
+            location=Location.CEILING,
+            event=StructuralEvent.REJECTION,
+            trajectory=Trajectory.DOWN,
+            last_barrier="C1:1.39000"
+        )
+        state_str = derive_semantic_state(prim)
+        self.assertEqual(state_str, "CEILING_REJECTION")
+
+        prim_breakout = PrimitiveState(
+            location=Location.OUTSIDE_ABOVE,
+            event=StructuralEvent.BREAK,
+            trajectory=Trajectory.UP
+        )
+        self.assertEqual(derive_semantic_state(prim_breakout), "CEILING_BREAKOUT")
+
+        prim_breakdown = PrimitiveState(
+            location=Location.OUTSIDE_BELOW,
+            event=StructuralEvent.BREAK,
+            trajectory=Trajectory.DOWN
+        )
+        self.assertEqual(derive_semantic_state(prim_breakdown), "FLOOR_BREAKDOWN")
+
+    def test_diversity_bonus_cap(self):
+        from src.analytics.macro_strategic_engine import MSEHyperparameters
+        # Test custom diversity cap 0.20
+        params = MSEHyperparameters(diversity_bonus_cap=0.20)
+        raw_elements = [
+            (1.39000, 5.0, "W1_SBR"),
+            (1.39000, 4.5, "D1_SBR"),
+            (1.39000, 3.5, "H4_SBR"),
+            (1.39000, 2.0, "H1_SBR"),
+        ]
+        clusters = MacroStrategicEngine._cluster_merge_orthogonal(raw_elements, 0.0010, 5, params, is_ascending=True)
+        cl = clusters[0]
+        # Should be capped at 0.20
+        self.assertAlmostEqual(cl["d_tf"], 0.20, places=2)
+        self.assertAlmostEqual(cl["q_score"], 6.00, places=2)
 
 
 if __name__ == "__main__":

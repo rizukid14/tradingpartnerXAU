@@ -111,7 +111,7 @@ python main.py
    - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-Flash menganalisis dossier independen.
    - **Pass 2** (cross-examination, ~1.5s): DeepSeek V4-Flash (Devil's Advocate CRO) mengaudit proposal + 24 candle M5 micro.
    - **Hard Risk Veto**: reject otomatis kalau flag `COUNTER_TREND_MOMENTUM/LIQUIDITY_TRAP/HIGH_IMPACT_NEWS/SPREAD_SPIKE/FALLING_KNIFE_WATERFALL`.
-4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 75\%$ memicu split 2 posisi (+25% boost).
+4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 80\%$ memicu split 2 posisi (+25% boost).
 5. **`_apply_sltp_rules` floor**:
    - JPY Crosses (M30): $\text{SL} \ge \max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$.
    - FX Majors & Crosses (H1): $\text{SL} \ge \max(2 \times \text{spread} + 15\text{ pts}, 0.68 \times \text{ATR H1})$. Fallback statis 250 pts kalau ATR gagal.
@@ -125,7 +125,7 @@ python main.py
 
 ## Gate eksekusi aktif (Hard Rules)
 
-- **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 75\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
+- **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 80\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
 - **Lantai SL/TP (`_apply_sltp_rules` di `consensus.py`)**:
   - **XAU**: floor SL = $\max(2 \times \text{spread}, 1.60 \times \text{ATR M30})$, fallback 600 pts. Mode `LLM` (default) atau `ATR-Based` via `.env`.
   - **JPY Crosses**: floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$, ceiling $\le 200\text{ pts}$.
@@ -229,6 +229,43 @@ python main.py
       4. Free Margin Buffer $\ge 60\%$.
       5. Konsentrasi Keranjang Valas $\le 3$ posisi per mata uang (USD, EUR, JPY, dll).
       6. Strict 1-Trade per Symbol.
+46. **Stage 1 Mechanical Action Zone Gating & Pure Physical Level Anchoring** (31 Agustus):
+    - **Mechanical `WATCH_ONLY` Hard Gate**: Simbol yang berstatus `WATCH_ONLY` dari MSE (misal di area Mid-Chamber 30–70% Dealing Range tanpa konfluensi batas) langsung di-drop total (`HARD_BLOCK` di `_is_direction_allowed()`) pada Stage 1 Fast Radar (0 token).
+    - **Eliminasi Total Formula Sintetis `mid - 0.20*ATR`**: Menghapus seluruh formula floating/buatan di M1 dan M2.
+    - **M2 Physical Action Zone Requirement**: M2 (`TREND_ALIGNED_PULLBACK`) wajib memvalidasi sentuhan fisik Action Zone $F_1$ Floor (BUY) atau $C_1$ Ceiling (SELL) dengan toleransi $\le 0.20\times\text{ATR}$ + konfirmasi penahanan support/rejection wick. Penempatan entry limit dijangkarkan 100% pada level fisik struktural ($F_1/C_1/\text{RBS}/\text{SBR}$).
+    - **M1 Pure Swept Level Retest Anchor**: Entry limit M1 (`UNIVERSAL_LIQUIDITY_SWEEP`) dijangkarkan murni pada level fisik yang baru saja disapu (`ref_bot` / `ref_top`), tanpa rumus jarak sintetis.
+47. **H4 SMC Dynamic Consolidation Flag Gating & Mid-Chamber Protection** (31 Agustus 2026):
+    - **120-Bar H4 LuxSMC Engine**: Evaluasi dinamis 120 bar H4 mendeteksi pola konvergensi flag/triangle (`is_triangle_compression` via Lower Highs + Higher Lows) dan stationary ranging box (`is_ranging_box` via $\le 1$ BOS atau dealing range pos $30\% - 70\%$).
+    - **Hard Block M2 di Pasar Ranging**: M2 (`TREND_ALIGNED_PULLBACK`) dikunci total (**0 token, otomatis dilewati**) saat simbol berstatus `is_h4_ranging` atau `is_h4_flag_triangle` guna mencegah open posisi ceroboh di area konsolidasi (kasus EURGBP).
+    - **Mid-Chamber Inaction Zone Protection ($25\% - 75\%$)**: Area tengah $25\% - 75\%$ dealing range H4 dipaksa berstatus `WATCH_ONLY` di MSE dan diblokir dari seluruh entry pullback.
+    - **Strict Active Zone Enforcements**: M2 Pullback BUY hanya diizinkan di $\le 45\%$ (Discount) dan SELL di $\ge 55\%$ (Premium) pada tren ekspansi; M1 Universal Sweep diperketat hanya di Extreme Active Zone ($\le 25\%$ BUY / $\ge 75\%$ SELL).
+48. **Unified Stage 1 Macro Direction & CSM Flow Gate Refactoring** (1 September 2026):
+    - **Konsolidasi Pengecekan Arah Makro**: Menyatukan pengecekan *Macro Bias Alignment*, *CSM Flow Opposition* (Net Delta $\le -1.0$ BUY / $\ge +1.0$ SELL), dan *Systemic Basket Lock* ke dalam satu gerbang terpadu `_is_direction_allowed()`.
+    - **Eliminasi Redundansi Gate C M1 Sweep**: Menghapus `Gate C (Macro Asymmetry)` dari `evaluate_universal_sweep_gates()`, memfokuskan M1 murni pada *Gate A (Area of Value Anchor)* dan *Gate B (Anti-Ceiling/Floor Vector Memory)* dengan zero-conflict log.
+49. **Adaptive Multi-Scale Reaction Engine & Dynamic Variable-Length Layer Matrix** (1 September 2026):
+    - **Dynamic Variable-Length Layers ($N \ge 1$, Zero Artificial Padding)**: Menghapus batas kaku 4-tier dan padding level boneka (`MACRO_EXT_FALLBACK`). Seluruh lapisan support ($F_1 \dots F_N$) dan resistance ($C_1 \dots C_M$) diekstrak murni dinamis berdasarkan formasi fisik pasar via toleransi adaptif $\Delta_{\text{tol}} = \max(0.30 \times \text{ATR}_{\text{H1}}, 0.25 \times \text{Step}_{\text{Atlas}}, 5 \times \text{Point})$.
+    - **3-Grade Reaction Scaling**: Setiap barrier diklasifikasikan secara matematis ke dalam `GRADE_1_MICRO` (Asian/Intraday, $S < 3.5$), `GRADE_2_INTERMEDIATE` (H4/FRVP/Psych, $3.5 \le S < 7.0$), atau `GRADE_3_MACRO` (D1/W1 SBR-RBS, Weekly Wall, Annual Extremes, $S \ge 7.0$).
+    - **Calibrated Breakout & Sweep Tolerances**: Toleransi penembusan momentum ($\Delta_{\text{disp}} = 0.15 / 0.35 / 0.60 \times \text{ATR}_{\text{H1}}$) dan toleransi sumbu M1 Sweep ($\text{Wick Band} = 0.20 / 0.35 / 0.50 \times \text{ATR}_{\text{H1}}$) diatur proporsional sesuai grade barrier.
+    - **Target Scaling**: Grade 1 Sweep menargetkan quick mean-reversion ke 50% Intraday Eq / H1 EMA20 ($1.25R$); Grade 3 Macro Sweep/Breakout menargetkan ekspansi koridor penuh menuju $C_{\text{deep}} / F_{\text{deep}}$ ($2.5 - 3.5R+$).
+    - **Multi-Scale Context Injection di LLM**: Prompt High-Density Dossier Stage 2 menyuntikkan matriks hierarki lantai dan plafon berjenjang lengkap dengan grade reaksi, memperkuat validasi 3-LLM Consensus Jury.
+50. **Hierarchical Synergy, Next-Structure Anchoring ($C_1/F_1$) & Bounded Micro-Precision Refinement** (1 September 2026):
+    - **Decoupled Architecture**: Pemisahan peran fundamental antara pure quant engine dan multi-LLM jury. Pure Quant MSE mengunci koordinat baseline SL, TP, dan volume lot sizing, sementara 3 LLM (OpenAI, Gemini, DeepSeek) difokuskan pada Price Action M15/M5 Microscope, timing eksekusi, deteksi news trap, dan veto risiko (CRO).
+    - **Next-Structure TP Anchoring ($C_1$ / $F_1$)**: Mengunci TP1 persis di depan dinding fisik terdekat ($C_1$ untuk BUY, $F_1$ untuk SELL) dikurangi *front-running pad* ($0.15\times\text{ATR} + \text{Spread}$). Mengeliminasi fenomena klasik TP kejauhan yang berakhir pada penutupan prematur oleh trailing stop / BEP.
+    - **Bounded Micro-Precision Refinement (Market Orders)**: LLM diberikan kewenangan untuk menyempurnakan level SL dan TP pada order market berdasarkan sumbu mikro M5/M15 sebesar maksimal $\Delta_{\text{micro\_bound}} = \max(0.25 \times \text{ATR}_{\text{H1}}, 30\text{ pts})$ ($\approx \pm 3 - 5\text{ pips}$). Deviasi di luar batas ini otomatis di-clamp kembali ke jangkar fisik MSE (`Quant Structural Anchor`).
+    - **Non-Coercive Limit Order Optimization**: Jika LLM mengamati R:R ke struktur berikutnya terlalu sempit di harga pasar saat ini atau menginginkan harga yang lebih optimal, prompt memandu LLM secara non-koersif untuk memilih **Pending Limit Order** (`buy_limit` / `sell_limit`) di level diskon/retest pilihan daripada memaksakan entry market.
+51. **80% Confidence Split Elevation & M2 Inaction Dead Zone Alignment** (1 September 2026):
+    - **Penaikan Ambang Batas Split 2 Posisi ke 80%**: Mengubah parameter ambang batas pembukaan 2 posisi (+25% boost) dari $75\%$ menjadi $\ge 80\%$ di `.env`, `config.py`, dan `main.py`, memastikan eksposur ganda hanya terpicu saat konsensus 3 AI benar-benar bulat dan berada pada tingkat keyakinan institusional prima.
+    - **Penyelarasan Mid-Chamber Dead Zone M2**: Mengoreksi `is_in_mid_chamber` pada `market_scanner.py` menjadi $0.45 \le \text{pos} \le 0.55$ (area netral equilibrium sejati). Menghilangkan pemblokiran tidak sengaja pada area diskon sehat $25\% - 45\%$ untuk M2 BUY dan area premium $55\% - 75\%$ untuk M2 SELL.
+52. **M15/M5 Micro Candlestick Microscope & Macro Token Streamlining** (1 September 2026):
+    - **Eliminasi Candle Redundan D1/H4/H1**: Deretan teks OHLC mentah D1, H4, dan H1 dihapus dari prompt karena seluruh struktur makro telah dirangkum matang oleh Pure Quant MSE di Section 4 (hemat $\approx 500$ token).
+    - **Mikroskop M15 & M5 Murni**: Umpan candle live difokuskan pada 16 bar M15 ($\approx 4\text{ jam}$) untuk dinamika intrahari dan 24 bar M5 ($\approx 2\text{ jam}$) untuk mikroskop sumbu presisi eksekusi, menghasilkan prompt yang lebih ramping, cepat (<3s), dan tajam.
+53. **GATE C: Anti-Expansion Momentum Vector in Universal Sweep** (1 September 2026):
+    - **Penyelarasan Jarak Dinding Makro Sejati ($C_1 / F_1$)**: Menggantikan penghitungan jarak atap/lantai statis PWH/PWL menjadi dinding fisik sejati $C_1$ (`macro.get('immediate_ceiling_c1')`) dan $F_1$ (`macro.get('immediate_floor_f1')`).
+    - **Larangan Menghadang Kereta Cepat**: Pada fungsi `evaluate_universal_sweep_gates()`, jika tren makro H4/D1 berstatus `BULLISH_EXPANSION` dan jarak menuju plafon makro $C_1$ masih terbuka lebar ($> 0.35\times\text{ATR}_{\text{H1}}$), sistem **100% MEMBLOKIR entri SELL** pada sapuan PDH/Asian High. Sapuan tersebut secara kuantitatif diklasifikasikan sebagai *Breakout Continuation*, bukan *reversal*. Symmetrically, larangan BUY diaktifkan saat tren `BEARISH_EXPANSION` menuju lantai $F_1$.
+54. **Overhaul & Penyelarasan Konfluensi Trio Eksekusi (M1, M2, M3)** (1 September 2026):
+    - **M1 Wall Rank Gate & Strict Reclaim**: Di pasar yang sedang trending, sapuan intrahari (Asian High/PDH) **hanya boleh di-fade jika bertabrakan langsung dengan Dinding Makro Sejati $C_1/F_1$ ber-Grade $\ge G_2$ (Intermediate / Macro Fortress)**; level $G_1$ (Micro) 100% diblokir. Harga live wajib sudah reclaim ke dalam (`mid < ref_top` / `mid > ref_bot`).
+    - **M2 Dynamic EMA Corridor**: Variabel `ema20` dan `ema50` H1 diaktifkan sebagai koridor nilai dinamis. Pullback BUY wajib bertahan di atas $\text{EMA50} - 0.15\times\text{ATR}$ dan tidak mengejar harga di atas $\text{EMA20} + 0.25\times\text{ATR}$. Pullback SELL wajib bertahan di bawah $\text{EMA50} + 0.15\times\text{ATR}$ dan di atas $\text{EMA20} - 0.25\times\text{ATR}$.
+    - **M3 Confirmed Closed Bar Outside**: Retest pada dinding $C_1/F_1$ hanya disiapkan jika **candle sebelumnya terkonfirmasi close di luar dinding** dengan impuls body $\ge 40\%$, membuktikan dinding telah resmi jebol sebelum di-retest dari sisi luar (New RBS/SBR).
 
 ---
 

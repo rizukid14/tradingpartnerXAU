@@ -423,6 +423,7 @@ CONFIDENCE_CONSENSUS_THRESHOLD_BTC = _getenv_float("CONFIDENCE_CONSENSUS_THRESHO
 # FIX 29 Agu: orphan env var - sekarang dibaca oleh confidence_threshold_for()
 CONFIDENCE_CONSENSUS_THRESHOLD_FX = _getenv_float("CONFIDENCE_CONSENSUS_THRESHOLD_FX", 1.2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
+HIGH_CONFIDENCE_SPLIT_THRESHOLD = _getenv_float("HIGH_CONFIDENCE_SPLIT_THRESHOLD", 0.80)
 
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
 # Format: (start_hour, start_minute, end_hour, end_minute, mode)
