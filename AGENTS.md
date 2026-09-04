@@ -137,7 +137,7 @@ python main.py
   - **Friction-Aware Net R:R**: Target $\text{TP} = (\text{SL} \times R) + \text{Spread} + \text{Round-turn Commission}$ (memastikan net profit riil $\ge 1.25R$ bersih).
   - **M3 Fresh Breakout Law & Debounce**: Breakout recency $\le 4$ bar H1, displacement body $\ge 55\%$. Rejection di-lock 2 jam / sampai displacement $>0.50\times\text{ATR}$.
   - **Ceiling (anti-runaway)**: FX/JPY/Gold = $2.5 \times \text{ATR}$ (fallback 350 pts FX/JPY, 800 Gold); BTC = $1.8 \times \text{ATR}$ (fallback 45000).
-  - **R:R**: Net TP $\in [1.25\times, 3.0\times]$ SL + friction (grade-aware).
+  - **R:R**: Net TP $\in [1.25\times, 3.0\times]$ SL + friction (grade-aware). Pada setup `REDUCED_SCALP` / `TP1_ONLY_SCALP`, R:R dibatasi ke $[1.00\times, 1.25\times]$ guna mencegah pembengkakan TP makro pada scalp intraday.
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 00:00–08:00 WIB (FX & XAU skip; BTC 24/7 di legacy mode).
 - **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders.

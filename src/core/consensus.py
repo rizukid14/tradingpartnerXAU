@@ -278,7 +278,11 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""
             
             # Fallback ke Quant Station TP asli jika tersedia dan berada dalam batas wajar
-            cand_tp_pts = getattr(candidate, 'suggested_tp_pts', 0) if candidate else 0
+            raw_cand_tp_pts = getattr(candidate, 'suggested_tp_pts', 0) if candidate else 0
+            try:
+                cand_tp_pts = int(raw_cand_tp_pts) if raw_cand_tp_pts is not None else 0
+            except (TypeError, ValueError):
+                cand_tp_pts = 0
             if not cand_tp_pts and candidate and getattr(candidate, 'suggested_tp', 0.0) and getattr(candidate, 'trigger_price', 0.0):
                 try:
                     pt_val = si.point if si and si.point else (0.001 if "JPY" in str(sym) else (0.01 if "XAU" in str(sym) or "BTC" in str(sym) else 0.00001))
@@ -842,17 +846,26 @@ def calculate_consensus(decisions, candidate=None):
         llm_rr = (curr_cand_reward / curr_cand_risk) if (curr_cand_risk > 0) else 0.0
         is_valid_dir_tp = (consensus_signal == "BUY" and final_tgt > base_calc_ref) or (consensus_signal == "SELL" and final_tgt < base_calc_ref) if (final_tgt and base_calc_ref) else False
 
-        # Anti-Frankenstein R:R Guard: Ensure no sub-par R:R (< 1.25x) slips through
-        if llm_rr < 1.25 or not is_valid_dir_tp:
+        # Anti-Frankenstein R:R Guard: Ensure no sub-par R:R slips through
+        eff_action_tier = confluence.get("tier") or getattr(candidate, 'action_tier', None)
+        is_reduced_scalp = eff_action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP") or "REDUCED_SCALP" in str(getattr(candidate, 'setup_grade', '')).upper()
+        target_min_rr = 1.00 if is_reduced_scalp else 1.25
+
+        if llm_rr < target_min_rr or not is_valid_dir_tp:
             quant_reward = abs(prop_tp - base_calc_ref) if (prop_tp and base_calc_ref) else 0.0
             quant_rr = (quant_reward / curr_cand_risk) if (curr_cand_risk > 0) else 0.0
-            if quant_rr >= 1.25:
-                outlier_notes.append(f"Anti-Frankenstein Guard: Proposed R:R ({llm_rr:.2f}:1) < 1.25x -> TP expanded to Quant Target ({prop_tp}) yielding R:R {quant_rr:.2f}:1")
-                final_tgt = prop_tp
+            if quant_rr >= target_min_rr:
+                if is_reduced_scalp and quant_rr > 1.25:
+                    max_scalp_dist = 1.25 * curr_cand_risk
+                    final_tgt = (base_calc_ref + max_scalp_dist) if consensus_signal == "BUY" else (base_calc_ref - max_scalp_dist)
+                    outlier_notes.append(f"Anti-Frankenstein Guard (Reduced Scalp): TP calibrated to 1.25x level ({final_tgt})")
+                else:
+                    outlier_notes.append(f"Anti-Frankenstein Guard: Proposed R:R ({llm_rr:.2f}:1) < {target_min_rr}x -> TP expanded to Quant Target ({prop_tp}) yielding R:R {quant_rr:.2f}:1")
+                    final_tgt = prop_tp
             else:
-                min_tp_dist = 1.25 * curr_cand_risk
+                min_tp_dist = target_min_rr * curr_cand_risk
                 final_tgt = (base_calc_ref + min_tp_dist) if consensus_signal == "BUY" else (base_calc_ref - min_tp_dist)
-                outlier_notes.append(f"Anti-Frankenstein Guard: Proposed R:R ({llm_rr:.2f}:1) < 1.25x -> TP calibrated to minimum 1.25x level ({final_tgt})")
+                outlier_notes.append(f"Anti-Frankenstein Guard: Proposed R:R ({llm_rr:.2f}:1) < {target_min_rr}x -> TP calibrated to minimum {target_min_rr}x level ({final_tgt})")
         else:
             if final_tgt is not None and (abs(final_tgt - prop_tp) <= tp_micro_bound or (1.25 <= llm_rr <= 3.0)):
                 diff_tp_pts = abs(final_tgt - prop_tp) / point if point > 0 else 0
@@ -876,10 +889,11 @@ def calculate_consensus(decisions, candidate=None):
         final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(cand_sym)
         final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(cand_sym)
 
+    eff_action_tier = confluence.get("tier") or getattr(candidate, 'action_tier', None)
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(
         final_sl, final_tp,
         symbol=cand_sym,
-        action_tier=getattr(candidate, 'action_tier', None),
+        action_tier=eff_action_tier,
         setup_grade=getattr(candidate, 'setup_grade', None),
         candidate=candidate
     )

@@ -2,6 +2,32 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0. Perubahan 4 September 2026 (Malam V) — Penyelarasan 2D Confluence Action Tier dengan Anti-Frankenstein Guard & Capping SL/TP
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pelebaran Target TP Tidak Proporsional pada Setup Reduced Scalp (Kasus GBPCHF Live)**:
+   - Pada posisi live GBPCHF (Ticket #1261997759: SELL 0.10 lot, SL 212 pts, TP 400 pts), engine 2D Confluence mengevaluasi tier `REDUCED_SCALP` sehingga lot dipotong 50% ($0.21 \rightarrow 0.10$ lot).
+   - DeepSeek CRO di Pass 2 mengusulkan target scalp di F3 (1.09183 = 221 pts, R:R 1.00:1).
+   - Namun Anti-Frankenstein Guard sebelumnya memiliki ambang batas kaku `if llm_rr < 1.25`, memperlakukan target 1.00:1 sebagai sub-par dan otomatis memperlebar TP ke Quant Target Station F1 (1.09012 = 392 pts, ~400 pts).
+   - Selain itu, `_apply_sltp_rules` menerima `candidate.action_tier` (`FULL_ALLOW`) alih-alih `confluence["tier"]` (`REDUCED_SCALP`), sehingga aturan capping $1.25\times$ R:R tidak aktif.
+2. **Karakteristik H1 Intraday Trading**:
+   - Untuk pair GBPCHF dengan ATR H1 105 pts dan D1 ADR 531 pts, jarak TP 400 pts (3.8x ATR H1 / 75% ADR) terlalu jauh untuk setup scalp intraday, sementara order AUDCAD (BUY_LIMIT 0.66 lot, SL 120 pts, TP 207 pts, R:R 1.63x net setelah komisi & spread) sudah proporsional (2.3x ATR H1 / 49% ADR).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Effective Action Tier di Konsensus (`consensus.py`)**:
+   - Menghitung `eff_action_tier = confluence.get("tier") or getattr(candidate, 'action_tier', None)`.
+   - Menyesuaikan Anti-Frankenstein Guard:
+     * Jika `is_reduced_scalp`, `target_min_rr` diturunkan menjadi 1.00:1 (menghormati proposal scalp CRO).
+     * Jika TP quant melebihi 1.25x R:R, TP dibatasi pada batas aman 1.25x risk (`max_scalp_dist = 1.25 * curr_cand_risk`).
+   - Meneruskan `eff_action_tier` ke fungsi `_apply_sltp_rules(..., action_tier=eff_action_tier, ...)` sehingga aturan pembatasan `max_rr = 1.25` langsung aktif saat 2D Confluence memicu `REDUCED_SCALP`.
+2. **Penguatan Ekstraksi Defensif Atribut Cand_TP (`consensus.py`)**:
+   - Membungkus parsing `suggested_tp_pts` dengan `try/except` integer casting untuk mencegah `TypeError` saat berhadapan dengan mock/non-int objects pada pengujian.
+3. **Unit Test Suite Lengkap (`tests/test_cro_package_arbitration.py`)**:
+   - Menambahkan pengujian `test_anti_frankenstein_guard_reduced_scalp_capped` untuk memverifikasi bahwa setup reduced scalp tetap terikat pada rentang R:R $[1.00\times, 1.25\times + \text{friction}]$.
+   - 100% full unit test suite PASS tanpa regresi.
+
 ---
 
 ## 0. Perubahan 4 September 2026 (Malam IV) — Netralisasi Direktif Verdict (APPROVE vs REVISE vs REJECT) & Pengecualian Limit Order Berita Besar

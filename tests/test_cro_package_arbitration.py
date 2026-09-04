@@ -32,6 +32,7 @@ class TestCROPackageArbitration(unittest.TestCase):
         self.candidate.dealing_range_pos = 0.28
         self.candidate.suggested_sl = 0.58057
         self.candidate.suggested_tp = 0.58488
+        self.candidate.suggested_tp_pts = 0
         self.candidate.risk_reward_ratio = 2.31
         self.candidate.strong_low = 0.58050
         self.candidate.strong_high = 0.58500
@@ -207,6 +208,54 @@ class TestCROPackageArbitration(unittest.TestCase):
         achieved_rr = reward / risk if risk > 0 else 0.0
         self.assertGreaterEqual(achieved_rr, 1.25, f"Expected R:R >= 1.25, got {achieved_rr:.2f}")
 
+    @patch("src.core.consensus.config.mt5.copy_rates_from_pos")
+    @patch("src.core.consensus.config.mt5.account_info")
+    @patch("src.core.consensus.config.mt5.symbol_info_tick")
+    @patch("src.core.consensus.config.mt5.symbol_info")
+    def test_anti_frankenstein_guard_reduced_scalp_capped(self, mock_si, mock_tick, mock_acc, mock_rates):
+        mock_si.return_value = MagicMock(point=0.00001, trade_tick_value=1.0, trade_tick_size=0.00001, volume_min=0.01)
+        mock_tick.return_value = MagicMock(bid=0.58220, ask=0.58222)
+        mock_acc.return_value = MagicMock(equity=5000.0)
+        mock_rates.return_value = self.dummy_rates
+
+        self.candidate.action_tier = "REDUCED_SCALP"
+        self.candidate.setup_grade = "REDUCED_SCALP"
+
+        # Proposal with 1.10 R:R
+        decisions = {
+            "OpenAI": {
+                "signal": "BUY",
+                "confidence": 0.70,
+                "verdict": "REVISE",
+                "execution": {"entry_type": "buy_limit", "entry_price": 0.58187, "sl_price": 0.58057, "tp_price": 0.58330},
+                "reasoning": "Scalp buy."
+            },
+            "Gemini": {
+                "signal": "BUY",
+                "confidence": 0.68,
+                "verdict": "REVISE",
+                "execution": {"entry_type": "buy_limit", "entry_price": 0.58187, "sl_price": 0.58057, "tp_price": 0.58330},
+                "reasoning": "Scalp buy."
+            },
+            "DeepSeek": {
+                "signal": "BUY",
+                "confidence": 0.85,
+                "verdict": "APPROVE",
+                "execution": {"entry_type": "buy_limit", "entry_price": 0.58187, "sl_price": 0.58057, "tp_price": 0.58330},
+                "reasoning": "Scalp buy."
+            }
+        }
+
+        res = consensus.calculate_consensus(decisions, candidate=self.candidate)
+        self.assertEqual(res["signal"], "BUY")
+        risk = abs(0.58187 - res["invalidation_price"])
+        reward = abs(res["target_price"] - 0.58187)
+        achieved_rr = reward / risk if risk > 0 else 0.0
+        # 1.25x base + friction compensation (spread + commission) yields ~1.31x gross R:R
+        self.assertLessEqual(achieved_rr, 1.35, f"Expected R:R <= 1.35 for REDUCED_SCALP (1.25x + friction), got {achieved_rr:.2f}")
+        self.assertGreaterEqual(achieved_rr, 1.00, f"Expected R:R >= 1.00, got {achieved_rr:.2f}")
+
 
 if __name__ == "__main__":
     unittest.main()
+
