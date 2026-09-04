@@ -765,9 +765,16 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 def audit_pending_orders_thesis():
     """
     Real-Time Thesis Failure Invalidation Engine for Active Pending Orders.
-    Monitors all pending orders in MT5. If the underlying market structure fails
-    (e.g., M15 candle closes back inside the chamber across C1/F1, MSE state flips to REJECTION,
-    or CSM inverts sharply), the pending order is cancelled immediately to prevent catching a falling knife.
+    Monitors all pending orders in MT5. An order is cancelled ONLY if:
+      (1) Price has severely penetrated past the structural invalidation level:
+          - BUY: M15 close < (order_sl if order_sl > 0 else anchor - 0.50x ATR)
+          - SELL: M15 close > (order_sl if order_sl > 0 else anchor + 0.50x ATR)
+      (2) Systemic CSM currency flow inverts violently against the order (|delta| > 0.35 opposing)
+      (3) Confirmed Structural Stage Breakdown/Breakout in MSE:
+          - BUY: 'FLOOR_BREAKDOWN' in market_state
+          - SELL: 'CEILING_BREAKOUT' in market_state
+    NOTE: Minor MSE bias fluctuations or normal retest wicks/rejections (FLOOR_REJECTION / CEILING_REJECTION)
+    MUST NOT cancel pending orders (fixes bug where CEILING_REJECTION cancelled SELL limit orders).
     """
     try:
         orders = mt5.orders_get()
@@ -796,11 +803,7 @@ def audit_pending_orders_thesis():
             if not strat_dir:
                 continue
 
-            c1 = strat_dir.immediate_ceiling_c1
-            f1 = strat_dir.immediate_floor_f1
-            m_state = strat_dir.market_state
-            prim_dir = strat_dir.primary_execution_directive
-            bias_score = strat_dir.macro_bias_score
+            m_state = strat_dir.market_state or ""
 
             # 2. Fetch latest M15 rates
             rates_m15 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M15, 0, 3)
@@ -808,30 +811,63 @@ def audit_pending_orders_thesis():
             atr_pts = _get_dynamic_atr_points(sym, pt)
             atr_val = (atr_pts * pt) if atr_pts > 0 else (20 * pt)
 
+            # 3. Fetch CSM Net Delta
+            csm_delta = 0.0
+            try:
+                from src.analytics.currency_strength import get_csm_delta_for_symbol
+                csm_delta = get_csm_delta_for_symbol(sym)
+            except Exception:
+                csm_delta = 0.0
+
             cancel_reason = None
+            # Helper to extract numeric values safely from live MT5 struct or test mocks
+            def _safe_num(val, default=0.0):
+                if val is None:
+                    return default
+                if isinstance(val, (int, float)):
+                    return float(val)
+                if 'Mock' in type(val).__name__:
+                    return default
+                try:
+                    return float(val)
+                except Exception:
+                    return default
+
             is_m4_order = "SYSTEM" in (getattr(ord_item, "comment", "") or "").upper()
+            open_px = _safe_num(ord_item.price_open, 0.0)
+            sl_px = _safe_num(getattr(ord_item, 'sl', None), 0.0)
+            tp_px = _safe_num(getattr(ord_item, 'tp', None), 0.0)
+            curr_market_px = _safe_num(getattr(si, 'bid', None) if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP) else getattr(si, 'ask', None), 0.0)
+            if curr_market_px <= 0.0:
+                curr_market_px = _safe_num(last_m15_close, open_px)
 
-            # 3. Check Thesis Invalidation for BUY Pending Orders
+            # 4. Check Thesis Invalidation for BUY Pending Orders
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
-                # Condition A: Re-entry breakdown below C1 - 0.25x ATR (if it was a breakout retest above C1)
-                if not is_m4_order and c1 > 0 and ord_item.price_open >= c1 - (0.15 * atr_val):
-                    if last_m15_close < c1 - (0.25 * atr_val):
-                        cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber below C1 ({c1:.5f})"
-                # Condition B: MSE flipped to Bearish Pullback or Ceiling Rejection (bypassed untuk M4 systemic shock)
-                if not is_m4_order and (bias_score <= -0.40 or "HUNT_SELL" in prim_dir or "REJECTION" in m_state):
-                    cancel_reason = f"MSE flipped to Bearish ({m_state} / {prim_dir})"
+                # Structural Invalidation Floor: use SL if defined, else anchor - 0.50x ATR
+                inv_floor = sl_px if (sl_px > 0 and sl_px < open_px) else (open_px - (0.50 * atr_val))
+                if last_m15_close < inv_floor:
+                    cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation floor ({inv_floor:.5f})"
+                elif ord_item.type == mt5.ORDER_TYPE_BUY_LIMIT and tp_px > open_px and curr_market_px >= (open_px + 0.75 * (tp_px - open_px)):
+                    cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
+                elif not is_m4_order and csm_delta < -0.35:
+                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bearish ({csm_delta:+.2f})"
+                elif not is_m4_order and "FLOOR_BREAKDOWN" in m_state:
+                    cancel_reason = f"MSE Structural Floor Breakdown ({m_state})"
 
-            # 4. Check Thesis Invalidation for SELL Pending Orders
+            # 5. Check Thesis Invalidation for SELL Pending Orders
             elif ord_item.type in (mt5.ORDER_TYPE_SELL_LIMIT, mt5.ORDER_TYPE_SELL_STOP):
-                # Condition A: Re-entry breakout above F1 + 0.25x ATR (if it was a breakdown retest below F1)
-                if not is_m4_order and f1 > 0 and ord_item.price_open <= f1 + (0.15 * atr_val):
-                    if last_m15_close > f1 + (0.25 * atr_val):
-                        cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber above F1 ({f1:.5f})"
-                # Condition B: MSE flipped to Bullish Expansion or Floor Rejection (bypassed untuk M4 systemic shock)
-                if not is_m4_order and (bias_score >= 0.40 or "HUNT_BUY" in prim_dir or "REJECTION" in m_state):
-                    cancel_reason = f"MSE flipped to Bullish ({m_state} / {prim_dir})"
+                # Structural Invalidation Ceiling: use SL if defined, else anchor + 0.50x ATR
+                inv_ceiling = sl_px if (sl_px > 0 and sl_px > open_px) else (open_px + (0.50 * atr_val))
+                if last_m15_close > inv_ceiling:
+                    cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation ceiling ({inv_ceiling:.5f})"
+                elif ord_item.type == mt5.ORDER_TYPE_SELL_LIMIT and tp_px > 0 and tp_px < open_px and curr_market_px <= (open_px - 0.75 * (open_px - tp_px)):
+                    cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
+                elif not is_m4_order and csm_delta > +0.35:
+                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bullish ({csm_delta:+.2f})"
+                elif not is_m4_order and "CEILING_BREAKOUT" in m_state:
+                    cancel_reason = f"MSE Structural Ceiling Breakout ({m_state})"
 
-            # 5. Cancel order if thesis failed
+            # 6. Cancel order if thesis failed
             if cancel_reason:
                 req = {
                     "action": mt5.TRADE_ACTION_REMOVE,

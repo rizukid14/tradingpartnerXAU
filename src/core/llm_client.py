@@ -1293,6 +1293,8 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
             candles_block += f"\n- H1 Execution (Last 12 bars OHLC):\n{recent_h1_str}\n"
     
     meta_lines = []
+    if meta.get("multi_confluence"):
+        meta_lines.append(f"- Multi-Mechanism Structural Confluence: {meta.get('confluence_desc')} (High Probability Cluster)")
     if meta.get("entry_type"):
         meta_lines.append(f"- Proposed Execution Method: {meta.get('entry_type').upper()} @ {meta.get('entry_price')}")
     if meta.get("zone_touches"):
@@ -1597,16 +1599,24 @@ Your mission is to evaluate candidate setups proposed by the Python Quantitative
 1. Strict Unanimous Consensus: All active models must agree on direction (BUY or SELL). If split or uncertain, default to HOLD/REJECT.
 2. Mandatory R:R Gate & Intraday Structure Floor: Minimum R:R >= 1.25. Anchor SL behind physical intraday structural barriers (Scanner Raw SL, nearest H1 Order Block, or SBR/RBS + anti-wick buffer). SL MUST remain tightly bounded to intraday structure (0.50x to 1.00x ATR H1). FORBIDDEN: DO NOT inflate SL into deep multi-day macro invalidation stops (e.g. > 1.2x ATR) or deep TP2 macro stations for intraday candidates.
 3. Hybrid Targeting & Front-Running Pad: TP must snap to the nearest physical station/SBR/RBS minus front-running pad (TP = Station - [0.15x ATR + Spread] for BUY; Station + [0.15x ATR + Spread] for SELL).
-4. Symmetrical 5-Tier Action Matrix Permission:
-   - BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
-   - SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never adang rocket spikes (VERTICAL_SPIKE_LOCK).
-5. 4-Grade Quality Matrix:
+4. Symmetrical 5-Tier Action Matrix & Paradigm Separation:
+   - Mean-Reversion / Reload Setups (M1 Universal Sweep & M2 Trend-Aligned Pullback):
+     * BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
+     * SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never front-run rocket spikes (VERTICAL_SPIKE_LOCK).
+   - Breakout Retest & Continuation Setups (M3 Breakout Retest & M4 Systemic Flow):
+     * The 50% Dealing Range rule does NOT apply as a rejection barrier (breakout above resistance naturally occurs in Premium, and breakdown below support naturally occurs in Discount).
+     * Validate against the Flipped Structural Barrier (RBS/SBR retest quality) and runway to the next station/barrier.
+5. Limit Order Preference over Hard Reject:
+   - If the directional thesis and structural zone (SBR/RBS, Order Block, or F1/C1) have sound institutional probability, but price action at current market price is unconfirmed, in retracement, or slightly off-level: DO NOT REJECT. Select 'REVISE' with a PENDING LIMIT ORDER ('buy_limit' / 'sell_limit') anchored at the structural retest level!
+   - Reserve 'REJECT' strictly for fatal, high-impact structural violations: HTF Macro inversion against trade without CHoCH, severe news event spike, unmitigated waterfall penetrating past invalidation, or complete lack of edge.
+6. 4-Grade Quality Matrix:
    - GRADE_S (God-Tier, 1.0x Lot, 3.0x ATR TP) | GRADE_A_PLUS (High Conviction, 1.0x Lot, 2.0x ATR TP)
    - GRADE_A (Standard, 1.0x Lot, 1.5x ATR TP) | GRADE_B (Defensive Scalp TP1 Only, 0.50x Lot, 1.25x ATR TP).
 
 ### 2. MASTER INSTITUTIONAL HARD RISK VETO FLAGS:
 If any of these conditions are present, you MUST reject the trade (Verdict: REJECT or Signal: HOLD):
-- COUNTER_TREND_MOMENTUM: Counter-trend against H4/D1 trend or unmitigated falling knife.
+- COUNTER_TREND_MOMENTUM: Counter-trend against H4/D1 trend or unmitigated falling knife. Note: Orderly 2-3 bar pullback retracements towards a pending limit anchor are NOT waterfalls.
+- FALLING_KNIFE_WATERFALL: Unmitigated candle expansion penetrating clean through the anchor level with zero rejection wicks and closing past invalidation.
 - LIQUIDITY_TRAP: Entry directly in front of Equal Highs/Lows (EQH/EQL) or structural ceiling.
 - IMPULSE_CHASE: FOMO chase of extended candle without basing -> select REVISE to Pending Limit.
 - SYSTEMIC_CURRENCY_DUMP: Base currency collapsing across 8-currency Boitoki CSM.
@@ -1744,6 +1754,24 @@ def build_openai_structure_dossier_prompt(candidate, recent_d1_str=None, recent_
     h4_st = getattr(candidate, 'h4_trend', '') or 'Aligned with Macro'
     tier_st = getattr(candidate, 'action_tier', 'FULL_ALLOW')
 
+    meta = getattr(candidate, 'metadata', {}) or {}
+    trajectory_line = ""
+    orig_px = meta.get("origin_price")
+    orig_age = meta.get("origin_age")
+    tgt_px = meta.get("target_price")
+    if orig_px and tgt_px:
+        trajectory_line = f"\n- Standby Trajectory: Origin @ {fp(orig_px)} ({orig_age} bars ago) -> Retest Level @ {fp(candidate.trigger_price)} -> Projected Target @ {fp(tgt_px)}"
+
+    setup_paradigm_note = ""
+    st_type = str(getattr(candidate, 'setup_type', '') or '')
+    if "BREAKOUT" in st_type or "SYSTEMIC" in st_type or st_type == config.M4_SETUP_TYPE:
+        setup_paradigm_note = (
+            f"\n- Setup Paradigm: CONTINUATION / BREAKOUT RETEST ({st_type}). "
+            f"Price has breached structural boundary and is retesting the flipped level (RBS/SBR). "
+            f"Dealing Range position ({candidate.dealing_range_pos*100:.1f}%) reflects post-breakout expansion — "
+            f"DO NOT reject simply because BUY is in Premium or SELL is in Discount. Evaluate continuation corridor delivery."
+        )
+
     prompt = f"""# ROLE: CHIEF QUANTITATIVE MACRO STRATEGIST (OPENAI o4-mini)
 ## MISSION BRIEF
 You are the Chief Quantitative Macro Strategist of an elite institutional hedge fund.
@@ -1757,7 +1785,7 @@ You analyze D1/H4 macro delivery. You DO NOT touch micro M5/M1 wicks — that is
 - MSE Action Tier: {tier_st} | Regime Stability: {getattr(candidate, 'regime_stability', 'STABLE')}
 - Intraday Chamber Position: {candidate.dealing_range_pos*100:.1f}% ({'🟢 DISCOUNT — Buy Zone' if candidate.dealing_range_pos <= 0.35 else ('🟡 LOWER DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('⚪ EQUILIBRIUM — Avoid Market Orders' if candidate.dealing_range_pos <= 0.55 else ('🟠 UPPER PREMIUM' if candidate.dealing_range_pos <= 0.65 else '🔴 PREMIUM — Sell Zone')))})
 - Volatility Regime: ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts | Spread/ATR Ratio = {candidate.current_spread_pts / max(candidate.current_atr_pts, 1) * 100:.1f}%
-- Setup Type Proposed: {candidate.setup_type} | Baseline R:R: {candidate.risk_reward_ratio:.2f}:1
+- Setup Type Proposed: {candidate.setup_type} | Baseline R:R: {candidate.risk_reward_ratio:.2f}:1{trajectory_line}{setup_paradigm_note}
 
 ---
 ## 2. HTF MULTI-TIMEFRAME CANDLESTICK TAPE
@@ -1798,13 +1826,24 @@ Classify the current market structure into ONE of:
 1. **Corridor Delivery**: Has price shown structural acceptance ABOVE base station (BUY) or BELOW resistance station (SELL)? Station-to-Station delivery requires a clear close, not just a wick touch.
 2. **Anti-FOMO Gate**: Dealing Range >= 85% (BUY) or <= 15% (SELL) → FORBIDDEN market order. MUST use 'buy_limit'/'sell_limit' at retest level, or REJECT if no retest anchor exists.
 3. **Macro Headwind Check**: If D1 trend direction opposes proposed trade, and H4 lacks a clear CHoCH structure flip — output REJECT with COUNTER_TREND_MOMENTUM flag.
-4. **Confidence Calibration (Hard Floor >= 0.60)**: Only APPROVE if you have >= 70% conviction in macro alignment. If 60-69% conviction → REVISE with Pending Limit. If conviction is < 60% OR if opposing macro momentum is present, you are STRICTLY FORBIDDEN from issuing a BUY/SELL signal — you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+4. **Execution Verdict Framework (Neutral & Independent of Confidence Level)**:
+   - **'APPROVE'**: Select this if you agree with the proposed directional bias AND accept the initial proposed entry coordinates without modification.
+   - **'REVISE'**: Select this if you agree with the directional bias (BUY/SELL), but wish to modify the entry (e.g. converting market entry into a pending limit order, or anchoring entry at Floor F1 / Ceiling C1 / broken SBR/RBS) or adjust SL/TP to better structural boundaries.
+     * CRITICAL: 'REVISE' is NOT a low-confidence verdict! High-confidence convictions (70%, 80%, 90%) are fully valid for 'REVISE' when setting disciplined limit orders.
+     * If live price is in mid-chamber consolidation, or approaching boundaries, choose 'REVISE' with 'buy_limit'/'sell_limit' at the structural station anchor.
+   - **'REJECT'**: Mandatory if your directional conviction is below 60% (< 0.60) OR if fatal structural violations are present (HTF macro inversion without CHoCH, waterfall collapse past invalidation).
+     * When rejecting, you MUST output signal: "HOLD", verdict: "REJECT", and confidence <= 0.40.
+5. **High-Impact News Policy**:
+   - Within 1 hour before/after a High-Impact News event:
+     * MARKET orders are strictly FORBIDDEN due to spread blowouts and immediate execution slippage.
+     * PENDING LIMIT orders ('REVISE') anchored safely at major macro stations (F1/F2 floor or C1/C2 ceiling) are PERMITTED to absorb news spike wicks, provided conviction remains >= 0.60.
+     * If news volatility makes even structural limit orders unsafe, output verdict: "REJECT" and signal: "HOLD".
 
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
   "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60,
-  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
+  "confidence": float (0.00 to 1.00) — STRICT: Directional BUY/SELL requires >= 0.60 (both for APPROVE and REVISE). If conviction < 0.60, set signal to "HOLD" and verdict to "REJECT",
   "role": "STRATEGIC_STRUCTURE",
   "regime": "EXPANSION_TREND" | "ABSORPTION_PRE_BREAKOUT" | "RANGE_BOUND" | "EXHAUSTION_REVERSAL",
   "station_corridor": "e.g. '1.09500 -> 1.10020 (Base Station -> C1 Ceiling)' describing price delivery path",
@@ -1861,6 +1900,13 @@ def build_gemini_price_action_dossier_prompt(candidate, recent_m1_str=None, rece
             ch_desc = "NEAR CEILING C1 (Resistance Retest)" if ch_clamped >= 0.70 else ("NEAR FLOOR F1 (Support Retest)" if ch_clamped <= 0.30 else "MID-CHAMBER")
             chamber_line = f"- Local ZCE Execution Chamber: Floor F1 = {fp(zce_f1)} │ Ceiling C1 = {fp(zce_c1)} │ Local Position: {ch_clamped*100:.1f}% ({ch_desc})"
 
+    orig_px = meta.get("origin_price")
+    orig_age = meta.get("origin_age")
+    tgt_px = meta.get("target_price")
+    trajectory_line = ""
+    if orig_px and tgt_px:
+        trajectory_line = f"\n- Standby Trajectory: Origin @ {fp(orig_px)} ({orig_age} bars ago) -> Retest Level @ {fp(candidate.trigger_price)} -> Projected Target @ {fp(tgt_px)}"
+
     prompt = f"""# ROLE: MASTER PRICE ACTION & RETEST TACTICIAN (GEMINI 3.1-Flash)
 ## MISSION BRIEF
 You are the Lead Price Action and Order Flow Tactician of an elite institutional quantitative hedge fund.
@@ -1875,18 +1921,19 @@ You DO NOT analyze D1/H4 macro economics — that is OpenAI's domain. You own th
 - Quant Baseline: SL = {fp(candidate.suggested_sl)} | TP = {fp(candidate.suggested_tp)} | R:R = {candidate.risk_reward_ratio:.2f}:1
 - Macro 50-bar Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'🟢 DISCOUNT' if candidate.dealing_range_pos <= 0.35 else ('🟡 LOWER DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('⚪ EQUILIBRIUM' if candidate.dealing_range_pos <= 0.55 else ('🟠 UPPER PREMIUM' if candidate.dealing_range_pos <= 0.65 else '🔴 PREMIUM')))})
 {f"{chamber_line}\n" if chamber_line else ""}- ATR(14) H1 = {candidate.current_atr_pts:.1f} pts | Spread = {candidate.current_spread_pts} pts
-- Rejection Wick Metric: {wick_desc}
+- Rejection Wick Metric: {wick_desc}{trajectory_line}
 
 ### [M1] Live Micro Scalp Tape — Last 15 Bars (Execution-Level Flow):
 {m1_tape}
 KEY: Look for absorption sequences — small-body bars with long lower wicks at support = institutional demand. Wide-body bars closing above midpoint = displacement momentum.
 
-### [M5] Live Execution Flow Tape — Last 24 Bars (Entry Confirmation Window):
+### [M5] Live Execution Flow Tape — Last 24 Bars [PULLBACK RETEST RETRACEMENT CHECK]:
 {m5_tape}
-KEY: Classify candle anatomy per bar:
-  - DISPLACEMENT: body > 60% of candle range, wicks < 20% — strong conviction directional move
-  - INDECISION: body < 30% of range, long wicks both sides — institutional contention / chop
-  - REJECTION_WICK: lower wick (BUY) or upper wick (SELL) > 40% of candle range — institutional defense at level
+KEY: Differentiate Retest Pullbacks vs Cascading Waterfalls:
+  - When price is pulling back towards the retest anchor ({fp(candidate.trigger_price)} or SBR/RBS), 2-3 opposing bars approaching the level are a NORMAL RETRACEMENT leg.
+  - DO NOT classify incoming pullback bars as a WATERFALL or FALLING KNIFE unless they penetrate cleanly THROUGH the anchor level with wide bodies (no wicks) and close beyond invalidation.
+  - Absorption / Confirmation: If the candle touching or bouncing off the anchor level prints a rejection wick >= 25% or tight indecision body, the retest is VALID.
+  - If current market price is still in mid-pullback or shows indecision, PREFER REVISE with a Pending Limit Order at the anchor level rather than REJECTing the setup!
 
 ### [M15] Intraday Session Context — Last 12 Bars (Structural Intermediate):
 {m15_tape}
@@ -1930,13 +1977,24 @@ RULE: HIGH-impact event within 30 minutes → output HOLD/REJECT. Wicks and spre
 3. **SL Anchoring**:
    - BUY: SL below the last unmitigated Bullish OB lower boundary + 0.3x ATR anti-wick buffer
    - SELL: SL above the last unmitigated Bearish OB upper boundary + 0.3x ATR anti-wick buffer
-5. **Confidence Floor (Hard Floor >= 0.60)**: APPROVE only if absorption confirmed by ≥2 M5 bars (conviction ≥ 70%). REVISE if pending limit at FVG/OB is viable (conviction 60–69%). If conviction is < 60% OR if you detect IMPULSE_CHASE / opposing momentum without rejection wicks, you are STRICTLY FORBIDDEN from issuing a BUY/SELL signal — you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+4. **Execution Verdict Framework (Neutral & Independent of Confidence Level)**:
+   - **'APPROVE'**: Select this if you agree with the directional bias AND accept the initial proposed entry coordinates without modification.
+   - **'REVISE'**: Select this if you agree with the directional bias (BUY/SELL), but wish to modify the entry (e.g. placing a pending limit order at an unmitigated OB/FVG or F1/C1 barrier) or adjust SL/TP.
+     * CRITICAL: 'REVISE' is NOT a low-confidence verdict! High-confidence convictions (70%, 80%, 90%) are fully valid for 'REVISE' when setting disciplined limit orders.
+     * If live price is unconfirmed, in retracement, or slightly off-level: SELECT 'REVISE' with 'buy_limit'/'sell_limit' at the structural anchor rather than rejecting.
+   - **'REJECT'**: Mandatory if your directional conviction is below 60% (< 0.60) OR if you detect IMPULSE_CHASE / opposing momentum without rejection wicks / waterfall breakdown.
+     * When rejecting, you MUST output signal: "HOLD", verdict: "REJECT", and confidence <= 0.40.
+5. **High-Impact News Policy**:
+   - Within 1 hour of high-impact news:
+     * MARKET orders are strictly FORBIDDEN.
+     * PENDING LIMIT orders ('REVISE') anchored safely at key structural boundaries (F1/F2 or unmitigated OB) are PERMITTED if conviction remains >= 0.60.
+     * If news volatility makes the setup unsafe, or conviction < 0.60, output verdict: "REJECT" and signal: "HOLD".
 
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
   "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60 or if IMPULSE_CHASE detected,
-  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
+  "confidence": float (0.00 to 1.00) — STRICT: Directional BUY/SELL requires >= 0.60 (both for APPROVE and REVISE). If conviction < 0.60, set signal to "HOLD" and verdict to "REJECT",
   "role": "PRICE_ACTION_TACTICIAN",
   "retest_quality": "PRISTINE_RETEST" | "LIQUIDITY_ABSORPTION" | "DIRTY_SWEEP" | "FAILED_BREAKOUT",
   "order_flow_energy": "BULLISH_DISPLACEMENT" | "BEARISH_DISPLACEMENT" | "INDECISION_DOJI" | "REJECTION_WICK" | "CHOP_ZONE",
@@ -1970,30 +2028,58 @@ def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_
     m5_tape = recent_m5_str or format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
     cal_str = calendar_text or _get_symbol_news_context(sym, candidate)
 
-    # Format OpenAI and Gemini findings
+    # Format OpenAI findings (Pass 1 Macro Specialist)
     o_v = openai_res.get("verdict", "HOLD") if openai_res else "N/A"
     o_c = openai_res.get("confidence", 0.0) if openai_res else 0.0
     o_reg = openai_res.get("regime", "N/A") if openai_res else "N/A"
     o_thesis = openai_res.get("reasoning", "") if openai_res else "No thesis provided"
     o_exec = openai_res.get("execution", {}) if openai_res else {}
 
-    # Format Gemini findings (Pass 1)
+    # Extract OpenAI package coordinates
+    point = 0.001 if "JPY" in sym.upper() else (0.01 if any(x in sym.upper() for x in ("XAU", "GOLD", "BTC")) else 0.00001)
+    o_et = (o_exec.get("entry_type") or "market").lower()
+    o_ep = o_exec.get("entry_price") or candidate.trigger_price
+    o_sl = o_exec.get("sl_price")
+    o_tp = o_exec.get("tp_price")
+    o_sl_pts = int(round(abs(float(o_ep) - float(o_sl)) / point)) if (o_ep and o_sl and point > 0) else 0
+    o_tp_pts = int(round(abs(float(o_tp) - float(o_ep)) / point)) if (o_ep and o_tp and point > 0) else 0
+    o_rr = (o_tp_pts / o_sl_pts) if (o_sl_pts > 0) else 0.0
+
+    # Format Gemini findings (Pass 1 Price Action Specialist)
     g_v = gemini_res.get("verdict", "HOLD") if gemini_res else "N/A"
     g_c = gemini_res.get("confidence", 0.0) if gemini_res else 0.0
     g_ret = gemini_res.get("retest_quality", "N/A") if gemini_res else "N/A"
     g_notes = gemini_res.get("reasoning", "") if gemini_res else "No notes provided"
     g_exec = gemini_res.get("execution", {}) if gemini_res else {}
 
+    # Extract Gemini package coordinates
+    g_et = (g_exec.get("entry_type") or "market").lower()
+    g_ep = g_exec.get("entry_price") or candidate.trigger_price
+    g_sl = g_exec.get("sl_price")
+    g_tp = g_exec.get("tp_price")
+    g_sl_pts = int(round(abs(float(g_ep) - float(g_sl)) / point)) if (g_ep and g_sl and point > 0) else 0
+    g_tp_pts = int(round(abs(float(g_tp) - float(g_ep)) / point)) if (g_ep and g_tp and point > 0) else 0
+    g_rr = (g_tp_pts / g_sl_pts) if (g_sl_pts > 0) else 0.0
+
     # Fetch Pure Quant MSE Directive for DeepSeek Master Arbiter
     strat_block = ""
+    f1_price, f2_price, c1_price, c2_price = None, None, None, None
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
         strat_dir = macro_strategic_engine.get_directive(sym)
         c_lines = [f"  * {c.get('tier')}: {fp(c.get('price'))} ({c.get('tag_str')}, Score: {c.get('density_score')})" for c in getattr(strat_dir, 'layered_ceilings', [])[:4]]
         f_lines = [f"  * {f.get('tier')}: {fp(f.get('price'))} ({f.get('tag_str')}, Score: {f.get('density_score')})" for f in getattr(strat_dir, 'layered_floors', [])[:4]]
         traps_str = ", ".join(strat_dir.forbidden_traps) if strat_dir.forbidden_traps else "None"
+        
+        c_list = getattr(strat_dir, 'layered_ceilings', [])
+        f_list = getattr(strat_dir, 'layered_floors', [])
+        f1_price = f_list[0].get('price') if len(f_list) > 0 else getattr(strat_dir, 'immediate_floor_f1', None)
+        f2_price = f_list[1].get('price') if len(f_list) > 1 else None
+        c1_price = c_list[0].get('price') if len(c_list) > 0 else getattr(strat_dir, 'immediate_ceiling_c1', None)
+        c2_price = c_list[1].get('price') if len(c_list) > 1 else None
+
         strat_block = f"""### Pure Quant 6-TF Macro Strategic Directive (MSE)
-- Dealing Chamber: Floor F1={fp(strat_dir.immediate_floor_f1)} │ Ceiling C1={fp(strat_dir.immediate_ceiling_c1)} │ Chamber Pos: {strat_dir.chamber_position_pct*100:.1f}%
+- Dealing Chamber: Floor F1={fp(f1_price)} │ Ceiling C1={fp(c1_price)} │ Chamber Pos: {strat_dir.chamber_position_pct*100:.1f}%
 - Structural Stage: {strat_dir.structural_stage} | Market State: {strat_dir.market_state}
 - Layered Resistance Ceilings (C1-C4):\n{chr(10).join(c_lines)}
 - Layered Support Floors (F1-F4):\n{chr(10).join(f_lines)}
@@ -2020,39 +2106,64 @@ def build_deepseek_cro_arbiter_prompt(candidate, openai_res, gemini_res, recent_
 - Nearest Bullish OB: {getattr(candidate, 'bullish_ob_zone', '') or 'None'} │ Nearest Bearish OB: {getattr(candidate, 'bearish_ob_zone', '') or 'None'}
 - Nearest Fair Value Gap (FVG): {getattr(candidate, 'fvg_zone', '') or 'None'} │ FRVP: {getattr(candidate, 'frvp_confluence', '') or 'Normal'}"""
 
+    confluence_line = f"\n- Confluence: {getattr(candidate, 'metadata', {}).get('confluence_desc')} (Multi-Mechanism Validation)" if getattr(candidate, 'metadata', {}).get("multi_confluence") else ""
+
+    meta = getattr(candidate, 'metadata', {}) or {}
+    orig_px = meta.get("origin_price")
+    orig_age = meta.get("origin_age")
+    tgt_px = meta.get("target_price")
+    trajectory_line = ""
+    if orig_px and tgt_px:
+        trajectory_line = f"\n- Standby Trajectory: Origin @ {fp(orig_px)} ({orig_age} bars ago) -> Retest Level @ {fp(candidate.trigger_price)} -> Projected Target @ {fp(tgt_px)}"
+
+    quant_sl_pts = int(round(abs(candidate.trigger_price - candidate.suggested_sl) / point)) if (candidate.suggested_sl and point > 0) else 0
+    quant_tp_pts = int(round(abs(candidate.suggested_tp - candidate.trigger_price) / point)) if (candidate.suggested_tp and point > 0) else 0
+
     prompt = f"""# ROLE: CHIEF RISK OFFICER & MASTER VETO ARBITER (DEEPSEEK V4-Flash)
 ## MISSION BRIEF
 You hold ABSOLUTE MASTER VETO POWER over this trade proposal. You are the final gatekeeper.
 You have received Pass 1 findings from two specialists:
-  - OpenAI o4-mini → Chief Quantitative MACRO Strategist (D1/H4 structure)
-  - Gemini 3.1-Flash → Master PRICE ACTION Tactician (M1/M5/M15/H1 micro flow)
+  - OpenAI o4-mini → Chief Quantitative MACRO Strategist (D1/H4 structure & wide targets)
+  - Gemini 3.1-Flash → Master PRICE ACTION Tactician (M1/M5/M15/H1 micro flow & order blocks)
 Your mission: Cross-examine their claims with cold mathematical rigor. Verify against ALL ground truth data.
-Synthesize the optimal execution or issue a HARD VETO with clear mathematical justification.
+Arbitrate between their atomic structural packages or issue a HARD VETO with clear mathematical justification.
 
 ---
 ## 1. CANDIDATE PROPOSAL & PASS 1 JURY DOSSIER
 
 ### Trade Specification:
-- Asset: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str}
+- Asset: {sym} | Setup: {candidate.setup_type} | Direction: {direction_str}{confluence_line}
 - Live Price: {fp(candidate.trigger_price)} | ATR(14) H1: {candidate.current_atr_pts:.1f} pts | Spread: {candidate.current_spread_pts} pts
 - Dealing Range: {candidate.dealing_range_pos*100:.1f}% ({'⛔ EXTREME_PREMIUM — Chase Risk!' if candidate.dealing_range_pos >= 0.85 else ('✅ EXTREME_DISCOUNT — Reload Zone' if candidate.dealing_range_pos <= 0.15 else ('🟢 DISCOUNT' if candidate.dealing_range_pos <= 0.45 else ('🔴 PREMIUM' if candidate.dealing_range_pos >= 0.55 else '⚪ EQUILIBRIUM')))})
-- Quant Baseline: SL = {fp(candidate.suggested_sl)} | TP = {fp(candidate.suggested_tp)} | R:R = {candidate.risk_reward_ratio:.2f}:1
-- Spread/ATR Ratio: {candidate.current_spread_pts / max(candidate.current_atr_pts, 1) * 100:.1f}% (Alert if > 20%)
+- Quant Baseline Station: SL = {fp(candidate.suggested_sl)} ({quant_sl_pts} pts) | TP = {fp(candidate.suggested_tp)} ({quant_tp_pts} pts) | Baseline R:R = {candidate.risk_reward_ratio:.2f}:1
+- Dealing Chamber Key Anchors: Floor F1 = {fp(f1_price)} | Floor F2 = {fp(f2_price)} | Ceiling C1 = {fp(c1_price)} | Ceiling C2 = {fp(c2_price)}
+- Spread/ATR Ratio: {candidate.current_spread_pts / max(candidate.current_atr_pts, 1) * 100:.1f}% (Alert if > 20%){trajectory_line}
 
-### OPENAI FINDINGS — Strategic Structure & Macro Corridor:
-- Verdict: **{o_v}** | Confidence: {o_c:.0%} | Regime: {o_reg}
-- Proposed Execution: {o_exec}
+### PASS 1 SPECIALIST PROPOSALS (EVALUATE AS ATOMIC STRUCTURAL PACKAGES):
+
+#### 📦 PACKAGE A — OpenAI o4-mini (Chief Quantitative Macro Strategist):
+- Verdict: **{o_v}** | Conviction: {o_c:.0%} | Structural Regime: {o_reg}
+- Atomic Execution Proposal:
+  * Entry: {o_et.upper()} @ {fp(o_ep)}
+  * Stop Loss: {fp(o_sl)} ({o_sl_pts} pts)
+  * Take Profit: {fp(o_tp)} ({o_tp_pts} pts)
+  * Implied R:R: {o_rr:.2f}:1 {'✅ (Meets >= 1.25x)' if o_rr >= 1.25 else '⚠ (Sub-par < 1.25x)'}
 - Macro Thesis: "{o_thesis}"
 
-### GEMINI FINDINGS — Price Action & Retest Tactician:
-- Verdict: **{g_v}** | Confidence: {g_c:.0%} | Retest Quality: {g_ret}
-- Proposed Execution: {g_exec}
+#### 📦 PACKAGE B — Gemini 3.1-Flash (Master Price Action Tactician):
+- Verdict: **{g_v}** | Conviction: {g_c:.0%} | Retest Quality: {g_ret}
+- Atomic Execution Proposal:
+  * Entry: {g_et.upper()} @ {fp(g_ep)}
+  * Stop Loss: {fp(g_sl)} ({g_sl_pts} pts)
+  * Take Profit: {fp(g_tp)} ({g_tp_pts} pts)
+  * Implied R:R: {g_rr:.2f}:1 {'✅ (Meets >= 1.25x)' if g_rr >= 1.25 else '⚠ (Sub-par < 1.25x)'}
 - Price Action Summary: "{g_notes}"
 
-### JURY AGREEMENT SUMMARY:
+### SPECIALIST CONVERGENCE AUDIT:
 - Direction Agreement: {'✅ UNANIMOUS — Both say ' + direction_str if o_v != 'REJECT' and g_v != 'REJECT' else '⛔ DISAGREEMENT — Check for structural conflict'}
+- Entry Proximity Gap: {abs(float(o_ep or 0) - float(g_ep or 0))/point:.1f} pts difference between OpenAI and Gemini entry targets
 - Confidence Gap: {abs(o_c - g_c) * 100:.1f}% gap between OpenAI and Gemini {'(Large gap — investigate divergence)' if abs(o_c - g_c) > 0.20 else '(Normal)'}
-- Entry Type Conflict: {'⚠ DIFFERENT ENTRY TYPES — Arbiter required' if (o_exec.get('entry_type','') if isinstance(o_exec, dict) else '') != (g_exec.get('entry_type','') if isinstance(g_exec, dict) else '') else '✅ Entry type aligned'}
+- Entry Type Alignment: {'⚠ CONFLICT — One proposes Market, other proposes Limit' if o_et != g_et else f'✅ Both propose {o_et.upper()}'}
 
 ---
 ## 2. GROUND TRUTH: STRUCTURAL MSE, CSM & SMC DATA
@@ -2077,10 +2188,10 @@ AUDIT: Is H1 basing cleanly above the structural floor (BUY) or below resistance
 ### [M5] Micro Execution Flow Tape — Last 24 Bars (Anti-Waterfall / Anti-Spike Detector):
 {m5_tape}
 AUDIT: Scan for:
-  - WATERFALL: ≥4 consecutive BEAR bars with expanding bodies and no lower wicks → FALLING_KNIFE_WATERFALL flag → force HOLD
-  - VERTICAL_SPIKE: ≥4 consecutive BULL bars closing near highs → IMPULSE_CHASE flag → force Limit Order
-  - ABSORPTION: alternating bars with wicks at key level → clean basing → potential APPROVE
-  - CHOP: small bodies alternating randomly → insufficient conviction → REVISE to Limit
+  - WATERFALL: >=4 consecutive BEAR bars with expanding bodies penetrating past the structural floor/anchor without lower wicks -> FALLING_KNIFE_WATERFALL flag -> force HOLD. Note: 2-3 bar orderly pullback retracing toward a pending limit anchor with deceleration or wicks is a normal retest, NOT a waterfall.
+  - VERTICAL_SPIKE: >=4 consecutive BULL bars closing near highs -> IMPULSE_CHASE flag -> force Limit Order
+  - ABSORPTION: alternating bars with wicks at key level -> clean basing -> potential APPROVE or REVISE to Limit
+  - CHOP: small bodies alternating randomly -> prefer REVISE to Limit at structural anchor.
 
 ---
 ## 4. RISK CONSTRAINTS & ECONOMIC CALENDAR
@@ -2098,46 +2209,61 @@ RULES:
 - Optimal TP for {direction_str}: Next structural station/resistance minus 0.15x ATR front-run pad.
 
 ---
-## 5. MASTER VETO AUDIT FRAMEWORK
+## 5. MASTER CRO ARBITRATION & ANTI-FRANKENSTEIN INTEGRITY RULES
 
-### Step 1 — Contradiction Analysis:
-Are OpenAI and Gemini contradicting each other on a critical point?
+### CRITICAL: THE ATOMIC PACKAGE INTEGRITY LAW (ANTI-FRANKENSTEIN PROTOCOL)
+Each Pass 1 proposal is a calibrated, cohesive ATOMIC PACKAGE designed around structural coordinates.
+- **FATAL ERROR TO AVOID (THE FRANKENSTEIN HYBRID)**:
+  DO NOT blindly take Gemini's higher entry near market (e.g. 0.58187) and mash it with OpenAI's conservative ceiling TP at C1 (e.g. 0.58314).
+  Doing so destroys the trade's expectancy by compressing the reward to 12.7 pips against a 13.0 pips risk, resulting in an invalid 0.97:1 R:R!
+- **MANDATORY ARBITRATION PROTOCOL**:
+  * **Option 1 (PACKAGE_OPENAI)**: If you anticipate price will probe deeper to test the primary structural floor (F1) before reversing, select OpenAI's full package (Entry @ F1, SL behind F2, TP @ C1). This guarantees clean R:R >= 1.25x.
+  * **Option 2 (PACKAGE_GEMINI)**: If M5 micro order flow confirms immediate liquidity absorption at the micro OB/FVG and waiting for F1 risks missing the run, you may adopt Gemini's entry, BUT you MUST adopt Gemini's expanded TP (targeting Expansion Ceiling C2 or Quant Station) so that Net R:R is >= 1.50x!
+  * **Option 3 (REVISE_EXPANDED_TP)**: If you select an entry near market/micro OB, you MUST EXPAND the TP to Ceiling C2 or higher structural resistance so calculated R:R is >= 1.25x.
+  * **Option 4 (VETO / REJECT)**: If M5 shows unmitigated waterfall breakdown (>=4 red bars penetrating floor without lower wicks), a liquidity trap, or if no valid target station provides R:R >= 1.25x.
+- **ABSOLUTE MATHEMATICAL GATE**:
+  Calculated R:R = |tp_price - entry_price| / |entry_price - sl_price| MUST BE >= 1.25:1.
+  You must output "calculated_rr" in your JSON. If calculated_rr < 1.25, you must set signal to "HOLD" and verdict to "REJECT".
+
+### Step 1 — Contradiction & Trap Analysis:
 - If OpenAI says REJECT + Gemini says APPROVE → HARD VETO (structural conflict)
-- If confidence gap > 25% → investigate the divergence before synthesizing
-- If entry types differ (Market vs Limit) → determine optimal; do NOT veto for style alone
-
-### Step 2 — Trap & Fallacy Detection:
-- LIQUIDITY_TRAP: Is price entering directly in front of Equal Highs/Lows or a structural ceiling? → REJECT
+- LIQUIDITY_TRAP: Is price entering directly in front of Equal Highs/Lows or an unbreached ceiling? → REJECT
 - IMPULSE_CHASE: Is price extending > 1.0x ATR from the last base? → Convert to Limit or REJECT
-- FALLING_KNIFE_WATERFALL: ≥4 consecutive momentum bars in opposite direction? → REJECT
+- FALLING_KNIFE_WATERFALL: Unmitigated candle expansion penetrating clean through the anchor level with zero rejection wicks and closing past invalidation? → REJECT. (Do NOT veto normal pullback retracements that show deceleration or lower wicks).
 - COUNTER_TREND: D1/H4 trend directly opposes the proposed direction without a CHoCH flip? → REJECT
 
-### Step 3 — Final Synthesis:
+### Step 2 — Final Arbitration & Execution Synthesis:
 If no HARD VETO is warranted:
-1. Determine the single best entry_type (Market or Limit) based on current price vs level proximity
-2. Set SL behind the most conservative physical structural barrier (OpenAI or Gemini's choice, whichever is safer)
-3. Set TP at the nearest confirmed opposing structural station (OpenAI's macro target or Gemini's micro FVG, whichever is closer)
-4. Verify final R:R >= 1.25:1. If not, widen TP to next structural level or REJECT.
-5. Confidence Calibration (Hard Floor >= 0.60): Output directional BUY/SELL only if synthesized conviction >= 60%. If conviction < 60% OR if any unmitigated risk flag remains, you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
+1. Choose the winning atomic package ("PACKAGE_OPENAI", "PACKAGE_GEMINI", or "REVISE_EXPANDED_TP").
+2. Set entry_type ('market', 'buy_limit', or 'sell_limit'). If directional thesis is valid but price is unconfirmed, in retracement, or approaching news: SELECT REVISE with a PENDING LIMIT ORDER at the structural anchor. REVISE is fully compatible with high conviction (>= 70-80%).
+3. Ensure SL is anchored behind a solid physical structural barrier (Floor F1/F2 or confirmed OB).
+4. Ensure TP delivers Net R:R >= 1.25:1.
+5. Confidence Calibration (Hard Floor >= 0.60): Output directional BUY/SELL only if synthesized conviction >= 60% (whether APPROVE or REVISE). If conviction < 60% OR if any unmitigated risk flag remains, you MUST output signal: "HOLD" and verdict: "REJECT" (confidence <= 0.40).
 
 Respond strictly in valid JSON:
 {{
   "verdict": "APPROVE" | "REVISE" | "REJECT",
-  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60,
-  "confidence": float (0.00 to 1.00) — STRICT: BUY/SELL requires >= 0.60. If conviction < 0.60, set signal to "HOLD",
+  "signal": "{direction_str}" | "HOLD" — MUST be "HOLD" if confidence < 0.60 or calculated_rr < 1.25,
+  "confidence": float (0.00 to 1.00) — STRICT: Directional BUY/SELL requires >= 0.60 (both for APPROVE and REVISE). If conviction < 0.60, set signal to "HOLD" and verdict to "REJECT",
   "role": "CHIEF_RISK_OFFICER",
   "risk_verdict": "CLEARED" | "REVISE_ENTRY_SL" | "HARD_VETO",
-  "jury_synthesis": "UNANIMOUS_ALIGNED" | "ENTRY_ARBITER_REQUIRED" | "CONFIDENCE_GAP_RESOLVED" | "CONTRADICTION_VETOED",
+  "arbitration_decision": {{
+    "openai_eval": "Critique of OpenAI package (R:R & structure)",
+    "gemini_eval": "Critique of Gemini package (R:R & structure)",
+    "chosen_package": "PACKAGE_OPENAI" | "PACKAGE_GEMINI" | "REVISE_EXPANDED_TP" | "VETO",
+    "arbitration_rationale": "Why this atomic package was selected and how R:R >= 1.25 is maintained"
+  }},
   "veto_flags": ["NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "FALLING_KNIFE_WATERFALL" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS" | "POOR_RR_RATIO"],
   "execution": {{
     "entry_type": "market" | "buy_limit" | "sell_limit",
     "entry_price": float (null if market, exact price if pending),
-    "sl_price": float (exact price behind safest physical structural barrier, {P} decimals),
-    "tp_price": float (exact price at nearest confirmed opposing structural target, {P} decimals)
+    "sl_price": float (exact price behind safest physical barrier, {P} decimals),
+    "tp_price": float (exact price at target station ensuring R:R >= 1.25, {P} decimals),
+    "calculated_rr": float (>= 1.25)
   }},
   "risk_flag": "NONE" | "COUNTER_TREND_MOMENTUM" | "LIQUIDITY_TRAP" | "IMPULSE_CHASE" | "FALLING_KNIFE_WATERFALL" | "SYSTEMIC_CURRENCY_DUMP" | "HIGH_IMPACT_NEWS",
   "veto_reason": null | string (max 20 words if REJECT — cite specific price evidence),
-  "reasoning": "4-5 sentences: (1) Jury agreement/conflict summary, (2) M5 tape anti-waterfall/spike audit result, (3) R:R verification with numbers, (4) entry synthesis justification or veto trigger, (5) final SL/TP structural anchor explanation."
+  "reasoning": "4-5 sentences: (1) Package arbitration between OpenAI vs Gemini, (2) M5 tape anti-waterfall/spike audit, (3) R:R calculation verifying R:R >= 1.25 with exact numbers, (4) why atomic package integrity is preserved without frankenstein compression, (5) final SL/TP structural anchors."
 }}"""
     return _strip_emoji(prompt)
 

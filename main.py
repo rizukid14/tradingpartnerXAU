@@ -668,25 +668,15 @@ def run_scanner_trading_cycle(cand, risk):
         print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         return False
     
-    # 2. Fetch live candles (M15 & M5 Micro Microscope) from MT5
+    # 2. Fetch live candles (M15 & M5 Micro Microscope, H1, H4) from MT5
     try:
         from config import mt5
-        rates_m15 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M15, 0, 17) # 16 completed bars (~4 hours)
-        rates_m5 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 25)   # 24 completed bars (~2 hours)
-        
-        def _fmt(rates):
-            if rates is None or len(rates) == 0:
-                return None
-            lines = []
-            for r in rates:
-                t_s = connector.format_time(r["time"]) if hasattr(connector, "format_time") else str(r["time"])
-                lines.append(f"- [{t_s}] Open: {r['open']:.5f} | High: {r['high']:.5f} | Low: {r['low']:.5f} | Close: {r['close']:.5f}")
-            return "\n".join(lines)
-            
-        m15_str = _fmt(rates_m15[:-1]) if rates_m15 is not None and len(rates_m15) > 1 else None
-        m5_str = _fmt(rates_m5[:-1]) if rates_m5 is not None and len(rates_m5) > 1 else None
+        m15_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_M15, count=12)
+        m5_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
+        h1_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
+        h4_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_H4, count=6)
     except Exception as e:
-        m15_str, m5_str = None, None
+        m15_str, m5_str, h1_str, h4_str = None, None, None, None
         
     # 3. Call 2-Pass Sequential Cross-Examination Jury
     old_sym = config.SYMBOL
@@ -694,6 +684,9 @@ def run_scanner_trading_cycle(cand, risk):
     try:
         decisions = llm.get_multi_llm_decisions_for_candidate(
             cand,
+            recent_d1_str=None,
+            recent_h4_str=h4_str,
+            recent_h1_str=h1_str,
             recent_m15_str=m15_str,
             recent_m5_str=m5_str
         )
@@ -716,30 +709,78 @@ def run_scanner_trading_cycle(cand, risk):
             })
             print(f" {UI.RED}[PASS 2 VETO] Trade {sym} di-veto oleh DeepSeek Devil's Advocate: {result.get('reason')}{UI.RST}")
             
-            # 1 EPISODE RETEST DEBOUNCE (3 Sep 2026): Kunci level retest agar tidak memicu panggilan LLM berulang
+            # GRANULAR REJECTION LOCK (4 Sep 2026): Kunci spesifik (symbol, setup_type, direction) 45m; jeda simbol 3m
             try:
                 from src.analytics.market_scanner import MarketScanner
                 scanner_inst = getattr(MarketScanner, '_instance', None)
                 if scanner_inst:
                     rej_level = getattr(cand, 'trigger_price', 0.0) or getattr(cand, 'scan_mid', 0.0)
                     rej_atr = getattr(cand, 'current_atr_pts', 0.0)
-                    scanner_inst.record_retest_rejection(sym, level=rej_level, current_atr=rej_atr)
-                    print(f" {UI.YELLOW}[RETEST LOCK] {sym} dikunci pada level {rej_level:.5f} (2 jam / displacement >0.50x ATR) setelah VETO.{UI.RST}")
+                    cand_type = getattr(cand, 'setup_type', '')
+                    cand_dir = getattr(cand, 'direction', 0)
+                    scanner_inst.record_setup_rejection(
+                        sym,
+                        setup_type=cand_type,
+                        direction=cand_dir,
+                        level=rej_level,
+                        current_atr=rej_atr
+                    )
+                    dir_str = "BUY" if cand_dir == 1 else ("SELL" if cand_dir == -1 else "ALL")
+                    print(f" {UI.YELLOW}[GRANULAR LOCK] {sym} {cand_type} ({dir_str}) dikunci 45m; jeda simbol 3m setelah VETO.{UI.RST}")
             except Exception:
                 pass
             
             return False
             
         elif trade_signal == "HOLD":
-            # 1 EPISODE RETEST DEBOUNCE (3 Sep 2026): Kunci level retest agar tidak memicu panggilan LLM berulang
+            # BIFURCATED REJECTION LOGIC (4 Sep 2026):
+            # 1. Hard Risk VETO (45m Lockout): Khusus jika ada fatal risk flag (counter-trend, waterfall, dump, news, trap).
+            # 2. Soft Timing HOLD (3m Breathing Only): Jika penolakan murni karena timing / boundary belum tersentuh.
+            FATAL_VETO_FLAGS = {
+                "COUNTER_TREND_MOMENTUM", "FALLING_KNIFE_WATERFALL",
+                "SYSTEMIC_CURRENCY_DUMP", "HIGH_IMPACT_NEWS", "LIQUIDITY_TRAP",
+                "UNMITIGATED_IMPULSE_CHASE", "CURRENCY_CONFLICT", "MACRO_HEADWIND"
+            }
+            has_fatal_veto = False
+            fatal_reason = ""
+            for m_name, d_val in decisions.items():
+                rf = str(d_val.get("risk_flag") or "").strip().upper()
+                if rf in FATAL_VETO_FLAGS:
+                    # HIGH_IMPACT_NEWS: If the proposed entry is a pending limit order with conf >= 0.60,
+                    # do NOT apply 45m hard lockout; let it be soft timing hold (3m)
+                    if rf == "HIGH_IMPACT_NEWS":
+                        exec_b = d_val.get("execution") or {}
+                        e_type = (exec_b.get("entry_type") or d_val.get("entry_type") or "market").strip().lower()
+                        if e_type != "market" and float(d_val.get("confidence", 0.0)) >= 0.60:
+                            continue
+                    has_fatal_veto = True
+                    fatal_reason = f"{m_name} flagged {rf}"
+                    break
+
             try:
                 from src.analytics.market_scanner import MarketScanner
                 scanner_inst = getattr(MarketScanner, '_instance', None)
                 if scanner_inst:
                     rej_level = getattr(cand, 'trigger_price', 0.0) or getattr(cand, 'scan_mid', 0.0)
                     rej_atr = getattr(cand, 'current_atr_pts', 0.0)
-                    scanner_inst.record_retest_rejection(sym, level=rej_level, current_atr=rej_atr)
-                    print(f" {UI.YELLOW}[RETEST LOCK] {sym} dikunci pada level {rej_level:.5f} (2 jam / displacement >0.50x ATR) setelah HOLD.{UI.RST}")
+                    cand_type = getattr(cand, 'setup_type', '')
+                    cand_dir = getattr(cand, 'direction', 0)
+                    dir_str = "BUY" if cand_dir == 1 else ("SELL" if cand_dir == -1 else "ALL")
+
+                    if has_fatal_veto:
+                        # Hard Risk VETO -> 45m granular lockout
+                        scanner_inst.record_setup_rejection(
+                            sym,
+                            setup_type=cand_type,
+                            direction=cand_dir,
+                            level=rej_level,
+                            current_atr=rej_atr
+                        )
+                        print(f" {UI.YELLOW}[HARD VETO LOCK] {sym} {cand_type} ({dir_str}) dikunci 45m; jeda simbol 3m ({fatal_reason}).{UI.RST}")
+                    else:
+                        # Soft Timing HOLD -> HANYA jeda bernapas 3m (tanpa 45m mechanism lockout)
+                        scanner_inst.record_soft_timing_hold(sym)
+                        print(f" {UI.CYAN}[SOFT TIMING HOLD] {sym} {cand_type} ({dir_str}): Dijeda bernapas 3m (tanpa lockout). Siap scan ulang saat sentuh boundary.{UI.RST}")
             except Exception:
                 pass
             

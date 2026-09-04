@@ -284,7 +284,7 @@ M4_FLOW_WARM_BARS = _getenv_int("M4_FLOW_WARM_BARS", 720)   # warm rolling z-sco
 M4_FLOW_LOOKBACK_BARS = _getenv_int("M4_FLOW_LOOKBACK_BARS", 24)  # jendela akumulasi flow 24-bar (studi idx24)
 M4_LOOKBACK_BARS = _getenv_int("M4_LOOKBACK_BARS", 120)     # jendela swing level [ep-LOOK:ep] (studi LOOK)
 M4_MIN_EPISODE_BARS = _getenv_int("M4_MIN_EPISODE_BARS", 6) # breakdown baru dievaluasi saat episode >= 6 bar
-M4_MAX_WAIT_BARS = _getenv_int("M4_MAX_WAIT_BARS", 120)     # jendela tunggu retest sejak break (studi MAX_WAIT)
+M4_MAX_WAIT_BARS = _getenv_int("M4_MAX_WAIT_BARS", 48)     # jendela tunggu retest sejak break (48 bar H1 / 2 hari bursa)
 M4_MIN_GAP_BARS = _getenv_int("M4_MIN_GAP_BARS", 240)       # anti re-entry antar break (studi MIN_GAP)
 M4_SL_ATR_MULT = _getenv_float("M4_SL_ATR_MULT", 0.45)      # SL struktural = 0.45 x ATR H1 (user: ikut data)
 M4_TP_R_MULT = _getenv_float("M4_TP_R_MULT", 1.1)           # TP = 1.1R (R = jarak SL dari level)
@@ -294,6 +294,10 @@ M4_COLD_FETCH_BARS = _getenv_int("M4_COLD_FETCH_BARS", 900)  # fetch awal (butuh
 M4_EMIT_BAND_ATR = _getenv_float("M4_EMIT_BAND_ATR", 0.35)  # lebar band pendekatan retest sebelum emisi
 M4_PENDING_EXPIRY_MINUTES = _getenv_int("M4_PENDING_EXPIRY_MINUTES", 120)  # Expiry pending order M4 (2 jam / 2 bar H1)
 M4_EXCLUDED_PAIRS = os.getenv("M4_EXCLUDED_PAIRS", "USDJPY").split(",")  # USDJPY negatif (48.1% studi #1)
+M4_EXTREME_DR_THRESHOLD = _getenv_float("M4_EXTREME_DR_THRESHOLD", 0.70) # Ambang Extreme Premium (>0.70) & Extreme Discount (<0.30)
+M4_EXTREME_CSM_DELTA_OVERRIDE = _getenv_float("M4_EXTREME_CSM_DELTA_OVERRIDE", 0.035) # Minimal Net CSM Delta untuk bypass DR di M4
+M4_BASING_MIN_BARS = _getenv_int("M4_BASING_MIN_BARS", 4) # Minimal bar kompresi M15/M30 untuk validasi micro-basing
+M4_BASING_MAX_RANGE_ATR = _getenv_float("M4_BASING_MAX_RANGE_ATR", 0.35) # Max range bar basing <= 0.35x ATR
 
 # Systemic Currency Basket Circuit Breaker (Global M15/H1 CSM 8 Currencies)
 ENABLE_SYSTEMIC_BASKET_LOCK = _getenv_bool("ENABLE_SYSTEMIC_BASKET_LOCK", True)
@@ -419,6 +423,10 @@ MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max
 M3_BREAKOUT_RECENCY_BARS = _getenv_int("M3_BREAKOUT_RECENCY_BARS", 4)   # Max 4 bar H1 sejak breakout
 M3_MIN_DISPLACEMENT_BODY = _getenv_float("M3_MIN_DISPLACEMENT_BODY", 0.55) # Minimal 55% body ratio pada breakout candle
 M3_RETEST_DEBOUNCE_HOURS = _getenv_float("M3_RETEST_DEBOUNCE_HOURS", 2.0) # 2 bar H1 (120 menit) lock jika direject
+M3_M5_REJECTION_FILTER = _getenv_bool("M3_M5_REJECTION_FILTER", True) # Filter micro-rejection M5 anti-waterfall pada retest M3
+M3_M5_MIN_WICK_RATIO = _getenv_float("M3_M5_MIN_WICK_RATIO", 0.25)   # Minimal 25% rejection wick di M5
+SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS = _getenv_int("SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180) # Jeda bernapas simbol 3 menit
+SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS = _getenv_int("SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 2700) # Lockout granular 45 menit per mekanisme & arah
 
 # Gate OVER-RISK di consensus: SL yang gak muat di min lot (risk aktual > budget
 # per-trade) TIDAK otomatis ditolak di risk_pct — masih diterima selama risk aktual

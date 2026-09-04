@@ -69,6 +69,44 @@ class TestFreshBreakoutAndNetRR(unittest.TestCase):
         is_locked, _ = self.scanner.is_retest_locked(sym, current_mid=0.58160, current_atr=atr_val)
         self.assertFalse(is_locked)
 
+    def test_m3_m5_rejection_filter_blocks_waterfall(self):
+        """M3 must reject retest when M5 candle shows waterfall penetration (no rejection wick)."""
+        sym = "EURUSD-ECNc"
+        level = 1.10500
+        atr_val = 0.00100
+        pt = 0.00001
+
+        # Mock M5 rates: candle penetrates level from 1.1040 to 1.1070 with close at 1.1068 (bullish marubozu)
+        mock_rates = [
+            {'open': 1.1040, 'high': 1.1045, 'low': 1.1038, 'close': 1.1044},
+            {'open': 1.1044, 'high': 1.1055, 'low': 1.1042, 'close': 1.1054},
+            {'open': 1.1054, 'high': 1.1070, 'low': 1.1052, 'close': 1.1068},
+        ]
+
+        with patch.object(config.mt5, 'copy_rates_from_pos', return_value=mock_rates):
+            ok, reason = self.scanner._verify_m5_rejection_wick(sym, level=level, direction=-1, atr_val=atr_val, pt=pt)
+            self.assertFalse(ok)
+            self.assertEqual(reason, "M5_WATERFALL_PENETRATION")
+
+    def test_m3_m5_rejection_filter_allows_valid_wick(self):
+        """M3 must approve retest when M5 candle shows authentic rejection wick (>= 25%)."""
+        sym = "EURUSD-ECNc"
+        level = 1.10500
+        atr_val = 0.00100
+        pt = 0.00001
+
+        # Mock M5 rates: candle touches 1.1053 but wicks down and closes at 1.1048 (upper wick = 5 pips)
+        mock_rates = [
+            {'open': 1.1040, 'high': 1.1045, 'low': 1.1038, 'close': 1.1044},
+            {'open': 1.1044, 'high': 1.1048, 'low': 1.1042, 'close': 1.1046},
+            {'open': 1.1046, 'high': 1.1053, 'low': 1.1044, 'close': 1.1048},
+        ]
+
+        with patch.object(config.mt5, 'copy_rates_from_pos', return_value=mock_rates):
+            ok, reason = self.scanner._verify_m5_rejection_wick(sym, level=level, direction=-1, atr_val=atr_val, pt=pt)
+            self.assertTrue(ok)
+            self.assertEqual(reason, "M5_REJECTION_CONFIRMED")
+
 
 if __name__ == "__main__":
     unittest.main()

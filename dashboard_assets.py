@@ -107,9 +107,56 @@ html, body {
 /* MAIN WORKSPACE GRID */
 .workspace {
   display: grid;
-  grid-template-columns: 290px 1fr 330px;
+  grid-template-columns: 340px 1fr 330px;
   height: calc(100vh - 36px);
   width: 100vw;
+  transition: grid-template-columns 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.workspace.xray-collapsed {
+  grid-template-columns: 340px 1fr 38px;
+}
+.workspace.xray-collapsed .right-panel .panel-header span,
+.workspace.xray-collapsed #gates-container {
+  display: none !important;
+}
+.workspace.xray-collapsed .right-panel {
+  cursor: pointer;
+}
+.workspace.xray-collapsed .xray-collapsed-label {
+  display: flex !important;
+}
+.xray-collapsed-label {
+  display: none;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 15px 0;
+  cursor: pointer;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+.btn-toggle-xray {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+.btn-toggle-xray:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: rgba(0,229,255,0.1);
 }
 
 /* LEFT SIDEBAR: PROXIMITY WATCHLIST */
@@ -176,12 +223,12 @@ html, body {
   overflow-y: auto;
 }
 .pair-row {
-  display: grid;
-  grid-template-columns: 78px 1fr 68px;
-  padding: 7px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3.5px;
+  padding: 6px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.03);
   cursor: pointer;
-  align-items: center;
   user-select: none;
   transition: background 0.1s ease;
 }
@@ -190,20 +237,64 @@ html, body {
   background: var(--bg-elevated);
   border-left: 3px solid var(--cyan);
 }
+.pair-row-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  white-space: nowrap;
+}
+.pair-col-left {
+  width: 100px;
+  min-width: 100px;
+  max-width: 100px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+.pair-col-mid {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.pair-col-right {
+  min-width: 52px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
 .pair-symbol {
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: 11.5px;
   color: var(--text-main);
+  letter-spacing: 0.2px;
 }
 .pair-setup-pill {
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 700;
-  padding: 1px 4px;
+  padding: 1px 3.5px;
   border-radius: 2px;
   display: inline-block;
   font-family: var(--font-mono);
   text-transform: uppercase;
+  white-space: nowrap;
+}
+.tactical-pill {
+  background: rgba(255,183,3,0.15);
+  color: var(--amber);
+  border: 1px solid rgba(255,183,3,0.3);
+  padding: 0px 4px;
+  border-radius: 2px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  letter-spacing: 0.2px;
 }
 .setup-near { background: rgba(0, 230, 118, 0.18); color: var(--green); border: 1px solid var(--green); }
 .setup-standby { background: rgba(255, 215, 64, 0.15); color: var(--amber); border: 1px solid var(--amber); }
@@ -211,9 +302,34 @@ html, body {
 
 .setup-pill-bull { background: rgba(0, 230, 118, 0.16); color: var(--green); border: 1px solid var(--green); }
 .setup-pill-bear { background: rgba(255, 82, 82, 0.16); color: var(--red); border: 1px solid var(--red); }
+.setup-pill-confl-bull { background: rgba(0, 230, 118, 0.22); color: var(--green); border: 1px solid #ffd700; box-shadow: 0 0 5px rgba(255, 215, 0, 0.35); font-weight: 800; }
+.setup-pill-confl-bear { background: rgba(255, 82, 82, 0.22); color: var(--red); border: 1px solid #ffd700; box-shadow: 0 0 5px rgba(255, 215, 0, 0.35); font-weight: 800; }
 .setup-pill-neutral { background: rgba(0, 229, 255, 0.14); color: var(--cyan); border: 1px solid var(--cyan); }
 .setup-pill-amber { background: rgba(255, 215, 64, 0.14); color: var(--amber); border: 1px solid var(--amber); }
 .setup-pill-idle { background: rgba(148, 163, 184, 0.1); color: var(--text-dim); border: 1px solid rgba(148, 163, 184, 0.2); }
+.extra-setup-pill {
+  font-size: 7.5px;
+  font-weight: 700;
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-dim);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  padding: 0px 3px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+}
+.htf-bias-tag {
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  display: inline-block;
+}
+.htf-bull { background: rgba(0, 230, 118, 0.14); color: var(--green); border: 1px solid rgba(0, 230, 118, 0.3); }
+.htf-bear { background: rgba(255, 82, 82, 0.14); color: var(--red); border: 1px solid rgba(255, 82, 82, 0.3); }
+.htf-flat { background: rgba(255, 215, 64, 0.14); color: var(--amber); border: 1px solid rgba(255, 215, 64, 0.3); }
+
 
 .pair-meta {
   display: flex;
@@ -222,8 +338,13 @@ html, body {
 }
 .pair-dist-text {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .pair-dist-bold {
   font-weight: 700;
@@ -249,10 +370,12 @@ html, body {
 .tier-watch { background: #38bdf8; color: #000; }
 .tier-lock { background: var(--red); color: #fff; }
 
-.csm-badge {
+.csm-text {
   font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
 }
 .csm-pos { color: var(--green); }
 .csm-neg { color: var(--red); }
@@ -817,12 +940,18 @@ html, body {
 
   <!-- RIGHT: 7-GATE X-RAY SURVEILLANCE -->
   <div class="right-panel">
-    <div class="panel-header">
-      <span class="panel-title">Decision Gates Audit (X-Ray)</span>
+    <div class="panel-header" onclick="if(document.querySelector('.workspace').classList.contains('xray-collapsed')) toggleXrayPanel();">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <button id="btn-toggle-xray" class="btn-toggle-xray" onclick="event.stopPropagation(); toggleXrayPanel();" title="Toggle Decision Gates Audit (X-Ray)">▶</button>
+        <span class="panel-title">Decision Gates Audit (X-Ray)</span>
+      </div>
       <span id="gate-symbol-label" style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);">—</span>
     </div>
     <div class="gate-scroll" id="gates-container">
       <!-- 7 Gate cards injected via JS -->
+    </div>
+    <div class="xray-collapsed-label" onclick="toggleXrayPanel()">
+      DECISION GATES X-RAY
     </div>
   </div>
 
@@ -995,6 +1124,166 @@ function renderVerticalShading() {
       shadingCtx.fillText(txt, badgeX + 7, y);
     });
   }
+
+  // 3. Render Dynamic 3-Point Trajectory Vectors (Origin -> Retest -> Target Projection)
+  if (cachedSymbolData && cachedSymbolData.m_standbys && candleSeries && chart) {
+    const timeScale = chart.timeScale();
+    const standbysWithTraj = cachedSymbolData.m_standbys.filter(s => s.trajectory && s.trajectory.origin_time > 0);
+
+    const drawnKeys = new Set();
+    standbysWithTraj.forEach(s => {
+      const traj = s.trajectory;
+      const key = `${traj.retest_price}_${traj.direction}`;
+      if (drawnKeys.has(key)) return;
+      drawnKeys.add(key);
+
+      const x1 = timeScale.timeToCoordinate(traj.origin_time);
+      const y1 = candleSeries.priceToCoordinate(traj.origin_price);
+
+      const x2 = timeScale.timeToCoordinate(traj.retest_time);
+      const y2 = candleSeries.priceToCoordinate(traj.retest_price);
+
+      const y3 = candleSeries.priceToCoordinate(traj.target_price);
+      const y4 = traj.target_tp2 ? candleSeries.priceToCoordinate(traj.target_tp2) : null;
+
+      if (x1 !== null && y1 !== null && x2 !== null && y2 !== null && y3 !== null) {
+        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(56, 189, 248, 0.90)" : "rgba(250, 204, 21, 0.90)"));
+        const dir = traj.direction;
+
+        shadingCtx.save();
+
+        // 1. Vector Segment 1: Origin Breakdown/Breakout -> Retest Touch (Dashed Path)
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([5, 4]);
+        shadingCtx.lineWidth = 1.8;
+        shadingCtx.strokeStyle = strokeCol;
+        shadingCtx.moveTo(x1, y1);
+        shadingCtx.lineTo(x2, y2);
+        shadingCtx.stroke();
+
+        // Origin Dot at (x1, y1)
+        shadingCtx.setLineDash([]);
+        shadingCtx.fillStyle = strokeCol;
+        shadingCtx.beginPath();
+        shadingCtx.arc(x1, y1, 4, 0, 2 * Math.PI);
+        shadingCtx.fill();
+
+        // Origin Pill Label
+        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+        let originTxt = "";
+        if (s.is_confluence) {
+          originTxt = (dir === -1) ? `1. Breakdown (${traj.origin_age}b ago)` : `1. Breakout (${traj.origin_age}b ago)`;
+        } else if (s.type === "M3" || s.type === "M4") {
+          originTxt = (dir === -1) ? `1. Breakdown (${traj.origin_age}b ago)` : `1. Breakout (${traj.origin_age}b ago)`;
+        } else if (s.type === "M2") {
+          originTxt = `1. Pullback Origin (${traj.origin_age}b ago)`;
+        } else {
+          originTxt = `1. Origin (${traj.origin_age}b ago)`;
+        }
+        const originW = shadingCtx.measureText(originTxt).width;
+        const originPillX = Math.max(10, x1 - originW / 2 - 4);
+        const originPillY = (dir === -1) ? y1 - 18 : y1 + 6;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
+        shadingCtx.fillRect(originPillX, originPillY, originW + 8, 14);
+        shadingCtx.fillStyle = strokeCol;
+        shadingCtx.fillText(originTxt, originPillX + 4, originPillY + 10);
+
+        // 2. Retest / Touch Anchor Point at (x2, y2)
+        shadingCtx.beginPath();
+        shadingCtx.arc(x2, y2, 4.5, 0, 2 * Math.PI);
+        shadingCtx.fillStyle = "#ffffff";
+        shadingCtx.fill();
+        shadingCtx.lineWidth = 2;
+        shadingCtx.strokeStyle = strokeCol;
+        shadingCtx.stroke();
+
+        // Touch / Retest Anchor Pill Label
+        let anchorTxt = "";
+        if (s.is_confluence) {
+          anchorTxt = (dir === -1) ? "2. SBR & EMA Touch" : "2. RBS & EMA Touch";
+        } else if (s.type === "M2") {
+          anchorTxt = "2. EMA Touch";
+        } else {
+          anchorTxt = (dir === -1) ? "2. SBR Retest" : "2. RBS Retest";
+        }
+        const anchorW = shadingCtx.measureText(anchorTxt).width;
+        const anchorPillX = Math.max(10, x2 - anchorW / 2);
+        const anchorPillY = (dir === -1) ? y2 - 20 : y2 + 8;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
+        shadingCtx.fillRect(anchorPillX, anchorPillY, anchorW + 8, 14);
+        shadingCtx.fillStyle = strokeCol;
+        shadingCtx.fillText(anchorTxt, anchorPillX + 4, anchorPillY + 10);
+
+        // 3. Vector Segment 2: Retest -> Target Projection (Arrow forward)
+        const hasTp2 = traj.target_tp2 && Math.abs(traj.target_tp2 - traj.target_price) > 0.00001;
+        const x3 = Math.min(width - 40, Math.max(x2 + 45, x2 + 30));
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([6, 3]);
+        shadingCtx.lineWidth = 2.2;
+        shadingCtx.strokeStyle = (dir === 1) ? "#00e676" : "#ff5252";
+        shadingCtx.moveTo(x2, y2);
+        shadingCtx.lineTo(x3, y3);
+        shadingCtx.stroke();
+
+        // Arrow Head at (x3, y3)
+        shadingCtx.setLineDash([]);
+        const angle = Math.atan2(y3 - y2, x3 - x2);
+        const arrowLength = 9;
+        shadingCtx.fillStyle = (dir === 1) ? "#00e676" : "#ff5252";
+        shadingCtx.beginPath();
+        shadingCtx.moveTo(x3, y3);
+        shadingCtx.lineTo(x3 - arrowLength * Math.cos(angle - Math.PI / 6), y3 - arrowLength * Math.sin(angle - Math.PI / 6));
+        shadingCtx.lineTo(x3 - arrowLength * Math.cos(angle + Math.PI / 6), y3 - arrowLength * Math.sin(angle + Math.PI / 6));
+        shadingCtx.closePath();
+        shadingCtx.fill();
+
+        // Target Projection Pill Label
+        const tgtTxt = hasTp2 ? `3a. TP1 ${traj.target_price.toFixed(cachedSymbolData.digits || 5)}` : `3. TP Target ${traj.target_price.toFixed(cachedSymbolData.digits || 5)}`;
+        const tgtW = shadingCtx.measureText(tgtTxt).width;
+        const tgtPillX = Math.min(width - tgtW - 14, x3 + 8);
+        const tgtPillY = y3 - 7;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
+        shadingCtx.fillRect(tgtPillX, tgtPillY, tgtW + 8, 14);
+        shadingCtx.fillStyle = (dir === 1) ? "#00e676" : "#ff5252";
+        shadingCtx.fillText(tgtTxt, tgtPillX + 4, tgtPillY + 10);
+
+        // 4. Vector Segment 2b: TP1 -> TP2 Macro Expansion Projection (if available)
+        if (hasTp2 && y4 !== null && Math.abs(y4 - y3) > 10) {
+          const x4 = Math.min(width - 30, x3 + 35);
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([4, 4]);
+          shadingCtx.lineWidth = 1.8;
+          shadingCtx.strokeStyle = (dir === 1) ? "rgba(0, 230, 118, 0.75)" : "rgba(255, 82, 82, 0.75)";
+          shadingCtx.moveTo(x3, y3);
+          shadingCtx.lineTo(x4, y4);
+          shadingCtx.stroke();
+
+          // Arrow Head at (x4, y4)
+          shadingCtx.setLineDash([]);
+          const angle4 = Math.atan2(y4 - y3, x4 - x3);
+          shadingCtx.fillStyle = (dir === 1) ? "#00e676" : "#ff5252";
+          shadingCtx.beginPath();
+          shadingCtx.moveTo(x4, y4);
+          shadingCtx.lineTo(x4 - arrowLength * Math.cos(angle4 - Math.PI / 6), y4 - arrowLength * Math.sin(angle4 - Math.PI / 6));
+          shadingCtx.lineTo(x4 - arrowLength * Math.cos(angle4 + Math.PI / 6), y4 - arrowLength * Math.sin(angle4 + Math.PI / 6));
+          shadingCtx.closePath();
+          shadingCtx.fill();
+
+          // TP2 Projection Pill Label
+          const tp2Txt = `3b. TP2 Expansion ${traj.target_tp2.toFixed(cachedSymbolData.digits || 5)}`;
+          const tp2W = shadingCtx.measureText(tp2Txt).width;
+          const tp2PillX = Math.min(width - tp2W - 14, x4 + 8);
+          const tp2PillY = y4 - 7;
+          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
+          shadingCtx.fillRect(tp2PillX, tp2PillY, tp2W + 8, 14);
+          shadingCtx.fillStyle = (dir === 1) ? "#00e676" : "#ff5252";
+          shadingCtx.fillText(tp2Txt, tp2PillX + 4, tp2PillY + 10);
+        }
+
+        shadingCtx.restore();
+      }
+    });
+  }
 }
 
 // Initialize Lightweight Chart
@@ -1155,25 +1444,42 @@ function renderChartLevels(data) {
 
       // 2. Temporal Candle Marker (Titik Terjadinya / Proyeksi Kapan)
       if (s.event_time && s.event_time > 0) {
+        // Multi-setup confluence fusion: Skip separate M2 marker if confluent with M3
+        if (s.is_confluence && s.type === "M2") {
+          return;
+        }
+
         let shape = "circle";
         let pos = (s.direction === 1) ? "belowBar" : "aboveBar";
         let markerText = `[${s.type}]`;
 
-        if (s.type === "M3") {
+        if (s.is_confluence) {
           shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-          const statusDesc = (s.status === 'WAITING_RETEST') ? 'Waiting Retest' : 'Retest Active';
+          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
+          const structStr = (s.direction === 1) ? "RBS" : "SBR";
           const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
-          markerText = `[M3 BREAK] ${statusDesc} (${ageDesc})`;
+          markerText = `[M2+M3 ${dirStr} CONFLUENCE] ${structStr} & EMA Touch @ ${s.price.toFixed(data.digits || 5)} (${ageDesc})`;
+          color = "#c084fc";
+        } else if (s.type === "M3") {
+          shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
+          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
+          const structStr = (s.direction === 1) ? "RBS" : "SBR";
+          const statusDesc = (s.status === 'WAITING_RETEST') ? 'Waiting' : 'Retesting';
+          const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
+          markerText = `[M3 ${dirStr} RETEST] ${structStr} ${statusDesc} (${ageDesc})`;
         } else if (s.type === "M1") {
           shape = "circle";
+          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
           const statusDesc = (s.status === 'WAITING_CLOSE_RECLAIM') ? 'Waiting Close Reclaim' : (s.status === 'RECLAIMED_FADING' ? 'Reclaimed & Fading' : 'Sweep Watch');
-          markerText = `[M1 SWEEP] ${statusDesc}`;
+          markerText = `[M1 ${dirStr} SWEEP] ${statusDesc}`;
         } else if (s.type === "M2") {
           shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-          markerText = `[M2 PULLBACK] Target @ ${s.price.toFixed(data.digits || 5)}`;
+          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
+          markerText = `[M2 ${dirStr} PULLBACK] EMA Touch @ ${s.price.toFixed(data.digits || 5)}`;
         } else if (s.type === "M4") {
           shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-          markerText = `[M4 FLOW] Breakdown @ ${s.price.toFixed(data.digits || 5)}`;
+          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
+          markerText = `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
         }
 
         temporalMarkers.push({
@@ -1275,7 +1581,9 @@ function renderWatchlist(pairs) {
     const sName = (p.active_setup || "").toUpperCase();
     const bName = (p.bias || "").toUpperCase();
 
-    if (sName.includes("BEAR") || sName.includes("SELL") || (!sName.includes("BULL") && bName.includes("BEAR"))) {
+    if (p.is_confluence) {
+      setupPillClass = sName.includes("BEAR") ? "setup-pill-confl-bear" : "setup-pill-confl-bull";
+    } else if (sName.includes("BEAR") || sName.includes("SELL") || (!sName.includes("BULL") && bName.includes("BEAR"))) {
       setupPillClass = "setup-pill-bear";
     } else if (sName.includes("BULL") || sName.includes("BUY") || (!sName.includes("BEAR") && bName.includes("BULL"))) {
       setupPillClass = "setup-pill-bull";
@@ -1293,27 +1601,36 @@ function renderWatchlist(pairs) {
     const csmClass = p.csm_delta >= 0 ? "csm-pos" : "csm-neg";
     const csmText = `${p.csm_delta >= 0 ? '+' : ''}${p.csm_delta.toFixed(1)}`;
 
-    let biasColor = "var(--text-dim)";
-    if (p.bias && p.bias.includes("BULL")) biasColor = "var(--green)";
-    else if (p.bias && p.bias.includes("BEAR")) biasColor = "var(--red)";
-    else biasColor = "var(--amber)";
+    const biasTagClass = bName.includes("BULL") ? "htf-bull" : (bName.includes("BEAR") ? "htf-bear" : "htf-flat");
+    const pipsVal = p.dist_pips !== undefined ? p.dist_pips.toFixed(1) : "0.0";
+    const atrVal = p.dist_atr !== undefined ? p.dist_atr.toFixed(2) : "0.00";
+    const distText = p.dist_atr < 50 ? `${pipsVal}p (${atrVal}x ATR)` : ">50p (Idle)";
 
     html += `
       <div class="pair-row ${isSelected}" onclick="selectSymbol('${p.symbol}')">
-        <div>
-          <div class="pair-symbol">${cleanSym}</div>
-          <span class="pair-setup-pill ${setupPillClass}">${p.active_setup || "WATCH"}</span>
-        </div>
-        <div class="pair-meta">
-          <div class="pair-dist-text">${p.dist_desc}</div>
-          <div style="font-size:9px;font-weight:600;color:${biasColor};font-family:var(--font-mono);letter-spacing:0.3px;display:flex;align-items:center;gap:4px;">
-            <span>${p.bias}</span>
-            ${p.tactical_tag ? `<span style="background:rgba(255,183,3,0.15);color:var(--amber);border:1px solid rgba(255,183,3,0.3);padding:0px 4px;border-radius:3px;font-size:8px;">${p.tactical_tag}</span>` : ''}
+        <div class="pair-row-line">
+          <div class="pair-col-left">
+            <span class="pair-symbol">${cleanSym}</span>
+            <span class="csm-text ${csmClass}">${csmText}</span>
+          </div>
+          <div class="pair-col-mid">
+            <span class="pair-dist-text">${distText}</span>
+          </div>
+          <div class="pair-col-right">
+            <span class="tier-badge ${tierClass}">${p.perm_label}</span>
           </div>
         </div>
-        <div class="pair-right">
-          <span class="tier-badge ${tierClass}">${p.perm_label}</span>
-          <span class="csm-badge ${csmClass}">CSM ${csmText}</span>
+        <div class="pair-row-line">
+          <div class="pair-col-left">
+            <span class="pair-setup-pill ${setupPillClass}">${p.active_setup || "WATCH"}</span>
+            ${p.extra_count > 0 && !p.is_confluence ? `<span class="extra-setup-pill" title="${p.extra_count} additional standby setup(s)" style="margin-left:2px;">+${p.extra_count}</span>` : ''}
+          </div>
+          <div class="pair-col-mid">
+            ${p.tactical_tag ? `<span class="tactical-pill">${p.tactical_tag}</span>` : ''}
+          </div>
+          <div class="pair-col-right">
+            <span class="htf-bias-tag ${biasTagClass}">${p.bias}</span>
+          </div>
         </div>
       </div>
     `;
@@ -1355,7 +1672,7 @@ function renderSymbolHeader(d) {
     setCompassPill("pill-h1", "H1", it.h1_trend);
 
     document.getElementById("hud-adx").textContent = `${it.adx}`;
-    document.getElementById("hud-state").textContent = it.mse_state;
+    document.getElementById("hud-state").textContent = it.operational_phase || it.mse_state;
     document.getElementById("hud-session").textContent = it.active_session;
     document.getElementById("hud-rollover").textContent = it.pre_rollover_countdown;
   }
@@ -1627,6 +1944,30 @@ function setupEvents() {
   });
 }
 
+// Toggle Right Panel X-Ray Audit
+function toggleXrayPanel() {
+  const ws = document.querySelector(".workspace");
+  if (!ws) return;
+  ws.classList.toggle("xray-collapsed");
+  const isCollapsed = ws.classList.contains("xray-collapsed");
+  try {
+    localStorage.setItem("xray_collapsed", isCollapsed ? "1" : "0");
+  } catch(e) {}
+
+  const btn = document.getElementById("btn-toggle-xray");
+  if (btn) btn.textContent = isCollapsed ? "◀" : "▶";
+
+  setTimeout(() => {
+    const container = document.getElementById("tv-chart");
+    if (chart && container) {
+      chart.resize(container.clientWidth, container.clientHeight);
+    }
+    if (typeof resizeOverlayCanvas === "function") {
+      resizeOverlayCanvas();
+    }
+  }, 220);
+}
+
 // Bootstrap
 window.addEventListener("DOMContentLoaded", () => {
   initChart();
@@ -1634,6 +1975,13 @@ window.addEventListener("DOMContentLoaded", () => {
   fetchOverview();
   fetchSymbolData();
   fetchRules();
+
+  // Restore X-Ray collapse state
+  try {
+    if (localStorage.getItem("xray_collapsed") === "1") {
+      toggleXrayPanel();
+    }
+  } catch(e) {}
 
   // Fast Polling loop: 2.5s
   setInterval(fetchOverview, 2500);

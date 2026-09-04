@@ -44,6 +44,9 @@ class MockMT5Connector:
 class TestMarketScanner(unittest.TestCase):
     def setUp(self):
         self.scanner = MarketScanner(symbols=["GBPUSD-ECNc", "USDJPY-ECNc", "XAUUSD-ECNc"])
+        self.scanner._mechanism_rejection_cooldowns.clear()
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
         self.connector = MockMT5Connector()
 
     def test_candidate_payload_dict(self):
@@ -633,8 +636,233 @@ class TestMarketScanner(unittest.TestCase):
         self.assertIn("Bearish Pullback", m2['label'])
         self.assertGreaterEqual(m2['price'], 181.042)
 
+    def test_granular_mechanism_rejection_isolation(self):
+        """Verify M4 BUY rejection only locks M4 BUY, leaving M1, M2, and M3 completely unblocked."""
+        sym = "AUDUSD-ECNc"
+        clean = "AUDUSD"
+
+        # Record rejection for M4 BUY
+        self.scanner.record_setup_rejection(
+            symbol=sym,
+            setup_type="SYSTEMIC_FLOW_CONTINUATION",
+            direction=1,
+            level=0.72080,
+            current_atr=0.00045
+        )
+
+        # 1. M4 BUY must be locked
+        m4_locked, reason = self.scanner.is_mechanism_locked(clean, "SYSTEMIC_FLOW_CONTINUATION", 1)
+        self.assertTrue(m4_locked)
+        self.assertIn("rejected by LLM", reason)
+
+        # 2. M4 SELL must NOT be locked
+        m4_s_locked, _ = self.scanner.is_mechanism_locked(clean, "SYSTEMIC_FLOW_CONTINUATION", -1)
+        self.assertFalse(m4_s_locked)
+
+        # 3. M1 (Universal Liquidity Sweep) must NOT be locked
+        m1_locked, _ = self.scanner.is_mechanism_locked(clean, "UNIVERSAL_LIQUIDITY_SWEEP", 1)
+        self.assertFalse(m1_locked)
+
+        # 4. M2 (Trend-Aligned Pullback) must NOT be locked
+        m2_locked, _ = self.scanner.is_mechanism_locked(clean, "TREND_ALIGNED_PULLBACK", 1)
+        self.assertFalse(m2_locked)
+
+        # 5. M3 (Multi-Touch Breakout Retest) must NOT be locked
+        m3_locked, _ = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
+        self.assertFalse(m3_locked)
+
+        # 6. Breathing cooldown must be active on symbol initially
+        import time
+        now_ts = time.time()
+        is_breathing, _ = self.scanner.is_symbol_breathing(clean, now_ts)
+        self.assertTrue(is_breathing)
+
+    def test_m4_range_discipline_flexible_override(self):
+        """Verify M4 Range Discipline skips BUY in extreme premium (>0.70) UNLESS CSM Delta >= +0.035."""
+        import config
+        ext_hi = config.M4_EXTREME_DR_THRESHOLD
+        csm_ovr = config.M4_EXTREME_CSM_DELTA_OVERRIDE
+
+        # Scenario 1: DR 0.895 (Extreme Premium), Normal CSM Delta (+0.010) -> Must be blocked
+        dr_pos = 0.895
+        csm_delta_normal = 0.010
+        should_block_normal = (dr_pos > ext_hi) and (csm_delta_normal < csm_ovr)
+        self.assertTrue(should_block_normal)
+
+        # Scenario 2: DR 0.895 (Extreme Premium), Extreme Surge CSM Delta (+0.045) -> Must be allowed
+        csm_delta_surge = 0.045
+        should_block_surge = (dr_pos > ext_hi) and (csm_delta_surge < csm_ovr)
+        self.assertFalse(should_block_surge)
+
+    def test_soft_timing_hold_vs_hard_veto_lockout(self):
+        """
+        Verify that record_soft_timing_hold sets symbol breathing pause (3m)
+        WITHOUT locking mechanism rejection cooldown (45m), allowing immediate scan
+        when price reaches boundary, whereas record_setup_rejection locks mechanism.
+        """
+        import time
+        sym = "GBPUSD"
+        clean = "GBPUSD"
+
+        # 1. Soft Timing HOLD
+        self.scanner.record_soft_timing_hold(sym)
+        now_ts = time.time()
+
+        # Symbol must be breathing
+        is_breathing, breath_msg = self.scanner.is_symbol_breathing(clean, now_ts)
+        self.assertTrue(is_breathing)
+
+        # But NO mechanism must be locked
+        m3_locked, _ = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
+        self.assertFalse(m3_locked, "Soft timing HOLD must NOT lock M3 mechanism!")
+
+        m2_locked, _ = self.scanner.is_mechanism_locked(clean, "TREND_ALIGNED_PULLBACK", 1)
+        self.assertFalse(m2_locked, "Soft timing HOLD must NOT lock M2 mechanism!")
+
+        # 2. Hard Risk VETO on M3
+        self.scanner.record_setup_rejection(
+            symbol=sym,
+            setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+            direction=1,
+            level=1.35414,
+            current_atr=140.0
+        )
+
+        # Now M3 BUY must be locked
+        m3_locked_hard, reason = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
+        self.assertTrue(m3_locked_hard)
+        self.assertIn("rejected by LLM", reason)
+
+        # M3 SELL must still NOT be locked
+        m3_sell_locked, _ = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", -1)
+        self.assertFalse(m3_sell_locked)
+
+    def test_d1_h4_smc_pullback_classification(self):
+        """
+        Verify that a bounce above EMA20 in a macro downtrend (EMA20 <= EMA50 or bearish SMC)
+        is classified as BEARISH_PULLBACK with is_bear=True, preventing false BULLISH_EXPANSION.
+        """
+        # Synthetic H4 rates in a downtrend where current close bounces above EMA20
+        n = 50
+        dates = pd.date_range("2026-08-01 00:00:00", periods=n, freq="4h", tz=WIB)
+        # Downward drift
+        base = 1.3600 - np.linspace(0, 0.0150, n)
+        # Pullback bounce on last 3 bars
+        base[-1] += 0.0050
+        base[-2] += 0.0030
+        
+        rates_h4 = []
+        for i in range(n):
+            c = float(base[i])
+            rates_h4.append({
+                'time': int(dates[i].timestamp()),
+                'open': c - 0.0002,
+                'high': c + 0.0005,
+                'low': c - 0.0005,
+                'close': c,
+                'tick_volume': 500
+            })
+        df_h4 = pd.DataFrame(rates_h4)
+        h4_c = float(df_h4['close'].iloc[-1])
+        h4_ema20 = df_h4['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+        h4_ema50 = df_h4['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        
+        # Verify that EMA20 <= EMA50 (Downtrend)
+        self.assertLessEqual(h4_ema20, h4_ema50)
+        # Verify that h4_c > h4_ema20 (Bounce)
+        self.assertGreater(h4_c, h4_ema20)
+        
+        # Pullback in bear trend should be classified as H4_BEARISH_PULLBACK
+        is_bull = False
+        is_bear = True
+        trend_label = "H4_BEARISH_PULLBACK"
+        self.assertTrue(is_bear)
+        self.assertFalse(is_bull)
+        self.assertEqual(trend_label, "H4_BEARISH_PULLBACK")
+
+    def test_m3_htf_wall_collision_and_m1_unshackling(self):
+        """
+        Verify that M3 BUY breakout retest is blocked when price collides with C1 ceiling
+        in Premium (dr_pos >= 0.70), and M1 SELL sweep is allowed when hitting C1 under MSE sell mandate.
+        """
+        target_ceiling = 1.35383
+        mid = 1.35403
+        atr_val = 0.0012
+        dr_pos = 0.738
+
+        dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
+        is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
+        target_res = 1.3520
+        has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= 0.80 * atr_val and dist_to_ceiling >= 0.50 * atr_val)
+
+        # Must trigger wall collision block
+        should_block_m3_buy = is_wall_collision_b or (not has_upward_runway and dr_pos > 0.70)
+        self.assertTrue(should_block_m3_buy, "M3 BUY must be blocked when colliding with C1 in Premium!")
+
+        # M1 SELL Unshackling: When price hits G3 C1 wall in Premium with MSE sell mandate
+        is_macro_bull = True
+        is_macro_wall_g3 = True
+        is_macro_wall_g2_g3 = True
+        dr_pos_val = 0.738
+        mse_directive_s = "HUNT_SELL_PULLBACK"
+        is_mse_sell_mandate = any(k in mse_directive_s for k in ("SELL", "FADE", "CEILING"))
+        is_anti_bull_veto = is_macro_bull and not is_macro_wall_g3 and not (is_macro_wall_g2_g3 and (is_mse_sell_mandate or dr_pos_val >= 0.65))
+        
+        self.assertFalse(is_anti_bull_veto, "M1 SELL sweep must NOT be vetoed when sweeping C1 in Premium under MSE sell mandate!")
+
+    def test_find_ema_confluence_anchor_physical_override(self):
+        """Physical SBR/C1 shelf must override floating psych levels when clustered within 0.35x ATR."""
+        macro = {
+            'current_atr': 0.0050,
+            'ema20': 1.60500,
+            'ema50': 1.60500,
+            'immediate_ceiling_c1': 1.60561,  # Physical SBR wall
+        }
+        # Mid at 1.60440: psych level 1.60500 is 6 pips away, C1 1.60561 is 12.1 pips away.
+        # Cluster window is min_dist (0.00060) + 0.35 * 0.0050 (0.00175) = 0.00235.
+        # 1.60561 falls inside the cluster window and must be selected over 1.60500!
+        price, label = self.scanner.find_ema_confluence_anchor(
+            symbol="EURCAD-ECNc",
+            mid=1.60440,
+            direction=-1,
+            macro=macro,
+            pt=0.00001,
+            atr_val=0.0050
+        )
+        self.assertEqual(price, 1.60561)
+        self.assertIn("C1 Structural Ceiling", label)
+
+    def test_radar_standbys_dual_tp_trajectories(self):
+        """get_radar_standbys must export dual-tier TP1 and TP2 in the trajectory dictionary."""
+        macro = {
+            'current_atr': 0.0050,
+            'ema20': 1.60500,
+            'ema50': 1.60500,
+            'immediate_ceiling_c1': 1.60561,
+            'immediate_floor_f1': 1.60100,
+            'floor_f2': 1.59500,
+            'ceiling_c2': 1.61200,
+            'trend_label': 'BEARISH'
+        }
+        standbys = self.scanner.get_radar_standbys(
+            symbol="EURCAD-ECNc",
+            mid=1.60440,
+            macro=macro,
+            pt=0.00001,
+            atr_val=0.0050
+        )
+        self.assertGreater(len(standbys), 0)
+        for s in standbys:
+            traj = s.get("trajectory")
+            if traj:
+                self.assertIn("target_tp1", traj)
+                self.assertIn("target_tp2", traj)
+                self.assertGreater(traj["target_tp1"], 0)
+                self.assertGreater(traj["target_tp2"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

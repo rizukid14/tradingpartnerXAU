@@ -255,6 +255,8 @@ class MarketScanner:
         self.last_candidates: List[CandidateSetup] = []
         self._last_radar_scan_time: float = 0.0
         self._cooldown_file = os.path.join(config.DATA_DIR, "scanner_cooldowns.json")
+        self._symbol_last_eval: Dict[str, float] = {}
+        self._mechanism_rejection_cooldowns: Dict[str, float] = {}
         self._symbol_last_trigger: Dict[str, float] = self._load_cooldowns()
         # ── M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026) ──
         # State machine episode per simbol (2 arah) + feed z per currency (rolling 24-bar H1,
@@ -271,22 +273,33 @@ class MarketScanner:
         MarketScanner._instance = self
 
     def _load_cooldowns(self) -> Dict[str, float]:
+        legacy_triggers = {}
         try:
             if os.path.exists(self._cooldown_file):
                 with open(self._cooldown_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     now_ts = time.time()
-                    return {k: float(v) for k, v in data.items() if (now_ts - float(v)) < 1800}
+                    if isinstance(data, dict):
+                        if "mechanism_cooldowns" in data or "symbol_eval" in data:
+                            self._symbol_last_eval = {k: float(v) for k, v in data.get("symbol_eval", {}).items() if float(v) > now_ts}
+                            self._mechanism_rejection_cooldowns = {k: float(v) for k, v in data.get("mechanism_cooldowns", {}).items() if float(v) > now_ts}
+                            legacy_triggers = {k: float(v) for k, v in data.get("symbol_trigger", {}).items() if (now_ts - float(v)) < 1800}
+                        else:
+                            legacy_triggers = {k: float(v) for k, v in data.items() if (now_ts - float(v)) < 1800}
         except Exception:
             pass
-        return {}
+        return legacy_triggers
 
     def _save_cooldowns(self):
         try:
             now_ts = time.time()
-            valid_cd = {k: v for k, v in self._symbol_last_trigger.items() if (now_ts - v) < 1800}
+            data = {
+                "symbol_eval": {k: v for k, v in self._symbol_last_eval.items() if v > now_ts},
+                "mechanism_cooldowns": {k: v for k, v in self._mechanism_rejection_cooldowns.items() if v > now_ts},
+                "symbol_trigger": {k: v for k, v in self._symbol_last_trigger.items() if (now_ts - v) < 1800}
+            }
             with open(self._cooldown_file, "w", encoding="utf-8") as f:
-                json.dump(valid_cd, f, indent=2)
+                json.dump(data, f, indent=2)
         except Exception:
             pass
 
@@ -295,25 +308,107 @@ class MarketScanner:
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         now_ts = time.time()
         self._symbol_last_trigger[clean_sym] = now_ts + max(0, cooldown_seconds - 900)
+        self._symbol_last_eval[clean_sym] = now_ts + min(float(cooldown_seconds), float(getattr(config, "SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180)))
         self._save_cooldowns()
         logger.info(f"⏳ Cooldown {cooldown_seconds // 60}m diaktifkan untuk {clean_sym} (Pending Cancelled/Expired).")
 
-    def record_retest_rejection(self, symbol: str, level: float, current_atr: float = 0.0):
+    def record_setup_rejection(
+        self,
+        symbol: str,
+        setup_type: str = "",
+        direction: int = 0,
+        level: float = 0.0,
+        current_atr: float = 0.0
+    ):
         """
-        Mencatat level retest yang di-reject atau di-hold oleh 3-LLM Jury (1 Episode Retest Debounce).
-        Kunci level tersebut dari trigger ulang sampai harga keluar (>0.5x ATR) atau 2 jam berlalu.
+        Mencatat penolakan/HOLD setup oleh 3-LLM Jury secara granular (4 Sep 2026):
+        1. Lockout Granular (45 menit default): Khusus untuk (symbol, setup_type, direction).
+        2. Breathing Cooldown Simbol (3 menit default): Menjeda evaluasi beruntun pada simbol yang sama.
+        3. Level Retest Lockout (2 jam jika M3 Breakout Retest): Khusus level retest M3 (1 Episode Retest Debounce).
         """
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         now_ts = time.time()
-        self._retest_rejected_levels[clean_sym] = {
-            "level": float(level),
-            "rejected_at": now_ts,
-            "entry_atr": float(current_atr)
-        }
-        # Naikkan juga symbol trigger cooldown ke minimal 45 menit
-        self._symbol_last_trigger[clean_sym] = now_ts + 1800 # 45 min cooldown total
+        dur_rejection = float(getattr(config, "SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 2700))
+        dur_breathing = float(getattr(config, "SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180))
+
+        # 1. Lockout Granular (Per-Mekanisme & Per-Arah)
+        if setup_type:
+            mech_key = f"{clean_sym}:{setup_type}:{direction}"
+            self._mechanism_rejection_cooldowns[mech_key] = now_ts + dur_rejection
+            logger.info(f"🔒 [GRANULAR REJECTION] {mech_key} dikunci {dur_rejection // 60:.0f}m.")
+
+        # 2. Jeda Bernapas Simbol (3 menit) — agar tidak membakar token berturut-turut pada detik yang sama
+        self._symbol_last_eval[clean_sym] = now_ts + dur_breathing
+
+        # 3. Retest Level Debounce Memory — khusus jika setup terkait level retest (M3)
+        if "BREAKOUT" in setup_type.upper() or setup_type == "M3" or "RETEST" in setup_type.upper():
+            if level > 0:
+                self._retest_rejected_levels[clean_sym] = {
+                    "level": float(level),
+                    "rejected_at": now_ts,
+                    "entry_atr": float(current_atr)
+                }
+                logger.info(f"🔒 [M3 RETEST LOCK] {clean_sym} level {level:.5f} dikunci (2 jam / displacement >0.50x ATR).")
+
+        # Kompatibilitas field lama
+        self._symbol_last_trigger[clean_sym] = now_ts + dur_breathing
         self._save_cooldowns()
-        logger.info(f"🔒 [RETEST REJECTION MEMORY] {clean_sym} dikunci pada level {level:.5f} (2 jam / displacement >0.50x ATR).")
+
+    def record_retest_rejection(self, symbol: str, level: float, current_atr: float = 0.0):
+        """Backward-compatible wrapper for record_setup_rejection (default to M3_BREAKOUT_RETEST)."""
+        self.record_setup_rejection(
+            symbol=symbol,
+            setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+            direction=0,
+            level=level,
+            current_atr=current_atr
+        )
+
+    def record_soft_timing_hold(self, symbol: str):
+        """
+        Mencatat status Soft Timing HOLD (menunggu harga menyentuh boundary / retest confirmation).
+        HANYA mengaktifkan jeda bernapas simbol (dur_breathing default 3 menit) untuk mencegah
+        pemborosan token API beruntun, TANPA mengunci mekanisme selama 45 menit.
+        """
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        now_ts = time.time()
+        dur_breathing = float(getattr(config, "SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180))
+        self._symbol_last_eval[clean_sym] = now_ts + dur_breathing
+        self._symbol_last_trigger[clean_sym] = now_ts + dur_breathing
+        self._save_cooldowns()
+        logger.info(f"⏳ [SOFT TIMING HOLD] {clean_sym} dijeda bernapas {dur_breathing // 60:.0f}m (tanpa granular mechanism lockout).")
+
+    def is_mechanism_locked(self, symbol: str, setup_type: str, direction: int = 0) -> Tuple[bool, str]:
+        """
+        Mengecek apakah pasangan (simbol, setup_type, direction) sedang dalam masa granular rejection lockout.
+        """
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        now_ts = time.time()
+        
+        # Cek kunci spesifik arah
+        mech_key = f"{clean_sym}:{setup_type}:{direction}"
+        exp = self._mechanism_rejection_cooldowns.get(mech_key, 0.0)
+        if now_ts < exp:
+            remaining_mins = (exp - now_ts) / 60.0
+            return True, f"{mech_key} rejected by LLM ({remaining_mins:.1f}m remaining)"
+            
+        # Cek kunci netral arah (direction = 0)
+        mech_key_0 = f"{clean_sym}:{setup_type}:0"
+        exp_0 = self._mechanism_rejection_cooldowns.get(mech_key_0, 0.0)
+        if now_ts < exp_0:
+            remaining_mins = (exp_0 - now_ts) / 60.0
+            return True, f"{mech_key_0} rejected by LLM ({remaining_mins:.1f}m remaining)"
+
+        return False, ""
+
+    def is_symbol_breathing(self, symbol: str, now_ts: float) -> Tuple[bool, str]:
+        """True jika simbol masih berada dalam jeda bernapas singkat (default 3 menit)."""
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        exp = self._symbol_last_eval.get(clean_sym, 0.0)
+        if now_ts < exp:
+            rem = int(exp - now_ts)
+            return True, f"Jeda bernapas aktif ({rem}s tersisa)"
+        return False, ""
 
     def is_retest_locked(self, symbol: str, current_mid: float, current_atr: float) -> Tuple[bool, str]:
         """
@@ -500,12 +595,12 @@ class MarketScanner:
                         continue
                 except Exception:
                     continue
-                self._m4_step_side(st_all["SELL"], -1, p, float(zbv), float(zqv), cl, lo, hi, atr)
-                self._m4_step_side(st_all["BUY"], 1, p, float(zbv), float(zqv), cl, lo, hi, atr)
+                self._m4_step_side(st_all["SELL"], -1, p, float(zbv), float(zqv), cl, lo, hi, atr, df.index)
+                self._m4_step_side(st_all["BUY"], 1, p, float(zbv), float(zqv), cl, lo, hi, atr, df.index)
             self._m4_processed_ts[c] = float(df.index[-1])
 
     def _m4_step_side(self, st: dict, side: int, p: int, zb: float, zq: float,
-                      cl: np.ndarray, lo: np.ndarray, hi: np.ndarray, atr):
+                      cl: np.ndarray, lo: np.ndarray, hi: np.ndarray, atr, df_times=None):
         """Translasi 1:1 state machine studi mirror ke bar H1 live (per sisi SELL/BUY)."""
         EP = config.M4_TRIGGER_Z
         CT = config.M4_CONT_Z
@@ -543,12 +638,14 @@ class MarketScanner:
                             sl, tp = level + R, level - config.M4_TP_R_MULT * R
                         else:
                             sl, tp = level - R, level + config.M4_TP_R_MULT * R
-                        st["pending"] = {"break_pos": p, "level": float(level), "atr": atr_p,
+                        b_time = int(df_times[p]) if (df_times is not None and p < len(df_times)) else 0
+                        st["pending"] = {"break_pos": p, "break_time": b_time, "level": float(level), "atr": atr_p,
                                          "sl": float(sl), "tp": float(tp)}
         else:
             if trig:
                 w0 = max(0, p - config.M4_LOOKBACK_BARS)
                 st["ep"] = p
+                st["ep_time"] = int(df_times[p]) if (df_times is not None and p < len(df_times)) else 0
                 # level = swing 120-bar SEBELUM episode: SELL pakai lantai low, BUY pakai atap high (studi 1:1)
                 st["level"] = float(hi[w0:p].max()) if side == 1 else float(lo[w0:p].min())
 
@@ -577,8 +674,12 @@ class MarketScanner:
             return
         self._m4_feed_updated = time.time()
 
-    def _m4_pending_ready(self, sym_clean: str, side_key: str, mid: float, atr_now: float) -> Optional[dict]:
-        """Ambil pending M4 yang valid & sedang dalam band pendekatan retest level."""
+    def _m4_pending_ready(self, sym_clean: str, side_key: str, mid: float, atr_now: float, mt5_connector=None) -> Optional[dict]:
+        """
+        Ambil pending M4 yang valid & sedang dalam:
+        1. Mode A: Band pendekatan retest level awal (Classic Deep Retest).
+        2. Mode B: M15/M30 High-Tight Basing (Konsolidasi mendatar paska-breakout).
+        """
         st = self._m4_state.get(sym_clean, {}).get(side_key)
         if not st:
             return None
@@ -591,14 +692,196 @@ class MarketScanner:
             return None
         band = config.M4_EMIT_BAND_ATR * atr_ref
         tol = 0.10 * atr_ref
+
+        # Mode A: Classic Deep Retest
         if side_key == "SELL":
-            # harga mendekati level dari bawah (retest) — belum reclaim jauh di atas level
-            if not (level - band <= mid <= level + tol):
-                return None
+            in_deep = (level - band <= mid <= level + tol)
         else:
-            if not (level - tol <= mid <= level + band):
-                return None
-        return pend
+            in_deep = (level - tol <= mid <= level + band)
+        if in_deep:
+            pend_copy = dict(pend)
+            pend_copy["is_basing"] = False
+            return pend_copy
+
+        # Mode B: M15/M30 High-Tight Basing (Absorption channel di atas/bawah level)
+        tf_basing = getattr(config.mt5, 'TIMEFRAME_M30', 30) if "JPY" in sym_clean else getattr(config.mt5, 'TIMEFRAME_M15', 15)
+        rates = None
+        if hasattr(config.mt5, 'copy_rates_from_pos'):
+            try:
+                rates = config.mt5.copy_rates_from_pos(sym_clean, tf_basing, 0, 6)
+            except Exception:
+                pass
+        if (rates is None or len(rates) < 4) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+            try:
+                rates = mt5_connector.get_closed_bars(sym_clean, count=6, timeframe=tf_basing)
+            except Exception:
+                pass
+
+        if rates is not None and len(rates) >= 4:
+            try:
+                chunk = rates[-4:]
+                highs = [float(b['high']) for b in chunk]
+                lows = [float(b['low']) for b in chunk]
+                c_hi = max(highs)
+                c_lo = min(lows)
+                c_rng = c_hi - c_lo
+                max_basing_rng = getattr(config, "M4_BASING_MAX_RANGE_ATR", 0.35) * atr_ref
+
+                if c_rng <= max_basing_rng:
+                    if side_key == "SELL" and c_hi <= level + tol:
+                        # Basing di bawah broken support: limit retest di atap basing
+                        if abs(mid - c_hi) <= 0.20 * atr_ref:
+                            r_pts = config.M4_SL_ATR_MULT * atr_ref
+                            b_sl = c_hi + r_pts
+                            b_tp = c_hi - config.M4_TP_R_MULT * r_pts
+                            return {
+                                "break_pos": pend.get("break_pos", 0),
+                                "break_time": pend.get("break_time", 0),
+                                "level": float(c_hi),
+                                "atr": atr_ref,
+                                "sl": float(b_sl),
+                                "tp": float(b_tp),
+                                "is_basing": True
+                            }
+                    elif side_key == "BUY" and c_lo >= level - tol:
+                        # Basing di atas broken resistance: limit retest di lantai basing
+                        if abs(mid - c_lo) <= 0.20 * atr_ref:
+                            r_pts = config.M4_SL_ATR_MULT * atr_ref
+                            b_sl = c_lo - r_pts
+                            b_tp = c_lo + config.M4_TP_R_MULT * r_pts
+                            return {
+                                "break_pos": pend.get("break_pos", 0),
+                                "break_time": pend.get("break_time", 0),
+                                "level": float(c_lo),
+                                "atr": atr_ref,
+                                "sl": float(b_sl),
+                                "tp": float(b_tp),
+                                "is_basing": True
+                            }
+            except Exception:
+                pass
+
+        return None
+
+    def get_m4_regime_catalyst(self, sym_clean: str, csm_delta: float = 0.0, atr_val: float = 0.0, mid: float = 0.0, mt5_connector=None) -> dict:
+        """
+        Evaluates active M4 Systemic Flow Catalyst for a symbol:
+        1. Checks active episode or pending status.
+        2. Validates duration <= 48 H1 bars (1-2 trading days). If > 48 bars -> Expired.
+        3. CSM Invalidation Guard:
+           - SELL flow invalidated if CSM Net Delta >= +1.0 (strong buyer dominance).
+           - BUY flow invalidated if CSM Net Delta <= -1.0 (strong seller dominance).
+        4. Detects Basing Chamber (basing ceiling & floor) on M15/M30 bars.
+        Returns dict with catalyst details.
+        """
+        res = {
+            "catalyst": None,       # "BEARISH_FLOW" | "BULLISH_FLOW" | None
+            "side": None,           # "SELL" | "BUY" | None
+            "age": 0,
+            "basing_ceiling": 0.0,
+            "basing_floor": 0.0,
+            "is_basing": False,
+            "origin_level": 0.0,
+            "reason": ""
+        }
+        if not getattr(config, "M4_ENABLED", True) or not hasattr(self, "_m4_state"):
+            return res
+        
+        st_sym = self._m4_state.get(sym_clean)
+        if not st_sym:
+            return res
+        
+        df_m4 = getattr(self, "_m4_df", {}).get(sym_clean)
+        n_bars = len(df_m4) if df_m4 is not None else 0
+        max_age = getattr(config, "M4_MAX_WAIT_BARS", 48)
+
+        # Cek sisi SELL lalu BUY
+        for side, side_dir, inv_csm in (("SELL", "BEARISH_FLOW", 1.0), ("BUY", "BULLISH_FLOW", -1.0)):
+            s_data = st_sym.get(side, {})
+            pend = s_data.get("pending")
+            ep = s_data.get("ep")
+            
+            ref_pos = None
+            if pend and pend.get("break_pos") is not None:
+                ref_pos = pend["break_pos"]
+            elif ep is not None:
+                ref_pos = ep
+                
+            if ref_pos is None:
+                continue
+                
+            age = (n_bars - 1 - ref_pos) if (n_bars > ref_pos) else 0
+            if age > max_age:
+                # Durasi katalisator melebihi 1-2 hari bursa (48 bar) -> Expired
+                continue
+                
+            # CSM Flow Invalidation Guard
+            if (side == "SELL" and csm_delta >= inv_csm) or (side == "BUY" and csm_delta <= inv_csm):
+                # Aliran CSM berlawanan secara ekstrem -> Gugur
+                continue
+                
+            res["catalyst"] = side_dir
+            res["side"] = side
+            res["age"] = age
+            res["origin_level"] = float(pend.get("level", 0.0)) if pend else float(s_data.get("level", 0.0) or 0.0)
+            res["reason"] = f"M4 {side_dir} active (age={age}b <= {max_age}b, CSM {csm_delta:+.2f})"
+            
+            # Cek basing chamber di M15/M30
+            b_ceil = 0.0
+            b_floor = 0.0
+            is_basing = False
+            
+            tf_basing = getattr(config.mt5, 'TIMEFRAME_M30', 30) if "JPY" in sym_clean else getattr(config.mt5, 'TIMEFRAME_M15', 15)
+            rates = None
+            if hasattr(config.mt5, 'copy_rates_from_pos'):
+                try:
+                    rates = config.mt5.copy_rates_from_pos(sym_clean, tf_basing, 0, 6)
+                except Exception:
+                    pass
+            if (rates is None or len(rates) < 4) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+                try:
+                    rates = mt5_connector.get_closed_bars(sym_clean, count=6, timeframe=tf_basing)
+                except Exception:
+                    pass
+                    
+            if rates is not None and len(rates) >= 4:
+                try:
+                    chunk = rates[-4:]
+                    highs = [float(b['high']) for b in chunk]
+                    lows = [float(b['low']) for b in chunk]
+                    c_hi = max(highs)
+                    c_lo = min(lows)
+                    c_rng = c_hi - c_lo
+                    atr_ref = atr_val if atr_val > 0 else (pend.get("atr", 0.0) if pend else 0.0)
+                    max_basing_rng = getattr(config, "M4_BASING_MAX_RANGE_ATR", 0.35) * atr_ref if atr_ref > 0 else 0.0
+                    
+                    if atr_ref > 0 and c_rng <= max_basing_rng:
+                        tol = 0.10 * atr_ref
+                        orig_lvl = res["origin_level"]
+                        if side == "SELL" and (orig_lvl <= 0 or c_hi <= orig_lvl + tol):
+                            b_ceil = c_hi
+                            b_floor = c_lo
+                            is_basing = True
+                        elif side == "BUY" and (orig_lvl <= 0 or c_lo >= orig_lvl - tol):
+                            b_ceil = c_hi
+                            b_floor = c_lo
+                            is_basing = True
+                except Exception:
+                    pass
+                    
+            if not is_basing and res["origin_level"] > 0:
+                # Jika belum forming basing box ketat, jadikan origin_level sebagai anchor awal
+                if side == "SELL":
+                    b_ceil = res["origin_level"]
+                else:
+                    b_floor = res["origin_level"]
+                    
+            res["basing_ceiling"] = b_ceil
+            res["basing_floor"] = b_floor
+            res["is_basing"] = is_basing
+            return res
+            
+        return res
 
     @staticmethod
     def _is_m4_supported(sym_clean: str) -> bool:
@@ -705,6 +988,77 @@ class MarketScanner:
             logger.debug(f"Error classifying candle for {sym}: {e}")
             return default_res
 
+    def _verify_m5_rejection_wick(self, sym: str, level: float, direction: int, atr_val: float, pt: float, mt5_connector=None) -> Tuple[bool, str]:
+        """
+        Microscope M5 Verification Gate for M3 Breakout Retest:
+        Evaluates the last 6 M5 candles to ensure the retest touch is met with an authentic rejection wick (>=25%)
+        and NOT a waterfall penetration (which empirically carries a 0.8% win rate / 75.7% failure rate).
+        - For SELL (direction == -1, SBR level): Price approaches level from below.
+          Requires upper_wick_ratio >= 0.25 on the touch bar OR close <= level + 0.05 * atr.
+          Rejects if strong bullish marubozu penetrates level with close > level + 0.15 * atr.
+        - For BUY (direction == 1, RBS level): Price approaches level from above.
+          Requires lower_wick_ratio >= 0.25 on the touch bar OR close >= level - 0.05 * atr.
+          Rejects if strong bearish marubozu penetrates level with close < level - 0.15 * atr.
+        """
+        if not getattr(config, "M3_M5_REJECTION_FILTER", True):
+            return True, "FILTER_DISABLED"
+
+        rates_m5 = None
+        tf_m5 = getattr(config.mt5, 'TIMEFRAME_M5', 5)
+        if hasattr(config.mt5, 'copy_rates_from_pos'):
+            try:
+                rates_m5 = config.mt5.copy_rates_from_pos(sym, tf_m5, 0, 6)
+            except Exception:
+                pass
+        if (rates_m5 is None or len(rates_m5) < 2) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+            try:
+                rates_m5 = mt5_connector.get_closed_bars(sym, count=6, timeframe=tf_m5)
+            except Exception:
+                pass
+
+        # If rates cannot be fetched (e.g. mock/offline in unit tests), pass safely
+        if rates_m5 is None or len(rates_m5) < 2:
+            return True, "M5_UNAVAILABLE_PASS"
+
+        min_wick_ratio = getattr(config, "M3_M5_MIN_WICK_RATIO", 0.25)
+        atr_ref = max(atr_val, 10.0 * pt)
+
+        has_touch = False
+        has_rejection = False
+        is_waterfall = False
+
+        for bar in rates_m5[-3:]:
+            b_op = float(bar['open'])
+            b_hi = float(bar['high'])
+            b_lo = float(bar['low'])
+            b_cl = float(bar['close'])
+            b_rng = b_hi - b_lo
+
+            if direction == -1:  # SELL at SBR
+                if b_hi >= level - 0.10 * atr_ref:
+                    has_touch = True
+                    upper_wick = b_hi - max(b_op, b_cl)
+                    wick_ratio = (upper_wick / b_rng) if b_rng > 0 else 0.0
+                    if wick_ratio >= min_wick_ratio or b_cl <= level + 0.05 * atr_ref:
+                        has_rejection = True
+                    if b_cl > level + 0.15 * atr_ref and b_cl > b_op and wick_ratio < 0.15:
+                        is_waterfall = True
+            else:  # BUY at RBS
+                if b_lo <= level + 0.10 * atr_ref:
+                    has_touch = True
+                    lower_wick = min(b_op, b_cl) - b_lo
+                    wick_ratio = (lower_wick / b_rng) if b_rng > 0 else 0.0
+                    if wick_ratio >= min_wick_ratio or b_cl >= level - 0.05 * atr_ref:
+                        has_rejection = True
+                    if b_cl < level - 0.15 * atr_ref and b_cl < b_op and wick_ratio < 0.15:
+                        is_waterfall = True
+
+        if is_waterfall and not has_rejection:
+            return False, "M5_WATERFALL_PENETRATION"
+        if has_touch and not has_rejection:
+            return False, "M5_NO_REJECTION_WICK"
+        return True, "M5_REJECTION_CONFIRMED"
+
     def find_ema_confluence_anchor(
         self,
         symbol: str,
@@ -792,8 +1146,20 @@ class MarketScanner:
             valid_cands = [c for c in candidates if abs(c[0] - mid) <= 3.0 * atr_val]
             if not valid_cands:
                 valid_cands = candidates
-            valid_cands.sort(key=lambda x: (abs(x[0] - mid), x[2]))
-            best_price, best_desc, _ = valid_cands[0]
+
+            # Physical Structural Override: If physical barriers (OB priority 1, F1/C1 priority 2)
+            # sit within 0.35x ATR of the nearest candidate, prioritize them over floating psych levels.
+            min_dist = min(abs(c[0] - mid) for c in valid_cands)
+            cluster_window = min_dist + (0.35 * atr_val)
+            nearby_cluster = [c for c in valid_cands if abs(c[0] - mid) <= cluster_window]
+
+            def candidate_sort_key(cand):
+                price, _, p_tier = cand
+                tier_group = 0 if p_tier in (1, 2) else (1 if p_tier == 3 else 2)
+                return (tier_group, abs(price - mid))
+
+            nearby_cluster.sort(key=candidate_sort_key)
+            best_price, best_desc, _ = nearby_cluster[0]
             label_prefix = "Bullish Pullback (EMA + " if direction == 1 else "Bearish Pullback (EMA + "
             return round(best_price, digits), f"{label_prefix}{best_desc} Confluence)"
         else:
@@ -828,6 +1194,16 @@ class MarketScanner:
         dr_pos = float(macro.get('dealing_range_pos', 0.5) or 0.5)
 
         df = macro.get('df')
+
+        def _ts_to_int(t):
+            if t is None:
+                return 0
+            if hasattr(t, 'timestamp'):
+                return int(t.timestamp())
+            try:
+                return int(t)
+            except Exception:
+                return 0
 
         standbys = []
 
@@ -875,7 +1251,7 @@ class MarketScanner:
                 pierce_bars = [i for i in range(max(0, len(df) - 10), len(df)) if df.iloc[i]['high'] >= m1_price - 0.15 * atr_val]
                 if pierce_bars:
                     best_i = max(pierce_bars, key=lambda idx: df.iloc[idx]['high'])
-                    m1_event_time = int(df.index[best_i].timestamp())
+                    m1_event_time = _ts_to_int(df.index[best_i])
                     m1_bar_age = len(df) - 1 - best_i
                     m1_status = "RECLAIMED_FADING" if df.iloc[best_i]['close'] < m1_price else "WAITING_CLOSE_RECLAIM"
         else:
@@ -888,7 +1264,7 @@ class MarketScanner:
                 pierce_bars = [i for i in range(max(0, len(df) - 10), len(df)) if df.iloc[i]['low'] <= m1_price + 0.15 * atr_val]
                 if pierce_bars:
                     best_i = min(pierce_bars, key=lambda idx: df.iloc[idx]['low'])
-                    m1_event_time = int(df.index[best_i].timestamp())
+                    m1_event_time = _ts_to_int(df.index[best_i])
                     m1_bar_age = len(df) - 1 - best_i
                     m1_status = "RECLAIMED_FADING" if df.iloc[best_i]['close'] > m1_price else "WAITING_CLOSE_RECLAIM"
 
@@ -910,6 +1286,12 @@ class MarketScanner:
         m2_dir = -1 if is_bear else (1 if is_bull else (-1 if dr_pos >= 0.50 else 1))
         m2_price, m2_lbl = self.find_ema_confluence_anchor(symbol, mid, m2_dir, macro, pt, atr_val)
 
+        # Target Projections from Structural ZCE Walls
+        f1_floor = float(macro.get('immediate_floor_f1', 0.0) or 0.0)
+        c1_ceiling = float(macro.get('immediate_ceiling_c1', 0.0) or 0.0)
+        f2_floor = float(macro.get('floor_f2') or macro.get('deep_target_floor_f2') or 0.0)
+        c2_ceiling = float(macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2') or 0.0)
+
         if m2_price > 0:
             m2_event_time = 0
             m2_status = "PROJECTED_PULLBACK"
@@ -926,14 +1308,22 @@ class MarketScanner:
                     bar = df.iloc[i]
                     if m2_dir == 1:
                         if bar['low'] <= m2_price + 0.20 * atr_val and bar['close'] >= m2_price - 0.25 * atr_val:
-                            m2_event_time = int(df.index[i].timestamp())
+                            m2_event_time = _ts_to_int(df.index[i])
                             m2_bar_age = len(df) - 1 - i
-                            m2_status = "RETEST_ACTIVE"
+                            m2_status = "TOUCH_ACTIVE"
                     else:
                         if bar['high'] >= m2_price - 0.20 * atr_val and bar['close'] <= m2_price + 0.25 * atr_val:
-                            m2_event_time = int(df.index[i].timestamp())
+                            m2_event_time = _ts_to_int(df.index[i])
                             m2_bar_age = len(df) - 1 - i
-                            m2_status = "RETEST_ACTIVE"
+                            m2_status = "TOUCH_ACTIVE"
+
+            m2_tp1 = f1_floor if (m2_dir == -1 and f1_floor > 0 and f1_floor < m2_price - 0.15 * atr_val) else (
+                c1_ceiling if (m2_dir == 1 and c1_ceiling > 0 and c1_ceiling > m2_price + 0.15 * atr_val) else round(m2_price + (1.5 * atr_val * m2_dir), digits)
+            )
+            m2_tp2 = f2_floor if (m2_dir == -1 and f2_floor > 0 and f2_floor < m2_tp1 - 0.15 * atr_val) else (
+                c2_ceiling if (m2_dir == 1 and c2_ceiling > 0 and c2_ceiling > m2_tp1 + 0.15 * atr_val) else round(m2_price + (2.5 * atr_val * m2_dir), digits)
+            )
+            m2_target_price = m2_tp1
 
             standbys.append({
                 "type": "M2",
@@ -944,7 +1334,20 @@ class MarketScanner:
                 "bar_age": m2_bar_age,
                 "direction": m2_dir,
                 "est_bars": est_bars,
-                "est_time": est_time_str
+                "est_time": est_time_str,
+                "target_price": round(m2_target_price, digits),
+                "trajectory": {
+                    "origin_time": m2_event_time if m2_event_time > 0 else _ts_to_int(df.index[max(0, len(df) - 5)] if df is not None and len(df) > 0 else 0),
+                    "origin_price": round(m2_price + (0.5 * atr_val * -m2_dir), digits),
+                    "origin_age": m2_bar_age if m2_bar_age > 0 else est_bars,
+                    "retest_time": m2_event_time if m2_event_time > 0 else _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0),
+                    "retest_price": round(m2_price, digits),
+                    "target_price": round(m2_target_price, digits),
+                    "target_tp1": round(m2_tp1, digits),
+                    "target_tp2": round(m2_tp2, digits),
+                    "direction": m2_dir,
+                    "phase": m2_status
+                }
             })
 
         # ── 3. M3: MULTI-TOUCH CLUSTER BREAKOUT & DELAYED RETEST ──
@@ -960,8 +1363,6 @@ class MarketScanner:
         bos_s = float(macro.get('h1_bos_level', 0.0) or 0.0) if macro.get('h1_bos_direction') == 'bearish' else 0.0
         rbs_b = float(macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4') or 0.0)
         sbr_b = float(macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4') or 0.0)
-        f1_floor = float(macro.get('immediate_floor_f1', 0.0) or 0.0)
-        c1_ceiling = float(macro.get('immediate_ceiling_c1', 0.0) or 0.0)
 
         m3_price = 0.0
         m3_lbl = "SBR/RBS Breakout Retest"
@@ -969,6 +1370,9 @@ class MarketScanner:
         m3_event_time = 0
         m3_bar_age = 0
         m3_status = "WAITING_RETEST"
+        m3_origin_time = 0
+        m3_origin_age = 0
+        m3_origin_price = 0.0
 
         if m3_dir == 1:
             # Priority 1: Multi-Touch Cluster with >= 2 touches
@@ -982,17 +1386,6 @@ class MarketScanner:
                 cand_res = [lvl for lvl in (pdh_b, pwh_b, bos_b, rbs_b) if (lvl > 0 and lvl < mid)]
                 m3_price = max(cand_res) if cand_res else (rbs_b or f1_floor or 0.0)
                 m3_lbl = "Broken Resistance RBS Retest"
-
-            # Temporal breakout detection
-            if df is not None and len(df) >= 3 and m3_price > 0:
-                lookback = min(20, len(df))
-                for i in range(len(df) - lookback, len(df)):
-                    p_bar = df.iloc[i - 1]
-                    c_bar = df.iloc[i]
-                    if (p_bar['close'] <= m3_price and c_bar['close'] > m3_price) or (p_bar['high'] <= m3_price and c_bar['close'] > m3_price):
-                        m3_event_time = int(df.index[i].timestamp())
-                        m3_bar_age = len(df) - 1 - i
-                        m3_status = "WAITING_RETEST" if mid > m3_price else "RETEST_ACTIVE"
         else:
             if c_sup > 0 and t_sup >= 2 and c_sup > mid:
                 m3_price = c_sup
@@ -1005,16 +1398,65 @@ class MarketScanner:
                 m3_price = min(cand_sup) if cand_sup else (sbr_b or c1_ceiling or 0.0)
                 m3_lbl = "Broken Support SBR Retest"
 
-            # Temporal breakdown detection
-            if df is not None and len(df) >= 3 and m3_price > 0:
-                lookback = min(20, len(df))
-                for i in range(len(df) - lookback, len(df)):
-                    p_bar = df.iloc[i - 1]
-                    c_bar = df.iloc[i]
+        # 3-Point Trajectory: Accurate Origin Breakdown/Breakout & Retest Detection
+        if df is not None and len(df) >= 3 and m3_price > 0:
+            lookback = min(35, len(df))
+            start_idx = len(df) - lookback
+
+            # 1. Detect physical penetration origin bar (first crossing bar in lookback window)
+            penetration_indices = []
+            for i in range(start_idx, len(df)):
+                p_bar = df.iloc[i - 1]
+                c_bar = df.iloc[i]
+                if m3_dir == 1:
+                    if (p_bar['close'] <= m3_price and c_bar['close'] > m3_price) or (p_bar['high'] <= m3_price and c_bar['close'] > m3_price):
+                        penetration_indices.append(i)
+                else:
                     if (p_bar['close'] >= m3_price and c_bar['close'] < m3_price) or (p_bar['low'] >= m3_price and c_bar['close'] < m3_price):
-                        m3_event_time = int(df.index[i].timestamp())
-                        m3_bar_age = len(df) - 1 - i
-                        m3_status = "WAITING_RETEST" if mid < m3_price else "RETEST_ACTIVE"
+                        penetration_indices.append(i)
+
+            if penetration_indices:
+                origin_idx = penetration_indices[0] # Earliest physical penetration of the move
+                m3_origin_time = _ts_to_int(df.index[origin_idx])
+                m3_origin_age = len(df) - 1 - origin_idx
+                m3_origin_price = float(df.iloc[origin_idx]['close'])
+            else:
+                m3_origin_time = _ts_to_int(df.index[start_idx])
+                m3_origin_age = lookback
+                m3_origin_price = m3_price
+
+            # 2. Detect retest touch on recent bars
+            retest_indices = []
+            for j in range(max(start_idx, len(df) - 8), len(df)):
+                bar = df.iloc[j]
+                if m3_dir == 1:
+                    if bar['low'] <= m3_price + 0.25 * atr_val and bar['close'] >= m3_price - 0.25 * atr_val:
+                        retest_indices.append(j)
+                else:
+                    if bar['high'] >= m3_price - 0.25 * atr_val and bar['close'] <= m3_price + 0.25 * atr_val:
+                        retest_indices.append(j)
+
+            if retest_indices:
+                latest_retest_idx = retest_indices[-1]
+                m3_event_time = _ts_to_int(df.index[latest_retest_idx])
+                m3_bar_age = len(df) - 1 - latest_retest_idx
+                m3_status = "RETEST_ACTIVE"
+            else:
+                m3_event_time = m3_origin_time
+                m3_bar_age = m3_origin_age
+                m3_status = "WAITING_RETEST"
+
+        if m3_dir == -1:
+            m3_tp1 = f1_floor if (f1_floor > 0 and f1_floor < m3_price - 0.15 * atr_val) else (
+                f2_floor if (f2_floor > 0 and f2_floor < m3_price - 0.15 * atr_val) else round(m3_price - 1.5 * atr_val, digits)
+            )
+            m3_tp2 = f2_floor if (f2_floor > 0 and f2_floor < m3_tp1 - 0.15 * atr_val) else round(m3_price - 2.5 * atr_val, digits)
+        else:
+            m3_tp1 = c1_ceiling if (c1_ceiling > 0 and c1_ceiling > m3_price + 0.15 * atr_val) else (
+                c2_ceiling if (c2_ceiling > 0 and c2_ceiling > m3_price + 0.15 * atr_val) else round(m3_price + 1.5 * atr_val, digits)
+            )
+            m3_tp2 = c2_ceiling if (c2_ceiling > 0 and c2_ceiling > m3_tp1 + 0.15 * atr_val) else round(m3_price + 2.5 * atr_val, digits)
+        m3_target_price = m3_tp1
 
         if m3_price > 0:
             standbys.append({
@@ -1024,23 +1466,92 @@ class MarketScanner:
                 "event_time": m3_event_time,
                 "status": m3_status,
                 "bar_age": m3_bar_age,
-                "direction": m3_dir
+                "direction": m3_dir,
+                "origin_time": m3_origin_time,
+                "origin_age": m3_origin_age,
+                "origin_price": round(m3_origin_price, digits),
+                "target_price": round(m3_target_price, digits),
+                "trajectory": {
+                    "origin_time": m3_origin_time,
+                    "origin_price": round(m3_origin_price, digits),
+                    "origin_age": int(m3_origin_age),
+                    "retest_time": m3_event_time if m3_status == "RETEST_ACTIVE" else _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0),
+                    "retest_price": round(m3_price, digits),
+                    "target_price": round(m3_target_price, digits),
+                    "target_tp1": round(m3_tp1, digits),
+                    "target_tp2": round(m3_tp2, digits),
+                    "direction": m3_dir,
+                    "phase": m3_status
+                }
             })
 
         # ── 4. M4: SYSTEMIC FLOW CONTINUATION ──
         if hasattr(self, "_m4_state"):
+            df_m4 = getattr(self, "_m4_df", {}).get(clean_sym)
             for side in ("SELL", "BUY"):
                 p = self._m4_state.get(clean_sym, {}).get(side, {}).get("pending")
                 if p and p.get("level"):
+                    break_pos = p.get("break_pos", 0)
+                    break_time = p.get("break_time", 0)
+                    if (not break_time or break_time == 0) and df_m4 is not None and break_pos < len(df_m4):
+                        break_time = _ts_to_int(df_m4.index[break_pos])
+                    elif (not break_time or break_time == 0) and df is not None and len(df) > 0:
+                        break_time = _ts_to_int(df.index[-1])
+                    
+                    if df_m4 is not None and len(df_m4) > break_pos:
+                        bar_age = len(df_m4) - 1 - break_pos
+                    elif df is not None and len(df) > 0:
+                        bar_age = 0
+                    else:
+                        bar_age = 0
+
+                    m4_lvl = float(p.get("level"))
+                    m4_dir = 1 if side == "BUY" else -1
+                    m4_tp1 = c1_ceiling if (m4_dir == 1 and c1_ceiling > m4_lvl + 0.15 * atr_val) else (
+                        f1_floor if (m4_dir == -1 and f1_floor > 0 and f1_floor < m4_lvl - 0.15 * atr_val) else round(m4_lvl + (1.5 * atr_val * m4_dir), digits)
+                    )
+                    m4_tp2 = c2_ceiling if (m4_dir == 1 and c2_ceiling > m4_tp1 + 0.15 * atr_val) else (
+                        f2_floor if (m4_dir == -1 and f2_floor > 0 and f2_floor < m4_tp1 - 0.15 * atr_val) else round(m4_lvl + (2.5 * atr_val * m4_dir), digits)
+                    )
+                    m4_target = m4_tp1
+
                     standbys.append({
                         "type": "M4",
-                        "price": round(float(p.get("level")), digits),
-                        "label": f"Systemic Flow Limit ({side})",
-                        "event_time": int(df.index[-1].timestamp()) if (df is not None and len(df) > 0) else 0,
-                        "status": "WAITING_FLOW_RETEST",
-                        "bar_age": 0,
-                        "direction": 1 if side == "BUY" else -1
+                        "price": round(m4_lvl, digits),
+                        "label": f"Systemic Flow Limit ({side})" if not p.get("is_basing") else f"Systemic Flow Basing ({side})",
+                        "event_time": int(break_time),
+                        "status": "WAITING_FLOW_RETEST" if not p.get("is_basing") else "WAITING_BASING_RETEST",
+                        "bar_age": int(bar_age),
+                        "direction": m4_dir,
+                        "origin_time": int(break_time),
+                        "origin_age": int(bar_age),
+                        "origin_price": round(m4_lvl, digits),
+                        "target_price": round(m4_target, digits),
+                        "trajectory": {
+                            "origin_time": int(break_time),
+                            "origin_price": round(m4_lvl, digits),
+                            "origin_age": int(bar_age),
+                            "retest_time": _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0),
+                            "retest_price": round(m4_lvl, digits),
+                            "target_price": round(m4_target, digits),
+                            "target_tp1": round(m4_tp1, digits),
+                            "target_tp2": round(m4_tp2, digits),
+                            "direction": m4_dir,
+                            "phase": "WAITING_FLOW_RETEST" if not p.get("is_basing") else "WAITING_BASING_RETEST"
+                        }
                     })
+
+        # ── 5. MULTI-SETUP CONFLUENCE FUSION (M2 + M3) ──
+        if m2_price > 0 and m3_price > 0 and m2_dir == m3_dir:
+            if abs(m2_price - m3_price) <= 0.35 * atr_val:
+                dir_str = "SELL" if m3_dir == -1 else "BUY"
+                struct_str = "SBR" if m3_dir == -1 else "RBS"
+                for item in standbys:
+                    if item["type"] in ("M2", "M3"):
+                        item["is_confluence"] = True
+                        item["confluence_partner"] = "M3" if item["type"] == "M2" else "M2"
+                        item["confluence_label"] = f"[M2+M3 {dir_str} CONFLUENCE] {struct_str} & EMA Touch"
+
         return standbys
 
     def update_macro_context(self, mt5_connector=None, force: bool = False) -> None:
@@ -1174,23 +1685,34 @@ class MarketScanner:
                     d1_smc = LuxSMCAnalyzer(swing_length=3).analyze(df_d1, point_size=pt)
                     d1_anchor_low = d1_smc.strong_low if d1_smc.strong_low > 0 else d1_50_lo
                     d1_anchor_high = d1_smc.strong_high if d1_smc.strong_high > 0 else d1_50_hi
+                    d1_smc_bias = getattr(d1_smc, 'trend_bias', 'neutral')
                     
                     if (d1_c >= d1_ema_short and d1_c >= d1_ema_long) and (d1_c > d1_anchor_low):
-                        d1_is_bull = True
-                        d1_is_bear = False
-                        d1_trend_label = "D1_BULLISH_EXPANSION"
+                        if d1_smc_bias == "bearish":
+                            d1_is_bull = False
+                            d1_is_bear = True
+                            d1_trend_label = "D1_BEARISH_PULLBACK"
+                        else:
+                            d1_is_bull = True
+                            d1_is_bear = False
+                            d1_trend_label = "D1_BULLISH_EXPANSION"
                     elif (d1_c <= d1_ema_short and d1_c <= d1_ema_long) and (d1_c < d1_anchor_high):
-                        d1_is_bull = False
-                        d1_is_bear = True
-                        d1_trend_label = "D1_BEARISH_EXPANSION"
-                    elif d1_c < d1_ema_short and d1_ema_short > d1_ema_long:
-                        d1_is_bull = False
-                        d1_is_bear = True
-                        d1_trend_label = "D1_BEARISH_PULLBACK"
-                    elif d1_c > d1_ema_short and d1_ema_short < d1_ema_long:
+                        if d1_smc_bias == "bullish":
+                            d1_is_bull = True
+                            d1_is_bear = False
+                            d1_trend_label = "D1_BULLISH_PULLBACK"
+                        else:
+                            d1_is_bull = False
+                            d1_is_bear = True
+                            d1_trend_label = "D1_BEARISH_EXPANSION"
+                    elif d1_c < d1_ema_short and d1_ema_short >= d1_ema_long:
                         d1_is_bull = True
                         d1_is_bear = False
                         d1_trend_label = "D1_BULLISH_PULLBACK"
+                    elif d1_c > d1_ema_short and d1_ema_short <= d1_ema_long:
+                        d1_is_bull = False
+                        d1_is_bear = True
+                        d1_trend_label = "D1_BEARISH_PULLBACK"
                     else:
                         d1_is_bull = False
                         d1_is_bear = False
@@ -1239,27 +1761,38 @@ class MarketScanner:
                     h4_dr_pos = h4_smc.dealing_range_pos
                     h4_bos_count = h4_smc.bos_count
 
+                    h4_smc_bias = getattr(h4_smc, 'trend_bias', 'neutral')
                     if is_h4_ranging or is_h4_flag_triangle:
                         h4_is_bull = False
                         h4_is_bear = False
                         h4_trend_label = "H4_RANGING_FLAG_BOX" if is_h4_flag_triangle else "H4_SIDEWAYS_RANGE"
                     else:
                         if (h4_c >= h4_ema20 and h4_c >= h4_ema50) and (h4_c > h4_swing_low):
-                            h4_is_bull = True
-                            h4_is_bear = False
-                            h4_trend_label = "H4_BULLISH_EXPANSION"
+                            if h4_smc_bias == "bearish":
+                                h4_is_bull = False
+                                h4_is_bear = True
+                                h4_trend_label = "H4_BEARISH_PULLBACK"
+                            else:
+                                h4_is_bull = True
+                                h4_is_bear = False
+                                h4_trend_label = "H4_BULLISH_EXPANSION"
                         elif (h4_c <= h4_ema20 and h4_c <= h4_ema50) and (h4_c < h4_swing_high):
-                            h4_is_bull = False
-                            h4_is_bear = True
-                            h4_trend_label = "H4_BEARISH_EXPANSION"
+                            if h4_smc_bias == "bullish":
+                                h4_is_bull = True
+                                h4_is_bear = False
+                                h4_trend_label = "H4_BULLISH_PULLBACK"
+                            else:
+                                h4_is_bull = False
+                                h4_is_bear = True
+                                h4_trend_label = "H4_BEARISH_EXPANSION"
                         elif h4_c < h4_ema20 and h4_ema20 >= h4_ema50:
-                            h4_is_bull = False
-                            h4_is_bear = True
-                            h4_trend_label = "H4_BEARISH_PULLBACK"
-                        elif h4_c > h4_ema20 and h4_ema20 <= h4_ema50:
                             h4_is_bull = True
                             h4_is_bear = False
                             h4_trend_label = "H4_BULLISH_PULLBACK"
+                        elif h4_c > h4_ema20 and h4_ema20 <= h4_ema50:
+                            h4_is_bull = False
+                            h4_is_bear = True
+                            h4_trend_label = "H4_BEARISH_PULLBACK"
                         else:
                             h4_is_bull = False
                             h4_is_bear = False
@@ -1484,6 +2017,19 @@ class MarketScanner:
             else:
                 combined_is_bull = is_d1_bull
                 combined_is_bear = is_d1_bear
+
+            # MSE 6-TF Macro Strategic Directive Harmony
+            if strat_dir is not None:
+                mse_bias = getattr(strat_dir, 'daily_macro_bias', '')
+                mse_directive = getattr(strat_dir, 'primary_execution_directive', '')
+                if mse_bias == "BEARISH_PULLBACK" or "HUNT_SELL" in mse_directive:
+                    if is_h4_bear or not is_d1_bull:
+                        combined_is_bear = True
+                        combined_is_bull = False
+                elif mse_bias == "BULLISH_PULLBACK" or "HUNT_BUY" in mse_directive:
+                    if is_h4_bull or not is_d1_bear:
+                        combined_is_bull = True
+                        combined_is_bear = False
 
             combined_trend_label = f"{d1_trend_label} | {h4_trend_label}"
 
@@ -1801,8 +2347,10 @@ class MarketScanner:
             if clean_sym in active_symbols:
                 continue
 
-            # Per-Symbol Cooldown: Min 15 minutes between LLM Jury evaluations for the same symbol
-            if (now_ts - self._symbol_last_trigger.get(clean_sym, 0.0)) < 900:
+            # Per-Symbol Breathing Cooldown: Jeda bernapas singkat (default 3 menit) antar-evaluasi LLM
+            is_breathing, breath_reason = self.is_symbol_breathing(clean_sym, now_ts)
+            if is_breathing:
+                logger.debug(f"[RADAR] {sym} SKIP: {breath_reason}")
                 continue
 
             # ── SESSION-AWARE PAIR ROUTER (Anti-European Trap in Asian Session) ──
@@ -1872,12 +2420,25 @@ class MarketScanner:
                         logger.debug(f"[RADAR] {sym} SKIP: Hard Lockout {macro.get('wave_state', 'LOCK')} ({macro.get('wave_summary', '')}).")
                         continue
 
+                # ── M4 SYSTEMIC FLOW REGIME CATALYST & BASING CHAMBER ──
+                m4_cat_info = self.get_m4_regime_catalyst(clean_sym, csm_delta=csm_delta_val, atr_val=(atr_pts * pt), mid=mid, mt5_connector=mt5_connector)
+                m4_catalyst = m4_cat_info.get("catalyst")
+                m4_basing_ceiling = m4_cat_info.get("basing_ceiling", 0.0)
+                m4_basing_floor = m4_cat_info.get("basing_floor", 0.0)
+                m4_age = m4_cat_info.get("age", 0)
+
                 # ── DIRECTIONAL 5-TIER OPERATIONAL ACTION MATRIX & CIRCUIT BREAKER ──
                 def _is_direction_allowed(target_dir: int, setup_label: str, entry_price: Optional[float] = None) -> tuple:
                     """
                     Resolves the 5-Tier Operational Action Matrix:
                     Returns: (allowed: bool, action_tier: str, reason: str)
                     """
+                    # 0. M4 Systemic Flow Catalyst Hard Directional Lock
+                    if m4_catalyst == "BEARISH_FLOW" and target_dir == 1:
+                        return False, "HARD_BLOCK", f"[M4 CATALYST VETO] BUY blocked: Systemic Bearish Flow active ({m4_age}b <= 48b)"
+                    if m4_catalyst == "BULLISH_FLOW" and target_dir == -1:
+                        return False, "HARD_BLOCK", f"[M4 CATALYST VETO] SELL blocked: Systemic Bullish Flow active ({m4_age}b <= 48b)"
+
                     # 1. Systemic Currency Basket Lock (M15 + H1 Global Flows)
                     is_basket_locked, basket_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
                     if is_basket_locked:
@@ -1932,12 +2493,14 @@ class MarketScanner:
                     # 4. Macro Bias Alignment & Action Tier Resolution
                     is_aligned = (target_dir == 1 and bias_score >= 0.35) or (target_dir == -1 and bias_score <= -0.35)
                     is_counter = (target_dir == 1 and bias_score <= -0.35) or (target_dir == -1 and bias_score >= 0.35)
+                    is_m4_pro = (target_dir == -1 and m4_catalyst == "BEARISH_FLOW") or (target_dir == 1 and m4_catalyst == "BULLISH_FLOW")
 
-                    if is_csm_opposed and not is_aligned:
+                    if is_csm_opposed and not is_aligned and not is_m4_pro:
                         return False, "HARD_BLOCK", f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction"
 
-                    if is_aligned:
-                        return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f})"
+                    if is_aligned or is_m4_pro:
+                        flow_tag = f" [M4_CATALYST: {m4_catalyst}]" if is_m4_pro else ""
+                        return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f}){flow_tag}"
                     elif is_counter:
                         # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap, or M4 systemic flow
                         if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper() or "SYSTEMIC" in setup_label.upper():
@@ -1972,14 +2535,19 @@ class MarketScanner:
                     dr_pos_val = macro.get('dealing_range_pos', 0.5)
 
                     # Bearish Liquidity Sweep (SFP High): Sweep above Asian High, PDH, EQH, or Psychological Ceiling (PREMIUM ZONE ONLY)
+                    is_m1_s_locked, m1_s_lock_reason = self.is_mechanism_locked(clean_sym, "UNIVERSAL_LIQUIDITY_SWEEP", -1)
                     valid_tops = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0 and 0 < (v - mid) <= 1.0 * atr_price_val]
+                    if m4_basing_ceiling > 0 and 0 < (m4_basing_ceiling - mid) <= 1.0 * atr_price_val:
+                        valid_tops.append(m4_basing_ceiling)
                     ref_top = min(valid_tops) if valid_tops else (macro.get('immediate_ceiling_c1') or asian_h or (mid + atr_price_val))
-                    if dr_pos_val >= 0.55 and (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
+                    if is_m1_s_locked:
+                        logger.debug(f"[SWEEP SELL LOCK] {sym} SKIP: {m1_s_lock_reason}")
+                    elif dr_pos_val >= 0.55 and (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
                         allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
                         if not allowed_m1_s:
                             logger.debug(f"[SWEEP SELL GATE] {sym} SKIP ({action_tier_m1_s}): {reason_m1_s}")
                         else:
-                            gate_ok, gate_reason = evaluate_judas_sweep_gates(
+                            gate_ok, gate_reason = evaluate_universal_sweep_gates(
                                 signal_type='SELL',
                                 dealing_range_pos=dr_pos_val,
                                 dist_to_htf_floor=dist_floor,
@@ -2004,18 +2572,22 @@ class MarketScanner:
                             is_macro_wall_g2_g3 = (is_macro_wall and c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO"))
                             is_macro_wall_g3 = (is_macro_wall and c1_grade == "GRADE_3_MACRO")
 
-                            if is_euro_pair and is_asian_session and not is_macro_wall_g3:
+                            if is_euro_pair and is_asian_session and not is_macro_wall_g3 and (m4_catalyst != "BEARISH_FLOW"):
                                 logger.debug(f"[SWEEP SELL ASIA NOISE] {sym} SKIP: European pair sweep in Asian session lacks Grade 3 Macro Wall (Current: {c1_grade}).")
                                 continue
 
-                            # 2. Anti-Trend Veto: Fading a bullish trend is strictly forbidden unless hitting G3 Macro Fortress Wall!
-                            is_macro_bull = (macro.get('is_bull', False) or (strat_dir_sym and getattr(strat_dir_sym, 'macro_bias_score', 0.0) >= 0.35))
-                            if is_macro_bull and not is_macro_wall_g3:
-                                logger.debug(f"[SWEEP SELL ANTI-BULL VETO] {sym} SKIP: Fading bullish trend is forbidden unless hitting G3 Macro Fortress Wall (Current: {c1_grade}).")
+                            # 2. Anti-Trend Veto: Fading a bullish trend is strictly forbidden unless hitting G3 Macro Fortress Wall or C1 Rejection!
+                            is_macro_bull = (macro.get('is_bull', False) or (strat_dir_sym and getattr(strat_dir_sym, 'macro_bias_score', 0.0) >= 0.35)) and (m4_catalyst != "BEARISH_FLOW")
+                            mse_directive_s = str(macro.get('primary_execution_directive') or '')
+                            is_mse_sell_mandate = any(k in mse_directive_s for k in ("SELL", "FADE", "CEILING")) or (strat_dir_sym and getattr(strat_dir_sym, 'market_state', '') == "CEILING_REJECTION")
+                            is_anti_bull_veto = is_macro_bull and not is_macro_wall_g3 and not (is_macro_wall_g2_g3 and (is_mse_sell_mandate or dr_pos_val >= 0.65))
+
+                            if is_anti_bull_veto:
+                                logger.debug(f"[SWEEP SELL ANTI-BULL VETO] {sym} SKIP: Fading bullish trend is forbidden unless hitting G3 Macro Fortress Wall or C1 Rejection (Current: {c1_grade}).")
                                 continue
 
                             # 3. Wall Rank Gate: In trending markets, sweeping high is ONLY permitted at G2/G3 Macro Fortress!
-                            is_ranging_market = (macro.get('daily_macro_bias') == "RANGE_BOUND" or (not macro.get('is_bull') and not macro.get('is_bear')))
+                            is_ranging_market = (macro.get('daily_macro_bias') == "RANGE_BOUND" or (not macro.get('is_bull') and not macro.get('is_bear')) or (m4_catalyst == "BEARISH_FLOW") or is_mse_sell_mandate)
                             if not is_ranging_market and not is_macro_wall_g2_g3:
                                 logger.debug(f"[SWEEP SELL WALL GRADE] {sym} SKIP: Sweep at {ref_top:.5f} is {c1_grade} in trending market. Requires G2/G3 Macro Fortress.")
                                 continue
@@ -2055,7 +2627,13 @@ class MarketScanner:
                                         sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
                                         spread_pts=spread_pts,
                                         c1=macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1'),
-                                        f1=macro.get('immediate_floor_f1') or macro.get('floor_f1')
+                                        f1=macro.get('immediate_floor_f1') or macro.get('floor_f1'),
+                                        c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                        f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                        c1_grade=macro.get('c1_reaction_grade'),
+                                        f1_grade=macro.get('f1_reaction_grade'),
+                                        c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                        f1_is_vacuum=bool(macro.get('f1_is_vacuum', False))
                                     )
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
@@ -2120,14 +2698,19 @@ class MarketScanner:
                                         continue
 
                     # Bullish Liquidity Sweep (SFP Low): Sweep below Asian Low, PDL, EQL, or Psychological Floor (DISCOUNT ZONE ONLY)
+                    is_m1_b_locked, m1_b_lock_reason = self.is_mechanism_locked(clean_sym, "UNIVERSAL_LIQUIDITY_SWEEP", 1)
                     valid_bots = [v for v in [asian_l, pdl_val, eql_val, p_floor] if v > 0 and 0 < (mid - v) <= 1.0 * atr_price_val]
+                    if m4_basing_floor > 0 and 0 < (mid - m4_basing_floor) <= 1.0 * atr_price_val:
+                        valid_bots.append(m4_basing_floor)
                     ref_bot = max(valid_bots) if valid_bots else (macro.get('immediate_floor_f1') or asian_l or (mid - atr_price_val))
-                    if dr_pos_val <= 0.45 and (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
+                    if is_m1_b_locked:
+                        logger.debug(f"[SWEEP BUY LOCK] {sym} SKIP: {m1_b_lock_reason}")
+                    elif dr_pos_val <= 0.45 and (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
                         allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
                         if not allowed_m1_b:
                             logger.debug(f"[SWEEP BUY GATE] {sym} SKIP ({action_tier_m1_b}): {reason_m1_b}")
                         else:
-                            gate_ok, gate_reason = evaluate_judas_sweep_gates(
+                            gate_ok, gate_reason = evaluate_universal_sweep_gates(
                                 signal_type='BUY',
                                 dealing_range_pos=dr_pos_val,
                                 dist_to_htf_floor=dist_floor,
@@ -2152,18 +2735,22 @@ class MarketScanner:
                             is_macro_wall_g2_g3 = (is_macro_wall and f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO"))
                             is_macro_wall_g3 = (is_macro_wall and f1_grade == "GRADE_3_MACRO")
 
-                            if is_euro_pair and is_asian_session and not is_macro_wall_g3:
+                            if is_euro_pair and is_asian_session and not is_macro_wall_g3 and (m4_catalyst != "BULLISH_FLOW"):
                                 logger.debug(f"[SWEEP BUY ASIA NOISE] {sym} SKIP: European pair sweep in Asian session lacks Grade 3 Macro Wall (Current: {f1_grade}).")
                                 continue
 
-                            # 2. Anti-Trend Veto: Catching falling knife in a bearish trend is strictly forbidden unless hitting G3 Macro Fortress Floor!
-                            is_macro_bear = (macro.get('is_bear', False) or (strat_dir_sym and getattr(strat_dir_sym, 'macro_bias_score', 0.0) <= -0.35))
-                            if is_macro_bear and not is_macro_wall_g3:
-                                logger.debug(f"[SWEEP BUY ANTI-BEAR VETO] {sym} SKIP: Catching falling knife in bearish trend is forbidden unless hitting G3 Macro Fortress Floor (Current: {f1_grade}).")
+                            # 2. Anti-Trend Veto: Catching falling knife in a bearish trend is strictly forbidden unless hitting G3 Macro Fortress Floor or F1 Rebound!
+                            is_macro_bear = (macro.get('is_bear', False) or (strat_dir_sym and getattr(strat_dir_sym, 'macro_bias_score', 0.0) <= -0.35)) and (m4_catalyst != "BULLISH_FLOW")
+                            mse_directive_b = str(macro.get('primary_execution_directive') or '')
+                            is_mse_buy_mandate = any(k in mse_directive_b for k in ("BUY", "FADE", "FLOOR")) or (strat_dir_sym and getattr(strat_dir_sym, 'market_state', '') == "FLOOR_REJECTION")
+                            is_anti_bear_veto = is_macro_bear and not is_macro_wall_g3 and not (is_macro_wall_g2_g3 and (is_mse_buy_mandate or dr_pos_val <= 0.35))
+
+                            if is_anti_bear_veto:
+                                logger.debug(f"[SWEEP BUY ANTI-BEAR VETO] {sym} SKIP: Catching falling knife in bearish trend is forbidden unless hitting G3 Macro Fortress Floor or F1 Rebound (Current: {f1_grade}).")
                                 continue
 
                             # 3. Wall Rank Gate: In trending markets, sweeping low is ONLY permitted at G2/G3 Macro Fortress!
-                            is_ranging_market = (macro.get('daily_macro_bias') == "RANGE_BOUND" or (not macro.get('is_bull') and not macro.get('is_bear')))
+                            is_ranging_market = (macro.get('daily_macro_bias') == "RANGE_BOUND" or (not macro.get('is_bull') and not macro.get('is_bear')) or (m4_catalyst == "BULLISH_FLOW") or is_mse_buy_mandate)
                             if not is_ranging_market and not is_macro_wall_g2_g3:
                                 logger.debug(f"[SWEEP BUY WALL GRADE] {sym} SKIP: Sweep at {ref_bot:.5f} is {f1_grade} in trending market. Requires G2/G3 Macro Fortress.")
                                 continue
@@ -2203,7 +2790,13 @@ class MarketScanner:
                                         sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
                                         spread_pts=spread_pts,
                                         c1=macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1'),
-                                        f1=macro.get('immediate_floor_f1') or macro.get('floor_f1')
+                                        f1=macro.get('immediate_floor_f1') or macro.get('floor_f1'),
+                                        c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                        f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                        c1_grade=macro.get('c1_reaction_grade'),
+                                        f1_grade=macro.get('f1_reaction_grade'),
+                                        c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                        f1_is_vacuum=bool(macro.get('f1_is_vacuum', False))
                                     )
                                     sl = sl_tp['sl']
                                     tp = sl_tp['tp']
@@ -2278,25 +2871,32 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     atr_val = atr_pts * pt
                     
-                    # BUY: (Bullish Macro OR Bullish Corridor) AND NOT Bearish Corridor + Pullback to FVG / OB / EMA50 / Support Floor
+                    # BUY: (Bullish Macro OR Bullish Corridor OR M4 Bullish Flow) AND NOT Bearish Corridor + Pullback to FVG / OB / EMA50 / Support Floor
                     allowed_m2_b, action_tier_m2_b, reason_m2_b = _is_direction_allowed(1, "BUY_PULLBACK")
-                    can_buy_m2 = allowed_m2_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
+                    can_buy_m2 = allowed_m2_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR" or m4_catalyst == "BULLISH_FLOW") and (m_corr != "BEARISH_CORRIDOR")
                     
                     fvg_bull_top = macro.get('bullish_fvg_top', 0.0)
                     ob_bull_top = macro.get('bullish_ob_top', 0.0)
                     f1_floor = macro.get('immediate_floor_f1', 0.0)
                     has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.50 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.50 * atr_val)
                     has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.50 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.50 * atr_val)
-                    is_valid_pullback_range_b = (pos_in_range <= 0.65) and ((pos_in_range <= 0.55) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b)
+                    has_m4_retest_b = (m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 0.50 * atr_val)
+                    is_valid_pullback_range_b = (pos_in_range <= 0.65) and ((pos_in_range <= 0.55) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b or has_m4_retest_b)
 
-                    if not allowed_m2_b:
+                    is_m2_b_locked, m2_b_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", 1)
+                    if is_m2_b_locked:
+                        logger.debug(f"[PULLBACK BUY LOCK] {sym} SKIP: {m2_b_lock_reason}")
+                    elif not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
                     elif can_buy_m2 and is_valid_pullback_range_b:
                         base_floor, m2_confluence_desc = self.find_ema_confluence_anchor(sym, mid, 1, macro, pt, atr_val)
+                        if m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 0.50 * atr_val:
+                            base_floor = m4_basing_floor
+                            m2_confluence_desc = f"M4 Basing Floor ({m4_basing_floor:.{5 if pt < 0.01 else 3}f})"
 
                         # Dynamic EMA Corridor: Price must NOT be collapsed far below EMA50, and must be in healthy pullback value area
                         is_ema_pullback_valid = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
-                        if not is_ema_pullback_valid:
+                        if not is_ema_pullback_valid and not has_m4_retest_b:
                             logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
                             continue
 
@@ -2316,7 +2916,13 @@ class MarketScanner:
                                 sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
                                 spread_pts=spread_pts,
                                 c1=macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1'),
-                                f1=macro.get('immediate_floor_f1') or macro.get('floor_f1')
+                                f1=macro.get('immediate_floor_f1') or macro.get('floor_f1'),
+                                c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                c1_grade=macro.get('c1_reaction_grade'),
+                                f1_grade=macro.get('f1_reaction_grade'),
+                                c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                f1_is_vacuum=bool(macro.get('f1_is_vacuum', False))
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
@@ -2382,25 +2988,32 @@ class MarketScanner:
                                 ))
                                 continue
 
-                    # SELL: (Bearish Macro OR Bearish Corridor) AND NOT Bullish Corridor + Pullback to FVG / OB / EMA50 / Resistance Ceiling
+                    # SELL: (Bearish Macro OR Bearish Corridor OR M4 Bearish Flow) AND NOT Bullish Corridor + Pullback to FVG / OB / EMA50 / Resistance Ceiling
                     allowed_m2_s, action_tier_m2_s, reason_m2_s = _is_direction_allowed(-1, "SELL_PULLBACK")
-                    can_sell_m2 = allowed_m2_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
+                    can_sell_m2 = allowed_m2_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR" or m4_catalyst == "BEARISH_FLOW") and (m_corr != "BULLISH_CORRIDOR")
                     
                     fvg_bear_bot = macro.get('bearish_fvg_bot', 0.0)
                     ob_bear_bot = macro.get('bearish_ob_bot', 0.0)
                     c1_ceiling = macro.get('immediate_ceiling_c1', 0.0)
                     has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.50 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.50 * atr_val)
                     has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.50 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.50 * atr_val)
-                    is_valid_pullback_range_s = (pos_in_range >= 0.35) and ((pos_in_range >= 0.45) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s)
+                    has_m4_retest_s = (m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 0.50 * atr_val)
+                    is_valid_pullback_range_s = (pos_in_range >= 0.35) and ((pos_in_range >= 0.45) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s or has_m4_retest_s)
 
-                    if not allowed_m2_s:
+                    is_m2_s_locked, m2_s_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", -1)
+                    if is_m2_s_locked:
+                        logger.debug(f"[PULLBACK SELL LOCK] {sym} SKIP: {m2_s_lock_reason}")
+                    elif not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
                     elif can_sell_m2 and is_valid_pullback_range_s:
                         base_ceiling, m2_confluence_desc = self.find_ema_confluence_anchor(sym, mid, -1, macro, pt, atr_val)
+                        if m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 0.50 * atr_val:
+                            base_ceiling = m4_basing_ceiling
+                            m2_confluence_desc = f"M4 Basing Ceiling ({m4_basing_ceiling:.{5 if pt < 0.01 else 3}f})"
 
                         # Dynamic EMA Corridor: Price must NOT be blown up far above EMA50, and must be in healthy pullback value area
                         is_ema_pullback_valid = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
-                        if not is_ema_pullback_valid:
+                        if not is_ema_pullback_valid and not has_m4_retest_s:
                             logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
                             continue
 
@@ -2420,7 +3033,13 @@ class MarketScanner:
                                 sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
                                 spread_pts=spread_pts,
                                 c1=macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1'),
-                                f1=macro.get('immediate_floor_f1') or macro.get('floor_f1')
+                                f1=macro.get('immediate_floor_f1') or macro.get('floor_f1'),
+                                c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                c1_grade=macro.get('c1_reaction_grade'),
+                                f1_grade=macro.get('f1_reaction_grade'),
+                                c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                f1_is_vacuum=bool(macro.get('f1_is_vacuum', False))
                             )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
@@ -2507,14 +3126,17 @@ class MarketScanner:
                     if c_res > 0 and t_res >= 2 and c_res < mid:
                         target_res = c_res
                     else:
-                        cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier) if (lvl > 0 and lvl < mid)]
+                        cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, m4_basing_ceiling) if (lvl > 0 and lvl < mid)]
                         target_res = max(cand_res_list) if cand_res_list else 0.0
 
                     allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST", entry_price=target_res)
-                    can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR") and (m_corr != "BEARISH_CORRIDOR")
+                    can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR" or m4_catalyst == "BULLISH_FLOW") and (m_corr != "BEARISH_CORRIDOR")
                     
+                    is_m3_b_locked, m3_b_lock_reason = self.is_mechanism_locked(clean_sym, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
                     is_locked_b, lock_reason_b = self.is_retest_locked(clean_sym, mid, atr_val)
-                    if is_locked_b:
+                    if is_m3_b_locked:
+                        logger.debug(f"[BREAKOUT BUY LOCK] {sym} SKIP: {m3_b_lock_reason}")
+                    elif is_locked_b:
                         logger.debug(f"[BREAKOUT BUY DEBOUNCE] {sym} SKIP: {lock_reason_b}")
                     elif not allowed_m3_b:
                         logger.debug(f"[BREAKOUT BUY GATE] {sym} SKIP ({action_tier_m3_b}): {reason_m3_b}")
@@ -2558,27 +3180,43 @@ class MarketScanner:
                                 if max_push_b > 2.50:
                                     logger.debug(f"[BREAKOUT BUY RUNAWAY] {sym} SKIP: excursion {max_push_b:.2f}x ATR > 2.50x ATR (flash spike exhaustion)")
                                 else:
-                                    # Cek Runway Struktural ke Plafon C1 berikutnya:
+                                    # HTF Wall Collision & Runway Guard ke Plafon C1:
                                     target_ceiling = (macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
-                                    has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= 0.80 * atr_val)
-                                    if not has_upward_runway and dr_pos > 0.72:
-                                        logger.debug(f"[BREAKOUT BUY EXTREME] {sym} SKIP: runway to ceiling {target_ceiling:.5f} insufficient ({target_ceiling - target_res:.5f}) and dr_pos {dr_pos*100:.1f}%")
-                                    else:
-                                        entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
+                                    dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
+                                    # Block BUY jika harga menabrak plafon C1 (jarak <= 0.35x ATR) atau berada di Premium (dr_pos >= 0.70)
+                                    is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
+                                    has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= 0.80 * atr_val and dist_to_ceiling >= 0.50 * atr_val)
+                                    
+                                    if is_wall_collision_b or (not has_upward_runway and dr_pos > 0.70):
+                                        logger.debug(f"[BREAKOUT BUY WALL COLLISION] {sym} SKIP: mid {mid:.5f} collides with ceiling {target_ceiling:.5f} (dist: {dist_to_ceiling/atr_val:.2f}x ATR, dr_pos: {dr_pos*100:.1f}%)")
+                                        continue
+                                    
+                                    # M5 Micro-Rejection Verification Gate
+                                    m5_ok_b, m5_reason_b = self._verify_m5_rejection_wick(sym, target_res, 1, atr_val, pt, mt5_connector=mt5_connector)
+                                    if not m5_ok_b:
+                                        logger.debug(f"[M3 BUY M5 GATE] {sym} SKIP: {m5_reason_b} at level {target_res:.5f}")
+                                        continue
+                                    entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
                                 sl_tp = calculate_intraday_sl_tp(
                                     symbol=sym,
-                                entry_price=entry_lim,
-                                direction=1,
-                                origin_level=target_res,
-                                atr_h1=atr_val,
-                                pwl=macro.get('pwl', 0.0),
-                                pwh=macro.get('pwh', 0.0),
-                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
-                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
-                                spread_pts=spread_pts,
-                                c1=((macro.get('ceiling_c1') or 0.0) if ((macro.get('ceiling_c1') or 0.0) > entry_lim) else ((macro.get('ceiling_c2') or 0.0) if ((macro.get('ceiling_c2') or 0.0) > entry_lim) else 0.0)) or (macro.get('immediate_ceiling_c1') or 0.0),
-                                f1=target_res
-                            )
+                                    entry_price=entry_lim,
+                                    direction=1,
+                                    origin_level=target_res,
+                                    atr_h1=atr_val,
+                                    pwl=macro.get('pwl', 0.0),
+                                    pwh=macro.get('pwh', 0.0),
+                                    rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                    sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                    spread_pts=spread_pts,
+                                    c1=((macro.get('ceiling_c1') or 0.0) if ((macro.get('ceiling_c1') or 0.0) > entry_lim) else ((macro.get('ceiling_c2') or 0.0) if ((macro.get('ceiling_c2') or 0.0) > entry_lim) else 0.0)) or (macro.get('immediate_ceiling_c1') or 0.0),
+                                    f1=target_res,
+                                    c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                    f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                    c1_grade=macro.get('c1_reaction_grade'),
+                                    f1_grade=macro.get('f1_reaction_grade'),
+                                    c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                    f1_is_vacuum=bool(macro.get('f1_is_vacuum', False))
+                                )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
                             if action_tier_m3_b in ("TP1_ONLY_SCALP", "REDUCED_SCALP"):
@@ -2657,14 +3295,17 @@ class MarketScanner:
                     if c_sup > 0 and t_sup >= 2 and c_sup > mid:
                         target_sup = c_sup
                     else:
-                        cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier) if (lvl > 0 and lvl > mid)]
+                        cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, m4_basing_floor) if (lvl > 0 and lvl > mid)]
                         target_sup = min(cand_sup_list) if cand_sup_list else 0.0
 
                     allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST", entry_price=target_sup)
-                    can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR") and (m_corr != "BULLISH_CORRIDOR")
+                    can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR" or m4_catalyst == "BEARISH_FLOW") and (m_corr != "BULLISH_CORRIDOR")
                     
+                    is_m3_s_locked, m3_s_lock_reason = self.is_mechanism_locked(clean_sym, "MULTI_TOUCH_BREAKOUT_RETEST", -1)
                     is_locked_s, lock_reason_s = self.is_retest_locked(clean_sym, mid, atr_val)
-                    if is_locked_s:
+                    if is_m3_s_locked:
+                        logger.debug(f"[BREAKOUT SELL LOCK] {sym} SKIP: {m3_s_lock_reason}")
+                    elif is_locked_s:
                         logger.debug(f"[BREAKOUT SELL DEBOUNCE] {sym} SKIP: {lock_reason_s}")
                     elif not allowed_m3_s:
                         logger.debug(f"[BREAKOUT SELL GATE] {sym} SKIP ({action_tier_m3_s}): {reason_m3_s}")
@@ -2708,27 +3349,43 @@ class MarketScanner:
                                 if max_push_s > 2.50:
                                     logger.debug(f"[BREAKOUT SELL RUNAWAY] {sym} SKIP: excursion {max_push_s:.2f}x ATR > 2.50x ATR (flash dump exhaustion)")
                                 else:
-                                    # Cek Runway Struktural ke Lantai F1 berikutnya:
+                                    # HTF Wall Collision & Runway Guard ke Lantai F1:
                                     target_floor = (macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
-                                    has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= 0.80 * atr_val)
-                                    if not has_downward_runway and dr_pos < 0.28:
-                                        logger.debug(f"[BREAKOUT SELL EXTREME] {sym} SKIP: runway to floor {target_floor:.5f} insufficient ({target_sup - target_floor:.5f}) and dr_pos {dr_pos*100:.1f}%")
-                                    else:
-                                        entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
+                                    dist_to_floor = (mid - target_floor) if target_floor > 0 else 999.0
+                                    # Block SELL jika harga menabrak lantai F1 (jarak <= 0.35x ATR) atau berada di Discount (dr_pos <= 0.30)
+                                    is_wall_collision_s = (target_floor > 0 and dist_to_floor <= 0.35 * atr_val and mid > target_floor - 0.15 * atr_val)
+                                    has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= 0.80 * atr_val and dist_to_floor >= 0.50 * atr_val)
+                                    
+                                    if is_wall_collision_s or (not has_downward_runway and dr_pos < 0.30):
+                                        logger.debug(f"[BREAKOUT SELL WALL COLLISION] {sym} SKIP: mid {mid:.5f} collides with floor {target_floor:.5f} (dist: {dist_to_floor/atr_val:.2f}x ATR, dr_pos: {dr_pos*100:.1f}%)")
+                                        continue
+                                    
+                                    # M5 Micro-Rejection Verification Gate
+                                    m5_ok_s, m5_reason_s = self._verify_m5_rejection_wick(sym, target_sup, -1, atr_val, pt, mt5_connector=mt5_connector)
+                                    if not m5_ok_s:
+                                        logger.debug(f"[M3 SELL M5 GATE] {sym} SKIP: {m5_reason_s} at level {target_sup:.5f}")
+                                        continue
+                                    entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
                                 sl_tp = calculate_intraday_sl_tp(
-                                symbol=sym,
-                                entry_price=entry_lim,
-                                direction=-1,
-                                origin_level=target_sup,
-                                atr_h1=atr_val,
-                                pwl=macro.get('pwl', 0.0),
-                                pwh=macro.get('pwh', 0.0),
-                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
-                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
-                                spread_pts=spread_pts,
-                                c1=target_sup,
-                                f1=((macro.get('floor_f1') or 0.0) if ((macro.get('floor_f1') or 0.0) > 0.0 and (macro.get('floor_f1') or 0.0) < entry_lim) else ((macro.get('floor_f2') or 0.0) if ((macro.get('floor_f2') or 0.0) > 0.0 and (macro.get('floor_f2') or 0.0) < entry_lim) else 0.0)) or (macro.get('immediate_floor_f1') or 0.0)
-                            )
+                                    symbol=sym,
+                                    entry_price=entry_lim,
+                                    direction=-1,
+                                    origin_level=target_sup,
+                                    atr_h1=atr_val,
+                                    pwl=macro.get('pwl', 0.0),
+                                    pwh=macro.get('pwh', 0.0),
+                                    rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                    sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                    spread_pts=spread_pts,
+                                    c1=target_sup,
+                                    f1=((macro.get('floor_f1') or 0.0) if ((macro.get('floor_f1') or 0.0) > 0.0 and (macro.get('floor_f1') or 0.0) < entry_lim) else ((macro.get('floor_f2') or 0.0) if ((macro.get('floor_f2') or 0.0) > 0.0 and (macro.get('floor_f2') or 0.0) < entry_lim) else 0.0)) or (macro.get('immediate_floor_f1') or 0.0),
+                                    c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                    f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                    c1_grade=macro.get('c1_reaction_grade'),
+                                    f1_grade=macro.get('f1_reaction_grade'),
+                                    c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                    f1_is_vacuum=bool(macro.get('f1_is_vacuum', False))
+                                )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
                             if action_tier_m3_s in ("TP1_ONLY_SCALP", "REDUCED_SCALP"):
@@ -2810,10 +3467,34 @@ class MarketScanner:
                         if atr_now <= 0:
                             atr_now = atr_pts * pt
                         for _side_key in ("SELL", "BUY"):
-                            pend = self._m4_pending_ready(clean_sym, _side_key, mid, atr_now)
+                            pend = self._m4_pending_ready(clean_sym, _side_key, mid, atr_now, mt5_connector=mt5_connector)
                             if pend is None:
                                 continue
                             _dir = -1 if _side_key == "SELL" else 1
+
+                            # Granular Mechanism Lockout Check
+                            is_m4_locked, m4_lock_reason = self.is_mechanism_locked(clean_sym, config.M4_SETUP_TYPE, _dir)
+                            if is_m4_locked:
+                                logger.debug(f"[M4 LOCK] {sym} {_side_key} SKIP: {m4_lock_reason}")
+                                continue
+
+                            # Flexible Range Discipline Gate (User choice 4 Sep 2026):
+                            # BUY in Extreme Premium (>0.70 DR) only allowed if CSM Delta >= +0.035
+                            # SELL in Extreme Discount (<0.30 DR) only allowed if CSM Delta <= -0.035
+                            ext_dr_hi = getattr(config, "M4_EXTREME_DR_THRESHOLD", 0.70)
+                            ext_dr_lo = 1.0 - ext_dr_hi
+                            csm_override = getattr(config, "M4_EXTREME_CSM_DELTA_OVERRIDE", 0.035)
+                            dr_pos_m4 = float(macro.get('dealing_range_pos', macro.get('dr_pos', 0.5)) or 0.5)
+
+                            if _side_key == "BUY" and dr_pos_m4 > ext_dr_hi:
+                                if csm_delta_val < csm_override:
+                                    logger.debug(f"[M4 RANGE DISCIPLINE] {sym} BUY SKIP: DR {dr_pos_m4*100:.1f}% > {ext_dr_hi*100:.0f}% without extreme CSM Delta ({csm_delta_val:+.4f} < +{csm_override:.3f})")
+                                    continue
+                            elif _side_key == "SELL" and dr_pos_m4 < ext_dr_lo:
+                                if csm_delta_val > -csm_override:
+                                    logger.debug(f"[M4 RANGE DISCIPLINE] {sym} SELL SKIP: DR {dr_pos_m4*100:.1f}% < {ext_dr_lo*100:.0f}% without extreme CSM Delta ({csm_delta_val:+.4f} > -{csm_override:.3f})")
+                                    continue
+
                             _alw, _tier, _why = _is_direction_allowed(_dir, config.M4_SETUP_TYPE, entry_price=pend["level"])
                             if not _alw:
                                 logger.debug(f"[M4] {sym} {_side_key} gate-blocked: {_why}")
@@ -2856,6 +3537,7 @@ class MarketScanner:
                                     "m4_tp_pts": _tp_pts,
                                     "m4_atr_price": round(pend.get("atr", 0.0), 6),
                                     "m4_direction": _side_key,
+                                    "m4_is_basing": pend.get("is_basing", False),
                                     "permission": perm_state,
                                     "csm_delta": csm_delta_val,
                                     "action_tier": _tier,
@@ -2888,6 +3570,36 @@ class MarketScanner:
                     pass
             c_clean = c.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
             self._symbol_last_trigger[c_clean] = now_ts
+            self._symbol_last_eval[c_clean] = now_ts + float(getattr(config, "SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180))
+
+            # ── MULTI-MECHANISM CONFLUENCE TAGGING (4 Sep 2026) ──
+            try:
+                macro_sym = self.macro_cache.get(c.symbol, {})
+                c_pt = self._get_point(c.symbol)
+                c_atr = (c.current_atr_pts * c_pt) if c.current_atr_pts > 0 else (0.0050 if "JPY" in c_clean else 0.00050)
+                c_mid = c.scan_mid if c.scan_mid > 0 else c.trigger_price
+                standbys = self.get_radar_standbys(c.symbol, mid=c_mid, macro=macro_sym, pt=c_pt, atr_val=c_atr)
+
+                confluent_types = []
+                for s in standbys:
+                    stype = s.get("type", "")
+                    sprice = float(s.get("price", 0.0) or 0.0)
+                    sdir = s.get("direction", 0)
+                    # Cek jika mekanisme berbeda, arah searah, dan jarak <= 0.35x ATR
+                    if sprice > 0 and abs(sprice - c.trigger_price) <= 0.35 * c_atr:
+                        if sdir == c.direction or sdir == 0:
+                            if stype and stype not in confluent_types:
+                                confluent_types.append(stype)
+
+                if confluent_types:
+                    all_confl = sorted(list(set([c.setup_type] + confluent_types)))
+                    if len(all_confl) >= 2:
+                        c.metadata["multi_confluence"] = True
+                        c.metadata["confluence_mechanisms"] = all_confl
+                        c.metadata["confluence_desc"] = f"Multi-Mechanism Confluence ({' + '.join(all_confl)} within 0.35x ATR)"
+                        logger.info(f"🔥 [MULTI-CONFLUENCE DETECTED] {c.symbol} {c.setup_type} didukung oleh: {' + '.join(all_confl)}")
+            except Exception as _ce:
+                logger.debug(f"Confluence detection error on {c.symbol}: {_ce}")
         if candidates:
             self._save_cooldowns()
 

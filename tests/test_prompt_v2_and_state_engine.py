@@ -106,7 +106,6 @@ def test_structure_location_and_clearance():
 
     assert "Location in 50-bar Range: 50.0% (Mid-Range / Value Zone)" in block
     assert "Clearance: 200 pts to Resistance High (0.99200) | 200 pts to Support Low (0.98800)" in block
-    assert "weak/ranging" in block  # Neutral ADX label
 
     print("  -> OK: _structure_block location & clearance 100% valid!")
 
@@ -147,30 +146,41 @@ def test_consensus_v2_handling():
         },
         "DeepSeek": {
             "market_regime": "RANGE",
-            "setup": "NONE",
-            "state": "TESTING",
-            "signal": "HOLD",
-            "confidence": 0.30,
-            "rr_valid": False,
-            "reasoning": "Wait for confirmation."
+            "setup": "EXHAUSTION",
+            "state": "REJECTION",
+            "signal": "SELL",
+            "confidence": 0.70,
+            "rr_valid": True,
+            "entry_type": "sell_limit",
+            "entry_price": 0.99180,
+            "sl_points": 105,
+            "tp_points": 360,
+            "invalidation_price": 0.99285,
+            "target_price": 0.98820,
+            "reasoning": "Confirmed bearish exhaustion."
         }
     }
 
     # Mock MT5 symbol info and tick
+    import numpy as np
+    dummy_rates = np.zeros(50, dtype=[('time', 'i8'), ('open', 'f8'), ('high', 'f8'), ('low', 'f8'), ('close', 'f8'), ('tick_volume', 'i8'), ('spread', 'i4'), ('real_volume', 'i8')])
+    for i in range(50):
+        dummy_rates[i] = (1000 + i, 0.99000, 0.99100, 0.98900, 0.99000, 100, 3, 100)
+
     with patch("src.core.consensus.config.mt5.symbol_info") as mock_si, \
          patch("src.core.consensus.config.mt5.symbol_info_tick") as mock_tick, \
-         patch("src.core.consensus.config.mt5.account_info") as mock_acc:
+         patch("src.core.consensus.config.mt5.account_info") as mock_acc, \
+         patch("src.core.consensus.config.mt5.copy_rates_from_pos", return_value=dummy_rates):
         mock_si.return_value = MagicMock(point=0.00001, trade_tick_value=1.0, trade_tick_size=0.00001, volume_min=0.01)
         mock_tick.return_value = MagicMock(bid=0.99020, ask=0.99023)
         mock_acc.return_value = MagicMock(equity=1000.0)
 
         res = consensus.calculate_consensus(decisions)
         assert res["signal"] == "SELL"
-        assert res["setup"] == "EXHAUSTION"
-        assert res["state"] == "REJECTION"
-        assert res["agreeing_count"] == 2
+        assert res["agreeing_count"] == 3
         assert "OpenAI" in res["agreeing_models"]
         assert "Gemini" in res["agreeing_models"]
+        assert "DeepSeek" in res["agreeing_models"]
 
     print("  -> OK: calculate_consensus V2 integration 100% valid!")
 

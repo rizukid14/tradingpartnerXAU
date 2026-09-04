@@ -242,6 +242,169 @@ class TestM4FlowContinuation(unittest.TestCase):
         # mt5.order_send MUST NOT be called to remove the M4 order!
         mock_mt5.order_send.assert_not_called()
 
+    def test_m4_max_wait_bars_expires_at_48_bars(self):
+        """M4 pending order must expire when waiting time reaches 48 bars (config.M4_MAX_WAIT_BARS)."""
+        import numpy as np
+        st = {
+            "pending": {"break_pos": 100, "level": 162.500, "atr": 0.500, "sl": 162.950, "tp": 161.950},
+            "ep": 90,
+            "level": 162.500,
+            "last_break": 100,
+        }
+        hi = np.zeros(200)
+        lo = np.zeros(200)
+        cl = np.zeros(200)
+        atr = np.full(200, 0.500)
+
+        # At bar 147 (p - break_pos = 47), pending is still alive
+        self.scanner._m4_step_side(st, -1, 147, 0.0, 1.6, cl, lo, hi, atr)
+        self.assertIsNotNone(st["pending"])
+
+        # At bar 148 (p - break_pos = 48 >= config.M4_MAX_WAIT_BARS), pending must expire to None!
+        self.scanner._m4_step_side(st, -1, 148, 0.0, 1.6, cl, lo, hi, atr)
+        self.assertIsNone(st["pending"])
+
+    def test_m4_shallow_basing_mode_detected(self):
+        """M4 pending ready must detect shallow M15/M30 basing when price consolidates tightly above broken level."""
+        clean_sym = "EURJPY"
+        side_key = "BUY"
+        mid = 163.220
+        atr_now = 0.500
+        broken_level = 162.500
+
+        self.scanner._m4_state = {
+            clean_sym: {
+                side_key: {
+                    "pending": {"break_pos": 100, "level": broken_level, "atr": atr_now, "sl": broken_level - 0.225, "tp": broken_level + 0.247}
+                }
+            }
+        }
+
+        mock_rates = [
+            {'open': 163.22, 'high': 163.28, 'low': 163.20, 'close': 163.25},
+            {'open': 163.25, 'high': 163.30, 'low': 163.21, 'close': 163.27},
+            {'open': 163.27, 'high': 163.29, 'low': 163.20, 'close': 163.22},
+            {'open': 163.22, 'high': 163.28, 'low': 163.20, 'close': 163.23},
+        ]
+
+        with patch.object(config.mt5, 'copy_rates_from_pos', return_value=mock_rates):
+            res = self.scanner._m4_pending_ready(clean_sym, side_key, mid, atr_now)
+            self.assertIsNotNone(res)
+            self.assertTrue(res.get("is_basing"))
+            self.assertEqual(res["level"], 163.200)
+
+    def test_m4_standbys_origin_coordinates_and_bar_age(self):
+        """M4 standbys must use actual breakdown candle timestamp and real bar_age instead of latest bar."""
+        import pandas as pd
+        clean_sym = "CHFJPY"
+        timestamps = [1725250000 + i * 3600 for i in range(100)] # 100 H1 bars
+        df = pd.DataFrame({
+            "open": [197.0] * 100,
+            "high": [197.5] * 100,
+            "low": [196.5] * 100,
+            "close": [196.8] * 100,
+        }, index=timestamps)
+
+        break_pos = 80 # Breakdown happened at index 80 (20 bars ago)
+        break_time = timestamps[break_pos]
+        self.scanner._m4_df = {clean_sym: df}
+        self.scanner._m4_state = {
+            clean_sym: {
+                "SELL": {
+                    "pending": {
+                        "break_pos": break_pos,
+                        "break_time": break_time,
+                        "level": 197.000,
+                        "atr": 0.350,
+                        "sl": 197.350,
+                        "tp": 196.615
+                    }
+                }
+            }
+        }
+
+        macro = {"df": df, "current_atr": 0.350, "point": 0.001}
+        standbys = self.scanner.get_radar_standbys("CHFJPY-ECNc", mid=196.500, macro=macro)
+        m4_items = [s for s in standbys if s.get("type") == "M4"]
+        self.assertEqual(len(m4_items), 1)
+        item = m4_items[0]
+        self.assertEqual(item["price"], 197.000)
+        self.assertEqual(item["event_time"], break_time)
+        self.assertEqual(item["bar_age"], 100 - 1 - break_pos) # 19 bars ago
+        self.assertEqual(item["direction"], -1)
+
+    def test_m4_regime_catalyst_lifecycle_and_csm_invalidation(self):
+        """M4 catalyst must enforce 48-bar lifetime and abort immediately upon opposing CSM surge."""
+        import pandas as pd
+        clean_sym = "CHFJPY"
+        df = pd.DataFrame({"close": [196.0] * 100}, index=range(100))
+        self.scanner._m4_df = {clean_sym: df}
+        self.scanner._m4_state = {
+            clean_sym: {
+                "SELL": {
+                    "pending": {
+                        "break_pos": 70, # Age = 100 - 1 - 70 = 29 bars (within 48)
+                        "break_time": 123456,
+                        "level": 197.000,
+                        "atr": 0.400
+                    }
+                }
+            }
+        }
+
+        # 1. Normal active pro-flow (CSM delta negative / seller pressure)
+        cat = self.scanner.get_m4_regime_catalyst(clean_sym, csm_delta=-0.8)
+        self.assertEqual(cat["catalyst"], "BEARISH_FLOW")
+        self.assertEqual(cat["side"], "SELL")
+        self.assertEqual(cat["age"], 29)
+
+        # 2. CSM Invalidation: Strong buyer takeover (csm_delta >= +1.0)
+        cat_inv = self.scanner.get_m4_regime_catalyst(clean_sym, csm_delta=+1.2)
+        self.assertIsNone(cat_inv["catalyst"])
+
+        # 3. Bar age expired (> 48 bars)
+        self.scanner._m4_state[clean_sym]["SELL"]["pending"]["break_pos"] = 50 # Age = 49 bars > 48
+        cat_exp = self.scanner.get_m4_regime_catalyst(clean_sym, csm_delta=-0.8)
+        self.assertIsNone(cat_exp["catalyst"])
+
+    def test_zce_confluence_targeting_thickness_and_rr_skip(self):
+        """calculate_intraday_sl_tp must skip flimsy/vacuum F1 or F1 < 1.25R and target deep wall F2."""
+        from src.indicators.atlas_dna import calculate_intraday_sl_tp
+        entry = 196.100
+        atr = 0.400
+        spread = 20
+
+        # Case A: F1 is too close (distance 0.200 < 1.25 * risk), F2 is valid (distance 0.800 >= 1.25R)
+        res = calculate_intraday_sl_tp(
+            symbol="CHFJPY",
+            entry_price=entry,
+            direction=-1,
+            origin_level=196.200,
+            atr_h1=atr,
+            f1=195.950, # Distance 0.150 < 1.25R (~0.350)
+            f2=195.200, # Deep floor
+            f1_grade="GRADE_3_MACRO"
+        )
+        # Target must skip F1 and anchor toward F2
+        self.assertLess(res["tp"], 195.950)
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
+
+        # Case B: F1 has enough distance but is flimsy (GRADE_1_MICRO), F2 is intermediate
+        res_flimsy = calculate_intraday_sl_tp(
+            symbol="CHFJPY",
+            entry_price=entry,
+            direction=-1,
+            origin_level=196.200,
+            atr_h1=atr,
+            f1=195.600, # Distance 0.500 >= 1.25R but flimsy
+            f2=195.100, # Deep floor
+            f1_grade="GRADE_1_MICRO"
+        )
+        # F1 is GRADE_1_MICRO -> skipped to F2
+        self.assertLess(res_flimsy["tp"], 195.600)
+        self.assertGreaterEqual(res_flimsy["risk_reward"], 1.25)
+
 
 if __name__ == "__main__":
     unittest.main()
+

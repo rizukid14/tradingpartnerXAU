@@ -314,19 +314,19 @@ class CockpitDataEngine:
             f1 = macro.get("immediate_floor_f1") or macro.get("floor_f1") or 0.0
             c1 = macro.get("immediate_ceiling_c1") or macro.get("ceiling_c1") or 0.0
 
-            # Bias extraction: Prioritize structural flags is_bear / is_bull from macro context
+            # Bias extraction: Explicit Higher-Timeframe Macro Trend (D1 + H4)
             if macro.get("is_bear") and not macro.get("is_bull"):
-                bias = "BEARISH"
+                bias = "HTF: BEAR"
             elif macro.get("is_bull") and not macro.get("is_bear"):
-                bias = "BULLISH"
+                bias = "HTF: BULL"
             else:
                 bias_label = str(macro.get("trend_label") or macro.get("trend_compass") or "SIDEWAYS").upper()
                 if "BEAR" in bias_label and "BULL" not in bias_label:
-                    bias = "BEARISH"
+                    bias = "HTF: BEAR"
                 elif "BULL" in bias_label and "BEAR" not in bias_label:
-                    bias = "BULLISH"
+                    bias = "HTF: BULL"
                 else:
-                    bias = "NEUTRAL"
+                    bias = "HTF: FLAT"
 
             tactical_tag = str(macro.get("tactical_desc") or "")
             csm_delta = float(macro.get("csm_delta", 0.0) or 0.0)
@@ -336,6 +336,12 @@ class CockpitDataEngine:
             # 1:1 Radar Standbys directly from MarketScanner
             standbys = self.scanner.get_radar_standbys(sym, mid, macro, pt, atr_val)
             setups_dist = []
+            type_label_map = {
+                "M1": "M1:SWEEP",
+                "M2": "M2:PULLBACK",
+                "M3": "M3:BREAKOUT",
+                "M4": "M4:FLOW"
+            }
             for s in standbys:
                 s_lvl = float(s.get("price", 0.0))
                 if s_lvl > 0 and mid > 0:
@@ -348,23 +354,57 @@ class CockpitDataEngine:
                         dir_tag = "BULL"
                     else:
                         dir_tag = s_lbl.split()[0] if s_lbl else "SETUP"
-                    short_name = f"{s['type']} {dir_tag}"
-                    setups_dist.append((short_name, dist_pips, dist_atr, s_lvl))
+                    s_type_label = type_label_map.get(s.get("type", ""), s.get("type", "SETUP"))
+                    short_name = f"{s_type_label} {dir_tag}"
+                    setups_dist.append({
+                        "name": short_name,
+                        "type": s.get("type", ""),
+                        "dir": dir_tag,
+                        "dist_pips": dist_pips,
+                        "dist_atr": dist_atr,
+                        "lvl": s_lvl
+                    })
 
-            # Pick closest
+            # Pick closest and evaluate multi-setup confluence
+            is_confluence = False
+            confluence_name = ""
+            extra_count = 0
+
             if setups_dist:
-                setups_dist.sort(key=lambda x: x[2]) # sort by dist_atr
-                closest_name, closest_pips, closest_atr, closest_lvl = setups_dist[0]
+                setups_dist.sort(key=lambda x: x["dist_atr"])  # sort by dist_atr
+                closest = setups_dist[0]
+                closest_name = closest["name"]
+                closest_pips = closest["dist_pips"]
+                closest_atr = closest["dist_atr"]
+                closest_lvl = closest["lvl"]
+
+                # Near setups within reasonable operational proximity (<= 1.5x ATR)
+                near_setups = [s for s in setups_dist if s["dist_atr"] <= 1.5]
+                extra_count = max(0, len(near_setups) - 1)
+
+                # Confluence check: >= 2 setups in same direction within <= 0.35x ATR
+                if len(near_setups) >= 2:
+                    same_dir_setups = [s for s in near_setups if s["dir"] == closest["dir"]]
+                    if len(same_dir_setups) >= 2:
+                        min_lvl = min(s["lvl"] for s in same_dir_setups)
+                        max_lvl = max(s["lvl"] for s in same_dir_setups)
+                        if (max_lvl - min_lvl) <= 0.35 * atr_val:
+                            confl_types = [s["type"] for s in same_dir_setups]
+                            confluence_name = f"{'+'.join(confl_types)} {closest['dir']}"
+                            is_confluence = True
+                            closest_name = confluence_name
             else:
                 closest_name, closest_pips, closest_atr, closest_lvl = ("IDLE", 999.0, 99.0, 0.0)
 
             is_near = (closest_atr <= 1.0)
-            dist_desc = f"{closest_pips:.1f}p ({closest_atr:.2f}x ATR)" if closest_atr < 50 else ">50p (Idle)"
+            dist_desc = f"{closest_pips:.1f} pips ({closest_atr:.2f}x ATR)" if closest_atr < 50 else ">50 pips (Idle)"
 
             pairs_data.append({
                 "symbol": sym,
                 "clean_symbol": clean_sym,
                 "active_setup": closest_name,
+                "is_confluence": is_confluence,
+                "extra_count": extra_count,
                 "dist_pips": round(closest_pips, 1),
                 "dist_atr": round(closest_atr, 2),
                 "dist_desc": dist_desc,
@@ -630,6 +670,30 @@ class CockpitDataEngine:
         adx_val = float(macro.get("adx_14", 24.5) or 24.5)
         bias_score = float(getattr(strat, "macro_bias_score", macro.get("macro_bias_score", 0.0)) or 0.0)
 
+        # Determine rich operational phase from active radar standbys
+        operational_phase = mse_state
+        if m_standbys:
+            confl_item = next((s for s in m_standbys if s.get("is_confluence")), None)
+            if confl_item:
+                dir_txt = "SELL" if confl_item.get("direction") == -1 else "BUY"
+                struct_txt = "SBR" if dir_txt == "SELL" else "RBS"
+                tgt_txt = f"{confl_item.get('target_price', 0.0):.{digits}f}"
+                operational_phase = f"RETESTING {struct_txt} {confl_item['price']:.{digits}f} -> TARGET {tgt_txt} [{dir_txt} CONFLUENCE]"
+            else:
+                active_s = next((s for s in m_standbys if "ACTIVE" in str(s.get("status", ""))), None) or m_standbys[0]
+                s_type = active_s.get("type", "M3")
+                dir_txt = "SELL" if active_s.get("direction") == -1 else "BUY"
+                tgt_txt = f"{active_s.get('target_price', 0.0):.{digits}f}"
+                if s_type == "M3":
+                    struct_txt = "SBR" if dir_txt == "SELL" else "RBS"
+                    operational_phase = f"RETESTING {struct_txt} {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
+                elif s_type == "M2":
+                    operational_phase = f"PULLBACK TOUCH @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
+                elif s_type == "M1":
+                    operational_phase = f"SWEEP WATCH @ {active_s['price']:.{digits}f} [{s_type} {dir_txt}]"
+                elif s_type == "M4":
+                    operational_phase = f"FLOW RETEST @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
+
         intel = {
             "w1_trend": w1_trend,
             "d1_trend": d1_trend,
@@ -637,6 +701,7 @@ class CockpitDataEngine:
             "h1_trend": h1_trend,
             "adx": round(adx_val, 1),
             "mse_state": mse_state,
+            "operational_phase": operational_phase,
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
             "bias_score": round(bias_score, 2),
             "active_session": active_session,

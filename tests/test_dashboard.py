@@ -1,223 +1,81 @@
-"""Test dashboard parser, metrics, dan renderer (konvensi proyek: fungsi test_* + return failed)."""
-import sys
+"""Unit tests for Institutional Quant Decision Surveillance Cockpit (dashboard.py)."""
 import os
-import json
-import tempfile
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import dashboard  # noqa: E402
-
-SAMPLE_LOG = """\
-============================================================
-    BOT TRADING MULTI-LLM CONSENSUS - PROTECTED EXECUTION    
-============================================================
-Mode: [HOT]  LIVE EXECUTION (Duit Asli/Demo)
-Simbol: BTCUSD.c | Timeframe: M30 | Lot Size: 0.01
-Models: OpenAI (gpt-5.4-mini), Gemini (gemini-3.5-flash-lite), Claude (claude-sonnet-4-6)
-------------------------------------------------------------
-[MT5] Mencoba masuk ke akun 27556325 pada server VTMarkets-Live 3...
-[MT5] Login berhasil!
-[OK]  Terhubung ke MT5 dengan sukses!
-[FAST]  [CYCLE START] Memulai analisa market pada 2026-08-09 13:50:33...
-[PRICE]  Harga saat ini BTCUSD.c - Bid: 64847.66, Ask: 64864.77, Spread: 1711.0 pts
-[LATENCY]  [LATENSI MODEL (Ronde 1)] OpenAI: 1.87s | Gemini: 1.24s | Claude: 3.48s (Total: 3.49s)
-[BOT]  [Gemini] Decision: SELL (Conf: 72.0%)
-   SL: 8300 pts, TP: 13500 pts
-   Reason: Bearish multi-horizon forecast aligns with H1 pressure.
-[BOT]  [OpenAI] Decision: SELL (Conf: 68.0%)
-   SL: 8200 pts, TP: 12300 pts
-   Reason: M30 remains below EMA20.
-[BOT]  [Claude] Decision: SELL (Conf: 68.0%)
-   SL: 8000 pts, TP: 14000 pts
-   Reason: Price within optimal entry zone.
-[START]  [KONSENSUS DISETUJUI] Sinyal: SELL (skor 2.08 >= threshold 1.8)
-   Model yang sepakat: Gemini, OpenAI, Claude
-   Rata-rata Keyakinan: 69.3%
-[HOT]  [UNANIMOUS 3/3 HIGH CONFIDENCE] Ketiga AI sepakat SELL! Membuka 2 posisi sekaligus (Sisa slot: 6)...
-[MT5] Mengirim order: SELL BTCUSD.c 0.19 lot pada harga 64847.58 (SL: 64929.24, TP: 64714.92)...
-[MT5] Order BERHASIL! Ticket: 1161839635
-[DONE]  Sukses menempatkan order #1: SELL (Ticket: 1161839635, Lot: 0.19)
-[MT5] Mengirim order: SELL BTCUSD.c 0.19 lot pada harga 64847.04 (SL: 64928.7, TP: 64687.85)...
-[MT5] Order BERHASIL! Ticket: 1161839638
-[DONE]  Sukses menempatkan order #2: SELL (Ticket: 1161839638, Lot: 0.19)
-[FAST]  [CYCLE START] Memulai analisa market pada 2026-08-09 14:20:33...
-[PRICE]  Harga saat ini BTCUSD.c - Bid: 64800.0, Ask: 64817.0, Spread: 1700.0 pts
-[LATENCY]  [LATENSI MODEL (Ronde 1)] OpenAI: 2.0s | Gemini: 1.5s | Claude: 3.0s (Total: 3.0s)
-[BOT]  [Gemini] Decision: HOLD (Conf: 55.0%)
-   SL: 0 pts, TP: 0 pts
-   Reason: Waiting.
-[BOT]  [OpenAI] Decision: HOLD (Conf: 60.0%)
-   SL: 0 pts, TP: 0 pts
-   Reason: Waiting.
-[BOT]  [Claude] Decision: HOLD (Conf: 65.0%)
-   SL: 0 pts, TP: 0 pts
-   Reason: Waiting.
-[ALERT]  [KONSENSUS GAGAL] Tidak memenuhi threshold konsensus (2 model). Posisi: HOLD.
-[FORECAST]  [FORECAST INFO] Bias: BEARISH | Proyeksi R:R (T+1h/T+4h): 0.79
-[POST-MORTEM] Menganalisis hasil trade tiket #1161839635 (BTCUSD.c, P/L: -14.75)...
-[IDEA]  [PELAJARAN BARU DITERIMA] [entry] [LESSON] Avoid 5-minute BTC scalps when price is stretched.
-"""
+import dashboard
 
 
-def _write_sample(path):
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(SAMPLE_LOG)
-    return path
+class TestDashboardCockpit(unittest.TestCase):
+    def test_session_name_detection(self):
+        wib = ZoneInfo("Asia/Jakarta")
+        self.assertEqual(dashboard._get_session_name(datetime(2026, 9, 4, 3, 30, tzinfo=wib)), "DEAD_ZONE")
+        self.assertEqual(dashboard._get_session_name(datetime(2026, 9, 4, 9, 0, tzinfo=wib)), "TOKYO")
+        self.assertEqual(dashboard._get_session_name(datetime(2026, 9, 4, 15, 0, tzinfo=wib)), "LONDON")
+        self.assertEqual(dashboard._get_session_name(datetime(2026, 9, 4, 20, 0, tzinfo=wib)), "OVERLAP")
+        self.assertEqual(dashboard._get_session_name(datetime(2026, 9, 4, 23, 15, tzinfo=wib)), "LATE_NY")
 
+    def test_countdown_to_rollover(self):
+        wib = ZoneInfo("Asia/Jakarta")
+        dt = datetime(2026, 9, 4, 2, 50, 0, tzinfo=wib)
+        self.assertEqual(dashboard._get_countdown_to_rollover(dt), "1h 00m")
 
-def test_parser_events():
-    failed = 0
-    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8") as tf:
-        tf.write(SAMPLE_LOG)
-        path = tf.name
-    try:
-        events = dashboard.parse_log(path)
-        types = [e["type"] for e in events]
-        # session, cycle, price, latency, decisions, consensus, order, trade_close, lesson, forecast
-        checks = {
-            "session": 1,
-            "cycle": 2,
-            "latency": 2,
-            "model_decision": 6,
-            "consensus": 2,
-            "order": 2,
-            "trade_close": 1,
-            "lesson": 1,
-            "forecast": 1,
+    def test_consolidate_zce_zones_empty(self):
+        res = dashboard._consolidate_zce_zones(None, 1.0, 0.5, 1.5, 0.01, 0.0001, 5)
+        self.assertEqual(res, [])
+
+    def test_cockpit_data_engine_init(self):
+        engine = dashboard.CockpitDataEngine()
+        self.assertFalse(engine._is_running)
+        self.assertIsNone(engine.scanner)
+        self.assertEqual(engine.cached_overview, {})
+        self.assertEqual(engine.cached_symbol_data, {})
+
+    def test_radar_standbys_trajectory_and_confluence(self):
+        import pandas as pd
+        from src.analytics.market_scanner import MarketScanner
+        scanner = MarketScanner()
+
+        # Mock EURJPY H1 data: breakdown 10 bars ago at 181.719, then rebound back to 181.719
+        times = pd.date_range('2026-09-04 00:00', periods=25, freq='h')
+        closes = [182.200]*10 + [181.200]*10 + [181.710]*5
+        df = pd.DataFrame({'close': closes, 'high': [c + 0.10 for c in closes], 'low': [c - 0.10 for c in closes], 'open': closes}, index=times)
+
+        macro = {
+            'df': df,
+            'is_bear': True,
+            'current_atr': 0.35,
+            'immediate_ceiling_c1': 181.719,
+            'immediate_floor_f1': 181.426,
+            'cluster_support': 0.0,
+            'touches_support': 0
         }
-        for typ, cnt in checks.items():
-            got = types.count(typ)
-            if got != cnt:
-                print(f"FAIL parser: {typ} expected {cnt} got {got}")
-                failed += 1
-        # order fields
-        orders = [e for e in events if e["type"] == "order"]
-        if orders[0]["ticket"] != 1161839635:
-            print(f"FAIL parser: ticket {orders[0]['ticket']}")
-            failed += 1
-        if orders[0]["side"] != "SELL" or orders[0]["symbol"] != "BTCUSD.c":
-            print("FAIL parser: order side/symbol")
-            failed += 1
-        if abs(orders[0]["lot"] - 0.19) > 1e-9:
-            print(f"FAIL parser: lot {orders[0]['lot']}")
-            failed += 1
-        # consensus approved fields
-        cons = [e for e in events if e["type"] == "consensus" and e["approved"]]
-        if not cons or cons[0]["signal"] != "SELL" or cons[0]["score"] != 2.08:
-            print(f"FAIL parser: consensus {cons}")
-            failed += 1
-        # trade_close
-        tc = [e for e in events if e["type"] == "trade_close"]
-        if tc[0]["pnl"] != -14.75:
-            print(f"FAIL parser: close pnl {tc[0]['pnl']}")
-            failed += 1
-        # cycle ts
-        cycles = [e for e in events if e["type"] == "cycle"]
-        if cycles[0]["ts"] is None:
-            print("FAIL parser: cycle ts")
-            failed += 1
-    finally:
-        os.unlink(path)
-    return failed
 
+        standbys = scanner.get_radar_standbys("EURJPY", mid=181.650, macro=macro, pt=0.001, atr_val=0.35)
+        m3_list = [s for s in standbys if s["type"] == "M3"]
+        self.assertTrue(len(m3_list) > 0)
+        m3 = m3_list[0]
 
-def test_metrics():
-    failed = 0
-    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8") as tf:
-        tf.write(SAMPLE_LOG)
-        path = tf.name
-    try:
-        events = dashboard.parse_log(path)
-        # state: risk_state with known_closed (both orders closed)
-        state = {
-            "risk_state": {"known_closed": [1161839635, 1161839638]},
-            "memory_lessons": {
-                "BTCUSD.c": {
-                    "lessons": [
-                        {"symbol": "BTCUSD.c", "lesson": "[LESSON] test", "theme": "entry"}
-                    ],
-                    "lessons_summary": "",
-                }
-            },
-            "decision_memory": {},
-            "dynamic_rules": {},
-            "forecast_cache": {},
-        }
-        m = dashboard.compute_metrics(events, state)
-        s = m["summary"]
-        if s["total_orders"] != 2:
-            print(f"FAIL metrics: total_orders {s['total_orders']}")
-            failed += 1
-        if s["total_closed"] != 1:
-            print(f"FAIL metrics: total_closed {s['total_closed']}")
-            failed += 1
-        if s["net_pnl"] != -14.75:
-            print(f"FAIL metrics: net_pnl {s['net_pnl']}")
-            failed += 1
-        if s["win_rate"] != 0.0:
-            print(f"FAIL metrics: win_rate {s['win_rate']}")
-            failed += 1
-        if s["total_cycles"] != 2:
-            print(f"FAIL metrics: total_cycles {s['total_cycles']}")
-            failed += 1
-        # model stats
-        ms = m["model_stats"]
-        if "Gemini" not in ms or ms["Gemini"]["n"] != 2:
-            print(f"FAIL metrics: model_stats Gemini {ms.get('Gemini')}")
-            failed += 1
-        # agreement: 2 cycles, 1 ge2 (SELL x3), 1 split? second cycle all HOLD
-        if m["agreement"]["ge2"] != 1:
-            print(f"FAIL metrics: agreement ge2 {m['agreement']['ge2']}")
-            failed += 1
-        # lessons
-        if len(m["lessons"]) != 1:
-            print(f"FAIL metrics: lessons {len(m['lessons'])}")
-            failed += 1
-        # trades table
-        if len(m["trades"]) != 2:
-            print(f"FAIL metrics: trades {len(m['trades'])}")
-            failed += 1
-        # consensus approved
-        if s["consensus_approved"] != 1 or s["consensus_failed"] != 1:
-            print(f"FAIL metrics: consensus {s['consensus_approved']}/{s['consensus_failed']}")
-            failed += 1
-    finally:
-        os.unlink(path)
-    return failed
+        # Verify trajectory object exists
+        self.assertIn("trajectory", m3)
+        traj = m3["trajectory"]
+        self.assertEqual(traj["direction"], -1) # SELL
+        self.assertEqual(traj["retest_price"], 181.719)
+        self.assertEqual(traj["target_price"], 181.426)
+        self.assertTrue(traj["origin_age"] > 0)
+        self.assertTrue(traj["origin_time"] > 0)
 
-
-def test_render():
-    failed = 0
-    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8") as tf:
-        tf.write(SAMPLE_LOG)
-        path = tf.name
-    try:
-        events = dashboard.parse_log(path)
-        m = dashboard.compute_metrics(events, {"risk_state": {"known_closed": [1161839635, 1161839638]}})
-        html = dashboard.render_html(m)
-        for needle in ("<html", "chart-equity", "chart-decisions", "trades-table",
-                       "DATA =", "Kualitas Sinyal", "Equity Curve", "Lessons &amp; Post-Mortem"):
-            if needle not in html:
-                print(f"FAIL render: missing {needle}")
-                failed += 1
-    finally:
-        os.unlink(path)
-    return failed
-
-
-def test_load_json_defensive():
-    failed = 0
-    # file tidak ada -> None
-    if dashboard._load_json("__nonexistent__.json") is not None:
-        print("FAIL load_json: nonexistent should be None")
-        failed += 1
-    return failed
+        # Check confluence fusion if M2 is also near 181.719
+        m2_list = [s for s in standbys if s["type"] == "M2"]
+        if m2_list and abs(m2_list[0]["price"] - 181.719) <= 0.35 * 0.35:
+            self.assertTrue(m3.get("is_confluence", False))
+            self.assertIn("CONFLUENCE", m3.get("confluence_label", ""))
 
 
 if __name__ == "__main__":
-    total = 0
-    for fn in (test_parser_events, test_metrics, test_render, test_load_json_defensive):
-        total += fn()
-    print(f"\n{'[OK]  SEMUA TEST PASS' if total == 0 else f'[X]  {total} TEST GAGAL'}")
-    sys.exit(1 if total else 0)
+    unittest.main()
+
