@@ -25,9 +25,9 @@ class TestFreshBreakoutAndNetRR(unittest.TestCase):
         fl_gbpaud_high = config.get_sl_floor_points("GBPAUD-ECNc", spread_pts=20, atr_points=400)
         self.assertEqual(fl_gbpaud_high, 200)
 
-        # 4. JPY Cross (CHFJPY): ATR 150 pts -> floor clamps to 200 pts
+        # 4. JPY Cross (CHFJPY): ATR 150 pts -> floor clamps to 250 pts (H1)
         fl_chfjpy = config.get_sl_floor_points("CHFJPY-ECNc", spread_pts=15, atr_points=150)
-        self.assertEqual(fl_chfjpy, 200)
+        self.assertEqual(fl_chfjpy, 250)
 
         # 5. NZD Cross (EURNZD): High-Beta (180) + NZD Padding (20) = 200 pts
         fl_eurnzd = config.get_sl_floor_points("EURNZD-ECNc", spread_pts=20, atr_points=150)

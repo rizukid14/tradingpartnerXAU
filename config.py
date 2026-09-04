@@ -260,6 +260,7 @@ ZCE_CONFLICT_GAP = _getenv_float("ZCE_CONFLICT_GAP", 0.45)             # selisih
 ZCE_CLUSTER_MERGE_ATR_MULT = _getenv_float("ZCE_CLUSTER_MERGE_ATR_MULT", 0.25)
 ZCE_GRADE_G2 = _getenv_float("ZCE_GRADE_G2", 3.5)
 ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
+ZCE_CHAMBER_CLEARANCE_ATR_MULT = _getenv_float("ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)  # Ambang clearance chamber (0.30x ATR H1)
 # Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
 SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
 # Toleransi is_macro_wall M1 (market_scanner): selisih ref_top/ref_bot vs dinding C1/F1 agar
@@ -405,17 +406,17 @@ DEFAULT_TP_POINTS_BTC = _getenv_int("DEFAULT_TP_POINTS_BTC", 100000)
 #     dari o4-mini di-floor ke 1.2x ATR). Fallback statis 400 pts kalau ATR gagal.
 #   - R:R minimum 1.25 : 1 (TP >= 1.25 x SL)
 LLM_FX_FLOOR_ATR_MULT = _getenv_float("LLM_FX_FLOOR_ATR_MULT", 0.50)   # 0.50x ATR H1 untuk FX majors
-LLM_JPY_FLOOR_ATR_MULT = _getenv_float("LLM_JPY_FLOOR_ATR_MULT", 1.00)  # 1.00x ATR M30 untuk JPY crosses
+LLM_JPY_FLOOR_ATR_MULT = _getenv_float("LLM_JPY_FLOOR_ATR_MULT", 0.50)  # 0.50x ATR H1 untuk JPY crosses (Unified H1)
 LLM_XAU_FLOOR_ATR_MULT = _getenv_float("LLM_XAU_FLOOR_ATR_MULT", 1.25)  # 1.25x ATR H1 buffer Gold H1
 LLM_SAFETY_FLOOR_FX_PTS = _getenv_int("LLM_SAFETY_FLOOR_FX_PTS", 250)   # fallback kalau ATR gagal
 LLM_SAFETY_FLOOR_XAU_PTS = _getenv_int("LLM_SAFETY_FLOOR_XAU_PTS", 600)  # fallback kalau ATR gagal (6 USD)
 LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 
-# Segmented Safety Floors (3 September 2026)
+# Segmented Safety Floors (3 September 2026 / 4 Sep Unified H1)
 SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 120)       # 120 pts (12 pips) untuk Low-Beta & Standard FX
 SL_FLOOR_HIGH_BETA_PTS = _getenv_int("SL_FLOOR_HIGH_BETA_PTS", 180)     # 180 pts (18 pips) untuk High-Beta Crosses (GBPAUD, GBPNZD, EURNZD, GBPCHF)
-SL_FLOOR_JPY_PTS = _getenv_int("SL_FLOOR_JPY_PTS", 200)                 # 200 pts (20 pips) untuk JPY Crosses (M30)
+SL_FLOOR_JPY_PTS = _getenv_int("SL_FLOOR_JPY_PTS", 250)                 # 250 pts (25 pips) untuk JPY Crosses (H1)
 COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0) # $6.00 round turn ($3/side)
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
 
@@ -699,8 +700,8 @@ def is_high_beta_pair(symbol: str) -> bool:
 
 def get_sl_floor_points(symbol: str, spread_pts: int = 0, atr_points: int = 0) -> int:
     """
-    Kalkulasi Segmented Safety Floor Stop Loss (3 September 2026):
-    - JPY Crosses (M30): max(2*spread + 20, int(1.00 * atr_points), SL_FLOOR_JPY_PTS)
+    Kalkulasi Segmented Safety Floor Stop Loss (3 September 2026 / 4 Sep Unified H1):
+    - JPY Crosses (H1): max(2*spread + 20, int(LLM_JPY_FLOOR_ATR_MULT * atr_points), SL_FLOOR_JPY_PTS)
     - High-Beta Crosses (H1): max(2*spread + 20, int(0.50 * atr_points), SL_FLOOR_HIGH_BETA_PTS)
     - Quiet & Standard FX (H1): max(2*spread + 15, int(0.50 * atr_points), SL_FLOOR_QUIET_FX_PTS)
     - Anti-wick padding NZD (+20 pts)
@@ -1006,7 +1007,7 @@ def get_timeframe_str(symbol=None, now_wib=None):
         return env_tf.upper()
     if symbol:
         sym_clean = symbol.upper()
-        if "JPY" in sym_clean or "XAU" in sym_clean or "GOLD" in sym_clean:
+        if "XAU" in sym_clean or "GOLD" in sym_clean:
             return "M30"
     return "H1"
 

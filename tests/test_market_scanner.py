@@ -860,6 +860,166 @@ class TestMarketScanner(unittest.TestCase):
                 self.assertGreater(traj["target_tp1"], 0)
                 self.assertGreater(traj["target_tp2"], 0)
 
+    def test_m1_sweep_wall_rank_gate_rejects_g1_in_ranging_market(self):
+        """Verify M1 Sweep strictly rejects G1 Micro Level sweeps even in RANGE_BOUND markets."""
+        from unittest.mock import MagicMock
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        mock_directive = MagicMock(spec=MacroStrategicDirective)
+        mock_directive.action_tier = 'FULL_ALLOW'
+        mock_directive.macro_bias_score = 0.0
+        mock_directive.hard_circuit_breaker = False
+        mock_directive.forbidden_traps = []
+
+        self.scanner.symbols = ["EURUSD-ECNc"]
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+        self.scanner.macro_cache["EURUSD-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'dealing_range_pos': 0.85,
+            'dealing_range_low': 1.0800,
+            'dealing_range_high': 1.0900,
+            'is_bull': False,
+            'is_bear': False,
+            'trend_label': 'RANGE_BOUND',
+            'permission_state': 'GO',
+            'csm_delta': 0.0,
+            'strat_dir': mock_directive,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.0,
+            'macro_corridor': 'NEUTRAL_CORRIDOR',
+            'daily_macro_bias': 'RANGE_BOUND',
+            'immediate_floor_f1': 1.0820,
+            'immediate_ceiling_c1': 1.0880,
+            'c1_reaction_grade': 'GRADE_1_MICRO',
+            'asian_high': 1.0880,
+            'pdh': 1.0880,
+            'ema20': 1.0850,
+            'ema50': 1.0830
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 1.0879, 'bid': 1.0877, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 1.0870, 'high': 1.0875, 'low': 1.0865, 'close': 1.0872, 'time': 1699999000},
+            {'open': 1.0870, 'high': 1.0882, 'low': 1.0868, 'close': 1.0876, 'time': 1700000000}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    sweep_cands = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                    self.assertEqual(len(sweep_cands), 0, "G1 Micro level in RANGE_BOUND market must be strictly REJECTED!")
+
+                    # Now change grade to GRADE_2_INTERMEDIATE and clear breathing cooldown -> Must produce candidate!
+                    self.scanner._symbol_last_eval.clear()
+                    self.scanner._symbol_last_trigger.clear()
+                    self.scanner.macro_cache["EURUSD-ECNc"]["c1_reaction_grade"] = "GRADE_2_INTERMEDIATE"
+                    candidates_g2 = self.scanner.scan_fast_radar(mock_connector)
+                    sweep_cands_g2 = [c for c in candidates_g2 if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                    self.assertEqual(len(sweep_cands_g2), 1, "G2 Fortress wall in RANGE_BOUND market must be APPROVED!")
+
+    def test_m4_grade_3_macro_gate_demands_basing(self):
+        """Verify M4 breaking Grade 3 Macro Wall requires H1 basing box (WATCH_BASING_FORMATION)."""
+        import time
+        from unittest.mock import MagicMock
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        sym = "GBPUSD-ECNc"
+        clean_sym = "GBPUSD"
+        self.scanner.symbols = [sym]
+        self.scanner._m4_universe = [clean_sym]
+        self.scanner._m4_feed_updated = time.time()
+        self.scanner._m4_feed_hour = datetime.now(WIB).hour
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+        self.scanner._mechanism_rejection_cooldowns[f"{clean_sym}:TREND_ALIGNED_PULLBACK:1"] = time.time() + 3600
+        self.scanner._mechanism_rejection_cooldowns[f"{clean_sym}:MULTI_TOUCH_BREAKOUT_RETEST:1"] = time.time() + 3600
+
+        mock_directive = MagicMock(spec=MacroStrategicDirective)
+        mock_directive.action_tier = 'FULL_ALLOW'
+        mock_directive.macro_bias_score = 0.50
+        mock_directive.hard_circuit_breaker = False
+        mock_directive.forbidden_traps = []
+
+        self.scanner.macro_cache[sym] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'current_atr': 0.00100,
+            'dealing_range_pos': 0.50,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.020,
+            'strat_dir': mock_directive,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.50,
+            'immediate_ceiling_c1': 1.30500,
+            'c1_reaction_grade': 'GRADE_3_MACRO',
+            'immediate_floor_f1': 1.29500,
+            'f1_reaction_grade': 'GRADE_2_INTERMEDIATE',
+            'ema20': 1.30000,
+            'ema50': 1.29800,
+        }
+
+        # Case 1: M4 pending without basing (is_basing = False) near C1 Grade 3 (1.30500)
+        p_no_basing = {
+            "level": 1.30520,  # within 0.50*atr of C1 (1.30500)
+            "sl": 1.30070,
+            "tp": 1.31015,
+            "is_basing": False,
+            "break_time": 1700000000,
+            "break_pos": 10,
+            "atr": 0.00100
+        }
+        self.scanner._m4_state[clean_sym] = {
+            "BUY": {"pending": p_no_basing},
+            "SELL": {"pending": None}
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 1.30530, 'bid': 1.30510, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch.object(self.scanner, '_m4_pending_ready', return_value=p_no_basing):
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    m4_cands = [c for c in candidates if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                    self.assertEqual(len(m4_cands), 0, "M4 breaking Grade 3 Wall without basing must be held back!")
+
+                    # Verify get_radar_standbys marks status as WATCH_BASING_FORMATION
+                    standbys = self.scanner.get_radar_standbys(sym, mid=1.30530, macro=self.scanner.macro_cache[sym])
+                    m4_sb = next((s for s in standbys if s["type"] == "M4"), None)
+                    self.assertIsNotNone(m4_sb)
+                    self.assertEqual(m4_sb["status"], "WATCH_BASING_FORMATION")
+
+        # Case 2: M4 pending WITH basing (is_basing = True)
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+        p_with_basing = dict(p_no_basing)
+        p_with_basing["is_basing"] = True
+        self.scanner._m4_state[clean_sym]["BUY"]["pending"] = p_with_basing
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch.object(self.scanner, '_m4_pending_ready', return_value=p_with_basing):
+                    candidates2 = self.scanner.scan_fast_radar(mock_connector)
+                    m4_cands2 = [c for c in candidates2 if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                    self.assertEqual(len(m4_cands2), 1, "M4 breaking Grade 3 Wall WITH basing must be APPROVED!")
+
 
 if __name__ == "__main__":
     unittest.main()

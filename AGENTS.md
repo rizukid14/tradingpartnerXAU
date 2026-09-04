@@ -59,7 +59,7 @@
 
 Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
 
-- **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest), M4 (Systemic Flow Continuation) — dengan timeframe struktural **H1 untuk FX majors & NZD, M30 untuk JPY Crosses**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
+- **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest), M4 (Systemic Flow Continuation) — dengan timeframe struktural **H1 untuk seluruh 26 FX pair (termasuk JPY Crosses pasca unifikasi 4 Sep 2026)**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
 - **BTCUSD.c (Bitcoin)**: Tidak masuk scanner universe. Mode `ENABLE_BTC_ROTATION=False` (default) = BTC off.
 - **XAUUSD-ECNc (Gold)**: **DIMATIKAN TOTAL PERMANEN** (30 Agustus 2026). Audit membuktikan Gold menyebabkan $-\$1,067.79$ drawdown akun live sementara portofolio 26 FX membukukan net profit $+\$387.08$. Gold dihapus dari universe scanner `.env` dan `config.py`.
 - **HTF Macro Cache (Stage 1A)**: Struktur D1 + H4 + W1 di-fetch sekali per refresh window (~$60$ detik) lalu dipakai semua simbol → **0 token LLM**. CSM (Boitoki Currency Strength Matrix) dihitung sub-detik.
@@ -107,14 +107,14 @@ python main.py
 ## Alur cycle (scanner mode)
 
 1. **HTF Macro Cache Refresh** (tiap ~60 detik, 0 token): fetch D1+H4+W1 untuk 26 simbol FX → simpan `macro_cache`.
-2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 4 mekanisme scan semua simbol di timeframe struktural (H1 untuk FX majors, M30 untuk JPY) → cek `permission_state` hasil mapping MSE action tier (`FULL_ALLOW→GO/ARM` only — lihat tabel arsitektur; `HARD_BLOCK`/`WATCH_ONLY` = 0 token) + gate arah terpadu `_is_direction_allowed()` → kalau ada setup A+ lolos → **Stage 2 trigger**.
+2. **Fast Execution Radar** (`market_scanner.scan_all`, tiap 60 detik, 0 token): 4 mekanisme scan semua simbol di timeframe struktural (H1 untuk seluruh 26 FX pair pasca unifikasi 4 Sep 2026) → cek `permission_state` hasil mapping MSE action tier (`FULL_ALLOW→GO/ARM` only — lihat tabel arsitektur; `HARD_BLOCK`/`WATCH_ONLY` = 0 token) + gate arah terpadu `_is_direction_allowed()` → kalau ada setup A+ lolos → **Stage 2 trigger**.
 3. **Stage 2 — 3-LLM Consensus Jury** (per setup A+, ~5.5 detik):
    - **Pass 1** (paralel, ~3.0s): OpenAI o4-mini + Gemini 3.1-Flash menganalisis dossier independen.
    - **Pass 2** (cross-examination, ~1.5s): DeepSeek V4-Flash (Devil's Advocate CRO) mengaudit proposal + 24 candle M5 micro.
    - **Hard Risk Veto**: reject otomatis kalau flag `COUNTER_TREND_MOMENTUM/LIQUIDITY_TRAP/HIGH_IMPACT_NEWS/SPREAD_SPIKE/FALLING_KNIFE_WATERFALL`.
 4. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada 1 model saja yang HOLD/REJECT atau split vote → otomatis **HOLD** (Zero Tolerance Split). Unanimous + Confidence $\ge 80\%$ memicu split 2 posisi (+25% boost).
-5. **`_apply_sltp_rules` floor & ceiling** (realita kode `consensus.py:155-206`, 2 Sep 2026):
-   - JPY Crosses (M30): floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30})$; fallback 250 pts kalau ATR gagal.
+5. **`_apply_sltp_rules` floor & ceiling** (realita kode `consensus.py:155-206`, 4 Sep 2026):
+   - JPY Crosses (H1): floor SL = $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 250\text{ pts})$; fallback 250 pts kalau ATR gagal.
    - FX Majors & Crosses (H1): floor SL = $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1})$ (`LLM_FX_FLOOR_ATR_MULT` di `.env`); fallback 250 pts kalau ATR gagal.
    - NZD Alpha: $+20\text{ pts}$ anti-wick padding.
    - Ceiling (anti-runaway, **bukan** 160 pts statis): FX/JPY/Gold = $2.5 \times \text{ATR}$ (fallback 350 pts FX/JPY, 800 Gold); BTC = $1.8 \times \text{ATR}$ (fallback 45000). Hardcode di `consensus.py:186-206`.
@@ -127,11 +127,11 @@ python main.py
 ## Gate eksekusi aktif (Hard Rules)
 
 - **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 80\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
-- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 3 Sep 2026)**:
-  - **Segmented Safety Floors (3 Sep 2026)**:
+- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 4 Sep 2026)**:
+  - **Segmented Safety Floors (3 Sep 2026 / 4 Sep Unified H1)**:
     * **Quiet & Standard FX**: $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1}, 120\text{ pts floor / 12 pips})$. Mengunci lot akun $5.8k $\le 0.40 - 0.45$ lot (eliminasi lot 1.27 / 1.60).
     * **High-Beta FX** (`GBPAUD`, `GBPNZD`, `EURNZD`, `GBPCHF`): $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 180\text{ pts floor / 18 pips})$.
-    * **JPY Crosses** (M30): $\max(2 \times \text{spread} + 20\text{ pts}, 1.00 \times \text{ATR M30}, 200\text{ pts floor / 20 pips})$; ceiling $2.5 \times \text{ATR}$ (fallback 350 pts).
+    * **JPY Crosses** (H1): $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 250\text{ pts floor / 25 pips})$; ceiling $2.5 \times \text{ATR}$ (fallback 350 pts).
     * **NZD Crosses**: Tambahan $+20\text{ pts}$ anti-wick padding.
     * **M4 Systemic Flow**: Tunduk pada segmented safety floor & Net R:R (`M4_STRUCTURAL_FLOORED`).
   - **Friction-Aware Net R:R**: Target $\text{TP} = (\text{SL} \times R) + \text{Spread} + \text{Round-turn Commission}$ (memastikan net profit riil $\ge 1.25R$ bersih).

@@ -2,6 +2,48 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0. Perubahan 4 September 2026 (Malam VI) — Penyelarasan ZCE & MSE Chamber Migration, Eliminasi Inversion Bug, dan Unifikasi 26 Pair FX ke Timeframe H1
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Dynamic State Mutation during Penetration (Inversion Bug Kasus EURJPY & USDJPY Live)**:
+   - Pada pukul 16:44:48 WIB, harga EURJPY dan USDJPY menusuk tipis ke atas Asian High / Plafon $C_1$ (+1.4 pips).
+   - Akibat fungsi `_elect_walls()` di ZCE tidak memiliki syarat *Chamber Clearance*, penusukan tipis tersebut menyebabkan level $C_1$ (181.831) seketika melompat menjadi `imm_floor_f1` (Lantai F1).
+   - Di `market_scanner.py`, evaluasi Dealing Range berbasis 100-bar macro menempatkan posisi harga di zona diskon makro (0.26). Akibatnya, sinyal Bearish Sweep (SELL) tertahan oleh filter `dr_pos_val >= 0.55`, sedangkan Bullish Sweep (BUY) lolos karena `dr_pos_val <= 0.45` dan mengambil referensi `ref_bot = imm_floor_f1 = 181.831`!
+   - Hasilnya, sapuan likuiditas di atas level tertinggi (High) memicu BUY alih-alih SELL, bertolak belakang dengan analisa retikel dashboard `[M1] SELL @ 181.831`.
+2. **Fragmentasi Timeframe JPY Crosses (M30 vs H1)**:
+   - Penggunaan timeframe M30 pada JPY Crosses menghasilkan noise micro-structure, SL terlalu tipis, dan ketidaksinkronan dengan arsitektur 26 pair FX lainnya yang beroperasi murni pada H1.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **ZCE Chamber Clearance & Probe Zone Lock (`zone_confluence_engine.py`)**:
+   - Menerapkan ambang clearance $\ge 0.30 \times \text{ATR H1}$ (`ZCE_CHAMBER_CLEARANCE_ATR_MULT = 0.30`).
+   - Ketika harga berada di dalam zona penusukan ($[C_1 - 0.10 \times \text{ATR}, C_1 + 0.30 \times \text{ATR}]$), level $C_1$ tetap dikunci mati sebagai Plafon dan dilarang berpindah ke `floor_cands`.
+   - Level Plafon hanya sah bermigrasi menjadi Lantai $F_1$ (RBS Floor) jika harga telah menembus bersih $\ge 0.30 \times \text{ATR H1}$ di atas band atas zona.
+   - Berlaku simetris untuk Lantai $F_1$: dilarang melompat menjadi Plafon saat ditusuk tipis ke bawah.
+2. **Hukum Invariansi Peran M1 & Decoupled Intraday DR (`market_scanner.py`)**:
+   - Menghapus syarat cacat `0 < (v - mid)` pada `valid_tops` yang mendiskualifikasi level saat ditembus, digantikan dengan batas toleransi absolut $\text{abs}(\text{mid} - v) \le 1.0 \times \text{ATR}$.
+   - **Strict Directional Category Invariance**:
+     * `ref_top` (SELL) dilarang keras mengambil level lantai (`invalid_ceil_levels`).
+     * `ref_bot` (BUY) dilarang keras mengambil level plafon (`invalid_floor_levels`).
+   - **Intraday Session Dealing Range**: Evaluasi M1 menggunakan rentang sesi Asia (`asian_h`, `asian_l`), sehingga tren turun multi-hari tidak lagi memblokir Bearish Sweep di puncak intraday.
+3. **Unifikasi 100% 26 Pair FX ke Timeframe H1 (`config.py` & `.env`)**:
+   - `get_timeframe_str(symbol)` mengembalikan `H1` untuk seluruh simbol FX termasuk JPY crosses.
+   - `LLM_JPY_FLOOR_ATR_MULT = 0.50` dan `SL_FLOOR_JPY_PTS = 250` diselaraskan ke skala H1.
+   - Perbarui inline keyboard menu Telegram di `telegram_bot.py` menjadi `USDJPY H1`, `GBPJPY H1`, `EURJPY H1`, `CADJPY H1`.
+4. **Unit Test Suite Lengkap (`tests/test_zce_chamber_clearance.py`)**:
+   - 5 pengujian otomatis memverifikasi retensi probe zone, migrasi kamar bersih (breakout/breakdown), dan konsistensi parameter konfigurasi H1. 100% PASS.
+5. **Universal Liquidity Sweep (M1) G2/G3 Wall Enforcement & Radar Loop Ladder Fix (`market_scanner.py`)**:
+   - Menghapus bypass `is_ranging_market` pada filter grade dinding M1; M1 Universal Liquidity Sweep (BUY dan SELL) kini secara mutlak mewajibkan dinding ZCE berperingkat minimal `GRADE_2_INTERMEDIATE` atau `GRADE_3_MACRO`.
+   - Merestrukturisasi seluruh gate evaluasi M1 menjadi tangga `if-elif` terpadu, mengeliminasi `continue` prematur yang sebelumnya menggugurkan loop simbol utama dan mencegah evaluasi mekanisme M2, M3, dan M4.
+6. **M4 Supreme Precedence & Grade 3 Anti-Liquidity Trap Basing Gate (`market_scanner.py`)**:
+   - Pada `_is_direction_allowed()`, M4 Systemic Flow diberikan hak preseden tertinggi (`ALIGNED_M4_SYSTEMIC_EXPANSION [M4_CATALYST]`), mengesampingkan bias makro statis dan perangkap arah.
+   - Pada loop M4, penembusan dinding ZCE Grade 3 ($C_1/F_1$) diwajibkan membentuk High-Tight Basing H1 (`/\/\/\/`, compression $\le 0.35\times\text{ATR}$, `pend["is_basing"] == True`). Jika belum terbentuk konsolidasi, radar menahan emisi tiket dengan status `WATCH_BASING_FORMATION`.
+   - Inisialisasi `_m4_universe` saat startup scanner (`__init__`) dan akses defensif atribut `ema20`, `dealing_range_high`, dan `dealing_range_low`.
+
+---
+
 ## 0. Perubahan 4 September 2026 (Malam V) — Penyelarasan 2D Confluence Action Tier dengan Anti-Frankenstein Guard & Capping SL/TP
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

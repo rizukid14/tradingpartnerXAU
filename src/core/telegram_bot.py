@@ -462,7 +462,7 @@ def handle_help_command(chat_id):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "🧭 *ANALISIS & STRATEGI MAKRO:*",
         "• `/analisa <pair> [tf]` ➔ Analisis On-Demand 3-AI (o4-mini + Gemini + DeepSeek)",
-        "  _Contoh_: `/analisa GBPUSD H1` atau `/analisa USDJPY M30`",
+        "  _Contoh_: `/analisa GBPUSD H1` atau `/analisa USDJPY H1`",
         "• `/macro [pair|all]` ➔ 6-TF Top-Down Macro Strategic Engine (Mandat, SBR/RBS, Target, Pantangan)",
         "  _Contoh_: `/macro GBPUSD` atau `/macro all` (tabel 26 pair)",
         "• `/fundamental [pair]` ➔ 8-Currency Composite Fundamental Scorecard & Conflict Matrix (Apex Paragon)",
@@ -678,15 +678,15 @@ def _build_main_menu_keyboard():
             ],
             [
                 {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD_H1"},
-                {"text": "USDJPY M30", "callback_data": "analyze:USDJPY_M30"}
+                {"text": "USDJPY H1", "callback_data": "analyze:USDJPY_H1"}
             ],
             [
                 {"text": "EURUSD H1", "callback_data": "analyze:EURUSD_H1"},
-                {"text": "GBPJPY M30", "callback_data": "analyze:GBPJPY_M30"}
+                {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY_H1"}
             ],
             [
-                {"text": "EURJPY M30", "callback_data": "analyze:EURJPY_M30"},
-                {"text": "CADJPY M30", "callback_data": "analyze:CADJPY_M30"}
+                {"text": "EURJPY H1", "callback_data": "analyze:EURJPY_H1"},
+                {"text": "CADJPY H1", "callback_data": "analyze:CADJPY_H1"}
             ],
             [
                 {"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"},
@@ -1228,7 +1228,7 @@ def _process_update(update):
                     "Examples:\n"
                     "• `/analisa GBPUSD` (Default Sesi)\n"
                     "• `/analisa EURUSD H1`\n"
-                    "• `/analisa USDJPY M30`\n"
+                    "• `/analisa USDJPY H1`\n"
                     "• `/analisa GBPJPY H4`\n"
                     "• `/analisa BTCUSD D1`",
                     chat_id=target_chat
