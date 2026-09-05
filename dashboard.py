@@ -539,6 +539,12 @@ class CockpitDataEngine:
         pairs_data.sort(key=_get_pair_sort_key)
 
         with self._lock:
+            try:
+                from src.analytics.shadow_tracker import shadow_tracker
+                shadow_data = shadow_tracker.get_performance_summary()
+            except Exception:
+                shadow_data = {}
+
             self.cached_overview = {
                 "account": {
                     "login": login,
@@ -549,7 +555,8 @@ class CockpitDataEngine:
                     "open_count": len(open_pos),
                 },
                 "timestamp_wib": clock_str,
-                "pairs": pairs_data
+                "pairs": pairs_data,
+                "shadow_radar": shadow_data
             }
 
     def get_symbol_detail(self, symbol: str, timeframe_str: str = "H1") -> Dict[str, Any]:
@@ -1019,7 +1026,22 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        # 4. Web UI Root
+        # 4. API: Shadow Radar Analytics
+        elif self.path == "/api/shadow":
+            try:
+                from src.analytics.shadow_tracker import shadow_tracker
+                s_data = shadow_tracker.get_performance_summary()
+            except Exception as e:
+                s_data = {"error": str(e)}
+            payload = json.dumps(s_data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        # 5. Web UI Root
         elif self.path in ("/", "/index.html", "/dashboard"):
             html = TEMPLATE.encode("utf-8")
             self.send_response(200)

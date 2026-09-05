@@ -2,7 +2,60 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 5 September 2026 (Malam) — Penyelarasan Vertical Shading (Sessions & Regimes) Sesuai Realita Engine, Dynamic Mini Legend, dan Client Disconnect Guard
+## 0. Perubahan 5 September 2026 (Malam II) — Virtual Shadow Quant Radar: Perekaman Telemetri 100% Sinyal Stage 1 Tanpa Batasan Slot MT5 (Unconstrained Data Collector)
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Keterbatasan Kapasitas Eksekusi MT5 vs Kebutuhan Riset Kuantitatif**:
+   - Portofolio bot menerapkan pembatasan ketat `MAX_OPEN_POSITIONS` (misal 6 posisi) dan `MAX_PENDING_ORDERS` (4 order) demi mencegah *margin cluster* dan risiko korelasi mata uang fiat yang berlebih.
+   - Akibatnya, ketika pasar menghasilkan banyak setup A+ valid (misal 15–20 setup dalam sehari), bot terpaksa mengabaikan sebagian besar setup tersebut (`PRE-DISPATCH BLOCKED: Max positions reached`).
+   - Hal ini membatasi ukuran sampel ($N$) untuk evaluasi statistik performa murni Stage 1 Fast Radar (M1..M4), terutama dalam mode *Pure Quant No-LLM*.
+2. **Kebutuhan Analisis Excursion Tanpa Risiko Modal (Zero-Risk Paper Tracking)**:
+   - Diperlukan mekanisme pencatatan independen yang dapat memantau pergerakan harga riil bar-demi-bar (MFE/MAE) untuk setiap peluang kuantitatif yang lolos filter Stage 1 tanpa membebani margin akun demo MT5.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Modul Mandiri Virtual Shadow Tracker (`src/analytics/shadow_tracker.py`)**:
+   - Mendefinisikan dataclass `ShadowTrade`: merekam parameter lengkap setup (`shadow_id`, `symbol`, `setup_type`, `direction`, `entry_type`, `entry_price`, `sl_price`, `tp_price`, `risk_reward`, `sl_points`, `tp_points`, `status`, `outcome`, `peak_mfe_r`, `max_mae_r`, `mt5_disposition`, `mt5_ticket`).
+   - Class `QuantShadowTracker` (Singleton):
+     * `register_candidate()`: Mendaftarkan setup kuantitatif baru yang lolos radar dengan proteksi deduplikasi (anti-spam 30 menit).
+     * `update_shadow_orders(connector)`: Memperbarui status seluruh order aktif menggunakan data tick live MT5:
+       - Mendeteksi penjemputan pending limit order (*limit fill*).
+       - Mendeteksi pembatalan *Target Proximity Expiration* ($\ge 75\%$ menuju TP tanpa fill).
+       - Mendeteksi *Timeout Expiration* (pending order $>120$ menit).
+       - Menghitung akumulasi *Max Favorable Excursion* (MFE) dan *Max Adverse Excursion* (MAE) dalam satuan R.
+       - Menyelesaikan trade saat menyentuh TP (`TP_HIT`, +R), SL (`SL_HIT`, -1.0R), atau stagnasi $>24$ jam (`TIME_DECAY_EXIT`).
+     * `get_performance_summary()`: Menghasilkan ringkasan analitik real-time (Total Setups, Winrate %, Realized Net R, Expected Value per trade, dan breakdown per mekanisme M1..M4).
+   - Penyimpanan Telemetri Terstruktur:
+     * `data/quant_shadow_trades.jsonl`: Log append-only setiap trade yang tuntas (`RESOLVED`).
+     * `data/quant_shadow_state.json`: State file order aktif/pending yang tahan terhadap restart bot.
+
+2. **Integrasi Alur Eksekusi Utama (`main.py`)**:
+   - Pada `run_scanner_trading_cycle()`:
+     * Setiap setup yang lolos validasi SL/TP didaftarkan ke `shadow_tracker`.
+     * Menandai disposisi eksekusi MT5: `EXECUTED_MT5` (dengan nomor tiket) jika slot tersedia, atau `SKIPPED_SLOT_FULL` / `SKIPPED_RISK_BLOCKED` jika diblokir oleh kapasitas MT5.
+     * Jika mode LLM aktif dan konsensus memutuskan HOLD/VETO, setup tetap dicatat dengan disposisi `SKIPPED_LLM_VETO` untuk menganalisis akurasi keputusan AI secara retrospektif.
+   - Pada loop 3 detik:
+     * Memanggil `shadow_tracker.update_shadow_orders(connector)` secara otomatis.
+     * Mencetak notifikasi ANSI rapi di terminal saat ada trade virtual yang selesai:
+       `[SHADOW RADAR RESOLVED] GBPJPY (M3) -> TP_HIT (+1.67R) | MFE: +1.82R | MAE: -0.35R`.
+
+3. **Integrasi Dashboard Surveillance Cockpit (`dashboard.py` & `dashboard_assets.py`)**:
+   - Backend `dashboard.py`:
+     * Menyuntikkan `shadow_radar` ke payload `/api/overview`.
+     * Menambahkan dedicated endpoint `/api/shadow` untuk querying metrik telemetri.
+   - Frontend `dashboard_assets.py`:
+     * Header bar: Menampilkan pill live status `Virtual Shadow: N rec (act, pend) | WR % (+/-R)`.
+     * Drawer tabs: Menambahkan tab baru `Virtual Shadow Quant Radar` berisi 4 summary cards, tabel breakdown performa M1..M4, dan tabel live order virtual aktif & recent resolved.
+
+4. **Unit Test Suite Lengkap (`tests/test_shadow_tracker.py`)**:
+   - 6 test cases memverifikasi registrasi market/pending, deduplikasi, transisi pending-to-active fill, target proximity expiration, pelacakan MFE/MAE, dan resolusi TP/SL.
+   - Full regression test suite: **144/144 tests 100% PASS**.
+
+---
+
+## 1. Perubahan 5 September 2026 (Malam) — Penyelarasan Vertical Shading (Sessions & Regimes) Sesuai Realita Engine, Dynamic Mini Legend, dan Client Disconnect Guard
 
 ### 🎯 Latar Belakang & Identifikasi Kebutuhan:
 1. **Desinkronisasi Persepsi Visual Operator vs Realita Engine**:

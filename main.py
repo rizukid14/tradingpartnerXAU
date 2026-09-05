@@ -15,6 +15,7 @@ from src.core.risk_engine import RiskEngine
 from src.core.cli_theme import UI, render_banner, render_scanner_banner, render_candidate_alert_box, render_hacker_bento_hud
 from src.analytics import position_manager
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
+from src.analytics.shadow_tracker import shadow_tracker
 
 import re
 import shutil
@@ -935,6 +936,22 @@ def run_scanner_trading_cycle(cand, risk):
             
             # Final Pre-Dispatch Risk Check (guards against positions opened while LLM was reasoning)
             can_trade_ok, risk_msg = risk.can_trade(sym)
+
+            # Register into Virtual Shadow Quant Radar (Unconstrained Data Collector)
+            p_sl_calc = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)
+            p_tp_calc = entry_price + (tp_points * point) if trade_signal == "BUY" else entry_price - (tp_points * point)
+            sh_disp = "EXECUTED_MT5" if can_trade_ok else f"SKIPPED_{risk_msg[:18]}"
+            registered_shadow = shadow_tracker.register_candidate(
+                candidate=cand,
+                entry_type=entry_type,
+                entry_price=entry_price,
+                sl_price=p_sl_calc,
+                tp_price=p_tp_calc,
+                sl_points=sl_points,
+                tp_points=tp_points,
+                mt5_disposition=sh_disp
+            )
+
             if not can_trade_ok:
                 print(f" {UI.YELLOW}[PRE-DISPATCH BLOCKED] Trade {sym} dibatalkan: {risk_msg}{UI.RST}")
                 tg.alert_trade_aborted(
@@ -968,6 +985,8 @@ def run_scanner_trading_cycle(cand, risk):
                         expiration_minutes=pending_expiry
                     )
                     if pending_res.get("status") == "SUCCESS":
+                        if registered_shadow and pending_res.get("ticket"):
+                            registered_shadow.mt5_ticket = pending_res.get("ticket")
                         if config.DRY_RUN:
                             print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
                         else:
@@ -1019,6 +1038,8 @@ def run_scanner_trading_cycle(cand, risk):
                     atr_h1_pts=cand.current_atr_pts,
                 )
                 if order_res.get("status") == "SUCCESS":
+                    if registered_shadow and order_res.get("ticket"):
+                        registered_shadow.mt5_ticket = order_res.get("ticket")
                     if config.DRY_RUN:
                         print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
                     else:
@@ -1049,6 +1070,29 @@ def run_scanner_trading_cycle(cand, risk):
             return True
         else:
             print(f" {UI.DIM}[STAGE 2 JURY] Setup {cand.setup_type} pada {sym} DITOLAK/HOLD oleh sidang konsensus.{UI.RST}")
+            # Register to shadow tracker for unconstrained quant comparison
+            try:
+                c_dir = "BUY" if cand.direction == 1 else "SELL"
+                c_mid = getattr(cand, "scan_mid", 0.0) or cand.trigger_price
+                c_sl_p = cand.suggested_sl
+                c_tp_p = cand.suggested_tp
+                t_live = connector.get_current_tick(sym)
+                pt = t_live.get("point", 0.00001) if t_live else 0.00001
+                if c_mid > 0 and c_sl_p > 0 and c_tp_p > 0:
+                    c_sl_pts = int(round(abs(c_mid - c_sl_p) / pt)) if pt > 0 else 100
+                    c_tp_pts = int(round(abs(c_tp_p - c_mid) / pt)) if pt > 0 else 150
+                    shadow_tracker.register_candidate(
+                        candidate=cand,
+                        entry_type="market",
+                        entry_price=c_mid,
+                        sl_price=c_sl_p,
+                        tp_price=c_tp_p,
+                        sl_points=c_sl_pts,
+                        tp_points=c_tp_pts,
+                        mt5_disposition="SKIPPED_LLM_VETO"
+                    )
+            except Exception:
+                pass
             return False
     finally:
         config.SYMBOL = old_sym
@@ -1283,6 +1327,15 @@ def main():
                     _detect_filled_pending(scanner=scanner)
                 except Exception as e:
                     print(f"[PENDING SYNC ERROR] {e}")
+
+                # Update Virtual Shadow Quant Radar orders
+                try:
+                    resolved_shadows = shadow_tracker.update_shadow_orders(connector)
+                    for r_sh in resolved_shadows:
+                        net_r_str = f"{r_sh.net_r:+.2f}R" if r_sh.net_r is not None else "0.0R"
+                        print(f" {UI.MAGENTA}[SHADOW RADAR RESOLVED] {r_sh.symbol} ({r_sh.setup_type[:6]}) -> {r_sh.outcome} ({net_r_str}) | MFE: {r_sh.peak_mfe_r:+.2f}R | MAE: {r_sh.max_mae_r:+.2f}R{UI.RST}")
+                except Exception as e:
+                    pass
 
                 # Detect positions closed by MT5 in real time
                 try:

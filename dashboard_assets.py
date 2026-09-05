@@ -844,6 +844,10 @@ html, body {
   </div>
   <div class="header-right">
     <div class="account-stat">
+      <span class="stat-label">Virtual Shadow:</span>
+      <span class="stat-val" id="shadow-stat-val" style="color:var(--purple);font-size:10.5px;">0 rec (0% WR)</span>
+    </div>
+    <div class="account-stat">
       <span class="stat-label">Mode:</span>
       <span class="stat-val" style="color:var(--cyan);">STANDALONE OBSERVER</span>
     </div>
@@ -968,6 +972,7 @@ html, body {
       <div class="drawer-tabs">
         <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
         <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1, M2, M3, M4)</div>
+        <div class="drawer-tab" data-drawer="shadow">Virtual Shadow Quant Radar</div>
         <div class="drawer-tab" data-drawer="rules">Active Rules & .env Inventory</div>
       </div>
       <div class="drawer-body" id="drawer-content">
@@ -1626,8 +1631,11 @@ async function fetchOverview() {
     const data = await res.json();
     cachedOverview = data;
     document.getElementById("error-banner").style.display = "none";
-    renderHeader(data.account, data.timestamp_wib);
+    renderHeader(data.account, data.timestamp_wib, data.shadow_radar);
     renderWatchlist(data.pairs);
+    if (currentDrawerTab === "shadow") {
+      renderDrawer();
+    }
   } catch (err) {
     document.getElementById("error-banner").style.display = "block";
   }
@@ -1650,7 +1658,7 @@ async function fetchSymbolData() {
 }
 
 // Render Top Header
-function renderHeader(acc, clock) {
+function renderHeader(acc, clock, shadowRadar) {
   if (!acc) return;
   document.getElementById("acc-login").textContent = acc.login || "Live MT5";
   document.getElementById("acc-balance").textContent = `$${(acc.balance || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
@@ -1667,6 +1675,17 @@ function renderHeader(acc, clock) {
   clEl.className = `stat-val ${clVal >= 0 ? 'stat-pnl-pos' : 'stat-pnl-neg'}`;
 
   if (clock) document.getElementById("live-clock").textContent = clock;
+
+  const shEl = document.getElementById("shadow-stat-val");
+  if (shEl && shadowRadar) {
+    const tot = shadowRadar.total_recorded || 0;
+    const wr = shadowRadar.winrate_pct || 0;
+    const netR = shadowRadar.cumulative_net_r || 0;
+    const act = shadowRadar.active_count || 0;
+    const pend = shadowRadar.pending_count || 0;
+    shEl.textContent = `${tot} rec (${act} act, ${pend} pend) | WR ${wr.toFixed(0)}% (${netR >= 0 ? '+' : ''}${netR.toFixed(1)}R)`;
+    shEl.style.color = (netR >= 0) ? "var(--green)" : "var(--red)";
+  }
 }
 
 // Render Left Watchlist
@@ -1978,6 +1997,117 @@ function renderDrawer() {
         </div>
       </div>
     `;
+  } else if (currentDrawerTab === "shadow") {
+    const s = cachedOverview?.shadow_radar;
+    if (!s) {
+      container.innerHTML = `<div style="padding:10px;color:var(--text-dim);">Mengambil data telemetri Virtual Shadow Quant Radar...</div>`;
+      return;
+    }
+
+    const netCol = (s.cumulative_net_r >= 0) ? "var(--green)" : "var(--red)";
+    const evCol = (s.expected_value_r >= 0) ? "var(--green)" : "var(--red)";
+
+    let html = `
+      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
+        <div class="telemetry-card">
+          <div class="tele-title">Total Radar Setups</div>
+          <div class="tele-row"><span class="tele-lbl">Recorded:</span><span class="tele-val">${s.total_recorded}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Active Now:</span><span class="tele-val" style="color:var(--cyan);">${s.active_count}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Pending Fill:</span><span class="tele-val" style="color:var(--amber);">${s.pending_count}</span></div>
+        </div>
+        <div class="telemetry-card">
+          <div class="tele-title">Winrate & Outcomes</div>
+          <div class="tele-row"><span class="tele-lbl">Winrate:</span><span class="tele-val" style="color:var(--green);">${s.winrate_pct.toFixed(1)}%</span></div>
+          <div class="tele-row"><span class="tele-lbl">TP Hits:</span><span class="tele-val" style="color:var(--green);">${s.tp_hits}</span></div>
+          <div class="tele-row"><span class="tele-lbl">SL Hits:</span><span class="tele-val" style="color:var(--red);">${s.sl_hits}</span></div>
+        </div>
+        <div class="telemetry-card">
+          <div class="tele-title">Performance Edge</div>
+          <div class="tele-row"><span class="tele-lbl">Cumulative Net R:</span><span class="tele-val" style="color:${netCol};">${s.cumulative_net_r >= 0 ? '+' : ''}${s.cumulative_net_r.toFixed(2)}R</span></div>
+          <div class="tele-row"><span class="tele-lbl">Expected Value:</span><span class="tele-val" style="color:${evCol};">${s.expected_value_r >= 0 ? '+' : ''}${s.expected_value_r.toFixed(2)}R / trade</span></div>
+          <div class="tele-row"><span class="tele-lbl">Decisive Trades:</span><span class="tele-val">${s.decisive_trades}</span></div>
+        </div>
+        <div class="telemetry-card">
+          <div class="tele-title">Execution Quality</div>
+          <div class="tele-row"><span class="tele-lbl">Expired / No-Fill:</span><span class="tele-val">${s.expired_count}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Unconstrained Mode:</span><span class="tele-val" style="color:var(--cyan);">100% CAPTURED</span></div>
+          <div class="tele-row"><span class="tele-lbl">MT5 Capacity Filter:</span><span class="tele-val" style="color:var(--purple);">INDEPENDENT</span></div>
+        </div>
+      </div>
+    `;
+
+    // Mechanisms Table
+    const mechs = s.mechanisms || {};
+    html += `
+      <div style="font-weight:700;font-size:11px;color:var(--cyan);margin-bottom:4px;text-transform:uppercase;">Breakdown Performa Mekanisme Stage 1 Radar:</div>
+      <table class="data-table" style="margin-bottom:12px;"><thead><tr>
+        <th>Mekanisme</th><th>Total Setups</th><th>TP Hits</th><th>SL Hits</th><th>Winrate %</th><th>Realized Net R</th>
+      </tr></thead><tbody>
+        <tr>
+          <td style="color:#fb923c;font-weight:700;">M1: Universal Liquidity Sweep</td>
+          <td>${mechs.M1?.total || 0}</td><td>${mechs.M1?.tp || 0}</td><td>${mechs.M1?.sl || 0}</td>
+          <td>${mechs.M1?.total ? ((mechs.M1.tp / (mechs.M1.tp + mechs.M1.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td style="color:${(mechs.M1?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M1?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M1?.net_r || 0).toFixed(2)}R</td>
+        </tr>
+        <tr>
+          <td style="color:#38bdf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
+          <td>${mechs.M2?.total || 0}</td><td>${mechs.M2?.tp || 0}</td><td>${mechs.M2?.sl || 0}</td>
+          <td>${mechs.M2?.total ? ((mechs.M2.tp / (mechs.M2.tp + mechs.M2.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td style="color:${(mechs.M2?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M2?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M2?.net_r || 0).toFixed(2)}R</td>
+        </tr>
+        <tr>
+          <td style="color:#c084fc;font-weight:700;">M3: Breakout Retest Guard</td>
+          <td>${mechs.M3?.total || 0}</td><td>${mechs.M3?.tp || 0}</td><td>${mechs.M3?.sl || 0}</td>
+          <td>${mechs.M3?.total ? ((mechs.M3.tp / (mechs.M3.tp + mechs.M3.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td style="color:${(mechs.M3?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M3?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M3?.net_r || 0).toFixed(2)}R</td>
+        </tr>
+        <tr>
+          <td style="color:#facc15;font-weight:700;">M4: Systemic Flow Continuation</td>
+          <td>${mechs.M4?.total || 0}</td><td>${mechs.M4?.tp || 0}</td><td>${mechs.M4?.sl || 0}</td>
+          <td>${mechs.M4?.total ? ((mechs.M4.tp / (mechs.M4.tp + mechs.M4.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td style="color:${(mechs.M4?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M4?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M4?.net_r || 0).toFixed(2)}R</td>
+        </tr>
+      </tbody></table>
+    `;
+
+    // Active & Recent Trades Table
+    const activeList = s.active_trades || [];
+    const recentList = s.recent_resolved || [];
+    const combined = [...activeList, ...recentList];
+
+    if (combined.length > 0) {
+      html += `
+        <div style="font-weight:700;font-size:11px;color:var(--purple);margin-bottom:4px;text-transform:uppercase;">Daftar Order Virtual (Aktif & Recent Resolved):</div>
+        <table class="data-table"><thead><tr>
+          <th>ID Shadow</th><th>Simbol</th><th>Arah</th><th>Entry</th><th>SL</th><th>TP</th><th>R:R</th><th>Status / Outcome</th><th>Net R</th><th>Peak MFE</th><th>Max MAE</th><th>MT5 Status</th>
+        </tr></thead><tbody>
+      `;
+      combined.forEach(tr => {
+        const isBuy = (tr.direction === "BUY");
+        const dirCol = isBuy ? "var(--green)" : "var(--red)";
+        const outCol = (tr.outcome === "TP_HIT") ? "var(--green)" : ((tr.outcome === "SL_HIT") ? "var(--red)" : "var(--amber)");
+        const netRText = (tr.net_r !== null && tr.net_r !== undefined) ? `${tr.net_r >= 0 ? '+' : ''}${tr.net_r.toFixed(2)}R` : '—';
+        html += `<tr>
+          <td style="font-family:var(--font-mono);font-size:10px;">${tr.shadow_id}</td>
+          <td style="font-weight:700;">${tr.symbol}</td>
+          <td style="color:${dirCol};font-weight:700;">${tr.direction}</td>
+          <td>${tr.entry_price}</td>
+          <td>${tr.sl_price}</td>
+          <td>${tr.tp_price}</td>
+          <td>${tr.risk_reward || '—'}R</td>
+          <td style="color:${outCol};font-weight:700;">${tr.outcome || tr.status}</td>
+          <td style="color:${outCol};font-weight:700;">${netRText}</td>
+          <td style="color:var(--green);">${tr.peak_mfe_r ? '+' + tr.peak_mfe_r.toFixed(2) + 'R' : '—'}</td>
+          <td style="color:var(--red);">${tr.max_mae_r ? tr.max_mae_r.toFixed(2) + 'R' : '—'}</td>
+          <td><span style="color:${tr.mt5_disposition?.includes('EXECUTED') ? 'var(--green)' : 'var(--amber)'};">${tr.mt5_disposition || 'PENDING'}</span></td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    } else {
+      html += `<div style="color:var(--text-dim);font-family:var(--font-mono);padding:8px;">Belum ada riwayat shadow trade yang tuntas. Menunggu siklus radar Stage 1...</div>`;
+    }
+    container.innerHTML = html;
+
   } else if (currentDrawerTab === "rules") {
     if (!cachedRules) {
       fetchRules();
