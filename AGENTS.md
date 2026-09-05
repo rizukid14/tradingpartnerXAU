@@ -57,14 +57,15 @@
 
 ## Apa ini
 
-Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
+Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade` dan branch `quant-trade-noAI` untuk Pure Quant No-LLM).
 
 - **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest), M4 (Systemic Flow Continuation) — dengan timeframe struktural **H1 untuk seluruh 26 FX pair (termasuk JPY Crosses pasca unifikasi 4 Sep 2026)**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
 - **BTCUSD.c (Bitcoin)**: Rotasi akhir pekan 24/7. Mode `ENABLE_BTC_ROTATION=True` dan `WEEKEND_TRADING_ENABLED=True` mengaktifkan `BTCUSD.c` pada hari Sabtu–Minggu (M1, M2, M3 aktif, M4 off; max 2 posisi, risk 0.50%).
+- **Pure Quant Direct Execution (`quant-trade-noAI`)**: Mode `ENABLE_LLM_JURY=False` mengeksekusi setup quant langsung ke MT5 (0 token API) dengan institutional safety check (`MT5_ACCOUNT_MODE=demo`).
 - **XAUUSD-ECNc (Gold)**: **DIMATIKAN TOTAL PERMANEN** (30 Agustus 2026). Audit membuktikan Gold menyebabkan $-\$1,067.79$ drawdown akun live sementara portofolio 26 FX membukukan net profit $+\$387.08$. Gold dihapus dari universe scanner `.env` dan `config.py`.
 - **HTF Macro Cache (Stage 1A)**: Struktur D1 + H4 + W1 di-fetch sekali per refresh window (~$60$ detik) lalu dipakai semua simbol → **0 token LLM**. CSM (Boitoki Currency Strength Matrix) dihitung sub-detik.
-- **Mode AI**: `AI_MODE_POLICY = "fixed"` + `AI_FIXED_MODE = "triple"` → **selalu 3-LLM jury** (OpenAI + Gemini + DeepSeek). Tidak ada schedule dual/triple berdasarkan jam.
-- **Akun**: **LIVE** `VTMarkets-Live 3` (login `27556325`), magic `20260625`, balance ~$6000, Waktu **WIB** (Asia/Jakarta).
+- **Mode AI**: `AI_MODE_POLICY = "fixed"` + `AI_FIXED_MODE = "triple"` → **selalu 3-LLM jury** (OpenAI + Gemini + DeepSeek) saat `ENABLE_LLM_JURY=True`.
+- **Akun**: **DEMO** `VTMarkets-Demo` (login `1157958`) di branch `quant-trade-noAI` / **LIVE** `VTMarkets-Live 3` (login `27556325`) di branch `quant-trade`, magic `20260625`, Waktu **WIB** (Asia/Jakarta).
 
 > **Tidak ada konsep "default pair" di scanner mode**. Semua 26 simbol FX setara, diproses paralel oleh radar.
 

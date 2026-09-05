@@ -163,6 +163,27 @@ def init_mt5():
             print(f"[MT5 ERROR] Could not login to MT5 account #{config.MT5_LOGIN} on server {config.MT5_SERVER}: {last_err}")
             return False
 
+    # Institutional Safety Guard: MT5_ACCOUNT_MODE validation
+    if hasattr(mt5, "account_info") and callable(mt5.account_info):
+        acc_info = mt5.account_info()
+        if acc_info is not None:
+            acct_mode = getattr(config, "MT5_ACCOUNT_MODE", "live").lower()
+            demo_mode_const = getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
+            if acct_mode == "demo" and getattr(acc_info, "trade_mode", 0) != demo_mode_const:
+                print(f"\n {UI.RED}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
+                print(f" {UI.RED}{UI.BOLD}  ║ [FATAL SAFETY LOCK] MODE DEMO AKTIF TAPI TERMINAL TERHUBUNG KE AKUN REAL!            ║{UI.RST}")
+                print(f" {UI.RED}{UI.BOLD}  ║ • Akun MT5 Aktif : #{getattr(acc_info, 'login', 'UNKNOWN')} ({getattr(acc_info, 'server', 'UNKNOWN')})                          ║{UI.RST}")
+                print(f" {UI.RED}{UI.BOLD}  ║ • Trade Mode     : REAL / LIVE (trade_mode={getattr(acc_info, 'trade_mode', 'N/A')})                               ║{UI.RST}")
+                print(f" {UI.RED}{UI.BOLD}  ║ • Tindakan       : Inisialisasi DIBATALKAN untuk melindungi modal live!               ║{UI.RST}")
+                print(f" {UI.RED}{UI.BOLD}  ║ • Solusi         : Beralih ke akun Demo di MT5 desktop atau isi MT5_DEMO_LOGIN di .env.║{UI.RST}")
+                print(f" {UI.RED}{UI.BOLD}╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
+                mt5.shutdown()
+                return False
+            elif acct_mode == "demo":
+                print(f" {UI.GREEN}[MT5 SAFETY CHECK] Terverifikasi terhubung ke akun DEMO #{getattr(acc_info, 'login', 'N/A')} ({getattr(acc_info, 'server', 'N/A')}).{UI.RST}")
+            else:
+                print(f" {UI.YELLOW}[MT5 SAFETY CHECK] Terhubung ke akun LIVE #{getattr(acc_info, 'login', 'N/A')} ({getattr(acc_info, 'server', 'N/A')}).{UI.RST}")
+
     config.SYMBOL = get_valid_trade_symbol(config.SYMBOL)
     symbol_info = mt5.symbol_info(config.SYMBOL)
     if symbol_info is None:
@@ -552,7 +573,8 @@ def get_account_info():
         "margin": acc.margin,
         "free_margin": acc.margin_free,
         "leverage": acc.leverage,
-        "profit": acc.profit
+        "profit": acc.profit,
+        "trade_mode": getattr(acc, "trade_mode", 0)
     }
 
 def get_position_net_profit(position_id):

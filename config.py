@@ -468,6 +468,9 @@ CONSENSUS_THRESHOLD = _getenv_int("CONSENSUS_THRESHOLD", 2)
 MIN_CONSENSUS_MODELS = _getenv_int("MIN_CONSENSUS_MODELS", 2)
 HIGH_CONFIDENCE_SPLIT_THRESHOLD = _getenv_float("HIGH_CONFIDENCE_SPLIT_THRESHOLD", 0.80)
 
+# AI & LLM JURY TOGGLE
+ENABLE_LLM_JURY = _getenv_bool("ENABLE_LLM_JURY", True)
+
 # --- TIME-BASED AI MODE SCHEDULE (WIB) ---
 # Format: (start_hour, start_minute, end_hour, end_minute, mode)
 # Mode values: "single" | "single_gemini" | "dual" | "triple"

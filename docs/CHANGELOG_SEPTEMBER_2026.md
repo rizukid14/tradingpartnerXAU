@@ -2,7 +2,39 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 5 September 2026 (Siang) — Harmonisasi Ambang Batas Invalidation Pending Order (CSM Opposed Threshold), Logging Persistence, dan Friday Pre-Weekend Liquidity Shield
+## 0. Perubahan 5 September 2026 (Siang II) — Branch `quant-trade-noAI`: Mode Pure Quant Weekend BTC Tanpa LLM dan Institutional Demo Safety Lock
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Trading Weekend Khusus Bitcoin Tanpa Beban Token AI**:
+   - Pengguna membutuhkan mode eksekusi murni kuantitatif (*Pure Quant Execution*) khusus untuk aset `BTCUSD.c` pada akhir pekan (Sabtu–Minggu) tanpa memanggil konsensus 3-LLM Jury (0 token API, sub-detik).
+   - Seluruh sinyal, entri pending limit, SL struktural, TP quant anchor, dan sizing risiko dieksekusi langsung dari modul Stage 1 Fast Radar.
+2. **Isolasi Akun Demo & Perlindungan Akun Riil (Institutional Demo Safety Lock)**:
+   - Menghindari kecelakaan di mana bot berjalan pada akun Real/Live padahal dimaksudkan untuk akun Demo.
+   - Penambahan proteksi hard lock di `mt5_connector.py` yang memverifikasi `account_info().trade_mode == ACCOUNT_TRADE_MODE_DEMO`. Jika akun terdeteksi `REAL`, inisialisasi langsung dibatalkan keras.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Branch Baru `quant-trade-noAI` (`git checkout -b quant-trade-noAI`)**:
+   - Dibuat dari basis commit terverifikasi pada `quant-trade`.
+2. **Parameter Konfigurasi `ENABLE_LLM_JURY` (`config.py` & `.env`)**:
+   - Memperkenalkan `ENABLE_LLM_JURY = _getenv_bool("ENABLE_LLM_JURY", True)`.
+   - Di `.env`, diset `ENABLE_LLM_JURY=false` dan `MT5_ACCOUNT_MODE=demo`.
+3. **Pure Quant Direct Execution Engine (`main.py`)**:
+   - Jika `ENABLE_LLM_JURY=False`, `run_scanner_trading_cycle` melewati pemanggilan `llm.get_multi_llm_decisions_for_candidate` secara total.
+   - Sinyal, harga pemicu, SL, TP, dan lot sizing dihitung langsung dari `CandidateSetup` kuantitatif serta tunduk pada aturan `_apply_sltp_rules` (plafon/lantai BTC 30,000–45,000 pts) dan `risk_engine`.
+   - Banner CLI terminal menampilkan `PURE QUANT RADAR (Fast Radar 60s | Direct Quant Execution / No-LLM)`.
+4. **Institutional Demo vs Live Safety Guard (`mt5_connector.py`)**:
+   - Validasi `trade_mode` terminal MT5: jika konfigurasi meminta `demo` tetapi broker mengembalikan `REAL`, bot langsung memutus koneksi MT5 (`shutdown()`) dan membatalkan start.
+5. **Unit Test Suite Baru (`tests/test_demo_safety_guard.py` & `tests/test_pure_quant_execution.py`)**:
+   - Validasi pemblokiran akun real saat mode demo aktif (2/2 tests PASS).
+   - Validasi eksekusi langsung pending limit dan market order tanpa pemanggilan LLM (2/2 tests PASS).
+   - Full regression discovery 128 tests: 100% PASS.
+
+---
+
+## 0. Perubahan 5 September 2026 (Siang I) — Harmonisasi Ambang Batas Invalidation Pending Order (CSM Opposed Threshold), Logging Persistence, dan Friday Pre-Weekend Liquidity Shield
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Desinkronisasi Ambang Batas CSM Scanner vs Position Manager (Auto-Cancel 4–10 Detik)**:

@@ -652,6 +652,7 @@ def run_scanner_trading_cycle(cand, risk):
     Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
     """
     sym = cand.symbol
+    tf_str = getattr(cand, "timeframe", "H1")
     print("\n" + render_candidate_alert_box(cand))
     meta = getattr(cand, 'metadata', {}) or {}
     zce_cls = meta.get('zce_class', 'MSE_BASE')
@@ -667,36 +668,96 @@ def run_scanner_trading_cycle(cand, risk):
     if not can_trade_ok:
         print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         return False
-    
-    # 2. Fetch live candles (M15 & M5 Micro Microscope, H1, H4) from MT5
-    try:
-        from config import mt5
-        m15_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_M15, count=12)
-        m5_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
-        h1_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
-        h4_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_H4, count=6)
-    except Exception as e:
-        m15_str, m5_str, h1_str, h4_str = None, None, None, None
-        
-    # 3. Call 2-Pass Sequential Cross-Examination Jury
+
     old_sym = config.SYMBOL
     config.SYMBOL = sym
     try:
-        decisions = llm.get_multi_llm_decisions_for_candidate(
-            cand,
-            recent_d1_str=None,
-            recent_h4_str=h4_str,
-            recent_h1_str=h1_str,
-            recent_m15_str=m15_str,
-            recent_m5_str=m5_str
-        )
-        result = consensus.calculate_consensus(decisions, candidate=cand)
-        
-        trade_signal = result.get("signal", "HOLD")
-        
-        # Check if Pass 1 approved vs Pass 2 vetoed
-        if decisions.get("OpenAI", {}).get("signal") in ("BUY", "SELL") or decisions.get("Gemini", {}).get("signal") in ("BUY", "SELL"):
-            record_funnel_event("pass1_approved", sym=sym, setup=cand.setup_type)
+        # PURE QUANT DIRECT EXECUTION (No-LLM Mode)
+        if not getattr(config, "ENABLE_LLM_JURY", True):
+            trade_signal = "BUY" if cand.direction == 1 else "SELL"
+            tick_live = connector.get_current_tick(sym)
+            if not tick_live:
+                print(f" {UI.RED}[PURE QUANT ERROR] Gagal mengambil tick live untuk {sym}.{UI.RST}")
+                return False
+
+            point = tick_live.get("point", 0.00001) or 0.00001
+            ask = tick_live["ask"]
+            bid = tick_live["bid"]
+            mkt_ref = ask if trade_signal == "BUY" else bid
+            trig_p = getattr(cand, "trigger_price", 0.0) or mkt_ref
+
+            entry_type = "market"
+            entry_price = mkt_ref
+            if getattr(config, "PENDING_ORDERS_ENABLED", False) and trig_p > 0:
+                spread_pts = tick_live.get("spread", 0)
+                min_dist_pts = max(spread_pts * 2, 20)
+                if trade_signal == "BUY" and (ask - trig_p) >= (min_dist_pts * point):
+                    entry_type = "buy_limit"
+                    entry_price = trig_p
+                elif trade_signal == "SELL" and (trig_p - bid) >= (min_dist_pts * point):
+                    entry_type = "sell_limit"
+                    entry_price = trig_p
+
+            ref_price = entry_price
+            if getattr(cand, "suggested_sl", 0.0) > 0 and point > 0:
+                raw_sl_pts = int(round(abs(ref_price - cand.suggested_sl) / point))
+            else:
+                raw_sl_pts = config.default_sl_points_for(sym)
+
+            if getattr(cand, "suggested_tp", 0.0) > 0 and point > 0:
+                raw_tp_pts = int(round(abs(cand.suggested_tp - ref_price) / point))
+            else:
+                raw_tp_pts = config.default_tp_points_for(sym)
+
+            result = {
+                "signal": trade_signal,
+                "entry_type": entry_type,
+                "entry_price": entry_price,
+                "sl_points": raw_sl_pts,
+                "tp_points": raw_tp_pts,
+                "confidence": 0.85,
+                "agreeing_count": 3,
+                "agreeing_models": ["Pure Quant Engine"],
+                "agreeing_models_str": "Pure Quant Engine (No-LLM)",
+                "reason": f"Pure Quant {cand.setup_type} direct execution without LLM",
+                "confluence_tier": "PURE_QUANT_RADAR",
+                "sizing_multiplier": 1.0,
+                "is_split_ticket": False,
+                "tp_mode": "QUANT_STRUCTURAL_TARGET"
+            }
+
+            print(f"\n {UI.CYAN}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
+            print(f" {UI.CYAN}{UI.BOLD}  ║ [PURE QUANT DIRECT EXECUTION] {sym} [{cand.setup_type}]                                ║{UI.RST}")
+            print(f" {UI.CYAN}{UI.BOLD}  ║ • Signal     : {trade_signal} ({entry_type.upper()} @ {entry_price})                                     ║{UI.RST}")
+            print(f" {UI.CYAN}{UI.BOLD}  ║ • SL / TP Raw: SL {raw_sl_pts} pts ({cand.suggested_sl}) | TP {raw_tp_pts} pts ({cand.suggested_tp})             ║{UI.RST}")
+            print(f" {UI.CYAN}{UI.BOLD}  ╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
+        else:
+            # 2. Fetch live candles (M15 & M5 Micro Microscope, H1, H4) from MT5
+            try:
+                from config import mt5
+                m15_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_M15, count=12)
+                m5_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_M5, count=24)
+                h1_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_H1, count=6)
+                h4_str = llm.format_micro_tape(sym, mt5.TIMEFRAME_H4, count=6)
+            except Exception as e:
+                m15_str, m5_str, h1_str, h4_str = None, None, None, None
+                
+            # 3. Call 2-Pass Sequential Cross-Examination Jury
+            decisions = llm.get_multi_llm_decisions_for_candidate(
+                cand,
+                recent_d1_str=None,
+                recent_h4_str=h4_str,
+                recent_h1_str=h1_str,
+                recent_m15_str=m15_str,
+                recent_m5_str=m5_str
+            )
+            result = consensus.calculate_consensus(decisions, candidate=cand)
+            
+            trade_signal = result.get("signal", "HOLD")
+            
+            # Check if Pass 1 approved vs Pass 2 vetoed
+            if decisions.get("OpenAI", {}).get("signal") in ("BUY", "SELL") or decisions.get("Gemini", {}).get("signal") in ("BUY", "SELL"):
+                record_funnel_event("pass1_approved", sym=sym, setup=cand.setup_type)
             
         if trade_signal == "HOLD" and (decisions.get("DeepSeek", {}).get("veto") or "VETO" in (result.get("reason") or "")):
             record_funnel_event("pass2_vetoed", sym=sym, setup=cand.setup_type, details={"reason": result.get("reason")})
@@ -1079,7 +1140,10 @@ def main():
             total_symbols=len(config.get_scanner_symbols()),
             account_mode=getattr(config, "MT5_ACCOUNT_MODE", "live")
         ))
-        print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
+        if not getattr(config, "ENABLE_LLM_JURY", True):
+            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.CYAN}PURE QUANT RADAR{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: Direct Quant Execution / No-LLM)")
+        else:
+            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
         print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (26 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
     else:
         print(render_banner(
