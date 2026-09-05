@@ -995,16 +995,19 @@ class TestMarketScanner(unittest.TestCase):
 
         with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
             with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch.object(self.scanner, '_m4_pending_ready', return_value=p_no_basing):
-                    candidates = self.scanner.scan_fast_radar(mock_connector)
-                    m4_cands = [c for c in candidates if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
-                    self.assertEqual(len(m4_cands), 0, "M4 breaking Grade 3 Wall without basing must be held back!")
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    with patch.object(self.scanner, '_m4_pending_ready', return_value=p_no_basing):
+                        candidates = self.scanner.scan_fast_radar(mock_connector)
+                        m4_cands = [c for c in candidates if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                        self.assertEqual(len(m4_cands), 0, "M4 breaking Grade 3 Wall without basing must be held back!")
 
-                    # Verify get_radar_standbys marks status as WATCH_BASING_FORMATION
-                    standbys = self.scanner.get_radar_standbys(sym, mid=1.30530, macro=self.scanner.macro_cache[sym])
-                    m4_sb = next((s for s in standbys if s["type"] == "M4"), None)
-                    self.assertIsNotNone(m4_sb)
-                    self.assertEqual(m4_sb["status"], "WATCH_BASING_FORMATION")
+                        # Verify get_radar_standbys marks status as WATCH_BASING_FORMATION
+                        standbys = self.scanner.get_radar_standbys(sym, mid=1.30530, macro=self.scanner.macro_cache[sym])
+                        m4_sb = next((s for s in standbys if s["type"] == "M4"), None)
+                        self.assertIsNotNone(m4_sb)
+                        self.assertEqual(m4_sb["status"], "WATCH_BASING_FORMATION")
 
         # Case 2: M4 pending WITH basing (is_basing = True)
         self.scanner._symbol_last_eval.clear()
@@ -1015,10 +1018,70 @@ class TestMarketScanner(unittest.TestCase):
 
         with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
             with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch.object(self.scanner, '_m4_pending_ready', return_value=p_with_basing):
-                    candidates2 = self.scanner.scan_fast_radar(mock_connector)
-                    m4_cands2 = [c for c in candidates2 if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
-                    self.assertEqual(len(m4_cands2), 1, "M4 breaking Grade 3 Wall WITH basing must be APPROVED!")
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    with patch.object(self.scanner, '_m4_pending_ready', return_value=p_with_basing):
+                        candidates2 = self.scanner.scan_fast_radar(mock_connector)
+                        m4_cands2 = [c for c in candidates2 if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                        self.assertEqual(len(m4_cands2), 1, "M4 breaking Grade 3 Wall WITH basing must be APPROVED!")
+
+    def test_btc_weekend_scanner_and_risk_entry_allowed(self):
+        """Verify that on weekends (Saturday/Sunday), BTCUSD.c is scanned by radar and risk engine allows entry."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from unittest.mock import MagicMock, patch
+        from src.core.risk_engine import RiskEngine
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        btc_sym = "BTCUSD.c"
+        btc_scanner = MarketScanner(symbols=[btc_sym])
+        btc_scanner.macro_cache[btc_sym] = {
+            'point': 0.01,
+            'atr_pts': 5000,
+            'current_atr': 50.0,
+            'dealing_range_pos': 0.50,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.0,
+            'action_tier': 'FULL_ALLOW',
+            'immediate_ceiling_c1': 81000.0,
+            'immediate_floor_f1': 79000.0,
+            'ema20': 79800.0,
+            'ema50': 79500.0,
+            'df': None
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 80010.0, 'bid': 80000.0, 'time': 1700000000}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+
+        # Simulate Saturday (weekend dow=5) at 03:00 WIB (subuh dead zone for FX)
+        saturday_subuh = datetime(2026, 9, 5, 3, 0, 0, tzinfo=WIB)
+        with patch("src.analytics.market_scanner.datetime") as mock_dt:
+            mock_dt.now.return_value = saturday_subuh
+            mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+            with patch("config.mt5.positions_get", return_value=[]):
+                with patch("config.mt5.orders_get", return_value=[]):
+                    # Fast radar should NOT return early with [] on weekend for crypto
+                    candidates = btc_scanner.scan_fast_radar(mock_connector)
+                    self.assertIsInstance(candidates, list)
+
+        # Verify RiskEngine allows entry for BTC on weekend
+        risk = RiskEngine()
+        allowed, msg = risk._check_weekend_entry(symbol=btc_sym)
+        self.assertTrue(allowed, f"RiskEngine._check_weekend_entry should allow BTC on weekend, but got: {msg}")
+
+        mock_acc_dict = {"balance": 6000.0, "equity": 6000.0, "margin_free": 6000.0, "free_margin": 6000.0}
+        with patch("src.core.risk_engine.connector.get_account_info", return_value=mock_acc_dict):
+            with patch("config.mt5.positions_get", return_value=[]):
+                with patch("config.mt5.orders_get", return_value=[]):
+                    with patch("config.mt5.symbol_info_tick", return_value=MagicMock(ask=80010.0, bid=80000.0)):
+                        with patch("config.mt5.symbol_info", return_value=MagicMock(point=0.01, digits=2)):
+                            val_allowed, val_msg = risk.can_trade(symbol=btc_sym)
+                            self.assertTrue(val_allowed, f"RiskEngine.can_trade should allow BTC on weekend, but got: {val_msg}")
 
 
 if __name__ == "__main__":

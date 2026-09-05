@@ -2,6 +2,45 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0. Perubahan 5 September 2026 (Siang) — Harmonisasi Ambang Batas Invalidation Pending Order (CSM Opposed Threshold), Logging Persistence, dan Friday Pre-Weekend Liquidity Shield
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Desinkronisasi Ambang Batas CSM Scanner vs Position Manager (Auto-Cancel 4–10 Detik)**:
+   - Pada sesi perdagangan 4 September 2026, terjadi fenomena di mana pending limit order (EURNZD, GBPCAD, GBPAUD, CHFJPY) yang telah disetujui bulat 3/3 oleh AI Jury dibatalkan oleh sistem hanya dalam waktu 4 hingga 10 detik pasca-approval.
+   - Investigasi mendalam membuktikan `market_scanner.py:2509` meloloskan setup selama $|\text{csm\_delta}| < 1.0$, namun `position_manager.py:852, 865` langsung membatalkan pending order jika $\text{csm\_delta} < -0.35$ (BUY) atau $> +0.35$ (SELL).
+   - Engine salah mengira nilai delta statis yang sudah ada sejak awal sebagai "pembalikan tajam" (*reversed strongly*), sehingga membatalkan order secara prematur.
+   - Forward trajectory audit membuktikan 12 dari 17 pending order yang terjemput (70.6%) sebenarnya profitabel dengan potensi net profit $+\$415.78$ yang terbuang sia-sia.
+2. **Friday Late-Session / Pre-Weekend Thin Liquidity Evaporation**:
+   - Seluruh slippage Stop Loss parah (14.8 – 17.7 pip) terjadi pada pukul 02:30 WIB (22:30 Server Jumat) akibat menyusutnya likuiditas antar-bank menjelang penutupan mingguan (flash drop NZDUSD dan AUDCAD).
+   - Selama rilis berita NFP (19:30 WIB), filter AI bekerja 100% sempurna memblokir trade, membuktikan bahwa kerugian bukan berasal dari berita NFP melainkan operasi pada jam pasar tipis akhir pekan.
+3. **Visibilitas Log Terminal yang Tertimpa**:
+   - Format `print(f"\r\x1b[2K[THESIS FAILURE CANCEL]...")` di `position_manager.py` tertimpa oleh dynamic status clock line sehingga pembatalan order tidak terbaca oleh operator.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Harmonisasi Ambang Batas CSM Pending Invalidation (`position_manager.py`, `config.py`, `.env`)**:
+   - Memperkenalkan parameter `PENDING_CSM_OPPOSED_THRESHOLD = 1.0`, menyelaraskan ambang batas pembatalan pending order dengan filter arah radar di `market_scanner.py` ($1.0$).
+   - Order pending BUY hanya dibatalkan jika `csm_delta <= -1.0`, dan order pending SELL hanya jika `csm_delta >= +1.0`.
+   - Mengganti print carriage-return dengan newline dan mencatat langsung ke `logger.info()` agar tercatat permanen di `trading_bot.log`.
+2. **Friday Pre-Weekend Liquidity Shield (`risk_engine.py`, `config.py`, `.env`)**:
+   - Mengimplementasikan `_check_friday_pre_weekend_lock(symbol, now_wib)`.
+   - Mulai Jumat malam pukul 23:00 WIB (`FRIDAY_CUTOFF_HOUR_WIB = 23`), bot secara otomatis membekukan pembukaan posisi baru pada instrumen FX & Logam (`can_trade() -> False`), menghindari jendela bahaya likuiditas tipis 01:00–04:00 WIB.
+   - Posisi terbuka yang sudah berjalan tetap dikelola penuh oleh trailing, BEP, dan partial close.
+   - Aset crypto (BTCUSD) tetap dapat beroperasi secara independen jika `ENABLE_BTC_ROTATION = True`.
+3. **Unit Test Suite Lengkap (`tests/test_audit_pending_orders_thesis.py` & `tests/test_friday_pre_weekend_lock.py`)**:
+   - Pengujian memverifikasi order dengan CSM moderat (-0.69 / +0.45) tetap dipertahankan, sementara CSM ekstrem (-1.15 / +1.25) dibatalkan secara presisi.
+   - Pengujian memvalidasi aktivasi penguncian hari Jumat $\ge 23:00$ WIB dan isolasi perlakuan crypto. 100% PASS.
+4. **Integrasi 24/7 Weekend Bitcoin Scanner & Risk Engine Bypass (`market_scanner.py`, `risk_engine.py`, `config.py`, `.env`)**:
+   - **Bypass Weekend & Dead Zone di Radar**: `scan_fast_radar()` memeriksa keberadaan instrumen crypto. Pasar FX tetap diblokir pada akhir pekan (`dow in (5, 6)`) dan dead zone subuh (`00:00 - 08:00 WIB`), namun instrumen crypto (`BTCUSD.c`) diizinkan beroperasi 24/7 tanpa henti.
+   - **Bypass Jam Sesi & Weekend di Risk Engine**: `_check_weekend_entry(symbol)` dan `_check_danger_zones(symbol)` membebaskan `BTCUSD.c` dari larangan entri baru akhir pekan saat `ENABLE_BTC_ROTATION = True`. `WEEKEND_TRADING_ENABLED=true` diaktifkan di `.env`.
+   - **Penyelarasan Sesi Asia**: `is_asian_session_pair()` dan `is_symbol_allowed_for_session()` membebaskan crypto dari pembatasan jam sesi bursa Pasifik/Eropa.
+   - **Mekanisme Aktif BTC**: Mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), dan M3 (Multi-Touch Breakout Retest) aktif penuh menganalisis chart H1 BTCUSD dengan batas kapasitas `MAX_OPEN_POSITIONS_BTC = 2`, sementara M4 (Systemic Currency Flow) tetap non-aktif karena ketiadaan komponen fiat CSM.
+   - **Hermetic Unit Test**: `test_m4_grade_3_macro_gate_demands_basing` dipersenjatai dengan mock waktu agar kalender pengujian terisolasi sempurna, dan penambahan `test_btc_weekend_scanner_and_risk_entry_allowed` membuktikan radar dan risk engine meloloskan BTC di akhir pekan.
+
+---
+
 ## 0. Perubahan 4 September 2026 (Malam VI) — Penyelarasan ZCE & MSE Chamber Migration, Eliminasi Inversion Bug, dan Unifikasi 26 Pair FX ke Timeframe H1
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
@@ -360,6 +399,41 @@
 
 ---
 
+## 1. Perubahan 4 September 2026 (Dini Hari) — Pemisahan Tren Struktural HTF dari Status Taktikal Kamar & M2 Confluence Anchor
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pembajakan Tren Struktural oleh Pengujian Batas Kamar (Tactical Contamination)**:
+   - Sebelumnya, saat harga menyentuh lantai diskon F1 pada kondisi tren turun tajam (downtrend), pembacaan bias sesaat dapat membalik label makro menjadi bullish, merusak disiplin trend-following.
+2. **Ketiadaan Konfluensi Fisik pada Anchor M2 Pullback**:
+   - Level M2 Pullback sebelumnya rentan mengambil titik swing acak. Pada tren bearish, level entri bisa terpasang di bawah harga pasar (swing low) alih-alih di rak resistensi/EMA di atas harga.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Pemisahan Tren Struktural HTF vs Status Taktikal Kamar (`market_scanner.py`, `dashboard.py`)**:
+   - Tren makro D1/H4 (`combined_is_bull`, `combined_is_bear`) dikunci murni berdasarkan ekspansi/pullback struktural.
+   - Status batas ekstrim dipisahkan ke dalam variabel `tactical_state`:
+     * `REBOUND_WATCH_AT_FLOOR`: Harga menguji Floor F1 atau berada di diskon $\le 20\%$.
+     * `REJECTION_WATCH_AT_CEILING`: Harga menguji Ceiling C1 atau berada di premium $\ge 80\%$.
+     * `BALANCED_FLOW`: Berada di jalur pergerakan normal.
+   - **Diferensiasi Arah M1 vs M2**:
+     * M1 diizinkan fade batas ekstrim: Bullish Sweep Support (SFP Low) saat menguji lantai diskon $\le 30\%$, Bearish Sweep Resistance (SFP High) saat menguji plafon premium $\ge 70\%$.
+     * M2 tetap patuh arah tren makro: Bearish Pullback selalu mencari resistensi $\ge \text{mid}$, Bullish Pullback selalu mencari support $\le \text{mid}$.
+
+2. **M2 Confluence Anchor & Retest Identification (`market_scanner.py`)**:
+   - Implementasi `find_ema_confluence_anchor()`: Mengaitkan level M2 ke konfluensi terdekat (OB, FVG, F1/C1, Psychological Level, EMA20/50).
+   - Menambahkan metadata temporal tracking pada `get_radar_standbys` (`event_time`, `status`, `bar_age`, `direction`, `trajectory`).
+
+3. **Peningkatan Visualisasi Chart Dashboard (`dashboard.py`, `dashboard_assets.py`)**:
+   - Merender marker lilin, label status taktikal, dan garis proyeksi trajektori secara real-time pada Lightweight Charts.
+
+4. **Automated Unit Tests (`tests/test_market_scanner.py`)**:
+   - `test_get_radar_standbys_bearish_and_bullish`: Verifikasi M2 bearish selalu $\ge \text{mid}$ dan bullish $\le \text{mid}$.
+   - `test_find_ema_confluence_anchor_and_temporal_tracking`: Validasi penjangkaran konfluensi dan field temporal.
+   - `test_structural_trend_and_tactical_chamber_separation`: Memastikan tren makro tetap bearish saat terjadi pantulan di lantai F1.
+
+---
 ## 1. Perubahan 3 September 2026 (Malam) — M3 Fresh Breakout Law, Retest Debounce, Segmented SL Floor & Net R:R Commission Engine
 
 ### 🎯 Latar Belakang & Identifikasi Flaw:

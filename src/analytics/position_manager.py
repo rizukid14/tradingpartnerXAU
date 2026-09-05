@@ -13,6 +13,7 @@ or moved to break-even so a bot restart cannot re-trigger those actions.
 import os
 import json
 import time
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import config
@@ -21,6 +22,7 @@ from src.core.cli_theme import UI
 from src.core.mt5_connector import is_order_success, get_usd_per_point
 from src.core import telegram_alerts as tg
 
+logger = logging.getLogger("trading_bot")
 WIB = ZoneInfo("Asia/Jakarta")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
@@ -842,6 +844,7 @@ def audit_pending_orders_thesis():
                 curr_market_px = _safe_num(last_m15_close, open_px)
 
             # 4. Check Thesis Invalidation for BUY Pending Orders
+            csm_opposed_thresh = getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
                 # Structural Invalidation Floor: use SL if defined, else anchor - 0.50x ATR
                 inv_floor = sl_px if (sl_px > 0 and sl_px < open_px) else (open_px - (0.50 * atr_val))
@@ -849,8 +852,8 @@ def audit_pending_orders_thesis():
                     cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation floor ({inv_floor:.5f})"
                 elif ord_item.type == mt5.ORDER_TYPE_BUY_LIMIT and tp_px > open_px and curr_market_px >= (open_px + 0.75 * (tp_px - open_px)):
                     cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
-                elif not is_m4_order and csm_delta < -0.35:
-                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bearish ({csm_delta:+.2f})"
+                elif not is_m4_order and csm_delta <= -csm_opposed_thresh:
+                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bearish ({csm_delta:+.2f} <= -{csm_opposed_thresh:.2f})"
                 elif not is_m4_order and "FLOOR_BREAKDOWN" in m_state:
                     cancel_reason = f"MSE Structural Floor Breakdown ({m_state})"
 
@@ -862,8 +865,8 @@ def audit_pending_orders_thesis():
                     cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation ceiling ({inv_ceiling:.5f})"
                 elif ord_item.type == mt5.ORDER_TYPE_SELL_LIMIT and tp_px > 0 and tp_px < open_px and curr_market_px <= (open_px - 0.75 * (open_px - tp_px)):
                     cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
-                elif not is_m4_order and csm_delta > +0.35:
-                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bullish ({csm_delta:+.2f})"
+                elif not is_m4_order and csm_delta >= +csm_opposed_thresh:
+                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bullish ({csm_delta:+.2f} >= +{csm_opposed_thresh:.2f})"
                 elif not is_m4_order and "CEILING_BREAKOUT" in m_state:
                     cancel_reason = f"MSE Structural Ceiling Breakout ({m_state})"
 
@@ -877,7 +880,8 @@ def audit_pending_orders_thesis():
                 }
                 res = mt5.order_send(req)
                 if is_order_success(res):
-                    print(f"\r\x1b[2K{UI.RED}[THESIS FAILURE CANCEL]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
+                    print(f"\n{UI.RED}[THESIS FAILURE CANCEL]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
+                    logger.info(f"[THESIS FAILURE CANCEL] Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
                     try:
                         tg.alert_trade_aborted(
                             symbol=sym,

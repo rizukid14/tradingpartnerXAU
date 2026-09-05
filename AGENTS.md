@@ -60,7 +60,7 @@
 Bot trading **multi-LLM consensus** (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4 Flash) yang berjalan di **MetaTrader 5** dengan arsitektur **2-Stage Quant Funnel** (branch `quant-trade`).
 
 - **`TRADING_MODE = "scanner"` (Default)**: Universe **26 simbol FX Terkurasi** dipindai paralel tiap 60 detik oleh **Stage 1 Fast Radar** (`market_scanner.py`) — mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), M3 (Multi-Touch Breakout Retest), M4 (Systemic Flow Continuation) — dengan timeframe struktural **H1 untuk seluruh 26 FX pair (termasuk JPY Crosses pasca unifikasi 4 Sep 2026)**. Hanya **8–15 setup A+ per hari** yang lolos ke **Stage 2 (3-LLM Consensus Jury)**. Hemat ~85% token API vs full-cycle scan.
-- **BTCUSD.c (Bitcoin)**: Tidak masuk scanner universe. Mode `ENABLE_BTC_ROTATION=False` (default) = BTC off.
+- **BTCUSD.c (Bitcoin)**: Rotasi akhir pekan 24/7. Mode `ENABLE_BTC_ROTATION=True` dan `WEEKEND_TRADING_ENABLED=True` mengaktifkan `BTCUSD.c` pada hari Sabtu–Minggu (M1, M2, M3 aktif, M4 off; max 2 posisi, risk 0.50%).
 - **XAUUSD-ECNc (Gold)**: **DIMATIKAN TOTAL PERMANEN** (30 Agustus 2026). Audit membuktikan Gold menyebabkan $-\$1,067.79$ drawdown akun live sementara portofolio 26 FX membukukan net profit $+\$387.08$. Gold dihapus dari universe scanner `.env` dan `config.py`.
 - **HTF Macro Cache (Stage 1A)**: Struktur D1 + H4 + W1 di-fetch sekali per refresh window (~$60$ detik) lalu dipakai semua simbol → **0 token LLM**. CSM (Boitoki Currency Strength Matrix) dihitung sub-detik.
 - **Mode AI**: `AI_MODE_POLICY = "fixed"` + `AI_FIXED_MODE = "triple"` → **selalu 3-LLM jury** (OpenAI + Gemini + DeepSeek). Tidak ada schedule dual/triple berdasarkan jam.
@@ -140,7 +140,7 @@ python main.py
   - **R:R**: Net TP $\in [1.25\times, 3.0\times]$ SL + friction (grade-aware). Pada setup `REDUCED_SCALP` / `TP1_ONLY_SCALP`, R:R dibatasi ke $[1.00\times, 1.25\times]$ guna mencegah pembengkakan TP makro pada scalp intraday.
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone**: 00:00–08:00 WIB (FX & XAU skip; BTC 24/7 di legacy mode).
-- **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders.
+- **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders, **Friday Pre-Weekend Lock (freeze new orders mulai 23:00 WIB Jumat)**.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
   - **Break-Even (BEP)**: aktif di **45%–55% TP** + padding komisi round-trip + Pocket Profit 15 pts (1.5 pips).
   - **Partial Close (TP1)**: aktif di **45%–55% TP**, cairkan 50% lot + geser sisa ke Risk-Free BEP.
@@ -149,6 +149,7 @@ python main.py
     * **Stage 2 (Terminal Lock: $\ge$ 90% TP)**: $0.50\times\text{ATR M30}$ dengan floor 30 pts FX (3 pips).
   - **Peak-Aware Time-Decay Stagnation Exit**: posisi $\ge$4 jam hold di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
   - **Pending Order Target Proximity Invalidation**: batalkan otomatis pending limit order jika harga live telah bergerak $\ge 75\%$ menuju TP tanpa terjemput (mencegah late adverse fill pada late reverse).
+  - **Pending Order Harmonisasi Invalidation CSM**: pembatalan pending limit order diselaraskan dengan scanner threshold ($|\text{csm\_delta}| \ge 1.0$, `PENDING_CSM_OPPOSED_THRESHOLD`), mencegah auto-cancel prematur pada order valid.
   - **Pre-Rollover Shield (03:50–04:15 WIB)**: tutup bersih di 03:50 WIB JIKA jarak fisik ke SL $\le$ threshold per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, USDJPY 150 pts, NZDCAD 140 pts, AUDCAD 130 pts). Posisi SL aman / profit tebal dibiarkan jalan.
 
 ---

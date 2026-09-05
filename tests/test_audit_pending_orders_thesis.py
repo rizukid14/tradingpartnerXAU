@@ -134,7 +134,7 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
     @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
     def test_sell_cancelled_when_csm_reverses_strongly(self, mock_csm, mock_get_dir, mock_mt5):
-        """SELL limit order must be cancelled if CSM currency flow turns strongly bullish (> +0.35)."""
+        """SELL limit order must NOT be cancelled at moderate CSM (+0.45), but MUST be cancelled if CSM turns strongly bullish (>= +1.0)."""
         mock_order = MagicMock()
         mock_order.ticket = 44444
         mock_order.symbol = "EURJPY-ECNc"
@@ -160,9 +160,14 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
 
         # Price close is still safe (162.400)
         mock_mt5.copy_rates_from_pos.return_value = [{"close": 162.400}]
-        # BUT CSM delta inverts strongly to +0.45 (EUR surging against JPY!)
+        
+        # 1. Moderate CSM delta (+0.45) allowed by scanner must NOT cancel the order!
         mock_csm.return_value = +0.45
+        audit_pending_orders_thesis()
+        mock_mt5.order_send.assert_not_called()
 
+        # 2. BUT extreme opposed CSM delta (+1.25 >= +1.0) MUST cancel the order!
+        mock_csm.return_value = +1.25
         mock_send_res = MagicMock()
         mock_send_res.retcode = 10009
         mock_mt5.order_send.return_value = mock_send_res
@@ -172,6 +177,53 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
         mock_mt5.order_send.assert_called_once()
         sent_req = mock_mt5.order_send.call_args[0][0]
         self.assertEqual(sent_req["order"], 44444)
+
+    @patch("src.analytics.position_manager.mt5")
+    @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
+    @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
+    def test_buy_pending_csm_harmonized_tolerance(self, mock_csm, mock_get_dir, mock_mt5):
+        """BUY limit order with CSM delta -0.69 (EURNZD case) must NOT be cancelled, but cancelled at <= -1.0."""
+        mock_order = MagicMock()
+        mock_order.ticket = 77777
+        mock_order.symbol = "EURNZD-ECNc"
+        mock_order.magic = config.MAGIC_NUMBER
+        mock_order.comment = "RADAR M2 BUY"
+        mock_order.type = 2  # ORDER_TYPE_BUY_LIMIT
+        mock_order.price_open = 1.97450
+        mock_order.sl = 1.97250
+
+        mock_mt5.orders_get.return_value = [mock_order]
+        mock_mt5.ORDER_TYPE_BUY_LIMIT = 2
+        mock_mt5.ORDER_TYPE_SELL_LIMIT = 3
+        mock_mt5.ORDER_TYPE_BUY_STOP = 4
+        mock_mt5.ORDER_TYPE_SELL_STOP = 5
+
+        mock_si = MagicMock()
+        mock_si.point = 0.00001
+        mock_mt5.symbol_info.return_value = mock_si
+
+        mock_strat = MagicMock()
+        mock_strat.market_state = "NEUTRAL"
+        mock_get_dir.return_value = mock_strat
+
+        # Price close is above SL (1.97500 > 1.97250)
+        mock_mt5.copy_rates_from_pos.return_value = [{"close": 1.97500}]
+
+        # Moderate negative CSM delta (-0.69) must NOT cancel
+        mock_csm.return_value = -0.69
+        audit_pending_orders_thesis()
+        mock_mt5.order_send.assert_not_called()
+
+        # Extreme opposed CSM delta (-1.15 <= -1.0) MUST cancel
+        mock_csm.return_value = -1.15
+        mock_send_res = MagicMock()
+        mock_send_res.retcode = 10009
+        mock_mt5.order_send.return_value = mock_send_res
+
+        audit_pending_orders_thesis()
+        mock_mt5.order_send.assert_called_once()
+        sent_req = mock_mt5.order_send.call_args[0][0]
+        self.assertEqual(sent_req["order"], 77777)
 
     @patch("src.analytics.position_manager.mt5")
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")

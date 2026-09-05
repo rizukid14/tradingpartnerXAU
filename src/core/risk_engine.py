@@ -187,17 +187,22 @@ class RiskEngine:
             return False, spread_msg
 
         # 6. Check danger zones (rollover/dead zone)
-        danger_ok, danger_msg = self._check_danger_zones()
+        danger_ok, danger_msg = self._check_danger_zones(symbol=sym)
         if not danger_ok:
             return False, danger_msg
 
+        # 6b. Check Friday pre-weekend lock (freeze new entries before Friday night liquidity dries up)
+        friday_ok, friday_msg = self._check_friday_pre_weekend_lock(symbol=sym)
+        if not friday_ok:
+            return False, friday_msg
+
         # 7. Check weekend proximity (block new entries near weekend)
-        weekend_ok, weekend_msg = self._check_weekend_entry()
+        weekend_ok, weekend_msg = self._check_weekend_entry(symbol=sym)
         if not weekend_ok:
             return False, weekend_msg
 
         # 8. Check session filter (also sets lot multiplier)
-        session_ok, session_msg = self._check_session()
+        session_ok, session_msg = self._check_session(symbol=sym)
         if not session_ok:
             return False, session_msg
 
@@ -645,10 +650,11 @@ class RiskEngine:
                            f"(Maks: {max_spread} pts). Menunggu...")
         return True, ""
 
-    def _check_danger_zones(self, now_wib=None):
+    def _check_danger_zones(self, symbol=None, now_wib=None):
         """Check if current time falls in any predefined danger zones."""
         # Crypto (BTCUSD) trades 24/7 - no FX danger zones
-        if config.is_crypto(config.SYMBOL):
+        sym = symbol or config.SYMBOL
+        if sym and config.is_crypto(sym):
             return True, ""
 
         now_wib = now_wib or datetime.now(WIB)
@@ -665,28 +671,58 @@ class RiskEngine:
                 return False, f" [RISK] Zona bahaya '{zone['name']}': {zone['reason']}"
         return True, ""
 
-    def _check_weekend_entry(self):
+    def _check_friday_pre_weekend_lock(self, symbol=None, now_wib=None):
+        """
+        Friday Pre-Weekend Liquidity Shield:
+        Blocks new FX/Metals order entries starting Friday night (default >= 23:00 WIB)
+        through Saturday morning market close (04:00 WIB).
+        Institutional interbank liquidity dries up, resulting in severe spread spikes
+        and flash-drop slippage (e.g. the 02:30 WIB flash drop on 5 Sep 2026).
+        Crypto (BTCUSD) is excluded if ENABLE_BTC_ROTATION is True.
+        """
+        if not getattr(config, "ENABLE_FRIDAY_PRE_WEEKEND_LOCK", True):
+            return True, ""
+        sym = symbol or config.SYMBOL
+        if sym and config.is_crypto(sym) and getattr(config, "ENABLE_BTC_ROTATION", False):
+            return True, ""
+
+        now = now_wib or datetime.now(WIB)
+        cutoff_hour = getattr(config, "FRIDAY_CUTOFF_HOUR_WIB", 23)
+        # Friday (weekday == 4) at or after cutoff_hour (default 23:00 WIB)
+        if now.weekday() == 4 and now.hour >= cutoff_hour:
+            return False, f" [RISK] Friday Pre-Weekend Lock ({now.strftime('%H:%M')} WIB >= {cutoff_hour}:00 WIB). Likuiditas tipis menjelang penutupan mingguan."
+        # Saturday (weekday == 5) before FX market close (04:00 WIB)
+        if now.weekday() == 5 and now.hour < 5:
+            return False, f" [RISK] Friday/Weekend Pre-Close Lock ({now.strftime('%H:%M')} WIB). Pasar FX menjelang tutup mingguan."
+        return True, ""
+
+    def _check_weekend_entry(self, symbol=None, now_wib=None):
         """
         Block new trade entries during the weekend (Friday >= 22:00 WIB through
-        Monday 00:00 WIB) when WEEKEND_TRADING_ENABLED is False. This applies to
-        ALL symbols - including crypto/BTC, which would otherwise trade 24/7.
+        Monday 00:00 WIB) when WEEKEND_TRADING_ENABLED is False.
+        Crypto (BTCUSD) is allowed to trade 24/7 when ENABLE_BTC_ROTATION is True.
 
         Existing open positions are NOT affected (still managed by the 5s loop);
         only new entries are blocked.
         """
+        sym = symbol or config.SYMBOL
+        if sym and config.is_crypto(sym) and getattr(config, 'ENABLE_BTC_ROTATION', False):
+            return True, ""
+
         if getattr(config, 'WEEKEND_TRADING_ENABLED', False):
             return True, ""
-        now_wib = datetime.now(WIB)
-        # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 WIB.
-        # Jumat 23:59 masih boleh trading; Sabtu 00:00 langsung block.
-        if now_wib.weekday() in (5, 6):
+
+        now = now_wib or datetime.now(WIB)
+        # Weekend = Sabtu (5) + Minggu (6)
+        if now.weekday() in (5, 6):
             return False, " [RISK] Weekend - trading dimatikan (WEEKEND_TRADING_ENABLED=False). Tidak membuka posisi baru."
         return True, ""
 
-    def _check_session(self, now_wib=None):
+    def _check_session(self, symbol=None, now_wib=None):
         """Check if current time falls within allowed trading sessions. Sets lot multiplier."""
         # Crypto (BTCUSD) trades 24/7 - no FX session windows
-        if config.is_crypto(config.SYMBOL):
+        sym = symbol or config.SYMBOL
+        if sym and config.is_crypto(sym):
             self._session_lot_multiplier = 1.0
             return True, ""
 

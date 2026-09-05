@@ -901,6 +901,8 @@ class MarketScanner:
           Symbols without JPY/AUD/NZD (e.g., EURCAD, GBPCAD, USDCAD, EURUSD, GBPUSD, USDCHF, EURCHF, etc.) are locked.
         - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured pairs.
         """
+        if config.is_crypto(symbol):
+            return True
         if 8 <= hour_wib < 14:
             return config.is_asian_session_pair(symbol)
         elif 14 <= hour_wib <= 23:
@@ -2312,7 +2314,9 @@ class MarketScanner:
         
         # Dead Zone / Weekend Filter (00:00 - 08:00 WIB weekday, full block Sabtu-Minggu)
         # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 (bukan Jumat 22:00).
-        if dow in (5, 6) or (0 <= h < 8):
+        # Crypto (BTCUSD.c) trades 24/7 through weekends when ENABLE_BTC_ROTATION is True.
+        has_crypto = any(config.is_crypto(s) for s in (self.symbols or []))
+        if not has_crypto and (dow in (5, 6) or (0 <= h < 8)):
             return []
 
         # Ensure macro cache is initialized & dinding ZCE tidak basi (Patch #1, 2 Sep 2026).
@@ -2353,6 +2357,10 @@ class MarketScanner:
         now_ts = time.time()
 
         for sym, macro in self.macro_cache.items():
+            sym_is_crypto = config.is_crypto(sym)
+            if not sym_is_crypto and (dow in (5, 6) or (0 <= h < 8)):
+                continue
+
             clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
             
             # Anti-Duplicate: Skip if symbol already has active position or pending order!

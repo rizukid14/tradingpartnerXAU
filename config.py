@@ -689,8 +689,11 @@ def is_asian_session_pair(symbol: str) -> bool:
     During Asian Session (08:00 - 14:00 WIB), pure European/American pairs
     (EURUSD, GBPUSD, EURGBP, EURCHF, GBPCHF, GBPCAD, EURCAD, USDCAD, USDCHF)
     are locked to avoid low-liquidity whipsaw noise.
+    Crypto (BTCUSD) trades 24/7 and is always allowed.
     """
     s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
+    if is_crypto(s):
+        return True
     return any(c in s for c in ("JPY", "AUD", "NZD"))
 
 def is_high_beta_pair(symbol: str) -> bool:
@@ -810,8 +813,15 @@ def get_pending_order_expiry_minutes(now=None):
 # Jarak entry pending dari harga sekarang: minimal 2x spread, maksimal 1.5x ATR
 PENDING_ENTRY_MIN_SPREAD_MULT = _getenv_float("PENDING_ENTRY_MIN_SPREAD_MULT", 2.0)
 PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
+# Ambang batas pembatalan pending order berbasis CSM (diselaraskan dengan market_scanner is_csm_opposed = 1.0)
+PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
 # File statistik "AI proven" - riwayat pending order + outcome (persist)
 PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")
+
+# --- FRIDAY PRE-WEEKEND LIQUIDITY SHIELD ---
+# Mengunci emisi order baru di sesi tipis likuiditas Jumat malam / Sabtu dini hari
+ENABLE_FRIDAY_PRE_WEEKEND_LOCK = _getenv_bool("ENABLE_FRIDAY_PRE_WEEKEND_LOCK", True)
+FRIDAY_CUTOFF_HOUR_WIB = _getenv_int("FRIDAY_CUTOFF_HOUR_WIB", 23)
 
 # --- TELEGRAM ALERTS ---
 TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", False)
