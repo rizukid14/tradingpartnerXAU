@@ -2,7 +2,58 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 5 September 2026 (Sore) — Integrasi BTCUSD pada Dashboard Cockpit, 7-Gate X-Ray Surveillance, dan Normalisasi Simbol Akun Demo
+## 0. Perubahan 5 September 2026 (Malam) — Penyelarasan Vertical Shading (Sessions & Regimes) Sesuai Realita Engine, Dynamic Mini Legend, dan Client Disconnect Guard
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Desinkronisasi Persepsi Visual Operator vs Realita Engine**:
+   - Sesi vertical shading sebelumnya di dashboard bersifat generik dan statis (hanya mengelompokkan jam jam tanpa konteks). Operator tidak bisa melihat apakah suatu candle atau jam tertentu diizinkan trade (`PERMITTED`) atau diblokir keras (`BLOCKED`) oleh risk gate engine.
+   - Ketidakhadiran visualisasi **Macro Wave Consolidation Age Regimes** dari `wave_regime.py`: operator tidak mengetahui apakah suatu konsolidasi tergolong muda (`YOUNG_OSCILLATION` <24 jam), mulai matang (`MATURE_SQUEEZE` 24–72 jam), atau berada dalam kompresi institusional ekstrem (`SUPER_COMPRESSION` >72 jam / Squeeze $\ge 16$ bar).
+2. **Ketiadaan Chart Legend**:
+   - Pengguna tidak memiliki panduan visual (*legend*) di chart untuk mengidentifikasi arti spektrum warna sesi operasional maupun zona usia kompresi gelombang.
+3. **Pencemaran Log Terminal oleh Socket Disconnect**:
+   - Ketika operator me-refresh halaman dashboard sebelum payload HTTP selesai ditransmisikan, browser memutus koneksi TCP sehingga memicu log `Exception occurred during processing of request from ('127.0.0.1', ...)` (`ConnectionResetError: [WinError 10054]`).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Context-Aware Session Info Provider (`dashboard.py: _get_session_info`)**:
+   - Memetakan waktu candle dan status simbol 1:1 dengan seluruh rule eksekusi bot:
+     * `CRYPTO_247` (`PERMITTED`): Bitcoin/Crypto aktif non-stop 24/7 (bebas dari filter Dead Zone dan Asian Lock).
+     * `FRIDAY_LOCK` (`BLOCKED`): Freeze order baru mulai Jumat $\ge$ 23:00 WIB s/d Minggu untuk seluruh pair Forex.
+     * `DEAD_ZONE` (`BLOCKED`): 00:00–08:00 WIB untuk Forex (termasuk jendela kritis rollover 03:50–04:15 WIB).
+     * `ASIAN_ACTIVE` (`PERMITTED`): 08:00–14:00 WIB untuk pair bermata uang Tokyo Driver (`JPY`, `AUD`, `NZD`).
+     * `ASIAN_LOCKED` (`BLOCKED`): 08:00–14:00 WIB untuk non-Asian pairs (`EURUSD`, `GBPUSD`, dll).
+     * `LONDON_EXPANSION` (`PERMITTED`): 14:00–19:00 WIB (High Volume London open).
+     * `NY_OVERLAP` (`PERMITTED`): 19:00–23:00 WIB (Peak Liquidity).
+     * `LATE_NY` (`PERMITTED`): 23:00–02:00 WIB (Risk cap maksimal 2 posisi).
+   - Menyediakan fallback cerdas jika query sesi tidak menyertakan simbol (mengembalikan nama sesi generik).
+
+2. **Kalkulasi Vektorisasi Macro Wave Regime Series (`src/indicators/wave_regime.py`)**:
+   - Dibuat fungsi ter-vektorisasi cepat `classify_wave_regimes_series(highs, lows, closes, timeframe_hours=1.0, dealing_range_window=100)`.
+   - Menggunakan rolling window pandas dan numpy convolve untuk mendeteksi usia Dealing Range (jam) dan John Carter Squeeze Momentum (`sqz_on`, `sqz_bars`) dalam waktu sub-milidetik (~4 ms per 150 bar), bebas iterasi lambat.
+   - Menghasilkan klasifikasi: `YOUNG_OSCILLATION` (<24h), `MATURE_SQUEEZE` (24–72h), `SUPER_COMPRESSION` (>72h atau Squeeze $\ge 16$ bar).
+
+3. **Rendering Dual-Stripe & Dynamic Mini Legend (`dashboard_assets.py`)**:
+   - **Visual Shading**:
+     * Shading sesi dilengkapi dengan *top 3px stripe* berwarna tegas (Emerald Green untuk `PERMITTED`, Coral Red / Amber untuk `BLOCKED`).
+     * Shading wave regime dilengkapi dengan *bottom 3px accent stripe* (Purple untuk `SUPER_COMPRESSION`, Violet untuk `MATURE_SQUEEZE`).
+   - **Dynamic Mini Legend Overlay (`#chart-mini-legend`)**:
+     * Muncul otomatis di pojok kanan atas grafik candlestick.
+     * Beradaptasi secara responsif terhadap filter tombol toolbar aktif (`Sessions`, `Regimes`, `Both`, `Off`) dan konteks simbol aktif (menampilkan legend Crypto 24/7 vs Forex Driver).
+   - **Live HUD Display**: Menampilkan status Macro Wave Regime dan durasi squeeze secara real-time pada header simbol.
+
+4. **Silent Exception Guard pada HTTP Server (`dashboard.py: CockpitHTTPHandler`)**:
+   - Membungkus `do_GET` dengan penanganan khusus untuk `(ConnectionResetError, ConnectionAbortedError, BrokenPipeError)`.
+   - Mengeliminasi log traceback sampah di terminal ketika browser melakukan abort/refresh koneksi.
+
+5. **Unit Test Suite Lengkap (`tests/test_dashboard_shading.py`)**:
+   - 6 test cases memverifikasi: Crypto 24/7, Forex Dead Zone, Asian Lock vs Active, Friday Lock, vektorisasi Wave Regime series, dan integritas payload API `/api/symbol/<sym>`.
+   - Full regression test suite: **138/138 tests 100% PASS**.
+
+---
+
+## 1. Perubahan 5 September 2026 (Sore) — Integrasi BTCUSD pada Dashboard Cockpit, 7-Gate X-Ray Surveillance, dan Normalisasi Simbol Akun Demo
 
 ### 🎯 Latar Belakang & Identifikasi Kebutuhan:
 1. **Visibilitas X-Ray Cockpit untuk Bitcoin (BTCUSD)**:

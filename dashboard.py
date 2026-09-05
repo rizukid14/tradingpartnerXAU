@@ -53,18 +53,111 @@ OUT_HTML = os.path.join(ROOT, "dashboard.html")
 FUNNEL_METRICS_PATH = os.path.join(DATA_DIR, "quant_funnel_metrics.json")
 
 
-def _get_session_name(dt_wib: datetime) -> str:
+def _get_session_info(dt_wib: datetime, symbol: str = "") -> Dict[str, Any]:
+    """
+    Evaluates context-aware operational session & execution permission 1:1 with engine rules.
+    Identifies:
+    - CRYPTO_247: Bitcoin / Crypto 24/7 active (Bebas Dead Zone & Asian Lock)
+    - FRIDAY_LOCK: Jumat >= 23:00 WIB s/d Minggu (Weekend market closed)
+    - DEAD_ZONE: 00:00 - 08:00 WIB (Rollover 03:55-04:15 & Pre-rollover 03:50)
+    - ASIAN_ACTIVE: 08:00 - 14:00 WIB untuk driver JPY/AUD/NZD
+    - ASIAN_LOCKED: 08:00 - 14:00 WIB untuk non-Asian pairs (EURUSD, GBPUSD, dll)
+    - LONDON_EXPANSION: 14:00 - 19:00 WIB (High-volume London open)
+    - NY_OVERLAP: 19:00 - 23:00 WIB (Peak liquidity)
+    - LATE_NY: 23:00 - 02:00 WIB (Max 2 positions cap)
+    """
+    clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").upper()
+    is_crypto = config.is_crypto(symbol) if hasattr(config, "is_crypto") else ("BTC" in clean)
+
+    if is_crypto:
+        return {
+            "type": "CRYPTO_247",
+            "status": "PERMITTED",
+            "label": "24/7 Crypto Execution Active",
+            "color": "rgba(59, 130, 246, 0.07)",
+            "border_color": "rgba(59, 130, 246, 0.40)",
+            "name": "CRYPTO"
+        }
+
     h = dt_wib.hour
+
+    if clean:
+        weekday = dt_wib.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+        if (weekday == 4 and h >= 23) or weekday in (5, 6):
+            return {
+                "type": "FRIDAY_LOCK",
+                "status": "BLOCKED",
+                "label": "Weekend / Friday Lock (Market Closed)",
+                "color": "rgba(239, 68, 68, 0.08)",
+                "border_color": "rgba(239, 68, 68, 0.45)",
+                "name": "CLOSED"
+            }
+
     if 0 <= h < 8:
-        return "DEAD_ZONE"
+        if (h == 3 and dt_wib.minute >= 50) or (h == 4 and dt_wib.minute <= 15):
+            lbl = "Rollover Spread Spike (03:50–04:15 WIB)"
+        else:
+            lbl = "Dead Zone: Rollover & Thin Liquidity (00:00–08:00 WIB)"
+        return {
+            "type": "DEAD_ZONE",
+            "status": "BLOCKED",
+            "label": lbl,
+            "color": "rgba(239, 68, 68, 0.07)",
+            "border_color": "rgba(239, 68, 68, 0.40)",
+            "name": "DEAD_ZONE"
+        }
     elif 8 <= h < 14:
-        return "TOKYO"
+        is_asian_allowed = (not clean) or any(k in clean for k in ("JPY", "AUD", "NZD"))
+        if is_asian_allowed:
+            lbl = f"Tokyo Active Driver ({clean} Permitted)" if clean else "Tokyo Active Session"
+            return {
+                "type": "ASIAN_ACTIVE",
+                "status": "PERMITTED",
+                "label": lbl,
+                "color": "rgba(16, 185, 129, 0.06)",
+                "border_color": "rgba(16, 185, 129, 0.40)",
+                "name": "TOKYO"
+            }
+        else:
+            return {
+                "type": "ASIAN_LOCKED",
+                "status": "BLOCKED",
+                "label": f"Session Locked: Non-Asian Driver ({clean} Locked)",
+                "color": "rgba(245, 158, 11, 0.07)",
+                "border_color": "rgba(245, 158, 11, 0.40)",
+                "name": "TOKYO_LOCK"
+            }
     elif 14 <= h < 19:
-        return "LONDON"
+        return {
+            "type": "LONDON_EXPANSION",
+            "status": "PERMITTED",
+            "label": "London Open Expansion (High Volume)",
+            "color": "rgba(14, 165, 233, 0.06)",
+            "border_color": "rgba(14, 165, 233, 0.35)",
+            "name": "LONDON"
+        }
     elif 19 <= h < 23:
-        return "OVERLAP"
+        return {
+            "type": "NY_OVERLAP",
+            "status": "PERMITTED",
+            "label": "London / NY Overlap (Peak Liquidity)",
+            "color": "rgba(168, 85, 247, 0.07)",
+            "border_color": "rgba(168, 85, 247, 0.35)",
+            "name": "OVERLAP"
+        }
     else:
-        return "LATE_NY"
+        return {
+            "type": "LATE_NY",
+            "status": "PERMITTED",
+            "label": "Late NY Window (Max 2 Positions Cap)",
+            "color": "rgba(99, 102, 241, 0.05)",
+            "border_color": "rgba(99, 102, 241, 0.35)",
+            "name": "LATE_NY"
+        }
+
+
+def _get_session_name(dt_wib: datetime, symbol: str = "") -> str:
+    return _get_session_info(dt_wib, symbol)["name"]
 
 
 def _get_countdown_to_rollover(now_wib: datetime) -> str:
@@ -493,26 +586,33 @@ class CockpitDataEngine:
         candles = []
         if rates is not None and len(rates) > 0:
             import pandas as pd
+            from src.indicators.wave_regime import classify_wave_regimes_series
             df = pd.DataFrame(rates)
             df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
             df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
             df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
 
+            tf_hours = 1.0 if timeframe_str.upper() == "H1" else (0.5 if timeframe_str.upper() == "M30" else 5.0 / 60.0)
+            wave_series = classify_wave_regimes_series(
+                highs=df['high'].tolist(),
+                lows=df['low'].tolist(),
+                closes=df['close'].tolist(),
+                timeframe_hours=tf_hours
+            )
+
             # Keep requested window
             tail_df = df.tail(num_bars)
-            for _, r in tail_df.iterrows():
+            tail_indices = tail_df.index.tolist()
+
+            for orig_idx, (_, r) in zip(tail_indices, tail_df.iterrows()):
                 c_time = int(r['time'])
                 c_dt = datetime.fromtimestamp(c_time, tz=WIB)
-                c_sess = _get_session_name(c_dt)
+                c_sess_info = _get_session_info(c_dt, symbol)
+                c_w_info = wave_series[orig_idx] if orig_idx < len(wave_series) else {}
+
                 c_close = float(r['close'])
                 c_ema20 = float(r['ema20'])
                 c_ema50 = float(r['ema50'])
-                if c_close > c_ema50 and c_ema20 > c_ema50:
-                    c_reg = "BULL_EXP"
-                elif c_close < c_ema50 and c_ema20 < c_ema50:
-                    c_reg = "BEAR_EXP"
-                else:
-                    c_reg = "NEUTRAL"
 
                 candles.append({
                     "time": c_time, # epoch seconds
@@ -523,8 +623,16 @@ class CockpitDataEngine:
                     "ema20": round(c_ema20, digits),
                     "ema50": round(c_ema50, digits),
                     "ema200": round(float(r['ema200']), digits),
-                    "session": c_sess,
-                    "regime": c_reg
+                    "session": c_sess_info["name"],
+                    "session_type": c_sess_info["type"],
+                    "session_status": c_sess_info["status"],
+                    "session_label": c_sess_info["label"],
+                    "session_color": c_sess_info["color"],
+                    "session_border": c_sess_info["border_color"],
+                    "regime": c_w_info.get("regime", "YOUNG_OSCILLATION"),
+                    "range_age_hours": c_w_info.get("range_age_hours", 0.0),
+                    "sqz_on": c_w_info.get("sqz_on", False),
+                    "sqz_bars": c_w_info.get("sqz_bars", 0)
                 })
 
         # 2. Multi-Horizon ZCE Fortress Ladder (Consolidated & Proximity-Clamped)
@@ -703,6 +811,8 @@ class CockpitDataEngine:
                 elif s_type == "M4":
                     operational_phase = f"FLOW RETEST @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
 
+        now_session_info = _get_session_info(now_wib, symbol)
+        last_candle = candles[-1] if candles else {}
         intel = {
             "w1_trend": w1_trend,
             "d1_trend": d1_trend,
@@ -713,8 +823,14 @@ class CockpitDataEngine:
             "operational_phase": operational_phase,
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
             "bias_score": round(bias_score, 2),
-            "active_session": active_session,
-            "pre_rollover_countdown": rollover_countdown
+            "active_session": now_session_info["label"],
+            "active_session_type": now_session_info["type"],
+            "active_session_status": now_session_info["status"],
+            "pre_rollover_countdown": rollover_countdown,
+            "wave_regime_summary": last_candle.get("regime", "YOUNG_OSCILLATION"),
+            "range_age_hours": last_candle.get("range_age_hours", 0.0),
+            "sqz_on": last_candle.get("sqz_on", False),
+            "sqz_bars": last_candle.get("sqz_bars", 0)
         }
 
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
@@ -839,6 +955,19 @@ cockpit_engine = CockpitDataEngine()
 
 class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
+        try:
+            self._handle_do_get()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            # Harmless client disconnect (browser closed/refreshed tab before stream completed)
+            pass
+        except Exception as e:
+            logger.error(f"[DASHBOARD HTTP ERROR] {e}\n{traceback.format_exc()}")
+            try:
+                self.send_error(500, f"Internal Server Error: {e}")
+            except Exception:
+                pass
+
+    def _handle_do_get(self):
         # 1. API: Overview 26-pair
         if self.path == "/api/overview":
             with cockpit_engine._lock:

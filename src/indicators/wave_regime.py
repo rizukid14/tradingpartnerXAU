@@ -292,3 +292,89 @@ def evaluate_wave_regime(
         "required_sl_mode":        sl_mode,
         "narrative":               narrative,
     }
+
+
+def classify_wave_regimes_series(
+    highs: List[float],
+    lows: List[float],
+    closes: List[float],
+    timeframe_hours: float = 1.0,
+    dealing_range_window: int = 100
+) -> List[Dict[str, Any]]:
+    """
+    Computes bar-by-bar Macro Wave Consolidation Age and Squeeze state across an entire candle series.
+    Returns list of dicts with:
+      - 'regime': 'YOUNG_OSCILLATION' | 'MATURE_SQUEEZE' | 'SUPER_COMPRESSION'
+      - 'range_age_hours': float
+      - 'range_age_bars': int
+      - 'sqz_on': bool
+      - 'sqz_bars': int
+    """
+    n = len(closes)
+    if n == 0:
+        return []
+
+    import pandas as pd
+    c_arr = np.array(closes, dtype=np.float64)
+    h_arr = np.array(highs, dtype=np.float64)
+    l_arr = np.array(lows, dtype=np.float64)
+
+    # 1. Bollinger Bands (20, 2.0)
+    sma = pd.Series(c_arr).rolling(20, min_periods=1).mean().values
+    std = pd.Series(c_arr).rolling(20, min_periods=1).std(ddof=0).fillna(0.0).values
+    upper_bb = sma + (2.0 * std)
+    lower_bb = sma - (2.0 * std)
+
+    # 2. Keltner Channels (20, 1.5)
+    tr = np.zeros(n, dtype=np.float64)
+    tr[0] = h_arr[0] - l_arr[0]
+    for i in range(1, n):
+        tr[i] = max(h_arr[i] - l_arr[i], abs(h_arr[i] - c_arr[i-1]), abs(l_arr[i] - c_arr[i-1]))
+    sma_tr = pd.Series(tr).rolling(20, min_periods=1).mean().values
+    upper_kc = sma + (1.5 * sma_tr)
+    lower_kc = sma - (1.5 * sma_tr)
+
+    sqz_on_arr = (lower_bb > lower_kc) & (upper_bb < upper_kc)
+
+    # Consecutive squeeze counter
+    sqz_counts = np.zeros(n, dtype=int)
+    cnt = 0
+    for i in range(n):
+        if sqz_on_arr[i]:
+            cnt += 1
+        else:
+            cnt = 0
+        sqz_counts[i] = cnt
+
+    # 3. Rolling Range Age
+    s_h = pd.Series(h_arr)
+    s_l = pd.Series(l_arr)
+    rolling_max_idx = s_h.rolling(dealing_range_window, min_periods=1).apply(lambda x: len(x) - 1 - np.argmax(x), raw=True).values
+    rolling_min_idx = s_l.rolling(dealing_range_window, min_periods=1).apply(lambda x: len(x) - 1 - np.argmin(x), raw=True).values
+    age_bars_arr = np.maximum(1, np.minimum(rolling_max_idx, rolling_min_idx))
+    age_hours_arr = np.round(age_bars_arr * timeframe_hours, 1)
+
+    results = []
+    for i in range(n):
+        ah = float(age_hours_arr[i])
+        ab = int(age_bars_arr[i])
+        sb = int(sqz_counts[i])
+        son = bool(sqz_on_arr[i])
+
+        if ah > 72.0 or sb >= 16:
+            reg = "SUPER_COMPRESSION"
+        elif ah >= 24.0 or sb >= 6:
+            reg = "MATURE_SQUEEZE"
+        else:
+            reg = "YOUNG_OSCILLATION"
+
+        results.append({
+            "regime": reg,
+            "range_age_hours": ah,
+            "range_age_bars": ab,
+            "sqz_on": son,
+            "sqz_bars": sb
+        })
+
+    return results
+

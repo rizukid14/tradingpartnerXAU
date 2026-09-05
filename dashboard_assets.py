@@ -528,6 +528,41 @@ html, body {
   z-index: 1;
 }
 
+/* MINI LEGEND OVERLAY (Context-Aware Legend) */
+.chart-mini-legend {
+  position: absolute;
+  top: 10px;
+  right: 65px;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.2s ease;
+}
+.mini-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mini-legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
 /* MULTI-TF COMPASS & STATE HUD */
 .chart-intel-hud {
   position: absolute;
@@ -903,6 +938,7 @@ html, body {
     <div class="chart-wrapper">
       <div id="tv-chart"></div>
       <canvas id="chart-shading-canvas"></canvas>
+      <div id="chart-mini-legend" class="chart-mini-legend"></div>
       <div class="chart-intel-hud" id="chart-intel-hud">
         <div class="hud-line-1">
           <div class="hud-symbol-tag" id="hud-sym-tag">EURCAD H1</div>
@@ -919,6 +955,8 @@ html, body {
           <span class="hud-metric">STATE: <span class="hud-highlight" id="hud-state">—</span></span>
           <span class="hud-dot">•</span>
           <span class="hud-metric">SESSION: <span class="hud-highlight" id="hud-session">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">WAVE REGIME: <span class="hud-highlight" id="hud-wave-regime">—</span></span>
           <span class="hud-dot">•</span>
           <span class="hud-metric">PRE-ROLLOVER: <span class="hud-highlight" id="hud-rollover">—</span></span>
         </div>
@@ -1001,6 +1039,50 @@ function resizeOverlayCanvas() {
   renderVerticalShading();
 }
 
+function updateMiniLegend() {
+  const legendEl = document.getElementById("chart-mini-legend");
+  if (!legendEl) return;
+
+  if (activeVerticalFilter === "off") {
+    legendEl.style.display = "none";
+    return;
+  }
+
+  legendEl.style.display = "flex";
+  let html = "";
+
+  const isBtc = currentSymbol.toUpperCase().includes("BTC");
+
+  if (activeVerticalFilter === "sessions" || activeVerticalFilter === "both") {
+    if (isBtc) {
+      html += `
+        <div class="mini-legend-item" title="24/7 Crypto Trading: Bebas Dead Zone & Asian Lock"><span class="mini-legend-dot" style="background:#3b82f6;"></span><span>Crypto 24/7 (Active)</span></div>
+      `;
+    } else {
+      html += `
+        <div class="mini-legend-item" title="00:00-08:00 WIB: Rollover & Likuiditas Tipis (Hard Block)"><span class="mini-legend-dot" style="background:#ef4444;"></span><span>Dead Zone (Block)</span></div>
+        <div class="mini-legend-item" title="08:00-14:00 WIB: Non-Asian driver FX terkunci"><span class="mini-legend-dot" style="background:#f59e0b;"></span><span>Asian Locked</span></div>
+        <div class="mini-legend-item" title="08:00-14:00 WIB: JPY/AUD/NZD diizinkan trade"><span class="mini-legend-dot" style="background:#10b981;"></span><span>Asian Driver</span></div>
+        <div class="mini-legend-item" title="14:00-23:00 WIB: London & Overlap Peak Liquidity"><span class="mini-legend-dot" style="background:#0ea5e9;"></span><span>Expansion</span></div>
+      `;
+    }
+  }
+
+  if (activeVerticalFilter === "both") {
+    html += `<span style="color:var(--border-strong);margin:0 2px;">|</span>`;
+  }
+
+  if (activeVerticalFilter === "regimes" || activeVerticalFilter === "both") {
+    html += `
+      <div class="mini-legend-item" title="Konsolidasi < 24h: Universal Sweeps & Mean Reversion Valid"><span class="mini-legend-dot" style="background:#38bdf8;"></span><span>Young &lt;24h (Sweep)</span></div>
+      <div class="mini-legend-item" title="Konsolidasi 24-72h: Squeeze Maturing, Wajib SL H4"><span class="mini-legend-dot" style="background:#f59e0b;"></span><span>Mature 24-72h</span></div>
+      <div class="mini-legend-item" title="Konsolidasi > 72h / Triangle: Sweeps Dilarang, Breakout Imminent"><span class="mini-legend-dot" style="background:#ec4899;"></span><span>Super &gt;72h (Breakout)</span></div>
+    `;
+  }
+
+  legendEl.innerHTML = html;
+}
+
 function renderVerticalShading() {
   if (!shadingCanvas || !shadingCtx || !chart || !cachedSymbolData || !cachedSymbolData.candles) return;
   const container = document.getElementById("tv-chart");
@@ -1008,6 +1090,7 @@ function renderVerticalShading() {
   const height = container.clientHeight;
 
   shadingCtx.clearRect(0, 0, width, height);
+  updateMiniLegend();
 
   // 1. Session & Regime Vertical Shading
   if (activeVerticalFilter !== "off") {
@@ -1035,32 +1118,62 @@ function renderVerticalShading() {
 
         const barW = Math.max(1, x2 - x1);
 
-        // 1. Session vertical shading
+        // 1. Session vertical shading (Context-Aware Execution Window)
         if (activeVerticalFilter === "sessions" || activeVerticalFilter === "both") {
-          let sessionColor = null;
-          if (c.session === "TOKYO") sessionColor = "rgba(234, 179, 8, 0.045)"; // amber
-          else if (c.session === "LONDON") sessionColor = "rgba(56, 189, 248, 0.055)"; // cyan
-          else if (c.session === "OVERLAP") sessionColor = "rgba(168, 85, 247, 0.065)"; // purple
-          else if (c.session === "LATE_NY") sessionColor = "rgba(99, 102, 241, 0.040)"; // indigo
-          else if (c.session === "DEAD_ZONE") sessionColor = "rgba(239, 68, 68, 0.045)"; // red
+          let sessionColor = c.session_color || null;
+          const isBlocked = (c.session_status === "BLOCKED");
+
+          if (!sessionColor) {
+            if (c.session_type === "CRYPTO_247" || c.session === "CRYPTO") sessionColor = "rgba(59, 130, 246, 0.07)";
+            else if (c.session_type === "DEAD_ZONE" || c.session === "DEAD_ZONE") sessionColor = "rgba(239, 68, 68, 0.075)";
+            else if (c.session_type === "FRIDAY_LOCK" || c.session === "CLOSED") sessionColor = "rgba(239, 68, 68, 0.09)";
+            else if (c.session_type === "ASIAN_LOCKED" || c.session === "TOKYO_LOCK") sessionColor = "rgba(245, 158, 11, 0.075)";
+            else if (c.session_type === "ASIAN_ACTIVE" || c.session === "TOKYO") sessionColor = "rgba(16, 185, 129, 0.065)";
+            else if (c.session_type === "LONDON_EXPANSION" || c.session === "LONDON") sessionColor = "rgba(14, 165, 233, 0.065)";
+            else if (c.session_type === "NY_OVERLAP" || c.session === "OVERLAP") sessionColor = "rgba(168, 85, 247, 0.075)";
+            else if (c.session_type === "LATE_NY" || c.session === "LATE_NY") sessionColor = "rgba(99, 102, 241, 0.055)";
+          }
 
           if (sessionColor) {
             shadingCtx.fillStyle = sessionColor;
             shadingCtx.fillRect(x1, 0, barW, height);
+
+            // Top Execution Permission Stripe (3px)
+            if (isBlocked) {
+              shadingCtx.fillStyle = "rgba(239, 68, 68, 0.85)";
+              shadingCtx.fillRect(x1, 0, barW, 3);
+            } else if (c.session_status === "PERMITTED") {
+              const pStripe = (c.session_type === "ASIAN_ACTIVE") ? "rgba(16, 185, 129, 0.85)" :
+                              (c.session_type === "CRYPTO_247" ? "rgba(59, 130, 246, 0.85)" : "rgba(14, 165, 233, 0.85)");
+              shadingCtx.fillStyle = pStripe;
+              shadingCtx.fillRect(x1, 0, barW, 3);
+            }
           }
         }
 
-        // 2. Regime vertical shading
+        // 2. Macro Wave Consolidation Age Regime (wave_regime.py)
         if (activeVerticalFilter === "regimes" || activeVerticalFilter === "both") {
           let regimeColor = null;
-          if (c.regime === "BULL_EXP") regimeColor = "rgba(0, 230, 118, 0.05)";
-          else if (c.regime === "BEAR_EXP") regimeColor = "rgba(255, 82, 82, 0.05)";
+          let stripeColor = null;
+          const reg = c.regime || "YOUNG_OSCILLATION";
+
+          if (reg === "SUPER_COMPRESSION" || reg === "SUPER_COMPRESSION_THRUST") {
+            regimeColor = "rgba(236, 72, 153, 0.085)"; // Magenta / Deep Pink
+            stripeColor = "rgba(236, 72, 153, 0.85)";
+          } else if (reg === "MATURE_SQUEEZE") {
+            regimeColor = "rgba(245, 158, 11, 0.070)"; // Amber / Gold
+            stripeColor = "rgba(245, 158, 11, 0.80)";
+          } else {
+            // YOUNG_OSCILLATION (< 24h)
+            regimeColor = "rgba(56, 189, 248, 0.055)"; // Soft Sky Cyan
+            stripeColor = "rgba(56, 189, 248, 0.70)";
+          }
 
           if (regimeColor) {
             shadingCtx.fillStyle = regimeColor;
             shadingCtx.fillRect(x1, 0, barW, height);
-            // Bottom subtle regime indicator stripe (3px)
-            shadingCtx.fillStyle = (c.regime === "BULL_EXP") ? "rgba(0, 230, 118, 0.65)" : "rgba(255, 82, 82, 0.65)";
+            // Bottom 3px Wave Regime Indicator Stripe
+            shadingCtx.fillStyle = stripeColor;
             shadingCtx.fillRect(x1, height - 3, barW, 3);
           }
         }
@@ -1674,6 +1787,13 @@ function renderSymbolHeader(d) {
     document.getElementById("hud-adx").textContent = `${it.adx}`;
     document.getElementById("hud-state").textContent = it.operational_phase || it.mse_state;
     document.getElementById("hud-session").textContent = it.active_session;
+    const waveEl = document.getElementById("hud-wave-regime");
+    if (waveEl) {
+      const reg = it.wave_regime_summary || "YOUNG_OSCILLATION";
+      const regLabel = reg.includes("SUPER") ? "SUPER SQUEEZE" : (reg.includes("MATURE") ? "MATURE SQUEEZE" : "YOUNG OSC");
+      waveEl.textContent = `${regLabel} (${it.range_age_hours || 0}h)`;
+      waveEl.style.color = reg.includes("SUPER") ? "#ec4899" : (reg.includes("MATURE") ? "#f59e0b" : "#38bdf8");
+    }
     document.getElementById("hud-rollover").textContent = it.pre_rollover_countdown;
   }
 }
