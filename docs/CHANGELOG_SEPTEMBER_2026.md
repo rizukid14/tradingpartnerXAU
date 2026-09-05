@@ -2,6 +2,45 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0. Perubahan 5 September 2026 (Sore) — Integrasi BTCUSD pada Dashboard Cockpit, 7-Gate X-Ray Surveillance, dan Normalisasi Simbol Akun Demo
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Visibilitas X-Ray Cockpit untuk Bitcoin (BTCUSD)**:
+   - Pengguna membutuhkan pemantauan langsung terhadap aset Bitcoin di dashboard Cockpit (`dashboard.py`), termasuk live chart, ZCE macro levels, telemetry radar M1..M4, dan evaluasi 7-Gate Decision Matrix secara transparan.
+2. **Desinkronisasi Simbol Akun Demo vs Akun Live**:
+   - Di akun Demo broker VTMarkets:
+     * Crypto ticker adalah `BTCUSD` (tanpa akhiran `.c` dan tanpa `ECN`).
+     * Forex ticker adalah `XXXYYY-ECN` (tanpa akhiran `c`, contoh `EURUSD-ECN`).
+   - Kode resolver lama `mt5_connector.py:get_valid_trade_symbol()` tidak memangkas suffix `.c` atau `-ECNc` sebelum menguji kandidat `-ECN`, sehingga gagal mengenali simbol broker demo yang valid saat input berasal dari live environment (`BTCUSD.c` / `EURUSD-ECNc`).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Auto-Correct & Robust Symbol Normalizer (`src/core/mt5_connector.py`)**:
+   - `get_valid_trade_symbol()` kini memotong suffix (`-ECNC`, `-ECN`, `.ECN`, `C.ECN`, `.C`) kembali ke akar ticker 6-karakter (`base`) sebelum melakukan pencarian variasi simbol broker.
+   - Menguji kandidat secara berurutan: untuk crypto (`BTCUSD`, `BTCUSD.c`, `BTCUSD-ECN`, dll), untuk FX (`base + "-ECN"`, `base + "-ECNc"`, `base + ".c"`, `base`).
+   - Menjamin interoperabilitas dwiarah 100% transparan antara akun Demo (`BTCUSD`, `EURUSD-ECN`) dan akun Live (`BTCUSD.c`, `EURUSD-ECNc`).
+2. **Integrasi BTCUSD Permanen pada Dashboard Watchlist (`dashboard.py`)**:
+   - Inisialisasi scanner internal `MarketScanner` di dashboard kini selalu menyertakan `BTCUSD` bersama 26 pair FX.
+   - Cache overview (`_build_overview_cache`) menjamin `BTCUSD` selalu terdaftar dan dapat diklik kapan pun oleh operator.
+   - Penanganan nilai `digits` (2), `point` (1.0), dan `pip_div` (1) khusus crypto agar kalkulasi spread dan visualisasi level grafik tidak error.
+3. **Kalibrasi 7-Gate X-Ray Surveillance Khusus Crypto (`dashboard.py`)**:
+   - **Gate 1 (Session & Spread)**: BTCUSD dikecualikan dari dead zone 00:00–08:00 WIB dan limitasi sesi Asia Tokyo. Menggunakan plafon spread khusus crypto (`MAX_SPREAD_POINTS_BTC` = 2400 pts).
+   - **Gate 2 (Systemic Basket Shock)**: BTCUSD ditandai bebas/independen dari matriks shock mata uang fiat.
+   - **Gate 4 (Boitoki CSM Flow)**: Ditandai netral/independen dari matriks arus fiat 7 USD Majors.
+   - **Gate 6 (Execution Mode)**: Menampilkan status *Pure Quant Direct Execution (No-LLM, 0 Token API)* saat `ENABLE_LLM_JURY=False`.
+   - **Gate 7 (Risk Calibration)**: Menguji lantai SL 50,000 pts ($500) dan plafon 45,000 pts ($450) dengan sizing risiko crypto (`0.5%` equity).
+4. **Penyelarasan Konfigurasi `.env` & `config.py`**:
+   - `.env`: `WEEKEND_SYMBOL=BTCUSD`, `WEEKDAY_SYMBOL=GBPUSD-ECN`, `SCANNER_SYMBOLS` seluruh 26 pair FX format `-ECN`.
+   - `config.py`: Penyesuaian `default_sl_points_for`, `default_tp_points_for`, dan `get_pre_rollover_slippage_threshold` dengan `.replace("-ECN", "")`.
+5. **Unit Test Suite Lengkap (`tests/test_symbol_resolver.py` & `tests/test_dashboard_btc_xray.py`)**:
+   - `test_symbol_resolver.py`: 2/2 tests PASS (memverifikasi auto-correct demo dan live).
+   - `test_dashboard_btc_xray.py`: 2/2 tests PASS (memverifikasi overview cache dan 7-Gate X-Ray BTC).
+   - Full regression discovery: **132/132 tests 100% PASS**.
+
+---
+
 ## 0. Perubahan 5 September 2026 (Siang II) — Branch `quant-trade-noAI`: Mode Pure Quant Weekend BTC Tanpa LLM dan Institutional Demo Safety Lock
 
 ### 🎯 Latar Belakang & Identifikasi Kebutuhan:

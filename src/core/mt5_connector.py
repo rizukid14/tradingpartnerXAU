@@ -803,22 +803,40 @@ def get_valid_trade_symbol(symbol):
         _valid_symbol_cache[symbol] = symbol
         return symbol
 
-    clean_sym = symbol.strip().upper()
-    if clean_sym in ("GOLD", "XAU"):
-        clean_sym = "XAUUSD"
-    elif clean_sym in ("BTC", "BITCOIN"):
-        clean_sym = "BTCUSD"
+    raw = symbol.strip().upper()
+    base = raw
+    for sfx in ("-ECNC", "-ECN", ".ECN", "C.ECN", ".C"):
+        if base.endswith(sfx) and len(base) > len(sfx):
+            base = base[:-len(sfx)]
+            break
+    if base.endswith("C") and len(base) == 7 and not base.startswith("BTC"):
+        base = base[:-1]
 
-    candidates = [
-        clean_sym + "-ECNc",
-        clean_sym + "-ECN",
-        clean_sym + ".c",
-        clean_sym + "c",
-        clean_sym,
-        clean_sym + ".ecn",
-        clean_sym + "c.ecn",
-        clean_sym[:-1] if clean_sym.endswith("C") else clean_sym,
-    ]
+    if base in ("GOLD", "XAU"):
+        base = "XAUUSD"
+    elif base in ("BTC", "BITCOIN"):
+        base = "BTCUSD"
+
+    # Candidates covering Demo (BTCUSD, EURUSD-ECN) and Live (BTCUSD.c, EURUSD-ECNc)
+    if base == "BTCUSD" or "BTC" in base:
+        candidates = [
+            base,           # Demo: BTCUSD
+            base + ".c",    # Live: BTCUSD.c
+            base + "c",
+            base + "-ECN",
+            base + "-ECNc",
+            base + ".ecn",
+        ]
+    else:
+        candidates = [
+            base + "-ECN",   # Demo: EURUSD-ECN
+            base + "-ECNc",  # Live: EURUSD-ECNc
+            base + ".c",
+            base + "c",
+            base,
+            base + ".ecn",
+            base + "c.ecn",
+        ]
     for cand in candidates:
         cand_info = mt5.symbol_info(cand)
         if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4), 4):

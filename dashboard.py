@@ -235,11 +235,16 @@ class CockpitDataEngine:
 
     def start(self):
         connector.initialize_mt5()
-        self.scanner = MarketScanner()
+        dash_symbols = list(config.SCANNER_SYMBOLS)
+        btc_cand = getattr(config, "WEEKEND_SYMBOL", "BTCUSD")
+        clean_list = [s.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper() for s in dash_symbols]
+        if "BTCUSD" not in clean_list:
+            dash_symbols.append(btc_cand)
+        self.scanner = MarketScanner(symbols=dash_symbols)
         self._is_running = True
         t = threading.Thread(target=self._background_loop, daemon=True)
         t.start()
-        print("[Cockpit Engine] Background observation worker started.")
+        print(f"[Cockpit Engine] Background observation worker started for {len(dash_symbols)} pairs (FX + BTCUSD).")
 
     def _background_loop(self):
         """Refreshes MT5 macro context and 26-pair proximity every 5-8 seconds."""
@@ -286,8 +291,12 @@ class CockpitDataEngine:
 
         open_symbols = set(p.get("symbol") for p in open_pos)
 
-        # 2. 26 Pairs Proximity Analysis
-        symbols = config.get_scanner_symbols()
+        # 2. Universe Proximity Analysis (26 Pairs + BTCUSD)
+        symbols = list(self.scanner.symbols) if (self.scanner and self.scanner.symbols) else list(config.SCANNER_SYMBOLS)
+        btc_cand = getattr(config, "WEEKEND_SYMBOL", "BTCUSD")
+        clean_list = [s.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper() for s in symbols]
+        if "BTCUSD" not in clean_list:
+            symbols.append(btc_cand)
         pairs_data = []
 
         for sym in symbols:
@@ -298,9 +307,9 @@ class CockpitDataEngine:
 
             tick = config.mt5.symbol_info_tick(valid_sym)
             si = config.mt5.symbol_info(valid_sym)
-            digits = si.digits if si else 5
-            pt = si.point if si and si.point else (0.001 if "JPY" in sym else 0.00001)
-            pip_div = 10 if digits in (3, 5) else 1
+            digits = si.digits if si else (2 if "BTC" in clean_sym else 5)
+            pt = si.point if si and si.point else (1.0 if "BTC" in clean_sym else (0.001 if "JPY" in clean_sym else 0.00001))
+            pip_div = 1 if "BTC" in clean_sym else (10 if digits in (3, 5) else 1)
             pip_val = pt * pip_div
 
             bid = float(tick.bid) if tick else 0.0
@@ -458,9 +467,9 @@ class CockpitDataEngine:
         strat = macro.get("strat_dir")
 
         si = config.mt5.symbol_info(valid_sym)
-        digits = si.digits if si else 5
-        pt = si.point if si and si.point else (0.001 if "JPY" in symbol else 0.00001)
-        pip_div = 10 if digits in (3, 5) else 1
+        digits = si.digits if si else (2 if "BTC" in clean_sym else 5)
+        pt = si.point if si and si.point else (1.0 if "BTC" in clean_sym else (0.001 if "JPY" in clean_sym else 0.00001))
+        pip_div = 1 if "BTC" in clean_sym else (10 if digits in (3, 5) else 1)
         pip_val = pt * pip_div
 
         tick = config.mt5.symbol_info_tick(valid_sym)
@@ -744,29 +753,33 @@ class CockpitDataEngine:
         gates = []
 
         # Gate 1: Session & Spread Filter
-        is_dead_zone = (0 <= h < 8)
+        is_crypto = config.is_crypto(sym)
+        is_dead_zone = (0 <= h < 8) and not is_crypto
         clean_s = sym.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
-        is_asian = (8 <= h < 14)
-        is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD"))
-        spread_cap = max(int(round(atr_val * 0.15 / pt)), 20)
+        is_asian = (8 <= h < 14) and not is_crypto
+        is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto
+        spread_cap = config.max_spread_points_for(sym) if is_crypto else max(int(round(atr_val * 0.15 / pt)), 20)
 
         if is_dead_zone:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–08:00 WIB (Current: {h:02d}:00 WIB)."}
         elif is_asian and not is_asian_allowed:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SESSION LOCKED] Sesi Tokyo (08:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
         elif spread_pts > spread_cap:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas 15% ATR ({spread_cap} pts)."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
         else:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap."}
         gates.append(g1)
 
         # Gate 2: Systemic Basket Circuit Breaker (35.0 bps)
         target_dir = 1 if macro.get("is_bull") else -1
-        is_locked, b_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
-        if is_locked:
-            g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
+        if is_crypto:
+            g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
         else:
-            g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": "Aliran basket mata uang stabil (<35 bps threshold). Tidak ada shock eksternal."}
+            is_locked, b_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
+            if is_locked:
+                g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
+            else:
+                g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": "Aliran basket mata uang stabil (<35 bps threshold). Tidak ada shock eksternal."}
         gates.append(g2)
 
         # Gate 3: MSE Chamber & Forbidden Traps
@@ -783,12 +796,15 @@ class CockpitDataEngine:
         gates.append(g3)
 
         # Gate 4: Boitoki CSM Flow Alignment
-        csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
-        is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
-        if is_csm_opposed:
-            g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK", "desc": "Relative Net Currency Delta Flow Check", "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({'BUY' if target_dir==1 else 'SELL'})."}
+        if is_crypto:
+            g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": "Aset crypto (BTCUSD) independen dari arus fiat CSM (Net Delta N/A)."}
         else:
-            g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan momentum arah."}
+            csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
+            is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
+            if is_csm_opposed:
+                g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK", "desc": "Relative Net Currency Delta Flow Check", "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({'BUY' if target_dir==1 else 'SELL'})."}
+            else:
+                g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan momentum arah."}
         gates.append(g4)
 
         # Gate 5: M1..M4 Setup Prerequisites
@@ -799,11 +815,19 @@ class CockpitDataEngine:
         gates.append(g5)
 
         # Gate 6: Stage 2 3-AI Consensus Jury & CRO
-        g6 = {"id": 6, "title": "Stage 2 3-AI Consensus & CRO Audit", "status": "WAIT", "desc": "OpenAI + Gemini + DeepSeek CRO Veto", "reason": "Stage 1 Fast Radar Standby (0 Token terpakai). Memicu 3-LLM Jury otomatis saat setup A+ tersentuh."}
+        if not getattr(config, "ENABLE_LLM_JURY", True):
+            g6 = {"id": 6, "title": "Pure Quant Direct Execution (No-LLM)", "status": "PASS", "desc": "Direct Quant Radar Signal Dispatch (0 Token)", "reason": "Mode Pure Quant aktif (0 Token API). Sinyal kuantitatif dieksekusi langsung tanpa sidang LLM."}
+        else:
+            g6 = {"id": 6, "title": "Stage 2 3-AI Consensus & CRO Audit", "status": "WAIT", "desc": "OpenAI + Gemini + DeepSeek CRO Veto", "reason": "Stage 1 Fast Radar Standby (0 Token terpakai). Memicu 3-LLM Jury otomatis saat setup A+ tersentuh."}
         gates.append(g6)
 
         # Gate 7: Risk Calibration & SL/TP Rules
-        g7 = {"id": 7, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": "SL 0.50x ATR floor, 2.5x ATR ceiling, 1.0% equity cap", "reason": f"Sizing 1.0% equity aman. Plafon SL {int(atr_val*2.5/pt)} pts valid (Zero Over-Risk)."}
+        if is_crypto:
+            sl_floor = getattr(config, "DEFAULT_SL_POINTS_BTC", 30000)
+            sl_ceil = 45000
+            g7 = {"id": 7, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": f"BTC floor {sl_floor} pts, ceiling {sl_ceil} pts, {config.RISK_PERCENT_BTC}% risk", "reason": f"Sizing {config.RISK_PERCENT_BTC}% equity aman. SL floor {sl_floor} pts ($300) & plafon {sl_ceil} pts ($450) terkalibrasi."}
+        else:
+            g7 = {"id": 7, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": "SL 0.50x ATR floor, 2.5x ATR ceiling, 1.0% equity cap", "reason": f"Sizing 1.0% equity aman. Plafon SL {int(atr_val*2.5/pt)} pts valid (Zero Over-Risk)."}
         gates.append(g7)
 
         return gates

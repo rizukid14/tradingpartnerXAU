@@ -102,6 +102,7 @@ python main.py
 | `src/core/telegram_bot.py` | 2-Way Interactive Telegram Controller + on-demand 3-AI analysis + `/radar` `/levels` `/smc` |
 | `src/analytics/position_manager.py` | 2-Stage Trailing (H1 Breathing 65-90% TP, M30 Terminal Lock $\ge$90% TP), BEP 45-55%, partial close 50%, time-decay stagnation, pre-rollover shield |
 | `src/analytics/macro_strategic_engine.py` | **Barrier Chamber State Machine** (6-TF Native `MN1/W1/D1/H4/H1/M30`), Density Cluster Scoring ($C_1, C_2, F_1, F_2$), Interaction Sequence Tracking (`['F1_SWEEP', 'C1_SWEEP']`), 7-State Engine, Pair-Calibrated SL Floor (35p Crosses) |
+| `dashboard.py` | Multi-Pair Cockpit Dashboard & 7-Gate X-Ray Surveillance (live candles, ZCE levels, telemetry radar M1..M4, 7-Gate audit BTC & FX) |
 
 ---
 

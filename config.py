@@ -754,7 +754,7 @@ PRE_ROLLOVER_SLIPPAGE_DEFAULT_PTS = _getenv_float("PRE_ROLLOVER_SLIPPAGE_DEFAULT
 
 def get_pre_rollover_slippage_threshold(symbol: str) -> float:
     """Mengembalikan threshold jarak SL kritis (points) saat jendela pre-rollover 03:50 WIB."""
-    s_clean = (symbol or "").replace("-ECNc", "").replace(".c", "").upper()
+    s_clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").upper()
     if "EURCHF" in s_clean:
         return PRE_ROLLOVER_SLIPPAGE_EURCHF_PTS
     elif "GBPCHF" in s_clean:
@@ -1033,7 +1033,7 @@ def get_timeframe(symbol=None, now_wib=None):
 
 def default_sl_points_for(symbol):
     """Fallback default SL points if ATR/LLM calculation is missing."""
-    s_clean = (symbol or "").replace("-ECNc", "").replace(".c", "").upper()
+    s_clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").upper()
     if is_crypto(s_clean):
         return DEFAULT_SL_POINTS_BTC  # 50,000 pts ($500)
     if "XAU" in s_clean or "GOLD" in s_clean:
@@ -1047,7 +1047,7 @@ def default_sl_points_for(symbol):
 
 def default_tp_points_for(symbol):
     """Fallback default TP points if ATR/LLM calculation is missing (R:R 2.0:1 benchmark)."""
-    s_clean = (symbol or "").replace("-ECNc", "").replace(".c", "").upper()
+    s_clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").upper()
     if is_crypto(s_clean):
         return DEFAULT_TP_POINTS_BTC  # 100,000 pts ($1000)
     if "XAU" in s_clean or "GOLD" in s_clean:
