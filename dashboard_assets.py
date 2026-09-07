@@ -1492,13 +1492,13 @@ function renderChartLevels(data) {
   activeRenderedLevels = [];
   if (!data || !candleSeries) return;
 
-  const rawLadder = (data.zce_ladder && data.zce_ladder.length > 0) ? data.zce_ladder : (data.zce_walls || []);
+  const rawLadder = (data.zce_walls && data.zce_walls.length > 0) ? data.zce_walls : (data.zce_ladder || []);
   let filteredLadder = [];
 
   if (activeZceFilter === "primary") {
     filteredLadder = rawLadder.filter(w => w.tier === "F1" || w.tier === "C1");
   } else if (activeZceFilter === "macro") {
-    filteredLadder = rawLadder.filter(w => w.tier === "F1" || w.tier === "C1" || w.grade === "GRADE_3_MACRO" || w.grade === "GRADE_2_INTERMEDIATE");
+    filteredLadder = rawLadder.filter(w => w.tier === "F1" || w.tier === "C1" || w.tier === "F2" || w.tier === "C2" || w.grade === "GRADE_3_MACRO" || w.grade === "GRADE_2_INTERMEDIATE");
   } else {
     filteredLadder = rawLadder;
   }
@@ -1991,14 +1991,14 @@ function renderDrawer() {
     const t = d.telemetry;
     container.innerHTML = `
       <div class="telemetry-grid">
-        <div class="telemetry-card">
-          <div class="tele-title">M1A: Macro Boundary Sweep</div>
+        <div class="telemetry-card" style="border-top: 2px solid #fb923c;">
+          <div class="tele-title" style="color:#fb923c;">M1A: Macro Boundary Sweep</div>
           <div class="tele-row"><span class="tele-lbl">Target Sweep:</span><span class="tele-val">${t.m1_target || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Penetration:</span><span class="tele-val">${t.m1_penetration || 'No (>0.04 ATR)'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Reclaim Status:</span><span class="tele-val">${t.m1_reclaim || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1_wick || '0.0% (Req >=33%)'}</span></div>
         </div>
-        <div class="telemetry-card">
+        <div class="telemetry-card" style="border-top: 2px solid #e879f9;">
           <div class="tele-title" style="color:#e879f9;">M1B: Trend Induced Sweep</div>
           <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#e879f9;font-weight:700;">${t.m1b_target || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Liquidity Pool:</span><span class="tele-val" style="color:#e879f9;">${t.m1b_eqh || 'Single Anchor'}</span></div>
@@ -2006,22 +2006,22 @@ function renderDrawer() {
           <div class="tele-row"><span class="tele-lbl">Sweep Status:</span><span class="tele-val">${t.m1b_status || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1b_wick || '0.0% (Req >=30%)'}</span></div>
         </div>
-        <div class="telemetry-card">
-          <div class="tele-title">M2: Trend Pullback Retest</div>
+        <div class="telemetry-card" style="border-top: 2px solid #38bdf8;">
+          <div class="tele-title" style="color:#38bdf8;">M2: Trend Pullback Retest</div>
           <div class="tele-row"><span class="tele-lbl">ADX Trend Strength:</span><span class="tele-val">${t.m2_adx || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Fib 50% Level:</span><span class="tele-val">${t.m2_fib50 || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Fib 61.8% Pocket:</span><span class="tele-val">${t.m2_fib618 || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Discount Status:</span><span class="tele-val">${t.m2_zone || 'EQUILIBRIUM'}</span></div>
         </div>
-        <div class="telemetry-card">
-          <div class="tele-title">M3: Breakout Retest Guard</div>
+        <div class="telemetry-card" style="border-top: 2px solid #c084fc;">
+          <div class="tele-title" style="color:#c084fc;">M3: Breakout Retest Guard</div>
           <div class="tele-row"><span class="tele-lbl">Broken SBR/RBS:</span><span class="tele-val">${t.m3_level || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">15-Bar Recency:</span><span class="tele-val">${t.m3_recency || 'PASS'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Runaway Push:</span><span class="tele-val">${t.m3_runaway || '1.10x ATR (Max 2.5x)'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Target Runway:</span><span class="tele-val">${t.m3_runway || '1.40x ATR (Req >=0.8x)'}</span></div>
         </div>
-        <div class="telemetry-card">
-          <div class="tele-title">M4: Systemic Flow Continuation</div>
+        <div class="telemetry-card" style="border-top: 2px solid #facc15;">
+          <div class="tele-title" style="color:#facc15;">M4: Systemic Flow Continuation</div>
           <div class="tele-row"><span class="tele-lbl">Currency Z-Score:</span><span class="tele-val">${t.m4_z || '—'} (Req >=1.5)</span></div>
           <div class="tele-row"><span class="tele-lbl">120-Bar Breakdown:</span><span class="tele-val">${t.m4_breakdown || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Structural SL/TP:</span><span class="tele-val">SL 0.45x ATR | TP 1.1R</span></div>
@@ -2123,7 +2123,13 @@ function renderDrawer() {
         const dirCol = isBuy ? "var(--green)" : "var(--red)";
         const outCol = (tr.outcome === "TP_HIT") ? "var(--green)" : ((tr.outcome === "SL_HIT") ? "var(--red)" : "var(--amber)");
         const netRText = (tr.net_r !== null && tr.net_r !== undefined) ? `${tr.net_r >= 0 ? '+' : ''}${tr.net_r.toFixed(2)}R` : '—';
-        html += `<tr>
+        const isRealMt5 = String(tr.mt5_disposition || '').includes('EXECUTED');
+        const ticketStr = tr.mt5_ticket ? `#${tr.mt5_ticket}` : '';
+        const dispBadge = isRealMt5 
+          ? `<span class="badge" style="background:rgba(0,230,118,0.18);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;">🟢 REAL MT5 ${ticketStr}</span>`
+          : `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;">🟣 PAPER (${tr.mt5_disposition?.replace('SKIPPED_', '') || 'SHADOW'})</span>`;
+
+        html += `<tr style="${isRealMt5 ? 'background:rgba(0,230,118,0.03);' : ''}">
           <td style="font-family:var(--font-mono);font-size:10px;">${tr.shadow_id}</td>
           <td style="font-weight:700;">${tr.symbol}</td>
           <td style="color:${dirCol};font-weight:700;">${tr.direction}</td>
@@ -2135,7 +2141,7 @@ function renderDrawer() {
           <td style="color:${outCol};font-weight:700;">${netRText}</td>
           <td style="color:var(--green);">${tr.peak_mfe_r ? '+' + tr.peak_mfe_r.toFixed(2) + 'R' : '—'}</td>
           <td style="color:var(--red);">${tr.max_mae_r ? tr.max_mae_r.toFixed(2) + 'R' : '—'}</td>
-          <td><span style="color:${tr.mt5_disposition?.includes('EXECUTED') ? 'var(--green)' : 'var(--amber)'};">${tr.mt5_disposition || 'PENDING'}</span></td>
+          <td>${dispBadge}</td>
         </tr>`;
       });
       html += `</tbody></table>`;

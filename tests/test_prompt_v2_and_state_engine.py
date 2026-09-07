@@ -165,7 +165,7 @@ def test_consensus_v2_handling():
     import numpy as np
     dummy_rates = np.zeros(50, dtype=[('time', 'i8'), ('open', 'f8'), ('high', 'f8'), ('low', 'f8'), ('close', 'f8'), ('tick_volume', 'i8'), ('spread', 'i4'), ('real_volume', 'i8')])
     for i in range(50):
-        dummy_rates[i] = (1000 + i, 0.99000, 0.99100, 0.98900, 0.99000, 100, 3, 100)
+        dummy_rates[i] = (1000 + i, 0.99000, 0.99025, 0.98975, 0.99000, 100, 3, 100)
 
     with patch("src.core.consensus.config.mt5.symbol_info") as mock_si, \
          patch("src.core.consensus.config.mt5.symbol_info_tick") as mock_tick, \

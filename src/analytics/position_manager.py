@@ -301,23 +301,23 @@ def manage_all_positions():
             if _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup, lanjut ke tiket berikutnya
 
-        # M4 (SYSTEMIC_FLOW_CONTINUATION): All-or-Nothing ke TP 1.1R atau SL 0.45xATR
-        # (bypass Partial Close, BEP, dan Trailing agar rasio R:R dan EV studi 15-tahun FBS terjaga).
-        # Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
+        # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
+        # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
+        # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
+        # - Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
         is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
 
-        if not is_m4:
-            # --- 3. PARTIAL CLOSE at TP1 ---
-            if config.PARTIAL_CLOSE_ENABLED:
-                _check_partial_close(pos, symbol, profit_points, symbol_info)
+        # --- 3. PARTIAL CLOSE at TP1 ---
+        if not is_m4 and config.PARTIAL_CLOSE_ENABLED:
+            _check_partial_close(pos, symbol, profit_points, symbol_info)
 
-            # --- 4. BREAK-EVEN CHECK ---
-            if config.BREAK_EVEN_ENABLED:
-                _check_break_even(pos, symbol, profit_points, point, symbol_info)
+        # --- 4. BREAK-EVEN CHECK ---
+        if config.BREAK_EVEN_ENABLED and (not is_m4 or getattr(config, "M4_BREAK_EVEN_ENABLED", True)):
+            _check_break_even(pos, symbol, profit_points, point, symbol_info)
 
-            # --- 5. TRAILING STOP CHECK ---
-            if config.TRAILING_STOP_ENABLED:
-                _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
+        # --- 5. TRAILING STOP CHECK ---
+        if not is_m4 and config.TRAILING_STOP_ENABLED:
+            _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
     # Bersihkan state posisi yang sudah tidak open (biar dict/set gak numpuk)
     open_tickets = {p.ticket for p in positions}
@@ -609,13 +609,23 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     min_trigger = 30 if config.is_fx(symbol) else 100
 
     # Break-even trigger: Grade-Aware Dynamic Threshold
+    # M4: 70% TP (Memberi ruang nafas fluktuasi shock, mengunci profit bila mencapai 70% target)
     # Grade S: 65% TP (Give breathing room to swing)
-    # Grade B: 35% TP (Fast defensive lock)
+    # Grade B / Defensive / Vacuum Extension (>= 2.0R): 35% TP (Fast defensive lock)
     # Grade A+/A: 50% TP (Standard)
-    grade = _ticket_setup_grades.get(pos.ticket, "GRADE_A")
-    if "GRADE_S" in grade:
+    is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+    grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
+
+    # Hitung SL points awal untuk evaluasi R:R aktual
+    init_sl_pts = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0)
+    # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP >= 2.0R)
+    is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and (tp_points / init_sl_pts) >= 2.0)
+
+    if is_m4:
+        bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
+    elif "GRADE_S" in grade and not is_vacuum_or_stretched:
         bep_tp_ratio = 0.65
-    elif "GRADE_B" in grade:
+    elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
         bep_tp_ratio = 0.35
     else:
         bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
@@ -623,9 +633,10 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if tp_points > 0:
         be_trigger = max(min_trigger, int(tp_points * bep_tp_ratio))
     else:
-        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+        sl_points = init_sl_pts
         if sl_points > 0:
-            be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
+            be_mult = 0.35 if ("GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched) else config.BREAK_EVEN_TRIGGER_SL_MULT
+            be_trigger = max(int(sl_points * be_mult), min_trigger)
         else:
             be_trigger = config.break_even_trigger_for(symbol)
 
@@ -976,6 +987,7 @@ def audit_pending_orders_thesis():
 
             # 4. Check Thesis Invalidation for BUY Pending Orders
             csm_opposed_thresh = getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
+            enable_csm_cancel = getattr(config, "ENABLE_PENDING_CSM_CANCEL", False)
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
                 # Structural Invalidation Floor: use SL if defined, else anchor - 0.50x ATR
                 inv_floor = sl_px if (sl_px > 0 and sl_px < open_px) else (open_px - (0.50 * atr_val))
@@ -983,7 +995,7 @@ def audit_pending_orders_thesis():
                     cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation floor ({inv_floor:.5f})"
                 elif ord_item.type == mt5.ORDER_TYPE_BUY_LIMIT and tp_px > open_px and curr_market_px >= (open_px + 0.75 * (tp_px - open_px)):
                     cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
-                elif not is_m4_order and csm_delta <= -csm_opposed_thresh and not is_macro_aligned_buy:
+                elif enable_csm_cancel and not is_m4_order and csm_delta <= -csm_opposed_thresh and not is_macro_aligned_buy:
                     cancel_reason = f"Systemic CSM Flow reversed strongly to Bearish ({csm_delta:+.2f} <= -{csm_opposed_thresh:.2f})"
                 elif not is_m4_order and "FLOOR_BREAKDOWN" in m_state:
                     cancel_reason = f"MSE Structural Floor Breakdown ({m_state})"
@@ -996,7 +1008,7 @@ def audit_pending_orders_thesis():
                     cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation ceiling ({inv_ceiling:.5f})"
                 elif ord_item.type == mt5.ORDER_TYPE_SELL_LIMIT and tp_px > 0 and tp_px < open_px and curr_market_px <= (open_px - 0.75 * (open_px - tp_px)):
                     cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
-                elif not is_m4_order and csm_delta >= +csm_opposed_thresh and not is_macro_aligned_sell:
+                elif enable_csm_cancel and not is_m4_order and csm_delta >= +csm_opposed_thresh and not is_macro_aligned_sell:
                     cancel_reason = f"Systemic CSM Flow reversed strongly to Bullish ({csm_delta:+.2f} >= +{csm_opposed_thresh:.2f})"
                 elif not is_m4_order and "CEILING_BREAKOUT" in m_state:
                     cancel_reason = f"MSE Structural Ceiling Breakout ({m_state})"

@@ -312,6 +312,8 @@ M4_EXTREME_DR_THRESHOLD = _getenv_float("M4_EXTREME_DR_THRESHOLD", 0.70) # Amban
 M4_EXTREME_CSM_DELTA_OVERRIDE = _getenv_float("M4_EXTREME_CSM_DELTA_OVERRIDE", 0.035) # Minimal Net CSM Delta untuk bypass DR di M4
 M4_BASING_MIN_BARS = _getenv_int("M4_BASING_MIN_BARS", 4) # Minimal bar kompresi M15/M30 untuk validasi micro-basing
 M4_BASING_MAX_RANGE_ATR = _getenv_float("M4_BASING_MAX_RANGE_ATR", 0.35) # Max range bar basing <= 0.35x ATR
+M4_BREAK_EVEN_ENABLED = _getenv_bool("M4_BREAK_EVEN_ENABLED", True)
+M4_BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
 
 # Systemic Currency Basket Circuit Breaker (Global M15/H1 CSM 8 Currencies)
 ENABLE_SYSTEMIC_BASKET_LOCK = _getenv_bool("ENABLE_SYSTEMIC_BASKET_LOCK", True)
@@ -558,6 +560,7 @@ TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  
 TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR M30 lock)
 TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing
 TRAILING_BREAK_EVEN_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
+BREAK_EVEN_TRIGGER_SL_MULT = TRAILING_BREAK_EVEN_SL_MULT
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
 TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 80)    # Floor absolut jarak normal trailing FX (8 pips)
 TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)  # Floor absolut terminal trailing (3 pips)
@@ -835,6 +838,7 @@ PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
 PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
 ENABLE_PENDING_THESIS_AUDIT = _getenv_bool("ENABLE_PENDING_THESIS_AUDIT", True)
 ENABLE_SHADOW_PROXIMITY_CANCEL = _getenv_bool("ENABLE_SHADOW_PROXIMITY_CANCEL", True)
+ENABLE_PENDING_CSM_CANCEL = _getenv_bool("ENABLE_PENDING_CSM_CANCEL", False)
 ENABLE_CSM_FLOW_FILTER = _getenv_bool("ENABLE_CSM_FLOW_FILTER", True)
 # File statistik "AI proven" - riwayat pending order + outcome (persist)
 PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")

@@ -16,10 +16,12 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
 
     def setUp(self):
         self._orig_audit = getattr(config, "ENABLE_PENDING_THESIS_AUDIT", True)
+        self._orig_csm_cancel = getattr(config, "ENABLE_PENDING_CSM_CANCEL", False)
         config.ENABLE_PENDING_THESIS_AUDIT = True
 
     def tearDown(self):
         config.ENABLE_PENDING_THESIS_AUDIT = self._orig_audit
+        config.ENABLE_PENDING_CSM_CANCEL = self._orig_csm_cancel
 
     @patch("src.analytics.position_manager.mt5")
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
@@ -141,7 +143,8 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
     @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
     def test_sell_cancelled_when_csm_reverses_strongly(self, mock_csm, mock_get_dir, mock_mt5):
-        """SELL limit order must NOT be cancelled at moderate CSM (+0.45), but MUST be cancelled if CSM turns strongly bullish (>= +1.0)."""
+        """SELL limit order must NOT be cancelled at moderate CSM (+0.45), but MUST be cancelled if CSM turns strongly bullish (>= +1.0) when ENABLE_PENDING_CSM_CANCEL=True."""
+        config.ENABLE_PENDING_CSM_CANCEL = True
         mock_order = MagicMock()
         mock_order.ticket = 44444
         mock_order.symbol = "EURJPY-ECNc"
@@ -189,7 +192,8 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
     @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
     def test_buy_pending_csm_harmonized_tolerance(self, mock_csm, mock_get_dir, mock_mt5):
-        """BUY limit order with CSM delta -0.69 (EURNZD case) must NOT be cancelled, but cancelled at <= -1.0."""
+        """BUY limit order with CSM delta -0.69 (EURNZD case) must NOT be cancelled, but cancelled at <= -1.0 when ENABLE_PENDING_CSM_CANCEL=True."""
+        config.ENABLE_PENDING_CSM_CANCEL = True
         mock_order = MagicMock()
         mock_order.ticket = 77777
         mock_order.symbol = "EURNZD-ECNc"
@@ -231,6 +235,41 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
         mock_mt5.order_send.assert_called_once()
         sent_req = mock_mt5.order_send.call_args[0][0]
         self.assertEqual(sent_req["order"], 77777)
+
+    @patch("src.analytics.position_manager.mt5")
+    @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
+    @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
+    def test_csm_reversal_ignored_when_csm_cancel_disabled(self, mock_csm, mock_get_dir, mock_mt5):
+        """When ENABLE_PENDING_CSM_CANCEL=False, extreme CSM reversal must NOT cancel the pending order."""
+        config.ENABLE_PENDING_CSM_CANCEL = False
+        mock_order = MagicMock()
+        mock_order.ticket = 88881
+        mock_order.symbol = "EURJPY-ECNc"
+        mock_order.magic = config.MAGIC_NUMBER
+        mock_order.comment = "RADAR M2 SELL"
+        mock_order.type = 3  # ORDER_TYPE_SELL_LIMIT
+        mock_order.price_open = 162.500
+        mock_order.sl = 163.000
+
+        mock_mt5.orders_get.return_value = [mock_order]
+        mock_mt5.ORDER_TYPE_BUY_LIMIT = 2
+        mock_mt5.ORDER_TYPE_SELL_LIMIT = 3
+        mock_mt5.ORDER_TYPE_BUY_STOP = 4
+        mock_mt5.ORDER_TYPE_SELL_STOP = 5
+
+        mock_si = MagicMock()
+        mock_si.point = 0.001
+        mock_mt5.symbol_info.return_value = mock_si
+
+        mock_strat = MagicMock()
+        mock_strat.market_state = "NEUTRAL"
+        mock_get_dir.return_value = mock_strat
+
+        mock_mt5.copy_rates_from_pos.return_value = [{"close": 162.400}]
+        mock_csm.return_value = +1.50  # Very extreme opposed CSM
+
+        audit_pending_orders_thesis()
+        mock_mt5.order_send.assert_not_called()
 
     @patch("src.analytics.position_manager.mt5")
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")

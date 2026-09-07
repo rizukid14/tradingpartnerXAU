@@ -654,49 +654,135 @@ class CockpitDataEngine:
         if candles:
             c_min_lo = min(c["low"] for c in candles)
             c_max_hi = max(c["high"] for c in candles)
-            v_lo = c_min_lo - 0.40 * atr_val
-            v_hi = c_max_hi + 0.40 * atr_val
+            # Expand viewport clamp to 1.25 * atr_val (min 80 pips) so nearby F1/F2 and C1/C2 remain visible
+            vp_margin = max(1.25 * atr_val, 80.0 * pip_val)
+            v_lo = c_min_lo - vp_margin
+            v_hi = c_max_hi + vp_margin
         else:
-            v_lo = mid - 2.5 * atr_val
-            v_hi = mid + 2.5 * atr_val
+            v_lo = mid - 3.5 * atr_val
+            v_hi = mid + 3.5 * atr_val
 
         zce_ladder = _consolidate_zce_zones(zm, mid, v_lo, v_hi, atr_val, pip_val, digits)
 
-        # Baseline fallback for F1/C1 if ladder empty
-        zce_walls = []
+        # Baseline fallback for F1/F2 and C1/C2: Asymmetric Per-Side Injection (RFC 11 & MSE Confluence)
         f1 = macro.get("immediate_floor_f1") or macro.get("floor_f1")
         c1 = macro.get("immediate_ceiling_c1") or macro.get("ceiling_c1")
-        if zce_ladder:
-            zce_walls = zce_ladder
-        else:
+
+        layered_flrs = getattr(strat, "layered_floors", []) or []
+        layered_ceils = getattr(strat, "layered_ceilings", []) or []
+
+        f2 = getattr(strat, "deep_floor_f2", None)
+        if f2 is None and len(layered_flrs) > 1:
+            f2 = layered_flrs[1].get("price") if isinstance(layered_flrs[1], dict) else layered_flrs[1]
+        elif f2 is None and len(layered_flrs) == 1:
+            f2 = layered_flrs[0].get("price") if isinstance(layered_flrs[0], dict) else layered_flrs[0]
+
+        c2 = getattr(strat, "deep_ceiling_c2", None)
+        if c2 is None and len(layered_ceils) > 1:
+            c2 = layered_ceils[1].get("price") if isinstance(layered_ceils[1], dict) else layered_ceils[1]
+        elif c2 is None and len(layered_ceils) == 1:
+            c2 = layered_ceils[0].get("price") if isinstance(layered_ceils[0], dict) else layered_ceils[0]
+
+        zce_floors = [w for w in (zce_ladder or []) if w.get("type") == "floor"]
+        zce_ceils = [w for w in (zce_ladder or []) if w.get("type") == "ceiling"]
+
+        # Floor side fallback
+        if not zce_floors:
             if f1:
-                zce_walls.append({
+                zce_floors.append({
                     "price": round(float(f1), digits),
                     "band_low": round(float(f1), digits),
                     "band_high": round(float(f1), digits),
                     "type": "floor",
                     "tier": "F1",
-                    "label": "ZCE F1 Floor",
+                    "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
                     "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
                     "score": 4.5,
-                    "tfs": ["H1"],
+                    "tfs": ["H1", "D1"],
                     "kinds": ["MSE_BASE"],
                     "tag": "BASELINE_FLOOR"
                 })
+            if f2 and f1 and float(f2) < float(f1):
+                zce_floors.append({
+                    "price": round(float(f2), digits),
+                    "band_low": round(float(f2), digits),
+                    "band_high": round(float(f2), digits),
+                    "type": "floor",
+                    "tier": "F2",
+                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
+                    "grade": "GRADE_2_INTERMEDIATE",
+                    "score": 3.8,
+                    "tfs": ["D1"],
+                    "kinds": ["MSE_BASE"],
+                    "tag": "BASELINE_DEEP_FLOOR"
+                })
+        elif len(zce_floors) == 1 and f2:
+            f_price = zce_floors[0]["price"]
+            if float(f2) < f_price - 0.20 * atr_val:
+                zce_floors.append({
+                    "price": round(float(f2), digits),
+                    "band_low": round(float(f2), digits),
+                    "band_high": round(float(f2), digits),
+                    "type": "floor",
+                    "tier": "F2",
+                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
+                    "grade": "GRADE_2_INTERMEDIATE",
+                    "score": 3.8,
+                    "tfs": ["D1"],
+                    "kinds": ["MSE_BASE"],
+                    "tag": "BASELINE_DEEP_FLOOR"
+                })
+
+        # Ceiling side fallback
+        if not zce_ceils:
             if c1:
-                zce_walls.append({
+                zce_ceils.append({
                     "price": round(float(c1), digits),
                     "band_low": round(float(c1), digits),
                     "band_high": round(float(c1), digits),
                     "type": "ceiling",
                     "tier": "C1",
-                    "label": "ZCE C1 Ceiling",
+                    "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
                     "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
                     "score": 4.5,
-                    "tfs": ["H1"],
+                    "tfs": ["H1", "D1"],
                     "kinds": ["MSE_BASE"],
                     "tag": "BASELINE_CEIL"
                 })
+            if c2 and c1 and float(c2) > float(c1):
+                zce_ceils.append({
+                    "price": round(float(c2), digits),
+                    "band_low": round(float(c2), digits),
+                    "band_high": round(float(c2), digits),
+                    "type": "ceiling",
+                    "tier": "C2",
+                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
+                    "grade": "GRADE_2_INTERMEDIATE",
+                    "score": 3.8,
+                    "tfs": ["D1"],
+                    "kinds": ["MSE_BASE"],
+                    "tag": "BASELINE_DEEP_CEIL"
+                })
+        elif len(zce_ceils) == 1 and c2:
+            c_price = zce_ceils[0]["price"]
+            if float(c2) > c_price + 0.20 * atr_val:
+                zce_ceils.append({
+                    "price": round(float(c2), digits),
+                    "band_low": round(float(c2), digits),
+                    "band_high": round(float(c2), digits),
+                    "type": "ceiling",
+                    "tier": "C2",
+                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
+                    "grade": "GRADE_2_INTERMEDIATE",
+                    "score": 3.8,
+                    "tfs": ["D1"],
+                    "kinds": ["MSE_BASE"],
+                    "tag": "BASELINE_DEEP_CEIL"
+                })
+
+        zce_walls = zce_floors + zce_ceils
+        zce_walls.sort(key=lambda x: x["price"])
+        zce_ladder = list(zce_walls)
 
         # 3. M1..M4 Reticles directly from MarketScanner 1:1 API
         m_standbys = self.scanner.get_radar_standbys(symbol, mid, macro, pt, atr_val)
@@ -706,18 +792,61 @@ class CockpitDataEngine:
 
         # 5. Open Positions & Pending Orders for this symbol
         open_pos = []
+        pos_state_file = os.path.join(ROOT, "data", "position_manager_state.json")
+        pos_state = {}
+        if os.path.exists(pos_state_file):
+            try:
+                with open(pos_state_file, "r") as f:
+                    pos_state = json.load(f)
+            except Exception:
+                pos_state = {}
+        be_set = set(pos_state.get("break_even_tickets", []))
+        partial_set = set(pos_state.get("partial_closed_tickets", []))
+        trail_set = set(pos_state.get("trailing_active_tickets", []))
+
         for p in connector.get_all_open_positions() or []:
             if p.get("symbol") in (symbol, valid_sym):
+                t_id = p.get("ticket")
+                p_type = p.get("type")
+                p_dir = p.get("direction")
+                type_str = "BUY" if (p_type in (0, "BUY") or p_dir == "BUY") else "SELL"
+                p_comm = (p.get("comment") or "").upper()
+                is_m4_pos = "SYSTEM" in p_comm
+
+                # Dynamic Management Badge
+                if is_m4_pos:
+                    if t_id in be_set:
+                        mgt_badge = "M4 BEP LOCKED (+15 pts)"
+                    else:
+                        mgt_badge = "M4 FULL RUN (BEP @ 70% TP)"
+                elif t_id in trail_set:
+                    mgt_badge = "TRAILING ACTIVE (Stage 2)"
+                elif t_id in be_set:
+                    mgt_badge = "BEP LOCKED (+15 pts)"
+                elif t_id in partial_set:
+                    mgt_badge = "PARTIAL TP1 (50% Closed)"
+                else:
+                    mgt_badge = "ACTIVE BREATHING (Stage 1)"
+
+                # Dynamic Pre-rollover distance
+                sl_val = p.get("sl") or 0.0
+                curr_price = p.get("current_price") or p.get("price_open") or 0.0
+                if sl_val > 0 and curr_price > 0 and pt > 0:
+                    dist_pts = int(abs(curr_price - sl_val) / pt)
+                    roll_str = f"Risk ({dist_pts} pts)" if dist_pts <= 180 else f"Safe ({dist_pts} pts)"
+                else:
+                    roll_str = "Safe (>180 pts)"
+
                 open_pos.append({
-                    "ticket": p.get("ticket"),
-                    "type_str": "BUY" if p.get("type") == 0 else "SELL",
+                    "ticket": t_id,
+                    "type_str": type_str,
                     "volume": p.get("volume"),
                     "price_open": p.get("price_open"),
                     "sl": p.get("sl"),
                     "tp": p.get("tp"),
                     "profit": float(p.get("profit", 0.0)),
-                    "mgt_badge": "ACTIVE BREATHING (Stage 1)",
-                    "rollover_dist": "Safe (>180 pts)"
+                    "mgt_badge": mgt_badge,
+                    "rollover_dist": roll_str
                 })
 
         pending_orders = []
@@ -869,6 +998,10 @@ class CockpitDataEngine:
             "perm_label": macro.get("permission_state", "GO"),
             "tactical_state": macro.get("tactical_state", "BALANCED_FLOW"),
             "tactical_desc": macro.get("tactical_desc", ""),
+            "f1": round(float(f1), digits) if f1 else None,
+            "f2": round(float(f2), digits) if f2 else None,
+            "c1": round(float(c1), digits) if c1 else None,
+            "c2": round(float(c2), digits) if c2 else None,
             "candles": candles,
             "zce_walls": zce_walls,
             "zce_ladder": zce_ladder,
@@ -1078,9 +1211,10 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/api/shadow":
             try:
                 from src.analytics.shadow_tracker import shadow_tracker
+                shadow_tracker.reload_state_if_modified()
                 s_data = shadow_tracker.get_performance_summary()
-                # Extend payload dengan full trade arrays untuk JS table polling
-                act = [t.to_dict() if hasattr(t, "to_dict") else t for t in shadow_tracker.active_trades]
+                # Extend payload dengan full trade arrays & real-time live prices untuk JS table polling
+                act = shadow_tracker.get_active_trades_enriched()
                 resolved = shadow_tracker.get_all_resolved_trades(limit=500)
                 s_data["active_trades_full"] = act
                 s_data["resolved_trades_full"] = resolved

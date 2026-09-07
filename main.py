@@ -698,7 +698,12 @@ def run_scanner_trading_cycle(cand, risk):
             if c_tp <= 0 and pt > 0:
                 c_tp = c_entry + (c_tp_pts * pt) if c_dir == "BUY" else c_entry - (c_tp_pts * pt)
 
-            clean_disp = "SKIPPED_RISK_BASKET" if "Konsentrasi mata uang" in risk_msg else "SKIPPED_RISK_BLOCK"
+            if "posisi" in risk_msg.lower() or "kuota" in risk_msg.lower():
+                clean_disp = "SKIPPED_MAX_POSITIONS"
+            elif "Konsentrasi mata uang" in risk_msg:
+                clean_disp = "SKIPPED_RISK_BASKET"
+            else:
+                clean_disp = "SKIPPED_RISK_BLOCK"
             shadow_trade = shadow_tracker.register_candidate(
                 candidate=cand,
                 entry_type=c_entry_type,
@@ -711,6 +716,16 @@ def run_scanner_trading_cycle(cand, risk):
             )
             if shadow_trade:
                 print(f" {UI.MAGENTA}[SHADOW RADAR REGISTERED] {sym} ({cand.setup_type}) dicatat ke Paper Trade ({clean_disp}).{UI.RST}")
+            else:
+                existing_sh = shadow_tracker.get_active_shadow_for(sym, c_dir, cand.setup_type)
+                if existing_sh:
+                    cur_fl = f" | Floating: {existing_sh.floating_r:+.2f}R" if existing_sh.floating_r is not None else ""
+                    bep_badge = " | BEP LOCKED" if getattr(existing_sh, "bep_activated", False) else ""
+                    trail_badge = " | TRAILING" if getattr(existing_sh, "trailing_activated", False) else ""
+                    status_extra = trail_badge if trail_badge else bep_badge
+                    print(f" {UI.CYAN}[SHADOW RADAR ACTIVE] {sym} ({cand.setup_type}) sudah berjalan di Paper Trade [{existing_sh.status}{cur_fl}{status_extra} | ID: {existing_sh.shadow_id}].{UI.RST}")
+                else:
+                    print(f" {UI.GRAY}[SHADOW RADAR ACTIVE] {sym} ({cand.setup_type}) sudah terdaftar di Paper Trade (Deduplikasi 30m).{UI.RST}")
         except Exception as e:
             print(f" [SHADOW REGISTRATION ERROR] {e}")
 
@@ -1042,6 +1057,7 @@ def run_scanner_trading_cycle(cand, risk):
                     if pending_res.get("status") == "SUCCESS":
                         if registered_shadow and pending_res.get("ticket"):
                             registered_shadow.mt5_ticket = pending_res.get("ticket")
+                            shadow_tracker._save_state()
                         if config.DRY_RUN:
                             print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
                         else:
@@ -1055,6 +1071,7 @@ def run_scanner_trading_cycle(cand, risk):
                             csm_delta=getattr(cand, "csm_delta", 0.0),
                             setup_type=f"{cand.setup_type} (Pending P{i+1})"
                         )
+                        position_manager.set_ticket_setup_grade(pending_res.get("ticket"), getattr(cand, "action_tier", "GRADE_A"))
                         risk.record_trade_opened()
                         record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                         _recent_trihourly_opened.append({
@@ -1103,6 +1120,7 @@ def run_scanner_trading_cycle(cand, risk):
                 if order_res.get("status") == "SUCCESS":
                     if registered_shadow and order_res.get("ticket"):
                         registered_shadow.mt5_ticket = order_res.get("ticket")
+                        shadow_tracker._save_state()
                     if config.DRY_RUN:
                         print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
                     else:
@@ -1116,6 +1134,7 @@ def run_scanner_trading_cycle(cand, risk):
                         csm_delta=getattr(cand, "csm_delta", 0.0),
                         setup_type=f"{cand.setup_type} (Market P{i+1})"
                     )
+                    position_manager.set_ticket_setup_grade(order_res.get("ticket"), getattr(cand, "action_tier", "GRADE_A"))
                     risk.record_trade_opened()
                     record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                     _recent_trihourly_opened.append({
@@ -1404,7 +1423,10 @@ def main():
                     resolved_shadows = shadow_tracker.update_shadow_orders(connector)
                     for r_sh in resolved_shadows:
                         net_r_str = f"{r_sh.net_r:+.2f}R" if r_sh.net_r is not None else "0.0R"
-                        print(f" {UI.MAGENTA}[SHADOW RADAR RESOLVED] {r_sh.symbol} ({r_sh.setup_type[:6]}) -> {r_sh.outcome} ({net_r_str}) | MFE: {r_sh.peak_mfe_r:+.2f}R | MAE: {r_sh.max_mae_r:+.2f}R{UI.RST}")
+                        bep_flag = " [BEP]" if getattr(r_sh, "bep_activated", False) else ""
+                        trail_flag = " [TRAIL]" if getattr(r_sh, "trailing_activated", False) else ""
+                        flag_str = trail_flag if trail_flag else bep_flag
+                        print(f" {UI.MAGENTA}[SHADOW RADAR RESOLVED] {r_sh.symbol} ({r_sh.setup_type[:6]}) -> {r_sh.outcome}{flag_str} ({net_r_str}) | MFE: {r_sh.peak_mfe_r:+.2f}R | MAE: {r_sh.max_mae_r:+.2f}R{UI.RST}")
                 except Exception as e:
                     pass
 

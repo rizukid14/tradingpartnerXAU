@@ -258,6 +258,130 @@ class TestQuantShadowTracker(unittest.TestCase):
         self.assertEqual(resolved_list[0]["symbol"], "NZDUSD-ECN")
         self.assertEqual(resolved_list[0]["mt5_disposition"], "SKIPPED_RISK_BASKET")
 
+    def test_floating_pnl_and_live_price_tracking(self):
+        cand = self._make_candidate(direction=1)
+        # BUY: entry 1.10000, sl 1.09800 (200 pts), tp 1.10400 (400 pts)
+        self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=1.10000,
+            sl_price=1.09800,
+            tp_price=1.10400,
+            sl_points=200,
+            tp_points=400
+        )
+        mock_connector = MagicMock()
+        # Price is at 1.10100 (+100 pts, +0.50R)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10105, "bid": 1.10095, "point": 0.00001, "digits": 5}
+        self.tracker.update_shadow_orders(mock_connector)
+
+        trade = self.tracker.active_trades[0]
+        self.assertEqual(trade.current_price, 1.10100)
+        self.assertEqual(trade.floating_points, 100)
+        self.assertEqual(trade.floating_r, 0.50)
+
+    def test_mt5_ticket_reconciliation_on_closed_deal(self):
+        cand = self._make_candidate(direction=1)
+        self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=1.10000,
+            sl_price=1.09800,
+            tp_price=1.10400,
+            sl_points=200,
+            tp_points=400,
+            mt5_disposition="EXECUTED_MT5",
+            mt5_ticket=999888
+        )
+        mock_deal = MagicMock()
+        mock_deal.entry = 1
+        mock_deal.price = 1.10350
+        mock_deal.profit = 85.50
+        mock_deal.comment = "[tp 1.10350]"
+        mock_deal._asdict.return_value = {
+            "entry": 1,
+            "price": 1.10350,
+            "profit": 85.50,
+            "comment": "[tp 1.10350]"
+        }
+
+        from unittest.mock import patch
+        with patch.object(config.mt5, "positions_get", return_value=[]):
+            with patch.object(config.mt5, "history_deals_get", return_value=[mock_deal]):
+                mock_connector = MagicMock()
+                mock_connector.get_current_tick.return_value = {"ask": 1.10300, "bid": 1.10290, "point": 0.00001}
+                resolved = self.tracker.update_shadow_orders(mock_connector)
+
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0].outcome, "TP_HIT")
+        self.assertEqual(resolved[0].exit_price, 1.10350)
+        self.assertEqual(resolved[0].net_r, 1.75)
+
+    def test_virtual_bep_activation_and_hit(self):
+        cand = self._make_candidate(direction=1)
+        # BUY: entry 1.10000, sl 1.09800 (risk 200 pts), tp 1.10400 (400 pts)
+        self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=1.10000,
+            sl_price=1.09800,
+            tp_price=1.10400,
+            sl_points=200,
+            tp_points=400
+        )
+        mock_connector = MagicMock()
+        # Price moves up to 1.10110 (+110 pts, +0.55R) -> BEP triggers (+15 pts above entry -> 1.10015)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10115, "bid": 1.10105, "point": 0.00001, "digits": 5}
+        self.tracker.update_shadow_orders(mock_connector)
+
+        trade = self.tracker.active_trades[0]
+        self.assertTrue(trade.bep_activated)
+        self.assertEqual(trade.current_sl, 1.10015)
+
+        # Price pulls back to 1.10010 (below current_sl 1.10015)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10010, "bid": 1.10005, "point": 0.00001, "digits": 5}
+        resolved = self.tracker.update_shadow_orders(mock_connector)
+
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0].outcome, "BEP_HIT")
+        self.assertGreaterEqual(resolved[0].net_r, 0.0)
+        self.assertEqual(resolved[0].exit_price, 1.10015)
+
+    def test_virtual_trailing_stop_activation_and_hit(self):
+        cand = self._make_candidate(direction=1)
+        # BUY: entry 1.10000, sl 1.09800 (risk 200 pts), tp 1.10400 (400 pts)
+        self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=1.10000,
+            sl_price=1.09800,
+            tp_price=1.10400,
+            sl_points=200,
+            tp_points=400
+        )
+        mock_connector = MagicMock()
+        # Price surges to 1.10200 (+200 pts, +1.00R, like EURUSD today)
+        # Trailing triggers: current_sl = entry + (1.00 - 0.40) * 0.00200 = 1.10120 (+0.60R)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10205, "bid": 1.10195, "point": 0.00001, "digits": 5}
+        self.tracker.update_shadow_orders(mock_connector)
+
+        trade = self.tracker.active_trades[0]
+        self.assertTrue(trade.bep_activated)
+        self.assertTrue(trade.trailing_activated)
+        self.assertEqual(trade.current_sl, 1.10120)
+
+        # Price pulls back and hits trailing SL (ask <= 1.10120)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10115, "bid": 1.10110, "point": 0.00001, "digits": 5}
+        resolved = self.tracker.update_shadow_orders(mock_connector)
+
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0].outcome, "TRAILING_SL_HIT")
+        self.assertEqual(resolved[0].net_r, 0.60)
+        self.assertEqual(resolved[0].exit_price, 1.10120)
+
+        summary = self.tracker.get_performance_summary()
+        self.assertEqual(summary["cumulative_net_r"], 0.60)
+
 
 if __name__ == "__main__":
     unittest.main()

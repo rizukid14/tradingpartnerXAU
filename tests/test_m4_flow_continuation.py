@@ -200,9 +200,9 @@ class TestM4FlowContinuation(unittest.TestCase):
         with patch("src.analytics.position_manager.time.time", return_value=1000005.0):
             manage_all_positions()
 
-        # Partial close, BEP, and Trailing MUST NOT be called for M4
+        # Partial close and Trailing MUST NOT be called for M4, but BEP (70% TP) MUST be called
         mock_partial.assert_not_called()
-        mock_be.assert_not_called()
+        mock_be.assert_called_once()
         mock_trail.assert_not_called()
 
     @patch("src.analytics.position_manager.mt5")
@@ -403,6 +403,47 @@ class TestM4FlowContinuation(unittest.TestCase):
         # F1 is GRADE_1_MICRO -> skipped to F2
         self.assertLess(res_flimsy["tp"], 195.600)
         self.assertGreaterEqual(res_flimsy["risk_reward"], 1.25)
+
+    @patch("src.analytics.position_manager.mt5")
+    def test_m4_break_even_70pct_trigger(self, mock_mt5):
+        """M4 positions must trigger BEP at exactly 70% TP."""
+        from src.analytics.position_manager import _check_break_even, _break_even_tickets
+        _break_even_tickets.clear()
+
+        mock_pos = MagicMock()
+        mock_pos.ticket = 77777
+        mock_pos.symbol = "AUDUSD-ECNc"
+        mock_pos.comment = "JURY SYSTEM P1"
+        mock_pos.type = 0  # BUY
+        mock_pos.price_open = 0.72000
+        mock_pos.sl = 0.71800
+        mock_pos.tp = 0.72200  # TP distance = 200 points
+        mock_pos.volume = 0.50
+
+        mock_si = MagicMock()
+        mock_si.point = 0.00001
+        mock_si.digits = 5
+        mock_si.trade_tick_size = 0.00001
+        mock_si.trade_tick_value = 1.0
+
+        mock_mt5.ORDER_TYPE_BUY = 0
+        mock_mt5.ORDER_TYPE_SELL = 1
+
+        # At 65% TP (130 pts) -> should NOT trigger BEP (threshold 70% = 140 pts)
+        _check_break_even(mock_pos, "AUDUSD-ECNc", 130, 0.00001, mock_si)
+        self.assertNotIn(77777, _break_even_tickets)
+
+        # At 70% TP (140 pts) -> MUST trigger BEP
+        mock_mt5.history_deals_get.return_value = []
+        mock_res = MagicMock()
+        mock_res.retcode = 10009  # TRADE_RETCODE_DONE
+        mock_mt5.order_send.return_value = mock_res
+        mock_mt5.TRADE_RETCODE_DONE = 10009
+        mock_mt5.TRADE_ACTION_SLTP = 6
+
+        _check_break_even(mock_pos, "AUDUSD-ECNc", 140, 0.00001, mock_si)
+        self.assertIn(77777, _break_even_tickets)
+        _break_even_tickets.clear()
 
 
 if __name__ == "__main__":

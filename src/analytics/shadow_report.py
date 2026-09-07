@@ -27,9 +27,10 @@ def render_shadow_report_html() -> str:
     now_dt = datetime.now(WIB)
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S WIB")
 
+    shadow_tracker.reload_state_if_modified()
     summary = shadow_tracker.get_performance_summary()
     resolved_trades = shadow_tracker.get_all_resolved_trades(limit=500)
-    active_trades = [t.to_dict() if hasattr(t, "to_dict") else t for t in shadow_tracker.active_trades]
+    active_trades = shadow_tracker.get_active_trades_enriched()
 
     total_rec = summary.get("total_recorded", 0)
     act_cnt = summary.get("active_count", len(active_trades))
@@ -418,6 +419,11 @@ def render_shadow_report_html() -> str:
               <td style="color:var(--text-dim);">Lolos seluruh filter & order riil berhasil dikirim ke MT5.</td>
             </tr>
             <tr>
+              <td><span class="badge" style="background:rgba(192,132,252,0.15);color:#c084fc;border:1px solid rgba(192,132,252,0.3);">SKIPPED_MAX_POSITIONS</span></td>
+              <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_MAX_POSITIONS', 0)}</td>
+              <td style="color:var(--text-dim);">Ditolak eksekusi karena slot MT5 penuh (6/6). Berjalan 100% sebagai Paper Trade murni.</td>
+            </tr>
+            <tr>
               <td><span class="badge" style="background:rgba(251,191,36,0.15);color:var(--amber);border:1px solid rgba(251,191,36,0.3);">SKIPPED_RISK_BASKET</span></td>
               <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_RISK_BASKET', 0)}</td>
               <td style="color:var(--text-dim);">Ditolak karena batas konsentrasi mata uang (Max 3 posisi).</td>
@@ -425,7 +431,7 @@ def render_shadow_report_html() -> str:
             <tr>
               <td><span class="badge" style="background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);">SKIPPED_RISK_BLOCK</span></td>
               <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_RISK_BLOCK', 0)}</td>
-              <td style="color:var(--text-dim);">Ditolak karena batas kapasitas slot MT5, margin buffer, atau pause loss.</td>
+              <td style="color:var(--text-dim);">Ditolak karena margin buffer, dead zone, atau pause loss.</td>
             </tr>
             <tr>
               <td><span class="badge" style="background:rgba(255,82,82,0.15);color:var(--red);border:1px solid rgba(255,82,82,0.3);">SKIPPED_LLM_VETO</span></td>
@@ -445,6 +451,8 @@ def render_shadow_report_html() -> str:
   <div class="filter-bar">
     <input type="text" id="searchInput" class="search-input" placeholder="🔍 Cari simbol, setup, outcome, ID..." oninput="filterTable();">
     <button class="filter-pill active" onclick="setFilter('ALL', this);">Semua ({len(all_combined)})</button>
+    <button class="filter-pill" onclick="setFilter('REAL_MT5', this);" style="border-color:rgba(0,230,118,0.4);color:var(--green);font-weight:700;">🟢 Real MT5 ({disp_stats.get('EXECUTED_MT5', 0)})</button>
+    <button class="filter-pill" onclick="setFilter('PAPER_SHADOW', this);" style="border-color:rgba(192,132,252,0.4);color:#c084fc;font-weight:700;">🟣 Paper Shadow ({len(all_combined) - disp_stats.get('EXECUTED_MT5', 0)})</button>
     <button class="filter-pill" onclick="setFilter('ACTIVE', this);">Aktif ({act_cnt})</button>
     <button class="filter-pill" onclick="setFilter('PENDING', this);">Pending ({pend_cnt})</button>
     <button class="filter-pill" onclick="setFilter('TP_HIT', this);">TP Hit ({tp_hits})</button>
@@ -463,11 +471,12 @@ def render_shadow_report_html() -> str:
           <th>Arah</th>
           <th>Tipe</th>
           <th>Entry</th>
+          <th>Harga Live</th>
           <th>SL</th>
           <th>TP</th>
           <th>R:R</th>
           <th>Status / Outcome</th>
-          <th>Net R</th>
+          <th>Floating / Net R</th>
           <th>Peak MFE</th>
           <th>Max MAE</th>
           <th>Disposisi MT5</th>
@@ -490,7 +499,7 @@ def render_shadow_report_html() -> str:
     function renderTableRows(trades) {{
       const tbody = document.getElementById('tableBody');
       if (!trades || trades.length === 0) {{
-        tbody.innerHTML = `<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--text-dim);">Tidak ada data order virtual yang cocok dengan filter.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="16" style="text-align:center;padding:24px;color:var(--text-dim);">Tidak ada data order virtual yang cocok dengan filter.</td></tr>`;
         return;
       }}
 
@@ -500,30 +509,91 @@ def render_shadow_report_html() -> str:
         const dirCol = isBuy ? "var(--green)" : "var(--red)";
 
         let outCol = "var(--text-dim)";
-        if (tr.outcome === "TP_HIT") outCol = "var(--green)";
+        if (tr.outcome === "TP_HIT" || tr.outcome === "TRAILING_SL_HIT") outCol = "var(--green)";
+        else if (tr.outcome === "BEP_HIT") outCol = "var(--cyan)";
         else if (tr.outcome === "SL_HIT") outCol = "var(--red)";
         else if (tr.status === "ACTIVE") outCol = "var(--cyan)";
         else if (tr.status === "PENDING") outCol = "var(--amber)";
 
-        const netRText = (tr.net_r !== null && tr.net_r !== undefined) ? `${{tr.net_r >= 0 ? '+' : ''}}${{Number(tr.net_r).toFixed(2)}}R` : '—';
+        // 1. Live Price calculation
+        let livePriceStr = '—';
+        let livePriceStyle = 'font-family:var(--font-mono);';
+        if (tr.current_price !== undefined && tr.current_price !== null) {{
+          livePriceStr = `${{tr.current_price}}`;
+          if (tr.status === 'ACTIVE') {{
+            livePriceStyle += 'font-weight:700;color:#fff;';
+          }} else if (tr.status === 'PENDING') {{
+            livePriceStyle += 'color:var(--amber);';
+          }}
+        }} else if (tr.exit_price !== undefined && tr.exit_price !== null) {{
+          livePriceStr = `${{tr.exit_price}}`;
+          livePriceStyle += 'color:var(--text-dim);';
+        }}
+
+        // 2. Floating / Net R calculation
+        let pnlText = '—';
+        let pnlCol = 'var(--text-dim)';
+        if (tr.status === "ACTIVE") {{
+          const flR = (tr.floating_r !== undefined && tr.floating_r !== null) ? Number(tr.floating_r) : null;
+          const flPts = (tr.floating_points !== undefined && tr.floating_points !== null) ? Number(tr.floating_points) : null;
+          if (flR !== null) {{
+            pnlCol = flR >= 0 ? "var(--green)" : "var(--red)";
+            const sign = flR >= 0 ? '+' : '';
+            const ptsSign = (flPts !== null && flPts >= 0) ? '+' : '';
+            const ptsPart = (flPts !== null) ? ` (${{ptsSign}}${{flPts}}p)` : '';
+            pnlText = `${{sign}}${{flR.toFixed(2)}}R${{ptsPart}}`;
+          }}
+        }} else if (tr.status === "PENDING") {{
+          const pts = (tr.floating_points !== undefined && tr.floating_points !== null) ? Math.abs(Number(tr.floating_points)) : null;
+          pnlCol = "var(--amber)";
+          pnlText = (pts !== null) ? `⏳ ${{pts}}p ke limit` : `⏳ Pending`;
+        }} else if (tr.status === "RESOLVED") {{
+          if (tr.net_r !== null && tr.net_r !== undefined) {{
+            const rVal = Number(tr.net_r);
+            pnlCol = rVal >= 0 ? "var(--green)" : "var(--red)";
+            const sign = rVal >= 0 ? '+' : '';
+            pnlText = `${{sign}}${{rVal.toFixed(2)}}R (${{tr.outcome || 'RESOLVED'}})`;
+          }} else {{
+            pnlText = tr.outcome || 'RESOLVED';
+          }}
+        }}
+
         const mfeText = (tr.peak_mfe_r !== undefined && tr.peak_mfe_r !== null) ? `+${{Number(tr.peak_mfe_r).toFixed(2)}}R` : '—';
         const maeText = (tr.max_mae_r !== undefined && tr.max_mae_r !== null) ? `${{Number(tr.max_mae_r).toFixed(2)}}R` : '—';
 
+        const isMt5Real = String(tr.mt5_disposition || '').includes("EXECUTED");
+        const ticketStr = tr.mt5_ticket ? `#${{tr.mt5_ticket}}` : '';
         const disp = tr.mt5_disposition || 'PENDING';
-        let dispBadge = `<span class="badge" style="background:rgba(255,255,255,0.06);color:var(--text-dim);">${{disp}}</span>`;
-        if (disp.includes("EXECUTED")) {{
-          dispBadge = `<span class="badge" style="background:var(--green-glow);color:var(--green);border:1px solid rgba(0,230,118,0.3);">${{disp}}</span>`;
+
+        let dispBadge = '';
+        if (isMt5Real) {{
+          dispBadge = `<span class="badge" style="background:var(--green-glow);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;">🟢 REAL MT5 ${{ticketStr}}</span>`;
+        }} else if (disp.includes("MAX_POSITIONS") || disp.includes("SLOT")) {{
+          dispBadge = `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;">🟣 PAPER (Slot 6/6 Full)</span>`;
         }} else if (disp.includes("BASKET")) {{
-          dispBadge = `<span class="badge" style="background:rgba(251,191,36,0.18);color:var(--amber);border:1px solid rgba(251,191,36,0.35);">${{disp}}</span>`;
+          dispBadge = `<span class="badge" style="background:rgba(251,191,36,0.18);color:var(--amber);border:1px solid rgba(251,191,36,0.35);font-weight:700;">🟣 PAPER (Basket Limit)</span>`;
         }} else if (disp.includes("RISK")) {{
-          dispBadge = `<span class="badge" style="background:rgba(251,146,60,0.18);color:#fb923c;border:1px solid rgba(251,146,60,0.35);">${{disp}}</span>`;
+          dispBadge = `<span class="badge" style="background:rgba(251,146,60,0.18);color:#fb923c;border:1px solid rgba(251,146,60,0.35);font-weight:700;">🟣 PAPER (Risk Blocked)</span>`;
         }} else if (disp.includes("VETO")) {{
-          dispBadge = `<span class="badge" style="background:var(--red-glow);color:var(--red);border:1px solid rgba(255,82,82,0.35);">${{disp}}</span>`;
+          dispBadge = `<span class="badge" style="background:var(--red-glow);color:var(--red);border:1px solid rgba(255,82,82,0.35);font-weight:700;">🟣 PAPER (LLM Veto)</span>`;
+        }} else {{
+          dispBadge = `<span class="badge" style="background:rgba(148,163,184,0.15);color:var(--text-dim);border:1px solid rgba(148,163,184,0.3);font-weight:700;">🟣 PAPER SHADOW</span>`;
         }}
+
+        let bepTrailBadge = '';
+        if (tr.trailing_activated) {{
+          bepTrailBadge = ` <span class="badge" style="background:rgba(56,189,248,0.2);color:var(--cyan);border:1px solid rgba(56,189,248,0.4);font-size:9.5px;padding:1px 5px;">TRAIL</span>`;
+        }} else if (tr.bep_activated) {{
+          bepTrailBadge = ` <span class="badge" style="background:rgba(0,230,118,0.2);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-size:9.5px;padding:1px 5px;">BEP</span>`;
+        }}
+
+        const rowStyle = isMt5Real 
+          ? `background:rgba(0, 230, 118, 0.035); border-left:3px solid var(--green);` 
+          : `border-left:3px solid rgba(192, 132, 252, 0.35);`;
 
         const timeStr = tr.created_at ? tr.created_at.split('T')[1]?.split('.')[0] || tr.created_at : '-';
 
-        html += `<tr>
+        html += `<tr style="${{rowStyle}}">
           <td style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-dim);">${{tr.shadow_id}}</td>
           <td style="font-family:var(--font-mono);font-size:11px;">${{timeStr}}</td>
           <td style="font-weight:700;font-family:var(--font-mono);">${{tr.symbol}}</td>
@@ -531,11 +601,12 @@ def render_shadow_report_html() -> str:
           <td style="font-weight:700;color:${{dirCol}};">${{tr.direction}}</td>
           <td style="font-size:11px;color:var(--text-muted);">${{tr.entry_type || 'market'}}</td>
           <td style="font-family:var(--font-mono);">${{tr.entry_price}}</td>
+          <td style="${{livePriceStyle}}">${{livePriceStr}}</td>
           <td style="font-family:var(--font-mono);color:var(--red);">${{tr.sl_price}}</td>
           <td style="font-family:var(--font-mono);color:var(--green);">${{tr.tp_price}}</td>
           <td style="font-family:var(--font-mono);font-weight:700;">${{tr.risk_reward || '—'}}R</td>
-          <td style="font-weight:700;color:${{outCol}};font-family:var(--font-mono);">${{tr.outcome || tr.status}}</td>
-          <td style="font-weight:800;color:${{outCol}};font-family:var(--font-mono);">${{netRText}}</td>
+          <td style="font-weight:700;color:${{outCol}};font-family:var(--font-mono);">${{tr.outcome || tr.status}}${{bepTrailBadge}}</td>
+          <td style="font-weight:800;color:${{pnlCol}};font-family:var(--font-mono);">${{pnlText}}</td>
           <td style="color:var(--green);font-family:var(--font-mono);">${{mfeText}}</td>
           <td style="color:var(--red);font-family:var(--font-mono);">${{maeText}}</td>
           <td>${{dispBadge}}</td>
@@ -555,13 +626,15 @@ def render_shadow_report_html() -> str:
     function filterTable() {{
       const q = (document.getElementById('searchInput').value || '').toLowerCase();
       const filtered = allTrades.filter(tr => {{
+        if (currentFilter === 'REAL_MT5' && !String(tr.mt5_disposition || '').includes('EXECUTED')) return false;
+        if (currentFilter === 'PAPER_SHADOW' && String(tr.mt5_disposition || '').includes('EXECUTED')) return false;
         if (currentFilter === 'ACTIVE' && tr.status !== 'ACTIVE') return false;
         if (currentFilter === 'PENDING' && tr.status !== 'PENDING') return false;
         if (currentFilter === 'TP_HIT' && tr.outcome !== 'TP_HIT') return false;
         if (currentFilter === 'SL_HIT' && tr.outcome !== 'SL_HIT') return false;
-        if (currentFilter === 'RISK' && !String(tr.mt5_disposition || '').includes('RISK') && !String(tr.mt5_disposition || '').includes('BASKET')) return false;
+        if (currentFilter === 'RISK' && !String(tr.mt5_disposition || '').includes('RISK') && !String(tr.mt5_disposition || '').includes('BASKET') && !String(tr.mt5_disposition || '').includes('MAX_POSITIONS')) return false;
         if (q) {{
-          const hay = `${{tr.shadow_id}} ${{tr.symbol}} ${{tr.setup_type}} ${{tr.direction}} ${{tr.outcome || tr.status}} ${{tr.mt5_disposition}}`.toLowerCase();
+          const hay = `${{tr.shadow_id}} ${{tr.symbol}} ${{tr.setup_type}} ${{tr.direction}} ${{tr.outcome || tr.status}} ${{tr.mt5_disposition}} ${{tr.mt5_ticket || ''}}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }}
         return true;
@@ -597,21 +670,21 @@ def render_shadow_report_html() -> str:
       updateKpiEl('kpi-ev',      (ev >= 0 ? '+' : '') + ev.toFixed(3) + 'R');
 
       // Update filter bar counters
-      const actCnt  = data.active_count || 0;
-      const totCnt  = allTrades.length;
-      const pendCnt = data.pending_count || 0;
-      const tpCnt   = data.tp_hits || 0;
-      const slCnt   = data.sl_hits || 0;
-      const el0 = document.querySelector('.filter-pill:nth-child(1)');
-      const el1 = document.querySelector('.filter-pill:nth-child(2)');
-      const el2 = document.querySelector('.filter-pill:nth-child(3)');
-      const el3 = document.querySelector('.filter-pill:nth-child(4)');
-      const el4 = document.querySelector('.filter-pill:nth-child(5)');
-      if (el0) el0.textContent = `Semua (${{totCnt}})`;
-      if (el1) el1.textContent = `Aktif (${{actCnt}})`;
-      if (el2) el2.textContent = `Pending (${{pendCnt}})`;
-      if (el3) el3.textContent = `TP Hit (${{tpCnt}})`;
-      if (el4) el4.textContent = `SL Hit (${{slCnt}})`;
+      const totCnt   = allTrades.length;
+      const realCnt  = allTrades.filter(t => String(t.mt5_disposition || '').includes('EXECUTED')).length;
+      const paperCnt = totCnt - realCnt;
+      const actCnt   = data.active_count || 0;
+      const pendCnt  = data.pending_count || 0;
+      const tpCnt    = data.tp_hits || 0;
+      const slCnt    = data.sl_hits || 0;
+      const pills = document.querySelectorAll('.filter-pill');
+      if (pills[0]) pills[0].textContent = `Semua (${{totCnt}})`;
+      if (pills[1]) pills[1].textContent = `🟢 Real MT5 (${{realCnt}})`;
+      if (pills[2]) pills[2].textContent = `🟣 Paper Shadow (${{paperCnt}})`;
+      if (pills[3]) pills[3].textContent = `Aktif (${{actCnt}})`;
+      if (pills[4]) pills[4].textContent = `Pending (${{pendCnt}})`;
+      if (pills[5]) pills[5].textContent = `TP Hit (${{tpCnt}})`;
+      if (pills[6]) pills[6].textContent = `SL Hit (${{slCnt}})`;
 
       // Refresh tabel dengan filter aktif saat ini
       filterTable();

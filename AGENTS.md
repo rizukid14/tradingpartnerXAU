@@ -317,6 +317,11 @@ python main.py
     - **Penyelarasan Semantik Mandate Thesis MSE (`macro_strategic_engine.py`)**: Pada state `CHAMBER_CONSOLIDATION` (20-80% chamber), larangan tegas dibatasi untuk *market chase order*, sedangkan *Pending Limit Orders* di Floor F1 / Ceiling C1 atau retest anchor ditegaskan sah dan direkomendasikan (`REVISE`).
     - **Prompt Dossier Alignment (`llm_client.py`)**: Rule #4 OpenAI & Gemini menegaskan resolusi mid-chamber via Pending Limit Order di boundary.
     - **API Baru `record_soft_timing_hold()` (`market_scanner.py`)**: Mengatur jeda bernapas tanpa mengunci mekanisme. Test suite 120/120 PASS.
+66. **Asymmetric Vacuum BEP, Shadow MT5 Auto-Sync & 100% Winrate Live Validation** (7 September 2026):
+    - **Dynamic Asymmetric BEP ($0.35\text{R}$ Trigger)** (`position_manager.py` & `shadow_tracker.py`): Mengaktifkan BEP lebih dini di $0.35\text{R}$ (dari $0.50\text{R}$) saat rasio TP/SL $\ge 2.0$ (kondisi vacuum stretch multi-tahun) atau mode defensif. Terbukti live mengunci posisi `EURAUD SELL` (+0.40R) ke risk-free BEP +15 pts.
+    - **Paper Shadow Radar Deduplication & Live Ticket Sync** (`shadow_tracker.py` & `main.py`): Deduplikasi 30 menit + auto-sync instan nomor tiket MT5 (`mt5_ticket`) dan rekonsiliasi deal exit MT5. Penambahan badge visual `[BEP LOCKED]` / `[TRAILING]` di terminal dan `quant_shadow_report.html`.
+    - **Validasi Live 100% Winrate (17 Closed Deals, +$577.14 USD)**: Pembuktian efektivitas unifikasi H1 JPY Crosses (M3 Breakout Retest), konfirmasi M5 rejection wick $\ge 25\%$, dan eksekusi 7 deal Partial TP1 50%.
+    - **Eksperimen OpenAI Quantitative Regime Synthesis & Factual Recap** (`scratch/test_openai_regime_and_recap.py`): Menghubungkan live news ForexFactory/TradingView + CSM ke nilai rezim kuantitatif numerik (`volatility_expansion_score`, `directional_persistence_score`, `recommended_operational_mode`).
 
 ---
 

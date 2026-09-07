@@ -53,6 +53,12 @@ class ShadowTrade:
     mt5_disposition: str = "EXECUTED_MT5"  # EXECUTED_MT5, SKIPPED_SLOT_FULL, SKIPPED_RISK_BLOCK, SKIPPED_VETO
     mt5_ticket: Optional[int] = None
     action_tier: str = "FULL_ALLOW"
+    current_price: Optional[float] = None
+    floating_points: Optional[int] = None
+    floating_r: Optional[float] = None
+    current_sl: Optional[float] = None
+    bep_activated: bool = False
+    trailing_activated: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -83,6 +89,7 @@ class QuantShadowTracker:
         if getattr(self, "_initialized", False):
             return
         self._lock = threading.RLock()
+        self._last_state_mtime: float = 0.0
         self.active_trades: List[ShadowTrade] = []
         self._stats = {
             "total_recorded": 0,
@@ -102,6 +109,7 @@ class QuantShadowTracker:
         with self._lock:
             try:
                 if os.path.exists(SHADOW_STATE_FILE):
+                    self._last_state_mtime = os.path.getmtime(SHADOW_STATE_FILE)
                     with open(SHADOW_STATE_FILE, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     self.active_trades = [ShadowTrade.from_dict(t) for t in data.get("active_trades", [])]
@@ -110,6 +118,61 @@ class QuantShadowTracker:
             except Exception as e:
                 logger.error(f"[SHADOW TRACKER LOAD ERROR] {e}")
                 self.active_trades = []
+
+    def reload_state_if_modified(self) -> bool:
+        """
+        Reloads state from disk if file was modified by another process (e.g. main.py vs dashboard.py).
+        Returns True if state was reloaded, False otherwise.
+        """
+        with self._lock:
+            try:
+                if os.path.exists(SHADOW_STATE_FILE):
+                    mtime = os.path.getmtime(SHADOW_STATE_FILE)
+                    if mtime > self._last_state_mtime:
+                        self._load_state()
+                        return True
+            except Exception as e:
+                logger.debug(f"[SHADOW RELOAD CHECK ERROR] {e}")
+            return False
+
+    def get_active_trades_enriched(self) -> List[Dict[str, Any]]:
+        """
+        Returns active trades enriched with real-time MT5 current_price, floating_points, and floating_r.
+        Safely callable from dashboard.py, reporting scripts, or CLI.
+        """
+        with self._lock:
+            self.reload_state_if_modified()
+            enriched = []
+            for t in self.active_trades:
+                d = t.to_dict()
+                try:
+                    sym = d.get("symbol", "")
+                    if hasattr(config, "mt5") and hasattr(config.mt5, "symbol_info_tick"):
+                        si = config.mt5.symbol_info_tick(sym)
+                        if si and si.bid > 0 and si.ask > 0:
+                            mid = (si.bid + si.ask) / 2.0
+                            s_info = config.mt5.symbol_info(sym)
+                            pt = getattr(s_info, "point", 0.00001) or 0.00001
+                            digits = getattr(s_info, "digits", 5)
+                            entry = float(d.get("entry_price", 0.0))
+                            sl = float(d.get("sl_price", 0.0))
+                            risk = abs(entry - sl)
+                            direction = d.get("direction", "BUY")
+
+                            d["current_price"] = round(mid, digits)
+                            if d.get("status") == "ACTIVE" and risk > 0:
+                                curr_r = (mid - entry) / risk if direction == "BUY" else (entry - mid) / risk
+                                curr_pts = int(round((mid - entry) / pt)) if direction == "BUY" else int(round((entry - mid) / pt))
+                                d["floating_r"] = round(curr_r, 2)
+                                d["floating_points"] = curr_pts
+                            elif d.get("status") == "PENDING":
+                                dist_pts = int(round((entry - si.ask) / pt)) if direction == "BUY" else int(round((si.bid - entry) / pt))
+                                d["floating_points"] = dist_pts
+                                d["floating_r"] = 0.0
+                except Exception:
+                    pass
+                enriched.append(d)
+            return enriched
 
     def _save_state(self):
         """Persists active state to quant_shadow_state.json atomically."""
@@ -128,6 +191,8 @@ class QuantShadowTracker:
                     os.replace(tmp_path, SHADOW_STATE_FILE)
                 else:
                     os.rename(tmp_path, SHADOW_STATE_FILE)
+                if os.path.exists(SHADOW_STATE_FILE):
+                    self._last_state_mtime = os.path.getmtime(SHADOW_STATE_FILE)
             except Exception as e:
                 logger.error(f"[SHADOW TRACKER SAVE ERROR] {e}")
 
@@ -172,7 +237,12 @@ class QuantShadowTracker:
                     # Check if created within last 30 minutes
                     try:
                         ex_time = datetime.fromisoformat(existing.created_at)
-                        if (now_dt - ex_time).total_seconds() < 1800:
+                        elapsed_s = (now_dt - ex_time).total_seconds()
+                        if elapsed_s < 1800:
+                            logger.info(
+                                f"[SHADOW DEDUPLICATED] {sym} {dir_str} ({setup_type}) sudah aktif di Paper Trade "
+                                f"(ID: {existing.shadow_id}, status: {existing.status}, age: {elapsed_s/60:.1f}m < 30m)."
+                            )
                             return None
                     except Exception:
                         pass
@@ -202,6 +272,9 @@ class QuantShadowTracker:
                 mt5_disposition=mt5_disposition,
                 mt5_ticket=mt5_ticket,
                 action_tier=action_tier,
+                current_sl=sl_price,
+                bep_activated=False,
+                trailing_activated=False,
                 metadata={
                     "current_atr_pts": getattr(candidate, "current_atr_pts", 0.0),
                     "current_spread_pts": getattr(candidate, "current_spread_pts", 0),
@@ -221,16 +294,26 @@ class QuantShadowTracker:
             )
             return trade
 
+    def get_active_shadow_for(self, symbol: str, direction: str, setup_type: str) -> Optional[ShadowTrade]:
+        """Mengambil trade aktif/pending yang cocok untuk pelaporan status CLI."""
+        with self._lock:
+            for t in self.active_trades:
+                if t.symbol == symbol and t.direction == direction and t.setup_type == setup_type:
+                    return t
+        return None
+
     def update_shadow_orders(self, connector: Any) -> List[ShadowTrade]:
         """
-        Evaluates and advances the state of all pending and active shadow orders using live ticks.
+        Updates status of all active and pending shadow orders against live ticks.
         Detects:
+        0. MT5 Deal Reconciliation (resolves closed MT5 tickets directly from broker history).
         1. Pending Fill (limit order triggered by market price).
         2. Target Proximity Invalidation (>=75% move toward TP without fill).
         3. Timeout Expiration (pending > 120 minutes).
         4. Excursion Tracking (MFE & MAE accumulation).
-        5. TP Hit (+R) and SL Hit (-1.0R).
-        6. Time Decay Stagnation Exit (> 24 hours).
+        5. Live Price & Floating P/L Tracking (current_price, floating_points, floating_r).
+        6. TP Hit (+R) and SL Hit (-1.0R).
+        7. Time Decay Stagnation Exit (> 24 hours).
         """
         with self._lock:
             if not self.active_trades:
@@ -241,8 +324,90 @@ class QuantShadowTracker:
             newly_resolved: List[ShadowTrade] = []
             remaining: List[ShadowTrade] = []
 
+            # -------------------------------------------------------------
+            # 0. MT5 OPEN POSITIONS QUERY (Single Batch Query)
+            # -------------------------------------------------------------
+            open_mt5_tickets = set()
+            try:
+                if hasattr(config, "mt5") and hasattr(config.mt5, "positions_get"):
+                    raw_mt5_pos = config.mt5.positions_get()
+                    if raw_mt5_pos:
+                        open_mt5_tickets = {p.ticket for p in raw_mt5_pos}
+            except Exception:
+                pass
+
             for trade in self.active_trades:
                 try:
+                    # ---------------------------------------------------------
+                    # 0b. MT5 TICKET RECONCILIATION (For Real Executed Trades)
+                    # ---------------------------------------------------------
+                    # Auto-recover missing mt5_ticket for EXECUTED_MT5 trades from history deals
+                    if not trade.mt5_ticket and trade.mt5_disposition == "EXECUTED_MT5" and trade.status in ("ACTIVE", "PENDING"):
+                        try:
+                            if hasattr(config, "mt5") and hasattr(config.mt5, "history_deals_get"):
+                                c_time = datetime.fromisoformat(trade.created_at)
+                                from_ep = int(c_time.timestamp()) - 300
+                                to_ep = int(now_dt.timestamp()) + 60
+                                deals_search = config.mt5.history_deals_get(from_ep, to_ep)
+                                if deals_search:
+                                    for d in deals_search:
+                                        d_sym = getattr(d, "symbol", "")
+                                        d_entry = getattr(d, "entry", -1)
+                                        d_pos = getattr(d, "position_id", 0)
+                                        if d_entry == 0 and d_pos > 0 and (trade.symbol in d_sym or d_sym in trade.symbol):
+                                            trade.mt5_ticket = d_pos
+                                            logger.info(f"[SHADOW RECONCILE] Recovered missing mt5_ticket #{d_pos} for {trade.shadow_id} ({trade.symbol})")
+                                            break
+                        except Exception as e:
+                            logger.debug(f"[SHADOW RECONCILE ERROR] {e}")
+
+                    if trade.mt5_ticket and trade.status in ("ACTIVE", "PENDING"):
+                        if trade.mt5_ticket not in open_mt5_tickets:
+                            try:
+                                if hasattr(config, "mt5") and hasattr(config.mt5, "history_deals_get"):
+                                    deals = config.mt5.history_deals_get(position=trade.mt5_ticket)
+                                    if deals:
+                                        close_deal = None
+                                        for d in deals:
+                                            d_dict = d._asdict() if hasattr(d, "_asdict") else (d if isinstance(d, dict) else {})
+                                            entry_val = d_dict.get("entry", getattr(d, "entry", -1))
+                                            if entry_val == 1:  # DEAL_ENTRY_OUT
+                                                close_deal = d_dict or {
+                                                    "price": getattr(d, "price", 0.0),
+                                                    "profit": getattr(d, "profit", 0.0),
+                                                    "comment": getattr(d, "comment", "")
+                                                }
+                                                break
+                                        if close_deal:
+                                            exit_p = float(close_deal.get("price", 0.0))
+                                            profit_usd = float(close_deal.get("profit", 0.0))
+                                            comment = str(close_deal.get("comment", "")).lower()
+
+                                            trade.status = "RESOLVED"
+                                            trade.resolved_time = now_iso
+                                            trade.exit_price = exit_p if exit_p > 0 else trade.entry_price
+
+                                            risk_dist = abs(trade.entry_price - trade.sl_price)
+                                            if risk_dist > 0:
+                                                realized_pts = (trade.exit_price - trade.entry_price) if trade.direction == "BUY" else (trade.entry_price - trade.exit_price)
+                                                trade.net_r = round(realized_pts / risk_dist, 2)
+                                            else:
+                                                trade.net_r = 0.0
+
+                                            if "tp" in comment or profit_usd > 0:
+                                                trade.outcome = "TP_HIT"
+                                            elif "sl" in comment or profit_usd < 0:
+                                                trade.outcome = "SL_HIT"
+                                            else:
+                                                trade.outcome = "RESOLVED_CLOSED"
+
+                                            logger.info(f"[SHADOW MT5 SYNC] {trade.shadow_id} (Ticket #{trade.mt5_ticket}) resolved via MT5 deal: {trade.outcome} @ {trade.exit_price} ({trade.net_r:+.2f}R, ${profit_usd:+.2f})")
+                                            newly_resolved.append(trade)
+                                            self._record_resolved(trade)
+                                            continue
+                            except Exception as e:
+                                logger.debug(f"[SHADOW MT5 RECONCILE ERROR] {trade.shadow_id}: {e}")
+
                     tick = connector.get_current_tick(trade.symbol)
                     if not tick:
                         remaining.append(trade)
@@ -250,15 +415,29 @@ class QuantShadowTracker:
 
                     ask = float(tick.get("ask", 0.0))
                     bid = float(tick.get("bid", 0.0))
+                    point = float(tick.get("point", 0.00001))
+                    digits = int(tick.get("digits", 5))
+                    if point <= 0:
+                        point = 0.00001 if "JPY" not in trade.symbol else 0.001
+
                     if ask <= 0 or bid <= 0:
                         remaining.append(trade)
                         continue
                     mid = (ask + bid) / 2.0
+                    trade.current_price = round(mid, digits)
 
                     # -------------------------------------------------------------
                     # 1. PENDING ORDER EVALUATION
                     # -------------------------------------------------------------
                     if trade.status == "PENDING":
+                        # Distance to entry fill in points
+                        if trade.direction == "BUY":
+                            dist_pts = int(round((trade.entry_price - ask) / point))
+                        else:
+                            dist_pts = int(round((bid - trade.entry_price) / point))
+                        trade.floating_points = dist_pts
+                        trade.floating_r = 0.0
+
                         # Check fill
                         is_filled = False
                         if trade.direction == "BUY":
@@ -271,8 +450,13 @@ class QuantShadowTracker:
                         if is_filled:
                             trade.status = "ACTIVE"
                             trade.fill_time = now_iso
+                            trade.current_sl = trade.sl_price
+                            trade.bep_activated = False
+                            trade.trailing_activated = False
                             trade.peak_mfe_r = 0.0
                             trade.max_mae_r = 0.0
+                            trade.floating_points = 0
+                            trade.floating_r = 0.0
                             logger.info(f"[SHADOW FILLED] {trade.shadow_id} | {trade.symbol} {trade.direction} filled @ {trade.entry_price}")
                             remaining.append(trade)
                             continue
@@ -321,14 +505,38 @@ class QuantShadowTracker:
                     if trade.status == "ACTIVE":
                         risk_amount = abs(trade.entry_price - trade.sl_price)
                         if risk_amount <= 0:
-                            remaining.append(trade)
-                            continue
+                            risk_amount = (trade.sl_points * point) if trade.sl_points > 0 else (100 * point)
+                        if trade.current_sl is None:
+                            trade.current_sl = trade.sl_price
 
-                        # Excursion tracking
+                        # Excursion tracking & floating P/L
                         if trade.direction == "BUY":
                             curr_r = (mid - trade.entry_price) / risk_amount
+                            pts = int(round((mid - trade.entry_price) / point))
+                            trade.floating_points = pts
+                            trade.floating_r = round(curr_r, 2)
                             trade.peak_mfe_r = max(trade.peak_mfe_r, round(curr_r, 2))
                             trade.max_mae_r = min(trade.max_mae_r, round(curr_r, 2))
+
+                            # Dynamic BEP Threshold: 0.35R for vacuum / defensive setups, 0.50R standard
+                            is_defensive = (trade.action_tier in ("REDUCED_CONFIDENCE", "TP1_ONLY_SCALP") or trade.risk_reward >= 2.0)
+                            bep_trigger_r = 0.35 if is_defensive else 0.50
+
+                            # 1. Virtual Break-Even (BEP) Trigger
+                            if curr_r >= bep_trigger_r and not trade.bep_activated:
+                                b_sl = round(trade.entry_price + (15 * point), digits)
+                                if trade.current_sl < b_sl:
+                                    trade.current_sl = b_sl
+                                trade.bep_activated = True
+                                logger.info(f"[SHADOW BEP] {trade.shadow_id} | {trade.symbol} BUY moved SL to BEP @ {trade.current_sl} (+15 pts, trigger: {bep_trigger_r}R)")
+
+                            # 2. Virtual Dynamic Trailing Stop Trigger: curr_r >= 0.80
+                            if curr_r >= 0.80:
+                                trade.trailing_activated = True
+                                trail_floor = round(trade.entry_price + ((curr_r - 0.40) * risk_amount), digits)
+                                if trade.current_sl < trail_floor:
+                                    trade.current_sl = trail_floor
+                                    logger.debug(f"[SHADOW TRAILING] {trade.shadow_id} | {trade.symbol} BUY trailed SL to @ {trade.current_sl} (+{curr_r - 0.40:.2f}R)")
 
                             # Check TP Hit
                             if bid >= trade.tp_price:
@@ -341,21 +549,50 @@ class QuantShadowTracker:
                                 self._record_resolved(trade)
                                 continue
 
-                            # Check SL Hit
-                            elif ask <= trade.sl_price:
+                            # Check SL Hit (Evaluated against trade.current_sl)
+                            active_sl = trade.current_sl if trade.current_sl is not None else trade.sl_price
+                            if ask <= active_sl:
                                 trade.status = "RESOLVED"
-                                trade.outcome = "SL_HIT"
                                 trade.resolved_time = now_iso
-                                trade.exit_price = trade.sl_price
-                                trade.net_r = -1.0
+                                trade.exit_price = active_sl
+                                if trade.bep_activated or trade.trailing_activated:
+                                    realized_r = round((active_sl - trade.entry_price) / risk_amount, 2)
+                                    trade.net_r = max(0.0, realized_r)
+                                    trade.outcome = "TRAILING_SL_HIT" if realized_r >= 0.20 else "BEP_HIT"
+                                else:
+                                    trade.outcome = "SL_HIT"
+                                    trade.net_r = -1.0
                                 newly_resolved.append(trade)
                                 self._record_resolved(trade)
                                 continue
 
                         elif trade.direction == "SELL":
                             curr_r = (trade.entry_price - mid) / risk_amount
+                            pts = int(round((trade.entry_price - mid) / point))
+                            trade.floating_points = pts
+                            trade.floating_r = round(curr_r, 2)
                             trade.peak_mfe_r = max(trade.peak_mfe_r, round(curr_r, 2))
                             trade.max_mae_r = min(trade.max_mae_r, round(curr_r, 2))
+
+                            # Dynamic BEP Threshold: 0.35R for vacuum / defensive setups, 0.50R standard
+                            is_defensive = (trade.action_tier in ("REDUCED_CONFIDENCE", "TP1_ONLY_SCALP") or trade.risk_reward >= 2.0)
+                            bep_trigger_r = 0.35 if is_defensive else 0.50
+
+                            # 1. Virtual Break-Even (BEP) Trigger
+                            if curr_r >= bep_trigger_r and not trade.bep_activated:
+                                b_sl = round(trade.entry_price - (15 * point), digits)
+                                if trade.current_sl > b_sl:
+                                    trade.current_sl = b_sl
+                                trade.bep_activated = True
+                                logger.info(f"[SHADOW BEP] {trade.shadow_id} | {trade.symbol} SELL moved SL to BEP @ {trade.current_sl} (+15 pts, trigger: {bep_trigger_r}R)")
+
+                            # 2. Virtual Dynamic Trailing Stop Trigger: curr_r >= 0.80
+                            if curr_r >= 0.80:
+                                trade.trailing_activated = True
+                                trail_ceil = round(trade.entry_price - ((curr_r - 0.40) * risk_amount), digits)
+                                if trade.current_sl > trail_ceil:
+                                    trade.current_sl = trail_ceil
+                                    logger.debug(f"[SHADOW TRAILING] {trade.shadow_id} | {trade.symbol} SELL trailed SL to @ {trade.current_sl} (+{curr_r - 0.40:.2f}R)")
 
                             # Check TP Hit
                             if ask <= trade.tp_price:
@@ -368,23 +605,38 @@ class QuantShadowTracker:
                                 self._record_resolved(trade)
                                 continue
 
-                            # Check SL Hit
-                            elif bid >= trade.sl_price:
+                            # Check SL Hit (Evaluated against trade.current_sl)
+                            active_sl = trade.current_sl if trade.current_sl is not None else trade.sl_price
+                            if bid >= active_sl:
                                 trade.status = "RESOLVED"
-                                trade.outcome = "SL_HIT"
                                 trade.resolved_time = now_iso
-                                trade.exit_price = trade.sl_price
-                                trade.net_r = -1.0
+                                trade.exit_price = active_sl
+                                if trade.bep_activated or trade.trailing_activated:
+                                    realized_r = round((trade.entry_price - active_sl) / risk_amount, 2)
+                                    trade.net_r = max(0.0, realized_r)
+                                    trade.outcome = "TRAILING_SL_HIT" if realized_r >= 0.20 else "BEP_HIT"
+                                else:
+                                    trade.outcome = "SL_HIT"
+                                    trade.net_r = -1.0
                                 newly_resolved.append(trade)
                                 self._record_resolved(trade)
                                 continue
 
-                        # Check Time-Decay Stagnation Exit (24 hours hold)
+                        # Check Peak-Aware Time-Decay Stagnation Exit
                         try:
                             f_time_str = trade.fill_time or trade.created_at
                             f_time = datetime.fromisoformat(f_time_str)
                             hold_hours = (now_dt - f_time).total_seconds() / 3600.0
-                            if hold_hours >= 24.0:
+                            if hold_hours >= 4.0 and trade.peak_mfe_r < 0.30 and (-0.20 <= curr_r <= 0.20):
+                                trade.status = "RESOLVED"
+                                trade.outcome = "TIME_DECAY_EXIT"
+                                trade.resolved_time = now_iso
+                                trade.exit_price = mid
+                                trade.net_r = round(curr_r, 2)
+                                newly_resolved.append(trade)
+                                self._record_resolved(trade)
+                                continue
+                            elif hold_hours >= 24.0:
                                 trade.status = "RESOLVED"
                                 trade.outcome = "TIME_DECAY_EXIT"
                                 trade.resolved_time = now_iso
@@ -403,7 +655,7 @@ class QuantShadowTracker:
                     remaining.append(trade)
 
             self.active_trades = remaining
-            if newly_resolved:
+            if newly_resolved or len(remaining) > 0:
                 self._save_state()
 
             return newly_resolved
@@ -427,8 +679,13 @@ class QuantShadowTracker:
         elif trade.outcome == "SL_HIT":
             self._stats["sl_hits"] += 1
             self._stats["cumulative_net_r"] = round(self._stats["cumulative_net_r"] - 1.0, 2)
-        elif trade.outcome == "TIME_DECAY_EXIT":
-            self._stats["cumulative_net_r"] = round(self._stats["cumulative_net_r"] + (trade.net_r or 0.0), 2)
+        elif trade.outcome in ("BEP_HIT", "TRAILING_SL_HIT", "TIME_DECAY_EXIT", "RESOLVED_CLOSED"):
+            r_val = trade.net_r or 0.0
+            if r_val > 0.05:
+                self._stats["tp_hits"] += 1
+            elif r_val < -0.05:
+                self._stats["sl_hits"] += 1
+            self._stats["cumulative_net_r"] = round(self._stats["cumulative_net_r"] + r_val, 2)
         elif trade.outcome in ("EXPIRED_NO_FILL", "EXPIRED_TIMEOUT"):
             self._stats["expired_count"] += 1
 
@@ -477,6 +734,7 @@ class QuantShadowTracker:
             # MT5 Execution vs Skipped breakdown
             disp_stats = {
                 "EXECUTED_MT5": 0,
+                "SKIPPED_MAX_POSITIONS": 0,
                 "SKIPPED_RISK_BASKET": 0,
                 "SKIPPED_RISK_BLOCK": 0,
                 "SKIPPED_LLM_VETO": 0,
@@ -488,6 +746,8 @@ class QuantShadowTracker:
                 disp = str(t_dict.get("mt5_disposition", "OTHER") or "OTHER").upper()
                 if "EXECUTED" in disp:
                     disp_stats["EXECUTED_MT5"] += 1
+                elif "MAX_POSITIONS" in disp or "SLOT" in disp:
+                    disp_stats["SKIPPED_MAX_POSITIONS"] += 1
                 elif "BASKET" in disp or "KONSENTRASI" in disp:
                     disp_stats["SKIPPED_RISK_BASKET"] += 1
                 elif "RISK" in disp:

@@ -366,6 +366,7 @@ def get_open_positions(symbol=None, magic=None):
             "profit": p.profit,
             "swap": getattr(p, "swap", 0.0),
             "magic": p.magic,
+            "comment": getattr(p, "comment", ""),
             "time": p.time
         })
     return res
