@@ -62,6 +62,8 @@ def render_shadow_report_html() -> str:
 
     # Combine active + resolved for data table
     all_combined = active_trades + resolved_trades
+    real_mt5_count = sum(1 for t in all_combined if "EXECUTED" in str(t.get("mt5_disposition", "")) or bool(t.get("mt5_ticket")))
+    paper_shadow_count = len(all_combined) - real_mt5_count
     trades_json = json.dumps(all_combined)
 
     net_r_color = "#00e676" if cum_net_r >= 0 else "#ff5252"
@@ -339,7 +341,7 @@ def render_shadow_report_html() -> str:
     </div>
     <div class="kpi-card">
       <div class="kpi-title">Eksekusi MT5 vs Skipped</div>
-      <div class="kpi-value" id="kpi-exec" style="color:var(--cyan);">{disp_stats.get('EXECUTED_MT5', 0)} / {total_rec}</div>
+      <div class="kpi-value" id="kpi-exec" style="color:var(--cyan);">{real_mt5_count} / {total_rec}</div>
       <div class="kpi-subtext">Risk Block: <b id="kpi-risk" style="color:var(--amber);">{disp_stats.get('SKIPPED_RISK_BASKET', 0) + disp_stats.get('SKIPPED_RISK_BLOCK', 0)}</b> │ Veto: <b id="kpi-veto" style="color:var(--red);">{disp_stats.get('SKIPPED_LLM_VETO', 0)}</b></div>
     </div>
   </div>
@@ -451,8 +453,8 @@ def render_shadow_report_html() -> str:
   <div class="filter-bar">
     <input type="text" id="searchInput" class="search-input" placeholder="🔍 Cari simbol, setup, outcome, ID..." oninput="filterTable();">
     <button class="filter-pill active" onclick="setFilter('ALL', this);">Semua ({len(all_combined)})</button>
-    <button class="filter-pill" onclick="setFilter('REAL_MT5', this);" style="border-color:rgba(0,230,118,0.4);color:var(--green);font-weight:700;">🟢 Real MT5 ({disp_stats.get('EXECUTED_MT5', 0)})</button>
-    <button class="filter-pill" onclick="setFilter('PAPER_SHADOW', this);" style="border-color:rgba(192,132,252,0.4);color:#c084fc;font-weight:700;">🟣 Paper Shadow ({len(all_combined) - disp_stats.get('EXECUTED_MT5', 0)})</button>
+    <button class="filter-pill" onclick="setFilter('REAL_MT5', this);" style="border-color:rgba(0,230,118,0.4);color:var(--green);font-weight:700;">🟢 Real MT5 ({real_mt5_count})</button>
+    <button class="filter-pill" onclick="setFilter('PAPER_SHADOW', this);" style="border-color:rgba(192,132,252,0.4);color:#c084fc;font-weight:700;">🟣 Paper Shadow ({paper_shadow_count})</button>
     <button class="filter-pill" onclick="setFilter('ACTIVE', this);">Aktif ({act_cnt})</button>
     <button class="filter-pill" onclick="setFilter('PENDING', this);">Pending ({pend_cnt})</button>
     <button class="filter-pill" onclick="setFilter('TP_HIT', this);">TP Hit ({tp_hits})</button>
@@ -561,7 +563,7 @@ def render_shadow_report_html() -> str:
         const mfeText = (tr.peak_mfe_r !== undefined && tr.peak_mfe_r !== null) ? `+${{Number(tr.peak_mfe_r).toFixed(2)}}R` : '—';
         const maeText = (tr.max_mae_r !== undefined && tr.max_mae_r !== null) ? `${{Number(tr.max_mae_r).toFixed(2)}}R` : '—';
 
-        const isMt5Real = String(tr.mt5_disposition || '').includes("EXECUTED");
+        const isMt5Real = String(tr.mt5_disposition || '').includes("EXECUTED") || (Boolean(tr.mt5_ticket) && Number(tr.mt5_ticket) > 0);
         const ticketStr = tr.mt5_ticket ? `#${{tr.mt5_ticket}}` : '';
         const disp = tr.mt5_disposition || 'PENDING';
 
@@ -626,8 +628,9 @@ def render_shadow_report_html() -> str:
     function filterTable() {{
       const q = (document.getElementById('searchInput').value || '').toLowerCase();
       const filtered = allTrades.filter(tr => {{
-        if (currentFilter === 'REAL_MT5' && !String(tr.mt5_disposition || '').includes('EXECUTED')) return false;
-        if (currentFilter === 'PAPER_SHADOW' && String(tr.mt5_disposition || '').includes('EXECUTED')) return false;
+        const trIsReal = String(tr.mt5_disposition || '').includes('EXECUTED') || (Boolean(tr.mt5_ticket) && Number(tr.mt5_ticket) > 0);
+        if (currentFilter === 'REAL_MT5' && !trIsReal) return false;
+        if (currentFilter === 'PAPER_SHADOW' && trIsReal) return false;
         if (currentFilter === 'ACTIVE' && tr.status !== 'ACTIVE') return false;
         if (currentFilter === 'PENDING' && tr.status !== 'PENDING') return false;
         if (currentFilter === 'TP_HIT' && tr.outcome !== 'TP_HIT') return false;

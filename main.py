@@ -1055,8 +1055,10 @@ def run_scanner_trading_cycle(cand, risk):
                         expiration_minutes=pending_expiry
                     )
                     if pending_res.get("status") == "SUCCESS":
-                        if registered_shadow and pending_res.get("ticket"):
-                            registered_shadow.mt5_ticket = pending_res.get("ticket")
+                        target_sh = registered_shadow or shadow_tracker.get_active_shadow_for(sym, trade_signal, cand.setup_type)
+                        if target_sh and pending_res.get("ticket"):
+                            target_sh.mt5_ticket = pending_res.get("ticket")
+                            target_sh.mt5_disposition = "EXECUTED_MT5"
                             shadow_tracker._save_state()
                         if config.DRY_RUN:
                             print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
@@ -1118,8 +1120,10 @@ def run_scanner_trading_cycle(cand, risk):
                     atr_h1_pts=cand.current_atr_pts,
                 )
                 if order_res.get("status") == "SUCCESS":
-                    if registered_shadow and order_res.get("ticket"):
-                        registered_shadow.mt5_ticket = order_res.get("ticket")
+                    target_sh = registered_shadow or shadow_tracker.get_active_shadow_for(sym, trade_signal, cand.setup_type)
+                    if target_sh and order_res.get("ticket"):
+                        target_sh.mt5_ticket = order_res.get("ticket")
+                        target_sh.mt5_disposition = "EXECUTED_MT5"
                         shadow_tracker._save_state()
                     if config.DRY_RUN:
                         print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")

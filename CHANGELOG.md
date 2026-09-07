@@ -24,6 +24,7 @@ Semua pembaruan, evolusi arsitektur, optimasi kuantitatif, dan bugfix sistem tra
   - Teruji live secara otomatis mengunci `EURAUD SELL` (+0.40R) ke level BEP +15 pts tanpa intervensi manual.
 - **Paper Shadow Radar Deduplication & Live Ticket Sync (`shadow_tracker.py` & `main.py`)**:
   - Deduplikasi otomatis interval 30 menit untuk mencegah duplikasi sinyal identik di Paper Trade.
+  - Auto-Link Proaktif Posisi Terbuka MT5: Menautkan instan nomor tiket MT5 dan mempromosikan status menjadi `EXECUTED_MT5` saat order terisi atau saat posisi live terbuka di MT5 (menyelesaikan isu keterlambatan pelaporan Real MT5 pada EURCHF & EURNZD).
   - Sinkronisasi instan tiket MT5 ke metadata `ShadowTrade` saat order limit/market terpasang (`mt5_ticket`), dilengkapi rekonsiliasi deal history penutupan posisi MT5 (termasuk time-decay stagnation exit NZDCHF +0.25R).
   - Penambahan badge visual `[BEP LOCKED]` dan `[TRAILING]` pada log terminal `main.py` dan laporan HTML `quant_shadow_report.html`.
 - **Validasi Live Performa 100% Winrate (17 Closed Deals)**:

@@ -143,7 +143,32 @@ class QuantShadowTracker:
         with self._lock:
             self.reload_state_if_modified()
             enriched = []
+
+            # Proactively gather live MT5 open positions
+            open_mt5_map = {}
+            try:
+                if hasattr(config, "mt5") and hasattr(config.mt5, "positions_get"):
+                    raw_pos = config.mt5.positions_get()
+                    if raw_pos:
+                        for p in raw_pos:
+                            p_dir = "BUY" if getattr(p, "type", 0) == 0 else "SELL"
+                            p_sym = getattr(p, "symbol", "")
+                            open_mt5_map[(p_sym, p_dir)] = p
+                            clean_sym = p_sym.split("-")[0].split(".")[0]
+                            open_mt5_map[(clean_sym, p_dir)] = p
+            except Exception:
+                pass
+
+            state_needs_save = False
             for t in self.active_trades:
+                if not t.mt5_ticket or t.mt5_disposition != "EXECUTED_MT5":
+                    clean_sym = t.symbol.split("-")[0].split(".")[0]
+                    matched_p = open_mt5_map.get((t.symbol, t.direction)) or open_mt5_map.get((clean_sym, t.direction))
+                    if matched_p:
+                        t.mt5_ticket = matched_p.ticket
+                        t.mt5_disposition = "EXECUTED_MT5"
+                        state_needs_save = True
+
                 d = t.to_dict()
                 try:
                     sym = d.get("symbol", "")
@@ -172,6 +197,10 @@ class QuantShadowTracker:
                 except Exception:
                     pass
                 enriched.append(d)
+
+            if state_needs_save:
+                self._save_state()
+
             return enriched
 
     def _save_state(self):
@@ -328,18 +357,36 @@ class QuantShadowTracker:
             # 0. MT5 OPEN POSITIONS QUERY (Single Batch Query)
             # -------------------------------------------------------------
             open_mt5_tickets = set()
+            mt5_open_by_symbol = {}
             try:
                 if hasattr(config, "mt5") and hasattr(config.mt5, "positions_get"):
                     raw_mt5_pos = config.mt5.positions_get()
                     if raw_mt5_pos:
                         open_mt5_tickets = {p.ticket for p in raw_mt5_pos}
+                        for p in raw_mt5_pos:
+                            p_dir = "BUY" if getattr(p, "type", 0) == 0 else "SELL"
+                            p_sym = getattr(p, "symbol", "")
+                            mt5_open_by_symbol[(p_sym, p_dir)] = p
+                            clean_sym = p_sym.split("-")[0].split(".")[0]
+                            mt5_open_by_symbol[(clean_sym, p_dir)] = p
             except Exception:
                 pass
 
             for trade in self.active_trades:
                 try:
                     # ---------------------------------------------------------
-                    # 0b. MT5 TICKET RECONCILIATION (For Real Executed Trades)
+                    # 0a. PROACTIVE LIVE MT5 POSITION RECONCILIATION
+                    # ---------------------------------------------------------
+                    if not trade.mt5_ticket or trade.mt5_disposition != "EXECUTED_MT5":
+                        clean_tr_sym = trade.symbol.split("-")[0].split(".")[0]
+                        matched_pos = mt5_open_by_symbol.get((trade.symbol, trade.direction)) or mt5_open_by_symbol.get((clean_tr_sym, trade.direction))
+                        if matched_pos:
+                            trade.mt5_ticket = matched_pos.ticket
+                            trade.mt5_disposition = "EXECUTED_MT5"
+                            logger.info(f"[SHADOW RECONCILE] Proactively matched open MT5 position #{matched_pos.ticket} ({matched_pos.symbol} {trade.direction}) to {trade.shadow_id}")
+
+                    # ---------------------------------------------------------
+                    # 0b. MT5 TICKET RECONCILIATION (From History Deals)
                     # ---------------------------------------------------------
                     # Auto-recover missing mt5_ticket for EXECUTED_MT5 trades from history deals
                     if not trade.mt5_ticket and trade.mt5_disposition == "EXECUTED_MT5" and trade.status in ("ACTIVE", "PENDING"):
@@ -356,6 +403,7 @@ class QuantShadowTracker:
                                         d_pos = getattr(d, "position_id", 0)
                                         if d_entry == 0 and d_pos > 0 and (trade.symbol in d_sym or d_sym in trade.symbol):
                                             trade.mt5_ticket = d_pos
+                                            trade.mt5_disposition = "EXECUTED_MT5"
                                             logger.info(f"[SHADOW RECONCILE] Recovered missing mt5_ticket #{d_pos} for {trade.shadow_id} ({trade.symbol})")
                                             break
                         except Exception as e:
