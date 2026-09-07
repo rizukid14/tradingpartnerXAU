@@ -13,7 +13,7 @@ class TestM1BTrendFollowingSweep(unittest.TestCase):
         dates = pd.date_range('2026-09-07 00:00', periods=24, freq='1h')
         self.df_bear = pd.DataFrame({
             'open':  np.linspace(1.8850, 1.8740, 24),
-            'high':  np.linspace(1.8860, 1.8755, 24),
+            'high':  np.linspace(1.8860, 1.8748, 24),
             'low':   np.linspace(1.8840, 1.8730, 24),
             'close': np.linspace(1.8845, 1.8735, 24),
             'atr':   [0.00100] * 24

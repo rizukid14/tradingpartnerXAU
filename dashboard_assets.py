@@ -1612,7 +1612,7 @@ function renderChartLevels(data) {
           shape = "circle";
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
           const statusDesc = (s.status === 'WAITING_CLOSE_RECLAIM') ? 'Waiting Close Reclaim' : (s.status === 'RECLAIMED_FADING' ? 'Reclaimed & Fading' : 'Sweep Watch');
-          markerText = `[M1 ${dirStr} SWEEP] ${statusDesc}`;
+          markerText = `[M1A ${dirStr} MACRO SWEEP] ${statusDesc}`;
         } else if (s.type === "M2") {
           shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
@@ -1992,7 +1992,7 @@ function renderDrawer() {
     container.innerHTML = `
       <div class="telemetry-grid">
         <div class="telemetry-card">
-          <div class="tele-title">M1: Universal Liquidity Sweep</div>
+          <div class="tele-title">M1A: Macro Boundary Sweep</div>
           <div class="tele-row"><span class="tele-lbl">Target Sweep:</span><span class="tele-val">${t.m1_target || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Penetration:</span><span class="tele-val">${t.m1_penetration || 'No (>0.04 ATR)'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Reclaim Status:</span><span class="tele-val">${t.m1_reclaim || 'Unconfirmed'}</span></div>

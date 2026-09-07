@@ -823,9 +823,9 @@ class CockpitDataEngine:
                 elif s_type == "M2":
                     operational_phase = f"PULLBACK TOUCH @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
                 elif s_type == "M1":
-                    operational_phase = f"SWEEP WATCH @ {active_s['price']:.{digits}f} [{s_type} {dir_txt}]"
+                    operational_phase = f"MACRO SWEEP @ {active_s['price']:.{digits}f} [M1A {dir_txt}]"
                 elif s_type == "M1B":
-                    operational_phase = f"TREND SWEEP @ {active_s['price']:.{digits}f} [{s_type} {dir_txt}]"
+                    operational_phase = f"TREND SWEEP @ {active_s['price']:.{digits}f} [M1B {dir_txt}]"
                 elif s_type == "M4":
                     operational_phase = f"FLOW RETEST @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
 
@@ -978,11 +978,11 @@ class CockpitDataEngine:
         gates.append(g4)
 
 
-        # Gate 5: M1..M4 (inc. M1B) Setup Prerequisites
+        # Gate 5: M1A/M1B..M4 Setup Prerequisites
         if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":
-            g5 = {"id": 5, "title": "M1..M4 (inc. M1B) Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
+            g5 = {"id": 5, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
         else:
-            g5 = {"id": 5, "title": "M1..M4 (inc. M1B) Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
+            g5 = {"id": 5, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
         gates.append(g5)
 
         # Gate 6: Stage 2 3-AI Consensus Jury & CRO

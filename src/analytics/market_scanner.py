@@ -1191,6 +1191,7 @@ class MarketScanner:
 
         df = macro.get('df')
         lookback = getattr(config, 'M1B_LOOKBACK_BARS', 24)
+        eq_tol = 0.15 * atr_val
 
         def _to_ts_int(t):
             if t is None:
@@ -1216,8 +1217,10 @@ class MarketScanner:
             cand_highs = []
             if df is not None and len(df) >= 6:
                 n = len(df)
-                start_i = max(0, n - lookback)
-                for i in range(start_i, n):
+                # Exclude bar 0 (n - 1) from anchor formation: current candle tests the level, does not form historical anchor
+                end_i = max(1, n - 1)
+                start_i = max(0, end_i - lookback)
+                for i in range(start_i, end_i):
                     h_val = float(df.iloc[i]['high'])
                     if h_val >= mid - 0.20 * atr_val:
                         cand_highs.append((h_val, i, _to_ts_int(df.index[i])))
@@ -1233,7 +1236,8 @@ class MarketScanner:
                     "origin_time": 0,
                     "origin_age": 0,
                     "is_eqh": False,
-                    "touches": 0
+                    "touches": 1,
+                    "label": f"M1B ZCE SBR Sweep [{best_tag}]"
                 }
 
             best_match = None
@@ -1241,22 +1245,38 @@ class MarketScanner:
             for z_val, z_tag in zce_res:
                 cluster = [c for c in cand_highs if abs(c[0] - z_val) <= match_tol]
                 if cluster:
-                    touches = len(cluster)
+                    # Check if there are >= 2 candles whose highs are tightly aligned (EQH Pool: <= 0.15x ATR)
+                    is_true_eqh = False
+                    if len(cluster) >= 2:
+                        for ci in range(len(cluster)):
+                            for cj in range(ci + 1, len(cluster)):
+                                if abs(cluster[ci][0] - cluster[cj][0]) <= eq_tol:
+                                    is_true_eqh = True
+                                    break
+                            if is_true_eqh:
+                                break
+
+                    touches = len(cluster) if is_true_eqh else 1
                     best_cand = max(cluster, key=lambda x: x[0])
                     origin_cand = cluster[0]
                     diff = abs(best_cand[0] - z_val)
+
+                    anchor_price = best_cand[0] if is_true_eqh else z_val
+                    lbl_text = f"M1B {len(cluster)}x EQH Pool [{z_tag}]" if is_true_eqh else f"M1B ZCE SBR Sweep [{z_tag}]"
+
                     if diff < min_diff:
                         min_diff = diff
                         best_match = {
-                            "anchor_level": round(best_cand[0], digits),
+                            "anchor_level": round(anchor_price, digits),
                             "zce_level": round(z_val, digits),
                             "zce_tag": z_tag,
                             "direction": -1,
-                            "dist_atr": round(abs(best_cand[0] - mid) / atr_val, 2),
+                            "dist_atr": round(abs(anchor_price - mid) / atr_val, 2),
                             "origin_time": origin_cand[2],
                             "origin_age": len(df) - 1 - origin_cand[1] if df is not None else 0,
-                            "is_eqh": (touches >= 2),
-                            "touches": touches
+                            "is_eqh": is_true_eqh,
+                            "touches": touches,
+                            "label": lbl_text
                         }
             return best_match
 
@@ -1274,8 +1294,9 @@ class MarketScanner:
             cand_lows = []
             if df is not None and len(df) >= 6:
                 n = len(df)
-                start_i = max(0, n - lookback)
-                for i in range(start_i, n):
+                end_i = max(1, n - 1)
+                start_i = max(0, end_i - lookback)
+                for i in range(start_i, end_i):
                     l_val = float(df.iloc[i]['low'])
                     if l_val <= mid + 0.20 * atr_val:
                         cand_lows.append((l_val, i, _to_ts_int(df.index[i])))
@@ -1291,7 +1312,8 @@ class MarketScanner:
                     "origin_time": 0,
                     "origin_age": 0,
                     "is_eql": False,
-                    "touches": 0
+                    "touches": 1,
+                    "label": f"M1B ZCE RBS Sweep [{best_tag}]"
                 }
 
             best_match = None
@@ -1299,22 +1321,37 @@ class MarketScanner:
             for z_val, z_tag in zce_sup:
                 cluster = [c for c in cand_lows if abs(c[0] - z_val) <= match_tol]
                 if cluster:
-                    touches = len(cluster)
+                    is_true_eql = False
+                    if len(cluster) >= 2:
+                        for ci in range(len(cluster)):
+                            for cj in range(ci + 1, len(cluster)):
+                                if abs(cluster[ci][0] - cluster[cj][0]) <= eq_tol:
+                                    is_true_eql = True
+                                    break
+                            if is_true_eql:
+                                break
+
+                    touches = len(cluster) if is_true_eql else 1
                     best_cand = min(cluster, key=lambda x: x[0])
                     origin_cand = cluster[0]
                     diff = abs(best_cand[0] - z_val)
+
+                    anchor_price = best_cand[0] if is_true_eql else z_val
+                    lbl_text = f"M1B {len(cluster)}x EQL Pool [{z_tag}]" if is_true_eql else f"M1B ZCE RBS Sweep [{z_tag}]"
+
                     if diff < min_diff:
                         min_diff = diff
                         best_match = {
-                            "anchor_level": round(best_cand[0], digits),
+                            "anchor_level": round(anchor_price, digits),
                             "zce_level": round(z_val, digits),
                             "zce_tag": z_tag,
                             "direction": 1,
-                            "dist_atr": round(abs(best_cand[0] - mid) / atr_val, 2),
+                            "dist_atr": round(abs(anchor_price - mid) / atr_val, 2),
                             "origin_time": origin_cand[2],
                             "origin_age": len(df) - 1 - origin_cand[1] if df is not None else 0,
-                            "is_eql": (touches >= 2),
-                            "touches": touches
+                            "is_eql": is_true_eql,
+                            "touches": touches,
+                            "label": lbl_text
                         }
             return best_match
 
@@ -1397,7 +1434,8 @@ class MarketScanner:
         if m1_dir == -1:
             valid_tops = [v for v in [asian_h, pdh_val, pwh_val, c1_val] if v > 0 and v >= mid - 0.15 * atr_val]
             m1_price = min(valid_tops) if valid_tops else (c1_val or asian_h or (mid + 0.5 * atr_val))
-            m1_lbl = "Bearish Sweep Resistance (SFP High)"
+            macro_tag = "Asian High" if m1_price == asian_h else ("PDH" if m1_price == pdh_val else ("PWH" if m1_price == pwh_val else "Macro Wall C1"))
+            m1_lbl = f"M1A Bearish Sweep Resistance [{macro_tag}] (Macro SFP)"
 
             # Temporal sweep detection in recent bars
             if df is not None and len(df) >= 3:
@@ -1410,7 +1448,8 @@ class MarketScanner:
         else:
             valid_bots = [v for v in [asian_l, pdl_val, pwl_val, f1_val] if v > 0 and v <= mid + 0.15 * atr_val]
             m1_price = max(valid_bots) if valid_bots else (f1_val or asian_l or (mid - 0.5 * atr_val))
-            m1_lbl = "Bullish Sweep Support (SFP Low)"
+            macro_tag = "Asian Low" if m1_price == asian_l else ("PDL" if m1_price == pdl_val else ("PWL" if m1_price == pwl_val else "Macro Wall F1"))
+            m1_lbl = f"M1A Bullish Sweep Support [{macro_tag}] (Macro SFP)"
 
             # Temporal sweep detection in recent bars
             if df is not None and len(df) >= 3:
@@ -1459,8 +1498,7 @@ class MarketScanner:
 
                 is_eq = m1b_info.get("is_eqh", False) if m1b_dir == -1 else m1b_info.get("is_eql", False)
                 touches_cnt = m1b_info.get("touches", 1)
-                pool_name = "EQH" if m1b_dir == -1 else "EQL"
-                lbl_text = f"M1B {touches_cnt}x {pool_name} Pool [{m1b_info.get('zce_tag', 'ZCE')}]" if (is_eq and touches_cnt >= 2) else f"M1B Trend Sweep [{m1b_info.get('zce_tag', 'ZCE')}]"
+                lbl_text = m1b_info.get("label") or (f"M1B {touches_cnt}x {'EQH' if m1b_dir == -1 else 'EQL'} Pool [{m1b_info.get('zce_tag', 'ZCE')}]" if is_eq else f"M1B ZCE {'SBR' if m1b_dir == -1 else 'RBS'} Sweep [{m1b_info.get('zce_tag', 'ZCE')}]")
 
                 standbys.append({
                     "type": "M1B",
