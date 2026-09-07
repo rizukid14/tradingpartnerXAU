@@ -293,6 +293,11 @@ def render_shadow_report_html() -> str:
       border-color: var(--cyan);
       color: var(--cyan);
     }}
+    @keyframes pulse {{
+      0% {{ opacity: 0.4; }}
+      50% {{ opacity: 1; }}
+      100% {{ opacity: 0.4; }}
+    }}
   </style>
 </head>
 <body>
@@ -304,6 +309,7 @@ def render_shadow_report_html() -> str:
       <div class="header-subtitle">
         Perekaman & Evaluasi Otomatis Sinyal Stage 1 Multi-Pair (Termasuk Sinyal Terkena Risk Gate / Cap MT5) | 
         Update: <span style="font-family:var(--font-mono);color:#fff;">{now_str}</span>
+        <span id="live-indicator" style="margin-left:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);"><span style="color:var(--green);">&#9679;</span> LIVE &mdash; 30s Polling</span>
       </div>
     </div>
     <div class="header-actions">
@@ -317,23 +323,23 @@ def render_shadow_report_html() -> str:
   <div class="kpi-grid">
     <div class="kpi-card">
       <div class="kpi-title">Total Sinyal Radar</div>
-      <div class="kpi-value" style="color:var(--purple);">{total_rec}</div>
-      <div class="kpi-subtext">Aktif: <b style="color:var(--cyan);">{act_cnt}</b> │ Pending: <b style="color:var(--amber);">{pend_cnt}</b></div>
+      <div class="kpi-value" id="kpi-total" style="color:var(--purple);">{total_rec}</div>
+      <div class="kpi-subtext">Aktif: <b id="kpi-active" style="color:var(--cyan);">{act_cnt}</b> │ Pending: <b id="kpi-pending" style="color:var(--amber);">{pend_cnt}</b></div>
     </div>
     <div class="kpi-card">
       <div class="kpi-title">Winrate Realized</div>
-      <div class="kpi-value" style="color:var(--green);">{winrate:.1f}%</div>
-      <div class="kpi-subtext">TP: <b style="color:var(--green);">{tp_hits}</b> │ SL: <b style="color:var(--red);">{sl_hits}</b> (Sample: {decisive})</div>
+      <div class="kpi-value" id="kpi-winrate" style="color:var(--green);">{winrate:.1f}%</div>
+      <div class="kpi-subtext">TP: <b id="kpi-tp" style="color:var(--green);">{tp_hits}</b> │ SL: <b id="kpi-sl" style="color:var(--red);">{sl_hits}</b> (Sample: {decisive})</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-title">Cumulative Net R</div>
-      <div class="kpi-value" style="color:{net_r_color};">{'+' if cum_net_r >= 0 else ''}{cum_net_r:.2f}R</div>
-      <div class="kpi-subtext">Expected Value: <b style="color:{ev_color};">{'+' if ev_r >= 0 else ''}{ev_r:.2f}R / trade</b></div>
+      <div class="kpi-value" id="kpi-cumr" style="color:{net_r_color};">{'+' if cum_net_r >= 0 else ''}{cum_net_r:.2f}R</div>
+      <div class="kpi-subtext">Expected Value: <b id="kpi-ev" style="color:{ev_color};">{'+' if ev_r >= 0 else ''}{ev_r:.2f}R / trade</b></div>
     </div>
     <div class="kpi-card">
       <div class="kpi-title">Eksekusi MT5 vs Skipped</div>
-      <div class="kpi-value" style="color:var(--cyan);">{disp_stats.get('EXECUTED_MT5', 0)} / {total_rec}</div>
-      <div class="kpi-subtext">Risk Block: <b style="color:var(--amber);">{disp_stats.get('SKIPPED_RISK_BASKET', 0) + disp_stats.get('SKIPPED_RISK_BLOCK', 0)}</b> │ Veto: <b style="color:var(--red);">{disp_stats.get('SKIPPED_LLM_VETO', 0)}</b></div>
+      <div class="kpi-value" id="kpi-exec" style="color:var(--cyan);">{disp_stats.get('EXECUTED_MT5', 0)} / {total_rec}</div>
+      <div class="kpi-subtext">Risk Block: <b id="kpi-risk" style="color:var(--amber);">{disp_stats.get('SKIPPED_RISK_BASKET', 0) + disp_stats.get('SKIPPED_RISK_BLOCK', 0)}</b> │ Veto: <b id="kpi-veto" style="color:var(--red);">{disp_stats.get('SKIPPED_LLM_VETO', 0)}</b></div>
     </div>
   </div>
 
@@ -474,9 +480,13 @@ def render_shadow_report_html() -> str:
   </div>
 
   <script>
-    const allTrades = {trades_json};
+    // ── LIVE POLLING ENGINE ─────────────────────────────────────────────
+    const POLL_INTERVAL_MS = 30000; // 30 detik
+    let allTrades = {trades_json};  // Initial data dari server render
     let currentFilter = 'ALL';
+    let pollTimer = null;
 
+    // ── RENDER TABLE ────────────────────────────────────────────────────
     function renderTableRows(trades) {{
       const tbody = document.getElementById('tableBody');
       if (!trades || trades.length === 0) {{
@@ -488,7 +498,7 @@ def render_shadow_report_html() -> str:
       trades.forEach(tr => {{
         const isBuy = (tr.direction === "BUY");
         const dirCol = isBuy ? "var(--green)" : "var(--red)";
-        
+
         let outCol = "var(--text-dim)";
         if (tr.outcome === "TP_HIT") outCol = "var(--green)";
         else if (tr.outcome === "SL_HIT") outCol = "var(--red)";
@@ -498,7 +508,7 @@ def render_shadow_report_html() -> str:
         const netRText = (tr.net_r !== null && tr.net_r !== undefined) ? `${{tr.net_r >= 0 ? '+' : ''}}${{Number(tr.net_r).toFixed(2)}}R` : '—';
         const mfeText = (tr.peak_mfe_r !== undefined && tr.peak_mfe_r !== null) ? `+${{Number(tr.peak_mfe_r).toFixed(2)}}R` : '—';
         const maeText = (tr.max_mae_r !== undefined && tr.max_mae_r !== null) ? `${{Number(tr.max_mae_r).toFixed(2)}}R` : '—';
-        
+
         const disp = tr.mt5_disposition || 'PENDING';
         let dispBadge = `<span class="badge" style="background:rgba(255,255,255,0.06);color:var(--text-dim);">${{disp}}</span>`;
         if (disp.includes("EXECUTED")) {{
@@ -534,6 +544,7 @@ def render_shadow_report_html() -> str:
       tbody.innerHTML = html;
     }}
 
+    // ── FILTER ──────────────────────────────────────────────────────────
     function setFilter(filt, btn) {{
       currentFilter = filt;
       document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
@@ -544,14 +555,11 @@ def render_shadow_report_html() -> str:
     function filterTable() {{
       const q = (document.getElementById('searchInput').value || '').toLowerCase();
       const filtered = allTrades.filter(tr => {{
-        // Match status
         if (currentFilter === 'ACTIVE' && tr.status !== 'ACTIVE') return false;
         if (currentFilter === 'PENDING' && tr.status !== 'PENDING') return false;
         if (currentFilter === 'TP_HIT' && tr.outcome !== 'TP_HIT') return false;
         if (currentFilter === 'SL_HIT' && tr.outcome !== 'SL_HIT') return false;
         if (currentFilter === 'RISK' && !String(tr.mt5_disposition || '').includes('RISK') && !String(tr.mt5_disposition || '').includes('BASKET')) return false;
-
-        // Match query
         if (q) {{
           const hay = `${{tr.shadow_id}} ${{tr.symbol}} ${{tr.setup_type}} ${{tr.direction}} ${{tr.outcome || tr.status}} ${{tr.mt5_disposition}}`.toLowerCase();
           if (!hay.includes(q)) return false;
@@ -561,13 +569,82 @@ def render_shadow_report_html() -> str:
       renderTableRows(filtered);
     }}
 
-    // Initial render
+    // ── KPI UPDATE ──────────────────────────────────────────────────────
+    function updateKpiEl(id, val) {{
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    }}
+
+    function applyLiveData(data) {{
+      if (!data || data.error) return;
+
+      // Update trades array
+      if (data.all_trades_combined && data.all_trades_combined.length >= 0) {{
+        allTrades = data.all_trades_combined;
+      }}
+
+      // Update KPI cards
+      const cumR = Number(data.cumulative_net_r || 0);
+      const wr   = Number(data.winrate_pct || 0);
+      const ev   = Number(data.expected_value_r || 0);
+      updateKpiEl('kpi-total',   data.total_recorded || 0);
+      updateKpiEl('kpi-active',  data.active_count || 0);
+      updateKpiEl('kpi-resolved',data.total_resolved || 0);
+      updateKpiEl('kpi-tp',      data.tp_hits || 0);
+      updateKpiEl('kpi-sl',      data.sl_hits || 0);
+      updateKpiEl('kpi-winrate', wr.toFixed(1) + '%');
+      updateKpiEl('kpi-cumr',    (cumR >= 0 ? '+' : '') + cumR.toFixed(2) + 'R');
+      updateKpiEl('kpi-ev',      (ev >= 0 ? '+' : '') + ev.toFixed(3) + 'R');
+
+      // Update filter bar counters
+      const actCnt  = data.active_count || 0;
+      const totCnt  = allTrades.length;
+      const pendCnt = data.pending_count || 0;
+      const tpCnt   = data.tp_hits || 0;
+      const slCnt   = data.sl_hits || 0;
+      const el0 = document.querySelector('.filter-pill:nth-child(1)');
+      const el1 = document.querySelector('.filter-pill:nth-child(2)');
+      const el2 = document.querySelector('.filter-pill:nth-child(3)');
+      const el3 = document.querySelector('.filter-pill:nth-child(4)');
+      const el4 = document.querySelector('.filter-pill:nth-child(5)');
+      if (el0) el0.textContent = `Semua (${{totCnt}})`;
+      if (el1) el1.textContent = `Aktif (${{actCnt}})`;
+      if (el2) el2.textContent = `Pending (${{pendCnt}})`;
+      if (el3) el3.textContent = `TP Hit (${{tpCnt}})`;
+      if (el4) el4.textContent = `SL Hit (${{slCnt}})`;
+
+      // Refresh tabel dengan filter aktif saat ini
+      filterTable();
+
+      // Update live indicator
+      const ts = new Date().toLocaleTimeString('id-ID', {{hour:'2-digit', minute:'2-digit', second:'2-digit'}});
+      const indEl = document.getElementById('live-indicator');
+      if (indEl) indEl.innerHTML = `<span style="color:var(--green);animation:pulse 1s ease;">&#9679;</span> LIVE &mdash; Update: ${{ts}} WIB`;
+    }}
+
+    // ── POLLING LOOP ────────────────────────────────────────────────────
+    function pollShadowData() {{
+      fetch('/api/shadow', {{cache: 'no-store'}})
+        .then(r => r.json())
+        .then(data => applyLiveData(data))
+        .catch(err => {{
+          const indEl = document.getElementById('live-indicator');
+          if (indEl) indEl.innerHTML = `<span style="color:var(--amber);">&#9679;</span> Reconnecting...`;
+        }});
+    }}
+
+    // Initial render + start polling
     renderTableRows(allTrades);
+    pollTimer = setInterval(pollShadowData, POLL_INTERVAL_MS);
+
+    // Immediate first poll untuk sync data terkini
+    setTimeout(pollShadowData, 2000);
   </script>
 </body>
 </html>
 """
     return html
+
 
 
 def generate_and_save_shadow_report(out_file: Optional[str] = None) -> str:

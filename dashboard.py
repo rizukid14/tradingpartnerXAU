@@ -736,16 +736,19 @@ class CockpitDataEngine:
 
         # 6. Telemetry for Tab 2 (Extracted directly from 1:1 Radar Standbys)
         m1_item = next((s for s in m_standbys if s["type"] == "M1"), None)
+        m1b_item = next((s for s in m_standbys if s["type"] == "M1B"), None)
         m2_item = next((s for s in m_standbys if s["type"] == "M2"), None)
         m3_item = next((s for s in m_standbys if s["type"] == "M3"), None)
         m4_item = next((s for s in m_standbys if s["type"] == "M4"), None)
 
         m1_tgt = f"{m1_item['price']:.{digits}f}" if m1_item else "—"
+        m1b_tgt = f"{m1b_item['price']:.{digits}f}" if m1b_item else "—"
         m2_tgt = f"{m2_item['price']:.{digits}f}" if m2_item else "—"
         m3_tgt = f"{m3_item['price']:.{digits}f}" if m3_item else "—"
         m4_tgt = f"{m4_item['price']:.{digits}f}" if m4_item else "None"
 
         m1_status_str = m1_item.get("status", "WAITING_SWEEP") if m1_item else "WAITING_SWEEP"
+        m1b_status_str = m1b_item.get("status", "WAITING_SWEEP") if m1b_item else "NO_ZCE_CONFLUENCE"
         m3_status_str = m3_item.get("status", "WAITING_RETEST") if m3_item else "PASS"
         m3_age = m3_item.get("bar_age", 0) if m3_item else 0
         m2_desc = m2_item.get("label", "EMA Pullback") if m2_item else "—"
@@ -755,6 +758,10 @@ class CockpitDataEngine:
             "m1_penetration": "Active Pierce" if (m1_item and abs(mid - m1_item['price']) <= 0.15 * atr_val) else "No (<0.15 ATR)",
             "m1_reclaim": m1_status_str,
             "m1_wick": f"{macro.get('rejection_wick_ratio', 0.0)*100:.1f}%",
+            "m1b_target": m1b_tgt,
+            "m1b_status": m1b_status_str,
+            "m1b_zce": m1b_item.get("label", "ZCE Anchor") if m1b_item else "—",
+            "m1b_wick": f"{macro.get('rejection_wick_ratio', 0.0)*100:.1f}% (Req >=30%)",
             "m2_adx": f"{macro.get('adx_14', 24.5):.1f} (Trend Aligned)",
             "m2_fib50": m2_tgt,
             "m2_fib618": f"{m2_desc.replace('Bullish Pullback (', '').replace('Bearish Pullback (', '').replace(')', '')} [Est: {m2_item.get('est_time', 'Active')}]" if m2_item else "—",
@@ -816,6 +823,8 @@ class CockpitDataEngine:
                     operational_phase = f"PULLBACK TOUCH @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
                 elif s_type == "M1":
                     operational_phase = f"SWEEP WATCH @ {active_s['price']:.{digits}f} [{s_type} {dir_txt}]"
+                elif s_type == "M1B":
+                    operational_phase = f"TREND SWEEP @ {active_s['price']:.{digits}f} [{s_type} {dir_txt}]"
                 elif s_type == "M4":
                     operational_phase = f"FLOW RETEST @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
 
@@ -968,11 +977,11 @@ class CockpitDataEngine:
         gates.append(g4)
 
 
-        # Gate 5: M1..M4 Setup Prerequisites
+        # Gate 5: M1..M4 (inc. M1B) Setup Prerequisites
         if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":
-            g5 = {"id": 5, "title": "M1..M4 Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
+            g5 = {"id": 5, "title": "M1..M4 (inc. M1B) Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
         else:
-            g5 = {"id": 5, "title": "M1..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1 / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
+            g5 = {"id": 5, "title": "M1..M4 (inc. M1B) Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
         gates.append(g5)
 
         # Gate 6: Stage 2 3-AI Consensus Jury & CRO
@@ -1069,15 +1078,23 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 from src.analytics.shadow_tracker import shadow_tracker
                 s_data = shadow_tracker.get_performance_summary()
+                # Extend payload dengan full trade arrays untuk JS table polling
+                act = [t.to_dict() if hasattr(t, "to_dict") else t for t in shadow_tracker.active_trades]
+                resolved = shadow_tracker.get_all_resolved_trades(limit=500)
+                s_data["active_trades_full"] = act
+                s_data["resolved_trades_full"] = resolved
+                s_data["all_trades_combined"] = act + resolved
             except Exception as e:
                 s_data = {"error": str(e)}
-            payload = json.dumps(s_data).encode("utf-8")
+            payload = json.dumps(s_data, default=str).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(payload)
+
 
         # 4b. Web UI: Quant Shadow Radar HTML Report
         elif self.path in ("/shadow", "/shadow.html", "/report/shadow"):

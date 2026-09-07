@@ -1172,6 +1172,120 @@ class MarketScanner:
             label_prefix = "Bullish Pullback (EMA + " if direction == 1 else "Bearish Pullback (EMA + "
             return round(fallback, digits), f"{label_prefix}Dynamic Barrier {fallback:.{digits}f} Confluence)"
 
+    def find_m1b_zce_basing_anchor(self, symbol: str, mid: float, direction: int, macro: Dict[str, Any], pt: float, atr_val: float) -> Optional[Dict[str, Any]]:
+        """
+        M1B: Trend-Following Induced Liquidity Sweep Anchor with Strict ZCE Confluence (7 Sep 2026).
+        Mencari atap basing (SELL) atau lantai basing (BUY) internal (12-24 bar H1)
+        yang WAJIB memiliki konfluensi geometris (<= 0.35x ATR) dengan level ZCE
+        (C1/C2/SBR untuk SELL, F1/F2/RBS untuk BUY).
+        """
+        if mid <= 0 or macro is None:
+            return None
+
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        digits = 3 if "JPY" in clean_sym else 5
+        pt = pt if pt > 0 else (0.001 if "JPY" in clean_sym else 0.00001)
+        m_atr = float(macro.get('current_atr') or 0.0)
+        atr_val = m_atr if m_atr > 0 else (atr_val if atr_val > 0 else 60.0 * pt)
+        match_tol = max(getattr(config, 'SWEEP_WALL_MATCH_ATR_MULT', 0.30), 0.50) * atr_val
+
+        df = macro.get('df')
+        lookback = getattr(config, 'M1B_LOOKBACK_BARS', 24)
+
+        if direction == -1:
+            # SELL: Cari basing ceiling / swing high di atas mid yang confluence dengan ZCE Resistance
+            zce_res = []
+            for k in ('immediate_ceiling_c1', 'ceiling_c1', 'macro_ceiling_c2', 'micro_sbr_h1', 'inter_sbr_h4', 'macro_sbr_d1', 'cluster_resistance'):
+                v = float(macro.get(k, 0.0) or 0.0)
+                if v > 0 and v >= mid - 0.25 * atr_val:
+                    zce_res.append((v, k))
+
+            if not zce_res:
+                return None
+
+            cand_highs = []
+            if df is not None and len(df) >= 6:
+                n = len(df)
+                start_i = max(0, n - lookback)
+                for i in range(start_i, n):
+                    h_val = float(df.iloc[i]['high'])
+                    if h_val >= mid - 0.20 * atr_val:
+                        cand_highs.append(h_val)
+
+            if not cand_highs:
+                best_z, best_tag = min(zce_res, key=lambda item: abs(item[0] - mid))
+                return {
+                    "anchor_level": round(best_z, digits),
+                    "zce_level": round(best_z, digits),
+                    "zce_tag": best_tag,
+                    "direction": -1,
+                    "dist_atr": round(abs(best_z - mid) / atr_val, 2)
+                }
+
+            best_match = None
+            min_diff = 9999.0
+            for h_cand in cand_highs:
+                for z_val, z_tag in zce_res:
+                    diff = abs(h_cand - z_val)
+                    if diff <= match_tol and diff < min_diff:
+                        min_diff = diff
+                        best_match = {
+                            "anchor_level": round(h_cand, digits),
+                            "zce_level": round(z_val, digits),
+                            "zce_tag": z_tag,
+                            "direction": -1,
+                            "dist_atr": round(abs(h_cand - mid) / atr_val, 2)
+                        }
+            return best_match
+
+        elif direction == 1:
+            # BUY: Cari basing floor / swing low di bawah mid yang confluence dengan ZCE Support
+            zce_sup = []
+            for k in ('immediate_floor_f1', 'floor_f1', 'macro_floor_f2', 'micro_rbs_h1', 'inter_rbs_h4', 'macro_rbs_d1', 'cluster_support'):
+                v = float(macro.get(k, 0.0) or 0.0)
+                if v > 0 and v <= mid + 0.25 * atr_val:
+                    zce_sup.append((v, k))
+
+            if not zce_sup:
+                return None
+
+            cand_lows = []
+            if df is not None and len(df) >= 6:
+                n = len(df)
+                start_i = max(0, n - lookback)
+                for i in range(start_i, n):
+                    l_val = float(df.iloc[i]['low'])
+                    if l_val <= mid + 0.20 * atr_val:
+                        cand_lows.append(l_val)
+
+            if not cand_lows:
+                best_z, best_tag = min(zce_sup, key=lambda item: abs(item[0] - mid))
+                return {
+                    "anchor_level": round(best_z, digits),
+                    "zce_level": round(best_z, digits),
+                    "zce_tag": best_tag,
+                    "direction": 1,
+                    "dist_atr": round(abs(best_z - mid) / atr_val, 2)
+                }
+
+            best_match = None
+            min_diff = 9999.0
+            for l_cand in cand_lows:
+                for z_val, z_tag in zce_sup:
+                    diff = abs(l_cand - z_val)
+                    if diff <= match_tol and diff < min_diff:
+                        min_diff = diff
+                        best_match = {
+                            "anchor_level": round(l_cand, digits),
+                            "zce_level": round(z_val, digits),
+                            "zce_tag": z_tag,
+                            "direction": 1,
+                            "dist_atr": round(abs(l_cand - mid) / atr_val, 2)
+                        }
+            return best_match
+
+        return None
+
     def get_radar_standbys(self, symbol: str, mid: float, macro: Optional[Dict[str, Any]] = None, pt: float = 0.00001, atr_val: float = 0.0060) -> List[Dict[str, Any]]:
         """
         Pure Quant 1:1 Radar Standby Extractor with Temporal Point Tracking.
@@ -1283,6 +1397,41 @@ class MarketScanner:
                 "bar_age": m1_bar_age,
                 "direction": m1_dir
             })
+
+        # ── 1B. M1B: TREND-ALIGNED INDUCED LIQUIDITY SWEEP (ZCE CONFLUENT) ──
+        if getattr(config, 'M1B_ENABLED', True):
+            m1b_dir = -1 if is_bear else (1 if is_bull else (-1 if dr_pos >= 0.50 else 1))
+            m1b_info = self.find_m1b_zce_basing_anchor(symbol, mid, m1b_dir, macro, pt, atr_val)
+            if m1b_info:
+                m1b_lvl = m1b_info['anchor_level']
+                m1b_status = "WAITING_SWEEP"
+                m1b_event_time = 0
+                m1b_bar_age = 0
+                if df is not None and len(df) >= 3:
+                    if m1b_dir == -1:
+                        pierce = [i for i in range(max(0, len(df) - 12), len(df)) if df.iloc[i]['high'] >= m1b_lvl]
+                        if pierce:
+                            last_p = pierce[-1]
+                            m1b_event_time = _ts_to_int(df.index[last_p])
+                            m1b_bar_age = len(df) - 1 - last_p
+                            m1b_status = "RECLAIMED" if df.iloc[last_p]['close'] < m1b_lvl else "ACTIVE_PIERCE"
+                    else:
+                        pierce = [i for i in range(max(0, len(df) - 12), len(df)) if df.iloc[i]['low'] <= m1b_lvl]
+                        if pierce:
+                            last_p = pierce[-1]
+                            m1b_event_time = _ts_to_int(df.index[last_p])
+                            m1b_bar_age = len(df) - 1 - last_p
+                            m1b_status = "RECLAIMED" if df.iloc[last_p]['close'] > m1b_lvl else "ACTIVE_PIERCE"
+
+                standbys.append({
+                    "type": "M1B",
+                    "price": round(m1b_lvl, digits),
+                    "label": f"M1B Trend Sweep [{m1b_info.get('zce_tag', 'ZCE')}]",
+                    "event_time": m1b_event_time,
+                    "status": m1b_status,
+                    "bar_age": m1b_bar_age,
+                    "direction": m1b_dir
+                })
 
         # ── 2. M2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & RETEST (CONFLUENCE) ──
         # M2 is strictly pro-trend:
@@ -2877,6 +3026,181 @@ class MarketScanner:
                                             }
                                         ))
                                         continue
+
+                # ── MECHANISM 1B: TREND-ALIGNED INDUCED LIQUIDITY SWEEP (ZCE CONFLUENT) ──
+                if getattr(config, 'M1B_ENABLED', True) and (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                    m1b_dirs = []
+                    bias_sc = macro.get('macro_bias_score', 0.0)
+                    if (macro.get('is_bear') or bias_sc <= -0.35) and (csm_delta_val <= -1.0 or not getattr(config, 'ENABLE_CSM_FLOW_FILTER', True)):
+                        m1b_dirs.append(-1)
+                    if (macro.get('is_bull') or bias_sc >= 0.35) and (csm_delta_val >= 1.0 or not getattr(config, 'ENABLE_CSM_FLOW_FILTER', True)):
+                        m1b_dirs.append(1)
+
+                    min_wick_ratio = getattr(config, 'M1B_MIN_WICK_RATIO', 0.30)
+                    dr_pos_val = macro.get('dealing_range_pos', 0.5)
+
+                    for m1b_d in m1b_dirs:
+                        is_m1b_locked, m1b_lock_reason = self.is_mechanism_locked(clean_sym, getattr(config, 'M1B_SETUP_TYPE', 'TREND_ALIGNED_INDUCED_SWEEP'), m1b_d)
+                        if is_m1b_locked:
+                            logger.debug(f"[M1B LOCK] {sym} SKIP: {m1b_lock_reason}")
+                            continue
+
+                        if m1b_d == -1:
+                            if not (getattr(config, 'M1B_DR_SELL_MIN', 0.10) <= dr_pos_val <= getattr(config, 'M1B_DR_SELL_MAX', 0.65)):
+                                continue
+                        else:
+                            if not (getattr(config, 'M1B_DR_BUY_MIN', 0.35) <= dr_pos_val <= getattr(config, 'M1B_DR_BUY_MAX', 0.90)):
+                                continue
+
+                        m1b_anchor_info = self.find_m1b_zce_basing_anchor(sym, mid, m1b_d, macro, pt, atr_price_val)
+                        if not m1b_anchor_info:
+                            continue
+
+                        anchor_lvl = m1b_anchor_info['anchor_level']
+                        zce_tag = m1b_anchor_info.get('zce_tag', 'ZCE')
+
+                        if m1b_d == -1:
+                            has_pen = (live_h >= anchor_lvl + (getattr(config, 'M1B_PENETRATION_ATR_MULT', 0.04) * atr_price_val)) or (c_qual.get('max_high', live_h) >= anchor_lvl + (0.04 * atr_price_val))
+                            has_reclaim = (c_qual.get('prev_close', mid) < anchor_lvl) and (mid <= anchor_lvl + 0.10 * atr_price_val)
+                            has_wick = (c_qual.get('max_upper_wick', 0.0) >= min_wick_ratio) or (c_qual.get('upper_wick_pct', 0.0) >= min_wick_ratio) or c_qual.get('is_bearish_engulf', False)
+
+                            if has_pen and has_reclaim and has_wick:
+                                allowed_m1b, tier_m1b, reason_m1b = _is_direction_allowed(-1, "M1B_TREND_SWEEP", entry_price=anchor_lvl)
+                                if not allowed_m1b:
+                                    logger.debug(f"[M1B SELL GATE] {sym} SKIP ({tier_m1b}): {reason_m1b}")
+                                    continue
+
+                                limit_entry = min(anchor_lvl, mid + (0.15 * atr_price_val))
+                                sl_pts_calc = max(int(round((live_h - limit_entry) / pt)) + spread_pts + 5, config.get_sl_floor_points(sym, spread_pts, atr_pts))
+                                sl_price = round(limit_entry + (sl_pts_calc * pt), digits)
+                                tp_pts_calc = int(round(max(1.5 * sl_pts_calc, 1.25 * atr_pts)))
+                                tp_price = round(limit_entry - (tp_pts_calc * pt), digits)
+                                rr_val = round(tp_pts_calc / max(1, sl_pts_calc), 2)
+
+                                candidates.append(CandidateSetup(
+                                    symbol=sym,
+                                    setup_type=getattr(config, 'M1B_SETUP_TYPE', "TREND_ALIGNED_INDUCED_SWEEP"),
+                                    direction=-1,
+                                    trigger_price=round(limit_entry, digits),
+                                    timeframe="H1",
+                                    macro_compass=macro['trend_label'],
+                                    dealing_range_pos=dr_pos_val,
+                                    rejection_wick_ratio=max(min_wick_ratio, c_qual.get('max_upper_wick', 0.0)),
+                                    current_spread_pts=spread_pts,
+                                    current_atr_pts=atr_pts,
+                                    key_support=macro.get('immediate_floor_f1', 0.0) or (mid - atr_price_val),
+                                    key_resistance=anchor_lvl,
+                                    suggested_sl=sl_price,
+                                    suggested_tp=tp_price,
+                                    risk_reward_ratio=rr_val,
+                                    strong_low=macro.get('strong_low', 0.0),
+                                    strong_high=macro.get('strong_high', 0.0),
+                                    bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                    bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                    fvg_zone=macro.get('fvg_zone', ""),
+                                    liquidity_pools=macro.get('liquidity_pools', ""),
+                                    frvp_confluence=f"M1B Trend Sweep [{zce_tag}]",
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=pwh_val,
+                                    pwl=pwl_val,
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    economic_context=cal_text,
+                                    action_tier=tier_m1b,
+                                    macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                    regime_stability=macro.get('regime_stability', 'STABLE'),
+                                    metadata={
+                                        "entry_type": "sell_limit",
+                                        "entry_price": round(limit_entry, digits),
+                                        "anchor_level": anchor_lvl,
+                                        "zce_tag": zce_tag,
+                                        "action_tier": tier_m1b,
+                                        "macro_corridor": macro.get('macro_corridor', 'NEUTRAL'),
+                                        **zce_meta
+                                    }
+                                ))
+                                continue
+                        else:
+                            has_pen = (live_l <= anchor_lvl - (getattr(config, 'M1B_PENETRATION_ATR_MULT', 0.04) * atr_price_val)) or (c_qual.get('max_low', live_l) <= anchor_lvl - (0.04 * atr_price_val))
+                            has_reclaim = (c_qual.get('prev_close', mid) > anchor_lvl) and (mid >= anchor_lvl - 0.10 * atr_price_val)
+                            has_wick = (c_qual.get('max_lower_wick', 0.0) >= min_wick_ratio) or (c_qual.get('lower_wick_pct', 0.0) >= min_wick_ratio) or c_qual.get('is_bullish_engulf', False)
+
+                            if has_pen and has_reclaim and has_wick:
+                                allowed_m1b, tier_m1b, reason_m1b = _is_direction_allowed(1, "M1B_TREND_SWEEP", entry_price=anchor_lvl)
+                                if not allowed_m1b:
+                                    logger.debug(f"[M1B BUY GATE] {sym} SKIP ({tier_m1b}): {reason_m1b}")
+                                    continue
+
+                                limit_entry = max(anchor_lvl, mid - (0.15 * atr_price_val))
+                                sl_pts_calc = max(int(round((limit_entry - live_l) / pt)) + spread_pts + 5, config.get_sl_floor_points(sym, spread_pts, atr_pts))
+                                sl_price = round(limit_entry - (sl_pts_calc * pt), digits)
+                                tp_pts_calc = int(round(max(1.5 * sl_pts_calc, 1.25 * atr_pts)))
+                                tp_price = round(limit_entry + (tp_pts_calc * pt), digits)
+                                rr_val = round(tp_pts_calc / max(1, sl_pts_calc), 2)
+
+                                candidates.append(CandidateSetup(
+                                    symbol=sym,
+                                    setup_type=getattr(config, 'M1B_SETUP_TYPE', "TREND_ALIGNED_INDUCED_SWEEP"),
+                                    direction=1,
+                                    trigger_price=round(limit_entry, digits),
+                                    timeframe="H1",
+                                    macro_compass=macro['trend_label'],
+                                    dealing_range_pos=dr_pos_val,
+                                    rejection_wick_ratio=max(min_wick_ratio, c_qual.get('max_lower_wick', 0.0)),
+                                    current_spread_pts=spread_pts,
+                                    current_atr_pts=atr_pts,
+                                    key_support=anchor_lvl,
+                                    key_resistance=macro.get('immediate_ceiling_c1', 0.0) or (mid + atr_price_val),
+                                    suggested_sl=sl_price,
+                                    suggested_tp=tp_price,
+                                    risk_reward_ratio=rr_val,
+                                    strong_low=macro.get('strong_low', 0.0),
+                                    strong_high=macro.get('strong_high', 0.0),
+                                    bullish_ob_zone=macro.get('bullish_ob_zone', ""),
+                                    bearish_ob_zone=macro.get('bearish_ob_zone', ""),
+                                    fvg_zone=macro.get('fvg_zone', ""),
+                                    liquidity_pools=macro.get('liquidity_pools', ""),
+                                    frvp_confluence=f"M1B Trend Sweep [{zce_tag}]",
+                                    pdh=macro.get('pdh', 0.0),
+                                    pdl=macro.get('pdl', 0.0),
+                                    daily_open=macro.get('daily_open', 0.0),
+                                    adr_used_pct=macro.get('adr_used_pct', 0.0),
+                                    h4_trend=macro.get('h4_trend_label', ''),
+                                    d1_50_range=macro.get('d1_50_range', ''),
+                                    d1_100_range=macro.get('d1_100_range', ''),
+                                    pwh=pwh_val,
+                                    pwl=pwl_val,
+                                    h4_monthly_range=macro.get('h4_monthly_range', ''),
+                                    wave_state=macro.get('wave_state', ''),
+                                    wave_summary=macro.get('wave_summary', ''),
+                                    permission=perm_state,
+                                    csm_delta=csm_delta_val,
+                                    timestamp_wib=now.strftime("%H:%M:%S WIB"),
+                                    economic_context=cal_text,
+                                    action_tier=tier_m1b,
+                                    macro_bias_score=macro.get('macro_bias_score', 0.0),
+                                    regime_stability=macro.get('regime_stability', 'STABLE'),
+                                    metadata={
+                                        "entry_type": "buy_limit",
+                                        "entry_price": round(limit_entry, digits),
+                                        "anchor_level": anchor_lvl,
+                                        "zce_tag": zce_tag,
+                                        "action_tier": tier_m1b,
+                                        "macro_corridor": macro.get('macro_corridor', 'NEUTRAL'),
+                                        **zce_meta
+                                    }
+                                ))
+                                continue
 
                 # ── MECHANISM 2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & DELAYED RETEST (H1/M30) ──
                 is_h4_ranging = macro.get('is_h4_ranging', False)

@@ -786,8 +786,14 @@ html, body {
 /* TELEMETRY CARDS */
 .telemetry-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
+}
+@media (max-width: 1200px) {
+  .telemetry-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 768px) {
+  .telemetry-grid { grid-template-columns: 1fr; }
 }
 .telemetry-card {
   background: var(--bg-base);
@@ -974,7 +980,7 @@ html, body {
     <div class="bottom-drawer">
       <div class="drawer-tabs">
         <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
-        <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1, M2, M3, M4)</div>
+        <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1A, M1B, M2, M3, M4)</div>
         <div class="drawer-tab" data-drawer="shadow">Virtual Shadow Quant Radar</div>
         <div class="drawer-tab" data-drawer="rules">Active Rules & .env Inventory</div>
       </div>
@@ -1541,6 +1547,7 @@ function renderChartLevels(data) {
     data.m_standbys.forEach(s => {
       let color = "#ffd740";
       if (s.type === "M1") color = "#fb923c";
+      else if (s.type === "M1B") color = "#e879f9";
       else if (s.type === "M2") color = "#38bdf8";
       else if (s.type === "M3") color = "#c084fc";
       else if (s.type === "M4") color = "#facc15";
@@ -1588,6 +1595,12 @@ function renderChartLevels(data) {
           const statusDesc = (s.status === 'WAITING_RETEST') ? 'Waiting' : 'Retesting';
           const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
           markerText = `[M3 ${dirStr} RETEST] ${structStr} ${statusDesc} (${ageDesc})`;
+        } else if (s.type === "M1B") {
+          shape = "circle";
+          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
+          const statusDesc = (s.status === 'RECLAIMED') ? 'Reclaimed SFP' : (s.status === 'ACTIVE_PIERCE' ? 'Piercing' : 'Waiting Sweep');
+          const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
+          markerText = `[M1B ${dirStr} TREND SWEEP] ${statusDesc} (${ageDesc})`;
         } else if (s.type === "M1") {
           shape = "circle";
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
@@ -1977,6 +1990,13 @@ function renderDrawer() {
           <div class="tele-row"><span class="tele-lbl">Penetration:</span><span class="tele-val">${t.m1_penetration || 'No (>0.04 ATR)'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Reclaim Status:</span><span class="tele-val">${t.m1_reclaim || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1_wick || '0.0% (Req >=33%)'}</span></div>
+        </div>
+        <div class="telemetry-card">
+          <div class="tele-title" style="color:#e879f9;">M1B: Trend Induced Sweep</div>
+          <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#e879f9;font-weight:700;">${t.m1b_target || '—'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">ZCE Confluence:</span><span class="tele-val">${t.m1b_zce || '—'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Sweep Status:</span><span class="tele-val">${t.m1b_status || 'Unconfirmed'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1b_wick || '0.0% (Req >=30%)'}</span></div>
         </div>
         <div class="telemetry-card">
           <div class="tele-title">M2: Trend Pullback Retest</div>

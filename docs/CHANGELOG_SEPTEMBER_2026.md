@@ -2,7 +2,37 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 7 September 2026 (Siang) — Isolasi Hermetis Unit Test Pure Quant (Zero Production State Pollution) & Pembersihan Telemetri BTCUSD
+## 0. Perubahan 7 September 2026 (Sore) — Implementasi Mekanisme M1B (Trend-Following Induced Liquidity Sweep) dengan Konfluensi Geometris ZCE & Integrasi Visual Dashboard
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Pemisahan M1A (Macro Counter-Trend SFP) dan M1B (Trend-Following Induced Sweep)**:
+   - M1A beroperasi di batas ekstrem Dealing Range (Premium/Discount) untuk menangkap pembalikan harga (Mean Reversion).
+   - M1B dirancang khusus untuk kondisi tren kuat (searah Macro Bias & CSM Net Delta) di mana harga membentuk internal basing/konsolidasi, melakukan false sweep (induced wick) menembus atap/lantai basing, lalu ditutup reclaim ke dalam area basing searah tren utama.
+2. **Mandat Konfluensi Geometris ZCE (Anti-Arbitrary Basing)**:
+   - Basing yang disapu DILARANG sembarang swing candle lokal. Basing WAJIB memiliki konfluensi geometris ($\le 0.50\times\text{ATR}$) dengan level Zone Confluence Engine (ZCE): Resistance C1/C2/SBR untuk setup SELL, atau Support F1/F2/RBS untuk setup BUY.
+3. **Persyaratan Visibilitas Penuh di Dashboard Cockpit (`http://localhost:8765`)**:
+   - Seluruh status radar M1B, level target, wick rejection ratio, konfluensi ZCE, dan garis horizontal reticle ungu neon `[M1B SWEEP ANCHOR]` di canvas chart wajib tersedia secara real-time di Cockpit Dashboard.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Parameter Konfigurasi (`config.py` & `.env`)**:
+   - Menambahkan `M1B_ENABLED = True`, `M1B_SETUP_TYPE = "TREND_ALIGNED_INDUCED_SWEEP"`.
+   - Menetapkan batas kuantitatif: `M1B_MIN_WICK_RATIO = 0.30` (wick $\ge 30\%$), `M1B_PENETRATION_ATR_MULT = 0.04`, `M1B_LOOKBACK_BARS = 24`, dan Dealing Range filter (`M1B_DR_SELL_MAX = 0.60`, `M1B_DR_BUY_MIN = 0.40`).
+2. **Deteksi Anchor & Radar Fast Scanner (`src/analytics/market_scanner.py`)**:
+   - Mengimplementasikan `find_m1b_zce_basing_anchor()`: memindai swing high/low internal 12-24 bar H1 dan mencocokkan secara ketat dengan hierarki ZCE (`C1`, `C2`, `SBR`, `F1`, `F2`, `RBS`).
+   - Mengintegrasikan M1B ke dalam `get_radar_standbys()` dan `scan_fast_radar()`: memvalidasi wick penetration, wick ratio $\ge 30\%$, close reclaim, serta Macro Bias dan CSM Delta alignment.
+3. **Visualisasi Cockpit Dashboard (`dashboard.py` & `dashboard_assets.py`)**:
+   - Menambahkan kartu telemetri `M1B: TREND SWEEP` pada grid 5 kolom responsif di tab Radar Telemetry.
+   - Mengintegrasikan garis harga putus-putus reticle horizontal warna ungu neon (`#c084fc`) berlabel `[M1B SWEEP ANCHOR]` di canvas chart SVG.
+   - Memperbarui checklist Gate 5 menjadi `M1..M4 (inc. M1B) Radar Prerequisites`.
+4. **Unit Test Suite & Verifikasi Sistem (`tests/test_m1b_sweep.py`)**:
+   - Membuat pengujian unit test khusus untuk M1B yang menguji deteksi anchor dengan konfluensi ZCE, penolakan anchor tanpa ZCE, dan eksport reticle standby M1B (3/3 test PASS).
+   - Pengujian keseluruhan `python -m unittest discover tests/` terverifikasi **157/157 PASS (100% OK)**.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Siang) — Isolasi Hermetis Unit Test Pure Quant (Zero Production State Pollution) & Pembersihan Telemetri BTCUSD
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Kebocoran Data Uji (*Test Pollution*) ke Database Produksi**:

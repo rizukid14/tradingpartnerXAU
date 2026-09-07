@@ -267,6 +267,19 @@ SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
 # dianggap "dinding yang sama". Default 0.15x ATR H1 ~1.2 pips EURUSD — terlalu sempit vs
 # rounding 5-digit + midpoint ZCE (2-3 pips). .env aktif 0.30; syarat grade G2/G3 TIDAK berubah.
 SWEEP_WALL_MATCH_ATR_MULT = _getenv_float("SWEEP_WALL_MATCH_ATR_MULT", 0.15)
+# ---------- M1B: TREND-ALIGNED INDUCED LIQUIDITY SWEEP (7 Sep 2026) ----------
+# Menangkap internal range liquidity sweep (SFP) di fase korektif/pullback yang selaras
+# dengan arah Macro Bias (D1/H4) dan arus Boitoki CSM (|delta| >= 1.0).
+M1B_ENABLED = _getenv_bool("M1B_ENABLED", True)
+M1B_SETUP_TYPE = "TREND_ALIGNED_INDUCED_SWEEP"
+M1B_MIN_WICK_RATIO = _getenv_float("M1B_MIN_WICK_RATIO", 0.30)
+M1B_PENETRATION_ATR_MULT = _getenv_float("M1B_PENETRATION_ATR_MULT", 0.04)
+M1B_LOOKBACK_BARS = _getenv_int("M1B_LOOKBACK_BARS", 24)
+M1B_BASING_MAX_RANGE_ATR = _getenv_float("M1B_BASING_MAX_RANGE_ATR", 0.40)
+M1B_DR_SELL_MAX = _getenv_float("M1B_DR_SELL_MAX", 0.60)
+M1B_DR_SELL_MIN = _getenv_float("M1B_DR_SELL_MIN", 0.10)
+M1B_DR_BUY_MIN = _getenv_float("M1B_DR_BUY_MIN", 0.40)
+M1B_DR_BUY_MAX = _getenv_float("M1B_DR_BUY_MAX", 0.90)
 
 # ---------- M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026) ----------
 # Studi #1 (JPY surge, scratch/study_surge_retest.py) + #1b mirror 26 pair dua arah
