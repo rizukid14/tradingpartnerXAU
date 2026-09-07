@@ -1175,9 +1175,9 @@ class MarketScanner:
     def find_m1b_zce_basing_anchor(self, symbol: str, mid: float, direction: int, macro: Dict[str, Any], pt: float, atr_val: float) -> Optional[Dict[str, Any]]:
         """
         M1B: Trend-Following Induced Liquidity Sweep Anchor with Strict ZCE Confluence (7 Sep 2026).
-        Mencari atap basing (SELL) atau lantai basing (BUY) internal (12-24 bar H1)
-        yang WAJIB memiliki konfluensi geometris (<= 0.35x ATR) dengan level ZCE
-        (C1/C2/SBR untuk SELL, F1/F2/RBS untuk BUY).
+        Mencari atap basing / EQH (SELL) atau lantai basing / EQL (BUY) internal (12-24 bar H1)
+        yang WAJIB memiliki konfluensi geometris (<= 0.50x ATR) dengan level ZCE
+        (C1/C2/SBR untuk SELL, F1/F2/RBS untuk BUY), serta mendeteksi jumlah sentuhan EQH/EQL pool dan timestamp asal.
         """
         if mid <= 0 or macro is None:
             return None
@@ -1191,6 +1191,16 @@ class MarketScanner:
 
         df = macro.get('df')
         lookback = getattr(config, 'M1B_LOOKBACK_BARS', 24)
+
+        def _to_ts_int(t):
+            if t is None:
+                return 0
+            if hasattr(t, 'timestamp'):
+                return int(t.timestamp())
+            try:
+                return int(t)
+            except Exception:
+                return 0
 
         if direction == -1:
             # SELL: Cari basing ceiling / swing high di atas mid yang confluence dengan ZCE Resistance
@@ -1210,7 +1220,7 @@ class MarketScanner:
                 for i in range(start_i, n):
                     h_val = float(df.iloc[i]['high'])
                     if h_val >= mid - 0.20 * atr_val:
-                        cand_highs.append(h_val)
+                        cand_highs.append((h_val, i, _to_ts_int(df.index[i])))
 
             if not cand_highs:
                 best_z, best_tag = min(zce_res, key=lambda item: abs(item[0] - mid))
@@ -1219,22 +1229,34 @@ class MarketScanner:
                     "zce_level": round(best_z, digits),
                     "zce_tag": best_tag,
                     "direction": -1,
-                    "dist_atr": round(abs(best_z - mid) / atr_val, 2)
+                    "dist_atr": round(abs(best_z - mid) / atr_val, 2),
+                    "origin_time": 0,
+                    "origin_age": 0,
+                    "is_eqh": False,
+                    "touches": 0
                 }
 
             best_match = None
             min_diff = 9999.0
-            for h_cand in cand_highs:
-                for z_val, z_tag in zce_res:
-                    diff = abs(h_cand - z_val)
-                    if diff <= match_tol and diff < min_diff:
+            for z_val, z_tag in zce_res:
+                cluster = [c for c in cand_highs if abs(c[0] - z_val) <= match_tol]
+                if cluster:
+                    touches = len(cluster)
+                    best_cand = max(cluster, key=lambda x: x[0])
+                    origin_cand = cluster[0]
+                    diff = abs(best_cand[0] - z_val)
+                    if diff < min_diff:
                         min_diff = diff
                         best_match = {
-                            "anchor_level": round(h_cand, digits),
+                            "anchor_level": round(best_cand[0], digits),
                             "zce_level": round(z_val, digits),
                             "zce_tag": z_tag,
                             "direction": -1,
-                            "dist_atr": round(abs(h_cand - mid) / atr_val, 2)
+                            "dist_atr": round(abs(best_cand[0] - mid) / atr_val, 2),
+                            "origin_time": origin_cand[2],
+                            "origin_age": len(df) - 1 - origin_cand[1] if df is not None else 0,
+                            "is_eqh": (touches >= 2),
+                            "touches": touches
                         }
             return best_match
 
@@ -1256,7 +1278,7 @@ class MarketScanner:
                 for i in range(start_i, n):
                     l_val = float(df.iloc[i]['low'])
                     if l_val <= mid + 0.20 * atr_val:
-                        cand_lows.append(l_val)
+                        cand_lows.append((l_val, i, _to_ts_int(df.index[i])))
 
             if not cand_lows:
                 best_z, best_tag = min(zce_sup, key=lambda item: abs(item[0] - mid))
@@ -1265,22 +1287,34 @@ class MarketScanner:
                     "zce_level": round(best_z, digits),
                     "zce_tag": best_tag,
                     "direction": 1,
-                    "dist_atr": round(abs(best_z - mid) / atr_val, 2)
+                    "dist_atr": round(abs(best_z - mid) / atr_val, 2),
+                    "origin_time": 0,
+                    "origin_age": 0,
+                    "is_eql": False,
+                    "touches": 0
                 }
 
             best_match = None
             min_diff = 9999.0
-            for l_cand in cand_lows:
-                for z_val, z_tag in zce_sup:
-                    diff = abs(l_cand - z_val)
-                    if diff <= match_tol and diff < min_diff:
+            for z_val, z_tag in zce_sup:
+                cluster = [c for c in cand_lows if abs(c[0] - z_val) <= match_tol]
+                if cluster:
+                    touches = len(cluster)
+                    best_cand = min(cluster, key=lambda x: x[0])
+                    origin_cand = cluster[0]
+                    diff = abs(best_cand[0] - z_val)
+                    if diff < min_diff:
                         min_diff = diff
                         best_match = {
-                            "anchor_level": round(l_cand, digits),
+                            "anchor_level": round(best_cand[0], digits),
                             "zce_level": round(z_val, digits),
                             "zce_tag": z_tag,
                             "direction": 1,
-                            "dist_atr": round(abs(l_cand - mid) / atr_val, 2)
+                            "dist_atr": round(abs(best_cand[0] - mid) / atr_val, 2),
+                            "origin_time": origin_cand[2],
+                            "origin_age": len(df) - 1 - origin_cand[1] if df is not None else 0,
+                            "is_eql": (touches >= 2),
+                            "touches": touches
                         }
             return best_match
 
@@ -1405,8 +1439,8 @@ class MarketScanner:
             if m1b_info:
                 m1b_lvl = m1b_info['anchor_level']
                 m1b_status = "WAITING_SWEEP"
-                m1b_event_time = 0
-                m1b_bar_age = 0
+                m1b_event_time = m1b_info.get("origin_time", 0)
+                m1b_bar_age = m1b_info.get("origin_age", 0)
                 if df is not None and len(df) >= 3:
                     if m1b_dir == -1:
                         pierce = [i for i in range(max(0, len(df) - 12), len(df)) if df.iloc[i]['high'] >= m1b_lvl]
@@ -1423,14 +1457,23 @@ class MarketScanner:
                             m1b_bar_age = len(df) - 1 - last_p
                             m1b_status = "RECLAIMED" if df.iloc[last_p]['close'] > m1b_lvl else "ACTIVE_PIERCE"
 
+                is_eq = m1b_info.get("is_eqh", False) if m1b_dir == -1 else m1b_info.get("is_eql", False)
+                touches_cnt = m1b_info.get("touches", 1)
+                pool_name = "EQH" if m1b_dir == -1 else "EQL"
+                lbl_text = f"M1B {touches_cnt}x {pool_name} Pool [{m1b_info.get('zce_tag', 'ZCE')}]" if (is_eq and touches_cnt >= 2) else f"M1B Trend Sweep [{m1b_info.get('zce_tag', 'ZCE')}]"
+
                 standbys.append({
                     "type": "M1B",
                     "price": round(m1b_lvl, digits),
-                    "label": f"M1B Trend Sweep [{m1b_info.get('zce_tag', 'ZCE')}]",
+                    "label": lbl_text,
                     "event_time": m1b_event_time,
                     "status": m1b_status,
                     "bar_age": m1b_bar_age,
-                    "direction": m1b_dir
+                    "direction": m1b_dir,
+                    "origin_time": m1b_info.get("origin_time", 0),
+                    "origin_age": m1b_info.get("origin_age", 0),
+                    "is_eqh": is_eq,
+                    "touches": touches_cnt
                 })
 
         # ── 2. M2: TREND-ALIGNED MULTI-TIMEFRAME PULLBACK & RETEST (CONFLUENCE) ──

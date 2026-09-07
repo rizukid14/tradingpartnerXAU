@@ -1596,11 +1596,18 @@ function renderChartLevels(data) {
           const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
           markerText = `[M3 ${dirStr} RETEST] ${structStr} ${statusDesc} (${ageDesc})`;
         } else if (s.type === "M1B") {
-          shape = "circle";
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          const statusDesc = (s.status === 'RECLAIMED') ? 'Reclaimed SFP' : (s.status === 'ACTIVE_PIERCE' ? 'Piercing' : 'Waiting Sweep');
+          const poolStr = (s.direction === 1) ? "EQL POOL" : "EQH POOL";
+          const touchDesc = (s.touches && s.touches > 1) ? `${s.touches}x ` : "";
           const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
-          markerText = `[M1B ${dirStr} TREND SWEEP] ${statusDesc} (${ageDesc})`;
+          if (s.status === 'WAITING_SWEEP') {
+            shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
+            markerText = `[M1B ${touchDesc}${poolStr}] ${s.label} (${ageDesc})`;
+          } else {
+            shape = "circle";
+            const statusDesc = (s.status === 'RECLAIMED') ? 'Reclaimed SFP' : 'Piercing';
+            markerText = `[M1B ${dirStr} INDUCED SWEEP] ${statusDesc} (${ageDesc})`;
+          }
         } else if (s.type === "M1") {
           shape = "circle";
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
@@ -1994,6 +2001,7 @@ function renderDrawer() {
         <div class="telemetry-card">
           <div class="tele-title" style="color:#e879f9;">M1B: Trend Induced Sweep</div>
           <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#e879f9;font-weight:700;">${t.m1b_target || '—'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Liquidity Pool:</span><span class="tele-val" style="color:#e879f9;">${t.m1b_eqh || 'Single Anchor'}</span></div>
           <div class="tele-row"><span class="tele-lbl">ZCE Confluence:</span><span class="tele-val">${t.m1b_zce || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Sweep Status:</span><span class="tele-val">${t.m1b_status || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1b_wick || '0.0% (Req >=30%)'}</span></div>

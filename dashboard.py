@@ -762,6 +762,7 @@ class CockpitDataEngine:
             "m1b_status": m1b_status_str,
             "m1b_zce": m1b_item.get("label", "ZCE Anchor") if m1b_item else "—",
             "m1b_wick": f"{macro.get('rejection_wick_ratio', 0.0)*100:.1f}% (Req >=30%)",
+            "m1b_eqh": f"{m1b_item.get('touches', 1)}x Touches ({'EQH' if m1b_item.get('direction', -1) == -1 else 'EQL'} Pool)" if (m1b_item and m1b_item.get("is_eqh")) else ("Single Anchor" if m1b_item else "—"),
             "m2_adx": f"{macro.get('adx_14', 24.5):.1f} (Trend Aligned)",
             "m2_fib50": m2_tgt,
             "m2_fib618": f"{m2_desc.replace('Bullish Pullback (', '').replace('Bearish Pullback (', '').replace(')', '')} [Est: {m2_item.get('est_time', 'Active')}]" if m2_item else "—",
