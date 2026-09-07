@@ -895,7 +895,27 @@ class CockpitDataEngine:
         gates.append(g1)
 
         # Gate 2: Systemic Basket Circuit Breaker (35.0 bps)
+        # Tentukan target_dir: prioritaskan M4 episode direction jika ada
         target_dir = 1 if macro.get("is_bull") else -1
+        m4_dir_override = None
+        try:
+            m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_s, {})
+            m4_n  = len(getattr(self.scanner, "_m4_df", {}).get(clean_s, []) or [])
+            for _side, _dir in (("BUY", 1), ("SELL", -1)):
+                _s = m4_st.get(_side, {})
+                _ep   = _s.get("ep")
+                _pend = _s.get("pending")
+                _ref  = _pend.get("break_pos") if _pend else _ep
+                if _ref is not None:
+                    _age = (m4_n - 1 - _ref) if m4_n > _ref else 0
+                    if _age <= getattr(config, "M4_MAX_WAIT_BARS", 48):
+                        m4_dir_override = _dir
+                        break
+        except Exception:
+            pass
+        if m4_dir_override is not None:
+            target_dir = m4_dir_override
+
         if is_crypto:
             g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
         else:
@@ -920,16 +940,33 @@ class CockpitDataEngine:
         gates.append(g3)
 
         # Gate 4: Boitoki CSM Flow Alignment
+        # Respects ENABLE_CSM_FLOW_FILTER: jika False → tampil OBSERVE (telemetri saja, tidak hard-block)
         if is_crypto:
             g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": "Aset crypto (BTCUSD) independen dari arus fiat CSM (Net Delta N/A)."}
         else:
             csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
+            csm_filter_enabled = getattr(config, "ENABLE_CSM_FLOW_FILTER", True)
             is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
-            if is_csm_opposed:
-                g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK", "desc": "Relative Net Currency Delta Flow Check", "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({'BUY' if target_dir==1 else 'SELL'})."}
+            dir_label = "BUY" if target_dir == 1 else "SELL"
+            m4_tag = " [M4 Dir]" if m4_dir_override is not None else ""
+
+            if is_csm_opposed and csm_filter_enabled:
+                # Filter aktif dan CSM berlawanan → BLOCK
+                g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK",
+                      "desc": "Relative Net Currency Delta Flow Check",
+                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label}{m4_tag})."}
+            elif is_csm_opposed and not csm_filter_enabled:
+                # Filter dinonaktifkan → OBSERVE (forward test mode)
+                g4 = {"id": 4, "title": "Boitoki CSM Flow — OBSERVE MODE", "status": "OBSERVE",
+                      "desc": "Relative Net Currency Delta Flow Check (Filter Dinonaktifkan)",
+                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
             else:
-                g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan momentum arah."}
+                # CSM selaras atau netral
+                g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS",
+                      "desc": "Relative Net Currency Delta Flow Check",
+                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label}{m4_tag} momentum arah."}
         gates.append(g4)
+
 
         # Gate 5: M1..M4 Setup Prerequisites
         if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":

@@ -762,6 +762,7 @@ html, body {
 .status-pass { background: var(--green); color: #000; }
 .status-block { background: var(--red); color: #fff; }
 .status-wait { background: var(--amber); color: #000; }
+.status-observe { background: var(--cyan); color: #000; }
 
 .gate-detail {
   font-size: 10.5px;
@@ -780,6 +781,7 @@ html, body {
 .gate-reason-box.block { border-left-color: var(--red); color: #fca5a5; }
 .gate-reason-box.pass { border-left-color: var(--green); color: #86efac; }
 .gate-reason-box.wait { border-left-color: var(--amber); color: #fde047; }
+.gate-reason-box.observe { border-left-color: var(--cyan); color: #67e8f9; }
 
 /* TELEMETRY CARDS */
 .telemetry-grid {
@@ -1894,6 +1896,7 @@ function renderGates(gates) {
     let boxClass = "wait";
     if (g.status === "PASS") { statusClass = "status-pass"; boxClass = "pass"; }
     else if (g.status === "BLOCK") { statusClass = "status-block"; boxClass = "block"; }
+    else if (g.status === "OBSERVE") { statusClass = "status-observe"; boxClass = "observe"; }
 
     html += `
       <div class="gate-card">
