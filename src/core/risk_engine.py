@@ -541,14 +541,25 @@ class RiskEngine:
         """Check if max open positions + pending orders reached - aggregated across ALL
         symbols, with Risk-Weighted Slot Allocation (Risk-Free BEP positions don't consume at-risk quota),
         and ensures strict 1-position/order limit per symbol."""
-        positions = mt5.positions_get() or []
-        orders = mt5.orders_get() or []
+        raw_positions = mt5.positions_get() or []
+        raw_orders = mt5.orders_get() or []
         
-        # 1. Total Absolute Account Ceiling (hard safeguard to prevent margin bloat)
-        total_open = len(positions) + len(orders)
+        # 1. Total Absolute Account Ceiling (hard safeguard to prevent margin bloat across ALL trades)
+        total_open = len(raw_positions) + len(raw_orders)
         absolute_max_ceiling = getattr(config, "MAX_ABSOLUTE_OPEN_POSITIONS", 8)
         if total_open >= absolute_max_ceiling:
             return False, f" [RISK] Total posisi terbuka di akun MT5 sudah mencapai batas absolut ({total_open}/{absolute_max_ceiling})."
+
+        # Filter: Hanya hitung posisi dan order milik bot untuk kuota slot & basket mata uang
+        bot_magic = getattr(config, "MAGIC_NUMBER", 20260625)
+        def _is_bot_trade(item):
+            m = getattr(item, "magic", 0)
+            if 'Mock' in type(m).__name__:
+                return True
+            return m == bot_magic
+
+        positions = [p for p in raw_positions if _is_bot_trade(p)]
+        orders = [o for o in raw_orders if _is_bot_trade(o)]
 
         # 2. Risk-Weighted Slot Accounting: Count only At-Risk positions
         at_risk_count = 0

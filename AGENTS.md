@@ -141,7 +141,7 @@ python main.py
   - **Ceiling (anti-runaway)**: FX/JPY/Gold = $2.5 \times \text{ATR}$ (fallback 350 pts FX/JPY, 800 Gold); BTC = $1.8 \times \text{ATR}$ (fallback 45000).
   - **R:R**: Net TP $\in [1.25\times, 3.0\times]$ SL + friction (grade-aware). Pada setup `REDUCED_SCALP` / `TP1_ONLY_SCALP`, R:R dibatasi ke $[1.00\times, 1.25\times]$ guna mencegah pembengkakan TP makro pada scalp intraday.
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
-- **Dead Zone**: 00:00–08:00 WIB (FX & XAU skip; BTC 24/7 di legacy mode).
+- **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London/NY 14:00–00:00 WIB (all FX permitted).
 - **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders, **Friday Pre-Weekend Lock (freeze new orders mulai 23:00 WIB Jumat)**.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
   - **Break-Even (BEP)**: aktif di **45%–55% TP** + padding komisi round-trip + Pocket Profit 15 pts (1.5 pips).
@@ -151,7 +151,7 @@ python main.py
     * **Stage 2 (Terminal Lock: $\ge$ 90% TP)**: $0.50\times\text{ATR M30}$ dengan floor 30 pts FX (3 pips).
   - **Peak-Aware Time-Decay Stagnation Exit**: posisi $\ge$4 jam hold di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
   - **Pending Order Target Proximity Invalidation**: batalkan otomatis pending limit order jika harga live telah bergerak $\ge 75\%$ menuju TP tanpa terjemput (mencegah late adverse fill pada late reverse).
-  - **Pending Order Harmonisasi Invalidation CSM**: pembatalan pending limit order diselaraskan dengan scanner threshold ($|\text{csm\_delta}| \ge 1.0$, `PENDING_CSM_OPPOSED_THRESHOLD`), mencegah auto-cancel prematur pada order valid.
+  - **Pending Order Harmonisasi Invalidation CSM & Macro Alignment**: pembatalan pending limit order diselaraskan dengan scanner threshold ($|\text{csm\_delta}| \ge 1.0$, `PENDING_CSM_OPPOSED_THRESHOLD`), dengan proteksi Macro Alignment (order tidak dibatalkan oleh CSM opposed moderat jika didukung bias makro $\ge 0.35$ BUY / $\le -0.35$ SELL).
   - **Pre-Rollover Shield (03:50–04:15 WIB)**: tutup bersih di 03:50 WIB JIKA jarak fisik ke SL $\le$ threshold per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, USDJPY 150 pts, NZDCAD 140 pts, AUDCAD 130 pts). Posisi SL aman / profit tebal dibiarkan jalan.
 
 ---

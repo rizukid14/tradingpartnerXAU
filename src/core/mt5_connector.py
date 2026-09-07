@@ -46,6 +46,7 @@ def get_broker_offset_seconds(symbol="XAUUSD-ECN"):
     now_utc = datetime.now(timezone.utc)
     
     # 2. Current MT5 tick time
+    symbol = get_valid_trade_symbol(symbol)
     tick = mt5.symbol_info_tick(symbol)
     if not tick:
         # If terminal not connected or symbol invalid, return 0 (no offset adjustment)
@@ -78,14 +79,16 @@ def server_utc_offset_hours():
     falling back to the active config symbol, and finally to 3 (GMT+3).
     """
     try:
-        # 1. Try BTCUSD.c first for 24/7 active ticks
-        tick = mt5.symbol_info_tick("BTCUSD.c")
+        # 1. Try BTCUSD first for 24/7 active ticks (auto-resolve Demo vs Live suffix)
+        btc_sym = get_valid_trade_symbol("BTCUSD.c")
+        tick = mt5.symbol_info_tick(btc_sym)
         if tick is not None and tick.time > 0:
             diff_seconds = tick.time - time.time()
             return round(diff_seconds / 3600.0)
             
         # 2. Fallback to active symbol
-        tick = mt5.symbol_info_tick(config.SYMBOL)
+        sym = get_valid_trade_symbol(config.SYMBOL)
+        tick = mt5.symbol_info_tick(sym)
         if tick is not None and tick.time > 0:
             diff_seconds = tick.time - time.time()
             return round(diff_seconds / 3600.0)
@@ -253,7 +256,8 @@ def get_market_data(symbol, timeframe, num_candles=50):
 
 def get_current_tick(symbol):
     """
-    Fetches current Ask, Bid, Spread, Point, Digits for a symbol.
+    Fetches current Ask, Bid, Spread, Point, Digits, and USD per point for a symbol.
+    Auto-corrects symbol variations (Demo vs Live).
     Returns a dict or None if unavailable.
     """
     symbol = get_valid_trade_symbol(symbol)
@@ -263,7 +267,10 @@ def get_current_tick(symbol):
     if tick is None or symbol_info is None:
         return None
 
-    spread = int(round((tick.ask - tick.bid) / symbol_info.point)) if symbol_info.point > 0 else 0
+    spread_usd = tick.ask - tick.bid
+    point_val = symbol_info.point if (symbol_info and symbol_info.point) else 0.0
+    spread_pts = round(spread_usd / point_val, 1) if point_val > 0 else 0.0
+    usd_per_pt = (symbol_info.trade_tick_value * config.lot_size_for(symbol) * (symbol_info.point / symbol_info.trade_tick_size)) if (symbol_info and symbol_info.trade_tick_size and symbol_info.point) else 0.0
 
     return {
         "ask": tick.ask,
@@ -271,9 +278,11 @@ def get_current_tick(symbol):
         "last": getattr(tick, "last", tick.ask),
         "volume": getattr(tick, "volume", 0),
         "time": server_to_wib(tick.time),
-        "spread": spread,
-        "point": symbol_info.point,
-        "digits": symbol_info.digits
+        "spread": spread_pts,
+        "spread_usd": spread_usd,
+        "point": point_val,
+        "digits": getattr(symbol_info, "digits", 5),
+        "usd_per_point": usd_per_pt,
     }
 
 
@@ -302,33 +311,11 @@ def get_last_m1_candles(symbol, num_candles=3):
         })
     return candles
 
-def get_current_tick(symbol):
-    """Gets the latest bid/ask tick data."""
-    tick = mt5.symbol_info_tick(symbol)
-    if tick is None:
-        print(f"[MT5 ERROR] Gagal mendapatkan tick untuk {symbol}.")
-        return None
-    si = mt5.symbol_info(symbol)
-    if si is None:
-        print(f"[MT5 ERROR] Gagal mendapatkan symbol info untuk {symbol}.")
-        return None
-    spread_usd = tick.ask - tick.bid
-    point_val = si.point if (si and si.point) else 0.0
-    spread_pts = round(spread_usd / point_val, 1) if point_val > 0 else 0.0
-    usd_per_pt = (si.trade_tick_value * config.lot_size_for(symbol) * (si.point / si.trade_tick_size)) if (si and si.trade_tick_size and si.point) else 0.0
-    return {
-        "bid": tick.bid,
-        "ask": tick.ask,
-        "spread": spread_pts,
-        "spread_usd": spread_usd,
-        "point": si.point,
-        "usd_per_point": usd_per_pt,
-    }
-
 
 def get_usd_per_point(symbol, volume=1.0):
     """Menghitung nilai USD per 1 point untuk volume tertentu."""
     try:
+        symbol = get_valid_trade_symbol(symbol)
         si = mt5.symbol_info(symbol)
         if si and si.trade_tick_size and si.point and si.trade_tick_value:
             return float(si.trade_tick_value * volume * (si.point / si.trade_tick_size))

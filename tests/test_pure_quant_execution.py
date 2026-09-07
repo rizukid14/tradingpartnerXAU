@@ -33,6 +33,19 @@ class TestPureQuantExecution(unittest.TestCase):
             action_tier="FULL_ALLOW"
         )
 
+        # Isolate side-effects to production telemetry, shadow tracker, and funnel metrics
+        self.patch_shadow = patch("main.shadow_tracker.register_candidate")
+        self.mock_shadow = self.patch_shadow.start()
+        self.addCleanup(self.patch_shadow.stop)
+
+        self.patch_telemetry = patch("main.position_manager.record_trade_open_telemetry")
+        self.mock_telemetry = self.patch_telemetry.start()
+        self.addCleanup(self.patch_telemetry.stop)
+
+        self.patch_funnel = patch("main.record_funnel_event")
+        self.mock_funnel = self.patch_funnel.start()
+        self.addCleanup(self.patch_funnel.stop)
+
     @patch("main.llm.get_multi_llm_decisions_for_candidate")
     @patch("main.connector.get_current_tick")
     @patch("main.connector.send_pending_order")

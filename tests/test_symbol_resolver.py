@@ -60,5 +60,53 @@ class TestSymbolResolver(unittest.TestCase):
         res_eur = mt5_connector.get_valid_trade_symbol("EURUSD-ECN")
         self.assertEqual(res_eur, "EURUSD-ECNc")
 
+    @patch("src.core.mt5_connector.mt5")
+    def test_get_current_tick_auto_resolves_symbol(self, mock_mt5):
+        """Verify get_current_tick auto-resolves symbol variations like BTCUSD.c to Demo BTCUSD."""
+        def mock_symbol_info(sym):
+            if sym == "BTCUSD":
+                m = MagicMock()
+                m.trade_mode = 4
+                m.point = 0.01
+                m.digits = 2
+                m.trade_tick_value = 1.0
+                m.trade_tick_size = 0.01
+                return m
+            return None
+
+        def mock_symbol_info_tick(sym):
+            if sym == "BTCUSD":
+                t = MagicMock()
+                t.ask = 80100.0
+                t.bid = 80090.0
+                t.last = 80095.0
+                t.volume = 10
+                t.time = 1700000000
+                return t
+            return None
+
+        mock_mt5.symbol_info.side_effect = mock_symbol_info
+        mock_mt5.symbol_info_tick.side_effect = mock_symbol_info_tick
+        mock_mt5.SYMBOL_TRADE_MODE_FULL = 4
+
+        # Calling with BTCUSD.c on demo broker should auto-resolve to BTCUSD and succeed
+        tick = mt5_connector.get_current_tick("BTCUSD.c")
+        self.assertIsNotNone(tick)
+        self.assertEqual(tick["ask"], 80100.0)
+        self.assertEqual(tick["bid"], 80090.0)
+        self.assertEqual(tick["point"], 0.01)
+        self.assertEqual(tick["digits"], 2)
+        self.assertIn("usd_per_point", tick)
+
+    @patch("src.core.mt5_connector.mt5")
+    def test_get_current_tick_returns_none_when_unavailable(self, mock_mt5):
+        """Verify get_current_tick returns None gracefully when tick is not available."""
+        mock_mt5.symbol_info.return_value = None
+        mock_mt5.symbol_info_tick.return_value = None
+        mock_mt5.SYMBOL_TRADE_MODE_FULL = 4
+
+        tick = mt5_connector.get_current_tick("NONEXISTENT")
+        self.assertIsNone(tick)
+
 if __name__ == "__main__":
     unittest.main()

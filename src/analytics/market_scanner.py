@@ -896,16 +896,18 @@ class MarketScanner:
     def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
         """
         Filters symbols based on active session currency drivers:
-        - Tokyo Session (08:00 - 14:00 WIB): Any symbol containing Asian/Pacific drivers (JPY, AUD, NZD) is allowed
+        - Tokyo Session (07:00 - 14:00 WIB): Any symbol containing Asian/Pacific drivers (JPY, AUD, NZD) is allowed
           (e.g., AUDCAD, CADJPY, NZDCAD, EURJPY, GBPJPY, CHFJPY, AUDUSD, NZDUSD, GBPAUD, EURNZD, etc.).
           Symbols without JPY/AUD/NZD (e.g., EURCAD, GBPCAD, USDCAD, EURUSD, GBPUSD, USDCHF, EURCHF, etc.) are locked.
         - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured pairs.
         """
         if config.is_crypto(symbol):
             return True
-        if 8 <= hour_wib < 14:
+        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
+        asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
+        if asia_start <= hour_wib < asia_end:
             return config.is_asian_session_pair(symbol)
-        elif 14 <= hour_wib <= 23:
+        elif asia_end <= hour_wib <= 23:
             return True
         return False
 
@@ -2307,16 +2309,17 @@ class MarketScanner:
         h = now.hour
         dow = now.weekday()
 
-        is_asian = (8 <= h < 17)
+        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
+        is_asian = (asia_start <= h < 17)
         req_body = 0.30 if is_asian else 0.40
         req_wick = 0.25 if is_asian else 0.333
 
         
-        # Dead Zone / Weekend Filter (00:00 - 08:00 WIB weekday, full block Sabtu-Minggu)
+        # Dead Zone / Weekend Filter (00:00 - 07:00 WIB weekday, full block Sabtu-Minggu)
         # FIX 29 Agu: weekend = Sabtu (5) + Minggu (6), cutoff Sabtu 00:00 (bukan Jumat 22:00).
         # Crypto (BTCUSD.c) trades 24/7 through weekends when ENABLE_BTC_ROTATION is True.
         has_crypto = any(config.is_crypto(s) for s in (self.symbols or []))
-        if not has_crypto and (dow in (5, 6) or (0 <= h < 8)):
+        if not has_crypto and (dow in (5, 6) or (0 <= h < asia_start)):
             return []
 
         # Ensure macro cache is initialized & dinding ZCE tidak basi (Patch #1, 2 Sep 2026).
@@ -2358,7 +2361,7 @@ class MarketScanner:
 
         for sym, macro in self.macro_cache.items():
             sym_is_crypto = config.is_crypto(sym)
-            if not sym_is_crypto and (dow in (5, 6) or (0 <= h < 8)):
+            if not sym_is_crypto and (dow in (5, 6) or (0 <= h < asia_start)):
                 continue
 
             clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
@@ -2375,7 +2378,7 @@ class MarketScanner:
 
             # ── SESSION-AWARE PAIR ROUTER (Anti-European Trap in Asian Session) ──
             if getattr(config, "SESSION_AWARE_ROUTING_ENABLED", True):
-                asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 8)
+                asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
                 asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
                 if asia_start <= h < asia_end:
                     if not config.is_asian_session_pair(sym):
@@ -2521,8 +2524,9 @@ class MarketScanner:
                     is_counter = (target_dir == 1 and bias_score <= -0.35) or (target_dir == -1 and bias_score >= 0.35)
                     is_m4_pro = (target_dir == -1 and m4_catalyst == "BEARISH_FLOW") or (target_dir == 1 and m4_catalyst == "BULLISH_FLOW")
 
-                    if is_csm_opposed and not is_aligned and not is_m4_pro:
-                        return False, "HARD_BLOCK", f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction"
+                    if getattr(config, "ENABLE_CSM_FLOW_FILTER", True):
+                        if is_csm_opposed and not is_aligned and not is_m4_pro:
+                            return False, "HARD_BLOCK", f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction"
 
                     if is_aligned or is_m4_pro:
                         flow_tag = f" [M4_CATALYST: {m4_catalyst}]" if is_m4_pro else ""

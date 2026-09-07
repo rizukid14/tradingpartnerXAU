@@ -668,6 +668,52 @@ def run_scanner_trading_cycle(cand, risk):
     can_trade_ok, risk_msg = risk.can_trade(sym)
     if not can_trade_ok:
         print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
+        # Masukkan ke Paper Trade (Quant Shadow Tracker) agar sinyal Stage 1 tetap dipantau
+        try:
+            t_live = connector.get_current_tick(sym)
+            pt = t_live.get("point", 0.00001) if t_live else 0.00001
+            c_dir = "BUY" if cand.direction == 1 else "SELL"
+            mkt_ref = (t_live.get("ask", 0.0) if c_dir == "BUY" else t_live.get("bid", 0.0)) if t_live else getattr(cand, "scan_mid", 0.0)
+            c_entry = getattr(cand, "trigger_price", 0.0) or mkt_ref or getattr(cand, "scan_mid", 0.0)
+            c_sl = getattr(cand, "suggested_sl", 0.0)
+            c_tp = getattr(cand, "suggested_tp", 0.0)
+            c_entry_type = "market"
+            if getattr(config, "PENDING_ORDERS_ENABLED", False) and getattr(cand, "trigger_price", 0.0) > 0 and t_live:
+                ask = t_live.get("ask", 0.0)
+                bid = t_live.get("bid", 0.0)
+                spread_pts = t_live.get("spread", 0)
+                min_dist_pts = max(spread_pts * 2, 20)
+                if c_dir == "BUY" and (ask - cand.trigger_price) >= (min_dist_pts * pt):
+                    c_entry_type = "buy_limit"
+                    c_entry = cand.trigger_price
+                elif c_dir == "SELL" and (cand.trigger_price - bid) >= (min_dist_pts * pt):
+                    c_entry_type = "sell_limit"
+                    c_entry = cand.trigger_price
+
+            c_sl_pts = int(round(abs(c_entry - c_sl) / pt)) if (pt > 0 and c_sl > 0) else config.default_sl_points_for(sym)
+            c_tp_pts = int(round(abs(c_tp - c_entry) / pt)) if (pt > 0 and c_tp > 0) else config.default_tp_points_for(sym)
+
+            if c_sl <= 0 and pt > 0:
+                c_sl = c_entry - (c_sl_pts * pt) if c_dir == "BUY" else c_entry + (c_sl_pts * pt)
+            if c_tp <= 0 and pt > 0:
+                c_tp = c_entry + (c_tp_pts * pt) if c_dir == "BUY" else c_entry - (c_tp_pts * pt)
+
+            clean_disp = "SKIPPED_RISK_BASKET" if "Konsentrasi mata uang" in risk_msg else "SKIPPED_RISK_BLOCK"
+            shadow_trade = shadow_tracker.register_candidate(
+                candidate=cand,
+                entry_type=c_entry_type,
+                entry_price=c_entry,
+                sl_price=c_sl,
+                tp_price=c_tp,
+                sl_points=c_sl_pts,
+                tp_points=c_tp_pts,
+                mt5_disposition=clean_disp
+            )
+            if shadow_trade:
+                print(f" {UI.MAGENTA}[SHADOW RADAR REGISTERED] {sym} ({cand.setup_type}) dicatat ke Paper Trade ({clean_disp}).{UI.RST}")
+        except Exception as e:
+            print(f" [SHADOW REGISTRATION ERROR] {e}")
+
         return False
 
     old_sym = config.SYMBOL
@@ -906,9 +952,18 @@ def run_scanner_trading_cycle(cand, risk):
             # High Confidence Multi-Position sizing:
             # If 3/3 AI agree and confidence >= 0.80 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
             # CRITICAL: If action_tier == "TP1_ONLY_SCALP", enforce single position only (no 2nd extended runner against macro)
-            positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
-            orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
-            total_active = len(positions or []) + len(orders or [])
+            bot_magic = getattr(config, "MAGIC_NUMBER", 20260625)
+            def _is_bot_trade(item):
+                m = getattr(item, "magic", 0)
+                if 'Mock' in type(m).__name__:
+                    return True
+                return m == bot_magic
+
+            raw_positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
+            raw_orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
+            bot_positions = [p for p in (raw_positions or []) if _is_bot_trade(p)]
+            bot_orders = [o for o in (raw_orders or []) if _is_bot_trade(o)]
+            total_active = len(bot_positions) + len(bot_orders)
             max_positions = config.get_max_open_positions()
             remaining_slots = max(0, max_positions - total_active)
             
@@ -992,6 +1047,14 @@ def run_scanner_trading_cycle(cand, risk):
                         else:
                             print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
                         print(f" [ZCE-AUDIT] Ticket #{pending_res.get('ticket')} | {sym} {entry_type.upper()} | Entry={entry_price} SL={p_sl_price} ({sl_points}pts) TP={p_tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
+                        position_manager.record_trade_open_telemetry(
+                            ticket=pending_res.get("ticket"),
+                            symbol=sym,
+                            direction=trade_signal,
+                            entry_price=entry_price,
+                            csm_delta=getattr(cand, "csm_delta", 0.0),
+                            setup_type=f"{cand.setup_type} (Pending P{i+1})"
+                        )
                         risk.record_trade_opened()
                         record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                         _recent_trihourly_opened.append({
@@ -1045,6 +1108,14 @@ def run_scanner_trading_cycle(cand, risk):
                     else:
                         print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
                     print(f" [ZCE-AUDIT] Ticket #{order_res.get('ticket')} | {sym} {trade_signal} | Entry={ref_price} SL={sl_price} ({sl_points}pts) TP={tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
+                    position_manager.record_trade_open_telemetry(
+                        ticket=order_res.get("ticket"),
+                        symbol=sym,
+                        direction=trade_signal,
+                        entry_price=ref_price,
+                        csm_delta=getattr(cand, "csm_delta", 0.0),
+                        setup_type=f"{cand.setup_type} (Market P{i+1})"
+                    )
                     risk.record_trade_opened()
                     record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                     _recent_trihourly_opened.append({
@@ -1349,6 +1420,19 @@ def main():
                         d_type = deal.get("type", "")
                         print(f"[CLOSE DETECTED] #{d_ticket} {d_symbol} {d_type} "
                               f"ditutup (P/L: {d_profit:+.2f}, reason: {d_reason or 'unknown'})")
+                        try:
+                            from src.analytics.currency_strength import get_csm_delta_for_symbol
+                            csm_close_val = get_csm_delta_for_symbol(d_symbol)
+                            position_manager.record_trade_close_telemetry(
+                                ticket=d_ticket,
+                                symbol=d_symbol,
+                                profit=d_profit,
+                                reason=d_reason or "unknown",
+                                csm_delta_close=csm_close_val,
+                                exit_price=deal.get("exit_price", 0.0)
+                            )
+                        except Exception as e:
+                            logger.error(f"[TELEMETRY CLOSE ERROR] {e}")
                         try:
                             tg.alert_trade_closed(
                                 ticket=d_ticket,

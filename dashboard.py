@@ -45,6 +45,7 @@ from src.core import mt5_connector as connector
 from src.analytics.market_scanner import MarketScanner, evaluate_systemic_basket_lock
 from src.analytics.currency_strength import calculate_boitoki_csm, get_csm_delta_for_symbol
 from src.indicators.lux_smc import LuxSMCAnalyzer
+from src.analytics.shadow_report import render_shadow_report_html, generate_and_save_shadow_report
 from dashboard_assets import TEMPLATE
 
 WIB = ZoneInfo("Asia/Jakarta")
@@ -93,11 +94,11 @@ def _get_session_info(dt_wib: datetime, symbol: str = "") -> Dict[str, Any]:
                 "name": "CLOSED"
             }
 
-    if 0 <= h < 8:
+    if 0 <= h < 7:
         if (h == 3 and dt_wib.minute >= 50) or (h == 4 and dt_wib.minute <= 15):
             lbl = "Rollover Spread Spike (03:50–04:15 WIB)"
         else:
-            lbl = "Dead Zone: Rollover & Thin Liquidity (00:00–08:00 WIB)"
+            lbl = "Dead Zone: Rollover & Thin Liquidity (00:00–07:00 WIB)"
         return {
             "type": "DEAD_ZONE",
             "status": "BLOCKED",
@@ -106,7 +107,7 @@ def _get_session_info(dt_wib: datetime, symbol: str = "") -> Dict[str, Any]:
             "border_color": "rgba(239, 68, 68, 0.40)",
             "name": "DEAD_ZONE"
         }
-    elif 8 <= h < 14:
+    elif 7 <= h < 14:
         is_asian_allowed = (not clean) or any(k in clean for k in ("JPY", "AUD", "NZD"))
         if is_asian_allowed:
             lbl = f"Tokyo Active Driver ({clean} Permitted)" if clean else "Tokyo Active Session"
@@ -877,16 +878,16 @@ class CockpitDataEngine:
 
         # Gate 1: Session & Spread Filter
         is_crypto = config.is_crypto(sym)
-        is_dead_zone = (0 <= h < 8) and not is_crypto
+        is_dead_zone = (0 <= h < 7) and not is_crypto
         clean_s = sym.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
-        is_asian = (8 <= h < 14) and not is_crypto
+        is_asian = (7 <= h < 14) and not is_crypto
         is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto
         spread_cap = config.max_spread_points_for(sym) if is_crypto else max(int(round(atr_val * 0.15 / pt)), 20)
 
         if is_dead_zone:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–08:00 WIB (Current: {h:02d}:00 WIB)."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB)."}
         elif is_asian and not is_asian_allowed:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SESSION LOCKED] Sesi Tokyo (08:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
         elif spread_pts > spread_cap:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
         else:
@@ -1011,7 +1012,7 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 {"category": "Mekanisme Radar", "param": "M3_ENABLED", "value": str(getattr(config, "M3_ENABLED", True)), "desc": "Breakout Retest (15-Bar Recency Guard, 2.5x ATR Runaway Guard, Runway >= 0.8x ATR)"},
                 {"category": "Mekanisme Radar", "param": "M4_ENABLED", "value": str(getattr(config, "M4_ENABLED", True)), "desc": "Systemic Flow Continuation (z >= 1.5, 120-bar break, SL 0.45x ATR, TP 1.1R beku)"},
                 {"category": "Circuit Breaker", "param": "SYSTEMIC_BASKET_THRESHOLD", "value": "35.0 bps", "desc": "USD, JPY, Cross & Spread Shock Threshold (Mencegah trade saat anomali lonjakan modal)"},
-                {"category": "Waktu Operasional", "param": "DEAD_ZONE_HOURS", "value": "00:00 - 08:00 WIB", "desc": "Perlindungan rollover likuiditas tipis & spread tinggi broker"},
+                {"category": "Waktu Operasional", "param": "DEAD_ZONE_HOURS", "value": "00:00 - 07:00 WIB", "desc": "Perlindungan rollover likuiditas tipis & spread tinggi broker"},
                 {"category": "Waktu Operasional", "param": "PRE_ROLLOVER_SHIELD", "value": "03:50 WIB", "desc": "Tutup otomatis posisi berisiko sebelum lonjakan rollover 04:00 WIB"},
                 {"category": "3-AI Consensus", "param": "AI_CONSENSUS_POLICY", "value": "Strict 3/3 Unanimous", "desc": "Wajib sepakat bulat 3 model (OpenAI o4-mini + Gemini 3.1 + DeepSeek V4)"},
                 {"category": "Risk Management", "param": "LLM_FX_FLOOR_ATR_MULT", "value": "0.50x ATR (H1)", "desc": "Batas lantai stop loss minimum FX majors & crosses (+15 pts buffer)"},
@@ -1041,12 +1042,23 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
+        # 4b. Web UI: Quant Shadow Radar HTML Report
+        elif self.path in ("/shadow", "/shadow.html", "/report/shadow"):
+            html = render_shadow_report_html().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(html)
+
         # 5. Web UI Root
         elif self.path in ("/", "/index.html", "/dashboard"):
             html = TEMPLATE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(html)))
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(html)
         else:
@@ -1066,7 +1078,14 @@ def main():
     # Always write static template
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(TEMPLATE)
-    print(f" [✓] Template Cockpit berhasil digenerate: {args.output}")
+    print(f" [OK] Template Cockpit berhasil digenerate: {args.output}")
+
+    # Also generate static Quant Shadow report
+    try:
+        sh_path = generate_and_save_shadow_report()
+        print(f" [OK] Static Quant Shadow Report berhasil digenerate: {sh_path}")
+    except Exception as e:
+        logger.warning(f"[DASHBOARD] Gagal generate shadow report statis: {e}")
 
     if args.serve:
         port = args.port

@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from src.analytics.shadow_tracker import QuantShadowTracker, ShadowTrade, SHADOW_STATE_FILE, SHADOW_TRADES_LOG
 from src.analytics.market_scanner import CandidateSetup
+import config
 
 WIB = ZoneInfo("Asia/Jakarta")
 
@@ -31,6 +32,8 @@ class TestQuantShadowTracker(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.orig_state_file = SHADOW_STATE_FILE
         self.orig_log_file = SHADOW_TRADES_LOG
+        self.orig_prox = getattr(config, "ENABLE_SHADOW_PROXIMITY_CANCEL", True)
+        config.ENABLE_SHADOW_PROXIMITY_CANCEL = True
 
         import src.analytics.shadow_tracker as st_module
         st_module.SHADOW_STATE_FILE = os.path.join(self.test_dir, "test_shadow_state.json")
@@ -41,6 +44,7 @@ class TestQuantShadowTracker(unittest.TestCase):
         self.tracker = QuantShadowTracker()
 
     def tearDown(self):
+        config.ENABLE_SHADOW_PROXIMITY_CANCEL = self.orig_prox
         import src.analytics.shadow_tracker as st_module
         st_module.SHADOW_STATE_FILE = self.orig_state_file
         st_module.SHADOW_TRADES_LOG = self.orig_log_file
@@ -225,6 +229,34 @@ class TestQuantShadowTracker(unittest.TestCase):
         summary = self.tracker.get_performance_summary()
         self.assertEqual(summary["sl_hits"], 1)
         self.assertEqual(summary["cumulative_net_r"], -1.0)
+
+    def test_risk_block_disposition_and_get_all_resolved_trades(self):
+        cand = self._make_candidate(symbol="NZDUSD-ECN", direction=1, setup_type="SYSTEMIC_FLOW_CONTINUATION")
+        trade = self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=0.72000,
+            sl_price=0.71800,
+            tp_price=0.72400,
+            sl_points=200,
+            tp_points=400,
+            mt5_disposition="SKIPPED_RISK_BASKET"
+        )
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.mt5_disposition, "SKIPPED_RISK_BASKET")
+
+        summary = self.tracker.get_performance_summary()
+        self.assertEqual(summary["disposition_breakdown"]["SKIPPED_RISK_BASKET"], 1)
+
+        # Resolve it
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {"ask": 0.72410, "bid": 0.72405, "point": 0.00001}
+        self.tracker.update_shadow_orders(mock_connector)
+
+        resolved_list = self.tracker.get_all_resolved_trades()
+        self.assertEqual(len(resolved_list), 1)
+        self.assertEqual(resolved_list[0]["symbol"], "NZDUSD-ECN")
+        self.assertEqual(resolved_list[0]["mt5_disposition"], "SKIPPED_RISK_BASKET")
 
 
 if __name__ == "__main__":

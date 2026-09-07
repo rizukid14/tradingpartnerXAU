@@ -14,6 +14,13 @@ from src.analytics.position_manager import audit_pending_orders_thesis
 
 class TestAuditPendingOrdersThesis(unittest.TestCase):
 
+    def setUp(self):
+        self._orig_audit = getattr(config, "ENABLE_PENDING_THESIS_AUDIT", True)
+        config.ENABLE_PENDING_THESIS_AUDIT = True
+
+    def tearDown(self):
+        config.ENABLE_PENDING_THESIS_AUDIT = self._orig_audit
+
     @patch("src.analytics.position_manager.mt5")
     @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
     @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
@@ -355,6 +362,127 @@ class TestAuditPendingOrdersThesis(unittest.TestCase):
 
         mock_mt5.order_send.assert_not_called()
 
+    @patch("src.analytics.position_manager.mt5")
+    @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
+    @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
+    def test_buy_limit_not_cancelled_when_macro_aligned_despite_opposed_csm(self, mock_csm, mock_get_dir, mock_mt5):
+        """BUY limit order (e.g. NZDCHF) with macro alignment (bias >= 0.35) must NOT be cancelled on opposed CSM."""
+        mock_order = MagicMock()
+        mock_order.ticket = 88881
+        mock_order.symbol = "NZDCHF-ECNc"
+        mock_order.magic = config.MAGIC_NUMBER
+        mock_order.comment = "RADAR M2 BUY"
+        mock_order.type = 2  # ORDER_TYPE_BUY_LIMIT
+        mock_order.price_open = 0.52000
+        mock_order.tp = 0.52500
+        mock_order.sl = 0.51700
+
+        mock_mt5.orders_get.return_value = [mock_order]
+        mock_mt5.ORDER_TYPE_BUY_LIMIT = 2
+        mock_mt5.ORDER_TYPE_SELL_LIMIT = 3
+        mock_mt5.ORDER_TYPE_BUY_STOP = 4
+        mock_mt5.ORDER_TYPE_SELL_STOP = 5
+
+        mock_si = MagicMock()
+        mock_si.point = 0.00001
+        mock_si.bid = 0.52050
+        mock_si.ask = 0.52060
+        mock_mt5.symbol_info.return_value = mock_si
+
+        mock_strat = MagicMock()
+        mock_strat.market_state = "FLOOR_REJECTION"
+        mock_strat.macro_bias_score = 0.95  # Strong Bullish Alignment
+        mock_get_dir.return_value = mock_strat
+
+        mock_mt5.copy_rates_from_pos.return_value = [{"close": 0.52050}]
+        mock_csm.return_value = -1.18  # Opposed CSM (NZD weak, CHF stronger)
+
+        audit_pending_orders_thesis()
+
+        # Must NOT be cancelled because macro structure overrides moderate CSM opposition!
+        mock_mt5.order_send.assert_not_called()
+
+    @patch("src.analytics.position_manager.mt5")
+    @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
+    @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
+    def test_sell_limit_not_cancelled_when_macro_aligned_despite_opposed_csm(self, mock_csm, mock_get_dir, mock_mt5):
+        """SELL limit order with macro alignment (bias <= -0.35) must NOT be cancelled on opposed CSM."""
+        mock_order = MagicMock()
+        mock_order.ticket = 88882
+        mock_order.symbol = "GBPJPY-ECNc"
+        mock_order.magic = config.MAGIC_NUMBER
+        mock_order.comment = "RADAR M3 SELL"
+        mock_order.type = 3  # ORDER_TYPE_SELL_LIMIT
+        mock_order.price_open = 195.000
+        mock_order.tp = 194.000
+        mock_order.sl = 195.600
+
+        mock_mt5.orders_get.return_value = [mock_order]
+        mock_mt5.ORDER_TYPE_BUY_LIMIT = 2
+        mock_mt5.ORDER_TYPE_SELL_LIMIT = 3
+        mock_mt5.ORDER_TYPE_BUY_STOP = 4
+        mock_mt5.ORDER_TYPE_SELL_STOP = 5
+
+        mock_si = MagicMock()
+        mock_si.point = 0.001
+        mock_si.bid = 194.850
+        mock_si.ask = 194.870
+        mock_mt5.symbol_info.return_value = mock_si
+
+        mock_strat = MagicMock()
+        mock_strat.market_state = "CEILING_REJECTION"
+        mock_strat.macro_bias_score = -0.80  # Strong Bearish Alignment
+        mock_get_dir.return_value = mock_strat
+
+        mock_mt5.copy_rates_from_pos.return_value = [{"close": 194.850}]
+        mock_csm.return_value = +1.35  # Opposed CSM (GBP strong, JPY weak)
+
+        audit_pending_orders_thesis()
+
+        # Must NOT be cancelled because macro structure overrides moderate CSM opposition!
+        mock_mt5.order_send.assert_not_called()
+
+    @patch("src.analytics.position_manager.record_thesis_observer_event")
+    @patch("src.analytics.position_manager.mt5")
+    @patch("src.analytics.macro_strategic_engine.macro_strategic_engine.get_directive")
+    @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
+    def test_audit_shadow_observer_bypasses_cancellation_when_disabled(self, mock_csm, mock_get_dir, mock_mt5, mock_record_observer):
+        """When ENABLE_PENDING_THESIS_AUDIT=False, thesis failure logs observer event and does NOT cancel order."""
+        config.ENABLE_PENDING_THESIS_AUDIT = False
+
+        mock_order = MagicMock()
+        mock_order.ticket = 99999
+        mock_order.symbol = "AUDUSD-ECNc"
+        mock_order.magic = config.MAGIC_NUMBER
+        mock_order.comment = "RADAR M1 BUY"
+        mock_order.type = 2  # BUY_LIMIT
+        mock_order.price_open = 0.65000
+        mock_order.sl = 0.64700
+
+        mock_mt5.orders_get.return_value = [mock_order]
+        mock_mt5.ORDER_TYPE_BUY_LIMIT = 2
+        mock_mt5.ORDER_TYPE_SELL_LIMIT = 3
+        mock_mt5.ORDER_TYPE_BUY_STOP = 4
+        mock_mt5.ORDER_TYPE_SELL_STOP = 5
+
+        mock_si = MagicMock()
+        mock_si.point = 0.00001
+        mock_mt5.symbol_info.return_value = mock_si
+
+        mock_strat = MagicMock()
+        mock_strat.market_state = "FLOOR_BREAKDOWN"
+        mock_get_dir.return_value = mock_strat
+        mock_mt5.copy_rates_from_pos.return_value = [{"close": 0.64500}]  # Severely penetrated floor
+        mock_csm.return_value = -1.5
+
+        audit_pending_orders_thesis()
+
+        # Order must NOT be cancelled (order_send not called)
+        mock_mt5.order_send.assert_not_called()
+        # But observer event MUST be recorded
+        mock_record_observer.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
+

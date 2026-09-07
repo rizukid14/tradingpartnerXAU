@@ -2,7 +2,224 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 5 September 2026 (Malam II) — Virtual Shadow Quant Radar: Perekaman Telemetri 100% Sinyal Stage 1 Tanpa Batasan Slot MT5 (Unconstrained Data Collector)
+## 0. Perubahan 7 September 2026 (Siang) — Isolasi Hermetis Unit Test Pure Quant (Zero Production State Pollution) & Pembersihan Telemetri BTCUSD
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kebocoran Data Uji (*Test Pollution*) ke Database Produksi**:
+   - Di `tests/test_pure_quant_execution.py`, pengujian alur `main.run_scanner_trading_cycle()` menggunakan candidate dummy `BTCUSD.c` (harga 95.000, SL 94.000).
+   - Fungsi tersebut memanggil `shadow_tracker.register_candidate()`, `position_manager.record_trade_open_telemetry()`, dan `record_funnel_event()`. Karena modul-modul ini belum di-patch dalam test tersebut, setiap kali unit test dijalankan (`test discover`), dummy order `BTCUSD.c` tertulis langsung ke database state produksi: `data/quant_shadow_state.json`, `data/quant_shadow_trades.jsonl`, `data/trade_lifecycle_telemetry.json`, dan `data/quant_funnel_metrics.json`.
+2. **False SL Hit saat Startup `main.py`**:
+   - Saat `main.py` dijalankan di weekday, loop memanggil `shadow_tracker.update_shadow_orders(connector)`. Tracker mengevaluasi dummy limit order BTCUSD (95.000) terhadap harga live MT5 (~54.000). Karena harga pasar jauh di bawah harga limit dan SL (94.000), tracker seketika menandai trade sebagai `SL_HIT (-1.00R)` dan mencetak:
+     `[SHADOW RADAR RESOLVED] BTCUSD.c (UNIVER) -> SL_HIT (-1.00R) | MFE: +0.00R | MAE: -15.38R`.
+   - Hal ini mendistorsi statistik shadow tracker dengan 6 SL hit palsu (`cumulative_net_r: -6.0R`).
+3. **Klarifikasi Status Weekday BTCUSD**:
+   - Ditegaskan bahwa BTCUSD **100% TIDAK AKTIF pada weekday**. Di `config.py` (`get_scanner_symbols`), filter `not is_crypto(s)` secara ketat membatasi radar hanya pada 26 pair FX. BTCUSD hanya aktif pada akhir pekan jika `ENABLE_BTC_ROTATION=True`.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Isolasi Hermetis Unit Test (`tests/test_pure_quant_execution.py`)**:
+   - Menambahkan mocking via `setUp` untuk:
+     * `patch("main.shadow_tracker.register_candidate")`
+     * `patch("main.position_manager.record_trade_open_telemetry")`
+     * `patch("main.record_funnel_event")`
+   - Memastikan eksekusi unit test tidak menghasilkan efek samping (*side-effects*) ke database atau file state produksi mana pun.
+2. **Pembersihan Database State & Telemetri**:
+   - `data/quant_shadow_state.json`: Menghapus 6 riwayat dummy `BTCUSD.c`, merestorasi statistik ke keadaan riil 26 pair FX (4 active, 2 resolved expired, 0 SL hit, 0.0R net).
+   - `data/quant_shadow_trades.jsonl`: Membersihkan baris log dummy `BTCUSD.c`, mempertahankan hanya data trade riil (`NZDUSD` dan `AUDJPY`).
+   - `data/trade_lifecycle_telemetry.json`: Menghapus tiket uji `999999` dan `888888`.
+   - `data/quant_funnel_metrics.json`: Menghapus event dummy `BTCUSD.c` dan menyesuaikan counter funnel metrics.
+3. **Konfigurasi Mode Forward Test di `.env`**:
+   - `ENABLE_CSM_FLOW_FILTER=false`: Hard gate filter CSM dinonaktifkan di radar untuk mengeksekusi seluruh setup ke demo, sementara perhitungannya tetap aktif dan dicatat di CLI/telemetri.
+   - `ENABLE_PENDING_THESIS_AUDIT=false`: Audit pembatalan pending order diubah ke Shadow Observer Mode tanpa membatalkan order MT5.
+4. **Verifikasi Suite Lengkap**:
+   - Seluruh test suite (`python -m unittest discover tests/`) dijalankan: **154/154 PASS (100% OK)** dan diverifikasi bahwa file database state di `data/` tetap bersih tanpa polusi data baru.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Pagi VI) — Mode Forward Test Agresif (Bypass Limitasi USD & Filter CSM, Shadow Observer Thesis Invalidation, dan Telemetri CSM Open/Close)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kebutuhan Sampel Data Forward Test Maksimal**:
+   - Untuk menguji efektivitas strategi secara kuantitatif tanpa hambatan pembatasan basket (`MAX_CURRENCY_BASKET_EXPOSURE=99`) dan tanpa filter arah CSM (`ENABLE_CSM_FLOW_FILTER=false`), sistem diaktifkan dalam mode pengumpulan data agresif.
+2. **Kebutuhan Counterfactual Telemetry (CSM Open & Close)**:
+   - Sebelumnya, nilai Net Delta CSM hanya dicatat pada saat radar memindai setup (open). Nilai CSM saat posisi ditutup belum terekam, sehingga sulit menganalisis korelasi pergeseran CSM terhadap hasil P/L.
+3. **Shadow Observer untuk Thesis Invalidation**:
+   - Ketika pembatalan pending order dinonaktifkan (`ENABLE_PENDING_THESIS_AUDIT=false`), audit tidak boleh keluar diam-diam (*silent return*). Audit harus tetap mengevaluasi kondisi tesis dan mencatatnya sebagai *Observer Event* (`[THESIS SHADOW OBSERVER]`) tanpa membatalkan order di MT5. Dengan begitu, kita mendapatkan bukti apakah trade yang seharusnya dibatalkan tersebut akhirnya menang (false invalidation) atau kalah (saved loss).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Pencatatan Telemetri CSM Open/Close (`position_manager.py` & `main.py`)**:
+   - Membuat file persistence `data/trade_lifecycle_telemetry.json` via helper `record_trade_open_telemetry()` dan `record_trade_close_telemetry()`.
+   - Di `main.py`: Menangkap snapshot `csm_delta_open` saat order dipasang, dan menangkap `csm_delta_close` saat deal tertutup terdeteksi via `risk.sync_closed_positions()`, menghitung `csm_delta_shift`.
+2. **Shadow Tracker Telemetry Integration (`shadow_tracker.py`)**:
+   - Menyimpan `csm_delta_open` dan `csm_opposed_open` di `ShadowTrade.metadata`.
+   - Mengambil `csm_delta_close` seketika saat shadow trade ter-resolve (`TP_HIT`, `SL_HIT`, `TIME_DECAY_EXIT`), menghitung `csm_delta_shift`, dan menulis ke `quant_shadow_trades.jsonl`.
+3. **Observer Mode pada Invalidation Audit (`position_manager.py`)**:
+   - Menghapus *silent early return* di `audit_pending_orders_thesis()`.
+   - Ketika syarat pembatalan terpenuhi namun `ENABLE_PENDING_THESIS_AUDIT=False`: Mencetak alert `[THESIS SHADOW OBSERVER]` dan mencatat event ke telemetri tanpa membatalkan order MT5.
+4. **Penyelarasan Unit Test Suite Lengkap**:
+   - `tests/test_audit_pending_orders_thesis.py`: Mengisolasi `config.ENABLE_PENDING_THESIS_AUDIT` dan menambahkan test observer.
+   - `tests/test_risk_engine_magic_filter.py`: Mengisolasi `MAX_CURRENCY_BASKET_EXPOSURE=3` dan menguji mode forward test `MAX=99`.
+   - `tests/test_shadow_tracker.py`: Mengisolasi `ENABLE_SHADOW_PROXIMITY_CANCEL`.
+   - Hasil pengujian: **154/154 Unit Tests PASS (100% OK)**.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Pagi V) — Pembukaan Sesi Asia 07:00 WIB Khusus Pair Pasifik & Asia (Tokyo Cash Open & Tokyo Fix Capture) & Penyesuaian Dead Zone 00:00–07:00 WIB
+
+### 🎯 Latar Belakang & Validasi Empiris:
+1. **Penyelidikan Distribusi Waktu 10 Tahun MetaQuotes H1 (2016–2026)**:
+   - Audit membuktikan timestamp MetaQuotes MT5 merupakan Jam Server (GMT+3). Penerapan formula wajib Rule 3 `WIB = Jam Server + 4 Jam` mengonfirmasi bahwa puncak likuiditas dunia sesungguhnya berada di **19:00 – 21:00 WIB** (puncak 21:00 WIB dengan Mean 27.78 pips pada pair Barat).
+   - Di pagi hari, Bursa Saham Tokyo resmi dibuka pukul 09:00 JST (**07:00 WIB**) dan penetapan kurs harian perbankan Jepang (*Tokyo Fixing / Nakane*) terjadi pada 09:55 JST (**07:55 WIB**).
+   - Pair ber-driver Asia/Pasifik (`USDJPY`, `AUDJPY`, `NZDJPY`, `AUDUSD`, `NZDUSD`, dll) melonjak aktivitasnya dari 13.6 pips ke **16.68 pips/jam** pada rentang 07:00–08:00 WIB.
+   - Sebelumnya, Dead Zone `DANGER_ZONES_WIB` memblokir semua pair hingga pukul 08:00 WIB, sehingga bot melewatkan momentum likuiditas institusional Tokyo Cash Open dan Tokyo Fix.
+2. **Kedaulatan Sesi Asia vs Penguncian Pair Barat**:
+   - Data empiris membuktikan bahwa pair Barat murni (`EURUSD`, `GBPUSD`, `USDCAD`, `EURGBP`, dll) sepanjang 07:00–14:00 WIB memiliki **Modus lilin H1 hanya 5.0 pips** (pasar mati/tergerus spread).
+   - Oleh karena itu, pembukaan jam 07:00 WIB **wajib dikhususkan hanya untuk pair yang memiliki driver JPY, AUD, atau NZD** (`is_asian_session_pair`), sementara pair Barat tetap dikunci 100% hingga sesi Eropa (14:00 WIB).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Konfigurasi (`config.py` & `.env`)**:
+   - Menambahkan `ASIA_SESSION_START_HOUR_WIB=7` dan `DANGER_ZONES_WIB=00:00-07:00` di `.env` sebagai *Single Source of Truth*.
+   - Di `config.py`:
+     * `ASIA_SESSION_START_HOUR_WIB = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)`
+     * `ALLOWED_SESSIONS_WIB`: Sesi `"Tokyo / Asia Pagi"` dimajukan dimulai pukul `(7, 0)`.
+     * `DANGER_ZONES_WIB`: Diperbarui menjadi `(0, 0)` s/d `(7, 0)` (`Overnight Rollover Dead Zone (00:00 - 07:00 WIB)`).
+2. **Penyelarasan Scanner Engine (`src/analytics/market_scanner.py`)**:
+   - `MarketScanner.is_symbol_allowed_for_session()`: Menggunakan batas dinamis `ASIA_SESSION_START_HOUR_WIB` (7) dan mengunci pair non-Asia pada rentang 07:00–14:00 WIB.
+   - `scan_fast_radar()`: Filter dead zone diperbarui dari `0 <= h < 8` menjadi `0 <= h < asia_start` (7).
+3. **Pembaruan Cockpit Surveillance Dashboard (`dashboard.py`)**:
+   - Memperbarui visualisasi status sesi `_get_session_name()`: `DEAD_ZONE` (00:00–07:00 WIB) dan `ASIAN_ACTIVE / ASIAN_LOCKED` (07:00–14:00 WIB).
+   - Menyelaraskan audit Gate 1 (Session & Spread Filter) dan card parameter `DEAD_ZONE_HOURS = 00:00 - 07:00 WIB`.
+4. **Pengujian Kuantitatif & Verifikasi Sistem**:
+   - Menambahkan unit test di `tests/test_market_scanner.py` (`test_session_aware_pair_filtering`) untuk memvalidasi:
+     * Jam 07:00 WIB: Pair Asia (`USDJPY`, `AUDUSD`, `NZDUSD`, `GBPJPY`) $\rightarrow$ `PASS / True`.
+     * Jam 07:00 WIB: Pair Barat (`EURUSD`, `GBPUSD`, `USDCAD`) $\rightarrow$ `LOCKED / False`.
+     * Jam 06:00 WIB: Seluruh pair FX $\rightarrow$ `DEAD ZONE / False`.
+   - Full test suite: **152/152 tests PASS (100%)**.
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi IV) — Isolasi Magic Number pada Risk Engine & Multi-Position Sizing (Pemisahan Trade Manual vs Bot)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pemicu False Currency Basket Block oleh Posisi Manual User**:
+   - Di akun MT5 terdapat 2 posisi manual `EURUSD-ECN` (tiket `#663308920` dan `#663314002`, `magic = 0`).
+   - Di `risk_engine.py:544` (`_check_max_positions()`), fungsi mengambil seluruh posisi akun via `mt5.positions_get()` tanpa menyaring `magic == config.MAGIC_NUMBER`.
+   - Akibatnya, 2 trade manual `EURUSD` ditambah 1 trade bot `AUDUSD` dihitung bersamaan sebagai 3 posisi USD, memicu penolakan *Currency Basket Concentration Limit (3/3)* pada seluruh pair USD (`USDJPY` dan `NZDUSD`).
+2. **Kalkulasi Sisa Kapasitas Split Ticket di `main.py:955`**:
+   - `main.py` juga menghitung slot tersisa dari seluruh posisi akun tanpa menyaring magic number, sehingga trade manual memotong kuota split-order bot.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Isolasi Magic Number di `risk_engine.py`**:
+   - Memisahkan `raw_positions`/`raw_orders` (seluruh akun) dari `positions`/`orders` milik bot (`magic == config.MAGIC_NUMBER`).
+   - Aturan *Total Absolute Account Ceiling* (max 8 posisi total) tetap memantau seluruh akun (`raw_positions`) sebagai rem darurat margin.
+   - Aturan *Risk-Weighted Slot Accounting* (max 6 posisi bot) dan *Currency Basket Concentration Limit* (max 3 posisi per mata uang) hanya menghitung posisi dan order milik bot.
+   - Posisi USD bot kini dihitung akurat (1 posisi `AUDUSD`), sehingga slot USD bot tersisa 2 posisi lagi dan `USDJPY` diizinkan membuka posisi.
+2. **Isolasi Magic Number di `main.py`**:
+   - Menyelaraskan kalkulasi `total_active` dan `remaining_slots` untuk pembagian tiket 2-posisi agar hanya menghitung posisi milik bot.
+3. **Penambahan Unit Test Suite (`tests/test_risk_engine_magic_filter.py`)**:
+   - `test_manual_positions_do_not_block_currency_basket`: Memvalidasi bahwa 2 trade manual `EURUSD` + 1 trade bot `AUDUSD` tidak memblokir `USDJPY`.
+   - `test_bot_positions_properly_enforce_currency_basket`: Memvalidasi bahwa 3 trade bot berunsur USD tetap memblokir order USD ke-4.
+   - `test_total_absolute_ceiling_monitors_all_trades`: Memvalidasi bahwa plafon darurat 8 posisi akun tetap memblokir trade jika total akun mencapai 8.
+   - Seluruh test suite sistem (152 tests): **100% PASS**.
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi III) — Sinkronisasi Macro Bias Alignment pada CSM Pending Order Invalidation & Eksplisitasi Config `.env`
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **False Thesis Invalidation pada Order Pending Macro-Aligned (`NZDCHF-ECN` #669657471)**:
+   - Order pending BUY LIMIT NZDCHF disetujui dan ditempatkan oleh Stage 1 radar (M2 Pullback) karena didukung kuat oleh Macro Bias MSE (`bias_score = +0.95`, `action_tier = FULL_ALLOW`, `market_state = FLOOR_REJECTION`).
+   - Di `market_scanner.py:2524-2527`, filter CSM berlawanan (`csm_delta <= -1.0`) dikecualikan jika arah trade selaras dengan bias makro (`is_aligned = True`, `bias_score >= 0.35`).
+   - Namun di `position_manager.py:855`, engine pembatalan pending order mengecek `csm_delta <= -csm_opposed_thresh` (-1.03 <= -1.00) secara sepihak tanpa memeriksa `is_macro_aligned_buy`. Akibatnya, pending order yang sah diloloskan radar langsung dibatalkan dalam siklus 3 detik berikutnya dengan log `[THESIS FAILURE CANCEL] Pending Order #669657471 (NZDCHF-ECN) Dibatalkan: Systemic CSM Flow reversed strongly to Bearish (-1.03 <= -1.00)`.
+2. **Klarifikasi Skala CSM & Parameter Konfigurasi**:
+   - Skala desimal `csm_delta` berada pada rentang $\approx [-5.0, +5.0]$ (hasil normalisasi skor Boitoki dibagi 10). Ambang batas pembatalan pending order adalah `1.00` (setara 10 poin Boitoki).
+   - Parameter `PENDING_CSM_OPPOSED_THRESHOLD` belum dideklarasikan eksplisit di `.env`.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Macro Bias Alignment di `position_manager.py`**:
+   - Mengekstrak `bias_score` dari `strat_dir.macro_bias_score` secara aman menggunakan helper `_safe_num()`.
+   - Menambahkan kondisi pelindung `not is_macro_aligned_buy` (untuk BUY) dan `not is_macro_aligned_sell` (untuk SELL).
+   - Pending order yang didukung arah makro struktural ($\text{bias} \ge +0.35$ untuk BUY atau $\le -0.35$ untuk SELL) tidak lagi dibatalkan oleh fluktuasi CSM moderat di sekitar $\pm 1.0$.
+2. **Eksplisitasi Konfigurasi `.env`**:
+   - Menambahkan parameter `PENDING_CSM_OPPOSED_THRESHOLD=1.0` ke `.env` sebagai Single Source of Truth.
+3. **Penambahan Unit Test Suite (`tests/test_audit_pending_orders_thesis.py`)**:
+   - Menambahkan `test_buy_limit_not_cancelled_when_macro_aligned_despite_opposed_csm` (memvalidasi kasus NZDCHF: BUY limit tetap aktif pada `csm_delta = -1.18` saat `bias_score = 0.95`).
+   - Menambahkan `test_sell_limit_not_cancelled_when_macro_aligned_despite_opposed_csm` (memvalidasi SELL limit tetap aktif pada `csm_delta = +1.35` saat `bias_score = -0.80`).
+   - Seluruh test suite sistem (149 tests): **100% PASS**.
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi II) — Integrasi Paper Trade (Quant Shadow) untuk Sinyal Tertolak Risk Gate & Dedicated HTML Performance Report via Dashboard
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Penolakan Currency Basket Concentration Limit (`MAX_CURRENCY_BASKET_EXPOSURE`)**:
+   - Risk Engine menerapkan aturan konsentrasi mata uang (`src/core/risk_engine.py:601-619`) dengan batas maksimal 3 posisi terbuka per mata uang (misal USD 3/3).
+   - Ketika sinyal valid Stage 1 (seperti `NZDUSD-ECN`) muncul saat kuota 3 posisi USD sudah terpenuhi, bot menolak eksekusi MT5 dengan pesan `[RISK GATE] Trade untuk NZDUSD-ECN [H1] tidak diizinkan oleh Risk Engine ( [RISK] Konsentrasi mata uang USD di MT5 sudah mencapai batas (3/3 posisi).).`
+   - Sebelumnya, penolakan di `main.py:668` langsung mengembalikan `False` tanpa mendaftarkan setup ke Virtual Shadow Order Book (`shadow_tracker`), sehingga telemetri peluang teknikal tersebut hilang dari riset kuantitatif.
+2. **Kebutuhan Akses Laporan Quant Shadow HTML yang Praktis**:
+   - Pengguna membutuhkan cara mudah untuk mengunduh/melihat visualisasi laporan kinerja sinyal quant shadow secara komprehensif melalui antarmuka web dashboard (HTML) tanpa harus membuka file json mentah.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Pendaftaran Otomatis Paper Trade saat Risk Gate Terpicu (`main.py`)**:
+   - Ketika `risk.can_trade(sym)` menolak pengiriman order ke MT5 pada Stage 2 (`main.py:668`), setup tetap dihitung parameter strukturalnya (entry, SL, TP, R:R) lalu didaftarkan ke `shadow_tracker.register_candidate()` dengan disposisi `SKIPPED_RISK_BASKET` atau `SKIPPED_RISK_BLOCK`.
+   - Setup akan dipantau pergerakan harganya secara virtual (fill, MFE, MAE, hingga TP/SL) secara non-invasif.
+2. **Penyelarasan Konfigurasi (`config.py` & `.env`)**:
+   - Menambahkan parameter `MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 3)` di `config.py` dan `.env`.
+3. **Modul Generator Laporan HTML Mandiri (`src/analytics/shadow_report.py`)**:
+   - `render_shadow_report_html()`: Menghasilkan halaman web laporan lengkap terminal-grade (KPI Cards, Breakdown Mekanisme M1..M4, Status Disposisi MT5, Buku Order Aktif & Riwayat Telemetri Tuntas dengan filter/pencarian real-time).
+   - `generate_and_save_shadow_report()`: Otomatis membuat file `docs/quant_shadow_report.html`.
+4. **Integrasi Endpoint Dashboard & Web UI (`dashboard.py` & `dashboard_assets.py`)**:
+   - Menambahkan rute `/shadow`, `/shadow.html`, dan `/report/shadow` pada HTTP handler `dashboard.py`.
+   - Menambahkan tombol langsung `[ 📊 LAPORAN ]` pada header dashboard dan `[ 📊 Buka Laporan Lengkap HTML ↗ ]` pada tab drawer Virtual Shadow.
+   - `dashboard.py` secara otomatis memperbarui file statis `docs/quant_shadow_report.html` saat dijalankan.
+5. **Pengujian & Verifikasi**:
+   - Menambahkan unit test `test_risk_block_disposition_and_get_all_resolved_trades` di `tests/test_shadow_tracker.py`.
+   - Test suite: **100% PASS** (7/7 shadow tracker tests, 99/99 regression tests).
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi I) — Eliminasi Duplikasi `get_current_tick()` & Harmonisasi Simbol Broker Kripto Demo/Live (`BTCUSD` vs `BTCUSD.c`)
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Penyebab Spam Error `[MT5 ERROR] Gagal mendapatkan tick untuk BTCUSD.c.`**:
+   - Terdapat 2 deklarasi fungsi `get_current_tick(symbol)` di [`src/core/mt5_connector.py`](file:///c:/Vibe/tradingpartner/src/core/mt5_connector.py).
+   - Fungsi baris 305–327 menimpa fungsi baris 254–278. Fungsi baris 305 langsung memanggil `mt5.symbol_info_tick(symbol)` tanpa me-resolve nama simbol via `get_valid_trade_symbol(symbol)`.
+   - Pada akun Demo VTMarkets (`VTMarkets-Demo` #1157958), simbol BTC adalah `BTCUSD` (tanpa suffix `.c`).
+   - File state `data/quant_shadow_state.json` menyimpan pending shadow trade dengan `"symbol": "BTCUSD.c"` dari sesi akhir pekan. Setiap 3 detik `shadow_tracker.update_shadow_orders()` meminta tick `BTCUSD.c`, yang selalu gagal (`None`) dan memicu print error spam di terminal serta mencegah pending order basi ter-resolve/expired.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Konsolidasi Kanonikal `get_current_tick()` (`src/core/mt5_connector.py`)**:
+   - Menghapus fungsi duplikat baris 305–327.
+   - Menyatukan fungsi kanonikal di baris 254 dengan memanggil `symbol = get_valid_trade_symbol(symbol)` pada baris pertama.
+   - Mengembalikan dictionary lengkap: `ask`, `bid`, `last`, `volume`, `time`, `spread`, `spread_usd`, `point`, `digits`, `usd_per_point`.
+   - Menghapus print error hardcoded pada level tick retriever dasar agar tidak membanjiri log saat symbol unavailable.
+2. **Penyelarasan Helper Terkait di `src/core/mt5_connector.py`**:
+   - `get_usd_per_point()`: Menambahkan `symbol = get_valid_trade_symbol(symbol)` sebelum query info broker.
+   - `get_broker_utc_offset_seconds()`: Menambahkan `symbol = get_valid_trade_symbol(symbol)`.
+   - `server_utc_offset_hours()`: Memanggil `get_valid_trade_symbol("BTCUSD.c")` agar secara otomatis mengenali `BTCUSD` pada akun Demo dan `BTCUSD.c` pada akun Live.
+3. **Konfigurasi Lingkungan (`.env`)**:
+   - Menambahkan `WEEKEND_SYMBOL=BTCUSD` di `.env` yang selaras dengan profil Demo VTMarkets.
+4. **Pengujian & Verifikasi**:
+   - Menambahkan unit test `test_get_current_tick_auto_resolves_symbol` dan `test_get_current_tick_returns_none_when_unavailable` di `tests/test_symbol_resolver.py`.
+   - Pending shadow order lama `SHADOW_20260905_213641_BTCUSD_UNIVER` sukses di-resolve oleh `shadow_tracker`.
+   - Seluruh test suite unit test: **100% PASS**.
+
+---
+
+## 1. Perubahan 5 September 2026 (Malam II) — Virtual Shadow Quant Radar: Perekaman Telemetri 100% Sinyal Stage 1 Tanpa Batasan Slot MT5 (Unconstrained Data Collector)
 
 ### 🎯 Latar Belakang & Identifikasi Kebutuhan:
 1. **Keterbatasan Kapasitas Eksekusi MT5 vs Kebutuhan Riset Kuantitatif**:

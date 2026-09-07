@@ -580,6 +580,7 @@ BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
 MAX_OPEN_POSITIONS_BTC = _getenv_int("MAX_OPEN_POSITIONS_BTC", 2)        # Weekend BTC trading max 2 posisi
+MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 3)  # Max open positions per single currency (USD, JPY, EUR, etc)
 
 
 def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
@@ -665,31 +666,32 @@ SPREAD_ATR_RATIO     = float(os.getenv("SPREAD_ATR_RATIO", "0.20"))   # 15% ATR 
 SPREAD_ATR_FLOOR_PTS = _getenv_int("SPREAD_ATR_FLOOR_PTS", 20)        # floor minimum FX (pts)
 
 # --- SESSION FILTER ---
-# Trade Zone: 09:00 - 00:00 WIB (00:00 - 09:00 WIB Dead Zone Rollover & Sepi Likuiditas)
+# Trade Zone: Tokyo 07:00-14:00 (Asia drivers), London/NY 14:00-00:00 (All FX), Dead Zone 00:00-07:00 WIB
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
+
+# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session) ---
+SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
+ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)
+ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
+
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo / Asia Pagi", "start": (8, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
+    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
     {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
     {"name": "London-NY Overlap", "start": (19, 0), "end": (21, 0),  "lot_multiplier": 1.2},
     {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": 1.0},
 ]
 
-# Danger zones (Dead Zone subuh & rollover 00:00 - 08:00 WIB). Berlaku XAU & FX; BTC 24/7.
+# Danger zones (Dead Zone subuh & rollover 00:00 - 07:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
-    {"name": "Overnight Rollover Dead Zone (00:00 - 08:00 WIB)", "start": (0, 0), "end": (8, 0),
-     "reason": "Dead Zone rollover & sepi likuiditas (00:00 - 08:00 WIB)"},
+    {"name": f"Overnight Rollover Dead Zone (00:00 - {ASIA_SESSION_START_HOUR_WIB:02d}:00 WIB)", "start": (0, 0), "end": (ASIA_SESSION_START_HOUR_WIB, 0),
+     "reason": f"Dead Zone rollover & sepi likuiditas (00:00 - {ASIA_SESSION_START_HOUR_WIB:02d}:00 WIB)"},
 ]
-
-# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session) ---
-SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
-ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 8)
-ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
 
 def is_asian_session_pair(symbol: str) -> bool:
     """
     True if the symbol contains Asian / Pacific currencies (JPY, AUD, NZD).
-    During Asian Session (08:00 - 14:00 WIB), pure European/American pairs
+    During Asian Session (07:00 - 14:00 WIB), pure European/American pairs
     (EURUSD, GBPUSD, EURGBP, EURCHF, GBPCHF, GBPCAD, EURCAD, USDCAD, USDCHF)
     are locked to avoid low-liquidity whipsaw noise.
     Crypto (BTCUSD) trades 24/7 and is always allowed.
@@ -818,6 +820,9 @@ PENDING_ENTRY_MIN_SPREAD_MULT = _getenv_float("PENDING_ENTRY_MIN_SPREAD_MULT", 2
 PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
 # Ambang batas pembatalan pending order berbasis CSM (diselaraskan dengan market_scanner is_csm_opposed = 1.0)
 PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
+ENABLE_PENDING_THESIS_AUDIT = _getenv_bool("ENABLE_PENDING_THESIS_AUDIT", True)
+ENABLE_SHADOW_PROXIMITY_CANCEL = _getenv_bool("ENABLE_SHADOW_PROXIMITY_CANCEL", True)
+ENABLE_CSM_FLOW_FILTER = _getenv_bool("ENABLE_CSM_FLOW_FILTER", True)
 # File statistik "AI proven" - riwayat pending order + outcome (persist)
 PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")
 

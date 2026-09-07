@@ -846,6 +846,7 @@ html, body {
     <div class="account-stat">
       <span class="stat-label">Virtual Shadow:</span>
       <span class="stat-val" id="shadow-stat-val" style="color:var(--purple);font-size:10.5px;">0 rec (0% WR)</span>
+      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:5px;padding:2px 6px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9.5px;font-weight:700;">📊 LAPORAN</a>
     </div>
     <div class="account-stat">
       <span class="stat-label">Mode:</span>
@@ -2008,6 +2009,10 @@ function renderDrawer() {
     const evCol = (s.expected_value_r >= 0) ? "var(--green)" : "var(--red)";
 
     let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-weight:800;font-size:12px;color:var(--purple);text-transform:uppercase;letter-spacing:0.5px;">VIRTUAL SHADOW QUANT RADAR (UNCONSTRAINED TELEMETRY)</div>
+        <a href="/shadow" target="_blank" style="padding:4px 12px;border-radius:4px;background:rgba(192,132,252,0.22);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:6px;">📊 Buka Laporan Lengkap HTML ↗</a>
+      </div>
       <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
         <div class="telemetry-card">
           <div class="tele-title">Total Radar Setups</div>

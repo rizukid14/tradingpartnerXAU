@@ -205,7 +205,9 @@ class QuantShadowTracker:
                 metadata={
                     "current_atr_pts": getattr(candidate, "current_atr_pts", 0.0),
                     "current_spread_pts": getattr(candidate, "current_spread_pts", 0),
-                    "dealing_range_pos": getattr(candidate, "dealing_range_pos", 0.5)
+                    "dealing_range_pos": getattr(candidate, "dealing_range_pos", 0.5),
+                    "csm_delta_open": float(getattr(candidate, "csm_delta", 0.0)),
+                    "csm_opposed_open": bool((dir_str == "BUY" and getattr(candidate, "csm_delta", 0.0) <= -0.35) or (dir_str == "SELL" and getattr(candidate, "csm_delta", 0.0) >= 0.35))
                 }
             )
 
@@ -276,22 +278,23 @@ class QuantShadowTracker:
                             continue
 
                         # Check Target Proximity Expiration (>=75% to TP without fill)
-                        tp_dist = abs(trade.tp_price - trade.entry_price)
-                        if tp_dist > 0:
-                            if trade.direction == "BUY":
-                                progress = (mid - trade.entry_price) / tp_dist
-                            else:
-                                progress = (trade.entry_price - mid) / tp_dist
+                        if getattr(config, "ENABLE_SHADOW_PROXIMITY_CANCEL", True):
+                            tp_dist = abs(trade.tp_price - trade.entry_price)
+                            if tp_dist > 0:
+                                if trade.direction == "BUY":
+                                    progress = (mid - trade.entry_price) / tp_dist
+                                else:
+                                    progress = (trade.entry_price - mid) / tp_dist
 
-                            if progress >= 0.75:
-                                trade.status = "RESOLVED"
-                                trade.outcome = "EXPIRED_NO_FILL"
-                                trade.resolved_time = now_iso
-                                trade.exit_price = mid
-                                trade.net_r = 0.0
-                                newly_resolved.append(trade)
-                                self._record_resolved(trade)
-                                continue
+                                if progress >= 0.75:
+                                    trade.status = "RESOLVED"
+                                    trade.outcome = "EXPIRED_NO_FILL"
+                                    trade.resolved_time = now_iso
+                                    trade.exit_price = mid
+                                    trade.net_r = 0.0
+                                    newly_resolved.append(trade)
+                                    self._record_resolved(trade)
+                                    continue
 
                         # Check Timeout (120 minutes)
                         try:
@@ -407,6 +410,16 @@ class QuantShadowTracker:
 
     def _record_resolved(self, trade: ShadowTrade):
         """Updates stats and appends to persistent trade log."""
+        try:
+            from src.analytics.currency_strength import get_csm_delta_for_symbol
+            csm_close = get_csm_delta_for_symbol(trade.symbol)
+            trade.metadata["csm_delta_close"] = float(csm_close)
+            csm_open = trade.metadata.get("csm_delta_open")
+            if csm_open is not None:
+                trade.metadata["csm_delta_shift"] = round(float(csm_close) - float(csm_open), 2)
+        except Exception:
+            pass
+
         self._stats["total_resolved"] += 1
         if trade.outcome == "TP_HIT":
             self._stats["tp_hits"] += 1
@@ -423,9 +436,12 @@ class QuantShadowTracker:
         self._recent_resolved = self._recent_resolved[-30:]
         self._append_resolved_log(trade)
 
+        csm_open_val = trade.metadata.get("csm_delta_open")
+        csm_close_val = trade.metadata.get("csm_delta_close")
+        csm_log_str = f" | CSM Open: {csm_open_val:+.2f} -> Close: {csm_close_val:+.2f}" if (csm_open_val is not None and csm_close_val is not None) else ""
         logger.info(
             f"[SHADOW RESOLVED] {trade.shadow_id} | {trade.symbol} {trade.direction} -> {trade.outcome} "
-            f"(Net R: {trade.net_r:+.2f}R | MFE: {trade.peak_mfe_r:+.2f}R | MAE: {trade.max_mae_r:+.2f}R)"
+            f"(Net R: {trade.net_r:+.2f}R | MFE: {trade.peak_mfe_r:+.2f}R | MAE: {trade.max_mae_r:+.2f}R{csm_log_str})"
         )
 
     def get_performance_summary(self) -> Dict[str, Any]:
@@ -458,6 +474,29 @@ class QuantShadowTracker:
                         mech_stats[m_key]["sl"] += 1
                     mech_stats[m_key]["net_r"] = round(mech_stats[m_key]["net_r"] + (t.get("net_r") or 0.0), 2)
 
+            # MT5 Execution vs Skipped breakdown
+            disp_stats = {
+                "EXECUTED_MT5": 0,
+                "SKIPPED_RISK_BASKET": 0,
+                "SKIPPED_RISK_BLOCK": 0,
+                "SKIPPED_LLM_VETO": 0,
+                "OTHER": 0
+            }
+            # Sample from active trades and recent resolved trades
+            sample_trades = [t.to_dict() for t in self.active_trades] + list(self._recent_resolved)
+            for t_dict in sample_trades:
+                disp = str(t_dict.get("mt5_disposition", "OTHER") or "OTHER").upper()
+                if "EXECUTED" in disp:
+                    disp_stats["EXECUTED_MT5"] += 1
+                elif "BASKET" in disp or "KONSENTRASI" in disp:
+                    disp_stats["SKIPPED_RISK_BASKET"] += 1
+                elif "RISK" in disp:
+                    disp_stats["SKIPPED_RISK_BLOCK"] += 1
+                elif "VETO" in disp:
+                    disp_stats["SKIPPED_LLM_VETO"] += 1
+                else:
+                    disp_stats["OTHER"] += 1
+
             return {
                 "total_recorded": self._stats.get("total_recorded", 0),
                 "active_count": len([t for t in self.active_trades if t.status == "ACTIVE"]),
@@ -471,9 +510,30 @@ class QuantShadowTracker:
                 "cumulative_net_r": round(cum_net_r, 2),
                 "expected_value_r": round(ev, 2),
                 "mechanisms": mech_stats,
-                "recent_resolved": self._recent_resolved[-10:],
-                "active_trades": [t.to_dict() for t in self.active_trades[:15]]
+                "disposition_breakdown": disp_stats,
+                "recent_resolved": self._recent_resolved[-20:],
+                "active_trades": [t.to_dict() for t in self.active_trades[:25]]
             }
+
+    def get_all_resolved_trades(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Reads historical resolved shadow trades from JSONL log, newest first."""
+        trades = []
+        try:
+            if os.path.exists(SHADOW_TRADES_LOG):
+                with open(SHADOW_TRADES_LOG, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                trades.append(json.loads(line))
+                            except Exception:
+                                pass
+        except Exception as e:
+            logger.error(f"[SHADOW READ LOG ERROR] {e}")
+
+        if trades:
+            return trades[::-1][:limit]
+        return list(reversed(self._recent_resolved[-limit:]))
 
 
 # Global Singleton Instance

@@ -26,6 +26,132 @@ logger = logging.getLogger("trading_bot")
 WIB = ZoneInfo("Asia/Jakarta")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
+TELEMETRY_FILE = os.path.join(config.DATA_DIR, "trade_lifecycle_telemetry.json")
+
+
+def _load_telemetry() -> dict:
+    """Load persisted trade lifecycle telemetry (CSM Open/Close & Thesis Invalidation)."""
+    try:
+        if os.path.exists(TELEMETRY_FILE):
+            with open(TELEMETRY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"[TELEMETRY LOAD WARNING] {e}")
+    return {"trades": {}, "thesis_observer_events": []}
+
+
+def _save_telemetry(data: dict):
+    """Persist trade lifecycle telemetry atomically."""
+    try:
+        tmp_path = TELEMETRY_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        if os.path.exists(TELEMETRY_FILE):
+            os.replace(tmp_path, TELEMETRY_FILE)
+        else:
+            os.rename(tmp_path, TELEMETRY_FILE)
+    except Exception as e:
+        logger.error(f"[TELEMETRY SAVE ERROR] {e}")
+
+
+def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_price: float, csm_delta: float, setup_type: str = ""):
+    """Catat snapshot nilai CSM dan atribut entry saat posisi/pending order dibuka."""
+    t_int = int(ticket)
+    data = _load_telemetry()
+    now_iso = datetime.now(WIB).isoformat()
+
+    is_opposed = (direction == "BUY" and csm_delta <= -0.35) or (direction == "SELL" and csm_delta >= 0.35)
+
+    data["trades"][str(t_int)] = {
+        "ticket": t_int,
+        "symbol": symbol,
+        "direction": direction,
+        "setup_type": setup_type,
+        "entry_price": float(entry_price),
+        "csm_delta_open": float(csm_delta),
+        "csm_opposed_open": bool(is_opposed),
+        "open_time": now_iso,
+        "status": "OPEN",
+        "would_be_cancelled": False,
+        "cancellation_reason": None,
+        "close_time": None,
+        "csm_delta_close": None,
+        "csm_delta_shift": None,
+        "profit": None,
+        "close_reason": None
+    }
+    _save_telemetry(data)
+    opp_str = " (CSM OPPOSED)" if is_opposed else " (CSM ALIGNED/NEUTRAL)"
+    print(f" {UI.CYAN}[CSM TELEMETRY OPEN]{UI.RST} Ticket #{t_int} | {symbol} {direction} | Entry: {entry_price} | CSM Delta Open: {csm_delta:+.2f}{opp_str}")
+    logger.info(f"[CSM TELEMETRY OPEN] Ticket #{t_int} | {symbol} {direction} | CSM Delta Open: {csm_delta:+.2f}{opp_str}")
+
+
+def record_thesis_observer_event(ticket: int, symbol: str, reason: str):
+    """Catat event observer thesis invalidation saat order seharusnya dibatalkan."""
+    t_int = int(ticket)
+    data = _load_telemetry()
+    now_iso = datetime.now(WIB).isoformat()
+
+    if str(t_int) in data["trades"]:
+        data["trades"][str(t_int)]["would_be_cancelled"] = True
+        data["trades"][str(t_int)]["cancellation_reason"] = reason
+
+    data["thesis_observer_events"].append({
+        "time": now_iso,
+        "ticket": t_int,
+        "symbol": symbol,
+        "reason": reason
+    })
+    data["thesis_observer_events"] = data["thesis_observer_events"][-100:]
+    _save_telemetry(data)
+
+
+def record_trade_close_telemetry(ticket: int, symbol: str, profit: float, reason: str, csm_delta_close: float, exit_price: float = 0.0):
+    """Catat snapshot nilai CSM saat posisi ditutup dan hitung pergeseran delta."""
+    t_int = int(ticket)
+    data = _load_telemetry()
+    now_iso = datetime.now(WIB).isoformat()
+
+    rec = data["trades"].get(str(t_int))
+    csm_open = rec.get("csm_delta_open", 0.0) if rec else 0.0
+    csm_shift = round(float(csm_delta_close) - float(csm_open), 2) if (rec and rec.get("csm_delta_open") is not None) else 0.0
+    direction = rec.get("direction", "TRADE") if rec else "TRADE"
+    would_cancel = rec.get("would_be_cancelled", False) if rec else False
+
+    if rec:
+        rec["status"] = "CLOSED"
+        rec["close_time"] = now_iso
+        rec["exit_price"] = float(exit_price)
+        rec["profit"] = float(profit)
+        rec["close_reason"] = str(reason)
+        rec["csm_delta_close"] = float(csm_delta_close)
+        rec["csm_delta_shift"] = csm_shift
+    else:
+        data["trades"][str(t_int)] = {
+            "ticket": t_int,
+            "symbol": symbol,
+            "direction": direction,
+            "setup_type": "UNKNOWN",
+            "entry_price": 0.0,
+            "csm_delta_open": None,
+            "csm_opposed_open": None,
+            "open_time": None,
+            "status": "CLOSED",
+            "would_be_cancelled": False,
+            "cancellation_reason": None,
+            "close_time": now_iso,
+            "csm_delta_close": float(csm_delta_close),
+            "csm_delta_shift": None,
+            "profit": float(profit),
+            "close_reason": str(reason)
+        }
+    _save_telemetry(data)
+
+    obs_tag = f" {UI.YELLOW}[OBSERVER: WOULD BE CANCELLED]{UI.RST}" if would_cancel else ""
+    csm_open_str = f"{csm_open:+.2f}" if (rec and rec.get("csm_delta_open") is not None) else "N/A"
+    print(f" {UI.CYAN}[CSM TELEMETRY CLOSE]{UI.RST} Ticket #{t_int} | {symbol} {direction} | P/L: ${profit:+.2f} ({reason}){obs_tag} | CSM Open: {csm_open_str} -> Close: {csm_delta_close:+.2f} (Shift: {csm_shift:+.2f})")
+    logger.info(f"[CSM TELEMETRY CLOSE] Ticket #{t_int} | {symbol} {direction} | P/L: ${profit:+.2f} ({reason}) | CSM Open: {csm_open_str} -> Close: {csm_delta_close:+.2f} (Shift: {csm_shift:+.2f})")
+
 
 
 def _load_state():
@@ -843,6 +969,11 @@ def audit_pending_orders_thesis():
             if curr_market_px <= 0.0:
                 curr_market_px = _safe_num(last_m15_close, open_px)
 
+            # Macro bias alignment check (aligned macro overrides moderate CSM opposition)
+            bias_score = _safe_num(getattr(strat_dir, 'macro_bias_score', 0.0), 0.0)
+            is_macro_aligned_buy = (bias_score >= 0.35)
+            is_macro_aligned_sell = (bias_score <= -0.35)
+
             # 4. Check Thesis Invalidation for BUY Pending Orders
             csm_opposed_thresh = getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
@@ -852,7 +983,7 @@ def audit_pending_orders_thesis():
                     cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation floor ({inv_floor:.5f})"
                 elif ord_item.type == mt5.ORDER_TYPE_BUY_LIMIT and tp_px > open_px and curr_market_px >= (open_px + 0.75 * (tp_px - open_px)):
                     cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
-                elif not is_m4_order and csm_delta <= -csm_opposed_thresh:
+                elif not is_m4_order and csm_delta <= -csm_opposed_thresh and not is_macro_aligned_buy:
                     cancel_reason = f"Systemic CSM Flow reversed strongly to Bearish ({csm_delta:+.2f} <= -{csm_opposed_thresh:.2f})"
                 elif not is_m4_order and "FLOOR_BREAKDOWN" in m_state:
                     cancel_reason = f"MSE Structural Floor Breakdown ({m_state})"
@@ -865,13 +996,19 @@ def audit_pending_orders_thesis():
                     cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation ceiling ({inv_ceiling:.5f})"
                 elif ord_item.type == mt5.ORDER_TYPE_SELL_LIMIT and tp_px > 0 and tp_px < open_px and curr_market_px <= (open_px - 0.75 * (open_px - tp_px)):
                     cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
-                elif not is_m4_order and csm_delta >= +csm_opposed_thresh:
+                elif not is_m4_order and csm_delta >= +csm_opposed_thresh and not is_macro_aligned_sell:
                     cancel_reason = f"Systemic CSM Flow reversed strongly to Bullish ({csm_delta:+.2f} >= +{csm_opposed_thresh:.2f})"
                 elif not is_m4_order and "CEILING_BREAKOUT" in m_state:
                     cancel_reason = f"MSE Structural Ceiling Breakout ({m_state})"
 
             # 6. Cancel order if thesis failed
             if cancel_reason:
+                if not getattr(config, "ENABLE_PENDING_THESIS_AUDIT", True):
+                    print(f"\n{UI.YELLOW}[THESIS SHADOW OBSERVER]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) SEHARUSNYA DIBATALKAN: {cancel_reason} (Bypass Aktif -> Order Dibiarkan)")
+                    logger.info(f"[THESIS SHADOW OBSERVER] Pending Order #{ord_item.ticket} ({sym}) SEHARUSNYA DIBATALKAN: {cancel_reason} (Bypass Aktif -> Order Dibiarkan)")
+                    record_thesis_observer_event(ord_item.ticket, sym, cancel_reason)
+                    continue
+
                 req = {
                     "action": mt5.TRADE_ACTION_REMOVE,
                     "order": ord_item.ticket,
