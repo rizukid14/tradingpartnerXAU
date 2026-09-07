@@ -145,29 +145,55 @@ class QuantShadowTracker:
             enriched = []
 
             # Proactively gather live MT5 open positions
-            open_mt5_map = {}
+            raw_pos = []
             try:
                 if hasattr(config, "mt5") and hasattr(config.mt5, "positions_get"):
-                    raw_pos = config.mt5.positions_get()
-                    if raw_pos:
-                        for p in raw_pos:
-                            p_dir = "BUY" if getattr(p, "type", 0) == 0 else "SELL"
-                            p_sym = getattr(p, "symbol", "")
-                            open_mt5_map[(p_sym, p_dir)] = p
-                            clean_sym = p_sym.split("-")[0].split(".")[0]
-                            open_mt5_map[(clean_sym, p_dir)] = p
+                    raw_pos = config.mt5.positions_get() or []
             except Exception:
                 pass
 
             state_needs_save = False
+            # 1. Detach tickets if MT5 comment conflicts with setup_type
+            for t in self.active_trades:
+                if t.mt5_ticket:
+                    matched_p = next((p for p in raw_pos if p.ticket == t.mt5_ticket), None)
+                    if matched_p:
+                        p_comment = str(getattr(matched_p, "comment", "")).upper()
+                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                            matches = ("TREND" in p_comment and "TREND" in t.setup_type) or \
+                                      ("MULTI" in p_comment and "MULTI" in t.setup_type) or \
+                                      ("UNIVER" in p_comment and "UNIVER" in t.setup_type) or \
+                                      ("FLOW" in p_comment and "FLOW" in t.setup_type)
+                            if not matches:
+                                logger.info(f"[SHADOW DETACH] Detaching mismatched ticket #{t.mt5_ticket} from {t.shadow_id} ({t.setup_type} != {p_comment})")
+                                t.mt5_ticket = None
+                                t.mt5_disposition = "SKIPPED_MAX_POSITIONS"
+                                state_needs_save = True
+
+            # 2. Match unclaimed MT5 open positions
+            claimed_tickets = {t.mt5_ticket for t in self.active_trades if t.mt5_ticket}
             for t in self.active_trades:
                 if not t.mt5_ticket or t.mt5_disposition != "EXECUTED_MT5":
                     clean_sym = t.symbol.split("-")[0].split(".")[0]
-                    matched_p = open_mt5_map.get((t.symbol, t.direction)) or open_mt5_map.get((clean_sym, t.direction))
-                    if matched_p:
-                        t.mt5_ticket = matched_p.ticket
-                        t.mt5_disposition = "EXECUTED_MT5"
-                        state_needs_save = True
+                    for p in raw_pos:
+                        if p.ticket in claimed_tickets:
+                            continue
+                        p_dir = "BUY" if getattr(p, "type", 0) == 0 else "SELL"
+                        p_clean = getattr(p, "symbol", "").split("-")[0].split(".")[0]
+                        if (p.symbol == t.symbol or p_clean == clean_sym) and p_dir == t.direction:
+                            p_comment = str(getattr(p, "comment", "")).upper()
+                            matches = True
+                            if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                                matches = ("TREND" in p_comment and "TREND" in t.setup_type) or \
+                                          ("MULTI" in p_comment and "MULTI" in t.setup_type) or \
+                                          ("UNIVER" in p_comment and "UNIVER" in t.setup_type) or \
+                                          ("FLOW" in p_comment and "FLOW" in t.setup_type)
+                            if matches:
+                                t.mt5_ticket = p.ticket
+                                t.mt5_disposition = "EXECUTED_MT5"
+                                claimed_tickets.add(p.ticket)
+                                state_needs_save = True
+                                break
 
                 d = t.to_dict()
                 try:
@@ -358,10 +384,12 @@ class QuantShadowTracker:
             # -------------------------------------------------------------
             open_mt5_tickets = set()
             mt5_open_by_symbol = {}
+            raw_mt5_pos = []
             try:
                 if hasattr(config, "mt5") and hasattr(config.mt5, "positions_get"):
-                    raw_mt5_pos = config.mt5.positions_get()
-                    if raw_mt5_pos:
+                    raw = config.mt5.positions_get()
+                    if raw:
+                        raw_mt5_pos = list(raw)
                         open_mt5_tickets = {p.ticket for p in raw_mt5_pos}
                         for p in raw_mt5_pos:
                             p_dir = "BUY" if getattr(p, "type", 0) == 0 else "SELL"
@@ -370,23 +398,81 @@ class QuantShadowTracker:
                             clean_sym = p_sym.split("-")[0].split(".")[0]
                             mt5_open_by_symbol[(clean_sym, p_dir)] = p
             except Exception:
-                pass
+                raw_mt5_pos = []
+
+            # Pre-pass: Detach mismatched tickets from open MT5 positions
+            claimed_open_tickets = set()
+            for trade in self.active_trades:
+                if trade.mt5_ticket and raw_mt5_pos:
+                    matched_p = next((p for p in raw_mt5_pos if p.ticket == trade.mt5_ticket), None)
+                    if matched_p:
+                        p_comment = str(getattr(matched_p, "comment", "")).upper()
+                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                            matches = ("TREND" in p_comment and "TREND" in trade.setup_type) or \
+                                      ("MULTI" in p_comment and "MULTI" in trade.setup_type) or \
+                                      ("UNIVER" in p_comment and "UNIVER" in trade.setup_type) or \
+                                      ("FLOW" in p_comment and "FLOW" in trade.setup_type)
+                            if not matches:
+                                logger.info(f"[SHADOW DETACH] Detaching mismatched ticket #{trade.mt5_ticket} from {trade.shadow_id} ({trade.setup_type} != {p_comment})")
+                                trade.mt5_ticket = None
+                                trade.mt5_disposition = "SKIPPED_MAX_POSITIONS"
+                    if trade.mt5_ticket:
+                        claimed_open_tickets.add(trade.mt5_ticket)
 
             for trade in self.active_trades:
                 try:
                     # ---------------------------------------------------------
-                    # 0a. PROACTIVE LIVE MT5 POSITION RECONCILIATION
+                    # 0a. CHECK EXPIRED / CANCELLED PENDING ORDERS IN MT5
+                    # ---------------------------------------------------------
+                    if trade.status == "PENDING" and trade.mt5_ticket:
+                        try:
+                            if hasattr(config, "mt5") and hasattr(config.mt5, "history_orders_get"):
+                                h_orders = config.mt5.history_orders_get(ticket=trade.mt5_ticket)
+                                if h_orders:
+                                    h_ord = h_orders[0]
+                                    ord_state = getattr(h_ord, "state", 0)
+                                    pos_id = getattr(h_ord, "position_id", 0)
+                                    if ord_state in (4, 6) and pos_id == 0:  # 4=CANCELED, 6=EXPIRED
+                                        trade.status = "RESOLVED"
+                                        trade.outcome = "EXPIRED_MT5"
+                                        trade.resolved_time = now_iso
+                                        trade.net_r = 0.0
+                                        trade.exit_price = trade.entry_price
+                                        trade.mt5_disposition = "SKIPPED_EXPIRED"
+                                        logger.info(f"[SHADOW EXPIRED SYNC] {trade.shadow_id} (Ticket #{trade.mt5_ticket}) resolved EXPIRED_MT5 (state={ord_state})")
+                                        newly_resolved.append(trade)
+                                        self._record_resolved(trade)
+                                        continue
+                        except Exception as e:
+                            logger.debug(f"[SHADOW PENDING EXPIRED CHECK ERROR] {trade.shadow_id}: {e}")
+
+                    # ---------------------------------------------------------
+                    # 0b. PROACTIVE LIVE MT5 POSITION RECONCILIATION
                     # ---------------------------------------------------------
                     if not trade.mt5_ticket or trade.mt5_disposition != "EXECUTED_MT5":
                         clean_tr_sym = trade.symbol.split("-")[0].split(".")[0]
-                        matched_pos = mt5_open_by_symbol.get((trade.symbol, trade.direction)) or mt5_open_by_symbol.get((clean_tr_sym, trade.direction))
-                        if matched_pos:
-                            trade.mt5_ticket = matched_pos.ticket
-                            trade.mt5_disposition = "EXECUTED_MT5"
-                            logger.info(f"[SHADOW RECONCILE] Proactively matched open MT5 position #{matched_pos.ticket} ({matched_pos.symbol} {trade.direction}) to {trade.shadow_id}")
+                        for p in (raw_mt5_pos or []):
+                            if p.ticket in claimed_open_tickets:
+                                continue
+                            p_dir = "BUY" if getattr(p, "type", 0) == 0 else "SELL"
+                            p_clean = getattr(p, "symbol", "").split("-")[0].split(".")[0]
+                            if (p.symbol == trade.symbol or p_clean == clean_tr_sym) and p_dir == trade.direction:
+                                p_comment = str(getattr(p, "comment", "")).upper()
+                                matches = True
+                                if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                                    matches = ("TREND" in p_comment and "TREND" in trade.setup_type) or \
+                                              ("MULTI" in p_comment and "MULTI" in trade.setup_type) or \
+                                              ("UNIVER" in p_comment and "UNIVER" in trade.setup_type) or \
+                                              ("FLOW" in p_comment and "FLOW" in trade.setup_type)
+                                if matches:
+                                    trade.mt5_ticket = p.ticket
+                                    trade.mt5_disposition = "EXECUTED_MT5"
+                                    claimed_open_tickets.add(p.ticket)
+                                    logger.info(f"[SHADOW RECONCILE] Proactively matched open MT5 position #{p.ticket} ({p.symbol} {trade.direction}) to {trade.shadow_id}")
+                                    break
 
                     # ---------------------------------------------------------
-                    # 0b. MT5 TICKET RECONCILIATION (From History Deals)
+                    # 0c. MT5 TICKET RECONCILIATION (From History Deals)
                     # ---------------------------------------------------------
                     # Auto-recover missing mt5_ticket for EXECUTED_MT5 trades from history deals
                     if not trade.mt5_ticket and trade.mt5_disposition == "EXECUTED_MT5" and trade.status in ("ACTIVE", "PENDING"):
