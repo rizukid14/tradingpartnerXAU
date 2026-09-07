@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  crypto_sol_dex:
+    build:
+      context: .
+      dockerfile: crypto_bot/sol_dex/Dockerfile
+    container_name: crypto_sol_dex
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - crypto_net
+
+  crypto_btc_perp:
+    build:
+      context: .
+      dockerfile: crypto_bot/btc_perp/Dockerfile
+    container_name: crypto_btc_perp
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - crypto_net
+
+  crypto_controller:
+    build:
+      context: .
+      dockerfile: crypto_bot/controller/Dockerfile
+    container_name: crypto_controller
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - crypto_sol_dex
+      - crypto_btc_perp
+    volumes:
+      - ./data:/app/data
+    networks:
+      - crypto_net
+
+networks:
+  crypto_net:
+    driver: bridge
