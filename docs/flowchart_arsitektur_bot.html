@@ -1,0 +1,368 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flowchart Arsitektur Trading Bot Multi-Layer</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f3f4f6;
+      --cyan: #06b6d4;
+      --yellow: #facc15;
+      --green: #10b981;
+      --red: #ef4444;
+      --blue: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+    .title-area h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .title-area p {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 2px;
+    }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    button {
+      background: #1f2937;
+      color: #f3f4f6;
+      border: 1px solid #374151;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    button:hover {
+      background: #374151;
+      border-color: var(--cyan);
+      color: #fff;
+    }
+    button.primary {
+      background: #0891b2;
+      border-color: #06b6d4;
+    }
+    button.primary:hover {
+      background: #06b6d4;
+    }
+    #viewport {
+      flex: 1;
+      overflow: auto;
+      position: relative;
+      background: radial-gradient(circle, #1a2234 1px, transparent 1px);
+      background-size: 24px 24px;
+      cursor: grab;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px;
+    }
+    #viewport:active {
+      cursor: grabbing;
+    }
+    #diagram-container {
+      transform-origin: 0 0;
+      transition: transform 0.1s ease-out;
+    }
+    .zoom-controls {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--card-bg);
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      z-index: 20;
+    }
+    .zoom-controls button {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      justify-content: center;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-area">
+      <h1>⚡ Arsitektur Kuantitatif 6-Layer Trading Bot</h1>
+      <p>Layer 0 (SFR/CSM) &bull; Layer 0.5 (Hysteresis) &bull; Layer 1 (MSE/ZCE) &bull; Layer 2 (Radar M1-M4) &bull; Layer 3 (Runway) &bull; Layer 4/5 (Eksekusi & Proteksi)</p>
+    </div>
+    <div class="btn-group">
+      <button onclick="downloadSVG()">📥 Download SVG</button>
+      <button class="primary" onclick="downloadPNG()">📸 Download PNG (HD)</button>
+    </div>
+  </header>
+
+  <div id="viewport">
+    <div id="diagram-container">
+      <pre class="mermaid" id="mermaid-code">
+flowchart TD
+    subgraph L0["LAYER 0: Institutional Currency Velocity & Macro Arbiter"]
+        A1["26 FX Cross Pairs<br/>(Rolling 24b H1 Log-Return,<br/>Warm 720b Historical Mean & Std)"] --> A2["Calculate Z-Score Matrix<br/>(z per Currency)"]
+        B1["7 USD Majors<br/>(Boitoki Log-Return 24b)"] --> B2["Calculate CSM Scores<br/>& Net Currency Delta"]
+        
+        A2 & B2 --> A3{"|z| >= 1.50 ?"}
+        A3 -- Yes --> A4["Trigger SFR Episode (Stateful)<br/>Anchor Snapshot @ Trigger Price<br/>Timer: Max 48 Bars H1 (2 Days)"]
+        A3 -- No --> A5["SFR Regime: NEUTRAL"]
+        
+        A4 --> A6{"CSM Invalidation Guard<br/>CSM Delta Opposed >= 1.0 ?"}
+        A6 -- Opposed --> A7["SFR Episode INVALIDATED<br/>(Exhaustion/Trap Flag)"]
+        A6 -- Aligned --> A8["SFR Regime Active:<br/>BULLISH_FLOW or BEARISH_FLOW"]
+    end
+
+    subgraph L05["LAYER 0.5: Directional Hysteresis Memory Gate (8 Jam)"]
+        C1["Current Direction Lock<br/>(Persisted to scanner_cooldowns.json)"]
+        A8 --> C2{"Target Setup Direction<br/>vs Locked Direction"}
+        C2 -- "Same Dir" --> C3["Refresh Lock Timestamp<br/>(Keep 8h Inertia)"]
+        C2 -- "Different Dir" --> C4{"3 Valid Reversal Keys:<br/>1. ZCE Wall Breached?<br/>2. MSE Bias Flipped >= 0.35?<br/>3. M1A Extreme Sweep (DR <=20% / >=80%)?"}
+        C4 -- "None Met" --> C5["HARD_BLOCK<br/>[DIRECTIONAL HYSTERESIS VETO]"]
+        C4 -- "1+ Met" --> C6["Release Lock & Update Dir<br/>Save to scanner_cooldowns.json"]
+    end
+
+    subgraph L1["LAYER 1: Macro Strategic Engine & ZCE Chamber"]
+        D1["6-TF Native Sockets (MN1..M30)<br/>Density Cluster Scoring"] --> D2["Elect ZCE Fortress Walls:<br/>C1, C2 (Ceilings) & F1, F2 (Floors)<br/>Grades: G1 Micro, G2 Interm, G3 Macro"]
+        D2 --> D3["Dealing Range Metric (0.0 to 1.0)<br/>& SBR/RBS Status Tracking"]
+        D3 --> D4{"Directional Check<br/>_is_direction_allowed()"}
+        A8 -- "Counter-Flow" --> D5["HARD_BLOCK [SFR VETO]<br/>(Zero Counter-Trend against Surge)"]
+        A8 -- "Aligned Flow" --> D6["FULL_ALLOW [ALIGNED_SFR_EXPANSION]<br/>(Supreme Precedence Granted)"]
+    end
+
+    subgraph L2["LAYER 2: 4-Mechanism Radar Execution Funnel (Every 60s)"]
+        E0["Radar Candidate Evaluation"] --> E1
+        E0 --> E2
+        E0 --> E3
+        E0 --> E4
+
+        subgraph M1_BOX["M1: Universal Liquidity Sweep / SFP"]
+            E1["M1A: Extreme Dealing Range Fade Trap<br/>M1B: Trend-Aligned Induced Sweep<br/>(Wick >= 25% + Structural Reclaim)"]
+        end
+
+        subgraph M2_BOX["M2: Trend-Aligned Deep Pullback"]
+            E2["Retracement to EMA50 / FVG / OB / Support<br/>Dynamic Dealing Range Tolerance:<br/>- Standard: 0.35 to 0.65<br/>- Aligned SFR+CSM: Relaxed to 0.20 to 0.80 (Ride the Wave)"]
+        end
+
+        subgraph M3_BOX["M3: Multi-Touch Breakout Retest"]
+            E3["Retest Level Tembusan (PWL/PWH/Cluster S-R)<br/>Fresh Breakout Law: <= 4 bars, Body >= 55%<br/>Debounce: 1 Retest per Episode"]
+        end
+
+        subgraph M4_BOX["M4: High-Tight Basing Continuation"]
+            E4["Runaway Momentum (Refuses Deep Retrace)<br/>Primary Identity: M15/M30 Basing Chamber<br/>Compression Range <= 0.35x ATR<br/>Limit Retest at Basing Roof/Floor"]
+        end
+    end
+
+    subgraph L3["LAYER 3: Dynamic ZCE Runway & Quality Grade Attribution"]
+        F0["Calculate Physical Runway to Nearest Opposing Wall (C1 BUY / F1 SELL)"]
+        F0 --> F1{"Runway Capacity"}
+        F1 -- "Runway < 0.75R + Friction" --> F2["SKIP SETUP (Anchor Too Tight)"]
+        F1 -- "0.75R <= Runway < 1.25R" --> F3["GRADE B (Wall Scalp)<br/>Friction Compensated, 1 Ticket Pure,<br/>Bypass Partial Close, Fast BEP @ 35%"]
+        F1 -- "1.25R <= Runway < 1.80R" --> F4["GRADE A (Standard Intraday)<br/>Target C1/F1, BEP @ 50%, Partial 50%"]
+        F1 -- "Runway >= 1.80R + Breached Wall" --> F5["GRADE A+ (Expansion Runner)<br/>Target C2/F2, BEP @ 50%"]
+        F1 -- "|z| >= 1.80 + CSM Delta >= 2.0 + G3 Wall" --> F6["GRADE S (Macro Super-Shock)<br/>Target 2.50R - 3.50R, Relaxed BEP @ 65%"]
+    end
+
+    subgraph L4["LAYER 4: Execution & Consensus Arbitration"]
+        G0{"Execution Engine Mode"}
+        G0 -- "ENABLE_LLM_JURY = False" --> G1["Pure Quant Direct Execution (0 API Tokens)<br/>Strict ATR Safety Floor & Slippage Check"]
+        G0 -- "ENABLE_LLM_JURY = True" --> G2["3-LLM Consensus Jury (~5.5s):<br/>Pass 1: OpenAI o4-mini + Gemini 3.1 Flash<br/>Pass 2: DeepSeek V4 Flash (Devil's Advocate CRO)<br/>Strict 3/3 Unanimous Vote Required"]
+        G1 & G2 --> G3["MT5 Order Send<br/>(Aggregate Cap: 6 Open + 4 Pending)"]
+    end
+
+    subgraph L5["LAYER 5: Active Position Management (Every 3s)"]
+        H0["Monitor MT5 Positions & Pending Orders"]
+        H0 --> H1["Grade-Aware Dynamic BEP:<br/>- Grade B / Defensive: 35% TP<br/>- Grade A / A+: 50% TP<br/>- Grade S: 65% TP<br/>- M4: 70% TP (+15 pts Pocket Profit)"]
+        H0 --> H2["2-Stage Dynamic Trailing Stop:<br/>- Stage 1 (Breathing 65% - 90% TP): 0.75x ATR H1<br/>- Stage 2 (Terminal Lock >= 90% TP): 0.50x ATR M30"]
+        H0 --> H3["CSM Dynamic Bailout:<br/>Cut-Loss Dini if CSM violently shifts against position (> 2.0)"]
+        H0 --> H4["Time-Decay Stagnation Exit:<br/>Close if stagnant >= 4 hours"]
+        H0 --> H5["Pre-Rollover Shield (03:50 WIB):<br/>Clean close positions within danger distance to SL"]
+    end
+
+    L0 --> L05
+    L05 --> L1
+    L1 --> L2
+    L2 --> L3
+    L3 --> L4
+    L4 --> L5
+      </pre>
+    </div>
+  </div>
+
+  <div class="zoom-controls">
+    <button onclick="zoomIn()" title="Zoom In">+</button>
+    <button onclick="zoomOut()" title="Zoom Out">&minus;</button>
+    <button onclick="resetZoom()" title="Reset Zoom">1:1</button>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#0b0f19',
+        primaryColor: '#1e293b',
+        primaryTextColor: '#f8fafc',
+        primaryBorderColor: '#38bdf8',
+        lineColor: '#64748b',
+        secondaryColor: '#0f172a',
+        tertiaryColor: '#1e1b4b'
+      },
+      flowchart: {
+        curve: 'basis',
+        htmlLabels: true
+      }
+    });
+
+    let currentScale = 1;
+    let isPanning = false;
+    let startX = 0, startY = 0;
+    let translateX = 0, translateY = 0;
+
+    const viewport = document.getElementById('viewport');
+    const container = document.getElementById('diagram-container');
+
+    function updateTransform() {
+      container.style.transform = `translate(${translateX}px, ${translateY}px) scale(${currentScale})`;
+    }
+
+    function zoomIn() {
+      currentScale = Math.min(currentScale * 1.2, 3);
+      updateTransform();
+    }
+
+    function zoomOut() {
+      currentScale = Math.max(currentScale / 1.2, 0.3);
+      updateTransform();
+    }
+
+    function resetZoom() {
+      currentScale = 1;
+      translateX = 0;
+      translateY = 0;
+      updateTransform();
+    }
+
+    viewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+      currentScale = Math.min(Math.max(currentScale * zoomFactor, 0.2), 3);
+      updateTransform();
+    });
+
+    viewport.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      isPanning = true;
+      startX = e.clientX - translateX;
+      startY = e.clientY - translateY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isPanning) return;
+      translateX = e.clientX - startX;
+      translateY = e.clientY - startY;
+      updateTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+      isPanning = false;
+    });
+
+    function getCleanSVG() {
+      const svg = document.querySelector('.mermaid svg');
+      if (!svg) return null;
+      const clone = svg.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.setAttribute('background-color', '#0b0f19');
+      return clone;
+    }
+
+    function downloadSVG() {
+      const svg = getCleanSVG();
+      if (!svg) return alert('Diagram belum selesai dirender.');
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'flowchart_arsitektur_bot.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadPNG() {
+      const svg = getCleanSVG();
+      if (!svg) return alert('Diagram belum selesai dirender.');
+      
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+
+      img.onload = function() {
+        const scale = 2; // High-DPI
+        const canvas = document.createElement('canvas');
+        canvas.width = (svg.clientWidth || 1600) * scale;
+        canvas.height = (svg.clientHeight || 2200) * scale;
+        const ctx = canvas.getContext('2d');
+        
+        // Dark background
+        ctx.fillStyle = '#0b0f19';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = 'flowchart_arsitektur_bot.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      };
+      img.src = url;
+    }
+  </script>
+</body>
+</html>
