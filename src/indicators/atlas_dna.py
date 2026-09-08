@@ -118,21 +118,38 @@ def calculate_dual_grid_stations(symbol: str, current_price: float) -> dict:
     }
 
 
+try:
+    import config
+    GRADE_S_MIN_RR = getattr(config, "GRADE_S_MIN_RR", 2.50)
+    GRADE_A_PLUS_MIN_RR = getattr(config, "GRADE_A_PLUS_MIN_RR", 1.80)
+    GRADE_A_MIN_RR = getattr(config, "GRADE_A_MIN_RR", 1.25)
+    GRADE_B_MIN_RR = getattr(config, "GRADE_B_MIN_RR", 0.75)
+    GRADE_S_MAX_RR = getattr(config, "GRADE_S_MAX_RR", 3.50)
+except Exception:
+    GRADE_S_MIN_RR = 2.50
+    GRADE_A_PLUS_MIN_RR = 1.80
+    GRADE_A_MIN_RR = 1.25
+    GRADE_B_MIN_RR = 0.75
+    GRADE_S_MAX_RR = 3.50
+
+
 def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int, 
                              origin_level: float, atr_h1: float, pwl: float = None, pwh: float = None,
                              rbs: float = None, sbr: float = None, spread_pts: float = 0.0,
                              c1: float = None, f1: float = None,
                              c2: float = None, f2: float = None,
                              c1_grade: str = None, f1_grade: str = None,
-                             c1_is_vacuum: bool = False, f1_is_vacuum: bool = False) -> dict:
+                             c1_is_vacuum: bool = False, f1_is_vacuum: bool = False,
+                             c1_breached: bool = False, f1_breached: bool = False) -> dict:
     """
     Calculates precise intraday Stop Loss and Take Profit anchored to Physical Stations:
-    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL if >= 1.25R and significant)
-    2. Deep Target Station: Next Strong Barrier (C2 for BUY, F2 for SELL if C1/F1 too close or vacuum)
+    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL if >= 0.75R + friction)
+    2. Deep Target Station: Next Strong Barrier (C2 for BUY, F2 for SELL only if C1/F1 legitimately breached or vacuum)
     3. Structural SBR/RBS
     4. Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
     - Front-running pad: [Spread + 0.15x ATR] deducted from target station
-    - Realistic Intraday R:R: Min 1.25:1 to Max 2.5:1
+    - Realistic Intraday R:R: Min 0.75:1 (Grade B Wall Scalp) to Max 3.5:1 (Grade S Super-Shock)
+    - Rigid Breached Wall Law: C2/F2 can ONLY be targeted if C1/F1 was legitimately breached with H1 close confirmation.
     """
     step = get_symbol_step(symbol)
     sub_step = step * 0.50 # 50-pip Sub-Station
@@ -167,18 +184,27 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         
         # TARGET HIERARCHY: 1. Next Structure C1 -> 2. Deep Ceiling C2 -> 3. SBR Ceiling -> 4. Psychological Sub-Station
         target_station = None
-        c1_valid = bool(c1 and c1 > entry_price + 1.25 * risk and (c1 - entry_price) <= 3.5 * risk)
+        min_wall_dist = (GRADE_B_MIN_RR * risk) + friction_pad
+        # Grade B Wall Scalp: If C1 is within [0.75R + friction, 3.5R], C1 is valid!
+        c1_valid = bool(c1 and c1 > entry_price + min_wall_dist and (c1 - entry_price) <= 3.5 * risk)
         c1_thick = bool(c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO") and not c1_is_vacuum) if c1_grade else True
-        if c1_valid and c1_thick:
+        
+        # Rigid Breached Wall Law:
+        # If C1 is valid and thick:
+        # - If NOT breached: target MUST NOT exceed C1 (target_station = c1).
+        # - If breached: C1 has fallen, target can advance to C2 (Grade A+ / S).
+        if c1_valid and c1_thick and not c1_breached:
             target_station = c1
-        elif c2 and c2 > entry_price + 1.25 * risk and (c2 - entry_price) <= 3.5 * risk:
+        elif (c1_breached or not c1_thick or not c1_valid) and c2 and c2 > entry_price + GRADE_A_MIN_RR * risk and (c2 - entry_price) <= 3.5 * risk:
             target_station = c2
-        elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
+        elif (c1_breached or not c1_thick or not c1_valid) and sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
             target_station = sbr
-        elif pwh and pwl and pwh > pwl:
+        elif (c1_breached or not c1_thick or not c1_valid) and pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
             if weekly_50 > entry_price + 1.15 * risk and (weekly_50 - entry_price) <= 3.5 * risk:
                 target_station = weekly_50
+        elif c1_valid:
+            target_station = c1
                 
         if target_station is None:
             # Nearest 50-pip Psychological Sub-Station
@@ -189,8 +215,10 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             
         tp_target = target_station - front_pad
         # Enforce realistic intraday clamp with Net R:R friction compensation
-        min_tp = entry_price + (1.25 * risk) + friction_pad
-        max_tp = entry_price + max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10)) + friction_pad
+        # If target_station is C1 and distance < 1.25*risk + friction_pad, clamp min_tp to min_wall_dist
+        is_wall_scalp = bool(target_station and c1 and abs(target_station - c1) < 1e-5 and (c1 - entry_price) < (GRADE_A_MIN_RR * risk + friction_pad))
+        min_tp = entry_price + (min_wall_dist if is_wall_scalp else (GRADE_A_MIN_RR * risk + friction_pad))
+        max_tp = entry_price + (GRADE_S_MAX_RR * risk) + friction_pad
         tp = max(min_tp, min(tp_target, max_tp))
             
     else: # SELL
@@ -207,18 +235,27 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         
         # TARGET HIERARCHY: 1. Next Structure F1 -> 2. Deep Floor F2 -> 3. RBS Floor -> 4. Psychological Sub-Station
         target_station = None
-        f1_valid = bool(f1 and f1 < entry_price - 1.25 * risk and (entry_price - f1) <= 3.5 * risk)
+        min_wall_dist = (GRADE_B_MIN_RR * risk) + friction_pad
+        # Grade B Wall Scalp: If F1 is within [0.75R + friction, 3.5R], F1 is valid!
+        f1_valid = bool(f1 and f1 < entry_price - min_wall_dist and (entry_price - f1) <= 3.5 * risk)
         f1_thick = bool(f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO") and not f1_is_vacuum) if f1_grade else True
-        if f1_valid and f1_thick:
+        
+        # Rigid Breached Wall Law:
+        # If F1 is valid and thick:
+        # - If NOT breached: target MUST NOT exceed F1 (target_station = f1).
+        # - If breached: F1 has fallen, target can advance to F2 (Grade A+ / S).
+        if f1_valid and f1_thick and not f1_breached:
             target_station = f1
-        elif f2 and f2 < entry_price - 1.25 * risk and (entry_price - f2) <= 3.5 * risk:
+        elif (f1_breached or not f1_thick or not f1_valid) and f2 and f2 < entry_price - GRADE_A_MIN_RR * risk and (entry_price - f2) <= 3.5 * risk:
             target_station = f2
-        elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
+        elif (f1_breached or not f1_thick or not f1_valid) and rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
             target_station = rbs
-        elif pwh and pwl and pwh > pwl:
+        elif (f1_breached or not f1_thick or not f1_valid) and pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
             if weekly_50 < entry_price - 1.15 * risk and (entry_price - weekly_50) <= 3.5 * risk:
                 target_station = weekly_50
+        elif f1_valid:
+            target_station = f1
                 
         if target_station is None:
             # Nearest 50-pip Psychological Sub-Station
@@ -229,16 +266,28 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             
         tp_target = target_station + front_pad
         # Enforce realistic intraday clamp with Net R:R friction compensation
-        min_tp = entry_price - (1.25 * risk) - friction_pad
-        max_tp = entry_price - max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10)) - friction_pad
+        # If target_station is F1 and distance < 1.25*risk + friction_pad, clamp min_tp to min_wall_dist
+        is_wall_scalp = bool(target_station and f1 and abs(target_station - f1) < 1e-5 and (entry_price - f1) < (GRADE_A_MIN_RR * risk + friction_pad))
+        min_tp = entry_price - (min_wall_dist if is_wall_scalp else (GRADE_A_MIN_RR * risk + friction_pad))
+        max_tp = entry_price - (GRADE_S_MAX_RR * risk) - friction_pad
         tp = min(min_tp, max(tp_target, max_tp))
             
     rr = abs(tp - entry_price) / max(risk, 1e-5)
+    if rr >= GRADE_S_MIN_RR:
+        setup_grade = "GRADE_S"
+    elif rr >= GRADE_A_PLUS_MIN_RR:
+        setup_grade = "GRADE_A_PLUS"
+    elif rr >= GRADE_A_MIN_RR and not is_wall_scalp:
+        setup_grade = "GRADE_A"
+    else:
+        setup_grade = "GRADE_B"
     
     return {
         "sl": round(sl, digits),
         "tp": round(tp, digits),
         "risk": risk,
         "risk_reward": round(rr, 2),
-        "target_station": round(target_station, digits)
+        "target_station": round(target_station, digits),
+        "setup_grade": setup_grade,
+        "is_wall_scalp": is_wall_scalp
     }

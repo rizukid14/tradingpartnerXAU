@@ -144,6 +144,14 @@ class ZoneMapResult:
     immediate_ceiling_c1: Optional[float] = None
     deep_floor_f2: Optional[float] = None
     deep_ceiling_c2: Optional[float] = None
+    immediate_floor_f1_grade: Optional[str] = None
+    immediate_ceiling_c1_grade: Optional[str] = None
+    immediate_floor_f1_score: float = 0.0
+    immediate_ceiling_c1_score: float = 0.0
+    deep_floor_f2_grade: Optional[str] = None
+    deep_ceiling_c2_grade: Optional[str] = None
+    deep_floor_f2_score: float = 0.0
+    deep_ceiling_c2_score: float = 0.0
     ladder: ScaleLadder = field(default_factory=ScaleLadder)
     suggested_method: str = "NONE"
     method_reason: str = ""
@@ -160,6 +168,20 @@ class ZoneMapResult:
             "imm_floor_f1": self.immediate_floor_f1,
             "deep_ceiling_c2": self.deep_ceiling_c2,
             "deep_floor_f2": self.deep_floor_f2,
+            "imm_ceiling_c1_grade": self.immediate_ceiling_c1_grade,
+            "imm_ceiling_c1_score": self.immediate_ceiling_c1_score,
+            "imm_floor_f1_grade": self.immediate_floor_f1_grade,
+            "imm_floor_f1_score": self.immediate_floor_f1_score,
+            "deep_ceiling_c2_grade": self.deep_ceiling_c2_grade,
+            "deep_ceiling_c2_score": self.deep_ceiling_c2_score,
+            "deep_floor_f2_grade": self.deep_floor_f2_grade,
+            "deep_floor_f2_score": self.deep_floor_f2_score,
+            "c1_grade": self.immediate_ceiling_c1_grade,
+            "f1_grade": self.immediate_floor_f1_grade,
+            "c2_grade": self.deep_ceiling_c2_grade,
+            "f2_grade": self.deep_floor_f2_grade,
+            "c1_score": self.immediate_ceiling_c1_score,
+            "f1_score": self.immediate_floor_f1_score,
             "symbol": self.symbol,
             "zone_count": len(self.clusters),
         }
@@ -487,6 +509,19 @@ class ZoneConfluenceEngine:
         deep_f2 = _first_deep(floor_layers, f1, above=False)
         deep_c2 = _first_deep(ceil_layers, c1, above=True)
 
+        def _get_layer_meta(layers: List[dict], price: Optional[float]):
+            if price is None:
+                return None, 0.0
+            for l in layers:
+                if abs(l["price"] - price) < 1e-6:
+                    return l.get("grade"), float(l.get("density_score", 0.0))
+            return None, 0.0
+
+        f1_grade, f1_score = _get_layer_meta(floor_layers, f1)
+        c1_grade, c1_score = _get_layer_meta(ceil_layers, c1)
+        f2_grade, f2_score = _get_layer_meta(floor_layers, deep_f2)
+        c2_grade, c2_score = _get_layer_meta(ceil_layers, deep_c2)
+
         return {
             "floors": floor_layers,
             "ceilings": ceil_layers,
@@ -494,6 +529,14 @@ class ZoneConfluenceEngine:
             "imm_ceiling_c1": c1,
             "deep_floor_f2": deep_f2,
             "deep_ceiling_c2": deep_c2,
+            "imm_floor_f1_grade": f1_grade,
+            "imm_floor_f1_score": f1_score,
+            "imm_ceiling_c1_grade": c1_grade,
+            "imm_ceiling_c1_score": c1_score,
+            "deep_floor_f2_grade": f2_grade,
+            "deep_floor_f2_score": f2_score,
+            "deep_ceiling_c2_grade": c2_grade,
+            "deep_ceiling_c2_score": c2_score,
         }
 
     # ------------------------------------------------------------------ #
@@ -633,6 +676,14 @@ class ZoneConfluenceEngine:
             immediate_ceiling_c1=walls["imm_ceiling_c1"],
             deep_floor_f2=walls["deep_floor_f2"],
             deep_ceiling_c2=walls["deep_ceiling_c2"],
+            immediate_floor_f1_grade=walls.get("imm_floor_f1_grade"),
+            immediate_ceiling_c1_grade=walls.get("imm_ceiling_c1_grade"),
+            immediate_floor_f1_score=walls.get("imm_floor_f1_score", 0.0),
+            immediate_ceiling_c1_score=walls.get("imm_ceiling_c1_score", 0.0),
+            deep_floor_f2_grade=walls.get("deep_floor_f2_grade"),
+            deep_ceiling_c2_grade=walls.get("deep_ceiling_c2_grade"),
+            deep_floor_f2_score=walls.get("deep_floor_f2_score", 0.0),
+            deep_ceiling_c2_score=walls.get("deep_ceiling_c2_score", 0.0),
             ladder=ladder,
             suggested_method=method,
             method_reason=reason,

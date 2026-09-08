@@ -122,11 +122,24 @@ def test_zce_runway_capacity_pass_with_small_atr(mt5_ok, monkeypatch):
 
 
 def test_zce_runway_insufficient_skip(mt5_ok, monkeypatch):
-    """ZCE Runway terhalang dinding lawan (R:R < 1.25) -> SKIP secara kuantitatif."""
+    """ZCE Runway terhalang dinding lawan (R:R < 0.75) -> SKIP secara kuantitatif."""
     _set_zce(monkeypatch, True, "full")
-    # SL 120 pts, tapi target dinding terhalang di 80 pts (R:R = 0.66 < 1.25)
+    # SL 120 pts, tapi target dinding terhalang di 80 pts (R:R = 0.66 < 0.75x SL = 90 pts)
     sl, tp, ok, reason = _apply_sltp_rules(
         sl_points=120, tp_points=80, symbol="AUDCHF-ECNc")
     assert ok is False
     assert "ANCHOR_TOO_WIDE" in reason
     assert "Runway ke target terhalang" in reason
+
+
+def test_zce_runway_grade_b_wall_scalp_pass(mt5_ok, monkeypatch):
+    """ZCE Runway sempit (0.75 <= R:R < 1.25) -> Transisi ke GRADE_B Wall Scalp, PASS tanpa SKIP."""
+    _set_zce(monkeypatch, True, "full")
+    # Kasus nyata NZDCHF: SL 140 pts, TP 165 pts (R:R = 1.18 < 1.25, tapi >= 0.75x SL = 105 pts)
+    sl, tp, ok, reason = _apply_sltp_rules(
+        sl_points=140, tp_points=165, symbol="NZDCHF-ECNc")
+    assert ok is True
+    assert "ANCHOR_TOO_WIDE" not in reason
+    assert tp == 165  # Target C1/F1 tidak didorong melampaui dinding
+    import src.core.consensus as cons
+    assert any("GRADE_B Wall Scalp" in adj for adj in cons._last_sltp_adjustments)

@@ -275,7 +275,7 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None, sizing_multiplier=None):
+    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None, sizing_multiplier=None, setup_grade=None):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
@@ -286,6 +286,7 @@ class RiskEngine:
 
         action_tier: 5-Tier Operational Action Matrix modifier ("REDUCED_CONFIDENCE" -> 0.75x, "REDUCED_SCALP" -> 0.50x).
         sizing_multiplier: Dynamic 2D Confluence Matrix multiplier (e.g. 1.25x for APEX, 0.50x for Half-Risk Scalp).
+        setup_grade: ZCE Runway Setup Grade ("GRADE_B" -> 0.75x defensive sizing).
         """
         symbol = connector.get_valid_trade_symbol(symbol or config.SYMBOL)
         risk_pct = config.risk_percent_for(symbol)
@@ -296,27 +297,30 @@ class RiskEngine:
             equity = 0.0
 
         si = mt5.symbol_info(symbol)
+        is_defensive = (setup_grade == "GRADE_B" or action_tier == "REDUCED_CONFIDENCE")
+        is_half_risk = (action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"))
+
         if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
             # No SL given -> fall back to the static per-symbol lot
             lot = config.lot_size_for(symbol)
-            if sizing_multiplier:
-                lot *= float(sizing_multiplier)
-            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            if is_half_risk:
                 lot *= 0.50
-            elif action_tier == "REDUCED_CONFIDENCE":
+            elif is_defensive:
                 lot *= 0.75
+            elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+                lot *= float(sizing_multiplier)
             return self._apply_lot_multipliers(lot, symbol)
 
         # USD value of a 1-point move for 1.0 lot
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
         if usd_per_pt_1lot <= 0:
             lot = config.lot_size_for(symbol)
-            if sizing_multiplier:
-                lot *= float(sizing_multiplier)
-            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            if is_half_risk:
                 lot *= 0.50
-            elif action_tier == "REDUCED_CONFIDENCE":
+            elif is_defensive:
                 lot *= 0.75
+            elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+                lot *= float(sizing_multiplier)
             return self._apply_lot_multipliers(lot, symbol)
 
         split_count = max(1, int(split_count))
@@ -325,12 +329,12 @@ class RiskEngine:
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
-            if sizing_multiplier:
-                lot *= float(sizing_multiplier)
-            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            if is_half_risk:
                 lot *= 0.50
-            elif action_tier == "REDUCED_CONFIDENCE":
+            elif is_defensive:
                 lot *= 0.75
+            elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+                lot *= float(sizing_multiplier)
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
@@ -358,15 +362,15 @@ class RiskEngine:
         lot = self._apply_lot_multipliers(lot_raw, symbol)
 
         # Apply 5-Tier / 2D Confluence Matrix modifiers
-        if sizing_multiplier is not None and isinstance(sizing_multiplier, (int, float)) and sizing_multiplier > 0:
-            lot *= float(sizing_multiplier)
-            print(f" {UI.tag('CONFLUENCE SIZING', UI.YELLOW)} {symbol}: 2D Confluence multiplier (x{sizing_multiplier:.2f}) applied -> {lot:.4f}")
-        elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+        if is_half_risk:
             lot *= 0.50
             print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_SCALP / Half-Risk multiplier (x0.50) applied -> {lot:.4f}")
-        elif action_tier == "REDUCED_CONFIDENCE":
+        elif is_defensive:
             lot *= 0.75
-            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE multiplier (x0.75) applied -> {lot:.4f}")
+            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE / GRADE_B multiplier (x0.75) applied -> {lot:.4f}")
+        elif sizing_multiplier is not None and isinstance(sizing_multiplier, (int, float)) and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+            lot *= float(sizing_multiplier)
+            print(f" {UI.tag('CONFLUENCE SIZING', UI.YELLOW)} {symbol}: 2D Confluence multiplier (x{sizing_multiplier:.2f}) applied -> {lot:.4f}")
 
         # Clamp to broker volume bounds and round DOWN to step (floor - jangan
         # pakai round(), itu bisa NAIKKAN lot di atas risk target).

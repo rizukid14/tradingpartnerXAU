@@ -281,6 +281,15 @@ M1B_DR_SELL_MIN = _getenv_float("M1B_DR_SELL_MIN", 0.10)
 M1B_DR_BUY_MIN = _getenv_float("M1B_DR_BUY_MIN", 0.40)
 M1B_DR_BUY_MAX = _getenv_float("M1B_DR_BUY_MAX", 0.90)
 
+# ---------- 4-TIER SETUP QUALITY & RIGID RUNWAY ARCHITECTURE (8 Sep 2026) ----------
+GRADE_S_MIN_RR = _getenv_float("GRADE_S_MIN_RR", 2.50)
+GRADE_A_PLUS_MIN_RR = _getenv_float("GRADE_A_PLUS_MIN_RR", 1.80)
+GRADE_A_MIN_RR = _getenv_float("GRADE_A_MIN_RR", 1.25)
+GRADE_B_MIN_RR = _getenv_float("GRADE_B_MIN_RR", 0.75)
+GRADE_S_PURE_QUANT_MIN_Z = _getenv_float("GRADE_S_PURE_QUANT_MIN_Z", 1.80)
+GRADE_S_PURE_QUANT_MIN_CSM_DELTA = _getenv_float("GRADE_S_PURE_QUANT_MIN_CSM_DELTA", 2.00)
+BREACHED_WALL_MIN_DISPLACEMENT = _getenv_float("BREACHED_WALL_MIN_DISPLACEMENT", 0.50)
+
 # ---------- M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026) ----------
 # Studi #1 (JPY surge, scratch/study_surge_retest.py) + #1b mirror 26 pair dua arah
 # (scratch/study_mirror_flow.py) membuktikan edge continuation saat currency z >= 1.5
@@ -296,8 +305,8 @@ M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 1.5)      # EP_Z studi: ambang epis
 M4_CONT_Z = _getenv_float("M4_CONT_Z", 0.75)           # episode bertahan selama |z| >= 0.75 salah satu sisi
 M4_FLOW_WARM_BARS = _getenv_int("M4_FLOW_WARM_BARS", 720)   # warm rolling z-score (studi WARM)
 M4_FLOW_LOOKBACK_BARS = _getenv_int("M4_FLOW_LOOKBACK_BARS", 24)  # jendela akumulasi flow 24-bar (studi idx24)
-M4_LOOKBACK_BARS = _getenv_int("M4_LOOKBACK_BARS", 120)     # jendela swing level [ep-LOOK:ep] (studi LOOK)
-M4_MIN_EPISODE_BARS = _getenv_int("M4_MIN_EPISODE_BARS", 6) # breakdown baru dievaluasi saat episode >= 6 bar
+M4_LOOKBACK_BARS = _getenv_int("M4_LOOKBACK_BARS", 24)       # jendela swing level fallback [ep-24:ep] (1 hari bursa H1)
+M4_MIN_EPISODE_BARS = _getenv_int("M4_MIN_EPISODE_BARS", 2)   # breakdown dievaluasi cepat paska lonjakan surge (>= 2 bar)
 M4_MAX_WAIT_BARS = _getenv_int("M4_MAX_WAIT_BARS", 48)     # jendela tunggu retest sejak break (48 bar H1 / 2 hari bursa)
 M4_MIN_GAP_BARS = _getenv_int("M4_MIN_GAP_BARS", 240)       # anti re-entry antar break (studi MIN_GAP)
 M4_SL_ATR_MULT = _getenv_float("M4_SL_ATR_MULT", 0.45)      # SL struktural = 0.45 x ATR H1 (user: ikut data)
@@ -692,12 +701,26 @@ SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", Tr
 ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)
 ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
 
+# --- SESSION LOT MULTIPLIERS (8 Sep 2026) ---
+SESSION_ASIA_LOT_MULT   = _getenv_float("SESSION_ASIA_LOT_MULT", 1.2)
+SESSION_LONDON_LOT_MULT = _getenv_float("SESSION_LONDON_LOT_MULT", 1.0)
+SESSION_NY_LOT_MULT     = _getenv_float("SESSION_NY_LOT_MULT", 0.8)
+
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
-    {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
-    {"name": "London-NY Overlap", "start": (19, 0), "end": (21, 0),  "lot_multiplier": 1.2},
-    {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": 1.0},
+    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (16, 0),  "lot_multiplier": SESSION_ASIA_LOT_MULT},
+    {"name": "London",            "start": (15, 0), "end": (20, 0),  "lot_multiplier": SESSION_LONDON_LOT_MULT},
+    {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": SESSION_NY_LOT_MULT},
 ]
+
+# --- CSM DYNAMIC FLOW BAILOUT (8 Sep 2026) ---
+ENABLE_CSM_DYNAMIC_BAILOUT = _getenv_bool("ENABLE_CSM_DYNAMIC_BAILOUT", True)
+CSM_BAILOUT_MIN_LOSS_R     = _getenv_float("CSM_BAILOUT_MIN_LOSS_R", -0.25)
+CSM_BAILOUT_SHIFT_THRESH   = _getenv_float("CSM_BAILOUT_SHIFT_THRESH", 2.5)
+CSM_BAILOUT_ABS_THRESH     = _getenv_float("CSM_BAILOUT_ABS_THRESH", 2.0)
+
+# --- DIRECTIONAL HYSTERESIS (8 Sep 2026) ---
+ENABLE_DIRECTIONAL_HYSTERESIS = _getenv_bool("ENABLE_DIRECTIONAL_HYSTERESIS", True)
+DIRECTIONAL_LOCK_HOURS        = _getenv_float("DIRECTIONAL_LOCK_HOURS", 8.0)
 
 # Danger zones (Dead Zone subuh & rollover 00:00 - 07:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [

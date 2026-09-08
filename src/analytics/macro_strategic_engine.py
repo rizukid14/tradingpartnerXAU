@@ -197,6 +197,10 @@ class MacroStrategicDirective:
     f1_fortress_tag: str = ""
     c1_reaction_grade: str = "GRADE_1_MICRO"
     f1_reaction_grade: str = "GRADE_1_MICRO"
+    c2_reaction_grade: str = "GRADE_2_INTERMEDIATE"
+    f2_reaction_grade: str = "GRADE_2_INTERMEDIATE"
+    c2_density_score: float = 0.0
+    f2_density_score: float = 0.0
     chamber_position_pct: float = 0.50
     retest_touch_count: int = 1
     interaction_sequence: List[str] = field(default_factory=list)
@@ -1117,10 +1121,57 @@ class MacroStrategicEngine:
                     deep_ceiling_c2 = float(_c2)
                 if _f2 is not None and float(_f2) < imm_floor_f1:
                     deep_floor_f2 = float(_f2)
+
+                # ZCE Attribute Ingestion (RFC 11 / Lapis 4 / Sep 2026):
+                _c1_g = zce_walls.get("imm_ceiling_c1_grade") or zce_walls.get("c1_grade")
+                _c1_s = zce_walls.get("imm_ceiling_c1_score") or zce_walls.get("c1_score")
+                if _c1_s is not None:
+                    c1_density_score = float(_c1_s)
+                    c1_fortress_tag = self._get_fortress_tag(c1_density_score)
                 if layered_ceilings:
-                    layered_ceilings[0] = {**layered_ceilings[0], "price": imm_ceiling_c1}
+                    layered_ceilings[0] = {
+                        **layered_ceilings[0],
+                        "price": imm_ceiling_c1,
+                        **({"reaction_grade": _c1_g, "displacement_thresh": round(_compute_displacement_thresh(_c1_g, atr_h1), digits), "wick_band": round(_compute_wick_band(_c1_g, atr_h1), digits)} if _c1_g else {}),
+                        **({"density_score": c1_density_score, "fortress_tag": c1_fortress_tag} if _c1_s is not None else {})
+                    }
+
+                _f1_g = zce_walls.get("imm_floor_f1_grade") or zce_walls.get("f1_grade")
+                _f1_s = zce_walls.get("imm_floor_f1_score") or zce_walls.get("f1_score")
+                if _f1_s is not None:
+                    f1_density_score = float(_f1_s)
+                    f1_fortress_tag = self._get_fortress_tag(f1_density_score)
                 if layered_floors:
-                    layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
+                    layered_floors[0] = {
+                        **layered_floors[0],
+                        "price": imm_floor_f1,
+                        **({"reaction_grade": _f1_g, "displacement_thresh": round(_compute_displacement_thresh(_f1_g, atr_h1), digits), "wick_band": round(_compute_wick_band(_f1_g, atr_h1), digits)} if _f1_g else {}),
+                        **({"density_score": f1_density_score, "fortress_tag": f1_fortress_tag} if _f1_s is not None else {})
+                    }
+
+                _c2_g = zce_walls.get("deep_ceiling_c2_grade") or zce_walls.get("c2_grade")
+                _c2_s = zce_walls.get("deep_ceiling_c2_score") or zce_walls.get("c2_score")
+                if _c2_s is not None:
+                    c2_density_score = float(_c2_s)
+                if _c2_g and len(layered_ceilings) > 1:
+                    layered_ceilings[1] = {
+                        **layered_ceilings[1],
+                        "price": deep_ceiling_c2,
+                        "reaction_grade": _c2_g,
+                        "density_score": c2_density_score,
+                    }
+
+                _f2_g = zce_walls.get("deep_floor_f2_grade") or zce_walls.get("f2_grade")
+                _f2_s = zce_walls.get("deep_floor_f2_score") or zce_walls.get("f2_score")
+                if _f2_s is not None:
+                    f2_density_score = float(_f2_s)
+                if _f2_g and len(layered_floors) > 1:
+                    layered_floors[1] = {
+                        **layered_floors[1],
+                        "price": deep_floor_f2,
+                        "reaction_grade": _f2_g,
+                        "density_score": f2_density_score,
+                    }
             else:
                 # Per-sisi: timpa hanya sisi yang valid; sisi lain biarkan MSE baseline.
                 # Harga live selalu menjadi pemisah (F1 < mid < C1) sehingga chamber
@@ -1131,16 +1182,59 @@ class MacroStrategicEngine:
                     _c2 = zce_walls.get("deep_ceiling_c2")
                     if _c2 is not None and float(_c2) > imm_ceiling_c1:
                         deep_ceiling_c2 = float(_c2)
+                    _c1_g = zce_walls.get("imm_ceiling_c1_grade") or zce_walls.get("c1_grade")
+                    _c1_s = zce_walls.get("imm_ceiling_c1_score") or zce_walls.get("c1_score")
+                    if _c1_s is not None:
+                        c1_density_score = float(_c1_s)
+                        c1_fortress_tag = self._get_fortress_tag(c1_density_score)
                     if layered_ceilings:
-                        layered_ceilings[0] = {**layered_ceilings[0], "price": imm_ceiling_c1}
+                        layered_ceilings[0] = {
+                            **layered_ceilings[0],
+                            "price": imm_ceiling_c1,
+                            **({"reaction_grade": _c1_g, "displacement_thresh": round(_compute_displacement_thresh(_c1_g, atr_h1), digits), "wick_band": round(_compute_wick_band(_c1_g, atr_h1), digits)} if _c1_g else {}),
+                            **({"density_score": c1_density_score, "fortress_tag": c1_fortress_tag} if _c1_s is not None else {})
+                        }
+                    _c2_g = zce_walls.get("deep_ceiling_c2_grade") or zce_walls.get("c2_grade")
+                    _c2_s = zce_walls.get("deep_ceiling_c2_score") or zce_walls.get("c2_score")
+                    if _c2_s is not None:
+                        c2_density_score = float(_c2_s)
+                    if _c2_g and len(layered_ceilings) > 1:
+                        layered_ceilings[1] = {
+                            **layered_ceilings[1],
+                            "price": deep_ceiling_c2,
+                            "reaction_grade": _c2_g,
+                            "density_score": c2_density_score,
+                        }
+
                 if f1_valid and float(_f1) < imm_ceiling_c1:
                     imm_floor_f1 = float(_f1)
                     floor_f1 = imm_floor_f1
                     _f2 = zce_walls.get("deep_floor_f2")
                     if _f2 is not None and float(_f2) < imm_floor_f1:
                         deep_floor_f2 = float(_f2)
+                    _f1_g = zce_walls.get("imm_floor_f1_grade") or zce_walls.get("f1_grade")
+                    _f1_s = zce_walls.get("imm_floor_f1_score") or zce_walls.get("f1_score")
+                    if _f1_s is not None:
+                        f1_density_score = float(_f1_s)
+                        f1_fortress_tag = self._get_fortress_tag(f1_density_score)
                     if layered_floors:
-                        layered_floors[0] = {**layered_floors[0], "price": imm_floor_f1}
+                        layered_floors[0] = {
+                            **layered_floors[0],
+                            "price": imm_floor_f1,
+                            **({"reaction_grade": _f1_g, "displacement_thresh": round(_compute_displacement_thresh(_f1_g, atr_h1), digits), "wick_band": round(_compute_wick_band(_f1_g, atr_h1), digits)} if _f1_g else {}),
+                            **({"density_score": f1_density_score, "fortress_tag": f1_fortress_tag} if _f1_s is not None else {})
+                        }
+                    _f2_g = zce_walls.get("deep_floor_f2_grade") or zce_walls.get("f2_grade")
+                    _f2_s = zce_walls.get("deep_floor_f2_score") or zce_walls.get("f2_score")
+                    if _f2_s is not None:
+                        f2_density_score = float(_f2_s)
+                    if _f2_g and len(layered_floors) > 1:
+                        layered_floors[1] = {
+                            **layered_floors[1],
+                            "price": deep_floor_f2,
+                            "reaction_grade": _f2_g,
+                            "density_score": f2_density_score,
+                        }
 
         # Enforce strict monotonic ladder ordering (F2 < F1 and C2 > C1)
         if floor_f2 is not None and floor_f2 >= floor_f1:
@@ -1675,6 +1769,10 @@ class MacroStrategicEngine:
             f1_fortress_tag=f1_fortress_tag,
             c1_reaction_grade=(layered_ceilings[0].get('reaction_grade', 'GRADE_1_MICRO') if layered_ceilings else 'GRADE_1_MICRO'),
             f1_reaction_grade=(layered_floors[0].get('reaction_grade', 'GRADE_1_MICRO') if layered_floors else 'GRADE_1_MICRO'),
+            c2_reaction_grade=(layered_ceilings[1].get('reaction_grade', 'GRADE_2_INTERMEDIATE') if len(layered_ceilings) > 1 else 'GRADE_2_INTERMEDIATE'),
+            f2_reaction_grade=(layered_floors[1].get('reaction_grade', 'GRADE_2_INTERMEDIATE') if len(layered_floors) > 1 else 'GRADE_2_INTERMEDIATE'),
+            c2_density_score=c2_density_score,
+            f2_density_score=f2_density_score,
             chamber_position_pct=round(chamber_pos, 2),
             retest_touch_count=len(interaction_seq),
             interaction_sequence=interaction_seq,

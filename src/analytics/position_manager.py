@@ -301,14 +301,21 @@ def manage_all_positions():
             if _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup, lanjut ke tiket berikutnya
 
+        # --- 2B. CSM DYNAMIC FLOW BAILOUT ---
+        if getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+            if _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
+                continue  # Posisi ditutup via bailout, lanjut ke tiket berikutnya
+
         # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
         # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
         # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
         # - Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
         is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+        grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
+        is_grade_b = "GRADE_B" in grade or "SCALP" in grade
 
         # --- 3. PARTIAL CLOSE at TP1 ---
-        if not is_m4 and config.PARTIAL_CLOSE_ENABLED:
+        if not is_m4 and not is_grade_b and config.PARTIAL_CLOSE_ENABLED:
             _check_partial_close(pos, symbol, profit_points, symbol_info)
 
         # --- 4. BREAK-EVEN CHECK ---
@@ -358,6 +365,12 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     # 0.01 lot (volume_min) can't be split: 50% of 0.01 rounds to 0, and
     # forcing volume_min would close the entire position. Skip partial close.
     if pos.volume <= symbol_info.volume_min:
+        return
+
+    # Skip partial close for Grade B Wall Scalps and M4 (Single sprint target, avoid wasting quota to broker commissions)
+    grade = str(_ticket_setup_grades.get(pos.ticket, "")).upper()
+    is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+    if "GRADE_B" in grade or is_m4:
         return
 
     # Calculate actual TP distance if set (dynamic LLM/ATR target)
@@ -567,6 +580,74 @@ def _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, n
     return False
 
 
+def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
+    """
+    CSM Dynamic Flow Bailout:
+    Menutup dini posisi terbuka jika arus mata uang sistemik (Boitoki CSM Net Delta)
+    berbalik tajam melawan arah trade DAN posisi sedang mengalami floating rugi.
+    
+    Dual Gate:
+    1. Finansial: Posisi sedang floating rugi (curr_r <= -0.25R).
+    2. Arus Sistemik Ekstrim:
+       - BUY: csm_delta <= -2.0 ATAU csm_delta_shift <= -2.5
+       - SELL: csm_delta >= +2.0 ATAU csm_delta_shift >= +2.5
+    """
+    if not getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+        return False
+    if config.is_crypto(symbol):
+        return False
+
+    init_sl_pts = _original_sl.get(pos.ticket, 0.0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0.0)
+    if init_sl_pts <= 0:
+        return False
+
+    curr_r = profit_points / init_sl_pts
+    min_loss_r = getattr(config, "CSM_BAILOUT_MIN_LOSS_R", -0.25)
+    # Hanya aktif jika sedang floating rugi di bawah threshold (misal <= -0.25R)
+    if curr_r > min_loss_r:
+        return False
+
+    try:
+        from src.analytics.currency_strength import get_csm_delta_for_symbol
+        csm_delta = get_csm_delta_for_symbol(symbol)
+    except Exception as e:
+        logger.debug(f"[CSM BAILOUT] Gagal fetch CSM delta untuk {symbol}: {e}")
+        return False
+
+    # Ambil snapshot CSM saat posisi pertama kali dibuka dari telemetry (jika ada)
+    telemetry = _load_telemetry()
+    rec = telemetry.get("trades", {}).get(str(pos.ticket), {})
+    csm_open = rec.get("csm_delta_open")
+    csm_shift = round(float(csm_delta) - float(csm_open), 2) if (csm_open is not None) else 0.0
+
+    shift_thresh = float(getattr(config, "CSM_BAILOUT_SHIFT_THRESH", 2.5))
+    abs_opposed_thresh = float(getattr(config, "CSM_BAILOUT_ABS_THRESH", 2.0))
+
+    should_bailout = False
+    bail_reason = ""
+
+    if pos.type == mt5.ORDER_TYPE_BUY:
+        if csm_delta <= -abs_opposed_thresh:
+            should_bailout = True
+            bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed BUY"
+        elif csm_open is not None and csm_shift <= -shift_thresh:
+            should_bailout = True
+            bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against BUY (open: {csm_open:+.2f})"
+    else:  # SELL
+        if csm_delta >= abs_opposed_thresh:
+            should_bailout = True
+            bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed SELL"
+        elif csm_open is not None and csm_shift >= shift_thresh:
+            should_bailout = True
+            bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against SELL (open: {csm_open:+.2f})"
+
+    if should_bailout:
+        reason = f"CSM Flow Inversion ({bail_reason}, float {curr_r:+.2f}R)"
+        return _close_position_by_ticket(pos, symbol, "[CSM BAILOUT EXIT]", comment=reason)
+
+    return False
+
+
 # =============================================================================
 #  BREAK-EVEN (from XAU-60 trade_executor.py)
 # =============================================================================
@@ -621,12 +702,12 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP >= 2.0R)
     is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and (tp_points / init_sl_pts) >= 2.0)
 
-    if is_m4:
-        bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
-    elif "GRADE_S" in grade and not is_vacuum_or_stretched:
+    if "GRADE_S" in grade:
         bep_tp_ratio = 0.65
     elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
         bep_tp_ratio = 0.35
+    elif is_m4:
+        bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
     else:
         bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
 

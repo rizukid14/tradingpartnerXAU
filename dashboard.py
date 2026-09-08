@@ -11,6 +11,7 @@ Usage:
 import argparse
 import http.server
 import json
+import logging
 import math
 import os
 import re
@@ -18,9 +19,12 @@ import socketserver
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger("dashboard")
 
 # Windows terminal UTF-8 encoding fix
 if sys.platform == "win32":
@@ -443,7 +447,7 @@ class CockpitDataEngine:
                 "M1": "M1:SWEEP",
                 "M2": "M2:PULLBACK",
                 "M3": "M3:BREAKOUT",
-                "M4": "M4:FLOW"
+                "M4": "M4:BASING"
             }
             for s in standbys:
                 s_lvl = float(s.get("price", 0.0))
@@ -457,15 +461,25 @@ class CockpitDataEngine:
                         dir_tag = "BULL"
                     else:
                         dir_tag = s_lbl.split()[0] if s_lbl else "SETUP"
-                    s_type_label = type_label_map.get(s.get("type", ""), s.get("type", "SETUP"))
+                    
+                    is_watch = bool(s.get("is_breakdown_watch", False))
+                    s_type = s.get("type", "")
+                    if is_watch:
+                        s_type_label = "SFR:WATCH"
+                    elif s_type == "M4":
+                        s_type_label = "M4:BASING" if "BASING" in s_lbl else "M4:RETEST"
+                    else:
+                        s_type_label = type_label_map.get(s_type, s_type or "SETUP")
+
                     short_name = f"{s_type_label} {dir_tag}"
                     setups_dist.append({
                         "name": short_name,
-                        "type": s.get("type", ""),
+                        "type": s_type,
                         "dir": dir_tag,
                         "dist_pips": dist_pips,
                         "dist_atr": dist_atr,
-                        "lvl": s_lvl
+                        "lvl": s_lvl,
+                        "is_watch": is_watch
                     })
 
             # Pick closest and evaluate multi-setup confluence
@@ -474,7 +488,8 @@ class CockpitDataEngine:
             extra_count = 0
 
             if setups_dist:
-                setups_dist.sort(key=lambda x: x["dist_atr"])  # sort by dist_atr
+                # Prioritize active actionable setups over passive background flow watching
+                setups_dist.sort(key=lambda x: (1 if x["is_watch"] else 0, x["dist_atr"]))
                 closest = setups_dist[0]
                 closest_name = closest["name"]
                 closest_pips = closest["dist_pips"]
@@ -502,6 +517,21 @@ class CockpitDataEngine:
             is_near = (closest_atr <= 1.0)
             dist_desc = f"{closest_pips:.1f} pips ({closest_atr:.2f}x ATR)" if closest_atr < 50 else ">50 pips (Idle)"
 
+            # M4 Systemic Flow Shock & Dealing Range Extraction
+            dr_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
+            base_curr = clean_sym[:3]
+            quote_curr = clean_sym[3:6]
+            z_dict = getattr(self.scanner, "_m4_z_last", {})
+            z_base = float(z_dict.get(base_curr, 0.0) or 0.0)
+            z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
+            m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
+            m4_active_standby = next((s for s in standbys if s.get("type") == "M4"), None)
+            m4_has_shock = (abs(z_base) >= 1.5 or abs(z_quote) >= 1.5 or m4_active_standby is not None or bool(m4_st.get("bear", {}).get("ref_bar")) or bool(m4_st.get("bull", {}).get("ref_bar")))
+            m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
+            m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+            dir_mem = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_sym)
+            dir_locked = ("BUY" if dir_mem.get("dir", 0) == 1 else "SELL") if (dir_mem and dir_mem.get("dir", 0) != 0) else None
+
             pairs_data.append({
                 "symbol": sym,
                 "clean_symbol": clean_sym,
@@ -520,7 +550,12 @@ class CockpitDataEngine:
                 "has_open_pos": (sym in open_symbols or valid_sym in open_symbols),
                 "bid": bid,
                 "ask": ask,
-                "digits": digits
+                "digits": digits,
+                "m4_shock": m4_has_shock,
+                "m4_z": round(m4_dominant_z, 2),
+                "m4_dir": m4_flow_dir,
+                "dir_locked": dir_locked,
+                "dr_pct": round(dr_pct, 1)
             })
 
         # Stable sorting by Base Currency Group: EUR, GBP, AUD, USD, CHF, CAD, NZD
@@ -837,6 +872,25 @@ class CockpitDataEngine:
                 else:
                     roll_str = "Safe (>180 pts)"
 
+                # Dynamic CSM shift telemetry for bailout audit
+                csm_status = "—"
+                try:
+                    from src.analytics.currency_strength import get_csm_delta_for_symbol
+                    from src.analytics.position_manager import _load_telemetry
+                    csm_curr = get_csm_delta_for_symbol(symbol)
+                    t_data = _load_telemetry()
+                    t_rec = t_data.get("trades", {}).get(str(t_id), {})
+                    csm_o = t_rec.get("csm_delta_open")
+                    if csm_o is not None:
+                        shift_v = round(csm_curr - csm_o, 2)
+                        csm_status = f"{shift_v:+.2f} (Now: {csm_curr:+.2f})"
+                        if abs(shift_v) >= 2.5:
+                            csm_status += " [BAILOUT RISK]"
+                    else:
+                        csm_status = f"Now: {csm_curr:+.2f}"
+                except Exception:
+                    pass
+
                 open_pos.append({
                     "ticket": t_id,
                     "type_str": type_str,
@@ -846,7 +900,8 @@ class CockpitDataEngine:
                     "tp": p.get("tp"),
                     "profit": float(p.get("profit", 0.0)),
                     "mgt_badge": mgt_badge,
-                    "rollover_dist": roll_str
+                    "rollover_dist": roll_str,
+                    "csm_shift": csm_status
                 })
 
         pending_orders = []
@@ -983,6 +1038,18 @@ class CockpitDataEngine:
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
         dr_lbl = "DEEP DISCOUNT" if dr_val <= 38.0 else ("EXTREME PREMIUM" if dr_val >= 62.0 else "EQUILIBRIUM")
 
+        # M4 Systemic Flow Shock state
+        base_curr = clean_sym[:3]
+        quote_curr = clean_sym[3:6]
+        z_dict = getattr(self.scanner, "_m4_z_last", {})
+        z_base = float(z_dict.get(base_curr, 0.0) or 0.0)
+        z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
+        m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
+        m4_active_standby = next((s for s in m_standbys if s.get("type") == "M4"), None)
+        m4_has_shock = (abs(z_base) >= 1.5 or abs(z_quote) >= 1.5 or m4_active_standby is not None or bool(m4_st.get("bear", {}).get("ref_bar")) or bool(m4_st.get("bull", {}).get("ref_bar")))
+        m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
+        m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+
         return {
             "symbol": symbol,
             "digits": digits,
@@ -993,6 +1060,9 @@ class CockpitDataEngine:
             "atr_pts": int(atr_pts),
             "dr_pos": dr_val,
             "dr_label": dr_lbl,
+            "m4_shock": m4_has_shock,
+            "m4_z": round(m4_dominant_z, 2),
+            "m4_dir": m4_flow_dir,
             "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0),
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
             "perm_label": macro.get("permission_state", "GO"),
@@ -1010,6 +1080,10 @@ class CockpitDataEngine:
             "gates": gates,
             "open_positions": open_pos,
             "pending_orders": pending_orders,
+            "direction_lock": getattr(self.scanner, "_symbol_directional_state", {}).get(
+                symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper(),
+                {"dir": 0, "status": "FREE", "reason": "UNCONSTRAINED"}
+            ),
             "telemetry": telemetry
         }
 
@@ -1027,14 +1101,24 @@ class CockpitDataEngine:
         is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto
         spread_cap = config.max_spread_points_for(sym) if is_crypto else max(int(round(atr_val * 0.15 / pt)), 20)
 
+        # Dynamic Session Multiplier & Bank Holiday Detection
+        from src.analytics.economic_calendar import calendar as econ_cal
+        is_holiday, holiday_desc = econ_cal.is_bank_holiday_today("ALL")
+        sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.2) if is_asian else (
+            getattr(config, "SESSION_NY_LOT_MULT", 0.8) if (20 <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 1.0)
+        )
+
         if is_dead_zone:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB)."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB). Hanya manage posisi."}
+        elif is_holiday and (20 <= h or h == 0) and not is_crypto:
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"Bank Holiday Circuit Breaker ({holiday_desc})", "reason": f"[BANK HOLIDAY] {holiday_desc}. Sesi New York dibekukan akibat pasar antarbank tutup."}
         elif is_asian and not is_asian_allowed:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
         elif spread_pts > spread_cap:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
         else:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap."}
+            holiday_note = f" • {holiday_desc}" if is_holiday else ""
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x{holiday_note})", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap. Lot multiplier: {sess_mult}x."}
         gates.append(g1)
 
         # Gate 2: Systemic Basket Circuit Breaker (35.0 bps)
@@ -1069,17 +1153,22 @@ class CockpitDataEngine:
                 g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": "Aliran basket mata uang stabil (<35 bps threshold). Tidak ada shock eksternal."}
         gates.append(g2)
 
-        # Gate 3: MSE Chamber & Forbidden Traps
+        # Gate 3: MSE Chamber & Forbidden Traps + Directional Hysteresis
         tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
         traps = getattr(strat, "forbidden_traps", []) or []
         trap_reason = traps[0] if traps else ""
 
+        dir_state = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_s, {})
+        dir_val = dir_state.get("dir", 0)
+        dir_label = "BUY ONLY" if dir_val == 1 else ("SELL ONLY" if dir_val == -1 else "FREE / DUAL")
+        dir_desc = f" • Lock: {dir_label}"
+
         if tier == "HARD_BLOCK":
-            g3 = {"id": 3, "title": "MSE Chamber & Action Matrix", "status": "BLOCK", "desc": "Structural Chamber Gating & Trap Avoidance", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
+            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
         elif tier == "WATCH_ONLY":
-            g3 = {"id": 3, "title": "MSE Chamber & Action Matrix", "status": "WAIT", "desc": "Structural Chamber Gating & Trap Avoidance", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
+            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
         else:
-            g3 = {"id": 3, "title": "MSE Chamber & Action Matrix", "status": "PASS", "desc": "Structural Chamber Gating & Trap Avoidance", "reason": f"Action Tier: {tier} (Kamar terbuka untuk limit retest / expansion)."}
+            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "PASS", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"Action Tier: {tier} (Kamar terbuka untuk retest/expansion){dir_desc}."}
         gates.append(g3)
 
         # Gate 4: Boitoki CSM Flow Alignment
@@ -1279,7 +1368,7 @@ def main():
     if args.serve:
         port = args.port
         cockpit_engine.start()
-        print(f" [🚀] Quant Decision Cockpit Server LIVE di: http://localhost:{port}")
+        print(f" [ONLINE] Quant Decision Cockpit Server LIVE di: http://localhost:{port}")
         print(f" [i] Tekan Ctrl+C untuk menghentikan server.")
         with socketserver.ThreadingTCPServer(("", port), CockpitHTTPHandler) as httpd:
             try:

@@ -2,7 +2,243 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 8 September 2026 (Pagi) — Dynamic ZCE Runway & Capacity Gate (Eliminasi Deadlock ANCHOR_TOO_WIDE) & Pembaruan Distribusi Outcome Komprehensif Shadow Tracker
+## 0.0.0. Perubahan 8 September 2026 (Siang II) — Pemisahan Taksonomi Layer 0 SFR vs Layer 1 M4 Basing, Dynamic Dealing Range M2 (Ride the Wave), dan Persistensi Directional Hysteresis ke Disk
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kerancuan Taksonomi Layer 0 vs Layer 1 ("M4 Override M1-M3")**:
+   - Filter pengunci arah global di baris 2846 `market_scanner.py` menggunakan nama `m4_catalyst` dan log `[M4 CATALYST VETO]`. Hal ini menciptakan miskonsepsi seolah-olah taktik entri M4 "meng-override" M1-M3, padahal yang mengunci arah adalah **Layer 0: Systemic Flow Regime (SFR)** berbasis anomali Z-score modal institusional ($|z| \ge 1.50$).
+   - Di sisi lain, eksekusi M4 horizon swing retest tumpang-tindih dengan M2 (Pullback) dan M3 (Horizontal Breakout Retest). Edge unik M4 yang sesungguhnya adalah **High-Tight Basing** ($\le 0.35\times\text{ATR}$) saat harga bergerak terlalu kencang dan menolak pullback dalam.
+2. **Kekakuan Dealing Range M2 Saat Aliran Modal Deras (Missing the Wave)**:
+   - Ambang Dealing Range M2 legacy (SELL $\ge 0.35$, BUY $\le 0.65$) memblokir shallow pullback saat terjadi systemic surge/dump yang kuat, menyebabkan bot melewatkan momentum tren deras.
+3. **Volatilitas RAM pada Directional Hysteresis 8 Jam**:
+   - Status `_symbol_directional_state` (pengunci inersia arah 8 jam) sebelumnya murni hidup di memori RAM. Restart bot menyebabkan inersia ter-reset kembali ke nilai macro bias awal.
+4. **Desinkronisasi Tampilan Dashboard Cockpit**:
+   - Badge watchlist dan hero banner menampilkan label `M4 Shock`, membingungkan operator seolah-olah order M4 sedang aktif, padahal yang aktif adalah Layer 0 Systemic Flow Shock.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Pemisahan Taksonomi Layer 0 SFR vs Layer 1 M4 (`market_scanner.py`)**:
+   - Menambahkan method `get_systemic_flow_regime(...)` dan return key bersih (`sfr_catalyst`, `sfr_side`, `sfr_age`).
+   - Mengubah log penolakan di `_is_direction_allowed()` menjadi **`[SFR VETO]`**.
+   - Menyelaraskan status preseden tertinggi menjadi `ALIGNED_SFR_SYSTEMIC_EXPANSION [SFR_CATALYST]`.
+   - Mengkhususkan M4 pada `_m4_pending_ready()` dengan memprioritaskan **Mode B: High-Tight Basing Compression ($\le 0.35\times\text{ATR}$)** sebagai identitas primer.
+2. **Dynamic Dealing Range M2 (Ride the Wave) (`market_scanner.py`)**:
+   - **M2 BUY**: Batas dealing range dilonggarkan dari $\le 0.65$ ke $\le 0.80$ jika didukung `sfr_catalyst == "BULLISH_FLOW"` dan $\text{CSM Delta} \ge +1.0$.
+   - **M2 SELL**: Batas dealing range dilonggarkan dari $\ge 0.35$ ke $\ge 0.20$ jika didukung `sfr_catalyst == "BEARISH_FLOW"` dan $\text{CSM Delta} \le -1.0$.
+3. **Persistensi Disk Directional Hysteresis 8 Jam (`market_scanner.py`)**:
+   - `_save_cooldowns()` dan `_load_cooldowns()` kini menyerialisasikan `symbol_directional_state` ke `data/scanner_cooldowns.json` dengan masa berlaku 8 jam (28800 detik).
+   - Penguncian arah kini sepenuhnya bertahan saat bot direstart.
+4. **Standardisasi Visual Dashboard Cockpit (`dashboard.py` & `dashboard_assets.py`)**:
+   - Watchlist shock badge diubah menjadi **`⚡ SFR | z: ...`**.
+   - Hero banner diubah menjadi **`SYSTEMIC FLOW REGIME (SFR) ACTIVE`**.
+   - Status penguncian arah `dir_locked: BUY / SELL` diekspos ke UI cockpit.
+   - Kolom Active Setup memprioritaskan setup entri actionable (M1, M2, M3, M4 Basing) dan tidak lagi tertutupi oleh background flow watching.
+5. **Verifikasi Test Suite**:
+   - Unit test baru `tests/test_sfr_and_basing_refinement.py`: **4/4 PASSED**.
+   - Full test suite: **203/203 PASSED (100% OK)** dalam 38.94 detik.
+
+---
+
+## 0.0. Perubahan 8 September 2026 (Pagi) — Penyelarasan M4 Systemic Flow ke ZCE Structural Walls (Anchor Dekat F1/C1 & Target Vektor F2/C2 dengan G-Grade Attribution)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Lookback Kaku 120-Bar H1 Terlalu Jauh dari Aksi Harga**:
+   - Parameter legacy `M4_LOOKBACK_BARS = 120` (~5 hari bursa) menuntut harga menembus titik ekstrem mingguan sebelum breakdown/breakout dicatat. Jarak fisik sering mencapai $2.0\times - 3.5\times\text{ATR}$ (150–250 pips), menyebabkan bot kehilangan momentum awal ekspansi saat systemic surge terjadi di tengah dealing range.
+2. **Latensi Tunggu 6 Jam (`M4_MIN_EPISODE_BARS = 6`)**:
+   - Menunda evaluasi breakdown hingga 6 candle H1 pasca-lonjakan aliran modal membuat respons radar terlambat terhadap tembusan struktur dekat yang terjadi dalam 1–2 jam pertama.
+3. **Ketiadaan Vektor Tujuan Struktural Berbasis ZCE**:
+   - Target TP legacy bersifat kaku ($1.1R$ fixed) dan tidak mengidentifikasi stasiun tujuan ZCE ($F_2 / C_2$) maupun bobot densitas likuiditas klaster ($G_1, G_2, G_3$).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Anchor Struktur Dekat ($F_1 / C_1$) (`market_scanner.py`)**:
+   - Untuk **SELL ($z \le -1.50$)**: Mengunci **$F_1$ (ZCE Immediate Floor)** sebagai level tembusan dan retest (SBR). Jika $F_1$ tidak ada/terlalu jauh, menggunakan fallback swing 24-bar H1 (1 hari bursa).
+   - Untuk **BUY ($z \ge +1.50$)**: Mengunci **$C_1$ (ZCE Immediate Ceiling)** sebagai level tembusan dan retest (RBS). Jika $C_1$ tidak ada/terlalu jauh, menggunakan fallback swing 24-bar H1.
+2. **Vektor Tujuan & Target Runway ($F_2 / C_2$ dengan Grade Attribution)**:
+   - Target SELL diarahkan langsung ke **$F_2$ (ZCE Deep Floor)** dengan front-run $5\text{ pts}$ sebelum dinding.
+   - Target BUY diarahkan langsung ke **$C_2$ (ZCE Deep Ceiling)** dengan front-run $5\text{ pts}$ sebelum dinding.
+   - Label telemetri dan radar standbys mencantumkan grade dinding ZCE ($G_1, G_2, G_3$):
+     * Watch: `[M4 SELL WATCH: Floor F1 (G2) -> Destination F2 (G3)]`
+     * Retest: `[M4 SELL RETEST: F1 (G2) -> F2 (G3)]`
+3. **Harmonisasi Parameter Konfigurasi (`config.py` & `.env`)**:
+   - `M4_LOOKBACK_BARS`: Diturunkan dari `120` ke `24` (1 hari perdagangan, selaras dengan rolling flow window 24-bar).
+   - `M4_MIN_EPISODE_BARS`: Disesuaikan dari `6` ke `2` bar H1 guna merespons penetrasi struktur dekat secara cepat.
+4. **Visualisasi Presisi di Dashboard (`dashboard_assets.py`)**:
+   - Garis horizontal emas putus-putus digambar di level $F_1 / C_1$ yang relevan dan dekat dengan harga.
+   - Marker candle menampilkan tooltip lengkap dengan anchor grade dan stasiun target $F_2 / C_2$.
+5. **Verifikasi Test Suite**:
+   - `tests/test_dashboard.py`, `tests/test_market_scanner.py`, `tests/test_shadow_tracker.py`: **50/50 Tests PASS (100% OK)**.
+
+---
+
+## 0.1. Perubahan 8 September 2026 (Malam Lanjut) — Implementasi 4-Tier Setup Quality System (Grade B, A, A+, S), Penegakan Rigid Breached Wall Law, dan Kompensasi Friksi Broker
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Blind-Spot Kompresi R:R Bersih pada Grade B Wall Scalp ($0.75R - 1.25R$)**:
+   - Menghitung target TP kotor semata di $0.75\times\text{SL}$ pada pair dengan spread moderat (AUDCHF, EURGBP) dan komisi broker ECN ($6/lot round-trip) mereduksi return bersih menjadi $0.50R - 0.54R$.
+   - Diperlukan *Friction Compensation Formula*: $\text{TP}_{\text{Gross}} \ge (0.75 \times \text{SL}) + \text{Spread} + \text{Commission}$, memastikan net reward bersih terjamin $\ge 0.75R$ dan menurunkan break-even winrate dari $66.7\%$ ke $57.1\%$.
+2. **Rejection Wick Trap pada Pelompatan Target Stasiun C1/F1 ke C2/F2**:
+   - Jika satu wick menembus C1/F1 namun candle H1 close di bawah C1 (rejection wick), melompatkan target TP ke C2 adalah fatal (membeli di atap resistensi institusional).
+   - Diperlukan *Rigid Breached Wall Law*: Target dilarang keras melompati C1/F1 ke C2/F2 kecuali candle H1 terakhir sah close di luar batas distal ($Close > C_1$ BUY / $Close < F_1$ SELL) dengan body displacement $\ge 50\%$.
+3. **Dual-Path Architecture untuk Grade S ($\ge 2.50R$)**:
+   - Jalur LLM Aktif: Unanimous 3/3 $\ge 85\%$ + M4 / Apex.
+   - Jalur Pure Quant No-AI (`ENABLE_LLM_JURY=False`): M4 Super-Shock ($|z| \ge 1.80$ + CSM Delta $|\Delta| \ge 2.00$ + ZCE Grade 3 Macro Wall Anchor) membuka target Macro Expansion ($2.50R - 3.50R$) dengan BEP dilonggarkan ke $65\%$ TP guna memberikan ruang ayunan tren.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Kompensasi Friksi & Runway Capacity Gate (`consensus.py` & `config.py`)**:
+   - `min_wall_floor = int(sl_points * GRADE_B_MIN_RR) + friction_pts`.
+   - Setup dengan runway di rentang $[0.75R + \text{friksi}, 1.25R + \text{friksi}]$ ditransisikan otomatis ke **Grade B Wall Scalp** (1 tiket, target C1/F1 murni, no partial close, BEP dipercepat 35%).
+2. **Rigid Breached Wall Law & 4-Tier Setup Tagging (`atlas_dna.py`)**:
+   - Menambahkan parameter `c1_breached` dan `f1_breached` ke `calculate_intraday_sl_tp`.
+   - C2/F2 hanya dapat dibidik jika C1/F1 telah sah breached atau tidak ada halangan dinding tebal.
+   - Tagging presisi: `GRADE_S` ($\ge 2.50R$), `GRADE_A_PLUS` ($1.80R - 2.50R$), `GRADE_A` ($1.25R - 1.80R$), dan `GRADE_B` ($0.75R - 1.25R$ / Wall Scalp).
+3. **Validasi Displacement Candle H1 (`market_scanner.py`)**:
+   - Implementasi helper `_is_zce_wall_breached`: mengecek penutupan fisik H1 bar terakhir di luar dinding + body ratio $\ge 50\%$ (`BREACHED_WALL_MIN_DISPLACEMENT`).
+   - Meneruskan status breach ke pemanggilan kalkulasi SL/TP di M1, M2, dan M3.
+   - Elevasi M4 Super-Shock ke `GRADE_S` pada mode Pure Quant No-AI.
+4. **Proteksi Posisi & BEP Grade-Aware (`position_manager.py`)**:
+   - Partial close 50% di-bypass total untuk Grade B Wall Scalp dan M4 guna menghemat kuota komisi broker.
+   - BEP threshold diselaraskan: Grade S aktif di 65% TP, Grade B/Defensive di 35% TP, M4 di 70% TP, dan Grade A/A+ di 50% TP.
+5. **Verifikasi Test Suite Penuh**:
+   - Unit test suite: **195/195 Tests PASS (100% OK)** termasuk pengujian rigid breached wall dan dynamic BEP.
+
+---
+
+## 0.1. Perubahan 8 September 2026 (Malam) — Penandaan Visual M4 Systemic Flow Shock & Standardisasi Google Material Symbols di Cockpit Dashboard
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Visibilitas M4 Systemic Flow Shock Rendah di Watchlist**:
+   - Shock anomali aliran sistemik ($|z| \ge 1.5$ atau reference bar / high-tight basing aktif) sebelumnya hanya tersimpan di memori radar backend dan tabel telemetri drawer, sehingga trader/observer tidak langsung mengetahui pair mana yang sedang mengalami shock aliran sistemik pada watchlist 26-pair utama.
+2. **Kerapatan Vertikal Watchlist Sidebar Terlalu Sempit (2-Baris Padat)**:
+   - Layout 2 baris sebelumnya (`padding: 6px 10px`) memadatkan teks jarak pips/ATR, setup pill, dan tag taktis sehingga sulit menyisipkan status Dealing Range % dan badge M4 Shock tanpa membuat elemen bertabrakan (*cluttered*).
+3. **Inkonsistensi Visual Emoji Ritel (AI-Slop)**:
+   - Penggunaan emoticon/emoji ritel (`⚠️`, `📊`, `🟢`, `🔴`, `🟡`, `🔵`, `⚪`, `🟣`, `▶`) menurunkan standar visual institusional dan tidak selaras dengan standar antarmuka kuantitatif profesional.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Watchlist Sidebar 3-Baris Longgar & Penandaan M4 Shock (`dashboard_assets.py`)**:
+   - Peregangan vertikal baris watchlist: padding `.pair-row` dinaikkan ke `9px 10px` dengan `gap: 4px`.
+   - Tata letak 3 baris teratur:
+     * **Baris 1**: Simbol (`pair-symbol`) + CSM Delta (`csm-text`) | spacer | Action Tier Badge (`tier-badge` `GO`/`ARM`/`WATCH`/`LOCK`).
+     * **Baris 2**: Active Setup Pill (`pair-setup-pill`) | Tactical Pill (`tactical-pill`) | HTF Bias Tag (`htf-bias-tag`).
+     * **Baris 3**: Jarak Pips & ATR (`pair-dist-text`) | Dealing Range % (`DR: xx%`) | **M4 Shock Badge** (jika `p.m4_shock` aktif).
+   - Penandaan khusus pair M4 Shock:
+     * Border kiri emas: `border-left: 3.5px solid #facc15`.
+     * Background tinting halus: `background: rgba(250, 204, 21, 0.04)`.
+     * Badge baris ke-3: `<span class="m4-shock-pill"><span class="material-symbols-outlined">bolt</span> M4 | z:+/-X.X (DIR)</span>`.
+2. **Hero Chart Header Banner untuk M4 Shock (`dashboard_assets.py` & `dashboard.py`)**:
+   - Menambahkan banner emas responsif `#m4-hero-banner` di sub-header chart:
+     `[bolt SYSTEMIC M4 FLOW SHOCK DETECTED • Dominant Currency z: +/-X.X (BULL/BEAR) • Standby Level / Basing Active]`.
+   - Menyelaraskan endpoint backend `/api/symbol` (`get_symbol_detail` di `dashboard.py`) agar mengembalikan field `m4_shock`, `m4_z`, dan `m4_dir`.
+3. **Standardisasi 100% Google Material Symbols Outlined (0% Emoji)**:
+   - Memuat stylesheet resmi Google Fonts `Material Symbols Outlined` di `<head>` dan class `.material-symbols-outlined`.
+   - Mengganti seluruh emoji ritel di HTML template, script, dan drawer telemetri:
+     * Error banner `⚠️` $\rightarrow$ `warning`
+     * Tombol laporan `📊 LAPORAN` $\rightarrow$ `monitoring` / `analytics` + `open_in_new`
+     * Toggle Decision Gates `▶`/`◀` $\rightarrow$ `chevron_right`/`chevron_left`
+     * Distribusi resolusi shadow `🟢 TP / 🔵 BEP / 🟡 Time-Decay / 🔴 SL / ⚪ Exp` $\rightarrow$ `check_circle`, `shield`, `timer`, `cancel`, `history_toggle_off`
+     * Badge status MT5 `🟢 REAL MT5` / `🟣 PAPER` $\rightarrow$ `verified` / `science`
+4. **Verifikasi Regresi Lengkap**:
+   - Full test suite: **192/192 Tests PASS (100% OK)** dalam 50.61 detik.
+
+---
+
+## 0.2. Perubahan 8 September 2026 (Sore) — Harmonisasi Runway Capacity Gate dengan Floor Grade B (0.75R) & Quickfix UnboundLocalError Scanner
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Rejection Palsu Setup Valid Akibat Runway Capacity Gate Kaku 1.25R (`NZDCHF-ECN`)**:
+   - Pada setup live `NZDCHF-ECN` (09:26 WIB), entry `0.47492`, raw SL 95 pts (`0.47587`), TP 165 pts (`0.47327` / target dinding $F_1$) memiliki R:R awal $1.74:1 \ge 1.25$ (`GRADE_A`).
+   - Di `_apply_sltp_rules`, Safety Floor khusus NZD menaikkan SL ke 140 pts ($\max(120, 0.5\times\text{ATR}) + 20\text{ pts anti-wick padding}$).
+   - Kenaikan SL ini mengompresi rasio R:R menjadi $165/140 = 1.18:1$.
+   - Runway Capacity Gate pagi hari secara kaku memvalidasi $165 < 140 \times 1.25 = 175\text{ pts}$ dan membatalkan trade dengan pesan:
+     `[!] Trade NZDCHF-ECN Dibatalkan (SL/TP Rules): ANCHOR_TOO_WIDE: ZCE Runway ke target terhalang dinding terdekat (165 pts < 1.25x SL 140 pts = 175 pts). SKIP trade — kapasitas runway tidak mencukupi.`
+   - Padahal secara kuantitatif, setup ini adalah **Grade B Wall Scalp** yang sangat sehat ($1.18R \ge 0.75R$ floor) dengan target dinding $F_1$ presisi.
+2. **Potensi Crash `UnboundLocalError: sl_tp` pada Mekanisme 3 (Breakout Retest)**:
+   - Pada blok M3 BUY dan M3 SELL di `market_scanner.py`, evaluasi `if not in_retest_window_b:` / `_s:` tidak memiliki instruksi `continue`.
+   - Ketika harga live berada di luar jendela sentuh retest, eksekusi melompat keluar dari blok `if/else` langsung menuju baris `sl = sl_tp['sl']`, menyebabkan `UnboundLocalError` karena variabel `sl_tp` belum diinisialisasi.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Harmonisasi ZCE Runway Capacity Gate dengan Floor Grade B 0.75R (`src/core/consensus.py`)**:
+   - Menyelaraskan ambang pembatalan keras `ANCHOR_TOO_WIDE`: trade hanya di-skip jika jarak Runway menuju target $< 0.75 \times \text{SL}$ (`min_wall_floor = int(sl_points * 0.75)`).
+   - Jika $0.75 \times \text{SL} \le \text{Runway} < 1.25 \times \text{SL}$: sistem secara otomatis mentransisikan setup menjadi **`GRADE_B` Wall Scalp** (`setup_grade = "GRADE_B"`, `action_tier = "GRADE_B"`).
+   - Menyetel `min_rr = 0.75` dan `max_rr = 1.25` khusus untuk `GRADE_B` dan setup scalp.
+   - Pada mode ZCE Wall Scalp (`is_grade_b_scalp and zce_wall_mode`), target TP diizinkan mengunci murni pada dinding $C_1/F_1$ tanpa dipaksa melampaui dinding oleh friksi komisi/spread jika jarak sudah $\ge 0.75R$.
+2. **Pencegahan Multi-Position & Sinkronisasi Setup Grade (`main.py`)**:
+   - Memperbarui variabel lokal `action_tier_val` dan `setup_grade_val` pasca eksekusi `_apply_sltp_rules` agar transisi ke `GRADE_B` terbaca langsung oleh dispatcher order.
+   - Mengunci eksekusi `GRADE_B` pada 1 tiket murni (`num_positions = 1`), melarang split 2 posisi atau bonus runner.
+   - Meneruskan `eff_grade` (`cand.setup_grade or cand.action_tier`) ke `position_manager.set_ticket_setup_grade`, menjamin posisi Grade B otomatis:
+     * Menghindari partial close TP1 50% (`is_grade_b` bypass).
+     * Mengaktifkan Break-Even Protection (BEP) agresif dipercepat di **35% TP**.
+3. **Quickfix Bug Fallthrough Scanner (`src/analytics/market_scanner.py`)**:
+   - Menambahkan `continue` pada baris `if not in_retest_window_b:` (BUY) dan `if not in_retest_window_s:` (SELL) di M3 Breakout Retest.
+   - Menambahkan atribut `setup_grade: str = "GRADE_A"` pada dataclass `CandidateSetup` dan payload `to_payload_dict()`.
+   - Mengisi `setup_grade` pada instansiasi kandidat M1, M2, dan M3: `"GRADE_B" if (sl_tp.get("setup_grade") == "GRADE_B" or rr_val < 1.25) else "GRADE_A"`.
+4. **Verifikasi Unit Test Suite Lengkap**:
+   - Menambahkan test case `test_zce_runway_grade_b_wall_scalp_pass` di `tests/test_zce_sltp_anchor.py` yang memverifikasi kasus nyata NZDCHF (SL 140 pts, TP 165 pts / 1.18R) lulus 100% dengan status `GRADE_B Wall Scalp` tanpa didorong melampaui dinding.
+   - Hasil pengujian: **12/12 Tests PASS (100% OK)** di `test_zce_sltp_anchor.py`, serta **58/58 Tests PASS** pada rangkaian test regresi scanner dan M4.
+
+---
+
+## 0.3. Perubahan 8 September 2026 (Siang) — Paket Pembaruan Kuantitatif Komprehensif (Grade B Wall Scalp, Directional Hysteresis Memory, Multiplier Sesi, Bank Holiday Breaker, dan CSM Dynamic Bailout)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Peluang Profit Terbuang Akibat Lompatan Target ke Dinding C2/F2**:
+   - Pada setup di mana dinding struktural terdekat $C_1/F_1$ berada pada jarak $0.80 - 1.20R$ (misal 18 pips), sistem menolak $C_1$ karena aturan lama mewajibkan $R:R \ge 1.25R$.
+   - Akibatnya, target dipaksa melompat jauh ke $C_2/F_2$ (40+ pips). Harga menyentuh $C_1/F_1$ dengan akurasi 100%, namun kemudian berbalik arah (reversal) sebelum mencapai $C_2$, merubah posisi profit tebal menjadi impas atau loss.
+2. **Ketiadaan Inersia Arah (Flip-Flop Whipsaw)**:
+   - Bot sebelumnya dapat melakukan BUY pada jam 15:00 lalu tiba-tiba melompat SELL pada jam 15:30 pada simbol yang sama hanya karena pullback tipis pada chart intraday, terjebak dalam whipsaw dua arah.
+3. **Risiko Likuiditas Tipis Bank Holiday & Sesi New York**:
+   - Pada hari libur perbankan AS (seperti US Labor Day 7 Sep 2026), likuiditas antar-bank menyusut drastis memicu spread spike dan sinyal palsu di sesi New York.
+   - Sesi New York secara empiris membukukan tingkat kegagalan lebih tinggi dibanding sesi Asia yang beroperasi rapi di zona supply/demand.
+4. **Drawdown Terlambat Cut Saat Arus Sistemik Berbalik Tajam**:
+   - Ketika arus mata uang (CSM Net Delta) berbalik ekstrem melawan posisi (seperti GBP meledak kuat melawan CHF hingga shift $+4.51$), membiarkan posisi menunggu hit SL penuh mengakibatkan loss $1.0R$ padahal sinyal aliran modal sudah terbalik total sejak awal.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Quickfix Bug Scanner & Defensive Attribute Extraction (`src/analytics/market_scanner.py`)**:
+   - Menambahkan `continue` pada runaway spike guard baris 3604 (BUY) dan 3773 (SELL) di `market_scanner.py` guna mengeliminasi `UnboundLocalError: sl_tp`.
+   - Menggunakan safe `.get()` dengan pair-aware fallback untuk atribut `point`, `dealing_range_pos`, `is_bull`, `is_bear`, dan `trend_label` di seluruh modul scanner guna mencegah `KeyError`.
+   - Memastikan variabel `clean_s` terdefinisi lokal di `_is_direction_allowed` dan loop simbol utama guna mencegah `free variable scope error`.
+2. **Chamber Runway & Grade B Wall Scalp (`src/indicators/atlas_dna.py` & `src/analytics/position_manager.py`)**:
+   - Di `atlas_dna.py`: Mengizinkan penguncian target stasiun langsung pada dinding terdekat $C_1/F_1$ jika jaraknya $\ge (0.75 \times \text{risk} + \text{friction})$ tanpa melompat ke $C_2/F_2$.
+   - Mengembalikan metadata `setup_grade = "GRADE_B"` dan `is_wall_scalp = True` jika $R:R < 1.25$.
+   - Di `position_manager.py`: Tiket dengan tag `GRADE_B` atau `SCALP` secara otomatis membypass Partial Close (TP1 50%) dan mengunci BEP agresif di 35% TP.
+3. **Directional Hysteresis Memory Gate (`src/analytics/market_scanner.py`)**:
+   - Menambahkan `_symbol_directional_state` pada radar scanner yang mengunci arah operasional simbol selama 8 jam (`DIRECTIONAL_LOCK_HOURS = 8.0`).
+   - Melarang pembalikan arah 180° kecuali memenuhi salah satu dari 3 syarat sah kuantitatif:
+     * **Syarat 1 (ZCE Chamber Breach)**: Harga menembus lantai $F_1$ ke bawah ($mid < F_1 - 0.20\times\text{ATR}$) untuk BUY-to-SELL atau menembus plafon $C_1$ ke atas untuk SELL-to-BUY.
+     * **Syarat 2 (MSE Macro Inversion)**: Skor bias makro berbalik tajam ($\ge +0.35$ BUY / $\le -0.35$ SELL).
+     * **Syarat 3 (Universal Liquidity Sweep M1A Ekstrem)**: Sapuan likuiditas M1A di batas Dealing Range ekstrim ($\ge 0.80$ SELL / $\le 0.20$ BUY). M1B dilarang membalik arah.
+   - Status penguncian arah diekspor ke visualisasi dashboard (`DIR: BUY ONLY / SELL ONLY / FREE`) dan diaudit pada Gate 3 X-Ray Surveillance.
+4. **Multiplier Sesi Lot & Bank Holiday Circuit Breaker (`config.py`, `.env`, `src/analytics/economic_calendar.py`)**:
+   - Di `.env` & `config.py`: Menambahkan `SESSION_ASIA_LOT_MULT=1.2`, `SESSION_LONDON_LOT_MULT=1.0`, `SESSION_NY_LOT_MULT=0.8`.
+   - Membatasi durasi sesi London di `ALLOWED_SESSIONS_WIB` hingga 20:00 WIB (bukan 23:00) agar multiplier New York (0.8x) otomatis aktif di rentang 20:00–00:00 WIB.
+   - Di `economic_calendar.py`: Menambahkan deteksi event `impact == 'HOLIDAY'` dan metode `is_bank_holiday_today("ALL")` untuk membekukan order baru di sesi New York saat libur bank nasional.
+5. **CSM Dynamic Flow Bailout (`src/analytics/position_manager.py`)**:
+   - Mengimplementasikan `_check_csm_dynamic_bailout()` berbasis dual-gate:
+     * **Gate Finansial**: Posisi sedang floating rugi $\le -0.25R$ (`CSM_BAILOUT_MIN_LOSS_R = -0.25`).
+     * **Gate Aliran Sistemik**: Arus mata uang berbalik tajam melawan trade (shift $\ge 2.5$ dari harga buka atau nilai absolut opposed $\ge 2.0$).
+   - Posisi yang sedang floating profit dilindungi dan dibiarkan bernapas hingga target TP.
+6. **Audit Visual & Telemetri Real-Time Dashboard (`dashboard.py` & `dashboard_assets.py`)**:
+   - Menambahkan kolom `CSM Shift` pada tabel Open Positions drawer untuk memantau pergeseran delta CSM live dan indikator `⚠️ BAILOUT RISK`.
+   - Menambahkan badge status Directional Lock (`DIR: BUY ONLY / SELL ONLY / FREE`) pada strip header atas instrumen.
+   - Memperbarui evaluasi Gate 1 (Session Multiplier & Bank Holiday) dan Gate 3 (Direction Lock) pada matriks X-Ray 7-Gate.
+7. **Unit Test Suite Lengkap (`tests/test_sep8_enhancements.py`)**:
+   - Mengembangkan 5 test case komprehensif yang menguji validitas Grade B Wall Scalp, bypass partial close, pemicu CSM bailout, deteksi bank holiday, dan directional lock.
+   - Hasil pengujian: **5/5 Tests PASS (100% OK)**.
+
+---
+
+## 0.4. Perubahan 8 September 2026 (Pagi) — Dynamic ZCE Runway & Capacity Gate (Eliminasi Deadlock ANCHOR_TOO_WIDE) & Pembaruan Distribusi Outcome Komprehensif Shadow Tracker
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Deadlock Matematis Plafon Ceiling vs Safety Floor (`ANCHOR_TOO_WIDE`)**:
@@ -41,7 +277,7 @@
 
 ---
 
-## 0.1. Perubahan 7 September 2026 (Sore) — Implementasi Mekanisme M1B (Trend-Following Induced Liquidity Sweep) dengan Konfluensi Geometris ZCE & Integrasi Visual Dashboard
+## 0.5. Perubahan 7 September 2026 (Sore) — Implementasi Mekanisme M1B (Trend-Following Induced Liquidity Sweep) dengan Konfluensi Geometris ZCE & Integrasi Visual Dashboard
 
 ### 🎯 Latar Belakang & Identifikasi Kebutuhan:
 1. **Pemisahan M1A (Macro Counter-Trend SFP) dan M1B (Trend-Following Induced Sweep)**:
@@ -71,7 +307,7 @@
 
 ---
 
-## 0.1. Perubahan 7 September 2026 (Siang) — Isolasi Hermetis Unit Test Pure Quant (Zero Production State Pollution) & Pembersihan Telemetri BTCUSD
+## 0.6. Perubahan 7 September 2026 (Siang) — Isolasi Hermetis Unit Test Pure Quant (Zero Production State Pollution) & Pembersihan Telemetri BTCUSD
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Kebocoran Data Uji (*Test Pollution*) ke Database Produksi**:
@@ -1379,4 +1615,61 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 
 5. **Verifikasi Kuantitatif Penuh**:
    - Seluruh test suite unit test: **115/115 tests PASSED (100% OK)** dalam 27.13s.
+
+---
+
+## 17. 8 September 2026 — Friction-Aware Net R:R, Dynamic ZCE Runway Gate & ZCE Reaction Grade Synchronization Bridge
+
+### 🎯 Komponen & Arsitektur Utama:
+
+1. **Sinkronisasi ZCE Reaction Grade (G3/G2/G1) ke MSE & Scanner (`zone_confluence_engine.py`, `macro_strategic_engine.py`, `market_scanner.py`)**:
+   - **Diagnosa Masalah**: Terjadi disinkronisasi data di mana Dashboard menampilkan dinding konfluensi sebagai `[G3]` (dari klaster ZCE skor $\ge 6.5$), namun engine eksekusi (`market_scanner.py`) menolaknya karena `c1_reaction_grade` / `f1_reaction_grade` di `macro_cache` tetap bernilai `GRADE_2_INTERMEDIATE` akibat terputusnya jembatan metadata pada `ZoneMapResult.to_wall_override()`.
+   - **Perbaikan**:
+     * `src/analytics/zone_confluence_engine.py`: `_elect_walls` dan `ZoneMapResult` mengekspor `imm_ceiling_c1_grade`, `imm_floor_f1_grade`, `imm_ceiling_c1_score`, `imm_floor_f1_score`, `deep_ceiling_c2_grade`, `deep_floor_f2_grade`, dll. `to_wall_override()` menyertakan seluruh metadata grade & score secara utuh.
+     * `src/analytics/macro_strategic_engine.py`: Blok `zce_walls` override menyerap grade dan density score ZCE ke `c1_reaction_grade`, `f1_reaction_grade`, `c2_reaction_grade`, `f2_reaction_grade`, serta memperbarui `layered_ceilings[0]` dan `layered_floors[0]` (`displacement_thresh`, `wick_band`, `fortress_tag`).
+     * `src/analytics/market_scanner.py`: `macro_cache` kini menyimpan `c1_reaction_grade`, `f1_reaction_grade`, `c2_reaction_grade`, `f2_reaction_grade`. Filter likuiditas sesi Asia untuk pair Eropa kini mengenali Grade 3 Macro Fortress Wall secara akurat.
+     * `tests/test_zce_grade_bridge.py`: Unit test baru memverifikasi transmisi end-to-end ZCE $\rightarrow$ MSE $\rightarrow$ Scanner macro context (100% PASS).
+
+2. **Friction-Aware Net R:R & 4-Tier Setup Quality Architecture (`consensus.py` & `market_scanner.py`)**:
+   - **Grade B Wall Scalp ($0.75R - 1.25R$)**: Target pantulan dinding terdekat ($C_1$ BUY / $F_1$ SELL) dengan kompensasi friksi $\text{TP}_{\text{Gross}} \ge (0.75 \times \text{SL}) + \text{Spread} + \text{Round-turn Commission}$. Partial close di-bypass 100%, BEP dipercepat ke 35% TP.
+   - **Grade A Standard Intraday ($1.25R - 1.80R$)**: Target 50-pip psikologis / $C_1/F_1$ dengan partial close 50% di 50% TP dan BEP di 50% TP.
+   - **Grade A+ Expansion Runner ($1.80R - 2.50R$)**: Mematuhi *Rigid Breached Wall Law* — target dilarang melompat ke $C_2/F_2$ jika hanya rejection wick; wajib ada konfirmasi fisik penutupan candle H1 di luar batas distal dengan displacement $\ge 50\%$.
+   - **Grade S Macro Super-Shock ($\ge 2.50R - 3.50R$)**: Dual-path architecture (Unanimous 3/3 $\ge 85\%$ atau Pure Quant No-AI $|z| \ge 1.80$ + $|\Delta| \ge 2.00$ + ZCE Macro Wall). BEP dilonggarkan ke 65% TP.
+
+3. **Dynamic ZCE Runway & Capacity Gate (`consensus.py`)**:
+   - Menghapus plafon kaku statis yang sering menyebabkan false rejection `ANCHOR_TOO_WIDE` saat malam/Asia ketika ATR mengecil ($< 48\text{ pts}$). Plafon ceiling ekstrim diangkat ke $\max(3.5 \times \text{ATR}, 1.5 \times \text{Floor})$.
+   - Validasi kapasitas runway ke dinding lawan ZCE terdekat ($C_1$ BUY / $F_1$ SELL). Jika runway $0.75 \le R:R < 1.25$, setup otomatis ditransisikan ke Grade B Wall Scalp.
+
+4. **Verifikasi Kuantitatif Penuh**:
+   - Full test suite: **198/198 tests PASSED (100% OK)** dalam 30.78s.
+
+---
+
+## 18. 8 September 2026 (Siang) — Ortogonalitas Action Tier (MSE) vs Setup Grade (ZCE) & Penyelarasan Lot Sizing Defensif
+
+### 🎯 Komponen & Arsitektur Utama:
+
+1. **Pemisahan Field Ortogonal (`market_scanner.py`)**:
+   - Menghapus polusi penimpaan field makro `CandidateSetup.action_tier` oleh string geometri `"GRADE_B"`.
+   - `action_tier` kini 100% didedikasikan untuk status makro MSE (`FULL_ALLOW`, `REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`, `WATCH_ONLY`, `HARD_BLOCK`).
+   - `setup_grade` didedikasikan secara terpisah untuk status kapasitas runway geometri ZCE (`GRADE_B`, `GRADE_A`, `GRADE_A+`, `GRADE_S`).
+
+2. **Harmonisasi Lot Sizing Single-Layer Defensif (`risk_engine.py` & `main.py`)**:
+   - Menambahkan parameter `setup_grade=None` ke `RiskEngine.get_effective_lot_size()`.
+   - Menyatukan kondisi defensif sehingga `setup_grade == "GRADE_B"` dan `action_tier == "REDUCED_CONFIDENCE"` diperlakukan setara sebagai satu layer diskon defensif ($0.75\times$ lot), mengeliminasi risiko dobel diskon ($0.75 \times 0.75 = 0.56\times$).
+   - Memprioritaskan pengecekan `is_half_risk` (0.50x) dan `is_defensive` (0.75x) sebelum pengali konfluensi, sehingga pengali netral default `sizing_multiplier = 1.0` tidak mem-bypass diskon defensif Grade B.
+   - `main.py` meneruskan `setup_grade=setup_grade_val` saat menghitung base lot.
+
+3. **Prioritas BEP Agresif Grade B (`position_manager.py`)**:
+   - Pengecekan `GRADE_B` / `REDUCED` (35% TP) diposisikan sebelum evaluasi rule umum M4 (70% TP).
+   - Menjamin setiap trade dengan target sempit/pantulan dinding lawan ($0.75R - 1.25R$) langsung mengunci profit di 35% TP tanpa risiko tertahan di 70% TP.
+
+4. **Klarifikasi Banner Radar Terminal (`cli_theme.py` & `main.py`)**:
+   - Menampilkan `• Runway Grade : ` (ZCE Geometry Setup Grade & Action Tier) secara terpisah di banner radar.
+   - Mengubah label Apex Carry menjadi `• Apex Carry FE: ` guna mencegah tabrakan pemahaman (*label collision*) antara grade geometri runway dan rating carry spread makro.
+   - Banner eksekusi Pure Quant mencantumkan grade setup dan *Realized R:R* pasca-market fill.
+
+5. **Verifikasi Kuantitatif Penuh**:
+   - Seluruh test suite unit test: **199/199 tests PASSED (100% OK)**.
+
 

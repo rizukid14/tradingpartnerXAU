@@ -302,6 +302,11 @@ def render_candidate_alert_box(candidate):
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
     ]
 
+    cand_grade = getattr(candidate, "setup_grade", "GRADE_A")
+    grade_color = UI.GREEN if cand_grade in ("GRADE_S", "GRADE_A_PLUS") else (UI.CYAN if cand_grade == "GRADE_A" else UI.YELLOW)
+    action_tier_str = getattr(candidate, "action_tier", "FULL_ALLOW")
+    items.append((f"• Runway Grade : ", f"{UI.BOLD}{grade_color}{cand_grade}{UI.RST} (Tier: {action_tier_str} | Net R:R {candidate.risk_reward_ratio:.2f}:1)"))
+
     zce_cls = meta.get('zce_class')
     if zce_cls:
         f1_s = meta.get('zce_f1_src', 'MSE')
@@ -321,7 +326,7 @@ def render_candidate_alert_box(candidate):
             badge_c = UI.GREEN if "ALIGNED" in fund_eval.status_badge else (UI.RED if "CONFLICT" in fund_eval.status_badge else UI.YELLOW)
             items.append((f"• Apex FE Bias : ", f"{badge_c}{fund_eval.status_badge}{UI.RST} (Delta: {fund_eval.fundamental_delta:+.2f})"))
             grade_c = UI.GREEN if "GRADE_S" in fund_eval.setup_grade or "GRADE_A_PLUS" in fund_eval.setup_grade else UI.CYAN
-            items.append((f"• Setup Grade  : ", f"{UI.BOLD}{grade_c}{fund_eval.setup_grade}{UI.RST} (Carry: {fund_eval.carry_spread:+.2f}% | Sizing: {fund_eval.sizing_modifier}x)"))
+            items.append((f"• Apex Carry FE: ", f"{UI.BOLD}{grade_c}{fund_eval.setup_grade}{UI.RST} (Carry: {fund_eval.carry_spread:+.2f}% | Sizing: {fund_eval.sizing_modifier}x)"))
             if fund_eval.hard_veto_flag:
                 items.append((f"• Veto Alert   : ", f"{UI.BG_RED} {fund_eval.hard_veto_flag} {UI.RST} ({fund_eval.hard_veto_reason})"))
     except Exception:

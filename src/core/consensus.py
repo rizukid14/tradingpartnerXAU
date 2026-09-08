@@ -181,6 +181,14 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     except Exception:
         pass
 
+    usd_per_pt_1lot = 0.0
+    if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
+        usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
+    
+    comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
+    comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
+    friction_pts = spread_pts + comm_pts
+
     mode = config.sltp_mode_for(sym)
 
     if mode == "LLM":
@@ -236,18 +244,33 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                         _last_sltp_adjustments.append(note)
                         return sl_points, tp_points, False, note
 
-                    # 2. ZCE Runway Capacity Gate:
-                    # Menilai apakah jarak target menuju dinding lawan (Runway) mencukupi min_rr.
-                    # Jika target TP yang tersedia lebih sempit dari (min_rr * SL), artinya ruang gerak
-                    # terhalang dinding lawan ZCE terdekat -> SKIP trade dengan alasan kuantitatif.
+                    # 2. ZCE Runway Capacity Gate (Friction-Compensated Net Target Floor):
+                    # Menilai apakah jarak target menuju dinding lawan (Runway) mencukupi net return.
+                    # - Jika target TP < (0.75x SL + friksi): ruang gerak terhimpit dinding terdekat -> SKIP trade.
+                    # - Jika (0.75x SL + friksi) <= target TP < (1.25x SL + friksi): target C1/F1 valid sebagai GRADE_B Wall Scalp
+                    #   (eksekusi 1 tiket, target dinding C1/F1 murni, tanpa partial close, BEP di 35% TP).
                     runway_target_pts = tp_points if tp_points > 0 else config.default_tp_points_for(sym)
-                    required_runway = int(sl_points * config.LLM_MIN_RR_RATIO)
-                    if runway_target_pts > 0 and runway_target_pts < required_runway:
+                    min_wall_floor = int(sl_points * getattr(config, "GRADE_B_MIN_RR", 0.75)) + friction_pts
+                    required_standard_runway = int(sl_points * config.LLM_MIN_RR_RATIO) + friction_pts
+                    if runway_target_pts > 0 and runway_target_pts < min_wall_floor:
                         note = (f"ANCHOR_TOO_WIDE: ZCE Runway ke target terhalang dinding terdekat "
-                                f"({runway_target_pts} pts < {config.LLM_MIN_RR_RATIO}x SL {sl_points} pts = {required_runway} pts). "
-                                f"SKIP trade — kapasitas runway tidak mencukupi.")
+                                f"({runway_target_pts} pts < 0.75x SL {sl_points} pts + {friction_pts} pts friksi = {min_wall_floor} pts). "
+                                f"SKIP trade — kapasitas net runway tidak mencukupi.")
                         _last_sltp_adjustments.append(note)
                         return sl_points, tp_points, False, note
+                    elif runway_target_pts > 0 and runway_target_pts < required_standard_runway:
+                        setup_grade = "GRADE_B"
+                        action_tier = "GRADE_B"
+                        if candidate is not None:
+                            try:
+                                candidate.setup_grade = "GRADE_B"
+                                candidate.action_tier = "GRADE_B"
+                            except Exception:
+                                pass
+                        _last_sltp_adjustments.append(
+                            f"ZCE Runway ({runway_target_pts} pts | Net {(runway_target_pts - friction_pts)/sl_points:.2f}R) < standard {config.LLM_MIN_RR_RATIO}x SL ({sl_points} pts) tapi >= Net 0.75x SL. "
+                            f"Menyesuaikan setup ke GRADE_B Wall Scalp."
+                        )
 
                     max_sl = runaway_ceiling
                 else:
@@ -262,7 +285,28 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(sym)
 
-        min_rr = config.LLM_MIN_RR_RATIO
+        # Pure Quant No-AI Grade S Elevation Check (M4 Shock |z| >= 1.80 + CSM Delta >= 2.00)
+        if candidate is not None and not getattr(config, "ENABLE_LLM_JURY", True):
+            md = getattr(candidate, "metadata", {}) or {}
+            csm_z = abs(float(md.get("m4_z_score", 0.0) or md.get("z_score", 0.0) or 0.0))
+            csm_delta = abs(float(getattr(candidate, "csm_delta", 0.0) or 0.0))
+            wall_grade = str(md.get("zce_wall_grade", "") or md.get("target_grade", "") or "").upper()
+            is_pure_quant_grade_s = (
+                (csm_z >= getattr(config, "GRADE_S_PURE_QUANT_MIN_Z", 1.80) or getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"))
+                and csm_delta >= getattr(config, "GRADE_S_PURE_QUANT_MIN_CSM_DELTA", 2.00)
+                and ("GRADE_3" in wall_grade or "MACRO" in wall_grade or tp_points >= int(sl_points * 2.50))
+            )
+            if is_pure_quant_grade_s and tp_points >= int(sl_points * 2.50):
+                setup_grade = "GRADE_S"
+                try:
+                    candidate.setup_grade = "GRADE_S"
+                except Exception:
+                    pass
+                _last_sltp_adjustments.append(
+                    f"[GRADE_S PURE QUANT ELEVATION] Super-Shock Flow (|z|={csm_z:.2f}, |Δ|={csm_delta:.2f}) -> Macro Expansion Target unlocked (R:R {tp_points/sl_points:.2f}:1)."
+                )
+
+        min_rr = getattr(config, "GRADE_A_MIN_RR", 1.25)
         max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
 
         # Dynamic Grade-Aware Multipliers
@@ -272,27 +316,20 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             max_rr = 3.50
         elif "GRADE_B" in grade_str or "REDUCED_SCALP" in grade_str or "REDUCED_SCALP" in act_str:
             max_rr = 1.25
+            min_rr = getattr(config, "GRADE_B_MIN_RR", 0.75)
         elif "GRADE_A_PLUS" in grade_str:
             max_rr = 2.50
 
         # 5-Tier Action Matrix R:R constraints
-        if action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP") or "REDUCED_SCALP" in grade_str or "TP1_ONLY" in act_str:
+        if action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or "REDUCED_SCALP" in grade_str or "TP1_ONLY" in act_str or "GRADE_B" in act_str:
             max_rr = min(max_rr, 1.25)
-            min_rr = min(min_rr, 1.00)
+            min_rr = min(min_rr, getattr(config, "GRADE_B_MIN_RR", 0.75))
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
-        # Net R:R Commission & Spread Compensation (3 Sep 2026):
+        # Net R:R Commission & Spread Compensation:
         # Biaya transaksi (Spread + Round-Turn Komisi) dihitung ke dalam target TP minimal
         # agar Net R:R setelah potongan broker tetap murni >= min_rr : 1.
-        usd_per_pt_1lot = 0.0
-        if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
-            usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
-        
-        comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
-        comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
-        friction_pts = spread_pts + comm_pts
-
         min_tp = int(sl_points * min_rr) + friction_pts
         max_tp = int(sl_points * max_rr) + friction_pts
         if tp_points < min_tp:

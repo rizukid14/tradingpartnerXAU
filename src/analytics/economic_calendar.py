@@ -525,18 +525,37 @@ class EconomicCalendar:
         now = datetime.now(WIB)
         events = self.get_events(now, symbol=symbol)
         for e in events:
-            if e.get("impact") not in ("HIGH", "CRITICAL"):
+            impact_val = str(e.get("impact", "")).upper()
+            if impact_val not in ("HIGH", "CRITICAL", "HOLIDAY"):
                 continue
             event_dt = e["dt"]
             diff_sec = (event_dt - now).total_seconds()
+            if impact_val == "HOLIDAY":
+                # Jika hari ini ada bank holiday pada mata uang terkait (berlaku sepanjang hari)
+                if event_dt.date() == now.date():
+                    return True, f"BANK HOLIDAY: {e.get('name')} [{e.get('country', '')}]"
             # 1. Upcoming within window_minutes
-            if 0 <= diff_sec <= (window_minutes * 60):
+            elif 0 <= diff_sec <= (window_minutes * 60):
                 mins = int(diff_sec / 60)
                 return True, f"{e.get('name')} in {mins}m [{e.get('country', '')}]"
             # 2. Released very recently (< 10m ago) during violent post-news spike
             elif -(10 * 60) <= diff_sec < 0:
                 mins = int(abs(diff_sec) / 60)
                 return True, f"{e.get('name')} released {mins}m ago [{e.get('country', '')}]"
+        return False, ""
+
+    def is_bank_holiday_today(self, currency_or_country: str = "US") -> tuple[bool, str]:
+        """True if there is an official bank holiday today for the currency or country."""
+        now = datetime.now(WIB)
+        events = self.get_events(now)
+        for e in events:
+            if str(e.get("impact", "")).upper() == "HOLIDAY":
+                if e["dt"].date() == now.date():
+                    c = str(e.get("country", "")).upper()
+                    cur = str(e.get("currency", "")).upper()
+                    tgt = currency_or_country.upper()
+                    if tgt in c or tgt in cur or tgt == "ALL":
+                        return True, f"Bank Holiday: {e.get('name')} [{c}]"
         return False, ""
 
 

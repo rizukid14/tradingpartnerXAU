@@ -331,6 +331,7 @@ class QuantShadowTracker:
                 bep_activated=False,
                 trailing_activated=False,
                 metadata={
+                    "setup_grade": getattr(candidate, "setup_grade", "GRADE_A"),
                     "current_atr_pts": getattr(candidate, "current_atr_pts", 0.0),
                     "current_spread_pts": getattr(candidate, "current_spread_pts", 0),
                     "dealing_range_pos": getattr(candidate, "dealing_range_pos", 0.5),
@@ -789,29 +790,30 @@ class QuantShadowTracker:
                                     self._record_resolved(trade)
                                     continue
 
-                        # Check Peak-Aware Time-Decay Stagnation Exit
+                        # Check Peak-Aware Time-Decay Stagnation Exit (Only for unlinked shadow paper trades)
                         try:
-                            f_time_str = trade.fill_time or trade.created_at
-                            f_time = datetime.fromisoformat(f_time_str)
-                            hold_hours = (now_dt - f_time).total_seconds() / 3600.0
-                            if hold_hours >= 4.0 and trade.peak_mfe_r < 0.30 and (-0.20 <= curr_r <= 0.20):
-                                trade.status = "RESOLVED"
-                                trade.outcome = "TIME_DECAY_EXIT"
-                                trade.resolved_time = now_iso
-                                trade.exit_price = mid
-                                trade.net_r = round(curr_r, 2)
-                                newly_resolved.append(trade)
-                                self._record_resolved(trade)
-                                continue
-                            elif hold_hours >= 24.0:
-                                trade.status = "RESOLVED"
-                                trade.outcome = "TIME_DECAY_EXIT"
-                                trade.resolved_time = now_iso
-                                trade.exit_price = mid
-                                trade.net_r = round(curr_r, 2)
-                                newly_resolved.append(trade)
-                                self._record_resolved(trade)
-                                continue
+                            if not is_live_mt5:
+                                f_time_str = trade.fill_time or trade.created_at
+                                f_time = datetime.fromisoformat(f_time_str)
+                                hold_hours = (now_dt - f_time).total_seconds() / 3600.0
+                                if hold_hours >= 4.0 and trade.peak_mfe_r < 0.30 and (-0.20 <= curr_r <= 0.20):
+                                    trade.status = "RESOLVED"
+                                    trade.outcome = "TIME_DECAY_EXIT"
+                                    trade.resolved_time = now_iso
+                                    trade.exit_price = mid
+                                    trade.net_r = round(curr_r, 2)
+                                    newly_resolved.append(trade)
+                                    self._record_resolved(trade)
+                                    continue
+                                elif hold_hours >= 24.0:
+                                    trade.status = "RESOLVED"
+                                    trade.outcome = "TIME_DECAY_EXIT"
+                                    trade.resolved_time = now_iso
+                                    trade.exit_price = mid
+                                    trade.net_r = round(curr_r, 2)
+                                    newly_resolved.append(trade)
+                                    self._record_resolved(trade)
+                                    continue
                         except Exception:
                             pass
 
@@ -1096,8 +1098,8 @@ class QuantShadowTracker:
             }
 
     def get_all_resolved_trades(self, limit: int = 200) -> List[Dict[str, Any]]:
-        """Reads historical resolved shadow trades from JSONL log, newest first."""
-        trades = []
+        """Reads historical resolved shadow trades from JSONL log with deduplication by shadow_id, newest first."""
+        trades_dict = {}
         try:
             if os.path.exists(SHADOW_TRADES_LOG):
                 with open(SHADOW_TRADES_LOG, "r", encoding="utf-8") as f:
@@ -1105,14 +1107,19 @@ class QuantShadowTracker:
                         line = line.strip()
                         if line:
                             try:
-                                trades.append(json.loads(line))
+                                obj = json.loads(line)
+                                sid = obj.get("shadow_id")
+                                if sid:
+                                    trades_dict[sid] = obj
                             except Exception:
                                 pass
         except Exception as e:
             logger.error(f"[SHADOW READ LOG ERROR] {e}")
 
-        if trades:
-            return trades[::-1][:limit]
+        if trades_dict:
+            trades = list(trades_dict.values())
+            trades.sort(key=lambda t: t.get("resolved_time") or t.get("created_at") or "", reverse=True)
+            return trades[:limit]
         return list(reversed(self._recent_resolved[-limit:]))
 
 

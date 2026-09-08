@@ -788,10 +788,14 @@ def run_scanner_trading_cycle(cand, risk):
                 "tp_mode": "QUANT_STRUCTURAL_TARGET"
             }
 
+            realized_rr = round(raw_tp_pts / max(raw_sl_pts, 1), 2)
+            c_grade = getattr(cand, "setup_grade", "GRADE_A")
+            fill_tag = "Market Fill (Slippage/Drift)" if entry_type == "market" else "Limit Entry"
             print(f"\n {UI.CYAN}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
             print(f" {UI.CYAN}{UI.BOLD}  ║ [PURE QUANT DIRECT EXECUTION] {sym} [{cand.setup_type}]                                ║{UI.RST}")
             print(f" {UI.CYAN}{UI.BOLD}  ║ • Signal     : {trade_signal} ({entry_type.upper()} @ {entry_price})                                     ║{UI.RST}")
             print(f" {UI.CYAN}{UI.BOLD}  ║ • SL / TP Raw: SL {raw_sl_pts} pts ({cand.suggested_sl}) | TP {raw_tp_pts} pts ({cand.suggested_tp})             ║{UI.RST}")
+            print(f" {UI.CYAN}{UI.BOLD}  ║ • Grade / R:R: Grade {c_grade} | Realized R:R {realized_rr:.2f}:1 [{fill_tag}]                  ║{UI.RST}")
             print(f" {UI.CYAN}{UI.BOLD}  ╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
         else:
             # 2. Fetch live candles (M15 & M5 Micro Microscope, H1, H4) from MT5
@@ -952,6 +956,10 @@ def run_scanner_trading_cycle(cand, risk):
             sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
                 sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
             )
+            # Re-read potentially adjusted action_tier and setup_grade (e.g. auto-transition to GRADE_B Wall Scalp)
+            action_tier_val = getattr(cand, "action_tier", action_tier_val)
+            setup_grade_val = getattr(cand, "setup_grade", setup_grade_val)
+
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
                 tg.alert_trade_aborted(
@@ -966,7 +974,7 @@ def run_scanner_trading_cycle(cand, risk):
                 
             # High Confidence Multi-Position sizing:
             # If 3/3 AI agree and confidence >= 0.80 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
-            # CRITICAL: If action_tier == "TP1_ONLY_SCALP", enforce single position only (no 2nd extended runner against macro)
+            # CRITICAL: If action_tier == "TP1_ONLY_SCALP" or setup is GRADE_B, enforce single position only (no 2nd extended runner against macro)
             bot_magic = getattr(config, "MAGIC_NUMBER", 20260625)
             def _is_bot_trade(item):
                 m = getattr(item, "magic", 0)
@@ -989,11 +997,12 @@ def run_scanner_trading_cycle(cand, risk):
             is_split_tix = result.get("is_split_ticket", False)
             tp_mode = result.get("tp_mode", "STANDARD_TP1_TP2")
 
-            # M4 (SYSTEMIC_FLOW_CONTINUATION): struktur studi 1 tiket — larang split 2 posisi & boost TP
+            # M4 (SYSTEMIC_FLOW_CONTINUATION) & GRADE_B Wall Scalp: struktur 1 tiket murni — larang split 2 posisi & boost TP
             _m4_single = (cand.setup_type == config.M4_SETUP_TYPE)
-            num_positions = 2 if (not _m4_single and is_split_tix and remaining_slots >= 2 and action_tier_val not in ("TP1_ONLY_SCALP", "REDUCED_SCALP")) else 1
+            _is_grade_b = (action_tier_val in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or setup_grade_val == "GRADE_B")
+            num_positions = 2 if (not _m4_single and not _is_grade_b and is_split_tix and remaining_slots >= 2) else 1
             
-            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult)
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult, setup_grade=setup_grade_val)
             if num_positions == 2:
                 effective_lot = round(base_lot * 0.625, 2)
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
@@ -1073,7 +1082,8 @@ def run_scanner_trading_cycle(cand, risk):
                             csm_delta=getattr(cand, "csm_delta", 0.0),
                             setup_type=f"{cand.setup_type} (Pending P{i+1})"
                         )
-                        position_manager.set_ticket_setup_grade(pending_res.get("ticket"), getattr(cand, "action_tier", "GRADE_A"))
+                        eff_grade = getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A")
+                        position_manager.set_ticket_setup_grade(pending_res.get("ticket"), eff_grade)
                         risk.record_trade_opened()
                         record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                         _recent_trihourly_opened.append({
@@ -1138,7 +1148,8 @@ def run_scanner_trading_cycle(cand, risk):
                         csm_delta=getattr(cand, "csm_delta", 0.0),
                         setup_type=f"{cand.setup_type} (Market P{i+1})"
                     )
-                    position_manager.set_ticket_setup_grade(order_res.get("ticket"), getattr(cand, "action_tier", "GRADE_A"))
+                    eff_grade = getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A")
+                    position_manager.set_ticket_setup_grade(order_res.get("ticket"), eff_grade)
                     risk.record_trade_opened()
                     record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                     _recent_trihourly_opened.append({

@@ -12,6 +12,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 <!-- TradingView Lightweight Charts v4.1.1 CDN -->
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -43,6 +44,16 @@ TEMPLATE = r"""<!DOCTYPE html>
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+  -webkit-font-smoothing: antialiased;
+}
 html, body {
   height: 100%;
   width: 100%;
@@ -225,8 +236,8 @@ html, body {
 .pair-row {
   display: flex;
   flex-direction: column;
-  gap: 3.5px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 9px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.03);
   cursor: pointer;
   user-select: none;
@@ -235,7 +246,46 @@ html, body {
 .pair-row:hover { background: var(--bg-hover); }
 .pair-row.selected {
   background: var(--bg-elevated);
-  border-left: 3px solid var(--cyan);
+  border-left: 3.5px solid var(--cyan);
+}
+.pair-row.m4-shock-row {
+  border-left: 3.5px solid #facc15;
+  background: rgba(250, 204, 21, 0.04);
+}
+.pair-row.m4-shock-row:hover {
+  background: rgba(250, 204, 21, 0.08);
+}
+.pair-row.m4-shock-row.selected {
+  background: rgba(250, 204, 21, 0.12);
+  border-left: 3.5px solid #facc15;
+}
+.m4-shock-pill {
+  background: rgba(250, 204, 21, 0.16);
+  color: #facc15;
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  padding: 1px 5px;
+  border-radius: 2.5px;
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.m4-hero-banner {
+  background: linear-gradient(90deg, rgba(250, 204, 21, 0.15) 0%, rgba(250, 204, 21, 0.04) 100%);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  color: #fde047;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 6px 14px;
 }
 .pair-row-line {
   display: flex;
@@ -820,7 +870,7 @@ html, body {
 </head>
 <body>
 
-<div id="error-banner">⚠️ Terputus dari server backend atau terminal MT5. Mencoba menghubungkan kembali...</div>
+<div id="error-banner"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;margin-right:4px;">warning</span>Terputus dari server backend atau terminal MT5. Mencoba menghubungkan kembali...</div>
 
 <!-- TOP STATUS BAR -->
 <div class="header-bar">
@@ -854,7 +904,7 @@ html, body {
     <div class="account-stat">
       <span class="stat-label">Virtual Shadow:</span>
       <span class="stat-val" id="shadow-stat-val" style="color:var(--purple);font-size:10.5px;">0 rec (0% WR)</span>
-      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:5px;padding:2px 6px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9.5px;font-weight:700;">📊 LAPORAN</a>
+      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:5px;padding:2px 6px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">monitoring</span> LAPORAN</a>
     </div>
     <div class="account-stat">
       <span class="stat-label">Mode:</span>
@@ -923,6 +973,12 @@ html, body {
           <span class="strip-val" id="strip-tier">—</span>
         </div>
       </div>
+    </div>
+
+    <!-- SFR SYSTEMIC SHOCK HERO BANNER -->
+    <div id="m4-hero-banner" class="m4-hero-banner" style="display:none;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:#facc15;">bolt</span>
+      <span><strong>SYSTEMIC FLOW REGIME (SFR) ACTIVE</strong> &bull; Dominant Currency z: <span id="m4-hero-z">+0.0</span> (<span id="m4-hero-dir">BULL</span>) &bull; Direction Locked &bull; Watching Basing / Structure</span>
     </div>
 
     <!-- FILTER STRIP BAR (High-Density Multi-Horizon Control) -->
@@ -994,7 +1050,7 @@ html, body {
   <div class="right-panel">
     <div class="panel-header" onclick="if(document.querySelector('.workspace').classList.contains('xray-collapsed')) toggleXrayPanel();">
       <div style="display:flex;align-items:center;gap:6px;">
-        <button id="btn-toggle-xray" class="btn-toggle-xray" onclick="event.stopPropagation(); toggleXrayPanel();" title="Toggle Decision Gates Audit (X-Ray)">▶</button>
+        <button id="btn-toggle-xray" class="btn-toggle-xray" onclick="event.stopPropagation(); toggleXrayPanel();" title="Toggle Decision Gates Audit (X-Ray)"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_right</span></button>
         <span class="panel-title">Decision Gates Audit (X-Ray)</span>
       </div>
       <span id="gate-symbol-label" style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);">—</span>
@@ -1618,9 +1674,16 @@ function renderChartLevels(data) {
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
           markerText = `[M2 ${dirStr} PULLBACK] EMA Touch @ ${s.price.toFixed(data.digits || 5)}`;
         } else if (s.type === "M4") {
-          shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
+          shape = s.is_breakdown_watch ? "circle" : ((s.direction === 1) ? "arrowUp" : "arrowDown");
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          markerText = `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
+          if (s.label && s.label.startsWith("M4")) {
+            markerText = `[${s.label}] @ ${s.price.toFixed(data.digits || 5)}`;
+          } else {
+            const lvlTag = (s.direction === 1) ? "Swing High" : "Swing Low";
+            markerText = s.is_breakdown_watch 
+              ? `[M4 ${dirStr} WATCH] ${lvlTag} @ ${s.price.toFixed(data.digits || 5)}`
+              : `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
+          }
         }
 
         temporalMarkers.push({
@@ -1761,30 +1824,45 @@ function renderWatchlist(pairs) {
     const atrVal = p.dist_atr !== undefined ? p.dist_atr.toFixed(2) : "0.00";
     const distText = p.dist_atr < 50 ? `${pipsVal}p (${atrVal}x ATR)` : ">50p (Idle)";
 
+    const m4RowClass = p.m4_shock ? "m4-shock-row" : "";
+    const m4Pill = p.m4_shock 
+      ? `<span class="m4-shock-pill" title="Systemic Flow Shock Active (z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z})"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">bolt</span> SFR | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>` 
+      : '';
+
     html += `
-      <div class="pair-row ${isSelected}" onclick="selectSymbol('${p.symbol}')">
+      <div class="pair-row ${isSelected} ${m4RowClass}" onclick="selectSymbol('${p.symbol}')">
+        <!-- Line 1: Symbol, CSM, Tier Badge -->
         <div class="pair-row-line">
           <div class="pair-col-left">
             <span class="pair-symbol">${cleanSym}</span>
             <span class="csm-text ${csmClass}">${csmText}</span>
           </div>
-          <div class="pair-col-mid">
-            <span class="pair-dist-text">${distText}</span>
-          </div>
+          <div class="pair-col-mid"></div>
           <div class="pair-col-right">
             <span class="tier-badge ${tierClass}">${p.perm_label}</span>
           </div>
         </div>
+        <!-- Line 2: Setup Pill, HTF Bias -->
         <div class="pair-row-line">
           <div class="pair-col-left">
             <span class="pair-setup-pill ${setupPillClass}">${p.active_setup || "WATCH"}</span>
             ${p.extra_count > 0 && !p.is_confluence ? `<span class="extra-setup-pill" title="${p.extra_count} additional standby setup(s)" style="margin-left:2px;">+${p.extra_count}</span>` : ''}
           </div>
-          <div class="pair-col-mid">
-            ${p.tactical_tag ? `<span class="tactical-pill">${p.tactical_tag}</span>` : ''}
-          </div>
+          <div class="pair-col-mid"></div>
           <div class="pair-col-right">
             <span class="htf-bias-tag ${biasTagClass}">${p.bias}</span>
+          </div>
+        </div>
+        <!-- Line 3: Distance, Dealing Range %, M4 Shock Badge -->
+        <div class="pair-row-line">
+          <div class="pair-col-left">
+            <span class="pair-dist-text">${distText}</span>
+          </div>
+          <div class="pair-col-mid">
+            <span style="color:var(--text-dim);font-size:8.5px;font-family:var(--font-mono);">DR: ${p.dr_pct !== undefined ? p.dr_pct.toFixed(0) : '50'}%</span>
+          </div>
+          <div class="pair-col-right">
+            ${m4Pill}
           </div>
         </div>
       </div>
@@ -1815,7 +1893,8 @@ function renderSymbolHeader(d) {
   csmEl.textContent = `${d.csm_delta >= 0 ? '+' : ''}${d.csm_delta.toFixed(2)}`;
   csmEl.className = `strip-val ${d.csm_delta >= 0 ? 'stat-pnl-pos' : 'stat-pnl-neg'}`;
 
-  document.getElementById("strip-tier").textContent = `${d.action_tier} (${d.perm_label})`;
+  const dirLock = d.direction_lock ? (d.direction_lock.dir === 1 ? "BUY ONLY" : (d.direction_lock.dir === -1 ? "SELL ONLY" : "FREE")) : "FREE";
+  document.getElementById("strip-tier").textContent = `${d.action_tier} (${d.perm_label}) • DIR: ${dirLock}`;
 
   // Render Multi-TF Compass & State HUD
   document.getElementById("hud-sym-tag").textContent = d.tactical_desc ? `${clean} ${currentTF} • ${d.tactical_desc}` : `${clean} ${currentTF}`;
@@ -1837,6 +1916,20 @@ function renderSymbolHeader(d) {
       waveEl.style.color = reg.includes("SUPER") ? "#ec4899" : (reg.includes("MATURE") ? "#f59e0b" : "#38bdf8");
     }
     document.getElementById("hud-rollover").textContent = it.pre_rollover_countdown;
+  }
+
+  // Render M4 Systemic Flow Shock Hero Banner
+  const m4Banner = document.getElementById("m4-hero-banner");
+  if (m4Banner) {
+    if (d.m4_shock) {
+      m4Banner.style.display = "flex";
+      const zEl = document.getElementById("m4-hero-z");
+      const dirEl = document.getElementById("m4-hero-dir");
+      if (zEl) zEl.textContent = `${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}`;
+      if (dirEl) dirEl.textContent = d.m4_dir || "BULL";
+    } else {
+      m4Banner.style.display = "none";
+    }
   }
 }
 
@@ -1948,7 +2041,7 @@ function renderDrawer() {
     }
 
     let html = `<table class="data-table"><thead><tr>
-      <th>Ticket</th><th>Type</th><th>Volume</th><th>Open Price</th><th>Current SL</th><th>Current TP</th><th>Profit</th><th>Management Stage</th><th>Pre-Rollover Dist</th>
+      <th>Ticket</th><th>Type</th><th>Volume</th><th>Open Price</th><th>Current SL</th><th>Current TP</th><th>Profit</th><th>Management Stage</th><th>Pre-Rollover Dist</th><th>CSM Shift</th>
     </tr></thead><tbody>`;
 
     (d.open_positions || []).forEach(p => {
@@ -1963,6 +2056,7 @@ function renderDrawer() {
         <td class="${pnlClass}" style="font-weight:700;">${p.profit >= 0 ? '+' : ''}$${p.profit.toFixed(2)}</td>
         <td><span style="color:var(--cyan);font-weight:600;">${p.mgt_badge || 'ACTIVE BREATHING'}</span></td>
         <td>${p.rollover_dist || 'Safe (>200 pts)'}</td>
+        <td style="font-family:var(--font-mono);font-size:11px;">${p.csm_shift || '—'}</td>
       </tr>`;
     });
 
@@ -1976,6 +2070,7 @@ function renderDrawer() {
         <td>${o.tp ? o.tp.toFixed(d.digits) : '—'}</td>
         <td>PENDING</td>
         <td><span style="color:var(--amber);">WAITING FILL</span></td>
+        <td>—</td>
         <td>—</td>
       </tr>`;
     });
@@ -2042,7 +2137,7 @@ function renderDrawer() {
     let html = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
         <div style="font-weight:800;font-size:12px;color:var(--purple);text-transform:uppercase;letter-spacing:0.5px;">VIRTUAL SHADOW QUANT RADAR (UNCONSTRAINED TELEMETRY)</div>
-        <a href="/shadow" target="_blank" style="padding:4px 12px;border-radius:4px;background:rgba(192,132,252,0.22);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:6px;">📊 Buka Laporan Lengkap HTML ↗</a>
+        <a href="/shadow" target="_blank" style="padding:4px 12px;border-radius:4px;background:rgba(192,132,252,0.22);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">analytics</span> Buka Laporan Lengkap HTML <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_new</span></a>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
         <div class="telemetry-card">
@@ -2065,9 +2160,9 @@ function renderDrawer() {
         </div>
         <div class="telemetry-card">
           <div class="tele-title">Distribusi Resolusi</div>
-          <div class="tele-row"><span class="tele-lbl">🟢 TP / 🔵 BEP:</span><span class="tele-val">${s.outcome_breakdown?.tp?.count || s.tp_hits} (${s.outcome_breakdown?.tp?.pct_total || 0}%) / ${s.outcome_breakdown?.bep?.count || s.bep_hits || 0} (${s.outcome_breakdown?.bep?.pct_total || 0}%)</span></div>
-          <div class="tele-row"><span class="tele-lbl">🟡 Time-Decay:</span><span class="tele-val">${s.outcome_breakdown?.time_decay?.count || s.time_decay_hits || 0} (${s.outcome_breakdown?.time_decay?.pct_total || 0}%)</span></div>
-          <div class="tele-row"><span class="tele-lbl">🔴 SL / ⚪ Exp:</span><span class="tele-val">${s.outcome_breakdown?.sl?.count || s.sl_hits} (${s.outcome_breakdown?.sl?.pct_total || 0}%) / ${s.expired_count} (${s.outcome_breakdown?.expired?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--green);vertical-align:-1px;">check_circle</span> TP / <span class="material-symbols-outlined" style="font-size:11px;color:var(--cyan);vertical-align:-1px;">shield</span> BEP:</span><span class="tele-val">${s.outcome_breakdown?.tp?.count || s.tp_hits} (${s.outcome_breakdown?.tp?.pct_total || 0}%) / ${s.outcome_breakdown?.bep?.count || s.bep_hits || 0} (${s.outcome_breakdown?.bep?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--amber);vertical-align:-1px;">timer</span> Time-Decay:</span><span class="tele-val">${s.outcome_breakdown?.time_decay?.count || s.time_decay_hits || 0} (${s.outcome_breakdown?.time_decay?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--red);vertical-align:-1px;">cancel</span> SL / <span class="material-symbols-outlined" style="font-size:11px;color:var(--text-dim);vertical-align:-1px;">history_toggle_off</span> Exp:</span><span class="tele-val">${s.outcome_breakdown?.sl?.count || s.sl_hits} (${s.outcome_breakdown?.sl?.pct_total || 0}%) / ${s.expired_count} (${s.outcome_breakdown?.expired?.pct_total || 0}%)</span></div>
         </div>
       </div>
     `;
@@ -2126,8 +2221,8 @@ function renderDrawer() {
         const isRealMt5 = String(tr.mt5_disposition || '').includes('EXECUTED');
         const ticketStr = tr.mt5_ticket ? `#${tr.mt5_ticket}` : '';
         const dispBadge = isRealMt5 
-          ? `<span class="badge" style="background:rgba(0,230,118,0.18);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;">🟢 REAL MT5 ${ticketStr}</span>`
-          : `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;">🟣 PAPER (${tr.mt5_disposition?.replace('SKIPPED_', '') || 'SHADOW'})</span>`;
+          ? `<span class="badge" style="background:rgba(0,230,118,0.18);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;color:var(--green);vertical-align:-1px;">verified</span> REAL MT5 ${ticketStr}</span>`
+          : `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;color:#c084fc;vertical-align:-1px;">science</span> PAPER (${tr.mt5_disposition?.replace('SKIPPED_', '') || 'SHADOW'})</span>`;
 
         html += `<tr style="${isRealMt5 ? 'background:rgba(0,230,118,0.03);' : ''}">
           <td style="font-family:var(--font-mono);font-size:10px;">${tr.shadow_id}</td>
@@ -2247,7 +2342,9 @@ function toggleXrayPanel() {
   } catch(e) {}
 
   const btn = document.getElementById("btn-toggle-xray");
-  if (btn) btn.textContent = isCollapsed ? "◀" : "▶";
+  if (btn) btn.innerHTML = isCollapsed 
+    ? '<span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_left</span>' 
+    : '<span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_right</span>';
 
   setTimeout(() => {
     const container = document.getElementById("tv-chart");
