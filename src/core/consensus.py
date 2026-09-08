@@ -224,11 +224,13 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                     return sl_points, tp_points, False, note
                 max_sl = static_fallback
             else:
-                max_sl = int(atr_points * sl_max_mult)
+                raw_max = int(atr_points * sl_max_mult)
+                # Harmonization: Plafon ceiling wajib lebih besar daripada safety floor minimal (bebas deadlock Ceiling < Floor)
+                max_sl = max(raw_max, int(min_sl * 1.5))
             if sl_points > max_sl:
                 if zce_wall_mode:
                     note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {max_sl} pts "
-                            f"({sl_max_mult}x ATR). SKIP trade — clamp akan memarkir SL di tengah struktur.")
+                            f"({sl_max_mult}x ATR, floor {min_sl} pts). SKIP trade — clamp akan memarkir SL di tengah struktur.")
                     _last_sltp_adjustments.append(note)
                     return sl_points, tp_points, False, note
                 label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")

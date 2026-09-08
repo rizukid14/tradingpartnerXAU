@@ -951,8 +951,12 @@ class QuantShadowTracker:
 
             tp_hits = 0
             sl_hits = 0
+            bep_hits = 0
+            time_decay_hits = 0
             cum_net_r = 0.0
             expired_count = 0
+            gross_profit_r = 0.0
+            gross_loss_r = 0.0
 
             for sid, t in all_resolved.items():
                 st = t.get("setup_type", "")
@@ -965,8 +969,12 @@ class QuantShadowTracker:
                     mech_stats[m_key]["net_r"] = round(mech_stats[m_key]["net_r"] + nr, 2)
 
                 cum_net_r = round(cum_net_r + nr, 2)
+                if nr > 0:
+                    gross_profit_r += nr
+                elif nr < 0:
+                    gross_loss_r += abs(nr)
 
-                # Classify TP vs SL vs BEP
+                # Classify TP vs SL vs BEP vs Time-Decay vs Expired
                 if out == "TP_HIT" or (out == "TRAILING_SL_HIT" and nr >= 0.20):
                     tp_hits += 1
                     if m_key in mech_stats:
@@ -976,15 +984,58 @@ class QuantShadowTracker:
                     if m_key in mech_stats:
                         mech_stats[m_key]["sl"] += 1
                 elif "BEP" in out:
+                    bep_hits += 1
                     if m_key in mech_stats:
                         mech_stats[m_key]["bep"] += 1
+                elif "TIME_DECAY" in out:
+                    time_decay_hits += 1
                 elif "EXPIRED" in out:
                     expired_count += 1
 
             total_resolved = len(all_resolved)
+            filled_trades = total_resolved - expired_count
             decisive_trades = tp_hits + sl_hits
             winrate = (tp_hits / decisive_trades * 100.0) if decisive_trades > 0 else 0.0
-            ev = (cum_net_r / decisive_trades) if decisive_trades > 0 else 0.0
+            preservation_rate = ((tp_hits + bep_hits) / filled_trades * 100.0) if filled_trades > 0 else 0.0
+            profit_factor = (gross_profit_r / gross_loss_r) if gross_loss_r > 0 else (99.0 if gross_profit_r > 0 else 0.0)
+            ev = (cum_net_r / total_resolved) if total_resolved > 0 else 0.0
+
+            # Outcome Breakdown with individual percentages
+            def _pct(cnt: int, base: int) -> float:
+                return round((cnt / base * 100.0), 1) if base > 0 else 0.0
+
+            outcome_breakdown = {
+                "tp": {
+                    "count": tp_hits,
+                    "pct_total": _pct(tp_hits, total_resolved),
+                    "pct_filled": _pct(tp_hits, filled_trades)
+                },
+                "bep": {
+                    "count": bep_hits,
+                    "pct_total": _pct(bep_hits, total_resolved),
+                    "pct_filled": _pct(bep_hits, filled_trades)
+                },
+                "sl": {
+                    "count": sl_hits,
+                    "pct_total": _pct(sl_hits, total_resolved),
+                    "pct_filled": _pct(sl_hits, filled_trades)
+                },
+                "time_decay": {
+                    "count": time_decay_hits,
+                    "pct_total": _pct(time_decay_hits, total_resolved),
+                    "pct_filled": _pct(time_decay_hits, filled_trades)
+                },
+                "expired": {
+                    "count": expired_count,
+                    "pct_total": _pct(expired_count, total_resolved),
+                    "pct_filled": 0.0
+                },
+                "filled_trades": filled_trades,
+                "preservation_rate": round(preservation_rate, 1),
+                "profit_factor": round(profit_factor, 2),
+                "gross_profit_r": round(gross_profit_r, 2),
+                "gross_loss_r": round(gross_loss_r, 2)
+            }
 
             # Update cached _stats
             self._stats["total_resolved"] = total_resolved
@@ -1025,11 +1076,19 @@ class QuantShadowTracker:
                 "total_resolved": total_resolved,
                 "tp_hits": tp_hits,
                 "sl_hits": sl_hits,
+                "bep_hits": bep_hits,
+                "time_decay_hits": time_decay_hits,
                 "expired_count": expired_count,
                 "decisive_trades": decisive_trades,
+                "filled_trades": filled_trades,
                 "winrate_pct": round(winrate, 1),
+                "preservation_rate": round(preservation_rate, 1),
+                "profit_factor": round(profit_factor, 2),
+                "gross_profit_r": round(gross_profit_r, 2),
+                "gross_loss_r": round(gross_loss_r, 2),
                 "cumulative_net_r": round(cum_net_r, 2),
                 "expected_value_r": round(ev, 2),
+                "outcome_breakdown": outcome_breakdown,
                 "mechanisms": mech_stats,
                 "disposition_breakdown": disp_stats,
                 "recent_resolved": list(all_resolved.values())[-20:],

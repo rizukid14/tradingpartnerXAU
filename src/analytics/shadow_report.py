@@ -38,11 +38,26 @@ def render_shadow_report_html() -> str:
     tot_res = summary.get("total_resolved", len(resolved_trades))
     tp_hits = summary.get("tp_hits", 0)
     sl_hits = summary.get("sl_hits", 0)
+    bep_hits = summary.get("bep_hits", 0)
+    td_hits = summary.get("time_decay_hits", 0)
     exp_cnt = summary.get("expired_count", 0)
     decisive = summary.get("decisive_trades", tp_hits + sl_hits)
+    filled_trades = summary.get("filled_trades", tot_res - exp_cnt)
     winrate = summary.get("winrate_pct", 0.0)
+    preservation_rate = summary.get("preservation_rate", 0.0)
+    profit_factor = summary.get("profit_factor", 0.0)
+    gross_profit_r = summary.get("gross_profit_r", 0.0)
+    gross_loss_r = summary.get("gross_loss_r", 0.0)
     cum_net_r = summary.get("cumulative_net_r", 0.0)
     ev_r = summary.get("expected_value_r", 0.0)
+
+    # Detailed Outcome Breakdown Dict
+    ob = summary.get("outcome_breakdown", {})
+    tp_ob = ob.get("tp", {"count": tp_hits, "pct_total": 0.0, "pct_filled": 0.0})
+    bep_ob = ob.get("bep", {"count": bep_hits, "pct_total": 0.0, "pct_filled": 0.0})
+    sl_ob = ob.get("sl", {"count": sl_hits, "pct_total": 0.0, "pct_filled": 0.0})
+    td_ob = ob.get("time_decay", {"count": td_hits, "pct_total": 0.0, "pct_filled": 0.0})
+    exp_ob = ob.get("expired", {"count": exp_cnt, "pct_total": 0.0, "pct_filled": 0.0})
 
     # Disposition Stats
     disp_stats = summary.get("disposition_breakdown", {
@@ -217,6 +232,82 @@ def render_shadow_report_html() -> str:
       margin-top: 4px;
     }}
 
+    /* Distribution Container */
+    .distribution-container {{
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 24px;
+    }}
+    .dist-bar {{
+      width: 100%;
+      height: 14px;
+      border-radius: 7px;
+      background: #0d131f;
+      display: flex;
+      overflow: hidden;
+      margin: 10px 0 14px 0;
+      border: 1px solid rgba(255,255,255,0.06);
+    }}
+    .dist-seg {{
+      height: 100%;
+      transition: width 0.3s ease;
+    }}
+    .seg-tp {{ background: var(--green); }}
+    .seg-bep {{ background: var(--cyan); }}
+    .seg-td {{ background: var(--amber); }}
+    .seg-sl {{ background: var(--red); }}
+    .seg-exp {{ background: #475569; }}
+
+    .outcome-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }}
+    .outcome-card {{
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 6px;
+      padding: 8px 12px;
+    }}
+    .outcome-header {{
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+    }}
+    .outcome-count {{
+      font-size: 17px;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      margin-top: 3px;
+    }}
+    .outcome-pct {{
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0.85;
+    }}
+    .outcome-sub {{
+      font-size: 10.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }}
+    .dot {{
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }}
+    .dot-green {{ background: var(--green); }}
+    .dot-cyan {{ background: var(--cyan); }}
+    .dot-amber {{ background: var(--amber); }}
+    .dot-red {{ background: var(--red); }}
+    .dot-gray {{ background: #64748b; }}
+
     /* Section Boxes */
     .section-title {{
       font-size: 13px;
@@ -337,22 +428,71 @@ def render_shadow_report_html() -> str:
     <div class="kpi-card">
       <div class="kpi-title">Total Sinyal Radar</div>
       <div class="kpi-value" id="kpi-total" style="color:var(--purple);">{total_rec}</div>
-      <div class="kpi-subtext">Aktif: <b id="kpi-active" style="color:var(--cyan);">{act_cnt}</b> │ Pending: <b id="kpi-pending" style="color:var(--amber);">{pend_cnt}</b></div>
+      <div class="kpi-subtext">Aktif: <b id="kpi-active" style="color:var(--cyan);">{act_cnt}</b> │ Pending: <b id="kpi-pending" style="color:var(--amber);">{pend_cnt}</b> │ Selesai: <b id="kpi-resolved" style="color:#fff;">{tot_res}</b></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-title">Winrate Realized</div>
+      <div class="kpi-title">Decisive Winrate (TP vs SL)</div>
       <div class="kpi-value" id="kpi-winrate" style="color:var(--green);">{winrate:.1f}%</div>
-      <div class="kpi-subtext">TP: <b id="kpi-tp" style="color:var(--green);">{tp_hits}</b> │ SL: <b id="kpi-sl" style="color:var(--red);">{sl_hits}</b> (Sample: {decisive})</div>
+      <div class="kpi-subtext">TP: <b id="kpi-tp" style="color:var(--green);">{tp_hits}</b> │ SL: <b id="kpi-sl" style="color:var(--red);">{sl_hits}</b> (Sample: <b id="kpi-decisive">{decisive}</b>)</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-title">Cumulative Net R</div>
+      <div class="kpi-title">Capital Preservation Rate</div>
+      <div class="kpi-value" id="kpi-preservation" style="color:var(--cyan);">{preservation_rate:.1f}%</div>
+      <div class="kpi-subtext">Non-Loss: <b id="kpi-nonloss" style="color:var(--cyan);">{tp_hits + bep_hits}</b> / <b id="kpi-filled">{filled_trades}</b> Terjemput</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Cumulative Return & Edge</div>
       <div class="kpi-value" id="kpi-cumr" style="color:{net_r_color};">{'+' if cum_net_r >= 0 else ''}{cum_net_r:.2f}R</div>
-      <div class="kpi-subtext">Expected Value: <b id="kpi-ev" style="color:{ev_color};">{'+' if ev_r >= 0 else ''}{ev_r:.2f}R / trade</b></div>
+      <div class="kpi-subtext">Profit Factor: <b id="kpi-pf" style="color:{'var(--green)' if profit_factor >= 1.0 else 'var(--red)'};">{profit_factor:.2f}</b> │ EV: <b id="kpi-ev" style="color:{ev_color};">{'+' if ev_r >= 0 else ''}{ev_r:.2f}R</b></div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-title">Eksekusi MT5 vs Skipped</div>
-      <div class="kpi-value" id="kpi-exec" style="color:var(--cyan);">{real_mt5_count} / {total_rec}</div>
-      <div class="kpi-subtext">Risk Block: <b id="kpi-risk" style="color:var(--amber);">{disp_stats.get('SKIPPED_RISK_BASKET', 0) + disp_stats.get('SKIPPED_RISK_BLOCK', 0)}</b> │ Veto: <b id="kpi-veto" style="color:var(--red);">{disp_stats.get('SKIPPED_LLM_VETO', 0)}</b></div>
+  </div>
+
+  <!-- COMPREHENSIVE OUTCOME DISTRIBUTION -->
+  <div class="distribution-container">
+    <div class="section-title" style="justify-content:space-between;display:flex;">
+      <span>🎯 Distribusi Hasil Resolusi Setup (Seluruh {tot_res} Trade Selesai)</span>
+      <span style="font-size:11px;color:var(--text-dim);font-weight:400;text-transform:none;">
+        Terjemput: <b id="dist-filled-txt" style="color:var(--cyan);">{filled_trades}</b> ({round(filled_trades / tot_res * 100.0, 1) if tot_res > 0 else 0}%) │ 
+        Expired Limit: <b id="dist-exp-txt" style="color:var(--text-muted);">{exp_cnt}</b> ({exp_ob['pct_total']}%)
+      </span>
+    </div>
+    
+    <!-- Multi-Segment Visual Progress Bar -->
+    <div class="dist-bar" id="dist-bar">
+      <div id="bar-tp" class="dist-seg seg-tp" style="width:{tp_ob['pct_total']}%;" title="TP Hit: {tp_ob['count']} ({tp_ob['pct_total']}%)"></div>
+      <div id="bar-bep" class="dist-seg seg-bep" style="width:{bep_ob['pct_total']}%;" title="BEP Locked: {bep_ob['count']} ({bep_ob['pct_total']}%)"></div>
+      <div id="bar-td" class="dist-seg seg-td" style="width:{td_ob['pct_total']}%;" title="Time-Decay Exit: {td_ob['count']} ({td_ob['pct_total']}%)"></div>
+      <div id="bar-sl" class="dist-seg seg-sl" style="width:{sl_ob['pct_total']}%;" title="SL Hit: {sl_ob['count']} ({sl_ob['pct_total']}%)"></div>
+      <div id="bar-exp" class="dist-seg seg-exp" style="width:{exp_ob['pct_total']}%;" title="Expired No-Fill: {exp_ob['count']} ({exp_ob['pct_total']}%)"></div>
+    </div>
+
+    <!-- Outcome Breakdown Cards Grid -->
+    <div class="outcome-grid">
+      <div class="outcome-card">
+        <div class="outcome-header"><span class="dot dot-green"></span> <b>TP HITS (WIN)</b></div>
+        <div class="outcome-count" id="out-tp-val" style="color:var(--green);">{tp_ob['count']} <span class="outcome-pct" id="out-tp-pct">({tp_ob['pct_total']}%)</span></div>
+        <div class="outcome-sub">% Terjemput: <b id="out-tp-fill">{tp_ob['pct_filled']}%</b></div>
+      </div>
+      <div class="outcome-card">
+        <div class="outcome-header"><span class="dot dot-cyan"></span> <b>BEP LOCKED</b></div>
+        <div class="outcome-count" id="out-bep-val" style="color:var(--cyan);">{bep_ob['count']} <span class="outcome-pct" id="out-bep-pct">({bep_ob['pct_total']}%)</span></div>
+        <div class="outcome-sub">% Terjemput: <b id="out-bep-fill">{bep_ob['pct_filled']}%</b></div>
+      </div>
+      <div class="outcome-card">
+        <div class="outcome-header"><span class="dot dot-amber"></span> <b>TIME-DECAY EXIT</b></div>
+        <div class="outcome-count" id="out-td-val" style="color:var(--amber);">{td_ob['count']} <span class="outcome-pct" id="out-td-pct">({td_ob['pct_total']}%)</span></div>
+        <div class="outcome-sub">% Terjemput: <b id="out-td-fill">{td_ob['pct_filled']}%</b></div>
+      </div>
+      <div class="outcome-card">
+        <div class="outcome-header"><span class="dot dot-red"></span> <b>SL HITS (LOSS)</b></div>
+        <div class="outcome-count" id="out-sl-val" style="color:var(--red);">{sl_ob['count']} <span class="outcome-pct" id="out-sl-pct">({sl_ob['pct_total']}%)</span></div>
+        <div class="outcome-sub">% Terjemput: <b id="out-sl-fill">{sl_ob['pct_filled']}%</b></div>
+      </div>
+      <div class="outcome-card">
+        <div class="outcome-header"><span class="dot dot-gray"></span> <b>EXPIRED / NO-FILL</b></div>
+        <div class="outcome-count" id="out-exp-val" style="color:var(--text-dim);">{exp_ob['count']} <span class="outcome-pct" id="out-exp-pct">({exp_ob['pct_total']}%)</span></div>
+        <div class="outcome-sub">Limit Timeout / Reversal</div>
+      </div>
     </div>
   </div>
 
@@ -678,14 +818,74 @@ def render_shadow_report_html() -> str:
       const cumR = Number(data.cumulative_net_r || 0);
       const wr   = Number(data.winrate_pct || 0);
       const ev   = Number(data.expected_value_r || 0);
+      const pf   = Number(data.profit_factor || 0);
+      const pres = Number(data.preservation_rate || 0);
+      const totRes = Number(data.total_resolved || 0);
+      const filled = Number(data.filled_trades || 0);
+      const tpHits = Number(data.tp_hits || 0);
+      const bepHits = Number(data.bep_hits || 0);
+      const slHits = Number(data.sl_hits || 0);
+      const tdHits = Number(data.time_decay_hits || 0);
+      const expCnt = Number(data.expired_count || 0);
+      const dec    = Number(data.decisive_trades || (tpHits + slHits));
+
       updateKpiEl('kpi-total',   data.total_recorded || 0);
       updateKpiEl('kpi-active',  data.active_count || 0);
-      updateKpiEl('kpi-resolved',data.total_resolved || 0);
-      updateKpiEl('kpi-tp',      data.tp_hits || 0);
-      updateKpiEl('kpi-sl',      data.sl_hits || 0);
+      updateKpiEl('kpi-pending', data.pending_count || 0);
+      updateKpiEl('kpi-resolved',totRes);
+      updateKpiEl('kpi-tp',      tpHits);
+      updateKpiEl('kpi-sl',      slHits);
+      updateKpiEl('kpi-decisive',dec);
       updateKpiEl('kpi-winrate', wr.toFixed(1) + '%');
+      updateKpiEl('kpi-preservation', pres.toFixed(1) + '%');
+      updateKpiEl('kpi-nonloss', tpHits + bepHits);
+      updateKpiEl('kpi-filled',  filled);
       updateKpiEl('kpi-cumr',    (cumR >= 0 ? '+' : '') + cumR.toFixed(2) + 'R');
-      updateKpiEl('kpi-ev',      (ev >= 0 ? '+' : '') + ev.toFixed(3) + 'R');
+      updateKpiEl('kpi-ev',      (ev >= 0 ? '+' : '') + ev.toFixed(2) + 'R');
+      updateKpiEl('kpi-pf',      pf.toFixed(2));
+
+      // Update Outcome Distribution Elements
+      const ob = data.outcome_breakdown || {{}};
+      const tpOb = ob.tp || {{pct_total: 0, pct_filled: 0, count: tpHits}};
+      const bepOb = ob.bep || {{pct_total: 0, pct_filled: 0, count: bepHits}};
+      const tdOb = ob.time_decay || {{pct_total: 0, pct_filled: 0, count: tdHits}};
+      const slOb = ob.sl || {{pct_total: 0, pct_filled: 0, count: slHits}};
+      const expOb = ob.expired || {{pct_total: 0, count: expCnt}};
+
+      const setBar = (id, pct, tip) => {{
+        const el = document.getElementById(id);
+        if (el) {{
+          el.style.width = pct + '%';
+          el.title = tip;
+        }}
+      }};
+      setBar('bar-tp',  tpOb.pct_total,  `TP Hit: ${{tpHits}} (${{tpOb.pct_total}}%)`);
+      setBar('bar-bep', bepOb.pct_total, `BEP Locked: ${{bepHits}} (${{bepOb.pct_total}}%)`);
+      setBar('bar-td',  tdOb.pct_total,  `Time-Decay: ${{tdHits}} (${{tdOb.pct_total}}%)`);
+      setBar('bar-sl',  slOb.pct_total,  `SL Hit: ${{slHits}} (${{slOb.pct_total}}%)`);
+      setBar('bar-exp', expOb.pct_total, `Expired: ${{expCnt}} (${{expOb.pct_total}}%)`);
+
+      updateKpiEl('dist-filled-txt', filled);
+      updateKpiEl('dist-exp-txt', expCnt);
+
+      updateKpiEl('out-tp-val', tpHits);
+      updateKpiEl('out-tp-pct', `(${{tpOb.pct_total}}%)`);
+      updateKpiEl('out-tp-fill', `${{tpOb.pct_filled}}%`);
+
+      updateKpiEl('out-bep-val', bepHits);
+      updateKpiEl('out-bep-pct', `(${{bepOb.pct_total}}%)`);
+      updateKpiEl('out-bep-fill', `${{bepOb.pct_filled}}%`);
+
+      updateKpiEl('out-td-val', tdHits);
+      updateKpiEl('out-td-pct', `(${{tdOb.pct_total}}%)`);
+      updateKpiEl('out-td-fill', `${{tdOb.pct_filled}}%`);
+
+      updateKpiEl('out-sl-val', slHits);
+      updateKpiEl('out-sl-pct', `(${{slOb.pct_total}}%)`);
+      updateKpiEl('out-sl-fill', `${{slOb.pct_filled}}%`);
+
+      updateKpiEl('out-exp-val', expCnt);
+      updateKpiEl('out-exp-pct', `(${{expOb.pct_total}}%)`);
 
       // Update Mechanism Breakdown Table
       if (data.mechanisms) {{

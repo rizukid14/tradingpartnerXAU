@@ -2047,27 +2047,27 @@ function renderDrawer() {
       <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
         <div class="telemetry-card">
           <div class="tele-title">Total Radar Setups</div>
-          <div class="tele-row"><span class="tele-lbl">Recorded:</span><span class="tele-val">${s.total_recorded}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Active Now:</span><span class="tele-val" style="color:var(--cyan);">${s.active_count}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Pending Fill:</span><span class="tele-val" style="color:var(--amber);">${s.pending_count}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Total Selesai:</span><span class="tele-val" style="font-weight:800;">${s.total_resolved || 0}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Order Terjemput:</span><span class="tele-val" style="color:var(--cyan);">${s.filled_trades || (s.total_resolved - (s.expired_count || 0))}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Aktif / Pending:</span><span class="tele-val" style="color:var(--amber);">${s.active_count} / ${s.pending_count}</span></div>
         </div>
         <div class="telemetry-card">
-          <div class="tele-title">Winrate & Outcomes</div>
-          <div class="tele-row"><span class="tele-lbl">Winrate:</span><span class="tele-val" style="color:var(--green);">${s.winrate_pct.toFixed(1)}%</span></div>
-          <div class="tele-row"><span class="tele-lbl">TP Hits:</span><span class="tele-val" style="color:var(--green);">${s.tp_hits}</span></div>
-          <div class="tele-row"><span class="tele-lbl">SL Hits:</span><span class="tele-val" style="color:var(--red);">${s.sl_hits}</span></div>
+          <div class="tele-title">Winrate & Preservasi</div>
+          <div class="tele-row"><span class="tele-lbl">Decisive WR:</span><span class="tele-val" style="color:var(--green);font-weight:800;">${s.winrate_pct.toFixed(1)}%</span></div>
+          <div class="tele-row"><span class="tele-lbl">Non-Loss Rate:</span><span class="tele-val" style="color:var(--cyan);font-weight:700;">${(s.preservation_rate || 0).toFixed(1)}%</span></div>
+          <div class="tele-row"><span class="tele-lbl">Decisive Sample:</span><span class="tele-val">${s.decisive_trades} (${s.tp_hits} TP / ${s.sl_hits} SL)</span></div>
         </div>
         <div class="telemetry-card">
-          <div class="tele-title">Performance Edge</div>
-          <div class="tele-row"><span class="tele-lbl">Cumulative Net R:</span><span class="tele-val" style="color:${netCol};">${s.cumulative_net_r >= 0 ? '+' : ''}${s.cumulative_net_r.toFixed(2)}R</span></div>
+          <div class="tele-title">Profit Factor & Edge</div>
+          <div class="tele-row"><span class="tele-lbl">Cumulative Net R:</span><span class="tele-val" style="color:${netCol};font-weight:800;">${s.cumulative_net_r >= 0 ? '+' : ''}${s.cumulative_net_r.toFixed(2)}R</span></div>
+          <div class="tele-row"><span class="tele-lbl">Profit Factor:</span><span class="tele-val" style="color:${(s.profit_factor || 0) >= 1.0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(s.profit_factor || 0).toFixed(2)}</span></div>
           <div class="tele-row"><span class="tele-lbl">Expected Value:</span><span class="tele-val" style="color:${evCol};">${s.expected_value_r >= 0 ? '+' : ''}${s.expected_value_r.toFixed(2)}R / trade</span></div>
-          <div class="tele-row"><span class="tele-lbl">Decisive Trades:</span><span class="tele-val">${s.decisive_trades}</span></div>
         </div>
         <div class="telemetry-card">
-          <div class="tele-title">Execution Quality</div>
-          <div class="tele-row"><span class="tele-lbl">Expired / No-Fill:</span><span class="tele-val">${s.expired_count}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Unconstrained Mode:</span><span class="tele-val" style="color:var(--cyan);">100% CAPTURED</span></div>
-          <div class="tele-row"><span class="tele-lbl">MT5 Capacity Filter:</span><span class="tele-val" style="color:var(--purple);">INDEPENDENT</span></div>
+          <div class="tele-title">Distribusi Resolusi</div>
+          <div class="tele-row"><span class="tele-lbl">🟢 TP / 🔵 BEP:</span><span class="tele-val">${s.outcome_breakdown?.tp?.count || s.tp_hits} (${s.outcome_breakdown?.tp?.pct_total || 0}%) / ${s.outcome_breakdown?.bep?.count || s.bep_hits || 0} (${s.outcome_breakdown?.bep?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl">🟡 Time-Decay:</span><span class="tele-val">${s.outcome_breakdown?.time_decay?.count || s.time_decay_hits || 0} (${s.outcome_breakdown?.time_decay?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl">🔴 SL / ⚪ Exp:</span><span class="tele-val">${s.outcome_breakdown?.sl?.count || s.sl_hits} (${s.outcome_breakdown?.sl?.pct_total || 0}%) / ${s.expired_count} (${s.outcome_breakdown?.expired?.pct_total || 0}%)</span></div>
         </div>
       </div>
     `;
