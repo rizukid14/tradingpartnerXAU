@@ -383,7 +383,8 @@ class TestM4FlowContinuation(unittest.TestCase):
             atr_h1=atr,
             f1=195.950, # Distance 0.150 < 1.25R (~0.350)
             f2=195.200, # Deep floor
-            f1_grade="GRADE_3_MACRO"
+            f1_grade="GRADE_3_MACRO",
+            f1_breached=True
         )
         # Target must skip F1 and anchor toward F2
         self.assertLess(res["tp"], 195.950)

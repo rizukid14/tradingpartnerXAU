@@ -136,7 +136,9 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
         _m4_tp = int(_md.get("m4_tp_pts") or 0)
         if _m4_sl > 0 and _m4_tp > 0:
             sym_m4 = symbol or config.SYMBOL
-            min_sl_m4 = config.get_sl_floor_points(sym_m4, spread_pts=0, atr_points=0)
+            cand_spread = int(getattr(candidate, "current_spread_pts", 0) or 0)
+            cand_atr = int(getattr(candidate, "current_atr_pts", 0) or 0)
+            min_sl_m4 = config.get_sl_floor_points(sym_m4, spread_pts=cand_spread, atr_points=cand_atr)
             if _m4_sl < min_sl_m4:
                 _last_sltp_adjustments.append(f"M4 SL {_m4_sl} pts < safety floor ({min_sl_m4} pts). Menyesuaikan ke {min_sl_m4} pts.")
                 _m4_sl = min_sl_m4

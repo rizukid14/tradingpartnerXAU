@@ -441,12 +441,17 @@ LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 
 # Segmented Safety Floors (3 September 2026 / 4 Sep Unified H1)
-SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 120)       # 120 pts (12 pips) untuk Low-Beta & Standard FX
+SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 80)       # 80 pts (8 pips) untuk Low-Beta & Standard FX
 SL_FLOOR_HIGH_BETA_PTS = _getenv_int("SL_FLOOR_HIGH_BETA_PTS", 180)     # 180 pts (18 pips) untuk High-Beta Crosses (GBPAUD, GBPNZD, EURNZD, GBPCHF)
 SL_FLOOR_JPY_PTS = _getenv_int("SL_FLOOR_JPY_PTS", 250)                 # 250 pts (25 pips) untuk JPY Crosses (H1)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)        # +20 pts (2.0 pips) anti-wick padding NZD
 COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0) # $6.00 round turn ($3/side)
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
+
+# M2 Trend-Aligned Pullback Rules
+M2_MAX_DR_BUY = _getenv_float("M2_MAX_DR_BUY", 0.55)               # Maksimal DR 55% (Discount/Equilibrium bawah) untuk M2 BUY
+M2_MIN_DR_SELL = _getenv_float("M2_MIN_DR_SELL", 0.45)             # Minimal DR 45% (Premium/Equilibrium atas) untuk M2 SELL
+M2_EMA_CORRIDOR_TOLERANCE_ATR = _getenv_float("M2_EMA_CORRIDOR_TOLERANCE_ATR", 0.35) # Max toleransi jarak anchor ke koridor EMA20/50
 
 # M3 Fresh Breakout & Displacement Rules
 M3_BREAKOUT_RECENCY_BARS = _getenv_int("M3_BREAKOUT_RECENCY_BARS", 4)   # Max 4 bar H1 sejak breakout
@@ -454,6 +459,10 @@ M3_MIN_DISPLACEMENT_BODY = _getenv_float("M3_MIN_DISPLACEMENT_BODY", 0.55) # Min
 M3_RETEST_DEBOUNCE_HOURS = _getenv_float("M3_RETEST_DEBOUNCE_HOURS", 2.0) # 2 bar H1 (120 menit) lock jika direject
 M3_M5_REJECTION_FILTER = _getenv_bool("M3_M5_REJECTION_FILTER", True) # Filter micro-rejection M5 anti-waterfall pada retest M3
 M3_M5_MIN_WICK_RATIO = _getenv_float("M3_M5_MIN_WICK_RATIO", 0.25)   # Minimal 25% rejection wick di M5
+M3_MIN_DR_SELL = _getenv_float("M3_MIN_DR_SELL", 0.40)           # Minimal DR 40% (Equilibrium/Premium) untuk M3 SELL
+M3_MAX_DR_BUY = _getenv_float("M3_MAX_DR_BUY", 0.60)             # Maksimal DR 60% (Discount/Equilibrium) untuk M3 BUY
+M3_SFP_REJECTION_WICK = _getenv_float("M3_SFP_REJECTION_WICK", 0.28) # Minimal wick ratio 28% untuk deteksi SFP absorption
+M3_SFP_LOOKBACK_BARS = _getenv_int("M3_SFP_LOOKBACK_BARS", 4)     # 4 bar H1 lookback untuk deteksi SFP absorption
 SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS = _getenv_int("SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180) # Jeda bernapas simbol 3 menit
 SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS = _getenv_int("SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 2700) # Lockout granular 45 menit per mekanisme & arah
 

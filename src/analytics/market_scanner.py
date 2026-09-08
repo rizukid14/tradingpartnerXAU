@@ -1091,6 +1091,98 @@ class MarketScanner:
             return False, "M5_NO_REJECTION_WICK"
         return True, "M5_REJECTION_CONFIRMED"
 
+    def _detect_recent_sfp_absorption(
+        self,
+        sym: str,
+        df: pd.DataFrame,
+        direction: int,
+        atr_val: float,
+        macro: Dict[str, Any]
+    ) -> Tuple[bool, str]:
+        """
+        Anti-Sweep SFP Veto for M3 Breakout Retest:
+        Detects if any recent H1 bar (last 3-4 bars) swept liquidity below/above major levels
+        (F1/PWL/PDL/Psychological level for SELL, or C1/PWH/PDH/Psychological level for BUY)
+        and closed back inside with a significant rejection wick (>= 28%).
+        
+        If detected, smart money is absorbing liquidity and a mean-reversion counter-move is active:
+        - For SELL: Price swept sell-side liquidity at the bottom and is bouncing up.
+          Executing M3 SELL here is "selling the bottom of the sweep" -> VETO!
+        - For BUY: Price swept buy-side liquidity at the top and is falling down.
+          Executing M3 BUY here is "buying the top of the sweep" -> VETO!
+        """
+        if df is None or len(df) < 4:
+            return False, "NO_DATA"
+
+        lookback = getattr(config, "M3_SFP_LOOKBACK_BARS", 4)
+        min_wick = getattr(config, "M3_SFP_REJECTION_WICK", 0.28)
+        recent_df = df.iloc[-lookback:]
+        clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        digits = 3 if "JPY" in clean_sym else 5
+
+        step = get_symbol_step(clean_sym)
+        sub_step = (step * 0.50) if (step is not None and step > 0) else 0.0050
+
+        if direction == -1: # SELL at SBR: check for bullish SFP (low sweep below floor/psych)
+            f1 = float(macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
+            pwl = float(macro.get('pwl', 0.0) or 0.0)
+            pdl = float(macro.get('pdl', 0.0) or 0.0)
+            
+            for idx in range(len(recent_df)):
+                row = recent_df.iloc[idx]
+                b_op = float(row['open'])
+                b_hi = float(row['high'])
+                b_lo = float(row['low'])
+                b_cl = float(row['close'])
+                b_rng = b_hi - b_lo
+                if b_rng <= 0:
+                    continue
+
+                lower_wick = min(b_op, b_cl) - b_lo
+                wick_ratio = lower_wick / b_rng
+
+                candidate_floors = [lvl for lvl in (f1, pwl, pdl) if lvl > 0]
+                if sub_step > 0:
+                    nearest_psych = round(b_lo / sub_step) * sub_step
+                    candidate_floors.append(nearest_psych)
+
+                for flr in candidate_floors:
+                    pierced = (b_lo <= flr - 0.02 * atr_val)
+                    reclaimed = (b_cl >= flr)
+                    if pierced and reclaimed and wick_ratio >= min_wick:
+                        return True, f"SFP Low Absorption: Low {b_lo:.{digits}f} swept below floor {flr:.{digits}f} with {wick_ratio*100:.1f}% lower wick (Reclaimed at {b_cl:.{digits}f})"
+
+        else: # BUY at RBS: check for bearish SFP (high sweep above ceiling/psych)
+            c1 = float(macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
+            pwh = float(macro.get('pwh', 0.0) or 0.0)
+            pdh = float(macro.get('pdh', 0.0) or 0.0)
+
+            for idx in range(len(recent_df)):
+                row = recent_df.iloc[idx]
+                b_op = float(row['open'])
+                b_hi = float(row['high'])
+                b_lo = float(row['low'])
+                b_cl = float(row['close'])
+                b_rng = b_hi - b_lo
+                if b_rng <= 0:
+                    continue
+
+                upper_wick = b_hi - max(b_op, b_cl)
+                wick_ratio = upper_wick / b_rng
+
+                candidate_ceils = [lvl for lvl in (c1, pwh, pdh) if lvl > 0]
+                if sub_step > 0:
+                    nearest_psych = round(b_hi / sub_step) * sub_step
+                    candidate_ceils.append(nearest_psych)
+
+                for ceil in candidate_ceils:
+                    pierced = (b_hi >= ceil + 0.02 * atr_val)
+                    reclaimed = (b_cl <= ceil)
+                    if pierced and reclaimed and wick_ratio >= min_wick:
+                        return True, f"SFP High Absorption: High {b_hi:.{digits}f} swept above ceiling {ceil:.{digits}f} with {wick_ratio*100:.1f}% upper wick (Reclaimed at {b_cl:.{digits}f})"
+
+        return False, "NO_SFP"
+
     def find_ema_confluence_anchor(
         self,
         symbol: str,
@@ -1121,26 +1213,26 @@ class MarketScanner:
         ema50 = float(macro.get('ema50', ema20) or ema20)
         corridor_lo = min(ema20, ema50)
         corridor_hi = max(ema20, ema50)
-        corridor_pad = 0.50 * atr_val
+        ema_tol = getattr(config, "M2_EMA_CORRIDOR_TOLERANCE_ATR", 0.35) * atr_val
+        search_lo = corridor_lo - ema_tol
+        search_hi = corridor_hi + ema_tol
 
         candidates = []
 
         if direction == 1:
-            # Bullish Pullback: Support level must be <= mid
+            # Bullish Pullback: Support level must be <= mid AND within/near EMA corridor
             ob_top = float(macro.get('bullish_ob_top', 0.0) or 0.0)
-            if ob_top > 0 and ob_top <= mid:
+            if ob_top > 0 and ob_top <= mid and (search_lo <= ob_top <= search_hi):
                 candidates.append((ob_top, f"Bullish OB ({ob_top:.{digits}f})", 1))
 
             f1 = float(macro.get('immediate_floor_f1', 0.0) or 0.0)
-            if f1 > 0 and f1 <= mid:
+            if f1 > 0 and f1 <= mid and (search_lo <= f1 <= search_hi):
                 candidates.append((f1, f"F1 Structural Floor ({f1:.{digits}f})", 2))
 
             fvg_top = float(macro.get('bullish_fvg_top', 0.0) or 0.0)
-            if fvg_top > 0 and fvg_top <= mid:
+            if fvg_top > 0 and fvg_top <= mid and (search_lo <= fvg_top <= search_hi):
                 candidates.append((fvg_top, f"Bullish FVG ({fvg_top:.{digits}f})", 3))
 
-            search_lo = min(corridor_lo - corridor_pad, mid - 1.5 * atr_val)
-            search_hi = min(corridor_hi + corridor_pad, mid)
             for frac in [1.0, 0.5, 0.25]:
                 g_step = step * frac
                 min_k = int(search_lo / g_step)
@@ -1149,22 +1241,24 @@ class MarketScanner:
                     p_lvl = round(k * g_step, digits)
                     if search_lo <= p_lvl <= search_hi and p_lvl <= mid:
                         candidates.append((p_lvl, f"Atlas Psych Level ({p_lvl:.{digits}f})", 4))
+
+            # Dynamic EMA20 barrier as baseline anchor if inside search band
+            if search_lo <= ema20 <= mid:
+                candidates.append((ema20, f"Dynamic EMA20 ({ema20:.{digits}f})", 4))
         else:
-            # Bearish Pullback: Resistance level must be >= mid
+            # Bearish Pullback: Resistance level must be >= mid AND within/near EMA corridor
             ob_bot = float(macro.get('bearish_ob_bot', 0.0) or 0.0)
-            if ob_bot > 0 and ob_bot >= mid:
+            if ob_bot > 0 and ob_bot >= mid and (search_lo <= ob_bot <= search_hi):
                 candidates.append((ob_bot, f"Bearish OB ({ob_bot:.{digits}f})", 1))
 
             c1 = float(macro.get('immediate_ceiling_c1', 0.0) or 0.0)
-            if c1 > 0 and c1 >= mid:
+            if c1 > 0 and c1 >= mid and (search_lo <= c1 <= search_hi):
                 candidates.append((c1, f"C1 Structural Ceiling ({c1:.{digits}f})", 2))
 
             fvg_bot = float(macro.get('bearish_fvg_bot', 0.0) or 0.0)
-            if fvg_bot > 0 and fvg_bot >= mid:
+            if fvg_bot > 0 and fvg_bot >= mid and (search_lo <= fvg_bot <= search_hi):
                 candidates.append((fvg_bot, f"Bearish FVG ({fvg_bot:.{digits}f})", 3))
 
-            search_lo = max(corridor_lo - corridor_pad, mid)
-            search_hi = max(corridor_hi + corridor_pad, mid + 1.5 * atr_val)
             for frac in [1.0, 0.5, 0.25]:
                 g_step = step * frac
                 min_k = int(search_lo / g_step)
@@ -1173,6 +1267,10 @@ class MarketScanner:
                     p_lvl = round(k * g_step, digits)
                     if search_lo <= p_lvl <= search_hi and p_lvl >= mid:
                         candidates.append((p_lvl, f"Atlas Psych Level ({p_lvl:.{digits}f})", 4))
+
+            # Dynamic EMA20 barrier as baseline anchor if inside search band
+            if search_hi >= ema20 >= mid:
+                candidates.append((ema20, f"Dynamic EMA20 ({ema20:.{digits}f})", 4))
 
         if candidates:
             valid_cands = [c for c in candidates if abs(c[0] - mid) <= 3.0 * atr_val]
@@ -1195,9 +1293,9 @@ class MarketScanner:
             label_prefix = "Bullish Pullback (EMA + " if direction == 1 else "Bearish Pullback (EMA + "
             return round(best_price, digits), f"{label_prefix}{best_desc} Confluence)"
         else:
-            fallback = round(mid - 0.5 * atr_val, digits) if direction == 1 else round(mid + 0.5 * atr_val, digits)
-            label_prefix = "Bullish Pullback (EMA + " if direction == 1 else "Bearish Pullback (EMA + "
-            return round(fallback, digits), f"{label_prefix}Dynamic Barrier {fallback:.{digits}f} Confluence)"
+            fallback = round(corridor_hi, digits) if direction == 1 else round(corridor_lo, digits)
+            label_prefix = "Bullish Pullback (EMA Corridor Fallback)" if direction == 1 else "Bearish Pullback (EMA Corridor Fallback)"
+            return round(fallback, digits), f"{label_prefix} ({fallback:.{digits}f})"
 
     def find_m1b_zce_basing_anchor(self, symbol: str, mid: float, direction: int, macro: Dict[str, Any], pt: float, atr_val: float) -> Optional[Dict[str, Any]]:
         """
@@ -3626,8 +3724,8 @@ class MarketScanner:
                     has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.50 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.50 * atr_val)
                     has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.50 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.50 * atr_val)
                     has_m4_retest_b = (m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 0.50 * atr_val)
-                    max_dr_buy = 0.80 if (sfr_catalyst == "BULLISH_FLOW" and csm_delta_val >= 1.0) else 0.65
-                    is_valid_pullback_range_b = (pos_in_range <= max_dr_buy) and ((pos_in_range <= 0.55) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b or has_m4_retest_b)
+                    max_dr_buy = float(getattr(config, "M2_MAX_DR_BUY", 0.55))
+                    is_valid_pullback_range_b = (pos_in_range <= max_dr_buy) and ((pos_in_range <= 0.50) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b or has_m4_retest_b)
 
                     is_m2_b_locked, m2_b_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", 1)
                     if is_m2_b_locked:
@@ -3642,7 +3740,7 @@ class MarketScanner:
 
                         # Dynamic EMA Corridor: Price must NOT be collapsed far below EMA50, and must be in healthy pullback value area
                         is_ema_pullback_valid = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
-                        if not is_ema_pullback_valid and not has_m4_retest_b:
+                        if not is_ema_pullback_valid:
                             logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
                             continue
 
@@ -3751,8 +3849,8 @@ class MarketScanner:
                     has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.50 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.50 * atr_val)
                     has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.50 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.50 * atr_val)
                     has_m4_retest_s = (m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 0.50 * atr_val)
-                    min_dr_sell = 0.20 if (sfr_catalyst == "BEARISH_FLOW" and csm_delta_val <= -1.0) else 0.35
-                    is_valid_pullback_range_s = (pos_in_range >= min_dr_sell) and ((pos_in_range >= 0.45) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s or has_m4_retest_s)
+                    min_dr_sell = float(getattr(config, "M2_MIN_DR_SELL", 0.45))
+                    is_valid_pullback_range_s = (pos_in_range >= min_dr_sell) and ((pos_in_range >= 0.50) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s or has_m4_retest_s)
 
                     is_m2_s_locked, m2_s_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", -1)
                     if is_m2_s_locked:
@@ -3767,7 +3865,7 @@ class MarketScanner:
 
                         # Dynamic EMA Corridor: Price must NOT be blown up far above EMA50, and must be in healthy pullback value area
                         is_ema_pullback_valid = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
-                        if not is_ema_pullback_valid and not has_m4_retest_s:
+                        if not is_ema_pullback_valid:
                             logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
                             continue
 
@@ -3964,13 +4062,20 @@ class MarketScanner:
                                     # HTF Wall Collision & Runway Guard ke Plafon C1:
                                     target_ceiling = (macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
                                     dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
-                                    # Block BUY jika harga menabrak plafon C1 (jarak <= 0.35x ATR) atau berada di Premium (dr_pos >= 0.70)
+                                    # Block BUY jika harga menabrak plafon C1 (jarak <= 0.35x ATR) atau berada di Premium (dr_pos > 0.60)
                                     is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
                                     min_runway_mult_b = 0.60 if is_mean_rev_buy else 0.80
                                     has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= min_runway_mult_b * atr_val and dist_to_ceiling >= 0.40 * atr_val)
+                                    is_premium_buy_blocked = (dr_pos > getattr(config, "M3_MAX_DR_BUY", 0.60)) and not is_mean_rev_buy
                                     
-                                    if is_wall_collision_b or (not has_upward_runway and dr_pos > 0.70):
-                                        logger.debug(f"[BREAKOUT BUY WALL COLLISION] {sym} SKIP: mid {mid:.5f} collides with ceiling {target_ceiling:.5f} (dist: {dist_to_ceiling/atr_val:.2f}x ATR, dr_pos: {dr_pos*100:.1f}%)")
+                                    if is_wall_collision_b or is_premium_buy_blocked or (not has_upward_runway):
+                                        logger.debug(f"[BREAKOUT BUY VETO] {sym} SKIP: collision={is_wall_collision_b}, dr_pos={dr_pos*100:.1f}% (> {getattr(config, 'M3_MAX_DR_BUY', 0.60)*100:.0f}%), runway={has_upward_runway}")
+                                        continue
+                                    
+                                    # Anti-Sweep SFP Absorption Veto:
+                                    is_sfp_b, sfp_reason_b = self._detect_recent_sfp_absorption(sym, df, 1, atr_val, macro)
+                                    if is_sfp_b:
+                                        logger.debug(f"[M3 BUY SFP VETO] {sym} SKIP: {sfp_reason_b}")
                                         continue
                                     
                                     # M5 Micro-Rejection Verification Gate
@@ -4162,13 +4267,20 @@ class MarketScanner:
                                     # HTF Wall Collision & Runway Guard ke Lantai F1:
                                     target_floor = (macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
                                     dist_to_floor = (mid - target_floor) if target_floor > 0 else 999.0
-                                    # Block SELL jika harga menabrak lantai F1 (jarak <= 0.35x ATR) atau berada di Discount (dr_pos <= 0.30)
+                                    # Block SELL jika harga menabrak lantai F1 (jarak <= 0.35x ATR) atau berada di Discount (dr_pos < 0.40)
                                     is_wall_collision_s = (target_floor > 0 and dist_to_floor <= 0.35 * atr_val and mid > target_floor - 0.15 * atr_val)
                                     min_runway_mult_s = 0.60 if is_mean_rev_sell else 0.80
                                     has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= min_runway_mult_s * atr_val and dist_to_floor >= 0.40 * atr_val)
+                                    is_discount_sell_blocked = (dr_pos < getattr(config, "M3_MIN_DR_SELL", 0.40)) and not is_mean_rev_sell
                                     
-                                    if is_wall_collision_s or (not has_downward_runway and dr_pos < 0.30):
-                                        logger.debug(f"[BREAKOUT SELL WALL COLLISION] {sym} SKIP: mid {mid:.5f} collides with floor {target_floor:.5f} (dist: {dist_to_floor/atr_val:.2f}x ATR, dr_pos: {dr_pos*100:.1f}%)")
+                                    if is_wall_collision_s or is_discount_sell_blocked or (not has_downward_runway):
+                                        logger.debug(f"[BREAKOUT SELL VETO] {sym} SKIP: collision={is_wall_collision_s}, dr_pos={dr_pos*100:.1f}% (< {getattr(config, 'M3_MIN_DR_SELL', 0.40)*100:.0f}%), runway={has_downward_runway}")
+                                        continue
+                                    
+                                    # Anti-Sweep SFP Absorption Veto:
+                                    is_sfp_s, sfp_reason_s = self._detect_recent_sfp_absorption(sym, df, -1, atr_val, macro)
+                                    if is_sfp_s:
+                                        logger.debug(f"[M3 SELL SFP VETO] {sym} SKIP: {sfp_reason_s}")
                                         continue
                                     
                                     # M5 Micro-Rejection Verification Gate
@@ -4351,6 +4463,26 @@ class MarketScanner:
                                 continue
                             _sl = pend["sl"]
                             _tp = pend["tp"]
+
+                            # Dynamic Structural ZCE Wall Anchoring for M4
+                            # Jika BUY dan terdapat ZCE F1 di bawah level dalam rentang 1.5 ATR:
+                            # Jangkar SL di belakang F1 (dengan bantalan anti-wick 15 pts + spread).
+                            if _side_key == "BUY" and f1_struct > 0 and f1_struct < _level and (_level - f1_struct) <= 1.5 * atr_now:
+                                _sl_wall = f1_struct - max(15 * pt, 0.15 * atr_now) - (spread_pts * pt)
+                                _sl = min(_sl, _sl_wall)
+                            elif _side_key == "SELL" and c1_struct > 0 and c1_struct > _level and (c1_struct - _level) <= 1.5 * atr_now:
+                                _sl_wall = c1_struct + max(15 * pt, 0.15 * atr_now) + (spread_pts * pt)
+                                _sl = max(_sl, _sl_wall)
+
+                            # Clamp ke Segmented Safety Floor (80 pts Quiet, 180 pts High-Beta, 250 pts JPY)
+                            _m4_floor_pts = config.get_sl_floor_points(sym, spread_pts=spread_pts, atr_points=atr_pts)
+                            if _side_key == "BUY":
+                                if (_level - _sl) < (_m4_floor_pts * pt):
+                                    _sl = _level - (_m4_floor_pts * pt)
+                            else:
+                                if (_sl - _level) < (_m4_floor_pts * pt):
+                                    _sl = _level + (_m4_floor_pts * pt)
+
                             _dec = 5 if pt < 0.01 else 2
                             _r_pts = max(1, int(round(abs(_sl - _level) / pt)))
                             _tp_pts = max(1, int(round(abs(_tp - _level) / pt)))

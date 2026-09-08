@@ -356,6 +356,14 @@ python main.py
     - **Vektor Tujuan & Target Runway ($F_2 / C_2$ dengan Grade Attribution)**: Arah ekspansi surge terkunci menuju stasiun ZCE berikutnya ($F_2$ SELL / $C_2$ BUY) dengan penandaan Grade klaster ($G_1, G_2, G_3$) dan front-run 5 pts.
     - **Optimasi Konfigurasi**: `M4_LOOKBACK_BARS` diselaraskan ke 24 (1 hari bursa) dan `M4_MIN_EPISODE_BARS` disesuaikan ke 2 bar H1 di `config.py` dan `.env`.
     - **Cockpit Chart & Standbys**: Dashboard menggambar garis level emas tepat di $F_1 / C_1$, dan marker menampilkan label rich: `[M4 SELL WATCH: Floor F1 (G2) -> Destination F2 (G3)]`.
+73. **Ortogonalitas Action Tier (MSE) vs Setup Grade (ZCE) & Penyelarasan Lot Sizing Defensif** (8 September 2026 — Siang/Sore):
+    - **Pemisahan Lapisan 2D**: `action_tier` murni status makro MSE (`FULL_ALLOW`, `REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`), `setup_grade` murni kapasitas runway geometri ZCE (`GRADE_B`, `GRADE_A`, `GRADE_A+`, `GRADE_S`).
+    - **Harmonisasi Lot Defensif Single-Layer** (`risk_engine.py`): `GRADE_B` dan `REDUCED_CONFIDENCE` sama-sama memicu diskon defensif $0.75\times$ tanpa dobel diskon ($0.75 \times 0.75 = 0.56\times$ dilarang). Pengali default `sizing_multiplier = 1.0` tidak mem-bypass pemotongan defensif.
+    - **Matriks Interaksi Eksekusi**:
+      * *`GRADE_A+` + `REDUCED_CONFIDENCE`*: Runway lapang ($2.34R$), tetapi target dipangkas ke plafon makro $\le 2.00R$, lot defensif $0.75\times$, BEP dipercepat ke 35% TP.
+      * *`GRADE_B` + `REDUCED_CONFIDENCE`*: Runway sempit ($0.75R - 1.25R$), wajib 1 tiket murni (dilarang split 2 posisi), bypass partial close 100%, lot defensif $0.75\times$, BEP 35% TP, stagnation exit 4 jam.
+    - **Transparansi Visual Terminal** (`cli_theme.py`, `main.py`): Pemisahan baris `• Runway Grade : ` (geometri ZCE) dan `• Apex Carry FE: ` (makro carry spread) di banner radar, serta pencatatan Realized R:R pasca-market fill di Pure Quant.
+    - **Verifikasi Kuantitatif**: 199/199 test suite pytest 100% PASS.
 
 ---
 

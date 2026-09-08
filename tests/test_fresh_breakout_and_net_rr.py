@@ -13,9 +13,9 @@ class TestFreshBreakoutAndNetRR(unittest.TestCase):
 
     def test_segmented_sl_floors(self):
         """Test segmented safety floors across low-beta, high-beta, and JPY pairs."""
-        # 1. Quiet FX (EURCHF): ATR 70 pts -> floor should clamp to 120 pts
+        # 1. Quiet FX (EURCHF): ATR 70 pts -> floor should clamp to 80 pts (Dynamic Floor)
         fl_eurchf = config.get_sl_floor_points("EURCHF-ECNc", spread_pts=15, atr_points=70)
-        self.assertEqual(fl_eurchf, 120)
+        self.assertEqual(fl_eurchf, 80)
 
         # 2. High-Beta FX (GBPAUD): ATR 150 pts -> 0.5x ATR is 75, floor clamps to 180 pts
         fl_gbpaud = config.get_sl_floor_points("GBPAUD-ECNc", spread_pts=20, atr_points=150)
@@ -37,13 +37,13 @@ class TestFreshBreakoutAndNetRR(unittest.TestCase):
         """Test that minimum TP covers target R + spread + round-turn commission."""
         with patch.object(config, "ZCE_ENABLED", False), patch.object(config, "ZCE_MODE", "shadow"):
             sl, tp, ok, reason = _apply_sltp_rules(
-                sl_points=50,  # Below 120 floor
+                sl_points=50,  # Below 80 floor
                 tp_points=60,  # Below Net R:R
                 symbol="EURCHF-ECNc",
             )
             self.assertTrue(ok)
-            # SL should be lifted to at least 120 pts
-            self.assertGreaterEqual(sl, 120)
+            # SL should be lifted to at least 80 pts
+            self.assertGreaterEqual(sl, 80)
             # TP must be at least int(sl * 1.25) + 5 pts comm
             self.assertGreaterEqual(tp, int(sl * 1.25) + 5)
 

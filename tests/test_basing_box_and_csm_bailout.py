@@ -144,12 +144,12 @@ def test_csm_dynamic_bailout_triggers_on_sharp_adverse_shift(mock_csm, mock_tele
     mock_csm.return_value = -2.20
     mock_telemetry.return_value = {
         "trades": {
-            "99999": {"csm_delta_open": 1.50}
+            "88888": {"csm_delta_open": 1.50}
         }
     }
     
     pos = MagicMock()
-    pos.ticket = 99999
+    pos.ticket = 88888
     pos.type = 0 # mt5.ORDER_TYPE_BUY
     pos.sl = 0.99400
     pos.price_open = 0.99500
