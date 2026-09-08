@@ -2,6 +2,34 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam IX) — Pelepasan Batas Konsentrasi Keranjang Valas di .env dan Debouncing Soft Timing Hold pada SLTP Abort
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Penyelarasan Batas Konsentrasi Mata Uang (`MAX_CURRENCY_BASKET_EXPOSURE`)**:
+   - Pada sesi 7 September 2026, batas konsentrasi mata uang disepakati untuk dilepas (`MAX_CURRENCY_BASKET_EXPOSURE=99`) guna mengumpulkan data forward test tanpa hambatan kuota artifisial, karena trade yang melebihi kapasitas akan otomatis dicatat ke *Shadow Paper Tracker*.
+   - Namun, variabel tersebut belum terdefinisi di `.env`, menyebabkan sistem runtime jatuh ke nilai default kaku `3`. Akibatnya, trade valid seperti `NZDUSD` dan 8 kali sinyal `USDJPY` dibatalkan paksa oleh Risk Engine.
+2. **Spamming Loop pada Penolakan SL/TP Rules (`ANCHOR_TOO_WIDE`)**:
+   - Ketika proposal order dibatalkan oleh `_apply_sltp_rules` (seperti `EURGBP` dengan realized R:R $0.27:1 < 0.75R$), `main.py` langsung mereturn `False` tanpa mencatat jeda timing.
+   - Akibatnya, radar memindai ulang dan mencetak proposal yang sama berulang-ulang setiap siklus 60 detik.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **Pelepasan Konsentrasi Valas di `.env` & `config.py`**:
+   - Menambahkan `MAX_CURRENCY_BASKET_EXPOSURE=99` ke dalam `.env`.
+   - Mengubah nilai default fallback di `config.py` menjadi `99`.
+   - Menambahkan *fast-bypass* pada `src/core/risk_engine.py` saat `MAX_CURRENCY_BASKET_EXPOSURE >= 90`.
+2. **Debouncing Soft Timing Hold pada Abort SL/TP Rules (`main.py`)**:
+   - Pada blok `if not sltp_ok:`, memanggil `scanner_inst.record_soft_timing_hold(sym, cand_type, dir_str)` sehingga instrumen dijeda bernapas 3 menit tanpa mengunci mekanisme permanen.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Unit Test Suite**:
+   - `tests/test_risk_engine_magic_filter.py`, `tests/test_dashboard.py`, `tests/test_market_scanner.py`: **46/46 PASSED (100%)**.
+
+---
+
 ## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam VIII) — Perluasan Toleransi Wall Proximity Anti-Bull/Anti-Bear Veto dan Stabilisasi Resensi Standby M1
 
 ### Latar Belakang & Identifikasi Masalah:

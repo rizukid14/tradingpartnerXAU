@@ -380,6 +380,10 @@ python main.py
     - **MSE Mandate Direct Veto Override**: Jika MSE mengeluarkan mandat penolakan atap/lantai (`CEILING_REJECTION`, `FLOOR_REJECTION`, atau directive `SELL`/`BUY`/`FADE`), anti-trend veto otomatis di-bypass jika harga berada di dinding $G_2/G_3$ atau di batas dealing range ekstrim.
     - **Stabilisasi Resensi Standby M1 (`get_radar_standbys()`)**: Memisahkan pelacakan sapuan atas (`top_bar_age`) dan sapuan bawah (`bot_bar_age`). Memprioritaskan sapuan segar (`bar_age <= 3`) sehingga penurunan harga menuju target $F_1$ tidak memicu pembalikan prematur indikator standby ke sapuan dasar usang (4 bar yang lalu).
     - **Verifikasi Kuantitatif**: 56/56 pytest suite (`test_dashboard.py`, `test_market_scanner.py`, dll) 100% PASS.
+77. **Pelepasan Batas Konsentrasi Keranjang Valas di .env & Debouncing SL/TP Abort** (8 September 2026 — Malam IX):
+    - **Pelepasan Konsentrasi Keranjang Valas (`MAX_CURRENCY_BASKET_EXPOSURE=99`)**: Menyelaraskan file `.env` dan default `config.py` ke nilai 99 (mode forward test / data collection), serta menambahkan fast bypass pada `risk_engine.py`. Mengeliminasi pemblokiran false positive pada `NZDUSD` dan `USDJPY`.
+    - **Debouncing Soft Timing Hold pada Abort SL/TP Rules (`main.py`)**: Menerapkan jeda bernapas 3 menit (`scanner_inst.record_soft_timing_hold`) saat order dibatalkan oleh aturan SL/TP (`ANCHOR_TOO_WIDE`), menghentikan spamming loop pada pair sempit seperti `EURGBP`.
+    - **Verifikasi Kuantitatif**: 46/46 pytest suite (`test_risk_engine_magic_filter.py`, `test_dashboard.py`, `test_market_scanner.py`) 100% PASS.
 
 ---
 

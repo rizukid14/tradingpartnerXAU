@@ -962,6 +962,16 @@ def run_scanner_trading_cycle(cand, risk):
 
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
+                try:
+                    from src.analytics.market_scanner import MarketScanner
+                    scanner_inst = getattr(MarketScanner, '_instance', None)
+                    if scanner_inst:
+                        cand_type = getattr(cand, 'setup_type', '')
+                        cand_dir = getattr(cand, 'direction', 0)
+                        dir_str = "BUY" if cand_dir == 1 else ("SELL" if cand_dir == -1 else "ALL")
+                        scanner_inst.record_soft_timing_hold(sym, cand_type, dir_str)
+                except Exception:
+                    pass
                 tg.alert_trade_aborted(
                     symbol=sym,
                     signal=trade_signal,

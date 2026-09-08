@@ -613,8 +613,9 @@ class RiskEngine:
                 if clean_sym == o_sym:
                     return False, f" [RISK] Simbol {symbol} sudah memiliki pending order aktif (Ticket #{o.ticket})."
 
-            # 5. Currency Basket Concentration Limit (Max 3 open positions containing the same currency)
-            if len(clean_sym) >= 6:
+            # 5. Currency Basket Concentration Limit (Max positions containing the same currency)
+            max_curr_exposure = getattr(config, "MAX_CURRENCY_BASKET_EXPOSURE", 99)
+            if 0 < max_curr_exposure < 90 and len(clean_sym) >= 6:
                 base_curr = clean_sym[:3]
                 quote_curr = clean_sym[3:6]
                 base_count = 0
@@ -626,7 +627,6 @@ class RiskEngine:
                     if quote_curr in p_clean:
                         quote_count += 1
                 
-                max_curr_exposure = getattr(config, "MAX_CURRENCY_BASKET_EXPOSURE", 3)
                 if base_count >= max_curr_exposure:
                     return False, f" [RISK] Konsentrasi mata uang {base_curr} di MT5 sudah mencapai batas ({base_count}/{max_curr_exposure} posisi)."
                 if quote_count >= max_curr_exposure:

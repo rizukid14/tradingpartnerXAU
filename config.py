@@ -622,7 +622,7 @@ BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
 MAX_OPEN_POSITIONS_BTC = _getenv_int("MAX_OPEN_POSITIONS_BTC", 2)        # Weekend BTC trading max 2 posisi
-MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 3)  # Max open positions per single currency (USD, JPY, EUR, etc)
+MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 99)  # Max open positions per single currency (USD, JPY, EUR, etc)
 
 
 def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
