@@ -517,6 +517,57 @@ class CockpitDataEngine:
             is_near = (closest_atr <= 1.0)
             dist_desc = f"{closest_pips:.1f} pips ({closest_atr:.2f}x ATR)" if closest_atr < 50 else ">50 pips (Idle)"
 
+            # ZCE Station Runway Target Calculation
+            c1_p = float(macro.get("immediate_ceiling_c1", macro.get("ceiling_c1", 0.0)) or 0.0)
+            f1_p = float(macro.get("immediate_floor_f1", macro.get("floor_f1", 0.0)) or 0.0)
+            c2_p = float(macro.get("ceiling_c2", 0.0) or 0.0)
+            f2_p = float(macro.get("floor_f2", 0.0) or 0.0)
+            struct_stage = str(macro.get("structural_stage") or "")
+
+            runway_station = "—"
+            runway_pips = 0.0
+            runway_atr = 0.0
+            runway_badge = "RW: —"
+            runway_text = "RW: —"
+
+            if mid > 0 and pip_val > 0 and atr_val > 0:
+                is_bull_orient = ("BULL" in bias) or (closest_name and ("BUY" in closest_name or "BULL" in closest_name))
+                is_bear_orient = ("BEAR" in bias) or (closest_name and ("SELL" in closest_name or "BEAR" in closest_name))
+
+                if is_bull_orient and not is_bear_orient:
+                    target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid >= c1_p and c2_p > c1_p)) else c1_p
+                    wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
+                    if target_wall > 0:
+                        runway_pips = (target_wall - mid) / pip_val
+                        runway_atr = (target_wall - mid) / atr_val
+                        runway_station = wall_lbl
+                        runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                        runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+                elif is_bear_orient and not is_bull_orient:
+                    target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
+                    wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
+                    if target_wall > 0:
+                        runway_pips = (mid - target_wall) / pip_val
+                        runway_atr = (mid - target_wall) / atr_val
+                        runway_station = wall_lbl
+                        runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                        runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+                else:
+                    dist_to_c1 = (c1_p - mid) if c1_p > 0 else 99999
+                    dist_to_f1 = (mid - f1_p) if f1_p > 0 else 99999
+                    if dist_to_c1 < dist_to_f1 and c1_p > 0:
+                        runway_pips = dist_to_c1 / pip_val
+                        runway_atr = dist_to_c1 / atr_val
+                        runway_station = "C1"
+                        runway_badge = f"C1: {runway_pips:.0f}p"
+                        runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+                    elif f1_p > 0:
+                        runway_pips = dist_to_f1 / pip_val
+                        runway_atr = dist_to_f1 / atr_val
+                        runway_station = "F1"
+                        runway_badge = f"F1: {runway_pips:.0f}p"
+                        runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+
             # M4 Systemic Flow Shock & Dealing Range Extraction
             dr_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
             base_curr = clean_sym[:3]
@@ -572,6 +623,11 @@ class CockpitDataEngine:
                 "m4_dir": m4_flow_dir,
                 "dir_locked": dir_locked,
                 "dr_pct": round(dr_pct, 1),
+                "runway_badge": runway_badge,
+                "runway_text": runway_text,
+                "runway_station": runway_station,
+                "runway_pips": round(runway_pips, 1),
+                "runway_atr": round(runway_atr, 2),
                 "basing_box": b_box_info,
                 "wave_regime": w_regime
             })
@@ -1088,6 +1144,63 @@ class CockpitDataEngine:
             "basing_box": macro.get("basing_box") or {}
         }
 
+        # ZCE Station Runway Target Calculation
+        c1_p = float(c1 or 0.0)
+        f1_p = float(f1 or 0.0)
+        c2_p = float(c2 or 0.0)
+        f2_p = float(f2 or 0.0)
+        mid_p = (bid + ask) / 2.0
+        pip_val = 0.01 if ("JPY" in symbol or "XAU" in symbol) else (1.0 if "BTC" in symbol else 0.0001)
+        atr_val_pts = float(atr_pts or 300)
+        atr_price = (atr_val_pts * (0.01 if "JPY" in symbol else 0.0001)) if atr_val_pts > 0 else 0.0030
+        struct_stage = str(macro.get("structural_stage") or "")
+        d1_trend_str = str(intel.get("d1_trend") or "").upper()
+        h4_trend_str = str(intel.get("h4_trend") or "").upper()
+
+        runway_badge = "RW: —"
+        runway_text = "—"
+        runway_station = "—"
+        runway_pips = 0.0
+        runway_atr = 0.0
+
+        if mid_p > 0 and pip_val > 0:
+            is_bull = ("BULL" in d1_trend_str or "BULL" in h4_trend_str)
+            is_bear = ("BEAR" in d1_trend_str or "BEAR" in h4_trend_str)
+
+            if is_bull and not is_bear:
+                target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid_p >= c1_p and c2_p > c1_p)) else c1_p
+                wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
+                if target_wall > 0:
+                    runway_pips = (target_wall - mid_p) / pip_val
+                    runway_atr = (target_wall - mid_p) / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = wall_lbl
+                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            elif is_bear and not is_bull:
+                target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid_p <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
+                wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
+                if target_wall > 0:
+                    runway_pips = (mid_p - target_wall) / pip_val
+                    runway_atr = (mid_p - target_wall) / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = wall_lbl
+                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            else:
+                dist_to_c1 = (c1_p - mid_p) if c1_p > 0 else 99999
+                dist_to_f1 = (mid_p - f1_p) if f1_p > 0 else 99999
+                if dist_to_c1 < dist_to_f1 and c1_p > 0:
+                    runway_pips = dist_to_c1 / pip_val
+                    runway_atr = dist_to_c1 / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = "C1"
+                    runway_badge = f"C1: {runway_pips:.0f}p"
+                    runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+                elif f1_p > 0:
+                    runway_pips = dist_to_f1 / pip_val
+                    runway_atr = dist_to_f1 / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = "F1"
+                    runway_badge = f"F1: {runway_pips:.0f}p"
+                    runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
         dr_lbl = "DEEP DISCOUNT" if dr_val <= 38.0 else ("EXTREME PREMIUM" if dr_val >= 62.0 else "EQUILIBRIUM")
 
@@ -1125,6 +1238,11 @@ class CockpitDataEngine:
             "atr_pts": int(atr_pts),
             "dr_pos": dr_val,
             "dr_label": dr_lbl,
+            "runway_text": runway_text,
+            "runway_badge": runway_badge,
+            "runway_station": runway_station,
+            "runway_pips": round(runway_pips, 1),
+            "runway_atr": round(runway_atr, 2),
             "m4_shock": m4_has_shock,
             "m4_flow_state": m4_flow_state,
             "m4_z": round(m4_dominant_z, 2),

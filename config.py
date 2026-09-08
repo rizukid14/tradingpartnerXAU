@@ -1322,3 +1322,8 @@ def trailing_activation_params_for(symbol):
             getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
         )
 
+
+# --- ZCE STATION RUNWAY & DELIVERY MODEL (8 Sep 2026) ---
+ZCE_MIN_RUNWAY_RR = _getenv_float("ZCE_MIN_RUNWAY_RR", 0.75)
+ZCE_COUNTER_HTF_MIN_RUNWAY_RR = _getenv_float("ZCE_COUNTER_HTF_MIN_RUNWAY_RR", 1.00)
+FLOW_VULNERABILITY_CSM_THRESHOLD = _getenv_float("FLOW_VULNERABILITY_CSM_THRESHOLD", 1.50)

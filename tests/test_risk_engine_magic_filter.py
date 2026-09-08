@@ -50,10 +50,11 @@ class TestRiskEngineMagicFilter(unittest.TestCase):
         allowed, msg = self.risk._check_max_positions("USDJPY-ECN")
         self.assertTrue(allowed, f"USDJPY should be allowed because manual trades are excluded, got: {msg}")
 
+    @patch("src.core.risk_engine.config.get_max_open_positions", return_value=6)
     @patch("src.core.risk_engine.connector.get_account_info")
     @patch("src.core.risk_engine.mt5.orders_get")
     @patch("src.core.risk_engine.mt5.positions_get")
-    def test_bot_positions_properly_enforce_currency_basket(self, mock_positions_get, mock_orders_get, mock_account):
+    def test_bot_positions_properly_enforce_currency_basket(self, mock_positions_get, mock_orders_get, mock_account, mock_get_max):
         """Three bot positions containing USD must block a 4th USD position under standard limits (MAX=3)."""
         mock_account.return_value = {"equity": 10000.0, "free_margin": 9000.0}
         mock_orders_get.return_value = []
@@ -74,10 +75,11 @@ class TestRiskEngineMagicFilter(unittest.TestCase):
         finally:
             config.MAX_CURRENCY_BASKET_EXPOSURE = orig_basket
 
+    @patch("src.core.risk_engine.config.get_max_open_positions", return_value=6)
     @patch("src.core.risk_engine.connector.get_account_info")
     @patch("src.core.risk_engine.mt5.orders_get")
     @patch("src.core.risk_engine.mt5.positions_get")
-    def test_basket_exposure_unlimited_when_set_to_99(self, mock_positions_get, mock_orders_get, mock_account):
+    def test_basket_exposure_unlimited_when_set_to_99(self, mock_positions_get, mock_orders_get, mock_account, mock_get_max):
         """When MAX_CURRENCY_BASKET_EXPOSURE=99, a 4th USD position must be permitted."""
         mock_account.return_value = {"equity": 10000.0, "free_margin": 9000.0}
         mock_orders_get.return_value = []

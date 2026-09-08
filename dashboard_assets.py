@@ -1172,8 +1172,8 @@ html, body {
           <span class="strip-val" id="strip-atr">— pts</span>
         </div>
         <div class="strip-item">
-          <span class="strip-lbl">Dealing Range</span>
-          <span class="strip-val" id="strip-dr">—%</span>
+          <span class="strip-lbl">ZCE Runway</span>
+          <span class="strip-val" id="strip-dr" style="color:var(--cyan);font-weight:600;">—</span>
         </div>
         <div class="strip-item">
           <span class="strip-lbl">CSM Delta</span>
@@ -2177,7 +2177,7 @@ function renderWatchlist(pairs) {
             <span class="pair-dist-text">${distText}</span>
           </div>
           <div class="pair-col-mid">
-            <span style="color:var(--text-dim);font-size:8.5px;font-family:var(--font-mono);">DR: ${p.dr_pct !== undefined ? p.dr_pct.toFixed(0) : '50'}%</span>
+            <span style="color:var(--cyan);font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="ZCE Runway Target: ${p.runway_text || '—'}">${p.runway_badge || 'RW: —'}</span>
           </div>
           <div class="pair-col-right" style="gap:3px;">
             ${boxPill}
@@ -2206,7 +2206,7 @@ function renderSymbolHeader(d) {
   document.getElementById("strip-price").textContent = `${d.bid.toFixed(d.digits)} / ${d.ask.toFixed(d.digits)}`;
   document.getElementById("strip-spread").textContent = `${d.spread_pts} pts`;
   document.getElementById("strip-atr").textContent = `${d.atr_pts} pts`;
-  document.getElementById("strip-dr").textContent = `${d.dr_pos.toFixed(1)}% (${d.dr_label})`;
+  document.getElementById("strip-dr").textContent = d.runway_text || (d.dr_pos !== undefined ? `${d.dr_pos.toFixed(1)}% (${d.dr_label})` : '—');
   
   const csmEl = document.getElementById("strip-csm");
   csmEl.textContent = `${d.csm_delta >= 0 ? '+' : ''}${d.csm_delta.toFixed(2)}`;

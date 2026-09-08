@@ -176,12 +176,18 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
     
     if direction == 1: # BUY
         # SL behind support origin level / ZCE F1 Floor / RBS
+        # Fortress SL Shielding: Park SL behind the safest (lowest) protective barrier
+        candidates = []
         if origin_level and origin_level < entry_price:
-            sl = origin_level - sl_buffer
-        elif f1 and f1 < entry_price:
-            sl = f1 - wall_cushion
-        elif rbs and rbs < entry_price:
-            sl = rbs - sl_buffer
+            candidates.append(origin_level - sl_buffer)
+        if f1 and f1 < entry_price:
+            candidates.append(f1 - wall_cushion)
+        if rbs and rbs < entry_price:
+            candidates.append(rbs - sl_buffer)
+
+        if candidates:
+            valid_cands = [c for c in candidates if (entry_price - c) <= max_sl_dist]
+            sl = min(valid_cands) if valid_cands else min(candidates)
         else:
             sl_anchor = entry_price - 1.2 * atr_h1
             sl = sl_anchor - sl_buffer
@@ -243,12 +249,18 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             
     else: # SELL
         # SL behind resistance origin level / ZCE C1 Ceiling / SBR
+        # Fortress SL Shielding: Park SL behind the safest (highest) protective barrier
+        candidates = []
         if origin_level and origin_level > entry_price:
-            sl = origin_level + sl_buffer
-        elif c1 and c1 > entry_price:
-            sl = c1 + wall_cushion
-        elif sbr and sbr > entry_price:
-            sl = sbr + sl_buffer
+            candidates.append(origin_level + sl_buffer)
+        if c1 and c1 > entry_price:
+            candidates.append(c1 + wall_cushion)
+        if sbr and sbr > entry_price:
+            candidates.append(sbr + sl_buffer)
+
+        if candidates:
+            valid_cands = [c for c in candidates if (c - entry_price) <= max_sl_dist]
+            sl = max(valid_cands) if valid_cands else max(candidates)
         else:
             sl_anchor = entry_price + 1.2 * atr_h1
             sl = sl_anchor + sl_buffer

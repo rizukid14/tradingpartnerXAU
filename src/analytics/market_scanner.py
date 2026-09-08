@@ -40,11 +40,12 @@ def evaluate_universal_sweep_gates(
     recent_floor_touch: bool,     # True if price touched PWL floor in last 24-32h
     close_below_ema20: bool,      # True if Close < EMA20 H1
     close_above_ema20: bool,      # True if Close > EMA20 H1
-    macro_trend: str              # 'BULLISH', 'BEARISH', or 'NEUTRAL'
+    macro_trend: str,             # 'BULLISH', 'BEARISH', or 'NEUTRAL'
+    wave_regime: Optional[str] = None # 'YOUNG_OSCILLATION', 'SUPER_COMPRESSION_THRUST', etc.
 ) -> Tuple[bool, str]:
     """
-    3-Gate Hierarchical Structural Validator for UNIVERSAL_LIQUIDITY_SWEEP.
-    Eliminates 'Catching a Falling Knife' when Bearish Delivery from HTF Ceiling is active.
+    Station-to-Station Structural Validator for UNIVERSAL_LIQUIDITY_SWEEP.
+    Replaced rigid Dealing Range % clamps with ZCE Target Runway & Anti-Knife Wave Regime Protection.
     
     Returns:
         (is_allowed: bool, log_reason: str)
@@ -52,24 +53,33 @@ def evaluate_universal_sweep_gates(
     atr_threshold = 0.35 * atr_val
 
     # =========================================================================
+    # WAVE REGIME SPECIALIZATION: Anti-Knife Thrust Gate
+    # =========================================================================
+    if wave_regime == "SUPER_COMPRESSION_THRUST":
+        if signal_type == 'SELL' and "BULLISH" in str(macro_trend).upper():
+            return False, "LOCKED BY WAVE REGIME: Super-Compression Thrust active with Bullish Macro (Anti-Knife: do not fade rocket)."
+        if signal_type == 'BUY' and "BEARISH" in str(macro_trend).upper():
+            return False, "LOCKED BY WAVE REGIME: Super-Compression Thrust active with Bearish Macro (Anti-Knife: do not catch falling knife)."
+
+    # =========================================================================
     # GATE B: Anti-Ceiling / Anti-Floor Rebound Vector (Vector Memory)
     # =========================================================================
     # 1. Bearish Delivery: Rejected PWH Ceiling & moving down below EMA20
     is_htf_bearish_delivery = recent_ceiling_touch and close_below_ema20
     if is_htf_bearish_delivery and signal_type == 'BUY':
-        if dealing_range_pos > 0.20 and dist_to_htf_floor > atr_threshold:
+        if dist_to_htf_floor > atr_threshold:
             return False, (
                 f"LOCKED BY GATE B [Anti-Ceiling Vector]: Bearish Delivery from Plafon is ACTIVE. "
-                f"Asian Low break at DR {dealing_range_pos*100:.1f}% is breakdown continuation toward HTF floor."
+                f"Breakdown continuation toward HTF floor (distance {dist_to_htf_floor/atr_val:.2f}x ATR)."
             )
 
     # 2. Bullish Delivery: Bounced from PWL Floor & surging up above EMA20
     is_htf_bullish_delivery = recent_floor_touch and close_above_ema20
     if is_htf_bullish_delivery and signal_type == 'SELL':
-        if dealing_range_pos < 0.80 and dist_to_htf_ceiling > atr_threshold:
+        if dist_to_htf_ceiling > atr_threshold:
             return False, (
                 f"LOCKED BY GATE B [Anti-Floor Vector]: Bullish Delivery from Floor is ACTIVE. "
-                f"Asian High break at DR {dealing_range_pos*100:.1f}% is breakout expansion toward HTF ceiling."
+                f"Breakout expansion toward HTF ceiling (distance {dist_to_htf_ceiling/atr_val:.2f}x ATR)."
             )
 
     # =========================================================================
@@ -94,31 +104,31 @@ def evaluate_universal_sweep_gates(
             )
 
     # =========================================================================
-    # GATE A: HTF Anchor & Deep Discount / Extreme Premium Area of Value
+    # GATE A: ZCE Target Runway & Structural Anchor Validation
     # =========================================================================
     if signal_type == 'BUY':
-        if dealing_range_pos > 0.45:
-            return False, f"LOCKED BY GATE A [Range Discipline]: Bullish Sweep forbidden in Premium/Equilibrium (DR {dealing_range_pos*100:.1f}% > 45%)."
-        is_deep_discount = dealing_range_pos <= 0.25
-        is_anchored_floor = dist_to_htf_floor <= atr_threshold
-        if not (is_deep_discount or is_anchored_floor):
+        # Upward runway to ceiling target must be >= 0.50x ATR (or adequate for min 0.75R)
+        if dist_to_htf_ceiling < 0.50 * atr_val:
+            return False, f"LOCKED BY GATE A [Runway Too Tight]: Upward runway to ceiling {dist_to_htf_ceiling/atr_val:.2f}x ATR < 0.50x ATR."
+        is_anchored_floor = dist_to_htf_floor <= atr_threshold or dealing_range_pos <= 0.25
+        if not is_anchored_floor:
             return False, (
                 f"LOCKED BY GATE A [HTF Anchor]: Low sweep at DR {dealing_range_pos*100:.1f}% "
-                f"lacks HTF Support Floor (Requires Deep Discount DR <= 25% or Floor Distance <= {atr_threshold:.5f})."
+                f"lacks HTF Support Floor (Requires Floor Distance <= {atr_threshold:.5f} or Deep Discount DR <= 25%)."
             )
-        return True, f"PASSED ALL GATES: Valid Universal Sweep BUY anchored at HTF Floor (DR {dealing_range_pos*100:.1f}%)."
+        return True, f"PASSED ALL GATES: Valid Universal Sweep BUY anchored at HTF Floor with adequate runway ({dist_to_htf_ceiling/atr_val:.2f}x ATR)."
 
     elif signal_type == 'SELL':
-        if dealing_range_pos < 0.55:
-            return False, f"LOCKED BY GATE A [Range Discipline]: Bearish Sweep forbidden in Discount/Equilibrium (DR {dealing_range_pos*100:.1f}% < 55%)."
-        is_extreme_premium = dealing_range_pos >= 0.75
-        is_anchored_ceiling = dist_to_htf_ceiling <= atr_threshold
-        if not (is_extreme_premium or is_anchored_ceiling):
+        # Downward runway to floor target must be >= 0.50x ATR (or adequate for min 0.75R)
+        if dist_to_htf_floor < 0.50 * atr_val:
+            return False, f"LOCKED BY GATE A [Runway Too Tight]: Downward runway to floor {dist_to_htf_floor/atr_val:.2f}x ATR < 0.50x ATR."
+        is_anchored_ceiling = dist_to_htf_ceiling <= atr_threshold or dealing_range_pos >= 0.75
+        if not is_anchored_ceiling:
             return False, (
                 f"LOCKED BY GATE A [HTF Anchor]: High sweep at DR {dealing_range_pos*100:.1f}% "
-                f"lacks HTF Resistance Ceiling (Requires Extreme Premium DR >= 75% or Ceiling Distance <= {atr_threshold:.5f})."
+                f"lacks HTF Resistance Ceiling (Requires Ceiling Distance <= {atr_threshold:.5f} or Extreme Premium DR >= 75%)."
             )
-        return True, f"PASSED ALL GATES: Valid Universal Sweep SELL anchored at HTF Ceiling (DR {dealing_range_pos*100:.1f}%)."
+        return True, f"PASSED ALL GATES: Valid Universal Sweep SELL anchored at HTF Ceiling with adequate runway ({dist_to_htf_floor/atr_val:.2f}x ATR)."
 
     return False, "LOCKED: Default Fallback."
 
@@ -3300,7 +3310,8 @@ class MarketScanner:
                                 recent_floor_touch=macro.get('recent_floor_touch', False),
                                 close_below_ema20=(mid < ema20_val),
                                 close_above_ema20=(mid > ema20_val),
-                                macro_trend=macro_trend_str
+                                macro_trend=macro_trend_str,
+                                wave_regime=macro.get('wave_regime_name', 'YOUNG_OSCILLATION')
                             )
                             clean_s = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
                             is_sweep_pair = clean_s in SWEEP_SPECIALIST_PAIRS
@@ -3470,7 +3481,8 @@ class MarketScanner:
                                 recent_floor_touch=macro.get('recent_floor_touch', False),
                                 close_below_ema20=(mid < macro.get('ema20', mid)),
                                 close_above_ema20=(mid > macro.get('ema20', mid)),
-                                macro_trend=macro_trend_str
+                                macro_trend=macro_trend_str,
+                                wave_regime=macro.get('wave_regime_name', 'YOUNG_OSCILLATION')
                             )
                             clean_s = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
                             is_sweep_pair = clean_s in SWEEP_SPECIALIST_PAIRS
@@ -3625,11 +3637,15 @@ class MarketScanner:
                             logger.debug(f"[M1B LOCK] {sym} SKIP: {m1b_lock_reason}")
                             continue
 
+                        f1_target_m1b = macro.get('immediate_floor_f1', 0.0) or (mid - atr_price_val)
+                        c1_target_m1b = macro.get('immediate_ceiling_c1', 0.0) or (mid + atr_price_val)
                         if m1b_d == -1:
-                            if not (getattr(config, 'M1B_DR_SELL_MIN', 0.10) <= dr_pos_val <= getattr(config, 'M1B_DR_SELL_MAX', 0.65)):
+                            if f1_target_m1b > 0 and (mid - f1_target_m1b) < 0.50 * atr_price_val:
+                                logger.debug(f"[M1B SELL RUNWAY] {sym} SKIP: Downward runway to floor {mid - f1_target_m1b:.5f} < 0.50x ATR")
                                 continue
                         else:
-                            if not (getattr(config, 'M1B_DR_BUY_MIN', 0.35) <= dr_pos_val <= getattr(config, 'M1B_DR_BUY_MAX', 0.90)):
+                            if c1_target_m1b > 0 and (c1_target_m1b - mid) < 0.50 * atr_price_val:
+                                logger.debug(f"[M1B BUY RUNWAY] {sym} SKIP: Upward runway to ceiling {c1_target_m1b - mid:.5f} < 0.50x ATR")
                                 continue
 
                         m1b_anchor_info = self.find_m1b_zce_basing_anchor(sym, mid, m1b_d, macro, pt, atr_price_val)
@@ -3803,10 +3819,8 @@ class MarketScanner:
                     has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.50 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.50 * atr_val)
                     has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.50 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.50 * atr_val)
                     has_m4_retest_b = (m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 0.50 * atr_val)
-                    max_dr_buy = float(getattr(config, "M2_MAX_DR_BUY", 0.68))
-                    if (sfr_catalyst == "BULLISH_FLOW") or (csm_delta_val >= 1.0):
-                        max_dr_buy = max(max_dr_buy, float(getattr(config, "M2_MAX_DR_BUY_CATALYST", 0.75)))
-                    is_valid_pullback_range_b = (pos_in_range <= max_dr_buy) and ((pos_in_range <= 0.50) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b or has_m4_retest_b)
+                    # ZCE Runway & Structural Pullback Validation (Replaced rigid DR % clamp)
+                    is_valid_pullback_range_b = has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b or has_m4_retest_b or (mid <= ema20 + 0.45 * atr_val)
                     is_ema_pullback_valid_b = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
 
                     is_m2_b_locked, m2_b_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", 1)
@@ -3927,10 +3941,8 @@ class MarketScanner:
                     has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.50 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.50 * atr_val)
                     has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.50 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.50 * atr_val)
                     has_m4_retest_s = (m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 0.50 * atr_val)
-                    min_dr_sell = float(getattr(config, "M2_MIN_DR_SELL", 0.32))
-                    if (sfr_catalyst == "BEARISH_FLOW") or (csm_delta_val <= -1.0):
-                        min_dr_sell = min(min_dr_sell, float(getattr(config, "M2_MIN_DR_SELL_CATALYST", 0.25)))
-                    is_valid_pullback_range_s = (pos_in_range >= min_dr_sell) and ((pos_in_range >= 0.50) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s or has_m4_retest_s)
+                    # ZCE Runway & Structural Pullback Validation (Replaced rigid DR % clamp)
+                    is_valid_pullback_range_s = has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s or has_m4_retest_s or (mid >= ema20 - 0.45 * atr_val)
                     is_ema_pullback_valid_s = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
 
                     is_m2_s_locked, m2_s_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", -1)
@@ -4129,16 +4141,8 @@ class MarketScanner:
                         min_runway_mult_b = 0.60 if is_mean_rev_buy else 0.80
                         has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= min_runway_mult_b * atr_val and dist_to_ceiling >= 0.40 * atr_val)
 
-                        # M3 Dealing Range with Trend Catalyst Confirmation:
-                        m3_max_dr_buy = float(getattr(config, "M3_MAX_DR_BUY", 0.80))
-                        m3_cat_dr_buy = float(getattr(config, "M3_CATALYST_DR_BUY_THRESHOLD", 0.60))
-                        has_buy_catalyst = (csm_delta_val >= 1.0) or (sfr_catalyst == "BULLISH_FLOW")
-                        if dr_pos > m3_max_dr_buy:
-                            is_premium_buy_blocked = not is_mean_rev_buy
-                        elif dr_pos > m3_cat_dr_buy:
-                            is_premium_buy_blocked = (not has_buy_catalyst) and (not is_mean_rev_buy)
-                        else:
-                            is_premium_buy_blocked = False
+                        # M3 Runway Validation (Replaced rigid dealing range % clamp)
+                        is_premium_buy_blocked = False
 
                         is_sfp_b, sfp_reason_b = self._detect_recent_sfp_absorption(sym, df, 1, atr_val, macro)
                         m5_ok_b, m5_reason_b = self._verify_m5_rejection_wick(sym, target_res, 1, atr_val, pt, mt5_connector=mt5_connector)
@@ -4152,8 +4156,8 @@ class MarketScanner:
                             logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
                         elif max_push_b > 2.50:
                             logger.debug(f"[BREAKOUT BUY RUNAWAY] {sym} SKIP: excursion {max_push_b:.2f}x ATR > 2.50x ATR (flash spike exhaustion)")
-                        elif is_wall_collision_b or is_premium_buy_blocked or (not has_upward_runway):
-                            logger.debug(f"[BREAKOUT BUY VETO] {sym} SKIP: collision={is_wall_collision_b}, dr_pos={dr_pos*100:.1f}% (> {m3_max_dr_buy*100:.0f}%), catalyst={has_buy_catalyst}, runway={has_upward_runway}")
+                        elif is_wall_collision_b or (not has_upward_runway):
+                            logger.debug(f"[BREAKOUT BUY VETO] {sym} SKIP: collision={is_wall_collision_b}, runway={has_upward_runway}")
                         elif is_sfp_b:
                             logger.debug(f"[M3 BUY SFP VETO] {sym} SKIP: {sfp_reason_b}")
                         elif not m5_ok_b:
@@ -4336,16 +4340,8 @@ class MarketScanner:
                         min_runway_mult_s = 0.60 if is_mean_rev_sell else 0.80
                         has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= min_runway_mult_s * atr_val and dist_to_floor >= 0.40 * atr_val)
 
-                        # M3 Dealing Range with Trend Catalyst Confirmation:
-                        m3_min_dr_sell = float(getattr(config, "M3_MIN_DR_SELL", 0.20))
-                        m3_cat_dr_sell = float(getattr(config, "M3_CATALYST_DR_SELL_THRESHOLD", 0.40))
-                        has_sell_catalyst = (csm_delta_val <= -1.0) or (sfr_catalyst == "BEARISH_FLOW")
-                        if dr_pos < m3_min_dr_sell:
-                            is_discount_sell_blocked = not is_mean_rev_sell
-                        elif dr_pos < m3_cat_dr_sell:
-                            is_discount_sell_blocked = (not has_sell_catalyst) and (not is_mean_rev_sell)
-                        else:
-                            is_discount_sell_blocked = False
+                        # M3 Runway Validation (Replaced rigid dealing range % clamp)
+                        is_discount_sell_blocked = False
 
                         is_sfp_s, sfp_reason_s = self._detect_recent_sfp_absorption(sym, df, -1, atr_val, macro)
                         m5_ok_s, m5_reason_s = self._verify_m5_rejection_wick(sym, target_sup, -1, atr_val, pt, mt5_connector=mt5_connector)
@@ -4359,8 +4355,8 @@ class MarketScanner:
                             logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
                         elif max_push_s > 2.50:
                             logger.debug(f"[BREAKOUT SELL RUNAWAY] {sym} SKIP: excursion {max_push_s:.2f}x ATR > 2.50x ATR (flash dump exhaustion)")
-                        elif is_wall_collision_s or is_discount_sell_blocked or (not has_downward_runway):
-                            logger.debug(f"[BREAKOUT SELL VETO] {sym} SKIP: collision={is_wall_collision_s}, dr_pos={dr_pos*100:.1f}% (< {m3_min_dr_sell*100:.0f}%), catalyst={has_sell_catalyst}, runway={has_downward_runway}")
+                        elif is_wall_collision_s or (not has_downward_runway):
+                            logger.debug(f"[BREAKOUT SELL VETO] {sym} SKIP: collision={is_wall_collision_s}, runway={has_downward_runway}")
                         elif is_sfp_s:
                             logger.debug(f"[M3 SELL SFP VETO] {sym} SKIP: {sfp_reason_s}")
                         elif not m5_ok_s:
@@ -4503,22 +4499,7 @@ class MarketScanner:
                                 logger.debug(f"[M4 LOCK] {sym} {_side_key} SKIP: {m4_lock_reason}")
                                 continue
 
-                            # Flexible Range Discipline Gate (User choice 4 Sep 2026):
-                            # BUY in Extreme Premium (>0.70 DR) only allowed if CSM Delta >= +0.035
-                            # SELL in Extreme Discount (<0.30 DR) only allowed if CSM Delta <= -0.035
-                            ext_dr_hi = getattr(config, "M4_EXTREME_DR_THRESHOLD", 0.70)
-                            ext_dr_lo = 1.0 - ext_dr_hi
-                            csm_override = getattr(config, "M4_EXTREME_CSM_DELTA_OVERRIDE", 0.035)
-                            dr_pos_m4 = float(macro.get('dealing_range_pos', macro.get('dr_pos', 0.5)) or 0.5)
-
-                            if _side_key == "BUY" and dr_pos_m4 > ext_dr_hi:
-                                if csm_delta_val < csm_override:
-                                    logger.debug(f"[M4 RANGE DISCIPLINE] {sym} BUY SKIP: DR {dr_pos_m4*100:.1f}% > {ext_dr_hi*100:.0f}% without extreme CSM Delta ({csm_delta_val:+.4f} < +{csm_override:.3f})")
-                                    continue
-                            elif _side_key == "SELL" and dr_pos_m4 < ext_dr_lo:
-                                if csm_delta_val > -csm_override:
-                                    logger.debug(f"[M4 RANGE DISCIPLINE] {sym} SELL SKIP: DR {dr_pos_m4*100:.1f}% < {ext_dr_lo*100:.0f}% without extreme CSM Delta ({csm_delta_val:+.4f} > -{csm_override:.3f})")
-                                    continue
+                            # M4 Systemic Flow: Evaluates structural runway and ZCE wall targets (Replaced rigid DR clamp)
 
                             _alw, _tier, _why = _is_direction_allowed(_dir, config.M4_SETUP_TYPE, entry_price=pend["level"])
                             if not _alw:

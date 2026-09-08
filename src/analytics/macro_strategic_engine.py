@@ -1359,11 +1359,12 @@ class MacroStrategicEngine:
             event = StructuralEvent.BREAK
         elif location == Location.CEILING:
             # Ascending Pre-Breakout Compression (Trend Aligned Uptrend grinding at ceiling with structural runway above)
-            if is_h1_bull and is_h4_bull and curr_mid >= sub_floor and has_runway_up and (h4_hl or not last_h1_bear):
+            htf_bullish = is_h4_bull or last_d1_bull
+            if htf_bullish and has_runway_up and not (peak_u_wick_pct >= 45 and last_h1_bear):
                 event = StructuralEvent.COMPRESSION
             elif any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
-            elif peak_u_wick_pct >= 33 or last_h1_bear or h4_lh:
+            elif peak_u_wick_pct >= 33 or (last_h1_bear and not htf_bullish) or h4_lh:
                 event = StructuralEvent.REJECTION
             elif any("TOUCH" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.TOUCH
@@ -1371,11 +1372,12 @@ class MacroStrategicEngine:
                 event = StructuralEvent.RETEST
         elif location == Location.FLOOR:
             # Descending Pre-Breakdown Compression (Trend Aligned Downtrend grinding at floor with structural runway below)
-            if is_h1_bear and is_h4_bear and curr_mid <= sub_ceiling and has_runway_down and (h4_lh or not last_h1_bull):
+            htf_bearish = is_h4_bear or last_d1_bear
+            if htf_bearish and has_runway_down and not (peak_l_wick_pct >= 45 and last_h1_bull):
                 event = StructuralEvent.COMPRESSION
             elif any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
-            elif peak_l_wick_pct >= 33 or last_h1_bull or h4_hl:
+            elif peak_l_wick_pct >= 33 or (last_h1_bull and not htf_bearish) or h4_hl:
                 event = StructuralEvent.REJECTION
             elif any("TOUCH" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.TOUCH
@@ -1439,38 +1441,67 @@ class MacroStrategicEngine:
         macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits) if last_d1_bull else round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
 
         if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
-            macro_bias = "BULLISH_PULLBACK"
-            primary_directive = "HUNT_BUY_AT_RBS"
-            macro_bias_score = +0.85 if market_state == "FLOOR_REJECTION" else +0.70
-            if h4_hl or last_d1_bull: macro_bias_score += 0.10
-            macro_bias_score = round(min(1.0, macro_bias_score), 2)
+            htf_bearish = is_h4_bear or last_d1_bear
+            if market_state == "FLOOR_REJECTION" and htf_bearish and has_runway_down:
+                macro_bias = "BEARISH_EXPANSION"
+                primary_directive = "HUNT_SELL_BREAKDOWN_RETEST"
+                macro_bias_score = -0.65
+                entry_anchor = round(imm_floor_f1, digits)
+                entry_zone_proximal = round(entry_anchor + reload_width, digits)
+                calculated_sl = imm_ceiling_c1 + anti_wick_buffer
+                if (calculated_sl - entry_anchor) < min_sl_dist:
+                    calculated_sl = entry_anchor + min_sl_dist
+                elif (calculated_sl - entry_anchor) > max_sl_dist:
+                    calculated_sl = entry_anchor + max_sl_dist
+                intraday_sl = round(calculated_sl, digits)
+                macro_invalidation = round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
+                target_station_final = deep_floor_f2
+                hard_circuit_breaker = False
+                action_tier = "FULL_ALLOW"
+                sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
+                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                tp1_target = entry_anchor - max(1.25 * sl_dist, 0.50 * abs(entry_anchor - deep_floor_f2))
+                tp1_price = round(max(tp1_target, deep_floor_f2 + front_pad), digits)
+                tp2_price = round(deep_floor_f2 + front_pad, digits)
+                stage_label = f"DESCENDING_ABSORPTION_AT_{imm_floor_f1:.{digits}f}"
+                thesis = f"{symbol} in descending absorption at floor {imm_floor_f1:.{digits}f}. Multi-day bear alignment targeting {deep_floor_f2:.{digits}f}."
+                confidence_score = 80
+                max_allowed_buy = 0.0
+                min_allowed_sell = round(deep_floor_f2, digits)
+                forbidden_traps = [f"Do NOT buy into descending bear momentum at {imm_floor_f1:.{digits}f}"]
+            else:
+                macro_bias = "BULLISH_PULLBACK"
+                primary_directive = "HUNT_BUY_AT_RBS"
+                macro_bias_score = +0.85 if market_state == "FLOOR_REJECTION" else +0.70
+                if h4_hl or last_d1_bull: macro_bias_score += 0.10
+                macro_bias_score = round(min(1.0, macro_bias_score), 2)
 
-            entry_anchor = round(imm_floor_f1 - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
-            entry_zone_proximal = round(entry_anchor + reload_width, digits)
-            # Shield is the Immediate Floor F1
-            calculated_sl = imm_floor_f1 - anti_wick_buffer
-            if (entry_anchor - calculated_sl) < min_sl_dist:
-                calculated_sl = entry_anchor - min_sl_dist
-            elif (entry_anchor - calculated_sl) > max_sl_dist:
-                calculated_sl = entry_anchor - max_sl_dist
-            intraday_sl = round(calculated_sl, digits)
+                entry_anchor = round(imm_floor_f1 - (sweep_offset if clean_sym in SWEEP_SPECIALIST_PAIRS else 0.0), digits)
+                entry_zone_proximal = round(entry_anchor + reload_width, digits)
+                # Shield is the Immediate Floor F1
+                calculated_sl = imm_floor_f1 - anti_wick_buffer
+                if (entry_anchor - calculated_sl) < min_sl_dist:
+                    calculated_sl = entry_anchor - min_sl_dist
+                elif (entry_anchor - calculated_sl) > max_sl_dist:
+                    calculated_sl = entry_anchor - max_sl_dist
+                intraday_sl = round(calculated_sl, digits)
 
-            macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
-            target_station_final = ceiling_station
-            hard_circuit_breaker = bool((curr_mid <= imm_floor_f1 - (0.25 * atr_h1)) or (curr_mid < macro_invalidation))
-            action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
+                macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
+                target_station_final = ceiling_station
+                hard_circuit_breaker = bool((curr_mid <= imm_floor_f1 - (0.25 * atr_h1)) or (curr_mid < macro_invalidation))
+                action_tier = "HARD_BLOCK" if hard_circuit_breaker else "FULL_ALLOW"
 
-            sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
-            front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-            tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(imm_ceiling_c1 - entry_anchor))
-            tp1_price = round(min(tp1_target, imm_ceiling_c1 - front_pad), digits)
-            tp2_price = round(deep_ceiling_c2 - front_pad, digits)
-            stage_label = f"RBS_SUPPORT_RETEST_AT_{imm_floor_f1:.{digits}f}"
-            thesis = f"{symbol} in {market_state} at floor {imm_floor_f1:.{digits}f}. Reload targeting ceiling {imm_ceiling_c1:.{digits}f} with breakout extension to {deep_ceiling_c2:.{digits}f}."
-            confidence_score = 88
-            max_allowed_buy = round(entry_anchor + (0.25 * atr_d1), digits)
-            min_allowed_sell = 0.0
-            forbidden_traps = [f"Do NOT short into confirmed RBS support at {imm_floor_f1:.{digits}f}"]
+                sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(imm_ceiling_c1 - entry_anchor))
+                tp1_price = round(min(tp1_target, imm_ceiling_c1 - front_pad), digits)
+                tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+                stage_label = f"RBS_SUPPORT_RETEST_AT_{imm_floor_f1:.{digits}f}"
+                thesis = f"{symbol} in {market_state} at floor {imm_floor_f1:.{digits}f}. Reload targeting ceiling {imm_ceiling_c1:.{digits}f} with breakout extension to {deep_ceiling_c2:.{digits}f}."
+                confidence_score = 88
+                max_allowed_buy = round(entry_anchor + (0.25 * atr_d1), digits)
+                min_allowed_sell = 0.0
+                forbidden_traps = [f"Do NOT short into confirmed RBS support at {imm_floor_f1:.{digits}f}"]
 
         elif market_state == "CEILING_ABSORPTION":
             macro_bias = "BULLISH_COMPRESSION"
@@ -1529,7 +1560,35 @@ class MacroStrategicEngine:
             forbidden_traps = [f"Do NOT buy into descending bearish compression at {imm_floor_f1:.{digits}f}"]
 
         elif market_state in ("CEILING_REJECTION", "CHAMBER_CEILING_TEST"):
-            if market_state == "CEILING_REJECTION":
+            htf_bullish = is_h4_bull or last_d1_bull
+            if market_state == "CEILING_REJECTION" and htf_bullish and has_runway_up:
+                macro_bias = "BULLISH_EXPANSION"
+                primary_directive = "HUNT_BUY_BREAKOUT_RETEST"
+                macro_bias_score = 0.65
+                entry_anchor = round(imm_ceiling_c1, digits)
+                entry_zone_proximal = round(entry_anchor - reload_width, digits)
+                calculated_sl = imm_floor_f1 - anti_wick_buffer
+                if (entry_anchor - calculated_sl) < min_sl_dist:
+                    calculated_sl = entry_anchor - min_sl_dist
+                elif (entry_anchor - calculated_sl) > max_sl_dist:
+                    calculated_sl = entry_anchor - max_sl_dist
+                intraday_sl = round(calculated_sl, digits)
+                macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
+                target_station_final = deep_ceiling_c2
+                hard_circuit_breaker = False
+                action_tier = "FULL_ALLOW"
+                sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(deep_ceiling_c2 - entry_anchor))
+                tp1_price = round(min(tp1_target, deep_ceiling_c2 - front_pad), digits)
+                tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+                stage_label = f"ASCENDING_ABSORPTION_AT_{imm_ceiling_c1:.{digits}f}"
+                thesis = f"{symbol} in ascending absorption at ceiling {imm_ceiling_c1:.{digits}f}. Multi-day bull alignment targeting {deep_ceiling_c2:.{digits}f}."
+                confidence_score = 80
+                max_allowed_buy = round(deep_ceiling_c2, digits)
+                min_allowed_sell = 0.0
+                forbidden_traps = [f"Do NOT short into ascending bull momentum at {imm_ceiling_c1:.{digits}f}"]
+            elif market_state == "CEILING_REJECTION":
                 macro_bias = "BEARISH_PULLBACK"
                 primary_directive = "HUNT_SELL_PULLBACK"
                 macro_bias_score = -0.80
@@ -1572,7 +1631,7 @@ class MacroStrategicEngine:
                 confidence_score = 75
                 hard_circuit_breaker = False
                 action_tier = "WATCH_ONLY"
-                max_allowed_buy = 0.0
+                max_allowed_buy = round(deep_ceiling_c2, digits) if htf_bullish else 0.0
                 min_allowed_sell = 0.0
                 forbidden_traps = ["Wait for test resolution"]
 

@@ -860,6 +860,34 @@ def run_scanner_trading_cycle(cand, risk):
             return False
             
         elif trade_signal == "HOLD":
+            # ATR Gate / ANCHOR_TOO_WIDE rejection in multi-LLM consensus: route to Paper Trade Shadow Book
+            if result.get("hold_type") == "atr_gate":
+                sltp_reason = result.get("sltp_reason", "")
+                try:
+                    cand_signal = result.get("candidate_signal", "BUY")
+                    t_live = connector.get_current_tick(sym)
+                    pt = t_live.get("point", 0.00001) if t_live else 0.00001
+                    p_entry_calc = result.get("entry_price") or (t_live.get("ask", 0.0) if cand_signal == "BUY" else t_live.get("bid", 0.0)) if t_live else getattr(cand, "scan_mid", 0.0)
+                    sh_sl_pts = result.get("sl_points", 0) or getattr(cand, "sl_points", 0) or config.default_sl_points_for(sym)
+                    sh_tp_pts = result.get("tp_points", 0) or getattr(cand, "tp_points", 0) or config.default_tp_points_for(sym)
+                    p_sl_calc = result.get("invalidation_price") or (p_entry_calc - (sh_sl_pts * pt) if cand_signal == "BUY" else p_entry_calc + (sh_sl_pts * pt))
+                    p_tp_calc = result.get("target_price") or (p_entry_calc + (sh_tp_pts * pt) if cand_signal == "BUY" else p_entry_calc - (sh_tp_pts * pt))
+                    clean_disp = "SKIPPED_ANCHOR_TOO_WIDE" if "ANCHOR_TOO_WIDE" in str(sltp_reason) else "SKIPPED_SLTP_RULES"
+                    shadow_trade = shadow_tracker.register_candidate(
+                        candidate=cand,
+                        entry_type=result.get("entry_type") or "market",
+                        entry_price=p_entry_calc,
+                        sl_price=p_sl_calc,
+                        tp_price=p_tp_calc,
+                        sl_points=sh_sl_pts,
+                        tp_points=sh_tp_pts,
+                        mt5_disposition=clean_disp
+                    )
+                    if shadow_trade:
+                        print(f" {UI.MAGENTA}[SHADOW RADAR REGISTERED] {sym} ({cand.setup_type}) dicatat ke Paper Trade ({clean_disp}).{UI.RST}")
+                except Exception as shadow_err:
+                    logger.debug(f"[SHADOW_REGISTER_HOLD_ATR_FAIL] {sym}: {shadow_err}")
+
             # BIFURCATED REJECTION LOGIC (4 Sep 2026):
             # 1. Hard Risk VETO (45m Lockout): Khusus jika ada fatal risk flag (counter-trend, waterfall, dump, news, trap).
             # 2. Soft Timing HOLD (3m Breathing Only): Jika penolakan murni karena timing / boundary belum tersentuh.
@@ -972,6 +1000,30 @@ def run_scanner_trading_cycle(cand, risk):
                         scanner_inst.record_soft_timing_hold(sym, cand_type, dir_str)
                 except Exception:
                     pass
+
+                # Virtual Shadow Quant Radar: Masukkan trade yang dibatalkan SL/TP (misal ANCHOR_TOO_WIDE) ke paper trade shadow
+                try:
+                    p_entry_calc = entry_price if (entry_price and entry_price > 0) else ref_price
+                    sh_sl_pts = sl_points if (sl_points and sl_points > 0) else config.default_sl_points_for(sym)
+                    sh_tp_pts = tp_points if (tp_points and tp_points > 0) else config.default_tp_points_for(sym)
+                    p_sl_calc = p_entry_calc - (sh_sl_pts * point) if trade_signal == "BUY" else p_entry_calc + (sh_sl_pts * point)
+                    p_tp_calc = p_entry_calc + (sh_tp_pts * point) if trade_signal == "BUY" else p_entry_calc - (sh_tp_pts * point)
+                    clean_disp = "SKIPPED_ANCHOR_TOO_WIDE" if "ANCHOR_TOO_WIDE" in str(sltp_reason) else "SKIPPED_SLTP_RULES"
+                    shadow_trade = shadow_tracker.register_candidate(
+                        candidate=cand,
+                        entry_type=entry_type,
+                        entry_price=p_entry_calc,
+                        sl_price=p_sl_calc,
+                        tp_price=p_tp_calc,
+                        sl_points=sh_sl_pts,
+                        tp_points=sh_tp_pts,
+                        mt5_disposition=clean_disp
+                    )
+                    if shadow_trade:
+                        print(f" {UI.MAGENTA}[SHADOW RADAR REGISTERED] {sym} ({cand.setup_type}) dicatat ke Paper Trade ({clean_disp}).{UI.RST}")
+                except Exception as shadow_err:
+                    logger.debug(f"[SHADOW_REGISTER_SLTP_FAIL] {sym}: {shadow_err}")
+
                 tg.alert_trade_aborted(
                     symbol=sym,
                     signal=trade_signal,

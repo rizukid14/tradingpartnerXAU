@@ -242,10 +242,30 @@ class QuantShadowTracker:
                 tmp_path = SHADOW_STATE_FILE + ".tmp"
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
-                if os.path.exists(SHADOW_STATE_FILE):
-                    os.replace(tmp_path, SHADOW_STATE_FILE)
-                else:
-                    os.rename(tmp_path, SHADOW_STATE_FILE)
+                
+                # Retry replace up to 5 times to handle Windows file locking from concurrent readers (e.g. dashboard.py)
+                saved = False
+                for attempt in range(5):
+                    try:
+                        if os.path.exists(SHADOW_STATE_FILE):
+                            os.replace(tmp_path, SHADOW_STATE_FILE)
+                        else:
+                            os.rename(tmp_path, SHADOW_STATE_FILE)
+                        saved = True
+                        break
+                    except (PermissionError, OSError):
+                        time.sleep(0.05 * (attempt + 1))
+
+                if not saved:
+                    # Fallback direct write if os.replace is held by Windows reader
+                    with open(SHADOW_STATE_FILE, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+
                 if os.path.exists(SHADOW_STATE_FILE):
                     self._last_state_mtime = os.path.getmtime(SHADOW_STATE_FILE)
             except Exception as e:
