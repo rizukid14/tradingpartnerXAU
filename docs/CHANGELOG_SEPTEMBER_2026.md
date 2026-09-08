@@ -2,6 +2,124 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0. Perubahan 8 September 2026 (Sore II) — Integrasi Pipeline Dynamic Basing Box ke Macro Cache, Scan Retest Window, dan Normalisasi F1/C1 Fallback Guarantee
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Putusnya Pipeline Data Basing Box**:
+   - `_build_single_macro_context()` di `market_scanner.py` belum memanggil `detect_dynamic_basing_box()` dan belum memasukkan field `basing_box` ke `macro_cache`.
+   - Karena `dashboard.py` membaca `macro = self.scanner.macro_cache.get(sym)`, field `basing_box` selalu bernilai `{}` kosong dan telemetry menampilkan `Basing Box: —` di seluruh 26 pair.
+2. **Kebutuhan Identifikasi Window Retest M3**:
+   - Pasar saat ini berada dalam fase ekspansi/tren aktif London–NY (rentang candle $\ge 2.0\times\text{ s/d } 3.7\times\text{ATR}$ vs batas horizontal $\le 1.60\times\text{ATR}$).
+   - Jendela retest M3 membutuhkan deteksi box yang baru saja tertembus ($\le 4$ bar) untuk menangkap level breakout/breakdown.
+3. **Filter F1/C1 Chart Mengalami Asimetri**:
+   - Di `dashboard.py`, fallback `F1`/`C1` hanya mengecek `if not zce_floors:` / `if not zce_ceils:`. Jika ZCE hanya memilih tier sekunder (`C2` atau `F2`), fallback terlewati sehingga `zce_walls` tidak memiliki `C1` atau `F1`.
+   - Di `dashboard_assets.py`, pengecekan string tipe hanya memeriksa `"ceil"`, padahal Python mengirimkan `"ceiling"`.
+
+---
+
+### Komponen & Solusi Utama:
+1. **Koneksi Pipeline Basing Box ke `macro_cache` (`src/analytics/market_scanner.py`)**:
+   - Menghitung `detect_dynamic_basing_box(df, atr_val=cur_atr)` langsung di `_build_single_macro_context()` dan menyimpannya ke `self.macro_cache[valid_sym]['basing_box']`.
+2. **Deteksi Jendela Breakout Retest & Telemetri Ekspansi (`src/indicators/wave_regime.py`)**:
+   - Memindai offset $k \in [1, 5]$ bar jika bar live `[-1]` tidak sedang kompresi. Mengembalikan status `is_broken: True`, `broken_recency: k`, dan level fisik `box_ceiling` / `box_floor` (contoh: `EURCAD-ECN` BROKEN 11b, 4b ago; `GBPUSD-ECN` BROKEN 18b, 2b ago).
+   - Menghitung `current_range_atr` untuk memberikan informasi kuantitatif saat pasar sedang ekspansi (contoh: `EURUSD-ECN` INACTIVE 3.75x ATR, expanding).
+3. **Normalisasi Dinding F1/C1 & Fallback Primary (`dashboard.py` & `dashboard_assets.py`)**:
+   - Memastikan setiap pair dijamin memiliki minimal 1 `F1` (Support) dan 1 `C1` (Resistance) via `has_f1` / `has_c1` checks.
+   - Memperbaiki pengecekan string tipe `"ceiling"` dan menambahkan fallback `primaryFloor` / `primaryCeil` pada preset `Primary (F1/C1 Only)`.
+   - Watchlist mendukung chip oranye `RETEST {bars}b` jika baru tertembus $\le 4$ bar lalu.
+4. **Verifikasi Test Suite**:
+   - `test_basing_box_and_csm_bailout.py`: **6/6 PASSED (100%)**.
+   - `test_market_scanner.py`: **34/34 PASSED (100%)**.
+   - Full test suite: **209/209 PASSED (100%)**.
+
+---
+
+## 0.0.0.0.0. Perubahan 8 September 2026 (Sore) — Granular 1-by-1 ZCE Fortress Ladder Filter, Standardisasi Google Material Symbols (0% Emoji), Eliminasi Garis Horizontal EMA, dan Dual Collapsible Drawers
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Visual Clutter pada Candlestick Chart**:
+   - Level ZCE multi-horizon sebelumnya ditampilkan seluruhnya secara default (`all`), ditambah garis putus-putus reticle standby M1–M4 dan temporal markers, sehingga memenuhi area chart dan menyulitkan operator membaca formasi candlestick live.
+   - Indikator EMA (20, 50, 200) menampilkan garis horizontal statis dan label harga pada sumbu kanan yang membingungkan dengan level order/ZCE.
+   - Baris metrik HUD kiri atas (`ADX`, `STATE`, `SESSION`, `WAVE REGIME`, `PRE-ROLLOVER`) terlalu panjang dan melebar melebihi batas pandang nyaman.
+2. **Keterbatasan Screen Real Estate Chart**:
+   - Sidebar kiri (26-Pair Proximity Watchlist) dan bottom drawer (MT5 Positions & Telemetry) memakan ruang vertikal dan horizontal yang besar, sehingga candlestick chart utama menjadi sempit pada layar monitor standar/laptop.
+
+---
+
+### Komponen & Solusi Utama:
+1. **Granular Multi-Tier ZCE & Radar Filter (`dashboard_assets.py`)**:
+   - **Ladder Presets**:
+     * `F1/C1` (Default): Hanya menampilkan dinding primer terdekat (F1 Floor & C1 Ceiling).
+     * `Macro G3`: Menampilkan dinding primer + macro multi-day liquidity walls.
+     * `All Zones`: Menampilkan seluruh spektrum zona ZCE multi-horizon.
+     * `Off`: Mematikan seluruh garis level ZCE untuk tampilan chart bersih murni.
+   - **Filter 1-1 Granular Chips (Standardisasi Google Material Symbols — 0% Emoji)**:
+     * `Floors`: Icon `vertical_align_bottom`, toggle instan lantai support.
+     * `Ceils`: Icon `vertical_align_top`, toggle instan atap resistance.
+     * `M1-M4`: Icon `radar`, silencer garis putus-putus radar dan marker proyeksi 3-point trajectory vectors.
+     * `F1`, `C1`, `F2/C2`, `G3`: Kontrol granular per-tier struktural.
+2. **Eliminasi Garis Horizontal EMA & Penambahan Legenda Kanan Atas (`dashboard_assets.py`)**:
+   - `addLineSeries` untuk EMA 20, EMA 50, dan EMA 200 diatur dengan `priceLineVisible: false`, `lastValueVisible: false`, dan `title: ""` (mengeliminasi seluruh garis horizontal statis dan teks pada price axis).
+   - Menambahkan legenda EMA terdedikasi `#chart-ema-legend` pada sudut kanan atas (`top: 10px; right: 65px;`) dengan garis indikator warna (`#00e5ff`, `#ffd740`, `#b388ff`).
+   - Menyelaraskan posisi `#chart-mini-legend` ke `top: 38px; right: 65px;` agar tersusun rapi di bawah legenda EMA.
+3. **Pemisahan Metrik HUD Kiri Atas Menjadi 2 Baris (`dashboard_assets.py`)**:
+   - Baris 1: Symbol Tag + Multi-TF Compass Pills (`W1`, `D1`, `H4`, `H1`).
+   - Baris 2 (`hud-line-2`): `ADX` • `STATE` • `SESSION`.
+   - Baris 3 (`hud-line-3`): `WAVE REGIME` • `PRE-ROLLOVER`.
+4. **Dual Collapsible Drawers (`dashboard_assets.py`)**:
+   - **Left Sidebar Watchlist**: Ditambahkan tombol `#btn-toggle-left` dan label vertikal `26-PAIR RADAR WATCHLIST`. Mengklik toggle atau label vertikal melipat sidebar menjadi 32px, memperluas lebar chart secara drastis.
+   - **Bottom Drawer**: Ditambahkan tombol `#btn-toggle-bottom`. Mengklik toggle melipat panel bawah menjadi 38px (hanya menampilkan tab bar). Mengklik sembarang tab drawer saat terlipat otomatis membuka kembali drawer.
+   - **Auto-Resizing Canvas & Chart**: Pemanggilan `chart.resize()` dan `resizeOverlayCanvas()` dengan delay 220ms untuk memastikan sinkronisasi sempurna pasca-transisi CSS layout flexbox.
+   - **Persistensi Preferensi Browser (`localStorage`)**:
+     * Preferensi lipat (`left_collapsed`, `bottom_collapsed`, `xray_collapsed`), ladder preset (`zce_preset`), dan radar silencer (`zce_radar`) disimpan dan direstorasi otomatis saat page refresh.
+5. **Verifikasi & Kompilasi**:
+   - `python -m py_compile dashboard_assets.py dashboard.py`: **OK (Exit 0)**.
+   - Test suite `python -m pytest tests/ -q`: **209/209 PASSED (100% OK)**.
+   - `python dashboard.py`: Template HTML berhasil digenerate ulang.
+
+---
+
+## 0.0.0.0. Perubahan 8 September 2026 (Siang III) — Dynamic Basing Box Breakout & Retest (M3 Mean-Reversion), Rollover Outlier Filtering, dan CSM Dynamic Bailout Protection
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pelewatan Setup Institutional Mean-Reversion Breakdown pada Titik Infleksi Tren (Studi Kasus AUDCAD)**:
+   - Pada 08/09/2026 04:00 server (08:00 WIB), `AUDCAD-ECN` mengalami kompresi horizontal 35-bar H1 (sejak 04/09 16:00 server) dan menembus lantai kompresi di level `0.99634–0.99655`, lalu me-retest level tersebut di jam 07:00 server (11:00 WIB) dengan target runway terbuka lebar 180–200 poin menuju $F_1-G_3$ RBS. Setup short ini didukung kuat oleh Boitoki CSM Net Delta (-2.77 s/d -3.52).
+   - Radar melewatkan trade short ini karena:
+     * M3 sebelumnya hanya memantau level statis ekstrim (`PDL`, `PWL`, `BOS H1`), buta terhadap lantai konsolidasi lokal (*basing range box*).
+     * Filter arah `can_sell_m3` mengunci short karena bias makro HTF berstatus netral (`0.0`), mengabaikan fakta bahwa seller mendominasi via CSM.
+2. **Suicide Exit pada CSM Dynamic Bailout (`position_manager.py`)**:
+   - Posisi BUY `AUDCAD-ECN` Ticket #675324733 dibuka di `csm_open = -2.77`.
+   - Saat posisi floating rugi minor -30 pts (-0.25R), fungsi `_check_csm_dynamic_bailout()` melihat `csm_delta <= -2.0` secara statis kaku dan langsung membunuh trade di -0.25R, padahal pergeseran riil (*adverse shift*) hanya -0.75 (dari -2.77 ke -3.52).
+3. **Distorsi Rollover Outlier Spike MT5 (00:00 Server / 04:00 WIB)**:
+   - Pelebaran spread dan anomali wick saat pergantian hari broker mendistorsi rentang box kompresi jika dihitung menggunakan titik ekstrim High/Low murni.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Dynamic Basing Box Extraction & Rollover Sanitization (`src/indicators/wave_regime.py`)**:
+   - Menambahkan fungsi `detect_dynamic_basing_box(df, min_bars=10, max_bars=48, max_range_atr=1.60, atr_val=None)`:
+     * Menggunakan **Body Box** ($\max(\text{open}, \text{close})$ sebagai atap dan $\min(\text{open}, \text{close})$ sebagai lantai) untuk menolak distorsi spike rollover 00:00 server.
+     * Mengidentifikasi rentang konsolidasi horizontal terpanjang ($10 \le N \le 48$ bar) yang memiliki rentang $\le 1.60\times\text{ATR}$.
+     * Mengembalikan batas `box_ceiling`, `box_floor`, `box_bars`, dan `range_atr`.
+2. **Integrasi M3 Mean-Reversion Breakdown & Retest (`src/analytics/market_scanner.py`)**:
+   - Injeksi kandidat level `basing_floor` ke M3 SELL dan `basing_ceil` ke M3 BUY.
+   - **Gate Arah Mean-Reversion**: Mengizinkan M3 beroperasi pada kondisi makro Netral atau Counter-Trend jika terkonfirmasi penembusan box dan CSM searah kuat ($|\text{CSM Delta}| \ge 1.50$).
+   - **Sizing & Risk Rules**: Ditetapkan sebagai setup defensif **`GRADE_B`** (`REDUCED_CONFIDENCE`), Stop Loss ketat ($0.35\times\text{ATR}$ dengan safety floor per-simbol), TP dikunci di $F_1+5\text{ pts}$ (SELL) atau $C_1-5\text{ pts}$ (BUY) dengan Net R:R $\ge 0.75R + \text{friksi}$.
+   - **ZCE Runway Relaksasi**: Ambang batas runway minimum diselaraskan ke $\ge 0.60\times\text{ATR}$ untuk Grade B Wall Scalp.
+   - Memperbarui `get_radar_standbys()` agar menampilkan `Basing Box Breakdown Retest (Nb)` dan mengarahkan vektor ke -1 saat kondisi terpenuhi.
+3. **Perbaikan Presisi CSM Dynamic Bailout (`src/analytics/position_manager.py`)**:
+   - Mengganti filter statis kaku dengan kalkulasi delta pergeseran riil:
+     * Trade BUY hanya di-bailout jika terjadi pergeseran negatif tajam `csm_shift <= -2.50`, ATAU jika trade dibuka saat CSM netral/positif (`csm_open >= -0.50`) lalu runtuh ke `csm_delta <= -2.0` dengan pergeseran $\le -1.50$.
+     * Menghilangkan 100% false bailout pada trade yang sudah dibuka dengan opposed CSM.
+4. **Telemetri Visual Cockpit Dashboard (`dashboard.py` & `dashboard_assets.py`)**:
+   - Watchlist menampilkan chip `📦 BOX Nb` jika pair berada dalam status kompresi horizontal.
+   - Tab Telemetry M3 menampilkan metrik `Basing Box: BOX Nb (Xx ATR)`.
+5. **Verifikasi Test Suite**:
+   - Unit test baru `tests/test_basing_box_and_csm_bailout.py`: **6/6 PASSED (100%)**.
+   - Full test suite: **197/197 PASSED (100% OK)** tanpa ada regresi.
+
+---
+
 ## 0.0.0. Perubahan 8 September 2026 (Siang II) — Pemisahan Taksonomi Layer 0 SFR vs Layer 1 M4 Basing, Dynamic Dealing Range M2 (Ride the Wave), dan Persistensi Directional Hysteresis ke Disk
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

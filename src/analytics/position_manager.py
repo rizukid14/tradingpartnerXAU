@@ -208,6 +208,11 @@ def set_ticket_setup_grade(ticket: int, setup_grade: str):
     _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
 
 
+def get_ticket_setup_grade(ticket: int) -> str:
+    """Mengembalikan grade setup tiket (misal: 'GRADE_S', 'GRADE_A', 'GRADE_B', dst)."""
+    return _ticket_setup_grades.get(int(ticket), "")
+
+
 def get_peak_mfe_info(ticket, point=0.00001, volume=0.01, symbol=""):
     """Mengembalikan data peak profit historis untuk injeksi prompt AI Re-evaluator."""
     t_int = int(ticket)
@@ -627,19 +632,29 @@ def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, n
     bail_reason = ""
 
     if pos.type == mt5.ORDER_TYPE_BUY:
-        if csm_delta <= -abs_opposed_thresh:
-            should_bailout = True
-            bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed BUY"
-        elif csm_open is not None and csm_shift <= -shift_thresh:
-            should_bailout = True
-            bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against BUY (open: {csm_open:+.2f})"
+        if csm_open is not None:
+            if csm_shift <= -shift_thresh:
+                should_bailout = True
+                bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against BUY (open: {csm_open:+.2f} -> now: {csm_delta:+.2f})"
+            elif csm_open >= -0.50 and csm_delta <= -abs_opposed_thresh and csm_shift <= -1.50:
+                should_bailout = True
+                bail_reason = f"CSM Flow Inversion from {csm_open:+.2f} to extreme {csm_delta:+.2f} (shift: {csm_shift:+.2f})"
+        else:
+            if csm_delta <= -abs_opposed_thresh:
+                should_bailout = True
+                bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed BUY (no open snapshot)"
     else:  # SELL
-        if csm_delta >= abs_opposed_thresh:
-            should_bailout = True
-            bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed SELL"
-        elif csm_open is not None and csm_shift >= shift_thresh:
-            should_bailout = True
-            bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against SELL (open: {csm_open:+.2f})"
+        if csm_open is not None:
+            if csm_shift >= shift_thresh:
+                should_bailout = True
+                bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against SELL (open: {csm_open:+.2f} -> now: {csm_delta:+.2f})"
+            elif csm_open <= 0.50 and csm_delta >= abs_opposed_thresh and csm_shift >= 1.50:
+                should_bailout = True
+                bail_reason = f"CSM Flow Inversion from {csm_open:+.2f} to extreme {csm_delta:+.2f} (shift: {csm_shift:+.2f})"
+        else:
+            if csm_delta >= abs_opposed_thresh:
+                should_bailout = True
+                bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed SELL (no open snapshot)"
 
     if should_bailout:
         reason = f"CSM Flow Inversion ({bail_reason}, float {curr_r:+.2f}R)"
@@ -1067,7 +1082,7 @@ def audit_pending_orders_thesis():
             is_macro_aligned_sell = (bias_score <= -0.35)
 
             # 4. Check Thesis Invalidation for BUY Pending Orders
-            csm_opposed_thresh = getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
+            csm_opposed_thresh = float(getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.50))
             enable_csm_cancel = getattr(config, "ENABLE_PENDING_CSM_CANCEL", False)
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
                 # Structural Invalidation Floor: use SL if defined, else anchor - 0.50x ATR

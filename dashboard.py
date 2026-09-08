@@ -531,6 +531,8 @@ class CockpitDataEngine:
             m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
             dir_mem = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_sym)
             dir_locked = ("BUY" if dir_mem.get("dir", 0) == 1 else "SELL") if (dir_mem and dir_mem.get("dir", 0) != 0) else None
+            b_box_info = macro.get("basing_box") or {}
+            w_regime = macro.get("wave_regime_name") or "YOUNG_OSCILLATION"
 
             pairs_data.append({
                 "symbol": sym,
@@ -555,7 +557,9 @@ class CockpitDataEngine:
                 "m4_z": round(m4_dominant_z, 2),
                 "m4_dir": m4_flow_dir,
                 "dir_locked": dir_locked,
-                "dr_pct": round(dr_pct, 1)
+                "dr_pct": round(dr_pct, 1),
+                "basing_box": b_box_info,
+                "wave_regime": w_regime
             })
 
         # Stable sorting by Base Currency Group: EUR, GBP, AUD, USD, CHF, CAD, NZD
@@ -721,39 +725,27 @@ class CockpitDataEngine:
         zce_floors = [w for w in (zce_ladder or []) if w.get("type") == "floor"]
         zce_ceils = [w for w in (zce_ladder or []) if w.get("type") == "ceiling"]
 
-        # Floor side fallback
-        if not zce_floors:
-            if f1:
-                zce_floors.append({
-                    "price": round(float(f1), digits),
-                    "band_low": round(float(f1), digits),
-                    "band_high": round(float(f1), digits),
-                    "type": "floor",
-                    "tier": "F1",
-                    "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
-                    "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
-                    "score": 4.5,
-                    "tfs": ["H1", "D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_FLOOR"
-                })
-            if f2 and f1 and float(f2) < float(f1):
-                zce_floors.append({
-                    "price": round(float(f2), digits),
-                    "band_low": round(float(f2), digits),
-                    "band_high": round(float(f2), digits),
-                    "type": "floor",
-                    "tier": "F2",
-                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_FLOOR"
-                })
-        elif len(zce_floors) == 1 and f2:
-            f_price = zce_floors[0]["price"]
-            if float(f2) < f_price - 0.20 * atr_val:
+        # Floor side fallback: ensure at least one F1 is present
+        has_f1 = any(w.get("tier") == "F1" for w in zce_floors)
+        if not has_f1 and f1:
+            zce_floors.insert(0, {
+                "price": round(float(f1), digits),
+                "band_low": round(float(f1), digits),
+                "band_high": round(float(f1), digits),
+                "type": "floor",
+                "tier": "F1",
+                "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
+                "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
+                "score": 4.5,
+                "tfs": ["H1", "D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_FLOOR"
+            })
+
+        has_f2 = any(w.get("tier") == "F2" for w in zce_floors)
+        if not has_f2 and f2:
+            f1_price = float(f1) if f1 else (zce_floors[0]["price"] if zce_floors else 0.0)
+            if f1_price == 0.0 or float(f2) < f1_price - 0.20 * atr_val:
                 zce_floors.append({
                     "price": round(float(f2), digits),
                     "band_low": round(float(f2), digits),
@@ -768,39 +760,27 @@ class CockpitDataEngine:
                     "tag": "BASELINE_DEEP_FLOOR"
                 })
 
-        # Ceiling side fallback
-        if not zce_ceils:
-            if c1:
-                zce_ceils.append({
-                    "price": round(float(c1), digits),
-                    "band_low": round(float(c1), digits),
-                    "band_high": round(float(c1), digits),
-                    "type": "ceiling",
-                    "tier": "C1",
-                    "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
-                    "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
-                    "score": 4.5,
-                    "tfs": ["H1", "D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_CEIL"
-                })
-            if c2 and c1 and float(c2) > float(c1):
-                zce_ceils.append({
-                    "price": round(float(c2), digits),
-                    "band_low": round(float(c2), digits),
-                    "band_high": round(float(c2), digits),
-                    "type": "ceiling",
-                    "tier": "C2",
-                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_CEIL"
-                })
-        elif len(zce_ceils) == 1 and c2:
-            c_price = zce_ceils[0]["price"]
-            if float(c2) > c_price + 0.20 * atr_val:
+        # Ceiling side fallback: ensure at least one C1 is present
+        has_c1 = any(w.get("tier") == "C1" for w in zce_ceils)
+        if not has_c1 and c1:
+            zce_ceils.insert(0, {
+                "price": round(float(c1), digits),
+                "band_low": round(float(c1), digits),
+                "band_high": round(float(c1), digits),
+                "type": "ceiling",
+                "tier": "C1",
+                "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
+                "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
+                "score": 4.5,
+                "tfs": ["H1", "D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_CEIL"
+            })
+
+        has_c2 = any(w.get("tier") == "C2" for w in zce_ceils)
+        if not has_c2 and c2:
+            c1_price = float(c1) if c1 else (zce_ceils[0]["price"] if zce_ceils else 0.0)
+            if c1_price == 0.0 or float(c2) > c1_price + 0.20 * atr_val:
                 zce_ceils.append({
                     "price": round(float(c2), digits),
                     "band_low": round(float(c2), digits),
@@ -955,6 +935,19 @@ class CockpitDataEngine:
             "m3_recency": f"{m3_status_str} ({m3_age}b ago)" if m3_item else "PASS",
             "m3_runaway": "1.12x ATR (Guard <=2.5x)",
             "m3_runway": "1.35x ATR (Req >=0.8x)",
+            "m3_basing": (
+                f"BOX {macro.get('basing_box', {}).get('box_bars', 0)}b ({macro.get('basing_box', {}).get('range_atr', 0.0):.2f}x ATR)"
+                if macro.get('basing_box', {}).get('is_compressing')
+                else (
+                    f"BROKEN ({macro.get('basing_box', {}).get('box_bars', 0)}b, {macro.get('basing_box', {}).get('broken_recency', 0)}b ago)"
+                    if macro.get('basing_box', {}).get('is_broken')
+                    else (
+                        f"INACTIVE ({macro.get('basing_box', {}).get('current_range_atr', 0.0):.2f}x ATR, expanding)"
+                        if macro.get('basing_box', {}).get('current_range_atr', 0.0) > 0
+                        else "INACTIVE (expanding)"
+                    )
+                )
+            ),
             "m4_z": f"{getattr(self.scanner, '_m4_z_last', {}).get(clean_sym[:3], 1.62):+.2f}",
             "m4_breakdown": "Confirmed 120-Bar",
             "m4_pending": m4_tgt
@@ -1032,7 +1025,8 @@ class CockpitDataEngine:
             "wave_regime_summary": last_candle.get("regime", "YOUNG_OSCILLATION"),
             "range_age_hours": last_candle.get("range_age_hours", 0.0),
             "sqz_on": last_candle.get("sqz_on", False),
-            "sqz_bars": last_candle.get("sqz_bars", 0)
+            "sqz_bars": last_candle.get("sqz_bars", 0),
+            "basing_box": macro.get("basing_box") or {}
         }
 
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0

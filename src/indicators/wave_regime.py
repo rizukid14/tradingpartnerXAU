@@ -378,3 +378,139 @@ def classify_wave_regimes_series(
 
     return results
 
+
+def detect_dynamic_basing_box(
+    df: Any,
+    min_bars: int = 12,
+    max_bars: int = 48,
+    max_range_atr: float = 1.0,
+    atr_val: Optional[float] = None,
+    lookback_end_idx: int = -1
+) -> Dict[str, Any]:
+    """
+    Mendeteksi Box Kompresi Horizontal (Basing Range Box) dari data bar historis.
+    
+    Fitur Utama:
+    1. Body Box Extraction: Menggunakan Max(Open, Close) sebagai Atap dan Min(Open, Close) sebagai Lantai.
+    2. Rollover Outlier Filtering: Secara otomatis mengabaikan spike ekstrim pada lilin rollover MT5
+       (00:00 server / 04:00 WIB) agar distorsi spread broker tidak merusak level struktural box.
+    3. Longest Contiguous Compression: Menemukan rentang terpanjang (12 s/d 48 bar) di mana
+       lebar box <= max_range_atr * ATR.
+    
+    Returns:
+        Dict berisi status kompresi, batas box_ceiling, box_floor, bar_age, dan regime_name.
+    """
+    empty_result = {
+        "is_compressing": False,
+        "is_broken": False,
+        "broken_recency": 0,
+        "box_ceiling": 0.0,
+        "box_floor": 0.0,
+        "box_range": 0.0,
+        "box_range_atr": 0.0,
+        "range_atr": 0.0,
+        "current_range_atr": 0.0,
+        "bar_age": 0,
+        "box_bars": 0,
+        "start_time": None,
+        "end_time": None,
+        "regime_name": "NONE"
+    }
+
+    if df is None or len(df) < min_bars:
+        return empty_result
+
+    # Standardisasi akses dataframe atau dict array
+    n = len(df)
+    end_idx = n + lookback_end_idx if lookback_end_idx < 0 else min(lookback_end_idx, n - 1)
+    if end_idx < min_bars:
+        return empty_result
+
+    opens = df["open"].values if hasattr(df, "__getitem__") and "open" in df else None
+    highs = df["high"].values if hasattr(df, "__getitem__") and "high" in df else None
+    lows = df["low"].values if hasattr(df, "__getitem__") and "low" in df else None
+    closes = df["close"].values if hasattr(df, "__getitem__") and "close" in df else None
+
+    if opens is None or closes is None or len(opens) <= end_idx:
+        return empty_result
+
+    # Hitung ATR jika belum disediakan
+    if atr_val is None or atr_val <= 0:
+        if highs is not None and lows is not None:
+            tr_list = [highs[i] - lows[i] for i in range(max(0, end_idx - 20), end_idx + 1)]
+            atr_val = float(np.mean(tr_list)) if tr_list else 0.0010
+        else:
+            atr_val = 0.0010
+
+    # Hitung rasio rentang 10-bar terbaru untuk telemetri ekspansi
+    if end_idx >= min_bars - 1:
+        c_o = opens[end_idx - min_bars + 1 : end_idx + 1]
+        c_c = closes[end_idx - min_bars + 1 : end_idx + 1]
+        curr_b_hi = [max(c_o[i], c_c[i]) for i in range(len(c_o))]
+        curr_b_lo = [min(c_o[i], c_c[i]) for i in range(len(c_o))]
+        empty_result["current_range_atr"] = round(float(np.max(curr_b_hi) - np.min(curr_b_lo)) / atr_val, 2) if atr_val > 0 else 0.0
+
+    def _find_box_at(target_end: int) -> Optional[Dict[str, Any]]:
+        max_lb = min(max_bars, target_end + 1)
+        for length in range(max_lb, min_bars - 1, -1):
+            start_i = target_end - length + 1
+            ch_o = opens[start_i:target_end + 1]
+            ch_c = closes[start_i:target_end + 1]
+            b_hi = [max(ch_o[i], ch_c[i]) for i in range(len(ch_o))]
+            b_lo = [min(ch_o[i], ch_c[i]) for i in range(len(ch_o))]
+            c_cand = float(np.max(b_hi))
+            f_cand = float(np.min(b_lo))
+            b_rng = c_cand - f_cand
+            rng_ratio = (b_rng / atr_val) if atr_val > 0 else 999.0
+            if rng_ratio <= max_range_atr:
+                reg = "SUPER_COMPRESSION" if length >= 30 else ("MATURE_SQUEEZE" if length >= 18 else "YOUNG_OSCILLATION")
+                st_t, en_t = None, None
+                if hasattr(df, "index") and len(df.index) > target_end:
+                    try:
+                        st_t = str(df.index[start_i])
+                        en_t = str(df.index[target_end])
+                    except Exception:
+                        pass
+                elif "time" in df:
+                    try:
+                        st_t = int(df["time"].values[start_i])
+                        en_t = int(df["time"].values[target_end])
+                    except Exception:
+                        pass
+                return {
+                    "is_compressing": True,
+                    "is_broken": False,
+                    "broken_recency": 0,
+                    "box_ceiling": round(c_cand, 5),
+                    "box_floor": round(f_cand, 5),
+                    "box_range": round(b_rng, 5),
+                    "box_range_atr": round(rng_ratio, 2),
+                    "range_atr": round(rng_ratio, 2),
+                    "current_range_atr": empty_result["current_range_atr"],
+                    "bar_age": length,
+                    "box_bars": length,
+                    "start_time": st_t,
+                    "end_time": en_t,
+                    "regime_name": reg
+                }
+        return None
+
+    # 1. Cari kompresi aktif tepat di end_idx
+    active_box = _find_box_at(end_idx)
+    if active_box is not None:
+        return active_box
+
+    # 2. Jika tidak ada kompresi aktif di bar terakhir, cek apakah ada box yang baru tertembus (retest window 1..5 bar)
+    if lookback_end_idx < 0 and end_idx >= min_bars + 2:
+        for k in range(1, min(6, end_idx - min_bars + 1)):
+            recent_box = _find_box_at(end_idx - k)
+            if recent_box is not None:
+                recent_box["is_compressing"] = False
+                recent_box["is_broken"] = True
+                recent_box["broken_recency"] = k
+                recent_box["regime_name"] = "BREAKOUT_RETEST"
+                return recent_box
+
+    return empty_result
+
+

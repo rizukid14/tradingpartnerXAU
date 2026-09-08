@@ -607,9 +607,23 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     ]
     if open_positions:
         pos_strs = []
+        try:
+            from src.analytics import position_manager
+        except Exception:
+            position_manager = None
         for p in open_positions[:3]:
             s_clean = p.get("symbol", "").replace("-ECNc", "").replace(".c", "")
-            pos_strs.append(f"{s_clean}: {UI.badge_pnl(p.get('profit', 0.0))}")
+            raw_g = position_manager.get_ticket_setup_grade(p.get("ticket")) if position_manager else ""
+            g_tag = ""
+            if "GRADE_S" in raw_g:
+                g_tag = f"{UI.BOLD}{UI.GREEN}[S]{UI.RST}"
+            elif "GRADE_A_PLUS" in raw_g or "GRADE_A+" in raw_g:
+                g_tag = f"{UI.GREEN}[A+]{UI.RST}"
+            elif "GRADE_A" in raw_g:
+                g_tag = f"{UI.CYAN}[A]{UI.RST}"
+            elif "GRADE_B" in raw_g:
+                g_tag = f"{UI.YELLOW}[B]{UI.RST}"
+            pos_strs.append(f"{s_clean}{g_tag}: {UI.badge_pnl(p.get('profit', 0.0))}")
         t2_lines.append(f" Positions  : {' | '.join(pos_strs)}")
     elif orders:
         ord_strs = []

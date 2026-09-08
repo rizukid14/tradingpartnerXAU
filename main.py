@@ -791,12 +791,12 @@ def run_scanner_trading_cycle(cand, risk):
             realized_rr = round(raw_tp_pts / max(raw_sl_pts, 1), 2)
             c_grade = getattr(cand, "setup_grade", "GRADE_A")
             fill_tag = "Market Fill (Slippage/Drift)" if entry_type == "market" else "Limit Entry"
-            print(f"\n {UI.CYAN}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ [PURE QUANT DIRECT EXECUTION] {sym} [{cand.setup_type}]                                ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ • Signal     : {trade_signal} ({entry_type.upper()} @ {entry_price})                                     ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ • SL / TP Raw: SL {raw_sl_pts} pts ({cand.suggested_sl}) | TP {raw_tp_pts} pts ({cand.suggested_tp})             ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ • Grade / R:R: Grade {c_grade} | Realized R:R {realized_rr:.2f}:1 [{fill_tag}]                  ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
+            box_items = [
+                ("• Signal     : ", f"{trade_signal} ({entry_type.upper()} @ {entry_price})"),
+                ("• SL / TP Raw: ", f"SL {raw_sl_pts} pts ({cand.suggested_sl}) | TP {raw_tp_pts} pts ({cand.suggested_tp})"),
+                ("• Grade / R:R: ", f"Grade {c_grade} | Realized R:R {realized_rr:.2f}:1 [{fill_tag}]"),
+            ]
+            print("\n" + UI.make_box(f"PURE QUANT DIRECT EXECUTION: {sym} [{cand.setup_type}]", box_items, width=76, border_color=UI.CYAN) + "\n")
         else:
             # 2. Fetch live candles (M15 & M5 Micro Microscope, H1, H4) from MT5
             try:
@@ -1567,8 +1567,23 @@ def main():
                     float_s = sum(x.get("profit", 0.0) for x in plist)
                     sym_clean = sym.replace("-ECNc", "").replace(".c", "")
                     count_str = f"({len(plist)})" if len(plist) > 1 else ""
+                    
+                    # Tampilkan badge setup grade (S / A+ / A / B)
+                    g_tags = []
+                    for x in plist:
+                        raw_g = position_manager.get_ticket_setup_grade(x.get("ticket"))
+                        if "GRADE_S" in raw_g:
+                            g_tags.append(f"{UI.BOLD}{UI.GREEN}[S]{UI.RST}")
+                        elif "GRADE_A_PLUS" in raw_g or "GRADE_A+" in raw_g:
+                            g_tags.append(f"{UI.GREEN}[A+]{UI.RST}")
+                        elif "GRADE_A" in raw_g:
+                            g_tags.append(f"{UI.CYAN}[A]{UI.RST}")
+                        elif "GRADE_B" in raw_g:
+                            g_tags.append(f"{UI.YELLOW}[B]{UI.RST}")
+                    grade_str = "".join(g_tags) if g_tags else ""
+
                     badges = "".join(position_manager.get_ticket_status_badge(x.get("ticket")) for x in plist)
-                    pos_parts.append(f"{sym_clean}{count_str}: {UI.badge_pnl(float_s)}{badges}")
+                    pos_parts.append(f"{sym_clean}{grade_str}{count_str}: {UI.badge_pnl(float_s)}{badges}")
                 pos_str = f" | {UI.GRAY}pos:{UI.RST} " + " | ".join(pos_parts)
             else:
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"

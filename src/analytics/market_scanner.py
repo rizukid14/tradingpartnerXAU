@@ -15,7 +15,7 @@ import config
 from src.indicators.lux_smc import LuxSMCAnalyzer
 from src.indicators.candle_quality import classify_candle, classify_breakout_sequence
 from src.indicators.sweep_detector import detect as sweep_detect
-from src.indicators.wave_regime import evaluate_wave_regime
+from src.indicators.wave_regime import evaluate_wave_regime, detect_dynamic_basing_box
 from src.indicators.atlas_dna import calculate_intraday_sl_tp, calculate_dynamic_stations, calculate_dual_grid_stations, get_symbol_step
 from src.analytics.currency_strength import get_csm_delta_for_symbol, evaluate_systemic_basket_lock
 from src.analytics.macro_strategic_engine import (
@@ -1628,7 +1628,24 @@ class MarketScanner:
 
         m3_price = 0.0
         m3_lbl = "SBR/RBS Breakout Retest"
-        m3_dir = 1 if (is_bull or m_corr == "BULLISH_CORRIDOR") else -1
+        
+        # Check Basing Box (8 Sep 2026)
+        b_box = macro.get("basing_box") or {}
+        b_ceil = b_box.get("box_ceiling", 0.0) if b_box.get("is_compressing") else 0.0
+        b_flr = b_box.get("box_floor", 0.0) if b_box.get("is_compressing") else 0.0
+        csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
+
+        # If macro is neutral/flat but basing box is broken downwards with strong negative CSM, bias m3_dir to -1
+        if not is_bull and not is_bear and m_corr == "NEUTRAL":
+            if b_flr > 0 and mid < b_flr and csm_d <= -1.0:
+                m3_dir = -1
+            elif b_ceil > 0 and mid > b_ceil and csm_d >= 1.0:
+                m3_dir = 1
+            else:
+                m3_dir = 1 if (is_bull or m_corr == "BULLISH_CORRIDOR") else -1
+        else:
+            m3_dir = 1 if (is_bull or m_corr == "BULLISH_CORRIDOR") else -1
+
         m3_event_time = 0
         m3_bar_age = 0
         m3_status = "WAITING_RETEST"
@@ -1641,24 +1658,30 @@ class MarketScanner:
             if c_res > 0 and t_res >= 2 and c_res < mid:
                 m3_price = c_res
                 m3_lbl = f"Multi-Touch Cluster Breakout ({t_res}x Touches)"
+            elif b_ceil > 0 and b_ceil < mid and abs(mid - b_ceil) <= 2.5 * atr_val:
+                m3_price = b_ceil
+                m3_lbl = f"Basing Box Breakout Retest ({b_box.get('box_bars', 0)}b)"
             elif f1_floor > 0 and f1_floor < mid and abs(mid - f1_floor) <= 2.5 * atr_val:
                 m3_price = f1_floor
                 m3_lbl = "Breakout Structural Floor (F1 Retest)"
             else:
-                cand_res = [lvl for lvl in (pdh_b, pwh_b, bos_b, rbs_b) if (lvl > 0 and lvl < mid)]
+                cand_res = [lvl for lvl in (pdh_b, pwh_b, bos_b, rbs_b, b_ceil) if (lvl > 0 and lvl < mid)]
                 m3_price = max(cand_res) if cand_res else (rbs_b or f1_floor or 0.0)
-                m3_lbl = "Broken Resistance RBS Retest"
+                m3_lbl = f"Basing Box Breakout Retest ({b_box.get('box_bars', 0)}b)" if (b_ceil > 0 and m3_price == b_ceil) else "Broken Resistance RBS Retest"
         else:
             if c_sup > 0 and t_sup >= 2 and c_sup > mid:
                 m3_price = c_sup
                 m3_lbl = f"Multi-Touch Cluster Breakdown ({t_sup}x Touches)"
+            elif b_flr > 0 and b_flr > mid and abs(b_flr - mid) <= 2.5 * atr_val:
+                m3_price = b_flr
+                m3_lbl = f"Basing Box Breakdown Retest ({b_box.get('box_bars', 0)}b)"
             elif c1_ceiling > 0 and c1_ceiling > mid and abs(c1_ceiling - mid) <= 2.5 * atr_val:
                 m3_price = c1_ceiling
                 m3_lbl = "Breakdown Structural Ceiling (C1 Retest)"
             else:
-                cand_sup = [lvl for lvl in (pdl_b, pwl_b, bos_s, sbr_b) if (lvl > 0 and lvl > mid)]
+                cand_sup = [lvl for lvl in (pdl_b, pwl_b, bos_s, sbr_b, b_flr) if (lvl > 0 and lvl > mid)]
                 m3_price = min(cand_sup) if cand_sup else (sbr_b or c1_ceiling or 0.0)
-                m3_lbl = "Broken Support SBR Retest"
+                m3_lbl = f"Basing Box Breakdown Retest ({b_box.get('box_bars', 0)}b)" if (b_flr > 0 and m3_price == b_flr) else "Broken Support SBR Retest"
 
         # 3-Point Trajectory: Accurate Origin Breakdown/Breakout & Retest Detection
         if df is not None and len(df) >= 3 and m3_price > 0:
@@ -2293,6 +2316,16 @@ class MarketScanner:
             # Wave Regime & Range Age
             regime_res = evaluate_wave_regime(recent_h, recent_l, recent_c, timeframe_hours=1.0, dealing_range_window=lb_bars)
 
+            # Dynamic Basing Box Detection (8 Sep 2026)
+            basing_box = detect_dynamic_basing_box(
+                df,
+                min_bars=getattr(config, "M3_BASING_MIN_BARS", 10),
+                max_bars=getattr(config, "M3_BASING_MAX_BARS", 48),
+                max_range_atr=getattr(config, "M3_BASING_MAX_RANGE_ATR", 1.60),
+                atr_val=cur_atr,
+                lookback_end_idx=-1
+            ) if (df is not None and len(df) >= 12 and getattr(config, "M3_BASING_BOX_ENABLED", True)) else {"is_compressing": False, "box_ceiling": 0.0, "box_floor": 0.0}
+
             # CSM Net Delta for Symbol
             csm_delta_val = get_csm_delta_for_symbol(valid_sym)
 
@@ -2505,6 +2538,7 @@ class MarketScanner:
                 'range_age_hours': regime_res.get('range_age_hours', 24.0),
                 'effective_sqz_bars': regime_res.get('effective_sqz_bars', 0),
                 'wave_regime_name': regime_res.get('regime', 'YOUNG_OSCILLATION'),
+                'basing_box': basing_box,
                 'wave_state': f"MSE_{mse_tier}",
                 'permission_v3': derived_perm,
                 'correction_type': 'NEUTRAL',
@@ -2944,7 +2978,8 @@ class MarketScanner:
                                 return False, "HARD_BLOCK", f"[MSE TRAP VETO] SELL forbidden: {trap}"
 
                     # 3. CSM Flow Opposition Check (Systemic Currency Pressure)
-                    is_csm_opposed = (target_dir == 1 and csm_delta_val <= -1.0) or (target_dir == -1 and csm_delta_val >= 1.0)
+                    csm_opp_thresh = float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))
+                    is_csm_opposed = (target_dir == 1 and csm_delta_val <= -csm_opp_thresh) or (target_dir == -1 and csm_delta_val >= csm_opp_thresh)
 
                     # 3B. Directional Hysteresis Memory Gate (ZCE + MSE State Machine)
                     if getattr(config, "ENABLE_DIRECTIONAL_HYSTERESIS", True) and not is_sfr_pro:
@@ -2976,7 +3011,16 @@ class MarketScanner:
                                     c1_lvl = macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1') or 0.0
                                     floor_broken = bool(locked_dir == 1 and f1_lvl > 0.0 and mid < (f1_lvl - 0.20 * atr_val))
                                     ceiling_broken = bool(locked_dir == -1 and c1_lvl > 0.0 and mid > (c1_lvl + 0.20 * atr_val))
-                                    zce_breached = floor_broken or ceiling_broken
+                                    
+                                    # Dynamic Basing Box Structural Breach (8 Sep 2026)
+                                    b_box = macro.get("basing_box") or {}
+                                    b_flr = b_box.get("box_floor", 0.0) if b_box.get("is_compressing") else 0.0
+                                    b_ceil = b_box.get("box_ceiling", 0.0) if b_box.get("is_compressing") else 0.0
+                                    box_broken = (
+                                        (locked_dir == 1 and b_flr > 0.0 and mid < (b_flr - 0.10 * atr_val) and csm_delta_val <= -1.5) or
+                                        (locked_dir == -1 and b_ceil > 0.0 and mid > (b_ceil + 0.10 * atr_val) and csm_delta_val >= 1.5)
+                                    )
+                                    zce_breached = floor_broken or ceiling_broken or box_broken
 
                                     # Syarat 2: MSE Macro Bias Regime Inversion
                                     macro_inverted = bool((target_dir == 1 and bias_score >= 0.35) or (target_dir == -1 and bias_score <= -0.35))
@@ -2997,7 +3041,7 @@ class MarketScanner:
                                         )
                                     else:
                                         # Salah satu syarat sah terpenuhi -> Lepas kunci dan perbarui arah
-                                        rev_reason = "ZCE_BREACH" if zce_breached else ("MACRO_FLIP" if macro_inverted else "M1A_EXTREME_SWEEP")
+                                        rev_reason = "ZCE_BREACH" if (floor_broken or ceiling_broken) else ("BASING_BOX_BREACH" if box_broken else ("MACRO_FLIP" if macro_inverted else "M1A_EXTREME_SWEEP"))
                                         self._symbol_directional_state[clean_s] = {
                                             "dir": target_dir,
                                             "locked_at": now_ts,
@@ -3022,8 +3066,12 @@ class MarketScanner:
                         flow_tag = f" [SFR_CATALYST: {sfr_catalyst}]" if is_sfr_pro else ""
                         return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f}){flow_tag}"
                     elif is_counter:
-                        # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap, or M4 systemic flow
-                        if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper() or "SYSTEMIC" in setup_label.upper():
+                        # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap, M4 systemic flow, or M3 Basing Box Breakdown
+                        is_basing_mean_rev = ("BASING" in setup_label.upper() or "BREAKOUT" in setup_label.upper()) and (
+                            (target_dir == -1 and csm_delta_val <= -getattr(config, "M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50)) or
+                            (target_dir == 1 and csm_delta_val >= getattr(config, "M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50))
+                        )
+                        if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper() or "SYSTEMIC" in setup_label.upper() or is_basing_mean_rev:
                             return True, "TP1_ONLY_SCALP", f"COUNTER_TREND_SCALP_PERMITTED ({bias_score:+.2f})"
                         else:
                             return False, "HARD_BLOCK", f"[COUNTER TREND BLOCK] Non-sweep setup rejected against macro ({bias_score:+.2f})"
@@ -3828,6 +3876,19 @@ class MarketScanner:
                     m_corr = macro.get('macro_corridor', 'NEUTRAL')
                     dr_pos = macro.get('dealing_range_pos', 0.5)
 
+                    # Dynamic Basing Box Detection (8 Sep 2026 - Branch 1 & 2)
+                    basing_box = detect_dynamic_basing_box(
+                        df,
+                        min_bars=getattr(config, "M3_BASING_MIN_BARS", 10),
+                        max_bars=getattr(config, "M3_BASING_MAX_BARS", 48),
+                        max_range_atr=getattr(config, "M3_BASING_MAX_RANGE_ATR", 1.60),
+                        atr_val=atr_val,
+                        lookback_end_idx=-1
+                    ) if (df is not None and len(df) >= 12 and getattr(config, "M3_BASING_BOX_ENABLED", True)) else {"is_compressing": False, "box_ceiling": 0.0, "box_floor": 0.0}
+                    basing_ceil = basing_box.get("box_ceiling", 0.0) if basing_box.get("is_compressing") else 0.0
+                    basing_floor = basing_box.get("box_floor", 0.0) if basing_box.get("is_compressing") else 0.0
+                    macro["basing_box"] = basing_box
+
                     # Bullish Breakout Retest: Broke above structural resistance (PDH/PWH/BOS H1/Cluster), now acting as RBS floor
                     pdh_barrier = macro.get('pdh', 0.0)
                     pwh_barrier = macro.get('pwh', 0.0)
@@ -3839,11 +3900,16 @@ class MarketScanner:
                     if c_res > 0 and t_res >= 2 and c_res < mid:
                         target_res = c_res
                     else:
-                        cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, m4_basing_ceiling) if (lvl > 0 and lvl < mid)]
+                        cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, m4_basing_ceiling, basing_ceil) if (lvl > 0 and lvl < mid)]
                         target_res = max(cand_res_list) if cand_res_list else 0.0
 
                     allowed_m3_b, action_tier_m3_b, reason_m3_b = _is_direction_allowed(1, "BUY_BREAKOUT_RETEST", entry_price=target_res)
-                    can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR" or m4_catalyst == "BULLISH_FLOW") and (m_corr != "BEARISH_CORRIDOR")
+                    is_basing_buy_break = (basing_ceil > 0 and abs(target_res - basing_ceil) <= 0.15 * atr_val)
+                    is_mean_rev_buy = (
+                        is_basing_buy_break and 
+                        csm_delta_val >= getattr(config, "M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50)
+                    )
+                    can_buy_m3 = allowed_m3_b and (macro['is_bull'] or m_corr == "BULLISH_CORRIDOR" or m4_catalyst == "BULLISH_FLOW" or is_mean_rev_buy) and (m_corr != "BEARISH_CORRIDOR")
                     
                     is_m3_b_locked, m3_b_lock_reason = self.is_mechanism_locked(clean_sym, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
                     is_locked_b, lock_reason_b = self.is_retest_locked(clean_sym, mid, atr_val)
@@ -3900,7 +3966,8 @@ class MarketScanner:
                                     dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
                                     # Block BUY jika harga menabrak plafon C1 (jarak <= 0.35x ATR) atau berada di Premium (dr_pos >= 0.70)
                                     is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
-                                    has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= 0.80 * atr_val and dist_to_ceiling >= 0.50 * atr_val)
+                                    min_runway_mult_b = 0.60 if is_mean_rev_buy else 0.80
+                                    has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= min_runway_mult_b * atr_val and dist_to_ceiling >= 0.40 * atr_val)
                                     
                                     if is_wall_collision_b or (not has_upward_runway and dr_pos > 0.70):
                                         logger.debug(f"[BREAKOUT BUY WALL COLLISION] {sym} SKIP: mid {mid:.5f} collides with ceiling {target_ceiling:.5f} (dist: {dist_to_ceiling/atr_val:.2f}x ATR, dr_pos: {dr_pos*100:.1f}%)")
@@ -3940,9 +4007,21 @@ class MarketScanner:
                                 )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
-                            if action_tier_m3_b in ("TP1_ONLY_SCALP", "REDUCED_SCALP"):
-                                tp = sl_tp.get('tp1', round(entry_lim + (1.10 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
+                            if is_mean_rev_buy:
+                                is_jpy = 'JPY' in sym
+                                is_high_beta = any(k in sym for k in ('GBPAUD', 'GBPNZD', 'EURNZD', 'GBPCHF'))
+                                min_sl_buf = (200 * pt) if is_jpy else ((180 * pt) if is_high_beta else (120 * pt))
+                                tight_buf = max(getattr(config, "M3_MEAN_REVERSION_SL_ATR_MULT", 0.35) * atr_val, min_sl_buf)
+                                sl = round(entry_lim - tight_buf, 5 if pt < 0.01 else 2)
+                                if _c1_w > entry_lim:
+                                    tp = round(min(_c1_w - (5 * pt), entry_lim + 2.0 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2)
+                                else:
+                                    tp = round(entry_lim + (1.20 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2)
+                                rr_val = round(abs(tp - entry_lim) / max(abs(entry_lim - sl), 1e-5), 2)
+                            elif action_tier_m3_b in ("TP1_ONLY_SCALP", "REDUCED_SCALP"):
+                                tp = sl_tp.get('tp1', round(entry_lim + (1.10 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
+                                rr_val = sl_tp['risk_reward']
                             if abs(entry_lim - mid) > 1.0 * atr_val:
                                 logger.debug(f"[M3 BUY DISTANCE GUARD] {sym} SKIP: entry_lim {entry_lim:.5f} too far from mid {mid:.5f}")
                             elif abs(entry_lim - sl) / pt >= 15:
@@ -3985,8 +4064,8 @@ class MarketScanner:
                                     csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     economic_context=cal_text,
-                                    setup_grade="GRADE_B" if (sl_tp.get("setup_grade") == "GRADE_B" or rr_val < 1.25) else sl_tp.get("setup_grade", "GRADE_A"),
-                                    action_tier=action_tier_m3_b,
+                                    setup_grade="GRADE_B" if (is_mean_rev_buy or sl_tp.get("setup_grade") == "GRADE_B" or rr_val < 1.25) else sl_tp.get("setup_grade", "GRADE_A"),
+                                    action_tier="REDUCED_CONFIDENCE" if is_mean_rev_buy else action_tier_m3_b,
                                     macro_bias_score=macro.get('macro_bias_score', 0.0),
                                     regime_stability=macro.get('regime_stability', 'STABLE'),
                                     metadata={
@@ -3999,8 +4078,10 @@ class MarketScanner:
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
-                                        "action_tier": action_tier_m3_b,
+                                        "action_tier": "REDUCED_CONFIDENCE" if is_mean_rev_buy else action_tier_m3_b,
                                         "macro_corridor": m_corr,
+                                        "is_mean_reversion": is_mean_rev_buy,
+                                        "basing_box": basing_box,
                                         **zce_meta
                                     }
                                 ))
@@ -4017,11 +4098,16 @@ class MarketScanner:
                     if c_sup > 0 and t_sup >= 2 and c_sup > mid:
                         target_sup = c_sup
                     else:
-                        cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, m4_basing_floor) if (lvl > 0 and lvl > mid)]
+                        cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, m4_basing_floor, basing_floor) if (lvl > 0 and lvl > mid)]
                         target_sup = min(cand_sup_list) if cand_sup_list else 0.0
 
                     allowed_m3_s, action_tier_m3_s, reason_m3_s = _is_direction_allowed(-1, "SELL_BREAKOUT_RETEST", entry_price=target_sup)
-                    can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR" or m4_catalyst == "BEARISH_FLOW") and (m_corr != "BULLISH_CORRIDOR")
+                    is_basing_sell_break = (basing_floor > 0 and abs(target_sup - basing_floor) <= 0.15 * atr_val)
+                    is_mean_rev_sell = (
+                        is_basing_sell_break and 
+                        csm_delta_val <= -getattr(config, "M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50)
+                    )
+                    can_sell_m3 = allowed_m3_s and (macro['is_bear'] or m_corr == "BEARISH_CORRIDOR" or m4_catalyst == "BEARISH_FLOW" or is_mean_rev_sell) and (m_corr != "BULLISH_CORRIDOR")
                     
                     is_m3_s_locked, m3_s_lock_reason = self.is_mechanism_locked(clean_sym, "MULTI_TOUCH_BREAKOUT_RETEST", -1)
                     is_locked_s, lock_reason_s = self.is_retest_locked(clean_sym, mid, atr_val)
@@ -4078,7 +4164,8 @@ class MarketScanner:
                                     dist_to_floor = (mid - target_floor) if target_floor > 0 else 999.0
                                     # Block SELL jika harga menabrak lantai F1 (jarak <= 0.35x ATR) atau berada di Discount (dr_pos <= 0.30)
                                     is_wall_collision_s = (target_floor > 0 and dist_to_floor <= 0.35 * atr_val and mid > target_floor - 0.15 * atr_val)
-                                    has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= 0.80 * atr_val and dist_to_floor >= 0.50 * atr_val)
+                                    min_runway_mult_s = 0.60 if is_mean_rev_sell else 0.80
+                                    has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= min_runway_mult_s * atr_val and dist_to_floor >= 0.40 * atr_val)
                                     
                                     if is_wall_collision_s or (not has_downward_runway and dr_pos < 0.30):
                                         logger.debug(f"[BREAKOUT SELL WALL COLLISION] {sym} SKIP: mid {mid:.5f} collides with floor {target_floor:.5f} (dist: {dist_to_floor/atr_val:.2f}x ATR, dr_pos: {dr_pos*100:.1f}%)")
@@ -4118,9 +4205,21 @@ class MarketScanner:
                                 )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
-                            if action_tier_m3_s in ("TP1_ONLY_SCALP", "REDUCED_SCALP"):
-                                tp = sl_tp.get('tp1', round(entry_lim - (1.10 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
                             rr_val = sl_tp['risk_reward']
+                            if is_mean_rev_sell:
+                                is_jpy = 'JPY' in sym
+                                is_high_beta = any(k in sym for k in ('GBPAUD', 'GBPNZD', 'EURNZD', 'GBPCHF'))
+                                min_sl_buf = (200 * pt) if is_jpy else ((180 * pt) if is_high_beta else (120 * pt))
+                                tight_buf = max(getattr(config, "M3_MEAN_REVERSION_SL_ATR_MULT", 0.35) * atr_val, min_sl_buf)
+                                sl = round(entry_lim + tight_buf, 5 if pt < 0.01 else 2)
+                                if _f1_w > 0.0 and _f1_w < entry_lim:
+                                    tp = round(max(_f1_w + (5 * pt), entry_lim - 2.0 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2)
+                                else:
+                                    tp = round(entry_lim - (1.20 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2)
+                                rr_val = round(abs(entry_lim - tp) / max(abs(sl - entry_lim), 1e-5), 2)
+                            elif action_tier_m3_s in ("TP1_ONLY_SCALP", "REDUCED_SCALP"):
+                                tp = sl_tp.get('tp1', round(entry_lim - (1.10 * abs(entry_lim - sl)), 5 if pt < 0.01 else 2))
+                                rr_val = sl_tp['risk_reward']
                             if abs(entry_lim - mid) > 1.0 * atr_val:
                                 logger.debug(f"[M3 SELL DISTANCE GUARD] {sym} SKIP: entry_lim {entry_lim:.5f} too far from mid {mid:.5f}")
                             elif abs(sl - entry_lim) / pt >= 15:
@@ -4163,8 +4262,8 @@ class MarketScanner:
                                     csm_delta=csm_delta_val,
                                     timestamp_wib=now.strftime("%H:%M:%S WIB"),
                                     economic_context=cal_text,
-                                    setup_grade="GRADE_B" if (sl_tp.get("setup_grade") == "GRADE_B" or rr_val < 1.25) else sl_tp.get("setup_grade", "GRADE_A"),
-                                    action_tier=action_tier_m3_s,
+                                    setup_grade="GRADE_B" if (is_mean_rev_sell or sl_tp.get("setup_grade") == "GRADE_B" or rr_val < 1.25) else sl_tp.get("setup_grade", "GRADE_A"),
+                                    action_tier="REDUCED_CONFIDENCE" if is_mean_rev_sell else action_tier_m3_s,
                                     macro_bias_score=macro.get('macro_bias_score', 0.0),
                                     regime_stability=macro.get('regime_stability', 'STABLE'),
                                     metadata={
@@ -4177,8 +4276,10 @@ class MarketScanner:
                                         "target_station": sl_tp.get('target_station', 0.0),
                                         "permission": perm_state,
                                         "csm_delta": csm_delta_val,
-                                        "action_tier": action_tier_m3_s,
+                                        "action_tier": "REDUCED_CONFIDENCE" if is_mean_rev_sell else action_tier_m3_s,
                                         "macro_corridor": m_corr,
+                                        "is_mean_reversion": is_mean_rev_sell,
+                                        "basing_box": basing_box,
                                         **zce_meta
                                     }
                                 ))
