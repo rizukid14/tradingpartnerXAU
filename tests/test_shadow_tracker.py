@@ -330,8 +330,8 @@ class TestQuantShadowTracker(unittest.TestCase):
             tp_points=400
         )
         mock_connector = MagicMock()
-        # Price moves up to 1.10110 (+110 pts, +0.55R) -> BEP triggers (+15 pts above entry -> 1.10015)
-        mock_connector.get_current_tick.return_value = {"ask": 1.10115, "bid": 1.10105, "point": 0.00001, "digits": 5}
+        # Price moves up to 1.10150 (+150 pts, 37.5% TP >= 35% TP threshold of 400 pts) -> BEP triggers (+15 pts above entry -> 1.10015)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10155, "bid": 1.10145, "point": 0.00001, "digits": 5}
         self.tracker.update_shadow_orders(mock_connector)
 
         trade = self.tracker.active_trades[0]

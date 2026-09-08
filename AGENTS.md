@@ -144,7 +144,7 @@ python main.py
 - **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London/NY 14:00–00:00 WIB (all FX permitted).
 - **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders, **Friday Pre-Weekend Lock (freeze new orders mulai 23:00 WIB Jumat)**.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
-  - **Break-Even (BEP)**: aktif di **45%–55% TP** + padding komisi round-trip + Pocket Profit 15 pts (1.5 pips).
+  - **Break-Even (BEP)**: Grade-Aware Dynamic Threshold — Standar (Grade A/A+) aktif di **50% TP**; Grade S di **65% TP**; Khusus Grade B / Defensive (`REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`) dan Vacuum Extension ($R:R \ge 2.0$) aktif dipercepat di **35% TP**; M4 aktif di **70% TP** (+ padding komisi round-trip + Pocket Profit 15 pts / 1.5 pips). Sinergi 1:1 antara `position_manager.py` dan `shadow_tracker.py`.
   - **Partial Close (TP1)**: aktif di **45%–55% TP**, cairkan 50% lot + geser sisa ke Risk-Free BEP.
   - **2-Stage Dynamic Trailing Stop**:
     * **Stage 1 (Swing Breathing: 65% s/d < 90% TP)**: $0.75\times\text{ATR H1}$ dengan floor absolut 80 pts FX (8 pips).
