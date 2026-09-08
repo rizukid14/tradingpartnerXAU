@@ -22,7 +22,7 @@ def _clean_md(val):
     return s.replace("_", "\\_").replace("*", "\\*")
 
 
-def send_message(text):
+def send_message(text, reply_markup=None):
     """Send a message via Telegram Bot API with automatic plain text fallback."""
     if not config.TELEGRAM_ENABLED:
         return False
@@ -39,6 +39,8 @@ def send_message(text):
             "parse_mode": "Markdown",
             "disable_web_page_preview": True,
         }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         resp = requests.post(url, json=payload, timeout=5)
         if resp.status_code == 200:
             return True
@@ -49,6 +51,8 @@ def send_message(text):
             "text": text,
             "disable_web_page_preview": True,
         }
+        if reply_markup:
+            plain_payload["reply_markup"] = reply_markup
         resp2 = requests.post(url, json=plain_payload, timeout=5)
         return resp2.status_code == 200
     except Exception:

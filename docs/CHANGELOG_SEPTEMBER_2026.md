@@ -2,9 +2,899 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0. Perubahan 7 September 2026 (Sore) — Implementasi Mekanisme M1B (Trend-Following Induced Liquidity Sweep) dengan Konfluensi Geometris ZCE & Integrasi Visual Dashboard
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Pemisahan M1A (Macro Counter-Trend SFP) dan M1B (Trend-Following Induced Sweep)**:
+   - M1A beroperasi di batas ekstrem Dealing Range (Premium/Discount) untuk menangkap pembalikan harga (Mean Reversion).
+   - M1B dirancang khusus untuk kondisi tren kuat (searah Macro Bias & CSM Net Delta) di mana harga membentuk internal basing/konsolidasi, melakukan false sweep (induced wick) menembus atap/lantai basing, lalu ditutup reclaim ke dalam area basing searah tren utama.
+2. **Mandat Konfluensi Geometris ZCE (Anti-Arbitrary Basing)**:
+   - Basing yang disapu DILARANG sembarang swing candle lokal. Basing WAJIB memiliki konfluensi geometris ($\le 0.50\times\text{ATR}$) dengan level Zone Confluence Engine (ZCE): Resistance C1/C2/SBR untuk setup SELL, atau Support F1/F2/RBS untuk setup BUY.
+3. **Persyaratan Visibilitas Penuh di Dashboard Cockpit (`http://localhost:8765`)**:
+   - Seluruh status radar M1B, level target, wick rejection ratio, konfluensi ZCE, dan garis horizontal reticle ungu neon `[M1B SWEEP ANCHOR]` di canvas chart wajib tersedia secara real-time di Cockpit Dashboard.
+
 ---
 
-## 1. Perubahan 2 September 2026 — Dual-Basket Confluence & Dispersion Matrix Engine
+### ✨ Komponen & Solusi Utama:
+1. **Parameter Konfigurasi (`config.py` & `.env`)**:
+   - Menambahkan `M1B_ENABLED = True`, `M1B_SETUP_TYPE = "TREND_ALIGNED_INDUCED_SWEEP"`.
+   - Menetapkan batas kuantitatif: `M1B_MIN_WICK_RATIO = 0.30` (wick $\ge 30\%$), `M1B_PENETRATION_ATR_MULT = 0.04`, `M1B_LOOKBACK_BARS = 24`, dan Dealing Range filter (`M1B_DR_SELL_MAX = 0.60`, `M1B_DR_BUY_MIN = 0.40`).
+2. **Deteksi Anchor & Radar Fast Scanner (`src/analytics/market_scanner.py`)**:
+   - Mengimplementasikan `find_m1b_zce_basing_anchor()`: memindai swing high/low internal 12-24 bar H1 dan mencocokkan secara ketat dengan hierarki ZCE (`C1`, `C2`, `SBR`, `F1`, `F2`, `RBS`).
+   - Mengintegrasikan M1B ke dalam `get_radar_standbys()` dan `scan_fast_radar()`: memvalidasi wick penetration, wick ratio $\ge 30\%$, close reclaim, serta Macro Bias dan CSM Delta alignment.
+3. **Visualisasi Cockpit Dashboard (`dashboard.py` & `dashboard_assets.py`)**:
+   - Menambahkan kartu telemetri `M1B: TREND SWEEP` pada grid 5 kolom responsif di tab Radar Telemetry.
+   - Mengintegrasikan garis harga putus-putus reticle horizontal warna ungu neon (`#c084fc`) berlabel `[M1B SWEEP ANCHOR]` di canvas chart SVG.
+   - Memperbarui checklist Gate 5 menjadi `M1..M4 (inc. M1B) Radar Prerequisites`.
+4. **Unit Test Suite & Verifikasi Sistem (`tests/test_m1b_sweep.py`)**:
+   - Membuat pengujian unit test khusus untuk M1B yang menguji deteksi anchor dengan konfluensi ZCE, penolakan anchor tanpa ZCE, dan eksport reticle standby M1B (3/3 test PASS).
+   - Pengujian keseluruhan `python -m unittest discover tests/` terverifikasi **157/157 PASS (100% OK)**.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Siang) — Isolasi Hermetis Unit Test Pure Quant (Zero Production State Pollution) & Pembersihan Telemetri BTCUSD
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kebocoran Data Uji (*Test Pollution*) ke Database Produksi**:
+   - Di `tests/test_pure_quant_execution.py`, pengujian alur `main.run_scanner_trading_cycle()` menggunakan candidate dummy `BTCUSD.c` (harga 95.000, SL 94.000).
+   - Fungsi tersebut memanggil `shadow_tracker.register_candidate()`, `position_manager.record_trade_open_telemetry()`, dan `record_funnel_event()`. Karena modul-modul ini belum di-patch dalam test tersebut, setiap kali unit test dijalankan (`test discover`), dummy order `BTCUSD.c` tertulis langsung ke database state produksi: `data/quant_shadow_state.json`, `data/quant_shadow_trades.jsonl`, `data/trade_lifecycle_telemetry.json`, dan `data/quant_funnel_metrics.json`.
+2. **False SL Hit saat Startup `main.py`**:
+   - Saat `main.py` dijalankan di weekday, loop memanggil `shadow_tracker.update_shadow_orders(connector)`. Tracker mengevaluasi dummy limit order BTCUSD (95.000) terhadap harga live MT5 (~54.000). Karena harga pasar jauh di bawah harga limit dan SL (94.000), tracker seketika menandai trade sebagai `SL_HIT (-1.00R)` dan mencetak:
+     `[SHADOW RADAR RESOLVED] BTCUSD.c (UNIVER) -> SL_HIT (-1.00R) | MFE: +0.00R | MAE: -15.38R`.
+   - Hal ini mendistorsi statistik shadow tracker dengan 6 SL hit palsu (`cumulative_net_r: -6.0R`).
+3. **Klarifikasi Status Weekday BTCUSD**:
+   - Ditegaskan bahwa BTCUSD **100% TIDAK AKTIF pada weekday**. Di `config.py` (`get_scanner_symbols`), filter `not is_crypto(s)` secara ketat membatasi radar hanya pada 26 pair FX. BTCUSD hanya aktif pada akhir pekan jika `ENABLE_BTC_ROTATION=True`.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Isolasi Hermetis Unit Test (`tests/test_pure_quant_execution.py`)**:
+   - Menambahkan mocking via `setUp` untuk:
+     * `patch("main.shadow_tracker.register_candidate")`
+     * `patch("main.position_manager.record_trade_open_telemetry")`
+     * `patch("main.record_funnel_event")`
+   - Memastikan eksekusi unit test tidak menghasilkan efek samping (*side-effects*) ke database atau file state produksi mana pun.
+2. **Pembersihan Database State & Telemetri**:
+   - `data/quant_shadow_state.json`: Menghapus 6 riwayat dummy `BTCUSD.c`, merestorasi statistik ke keadaan riil 26 pair FX (4 active, 2 resolved expired, 0 SL hit, 0.0R net).
+   - `data/quant_shadow_trades.jsonl`: Membersihkan baris log dummy `BTCUSD.c`, mempertahankan hanya data trade riil (`NZDUSD` dan `AUDJPY`).
+   - `data/trade_lifecycle_telemetry.json`: Menghapus tiket uji `999999` dan `888888`.
+   - `data/quant_funnel_metrics.json`: Menghapus event dummy `BTCUSD.c` dan menyesuaikan counter funnel metrics.
+3. **Konfigurasi Mode Forward Test di `.env`**:
+   - `ENABLE_CSM_FLOW_FILTER=false`: Hard gate filter CSM dinonaktifkan di radar untuk mengeksekusi seluruh setup ke demo, sementara perhitungannya tetap aktif dan dicatat di CLI/telemetri.
+   - `ENABLE_PENDING_THESIS_AUDIT=false`: Audit pembatalan pending order diubah ke Shadow Observer Mode tanpa membatalkan order MT5.
+4. **Verifikasi Suite Lengkap**:
+   - Seluruh test suite (`python -m unittest discover tests/`) dijalankan: **154/154 PASS (100% OK)** dan diverifikasi bahwa file database state di `data/` tetap bersih tanpa polusi data baru.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Pagi VI) — Mode Forward Test Agresif (Bypass Limitasi USD & Filter CSM, Shadow Observer Thesis Invalidation, dan Telemetri CSM Open/Close)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kebutuhan Sampel Data Forward Test Maksimal**:
+   - Untuk menguji efektivitas strategi secara kuantitatif tanpa hambatan pembatasan basket (`MAX_CURRENCY_BASKET_EXPOSURE=99`) dan tanpa filter arah CSM (`ENABLE_CSM_FLOW_FILTER=false`), sistem diaktifkan dalam mode pengumpulan data agresif.
+2. **Kebutuhan Counterfactual Telemetry (CSM Open & Close)**:
+   - Sebelumnya, nilai Net Delta CSM hanya dicatat pada saat radar memindai setup (open). Nilai CSM saat posisi ditutup belum terekam, sehingga sulit menganalisis korelasi pergeseran CSM terhadap hasil P/L.
+3. **Shadow Observer untuk Thesis Invalidation**:
+   - Ketika pembatalan pending order dinonaktifkan (`ENABLE_PENDING_THESIS_AUDIT=false`), audit tidak boleh keluar diam-diam (*silent return*). Audit harus tetap mengevaluasi kondisi tesis dan mencatatnya sebagai *Observer Event* (`[THESIS SHADOW OBSERVER]`) tanpa membatalkan order di MT5. Dengan begitu, kita mendapatkan bukti apakah trade yang seharusnya dibatalkan tersebut akhirnya menang (false invalidation) atau kalah (saved loss).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Pencatatan Telemetri CSM Open/Close (`position_manager.py` & `main.py`)**:
+   - Membuat file persistence `data/trade_lifecycle_telemetry.json` via helper `record_trade_open_telemetry()` dan `record_trade_close_telemetry()`.
+   - Di `main.py`: Menangkap snapshot `csm_delta_open` saat order dipasang, dan menangkap `csm_delta_close` saat deal tertutup terdeteksi via `risk.sync_closed_positions()`, menghitung `csm_delta_shift`.
+2. **Shadow Tracker Telemetry Integration (`shadow_tracker.py`)**:
+   - Menyimpan `csm_delta_open` dan `csm_opposed_open` di `ShadowTrade.metadata`.
+   - Mengambil `csm_delta_close` seketika saat shadow trade ter-resolve (`TP_HIT`, `SL_HIT`, `TIME_DECAY_EXIT`), menghitung `csm_delta_shift`, dan menulis ke `quant_shadow_trades.jsonl`.
+3. **Observer Mode pada Invalidation Audit (`position_manager.py`)**:
+   - Menghapus *silent early return* di `audit_pending_orders_thesis()`.
+   - Ketika syarat pembatalan terpenuhi namun `ENABLE_PENDING_THESIS_AUDIT=False`: Mencetak alert `[THESIS SHADOW OBSERVER]` dan mencatat event ke telemetri tanpa membatalkan order MT5.
+4. **Penyelarasan Unit Test Suite Lengkap**:
+   - `tests/test_audit_pending_orders_thesis.py`: Mengisolasi `config.ENABLE_PENDING_THESIS_AUDIT` dan menambahkan test observer.
+   - `tests/test_risk_engine_magic_filter.py`: Mengisolasi `MAX_CURRENCY_BASKET_EXPOSURE=3` dan menguji mode forward test `MAX=99`.
+   - `tests/test_shadow_tracker.py`: Mengisolasi `ENABLE_SHADOW_PROXIMITY_CANCEL`.
+   - Hasil pengujian: **154/154 Unit Tests PASS (100% OK)**.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Pagi V) — Pembukaan Sesi Asia 07:00 WIB Khusus Pair Pasifik & Asia (Tokyo Cash Open & Tokyo Fix Capture) & Penyesuaian Dead Zone 00:00–07:00 WIB
+
+### 🎯 Latar Belakang & Validasi Empiris:
+1. **Penyelidikan Distribusi Waktu 10 Tahun MetaQuotes H1 (2016–2026)**:
+   - Audit membuktikan timestamp MetaQuotes MT5 merupakan Jam Server (GMT+3). Penerapan formula wajib Rule 3 `WIB = Jam Server + 4 Jam` mengonfirmasi bahwa puncak likuiditas dunia sesungguhnya berada di **19:00 – 21:00 WIB** (puncak 21:00 WIB dengan Mean 27.78 pips pada pair Barat).
+   - Di pagi hari, Bursa Saham Tokyo resmi dibuka pukul 09:00 JST (**07:00 WIB**) dan penetapan kurs harian perbankan Jepang (*Tokyo Fixing / Nakane*) terjadi pada 09:55 JST (**07:55 WIB**).
+   - Pair ber-driver Asia/Pasifik (`USDJPY`, `AUDJPY`, `NZDJPY`, `AUDUSD`, `NZDUSD`, dll) melonjak aktivitasnya dari 13.6 pips ke **16.68 pips/jam** pada rentang 07:00–08:00 WIB.
+   - Sebelumnya, Dead Zone `DANGER_ZONES_WIB` memblokir semua pair hingga pukul 08:00 WIB, sehingga bot melewatkan momentum likuiditas institusional Tokyo Cash Open dan Tokyo Fix.
+2. **Kedaulatan Sesi Asia vs Penguncian Pair Barat**:
+   - Data empiris membuktikan bahwa pair Barat murni (`EURUSD`, `GBPUSD`, `USDCAD`, `EURGBP`, dll) sepanjang 07:00–14:00 WIB memiliki **Modus lilin H1 hanya 5.0 pips** (pasar mati/tergerus spread).
+   - Oleh karena itu, pembukaan jam 07:00 WIB **wajib dikhususkan hanya untuk pair yang memiliki driver JPY, AUD, atau NZD** (`is_asian_session_pair`), sementara pair Barat tetap dikunci 100% hingga sesi Eropa (14:00 WIB).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Konfigurasi (`config.py` & `.env`)**:
+   - Menambahkan `ASIA_SESSION_START_HOUR_WIB=7` dan `DANGER_ZONES_WIB=00:00-07:00` di `.env` sebagai *Single Source of Truth*.
+   - Di `config.py`:
+     * `ASIA_SESSION_START_HOUR_WIB = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)`
+     * `ALLOWED_SESSIONS_WIB`: Sesi `"Tokyo / Asia Pagi"` dimajukan dimulai pukul `(7, 0)`.
+     * `DANGER_ZONES_WIB`: Diperbarui menjadi `(0, 0)` s/d `(7, 0)` (`Overnight Rollover Dead Zone (00:00 - 07:00 WIB)`).
+2. **Penyelarasan Scanner Engine (`src/analytics/market_scanner.py`)**:
+   - `MarketScanner.is_symbol_allowed_for_session()`: Menggunakan batas dinamis `ASIA_SESSION_START_HOUR_WIB` (7) dan mengunci pair non-Asia pada rentang 07:00–14:00 WIB.
+   - `scan_fast_radar()`: Filter dead zone diperbarui dari `0 <= h < 8` menjadi `0 <= h < asia_start` (7).
+3. **Pembaruan Cockpit Surveillance Dashboard (`dashboard.py`)**:
+   - Memperbarui visualisasi status sesi `_get_session_name()`: `DEAD_ZONE` (00:00–07:00 WIB) dan `ASIAN_ACTIVE / ASIAN_LOCKED` (07:00–14:00 WIB).
+   - Menyelaraskan audit Gate 1 (Session & Spread Filter) dan card parameter `DEAD_ZONE_HOURS = 00:00 - 07:00 WIB`.
+4. **Pengujian Kuantitatif & Verifikasi Sistem**:
+   - Menambahkan unit test di `tests/test_market_scanner.py` (`test_session_aware_pair_filtering`) untuk memvalidasi:
+     * Jam 07:00 WIB: Pair Asia (`USDJPY`, `AUDUSD`, `NZDUSD`, `GBPJPY`) $\rightarrow$ `PASS / True`.
+     * Jam 07:00 WIB: Pair Barat (`EURUSD`, `GBPUSD`, `USDCAD`) $\rightarrow$ `LOCKED / False`.
+     * Jam 06:00 WIB: Seluruh pair FX $\rightarrow$ `DEAD ZONE / False`.
+   - Full test suite: **152/152 tests PASS (100%)**.
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi IV) — Isolasi Magic Number pada Risk Engine & Multi-Position Sizing (Pemisahan Trade Manual vs Bot)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pemicu False Currency Basket Block oleh Posisi Manual User**:
+   - Di akun MT5 terdapat 2 posisi manual `EURUSD-ECN` (tiket `#663308920` dan `#663314002`, `magic = 0`).
+   - Di `risk_engine.py:544` (`_check_max_positions()`), fungsi mengambil seluruh posisi akun via `mt5.positions_get()` tanpa menyaring `magic == config.MAGIC_NUMBER`.
+   - Akibatnya, 2 trade manual `EURUSD` ditambah 1 trade bot `AUDUSD` dihitung bersamaan sebagai 3 posisi USD, memicu penolakan *Currency Basket Concentration Limit (3/3)* pada seluruh pair USD (`USDJPY` dan `NZDUSD`).
+2. **Kalkulasi Sisa Kapasitas Split Ticket di `main.py:955`**:
+   - `main.py` juga menghitung slot tersisa dari seluruh posisi akun tanpa menyaring magic number, sehingga trade manual memotong kuota split-order bot.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Isolasi Magic Number di `risk_engine.py`**:
+   - Memisahkan `raw_positions`/`raw_orders` (seluruh akun) dari `positions`/`orders` milik bot (`magic == config.MAGIC_NUMBER`).
+   - Aturan *Total Absolute Account Ceiling* (max 8 posisi total) tetap memantau seluruh akun (`raw_positions`) sebagai rem darurat margin.
+   - Aturan *Risk-Weighted Slot Accounting* (max 6 posisi bot) dan *Currency Basket Concentration Limit* (max 3 posisi per mata uang) hanya menghitung posisi dan order milik bot.
+   - Posisi USD bot kini dihitung akurat (1 posisi `AUDUSD`), sehingga slot USD bot tersisa 2 posisi lagi dan `USDJPY` diizinkan membuka posisi.
+2. **Isolasi Magic Number di `main.py`**:
+   - Menyelaraskan kalkulasi `total_active` dan `remaining_slots` untuk pembagian tiket 2-posisi agar hanya menghitung posisi milik bot.
+3. **Penambahan Unit Test Suite (`tests/test_risk_engine_magic_filter.py`)**:
+   - `test_manual_positions_do_not_block_currency_basket`: Memvalidasi bahwa 2 trade manual `EURUSD` + 1 trade bot `AUDUSD` tidak memblokir `USDJPY`.
+   - `test_bot_positions_properly_enforce_currency_basket`: Memvalidasi bahwa 3 trade bot berunsur USD tetap memblokir order USD ke-4.
+   - `test_total_absolute_ceiling_monitors_all_trades`: Memvalidasi bahwa plafon darurat 8 posisi akun tetap memblokir trade jika total akun mencapai 8.
+   - Seluruh test suite sistem (152 tests): **100% PASS**.
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi III) — Sinkronisasi Macro Bias Alignment pada CSM Pending Order Invalidation & Eksplisitasi Config `.env`
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **False Thesis Invalidation pada Order Pending Macro-Aligned (`NZDCHF-ECN` #669657471)**:
+   - Order pending BUY LIMIT NZDCHF disetujui dan ditempatkan oleh Stage 1 radar (M2 Pullback) karena didukung kuat oleh Macro Bias MSE (`bias_score = +0.95`, `action_tier = FULL_ALLOW`, `market_state = FLOOR_REJECTION`).
+   - Di `market_scanner.py:2524-2527`, filter CSM berlawanan (`csm_delta <= -1.0`) dikecualikan jika arah trade selaras dengan bias makro (`is_aligned = True`, `bias_score >= 0.35`).
+   - Namun di `position_manager.py:855`, engine pembatalan pending order mengecek `csm_delta <= -csm_opposed_thresh` (-1.03 <= -1.00) secara sepihak tanpa memeriksa `is_macro_aligned_buy`. Akibatnya, pending order yang sah diloloskan radar langsung dibatalkan dalam siklus 3 detik berikutnya dengan log `[THESIS FAILURE CANCEL] Pending Order #669657471 (NZDCHF-ECN) Dibatalkan: Systemic CSM Flow reversed strongly to Bearish (-1.03 <= -1.00)`.
+2. **Klarifikasi Skala CSM & Parameter Konfigurasi**:
+   - Skala desimal `csm_delta` berada pada rentang $\approx [-5.0, +5.0]$ (hasil normalisasi skor Boitoki dibagi 10). Ambang batas pembatalan pending order adalah `1.00` (setara 10 poin Boitoki).
+   - Parameter `PENDING_CSM_OPPOSED_THRESHOLD` belum dideklarasikan eksplisit di `.env`.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Macro Bias Alignment di `position_manager.py`**:
+   - Mengekstrak `bias_score` dari `strat_dir.macro_bias_score` secara aman menggunakan helper `_safe_num()`.
+   - Menambahkan kondisi pelindung `not is_macro_aligned_buy` (untuk BUY) dan `not is_macro_aligned_sell` (untuk SELL).
+   - Pending order yang didukung arah makro struktural ($\text{bias} \ge +0.35$ untuk BUY atau $\le -0.35$ untuk SELL) tidak lagi dibatalkan oleh fluktuasi CSM moderat di sekitar $\pm 1.0$.
+2. **Eksplisitasi Konfigurasi `.env`**:
+   - Menambahkan parameter `PENDING_CSM_OPPOSED_THRESHOLD=1.0` ke `.env` sebagai Single Source of Truth.
+3. **Penambahan Unit Test Suite (`tests/test_audit_pending_orders_thesis.py`)**:
+   - Menambahkan `test_buy_limit_not_cancelled_when_macro_aligned_despite_opposed_csm` (memvalidasi kasus NZDCHF: BUY limit tetap aktif pada `csm_delta = -1.18` saat `bias_score = 0.95`).
+   - Menambahkan `test_sell_limit_not_cancelled_when_macro_aligned_despite_opposed_csm` (memvalidasi SELL limit tetap aktif pada `csm_delta = +1.35` saat `bias_score = -0.80`).
+   - Seluruh test suite sistem (149 tests): **100% PASS**.
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi II) — Integrasi Paper Trade (Quant Shadow) untuk Sinyal Tertolak Risk Gate & Dedicated HTML Performance Report via Dashboard
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Penolakan Currency Basket Concentration Limit (`MAX_CURRENCY_BASKET_EXPOSURE`)**:
+   - Risk Engine menerapkan aturan konsentrasi mata uang (`src/core/risk_engine.py:601-619`) dengan batas maksimal 3 posisi terbuka per mata uang (misal USD 3/3).
+   - Ketika sinyal valid Stage 1 (seperti `NZDUSD-ECN`) muncul saat kuota 3 posisi USD sudah terpenuhi, bot menolak eksekusi MT5 dengan pesan `[RISK GATE] Trade untuk NZDUSD-ECN [H1] tidak diizinkan oleh Risk Engine ( [RISK] Konsentrasi mata uang USD di MT5 sudah mencapai batas (3/3 posisi).).`
+   - Sebelumnya, penolakan di `main.py:668` langsung mengembalikan `False` tanpa mendaftarkan setup ke Virtual Shadow Order Book (`shadow_tracker`), sehingga telemetri peluang teknikal tersebut hilang dari riset kuantitatif.
+2. **Kebutuhan Akses Laporan Quant Shadow HTML yang Praktis**:
+   - Pengguna membutuhkan cara mudah untuk mengunduh/melihat visualisasi laporan kinerja sinyal quant shadow secara komprehensif melalui antarmuka web dashboard (HTML) tanpa harus membuka file json mentah.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Pendaftaran Otomatis Paper Trade saat Risk Gate Terpicu (`main.py`)**:
+   - Ketika `risk.can_trade(sym)` menolak pengiriman order ke MT5 pada Stage 2 (`main.py:668`), setup tetap dihitung parameter strukturalnya (entry, SL, TP, R:R) lalu didaftarkan ke `shadow_tracker.register_candidate()` dengan disposisi `SKIPPED_RISK_BASKET` atau `SKIPPED_RISK_BLOCK`.
+   - Setup akan dipantau pergerakan harganya secara virtual (fill, MFE, MAE, hingga TP/SL) secara non-invasif.
+2. **Penyelarasan Konfigurasi (`config.py` & `.env`)**:
+   - Menambahkan parameter `MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 3)` di `config.py` dan `.env`.
+3. **Modul Generator Laporan HTML Mandiri (`src/analytics/shadow_report.py`)**:
+   - `render_shadow_report_html()`: Menghasilkan halaman web laporan lengkap terminal-grade (KPI Cards, Breakdown Mekanisme M1..M4, Status Disposisi MT5, Buku Order Aktif & Riwayat Telemetri Tuntas dengan filter/pencarian real-time).
+   - `generate_and_save_shadow_report()`: Otomatis membuat file `docs/quant_shadow_report.html`.
+4. **Integrasi Endpoint Dashboard & Web UI (`dashboard.py` & `dashboard_assets.py`)**:
+   - Menambahkan rute `/shadow`, `/shadow.html`, dan `/report/shadow` pada HTTP handler `dashboard.py`.
+   - Menambahkan tombol langsung `[ 📊 LAPORAN ]` pada header dashboard dan `[ 📊 Buka Laporan Lengkap HTML ↗ ]` pada tab drawer Virtual Shadow.
+   - `dashboard.py` secara otomatis memperbarui file statis `docs/quant_shadow_report.html` saat dijalankan.
+5. **Pengujian & Verifikasi**:
+   - Menambahkan unit test `test_risk_block_disposition_and_get_all_resolved_trades` di `tests/test_shadow_tracker.py`.
+   - Test suite: **100% PASS** (7/7 shadow tracker tests, 99/99 regression tests).
+
+---
+
+## 1. Perubahan 7 September 2026 (Pagi I) — Eliminasi Duplikasi `get_current_tick()` & Harmonisasi Simbol Broker Kripto Demo/Live (`BTCUSD` vs `BTCUSD.c`)
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Penyebab Spam Error `[MT5 ERROR] Gagal mendapatkan tick untuk BTCUSD.c.`**:
+   - Terdapat 2 deklarasi fungsi `get_current_tick(symbol)` di [`src/core/mt5_connector.py`](file:///c:/Vibe/tradingpartner/src/core/mt5_connector.py).
+   - Fungsi baris 305–327 menimpa fungsi baris 254–278. Fungsi baris 305 langsung memanggil `mt5.symbol_info_tick(symbol)` tanpa me-resolve nama simbol via `get_valid_trade_symbol(symbol)`.
+   - Pada akun Demo VTMarkets (`VTMarkets-Demo` #1157958), simbol BTC adalah `BTCUSD` (tanpa suffix `.c`).
+   - File state `data/quant_shadow_state.json` menyimpan pending shadow trade dengan `"symbol": "BTCUSD.c"` dari sesi akhir pekan. Setiap 3 detik `shadow_tracker.update_shadow_orders()` meminta tick `BTCUSD.c`, yang selalu gagal (`None`) dan memicu print error spam di terminal serta mencegah pending order basi ter-resolve/expired.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Konsolidasi Kanonikal `get_current_tick()` (`src/core/mt5_connector.py`)**:
+   - Menghapus fungsi duplikat baris 305–327.
+   - Menyatukan fungsi kanonikal di baris 254 dengan memanggil `symbol = get_valid_trade_symbol(symbol)` pada baris pertama.
+   - Mengembalikan dictionary lengkap: `ask`, `bid`, `last`, `volume`, `time`, `spread`, `spread_usd`, `point`, `digits`, `usd_per_point`.
+   - Menghapus print error hardcoded pada level tick retriever dasar agar tidak membanjiri log saat symbol unavailable.
+2. **Penyelarasan Helper Terkait di `src/core/mt5_connector.py`**:
+   - `get_usd_per_point()`: Menambahkan `symbol = get_valid_trade_symbol(symbol)` sebelum query info broker.
+   - `get_broker_utc_offset_seconds()`: Menambahkan `symbol = get_valid_trade_symbol(symbol)`.
+   - `server_utc_offset_hours()`: Memanggil `get_valid_trade_symbol("BTCUSD.c")` agar secara otomatis mengenali `BTCUSD` pada akun Demo dan `BTCUSD.c` pada akun Live.
+3. **Konfigurasi Lingkungan (`.env`)**:
+   - Menambahkan `WEEKEND_SYMBOL=BTCUSD` di `.env` yang selaras dengan profil Demo VTMarkets.
+4. **Pengujian & Verifikasi**:
+   - Menambahkan unit test `test_get_current_tick_auto_resolves_symbol` dan `test_get_current_tick_returns_none_when_unavailable` di `tests/test_symbol_resolver.py`.
+   - Pending shadow order lama `SHADOW_20260905_213641_BTCUSD_UNIVER` sukses di-resolve oleh `shadow_tracker`.
+   - Seluruh test suite unit test: **100% PASS**.
+
+---
+
+## 1. Perubahan 5 September 2026 (Malam II) — Virtual Shadow Quant Radar: Perekaman Telemetri 100% Sinyal Stage 1 Tanpa Batasan Slot MT5 (Unconstrained Data Collector)
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Keterbatasan Kapasitas Eksekusi MT5 vs Kebutuhan Riset Kuantitatif**:
+   - Portofolio bot menerapkan pembatasan ketat `MAX_OPEN_POSITIONS` (misal 6 posisi) dan `MAX_PENDING_ORDERS` (4 order) demi mencegah *margin cluster* dan risiko korelasi mata uang fiat yang berlebih.
+   - Akibatnya, ketika pasar menghasilkan banyak setup A+ valid (misal 15–20 setup dalam sehari), bot terpaksa mengabaikan sebagian besar setup tersebut (`PRE-DISPATCH BLOCKED: Max positions reached`).
+   - Hal ini membatasi ukuran sampel ($N$) untuk evaluasi statistik performa murni Stage 1 Fast Radar (M1..M4), terutama dalam mode *Pure Quant No-LLM*.
+2. **Kebutuhan Analisis Excursion Tanpa Risiko Modal (Zero-Risk Paper Tracking)**:
+   - Diperlukan mekanisme pencatatan independen yang dapat memantau pergerakan harga riil bar-demi-bar (MFE/MAE) untuk setiap peluang kuantitatif yang lolos filter Stage 1 tanpa membebani margin akun demo MT5.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Modul Mandiri Virtual Shadow Tracker (`src/analytics/shadow_tracker.py`)**:
+   - Mendefinisikan dataclass `ShadowTrade`: merekam parameter lengkap setup (`shadow_id`, `symbol`, `setup_type`, `direction`, `entry_type`, `entry_price`, `sl_price`, `tp_price`, `risk_reward`, `sl_points`, `tp_points`, `status`, `outcome`, `peak_mfe_r`, `max_mae_r`, `mt5_disposition`, `mt5_ticket`).
+   - Class `QuantShadowTracker` (Singleton):
+     * `register_candidate()`: Mendaftarkan setup kuantitatif baru yang lolos radar dengan proteksi deduplikasi (anti-spam 30 menit).
+     * `update_shadow_orders(connector)`: Memperbarui status seluruh order aktif menggunakan data tick live MT5:
+       - Mendeteksi penjemputan pending limit order (*limit fill*).
+       - Mendeteksi pembatalan *Target Proximity Expiration* ($\ge 75\%$ menuju TP tanpa fill).
+       - Mendeteksi *Timeout Expiration* (pending order $>120$ menit).
+       - Menghitung akumulasi *Max Favorable Excursion* (MFE) dan *Max Adverse Excursion* (MAE) dalam satuan R.
+       - Menyelesaikan trade saat menyentuh TP (`TP_HIT`, +R), SL (`SL_HIT`, -1.0R), atau stagnasi $>24$ jam (`TIME_DECAY_EXIT`).
+     * `get_performance_summary()`: Menghasilkan ringkasan analitik real-time (Total Setups, Winrate %, Realized Net R, Expected Value per trade, dan breakdown per mekanisme M1..M4).
+   - Penyimpanan Telemetri Terstruktur:
+     * `data/quant_shadow_trades.jsonl`: Log append-only setiap trade yang tuntas (`RESOLVED`).
+     * `data/quant_shadow_state.json`: State file order aktif/pending yang tahan terhadap restart bot.
+
+2. **Integrasi Alur Eksekusi Utama (`main.py`)**:
+   - Pada `run_scanner_trading_cycle()`:
+     * Setiap setup yang lolos validasi SL/TP didaftarkan ke `shadow_tracker`.
+     * Menandai disposisi eksekusi MT5: `EXECUTED_MT5` (dengan nomor tiket) jika slot tersedia, atau `SKIPPED_SLOT_FULL` / `SKIPPED_RISK_BLOCKED` jika diblokir oleh kapasitas MT5.
+     * Jika mode LLM aktif dan konsensus memutuskan HOLD/VETO, setup tetap dicatat dengan disposisi `SKIPPED_LLM_VETO` untuk menganalisis akurasi keputusan AI secara retrospektif.
+   - Pada loop 3 detik:
+     * Memanggil `shadow_tracker.update_shadow_orders(connector)` secara otomatis.
+     * Mencetak notifikasi ANSI rapi di terminal saat ada trade virtual yang selesai:
+       `[SHADOW RADAR RESOLVED] GBPJPY (M3) -> TP_HIT (+1.67R) | MFE: +1.82R | MAE: -0.35R`.
+
+3. **Integrasi Dashboard Surveillance Cockpit (`dashboard.py` & `dashboard_assets.py`)**:
+   - Backend `dashboard.py`:
+     * Menyuntikkan `shadow_radar` ke payload `/api/overview`.
+     * Menambahkan dedicated endpoint `/api/shadow` untuk querying metrik telemetri.
+   - Frontend `dashboard_assets.py`:
+     * Header bar: Menampilkan pill live status `Virtual Shadow: N rec (act, pend) | WR % (+/-R)`.
+     * Drawer tabs: Menambahkan tab baru `Virtual Shadow Quant Radar` berisi 4 summary cards, tabel breakdown performa M1..M4, dan tabel live order virtual aktif & recent resolved.
+
+4. **Unit Test Suite Lengkap (`tests/test_shadow_tracker.py`)**:
+   - 6 test cases memverifikasi registrasi market/pending, deduplikasi, transisi pending-to-active fill, target proximity expiration, pelacakan MFE/MAE, dan resolusi TP/SL.
+   - Full regression test suite: **144/144 tests 100% PASS**.
+
+---
+
+## 1. Perubahan 5 September 2026 (Malam) — Penyelarasan Vertical Shading (Sessions & Regimes) Sesuai Realita Engine, Dynamic Mini Legend, dan Client Disconnect Guard
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Desinkronisasi Persepsi Visual Operator vs Realita Engine**:
+   - Sesi vertical shading sebelumnya di dashboard bersifat generik dan statis (hanya mengelompokkan jam jam tanpa konteks). Operator tidak bisa melihat apakah suatu candle atau jam tertentu diizinkan trade (`PERMITTED`) atau diblokir keras (`BLOCKED`) oleh risk gate engine.
+   - Ketidakhadiran visualisasi **Macro Wave Consolidation Age Regimes** dari `wave_regime.py`: operator tidak mengetahui apakah suatu konsolidasi tergolong muda (`YOUNG_OSCILLATION` <24 jam), mulai matang (`MATURE_SQUEEZE` 24–72 jam), atau berada dalam kompresi institusional ekstrem (`SUPER_COMPRESSION` >72 jam / Squeeze $\ge 16$ bar).
+2. **Ketiadaan Chart Legend**:
+   - Pengguna tidak memiliki panduan visual (*legend*) di chart untuk mengidentifikasi arti spektrum warna sesi operasional maupun zona usia kompresi gelombang.
+3. **Pencemaran Log Terminal oleh Socket Disconnect**:
+   - Ketika operator me-refresh halaman dashboard sebelum payload HTTP selesai ditransmisikan, browser memutus koneksi TCP sehingga memicu log `Exception occurred during processing of request from ('127.0.0.1', ...)` (`ConnectionResetError: [WinError 10054]`).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Context-Aware Session Info Provider (`dashboard.py: _get_session_info`)**:
+   - Memetakan waktu candle dan status simbol 1:1 dengan seluruh rule eksekusi bot:
+     * `CRYPTO_247` (`PERMITTED`): Bitcoin/Crypto aktif non-stop 24/7 (bebas dari filter Dead Zone dan Asian Lock).
+     * `FRIDAY_LOCK` (`BLOCKED`): Freeze order baru mulai Jumat $\ge$ 23:00 WIB s/d Minggu untuk seluruh pair Forex.
+     * `DEAD_ZONE` (`BLOCKED`): 00:00–08:00 WIB untuk Forex (termasuk jendela kritis rollover 03:50–04:15 WIB).
+     * `ASIAN_ACTIVE` (`PERMITTED`): 08:00–14:00 WIB untuk pair bermata uang Tokyo Driver (`JPY`, `AUD`, `NZD`).
+     * `ASIAN_LOCKED` (`BLOCKED`): 08:00–14:00 WIB untuk non-Asian pairs (`EURUSD`, `GBPUSD`, dll).
+     * `LONDON_EXPANSION` (`PERMITTED`): 14:00–19:00 WIB (High Volume London open).
+     * `NY_OVERLAP` (`PERMITTED`): 19:00–23:00 WIB (Peak Liquidity).
+     * `LATE_NY` (`PERMITTED`): 23:00–02:00 WIB (Risk cap maksimal 2 posisi).
+   - Menyediakan fallback cerdas jika query sesi tidak menyertakan simbol (mengembalikan nama sesi generik).
+
+2. **Kalkulasi Vektorisasi Macro Wave Regime Series (`src/indicators/wave_regime.py`)**:
+   - Dibuat fungsi ter-vektorisasi cepat `classify_wave_regimes_series(highs, lows, closes, timeframe_hours=1.0, dealing_range_window=100)`.
+   - Menggunakan rolling window pandas dan numpy convolve untuk mendeteksi usia Dealing Range (jam) dan John Carter Squeeze Momentum (`sqz_on`, `sqz_bars`) dalam waktu sub-milidetik (~4 ms per 150 bar), bebas iterasi lambat.
+   - Menghasilkan klasifikasi: `YOUNG_OSCILLATION` (<24h), `MATURE_SQUEEZE` (24–72h), `SUPER_COMPRESSION` (>72h atau Squeeze $\ge 16$ bar).
+
+3. **Rendering Dual-Stripe & Dynamic Mini Legend (`dashboard_assets.py`)**:
+   - **Visual Shading**:
+     * Shading sesi dilengkapi dengan *top 3px stripe* berwarna tegas (Emerald Green untuk `PERMITTED`, Coral Red / Amber untuk `BLOCKED`).
+     * Shading wave regime dilengkapi dengan *bottom 3px accent stripe* (Purple untuk `SUPER_COMPRESSION`, Violet untuk `MATURE_SQUEEZE`).
+   - **Dynamic Mini Legend Overlay (`#chart-mini-legend`)**:
+     * Muncul otomatis di pojok kanan atas grafik candlestick.
+     * Beradaptasi secara responsif terhadap filter tombol toolbar aktif (`Sessions`, `Regimes`, `Both`, `Off`) dan konteks simbol aktif (menampilkan legend Crypto 24/7 vs Forex Driver).
+   - **Live HUD Display**: Menampilkan status Macro Wave Regime dan durasi squeeze secara real-time pada header simbol.
+
+4. **Silent Exception Guard pada HTTP Server (`dashboard.py: CockpitHTTPHandler`)**:
+   - Membungkus `do_GET` dengan penanganan khusus untuk `(ConnectionResetError, ConnectionAbortedError, BrokenPipeError)`.
+   - Mengeliminasi log traceback sampah di terminal ketika browser melakukan abort/refresh koneksi.
+
+5. **Unit Test Suite Lengkap (`tests/test_dashboard_shading.py`)**:
+   - 6 test cases memverifikasi: Crypto 24/7, Forex Dead Zone, Asian Lock vs Active, Friday Lock, vektorisasi Wave Regime series, dan integritas payload API `/api/symbol/<sym>`.
+   - Full regression test suite: **138/138 tests 100% PASS**.
+
+---
+
+## 1. Perubahan 5 September 2026 (Sore) — Integrasi BTCUSD pada Dashboard Cockpit, 7-Gate X-Ray Surveillance, dan Normalisasi Simbol Akun Demo
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Visibilitas X-Ray Cockpit untuk Bitcoin (BTCUSD)**:
+   - Pengguna membutuhkan pemantauan langsung terhadap aset Bitcoin di dashboard Cockpit (`dashboard.py`), termasuk live chart, ZCE macro levels, telemetry radar M1..M4, dan evaluasi 7-Gate Decision Matrix secara transparan.
+2. **Desinkronisasi Simbol Akun Demo vs Akun Live**:
+   - Di akun Demo broker VTMarkets:
+     * Crypto ticker adalah `BTCUSD` (tanpa akhiran `.c` dan tanpa `ECN`).
+     * Forex ticker adalah `XXXYYY-ECN` (tanpa akhiran `c`, contoh `EURUSD-ECN`).
+   - Kode resolver lama `mt5_connector.py:get_valid_trade_symbol()` tidak memangkas suffix `.c` atau `-ECNc` sebelum menguji kandidat `-ECN`, sehingga gagal mengenali simbol broker demo yang valid saat input berasal dari live environment (`BTCUSD.c` / `EURUSD-ECNc`).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Auto-Correct & Robust Symbol Normalizer (`src/core/mt5_connector.py`)**:
+   - `get_valid_trade_symbol()` kini memotong suffix (`-ECNC`, `-ECN`, `.ECN`, `C.ECN`, `.C`) kembali ke akar ticker 6-karakter (`base`) sebelum melakukan pencarian variasi simbol broker.
+   - Menguji kandidat secara berurutan: untuk crypto (`BTCUSD`, `BTCUSD.c`, `BTCUSD-ECN`, dll), untuk FX (`base + "-ECN"`, `base + "-ECNc"`, `base + ".c"`, `base`).
+   - Menjamin interoperabilitas dwiarah 100% transparan antara akun Demo (`BTCUSD`, `EURUSD-ECN`) dan akun Live (`BTCUSD.c`, `EURUSD-ECNc`).
+2. **Integrasi BTCUSD Permanen pada Dashboard Watchlist (`dashboard.py`)**:
+   - Inisialisasi scanner internal `MarketScanner` di dashboard kini selalu menyertakan `BTCUSD` bersama 26 pair FX.
+   - Cache overview (`_build_overview_cache`) menjamin `BTCUSD` selalu terdaftar dan dapat diklik kapan pun oleh operator.
+   - Penanganan nilai `digits` (2), `point` (1.0), dan `pip_div` (1) khusus crypto agar kalkulasi spread dan visualisasi level grafik tidak error.
+3. **Kalibrasi 7-Gate X-Ray Surveillance Khusus Crypto (`dashboard.py`)**:
+   - **Gate 1 (Session & Spread)**: BTCUSD dikecualikan dari dead zone 00:00–08:00 WIB dan limitasi sesi Asia Tokyo. Menggunakan plafon spread khusus crypto (`MAX_SPREAD_POINTS_BTC` = 2400 pts).
+   - **Gate 2 (Systemic Basket Shock)**: BTCUSD ditandai bebas/independen dari matriks shock mata uang fiat.
+   - **Gate 4 (Boitoki CSM Flow)**: Ditandai netral/independen dari matriks arus fiat 7 USD Majors.
+   - **Gate 6 (Execution Mode)**: Menampilkan status *Pure Quant Direct Execution (No-LLM, 0 Token API)* saat `ENABLE_LLM_JURY=False`.
+   - **Gate 7 (Risk Calibration)**: Menguji lantai SL 50,000 pts ($500) dan plafon 45,000 pts ($450) dengan sizing risiko crypto (`0.5%` equity).
+4. **Penyelarasan Konfigurasi `.env` & `config.py`**:
+   - `.env`: `WEEKEND_SYMBOL=BTCUSD`, `WEEKDAY_SYMBOL=GBPUSD-ECN`, `SCANNER_SYMBOLS` seluruh 26 pair FX format `-ECN`.
+   - `config.py`: Penyesuaian `default_sl_points_for`, `default_tp_points_for`, dan `get_pre_rollover_slippage_threshold` dengan `.replace("-ECN", "")`.
+5. **Unit Test Suite Lengkap (`tests/test_symbol_resolver.py` & `tests/test_dashboard_btc_xray.py`)**:
+   - `test_symbol_resolver.py`: 2/2 tests PASS (memverifikasi auto-correct demo dan live).
+   - `test_dashboard_btc_xray.py`: 2/2 tests PASS (memverifikasi overview cache dan 7-Gate X-Ray BTC).
+   - Full regression discovery: **132/132 tests 100% PASS**.
+
+---
+
+## 0. Perubahan 5 September 2026 (Siang II) — Branch `quant-trade-noAI`: Mode Pure Quant Weekend BTC Tanpa LLM dan Institutional Demo Safety Lock
+
+### 🎯 Latar Belakang & Identifikasi Kebutuhan:
+1. **Trading Weekend Khusus Bitcoin Tanpa Beban Token AI**:
+   - Pengguna membutuhkan mode eksekusi murni kuantitatif (*Pure Quant Execution*) khusus untuk aset `BTCUSD.c` pada akhir pekan (Sabtu–Minggu) tanpa memanggil konsensus 3-LLM Jury (0 token API, sub-detik).
+   - Seluruh sinyal, entri pending limit, SL struktural, TP quant anchor, dan sizing risiko dieksekusi langsung dari modul Stage 1 Fast Radar.
+2. **Isolasi Akun Demo & Perlindungan Akun Riil (Institutional Demo Safety Lock)**:
+   - Menghindari kecelakaan di mana bot berjalan pada akun Real/Live padahal dimaksudkan untuk akun Demo.
+   - Penambahan proteksi hard lock di `mt5_connector.py` yang memverifikasi `account_info().trade_mode == ACCOUNT_TRADE_MODE_DEMO`. Jika akun terdeteksi `REAL`, inisialisasi langsung dibatalkan keras.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Branch Baru `quant-trade-noAI` (`git checkout -b quant-trade-noAI`)**:
+   - Dibuat dari basis commit terverifikasi pada `quant-trade`.
+2. **Parameter Konfigurasi `ENABLE_LLM_JURY` (`config.py` & `.env`)**:
+   - Memperkenalkan `ENABLE_LLM_JURY = _getenv_bool("ENABLE_LLM_JURY", True)`.
+   - Di `.env`, diset `ENABLE_LLM_JURY=false` dan `MT5_ACCOUNT_MODE=demo`.
+3. **Pure Quant Direct Execution Engine (`main.py`)**:
+   - Jika `ENABLE_LLM_JURY=False`, `run_scanner_trading_cycle` melewati pemanggilan `llm.get_multi_llm_decisions_for_candidate` secara total.
+   - Sinyal, harga pemicu, SL, TP, dan lot sizing dihitung langsung dari `CandidateSetup` kuantitatif serta tunduk pada aturan `_apply_sltp_rules` (plafon/lantai BTC 30,000–45,000 pts) dan `risk_engine`.
+   - Banner CLI terminal menampilkan `PURE QUANT RADAR (Fast Radar 60s | Direct Quant Execution / No-LLM)`.
+4. **Institutional Demo vs Live Safety Guard (`mt5_connector.py`)**:
+   - Validasi `trade_mode` terminal MT5: jika konfigurasi meminta `demo` tetapi broker mengembalikan `REAL`, bot langsung memutus koneksi MT5 (`shutdown()`) dan membatalkan start.
+5. **Unit Test Suite Baru (`tests/test_demo_safety_guard.py` & `tests/test_pure_quant_execution.py`)**:
+   - Validasi pemblokiran akun real saat mode demo aktif (2/2 tests PASS).
+   - Validasi eksekusi langsung pending limit dan market order tanpa pemanggilan LLM (2/2 tests PASS).
+   - Full regression discovery 128 tests: 100% PASS.
+
+---
+
+## 0. Perubahan 5 September 2026 (Siang I) — Harmonisasi Ambang Batas Invalidation Pending Order (CSM Opposed Threshold), Logging Persistence, dan Friday Pre-Weekend Liquidity Shield
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Desinkronisasi Ambang Batas CSM Scanner vs Position Manager (Auto-Cancel 4–10 Detik)**:
+   - Pada sesi perdagangan 4 September 2026, terjadi fenomena di mana pending limit order (EURNZD, GBPCAD, GBPAUD, CHFJPY) yang telah disetujui bulat 3/3 oleh AI Jury dibatalkan oleh sistem hanya dalam waktu 4 hingga 10 detik pasca-approval.
+   - Investigasi mendalam membuktikan `market_scanner.py:2509` meloloskan setup selama $|\text{csm\_delta}| < 1.0$, namun `position_manager.py:852, 865` langsung membatalkan pending order jika $\text{csm\_delta} < -0.35$ (BUY) atau $> +0.35$ (SELL).
+   - Engine salah mengira nilai delta statis yang sudah ada sejak awal sebagai "pembalikan tajam" (*reversed strongly*), sehingga membatalkan order secara prematur.
+   - Forward trajectory audit membuktikan 12 dari 17 pending order yang terjemput (70.6%) sebenarnya profitabel dengan potensi net profit $+\$415.78$ yang terbuang sia-sia.
+2. **Friday Late-Session / Pre-Weekend Thin Liquidity Evaporation**:
+   - Seluruh slippage Stop Loss parah (14.8 – 17.7 pip) terjadi pada pukul 02:30 WIB (22:30 Server Jumat) akibat menyusutnya likuiditas antar-bank menjelang penutupan mingguan (flash drop NZDUSD dan AUDCAD).
+   - Selama rilis berita NFP (19:30 WIB), filter AI bekerja 100% sempurna memblokir trade, membuktikan bahwa kerugian bukan berasal dari berita NFP melainkan operasi pada jam pasar tipis akhir pekan.
+3. **Visibilitas Log Terminal yang Tertimpa**:
+   - Format `print(f"\r\x1b[2K[THESIS FAILURE CANCEL]...")` di `position_manager.py` tertimpa oleh dynamic status clock line sehingga pembatalan order tidak terbaca oleh operator.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Harmonisasi Ambang Batas CSM Pending Invalidation (`position_manager.py`, `config.py`, `.env`)**:
+   - Memperkenalkan parameter `PENDING_CSM_OPPOSED_THRESHOLD = 1.0`, menyelaraskan ambang batas pembatalan pending order dengan filter arah radar di `market_scanner.py` ($1.0$).
+   - Order pending BUY hanya dibatalkan jika `csm_delta <= -1.0`, dan order pending SELL hanya jika `csm_delta >= +1.0`.
+   - Mengganti print carriage-return dengan newline dan mencatat langsung ke `logger.info()` agar tercatat permanen di `trading_bot.log`.
+2. **Friday Pre-Weekend Liquidity Shield (`risk_engine.py`, `config.py`, `.env`)**:
+   - Mengimplementasikan `_check_friday_pre_weekend_lock(symbol, now_wib)`.
+   - Mulai Jumat malam pukul 23:00 WIB (`FRIDAY_CUTOFF_HOUR_WIB = 23`), bot secara otomatis membekukan pembukaan posisi baru pada instrumen FX & Logam (`can_trade() -> False`), menghindari jendela bahaya likuiditas tipis 01:00–04:00 WIB.
+   - Posisi terbuka yang sudah berjalan tetap dikelola penuh oleh trailing, BEP, dan partial close.
+   - Aset crypto (BTCUSD) tetap dapat beroperasi secara independen jika `ENABLE_BTC_ROTATION = True`.
+3. **Unit Test Suite Lengkap (`tests/test_audit_pending_orders_thesis.py` & `tests/test_friday_pre_weekend_lock.py`)**:
+   - Pengujian memverifikasi order dengan CSM moderat (-0.69 / +0.45) tetap dipertahankan, sementara CSM ekstrem (-1.15 / +1.25) dibatalkan secara presisi.
+   - Pengujian memvalidasi aktivasi penguncian hari Jumat $\ge 23:00$ WIB dan isolasi perlakuan crypto. 100% PASS.
+4. **Integrasi 24/7 Weekend Bitcoin Scanner & Risk Engine Bypass (`market_scanner.py`, `risk_engine.py`, `config.py`, `.env`)**:
+   - **Bypass Weekend & Dead Zone di Radar**: `scan_fast_radar()` memeriksa keberadaan instrumen crypto. Pasar FX tetap diblokir pada akhir pekan (`dow in (5, 6)`) dan dead zone subuh (`00:00 - 08:00 WIB`), namun instrumen crypto (`BTCUSD.c`) diizinkan beroperasi 24/7 tanpa henti.
+   - **Bypass Jam Sesi & Weekend di Risk Engine**: `_check_weekend_entry(symbol)` dan `_check_danger_zones(symbol)` membebaskan `BTCUSD.c` dari larangan entri baru akhir pekan saat `ENABLE_BTC_ROTATION = True`. `WEEKEND_TRADING_ENABLED=true` diaktifkan di `.env`.
+   - **Penyelarasan Sesi Asia**: `is_asian_session_pair()` dan `is_symbol_allowed_for_session()` membebaskan crypto dari pembatasan jam sesi bursa Pasifik/Eropa.
+   - **Mekanisme Aktif BTC**: Mekanisme M1 (Universal Liquidity Sweep & SFP), M2 (Trend-Aligned Pullback), dan M3 (Multi-Touch Breakout Retest) aktif penuh menganalisis chart H1 BTCUSD dengan batas kapasitas `MAX_OPEN_POSITIONS_BTC = 2`, sementara M4 (Systemic Currency Flow) tetap non-aktif karena ketiadaan komponen fiat CSM.
+   - **Hermetic Unit Test**: `test_m4_grade_3_macro_gate_demands_basing` dipersenjatai dengan mock waktu agar kalender pengujian terisolasi sempurna, dan penambahan `test_btc_weekend_scanner_and_risk_entry_allowed` membuktikan radar dan risk engine meloloskan BTC di akhir pekan.
+
+---
+
+## 0. Perubahan 4 September 2026 (Malam VI) — Penyelarasan ZCE & MSE Chamber Migration, Eliminasi Inversion Bug, dan Unifikasi 26 Pair FX ke Timeframe H1
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Dynamic State Mutation during Penetration (Inversion Bug Kasus EURJPY & USDJPY Live)**:
+   - Pada pukul 16:44:48 WIB, harga EURJPY dan USDJPY menusuk tipis ke atas Asian High / Plafon $C_1$ (+1.4 pips).
+   - Akibat fungsi `_elect_walls()` di ZCE tidak memiliki syarat *Chamber Clearance*, penusukan tipis tersebut menyebabkan level $C_1$ (181.831) seketika melompat menjadi `imm_floor_f1` (Lantai F1).
+   - Di `market_scanner.py`, evaluasi Dealing Range berbasis 100-bar macro menempatkan posisi harga di zona diskon makro (0.26). Akibatnya, sinyal Bearish Sweep (SELL) tertahan oleh filter `dr_pos_val >= 0.55`, sedangkan Bullish Sweep (BUY) lolos karena `dr_pos_val <= 0.45` dan mengambil referensi `ref_bot = imm_floor_f1 = 181.831`!
+   - Hasilnya, sapuan likuiditas di atas level tertinggi (High) memicu BUY alih-alih SELL, bertolak belakang dengan analisa retikel dashboard `[M1] SELL @ 181.831`.
+2. **Fragmentasi Timeframe JPY Crosses (M30 vs H1)**:
+   - Penggunaan timeframe M30 pada JPY Crosses menghasilkan noise micro-structure, SL terlalu tipis, dan ketidaksinkronan dengan arsitektur 26 pair FX lainnya yang beroperasi murni pada H1.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **ZCE Chamber Clearance & Probe Zone Lock (`zone_confluence_engine.py`)**:
+   - Menerapkan ambang clearance $\ge 0.30 \times \text{ATR H1}$ (`ZCE_CHAMBER_CLEARANCE_ATR_MULT = 0.30`).
+   - Ketika harga berada di dalam zona penusukan ($[C_1 - 0.10 \times \text{ATR}, C_1 + 0.30 \times \text{ATR}]$), level $C_1$ tetap dikunci mati sebagai Plafon dan dilarang berpindah ke `floor_cands`.
+   - Level Plafon hanya sah bermigrasi menjadi Lantai $F_1$ (RBS Floor) jika harga telah menembus bersih $\ge 0.30 \times \text{ATR H1}$ di atas band atas zona.
+   - Berlaku simetris untuk Lantai $F_1$: dilarang melompat menjadi Plafon saat ditusuk tipis ke bawah.
+2. **Hukum Invariansi Peran M1 & Decoupled Intraday DR (`market_scanner.py`)**:
+   - Menghapus syarat cacat `0 < (v - mid)` pada `valid_tops` yang mendiskualifikasi level saat ditembus, digantikan dengan batas toleransi absolut $\text{abs}(\text{mid} - v) \le 1.0 \times \text{ATR}$.
+   - **Strict Directional Category Invariance**:
+     * `ref_top` (SELL) dilarang keras mengambil level lantai (`invalid_ceil_levels`).
+     * `ref_bot` (BUY) dilarang keras mengambil level plafon (`invalid_floor_levels`).
+   - **Intraday Session Dealing Range**: Evaluasi M1 menggunakan rentang sesi Asia (`asian_h`, `asian_l`), sehingga tren turun multi-hari tidak lagi memblokir Bearish Sweep di puncak intraday.
+3. **Unifikasi 100% 26 Pair FX ke Timeframe H1 (`config.py` & `.env`)**:
+   - `get_timeframe_str(symbol)` mengembalikan `H1` untuk seluruh simbol FX termasuk JPY crosses.
+   - `LLM_JPY_FLOOR_ATR_MULT = 0.50` dan `SL_FLOOR_JPY_PTS = 250` diselaraskan ke skala H1.
+   - Perbarui inline keyboard menu Telegram di `telegram_bot.py` menjadi `USDJPY H1`, `GBPJPY H1`, `EURJPY H1`, `CADJPY H1`.
+4. **Unit Test Suite Lengkap (`tests/test_zce_chamber_clearance.py`)**:
+   - 5 pengujian otomatis memverifikasi retensi probe zone, migrasi kamar bersih (breakout/breakdown), dan konsistensi parameter konfigurasi H1. 100% PASS.
+5. **Universal Liquidity Sweep (M1) G2/G3 Wall Enforcement & Radar Loop Ladder Fix (`market_scanner.py`)**:
+   - Menghapus bypass `is_ranging_market` pada filter grade dinding M1; M1 Universal Liquidity Sweep (BUY dan SELL) kini secara mutlak mewajibkan dinding ZCE berperingkat minimal `GRADE_2_INTERMEDIATE` atau `GRADE_3_MACRO`.
+   - Merestrukturisasi seluruh gate evaluasi M1 menjadi tangga `if-elif` terpadu, mengeliminasi `continue` prematur yang sebelumnya menggugurkan loop simbol utama dan mencegah evaluasi mekanisme M2, M3, dan M4.
+6. **M4 Supreme Precedence & Grade 3 Anti-Liquidity Trap Basing Gate (`market_scanner.py`)**:
+   - Pada `_is_direction_allowed()`, M4 Systemic Flow diberikan hak preseden tertinggi (`ALIGNED_M4_SYSTEMIC_EXPANSION [M4_CATALYST]`), mengesampingkan bias makro statis dan perangkap arah.
+   - Pada loop M4, penembusan dinding ZCE Grade 3 ($C_1/F_1$) diwajibkan membentuk High-Tight Basing H1 (`/\/\/\/`, compression $\le 0.35\times\text{ATR}$, `pend["is_basing"] == True`). Jika belum terbentuk konsolidasi, radar menahan emisi tiket dengan status `WATCH_BASING_FORMATION`.
+   - Inisialisasi `_m4_universe` saat startup scanner (`__init__`) dan akses defensif atribut `ema20`, `dealing_range_high`, dan `dealing_range_low`.
+
+---
+
+## 0. Perubahan 4 September 2026 (Malam V) — Penyelarasan 2D Confluence Action Tier dengan Anti-Frankenstein Guard & Capping SL/TP
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pelebaran Target TP Tidak Proporsional pada Setup Reduced Scalp (Kasus GBPCHF Live)**:
+   - Pada posisi live GBPCHF (Ticket #1261997759: SELL 0.10 lot, SL 212 pts, TP 400 pts), engine 2D Confluence mengevaluasi tier `REDUCED_SCALP` sehingga lot dipotong 50% ($0.21 \rightarrow 0.10$ lot).
+   - DeepSeek CRO di Pass 2 mengusulkan target scalp di F3 (1.09183 = 221 pts, R:R 1.00:1).
+   - Namun Anti-Frankenstein Guard sebelumnya memiliki ambang batas kaku `if llm_rr < 1.25`, memperlakukan target 1.00:1 sebagai sub-par dan otomatis memperlebar TP ke Quant Target Station F1 (1.09012 = 392 pts, ~400 pts).
+   - Selain itu, `_apply_sltp_rules` menerima `candidate.action_tier` (`FULL_ALLOW`) alih-alih `confluence["tier"]` (`REDUCED_SCALP`), sehingga aturan capping $1.25\times$ R:R tidak aktif.
+2. **Karakteristik H1 Intraday Trading**:
+   - Untuk pair GBPCHF dengan ATR H1 105 pts dan D1 ADR 531 pts, jarak TP 400 pts (3.8x ATR H1 / 75% ADR) terlalu jauh untuk setup scalp intraday, sementara order AUDCAD (BUY_LIMIT 0.66 lot, SL 120 pts, TP 207 pts, R:R 1.63x net setelah komisi & spread) sudah proporsional (2.3x ATR H1 / 49% ADR).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penyelarasan Effective Action Tier di Konsensus (`consensus.py`)**:
+   - Menghitung `eff_action_tier = confluence.get("tier") or getattr(candidate, 'action_tier', None)`.
+   - Menyesuaikan Anti-Frankenstein Guard:
+     * Jika `is_reduced_scalp`, `target_min_rr` diturunkan menjadi 1.00:1 (menghormati proposal scalp CRO).
+     * Jika TP quant melebihi 1.25x R:R, TP dibatasi pada batas aman 1.25x risk (`max_scalp_dist = 1.25 * curr_cand_risk`).
+   - Meneruskan `eff_action_tier` ke fungsi `_apply_sltp_rules(..., action_tier=eff_action_tier, ...)` sehingga aturan pembatasan `max_rr = 1.25` langsung aktif saat 2D Confluence memicu `REDUCED_SCALP`.
+2. **Penguatan Ekstraksi Defensif Atribut Cand_TP (`consensus.py`)**:
+   - Membungkus parsing `suggested_tp_pts` dengan `try/except` integer casting untuk mencegah `TypeError` saat berhadapan dengan mock/non-int objects pada pengujian.
+3. **Unit Test Suite Lengkap (`tests/test_cro_package_arbitration.py`)**:
+   - Menambahkan pengujian `test_anti_frankenstein_guard_reduced_scalp_capped` untuk memverifikasi bahwa setup reduced scalp tetap terikat pada rentang R:R $[1.00\times, 1.25\times + \text{friction}]$.
+   - 100% full unit test suite PASS tanpa regresi.
+
+---
+
+## 0. Perubahan 4 September 2026 (Malam IV) — Netralisasi Direktif Verdict (APPROVE vs REVISE vs REJECT) & Pengecualian Limit Order Berita Besar
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Disonansi 'REVISE' vs Confidence Level pada Evaluasi EURCHF**:
+   - Pada evaluasi live EURCHF, Gemini menyematkan `verdict: "REVISE"`, `signal: "BUY"`, tetapi memberikan `confidence: 55%` dan `risk_flag: "HIGH_IMPACT_NEWS"`.
+   - Prompt sebelumnya secara keliru memetakan `REVISE` sebagai tingkat keyakinan kedua yang lebih rendah (*"If 60-69% conviction -> REVISE"*), sehingga saat model ragu karena event berita dalam 30 menit, ia memilih `REVISE` alih-alih `REJECT`.
+   - Hal ini menimbulkan anomali di layar: Gemini tertera `[REVISE]` dan vote `BUY`, tetapi trade dibatalkan oleh `CONFIDENCE FLOOR GATE` (55% < 60%) dan dikunci 45 menit (`[HARD VETO LOCK]`) karena berita.
+2. **Klarifikasi Esensi Verdict**:
+   - `REVISE` bukanlah tingkat keyakinan rendah. `REVISE` adalah tindakan struktural di mana model **setuju dengan arah tren (BUY/SELL)** tetapi ingin **memodifikasi entry type (misal menjadi pending limit) atau menyesuaikan SL/TP**. Model dengan keyakinan 80%–90% sepenuhnya sah memilih `REVISE`.
+   - `APPROVE` berarti model menyetujui arah dan menerima koordinat awal tanpa modifikasi.
+   - `REJECT` adalah satu-satunya vonis sah ketika keyakinan model berada di bawah batas minimum 60% ($< 0.60$) atau jika terdapat risiko struktural fatal.
+3. **Penyelarasan Kebijakan Berita Besar (`HIGH_IMPACT_NEWS`)**:
+   - Menempatkan order pasar instan (`MARKET`) tepat sebelum rilis berita berisiko tinggi karena pelebaran spread dan slippage eksekusi.
+   - Namun, menempatkan pending limit order (`REVISE`) jauh di stasiun makro yang kokoh (F1/F2 floor atau C1/C2 ceiling) untuk menyerap sumbu (*wick absorption*) berita adalah strategi yang sah dan tidak seharusnya memicu penguncian fatal 45 menit jika keyakinan model $\ge 60\%$.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Netralisasi Panduan Verdict pada Prompt 3 Model (`llm_client.py`)**:
+   - Menghapus aturan distorsi *"60-69% -> REVISE"* dari seluruh prompt (OpenAI, Gemini, DeepSeek).
+   - Menetapkan direktif netral:
+     * **`APPROVE`**: Setuju dengan arah sinyal dan menerima koordinat awal apa adanya.
+     * **`REVISE`**: Setuju dengan arah sinyal (BUY/SELL), tetapi memodifikasi entry menjadi pending limit order di F1/C1/OB atau menyesuaikan SL/TP. Keyakinan tinggi (70%, 80%, 90%) sepenuhnya valid.
+     * **`REJECT`**: Wajib dipilih jika keyakinan $< 0.60$ ATAU terdapat risiko struktural fatal $\rightarrow$ sinyal wajib `HOLD` dan confidence $\le 0.40$.
+2. **Pengecualian Pending Limit Order dari Hard Lockout Berita Besar (`main.py` & `consensus.py`)**:
+   - Pada `consensus.py`: `HIGH_IMPACT_NEWS` hanya memveto order instan (`MARKET`). Pending limit order (`REVISE`) di stasiun makro dengan confidence $\ge 60\%$ diizinkan lolos.
+   - Pada `main.py`: Jika model menyematkan `HIGH_IMPACT_NEWS` namun order berupa pending limit (`entry_type != "market"`) dengan confidence $\ge 60\%$, sistem tidak mengaktifkan 45-menit hard lockout, melainkan memberlakukan `SOFT_TIMING_HOLD` (3 menit jeda bernapas).
+3. **Penyelarasan Dokumentasi Prompt (`docs/prompt/`)**:
+   - Mengekspor ulang `openai_prompt.md` dan `gemini_prompt.md` secara utuh.
+4. **Verifikasi Test Suite**:
+   - Seluruh unit test suite lulus 100% PASS tanpa regresi.
+
+---
+
+## 0. Perubahan 4 September 2026 (Malam III) — Physical SBR/RBS Barrier Override, Proximity Expiration Auto-Cancel, dan Visualisasi Dual-Tier Trajectory (TP1 & TP2)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Disonansi Multi-Level Konvinsi (EURCAD H1 Case)**:
+   - Pada kasus EURCAD H1, radar mendeteksi 3 level terpisah dalam jarak berdekatan: M2 EMA Pullback @ 1.60500, M3 SBR C1 Wall @ 1.60561, dan HTF SBR @ 1.60754.
+   - Karena algoritma `find_ema_confluence_anchor` sebelumnya mengurutkan kandidat murni berdasarkan jarak terdekat ke harga mid (`abs(x - mid)`), floating EMA/quarter psych level (1.60500) yang kebetulan lebih dekat 6 pips dipilih mengalahkan dinding fisik SBR C1 (1.60561) yang telah dikonfirmasi oleh aksi harga multi-hari.
+   - Konsolidasi 2 hari membuat EMA20/50 mendatar (flat), sehingga menaruh order limit pada angka psikologis/EMA tanpa menempel pada rak resistensi fisik meningkatkan risiko slippage atau false fill.
+2. **Jebakan Pending Order Tertinggal Saat Target Tercapai (*Runaway Target Trap*)**:
+   - Jika pending limit order ditempatkan di 1.60560 sementara pasar terus meluncur turun mencapai $\ge 75\%$ dari target take profit tanpa pernah pullback menjemput order limit, setup tersebut sejatinya telah terealisasi (*the move already happened*).
+   - Membiarkan pending order tetap aktif di pasar menimbulkan bahaya besar: jika harga kemudian berbalik naik menyentuh 1.60560, itu seringkali bukan pullback retest melainkan pembalikan momentum (reversal) berlawanan arah yang berisiko langsung menabrak Stop Loss.
+3. **Keterbatasan Visual Trajectory Tunggal di Dashboard**:
+   - Radar standbys dan grafik dashboard hanya merender 1 garis target (`target_price` / TP1), sehingga pengguna tidak dapat melihat proyeksi multi-horizon (TP1 di dinding terdekat F1/C1 vs TP2 Macro Expansion di F2/C2).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Physical SBR/RBS Barrier Override (`market_scanner.py`)**:
+   - Algoritma `find_ema_confluence_anchor` kini menerapkan pengelompokan klaster institusional:
+     * Menghitung jendela klaster terdekat $\text{min\_dist} + (0.35 \times \text{ATR})$.
+     * Seluruh kandidat di dalam jendela ini dikelompokkan ke dalam tier struktural: **Physical Structural Barriers (OB = Tier 0, F1/C1 Structural Wall = Tier 0)** diberi prioritas mutlak di atas **FVG (Tier 1)** dan **Atlas Psych Levels / EMA (Tier 2)**.
+     * Dalam tier fisik yang sama, sistem memilih barrier yang disentuh pertama kali oleh pullback (`abs(price - mid)` terkecil).
+     * Hasil: Pada kasus EURCAD, order limit otomatis menempel presisi di rak resistensi fisik C1 (1.60561), bukan di garis psikologis arbitrer.
+2. **Pending Order Target Proximity Invalidation (`position_manager.py`)**:
+   - Mesin `audit_pending_orders_thesis()` dipersenjatai dengan penjaga kedaluwarsa target proaktif:
+     * **BUY_LIMIT**: Jika harga live pasar $\ge \text{open\_px} + 0.75 \times (\text{tp\_px} - \text{open\_px})$, order pending dibatalkan otomatis dengan notifikasi `"Target proximity expiration: market reached >=75% of TP without fill"`.
+     * **SELL_LIMIT**: Jika harga live pasar $\le \text{open\_px} - 0.75 \times (\text{open\_px} - \text{tp\_px})$, order pending dibatalkan otomatis.
+     * Menggunakan parser numerik aman (`_safe_num`) guna mencegah konversi nilai mock bawaan (1.0) pada unit test suite.
+3. **Eksportasi Dual-Tier TP Standby (`market_scanner.py`)**:
+   - Di blok M2, M3, dan M4, `get_radar_standbys` kini menghitung dan mengekspor `target_tp1` (Immediate Floor F1 / Ceiling C1) dan `target_tp2` (Deep Macro Expansion F2 / C2) ke dalam kamus `trajectory`.
+4. **Visualisasi Vektor Bercabang di Dashboard Chart (`dashboard_assets.py`)**:
+   - Grafik Lightweight Charts kini menggambar 2 vektor proyeksi:
+     * **Vector 2a (Solid/Dashed)**: Retest Touch $\rightarrow$ `3a. TP1 <price>` (warna hijau/merah).
+     * **Vector 2b (Extended Projection)**: TP1 $\rightarrow$ `3b. TP2 Expansion <price>` jika target makro F2/C2 tersedia.
+5. **Unit Test Suite Lengkap (`tests/`)**:
+   - `test_audit_pending_orders_thesis.py`: Menambahkan 3 skenario uji target proximity (BUY limit cancelled at 76% TP, SELL limit cancelled at 77.5% TP, SELL limit preserved when only 27.5% progress).
+   - `test_market_scanner.py`: Menambahkan uji `test_find_ema_confluence_anchor_physical_override` dan `test_radar_standbys_dual_tp_trajectories`.
+   - Seluruh 38 unit test target dan 100% full test suite PASS tanpa regresi.
+
+---
+
+## 0. Perubahan 4 September 2026 (Malam II) — Arsitektur 2-Tier Master CRO Arbiter, Anti-Frankenstein Atomic Package Engine & Pemisahan Visual CLI Pass 1 vs Pass 2
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Jebakan Hibrida Frankenstein (*The Frankenstein Hybrid Trap*)**:
+   - Pada evaluasi live AUDCHF: OpenAI mengusulkan paket makro `buy_limit @ 0.58147` (SL 0.58003 di balik Floor F2, TP 0.58314 di Ceiling C1, R:R 1.16:1). Gemini mengusulkan paket micro price action `buy_limit @ 0.58187` (SL 0.58057 di balik M5 OB, TP 0.58488 di Ceiling C2, R:R 2.31:1).
+   - DeepSeek V4-Flash (Master CRO di Pass 2) khawatir order OpenAI di F1 tidak terjemput (*"may not fill"*), sehingga memilih **Entry Gemini (0.58187)**. Namun untuk TP, DeepSeek justru mengambil **TP konservatif OpenAI di C1 (0.58314)**!
+   - Akibat mencampur entry dekat market dengan TP terpendek, reward terperas menjadi hanya $12.7\text{ pips}$ melawan risk $13.0\text{ pips}$ $\rightarrow$ **R:R runtuh menjadi 0.97:1 (sub-par / negatif EV)**.
+2. **Disonansi Visual CLI Konsensus Multi-LLM**:
+   - Tampilan terminal CLI sebelumnya mencampur ketiga model secara datar (*flat loop*), menyembunyikan hierarki evaluasi antara Pass 1 (Specialist Investigation) dan Pass 2 (Master CRO Arbitration).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Injeksi Stasiun Quant & Prompt Arbiter DeepSeek CRO (`llm_client.py`)**:
+   - Prompt `build_deepseek_cro_arbiter_prompt` diperkaya dengan kalkulasi otomatis R:R dan jarak poin untuk kedua paket Pass 1 (`PACKAGE A — OpenAI` vs `PACKAGE B — Gemini`).
+   - Koordinat dealing chamber kuantitatif disuntikkan secara presisi: Floor F1, Floor F2, Ceiling C1, Ceiling C2, serta baseline quant station.
+   - **Hukum Integritas Paket Utuh (*The Atomic Package Integrity Law*)**: DeepSeek diwajibkan mengevaluasi proposal sebagai satu kesatuan struktural utuh. Dilarang keras mencampur entry tinggi dengan TP pendek yang menghasilkan R:R $< 1.25\times$.
+   - Skema JSON DeepSeek CRO kini menyertakan blok `arbitration_decision` (`openai_eval`, `gemini_eval`, `chosen_package`, `arbitration_rationale`) dan `calculated_rr` di dalam blok `execution`.
+2. **Adopsi Paket Utuh & Anti-Frankenstein Guard (`consensus.py`)**:
+   - Jika DeepSeek memilih `PACKAGE_OPENAI` atau `PACKAGE_GEMINI`, sistem konsensus secara otomatis mengadopsi satu set koordinat utuh (Entry, SL, TP) dari paket spesialis yang terpilih, alih-alih menghitung median terpisah.
+   - **Anti-Frankenstein R:R Guard**: Sistem secara otomatis memverifikasi $R:R = \text{Reward} / \text{Risk} \ge 1.25:1$ dari harga eksekusi riil (bukan harga market). Jika R:R $< 1.25\times$, sistem memperluas TP ke Quant Target Station (atau level minimum $1.25\times$), menjamin perlindungan matematis absolut.
+3. **Pemisahan Visualisasi Terminal CLI (`consensus.py`)**:
+   - Terminal kini menampilkan kartu terpisah yang terstruktur rapi:
+     * **`[ PASS 1: SPECIALIST DOSSIER INVESTIGATION ]`**: Kartu OpenAI (Macro Strategist) dan Gemini (Price Action Tactician) dengan konteks setup, retest quality, dan level.
+     * **`[ PASS 2: MASTER CRO & RISK ARBITER ]`**: Kartu DeepSeek (Master CRO Arbiter) menampilkan paket arbitrase yang dipilih (`PACKAGE_OPENAI` / `PACKAGE_GEMINI` / `REVISE_EXPANDED_TP`), kalkulasi R:R, justifikasi risiko, dan tape audit M5.
+     * **`[ FINAL CONSENSUS & EXECUTION TICKET ]`**: Ringkasan kesepakatan 3/3 dan tiket order yang divalidasi.
+4. **Unit Test Suite Lengkap (`tests/test_cro_package_arbitration.py`)**:
+   - 3 test case baru yang memvalidasi injeksi prompt, adopsi paket utuh, dan intersepsi Anti-Frankenstein Guard.
+   - Seluruh test suite (105/105 tests) PASS 100%.
+
+---
+
+## 0. Perubahan 4 September 2026 (Sore II) — Sinkronisasi SMC D1/H4 Macro Trend, HTF Wall Collision Gate (M3), & Unshackling M1 Universal Liquidity Sweep
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Jebakan Lagging 2-EMA D1/H4**:
+   - `market_scanner.py` menggunakan `close >= ema20 and close >= ema50`. Pada GBPUSD yang sedang mengalami koreksi tajam dari 1.3675 ke 1.3474, pantulan tipis 5 pip di atas EMA20 (1.35336) secara keliru melabeli pasar sebagai `D1_BULLISH_EXPANSION` dan `is_bull = True`.
+   - Di H4, pembalikan logika boolean membuat pantulan korektif di dalam tren turun (`h4_c > h4_ema20 and h4_ema20 <= h4_ema50`) dilabeli `h4_is_bull = True`, bertolak belakang dengan MSE 6-TF (`HUNT_SELL_PULLBACK`, `CEILING_REJECTION at 1.35383`).
+2. **Pembunuhan Prematur M1 SELL Universal Liquidity Sweep**:
+   - Aturan anti-trend `is_macro_bull` membaca `macro['is_bull'] == True`, langsung memicu `[SWEEP SELL ANTI-BULL VETO]`, sehingga peluang M1 SELL sweep di resistensi C1 terbuang meski MSE mengarahkan penjualan di plafon.
+3. **M3 BUY Menabrak Plafon di Premium Zone**:
+   - M3 BUY breakout mengukur runway plafon dari support lama yang tertinggal (`target_res`) alih-alih harga live (`mid`). Akibatnya radar meloloskan order BUY_LIMIT di 1.35403 tepat ke dinding plafon C1 di Premium (73.8% Range) yang ditolak 0/3 oleh AI Jury (`LIQUIDITY_TRAP`, `DIRTY_SWEEP`).
+4. **Klarifikasi Istilah M2**:
+   - Menstandarkan penamaan telemetry M2 sebagai `Touched` / `Retest EMA` (kata `Break` murni milik M3/M4).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Integrasi SMC Market Structure pada D1 & H4 (`market_scanner.py`)**:
+   - D1 memadukan `d1_smc.trend_bias` (`LuxSMCAnalyzer(swing_length=3)`): jika struktur SMC bearish, pantulan di atas EMA20 diklasifikasikan sebagai `D1_BEARISH_PULLBACK` (`is_bear = True`, `is_bull = False`).
+   - Koreksi pembalikan polaritas boolean H4: pantulan dalam tren turun (`h4_ema20 <= h4_ema50`) diklasifikasikan sebagai `H4_BEARISH_PULLBACK` (`h4_is_bear = True`, `h4_is_bull = False`).
+   - Harmonisasi dengan MSE 6-TF: direktif strategis MSE (`HUNT_SELL_PULLBACK` / `HUNT_BUY_DIP`) disinkronkan langsung ke `combined_is_bull` / `combined_is_bear`.
+2. **HTF Wall Collision & Runway Guard pada M3 Breakout (`market_scanner.py`)**:
+   - Mengukur jarak fisik riil `dist_to_ceiling = target_ceiling - mid`.
+   - Menolak keras (`[BREAKOUT BUY WALL COLLISION] SKIP` + `continue`) order BUY jika harga berada dalam radius $\le 0.35\times\text{ATR}$ dari plafon C1 atau berada di Premium Zone ($dr\_pos \ge 0.70$). Simetris untuk M3 SELL pada lantai F1 di Discount ($dr\_pos \le 0.30$).
+3. **Unshackling M1 Universal Liquidity Sweep di Plafon/Lantai Ekstrem (`market_scanner.py`)**:
+   - Anti-trend veto tidak lagi memblokir SELL sweep jika harga berada di Premium Zone ($dr\_pos \ge 0.65$) pada dinding validasi G2/G3 atau di bawah mandat MSE (`HUNT_SELL_PULLBACK`, `CEILING_REJECTION`, `FADE_CORRIDOR_EXTREMES`).
+   - Tetap mempertahankan seluruh kualifikasi ketat M1 (penetrasi stop-hunt, reclaim penutupan di balik level, dan rejection wick).
+4. **Penegakan Aturan Terminologi Resmi (Universal Liquidity Sweep)**:
+   - Memastikan semua pemanggilan gate menggunakan `evaluate_universal_sweep_gates` sesuai Rule 7 AGENTS.md.
+5. **Unit Test Suite (102/102 PASS — 100%)**:
+   - Isolasi hermetis `setUp` dari file disk `scanner_cooldowns.json`.
+   - Penambahan `test_d1_h4_smc_pullback_classification` dan `test_m3_htf_wall_collision_and_m1_unshackling`.
+
+---
+
+## 0. Perubahan 4 September 2026 (Malam) — Pemisahan Rejection (Soft Timing HOLD vs Hard VETO) & Penyelarasan Mandate Thesis MSE
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Disonansi Semantik MSE vs Setup Retest/Limit (Mid-Chamber Trap)**:
+   - Ketika harga berada di rentang 20%–80% dari dealing chamber (misalnya 28% atau 2.4 pips di atas Floor F1), MSE mencap kondisi tersebut sebagai `CHAMBER_CONSOLIDATION` dengan teks kaku:
+     `Mandate Thesis: Discipline requires waiting for extreme boundary touch...`
+     `Forbidden Traps: Do NOT execute market orders in mid-chamber consolidation zone`
+   - LLM membaca teks ini sebagai larangan kuantitatif mutlak dari sistem internal, sehingga secara otomatis mengeluarkan `HOLD` / `REJECT`.
+2. **Jebakan Hukuman Cooldown Kaku (*The 45-Minute Lockout Trap*)**:
+   - Di `main.py`, setiap kali AI menjawab `HOLD`, sistem langsung memanggil `record_setup_rejection()`, mengunci `(symbol, setup_type, direction)` selama **45 menit** (dan level retest M3 selama **2 jam**).
+   - Akibatnya: 5–10 menit kemudian harga menyentuh tepat di level boundary (Floor F1) dengan rejection wick 50% (sesuai yang ditunggu), namun Stage 1 Radar melewatinya (*skip*) karena masih tertahan lockout 45 menit. Peluang profit terlewat total.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Bifurkasi Klasifikasi Rejection di `main.py`**:
+   - **Hard Risk VETO (45 Menit Lockout)**:
+     Jika terdeteksi salah satu fatal risk flag (`COUNTER_TREND_MOMENTUM`, `FALLING_KNIFE_WATERFALL`, `SYSTEMIC_CURRENCY_DUMP`, `HIGH_IMPACT_NEWS`, `LIQUIDITY_TRAP`, `UNMITIGATED_IMPULSE_CHASE`). Kunci mekanisme 45m aktif secara protektif.
+   - **Soft Timing HOLD (Hanya 3 Menit Breathing Cooldown)**:
+     Jika `risk_flag` adalah `"NONE"` (penolakan murni karena timing atau harga belum menyentuh level). Sistem memanggil `scanner_inst.record_soft_timing_hold(sym)`, HANYA mengaktifkan jeda bernapas simbol 3 menit **TANPA mengunci mekanisme 45 menit**. Begitu harga menyentuh boundary level beberapa menit kemudian, Radar langsung siap memindai dan mengeksekusi kembali!
+2. **Penyelarasan Semantik Mandate Thesis & Forbidden Traps (`macro_strategic_engine.py`)**:
+   - Teks `thesis` dan `forbidden_traps` diperbarui untuk secara eksplisit membedakan *Market Chase Order* (dilarang mid-chamber) dari *Pending Limit Orders / Structural Retests* di boundary Floor F1 / Ceiling C1 (diizinkan & direkomendasikan via `REVISE`).
+3. **Edukasi Resolusi Mid-Chamber pada Prompt Dossier (`llm_client.py`)**:
+   - Rule #4 pada prompt OpenAI dan Gemini menegaskan bahwa jika harga berada di mid-chamber mendekati boundary, model diarahkan memilih `REVISE` dengan `buy_limit` / `sell_limit` di anchor level daripada melakukan hard `REJECT`.
+4. **Metode Baru `record_soft_timing_hold()` (`market_scanner.py`)**:
+   - Menyediakan API mandiri untuk jeda bernapas simbolik tanpa mengotori `_mechanism_rejection_cooldowns`.
+5. **Unit Test Suite (120/120 PASS — 100%)**:
+   - Test case baru `test_soft_timing_hold_vs_hard_veto_lockout` di `tests/test_market_scanner.py` memverifikasi presisi pemisahan cooldown.
+
+---
+
+## 1. Perubahan 4 September 2026 (Sore) — Penyelarasan Paradigma AI Dossier, Limit Order Priority & Fix Re-Evaluator Pending Order (Thesis Broken)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **False Rejection Akibat Benturan Paradigma (Audit 13:45–14:05 WIB)**:
+   - 4 setup valid yang lolos Stage 1 Radar (AUDCAD BUY, GBPUSD BUY, EURCHF SELL, USDCHF SELL) ditolak bulat oleh Stage 2 LLM Jury.
+   - Akar masalah: Prompt sistem multi-LLM mendiktekan bahwa *BUY HANYA diizinkan di Discount (≤ 50%)* dan *SELL HANYA diizinkan di Premium (≥ 50%)*. Ini aturan mean-reversion (M1/M2) yang bertentangan langsung dengan mekanisme breakout/continuation (M3/M4), di mana breakout resistance secara alamiah berada di Premium (> 50%) dan breakdown support berada di Discount (< 50%).
+2. **Salah Tafsir Candlestick Tape M5 (Pullback Retest vs Waterfall)**:
+   - Saat harga melakukan pullback retracement menuju level retest anchor, lilin M5 secara alami berlawanan arah (2–3 bar merah saat pullback ke support BUY). Model Gemini dan DeepSeek mencapnya sebagai `COUNTER_TREND_MOMENTUM` / `FALLING_KNIFE_WATERFALL`, padahal itu adalah proses pengujian level yang wajar.
+   - Tape M5 di `main.py` sebelumnya hanya mengirim string OHLC mentah tanpa kalkulasi pips sumbu/body.
+3. **Bug Kritis Re-Evaluator Pending Order (`audit_pending_orders_thesis()`)**:
+   - Order limit yang sudah terpasang sering dibatalkan sepihak tiap 3 detik karena evaluasi ambigu `"REJECTION" in m_state`.
+   - Akibatnya, `SELL_LIMIT` di ceiling justru dibatalkan saat terdeteksi `CEILING_REJECTION` (yang sebenarnya adalah sinyal jual valid), dan `BUY_LIMIT` dibatalkan saat `FLOOR_REJECTION`!
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Pemisahan Paradigma Setup pada System Directives (`llm_client.py`)**:
+   - Aturan #4 sistem prompt memisahkan tegas:
+     * *Mean-Reversion / Reload (M1 & M2)*: Wajib patuh batas 50% Dealing Range HTF.
+     * *Breakout Retest & Continuation (M3 & M4)*: Dibebaskan dari batasan 50% Dealing Range HTF. Evaluasi difokuskan pada kualitas retest level structural flip (RBS/SBR) dan runway stasiun target ZCE.
+2. **Prioritaskan `REVISE -> Limit Order` daripada Hard `REJECT` (`llm_client.py`)**:
+   - Jika arah dan zona level memiliki probabilitas institusional yang baik namun timing pasar saat ini belum optimal (sedang retracement atau mid-corridor), LLM diinstruksikan memilih `REVISE` dengan memasang Pending Limit Order di level anchor.
+   - Status `REJECT` / Veto dicadangkan strictly untuk risiko fatal: Counter-trend mayor tanpa CHoCH, lonjakan berita Tier-1 aktual, atau candle waterfall yang menembus bablas level invalidasi.
+3. **Edukasi Candlestick Tape M5 (`llm_client.py`) & Feeder `main.py`**:
+   - Header konteks `[PULLBACK RETEST RETRACEMENT CHECK]` ditambahkan ke prompt.
+   - Ditegaskan bahwa lilin counter-trend saat mendekati anchor adalah retracement normal, bukan waterfall, selama ada wick rejection $\ge 25\%$ atau deselerasi body.
+   - Feeder `main.py` diperbarui menggunakan `llm.format_micro_tape()` sehingga tape M15, M5, H1, H4 menyajikan kalkulasi eksplisit pips `Body / WickU / WickL`.
+   - Injeksi data 3-point trajectory (`origin_price`, `origin_age`, `target_price`) ke dossier prompt.
+4. **Refactoring Re-Evaluator Pending Order (`position_manager.py`)**:
+   - Menghapus pengecekan ambigu `"REJECTION" in m_state`.
+   - Menerapkan **Evaluasi Struktural Ketat**:
+     * BUY Pending Order HANYA dibatalkan jika M15 close menembus ke bawah SL atau anchor $> 0.50\times\text{ATR}$ (`last_close < anchor - 0.50*atr`), ATAU CSM Net Delta berbalik tajam ($<-0.35$), ATAU terkonfirmasi `FLOOR_BREAKDOWN`.
+     * SELL Pending Order HANYA dibatalkan jika M15 close menembus ke atas SL atau anchor $> 0.50\times\text{ATR}$ (`last_close > anchor + 0.50*atr`), ATAU CSM Net Delta berbalik tajam ($>+0.35$), ATAU terkonfirmasi `CEILING_BREAKOUT`.
+5. **Unit Test Suite 100% Pass (`tests/test_audit_pending_orders_thesis.py`)**:
+   - 4 test case baru memvalidasi perbaikan bug `CEILING_REJECTION` dan `FLOOR_REJECTION`, serta memastikan pembatalan struktural bekerja presisi.
+
+---
+
+## 1. Perubahan 4 September 2026 (Siang) — Dual-Timeframe Microscope (M3 M5-Rejection & M4 M15/M30 Basing Engine)
+
+### 🎯 Latar Belakang & Bukti Kuantitatif (100k Bar M5 + 11k H1 Swings):
+1. **Kegagalan Fatal Blind Retest M3 (4.8% Win Rate)**:
+   - Dari 6.826 sentuhan retest pada broken support/resistance level, **75.7% (5.166 kasus) adalah *Waterfall Penetration*** di mana lilin M5 menembus bablas tanpa penolakan (Win Rate hanya 0.8%).
+   - Memfilter retest dengan **M5 Rejection Wick $\ge 25\%$** terbukti melipatgandakan Win Rate menjadi **71.7%** ($N=99, \chi^2 = 348.2, p < 10^{-10}$).
+2. **Kekeliruan Asumsi Deep Retest M4 (10.1% Win Rate)**:
+   - Data membuktikan paska penembusan swing 120-bar saat flow meledak ($|z| \ge 1.5$), jika harga sampai turun kembali ke level awal, momentum sering kali sudah mati (Win Rate 10.1%).
+   - Sebaliknya, saat harga membentuk **High-Tight Basing M15/M30 (`/\/\/\/`)** di atas level pecahan ($\le 0.35\times\text{ATR}$), peluang kelanjutan tren naik **2.5x lipat (24.9% vs 10.1%)**.
+3. **Memori Retest Basi 120 Bar**:
+   - Menahan level breakdown selama 120 bar (5 hari bursa) membuat radar dipenuhi antrean M4 gantung yang sudah kehilangan relevansi flow.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **M3 M5 Micro-Rejection Gate (`market_scanner.py`, `config.py`, `.env`)**:
+   - `M3_M5_REJECTION_FILTER = True`, `M3_M5_MIN_WICK_RATIO = 0.25`:
+     - Menarik 6 candle M5 via MT5 (<1ms, 0 token) saat harga memasuki zona retest $0.28\times\text{ATR}$.
+     - Wajib mendeteksi sumbu penolakan fisik $\ge 25\%$ (upper wick untuk SELL SBR, lower wick untuk BUY RBS) atau pantulan close menjauh dari level.
+     - Lilin marubozu waterfall yang menembus level $>0.15\times\text{ATR}$ tanpa sumbu di-blokir 100% di Stage 1 sebelum memanggil 3-LLM Jury.
+
+2. **M4 Horizon Retest 48 Bar (2 Hari Bursa) (`config.py`, `.env`, `market_scanner.py`)**:
+   - `M4_MAX_WAIT_BARS = 48` (dipangkas dari 120 bar ke 48 bar H1).
+   - Menghapus antrean M4 basi yang tidak kunjung disentuh dalam 2 hari bursa.
+
+3. **M4 M15/M30 High-Tight Basing Engine (`market_scanner.py`)**:
+   - `M4_BASING_MIN_BARS = 4`, `M4_BASING_MAX_RANGE_ATR = 0.35`:
+     - Selain Mode A (Deep Retest), sistem mendukung Mode B: Konsolidasi mendatar M15 (FX Majors) dan M30 (JPY Crosses).
+     - Jika 4 bar M15/M30 berkonsolidasi ketat $\le 0.35\times\text{ATR}$ di atas level penembusan dan harga menguji batas base tersebut, order limit dipasang di boundary base dengan SL struktural $0.45\times\text{ATR}$ dan TP $1.1R$.
+
+---
+
+## 1. Perubahan 4 September 2026 (Pagi) — Granular Mechanism Cooldown, M4 Range Discipline & Multi-Confluence Architecture
+
+### 🎯 Latar Belakang & Identifikasi Flaw:
+1. **Cross-Mechanism Contamination Trap (AUDUSD Case Study)**:
+   - Pada saat setup M4 (`SYSTEMIC_FLOW_CONTINUATION` BUY_LIMIT @ 0.7208) ditolak oleh 3-LLM Jury (Pass 2 CRO DeepSeek mendeteksi `IMPULSE_CHASE` di 89.5% Dealing Range), `main.py` memanggil `record_retest_rejection(sym, ...)`.
+   - Di `market_scanner.py`, fungsi ini menetapkan `self._symbol_last_trigger[clean_sym] = now_ts + 1800`, yang memicu *blanket symbol lockout* selama 45 menit untuk pasangan tersebut.
+   - Akibatnya, setup valid M1 (Universal Liquidity Sweep), M2 (Pullback), dan M3 (Multi-Touch Breakout Retest) yang berada di zona yang sama (0.72071 - 0.72085) ikut terbunuh dan diabaikan total selama 45 menit.
+2. **Ketiadaan Filter Range Discipline di Hulu M4 (Stage 1 Radar)**:
+   - Mekanisme M4 sebelumnya tidak mengecek Dealing Range sama sekali, sehingga memancarkan BUY di Extreme Premium (>70%) atau SELL di Extreme Discount (<30%), membakar token LLM hanya untuk di-veto oleh DeepSeek CRO.
+3. **Ketiadaan Tagging Multi-Mekanisme Confluence**:
+   - Ketika M1, M2, dan M3 aktif bersamaan pada rentang sempit ($\le 0.35\times\text{ATR}$), 3-LLM Jury tidak menerima sinyal bahwa level tersebut merupakan konvergensi dari berbagai mekanisme kuantitatif.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Granular Per-Mechanism & Per-Direction Cooldown Engine (`market_scanner.py`, `config.py`, `.env`)**:
+   - `SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS = 180` (Jeda bernapas simbol 3 menit untuk mencegah spam token beruntun).
+   - `SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS = 2700` (Lockout granular 45 menit terpisah per tuple `(symbol, setup_type, direction)`).
+   - Penolakan M4 BUY hanya mengunci M4 BUY. M1 BUY/SELL, M2 BUY/SELL, dan M3 BUY/SELL pada simbol yang sama tetap dapat dievaluasi setelah jeda bernapas 3 menit.
+   - Lockout level harga fisik di `_retest_rejected_levels` dikhususkan hanya untuk setup bertipe `M3_BREAKOUT_RETEST` / `MULTI_TOUCH_BREAKOUT_RETEST`.
+   - Format penyimpanan `data/scanner_cooldowns.json` diperbarui mendukung format granular dengan mempertahankan kompatibilitas mundur.
+
+2. **Stage 1 Radar M4 Flexible Range Discipline (`market_scanner.py`, `config.py`, `.env`)**:
+   - `M4_EXTREME_DR_THRESHOLD = 0.70`:
+     - M4 BUY di atas 70% Dealing Range (Extreme Premium) di-filter di Stage 1 Radar (0 token), KECUALI jika didukung oleh aliran modal global yang sangat ekstrem (`csm_delta >= +0.035`).
+     - M4 SELL di bawah 30% Dealing Range (Extreme Discount) di-filter di Stage 1 Radar (0 token), KECUALI jika didukung oleh `csm_delta <= -0.035`.
+
+3. **Multi-Mechanism Confluence Detection & Dossier Injection (`market_scanner.py`, `src/core/llm_client.py`)**:
+   - Sebelum emisi kandidat radar, sistem memeriksa apakah terdapat $\ge 2$ mekanisme yang aktif searah dalam radius $\le 0.35\times\text{ATR}$.
+   - Jika terdeteksi, radar menyematkan atribut `multi_confluence = True` dan `confluence_mechanisms` (misal: `['M1_UNIVERSAL_LIQUIDITY_SWEEP', 'M2_PULLBACK', 'M3_BREAKOUT_RETEST']`).
+   - Injeksi langsung ke Dossier 3-LLM Jury:
+     - Pass 1: Baris `MULTI-MECHANISM CONFLUENCE: ACTIVE (M1+M2+M3 within 0.35xATR)` pada metadata.
+     - Pass 2: Parameter `Multi-Mechanism Confluence` pada audit `Trade Specification`.
+
+4. **Sinkronisasi Pemanggilan Rejection Memory (`main.py`)**:
+   - Memutakhirkan penanganan VETO Pass 2 dan HOLD konsensus di `main.py` untuk meneruskan `cand.setup_type` dan `cand.direction` ke `scanner_inst.record_setup_rejection()`.
+
+---
+
+## 1. Perubahan 4 September 2026 (Dini Hari) — Pemisahan Tren Struktural HTF dari Status Taktikal Kamar & M2 Confluence Anchor
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pembajakan Tren Struktural oleh Pengujian Batas Kamar (Tactical Contamination)**:
+   - Sebelumnya, saat harga menyentuh lantai diskon F1 pada kondisi tren turun tajam (downtrend), pembacaan bias sesaat dapat membalik label makro menjadi bullish, merusak disiplin trend-following.
+2. **Ketiadaan Konfluensi Fisik pada Anchor M2 Pullback**:
+   - Level M2 Pullback sebelumnya rentan mengambil titik swing acak. Pada tren bearish, level entri bisa terpasang di bawah harga pasar (swing low) alih-alih di rak resistensi/EMA di atas harga.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **Pemisahan Tren Struktural HTF vs Status Taktikal Kamar (`market_scanner.py`, `dashboard.py`)**:
+   - Tren makro D1/H4 (`combined_is_bull`, `combined_is_bear`) dikunci murni berdasarkan ekspansi/pullback struktural.
+   - Status batas ekstrim dipisahkan ke dalam variabel `tactical_state`:
+     * `REBOUND_WATCH_AT_FLOOR`: Harga menguji Floor F1 atau berada di diskon $\le 20\%$.
+     * `REJECTION_WATCH_AT_CEILING`: Harga menguji Ceiling C1 atau berada di premium $\ge 80\%$.
+     * `BALANCED_FLOW`: Berada di jalur pergerakan normal.
+   - **Diferensiasi Arah M1 vs M2**:
+     * M1 diizinkan fade batas ekstrim: Bullish Sweep Support (SFP Low) saat menguji lantai diskon $\le 30\%$, Bearish Sweep Resistance (SFP High) saat menguji plafon premium $\ge 70\%$.
+     * M2 tetap patuh arah tren makro: Bearish Pullback selalu mencari resistensi $\ge \text{mid}$, Bullish Pullback selalu mencari support $\le \text{mid}$.
+
+2. **M2 Confluence Anchor & Retest Identification (`market_scanner.py`)**:
+   - Implementasi `find_ema_confluence_anchor()`: Mengaitkan level M2 ke konfluensi terdekat (OB, FVG, F1/C1, Psychological Level, EMA20/50).
+   - Menambahkan metadata temporal tracking pada `get_radar_standbys` (`event_time`, `status`, `bar_age`, `direction`, `trajectory`).
+
+3. **Peningkatan Visualisasi Chart Dashboard (`dashboard.py`, `dashboard_assets.py`)**:
+   - Merender marker lilin, label status taktikal, dan garis proyeksi trajektori secara real-time pada Lightweight Charts.
+
+4. **Automated Unit Tests (`tests/test_market_scanner.py`)**:
+   - `test_get_radar_standbys_bearish_and_bullish`: Verifikasi M2 bearish selalu $\ge \text{mid}$ dan bullish $\le \text{mid}$.
+   - `test_find_ema_confluence_anchor_and_temporal_tracking`: Validasi penjangkaran konfluensi dan field temporal.
+   - `test_structural_trend_and_tactical_chamber_separation`: Memastikan tren makro tetap bearish saat terjadi pantulan di lantai F1.
+
+---
+## 1. Perubahan 3 September 2026 (Malam) — M3 Fresh Breakout Law, Retest Debounce, Segmented SL Floor & Net R:R Commission Engine
+
+### 🎯 Latar Belakang & Identifikasi Flaw:
+1. **Pemicu Beruntun M3 Radar (75 Setup / 5 Jam)**:
+   - Audit mendapati mekanisme M3 (Multi-Touch Breakout Retest) menyumbang 68 dari 75 setup (90.7%) yang dikirim ke 3-LLM Jury.
+   - Pemicunya adalah kombinasi bug scoping variabel `df` di `scan_all` (menyebabkan filter 16-bar recency selalu fallback ke `True`) dan `Retest Hovering Trap` di mana pair berkonsolidasi di pita sempit 2-3 pips selama 4 jam berturut-turut sementara cooldown hanya 15 menit.
+2. **Friksi Komisi pada Lot Sizing Mikro**:
+   - Pair dengan volatilitas rendah (seperti EURCHF dengan ATR H1 72 pts) menghasilkan SL ultra-sempit (29 pts) akibat M4 bypass total terhadap safety floor.
+   - Akibatnya lot membengkak ke 1.60 lot, dan komisi broker round-turn ($9.60) memakan hingga 15-60% dari target TP kotor atau memperbesar risiko rugi melampaui 1% equity.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+
+1. **M3 Fresh Breakout Law & Displacement Guard (`market_scanner.py`)**:
+   - `M3_BREAKOUT_RECENCY_BARS = 4`: Breakout wajib terjadi dalam rentang 3–4 candle H1 terakhir (bukan level purba 16-120 bar).
+   - `M3_MIN_DISPLACEMENT_BODY = 0.55`: Candle yang menembus level wajib merupakan candle momentum dengan rasio bodi $\ge 55\%$ (mengeliminasi penetrasi sumbu / doji palsu).
+   - Scoping DataFrame `df` di-pass secara presisi dari macro cache per-simbol.
+
+2. **1 Episode Retest = 1 Evaluasi LLM (Debounce Memory)**:
+   - Method `record_retest_rejection()` dan `is_retest_locked()` di `MarketScanner`: Ketika 3-LLM Jury memberikan keputusan REJECT atau HOLD pada suatu level, level tersebut di-lock total.
+   - Un-lock hanya terjadi jika harga mengalami perpindahan struktural $> 0.50\times\text{ATR}$ dari level tersebut ATAU telah berlalu minimal 2 jam (2 candle H1).
+
+3. **Segmented Absolute SL Floor (`config.py`, `.env`, `consensus.py`)**:
+   - Formula: $\text{SL Floor} = \max(2\times\text{Spread} + \text{Padding}, \quad \text{Floor Absolut Kategori}, \quad \text{Multiplier}\times\text{ATR})$.
+   - **Quiet/Standard FX**: Floor absolut **120 pts (12 pips)**. Membatasi lot sizing pada akun \$5.8k ke $\le 0.40 - 0.45$ lot.
+   - **High-Beta Crosses** (`GBPAUD`, `GBPNZD`, `EURNZD`, `GBPCHF`): Floor absolut **180 pts (18 pips)**.
+   - **JPY Crosses** (M30): Multiplier $1.00\times\text{ATR M30}$ dengan floor absolut **200 pts (20 pips)**.
+   - **M4 Systemic Flow**: Dihapuskannya bypass total anchor beku. Usulan M4 tetap tunduk pada Segmented Safety Floor dan Net R:R (`M4_STRUCTURAL_FLOORED`).
+
+4. **Friction-Aware Net R:R Engine (`consensus.py`, `atlas_dna.py`, `risk_engine.py`)**:
+   - Formula TP Minimum Bersih:
+     $$\text{min\_tp\_pts} = \text{int}(\text{sl\_points} \times \text{min\_rr}) + \text{spread\_pts} + \text{comm\_pts}$$
+   - Round-turn komisi dihitung dinamis dari `COMMISSION_USD_PER_LOT_ROUND = 6.0`.
+   - `risk_engine.py` mengaudit rasio friksi: memperingatkan jika friksi transaksi melampaui `MAX_FRICTION_TO_SL_RATIO = 0.20` (20% dari SL fisik).
+
+---
+
+## 2. Perubahan 2 September 2026 — Dual-Basket Confluence & Dispersion Matrix Engine
 
 ### 🎯 Latar Belakang & Identifikasi Flaw Single-Basket:
 - Analisis kuantitatif mengungkap bahwa menilai posisi pair $P = X/Y$ (misal `GBPCHF`) hanya dari satu basket mata uang (misal basket `CHF`) adalah *Single-Basket Fallacy*.
@@ -347,5 +1237,107 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 - #3 (wire konflik ZCE ke gate) sengaja TIDAK dieksekusi — sinyal belum pernah aktif & belum divalidasi; berisiko memangkas setup tanpa bukti edge.
 - Observasi Lapis 4 live cent lanjut; pantau log `[ZCE]` + dinding override agar umur peta ≤15 mnt.
 
+---
 
+## 15. 3 September 2026 — M4 SYSTEMIC FLOW CONTINUATION + Circuit Breaker Calibration
+
+### 🎯 Latar Belakang (Studi #1 & #1b Mirror)
+- **Studi #1 & #1b**: Systemic currency flow (rolling 24-bar H1 log-return warm 720, z >= 1.5) -> breakdown swing 120-bar -> pending limit retest di level. Validasi empiris 15 tahun FBS (N=650, P(win) 59.4% vs 51.8% control, chi-sq=8.74). SL struktural 0.45xATR, TP 1.1R. Exclude USDJPY (48.1% < netral).
+
+### 🔬 Implementasi & Penyelarasan Menyeluruh (/grill-me)
+1. **Parameter M4**: `M4_ENABLED=True`, `M4_TRIGGER_Z=1.5`, `M4_CONT_Z=0.75`, `M4_FLOW_LOOKBACK_BARS=24`, `M4_LOOKBACK_BARS=120`, `M4_MIN_EPISODE_BARS=6`, `M4_MIN_GAP_BARS=240`, `M4_SL_ATR_MULT=0.45`, `M4_TP_R_MULT=1.1`, `M4_PENDING_EXPIRY_MINUTES=120`.
+2. **All-or-Nothing Position Management**: Posisi M4 di `position_manager.py` dibebaskan dari Partial Close, BEP, dan Trailing Stop — menjaga integritas target struktural 1.1R, sembari mempertahankan Pre-Rollover Shield & Time-Decay Stagnation.
+3. **Thesis Invalidation Bypass**: Pending M4 dikecualikan dari pembatalan bias MSE D1/H4 di `position_manager.py:audit_pending_orders_thesis()`.
+4. **Fix Fatal Bug Symbol Collision**: `cand_sym = getattr(candidate, 'symbol', None) or config.SYMBOL` di seluruh alur konsensus multi-LLM, menghapus risiko pembatalan cross JPY/EUR akibat salah banding harga vs GBPUSD.
+5. **Unifikasi Filter Sesi Tokyo (08:00 - 14:00 WIB)**: `TOKYO_PROVEN_SYMBOLS` usang dihapus. `is_symbol_allowed_for_session` diselaraskan 100% dengan `config.is_asian_session_pair(symbol)`. Semua pair ber-driver aktif Asia/Pasifik (mengandung JPY, AUD, atau NZD) diizinkan; pair tanpa JPY/AUD/NZD dikunci.
+6. **Fix Silent TypeError di `_m4_refresh_z` (`market_scanner.py:414`)**:
+   - Mengganti `part.mean(axis=1, min_periods=minp)` (di mana `DataFrame.mean()` tidak menerima parameter `min_periods`) dengan `part.mean(axis=1).where(part.count(axis=1) >= minp)`.
+   - Memulihkan 27 episode flow aktif di scanner.
+7. **Kalibrasi Threshold Systemic Currency Basket Circuit Breaker ke 35.0 bps**:
+   - Menaikkan `SYSTEMIC_BASKET_USD_THRESHOLD`, `JPY_THRESHOLD`, `CROSS_THRESHOLD`, dan `SPREAD_THRESHOLD` dari 2.0 (20 bps) ke 3.5 (35 bps) di `config.py` dan `.env`.
+   - Membebaskan pergerakan tren harian wajar (USD -33.4 bps dan EUR -21.8 bps) agar setup trend-following (seperti GBPUSD SELL M4) dapat dieksekusi, sembari tetap mengunci ketat counter-trend pada shock ekstrem (seperti JPY Surge +67.5 bps).
+   - Seluruh unit test suite 75 tests lulus 100% PASS.
+8. **Periodic Quant Funnel Snapshot Logger (5-Menit)**:
+   - Menambahkan `_log_periodic_quant_snapshot()` di `market_scanner.py` yang mencatat ringkasan spasial 26 pair (`[ZCE F1/C1 | MSE State & Tier | Dealing Range Pos | M4 Standbys]`) tiap 300 detik ke `data/gate_debug.log` (<0.0005 detik, 0 token, 0 beban MT5).
+9. **Graceful MT5 Shutdown (`atexit` Protection)**:
+   - Menambahkan registrasi `atexit.register(_safe_mt5_shutdown)` di `src/core/mt5_connector.py`.
+   - Menjamin bahwa saat proses Python dimatikan via `Ctrl+C` atau selesai, koneksi terminal MT5 ditutup secara bersih dan tidak pernah meninggalkan *zombie process headless* (`terminal64.exe` tanpa GUI window) yang mengunci file disk dan membuat laptop ngelag.
+10. **Penyelarasan Menu & Command Telegram (`telegram_bot.py`)**:
+    - `/macro [pair]`: Sekarang memprioritaskan pembacaan direktif dari `scanner.macro_cache` sehingga level lantai F1 dan plafon C1 di Telegram **100% sinkron dengan dinding konfluensi ZCE** yang digunakan oleh bot eksekusi live.
+    - `/macro all`: Terhubung langsung ke cache scanner untuk menghasilkan ringkasan kompas 26 pair instan (<1ms).
+    - Macro Picker Menu: Ditambahkan tombol inline `🧭 [ All 26 Pairs Compass ]` (memanggil `cmd:macro_ALL`), serta mengganti pair non-aktif `BTCUSD` dengan pair FX aktif (`EURCHF` dan `AUDCAD`).
+    - `/levels` & `/smc`: Diperkaya dengan tampilan **🏰 ZCE FORTRESS WALLS** (F1 Lantai dan C1 Plafon multi-TF beserta Grade G2/G3 dan Fortress Tag).
+11. **Eliminasi False-Positive Gate Stacking (M3 Runway & M4 Contextual Trap Veto)**:
+    - **Diagnosa Masalah**: Audit `data/gate_debug.log` membuktikan bahwa filter kaku $dr\_pos < 0.28$ (disalin dari M2 Pullback) membunuh 100% setup M3 Breakdown Retest pada broken support (seperti EURCAD menembus support dan retest SBR di `1.60278` dengan target lantai Daily `1.60032`). Selain itu, trap MSE untuk harga pasar (`Do NOT short into support at F1`) memblokir membabi buta Limit Order M4 yang berada di plafon (seperti `CADJPY SELL_LIMIT @ 113.816` dengan target $F_1$ `113.302`).
+    - **Perbaikan Kode (`market_scanner.py`)**:
+      - `_is_direction_allowed(target_dir, setup_label, entry_price=None)`: Menambahkan *Contextual Limit Awareness*. Jika limit order sell berada $\ge 0.40\times\text{ATR}$ di atas support $F_1$, trap larangan short di support diabaikan karena $F_1$ adalah Take Profit target. Sebaliknya untuk buy limit di bawah resisten $C_1$.
+      - **M3 Breakdown Retest Runway**: Mengganti filter kaku $dr\_pos < 0.28$ dengan perhitungan Runway ke lantai target: $\text{Runway to } F_1 = (target\_sup - \text{immediate\_floor\_f1}) \ge 0.80\times\text{ATR}_{H1}$. Peluang breakdown retest dengan ruang gerak lebar kini diizinkan.
+12. **Perbaikan NameError `zce_meta` & Validasi Live Setup EURCAD (`market_scanner.py`)**:
+    - **Diagnosa Masalah**: Setelah filter runway M3 membuka blokir pada EURCAD, kode eksekusi mencapai tahap pembentukan `CandidateSetup`. Di sana terjadi `NameError: name 'zce_meta' is not defined` karena dictionary `zce_meta` yang dibuat di `_build_macro_context()` lupa disimpan ke return dict `macro`, dan belum diinisialisasi di scope `scan_all()`.
+    - **Perbaikan Kode**:
+      - Menyimpan `'zce_meta': zce_meta` ke dalam dictionary hasil return `_build_macro_context()`.
+      - Menginisialisasi `zce_meta = macro.get('zce_meta') or {...}` dengan fallback lengkap per-simbol di awal pemrosesan `scan_all()`.
+13. **Penyelarasan Mid-Chamber Gate untuk Limit Order Retest (`market_scanner.py`)**:
+    - **Diagnosa Masalah**: Trap MSE `Do NOT execute market orders in mid-chamber consolidation zone` menargetkan market order spekulatif di tengah kamar. Namun karena omisi kata kunci `"BREAKOUT"` di baris 1485 & 1507, Pending Limit Order M3 Breakout Retest (seperti pada CADJPY di range 73%) diblokir secara keliru padahal setup memiliki level SBR struktural dan runway ke lantai target.
+    - **Perbaikan Kode**:
+      - Menyatukan definisi `is_limit_retest = any(k in setup_label.upper() for k in ("PULLBACK", "SYSTEMIC", "BREAKOUT", "RETEST"))`.
+      - Membebaskan seluruh limit order retest ber-runway dari pemblokiran `INACTION_ZONE` dan trap `MID-CHAMBER / CONSOLIDATION ZONE`. Market order liar tetap diblokir 100%.
+    - **Verifikasi Kuantitatif Langsung**:
+      - Radar mendeteksi **6 setup A+ terkurasi** dengan runway lebar dan arah selaras CSM:
+        * `USDJPY-ECNc` SELL LIMIT @ 156.3505 (CSM Delta -22.41)
+        * `EURAUD-ECNc` SELL LIMIT @ 1.61567 (CSM Delta -4.40)
+        * `EURCAD-ECNc` SELL LIMIT @ 1.60281 (CSM Delta -5.82)
+        * `GBPAUD-ECNc` SELL LIMIT @ 1.87932 (CSM Delta -6.26)
+        * `AUDCHF-ECNc` BUY LIMIT @ 0.58142 (CSM Delta +0.39)
+        * `AUDCAD-ECNc` SELL LIMIT @ 0.99216 (CSM Delta -1.42)
+      - Full test suite: **75/75 tests PASSED (100% OK)** dalam 1.447s.
+14. **Penyelarasan Konteks ZCE Retest Chamber pada Prompt Gemini (`llm_client.py`)**:
+    - **Diagnosa Masalah**: Gemini 3.1-Flash (Lead Price Action Tactician) menolak setup EURCAD SELL LIMIT dengan flag `LIQUIDITY_TRAP` karena prompt hanya menyajikan `Dealing Range Position: 2.5% (DISCOUNT)`. Mengacu pada aturan baku SMC, melakukan short di area diskon 2.5% dianggap perangkap ritel. Padahal secara struktural, harga sedang melakukan retest di plafon kamar ZCE lokal ($C_1 = 1.60306$, posisi 89%) menuju lantai $F_1 = 1.60032$.
+    - **Perbaikan Kode**:
+      - Menginjeksi `- Local ZCE Execution Chamber: Floor F1 = ... │ Ceiling C1 = ... │ Local Position: ...%` ke dalam blok Context Gemini.
+      - Memperjelas Anti-FOMO Gate (Aturan 2) bahwa untuk Limit Retest Order (M2, M3, M4), retest di broken support (SBR) pada plafon kamar lokal adalah kelanjutan tren yang sah, bukan jebakan diskon.
+      - Menjaga spesialisasi 100% utuh: Gemini tetap fokus penuh mengaudit micro tape (M1/M5/M15/H1), wick rejection, dan displacement, sementara OpenAI fokus pada makroekonomi D1/H4.
+    - **Verifikasi**:
+      - `py_compile` bersih tanpa error.
+      - Full test suite: **75/75 tests PASSED (100% OK)**.
+15. **Implementasi 15-Bar Recency Guard & 2.5x ATR Flash Runaway Guard pada M3 (`market_scanner.py`)**:
+    - **Diagnosa Masalah**: Mekanisme M3 Multi-Touch Breakout Retest berpotensi meloloskan level-level kadaluarsa jika harga telah menjauh berhari-hari lalu berbalik sebagai counter-trend rally atau flash crash rebound.
+    - **Perbaikan Kode Kuantitatif (Berdasarkan Riset FBS 10.7 Tahun / 23.173 Trade)**:
+      - *15-Bar Recency Guard*: Level support/resistance yang ditembus WAJIB pernah dilewati/disentuh dalam 15 bar H1 terakhir (`has_recent_break`). Jika level ditembus >15 bar lalu tanpa retest, setup dianggap stale/hangus.
+      - *2.5x ATR Runaway Flash Crash Guard*: Pergerakan maksimal harga sejak breakout tidak boleh melebihi $2.50\times\text{ATR}$ (`max_push <= 2.50 * atr_val`). Ambang batas ini terbukti aman meloloskan pergerakan intraday normal (1.0x–1.92x ATR seperti GBPCAD yang sukses), namun secara tegas memfilter anomali flash crash / waterfall rebound.
+      - Desain zero-deadlock: Jika riwayat lilin < 16 bar (cold start / test harness), pengaman gracefully default ke True.
+    - **Verifikasi**:
+      - `py_compile` 100% OK.
+      - Full test suite: **75/75 tests PASSED (100% OK)** dalam 1.325s.
+
+---
+
+## 16. 4 September 2026 — Dynamic 3-Point Trajectory Vector Engine, M2+M3 Confluence Fusion & Accurate Origin Tracking
+
+### 🎯 Komponen & Arsitektur Utama:
+
+1. **Pemisahan Titik Origin Breakdown vs Retest Bounce (`market_scanner.py`)**:
+   - Memperbaiki algoritma deteksi M3 di `get_radar_standbys()` agar menelusuri mundur riwayat candle fisik:
+     * **Titik 1 (Origin Break)**: Mendeteksi bar pertama yang menembus level secara tegas (`origin_time`, `origin_price`, `origin_age`).
+     * **Titik 2 (Retest Bounce)**: Mendeteksi bar sentuhan retest terkini (`retest_time`, `retest_price`, `bar_age`).
+   - Mengeliminasi anomali loop yang menimpa `event_time` dengan lilin saat ini sehingga label penembusan keliru tertulis `(now)`.
+
+2. **Fusi Konfluensi Otomatis Multi-Setup M2 + M3 (`market_scanner.py` & `dashboard_assets.py`)**:
+   - Jika M2 (Pullback EMA) dan M3 (Retest SBR/RBS) bertemu di level yang sama ($\le 0.35\times\text{ATR}$) dengan arah yang sama:
+     * Standby ditandai dengan flag `is_confluence = True` dan `confluence_label = "[M2+M3 SELL CONFLUENCE] SBR & EMA Retest"`.
+     * Frontend chart hanya menampilkan satu penanda terpadu `[M2+M3 SELL RETEST] SBR & EMA @ level (Nb ago)`, mengeliminasi penumpukan panah ganda yang membingungkan operator.
+
+3. **Dynamic 3-Point Trajectory Vector Engine (`dashboard_assets.py`)**:
+   - Kanvas 2D overlay chart TradingView menggambar alur trajektori dinamis bergradasi 3-titik:
+     * **Segment 1 (Origin -> Retest)**: Garis putus-putus ungu/cyan beraksen titik awal `1. Break (Nb ago)`.
+     * **Segment 2 (Retest Anchor)**: Titik cincin beraksen putih di lilin retest aktif.
+     * **Segment 3 (Retest -> Target Projection)**: Garis vektor panah berarah tegas (Hijau BUY / Merah SELL) yang memproyeksikan target ke dinding ZCE terdekat ($F_1/C_1$ atau $F_2/C_2$) dengan label `3. TP Target <price>`.
+   - Tergambar mulus 60 FPS saat chart digeser (*pan*) atau di-zoom.
+
+4. **Rich Operational Phase di HUD & Watchlist (`dashboard.py` & `dashboard_assets.py`)**:
+   - Header Intel HUD baris kedua diperkaya: label `STATE: CONSOLIDATION_RELOAD` digantikan oleh status alur operasional aktif (`PHASE: RETESTING SBR 181.719 -> TARGET 181.426 [SELL CONFLUENCE]`).
+   - Tabel scanner watchlist menyajikan status alur per-pair secara eksplisit (`M2+M3 [BEAR]`, `M3 [BULL]`, dll).
+
+5. **Verifikasi Kuantitatif Penuh**:
+   - Seluruh test suite unit test: **115/115 tests PASSED (100% OK)** dalam 27.13s.
 

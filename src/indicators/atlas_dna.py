@@ -121,12 +121,16 @@ def calculate_dual_grid_stations(symbol: str, current_price: float) -> dict:
 def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int, 
                              origin_level: float, atr_h1: float, pwl: float = None, pwh: float = None,
                              rbs: float = None, sbr: float = None, spread_pts: float = 0.0,
-                             c1: float = None, f1: float = None) -> dict:
+                             c1: float = None, f1: float = None,
+                             c2: float = None, f2: float = None,
+                             c1_grade: str = None, f1_grade: str = None,
+                             c1_is_vacuum: bool = False, f1_is_vacuum: bool = False) -> dict:
     """
     Calculates precise intraday Stop Loss and Take Profit anchored to Physical Stations:
-    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL)
-    2. Secondary Target Station: Real Structural SBR/RBS
-    3. Tertiary Target Station: Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
+    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL if >= 1.25R and significant)
+    2. Deep Target Station: Next Strong Barrier (C2 for BUY, F2 for SELL if C1/F1 too close or vacuum)
+    3. Structural SBR/RBS
+    4. Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
     - Front-running pad: [Spread + 0.15x ATR] deducted from target station
     - Realistic Intraday R:R: Min 1.25:1 to Max 2.5:1
     """
@@ -138,8 +142,16 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
     pt = 0.001 if 'JPY' in symbol else (0.01 if 'XAU' in symbol or 'BTC' in symbol else 0.00001)
     max_sl_dist = 2.5 * atr_h1 if atr_h1 > 0 else (160 * pt)
     front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-    min_sl_buffer = (100 * pt) if 'JPY' in symbol else ((150 * pt) if ('XAU' in symbol or 'BTC' in symbol) else (65 * pt))
+    # Segmented Minimum SL Buffer (3 Sep 2026):
+    # JPY: 200 pts, High-Beta: 180 pts, Quiet/Standard FX: 120 pts
+    is_jpy = 'JPY' in symbol
+    is_high_beta = any(k in symbol for k in ('GBPAUD', 'GBPNZD', 'EURNZD', 'GBPCHF'))
+    min_sl_buffer = (200 * pt) if is_jpy else ((180 * pt) if is_high_beta else (120 * pt))
     sl_buffer = max(0.55 * atr_h1, min_sl_buffer)
+    
+    # Friction padding for Net R:R (Spread + ~5 pts Commission)
+    comm_pts = 5
+    friction_pad = (spread_pts + comm_pts) * pt
     
     if direction == 1: # BUY
         # SL behind support origin level / RBS with calibrated buffer
@@ -153,10 +165,14 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             sl = entry_price - max_sl_dist
         risk = max(abs(entry_price - sl), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_buffer)
         
-        # TARGET HIERARCHY: 1. Next Structure C1 -> 2. SBR Ceiling -> 3. Psychological Sub-Station (50-pip)
+        # TARGET HIERARCHY: 1. Next Structure C1 -> 2. Deep Ceiling C2 -> 3. SBR Ceiling -> 4. Psychological Sub-Station
         target_station = None
-        if c1 and c1 > entry_price + 1.15 * risk and (c1 - entry_price) <= 3.5 * risk:
+        c1_valid = bool(c1 and c1 > entry_price + 1.25 * risk and (c1 - entry_price) <= 3.5 * risk)
+        c1_thick = bool(c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO") and not c1_is_vacuum) if c1_grade else True
+        if c1_valid and c1_thick:
             target_station = c1
+        elif c2 and c2 > entry_price + 1.25 * risk and (c2 - entry_price) <= 3.5 * risk:
+            target_station = c2
         elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
             target_station = sbr
         elif pwh and pwl and pwh > pwl:
@@ -172,9 +188,9 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             target_station = nearest_psych
             
         tp_target = target_station - front_pad
-        # Enforce realistic intraday clamp (min 1.25x risk, max 2.5x risk / 1.8x ATR)
-        min_tp = entry_price + (1.25 * risk)
-        max_tp = entry_price + max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10))
+        # Enforce realistic intraday clamp with Net R:R friction compensation
+        min_tp = entry_price + (1.25 * risk) + friction_pad
+        max_tp = entry_price + max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10)) + friction_pad
         tp = max(min_tp, min(tp_target, max_tp))
             
     else: # SELL
@@ -189,10 +205,14 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             sl = entry_price + max_sl_dist
         risk = max(abs(sl - entry_price), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_buffer)
         
-        # TARGET HIERARCHY: 1. Next Structure F1 -> 2. RBS Floor -> 3. Psychological Sub-Station (50-pip)
+        # TARGET HIERARCHY: 1. Next Structure F1 -> 2. Deep Floor F2 -> 3. RBS Floor -> 4. Psychological Sub-Station
         target_station = None
-        if f1 and f1 < entry_price - 1.15 * risk and (entry_price - f1) <= 3.5 * risk:
+        f1_valid = bool(f1 and f1 < entry_price - 1.25 * risk and (entry_price - f1) <= 3.5 * risk)
+        f1_thick = bool(f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO") and not f1_is_vacuum) if f1_grade else True
+        if f1_valid and f1_thick:
             target_station = f1
+        elif f2 and f2 < entry_price - 1.25 * risk and (entry_price - f2) <= 3.5 * risk:
+            target_station = f2
         elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
             target_station = rbs
         elif pwh and pwl and pwh > pwl:
@@ -208,9 +228,9 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             target_station = nearest_psych
             
         tp_target = target_station + front_pad
-        # Enforce realistic intraday clamp (min 1.25x risk, max 2.5x risk / 1.8x ATR)
-        min_tp = entry_price - (1.25 * risk)
-        max_tp = entry_price - max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10))
+        # Enforce realistic intraday clamp with Net R:R friction compensation
+        min_tp = entry_price - (1.25 * risk) - friction_pad
+        max_tp = entry_price - max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10)) - friction_pad
         tp = min(min_tp, max(tp_target, max_tp))
             
     rr = abs(tp - entry_price) / max(risk, 1e-5)

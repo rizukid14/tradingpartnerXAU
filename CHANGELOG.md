@@ -18,6 +18,22 @@ Semua pembaruan, evolusi arsitektur, optimasi kuantitatif, dan bugfix sistem tra
 
 ## Kronologi Pembaruan (September 2026)
 
+### [7 September 2026] — Asymmetric Vacuum BEP, Shadow MT5 Auto-Sync & 100% Live Winrate Validation
+- **Asymmetric Vacuum & Structural BEP Protection (`position_manager.py` & `shadow_tracker.py`)**:
+  - Implementasi dynamic BEP trigger di $0.35\text{R}$ / $0.35 \times \text{TP}$ (turun dari $0.50\text{R}$ statis) saat posisi memiliki rasio TP/SL $\ge 2.0$ (kondisi liquidity vacuum / extreme multi-year stretch) atau setup berkategori defensif (`REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`).
+  - Teruji live secara otomatis mengunci `EURAUD SELL` (+0.40R) ke level BEP +15 pts tanpa intervensi manual.
+- **Paper Shadow Radar Deduplication & Live Ticket Sync (`shadow_tracker.py` & `main.py`)**:
+  - Deduplikasi otomatis interval 30 menit untuk mencegah duplikasi sinyal identik di Paper Trade.
+  - Auto-Link Proaktif Posisi Terbuka MT5: Menautkan instan nomor tiket MT5 dan mempromosikan status menjadi `EXECUTED_MT5` saat order terisi atau saat posisi live terbuka di MT5 (menyelesaikan isu keterlambatan pelaporan Real MT5 pada EURCHF & EURNZD).
+  - Sinkronisasi instan tiket MT5 ke metadata `ShadowTrade` saat order limit/market terpasang (`mt5_ticket`), dilengkapi rekonsiliasi deal history penutupan posisi MT5 (termasuk time-decay stagnation exit NZDCHF +0.25R).
+  - Penambahan badge visual `[BEP LOCKED]` dan `[TRAILING]` pada log terminal `main.py` dan laporan HTML `quant_shadow_report.html`.
+- **Validasi Live Performa 100% Winrate (17 Closed Deals)**:
+  - Branch `quant-trade-noAI` mencatatkan rekor 17 transaksi tertutup dengan hasil positif/BEP tanpa loss (Net Realized Profit **+$577.14 USD**).
+  - Keberhasilan didorong oleh unifikasi H1 JPY Crosses (M3 Breakout Retest di CADJPY, USDJPY, AUDJPY), filter rejection wick M5 $\ge 25\%$, dan eksekusi 7 deal Partial TP1 50%.
+- **Eksperimen OpenAI Macro Regime Synthesis & Factual Post-Session Recap (`scratch/test_openai_regime_and_recap.py`)**:
+  - Sintesis feed berita ForexFactory & TradingView menjadi nilai numerik rezim pasar (`volatility_expansion_score`, `directional_persistence_score`, `recommended_operational_mode`).
+  - Evaluasi post-trade berbasis data riil perbandingan harga Open vs Close serta validasi psikologis disiplin trading.
+
 ### [1–2 September 2026] — Dual-Basket Confluence & Dispersion Matrix Engine
 - **Dual-Basket Structural Progress & Dispersion Mapping**: Mengukur deviasi standar posisi relatif ($\sigma_X$ dan $\sigma_Y$) yang dinormalisasi ke skala $[0.0, 1.0]$ dari dealing range 50-bar H1 pada 26 simbol FX terkurasi ($N \ge 6$ pair per basket).
 - **Deterministic Decision Hierarchy (Mutual Exclusive Order)**: Matriks keputusan 4-Tier mutual exclusive:

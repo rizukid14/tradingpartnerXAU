@@ -85,8 +85,8 @@ class TestMacroStrategicEngine(unittest.TestCase):
 
     def test_systemic_basket_eur_dump_lock(self):
         from src.analytics.currency_strength import evaluate_systemic_basket_lock
-        scores_h1 = {"EUR": -30.0, "USD": 5.0, "GBP": 5.0, "JPY": 0.0, "CHF": 0.0, "AUD": 5.0, "CAD": 5.0, "NZD": 0.0}
-        scores_m15 = {"EUR": -35.0, "USD": 5.0, "GBP": 5.0, "JPY": 0.0, "CHF": 0.0, "AUD": 5.0, "CAD": 3.0, "NZD": 0.0}
+        scores_h1 = {"EUR": -36.0, "USD": 5.0, "GBP": 5.0, "JPY": 0.0, "CHF": 0.0, "AUD": 5.0, "CAD": 5.0, "NZD": 0.0}
+        scores_m15 = {"EUR": -38.0, "USD": 5.0, "GBP": 5.0, "JPY": 0.0, "CHF": 0.0, "AUD": 5.0, "CAD": 3.0, "NZD": 0.0}
 
         # In EUR dump: BUY on EURUSD / EURJPY / EURGBP must be locked!
         locked_eu, reason_eu, curr_eu = evaluate_systemic_basket_lock("EURUSD", 1, scores_h1, scores_m15)
@@ -100,11 +100,11 @@ class TestMacroStrategicEngine(unittest.TestCase):
 
     def test_systemic_basket_extreme_delta_spread_lock(self):
         from src.analytics.currency_strength import evaluate_systemic_basket_lock
-        # Each individual currency is mild (< 20.0 threshold), but their relative delta is 22.0 (>= 18.0 threshold)
-        scores_h1 = {"GBP": 10.0, "AUD": -10.0, "USD": 0.0, "EUR": 0.0, "JPY": 0.0, "CHF": 0.0, "CAD": 0.0, "NZD": 0.0}
-        scores_m15 = {"GBP": 12.0, "AUD": -12.0, "USD": 0.0, "EUR": 0.0, "JPY": 0.0, "CHF": 0.0, "CAD": 0.0, "NZD": 0.0}
+        # Each individual currency is mild (< 35.0 threshold), but their relative delta is 36.0 (>= 35.0 threshold)
+        scores_h1 = {"GBP": 18.0, "AUD": -18.0, "USD": 0.0, "EUR": 0.0, "JPY": 0.0, "CHF": 0.0, "CAD": 0.0, "NZD": 0.0}
+        scores_m15 = {"GBP": 18.0, "AUD": -18.0, "USD": 0.0, "EUR": 0.0, "JPY": 0.0, "CHF": 0.0, "CAD": 0.0, "NZD": 0.0}
 
-        # Net Delta GBPAUD = +11.2 - (-11.2) = +22.4 (>= +18.0 threshold) -> SELL GBPAUD must be locked!
+        # Net Delta GBPAUD = +18.0 - (-18.0) = +36.0 (>= +35.0 threshold) -> SELL GBPAUD must be locked!
         locked_ga, reason_ga, _ = evaluate_systemic_basket_lock("GBPAUD", -1, scores_h1, scores_m15)
         self.assertTrue(locked_ga)
     def test_orthogonal_clustering_and_anti_double_counting(self):

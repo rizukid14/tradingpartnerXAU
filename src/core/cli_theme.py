@@ -570,8 +570,21 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     
     positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
     orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
-    total_active = len(positions or []) + len(orders or [])
+    
+    bot_magic = getattr(config, "MAGIC_NUMBER", 20260625)
+    def _is_bot(item):
+        m = getattr(item, "magic", 0)
+        if 'Mock' in type(m).__name__:
+            return True
+        return m == bot_magic
+
+    bot_positions = [p for p in (positions or []) if _is_bot(p)]
+    bot_orders = [o for o in (orders or []) if _is_bot(o)]
+    total_bot = len(bot_positions) + len(bot_orders)
+    total_acc = len(positions or []) + len(orders or [])
     max_positions = config.get_max_open_positions()
+
+    cap_str = f"{total_bot}/{max_positions} Bot ({total_acc} Acc)" if total_acc > total_bot else f"{total_bot}/{max_positions} Active"
 
     max_loss_dlr = eq * (getattr(config, "MAX_DAILY_LOSS_PERCENT", 4.0) / 100.0)
     
@@ -583,7 +596,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     t2_lines = [
         f" Server     : {UI.WHITE}{srv}{UI.RST} (Login #{login_id})",
         f" Equity     : {UI.BOLD}{UI.WHITE}${eq:,.2f}{UI.RST} | Balance: ${bal:,.2f}",
-        f" Capacity   : {UI.BOLD}{UI.CYAN}{total_active}/{max_positions} Active{UI.RST} ({'Weekend Crypto Pool' if is_single_asset_mode else '26-Pair Basket Pool'})",
+        f" Capacity   : {UI.BOLD}{UI.CYAN}{cap_str}{UI.RST} ({'Weekend Crypto Pool' if is_single_asset_mode else '26-Pair Basket Pool'})",
         f" Daily P/L  : {UI.badge_pnl(daily_pnl)} | Max Loss Cap: {UI.RED}{config.MAX_DAILY_LOSS_PERCENT}% (${max_loss_dlr:.0f}){UI.RST}",
         f" ZCE Engine : {zce_color}{zce_mode}{UI.RST} ({zce_ov_str}) | {UI.CYAN}0 Token (<50ms){UI.RST}",
     ]

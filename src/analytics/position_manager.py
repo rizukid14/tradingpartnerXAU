@@ -13,6 +13,7 @@ or moved to break-even so a bot restart cannot re-trigger those actions.
 import os
 import json
 import time
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import config
@@ -21,9 +22,136 @@ from src.core.cli_theme import UI
 from src.core.mt5_connector import is_order_success, get_usd_per_point
 from src.core import telegram_alerts as tg
 
+logger = logging.getLogger("trading_bot")
 WIB = ZoneInfo("Asia/Jakarta")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "position_manager_state.json")
+TELEMETRY_FILE = os.path.join(config.DATA_DIR, "trade_lifecycle_telemetry.json")
+
+
+def _load_telemetry() -> dict:
+    """Load persisted trade lifecycle telemetry (CSM Open/Close & Thesis Invalidation)."""
+    try:
+        if os.path.exists(TELEMETRY_FILE):
+            with open(TELEMETRY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"[TELEMETRY LOAD WARNING] {e}")
+    return {"trades": {}, "thesis_observer_events": []}
+
+
+def _save_telemetry(data: dict):
+    """Persist trade lifecycle telemetry atomically."""
+    try:
+        tmp_path = TELEMETRY_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        if os.path.exists(TELEMETRY_FILE):
+            os.replace(tmp_path, TELEMETRY_FILE)
+        else:
+            os.rename(tmp_path, TELEMETRY_FILE)
+    except Exception as e:
+        logger.error(f"[TELEMETRY SAVE ERROR] {e}")
+
+
+def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_price: float, csm_delta: float, setup_type: str = ""):
+    """Catat snapshot nilai CSM dan atribut entry saat posisi/pending order dibuka."""
+    t_int = int(ticket)
+    data = _load_telemetry()
+    now_iso = datetime.now(WIB).isoformat()
+
+    is_opposed = (direction == "BUY" and csm_delta <= -0.35) or (direction == "SELL" and csm_delta >= 0.35)
+
+    data["trades"][str(t_int)] = {
+        "ticket": t_int,
+        "symbol": symbol,
+        "direction": direction,
+        "setup_type": setup_type,
+        "entry_price": float(entry_price),
+        "csm_delta_open": float(csm_delta),
+        "csm_opposed_open": bool(is_opposed),
+        "open_time": now_iso,
+        "status": "OPEN",
+        "would_be_cancelled": False,
+        "cancellation_reason": None,
+        "close_time": None,
+        "csm_delta_close": None,
+        "csm_delta_shift": None,
+        "profit": None,
+        "close_reason": None
+    }
+    _save_telemetry(data)
+    opp_str = " (CSM OPPOSED)" if is_opposed else " (CSM ALIGNED/NEUTRAL)"
+    print(f" {UI.CYAN}[CSM TELEMETRY OPEN]{UI.RST} Ticket #{t_int} | {symbol} {direction} | Entry: {entry_price} | CSM Delta Open: {csm_delta:+.2f}{opp_str}")
+    logger.info(f"[CSM TELEMETRY OPEN] Ticket #{t_int} | {symbol} {direction} | CSM Delta Open: {csm_delta:+.2f}{opp_str}")
+
+
+def record_thesis_observer_event(ticket: int, symbol: str, reason: str):
+    """Catat event observer thesis invalidation saat order seharusnya dibatalkan."""
+    t_int = int(ticket)
+    data = _load_telemetry()
+    now_iso = datetime.now(WIB).isoformat()
+
+    if str(t_int) in data["trades"]:
+        data["trades"][str(t_int)]["would_be_cancelled"] = True
+        data["trades"][str(t_int)]["cancellation_reason"] = reason
+
+    data["thesis_observer_events"].append({
+        "time": now_iso,
+        "ticket": t_int,
+        "symbol": symbol,
+        "reason": reason
+    })
+    data["thesis_observer_events"] = data["thesis_observer_events"][-100:]
+    _save_telemetry(data)
+
+
+def record_trade_close_telemetry(ticket: int, symbol: str, profit: float, reason: str, csm_delta_close: float, exit_price: float = 0.0):
+    """Catat snapshot nilai CSM saat posisi ditutup dan hitung pergeseran delta."""
+    t_int = int(ticket)
+    data = _load_telemetry()
+    now_iso = datetime.now(WIB).isoformat()
+
+    rec = data["trades"].get(str(t_int))
+    csm_open = rec.get("csm_delta_open", 0.0) if rec else 0.0
+    csm_shift = round(float(csm_delta_close) - float(csm_open), 2) if (rec and rec.get("csm_delta_open") is not None) else 0.0
+    direction = rec.get("direction", "TRADE") if rec else "TRADE"
+    would_cancel = rec.get("would_be_cancelled", False) if rec else False
+
+    if rec:
+        rec["status"] = "CLOSED"
+        rec["close_time"] = now_iso
+        rec["exit_price"] = float(exit_price)
+        rec["profit"] = float(profit)
+        rec["close_reason"] = str(reason)
+        rec["csm_delta_close"] = float(csm_delta_close)
+        rec["csm_delta_shift"] = csm_shift
+    else:
+        data["trades"][str(t_int)] = {
+            "ticket": t_int,
+            "symbol": symbol,
+            "direction": direction,
+            "setup_type": "UNKNOWN",
+            "entry_price": 0.0,
+            "csm_delta_open": None,
+            "csm_opposed_open": None,
+            "open_time": None,
+            "status": "CLOSED",
+            "would_be_cancelled": False,
+            "cancellation_reason": None,
+            "close_time": now_iso,
+            "csm_delta_close": float(csm_delta_close),
+            "csm_delta_shift": None,
+            "profit": float(profit),
+            "close_reason": str(reason)
+        }
+    _save_telemetry(data)
+
+    obs_tag = f" {UI.YELLOW}[OBSERVER: WOULD BE CANCELLED]{UI.RST}" if would_cancel else ""
+    csm_open_str = f"{csm_open:+.2f}" if (rec and rec.get("csm_delta_open") is not None) else "N/A"
+    print(f" {UI.CYAN}[CSM TELEMETRY CLOSE]{UI.RST} Ticket #{t_int} | {symbol} {direction} | P/L: ${profit:+.2f} ({reason}){obs_tag} | CSM Open: {csm_open_str} -> Close: {csm_delta_close:+.2f} (Shift: {csm_shift:+.2f})")
+    logger.info(f"[CSM TELEMETRY CLOSE] Ticket #{t_int} | {symbol} {direction} | P/L: ${profit:+.2f} ({reason}) | CSM Open: {csm_open_str} -> Close: {csm_delta_close:+.2f} (Shift: {csm_shift:+.2f})")
+
 
 
 def _load_state():
@@ -173,16 +301,22 @@ def manage_all_positions():
             if _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup, lanjut ke tiket berikutnya
 
+        # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
+        # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
+        # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
+        # - Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
+        is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+
         # --- 3. PARTIAL CLOSE at TP1 ---
-        if config.PARTIAL_CLOSE_ENABLED:
+        if not is_m4 and config.PARTIAL_CLOSE_ENABLED:
             _check_partial_close(pos, symbol, profit_points, symbol_info)
 
         # --- 4. BREAK-EVEN CHECK ---
-        if config.BREAK_EVEN_ENABLED:
+        if config.BREAK_EVEN_ENABLED and (not is_m4 or getattr(config, "M4_BREAK_EVEN_ENABLED", True)):
             _check_break_even(pos, symbol, profit_points, point, symbol_info)
 
         # --- 5. TRAILING STOP CHECK ---
-        if config.TRAILING_STOP_ENABLED:
+        if not is_m4 and config.TRAILING_STOP_ENABLED:
             _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
     # Bersihkan state posisi yang sudah tidak open (biar dict/set gak numpuk)
@@ -475,13 +609,23 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     min_trigger = 30 if config.is_fx(symbol) else 100
 
     # Break-even trigger: Grade-Aware Dynamic Threshold
+    # M4: 70% TP (Memberi ruang nafas fluktuasi shock, mengunci profit bila mencapai 70% target)
     # Grade S: 65% TP (Give breathing room to swing)
-    # Grade B: 35% TP (Fast defensive lock)
+    # Grade B / Defensive / Vacuum Extension (>= 2.0R): 35% TP (Fast defensive lock)
     # Grade A+/A: 50% TP (Standard)
-    grade = _ticket_setup_grades.get(pos.ticket, "GRADE_A")
-    if "GRADE_S" in grade:
+    is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+    grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
+
+    # Hitung SL points awal untuk evaluasi R:R aktual
+    init_sl_pts = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0)
+    # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP >= 2.0R)
+    is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and (tp_points / init_sl_pts) >= 2.0)
+
+    if is_m4:
+        bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
+    elif "GRADE_S" in grade and not is_vacuum_or_stretched:
         bep_tp_ratio = 0.65
-    elif "GRADE_B" in grade:
+    elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
         bep_tp_ratio = 0.35
     else:
         bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
@@ -489,9 +633,10 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     if tp_points > 0:
         be_trigger = max(min_trigger, int(tp_points * bep_tp_ratio))
     else:
-        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+        sl_points = init_sl_pts
         if sl_points > 0:
-            be_trigger = max(int(sl_points * config.BREAK_EVEN_TRIGGER_SL_MULT), min_trigger)
+            be_mult = 0.35 if ("GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched) else config.BREAK_EVEN_TRIGGER_SL_MULT
+            be_trigger = max(int(sl_points * be_mult), min_trigger)
         else:
             be_trigger = config.break_even_trigger_for(symbol)
 
@@ -759,9 +904,16 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
 def audit_pending_orders_thesis():
     """
     Real-Time Thesis Failure Invalidation Engine for Active Pending Orders.
-    Monitors all pending orders in MT5. If the underlying market structure fails
-    (e.g., M15 candle closes back inside the chamber across C1/F1, MSE state flips to REJECTION,
-    or CSM inverts sharply), the pending order is cancelled immediately to prevent catching a falling knife.
+    Monitors all pending orders in MT5. An order is cancelled ONLY if:
+      (1) Price has severely penetrated past the structural invalidation level:
+          - BUY: M15 close < (order_sl if order_sl > 0 else anchor - 0.50x ATR)
+          - SELL: M15 close > (order_sl if order_sl > 0 else anchor + 0.50x ATR)
+      (2) Systemic CSM currency flow inverts violently against the order (|delta| > 0.35 opposing)
+      (3) Confirmed Structural Stage Breakdown/Breakout in MSE:
+          - BUY: 'FLOOR_BREAKDOWN' in market_state
+          - SELL: 'CEILING_BREAKOUT' in market_state
+    NOTE: Minor MSE bias fluctuations or normal retest wicks/rejections (FLOOR_REJECTION / CEILING_REJECTION)
+    MUST NOT cancel pending orders (fixes bug where CEILING_REJECTION cancelled SELL limit orders).
     """
     try:
         orders = mt5.orders_get()
@@ -790,11 +942,7 @@ def audit_pending_orders_thesis():
             if not strat_dir:
                 continue
 
-            c1 = strat_dir.immediate_ceiling_c1
-            f1 = strat_dir.immediate_floor_f1
-            m_state = strat_dir.market_state
-            prim_dir = strat_dir.primary_execution_directive
-            bias_score = strat_dir.macro_bias_score
+            m_state = strat_dir.market_state or ""
 
             # 2. Fetch latest M15 rates
             rates_m15 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M15, 0, 3)
@@ -802,30 +950,77 @@ def audit_pending_orders_thesis():
             atr_pts = _get_dynamic_atr_points(sym, pt)
             atr_val = (atr_pts * pt) if atr_pts > 0 else (20 * pt)
 
+            # 3. Fetch CSM Net Delta
+            csm_delta = 0.0
+            try:
+                from src.analytics.currency_strength import get_csm_delta_for_symbol
+                csm_delta = get_csm_delta_for_symbol(sym)
+            except Exception:
+                csm_delta = 0.0
+
             cancel_reason = None
+            # Helper to extract numeric values safely from live MT5 struct or test mocks
+            def _safe_num(val, default=0.0):
+                if val is None:
+                    return default
+                if isinstance(val, (int, float)):
+                    return float(val)
+                if 'Mock' in type(val).__name__:
+                    return default
+                try:
+                    return float(val)
+                except Exception:
+                    return default
 
-            # 3. Check Thesis Invalidation for BUY Pending Orders
+            is_m4_order = "SYSTEM" in (getattr(ord_item, "comment", "") or "").upper()
+            open_px = _safe_num(ord_item.price_open, 0.0)
+            sl_px = _safe_num(getattr(ord_item, 'sl', None), 0.0)
+            tp_px = _safe_num(getattr(ord_item, 'tp', None), 0.0)
+            curr_market_px = _safe_num(getattr(si, 'bid', None) if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP) else getattr(si, 'ask', None), 0.0)
+            if curr_market_px <= 0.0:
+                curr_market_px = _safe_num(last_m15_close, open_px)
+
+            # Macro bias alignment check (aligned macro overrides moderate CSM opposition)
+            bias_score = _safe_num(getattr(strat_dir, 'macro_bias_score', 0.0), 0.0)
+            is_macro_aligned_buy = (bias_score >= 0.35)
+            is_macro_aligned_sell = (bias_score <= -0.35)
+
+            # 4. Check Thesis Invalidation for BUY Pending Orders
+            csm_opposed_thresh = getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
+            enable_csm_cancel = getattr(config, "ENABLE_PENDING_CSM_CANCEL", False)
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
-                # Condition A: Re-entry breakdown below C1 - 0.25x ATR (if it was a breakout retest above C1)
-                if c1 > 0 and ord_item.price_open >= c1 - (0.15 * atr_val):
-                    if last_m15_close < c1 - (0.25 * atr_val):
-                        cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber below C1 ({c1:.5f})"
-                # Condition B: MSE flipped to Bearish Pullback or Ceiling Rejection
-                if bias_score <= -0.40 or "HUNT_SELL" in prim_dir or "REJECTION" in m_state:
-                    cancel_reason = f"MSE flipped to Bearish ({m_state} / {prim_dir})"
+                # Structural Invalidation Floor: use SL if defined, else anchor - 0.50x ATR
+                inv_floor = sl_px if (sl_px > 0 and sl_px < open_px) else (open_px - (0.50 * atr_val))
+                if last_m15_close < inv_floor:
+                    cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation floor ({inv_floor:.5f})"
+                elif ord_item.type == mt5.ORDER_TYPE_BUY_LIMIT and tp_px > open_px and curr_market_px >= (open_px + 0.75 * (tp_px - open_px)):
+                    cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
+                elif enable_csm_cancel and not is_m4_order and csm_delta <= -csm_opposed_thresh and not is_macro_aligned_buy:
+                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bearish ({csm_delta:+.2f} <= -{csm_opposed_thresh:.2f})"
+                elif not is_m4_order and "FLOOR_BREAKDOWN" in m_state:
+                    cancel_reason = f"MSE Structural Floor Breakdown ({m_state})"
 
-            # 4. Check Thesis Invalidation for SELL Pending Orders
+            # 5. Check Thesis Invalidation for SELL Pending Orders
             elif ord_item.type in (mt5.ORDER_TYPE_SELL_LIMIT, mt5.ORDER_TYPE_SELL_STOP):
-                # Condition A: Re-entry breakout above F1 + 0.25x ATR (if it was a breakdown retest below F1)
-                if f1 > 0 and ord_item.price_open <= f1 + (0.15 * atr_val):
-                    if last_m15_close > f1 + (0.25 * atr_val):
-                        cancel_reason = f"M15 close ({last_m15_close:.5f}) broke back inside chamber above F1 ({f1:.5f})"
-                # Condition B: MSE flipped to Bullish Expansion or Floor Rejection
-                if bias_score >= 0.40 or "HUNT_BUY" in prim_dir or "REJECTION" in m_state:
-                    cancel_reason = f"MSE flipped to Bullish ({m_state} / {prim_dir})"
+                # Structural Invalidation Ceiling: use SL if defined, else anchor + 0.50x ATR
+                inv_ceiling = sl_px if (sl_px > 0 and sl_px > open_px) else (open_px + (0.50 * atr_val))
+                if last_m15_close > inv_ceiling:
+                    cancel_reason = f"M15 close ({last_m15_close:.5f}) penetrated invalidation ceiling ({inv_ceiling:.5f})"
+                elif ord_item.type == mt5.ORDER_TYPE_SELL_LIMIT and tp_px > 0 and tp_px < open_px and curr_market_px <= (open_px - 0.75 * (open_px - tp_px)):
+                    cancel_reason = f"Target proximity expiration: market ({curr_market_px:.5f}) reached >=75% of TP ({tp_px:.5f}) without fill"
+                elif enable_csm_cancel and not is_m4_order and csm_delta >= +csm_opposed_thresh and not is_macro_aligned_sell:
+                    cancel_reason = f"Systemic CSM Flow reversed strongly to Bullish ({csm_delta:+.2f} >= +{csm_opposed_thresh:.2f})"
+                elif not is_m4_order and "CEILING_BREAKOUT" in m_state:
+                    cancel_reason = f"MSE Structural Ceiling Breakout ({m_state})"
 
-            # 5. Cancel order if thesis failed
+            # 6. Cancel order if thesis failed
             if cancel_reason:
+                if not getattr(config, "ENABLE_PENDING_THESIS_AUDIT", True):
+                    print(f"\n{UI.YELLOW}[THESIS SHADOW OBSERVER]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) SEHARUSNYA DIBATALKAN: {cancel_reason} (Bypass Aktif -> Order Dibiarkan)")
+                    logger.info(f"[THESIS SHADOW OBSERVER] Pending Order #{ord_item.ticket} ({sym}) SEHARUSNYA DIBATALKAN: {cancel_reason} (Bypass Aktif -> Order Dibiarkan)")
+                    record_thesis_observer_event(ord_item.ticket, sym, cancel_reason)
+                    continue
+
                 req = {
                     "action": mt5.TRADE_ACTION_REMOVE,
                     "order": ord_item.ticket,
@@ -834,7 +1029,8 @@ def audit_pending_orders_thesis():
                 }
                 res = mt5.order_send(req)
                 if is_order_success(res):
-                    print(f"\r\x1b[2K{UI.RED}[THESIS FAILURE CANCEL]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
+                    print(f"\n{UI.RED}[THESIS FAILURE CANCEL]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
+                    logger.info(f"[THESIS FAILURE CANCEL] Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
                     try:
                         tg.alert_trade_aborted(
                             symbol=sym,

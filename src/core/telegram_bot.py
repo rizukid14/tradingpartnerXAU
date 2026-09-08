@@ -279,11 +279,33 @@ def handle_indicators_command(chat_id, symbol_input=None):
             f"• 🟢 *Discount Zone (Buy)*: `{smc['range_low_0']}` - `{smc['discount_zone_end']}`",
             f"• 🔽 *0% Range Low*: `{smc['range_low_0']}`\n",
             f"📍 *Harga Live*: `{cur_price_str}` ({smc['pos_pct']}% — *{smc['pos_label']}*)\n",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             "🧱 *STRUCTURAL CLUSTERS & COMPRESSION*:",
             f"• 🔴 *Resist Cluster*: `{smc.get('cluster_resistance', '-')}` (Sentuh: *{smc.get('touches_resistance', 0)}x*)",
             f"• 🟢 *Support Cluster*: `{smc.get('cluster_support', '-')}` (Sentuh: *{smc.get('touches_support', 0)}x*)",
             f"• 🌊 *Regime*: `{smc.get('wave_regime', 'NORMAL')}` (Umur: `{smc.get('range_age_hours', 24.0)}h`)\n",
+        ]
+
+        # ZCE Walls (RFC 11) if available
+        mc_item = scanner.macro_cache.get(sym) or scanner.macro_cache.get(clean_sym) or {}
+        zce_f1 = mc_item.get('immediate_floor_f1') or mc_item.get('floor_f1')
+        zce_c1 = mc_item.get('immediate_ceiling_c1') or mc_item.get('ceiling_c1')
+        if zce_f1 and zce_c1:
+            zce_f1_g = mc_item.get('f1_reaction_grade', 'GRADE_1_MICRO')
+            zce_c1_g = mc_item.get('c1_reaction_grade', 'GRADE_1_MICRO')
+            f1_g_tag = "G3-Macro" if zce_f1_g == "GRADE_3_MACRO" else ("G2-Inter" if zce_f1_g == "GRADE_2_INTERMEDIATE" else "G1-Micro")
+            c1_g_tag = "G3-Macro" if zce_c1_g == "GRADE_3_MACRO" else ("G2-Inter" if zce_c1_g == "GRADE_2_INTERMEDIATE" else "G1-Micro")
+            f1_fort = mc_item.get('f1_fortress_tag', '')
+            c1_fort = mc_item.get('c1_fortress_tag', '')
+            f1_extra = f" ({f1_g_tag} │ {f1_fort})" if f1_fort else f" ({f1_g_tag})"
+            c1_extra = f" ({c1_g_tag} │ {c1_fort})" if c1_fort else f" ({c1_g_tag})"
+            lines.extend([
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                "🏰 *ZCE FORTRESS WALLS (Multi-TF Confluence)*:",
+                f"• 🔺 *F1 Lantai*: `{zce_f1:.{dec}f}`{f1_extra}",
+                f"• 🔻 *C1 Plafon*: `{zce_c1:.{dec}f}`{c1_extra}\n",
+            ])
+
+        lines.extend([
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             "🎯 *LUXALGO SMC & LIQUIDITY LEVELS*:",
             f"• 🛡️ *Strong High*: `{smc['strong_high']}`",
@@ -292,7 +314,7 @@ def handle_indicators_command(chat_id, symbol_input=None):
             f"• 🟩 *Bullish OB*: `{smc['bullish_ob']}`",
             f"• 🟥 *Bearish OB*: `{smc['bearish_ob']}`",
             f"• ⚡ *FVG*: `{smc['fvg']}`"
-        ]
+        ])
 
         kb = {
             "inline_keyboard": [
@@ -311,10 +333,24 @@ def handle_macro_command(chat_id, symbol_input=None):
     """Sends pure quant 6-timeframe strategic directive directly without LLM overhead (0 token, instant)."""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
+        from src.analytics.market_scanner import MarketScanner
         sym = connector.get_valid_trade_symbol(symbol_input or config.SYMBOL)
         clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "")
-        
-        directive = macro_strategic_engine.get_directive(sym, mt5_connector=connector)
+
+        scanner = getattr(MarketScanner, '_instance', None)
+        directive = None
+        if scanner and hasattr(scanner, 'macro_cache') and scanner.macro_cache:
+            m = scanner.macro_cache.get(sym) or scanner.macro_cache.get(clean_sym)
+            if m and 'strat_dir' in m:
+                directive = m['strat_dir']
+
+        if directive is None:
+            zce_w = None
+            if scanner and hasattr(scanner, '_zce_maps'):
+                zm = scanner._zce_maps.get(sym) or scanner._zce_maps.get(clean_sym)
+                if zm and hasattr(zm, 'to_wall_override'):
+                    zce_w = zm.to_wall_override()
+            directive = macro_strategic_engine.get_directive(sym, mt5_connector=connector, zce_walls=zce_w)
         
         is_crypto_or_gold = ("BTC" in clean_sym or "XAU" in clean_sym)
         pip_unit = "USD" if is_crypto_or_gold else "pips"
@@ -366,7 +402,6 @@ def handle_macro_command(chat_id, symbol_input=None):
             f"⚠️ *Pantangan*:\n{traps_list}\n",
             f"🗺️ *Future Macro Roadmap*:\n`{bull_rmap}`\n`{bear_rmap}`\n",
             f"🔣 *Format Struktur*: `C1/C2 vs F1/F2` │ Grade `G1/G2/G3`\n",
-            f"🔣 *Format Struktur*: `C1/C2 vs F1/F2` │ Grade `G1/G2/G3`\n",
             f"🕒 `{datetime.now(WIB).strftime('%H:%M:%S WIB')}` │ Komputasi: `{directive.calculation_time_ms:.1f} ms` (0 Token)"
         ]
         msg_text = "\n".join(lines)
@@ -388,15 +423,23 @@ def handle_macro_all_command(chat_id):
     """Sends compact 26-pair macro compass table as Telegram message (/macro all)."""
     try:
         from src.analytics.macro_strategic_engine import macro_strategic_engine
+        from src.analytics.market_scanner import MarketScanner
         symbols = config.get_scanner_symbols()
         send_telegram_msg(
             f"🧭 *TOP-DOWN MACRO COMPASS — 26 PASANG FX*\n_Menghitung 6-TF Native Directive untuk {len(symbols)} simbol... (<50ms, 0 Token)_",
             chat_id=chat_id
         )
         lines_bull, lines_bear, lines_range = [], [], []
+        scanner = getattr(MarketScanner, '_instance', None)
         for s in symbols:
             valid_s = connector.get_valid_trade_symbol(s)
-            d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
+            d = None
+            if scanner and hasattr(scanner, 'macro_cache') and scanner.macro_cache:
+                m = scanner.macro_cache.get(valid_s) or scanner.macro_cache.get(s)
+                if m and 'strat_dir' in m:
+                    d = m['strat_dir']
+            if d is None:
+                d = macro_strategic_engine.get_directive(valid_s, mt5_connector=connector)
             clean = d.symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "")
             f1_raw = getattr(d, 'f1_reaction_grade', 'GRADE_1_MICRO')
             c1_raw = getattr(d, 'c1_reaction_grade', 'GRADE_1_MICRO')
@@ -433,15 +476,15 @@ def handle_help_command(chat_id):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "🧭 *ANALISIS & STRATEGI MAKRO:*",
         "• `/analisa <pair> [tf]` ➔ Analisis On-Demand 3-AI (o4-mini + Gemini + DeepSeek)",
-        "  _Contoh_: `/analisa GBPUSD H1` atau `/analisa USDJPY M30`",
-        "• `/macro [pair]` ➔ 6-TF Top-Down Macro Strategic Engine (Mandat, SBR/RBS, Target, Pantangan)",
-        "  _Contoh_: `/macro GBPUSD` (atau `/macro` untuk menu picker)",
+        "  _Contoh_: `/analisa GBPUSD H1` atau `/analisa USDJPY H1`",
+        "• `/macro [pair|all]` ➔ 6-TF Top-Down Macro Strategic Engine (Mandat, SBR/RBS, Target, Pantangan)",
+        "  _Contoh_: `/macro GBPUSD` atau `/macro all` (tabel 26 pair)",
         "• `/fundamental [pair]` ➔ 8-Currency Composite Fundamental Scorecard & Conflict Matrix (Apex Paragon)",
         "  _Contoh_: `/fund GBPUSD` atau `/fundamental`",
-        "• `/radar` ➔ Fast Radar Live Heatmap 26 Pairs (M1/M2/M3 A+ setups)",
+        "• `/radar` ➔ Fast Radar Live Heatmap 26 Pairs (M1 Sweep, M2 Pullback, M3 Wall, M4 Flow Continuation)",
         "• `/csm` ➔ Boitoki Currency Strength Matrix & Net Basket Delta",
         "• `/rotasi` ➔ Global Capital Rotation Matrix (Leader/Laggard Flow)",
-        "• `/levels <pair>` ➔ Level teknikal LuxAlgo SMC, FRVP POC/VAL/VAH",
+        "• `/levels <pair>` ➔ Level teknikal LuxAlgo SMC, FRVP POC/VAL/VAH, dan ZCE Dinding Konfluensi",
         "",
         "📰 *BERITA & SENTIMEN:*",
         "• `/news` ➔ Kalender Berita Ekonomi & Bank Holiday (ForexFactory Dual-Source)",
@@ -649,15 +692,15 @@ def _build_main_menu_keyboard():
             ],
             [
                 {"text": "GBPUSD H1", "callback_data": "analyze:GBPUSD_H1"},
-                {"text": "USDJPY M30", "callback_data": "analyze:USDJPY_M30"}
+                {"text": "USDJPY H1", "callback_data": "analyze:USDJPY_H1"}
             ],
             [
                 {"text": "EURUSD H1", "callback_data": "analyze:EURUSD_H1"},
-                {"text": "GBPJPY M30", "callback_data": "analyze:GBPJPY_M30"}
+                {"text": "GBPJPY H1", "callback_data": "analyze:GBPJPY_H1"}
             ],
             [
-                {"text": "EURJPY M30", "callback_data": "analyze:EURJPY_M30"},
-                {"text": "CADJPY M30", "callback_data": "analyze:CADJPY_M30"}
+                {"text": "EURJPY H1", "callback_data": "analyze:EURJPY_H1"},
+                {"text": "CADJPY H1", "callback_data": "analyze:CADJPY_H1"}
             ],
             [
                 {"text": "📡 [ SMC Radar 26 Pairs ]", "callback_data": "cmd:radar"},
@@ -687,6 +730,9 @@ def handle_macro_picker_menu(chat_id):
     kb = {
         "inline_keyboard": [
             [
+                {"text": "🧭 [ All 26 Pairs Compass ]", "callback_data": "cmd:macro_ALL"}
+            ],
+            [
                 {"text": "GBPUSD", "callback_data": "cmd:macro_GBPUSD"},
                 {"text": "USDJPY", "callback_data": "cmd:macro_USDJPY"},
                 {"text": "EURUSD", "callback_data": "cmd:macro_EURUSD"},
@@ -698,8 +744,8 @@ def handle_macro_picker_menu(chat_id):
             ],
             [
                 {"text": "AUDUSD", "callback_data": "cmd:macro_AUDUSD"},
-                {"text": "USDCAD", "callback_data": "cmd:macro_USDCAD"},
-                {"text": "BTCUSD", "callback_data": "cmd:macro_BTCUSD"},
+                {"text": "EURCHF", "callback_data": "cmd:macro_EURCHF"},
+                {"text": "AUDCAD", "callback_data": "cmd:macro_AUDCAD"},
             ],
             [
                 {"text": "« [ Back to Menu ]", "callback_data": "cmd:menu"}
@@ -1211,7 +1257,7 @@ def _process_update(update):
                     "Examples:\n"
                     "• `/analisa GBPUSD` (Default Sesi)\n"
                     "• `/analisa EURUSD H1`\n"
-                    "• `/analisa USDJPY M30`\n"
+                    "• `/analisa USDJPY H1`\n"
                     "• `/analisa GBPJPY H4`\n"
                     "• `/analisa BTCUSD D1`",
                     chat_id=target_chat
@@ -1292,7 +1338,10 @@ def _process_update(update):
             handle_macro_picker_menu(target_chat)
         elif data.startswith("cmd:macro_"):
             sym_req = data.split("cmd:macro_", 1)[1]
-            handle_macro_command(target_chat, symbol_input=sym_req)
+            if sym_req.upper() == "ALL":
+                handle_macro_all_command(target_chat)
+            else:
+                handle_macro_command(target_chat, symbol_input=sym_req)
         elif data == "cmd:news":
             handle_news_command(target_chat)
         elif data == "cmd:csm":

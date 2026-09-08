@@ -23,6 +23,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+import config
 from src.indicators.lux_smc import LuxSMCAnalyzer
 from src.indicators.volume_profile import compute_fixed_range_volume_profile
 from src.indicators.atlas_dna import calculate_dual_grid_stations
@@ -378,27 +379,41 @@ class ZoneConfluenceEngine:
     def _elect_walls(
         self, clusters: List[ZoneCluster], cur_price: float, atr_h1: float, digits: int
     ) -> dict:
-        eps = 0.05 * atr_h1
-        # Kandidat dinding dibangun dari DUA sumber:
-        #  (a) zona murni di bawah/atas harga  -> sisi zona yang menghadap harga
-        #      (band_high untuk floor, band_low untuk ceiling) — perilaku lama.
-        #  (b) zona yang MERENTANGI harga (band_low <= harga <= band_high):
-        #      TIDAK boleh dibuang (bug INV-2 lama: level "kabur jauh" 3-8x ATR).
-        #      Zona tsb menyumbang DUA dinding: band_low sebagai floor-edge
-        #      dan band_high sebagai ceiling-edge.
+        # RFC 11 Phase-2 & Chamber Clearance Enhancement (4 Sep 2026):
+        # Mencegah Dynamic State Mutation during Penetration (Inversion Bug).
+        # Level Plafon (C1) DILARANG melompat menjadi Floor hanya karena harga menusuk tipis (< probe_tol) di atasnya.
+        # Begitu pula Floor (F1) DILARANG melompat menjadi Ceiling saat ditusuk tipis ke bawah.
+        probe_tol = float(getattr(config, "ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)) * atr_h1
         floor_cands: List[tuple] = []  # (price, cluster)
         ceil_cands: List[tuple] = []   # (price, cluster)
+
         for c in clusters:
-            if c.band_high < cur_price - eps:
+            # 1. Cleanly below price (Chamber Cleared below):
+            # Harga sudah berada di atas band_high dengan jarak >= probe_tol -> Sah menjadi Floor (RBS).
+            if c.band_high <= cur_price - probe_tol:
                 floor_cands.append((c.band_high, c))
-            elif c.band_low < cur_price - eps:
-                # zona merentangi harga: tepi bawah masih di bawah harga
-                floor_cands.append((c.band_low, c))
-            if c.band_low > cur_price + eps:
+
+            # 2. Cleanly above price (Chamber Cleared above):
+            # Harga berada di bawah band_low dengan jarak >= probe_tol -> Sah menjadi Ceiling (SBR).
+            elif c.band_low >= cur_price + probe_tol:
                 ceil_cands.append((c.band_low, c))
-            elif c.band_high > cur_price + eps:
-                # zona merentangi harga: tepi atas masih di atas harga
-                ceil_cands.append((c.band_high, c))
+
+            # 3. In the Boundary Probe Zone (cur_price between c.band_low - probe_tol and c.band_high + probe_tol):
+            # Harga sedang berinteraksi/menembus/menyapu zona ini. Level mempertahankan peran aslinya!
+            else:
+                if cur_price >= c.band_low:
+                    # Harga berada di dalam zona atau menusuk tipis ke atas band_high (< probe_tol)
+                    # Tetap pertahankan sebagai Ceiling yang sedang disapu/diuji (SFP High candidate)!
+                    ceil_cands.append((c.band_high, c))
+                    if c.band_low < cur_price - probe_tol:
+                        floor_cands.append((c.band_low, c))
+                else:
+                    # Harga berada di dalam zona mendekati bawah atau menusuk tipis ke bawah band_low (< probe_tol)
+                    # Tetap pertahankan sebagai Floor yang sedang disapu/diuji (SFP Low candidate)!
+                    floor_cands.append((c.band_low, c))
+                    if c.band_high > cur_price + probe_tol:
+                        ceil_cands.append((c.band_high, c))
+
         floor_cands.sort(key=lambda k: -k[0])  # terdekat dari bawah dulu (harga terbesar)
         ceil_cands.sort(key=lambda k: k[0])    # terdekat dari atas dulu (harga terkecil)
 

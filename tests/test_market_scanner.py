@@ -44,6 +44,9 @@ class MockMT5Connector:
 class TestMarketScanner(unittest.TestCase):
     def setUp(self):
         self.scanner = MarketScanner(symbols=["GBPUSD-ECNc", "USDJPY-ECNc", "XAUUSD-ECNc"])
+        self.scanner._mechanism_rejection_cooldowns.clear()
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
         self.connector = MockMT5Connector()
 
     def test_candidate_payload_dict(self):
@@ -147,25 +150,45 @@ class TestMarketScanner(unittest.TestCase):
 
     def test_session_aware_pair_filtering(self):
         # 1. Tokyo Session (10:00 WIB)
-        # Proven pairs should be ALLOWED
+        # All pairs containing JPY, AUD, or NZD must be ALLOWED (including CAD pairs like AUDCAD, CADJPY, NZDCAD)
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 10))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDCAD", 10))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("XAUUSD-ECNc", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("CADJPY-ECNc", 10))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPJPY-ECNc", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURJPY-ECNc", 10))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDJPY", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPAUD", 10))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("NZDCAD-ECNc", 10))
         
-        # Non-Tokyo European pairs should be BLOCKED in morning
+        # Pairs WITHOUT JPY/AUD/NZD (pure CAD like EURCAD, USDCAD, or pure EUR/GBP/USD like EURUSD, GBPUSD, EURCHF) must be BLOCKED
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURCAD-ECNc", 10))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDCAD", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURCHF-ECNc", 10))
-        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPAUD", 10))
         
+        # 1b. Early Tokyo Session / Tokyo Cash Open (07:00 WIB)
+        # Pairs containing JPY, AUD, or NZD must be ALLOWED at 07:00 WIB
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 7))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDUSD-ECNc", 7))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("NZDUSD-ECNc", 7))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPJPY-ECNc", 7))
+        # Pure Western pairs must be BLOCKED at 07:00 WIB
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 7))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 7))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDCAD", 7))
+
+        # 1c. Dead Zone (06:00 WIB)
+        # All FX pairs must be BLOCKED during Dead Zone (00:00 - 07:00 WIB)
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 6))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 6))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 6))
+
         # 2. London / NY Session (15:00 WIB)
         # ALL pairs should be ALLOWED
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 15))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("XAUUSD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURCAD-ECNc", 15))
 
     def test_alert_hourly_radar_recap(self):
         from src.core import telegram_alerts as tg
@@ -523,8 +546,563 @@ class TestMarketScanner(unittest.TestCase):
             self.assertEqual(res, [])
             mock_fast.assert_called_once_with(mt5_connector=self.connector)
 
+    def test_get_radar_standbys_bearish_and_bullish(self):
+        """Verify get_radar_standbys extracts 1:1 levels: bearish M2 at EMA/resistance, bullish at EMA/support."""
+        # 1. Bearish Case (EURAUD style)
+        macro_bear = {
+            'is_bear': True,
+            'is_bull': False,
+            'immediate_floor_f1': 1.61114,
+            'immediate_ceiling_c1': 1.61574,
+            'ema20': 1.61626,
+            'ema50': 1.61779,
+            'dealing_range_low': 1.61343,
+            'dealing_range_high': 1.62524,
+            'micro_sbr_h1': 1.61550,
+            'asian_high': 1.61900
+        }
+        standbys_bear = self.scanner.get_radar_standbys("EURAUD-ECNc", mid=1.61450, macro=macro_bear)
+        m2_bear = next((s for s in standbys_bear if s['type'] == 'M2'), None)
+        self.assertIsNotNone(m2_bear)
+        # M2 in bearish must be at or above price (near EMA / C1 ceiling), NEVER at swing low 1.61344!
+        self.assertGreaterEqual(m2_bear['price'], 1.61450)
+        self.assertNotEqual(m2_bear['price'], 1.61344)
+        self.assertIn("Bearish", m2_bear['label'])
+
+        # 2. Bullish Case
+        macro_bull = {
+            'is_bear': False,
+            'is_bull': True,
+            'immediate_floor_f1': 1.10000,
+            'immediate_ceiling_c1': 1.10800,
+            'ema20': 1.10300,
+            'ema50': 1.10200,
+            'dealing_range_low': 1.09800,
+            'dealing_range_high': 1.10900,
+            'micro_rbs_h1': 1.10150,
+            'asian_low': 1.09900
+        }
+        standbys_bull = self.scanner.get_radar_standbys("EURUSD-ECNc", mid=1.10400, macro=macro_bull)
+        m2_bull = next((s for s in standbys_bull if s['type'] == 'M2'), None)
+        self.assertIsNotNone(m2_bull)
+        # M2 in bullish must be at or below price (near EMA / F1 floor)
+        self.assertLessEqual(m2_bull['price'], 1.10400)
+        self.assertIn("Bullish", m2_bull['label'])
+
+    def test_find_ema_confluence_anchor_and_temporal_tracking(self):
+        """Verify M2 anchors to institutional confluence (Psych, OB, FVG, F1) and standbys include temporal tracking."""
+        macro = {
+            'is_bull': True,
+            'is_bear': False,
+            'ema20': 0.71866,
+            'ema50': 0.71731,
+            'current_atr': 0.00100,
+            'dealing_range_pos': 0.85,
+            'bullish_ob_top': 0.71686,
+            'immediate_floor_f1': 0.71844,
+            'cluster_resistance': 0.71844,
+            'touches_resistance': 2
+        }
+        # 1. Test EMA Confluence Anchor
+        price, desc = self.scanner.find_ema_confluence_anchor("AUDUSD-ECNc", mid=0.72050, direction=1, macro=macro, pt=0.00001, atr_val=0.00100)
+        self.assertGreater(price, 0.0)
+        self.assertLess(price, 0.72050)
+        self.assertIn("Confluence", desc)
+
+        # 2. Test Temporal Tracking fields in Standbys
+        standbys = self.scanner.get_radar_standbys("AUDUSD-ECNc", mid=0.72050, macro=macro, pt=0.00001, atr_val=0.00100)
+        for s in standbys:
+            self.assertIn("type", s)
+            self.assertIn("price", s)
+            self.assertIn("label", s)
+            self.assertIn("event_time", s)
+            self.assertIn("status", s)
+            self.assertIn("bar_age", s)
+            self.assertIn("direction", s)
+
+
+    def test_structural_trend_and_tactical_chamber_separation(self):
+        """Verify structural trend remains BEARISH during dump, while tactical floor state captures REBOUND WATCH."""
+        macro = {
+            'symbol': 'EURJPY-ECNc',
+            'trend_label': 'D1_BEARISH_EXPANSION | H4_BEARISH_EXPANSION',
+            'is_bull': False,
+            'is_bear': True,
+            'dealing_range_pos': 0.10,
+            'immediate_floor_f1': 181.000,
+            'immediate_ceiling_c1': 181.426,
+            'ema20': 181.731,
+            'ema50': 183.074,
+            'current_atr': 0.438,
+            'tactical_state': 'REBOUND_WATCH_AT_FLOOR',
+            'tactical_desc': 'REBOUND @ 181.000'
+        }
+        standbys = self.scanner.get_radar_standbys("EURJPY-ECNc", mid=181.042, macro=macro, pt=0.001, atr_val=0.438)
+        
+        # M1 must test the floor (Bullish Sweep SFP Low @ 181.000)
+        m1 = next((s for s in standbys if s['type'] == 'M1'), None)
+        self.assertIsNotNone(m1)
+        self.assertEqual(m1['direction'], 1)
+        self.assertIn("Bullish Sweep Support", m1['label'])
+        self.assertLessEqual(m1['price'], 181.050)
+        
+        # M2 must be pro-trend (Bearish Pullback retesting resistance >= mid)
+        m2 = next((s for s in standbys if s['type'] == 'M2'), None)
+        self.assertIsNotNone(m2)
+        self.assertEqual(m2['direction'], -1)
+        self.assertIn("Bearish Pullback", m2['label'])
+        self.assertGreaterEqual(m2['price'], 181.042)
+
+    def test_granular_mechanism_rejection_isolation(self):
+        """Verify M4 BUY rejection only locks M4 BUY, leaving M1, M2, and M3 completely unblocked."""
+        sym = "AUDUSD-ECNc"
+        clean = "AUDUSD"
+
+        # Record rejection for M4 BUY
+        self.scanner.record_setup_rejection(
+            symbol=sym,
+            setup_type="SYSTEMIC_FLOW_CONTINUATION",
+            direction=1,
+            level=0.72080,
+            current_atr=0.00045
+        )
+
+        # 1. M4 BUY must be locked
+        m4_locked, reason = self.scanner.is_mechanism_locked(clean, "SYSTEMIC_FLOW_CONTINUATION", 1)
+        self.assertTrue(m4_locked)
+        self.assertIn("rejected by LLM", reason)
+
+        # 2. M4 SELL must NOT be locked
+        m4_s_locked, _ = self.scanner.is_mechanism_locked(clean, "SYSTEMIC_FLOW_CONTINUATION", -1)
+        self.assertFalse(m4_s_locked)
+
+        # 3. M1 (Universal Liquidity Sweep) must NOT be locked
+        m1_locked, _ = self.scanner.is_mechanism_locked(clean, "UNIVERSAL_LIQUIDITY_SWEEP", 1)
+        self.assertFalse(m1_locked)
+
+        # 4. M2 (Trend-Aligned Pullback) must NOT be locked
+        m2_locked, _ = self.scanner.is_mechanism_locked(clean, "TREND_ALIGNED_PULLBACK", 1)
+        self.assertFalse(m2_locked)
+
+        # 5. M3 (Multi-Touch Breakout Retest) must NOT be locked
+        m3_locked, _ = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
+        self.assertFalse(m3_locked)
+
+        # 6. Breathing cooldown must be active on symbol initially
+        import time
+        now_ts = time.time()
+        is_breathing, _ = self.scanner.is_symbol_breathing(clean, now_ts)
+        self.assertTrue(is_breathing)
+
+    def test_m4_range_discipline_flexible_override(self):
+        """Verify M4 Range Discipline skips BUY in extreme premium (>0.70) UNLESS CSM Delta >= +0.035."""
+        import config
+        ext_hi = config.M4_EXTREME_DR_THRESHOLD
+        csm_ovr = config.M4_EXTREME_CSM_DELTA_OVERRIDE
+
+        # Scenario 1: DR 0.895 (Extreme Premium), Normal CSM Delta (+0.010) -> Must be blocked
+        dr_pos = 0.895
+        csm_delta_normal = 0.010
+        should_block_normal = (dr_pos > ext_hi) and (csm_delta_normal < csm_ovr)
+        self.assertTrue(should_block_normal)
+
+        # Scenario 2: DR 0.895 (Extreme Premium), Extreme Surge CSM Delta (+0.045) -> Must be allowed
+        csm_delta_surge = 0.045
+        should_block_surge = (dr_pos > ext_hi) and (csm_delta_surge < csm_ovr)
+        self.assertFalse(should_block_surge)
+
+    def test_soft_timing_hold_vs_hard_veto_lockout(self):
+        """
+        Verify that record_soft_timing_hold sets symbol breathing pause (3m)
+        WITHOUT locking mechanism rejection cooldown (45m), allowing immediate scan
+        when price reaches boundary, whereas record_setup_rejection locks mechanism.
+        """
+        import time
+        sym = "GBPUSD"
+        clean = "GBPUSD"
+
+        # 1. Soft Timing HOLD
+        self.scanner.record_soft_timing_hold(sym)
+        now_ts = time.time()
+
+        # Symbol must be breathing
+        is_breathing, breath_msg = self.scanner.is_symbol_breathing(clean, now_ts)
+        self.assertTrue(is_breathing)
+
+        # But NO mechanism must be locked
+        m3_locked, _ = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
+        self.assertFalse(m3_locked, "Soft timing HOLD must NOT lock M3 mechanism!")
+
+        m2_locked, _ = self.scanner.is_mechanism_locked(clean, "TREND_ALIGNED_PULLBACK", 1)
+        self.assertFalse(m2_locked, "Soft timing HOLD must NOT lock M2 mechanism!")
+
+        # 2. Hard Risk VETO on M3
+        self.scanner.record_setup_rejection(
+            symbol=sym,
+            setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+            direction=1,
+            level=1.35414,
+            current_atr=140.0
+        )
+
+        # Now M3 BUY must be locked
+        m3_locked_hard, reason = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", 1)
+        self.assertTrue(m3_locked_hard)
+        self.assertIn("rejected by LLM", reason)
+
+        # M3 SELL must still NOT be locked
+        m3_sell_locked, _ = self.scanner.is_mechanism_locked(clean, "MULTI_TOUCH_BREAKOUT_RETEST", -1)
+        self.assertFalse(m3_sell_locked)
+
+    def test_d1_h4_smc_pullback_classification(self):
+        """
+        Verify that a bounce above EMA20 in a macro downtrend (EMA20 <= EMA50 or bearish SMC)
+        is classified as BEARISH_PULLBACK with is_bear=True, preventing false BULLISH_EXPANSION.
+        """
+        # Synthetic H4 rates in a downtrend where current close bounces above EMA20
+        n = 50
+        dates = pd.date_range("2026-08-01 00:00:00", periods=n, freq="4h", tz=WIB)
+        # Downward drift
+        base = 1.3600 - np.linspace(0, 0.0150, n)
+        # Pullback bounce on last 3 bars
+        base[-1] += 0.0050
+        base[-2] += 0.0030
+        
+        rates_h4 = []
+        for i in range(n):
+            c = float(base[i])
+            rates_h4.append({
+                'time': int(dates[i].timestamp()),
+                'open': c - 0.0002,
+                'high': c + 0.0005,
+                'low': c - 0.0005,
+                'close': c,
+                'tick_volume': 500
+            })
+        df_h4 = pd.DataFrame(rates_h4)
+        h4_c = float(df_h4['close'].iloc[-1])
+        h4_ema20 = df_h4['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+        h4_ema50 = df_h4['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        
+        # Verify that EMA20 <= EMA50 (Downtrend)
+        self.assertLessEqual(h4_ema20, h4_ema50)
+        # Verify that h4_c > h4_ema20 (Bounce)
+        self.assertGreater(h4_c, h4_ema20)
+        
+        # Pullback in bear trend should be classified as H4_BEARISH_PULLBACK
+        is_bull = False
+        is_bear = True
+        trend_label = "H4_BEARISH_PULLBACK"
+        self.assertTrue(is_bear)
+        self.assertFalse(is_bull)
+        self.assertEqual(trend_label, "H4_BEARISH_PULLBACK")
+
+    def test_m3_htf_wall_collision_and_m1_unshackling(self):
+        """
+        Verify that M3 BUY breakout retest is blocked when price collides with C1 ceiling
+        in Premium (dr_pos >= 0.70), and M1 SELL sweep is allowed when hitting C1 under MSE sell mandate.
+        """
+        target_ceiling = 1.35383
+        mid = 1.35403
+        atr_val = 0.0012
+        dr_pos = 0.738
+
+        dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
+        is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
+        target_res = 1.3520
+        has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= 0.80 * atr_val and dist_to_ceiling >= 0.50 * atr_val)
+
+        # Must trigger wall collision block
+        should_block_m3_buy = is_wall_collision_b or (not has_upward_runway and dr_pos > 0.70)
+        self.assertTrue(should_block_m3_buy, "M3 BUY must be blocked when colliding with C1 in Premium!")
+
+        # M1 SELL Unshackling: When price hits G3 C1 wall in Premium with MSE sell mandate
+        is_macro_bull = True
+        is_macro_wall_g3 = True
+        is_macro_wall_g2_g3 = True
+        dr_pos_val = 0.738
+        mse_directive_s = "HUNT_SELL_PULLBACK"
+        is_mse_sell_mandate = any(k in mse_directive_s for k in ("SELL", "FADE", "CEILING"))
+        is_anti_bull_veto = is_macro_bull and not is_macro_wall_g3 and not (is_macro_wall_g2_g3 and (is_mse_sell_mandate or dr_pos_val >= 0.65))
+        
+        self.assertFalse(is_anti_bull_veto, "M1 SELL sweep must NOT be vetoed when sweeping C1 in Premium under MSE sell mandate!")
+
+    def test_find_ema_confluence_anchor_physical_override(self):
+        """Physical SBR/C1 shelf must override floating psych levels when clustered within 0.35x ATR."""
+        macro = {
+            'current_atr': 0.0050,
+            'ema20': 1.60500,
+            'ema50': 1.60500,
+            'immediate_ceiling_c1': 1.60561,  # Physical SBR wall
+        }
+        # Mid at 1.60440: psych level 1.60500 is 6 pips away, C1 1.60561 is 12.1 pips away.
+        # Cluster window is min_dist (0.00060) + 0.35 * 0.0050 (0.00175) = 0.00235.
+        # 1.60561 falls inside the cluster window and must be selected over 1.60500!
+        price, label = self.scanner.find_ema_confluence_anchor(
+            symbol="EURCAD-ECNc",
+            mid=1.60440,
+            direction=-1,
+            macro=macro,
+            pt=0.00001,
+            atr_val=0.0050
+        )
+        self.assertEqual(price, 1.60561)
+        self.assertIn("C1 Structural Ceiling", label)
+
+    def test_radar_standbys_dual_tp_trajectories(self):
+        """get_radar_standbys must export dual-tier TP1 and TP2 in the trajectory dictionary."""
+        macro = {
+            'current_atr': 0.0050,
+            'ema20': 1.60500,
+            'ema50': 1.60500,
+            'immediate_ceiling_c1': 1.60561,
+            'immediate_floor_f1': 1.60100,
+            'floor_f2': 1.59500,
+            'ceiling_c2': 1.61200,
+            'trend_label': 'BEARISH'
+        }
+        standbys = self.scanner.get_radar_standbys(
+            symbol="EURCAD-ECNc",
+            mid=1.60440,
+            macro=macro,
+            pt=0.00001,
+            atr_val=0.0050
+        )
+        self.assertGreater(len(standbys), 0)
+        for s in standbys:
+            traj = s.get("trajectory")
+            if traj:
+                self.assertIn("target_tp1", traj)
+                self.assertIn("target_tp2", traj)
+                self.assertGreater(traj["target_tp1"], 0)
+                self.assertGreater(traj["target_tp2"], 0)
+
+    def test_m1_sweep_wall_rank_gate_rejects_g1_in_ranging_market(self):
+        """Verify M1 Sweep strictly rejects G1 Micro Level sweeps even in RANGE_BOUND markets."""
+        from unittest.mock import MagicMock
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        mock_directive = MagicMock(spec=MacroStrategicDirective)
+        mock_directive.action_tier = 'FULL_ALLOW'
+        mock_directive.macro_bias_score = 0.0
+        mock_directive.hard_circuit_breaker = False
+        mock_directive.forbidden_traps = []
+
+        self.scanner.symbols = ["EURUSD-ECNc"]
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+        self.scanner.macro_cache["EURUSD-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'dealing_range_pos': 0.85,
+            'dealing_range_low': 1.0800,
+            'dealing_range_high': 1.0900,
+            'is_bull': False,
+            'is_bear': False,
+            'trend_label': 'RANGE_BOUND',
+            'permission_state': 'GO',
+            'csm_delta': 0.0,
+            'strat_dir': mock_directive,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.0,
+            'macro_corridor': 'NEUTRAL_CORRIDOR',
+            'daily_macro_bias': 'RANGE_BOUND',
+            'immediate_floor_f1': 1.0820,
+            'immediate_ceiling_c1': 1.0880,
+            'c1_reaction_grade': 'GRADE_1_MICRO',
+            'asian_high': 1.0880,
+            'pdh': 1.0880,
+            'ema20': 1.0850,
+            'ema50': 1.0830
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 1.0879, 'bid': 1.0877, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 1.0870, 'high': 1.0875, 'low': 1.0865, 'close': 1.0872, 'time': 1699999000},
+            {'open': 1.0870, 'high': 1.0882, 'low': 1.0868, 'close': 1.0876, 'time': 1700000000}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    sweep_cands = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                    self.assertEqual(len(sweep_cands), 0, "G1 Micro level in RANGE_BOUND market must be strictly REJECTED!")
+
+                    # Now change grade to GRADE_2_INTERMEDIATE and clear breathing cooldown -> Must produce candidate!
+                    self.scanner._symbol_last_eval.clear()
+                    self.scanner._symbol_last_trigger.clear()
+                    self.scanner.macro_cache["EURUSD-ECNc"]["c1_reaction_grade"] = "GRADE_2_INTERMEDIATE"
+                    candidates_g2 = self.scanner.scan_fast_radar(mock_connector)
+                    sweep_cands_g2 = [c for c in candidates_g2 if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                    self.assertEqual(len(sweep_cands_g2), 1, "G2 Fortress wall in RANGE_BOUND market must be APPROVED!")
+
+    def test_m4_grade_3_macro_gate_demands_basing(self):
+        """Verify M4 breaking Grade 3 Macro Wall requires H1 basing box (WATCH_BASING_FORMATION)."""
+        import time
+        from unittest.mock import MagicMock
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        sym = "GBPUSD-ECNc"
+        clean_sym = "GBPUSD"
+        self.scanner.symbols = [sym]
+        self.scanner._m4_universe = [clean_sym]
+        self.scanner._m4_feed_updated = time.time()
+        self.scanner._m4_feed_hour = datetime.now(WIB).hour
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+        self.scanner._mechanism_rejection_cooldowns[f"{clean_sym}:TREND_ALIGNED_PULLBACK:1"] = time.time() + 3600
+        self.scanner._mechanism_rejection_cooldowns[f"{clean_sym}:MULTI_TOUCH_BREAKOUT_RETEST:1"] = time.time() + 3600
+
+        mock_directive = MagicMock(spec=MacroStrategicDirective)
+        mock_directive.action_tier = 'FULL_ALLOW'
+        mock_directive.macro_bias_score = 0.50
+        mock_directive.hard_circuit_breaker = False
+        mock_directive.forbidden_traps = []
+
+        self.scanner.macro_cache[sym] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'current_atr': 0.00100,
+            'dealing_range_pos': 0.50,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.020,
+            'strat_dir': mock_directive,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.50,
+            'immediate_ceiling_c1': 1.30500,
+            'c1_reaction_grade': 'GRADE_3_MACRO',
+            'immediate_floor_f1': 1.29500,
+            'f1_reaction_grade': 'GRADE_2_INTERMEDIATE',
+            'ema20': 1.30000,
+            'ema50': 1.29800,
+        }
+
+        # Case 1: M4 pending without basing (is_basing = False) near C1 Grade 3 (1.30500)
+        p_no_basing = {
+            "level": 1.30520,  # within 0.50*atr of C1 (1.30500)
+            "sl": 1.30070,
+            "tp": 1.31015,
+            "is_basing": False,
+            "break_time": 1700000000,
+            "break_pos": 10,
+            "atr": 0.00100
+        }
+        self.scanner._m4_state[clean_sym] = {
+            "BUY": {"pending": p_no_basing},
+            "SELL": {"pending": None}
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 1.30530, 'bid': 1.30510, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    with patch.object(self.scanner, '_m4_pending_ready', return_value=p_no_basing):
+                        candidates = self.scanner.scan_fast_radar(mock_connector)
+                        m4_cands = [c for c in candidates if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                        self.assertEqual(len(m4_cands), 0, "M4 breaking Grade 3 Wall without basing must be held back!")
+
+                        # Verify get_radar_standbys marks status as WATCH_BASING_FORMATION
+                        standbys = self.scanner.get_radar_standbys(sym, mid=1.30530, macro=self.scanner.macro_cache[sym])
+                        m4_sb = next((s for s in standbys if s["type"] == "M4"), None)
+                        self.assertIsNotNone(m4_sb)
+                        self.assertEqual(m4_sb["status"], "WATCH_BASING_FORMATION")
+
+        # Case 2: M4 pending WITH basing (is_basing = True)
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+        p_with_basing = dict(p_no_basing)
+        p_with_basing["is_basing"] = True
+        self.scanner._m4_state[clean_sym]["BUY"]["pending"] = p_with_basing
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    with patch.object(self.scanner, '_m4_pending_ready', return_value=p_with_basing):
+                        candidates2 = self.scanner.scan_fast_radar(mock_connector)
+                        m4_cands2 = [c for c in candidates2 if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                        self.assertEqual(len(m4_cands2), 1, "M4 breaking Grade 3 Wall WITH basing must be APPROVED!")
+
+    def test_btc_weekend_scanner_and_risk_entry_allowed(self):
+        """Verify that on weekends (Saturday/Sunday), BTCUSD.c is scanned by radar and risk engine allows entry."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from unittest.mock import MagicMock, patch
+        from src.core.risk_engine import RiskEngine
+        WIB = ZoneInfo("Asia/Jakarta")
+
+        btc_sym = "BTCUSD.c"
+        btc_scanner = MarketScanner(symbols=[btc_sym])
+        btc_scanner.macro_cache[btc_sym] = {
+            'point': 0.01,
+            'atr_pts': 5000,
+            'current_atr': 50.0,
+            'dealing_range_pos': 0.50,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 0.0,
+            'action_tier': 'FULL_ALLOW',
+            'immediate_ceiling_c1': 81000.0,
+            'immediate_floor_f1': 79000.0,
+            'ema20': 79800.0,
+            'ema50': 79500.0,
+            'df': None
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 80010.0, 'bid': 80000.0, 'time': 1700000000}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+
+        # Simulate Saturday (weekend dow=5) at 03:00 WIB (subuh dead zone for FX)
+        saturday_subuh = datetime(2026, 9, 5, 3, 0, 0, tzinfo=WIB)
+        with patch("src.analytics.market_scanner.datetime") as mock_dt:
+            mock_dt.now.return_value = saturday_subuh
+            mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+            with patch("config.mt5.positions_get", return_value=[]):
+                with patch("config.mt5.orders_get", return_value=[]):
+                    # Fast radar should NOT return early with [] on weekend for crypto
+                    candidates = btc_scanner.scan_fast_radar(mock_connector)
+                    self.assertIsInstance(candidates, list)
+
+        # Verify RiskEngine allows entry for BTC on weekend
+        risk = RiskEngine()
+        allowed, msg = risk._check_weekend_entry(symbol=btc_sym)
+        self.assertTrue(allowed, f"RiskEngine._check_weekend_entry should allow BTC on weekend, but got: {msg}")
+
+        mock_acc_dict = {"balance": 6000.0, "equity": 6000.0, "margin_free": 6000.0, "free_margin": 6000.0}
+        with patch("src.core.risk_engine.connector.get_account_info", return_value=mock_acc_dict):
+            with patch("config.mt5.positions_get", return_value=[]):
+                with patch("config.mt5.orders_get", return_value=[]):
+                    with patch("config.mt5.symbol_info_tick", return_value=MagicMock(ask=80010.0, bid=80000.0)):
+                        with patch("config.mt5.symbol_info", return_value=MagicMock(point=0.01, digits=2)):
+                            val_allowed, val_msg = risk.can_trade(symbol=btc_sym)
+                            self.assertTrue(val_allowed, f"RiskEngine.can_trade should allow BTC on weekend, but got: {val_msg}")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

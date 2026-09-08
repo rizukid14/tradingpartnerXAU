@@ -121,6 +121,37 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     global _last_sltp_adjustments
     _last_sltp_adjustments = []
 
+    # ── M4 SYSTEMIC FLOW CONTINUATION: SL/TP STRUKTURAL BEKU (studi #1/#1b mirror) ──
+    # SL = M4_SL_ATR_MULT × ATR(H1) dari level (0.45), TP = M4_TP_R_MULT × R (1.1R).
+    # Divalidasi studi (scratch/study_surge_retest.py & study_mirror_flow.py) → bypass total
+    # floor/ceiling/grade/RR default karena nilai tsb BUKAN thesis LLM, melainkan anchor mekanis.
+    # M4: Systemic Flow Continuation (3 Sep 2026)
+    # SL = M4_SL_ATR_MULT × ATR(H1) dari level (0.45), TP = M4_TP_R_MULT × R (1.1R).
+    # Catatan 3 Sep: M4 kini TIDAK LAGI bypass safety floor total agar tidak membuka
+    # SL mikro (misal 29 pts pada EURCHF) yang memicu lot raksasa > 1.0 lot.
+    # Nilai M4 di-clamp ke Segmented Safety Floor dan Net R:R (menutup komisi + spread).
+    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
+        _md = getattr(candidate, "metadata", None) or {}
+        _m4_sl = int(_md.get("m4_sl_pts") or 0)
+        _m4_tp = int(_md.get("m4_tp_pts") or 0)
+        if _m4_sl > 0 and _m4_tp > 0:
+            sym_m4 = symbol or config.SYMBOL
+            min_sl_m4 = config.get_sl_floor_points(sym_m4, spread_pts=0, atr_points=0)
+            if _m4_sl < min_sl_m4:
+                _last_sltp_adjustments.append(f"M4 SL {_m4_sl} pts < safety floor ({min_sl_m4} pts). Menyesuaikan ke {min_sl_m4} pts.")
+                _m4_sl = min_sl_m4
+            
+            comm_pts = 5
+            min_tp_m4 = int(_m4_sl * config.LLM_MIN_RR_RATIO) + comm_pts
+            if _m4_tp < min_tp_m4:
+                _last_sltp_adjustments.append(f"M4 TP {_m4_tp} pts < Net R:R ({config.LLM_MIN_RR_RATIO}x + {comm_pts} pts comm). Menyesuaikan ke {min_tp_m4} pts.")
+                _m4_tp = min_tp_m4
+
+            _last_sltp_adjustments.append(
+                f"M4 struktural: SL {_m4_sl} pts, TP {_m4_tp} pts — anchor floored (Net R:R)."
+            )
+            return _m4_sl, _m4_tp, True, "M4_STRUCTURAL_FLOORED"
+
     sym = symbol or config.SYMBOL
 
     if not sl_points or sl_points <= 0:
@@ -161,27 +192,13 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             min_sl = max(spread_pts * 2, int(1.20 * atr_points), 30000) if atr_points > 0 else 30000
         elif is_xau:
             min_sl = max(spread_pts * 2, int(config.LLM_SAFETY_FLOOR_ATR_MULT * atr_points)) if atr_points > 0 else config.LLM_SAFETY_FLOOR_STATIC_PTS
-        elif is_jpy:
-            jpy_mult = getattr(config, "LLM_JPY_FLOOR_ATR_MULT", 1.00)
-            if atr_points > 0:
-                min_sl = max(spread_pts * 2 + 20, int(jpy_mult * atr_points))
-            else:
-                min_sl = max(spread_pts * 2 + 20, config.default_sl_points_for(sym))
         else:
-            if atr_points > 0:
-                min_sl = max(spread_pts * 2 + 15, int(config.LLM_FX_FLOOR_ATR_MULT * atr_points))
-            else:
-                min_sl = max(spread_pts * 2 + 15, config.default_sl_points_for(sym))
+            # Segmented Safety Floors (3 Sep 2026): Low-Beta (120 pts), High-Beta (180 pts), JPY (200 pts / 1.00x ATR)
+            min_sl = config.get_sl_floor_points(sym, spread_pts=spread_pts, atr_points=atr_points)
             
         if sl_points < min_sl:
-            _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor. Menyesuaikan SL ke {min_sl} pts.")
+            _last_sltp_adjustments.append(f"SL {sl_points} pts di bawah safety floor ({min_sl} pts). Menyesuaikan SL ke {min_sl} pts.")
             sl_points = min_sl
-
-        # Anti-wick padding untuk pair silang (misal NZD +20 pts)
-        nzd_padding = config.sl_padding_for(sym)
-        if nzd_padding > 0:
-            sl_points += nzd_padding
-            _last_sltp_adjustments.append(f"Anti-wick buffer +{nzd_padding} pts untuk {sym} (SL -> {sl_points} pts).")
 
         # Hard Intraday Ceiling Cap (mencegah SL runaway / swing level)
         # ZCE anchor mode: ceiling = batas VALIDITAS anchor struktural (bukan alat clamp).
@@ -207,11 +224,13 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                     return sl_points, tp_points, False, note
                 max_sl = static_fallback
             else:
-                max_sl = int(atr_points * sl_max_mult)
+                raw_max = int(atr_points * sl_max_mult)
+                # Harmonization: Plafon ceiling wajib lebih besar daripada safety floor minimal (bebas deadlock Ceiling < Floor)
+                max_sl = max(raw_max, int(min_sl * 1.5))
             if sl_points > max_sl:
                 if zce_wall_mode:
                     note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {max_sl} pts "
-                            f"({sl_max_mult}x ATR). SKIP trade — clamp akan memarkir SL di tengah struktur.")
+                            f"({sl_max_mult}x ATR, floor {min_sl} pts). SKIP trade — clamp akan memarkir SL di tengah struktur.")
                     _last_sltp_adjustments.append(note)
                     return sl_points, tp_points, False, note
                 label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")
@@ -241,16 +260,31 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
-        min_tp = int(sl_points * min_rr)
-        max_tp = int(sl_points * max_rr)
+        # Net R:R Commission & Spread Compensation (3 Sep 2026):
+        # Biaya transaksi (Spread + Round-Turn Komisi) dihitung ke dalam target TP minimal
+        # agar Net R:R setelah potongan broker tetap murni >= min_rr : 1.
+        usd_per_pt_1lot = 0.0
+        if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
+            usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
+        
+        comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
+        comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
+        friction_pts = spread_pts + comm_pts
+
+        min_tp = int(sl_points * min_rr) + friction_pts
+        max_tp = int(sl_points * max_rr) + friction_pts
         if tp_points < min_tp:
-            _last_sltp_adjustments.append(f"TP {tp_points} pts < {min_rr}x SL. Menyesuaikan TP ke {min_tp} pts (R:R {min_rr}:1).")
+            _last_sltp_adjustments.append(f"TP {tp_points} pts < Net R:R ({min_rr}x SL + {friction_pts} pts friksi). Menyesuaikan TP ke {min_tp} pts.")
             tp_points = min_tp
         elif tp_points > max_tp:
             tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""
             
             # Fallback ke Quant Station TP asli jika tersedia dan berada dalam batas wajar
-            cand_tp_pts = getattr(candidate, 'suggested_tp_pts', 0) if candidate else 0
+            raw_cand_tp_pts = getattr(candidate, 'suggested_tp_pts', 0) if candidate else 0
+            try:
+                cand_tp_pts = int(raw_cand_tp_pts) if raw_cand_tp_pts is not None else 0
+            except (TypeError, ValueError):
+                cand_tp_pts = 0
             if not cand_tp_pts and candidate and getattr(candidate, 'suggested_tp', 0.0) and getattr(candidate, 'trigger_price', 0.0):
                 try:
                     pt_val = si.point if si and si.point else (0.001 if "JPY" in str(sym) else (0.01 if "XAU" in str(sym) or "BTC" in str(sym) else 0.00001))
@@ -353,12 +387,16 @@ def calculate_consensus(decisions, candidate=None):
     # weighted-confidence yang sudah di-drop.
     ai_mode = getattr(config, "get_ai_mode", lambda: "triple")()
 
+    # Simbol aktif: di scanner mode, SEMUA 26 simbol setara (tidak ada default pair).
+    # Ambil langsung dari candidate.symbol, fallback ke config.SYMBOL hanya jika None.
+    cand_sym = getattr(candidate, 'symbol', None) or config.SYMBOL
+
     point = 0.00001
     ref_price = 0.0
     try:
         from config import mt5
-        si = mt5.symbol_info(config.SYMBOL)
-        tick = mt5.symbol_info_tick(config.SYMBOL)
+        si = mt5.symbol_info(cand_sym)
+        tick = mt5.symbol_info_tick(cand_sym)
         if si and si.point:
             point = si.point
         if tick:
@@ -366,8 +404,8 @@ def calculate_consensus(decisions, candidate=None):
     except Exception:
         pass
 
-    # Print details for each model
-    for model_name, dec in decisions.items():
+    # Helper to render a model's detailed card
+    def _render_model_card(model_name, dec, role_label=None):
         sig = dec.get("signal") or "HOLD"
         conf = dec.get("confidence") if dec.get("confidence") is not None else 0.0
         reason = dec.get("reasoning") or "Tidak ada alasan."
@@ -390,10 +428,9 @@ def calculate_consensus(decisions, candidate=None):
             tp = int(round(abs(base_ref - float(tp_price)) / point))
 
         setup_label = dec.get("setup")
-        
         badge = UI.badge_signal(sig)
         bar = UI.make_bar(conf, 1.0, width=8)
-        
+
         # Format info eksekusi (Market vs Pending Order)
         if sig in ("BUY", "SELL"):
             if entry_type != "market" and entry_price:
@@ -403,20 +440,24 @@ def calculate_consensus(decisions, candidate=None):
             sltp_info = f"{exec_str} | SL: {sl} pts, TP: {tp} pts"
         else:
             sltp_info = "SL/TP: -"
-        
+
         verdict_str = f" {UI.badge_verdict(dec.get('verdict'))}" if dec.get("verdict") else ""
-        box_items.append(f"{UI.BOLD}{model_name:<10}{UI.RST}: {badge} {bar}{verdict_str} | {UI.DIM}{sltp_info}{UI.RST}")
-        
-        # 1. State / Decision Framework Context (Regime, Setup, State, RR Valid, Risk Flag)
-        regime_val = dec.get("market_regime") or dec.get("trend")
+        header_name = f"{model_name} ({role_label})" if role_label else model_name
+        box_items.append(f"{UI.BOLD}{header_name:<28}{UI.RST}: {badge} {bar}{verdict_str} | {UI.DIM}{sltp_info}{UI.RST}")
+
+        # 1. State / Decision Framework Context
+        regime_val = dec.get("market_regime") or dec.get("regime") or dec.get("trend")
         state_val = dec.get("state")
         rr_val = dec.get("rr_valid")
         risk_flag = dec.get("risk_flag")
+        retest_q = dec.get("retest_quality")
         ctx_parts = []
         if regime_val:
             ctx_parts.append(f"Regime: {regime_val}")
         if setup_label:
             ctx_parts.append(f"Setup: {setup_label}")
+        if retest_q:
+            ctx_parts.append(f"Retest: {retest_q}")
         if state_val:
             ctx_parts.append(f"State: {state_val}")
         if risk_flag and risk_flag != "NONE":
@@ -427,21 +468,57 @@ def calculate_consensus(decisions, candidate=None):
         elif dec.get("velocity"):
             ctx_parts.append(f"Velocity: {dec.get('velocity')}")
         if ctx_parts:
-            box_items.append((f"  {UI.CYAN}Context{UI.RST} : ", " | ".join(ctx_parts)))
-        
-        # 2. Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
+            box_items.append((f"  {UI.CYAN}Context{UI.RST}   : ", " | ".join(ctx_parts)))
+
+        # 2. Package Arbitration info (for Pass 2 CRO)
+        arb = dec.get("arbitration_decision") or dec.get("package_arbitration")
+        if isinstance(arb, dict):
+            chosen = arb.get("chosen_package")
+            rat = arb.get("arbitration_rationale")
+            calc_rr = exec_block.get("calculated_rr")
+            arb_parts = []
+            if chosen:
+                arb_parts.append(f"Package: {chosen}")
+            if calc_rr:
+                arb_parts.append(f"R:R: {calc_rr:.2f}:1")
+            if arb_parts:
+                box_items.append((f"  {UI.PURPLE}Arbitrate{UI.RST} : ", " | ".join(arb_parts)))
+            if rat:
+                box_items.append((f"  {UI.PURPLE}Rationale{UI.RST} : ", rat))
+
+        # 3. Tampilkan level teknikal (Inval & Target) jika tersedia di JSON
         levels_info = []
         if sl_price:
             levels_info.append(f"SL Price: {sl_price}")
         if tp_price:
             levels_info.append(f"TP Price: {tp_price}")
         if levels_info:
-            box_items.append((f"  {UI.RED}Levels{UI.RST} : ", " | ".join(levels_info)))
+            box_items.append((f"  {UI.RED}Levels{UI.RST}    : ", " | ".join(levels_info)))
 
-        # 3. Reason / Veto Reason
+        # 4. Reason / Veto Reason
         if dec.get("veto_reason"):
-            box_items.append((f"  {UI.RED}Veto{UI.RST}   : ", dec.get("veto_reason")))
-        box_items.append((f"  {UI.GRAY}Reason{UI.RST} : ", reason))
+            box_items.append((f"  {UI.RED}Veto{UI.RST}      : ", dec.get("veto_reason")))
+        box_items.append((f"  {UI.GRAY}Reason{UI.RST}    : ", reason))
+
+    # Visual Grouping: Pass 1 Specialists vs Pass 2 Master CRO Arbiter
+    pass1_names = [m for m in ("OpenAI", "Gemini") if m in decisions]
+    pass2_names = [m for m in ("DeepSeek", "Claude") if m in decisions]
+    other_names = [m for m in decisions if m not in pass1_names and m not in pass2_names]
+
+    if pass1_names and pass2_names:
+        box_items.append(f"{UI.CYAN}{UI.BOLD}[ PASS 1: SPECIALIST DOSSIER INVESTIGATION ]{UI.RST}")
+        for m in pass1_names:
+            role = "Macro Strategist" if m == "OpenAI" else ("Price Action" if m == "Gemini" else None)
+            _render_model_card(m, decisions[m], role_label=role)
+        box_items.append("---")
+        box_items.append(f"{UI.PURPLE}{UI.BOLD}[ PASS 2: MASTER CRO & RISK ARBITER ]{UI.RST}")
+        for m in pass2_names:
+            _render_model_card(m, decisions[m], role_label="Master CRO Arbiter")
+        for m in other_names:
+            _render_model_card(m, decisions[m])
+    else:
+        for m, d in decisions.items():
+            _render_model_card(m, d)
 
         
     # Evaluate consensus for active position early-close actions
@@ -524,7 +601,14 @@ def calculate_consensus(decisions, candidate=None):
     for model_name, dec in decisions.items():
         rf = dec.get("risk_flag")
         vd = dec.get("verdict")
-        if (vd == "REJECT" or dec.get("veto_reason")) and rf in VALID_HARD_VETO_FLAGS:
+        exec_b = dec.get("execution") or {}
+        e_type = (exec_b.get("entry_type") or dec.get("entry_type") or "market").strip().lower()
+
+        # HIGH_IMPACT_NEWS: Vetoes market orders. Pending limit orders at macro stations with conf >= 0.60 are permitted.
+        if rf == "HIGH_IMPACT_NEWS":
+            if e_type == "market" or vd == "REJECT" or float(dec.get("confidence", 0.0)) < 0.60:
+                hard_veto_models.append((model_name, rf, dec.get("veto_reason") or dec.get("reasoning") or "High-impact news forbids market entry"))
+        elif (vd == "REJECT" or dec.get("veto_reason")) and rf in VALID_HARD_VETO_FLAGS:
             hard_veto_models.append((model_name, rf, dec.get("veto_reason") or dec.get("reasoning") or "Critical Risk Detected"))
 
     if hard_veto_models and consensus_signal in ("BUY", "SELL"):
@@ -560,8 +644,8 @@ def calculate_consensus(decisions, candidate=None):
         return {
             "signal": "HOLD",
             "confidence": 0.0,
-            "sl_points": config.default_sl_points_for(config.SYMBOL),
-            "tp_points": config.default_tp_points_for(config.SYMBOL),
+            "sl_points": config.default_sl_points_for(cand_sym),
+            "tp_points": config.default_tp_points_for(cand_sym),
             "agreeing_count": 0,
             "agreeing_models": [],
             "tickets_to_close": tickets_to_close,
@@ -620,18 +704,65 @@ def calculate_consensus(decisions, candidate=None):
     ds_exec = (ds_dec.get("execution") or {}) if ds_dec else {}
     ds_entry_type = (ds_exec.get("entry_type") or ds_dec.get("entry_type", "")).strip().lower() if ds_dec else ""
     ds_ep = ds_exec.get("entry_price") or (ds_dec.get("entry_price") if ds_dec else None)
+    ds_sl = ds_exec.get("sl_price") or ds_dec.get("invalidation_price")
+    ds_tp = ds_exec.get("tp_price") or ds_dec.get("target_price")
 
-    if ds_entry_type in ("buy_limit", "sell_limit", "market", "buy_stop", "sell_stop") and "DeepSeek" in agreeing_models:
-        final_entry_type = ds_entry_type
-        final_entry_price = float(ds_ep) if (isinstance(ds_ep, (int, float)) and ds_ep > 0) else (float(statistics.median(entry_price_list)) if entry_price_list else None)
-    else:
-        # entry_type: mayoritas dari model yang setuju arah; seri -> market
-        final_entry_type = "market"
-        if entry_type_votes:
-            top_type, top_count = max(entry_type_votes.items(), key=lambda kv: kv[1])
-            if top_count >= max(1, len(agreeing_models) // 2):
-                final_entry_type = top_type
-        final_entry_price = float(statistics.median(entry_price_list)) if entry_price_list else None
+    arb_info = {}
+    chosen_pkg = ""
+    if ds_dec and "DeepSeek" in agreeing_models:
+        arb_info = ds_dec.get("arbitration_decision") or ds_dec.get("package_arbitration") or {}
+        chosen_pkg = (arb_info.get("chosen_package") or ds_dec.get("chosen_package") or "").upper().strip()
+
+    package_adopted = False
+    if chosen_pkg and "DeepSeek" in agreeing_models:
+        if "PACKAGE_OPENAI" in chosen_pkg and "OpenAI" in decisions:
+            o_dec = decisions["OpenAI"]
+            o_ex = o_dec.get("execution") or {}
+            o_et = (o_ex.get("entry_type") or o_dec.get("entry_type") or "market").strip().lower()
+            o_ep_val = o_ex.get("entry_price") or o_dec.get("entry_price")
+            o_sl_val = o_ex.get("sl_price") or o_dec.get("invalidation_price")
+            o_tp_val = o_ex.get("tp_price") or o_dec.get("target_price")
+            final_entry_type = o_et if o_et in ("market", "buy_limit", "sell_limit", "buy_stop", "sell_stop") else "market"
+            final_entry_price = float(o_ep_val) if (isinstance(o_ep_val, (int, float)) and o_ep_val > 0) else None
+            final_inv = float(o_sl_val) if (isinstance(o_sl_val, (int, float)) and o_sl_val > 0) else None
+            final_tgt = float(o_tp_val) if (isinstance(o_tp_val, (int, float)) and o_tp_val > 0) else None
+            package_adopted = True
+            outlier_notes.append("Atomic Package Adopted: PACKAGE_OPENAI (Macro Structural Unit)")
+        elif "PACKAGE_GEMINI" in chosen_pkg and "Gemini" in decisions:
+            g_dec = decisions["Gemini"]
+            g_ex = g_dec.get("execution") or {}
+            g_et = (g_ex.get("entry_type") or g_dec.get("entry_type") or "market").strip().lower()
+            g_ep_val = g_ex.get("entry_price") or g_dec.get("entry_price")
+            g_sl_val = g_ex.get("sl_price") or g_dec.get("invalidation_price")
+            g_tp_val = g_ex.get("tp_price") or g_dec.get("target_price")
+            final_entry_type = g_et if g_et in ("market", "buy_limit", "sell_limit", "buy_stop", "sell_stop") else "market"
+            final_entry_price = float(g_ep_val) if (isinstance(g_ep_val, (int, float)) and g_ep_val > 0) else None
+            final_inv = float(g_sl_val) if (isinstance(g_sl_val, (int, float)) and g_sl_val > 0) else None
+            final_tgt = float(g_tp_val) if (isinstance(g_tp_val, (int, float)) and g_tp_val > 0) else None
+            package_adopted = True
+            outlier_notes.append("Atomic Package Adopted: PACKAGE_GEMINI (Price Action Unit)")
+        elif ds_sl and ds_tp:
+            final_entry_type = ds_entry_type if ds_entry_type in ("buy_limit", "sell_limit", "market", "buy_stop", "sell_stop") else "market"
+            final_entry_price = float(ds_ep) if (isinstance(ds_ep, (int, float)) and ds_ep > 0) else None
+            final_inv = float(ds_sl) if (isinstance(ds_sl, (int, float)) and ds_sl > 0) else None
+            final_tgt = float(ds_tp) if (isinstance(ds_tp, (int, float)) and ds_tp > 0) else None
+            package_adopted = True
+            outlier_notes.append(f"Atomic Package Adopted: DeepSeek Master CRO Synthesized Package ({chosen_pkg})")
+
+    if not package_adopted:
+        if ds_entry_type in ("buy_limit", "sell_limit", "market", "buy_stop", "sell_stop") and "DeepSeek" in agreeing_models:
+            final_entry_type = ds_entry_type
+            final_entry_price = float(ds_ep) if (isinstance(ds_ep, (int, float)) and ds_ep > 0) else (float(statistics.median(entry_price_list)) if entry_price_list else None)
+        else:
+            # entry_type: mayoritas dari model yang setuju arah; seri -> market
+            final_entry_type = "market"
+            if entry_type_votes:
+                top_type, top_count = max(entry_type_votes.items(), key=lambda kv: kv[1])
+                if top_count >= max(1, len(agreeing_models) // 2):
+                    final_entry_type = top_type
+            final_entry_price = float(statistics.median(entry_price_list)) if entry_price_list else None
+        final_inv = statistics.median(inv_list) if inv_list else None
+        final_tgt = statistics.median(tgt_list) if tgt_list else None
 
     # 2. Hard Anti-FOMO Intercept: Pada Breakout Retest di Range Ekstrem (>=85% BUY / <=15% SELL), wajib Limit Order di Anchor Retest
     if candidate is not None:
@@ -670,8 +801,8 @@ def calculate_consensus(decisions, candidate=None):
         return {
             "signal": "HOLD",
             "confidence": confluence.get("composite_score", 0.0),
-            "sl_points": config.default_sl_points_for(config.SYMBOL),
-            "tp_points": config.default_tp_points_for(config.SYMBOL),
+            "sl_points": config.default_sl_points_for(cand_sym),
+            "tp_points": config.default_tp_points_for(cand_sym),
             "agreeing_count": len(agreeing_models),
             "agreeing_models": list(agreeing_models),
             "tickets_to_close": tickets_to_close,
@@ -683,8 +814,9 @@ def calculate_consensus(decisions, candidate=None):
         }
 
     avg_confidence = confluence.get("composite_score", avg_confidence)
-    final_inv = statistics.median(inv_list) if inv_list else None
-    final_tgt = statistics.median(tgt_list) if tgt_list else None
+    if not package_adopted:
+        final_inv = statistics.median(inv_list) if inv_list else None
+        final_tgt = statistics.median(tgt_list) if tgt_list else None
 
     # ── BOUNDED MICRO-PRECISION REFINEMENT (QUANT ANCHOR + LLM M5/M15 MICRO-TWEAK) ──
     cand_sym = getattr(candidate, 'symbol', config.SYMBOL)
@@ -702,23 +834,50 @@ def calculate_consensus(decisions, candidate=None):
             diff_pts = abs(final_inv - prop_sl) / point if point > 0 else 0
             outlier_notes.append(f"SL Micro-Refined by LLM M5/M15 wicks: {prop_sl} -> {final_inv} (Δ {diff_pts:.1f} pts)")
         else:
-            if final_inv is not None:
+            if final_inv is not None and not package_adopted:
                 outlier_notes.append(f"LLM SL ({final_inv}) deviated > {micro_bound/point:.0f} pts from Quant Anchor ({prop_sl}) -> Clamped to Quant Anchor")
-            final_inv = prop_sl
+                final_inv = prop_sl
+            elif final_inv is None:
+                final_inv = prop_sl
 
         # 2. Target / TP Validation (Permits structural expansion into FVG / Key Stations within 1.25x - 3.0x RR)
         tp_micro_bound = max(micro_bound * 1.5, 0.65 * atr_p)
-        is_valid_dir_tp = (consensus_signal == "BUY" and final_tgt > ref_price) or (consensus_signal == "SELL" and final_tgt < ref_price) if (final_tgt and ref_price) else False
-        curr_cand_risk = abs(ref_price - final_inv) if (ref_price and final_inv) else 0.0
-        llm_rr = (abs(final_tgt - ref_price) / curr_cand_risk) if (curr_cand_risk > 0 and final_tgt and ref_price) else 0.0
+        base_calc_ref = final_entry_price if (final_entry_type != "market" and final_entry_price) else ref_price
+        curr_cand_risk = abs(base_calc_ref - final_inv) if (base_calc_ref and final_inv) else 0.0
+        curr_cand_reward = abs(final_tgt - base_calc_ref) if (final_tgt and base_calc_ref) else 0.0
+        llm_rr = (curr_cand_reward / curr_cand_risk) if (curr_cand_risk > 0) else 0.0
+        is_valid_dir_tp = (consensus_signal == "BUY" and final_tgt > base_calc_ref) or (consensus_signal == "SELL" and final_tgt < base_calc_ref) if (final_tgt and base_calc_ref) else False
 
-        if final_tgt is not None and is_valid_dir_tp and (abs(final_tgt - prop_tp) <= tp_micro_bound or (1.25 <= llm_rr <= 3.0)):
-            diff_tp_pts = abs(final_tgt - prop_tp) / point if point > 0 else 0
-            outlier_notes.append(f"TP Refined to Structural Station/FVG: {prop_tp} -> {final_tgt} (Δ {diff_tp_pts:.1f} pts, R:R {llm_rr:.2f}:1)")
+        # Anti-Frankenstein R:R Guard: Ensure no sub-par R:R slips through
+        eff_action_tier = confluence.get("tier") or getattr(candidate, 'action_tier', None)
+        is_reduced_scalp = eff_action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP") or "REDUCED_SCALP" in str(getattr(candidate, 'setup_grade', '')).upper()
+        target_min_rr = 1.00 if is_reduced_scalp else 1.25
+
+        if llm_rr < target_min_rr or not is_valid_dir_tp:
+            quant_reward = abs(prop_tp - base_calc_ref) if (prop_tp and base_calc_ref) else 0.0
+            quant_rr = (quant_reward / curr_cand_risk) if (curr_cand_risk > 0) else 0.0
+            if quant_rr >= target_min_rr:
+                if is_reduced_scalp and quant_rr > 1.25:
+                    max_scalp_dist = 1.25 * curr_cand_risk
+                    final_tgt = (base_calc_ref + max_scalp_dist) if consensus_signal == "BUY" else (base_calc_ref - max_scalp_dist)
+                    outlier_notes.append(f"Anti-Frankenstein Guard (Reduced Scalp): TP calibrated to 1.25x level ({final_tgt})")
+                else:
+                    outlier_notes.append(f"Anti-Frankenstein Guard: Proposed R:R ({llm_rr:.2f}:1) < {target_min_rr}x -> TP expanded to Quant Target ({prop_tp}) yielding R:R {quant_rr:.2f}:1")
+                    final_tgt = prop_tp
+            else:
+                min_tp_dist = target_min_rr * curr_cand_risk
+                final_tgt = (base_calc_ref + min_tp_dist) if consensus_signal == "BUY" else (base_calc_ref - min_tp_dist)
+                outlier_notes.append(f"Anti-Frankenstein Guard: Proposed R:R ({llm_rr:.2f}:1) < {target_min_rr}x -> TP calibrated to minimum {target_min_rr}x level ({final_tgt})")
         else:
-            if final_tgt is not None:
-                outlier_notes.append(f"LLM TP ({final_tgt}) deviated > Quant Anchor ({prop_tp}) -> Clamped to Quant Anchor")
-            final_tgt = prop_tp
+            if final_tgt is not None and (abs(final_tgt - prop_tp) <= tp_micro_bound or (1.25 <= llm_rr <= 3.0)):
+                diff_tp_pts = abs(final_tgt - prop_tp) / point if point > 0 else 0
+                outlier_notes.append(f"TP Refined to Structural Station/FVG: {prop_tp} -> {final_tgt} (Δ {diff_tp_pts:.1f} pts, R:R {llm_rr:.2f}:1)")
+            else:
+                if final_tgt is not None and not package_adopted:
+                    outlier_notes.append(f"LLM TP ({final_tgt}) deviated > Quant Anchor ({prop_tp}) -> Clamped to Quant Anchor")
+                    final_tgt = prop_tp
+                elif final_tgt is None:
+                    final_tgt = prop_tp
 
         # Recalculate precise points from validated price coordinates
         base_calc_p = final_entry_price if (final_entry_type != "market" and final_entry_price) else ref_price
@@ -726,26 +885,46 @@ def calculate_consensus(decisions, candidate=None):
             final_sl = int(round(abs(base_calc_p - final_inv) / point))
             final_tp = int(round(abs(final_tgt - base_calc_p) / point))
         else:
-            final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
-            final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+            final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(cand_sym)
+            final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(cand_sym)
     else:
-        final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(config.SYMBOL)
-        final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(config.SYMBOL)
+        final_sl = int(round(statistics.median(sl_list))) if sl_list else config.default_sl_points_for(cand_sym)
+        final_tp = int(round(statistics.median(tp_list))) if tp_list else config.default_tp_points_for(cand_sym)
 
+    eff_action_tier = confluence.get("tier") or getattr(candidate, 'action_tier', None)
     final_sl, final_tp, sltp_ok, sltp_reason = _apply_sltp_rules(
         final_sl, final_tp,
-        symbol=config.SYMBOL,
-        action_tier=getattr(candidate, 'action_tier', None),
+        symbol=cand_sym,
+        action_tier=eff_action_tier,
         setup_grade=getattr(candidate, 'setup_grade', None),
         candidate=candidate
     )
 
-    # Guardrail entry pending (Filosofi: Percayakan pada LLM, No Trade is Better)
-    if final_entry_type != "market" and final_entry_price is not None:
+    # ── M4: anchor limit sudah terlewati market → BATAL (no market conversion; jangan fade struktur jebol) ──
+    _m4_anchor_broken = False
+    _m4_anchor_reason = ""
+    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
         try:
             from config import mt5
-            tick = mt5.symbol_info_tick(config.SYMBOL)
-            si = mt5.symbol_info(config.SYMBOL)
+            tick = mt5.symbol_info_tick(cand_sym)
+            si = mt5.symbol_info(cand_sym)
+            point = si.point if si else 0.00001
+            if tick and si and point and consensus_signal in ("BUY", "SELL") and final_entry_type != "market" and final_entry_price:
+                ref_price = tick.ask if consensus_signal == "BUY" else tick.bid
+                if (consensus_signal == "BUY" and final_entry_price >= ref_price) or \
+                   (consensus_signal == "SELL" and final_entry_price <= ref_price):
+                    _m4_anchor_broken = True
+                    _m4_anchor_reason = (f"M4 anchor limit {final_entry_price} vs market {ref_price:.5f}: "
+                                         f"harga sudah menembus anchor -> setup batal (no chase).")
+        except Exception:
+            pass
+
+    # Guardrail entry pending (Filosofi: Percayakan pada LLM, No Trade is Better)
+    if not _m4_anchor_broken and final_entry_type != "market" and final_entry_price is not None:
+        try:
+            from config import mt5
+            tick = mt5.symbol_info_tick(cand_sym)
+            si = mt5.symbol_info(cand_sym)
             point = si.point if si else 0.00001
             ref_price = tick.ask if consensus_signal == "BUY" else tick.bid
             dist_pts = abs(final_entry_price - ref_price) / point if (point and ref_price) else None
@@ -771,10 +950,14 @@ def calculate_consensus(decisions, candidate=None):
         except Exception:
             pass
 
+    if _m4_anchor_broken and sltp_ok:
+        sltp_ok = False
+        sltp_reason = _m4_anchor_reason
+
     try:
         from config import mt5
-        tick = mt5.symbol_info_tick(config.SYMBOL)
-        si = mt5.symbol_info(config.SYMBOL)
+        tick = mt5.symbol_info_tick(cand_sym)
+        si = mt5.symbol_info(cand_sym)
         point = si.point if si else 0.00001
         if tick and si and point:
             exec_ref = final_entry_price if (final_entry_type != "market" and final_entry_price) else (tick.ask if consensus_signal == "BUY" else tick.bid)
