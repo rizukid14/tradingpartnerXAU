@@ -2077,30 +2077,30 @@ function renderDrawer() {
     html += `
       <div style="font-weight:700;font-size:11px;color:var(--cyan);margin-bottom:4px;text-transform:uppercase;">Breakdown Performa Mekanisme Stage 1 Radar:</div>
       <table class="data-table" style="margin-bottom:12px;"><thead><tr>
-        <th>Mekanisme</th><th>Total Setups</th><th>TP Hits</th><th>SL Hits</th><th>Winrate %</th><th>Realized Net R</th>
+        <th>Mekanisme</th><th>Total Setups</th><th>TP Hits</th><th>SL Hits</th><th>BEP</th><th>Winrate %</th><th>Realized Net R</th>
       </tr></thead><tbody>
         <tr>
           <td style="color:#fb923c;font-weight:700;">M1: Universal Liquidity Sweep</td>
-          <td>${mechs.M1?.total || 0}</td><td>${mechs.M1?.tp || 0}</td><td>${mechs.M1?.sl || 0}</td>
-          <td>${mechs.M1?.total ? ((mechs.M1.tp / (mechs.M1.tp + mechs.M1.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td>${mechs.M1?.total || 0}</td><td>${mechs.M1?.tp || 0}</td><td>${mechs.M1?.sl || 0}</td><td>${mechs.M1?.bep || 0}</td>
+          <td>${((mechs.M1?.tp || 0) + (mechs.M1?.sl || 0)) > 0 ? (((mechs.M1.tp || 0) / ((mechs.M1.tp || 0) + (mechs.M1.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M1?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M1?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M1?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
           <td style="color:#38bdf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
-          <td>${mechs.M2?.total || 0}</td><td>${mechs.M2?.tp || 0}</td><td>${mechs.M2?.sl || 0}</td>
-          <td>${mechs.M2?.total ? ((mechs.M2.tp / (mechs.M2.tp + mechs.M2.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td>${mechs.M2?.total || 0}</td><td>${mechs.M2?.tp || 0}</td><td>${mechs.M2?.sl || 0}</td><td>${mechs.M2?.bep || 0}</td>
+          <td>${((mechs.M2?.tp || 0) + (mechs.M2?.sl || 0)) > 0 ? (((mechs.M2.tp || 0) / ((mechs.M2.tp || 0) + (mechs.M2.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M2?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M2?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M2?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
           <td style="color:#c084fc;font-weight:700;">M3: Breakout Retest Guard</td>
-          <td>${mechs.M3?.total || 0}</td><td>${mechs.M3?.tp || 0}</td><td>${mechs.M3?.sl || 0}</td>
-          <td>${mechs.M3?.total ? ((mechs.M3.tp / (mechs.M3.tp + mechs.M3.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td>${mechs.M3?.total || 0}</td><td>${mechs.M3?.tp || 0}</td><td>${mechs.M3?.sl || 0}</td><td>${mechs.M3?.bep || 0}</td>
+          <td>${((mechs.M3?.tp || 0) + (mechs.M3?.sl || 0)) > 0 ? (((mechs.M3.tp || 0) / ((mechs.M3.tp || 0) + (mechs.M3.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M3?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M3?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M3?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
           <td style="color:#facc15;font-weight:700;">M4: Systemic Flow Continuation</td>
-          <td>${mechs.M4?.total || 0}</td><td>${mechs.M4?.tp || 0}</td><td>${mechs.M4?.sl || 0}</td>
-          <td>${mechs.M4?.total ? ((mechs.M4.tp / (mechs.M4.tp + mechs.M4.sl || 1)) * 100).toFixed(1) : 0}%</td>
+          <td>${mechs.M4?.total || 0}</td><td>${mechs.M4?.tp || 0}</td><td>${mechs.M4?.sl || 0}</td><td>${mechs.M4?.bep || 0}</td>
+          <td>${((mechs.M4?.tp || 0) + (mechs.M4?.sl || 0)) > 0 ? (((mechs.M4.tp || 0) / ((mechs.M4.tp || 0) + (mechs.M4.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M4?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M4?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M4?.net_r || 0).toFixed(2)}R</td>
         </tr>
       </tbody></table>

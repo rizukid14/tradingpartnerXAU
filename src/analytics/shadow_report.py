@@ -55,10 +55,20 @@ def render_shadow_report_html() -> str:
 
     # Mechanisms Stats
     mechs = summary.get("mechanisms", {})
-    m1 = mechs.get("M1", {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0})
-    m2 = mechs.get("M2", {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0})
-    m3 = mechs.get("M3", {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0})
-    m4 = mechs.get("M4", {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0})
+    m1 = mechs.get("M1", {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0})
+    m2 = mechs.get("M2", {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0})
+    m3 = mechs.get("M3", {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0})
+    m4 = mechs.get("M4", {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0})
+
+    def _safe_wr(m_d):
+        tp = m_d.get('tp', 0)
+        sl = m_d.get('sl', 0)
+        return (tp / (tp + sl) * 100.0) if (tp + sl) > 0 else 0.0
+
+    wr1 = _safe_wr(m1)
+    wr2 = _safe_wr(m2)
+    wr3 = _safe_wr(m3)
+    wr4 = _safe_wr(m4)
 
     # Combine active + resolved for data table
     all_combined = active_trades + resolved_trades
@@ -360,6 +370,7 @@ def render_shadow_report_html() -> str:
               <th>Total</th>
               <th>TP</th>
               <th>SL</th>
+              <th>BEP</th>
               <th>Winrate</th>
               <th>Net R</th>
             </tr>
@@ -367,35 +378,39 @@ def render_shadow_report_html() -> str:
           <tbody>
             <tr>
               <td style="color:#fb923c;font-weight:700;">M1: Universal Liquidity Sweep</td>
-              <td>{m1.get('total', 0)}</td>
-              <td>{m1.get('tp', 0)}</td>
-              <td>{m1.get('sl', 0)}</td>
-              <td>{(m1.get('tp', 0) / (m1.get('tp', 0) + m1.get('sl', 0) or 1) * 100):.1f}%</td>
-              <td style="font-weight:700;color:{'var(--green)' if m1.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m1.get('net_r', 0) >= 0 else ''}{m1.get('net_r', 0):.2f}R</td>
+              <td id="mech-M1-total">{m1.get('total', 0)}</td>
+              <td id="mech-M1-tp" style="color:var(--green);font-weight:700;">{m1.get('tp', 0)}</td>
+              <td id="mech-M1-sl" style="color:var(--red);font-weight:700;">{m1.get('sl', 0)}</td>
+              <td id="mech-M1-bep" style="color:var(--cyan);font-weight:700;">{m1.get('bep', 0)}</td>
+              <td id="mech-M1-wr">{wr1:.1f}%</td>
+              <td id="mech-M1-nr" style="font-weight:700;color:{'var(--green)' if m1.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m1.get('net_r', 0) >= 0 else ''}{m1.get('net_r', 0):.2f}R</td>
             </tr>
             <tr>
               <td style="color:#38bdf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
-              <td>{m2.get('total', 0)}</td>
-              <td>{m2.get('tp', 0)}</td>
-              <td>{m2.get('sl', 0)}</td>
-              <td>{(m2.get('tp', 0) / (m2.get('tp', 0) + m2.get('sl', 0) or 1) * 100):.1f}%</td>
-              <td style="font-weight:700;color:{'var(--green)' if m2.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m2.get('net_r', 0) >= 0 else ''}{m2.get('net_r', 0):.2f}R</td>
+              <td id="mech-M2-total">{m2.get('total', 0)}</td>
+              <td id="mech-M2-tp" style="color:var(--green);font-weight:700;">{m2.get('tp', 0)}</td>
+              <td id="mech-M2-sl" style="color:var(--red);font-weight:700;">{m2.get('sl', 0)}</td>
+              <td id="mech-M2-bep" style="color:var(--cyan);font-weight:700;">{m2.get('bep', 0)}</td>
+              <td id="mech-M2-wr">{wr2:.1f}%</td>
+              <td id="mech-M2-nr" style="font-weight:700;color:{'var(--green)' if m2.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m2.get('net_r', 0) >= 0 else ''}{m2.get('net_r', 0):.2f}R</td>
             </tr>
             <tr>
               <td style="color:#c084fc;font-weight:700;">M3: Breakout Retest Guard</td>
-              <td>{m3.get('total', 0)}</td>
-              <td>{m3.get('tp', 0)}</td>
-              <td>{m3.get('sl', 0)}</td>
-              <td>{(m3.get('tp', 0) / (m3.get('tp', 0) + m3.get('sl', 0) or 1) * 100):.1f}%</td>
-              <td style="font-weight:700;color:{'var(--green)' if m3.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m3.get('net_r', 0) >= 0 else ''}{m3.get('net_r', 0):.2f}R</td>
+              <td id="mech-M3-total">{m3.get('total', 0)}</td>
+              <td id="mech-M3-tp" style="color:var(--green);font-weight:700;">{m3.get('tp', 0)}</td>
+              <td id="mech-M3-sl" style="color:var(--red);font-weight:700;">{m3.get('sl', 0)}</td>
+              <td id="mech-M3-bep" style="color:var(--cyan);font-weight:700;">{m3.get('bep', 0)}</td>
+              <td id="mech-M3-wr">{wr3:.1f}%</td>
+              <td id="mech-M3-nr" style="font-weight:700;color:{'var(--green)' if m3.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m3.get('net_r', 0) >= 0 else ''}{m3.get('net_r', 0):.2f}R</td>
             </tr>
             <tr>
               <td style="color:#facc15;font-weight:700;">M4: Systemic Flow Continuation</td>
-              <td>{m4.get('total', 0)}</td>
-              <td>{m4.get('tp', 0)}</td>
-              <td>{m4.get('sl', 0)}</td>
-              <td>{(m4.get('tp', 0) / (m4.get('tp', 0) + m4.get('sl', 0) or 1) * 100):.1f}%</td>
-              <td style="font-weight:700;color:{'var(--green)' if m4.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m4.get('net_r', 0) >= 0 else ''}{m4.get('net_r', 0):.2f}R</td>
+              <td id="mech-M4-total">{m4.get('total', 0)}</td>
+              <td id="mech-M4-tp" style="color:var(--green);font-weight:700;">{m4.get('tp', 0)}</td>
+              <td id="mech-M4-sl" style="color:var(--red);font-weight:700;">{m4.get('sl', 0)}</td>
+              <td id="mech-M4-bep" style="color:var(--cyan);font-weight:700;">{m4.get('bep', 0)}</td>
+              <td id="mech-M4-wr">{wr4:.1f}%</td>
+              <td id="mech-M4-nr" style="font-weight:700;color:{'var(--green)' if m4.get('net_r', 0) >= 0 else 'var(--red)'};">{'+' if m4.get('net_r', 0) >= 0 else ''}{m4.get('net_r', 0):.2f}R</td>
             </tr>
           </tbody>
         </table>
@@ -671,6 +686,32 @@ def render_shadow_report_html() -> str:
       updateKpiEl('kpi-winrate', wr.toFixed(1) + '%');
       updateKpiEl('kpi-cumr',    (cumR >= 0 ? '+' : '') + cumR.toFixed(2) + 'R');
       updateKpiEl('kpi-ev',      (ev >= 0 ? '+' : '') + ev.toFixed(3) + 'R');
+
+      // Update Mechanism Breakdown Table
+      if (data.mechanisms) {{
+        ['M1', 'M2', 'M3', 'M4'].forEach(m => {{
+          const s = data.mechanisms[m];
+          if (!s) return;
+          const totEl = document.getElementById(`mech-${{m}}-total`);
+          const tpEl  = document.getElementById(`mech-${{m}}-tp`);
+          const slEl  = document.getElementById(`mech-${{m}}-sl`);
+          const bepEl = document.getElementById(`mech-${{m}}-bep`);
+          const wrEl  = document.getElementById(`mech-${{m}}-wr`);
+          const nrEl  = document.getElementById(`mech-${{m}}-nr`);
+          if (totEl) totEl.textContent = s.total || 0;
+          if (tpEl)  tpEl.textContent = s.tp || 0;
+          if (slEl)  slEl.textContent = s.sl || 0;
+          if (bepEl) bepEl.textContent = s.bep || 0;
+          const dec = (s.tp || 0) + (s.sl || 0);
+          const wrVal = dec > 0 ? ((s.tp / dec) * 100).toFixed(1) + '%' : '0.0%';
+          if (wrEl)  wrEl.textContent = wrVal;
+          if (nrEl) {{
+            const nrVal = Number(s.net_r || 0);
+            nrEl.textContent = (nrVal >= 0 ? '+' : '') + nrVal.toFixed(2) + 'R';
+            nrEl.style.color = nrVal >= 0 ? 'var(--green)' : 'var(--red)';
+          }}
+        }});
+      }}
 
       // Update filter bar counters
       const totCnt   = allTrades.length;

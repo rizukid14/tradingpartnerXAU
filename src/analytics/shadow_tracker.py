@@ -917,32 +917,81 @@ class QuantShadowTracker:
     def get_performance_summary(self) -> Dict[str, Any]:
         """Returns structured performance analytics for Cockpit Dashboard and CLI."""
         with self._lock:
-            total_resolved = self._stats.get("total_resolved", 0)
-            tp_hits = self._stats.get("tp_hits", 0)
-            sl_hits = self._stats.get("sl_hits", 0)
-            decisive_trades = tp_hits + sl_hits
-            winrate = (tp_hits / decisive_trades * 100.0) if decisive_trades > 0 else 0.0
-            cum_net_r = self._stats.get("cumulative_net_r", 0.0)
-            ev = (cum_net_r / decisive_trades) if decisive_trades > 0 else 0.0
+            # Read full history from JSONL with deduplication (keyed by shadow_id)
+            all_resolved = {}
+            try:
+                if os.path.exists(SHADOW_TRADES_LOG):
+                    with open(SHADOW_TRADES_LOG, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    t_obj = json.loads(line)
+                                    sid = t_obj.get("shadow_id")
+                                    if sid:
+                                        all_resolved[sid] = t_obj
+                                except Exception:
+                                    pass
+            except Exception as e:
+                logger.error(f"[SHADOW READ STATS ERROR] {e}")
 
-            # Mechanism breakdown from recent resolved
+            # Fallback if log empty
+            if not all_resolved and self._recent_resolved:
+                for t_obj in self._recent_resolved:
+                    sid = t_obj.get("shadow_id")
+                    if sid:
+                        all_resolved[sid] = t_obj
+
             mech_stats = {
-                "M1": {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0},
-                "M2": {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0},
-                "M3": {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0},
-                "M4": {"total": 0, "tp": 0, "sl": 0, "net_r": 0.0}
+                "M1": {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0},
+                "M2": {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0},
+                "M3": {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0},
+                "M4": {"total": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0}
             }
 
-            for t in self._recent_resolved:
+            tp_hits = 0
+            sl_hits = 0
+            cum_net_r = 0.0
+            expired_count = 0
+
+            for sid, t in all_resolved.items():
                 st = t.get("setup_type", "")
                 m_key = "M1" if "SWEEP" in st else ("M2" if "PULLBACK" in st else ("M3" if "BREAKOUT" in st else ("M4" if "FLOW" in st else "M1")))
+                out = str(t.get("outcome", ""))
+                nr = float(t.get("net_r") or 0.0)
+
                 if m_key in mech_stats:
                     mech_stats[m_key]["total"] += 1
-                    if t.get("outcome") == "TP_HIT":
+                    mech_stats[m_key]["net_r"] = round(mech_stats[m_key]["net_r"] + nr, 2)
+
+                cum_net_r = round(cum_net_r + nr, 2)
+
+                # Classify TP vs SL vs BEP
+                if out == "TP_HIT" or (out == "TRAILING_SL_HIT" and nr >= 0.20):
+                    tp_hits += 1
+                    if m_key in mech_stats:
                         mech_stats[m_key]["tp"] += 1
-                    elif t.get("outcome") == "SL_HIT":
+                elif out == "SL_HIT" or (out == "TRAILING_SL_HIT" and nr < -0.05):
+                    sl_hits += 1
+                    if m_key in mech_stats:
                         mech_stats[m_key]["sl"] += 1
-                    mech_stats[m_key]["net_r"] = round(mech_stats[m_key]["net_r"] + (t.get("net_r") or 0.0), 2)
+                elif "BEP" in out:
+                    if m_key in mech_stats:
+                        mech_stats[m_key]["bep"] += 1
+                elif "EXPIRED" in out:
+                    expired_count += 1
+
+            total_resolved = len(all_resolved)
+            decisive_trades = tp_hits + sl_hits
+            winrate = (tp_hits / decisive_trades * 100.0) if decisive_trades > 0 else 0.0
+            ev = (cum_net_r / decisive_trades) if decisive_trades > 0 else 0.0
+
+            # Update cached _stats
+            self._stats["total_resolved"] = total_resolved
+            self._stats["tp_hits"] = tp_hits
+            self._stats["sl_hits"] = sl_hits
+            self._stats["expired_count"] = expired_count
+            self._stats["cumulative_net_r"] = cum_net_r
 
             # MT5 Execution vs Skipped breakdown
             disp_stats = {
@@ -953,8 +1002,7 @@ class QuantShadowTracker:
                 "SKIPPED_LLM_VETO": 0,
                 "OTHER": 0
             }
-            # Sample from active trades and recent resolved trades
-            sample_trades = [t.to_dict() for t in self.active_trades] + list(self._recent_resolved)
+            sample_trades = [t.to_dict() for t in self.active_trades] + list(all_resolved.values())
             for t_dict in sample_trades:
                 disp = str(t_dict.get("mt5_disposition", "OTHER") or "OTHER").upper()
                 if "EXECUTED" in disp:
@@ -971,20 +1019,20 @@ class QuantShadowTracker:
                     disp_stats["OTHER"] += 1
 
             return {
-                "total_recorded": self._stats.get("total_recorded", 0),
+                "total_recorded": len(sample_trades),
                 "active_count": len([t for t in self.active_trades if t.status == "ACTIVE"]),
                 "pending_count": len([t for t in self.active_trades if t.status == "PENDING"]),
                 "total_resolved": total_resolved,
                 "tp_hits": tp_hits,
                 "sl_hits": sl_hits,
-                "expired_count": self._stats.get("expired_count", 0),
+                "expired_count": expired_count,
                 "decisive_trades": decisive_trades,
                 "winrate_pct": round(winrate, 1),
                 "cumulative_net_r": round(cum_net_r, 2),
                 "expected_value_r": round(ev, 2),
                 "mechanisms": mech_stats,
                 "disposition_breakdown": disp_stats,
-                "recent_resolved": self._recent_resolved[-20:],
+                "recent_resolved": list(all_resolved.values())[-20:],
                 "active_trades": [t.to_dict() for t in self.active_trades[:25]]
             }
 
