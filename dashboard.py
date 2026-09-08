@@ -526,9 +526,22 @@ class CockpitDataEngine:
             z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
             m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
             m4_active_standby = next((s for s in standbys if s.get("type") == "M4"), None)
-            m4_has_shock = (abs(z_base) >= 1.5 or abs(z_quote) >= 1.5 or m4_active_standby is not None or bool(m4_st.get("bear", {}).get("ref_bar")) or bool(m4_st.get("bull", {}).get("ref_bar")))
             m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
             m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+
+            # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
+            is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+            has_active_ep = False
+            if m4_st:
+                for s_side in ("SELL", "BUY"):
+                    s_d = m4_st.get(s_side, {})
+                    if s_d.get("ep") is not None or s_d.get("pending") is not None:
+                        has_active_ep = True
+                        break
+            is_continuation = (not is_fresh_shock) and (has_active_ep or m4_active_standby is not None) and (abs(m4_dominant_z) >= 0.75)
+            m4_flow_state = "SHOCK" if is_fresh_shock else ("CONT" if is_continuation else "NONE")
+            m4_has_shock = (m4_flow_state == "SHOCK")
+
             dir_mem = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_sym)
             dir_locked = ("BUY" if dir_mem.get("dir", 0) == 1 else "SELL") if (dir_mem and dir_mem.get("dir", 0) != 0) else None
             b_box_info = macro.get("basing_box") or {}
@@ -554,6 +567,7 @@ class CockpitDataEngine:
                 "ask": ask,
                 "digits": digits,
                 "m4_shock": m4_has_shock,
+                "m4_flow_state": m4_flow_state,
                 "m4_z": round(m4_dominant_z, 2),
                 "m4_dir": m4_flow_dir,
                 "dir_locked": dir_locked,
@@ -1040,9 +1054,21 @@ class CockpitDataEngine:
         z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
         m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
         m4_active_standby = next((s for s in m_standbys if s.get("type") == "M4"), None)
-        m4_has_shock = (abs(z_base) >= 1.5 or abs(z_quote) >= 1.5 or m4_active_standby is not None or bool(m4_st.get("bear", {}).get("ref_bar")) or bool(m4_st.get("bull", {}).get("ref_bar")))
         m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
         m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+
+        # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
+        is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+        has_active_ep = False
+        if m4_st:
+            for s_side in ("SELL", "BUY"):
+                s_d = m4_st.get(s_side, {})
+                if s_d.get("ep") is not None or s_d.get("pending") is not None:
+                    has_active_ep = True
+                    break
+        is_continuation = (not is_fresh_shock) and (has_active_ep or m4_active_standby is not None) and (abs(m4_dominant_z) >= 0.75)
+        m4_flow_state = "SHOCK" if is_fresh_shock else ("CONT" if is_continuation else "NONE")
+        m4_has_shock = (m4_flow_state == "SHOCK")
 
         return {
             "symbol": symbol,
@@ -1055,6 +1081,7 @@ class CockpitDataEngine:
             "dr_pos": dr_val,
             "dr_label": dr_lbl,
             "m4_shock": m4_has_shock,
+            "m4_flow_state": m4_flow_state,
             "m4_z": round(m4_dominant_z, 2),
             "m4_dir": m4_flow_dir,
             "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0),

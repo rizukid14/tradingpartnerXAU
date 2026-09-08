@@ -2,6 +2,41 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0. Perubahan 8 September 2026 (Sore III) — Tri-State Differentiation M4 SFR Fresh Shock (|z| >= 1.50) vs Flow Continuation (0.75 <= |z| < 1.50)
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Kerancuan Tampilan Status Shock saat Z-Score Melandai ($z = -1.10$)**:
+   - Engine M4 memiliki dua ambang batas: `M4_TRIGGER_Z = 1.50` (memicu episode baru saat fresh shock) dan `M4_CONT_Z = 0.75` (mempertahankan episode hidup selama $|z| \ge 0.75$).
+   - Di `dashboard.py`, kondisi `m4_has_shock` sebelumnya mencampur aduk antara adanya standby order aktif dengan fresh shock murni (`m4_active_standby is not None`).
+   - Akibatnya, saat Z-score melandai (*decay*) ke $-1.10$, dashboard tetap merender badge kuning emas `⚡ SFR | z: -1.1` dan hero banner `SFR ACTIVE`, memberi kesan seolah-olah terjadi shock baru padahal nilai $z$ sudah di bawah $1.50$.
+
+---
+
+### Komponen & Solusi Utama:
+1. **Klasifikasi Tri-State Kuantitatif (`dashboard.py`)**:
+   - Menghitung `m4_flow_state` di `_build_overview_cache()` dan `get_symbol_detail()`:
+     * **`SHOCK` (Kuning Emas `#facc15`)**: Hanya aktif jika $|z_{\text{base}}| \ge 1.50$ atau $|z_{\text{quote}}| \ge 1.50$ (*Fresh Institutional Shock*).
+     * **`CONT` (Cyan / Biru `#38bdf8`)**: Aktif saat tidak ada fresh shock, namun episode M4 masih berjalan di scanner (`ep is not None` atau ada pending order) dengan $|z_{\text{dominant}}| \ge 0.75$.
+     * **`NONE`**: Jika $|z| < 0.75$ atau tidak ada episode aktif.
+   - Menghapus pengecekan usang `m4_st.get("bear", ...)` dan menyelaraskan dengan state machine riil `m4_st["SELL"]` & `m4_st["BUY"]`.
+2. **Diferensiasi Visual Cockpit (`dashboard_assets.py`)**:
+   - **CSS**: Menambahkan styling `.pair-row.m4-cont-row` dan `.m4-cont-pill` dengan aksen cyan `#38bdf8`.
+   - **Watchlist Sidebar**:
+     * `SHOCK` ($|z| \ge 1.50$): Border kuning emas + badge `⚡ SFR SHOCK | z: +/-X.X`.
+     * `CONT` ($0.75 \le |z| < 1.50$): Border cyan + badge `trending_flat FLOW CONT | z: +/-X.X`.
+     * `NONE`: Baris standar tanpa penanda.
+   - **Hero Banner Chart**:
+     * `SHOCK`: Emas `SYSTEMIC FLOW SHOCK (SFR) ACTIVE`.
+     * `CONT`: Cyan `SYSTEMIC FLOW CONTINUATION`.
+3. **Verifikasi Kuantitatif Live MT5 Data**:
+   - **12 SHOCK Pairs ($|z| \ge 1.50$)**: `EURJPY` (-1.63), `EURNZD` (+2.06), `GBPJPY` (-1.63), `GBPNZD` (+2.06), `AUDJPY` (-1.63), `AUDNZD` (+2.06), `USDJPY` (-1.63), `CHFJPY` (-1.63), `CADJPY` (-1.63), `NZDUSD` (-2.06), `NZDCAD` (-2.06), `NZDCHF` (-2.06).
+   - **7 CONT Pairs ($0.75 \le |z| < 1.50$)**: `EURUSD` (-1.10), `EURAUD` (-1.10), `EURCAD` (-1.10), `EURCHF` (-1.10), `EURGBP` (-1.10), `GBPCAD` (-0.92), `AUDCAD` (-0.92).
+   - **8 NONE Pairs**: `GBPUSD`, `GBPAUD`, `GBPCHF`, `AUDUSD`, `AUDCHF`, `USDCAD`, `USDCHF`, `BTCUSD`.
+4. **Verifikasi Test Suite**:
+   - Full test suite: **209/209 PASSED (100%)** dalam 41.82s.
+
+---
+
 ## 0.0.0.0.0.0. Perubahan 8 September 2026 (Sore II) — Integrasi Pipeline Dynamic Basing Box ke Macro Cache, Scan Retest Window, dan Normalisasi F1/C1 Fallback Guarantee
 
 ### Latar Belakang & Identifikasi Masalah:

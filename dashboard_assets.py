@@ -327,6 +327,31 @@ html, body {
   gap: 3px;
   white-space: nowrap;
 }
+.pair-row.m4-cont-row {
+  border-left: 3.5px solid rgba(56, 189, 248, 0.65);
+  background: rgba(56, 189, 248, 0.03);
+}
+.pair-row.m4-cont-row:hover {
+  background: rgba(56, 189, 248, 0.06);
+}
+.pair-row.m4-cont-row.selected {
+  background: rgba(56, 189, 248, 0.10);
+  border-left: 3.5px solid #38bdf8;
+}
+.m4-cont-pill {
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 1px 5px;
+  border-radius: 2.5px;
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
 .box-compress-pill {
   background: rgba(56, 189, 248, 0.16);
   color: #38bdf8;
@@ -2102,10 +2127,15 @@ function renderWatchlist(pairs) {
     const atrVal = p.dist_atr !== undefined ? p.dist_atr.toFixed(2) : "0.00";
     const distText = p.dist_atr < 50 ? `${pipsVal}p (${atrVal}x ATR)` : ">50p (Idle)";
 
-    const m4RowClass = p.m4_shock ? "m4-shock-row" : "";
-    const m4Pill = p.m4_shock 
-      ? `<span class="m4-shock-pill" title="Systemic Flow Shock Active (z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z})"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">bolt</span> SFR | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>` 
-      : '';
+    let m4RowClass = "";
+    let m4Pill = "";
+    if (p.m4_flow_state === "SHOCK" || p.m4_shock) {
+      m4RowClass = "m4-shock-row";
+      m4Pill = `<span class="m4-shock-pill" title="Systemic Flow Shock Active (|z| >= 1.50)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">bolt</span> SFR SHOCK | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
+    } else if (p.m4_flow_state === "CONT") {
+      m4RowClass = "m4-cont-row";
+      m4Pill = `<span class="m4-cont-pill" title="Systemic Flow Continuation Phase (Decaying |z| >= 0.75)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">trending_flat</span> FLOW CONT | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
+    }
 
     const boxPill = (p.basing_box && p.basing_box.is_compressing)
       ? `<span class="box-compress-pill" title="Dynamic Basing Box: ${p.basing_box.box_bars} bars, ${p.basing_box.range_atr.toFixed(2)}x ATR [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">view_in_ar</span> BOX ${p.basing_box.box_bars}b</span>`
@@ -2206,12 +2236,18 @@ function renderSymbolHeader(d) {
   // Render M4 Systemic Flow Shock Hero Banner
   const m4Banner = document.getElementById("m4-hero-banner");
   if (m4Banner) {
-    if (d.m4_shock) {
+    if (d.m4_flow_state === "SHOCK" || d.m4_shock) {
       m4Banner.style.display = "flex";
-      const zEl = document.getElementById("m4-hero-z");
-      const dirEl = document.getElementById("m4-hero-dir");
-      if (zEl) zEl.textContent = `${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}`;
-      if (dirEl) dirEl.textContent = d.m4_dir || "BULL";
+      m4Banner.style.background = "rgba(250, 204, 21, 0.08)";
+      m4Banner.style.borderColor = "rgba(250, 204, 21, 0.4)";
+      m4Banner.style.color = "#facc15";
+      m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#facc15;">bolt</span> <span><strong>SYSTEMIC FLOW SHOCK (SFR) ACTIVE</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Direction Locked &bull; Watching Basing / Structure</span>`;
+    } else if (d.m4_flow_state === "CONT") {
+      m4Banner.style.display = "flex";
+      m4Banner.style.background = "rgba(56, 189, 248, 0.08)";
+      m4Banner.style.borderColor = "rgba(56, 189, 248, 0.35)";
+      m4Banner.style.color = "#38bdf8";
+      m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#38bdf8;">trending_flat</span> <span><strong>SYSTEMIC FLOW CONTINUATION</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Episode Active &bull; Watching Retest / Basing</span>`;
     } else {
       m4Banner.style.display = "none";
     }
