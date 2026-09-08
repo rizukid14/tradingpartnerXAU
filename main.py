@@ -649,6 +649,7 @@ def run_scanner_trading_cycle(cand, risk):
     Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
     """
     sym = cand.symbol
+    tf_str = getattr(cand, "timeframe", "H1")
     print("\n" + render_candidate_alert_box(cand))
     meta = getattr(cand, 'metadata', {}) or {}
     zce_cls = meta.get('zce_class', 'MSE_BASE')
