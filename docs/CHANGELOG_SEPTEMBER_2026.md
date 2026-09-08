@@ -2,6 +2,140 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam II) — Posisi Setup Grade Badges di CLI dan Standardisasi ANSI Box Direct Execution
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Visibilitas Setup Grade pada Posisi Terbuka di CLI**:
+   - Status bar posisi (`pos:`) di loop 3 detik `main.py` dan Tile 2 Bento HUD `cli_theme.py` sebelumnya hanya menampilkan simbol dan P/L (misal: `AUDUSD: +$14.47 [BEP]`).
+   - Operator tidak dapat melihat secara langsung grade risiko/kualitas eksekusi (`GRADE_S`, `GRADE_A_PLUS`, `GRADE_A`, `GRADE_B`) tiap tiket yang sedang berjalan tanpa membaca file JSON state.
+2. **Distorsi Tampilan Border Kotak Eksekusi Pure Quant**:
+   - Blok alert terminal `[PURE QUANT DIRECT EXECUTION]` di `main.py` menggunakan format string dengan spasi manual hardcoded (`╔══...══╗`, `║ ... ║`).
+   - Ketika nama simbol, nilai harga, angka SL/TP, atau label fill berubah panjang karakternya, border kanan kotak bergeser dan berantakan.
+
+---
+
+### Komponen & Solusi Utama:
+1. **Integrasi Helper Grade Tiket (`src/analytics/position_manager.py`)**:
+   - Menambahkan fungsi helper `get_ticket_setup_grade(ticket: int) -> str` untuk mengambil status grade tiket dari state tersimpan `_ticket_setup_grades`.
+2. **Display Setup Grade Badges di CLI (`main.py` & `src/core/cli_theme.py`)**:
+   - Menambahkan badge warna grade setup langsung di samping nama pair pada baris `pos:` dan Bento HUD Tile 2:
+     * `[S]` (Bold Hijau `#22c55e`): `GRADE_S` (Macro Expansion Runner).
+     * `[A+]` (Hijau `#10b981`): `GRADE_A_PLUS` / `GRADE_A+`.
+     * `[A]` (Cyan `#06b6d4`): `GRADE_A` (Standard Intraday).
+     * `[B]` (Kuning `#eab308`): `GRADE_B` (Wall Scalp).
+   - Format tampilan: `pos: AUDUSD[S]: +$14.47 [BEP] | AUDCHF[B]: +$5.20 [TRAIL]`.
+3. **Standardisasi Kotak Eksekusi dengan `UI.make_box` (`main.py`)**:
+   - Mengganti border hardcoded manual dengan `UI.make_box()` (`width=76`, `border_color=UI.CYAN`).
+   - Menghitung visual display width secara dinamis dan ANSI-safe sehingga border kotak selalu presisi dan simetris di seluruh platform terminal.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0. Audit & Riset 8 September 2026 (Sore–Malam) — Asimetri Aliran London, CSM Opposed Bypass, dan Cacat Self-Hedging / Kanibalisasi Internal Keranjang Mata Uang
+
+### Latar Belakang & Hasil Audit Akun (Sesi London):
+1. **Asimetri & Kanibalisasi Posisi CAD (Internal Self-Hedging)**:
+   - Pada sesi London (pukul 15:45 WIB), akun membuka 6 posisi di mana terjadi konflik arah mata uang yang saling meniadakan (*self-hedging*):
+     * `USDCAD-ECN` SELL ($0.84\text{ lot}$) dan `EURCAD-ECN` SELL ($1.29\text{ lot}$) mengakumulasi eksposur **$+2.13\text{ lot}$ LONG CAD**.
+     * Secara simultan, radar mengeksekusi `AUDCAD-ECN` BUY ($2.03\text{ lot}$) yang setara dengan **$-2.03\text{ lot}$ SHORT CAD**.
+     * Hasil agregasi: Net eksposur CAD portofolio tergerus menjadi $+0.10\text{ lot}$ (kanibalisasi $95\%$). Di saat CAD menjadi mata uang terkuat kedua di pasar ($+28.32$ Boitoki CSM H1), reli CAD di USDCAD & EURCAD terhapus oleh kerugian di AUDCAD, membebani akun dengan biaya dobel komisi dan spread.
+2. **Celah Logika Bypass CSM oleh Stale Macro Bias di Radar (`market_scanner.py`)**:
+   - Di `market_scanner.py` fungsi `_is_direction_allowed()`, aturan pengecekan CSM berbunyi:
+     `if is_csm_opposed and not is_aligned and not is_sfr_pro:`
+   - Ketika Macro Bias D1/H4 bernilai $\ge +0.35$ (`is_aligned = True`), filter `is_csm_opposed` **di-bypass 100%**.
+   - Macro Bias bersifat *lagging* (mengikuti struktur multi-hari), sedangkan Boitoki CSM merefleksikan pergeseran likuiditas riil harian/intraday. Akibatnya, sinyal BUY AUDCAD tetap lolos ke Stage 2 kendati CSM Delta AUDCAD berada di level ekstrem $-3.02$ (AUD lemah vs CAD melonjak).
+3. **Pending Order CSM Invalidation Tidak Aktif**:
+   - Pada `position_manager.py`, parameter `ENABLE_PENDING_CSM_CANCEL` default-nya bernilai `False` dan belum dideklarasikan di `.env`.
+   - Hal ini menyebabkan pending limit order (seperti BUY_LIMIT AUDCAD) yang dipasang sebelum rotasi mata uang tidak pernah dibatalkan secara otomatis saat arus CSM berbalik menentang arah order saat terjemput.
+4. **Perbedaan Karakter Sesi Asia vs London**:
+   - Pada Sesi Asia (07:00–14:00 WIB), universe dibatasi hanya untuk pair Pasifik/Asia (AUD, NZD, JPY) dengan penggerak tunggal yang bersih (contoh: dump ekstrem NZD $-62.27$ menghasilkan profit bersih pada `EURNZD` BUY dan `NZDCHF` SELL).
+   - Saat seluruh 26 pair dibuka serentak pada Sesi London (14:00 WIB), ketiadaan *Cross-Pair Portfolio Currency Guard* menyebabkan radar memindai tiap pair secara terisolasi tanpa kesadaran atas akumulasi eksposur mata uang keranjang.
+
+---
+
+### Desain Arsitektur Solusi (Rencana Implementasi):
+1. **Portfolio Currency Basket Anti-Cannibalization Guard (`market_scanner.py`)**:
+   - Menambahkan audit eksposur portofolio riil sebelum tiket order diizinkan: jika akun telah memiliki eksposur netto dominan ($\ge 1.0\text{ lot}$) pada mata uang dasar/kutipan tertentu (misal Long CAD), radar memblokir keras order baru yang menjual mata uang tersebut (Short CAD) guna mencegah kanibalisasi internal.
+2. **Strict CSM Precedence pada Setup Continuation (`market_scanner.py`)**:
+   - Menghapus celah `not is_aligned` untuk setup continuation (M2, M3, M4): jika CSM Net Delta menentang keras ($|\Delta| \ge 1.50$), order mutlak di-`HARD_BLOCK` tanpa kompromi dari Macro Bias D1 yang basi.
+   - Pengecualian hanya diberikan untuk setup M1 Universal Liquidity Sweep / SFP murni di batas Dealing Range ekstrem ($\le 0.15$ atau $\ge 0.85$) untuk scalp pantulan cepat ke TP1.
+3. **Aktivasi Pending Order Thesis Invalidation di `.env`**:
+   - Menambahkan `ENABLE_PENDING_CSM_CANCEL=true` ke `.env` dan `config.py` sehingga pending limit order yang arusnya berbalik secara sistemik langsung dibatalkan sebelum terisi secara merugikan.
+4. **Kebijakan Testing Akun Demo**:
+   - Seluruh posisi dan pending order aktif di akun DEMO tetap dibiarkan berjalan normal untuk memperkaya sampel data observasi kuantitatif sebelum patch dieksekusi ke produksi live.
+
+---
+
+## 0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam) — Dynamic ZCE + SMC Structural Anchor, Transisi SL Floor 80 Pts Quiet FX, dan Propagasi ATR Riil M4
+
+### Latar Belakang & Identifikasi Masalah:
+1. **SL Floor Statis 120 Pts Menimpa Invalidation Level Alami pada Quiet FX**:
+   - Nilai konfigurasi `SL_FLOOR_QUIET_FX_PTS = 120` (12 pips) di `.env` dan `config.py` memaksa Stop Loss menjadi terlalu lebar ($1.46\times\text{ATR}$) pada pair dengan volatilitas tenang seperti AUDCAD (ATR H1 82 pts) dan EURCHF (ATR H1 70 pts).
+   - Pada setup AUDCAD-ECN BUY M4, radar mendeteksi invalidasi struktural High-Tight Basing di `0.99417` (58 pts dari entry `0.99475`) dengan ZCE Floor $F_1$ di `0.99382` (93 pts dari entry). Namun `_apply_sltp_rules` di `consensus.py` memaksakan penyesuaian SL ke 120 pts (`0.99355`) dan TP ke 155 pts karena helper `config.get_sl_floor_points()` dipanggil dengan `spread_pts=0, atr_points=0`.
+2. **Ketiadaan Integrasi Dinding ZCE $F_1/C_1$ pada Engine SL Intraday (`atlas_dna.py`)**:
+   - Fungsi `calculate_intraday_sl_tp` hanya memeriksa `origin_level` dan `rbs`/`sbr` untuk pemilihan `sl_anchor`. Dinding institusional ZCE $F_1$ (untuk BUY) dan $C_1$ (untuk SELL) tidak dimanfaatkan sebagai invalidation floor/ceiling, melainkan langsung jatuh ke fallback ATR acak dengan penambahan buffer statis 120 pts.
+
+---
+
+### Komponen & Solusi Utama:
+1. **Transisi Parameter SL Floor Quiet FX ke 80 Pts (`.env` & `config.py`)**:
+   - Mengubah `SL_FLOOR_QUIET_FX_PTS` dari `120` menjadi `80` (8 pips).
+   - `config.get_sl_floor_points(sym, spread_pts, atr_points)`:
+     * Quiet FX: `max(spread_pts * 2 + 15, int(0.50 * atr_points) if atr_points > 0 else 80, 80)`.
+     * Menjaga SL tetap bernapas proporsional pada pair ber-ATR rendah tanpa membuka risiko lot berlebih. High-Beta tetap 180 pts dan JPY tetap 250 pts (+20 pts NZD padding).
+2. **Dynamic Structural ZCE $F_1/C_1$ Anchoring (`src/indicators/atlas_dna.py`)**:
+   - BUY: Mengintegrasikan ZCE $F_1$ ke dalam hierarki `sl_anchor` jika `origin_level` tidak ada atau berada di atas entry. SL di-anchor di belakang $F_1$ dengan bantalan anti-wick `wall_cushion = max(15 pts, 0.15 ATR) + spread`.
+   - SELL: Mengintegrasikan ZCE $C_1$ ke dalam hierarki `sl_anchor` jika `origin_level` tidak ada atau berada di bawah entry. SL di-anchor di belakang $C_1$ dengan `wall_cushion`.
+   - Total jarak SL wajib memenuhi safety floor: $\ge 80\text{ pts}$ (Quiet FX), $\ge 180\text{ pts}$ (High-Beta), $\ge 250\text{ pts}$ (JPY), $+20\text{ pts}$ (NZD), dan dibatasi plafon `max(2.5 * atr_h1, min_sl_floor)`.
+3. **Propagasi Spread & ATR Riil M4 ke Consensus (`src/core/consensus.py`)**:
+   - Memperbaiki pemanggilan `config.get_sl_floor_points()` pada validasi M4 di baris 139 dengan meneruskan data riil kandidat: `cand_spread = candidate.current_spread_pts` dan `cand_atr = candidate.current_atr_pts`.
+   - Mencegah fallback default `atr_points=0` yang memicu pemaksaan floor statis.
+4. **ZCE Wall Anchoring pada Radar M4 (`src/analytics/market_scanner.py`)**:
+   - Pada pembentukan tiket M4 di radar, jika terdapat dinding ZCE $F_1$ (BUY) atau $C_1$ (SELL) dalam jangkauan $1.5\times\text{ATR}$, SL di-anchor di belakang dinding tersebut dengan bantalan 15 pts + spread, dan di-clamp ke safety floor 80 pts sebelum diteruskan ke consensus.
+5. **Verifikasi Test Suite**:
+   - Menambahkan unit test suite baru `tests/test_zce_sltp_anchor.py` (4/4 PASS).
+   - Menyelaraskan `tests/test_fresh_breakout_and_net_rr.py` ke floor 80 pts (EURCHF).
+   - Seluruh test suite: **220/220 PASSED (100%)** dalam 58.91s.
+
+---
+
+## 0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Petang) — M3 Hard Dealing Range Guard, Anti-Sweep SFP Absorption Veto, Rigid Breached Wall Law, dan Audit Eksekusi GBPNZD M2
+
+### Latar Belakang & Identifikasi Masalah:
+1. **USDCAD-ECN SELL di Kedalaman Discount (13.5% Dealing Range)**:
+   - Evaluasi radar M3 breakdown pada `market_scanner.py` memiliki celah logika pada filter runway: `(not has_downward_runway and dr_pos < 0.30)`. Karena runway ke bawah terbuka, syarat batas discount di-bypass sehingga bot mengeksekusi SELL tepat setelah harga melakukan sapuan likuiditas (sweep) 74.6% lower wick di bawah level psikologis `1.37800` dan F1 `1.37781`.
+2. **NZDCHF-ECN Target Leapfrog Melompati Dinding Tebal F1/F2**:
+   - Di `atlas_dna.py` fungsi `calculate_intraday_sl_tp()`, kondisi `elif (f1_breached or not f1_thick or not f1_valid) and f2:` mengevaluasi `not f1_valid = True` saat jarak ke F1 $< 0.75R$. Akibatnya, target melompati dinding F1 institusional (`GRADE_3_MACRO`) yang belum tertembus dan menetapkan TP di `0.47145` (28.5 pips) alih-alih tertahan di F1 (`0.47321`).
+3. **GBPNZD-ECN BUY di Premium (66.6% Dealing Range) Jauh di Atas EMA**:
+   - M2 Pullback mentoleransi range hingga `max_dr_buy = 0.80` saat ada katalisator SFR BULLISH_FLOW dan mengambil micro-FVG di `2.31387` sebagai anchor pullback terdekat, mengabaikan fakta bahwa harga berada jauh di atas EMA 20 (`2.3083`) dan EMA 50 (`2.3045`).
+
+---
+
+### Komponen & Solusi Utama:
+1. **Hard Dealing Range Veto pada M3 (`src/analytics/market_scanner.py`)**:
+   - M3 SELL: Wajib `dr_pos >= 0.40` (`M3_MIN_DR_SELL = 0.40`). Dilarang keras sell di area Discount.
+   - M3 BUY: Wajib `dr_pos <= 0.60` (`M3_MAX_DR_BUY = 0.60`). Dilarang keras buy di area Premium.
+   - Logika veto dipisahkan menjadi guard independen: `is_wall_collision_s or is_discount_sell_blocked or (not has_downward_runway)`.
+2. **Anti-Sweep SFP Absorption Veto pada M3 (`src/analytics/market_scanner.py`)**:
+   - Mengimplementasikan `_detect_recent_sfp_absorption()`: Jika dalam 4 bar H1 terakhir harga menyapu di bawah floor/psych level (SELL) atau di atas ceiling/psych level (BUY) dengan rejection wick $\ge 28\%$ (`M3_SFP_REJECTION_WICK = 0.28`) dan ditutup kembali ke dalam zona, sinyal M3 otomatis dibatalkan karena struktur berada dalam fase absorbsi likuiditas/rebound.
+3. **Rigid Breached Wall Law (`src/indicators/atlas_dna.py`)**:
+   - Menghapus syarat `not f1_valid` / `not c1_valid` dari pemicu lompatan target ke F2/C2.
+   - Dinding tebal (`GRADE_2_INTERMEDIATE`, `GRADE_3_MACRO`) mutlak mengunci target di F1/C1 kecuali jika sudah ada konfirmasi fisik penutupan candle di luar batas distal (`breached == True`). Jika jarak $< 0.75R$, setup ditolak bersih oleh Runway Gate tanpa melompat liar.
+4. **M2 Pullback Quarantine & EMA Corridor Confluence (`src/analytics/market_scanner.py`)**:
+   - `M2_MAX_DR_BUY = 0.55`: Memblokir keras M2 BUY di area Premium (`dr_pos > 0.55`). Menghapus pelonggaran batas 0.80.
+   - `M2_MIN_DR_SELL = 0.45`: Memblokir keras M2 SELL di area Discount (`dr_pos < 0.45`). Menghapus pelonggaran batas 0.20.
+   - Menghapus bypass `and not has_m4_retest_b` / `and not has_m4_retest_s` dari guard koridor EMA M2 sehingga M2 wajib berada di koridor EMA yang sehat tanpa celah.
+   - `find_ema_confluence_anchor()`: Menyaring seluruh kandidat struktural (OB, FVG, Psych) agar wajib berada dalam jarak $\le 0.35\times\text{ATR}$ dari koridor EMA 20/50 (`M2_EMA_CORRIDOR_TOLERANCE_ATR = 0.35`). Mengeliminasi anchor palsu pada micro-FVG yang melayang puluhan pips di atas EMA.
+5. **Sinkronisasi Parameter `.env` & `config.py`**:
+   - M3: `M3_MIN_DR_SELL=0.40`, `M3_MAX_DR_BUY=0.60`, `M3_SFP_REJECTION_WICK=0.28`, `M3_SFP_LOOKBACK_BARS=4`.
+   - M2: `M2_MAX_DR_BUY=0.55`, `M2_MIN_DR_SELL=0.45`, `M2_EMA_CORRIDOR_TOLERANCE_ATR=0.35`.
+6. **Verifikasi Test Suite**:
+   - Menambahkan 9 unit test baru di `tests/test_m3_discount_guard_and_leapfrog.py` (9/9 PASS).
+   - Menambahkan 5 unit test baru di `tests/test_m2_pullback_and_corridor.py` (5/5 PASS).
+   - Memperbaiki isolasi tiket mock di `tests/test_basing_box_and_csm_bailout.py` dan status breach di `tests/test_m4_flow_continuation.py`.
+   - Full test suite: **223/223 PASSED (100%)** dalam 37.49s.
+
+---
+
 ## 0.0.0.0.0.0.0. Perubahan 8 September 2026 (Sore III) — Tri-State Differentiation M4 SFR Fresh Shock (|z| >= 1.50) vs Flow Continuation (0.75 <= |z| < 1.50)
 
 ### Latar Belakang & Identifikasi Masalah:
@@ -1822,7 +1956,22 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
    - Mengubah label Apex Carry menjadi `• Apex Carry FE: ` guna mencegah tabrakan pemahaman (*label collision*) antara grade geometri runway dan rating carry spread makro.
    - Banner eksekusi Pure Quant mencantumkan grade setup dan *Realized R:R* pasca-market fill.
 
-5. **Verifikasi Kuantitatif Penuh**:
+5. **Matriks Interaksi 2-Dimensi (Geometri Runway ZCE vs Konfluensi Makro MSE)**:
+   - Evaluasi operasional saat status geometri bertemu dengan tier makro:
+
+| Parameter Eksekusi | Grade A+ (Reduced Confidence) | Grade B (Reduced Confidence) | Grade A (Full Allow) |
+|---|---|---|---|
+| **Dimensi Geometri (ZCE)** | Runway lapang $\ge 1.80R$ ($2.34R$) | Runway sempit pantulan dinding ($0.75R - 1.25R$) | Runway standar menuju $C_1/F_1$ ($1.25R - 1.80R$) |
+| **Dimensi Makro (MSE)** | Tren moderat (`REDUCED_CONFIDENCE`) | Tren moderat (`REDUCED_CONFIDENCE`) | Tren searah ekspansif (`FULL_ALLOW`) |
+| **Lot Multiplier** | **$0.75\times$** (Defensive Single-Layer) | **$0.75\times$** (Defensive Single-Layer) | **$1.00\times$** (Full Base Lot) |
+| **Struktur Tiket** | 1 atau 2 tiket (jika Unanimous $\ge 80\%$) | **Wajib 1 Tiket Murni** (Split Dilarang) | 1 atau 2 tiket (jika Unanimous $\ge 80\%$) |
+| **Plafon Target TP** | **Dipangkas ke $\le 2.00R$** (MSE Cap) | **Terkunci di $0.75R - 1.25R$** | Standar $1.25R - 1.80R$ |
+| **Partial Close** | Aktif 50% di 50% TP | **Bypass 100%** | Aktif 50% di 50% TP |
+| **Trigger BEP** | **Dipercepat ke 35% TP** | **Dipercepat ke 35% TP** | 50% TP |
+| **Stagnation Exit** | 4 jam jika MFE $< 0.30R$ | 4 jam jika MFE $< 0.30R$ | 4 jam jika MFE $< 0.30R$ |
+
+6. **Verifikasi Kuantitatif Penuh**:
+   - Unit test suite: `tests/test_sep8_enhancements.py` mencakup test spesifik `test_risk_engine_defensive_grade_b_with_neutral_multiplier`.
    - Seluruh test suite unit test: **199/199 tests PASSED (100% OK)**.
 
 
