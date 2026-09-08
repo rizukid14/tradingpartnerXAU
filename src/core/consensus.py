@@ -215,7 +215,7 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                 _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon BTC ($450 USD). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
         else:
-            # Aset non-BTC (FX/JPY/Gold): ceiling berbasis ATR (default SL_MAX_ATR_MULT=2.5x)
+            # Aset non-BTC (FX/JPY/Gold):
             static_fallback = 800 if is_xau else 350
             if atr_points <= 0:
                 if zce_wall_mode:
@@ -224,18 +224,40 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                     return sl_points, tp_points, False, note
                 max_sl = static_fallback
             else:
-                raw_max = int(atr_points * sl_max_mult)
-                # Harmonization: Plafon ceiling wajib lebih besar daripada safety floor minimal (bebas deadlock Ceiling < Floor)
-                max_sl = max(raw_max, int(min_sl * 1.5))
-            if sl_points > max_sl:
+                # Dynamic ZCE Runway & Capacity Gate:
+                # Plafon ekstrim struktural anti-runaway (swing multi-hari)
+                runaway_ceiling = max(int(atr_points * 3.5), 350)
+                
                 if zce_wall_mode:
-                    note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {max_sl} pts "
-                            f"({sl_max_mult}x ATR, floor {min_sl} pts). SKIP trade — clamp akan memarkir SL di tengah struktur.")
-                    _last_sltp_adjustments.append(note)
-                    return sl_points, tp_points, False, note
-                label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon {label} ({sl_max_mult}x ATR). Menyesuaikan SL ke {max_sl} pts.")
-                sl_points = max_sl
+                    # 1. Extremo runaway anchor check (anti swing liar yang memecahkan kapasitas H1)
+                    if sl_points > runaway_ceiling:
+                        note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {runaway_ceiling} pts "
+                                f"(3.5x ATR). SKIP trade — clamp akan memarkir SL di tengah struktur.")
+                        _last_sltp_adjustments.append(note)
+                        return sl_points, tp_points, False, note
+
+                    # 2. ZCE Runway Capacity Gate:
+                    # Menilai apakah jarak target menuju dinding lawan (Runway) mencukupi min_rr.
+                    # Jika target TP yang tersedia lebih sempit dari (min_rr * SL), artinya ruang gerak
+                    # terhalang dinding lawan ZCE terdekat -> SKIP trade dengan alasan kuantitatif.
+                    runway_target_pts = tp_points if tp_points > 0 else config.default_tp_points_for(sym)
+                    required_runway = int(sl_points * config.LLM_MIN_RR_RATIO)
+                    if runway_target_pts > 0 and runway_target_pts < required_runway:
+                        note = (f"ANCHOR_TOO_WIDE: ZCE Runway ke target terhalang dinding terdekat "
+                                f"({runway_target_pts} pts < {config.LLM_MIN_RR_RATIO}x SL {sl_points} pts = {required_runway} pts). "
+                                f"SKIP trade — kapasitas runway tidak mencukupi.")
+                        _last_sltp_adjustments.append(note)
+                        return sl_points, tp_points, False, note
+
+                    max_sl = runaway_ceiling
+                else:
+                    # Legacy non-ZCE clamp: batasi dengan ATR multiplier standard
+                    raw_max = int(atr_points * sl_max_mult)
+                    max_sl = max(raw_max, int(min_sl * 1.5))
+                    if sl_points > max_sl:
+                        label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")
+                        _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon {label} ({sl_max_mult}x ATR). Menyesuaikan SL ke {max_sl} pts.")
+                        sl_points = max_sl
 
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(sym)

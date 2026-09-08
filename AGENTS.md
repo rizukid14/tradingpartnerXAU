@@ -129,16 +129,19 @@ python main.py
 ## Gate eksekusi aktif (Hard Rules)
 
 - **Strict Unanimous 3/3 Consensus**: 3/3 model wajib searah (3/3 BUY atau 3/3 SELL). 2/3 atau split vote otomatis HOLD. Unanimous $\ge 80\%$ confidence $\rightarrow$ eksekusi 2 tiket @ $0.625\times$ base lot (+25% boost).
-- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 4 Sep 2026)**:
+- **Lantai & Plafon SL/TP (`_apply_sltp_rules` di `consensus.py` — realita 8 Sep 2026)**:
   - **Segmented Safety Floors (3 Sep 2026 / 4 Sep Unified H1)**:
     * **Quiet & Standard FX**: $\max(2 \times \text{spread} + 15\text{ pts}, 0.50 \times \text{ATR H1}, 120\text{ pts floor / 12 pips})$. Mengunci lot akun $5.8k $\le 0.40 - 0.45$ lot (eliminasi lot 1.27 / 1.60).
     * **High-Beta FX** (`GBPAUD`, `GBPNZD`, `EURNZD`, `GBPCHF`): $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 180\text{ pts floor / 18 pips})$.
-    * **JPY Crosses** (H1): $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 250\text{ pts floor / 25 pips})$; ceiling $2.5 \times \text{ATR}$ (fallback 350 pts).
+    * **JPY Crosses** (H1): $\max(2 \times \text{spread} + 20\text{ pts}, 0.50 \times \text{ATR H1}, 250\text{ pts floor / 25 pips})$.
     * **NZD Crosses**: Tambahan $+20\text{ pts}$ anti-wick padding.
     * **M4 Systemic Flow**: Tunduk pada segmented safety floor & Net R:R (`M4_STRUCTURAL_FLOORED`).
   - **Friction-Aware Net R:R**: Target $\text{TP} = (\text{SL} \times R) + \text{Spread} + \text{Round-turn Commission}$ (memastikan net profit riil $\ge 1.25R$ bersih).
   - **M3 Fresh Breakout Law & Debounce**: Breakout recency $\le 4$ bar H1, displacement body $\ge 55\%$. Rejection di-lock 2 jam / sampai displacement $>0.50\times\text{ATR}$.
-  - **Ceiling (anti-runaway)**: FX/JPY/Gold = $2.5 \times \text{ATR}$ (fallback 350 pts FX/JPY, 800 Gold); BTC = $1.8 \times \text{ATR}$ (fallback 45000).
+  - **Dynamic ZCE Runway & Capacity Gate (8 Sep 2026 — Pengganti Plafon Statis Kaku)**:
+    * **Eliminasi Deadlock Floor vs Ceiling**: Plafon ceiling ekstrim diangkat ke $\max(3.5 \times \text{ATR}, 1.5 \times \text{Floor})$, mengeliminasi 100% false rejection `ANCHOR_TOO_WIDE` saat malam/Asia saat ATR mengecil ($< 48\text{ pts}$).
+    * **Validasi Runway Target ZCE**: Menilai apakah jarak menuju dinding lawan ZCE terdekat ($C_1$ BUY / $F_1$ SELL) mencukupi $\ge 1.25 \times \text{SL}$. Trade hanya di-skip jika Runway terhalang dinding lawan terdekat ($R:R < 1.25$) atau anchor melampaui batas ekstrim multi-hari ($> 3.5 \times \text{ATR}$ / $> 350\text{ pts}$).
+    * Non-ZCE Legacy clamp: FX/JPY/Gold = $\max(2.5 \times \text{ATR}, 1.5 \times \text{Floor})$; BTC = $1.8 \times \text{ATR}$ (fallback 45000).
   - **R:R**: Net TP $\in [1.25\times, 3.0\times]$ SL + friction (grade-aware). Pada setup `REDUCED_SCALP` / `TP1_ONLY_SCALP`, R:R dibatasi ke $[1.00\times, 1.25\times]$ guna mencegah pembengkakan TP makro pada scalp intraday.
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
 - **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London/NY 14:00–00:00 WIB (all FX permitted).

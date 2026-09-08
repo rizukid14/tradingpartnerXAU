@@ -432,6 +432,7 @@ SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0
 SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 120)       # 120 pts (12 pips) untuk Low-Beta & Standard FX
 SL_FLOOR_HIGH_BETA_PTS = _getenv_int("SL_FLOOR_HIGH_BETA_PTS", 180)     # 180 pts (18 pips) untuk High-Beta Crosses (GBPAUD, GBPNZD, EURNZD, GBPCHF)
 SL_FLOOR_JPY_PTS = _getenv_int("SL_FLOOR_JPY_PTS", 250)                 # 250 pts (25 pips) untuk JPY Crosses (H1)
+SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)        # +20 pts (2.0 pips) anti-wick padding NZD
 COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0) # $6.00 round turn ($3/side)
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
 
@@ -725,18 +726,18 @@ def is_high_beta_pair(symbol: str) -> bool:
 def get_sl_floor_points(symbol: str, spread_pts: int = 0, atr_points: int = 0) -> int:
     """
     Kalkulasi Segmented Safety Floor Stop Loss (3 September 2026 / 4 Sep Unified H1):
-    - JPY Crosses (H1): max(2*spread + 20, int(LLM_JPY_FLOOR_ATR_MULT * atr_points), SL_FLOOR_JPY_PTS)
+    - JPY Crosses (H1): max(2*spread + 20, int(0.50 * atr_points), SL_FLOOR_JPY_PTS)
     - High-Beta Crosses (H1): max(2*spread + 20, int(0.50 * atr_points), SL_FLOOR_HIGH_BETA_PTS)
     - Quiet & Standard FX (H1): max(2*spread + 15, int(0.50 * atr_points), SL_FLOOR_QUIET_FX_PTS)
     - Anti-wick padding NZD (+20 pts)
     """
     clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
     if "JPY" in clean:
-        floor = max(spread_pts * 2 + 20, int(LLM_JPY_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_JPY_PTS, SL_FLOOR_JPY_PTS)
+        floor = max(spread_pts * 2 + 20, int(0.50 * atr_points) if atr_points > 0 else SL_FLOOR_JPY_PTS, SL_FLOOR_JPY_PTS)
     elif is_high_beta_pair(clean):
-        floor = max(spread_pts * 2 + 20, int(LLM_FX_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_HIGH_BETA_PTS, SL_FLOOR_HIGH_BETA_PTS)
+        floor = max(spread_pts * 2 + 20, int(0.50 * atr_points) if atr_points > 0 else SL_FLOOR_HIGH_BETA_PTS, SL_FLOOR_HIGH_BETA_PTS)
     else:
-        floor = max(spread_pts * 2 + 15, int(LLM_FX_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_QUIET_FX_PTS, SL_FLOOR_QUIET_FX_PTS)
+        floor = max(spread_pts * 2 + 15, int(0.50 * atr_points) if atr_points > 0 else SL_FLOOR_QUIET_FX_PTS, SL_FLOOR_QUIET_FX_PTS)
     
     if "NZD" in clean:
         floor += SL_PADDING_NZD_POINTS

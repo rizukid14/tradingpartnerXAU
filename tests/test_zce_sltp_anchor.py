@@ -108,3 +108,25 @@ def test_mode_off_atr_gagal_fallback_statistik(mt5_atr_gagal, monkeypatch):
     assert ok is True
     assert "ANCHOR_TOO_WIDE" not in reason
     assert "ATR_UNAVAILABLE" not in reason
+
+
+def test_zce_runway_capacity_pass_with_small_atr(mt5_ok, monkeypatch):
+    """ZCE Runway lapang (R:R >= 1.25) -> PASS, tidak terkena deadlock ceiling saat ATR kecil."""
+    _set_zce(monkeypatch, True, "full")
+    # SL 120 pts, TP 200 pts (R:R = 1.66 >= 1.25) pada AUDCHF
+    sl, tp, ok, reason = _apply_sltp_rules(
+        sl_points=120, tp_points=200, symbol="AUDCHF-ECNc")
+    assert ok is True
+    assert "ANCHOR_TOO_WIDE" not in reason
+    assert sl >= 40  # Mematuhi Adaptive Friction Floor
+
+
+def test_zce_runway_insufficient_skip(mt5_ok, monkeypatch):
+    """ZCE Runway terhalang dinding lawan (R:R < 1.25) -> SKIP secara kuantitatif."""
+    _set_zce(monkeypatch, True, "full")
+    # SL 120 pts, tapi target dinding terhalang di 80 pts (R:R = 0.66 < 1.25)
+    sl, tp, ok, reason = _apply_sltp_rules(
+        sl_points=120, tp_points=80, symbol="AUDCHF-ECNc")
+    assert ok is False
+    assert "ANCHOR_TOO_WIDE" in reason
+    assert "Runway ke target terhalang" in reason

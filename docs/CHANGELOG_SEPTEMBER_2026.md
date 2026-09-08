@@ -2,7 +2,46 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0. Perubahan 7 September 2026 (Sore) — Implementasi Mekanisme M1B (Trend-Following Induced Liquidity Sweep) dengan Konfluensi Geometris ZCE & Integrasi Visual Dashboard
+## 0. Perubahan 8 September 2026 (Pagi) — Dynamic ZCE Runway & Capacity Gate (Eliminasi Deadlock ANCHOR_TOO_WIDE) & Pembaruan Distribusi Outcome Komprehensif Shadow Tracker
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Deadlock Matematis Plafon Ceiling vs Safety Floor (`ANCHOR_TOO_WIDE`)**:
+   - Di sesi malam dan Asia (00:00–08:00 WIB), volatilitas pair-pair tenang (*Quiet FX* seperti AUDCHF, EURGBP, NZDCHF) mengecil drastis dengan ATR H1 berkisar antara 36–44 pts.
+   - Rumus plafon lama menetapkan ceiling kaku: $2.5 \times \text{ATR H1} = 90 - 110\text{ pts}$.
+   - Sedangkan aturan Safety Floor menetapkan batas minimal proteksi spread broker sebesar $120\text{ pts}$ ($140\text{ pts}$ untuk NZD).
+   - Akibatnya terjadi **Deadlock**: $\text{Ceiling (110 pts)} < \text{Floor (120 pts)}$. Sistem menaikkan SL ke 120 pts, lalu seketika membatalkan trade dengan pesan `[!] Trade AUDCHF-ECN Dibatalkan (SL/TP Rules): ANCHOR_TOO_WIDE: SL anchor 120 pts > ceiling 110 pts (2.5x ATR). SKIP trade — clamp akan memarkir SL di tengah struktur.`
+   - Hal ini mematikan seluruh peluang trading valid di pair tenang selama sesi malam dan pagi hari.
+2. **Kekurangan Transparansi Winrate Biner Shadow Tracker**:
+   - Dashboard Shadow Tracker sebelumnya hanya menyajikan winrate biner sempit dari 30 sampel (`TP: 16 | SL: 14`), mengabaikan 60+ trade terselesaikan lainnya (BEP Locked, Time-Decay Stagnation Exit, Expired Limit).
+   - Pengguna membutuhkan distribusi outcome yang komprehensif, terpisah, dan memiliki persentase masing-masing baik terhadap total setup maupun terhadap order yang terjemput (*filled trades*).
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Dynamic ZCE Runway & Capacity Gate (`src/core/consensus.py`)**:
+   - Menghapus pembatasan kaku $2.5 \times \text{ATR}$ yang menolak trade secara buta.
+   - Menerapkan **ZCE Runway Capacity Gate**: Sistem memvalidasi kapasitas ruang jelajah (Runway) menuju dinding lawan ZCE terdekat ($C_1$ untuk BUY, $F_1$ untuk SELL).
+   - **Aturan Evaluasi**:
+     * Jika $\text{Runway (TP)} \ge \text{SL} \times \text{min\_rr}$ ($1.25R$): Setup memiliki jalan bebas hambatan menuju target struktural $\rightarrow$ **TRADE DITERIMA (PASS)**.
+     * Jika $\text{Runway (TP)} < \text{SL} \times \text{min\_rr}$: Target terbentur dinding lawan ZCE terdekat $\rightarrow$ **TRADE DI-SKIP** dengan alasan kuantitatif: `"ANCHOR_TOO_WIDE: ZCE Runway ke target terhalang dinding terdekat (Runway < 1.25x SL)"`.
+     * Plafon ekstrim struktural anti-runaway diperlebar ke $\max(3.5 \times \text{ATR}, 1.5 \times \text{Floor})$ guna mengeliminasi 100% false deadlock pada trade normal, sambil tetap memblokir swing liar multi-hari ($> 350\text{ pts}$ / test $5000\text{ pts}$).
+2. **Pembaruan Distribusi Outcome Komprehensif Shadow Tracker (`shadow_tracker.py`, `shadow_report.py`, `dashboard_assets.py`)**:
+   - **Kalkulasi Metrik Lengkap**: Menambahkan payload `outcome_breakdown` dengan persentase terpisah untuk 5 kategori hasil:
+     * 🟢 **TP Hits (Win)**: 17.8% total / 21.6% filled ($\Sigma +16.72\text{R}$)
+     * 🔵 **BEP Locked**: 27.8% total / 33.8% filled ($\Sigma +2.82\text{R}$)
+     * 🟡 **Time-Decay Exit**: 21.1% total / 25.7% filled ($\Sigma -2.08\text{R}$)
+     * 🔴 **SL Hits (Loss)**: 15.6% total / 18.9% filled ($\Sigma -14.00\text{R}$)
+     * ⚪ **Expired / No-Fill**: 17.8% total ($0.00\text{R}$)
+   - **Metrik Preservasi Modal**: Menampilkan **Capital Preservation Rate (Non-Loss Rate) 55.4%** dan **Profit Factor 1.22**.
+   - **Multi-Segment Visual Bar**: Progress bar interaktif 5 segmen berwarna proporsional di `http://localhost:8765/shadow` dengan sinkronisasi real-time via polling 30 detik.
+   - **Cockpit Telemetry Sync**: Memperbarui 4 kartu telemetri pada drawer Virtual Shadow di `dashboard.py` / `dashboard_assets.py`.
+3. **Unit Test Suite 100% PASS**:
+   - Menambahkan pengujian `test_zce_runway_capacity_pass_with_small_atr` dan `test_zce_runway_insufficient_skip` di `tests/test_zce_sltp_anchor.py`.
+   - Menjalankan verifikasi regresi penuh: **186/186 Unit Tests Lulus (100% OK)**.
+
+---
+
+## 0.1. Perubahan 7 September 2026 (Sore) — Implementasi Mekanisme M1B (Trend-Following Induced Liquidity Sweep) dengan Konfluensi Geometris ZCE & Integrasi Visual Dashboard
 
 ### 🎯 Latar Belakang & Identifikasi Kebutuhan:
 1. **Pemisahan M1A (Macro Counter-Trend SFP) dan M1B (Trend-Following Induced Sweep)**:
