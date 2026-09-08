@@ -203,13 +203,13 @@ class TestM3DiscountGuardAndLeapfrog(unittest.TestCase):
         self.assertFalse(dr_pos_premium < min_dr_sell)
 
     def test_m3_premium_buy_guard_blocks_at_75_percent(self):
-        """M3 BUY must be strictly blocked if dr_pos > 0.60 (premium zone)."""
-        dr_pos = 0.75
-        max_dr_buy = getattr(config, "M3_MAX_DR_BUY", 0.60)
+        """M3 BUY must be strictly blocked if dr_pos > 0.80 (true extreme pucuk)."""
+        dr_pos = 0.85
+        max_dr_buy = getattr(config, "M3_MAX_DR_BUY", 0.80)
         is_premium_buy_blocked = (dr_pos > max_dr_buy)
         self.assertTrue(is_premium_buy_blocked)
 
-        # In discount/equilibrium (<= 0.60), buy is allowed
+        # In discount/equilibrium (<= 0.60), buy is unconditionally allowed
         dr_pos_discount = 0.45
         self.assertFalse(dr_pos_discount > max_dr_buy)
 

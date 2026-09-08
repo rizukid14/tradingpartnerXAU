@@ -75,7 +75,86 @@ class TestDashboardCockpit(unittest.TestCase):
             self.assertTrue(m3.get("is_confluence", False))
             self.assertIn("CONFLUENCE", m3.get("confluence_label", ""))
 
+    def test_m1_standbys_trajectory(self):
+        """M1A sweep standby must export a trajectory dictionary for visual chart projection."""
+        import pandas as pd
+        from src.analytics.market_scanner import MarketScanner
+        scanner = MarketScanner()
+
+        times = pd.date_range('2026-09-08 00:00', periods=20, freq='h')
+        closes = [1.35200]*10 + [1.35520]*5 + [1.35500]*5
+        highs = [c + 0.00100 for c in closes]
+        lows = [c - 0.00100 for c in closes]
+        df = pd.DataFrame({'close': closes, 'high': highs, 'low': lows, 'open': closes}, index=times)
+
+        macro = {
+            'df': df,
+            'is_bear': False,
+            'is_bull': True,
+            'current_atr': 0.00125,
+            'dealing_range_pos': 0.85,
+            'immediate_ceiling_c1': 1.35525,
+            'immediate_floor_f1': 1.35402,
+            'asian_high': 1.35498,
+            'pdh': 1.35498,
+        }
+
+        standbys = scanner.get_radar_standbys("GBPUSD", mid=1.35506, macro=macro, pt=0.00001, atr_val=0.00125)
+        m1_list = [s for s in standbys if s["type"] == "M1"]
+        self.assertTrue(len(m1_list) > 0)
+        m1 = m1_list[0]
+
+        # Verify trajectory object exists in M1
+        self.assertIn("trajectory", m1)
+        traj = m1["trajectory"]
+        self.assertEqual(traj["direction"], -1) # Bearish Sweep
+        self.assertEqual(traj["retest_price"], 1.35498)
+        self.assertEqual(traj["target_price"], 1.35402) # F1 target
+        self.assertIn("target_tp1", traj)
+        self.assertIn("target_tp2", traj)
+
+    def test_gate4_directional_lock_alignment(self):
+        """Gate 4 CSM evaluation must respect Directional Lock state (SELL ONLY -> test against SELL)."""
+        engine = dashboard.CockpitDataEngine()
+        from src.analytics.market_scanner import MarketScanner
+        engine.scanner = MarketScanner()
+
+        # Set symbol directional state to SELL ONLY
+        engine.scanner._symbol_directional_state["GBPUSD"] = {
+            "dir": -1,
+            "locked_at": 1788876400.0,
+            "reason": "MACRO_BIAS_INIT"
+        }
+
+        # Mock macro context where is_bull is True (trend) but CSM delta is +0.89
+        engine.scanner.macro_cache["GBPUSD"] = {
+            "symbol": "GBPUSD",
+            "is_bull": True,
+            "is_bear": False,
+            "csm_delta": 0.89,
+            "action_tier": "FULL_ALLOW",
+            "permission_state": "GO",
+            "immediate_floor_f1": 1.35402,
+            "immediate_ceiling_c1": 1.35525,
+            "current_atr": 0.00125,
+            "spread_pts": 2
+        }
+
+        detail = engine.get_symbol_detail("GBPUSD", "H1")
+        gates = {g["id"]: g for g in detail.get("gates", [])}
+
+        # Gate 3 should be SELL ONLY
+        self.assertIn("3", [str(k) for k in gates.keys()])
+        g3 = gates[3]
+        self.assertIn("SELL ONLY", g3["desc"])
+
+        # Gate 4 should align with SELL direction (not BUY)
+        self.assertIn("4", [str(k) for k in gates.keys()])
+        g4 = gates[4]
+        self.assertIn("SELL", g4["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

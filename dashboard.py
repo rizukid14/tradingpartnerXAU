@@ -736,13 +736,10 @@ class CockpitDataEngine:
         elif c2 is None and len(layered_ceils) == 1:
             c2 = layered_ceils[0].get("price") if isinstance(layered_ceils[0], dict) else layered_ceils[0]
 
-        zce_floors = [w for w in (zce_ladder or []) if w.get("type") == "floor"]
-        zce_ceils = [w for w in (zce_ladder or []) if w.get("type") == "ceiling"]
-
-        # Floor side fallback: ensure at least one F1 is present
-        has_f1 = any(w.get("tier") == "F1" for w in zce_floors)
-        if not has_f1 and f1:
-            zce_floors.insert(0, {
+        # Collect candidate floors from ZCE ladder and MSE baseline
+        raw_floors = [dict(w) for w in (zce_ladder or []) if w.get("type") == "floor" and w.get("price", 0.0) < mid]
+        if f1 and float(f1) < mid:
+            raw_floors.append({
                 "price": round(float(f1), digits),
                 "band_low": round(float(f1), digits),
                 "band_high": round(float(f1), digits),
@@ -755,29 +752,54 @@ class CockpitDataEngine:
                 "kinds": ["MSE_BASE"],
                 "tag": "BASELINE_FLOOR"
             })
+        if f2 and float(f2) < mid:
+            raw_floors.append({
+                "price": round(float(f2), digits),
+                "band_low": round(float(f2), digits),
+                "band_high": round(float(f2), digits),
+                "type": "floor",
+                "tier": "F2",
+                "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
+                "grade": "GRADE_2_INTERMEDIATE",
+                "score": 3.8,
+                "tfs": ["D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_DEEP_FLOOR"
+            })
 
-        has_f2 = any(w.get("tier") == "F2" for w in zce_floors)
-        if not has_f2 and f2:
-            f1_price = float(f1) if f1 else (zce_floors[0]["price"] if zce_floors else 0.0)
-            if f1_price == 0.0 or float(f2) < f1_price - 0.20 * atr_val:
-                zce_floors.append({
-                    "price": round(float(f2), digits),
-                    "band_low": round(float(f2), digits),
-                    "band_high": round(float(f2), digits),
-                    "type": "floor",
-                    "tier": "F2",
-                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_FLOOR"
-                })
+        proximity_thr = max(0.20 * atr_val, 4.0 * pip_val)
 
-        # Ceiling side fallback: ensure at least one C1 is present
-        has_c1 = any(w.get("tier") == "C1" for w in zce_ceils)
-        if not has_c1 and c1:
-            zce_ceils.insert(0, {
+        # Sort floors strictly descending (highest price first, i.e. closest to mid first)
+        raw_floors.sort(key=lambda x: -x["price"])
+        merged_floors: List[Dict[str, Any]] = []
+        for fl in raw_floors:
+            if not merged_floors:
+                merged_floors.append(fl)
+            else:
+                if abs(fl["price"] - merged_floors[-1]["price"]) <= proximity_thr:
+                    if fl.get("score", 0.0) > merged_floors[-1].get("score", 0.0):
+                        merged_floors[-1] = fl
+                else:
+                    merged_floors.append(fl)
+
+        # Monotonically assign tiers F1, F2, F3... by distance to mid
+        zce_floors = []
+        for idx, fl in enumerate(merged_floors[:4]):
+            tier_name = f"F{idx + 1}"
+            fl_copy = dict(fl)
+            fl_copy["tier"] = tier_name
+            orig_label = fl_copy.get("label", "")
+            parts = orig_label.split(" ", 1)
+            if len(parts) == 2 and (parts[0].startswith("F") or parts[0].startswith("FLR")):
+                fl_copy["label"] = f"{tier_name} {parts[1]}"
+            elif not orig_label:
+                fl_copy["label"] = f"{tier_name} {fl_copy['price']:.{digits}f}"
+            zce_floors.append(fl_copy)
+
+        # Collect candidate ceilings from ZCE ladder and MSE baseline
+        raw_ceils = [dict(w) for w in (zce_ladder or []) if w.get("type") == "ceiling" and w.get("price", 0.0) > mid]
+        if c1 and float(c1) > mid:
+            raw_ceils.append({
                 "price": round(float(c1), digits),
                 "band_low": round(float(c1), digits),
                 "band_high": round(float(c1), digits),
@@ -790,24 +812,47 @@ class CockpitDataEngine:
                 "kinds": ["MSE_BASE"],
                 "tag": "BASELINE_CEIL"
             })
+        if c2 and float(c2) > mid:
+            raw_ceils.append({
+                "price": round(float(c2), digits),
+                "band_low": round(float(c2), digits),
+                "band_high": round(float(c2), digits),
+                "type": "ceiling",
+                "tier": "C2",
+                "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
+                "grade": "GRADE_2_INTERMEDIATE",
+                "score": 3.8,
+                "tfs": ["D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_DEEP_CEIL"
+            })
 
-        has_c2 = any(w.get("tier") == "C2" for w in zce_ceils)
-        if not has_c2 and c2:
-            c1_price = float(c1) if c1 else (zce_ceils[0]["price"] if zce_ceils else 0.0)
-            if c1_price == 0.0 or float(c2) > c1_price + 0.20 * atr_val:
-                zce_ceils.append({
-                    "price": round(float(c2), digits),
-                    "band_low": round(float(c2), digits),
-                    "band_high": round(float(c2), digits),
-                    "type": "ceiling",
-                    "tier": "C2",
-                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_CEIL"
-                })
+        # Sort ceilings strictly ascending (lowest price first, i.e. closest to mid first)
+        raw_ceils.sort(key=lambda x: x["price"])
+        merged_ceils: List[Dict[str, Any]] = []
+        for ce in raw_ceils:
+            if not merged_ceils:
+                merged_ceils.append(ce)
+            else:
+                if abs(ce["price"] - merged_ceils[-1]["price"]) <= proximity_thr:
+                    if ce.get("score", 0.0) > merged_ceils[-1].get("score", 0.0):
+                        merged_ceils[-1] = ce
+                else:
+                    merged_ceils.append(ce)
+
+        # Monotonically assign tiers C1, C2, C3... by distance to mid
+        zce_ceils = []
+        for idx, ce in enumerate(merged_ceils[:4]):
+            tier_name = f"C{idx + 1}"
+            ce_copy = dict(ce)
+            ce_copy["tier"] = tier_name
+            orig_label = ce_copy.get("label", "")
+            parts = orig_label.split(" ", 1)
+            if len(parts) == 2 and (parts[0].startswith("C") or parts[0].startswith("CEIL")):
+                ce_copy["label"] = f"{tier_name} {parts[1]}"
+            elif not orig_label:
+                ce_copy["label"] = f"{tier_name} {ce_copy['price']:.{digits}f}"
+            zce_ceils.append(ce_copy)
 
         zce_walls = zce_floors + zce_ceils
         zce_walls.sort(key=lambda x: x["price"])
@@ -1143,8 +1188,15 @@ class CockpitDataEngine:
         gates.append(g1)
 
         # Gate 2: Systemic Basket Circuit Breaker (35.0 bps)
-        # Tentukan target_dir: prioritaskan M4 episode direction jika ada
-        target_dir = 1 if macro.get("is_bull") else -1
+        # Tentukan target_dir & Directional Lock:
+        # Prioritas 1: M4 episode direction jika aktif
+        # Prioritas 2: Directional Hysteresis memory (dir_val != 0)
+        # Prioritas 3: Macro bias is_bull / is_bear
+        dir_state = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_s, {})
+        dir_val = dir_state.get("dir", 0)
+        dir_label = "BUY ONLY" if dir_val == 1 else ("SELL ONLY" if dir_val == -1 else "FREE / DUAL")
+        dir_desc = f" • Lock: {dir_label}"
+
         m4_dir_override = None
         try:
             m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_s, {})
@@ -1161,8 +1213,13 @@ class CockpitDataEngine:
                         break
         except Exception:
             pass
+
         if m4_dir_override is not None:
             target_dir = m4_dir_override
+        elif dir_val != 0:
+            target_dir = dir_val
+        else:
+            target_dir = 1 if macro.get("is_bull") else -1
 
         if is_crypto:
             g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
@@ -1178,11 +1235,6 @@ class CockpitDataEngine:
         tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
         traps = getattr(strat, "forbidden_traps", []) or []
         trap_reason = traps[0] if traps else ""
-
-        dir_state = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_s, {})
-        dir_val = dir_state.get("dir", 0)
-        dir_label = "BUY ONLY" if dir_val == 1 else ("SELL ONLY" if dir_val == -1 else "FREE / DUAL")
-        dir_desc = f" • Lock: {dir_label}"
 
         if tier == "HARD_BLOCK":
             g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
@@ -1200,24 +1252,24 @@ class CockpitDataEngine:
             csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
             csm_filter_enabled = getattr(config, "ENABLE_CSM_FLOW_FILTER", True)
             is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
-            dir_label = "BUY" if target_dir == 1 else "SELL"
-            m4_tag = " [M4 Dir]" if m4_dir_override is not None else ""
+            dir_label_g4 = "BUY" if target_dir == 1 else "SELL"
+            m4_tag = " [M4 Dir]" if m4_dir_override is not None else (" [Lock Dir]" if dir_val != 0 else "")
 
             if is_csm_opposed and csm_filter_enabled:
                 # Filter aktif dan CSM berlawanan → BLOCK
                 g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label}{m4_tag})."}
+                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label_g4}{m4_tag})."}
             elif is_csm_opposed and not csm_filter_enabled:
                 # Filter dinonaktifkan → OBSERVE (forward test mode)
                 g4 = {"id": 4, "title": "Boitoki CSM Flow — OBSERVE MODE", "status": "OBSERVE",
                       "desc": "Relative Net Currency Delta Flow Check (Filter Dinonaktifkan)",
-                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
+                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label_g4}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
             else:
                 # CSM selaras atau netral
                 g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label}{m4_tag} momentum arah."}
+                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label_g4}{m4_tag} momentum arah."}
         gates.append(g4)
 
 

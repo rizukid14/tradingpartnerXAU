@@ -183,12 +183,45 @@ class TestMarketScanner(unittest.TestCase):
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 6))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 6))
 
-        # 2. London / NY Session (15:00 WIB)
-        # ALL pairs should be ALLOWED
+        # 2. London Core Session (15:00 WIB)
+        # ALL pairs should be ALLOWED in London core
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 15))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURCAD-ECNc", 15))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURNZD-ECNc", 15))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 15))
+
+        # 3. New York & Overlap Session (20:00 WIB) — Opsi 2: Pacific Cross Lock
+        # Cross AUD/NZD non-USD must be BLOCKED (eliminate choppy noise & MFE collapse in NY)
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURNZD-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPAUD-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPNZD-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDNZD-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("NZDCAD-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDCHF-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("NZDCHF-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDJPY-ECNc", 20))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("NZDJPY-ECNc", 20))
+
+        # USD Majors (AUDUSD, NZDUSD, EURUSD, GBPUSD, USDCAD) must remain ALLOWED in NY
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDUSD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("NZDUSD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDCAD-ECNc", 20))
+
+        # JPY Crosses & Western Crosses must remain ALLOWED in NY
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURJPY-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPJPY-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("EURCAD-ECNc", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPCAD-ECNc", 20))
+
+        # Crypto (BTCUSD) trades 24/7 and is always ALLOWED
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("BTCUSD.c", 20))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("BTCUSD.c", 4))
 
     def test_alert_hourly_radar_recap(self):
         from src.core import telegram_alerts as tg
@@ -1099,6 +1132,109 @@ class TestMarketScanner(unittest.TestCase):
                         with patch("config.mt5.symbol_info", return_value=MagicMock(point=0.01, digits=2)):
                             val_allowed, val_msg = risk.can_trade(symbol=btc_sym)
                             self.assertTrue(val_allowed, f"RiskEngine.can_trade should allow BTC on weekend, but got: {val_msg}")
+
+    def test_m1a_sweep_ceiling_trap_awareness_and_hysteresis_reversal(self):
+        """Verify M1A Bearish Sweep at C1 bypasses F1 floor trap and permits hysteresis reversal at extreme DR."""
+        import time
+        from unittest.mock import MagicMock
+        from src.analytics.macro_strategic_engine import MacroStrategicDirective
+
+        sym = "GBPUSD-ECN"
+        clean_sym = "GBPUSD"
+        self.scanner.symbols = [sym]
+        self.scanner._symbol_last_eval.clear()
+        self.scanner._symbol_last_trigger.clear()
+
+        # Set directional hysteresis locked to BUY (0.5 hours ago)
+        now_ts = time.time()
+        self.scanner._symbol_directional_state[clean_sym] = {
+            "dir": 1,
+            "locked_at": now_ts - 1800,
+            "reason": "MACRO_BIAS_INIT"
+        }
+
+        mock_strat = MagicMock(spec=MacroStrategicDirective)
+        mock_strat.action_tier = "FULL_ALLOW"
+        mock_strat.macro_bias_score = 0.0
+        mock_strat.hard_circuit_breaker = False
+        mock_strat.forbidden_traps = ["Do NOT short into confirmed RBS support at 1.35400"]
+        mock_strat.entry_anchor = 1.35400
+        mock_strat.intraday_sl = 1.35200
+        mock_strat.tp1_price = 1.35700
+        mock_strat.tp2_price = 1.36200
+
+        self.scanner.macro_cache[sym] = {
+            'point': 0.00001,
+            'digits': 5,
+            'atr_pts': 130,
+            'current_atr': 0.00130,
+            'dealing_range_pos': 0.91,
+            'dealing_range_low': 1.3500,
+            'dealing_range_high': 1.3570,
+            'is_bull': False,
+            'is_bear': False,
+            'trend_label': 'RANGE_BOUND',
+            'daily_macro_bias': 'RANGE_BOUND',
+            'macro_corridor': 'NEUTRAL_CORRIDOR',
+            'strat_dir': mock_strat,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.0,
+            'immediate_ceiling_c1': 1.35600,
+            'immediate_floor_f1': 1.35400,
+            'ceiling_c1': 1.35600,
+            'floor_f1': 1.35400,
+            'csm_delta': 0.0,
+            'permission_state': 'GO',
+            'c1_reaction_grade': 'GRADE_3_MACRO',
+            'f1_reaction_grade': 'GRADE_3_MACRO',
+            'asian_high': 1.35600,
+            'pdh': 1.35600,
+            'ema20': 1.35500,
+            'ema50': 1.35400,
+            'df': None,
+        }
+
+        # Mock connector with tick at 1.3558 (sweeping high near C1, 18 pips above F1)
+        mock_connector = MagicMock()
+        mock_connector.get_current_tick.return_value = {'ask': 1.35582, 'bid': 1.35580, 'time': int(now_ts)}
+        mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
+
+        # Mock candle rates for live candle quality: upper wick 70%, pierced 1.35578 and closed below
+        sweep_rates = [
+            {'open': 1.35560, 'high': 1.35620, 'low': 1.35540, 'close': 1.35545, 'time': int(now_ts - 300)}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.economic_calendar.calendar", None):
+                    with patch("config.mt5.copy_rates_from_pos", return_value=sweep_rates):
+                        with patch.object(self.scanner, '_evaluate_live_candle_quality', return_value={
+                            'live_high': 1.35620,
+                            'live_low': 1.35540,
+                            'direction': 'bearish',
+                            'body_ratio': 0.20,
+                            'upper_wick_pct': 0.70,
+                            'lower_wick_pct': 0.10,
+                            'max_upper_wick': 0.70,
+                            'sweep_side': 'top',
+                            'is_bearish_engulf': False,
+                            'prev_close': 1.35545
+                        }):
+                            with patch("src.analytics.market_scanner.evaluate_universal_sweep_gates", return_value=(True, "OK")):
+                                with patch("src.analytics.market_scanner.calculate_intraday_sl_tp", return_value={
+                                    'sl': 1.35750,
+                                    'tp': 1.35000,
+                                    'sl_pips': 17.0,
+                                    'tp1_pips': 25.0,
+                                    'tp2_pips': 58.0,
+                                    'risk_reward': 3.4,
+                                    'setup_grade': 'GRADE_A',
+                                    'target_station': 1.35000
+                                }):
+                                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                                    m1a_cands = [c for c in candidates if c.symbol == sym and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                                    self.assertEqual(len(m1a_cands), 1, "M1A Bearish Sweep at C1 must produce candidate and not be blocked by F1 floor trap or hysteresis!")
+                                    self.assertEqual(m1a_cands[0].direction, -1)
 
 
 if __name__ == "__main__":

@@ -713,14 +713,17 @@ class MarketScanner:
         # ── 1. PRIMARY IDENTITY: M15/M30 High-Tight Basing (Absorption Channel) ──
         tf_basing = getattr(config.mt5, 'TIMEFRAME_M30', 30) if "JPY" in sym_clean else getattr(config.mt5, 'TIMEFRAME_M15', 15)
         rates = None
+        target_sym = sym_clean
+        if mt5_connector is not None and hasattr(mt5_connector, 'get_valid_trade_symbol'):
+            target_sym = mt5_connector.get_valid_trade_symbol(sym_clean)
+        elif hasattr(config, 'get_valid_trade_symbol'):
+            target_sym = config.get_valid_trade_symbol(sym_clean)
+
         if hasattr(config.mt5, 'copy_rates_from_pos'):
             try:
-                rates = config.mt5.copy_rates_from_pos(sym_clean, tf_basing, 0, 6)
-            except Exception:
-                pass
-        if (rates is None or len(rates) < 4) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
-            try:
-                rates = mt5_connector.get_closed_bars(sym_clean, count=6, timeframe=tf_basing)
+                rates = config.mt5.copy_rates_from_pos(target_sym, tf_basing, 0, 6)
+                if rates is None or len(rates) < 4:
+                    rates = config.mt5.copy_rates_from_pos(sym_clean, tf_basing, 0, 6)
             except Exception:
                 pass
 
@@ -923,18 +926,29 @@ class MarketScanner:
     def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
         """
         Filters symbols based on active session currency drivers:
-        - Tokyo Session (07:00 - 14:00 WIB): Any symbol containing Asian/Pacific drivers (JPY, AUD, NZD) is allowed
+        - Tokyo / Asia Session (07:00 - 14:00 WIB): Any symbol containing Asian/Pacific drivers (JPY, AUD, NZD) is allowed
           (e.g., AUDCAD, CADJPY, NZDCAD, EURJPY, GBPJPY, CHFJPY, AUDUSD, NZDUSD, GBPAUD, EURNZD, etc.).
           Symbols without JPY/AUD/NZD (e.g., EURCAD, GBPCAD, USDCAD, EURUSD, GBPUSD, USDCHF, EURCHF, etc.) are locked.
-        - London & NY Sessions (14:00 - 23:59 WIB): Allow all configured pairs.
+        - London Core Session (14:00 - 19:00 WIB): All configured pairs are allowed.
+        - New York & Overlap Session (19:00 - 23:59 WIB):
+          * Opsi 2: AUD/NZD Crosses (EURNZD, GBPAUD, GBPNZD, AUDNZD, AUDCAD, NZDCAD, AUDCHF, NZDCHF, AUDJPY, NZDJPY) are locked.
+          * AUDUSD, NZDUSD, JPY Crosses, and all European/American pairs remain allowed.
+        - Dead Zone (00:00 - 07:00 WIB): All FX locked. Crypto trades 24/7.
         """
         if config.is_crypto(symbol):
             return True
         asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
         asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
+        ny_start = getattr(config, "NY_SESSION_START_HOUR_WIB", 19)
+        lock_pacific_cross = getattr(config, "NY_LOCK_PACIFIC_CROSSES", True)
+
         if asia_start <= hour_wib < asia_end:
             return config.is_asian_session_pair(symbol)
-        elif asia_end <= hour_wib <= 23:
+        elif asia_end <= hour_wib < ny_start:
+            return True
+        elif ny_start <= hour_wib <= 23:
+            if lock_pacific_cross and config.is_pacific_cross(symbol):
+                return False
             return True
         return False
 
@@ -1115,15 +1129,12 @@ class MarketScanner:
             return False, "NO_DATA"
 
         lookback = getattr(config, "M3_SFP_LOOKBACK_BARS", 4)
-        min_wick = getattr(config, "M3_SFP_REJECTION_WICK", 0.28)
+        min_wick = getattr(config, "M3_SFP_REJECTION_WICK", 0.42)
         recent_df = df.iloc[-lookback:]
         clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         digits = 3 if "JPY" in clean_sym else 5
 
-        step = get_symbol_step(clean_sym)
-        sub_step = (step * 0.50) if (step is not None and step > 0) else 0.0050
-
-        if direction == -1: # SELL at SBR: check for bullish SFP (low sweep below floor/psych)
+        if direction == -1: # SELL at SBR: check for bullish SFP (low sweep below floor)
             f1 = float(macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
             pwl = float(macro.get('pwl', 0.0) or 0.0)
             pdl = float(macro.get('pdl', 0.0) or 0.0)
@@ -1142,17 +1153,14 @@ class MarketScanner:
                 wick_ratio = lower_wick / b_rng
 
                 candidate_floors = [lvl for lvl in (f1, pwl, pdl) if lvl > 0]
-                if sub_step > 0:
-                    nearest_psych = round(b_lo / sub_step) * sub_step
-                    candidate_floors.append(nearest_psych)
 
                 for flr in candidate_floors:
                     pierced = (b_lo <= flr - 0.02 * atr_val)
                     reclaimed = (b_cl >= flr)
                     if pierced and reclaimed and wick_ratio >= min_wick:
-                        return True, f"SFP Low Absorption: Low {b_lo:.{digits}f} swept below floor {flr:.{digits}f} with {wick_ratio*100:.1f}% lower wick (Reclaimed at {b_cl:.{digits}f})"
+                        return True, f"SFP Low Absorption: Low {b_lo:.{digits}f} swept below macro floor {flr:.{digits}f} with {wick_ratio*100:.1f}% lower wick (Reclaimed at {b_cl:.{digits}f})"
 
-        else: # BUY at RBS: check for bearish SFP (high sweep above ceiling/psych)
+        else: # BUY at RBS: check for bearish SFP (high sweep above ceiling)
             c1 = float(macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
             pwh = float(macro.get('pwh', 0.0) or 0.0)
             pdh = float(macro.get('pdh', 0.0) or 0.0)
@@ -1171,15 +1179,12 @@ class MarketScanner:
                 wick_ratio = upper_wick / b_rng
 
                 candidate_ceils = [lvl for lvl in (c1, pwh, pdh) if lvl > 0]
-                if sub_step > 0:
-                    nearest_psych = round(b_hi / sub_step) * sub_step
-                    candidate_ceils.append(nearest_psych)
 
                 for ceil in candidate_ceils:
                     pierced = (b_hi >= ceil + 0.02 * atr_val)
                     reclaimed = (b_cl <= ceil)
                     if pierced and reclaimed and wick_ratio >= min_wick:
-                        return True, f"SFP High Absorption: High {b_hi:.{digits}f} swept above ceiling {ceil:.{digits}f} with {wick_ratio*100:.1f}% upper wick (Reclaimed at {b_cl:.{digits}f})"
+                        return True, f"SFP High Absorption: High {b_hi:.{digits}f} swept above macro ceiling {ceil:.{digits}f} with {wick_ratio*100:.1f}% upper wick (Reclaimed at {b_cl:.{digits}f})"
 
         return False, "NO_SFP"
 
@@ -1538,54 +1543,92 @@ class MarketScanner:
         m1_bar_age = 0
         m1_status = "WAITING_SWEEP"
 
-        # M1: Universal Liquidity Sweep & SFP
-        # When price tests Floor F1 (or deep discount <=0.30), sweep targets SFP Low (Floor Rebound).
-        # When price tests Ceiling C1 (or deep premium >=0.70), sweep targets SFP High (Ceiling Rejection).
-        # Otherwise, aligns with structural bias.
-        is_near_floor = (f1_val > 0 and abs(mid - f1_val) <= 0.50 * atr_val) or (dr_pos <= 0.30)
-        is_near_ceiling = (c1_val > 0 and abs(mid - c1_val) <= 0.50 * atr_val) or (dr_pos >= 0.70)
+        # ── 1. M1: UNIVERSAL LIQUIDITY SWEEP & SFP ──
+        # Check Top Sweep (Bearish Fade at Asian High / PDH / PWH / C1)
+        valid_tops = [v for v in [asian_h, pdh_val, pwh_val, c1_val] if v > 0 and v >= mid - 0.50 * atr_val]
+        top_price = min(valid_tops) if valid_tops else (c1_val or asian_h or (mid + 0.5 * atr_val))
+        top_tag = "Asian High" if top_price == asian_h else ("PDH" if top_price == pdh_val else ("PWH" if top_price == pwh_val else "Macro Wall C1"))
+        top_lbl = f"M1A Bearish Sweep Resistance [{top_tag}] (Macro SFP)"
+        top_event_time = 0
+        top_bar_age = 999
+        top_status = "WAITING_SWEEP"
+        if df is not None and len(df) >= 3 and top_price > 0:
+            pierce_bars_t = [i for i in range(max(0, len(df) - 10), len(df)) if df.iloc[i]['high'] >= top_price - 0.15 * atr_val]
+            if pierce_bars_t:
+                best_i_t = max(pierce_bars_t, key=lambda idx: df.iloc[idx]['high'])
+                top_event_time = _ts_to_int(df.index[best_i_t])
+                top_bar_age = len(df) - 1 - best_i_t
+                top_status = "RECLAIMED_FADING" if df.iloc[best_i_t]['close'] < top_price else "WAITING_CLOSE_RECLAIM"
 
-        if is_near_floor and not is_near_ceiling:
-            m1_dir = 1
-        elif is_near_ceiling and not is_near_floor:
+        # Check Bottom Sweep (Bullish Rebound at Asian Low / PDL / PWL / F1)
+        valid_bots = [v for v in [asian_l, pdl_val, pwl_val, f1_val] if v > 0 and v <= mid + 0.50 * atr_val]
+        bot_price = max(valid_bots) if valid_bots else (f1_val or asian_l or (mid - 0.5 * atr_val))
+        bot_tag = "Asian Low" if bot_price == asian_l else ("PDL" if bot_price == pdl_val else ("PWL" if bot_price == pwl_val else "Macro Wall F1"))
+        bot_lbl = f"M1A Bullish Sweep Support [{bot_tag}] (Macro SFP)"
+        bot_event_time = 0
+        bot_bar_age = 999
+        bot_status = "WAITING_SWEEP"
+        if df is not None and len(df) >= 3 and bot_price > 0:
+            pierce_bars_b = [i for i in range(max(0, len(df) - 10), len(df)) if df.iloc[i]['low'] <= bot_price + 0.15 * atr_val]
+            if pierce_bars_b:
+                best_i_b = min(pierce_bars_b, key=lambda idx: df.iloc[idx]['low'])
+                bot_event_time = _ts_to_int(df.index[best_i_b])
+                bot_bar_age = len(df) - 1 - best_i_b
+                bot_status = "RECLAIMED_FADING" if df.iloc[best_i_b]['close'] > bot_price else "WAITING_CLOSE_RECLAIM"
+
+        # Priority Selection:
+        # 1. If one side has a fresh pierce/sweep (bar_age <= 3) and the other does not -> choose the fresh one!
+        # 2. If both have fresh sweeps -> choose the one with smaller bar_age (most recent).
+        # 3. Otherwise, use Dealing Range position & Macro proximity:
+        if top_bar_age <= 3 and bot_bar_age > 3:
             m1_dir = -1
-        elif is_bear:
-            m1_dir = -1
-        elif is_bull:
+        elif bot_bar_age <= 3 and top_bar_age > 3:
             m1_dir = 1
+        elif top_bar_age <= 3 and bot_bar_age <= 3:
+            m1_dir = -1 if top_bar_age <= bot_bar_age else 1
         else:
-            m1_dir = -1 if dr_pos >= 0.50 else 1
+            is_near_floor = (f1_val > 0 and abs(mid - f1_val) <= 0.50 * atr_val) or (dr_pos <= 0.30)
+            is_near_ceiling = (c1_val > 0 and abs(mid - c1_val) <= 0.50 * atr_val) or (dr_pos >= 0.70)
+            if is_near_floor and not is_near_ceiling:
+                m1_dir = 1
+            elif is_near_ceiling and not is_near_floor:
+                m1_dir = -1
+            elif is_bear:
+                m1_dir = -1
+            elif is_bull:
+                m1_dir = 1
+            else:
+                m1_dir = -1 if dr_pos >= 0.50 else 1
 
         if m1_dir == -1:
-            valid_tops = [v for v in [asian_h, pdh_val, pwh_val, c1_val] if v > 0 and v >= mid - 0.15 * atr_val]
-            m1_price = min(valid_tops) if valid_tops else (c1_val or asian_h or (mid + 0.5 * atr_val))
-            macro_tag = "Asian High" if m1_price == asian_h else ("PDH" if m1_price == pdh_val else ("PWH" if m1_price == pwh_val else "Macro Wall C1"))
-            m1_lbl = f"M1A Bearish Sweep Resistance [{macro_tag}] (Macro SFP)"
-
-            # Temporal sweep detection in recent bars
-            if df is not None and len(df) >= 3:
-                pierce_bars = [i for i in range(max(0, len(df) - 10), len(df)) if df.iloc[i]['high'] >= m1_price - 0.15 * atr_val]
-                if pierce_bars:
-                    best_i = max(pierce_bars, key=lambda idx: df.iloc[idx]['high'])
-                    m1_event_time = _ts_to_int(df.index[best_i])
-                    m1_bar_age = len(df) - 1 - best_i
-                    m1_status = "RECLAIMED_FADING" if df.iloc[best_i]['close'] < m1_price else "WAITING_CLOSE_RECLAIM"
+            m1_price = top_price
+            m1_lbl = top_lbl
+            m1_event_time = top_event_time
+            m1_bar_age = top_bar_age if top_bar_age < 999 else 0
+            m1_status = top_status
         else:
-            valid_bots = [v for v in [asian_l, pdl_val, pwl_val, f1_val] if v > 0 and v <= mid + 0.15 * atr_val]
-            m1_price = max(valid_bots) if valid_bots else (f1_val or asian_l or (mid - 0.5 * atr_val))
-            macro_tag = "Asian Low" if m1_price == asian_l else ("PDL" if m1_price == pdl_val else ("PWL" if m1_price == pwl_val else "Macro Wall F1"))
-            m1_lbl = f"M1A Bullish Sweep Support [{macro_tag}] (Macro SFP)"
-
-            # Temporal sweep detection in recent bars
-            if df is not None and len(df) >= 3:
-                pierce_bars = [i for i in range(max(0, len(df) - 10), len(df)) if df.iloc[i]['low'] <= m1_price + 0.15 * atr_val]
-                if pierce_bars:
-                    best_i = min(pierce_bars, key=lambda idx: df.iloc[idx]['low'])
-                    m1_event_time = _ts_to_int(df.index[best_i])
-                    m1_bar_age = len(df) - 1 - best_i
-                    m1_status = "RECLAIMED_FADING" if df.iloc[best_i]['close'] > m1_price else "WAITING_CLOSE_RECLAIM"
+            m1_price = bot_price
+            m1_lbl = bot_lbl
+            m1_event_time = bot_event_time
+            m1_bar_age = bot_bar_age if bot_bar_age < 999 else 0
+            m1_status = bot_status
 
         if m1_price > 0:
+            c2_val = float(macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2') or 0.0)
+            f2_val = float(macro.get('floor_f2') or macro.get('deep_target_floor_f2') or 0.0)
+            if m1_dir == -1:
+                m1_tp1 = f1_val if (f1_val > 0 and f1_val < m1_price) else (m1_price - 1.5 * atr_val)
+                m1_tp2 = f2_val if (f2_val > 0 and f2_val < m1_tp1) else m1_tp1
+                origin_px = round(m1_price + (0.35 * atr_val), digits)
+            else:
+                m1_tp1 = c1_val if (c1_val > 0 and c1_val > m1_price) else (m1_price + 1.5 * atr_val)
+                m1_tp2 = c2_val if (c2_val > 0 and c2_val > m1_tp1) else m1_tp1
+                origin_px = round(m1_price - (0.35 * atr_val), digits)
+
+            default_time = _ts_to_int(df.index[-1]) if (df is not None and len(df) > 0) else 0
+            m1_t_origin = m1_event_time if m1_event_time > 0 else default_time
+            m1_t_retest = m1_event_time if m1_event_time > 0 else default_time
+
             standbys.append({
                 "type": "M1",
                 "price": round(m1_price, digits),
@@ -1593,7 +1636,20 @@ class MarketScanner:
                 "event_time": m1_event_time,
                 "status": m1_status,
                 "bar_age": m1_bar_age,
-                "direction": m1_dir
+                "direction": m1_dir,
+                "target_price": round(m1_tp1, digits),
+                "trajectory": {
+                    "origin_time": m1_t_origin,
+                    "origin_price": origin_px,
+                    "origin_age": m1_bar_age,
+                    "retest_time": m1_t_retest,
+                    "retest_price": round(m1_price, digits),
+                    "target_price": round(m1_tp1, digits),
+                    "target_tp1": round(m1_tp1, digits),
+                    "target_tp2": round(m1_tp2, digits),
+                    "direction": m1_dir,
+                    "phase": m1_status
+                }
             })
 
         # ── 1B. M1B: TREND-ALIGNED INDUCED LIQUIDITY SWEEP (ZCE CONFLUENT) ──
@@ -2930,14 +2986,14 @@ class MarketScanner:
                 logger.debug(f"[RADAR] {sym} SKIP: {breath_reason}")
                 continue
 
-            # ── SESSION-AWARE PAIR ROUTER (Anti-European Trap in Asian Session) ──
+            # ── SESSION-AWARE PAIR ROUTER (Asia Pacific Focus & NY Pacific Cross Lock - Opsi 2) ──
             if getattr(config, "SESSION_AWARE_ROUTING_ENABLED", True):
-                asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
-                asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
-                if asia_start <= h < asia_end:
-                    if not config.is_asian_session_pair(sym):
-                        logger.debug(f"[RADAR] {sym} SKIP: Sesi Asia ({asia_start:02d}:00-{asia_end:02d}:00 WIB) hanya mengizinkan pair Pasifik/Asia (AUD/NZD/JPY).")
-                        continue
+                if not self.is_symbol_allowed_for_session(sym, h):
+                    if h >= getattr(config, "NY_SESSION_START_HOUR_WIB", 19):
+                        logger.debug(f"[RADAR] {sym} SKIP: Sesi NY ({h:02d}:00 WIB) mengunci AUD/NZD Cross non-USD (Opsi 2).")
+                    else:
+                        logger.debug(f"[RADAR] {sym} SKIP: Sesi Asia ({h:02d}:00 WIB) hanya mengizinkan pair Pasifik/Asia (AUD/NZD/JPY).")
+                    continue
 
             try:
                 # Get live tick
@@ -3006,6 +3062,7 @@ class MarketScanner:
                 m4_basing_floor = sfr_cat_info.get("basing_floor", 0.0)
                 sfr_age = sfr_cat_info.get("sfr_age", sfr_cat_info.get("age", 0))
                 m4_age = sfr_age  # Backward-compatible alias
+                atr_val = atr_pts * pt
 
                 # ── DIRECTIONAL 5-TIER OPERATIONAL ACTION MATRIX & CIRCUIT BREAKER ──
                 def _is_direction_allowed(target_dir: int, setup_label: str, entry_price: Optional[float] = None) -> tuple:
@@ -3037,7 +3094,7 @@ class MarketScanner:
                         return False, "HARD_BLOCK", "[MSE GATING] Missing MSE Directive -> Defensive WATCH_ONLY"
 
                     strat_tier = getattr(strat_dir_sym, 'action_tier', 'FULL_ALLOW')
-                    is_limit_retest = any(k in setup_label.upper() for k in ("PULLBACK", "SYSTEMIC", "BREAKOUT", "RETEST"))
+                    is_limit_retest = any(k in setup_label.upper() for k in ("PULLBACK", "SYSTEMIC", "BREAKOUT", "RETEST", "SWEEP"))
                     if strat_tier in ("INACTION_ZONE", "CHAMBER_MID_BLOCK") and not is_limit_retest:
                         return False, "HARD_BLOCK", f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})"
                     if strat_tier == "HARD_LOCK":
@@ -3060,8 +3117,19 @@ class MarketScanner:
 
                         for trap in strat_dir_sym.forbidden_traps:
                             trap_u = trap.upper()
-                            if ("DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u) and not is_limit_retest:
-                                return False, "HARD_BLOCK", f"[MSE TRAP VETO] Trade forbidden in consolidation: {trap}"
+                            if ("DO NOT EXECUTE" in trap_u or "CONSOLIDATION ZONE" in trap_u or "MID-CHAMBER" in trap_u):
+                                if is_limit_retest:
+                                    # Limit order in consolidation is allowed by MSE if anchored at/near chamber boundaries
+                                    if "SWEEP" in setup_label.upper() and entry_price is not None:
+                                        dr_pos_check = macro.get('dealing_range_pos', 0.5)
+                                        is_boundary_sweep = (
+                                            (target_dir == -1 and (dr_pos_check >= 0.55 or (c1_lvl > 0 and entry_price >= c1_lvl - 0.35 * atr_val))) or
+                                            (target_dir == 1 and (dr_pos_check <= 0.45 or (f1_lvl > 0 and entry_price <= f1_lvl + 0.35 * atr_val)))
+                                        )
+                                        if not is_boundary_sweep:
+                                            return False, "HARD_BLOCK", f"[MSE TRAP VETO] Mid-chamber sweep forbidden: {trap}"
+                                else:
+                                    return False, "HARD_BLOCK", f"[MSE TRAP VETO] Trade forbidden in consolidation: {trap}"
 
                             if target_dir == 1 and ("DO NOT BUY" in trap_u or "DON'T BUY" in trap_u or "CEILING_TRAP" in trap_u):
                                 # Contextual Limit Awareness: Jika Buy Limit berada cukup jauh di bawah plafon C1 (C1 adalah target TP, bukan harga entri)
@@ -3125,7 +3193,7 @@ class MarketScanner:
 
                                     # Syarat 3: Universal Liquidity Sweep M1A di batas Dealing Range ekstrim
                                     # M1B dilarang membalik arah (M1B hanya untuk trend-following)
-                                    is_m1a_sweep = ("UNIVERSAL_LIQUIDITY_SWEEP" in setup_label.upper()) and not ("M1B" in setup_label.upper() or "INDUCED" in setup_label.upper())
+                                    is_m1a_sweep = any(k in setup_label.upper() for k in ("UNIVERSAL_LIQUIDITY_SWEEP", "BEARISH_SWEEP", "BULLISH_SWEEP")) and not ("M1B" in setup_label.upper() or "INDUCED" in setup_label.upper())
                                     dr_pos = macro.get('dealing_range_pos', 0.5)
                                     is_extreme_dr = (target_dir == -1 and dr_pos >= 0.80) or (target_dir == 1 and dr_pos <= 0.20)
                                     sweep_reversal = is_m1a_sweep and is_extreme_dr
@@ -3206,10 +3274,11 @@ class MarketScanner:
                     is_m1_s_locked, m1_s_lock_reason = self.is_mechanism_locked(clean_sym, "UNIVERSAL_LIQUIDITY_SWEEP", -1)
                     # Strict Category Invariance: ref_top DILARANG mengambil dari floor
                     invalid_ceil_levels = {asian_l, pdl_val, pwl_val, macro.get('immediate_floor_f1', 0.0)}
-                    valid_tops = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] if v > 0 and v not in invalid_ceil_levels and abs(mid - v) <= 1.0 * atr_price_val]
+                    imm_c1 = macro.get('immediate_ceiling_c1', 0.0) or 0.0
+                    c1_cand = [imm_c1] if (imm_c1 > 0 and imm_c1 not in invalid_ceil_levels and abs(mid - imm_c1) <= 1.0 * atr_price_val) else []
+                    valid_tops = [v for v in [asian_h, pdh_val, eqh_val, p_ceil] + c1_cand if v > 0 and v not in invalid_ceil_levels and abs(mid - v) <= 1.0 * atr_price_val]
                     if m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 1.0 * atr_price_val:
                         valid_tops.append(m4_basing_ceiling)
-                    imm_c1 = macro.get('immediate_ceiling_c1', 0.0) or 0.0
                     fallback_ceil = imm_c1 if (imm_c1 > 0 and imm_c1 not in invalid_ceil_levels) else (asian_h or (mid + atr_price_val))
                     ref_top = min(valid_tops) if valid_tops else fallback_ceil
 
@@ -3217,7 +3286,7 @@ class MarketScanner:
                     if is_m1_s_locked:
                         logger.debug(f"[SWEEP SELL LOCK] {sym} SKIP: {m1_s_lock_reason}")
                     elif is_premium_sweep and (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
-                        allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP")
+                        allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP", entry_price=ref_top)
                         if not allowed_m1_s:
                             logger.debug(f"[SWEEP SELL GATE] {sym} SKIP ({action_tier_m1_s}): {reason_m1_s}")
                         else:
@@ -3242,9 +3311,10 @@ class MarketScanner:
                             is_asian_session = (8 <= h < 14)
                             c1_struct = macro.get('immediate_ceiling_c1') or 0.0
                             c1_grade = macro.get('c1_reaction_grade', 'GRADE_1_MICRO')
-                            is_macro_wall = (c1_struct > 0 and abs(ref_top - c1_struct) <= config.SWEEP_WALL_MATCH_ATR_MULT * atr_price_val)
-                            is_macro_wall_g2_g3 = (is_macro_wall and c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO"))
-                            is_macro_wall_g3 = (is_macro_wall and c1_grade == "GRADE_3_MACRO")
+                            wall_tol = max(getattr(config, 'SWEEP_WALL_MATCH_ATR_MULT', 0.35), 0.50) * atr_price_val
+                            is_macro_wall = (c1_struct > 0 and abs(ref_top - c1_struct) <= wall_tol)
+                            is_macro_wall_g2_g3 = (c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO")) and (is_macro_wall or (c1_struct > 0 and abs(live_h - c1_struct) <= wall_tol))
+                            is_macro_wall_g3 = (c1_grade == "GRADE_3_MACRO") and (is_macro_wall or (c1_struct > 0 and abs(live_h - c1_struct) <= wall_tol))
 
                             has_penetrated_high = (live_h >= ref_top + (0.04 * atr_price_val)) or (c_qual.get('max_high', live_h) >= ref_top + (0.04 * atr_price_val))
                             has_closed_below = (c_qual.get('prev_close', mid) < ref_top)
@@ -3254,6 +3324,8 @@ class MarketScanner:
                             mse_directive_s = str(macro.get('primary_execution_directive') or '')
                             is_mse_sell_mandate = any(k in mse_directive_s for k in ("SELL", "FADE", "CEILING")) or (strat_dir_sym and getattr(strat_dir_sym, 'market_state', '') == "CEILING_REJECTION")
                             is_anti_bull_veto = is_macro_bull and not is_macro_wall_g3 and not (is_macro_wall_g2_g3 and (is_mse_sell_mandate or dr_pos_val >= 0.65))
+                            if is_mse_sell_mandate and (is_macro_wall_g3 or is_macro_wall_g2_g3 or dr_pos_val >= 0.65):
+                                is_anti_bull_veto = False
 
                             if is_euro_pair and is_asian_session and not is_macro_wall_g3 and (m4_catalyst != "BEARISH_FLOW"):
                                 logger.debug(f"[SWEEP SELL ASIA NOISE] {sym} SKIP: European pair sweep in Asian session lacks Grade 3 Macro Wall (Current: {c1_grade}).")
@@ -3373,6 +3445,10 @@ class MarketScanner:
                     if m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 1.0 * atr_price_val:
                         valid_bots.append(m4_basing_floor)
                     imm_f1 = macro.get('immediate_floor_f1', 0.0) or 0.0
+                    f1_cand = [imm_f1] if (imm_f1 > 0 and imm_f1 not in invalid_floor_levels and abs(mid - imm_f1) <= 1.0 * atr_price_val) else []
+                    valid_bots = [v for v in [asian_l, pdl_val, eql_val, p_floor] + f1_cand if v > 0 and v not in invalid_floor_levels and abs(mid - v) <= 1.0 * atr_price_val]
+                    if m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 1.0 * atr_price_val:
+                        valid_bots.append(m4_basing_floor)
                     fallback_floor = imm_f1 if (imm_f1 > 0 and imm_f1 not in invalid_floor_levels) else (asian_l or (mid - atr_price_val))
                     ref_bot = max(valid_bots) if valid_bots else fallback_floor
 
@@ -3380,7 +3456,7 @@ class MarketScanner:
                     if is_m1_b_locked:
                         logger.debug(f"[SWEEP BUY LOCK] {sym} SKIP: {m1_b_lock_reason}")
                     elif is_discount_sweep and (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
-                        allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP")
+                        allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP", entry_price=ref_bot)
                         if not allowed_m1_b:
                             logger.debug(f"[SWEEP BUY GATE] {sym} SKIP ({action_tier_m1_b}): {reason_m1_b}")
                         else:
@@ -3405,9 +3481,10 @@ class MarketScanner:
                             is_asian_session = (8 <= h < 14)
                             f1_struct = macro.get('immediate_floor_f1') or 0.0
                             f1_grade = macro.get('f1_reaction_grade', 'GRADE_1_MICRO')
-                            is_macro_wall = (f1_struct > 0 and abs(ref_bot - f1_struct) <= config.SWEEP_WALL_MATCH_ATR_MULT * atr_price_val)
-                            is_macro_wall_g2_g3 = (is_macro_wall and f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO"))
-                            is_macro_wall_g3 = (is_macro_wall and f1_grade == "GRADE_3_MACRO")
+                            wall_tol_b = max(getattr(config, 'SWEEP_WALL_MATCH_ATR_MULT', 0.35), 0.50) * atr_price_val
+                            is_macro_wall = (f1_struct > 0 and abs(ref_bot - f1_struct) <= wall_tol_b)
+                            is_macro_wall_g2_g3 = (f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO")) and (is_macro_wall or (f1_struct > 0 and abs(live_l - f1_struct) <= wall_tol_b))
+                            is_macro_wall_g3 = (f1_grade == "GRADE_3_MACRO") and (is_macro_wall or (f1_struct > 0 and abs(live_l - f1_struct) <= wall_tol_b))
                             
                             has_penetrated_low = (live_l <= ref_bot - (0.04 * atr_price_val)) or (c_qual.get('max_low', live_l) <= ref_bot - (0.04 * atr_price_val))
                             has_closed_above = (c_qual.get('prev_close', mid) > ref_bot)
@@ -3417,6 +3494,8 @@ class MarketScanner:
                             mse_directive_b = str(macro.get('primary_execution_directive') or '')
                             is_mse_buy_mandate = any(k in mse_directive_b for k in ("BUY", "FADE", "FLOOR")) or (strat_dir_sym and getattr(strat_dir_sym, 'market_state', '') == "FLOOR_REJECTION")
                             is_anti_bear_veto = is_macro_bear and not is_macro_wall_g3 and not (is_macro_wall_g2_g3 and (is_mse_buy_mandate or dr_pos_val <= 0.35))
+                            if is_mse_buy_mandate and (is_macro_wall_g3 or is_macro_wall_g2_g3 or dr_pos_val <= 0.35):
+                                is_anti_bear_veto = False
 
                             if is_euro_pair and is_asian_session and not is_macro_wall_g3 and (m4_catalyst != "BULLISH_FLOW"):
                                 logger.debug(f"[SWEEP BUY ASIA NOISE] {sym} SKIP: European pair sweep in Asian session lacks Grade 3 Macro Wall (Current: {f1_grade}).")
@@ -3724,25 +3803,24 @@ class MarketScanner:
                     has_fvg_or_ob_retest_b = (fvg_bull_top > 0 and abs(mid - fvg_bull_top) <= 0.50 * atr_val) or (ob_bull_top > 0 and abs(mid - ob_bull_top) <= 0.50 * atr_val)
                     has_ema_or_f1_retest_b = (abs(mid - ema50) <= 0.50 * atr_val) or (f1_floor > 0 and abs(mid - f1_floor) <= 0.50 * atr_val)
                     has_m4_retest_b = (m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 0.50 * atr_val)
-                    max_dr_buy = float(getattr(config, "M2_MAX_DR_BUY", 0.55))
+                    max_dr_buy = float(getattr(config, "M2_MAX_DR_BUY", 0.68))
+                    if (sfr_catalyst == "BULLISH_FLOW") or (csm_delta_val >= 1.0):
+                        max_dr_buy = max(max_dr_buy, float(getattr(config, "M2_MAX_DR_BUY_CATALYST", 0.75)))
                     is_valid_pullback_range_b = (pos_in_range <= max_dr_buy) and ((pos_in_range <= 0.50) or has_fvg_or_ob_retest_b or has_ema_or_f1_retest_b or has_m4_retest_b)
+                    is_ema_pullback_valid_b = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
 
                     is_m2_b_locked, m2_b_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", 1)
                     if is_m2_b_locked:
                         logger.debug(f"[PULLBACK BUY LOCK] {sym} SKIP: {m2_b_lock_reason}")
                     elif not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
-                    elif can_buy_m2 and is_valid_pullback_range_b:
+                    elif can_buy_m2 and is_valid_pullback_range_b and not is_ema_pullback_valid_b:
+                        logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
+                    elif can_buy_m2 and is_valid_pullback_range_b and is_ema_pullback_valid_b:
                         base_floor, m2_confluence_desc = self.find_ema_confluence_anchor(sym, mid, 1, macro, pt, atr_val)
                         if m4_basing_floor > 0 and abs(mid - m4_basing_floor) <= 0.50 * atr_val:
                             base_floor = m4_basing_floor
                             m2_confluence_desc = f"M4 Basing Floor ({m4_basing_floor:.{5 if pt < 0.01 else 3}f})"
-
-                        # Dynamic EMA Corridor: Price must NOT be collapsed far below EMA50, and must be in healthy pullback value area
-                        is_ema_pullback_valid = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
-                        if not is_ema_pullback_valid:
-                            logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
-                            continue
 
                         in_action_zone = (abs(mid - base_floor) <= 0.50 * atr_val) or (live_l <= base_floor + 0.15 * atr_val) or (base_floor <= mid <= base_floor + 0.65 * atr_val)
                         has_support_hold = (mid >= base_floor - 0.15 * atr_val) or (c_qual['max_lower_wick'] >= 0.10) or (c_qual['sweep_side'] == 'bottom')
@@ -3849,25 +3927,24 @@ class MarketScanner:
                     has_fvg_or_ob_retest_s = (fvg_bear_bot > 0 and abs(mid - fvg_bear_bot) <= 0.50 * atr_val) or (ob_bear_bot > 0 and abs(mid - ob_bear_bot) <= 0.50 * atr_val)
                     has_ema_or_c1_retest_s = (abs(mid - ema50) <= 0.50 * atr_val) or (c1_ceiling > 0 and abs(mid - c1_ceiling) <= 0.50 * atr_val)
                     has_m4_retest_s = (m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 0.50 * atr_val)
-                    min_dr_sell = float(getattr(config, "M2_MIN_DR_SELL", 0.45))
+                    min_dr_sell = float(getattr(config, "M2_MIN_DR_SELL", 0.32))
+                    if (sfr_catalyst == "BEARISH_FLOW") or (csm_delta_val <= -1.0):
+                        min_dr_sell = min(min_dr_sell, float(getattr(config, "M2_MIN_DR_SELL_CATALYST", 0.25)))
                     is_valid_pullback_range_s = (pos_in_range >= min_dr_sell) and ((pos_in_range >= 0.50) or has_fvg_or_ob_retest_s or has_ema_or_c1_retest_s or has_m4_retest_s)
+                    is_ema_pullback_valid_s = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
 
                     is_m2_s_locked, m2_s_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", -1)
                     if is_m2_s_locked:
                         logger.debug(f"[PULLBACK SELL LOCK] {sym} SKIP: {m2_s_lock_reason}")
                     elif not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
-                    elif can_sell_m2 and is_valid_pullback_range_s:
+                    elif can_sell_m2 and is_valid_pullback_range_s and not is_ema_pullback_valid_s:
+                        logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
+                    elif can_sell_m2 and is_valid_pullback_range_s and is_ema_pullback_valid_s:
                         base_ceiling, m2_confluence_desc = self.find_ema_confluence_anchor(sym, mid, -1, macro, pt, atr_val)
                         if m4_basing_ceiling > 0 and abs(mid - m4_basing_ceiling) <= 0.50 * atr_val:
                             base_ceiling = m4_basing_ceiling
                             m2_confluence_desc = f"M4 Basing Ceiling ({m4_basing_ceiling:.{5 if pt < 0.01 else 3}f})"
-
-                        # Dynamic EMA Corridor: Price must NOT be blown up far above EMA50, and must be in healthy pullback value area
-                        is_ema_pullback_valid = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
-                        if not is_ema_pullback_valid:
-                            logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
-                            continue
 
                         in_action_zone = (abs(mid - base_ceiling) <= 0.50 * atr_val) or (live_h >= base_ceiling - 0.15 * atr_val) or (base_ceiling - 0.65 * atr_val <= mid <= base_ceiling)
                         has_res_hold = (mid <= base_ceiling + 0.15 * atr_val) or (c_qual['max_upper_wick'] >= 0.10) or (c_qual['sweep_side'] == 'top')
@@ -4042,74 +4119,76 @@ class MarketScanner:
                                         is_displacement_b = True
                                         break
                         
+                        in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
+                        max_push_b = (max(df['high'].iloc[-(recency_bars + 2):]) - target_res) / atr_val if (df is not None and len(df) >= (recency_bars + 2) and atr_val > 0) else 0.0
+
+                        # HTF Wall Collision & Runway Guard ke Plafon C1:
+                        target_ceiling = (macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
+                        dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
+                        is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
+                        min_runway_mult_b = 0.60 if is_mean_rev_buy else 0.80
+                        has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= min_runway_mult_b * atr_val and dist_to_ceiling >= 0.40 * atr_val)
+
+                        # M3 Dealing Range with Trend Catalyst Confirmation:
+                        m3_max_dr_buy = float(getattr(config, "M3_MAX_DR_BUY", 0.80))
+                        m3_cat_dr_buy = float(getattr(config, "M3_CATALYST_DR_BUY_THRESHOLD", 0.60))
+                        has_buy_catalyst = (csm_delta_val >= 1.0) or (sfr_catalyst == "BULLISH_FLOW")
+                        if dr_pos > m3_max_dr_buy:
+                            is_premium_buy_blocked = not is_mean_rev_buy
+                        elif dr_pos > m3_cat_dr_buy:
+                            is_premium_buy_blocked = (not has_buy_catalyst) and (not is_mean_rev_buy)
+                        else:
+                            is_premium_buy_blocked = False
+
+                        is_sfp_b, sfp_reason_b = self._detect_recent_sfp_absorption(sym, df, 1, atr_val, macro)
+                        m5_ok_b, m5_reason_b = self._verify_m5_rejection_wick(sym, target_res, 1, atr_val, pt, mt5_connector=mt5_connector)
+
+                        m3_buy_candidate_ok = False
                         if not has_fresh_break_b:
                             logger.debug(f"[BREAKOUT BUY RECENCY] {sym} SKIP: target_res {target_res:.5f} has no fresh breakout in last {recency_bars} H1 bars")
                         elif not is_displacement_b:
                             logger.debug(f"[BREAKOUT BUY DISPLACEMENT] {sym} SKIP: breakout candle body < {min_disp_body*100:.0f}% (no momentum displacement)")
+                        elif not in_retest_window_b:
+                            logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
+                        elif max_push_b > 2.50:
+                            logger.debug(f"[BREAKOUT BUY RUNAWAY] {sym} SKIP: excursion {max_push_b:.2f}x ATR > 2.50x ATR (flash spike exhaustion)")
+                        elif is_wall_collision_b or is_premium_buy_blocked or (not has_upward_runway):
+                            logger.debug(f"[BREAKOUT BUY VETO] {sym} SKIP: collision={is_wall_collision_b}, dr_pos={dr_pos*100:.1f}% (> {m3_max_dr_buy*100:.0f}%), catalyst={has_buy_catalyst}, runway={has_upward_runway}")
+                        elif is_sfp_b:
+                            logger.debug(f"[M3 BUY SFP VETO] {sym} SKIP: {sfp_reason_b}")
+                        elif not m5_ok_b:
+                            logger.debug(f"[M3 BUY M5 GATE] {sym} SKIP: {m5_reason_b} at level {target_res:.5f}")
                         else:
-                            # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_res
-                            in_retest_window_b = (target_res - 0.10 * atr_val <= mid <= target_res + 0.28 * atr_val) or (live_l <= target_res + 0.15 * atr_val and mid >= target_res - 0.05 * atr_val)
-                            if not in_retest_window_b:
-                                logger.debug(f"[BREAKOUT BUY DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_res - 0.10*atr_val:.5f} - {target_res + 0.28*atr_val:.5f}]")
-                                continue
-                            else:
-                                # Runaway Flash Spike Guard: Excursion must not exceed 2.50x ATR
-                                max_push_b = (max(df['high'].iloc[-(recency_bars + 2):]) - target_res) / atr_val if (df is not None and len(df) >= (recency_bars + 2) and atr_val > 0) else 0.0
-                                if max_push_b > 2.50:
-                                    logger.debug(f"[BREAKOUT BUY RUNAWAY] {sym} SKIP: excursion {max_push_b:.2f}x ATR > 2.50x ATR (flash spike exhaustion)")
-                                    continue
-                                else:
-                                    # HTF Wall Collision & Runway Guard ke Plafon C1:
-                                    target_ceiling = (macro.get('ceiling_c1') or macro.get('immediate_ceiling_c1') or 0.0)
-                                    dist_to_ceiling = (target_ceiling - mid) if target_ceiling > 0 else 999.0
-                                    # Block BUY jika harga menabrak plafon C1 (jarak <= 0.35x ATR) atau berada di Premium (dr_pos > 0.60)
-                                    is_wall_collision_b = (target_ceiling > 0 and dist_to_ceiling <= 0.35 * atr_val and mid < target_ceiling + 0.15 * atr_val)
-                                    min_runway_mult_b = 0.60 if is_mean_rev_buy else 0.80
-                                    has_upward_runway = (target_ceiling <= 0.0) or ((target_ceiling - target_res) >= min_runway_mult_b * atr_val and dist_to_ceiling >= 0.40 * atr_val)
-                                    is_premium_buy_blocked = (dr_pos > getattr(config, "M3_MAX_DR_BUY", 0.60)) and not is_mean_rev_buy
-                                    
-                                    if is_wall_collision_b or is_premium_buy_blocked or (not has_upward_runway):
-                                        logger.debug(f"[BREAKOUT BUY VETO] {sym} SKIP: collision={is_wall_collision_b}, dr_pos={dr_pos*100:.1f}% (> {getattr(config, 'M3_MAX_DR_BUY', 0.60)*100:.0f}%), runway={has_upward_runway}")
-                                        continue
-                                    
-                                    # Anti-Sweep SFP Absorption Veto:
-                                    is_sfp_b, sfp_reason_b = self._detect_recent_sfp_absorption(sym, df, 1, atr_val, macro)
-                                    if is_sfp_b:
-                                        logger.debug(f"[M3 BUY SFP VETO] {sym} SKIP: {sfp_reason_b}")
-                                        continue
-                                    
-                                    # M5 Micro-Rejection Verification Gate
-                                    m5_ok_b, m5_reason_b = self._verify_m5_rejection_wick(sym, target_res, 1, atr_val, pt, mt5_connector=mt5_connector)
-                                    if not m5_ok_b:
-                                        logger.debug(f"[M3 BUY M5 GATE] {sym} SKIP: {m5_reason_b} at level {target_res:.5f}")
-                                        continue
-                                    entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
-                                _c1_w = ((macro.get('ceiling_c1') or 0.0) if ((macro.get('ceiling_c1') or 0.0) > entry_lim) else ((macro.get('ceiling_c2') or 0.0) if ((macro.get('ceiling_c2') or 0.0) > entry_lim) else 0.0)) or (macro.get('immediate_ceiling_c1') or 0.0)
-                                _f1_w = target_res
-                                _c1_b = self._is_zce_wall_breached(sym, _c1_w, 1, df)
-                                _f1_b = self._is_zce_wall_breached(sym, _f1_w, -1, df)
-                                sl_tp = calculate_intraday_sl_tp(
-                                    symbol=sym,
-                                    entry_price=entry_lim,
-                                    direction=1,
-                                    origin_level=target_res,
-                                    atr_h1=atr_val,
-                                    pwl=macro.get('pwl', 0.0),
-                                    pwh=macro.get('pwh', 0.0),
-                                    rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
-                                    sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
-                                    spread_pts=spread_pts,
-                                    c1=_c1_w,
-                                    f1=_f1_w,
-                                    c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
-                                    f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
-                                    c1_grade=macro.get('c1_reaction_grade'),
-                                    f1_grade=macro.get('f1_reaction_grade'),
-                                    c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
-                                    f1_is_vacuum=bool(macro.get('f1_is_vacuum', False)),
-                                    c1_breached=_c1_b,
-                                    f1_breached=_f1_b
-                                )
+                            m3_buy_candidate_ok = True
+
+                        if m3_buy_candidate_ok:
+                            entry_lim = target_res - (spread_pts * 0.5 * pt) # Limit retest entry at broken resistance (now RBS)
+                            _c1_w = ((macro.get('ceiling_c1') or 0.0) if ((macro.get('ceiling_c1') or 0.0) > entry_lim) else ((macro.get('ceiling_c2') or 0.0) if ((macro.get('ceiling_c2') or 0.0) > entry_lim) else 0.0)) or (macro.get('immediate_ceiling_c1') or 0.0)
+                            _f1_w = target_res
+                            _c1_b = self._is_zce_wall_breached(sym, _c1_w, 1, df)
+                            _f1_b = self._is_zce_wall_breached(sym, _f1_w, -1, df)
+                            sl_tp = calculate_intraday_sl_tp(
+                                symbol=sym,
+                                entry_price=entry_lim,
+                                direction=1,
+                                origin_level=target_res,
+                                atr_h1=atr_val,
+                                pwl=macro.get('pwl', 0.0),
+                                pwh=macro.get('pwh', 0.0),
+                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                spread_pts=spread_pts,
+                                c1=_c1_w,
+                                f1=_f1_w,
+                                c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                c1_grade=macro.get('c1_reaction_grade'),
+                                f1_grade=macro.get('f1_reaction_grade'),
+                                c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                f1_is_vacuum=bool(macro.get('f1_is_vacuum', False)),
+                                c1_breached=_c1_b,
+                                f1_breached=_f1_b
+                            )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
                             rr_val = sl_tp['risk_reward']
@@ -4247,74 +4326,76 @@ class MarketScanner:
                                         is_displacement_s = True
                                         break
                         
+                        in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
+                        max_push_s = (target_sup - min(df['low'].iloc[-(recency_bars + 2):])) / atr_val if (df is not None and len(df) >= (recency_bars + 2) and atr_val > 0) else 0.0
+
+                        # HTF Wall Collision & Runway Guard ke Lantai F1:
+                        target_floor = (macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
+                        dist_to_floor = (mid - target_floor) if target_floor > 0 else 999.0
+                        is_wall_collision_s = (target_floor > 0 and dist_to_floor <= 0.35 * atr_val and mid > target_floor - 0.15 * atr_val)
+                        min_runway_mult_s = 0.60 if is_mean_rev_sell else 0.80
+                        has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= min_runway_mult_s * atr_val and dist_to_floor >= 0.40 * atr_val)
+
+                        # M3 Dealing Range with Trend Catalyst Confirmation:
+                        m3_min_dr_sell = float(getattr(config, "M3_MIN_DR_SELL", 0.20))
+                        m3_cat_dr_sell = float(getattr(config, "M3_CATALYST_DR_SELL_THRESHOLD", 0.40))
+                        has_sell_catalyst = (csm_delta_val <= -1.0) or (sfr_catalyst == "BEARISH_FLOW")
+                        if dr_pos < m3_min_dr_sell:
+                            is_discount_sell_blocked = not is_mean_rev_sell
+                        elif dr_pos < m3_cat_dr_sell:
+                            is_discount_sell_blocked = (not has_sell_catalyst) and (not is_mean_rev_sell)
+                        else:
+                            is_discount_sell_blocked = False
+
+                        is_sfp_s, sfp_reason_s = self._detect_recent_sfp_absorption(sym, df, -1, atr_val, macro)
+                        m5_ok_s, m5_reason_s = self._verify_m5_rejection_wick(sym, target_sup, -1, atr_val, pt, mt5_connector=mt5_connector)
+
+                        m3_sell_candidate_ok = False
                         if not has_fresh_break_s:
                             logger.debug(f"[BREAKOUT SELL RECENCY] {sym} SKIP: target_sup {target_sup:.5f} has no fresh breakdown in last {recency_bars} H1 bars")
                         elif not is_displacement_s:
                             logger.debug(f"[BREAKOUT SELL DISPLACEMENT] {sym} SKIP: breakdown candle body < {min_disp_body*100:.0f}% (no momentum displacement)")
+                        elif not in_retest_window_s:
+                            logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
+                        elif max_push_s > 2.50:
+                            logger.debug(f"[BREAKOUT SELL RUNAWAY] {sym} SKIP: excursion {max_push_s:.2f}x ATR > 2.50x ATR (flash dump exhaustion)")
+                        elif is_wall_collision_s or is_discount_sell_blocked or (not has_downward_runway):
+                            logger.debug(f"[BREAKOUT SELL VETO] {sym} SKIP: collision={is_wall_collision_s}, dr_pos={dr_pos*100:.1f}% (< {m3_min_dr_sell*100:.0f}%), catalyst={has_sell_catalyst}, runway={has_downward_runway}")
+                        elif is_sfp_s:
+                            logger.debug(f"[M3 SELL SFP VETO] {sym} SKIP: {sfp_reason_s}")
+                        elif not m5_ok_s:
+                            logger.debug(f"[M3 SELL M5 GATE] {sym} SKIP: {m5_reason_s} at level {target_sup:.5f}")
                         else:
-                            # Strict Retest Approach Gate: Trigger ONLY when price has pulled back within retest proximity of target_sup
-                            in_retest_window_s = (target_sup - 0.28 * atr_val <= mid <= target_sup + 0.10 * atr_val) or (live_h >= target_sup - 0.15 * atr_val and mid <= target_sup + 0.05 * atr_val)
-                            if not in_retest_window_s:
-                                logger.debug(f"[BREAKOUT SELL DISTANCE] {sym} SKIP: mid {mid:.5f} outside active retest touch zone [{target_sup - 0.28*atr_val:.5f} - {target_sup + 0.10*atr_val:.5f}]")
-                                continue
-                            else:
-                                # Runaway Flash Dump Guard: Excursion must not exceed 2.50x ATR
-                                max_push_s = (target_sup - min(df['low'].iloc[-(recency_bars + 2):])) / atr_val if (df is not None and len(df) >= (recency_bars + 2) and atr_val > 0) else 0.0
-                                if max_push_s > 2.50:
-                                    logger.debug(f"[BREAKOUT SELL RUNAWAY] {sym} SKIP: excursion {max_push_s:.2f}x ATR > 2.50x ATR (flash dump exhaustion)")
-                                    continue
-                                else:
-                                    # HTF Wall Collision & Runway Guard ke Lantai F1:
-                                    target_floor = (macro.get('floor_f1') or macro.get('immediate_floor_f1') or 0.0)
-                                    dist_to_floor = (mid - target_floor) if target_floor > 0 else 999.0
-                                    # Block SELL jika harga menabrak lantai F1 (jarak <= 0.35x ATR) atau berada di Discount (dr_pos < 0.40)
-                                    is_wall_collision_s = (target_floor > 0 and dist_to_floor <= 0.35 * atr_val and mid > target_floor - 0.15 * atr_val)
-                                    min_runway_mult_s = 0.60 if is_mean_rev_sell else 0.80
-                                    has_downward_runway = (target_floor <= 0.0) or ((target_sup - target_floor) >= min_runway_mult_s * atr_val and dist_to_floor >= 0.40 * atr_val)
-                                    is_discount_sell_blocked = (dr_pos < getattr(config, "M3_MIN_DR_SELL", 0.40)) and not is_mean_rev_sell
-                                    
-                                    if is_wall_collision_s or is_discount_sell_blocked or (not has_downward_runway):
-                                        logger.debug(f"[BREAKOUT SELL VETO] {sym} SKIP: collision={is_wall_collision_s}, dr_pos={dr_pos*100:.1f}% (< {getattr(config, 'M3_MIN_DR_SELL', 0.40)*100:.0f}%), runway={has_downward_runway}")
-                                        continue
-                                    
-                                    # Anti-Sweep SFP Absorption Veto:
-                                    is_sfp_s, sfp_reason_s = self._detect_recent_sfp_absorption(sym, df, -1, atr_val, macro)
-                                    if is_sfp_s:
-                                        logger.debug(f"[M3 SELL SFP VETO] {sym} SKIP: {sfp_reason_s}")
-                                        continue
-                                    
-                                    # M5 Micro-Rejection Verification Gate
-                                    m5_ok_s, m5_reason_s = self._verify_m5_rejection_wick(sym, target_sup, -1, atr_val, pt, mt5_connector=mt5_connector)
-                                    if not m5_ok_s:
-                                        logger.debug(f"[M3 SELL M5 GATE] {sym} SKIP: {m5_reason_s} at level {target_sup:.5f}")
-                                        continue
-                                    entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
-                                _c1_w = target_sup
-                                _f1_w = ((macro.get('floor_f1') or 0.0) if ((macro.get('floor_f1') or 0.0) > 0.0 and (macro.get('floor_f1') or 0.0) < entry_lim) else ((macro.get('floor_f2') or 0.0) if ((macro.get('floor_f2') or 0.0) > 0.0 and (macro.get('floor_f2') or 0.0) < entry_lim) else 0.0)) or (macro.get('immediate_floor_f1') or 0.0)
-                                _c1_b = self._is_zce_wall_breached(sym, _c1_w, 1, df)
-                                _f1_b = self._is_zce_wall_breached(sym, _f1_w, -1, df)
-                                sl_tp = calculate_intraday_sl_tp(
-                                    symbol=sym,
-                                    entry_price=entry_lim,
-                                    direction=-1,
-                                    origin_level=target_sup,
-                                    atr_h1=atr_val,
-                                    pwl=macro.get('pwl', 0.0),
-                                    pwh=macro.get('pwh', 0.0),
-                                    rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
-                                    sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
-                                    spread_pts=spread_pts,
-                                    c1=_c1_w,
-                                    f1=_f1_w,
-                                    c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
-                                    f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
-                                    c1_grade=macro.get('c1_reaction_grade'),
-                                    f1_grade=macro.get('f1_reaction_grade'),
-                                    c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
-                                    f1_is_vacuum=bool(macro.get('f1_is_vacuum', False)),
-                                    c1_breached=_c1_b,
-                                    f1_breached=_f1_b
-                                )
+                            m3_sell_candidate_ok = True
+
+                        if m3_sell_candidate_ok:
+                            entry_lim = target_sup + (spread_pts * 0.5 * pt) # Limit retest entry at broken support (now SBR)
+                            _c1_w = target_sup
+                            _f1_w = ((macro.get('floor_f1') or 0.0) if ((macro.get('floor_f1') or 0.0) > 0.0 and (macro.get('floor_f1') or 0.0) < entry_lim) else ((macro.get('floor_f2') or 0.0) if ((macro.get('floor_f2') or 0.0) > 0.0 and (macro.get('floor_f2') or 0.0) < entry_lim) else 0.0)) or (macro.get('immediate_floor_f1') or 0.0)
+                            _c1_b = self._is_zce_wall_breached(sym, _c1_w, 1, df)
+                            _f1_b = self._is_zce_wall_breached(sym, _f1_w, -1, df)
+                            sl_tp = calculate_intraday_sl_tp(
+                                symbol=sym,
+                                entry_price=entry_lim,
+                                direction=-1,
+                                origin_level=target_sup,
+                                atr_h1=atr_val,
+                                pwl=macro.get('pwl', 0.0),
+                                pwh=macro.get('pwh', 0.0),
+                                rbs=macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4'),
+                                sbr=macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4'),
+                                spread_pts=spread_pts,
+                                c1=_c1_w,
+                                f1=_f1_w,
+                                c2=macro.get('ceiling_c2') or macro.get('deep_target_ceiling_c2'),
+                                f2=macro.get('floor_f2') or macro.get('deep_target_floor_f2'),
+                                c1_grade=macro.get('c1_reaction_grade'),
+                                f1_grade=macro.get('f1_reaction_grade'),
+                                c1_is_vacuum=bool(macro.get('c1_is_vacuum', False)),
+                                f1_is_vacuum=bool(macro.get('f1_is_vacuum', False)),
+                                c1_breached=_c1_b,
+                                f1_breached=_f1_b
+                            )
                             sl = sl_tp['sl']
                             tp = sl_tp['tp']
                             rr_val = sl_tp['risk_reward']

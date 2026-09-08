@@ -79,16 +79,16 @@ class TestM2PullbackAndCorridor(unittest.TestCase):
         self.assertGreaterEqual(anchor, ema20 - 0.35 * atr_val)
 
     def test_m2_buy_blocks_in_premium_zone(self):
-        """M2 BUY must be rejected if dealing_range_pos > 0.55 (GBPNZD at 66.6%)."""
-        dr_pos = 0.666 # 66.6% Premium
-        max_dr_buy = float(getattr(config, "M2_MAX_DR_BUY", 0.55))
+        """M2 BUY must be rejected if dealing_range_pos > 0.68 (or > 0.75 extreme)."""
+        dr_pos = 0.82 # 82% Deep Premium
+        max_dr_buy = float(getattr(config, "M2_MAX_DR_BUY", 0.68))
         is_valid_pullback_range_b = (dr_pos <= max_dr_buy)
         self.assertFalse(is_valid_pullback_range_b)
 
     def test_m2_sell_blocks_in_discount_zone(self):
-        """M2 SELL must be rejected if dealing_range_pos < 0.45."""
-        dr_pos = 0.35 # 35% Discount
-        min_dr_sell = float(getattr(config, "M2_MIN_DR_SELL", 0.45))
+        """M2 SELL must be rejected if dealing_range_pos < 0.32 (or < 0.25 extreme)."""
+        dr_pos = 0.18 # 18% Deep Discount
+        min_dr_sell = float(getattr(config, "M2_MIN_DR_SELL", 0.32))
         is_valid_pullback_range_s = (dr_pos >= min_dr_sell)
         self.assertFalse(is_valid_pullback_range_s)
 

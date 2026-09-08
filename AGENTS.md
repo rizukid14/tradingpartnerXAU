@@ -147,7 +147,7 @@ python main.py
     * Non-ZCE Legacy clamp: FX/JPY/Gold = $\max(2.5 \times \text{ATR}, 1.5 \times \text{Floor})$; BTC = $1.8 \times \text{ATR}$ (fallback 45000).
   - **R:R**: Net TP $\in [0.75\times, 3.50\times]$ SL + friction (grade-aware: Grade B $0.75-1.25R$; Grade A $1.25-1.80R$; Grade A+ $1.80-2.50R$; Grade S $2.50-3.50R$).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
-- **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London/NY 14:00–00:00 WIB (all FX permitted).
+- **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London Core 14:00–19:00 WIB (all 26 FX permitted); Sesi New York & Overlap 19:00–00:00 WIB (Opsi 2: AUD/NZD Crosses non-USD locked; AUDUSD, NZDUSD, JPY Crosses, dan Western pairs permitted).
 - **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders, **Friday Pre-Weekend Lock (freeze new orders mulai 23:00 WIB Jumat)**.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
   - **Break-Even (BEP)**: Grade-Aware Dynamic Threshold — Standar (Grade A/A+) aktif di **50% TP**; Grade S di **65% TP**; Khusus Grade B / Defensive (`REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`) dan Vacuum Extension ($R:R \ge 2.0$) aktif dipercepat di **35% TP**; M4 aktif di **70% TP** (+ padding komisi round-trip + Pocket Profit 15 pts / 1.5 pips). Sinergi 1:1 antara `position_manager.py` dan `shadow_tracker.py`.
@@ -364,6 +364,22 @@ python main.py
       * *`GRADE_B` + `REDUCED_CONFIDENCE`*: Runway sempit ($0.75R - 1.25R$), wajib 1 tiket murni (dilarang split 2 posisi), bypass partial close 100%, lot defensif $0.75\times$, BEP 35% TP, stagnation exit 4 jam.
     - **Transparansi Visual Terminal** (`cli_theme.py`, `main.py`): Pemisahan baris `• Runway Grade : ` (geometri ZCE) dan `• Apex Carry FE: ` (makro carry spread) di banner radar, serta pencatatan Realized R:R pasca-market fill di Pure Quant.
     - **Verifikasi Kuantitatif**: 199/199 test suite pytest 100% PASS.
+74. **Penyelarasan Contextual Limit Trap Awareness M1A Sweep & Directional Hysteresis Reversal** (8 September 2026 — Malam VI):
+    - **Eliminasi False Positive Trap Support pada Short Ceiling**: Propagasi parameter `entry_price` pada pemanggilan `_is_direction_allowed` M1A Bearish (`ref_top`) dan Bullish (`ref_bot`).
+    - **Contextual Limit Setup Recognition**: Memasukkan `"SWEEP"` ke dalam deteksi `is_limit_setup`, membebaskan short di atap $C_1$ dari veto trap support $F_1$ jika harga entri berada di sisi aman level yang berlawanan (`entry_price >= f1_lvl + 0.40 * atr_val`).
+    - **Harmonisasi String Matching Hysteresis**: Memperluas deteksi `is_m1a_sweep` pada `sweep_reversal` extreme dealing range ($\ge 80\%$ SELL, $\le 20\%$ BUY) agar mencakup `"UNIVERSAL_LIQUIDITY_SWEEP"`, `"BEARISH_SWEEP"`, dan `"BULLISH_SWEEP"`.
+    - **Demarkasi M1A vs M1B Tetap Rigid**: Batas Dealing Range M1B ($0.10 \le \text{DR} \le 0.60$ SELL / $0.40 \le \text{DR} \le 0.90$ BUY) dipertahankan 100% kaku untuk mencegah tabrakan sinyal dan duplikasi tiket.
+    - **Verifikasi Kuantitatif**: 35/35 test suite `test_market_scanner.py` & unit test M1A trap awareness 100% PASS.
+75. **Integrasi Trajektori Visual M1A Sweep Reclaim & Penyelarasan Directional Lock Gate 4 CSM** (8 September 2026 — Malam VII):
+    - **Ekspor Trajektori Dual-Tier M1A** (`src/analytics/market_scanner.py`): Pembangunan dictionary `trajectory` lengkap pada M1A standbys (`origin_time`, `origin_price`, `retest_price`, `target_tp1`, `target_tp2`, `direction`, `phase`).
+    - **Styling Visual Oranye Institusional** (`dashboard_assets.py`): Warna khusus `rgba(251, 146, 60, 0.95)` serta label pill `1. Sweep High / Sweep Low` dan `2. Sweep Reclaim` pada chart Lightweight.
+    - **Penyelarasan Hierarki Evaluasi Gate 4 CSM** (`dashboard.py`): Penentuan `target_dir` memprioritaskan M4 episode $\rightarrow$ Directional Lock Memory (`dir_val` BUY/SELL ONLY) $\rightarrow$ macro bias. Mengeliminasi paradoks visual G3 SELL ONLY vs G4 BUY momentum.
+    - **Verifikasi Kuantitatif**: 7/7 unit tests `test_dashboard.py` & regression suite 100% PASS.
+76. **Perluasan Toleransi Wall Proximity Anti-Bull/Anti-Bear Veto & Stabilisasi Resensi Standby M1** (8 September 2026 — Malam VIII):
+    - **Penyelarasan Wall Proximity Anti-Trend Veto** (`market_scanner.py`): Mengoreksi `is_macro_wall` yang sebelumnya gagal mengenali dinding $C_1/F_1$ karena toleransi terlalu sempit ($0.15\times\text{ATR} \approx 1.8\text{ pips}$). Memperluas toleransi `wall_tol` ke $\max(\text{SWEEP\_WALL\_MATCH\_ATR\_MULT}, 0.50) \times \text{ATR}$ ($\approx 6.2\text{ pips}$), memasukkan $C_1/F_1$ langsung ke kandidat level sapuan, dan memvalidasi `live_high`/`live_low` yang menabrak $C_1/F_1$ meskipun `ref_top`/`ref_bot` jatuh di Asian High/PDH.
+    - **MSE Mandate Direct Veto Override**: Jika MSE mengeluarkan mandat penolakan atap/lantai (`CEILING_REJECTION`, `FLOOR_REJECTION`, atau directive `SELL`/`BUY`/`FADE`), anti-trend veto otomatis di-bypass jika harga berada di dinding $G_2/G_3$ atau di batas dealing range ekstrim.
+    - **Stabilisasi Resensi Standby M1 (`get_radar_standbys()`)**: Memisahkan pelacakan sapuan atas (`top_bar_age`) dan sapuan bawah (`bot_bar_age`). Memprioritaskan sapuan segar (`bar_age <= 3`) sehingga penurunan harga menuju target $F_1$ tidak memicu pembalikan prematur indikator standby ke sapuan dasar usang (4 bar yang lalu).
+    - **Verifikasi Kuantitatif**: 56/56 pytest suite (`test_dashboard.py`, `test_market_scanner.py`, dll) 100% PASS.
 
 ---
 

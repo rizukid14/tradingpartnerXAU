@@ -2,6 +2,294 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam VIII) — Perluasan Toleransi Wall Proximity Anti-Bull/Anti-Bear Veto dan Stabilisasi Resensi Standby M1
+
+### Latar Belakang & Identifikasi Masalah:
+1. **False Rejection Veto Anti-Trend pada M1A Sweep Menabrak Dinding Makro G3 (`GBPUSD`)**:
+   - Pada instrumen `GBPUSD` H1, harga membentuk *Universal Liquidity Sweep & SFP* di atap Asian High (1.35498) dan menabrak plafon makro $C_1$ (1.35525, `GRADE_3_MACRO`) dengan high menembus ke 1.35620. Mandat MSE mengeluarkan diagnosis `CEILING_REJECTION`.
+   - Namun, radar terus menerus menolak eksekusi sell dengan log:
+     `[SWEEP SELL ANTI-BULL VETO] GBPUSD-ECN SKIP: Fading bullish trend is forbidden unless hitting G3 Macro Fortress Wall or C1 Rejection (Current: GRADE_3_MACRO)`.
+   - Investigasi mendalam menemukan bahwa variabel `is_macro_wall` mengevaluasi `abs(ref_top - c1_struct) <= SWEEP_WALL_MATCH_ATR_MULT * atr` dengan `SWEEP_WALL_MATCH_ATR_MULT = 0.15` ($\approx 1.87\text{ pips}$). Karena selisih antara `ref_top` (1.35498) dan `c1_struct` (1.35525) adalah $2.7\text{ pips}$, `is_macro_wall` bernilai `False` kendati wick candle nyata menembus kedua level tersebut hingga 1.35620! Selain itu, `is_anti_bull_veto` tidak memberikan override bagi mandat penolakan MSE jika `is_macro_wall_g2_g3` bernilai False.
+2. **Flipping Prematur Indikator Standby M1 pada Cockpit Dashboard**:
+   - Pada fungsi `get_radar_standbys()`, penentuan arah `m1_dir` didasarkan pada `is_near_floor` vs `is_near_ceiling`.
+   - Begitu harga GBPUSD mulai merosot turun sesuai arah Bearish Sweep menuju target lantai $F_1$, harga memasuki ambang $0.50\times\text{ATR}$ dari $F_1$, yang memicu `is_near_floor = True` dan membalik arah `m1_dir` menjadi +1 (Bullish Sweep).
+   - Akibatnya, indikator trajektori dan marker Bearish Sweep di puncak atap tiba-tiba hilang dan berganti menampilkan sapuan lantai dari 4 bar yang lalu (`bot_bar_age = 4`).
+
+---
+
+### Solusi Perbaikan Kode:
+1. **Perluasan Toleransi Wall Proximity & Symmetrical Hit Detection (`src/analytics/market_scanner.py`)**:
+   - Memasukkan level $C_1$ langsung ke dalam `valid_tops` dan $F_1$ ke `valid_bots`.
+   - Memperluas toleransi jarak dinding `wall_tol` menjadi $\max(\text{SWEEP\_WALL\_MATCH\_ATR\_MULT}, 0.50) \times \text{ATR}$ ($\approx 6.2\text{ pips}$).
+   - Memvalidasi kedekatan dinding dari titik penetrasi fisik nyata:
+     `is_macro_wall_g3 = (c1_grade == "GRADE_3_MACRO") and (is_macro_wall or (c1_struct > 0 and abs(live_h - c1_struct) <= wall_tol))`.
+   - Override mandat langsung dari MSE:
+     `if is_mse_sell_mandate and (is_macro_wall_g3 or is_macro_wall_g2_g3 or dr_pos_val >= 0.65): is_anti_bull_veto = False` (serta simetris untuk Bullish Sweep / Floor Rejection).
+2. **Stabilisasi Resensi Standby M1 Berbasis Event Lifecycle (`src/analytics/market_scanner.py`)**:
+   - Memisahkan evaluasi resensi sapuan atas (`top_bar_age`) dan sapuan bawah (`bot_bar_age`).
+   - Menerapkan aturan histeresis resensi: jika salah satu sisi memiliki sapuan segar (`bar_age <= 3`) dan sisi lainnya tidak (`bar_age > 3`), arah $M_1$ dikunci pada sapuan segar tersebut.
+   - Mengeliminasi 100% bug flipping prematur: trajektori Bearish Sweep tetap terkunci pada Asian High hingga siklus pergerakan harga selesai terkirim ke target.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Unit Test Suite**:
+   - `tests/test_dashboard.py`, `tests/test_m2_pullback_and_corridor.py`, `tests/test_m3_discount_guard_and_leapfrog.py`, `tests/test_market_scanner.py`: **56/56 PASSED (100%)**.
+2. **Integritas Runtime**:
+   - Zero syntax/import errors, anti-trend veto beroperasi secara presisi dengan perlindungan dinding makro G3.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam VII) — Integrasi Trajektori Visual M1A Sweep Reclaim dan Penyelarasan Directional Lock Gate 4 CSM
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Ketiadaan Garis Trajektori Visual Proyeksi M1A Sweep Reclaim**:
+   - Pada chart Lightweight Cockpit (`dashboard.py` / `dashboard_assets.py`), mekanisme M1B, M2, M3, dan M4 memiliki garis proyeksi trajektori panah putus-putus lengkap dari titik *origin/retest* menuju target *TP1* dan *TP2 Macro Expansion*.
+   - Sebaliknya, mekanisme M1A (*Universal Liquidity Sweep*) belum membangun dictionary `"trajectory"` di dalam `get_radar_standbys()`. Akibatnya, saat M1A aktif (misal `[M1A SELL MACRO SWEEP] Waiting Close Reclaim`), chart tidak menggambar vektor panah turun ke floor F1, melainkan hanya menampilkan trajektori milik setup lain (seperti M2 Bullish Pullback ke atas) sehingga membingungkan operator visual.
+2. **Diskoneksi Evaluasi Arah Gate 4 CSM vs Gate 3 Directional Lock**:
+   - Pada panel audit 7-Gate di Cockpit Dashboard, Gate 3 mengunci instrumen ke `Lock: SELL ONLY` (berdasarkan inisialisasi mandat makro MSE `CEILING_REJECTION` dengan score `-0.80`).
+   - Namun, Gate 4 (Boitoki CSM Flow Alignment) menentukan arah evaluasi secara naif berdasarkan `target_dir = 1 if macro.get("is_bull") else -1`. Karena tren D1/H1 GBPUSD bernilai bullish, Gate 4 menguji CSM terhadap arah BUY: `"Net Delta +0.89 selaras atau netral dengan BUY momentum arah"`.
+   - Hal ini menimbulkan paradoks visual: G3 mengunci SELL ONLY, tetapi G4 mengevaluasi terhadap BUY.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **Pembangunan Objek Trajektori Dual-Tier M1A (`src/analytics/market_scanner.py`)**:
+   - Pada fungsi `get_radar_standbys()`, blok M1A kini menyusun dictionary `"trajectory"` lengkap:
+     * `origin_price`: Titik ekstrem wick sapuan likuiditas ($p_{\text{sweep}} + 0.35\times\text{ATR}$ untuk short, $p_{\text{sweep}} - 0.35\times\text{ATR}$ untuk long).
+     * `retest_price`: Level struktural yang disapu (`m1_price`, e.g. Asian High / PDH / C1).
+     * `target_tp1`: Target pantulan equilibrium atau floor/ceiling pertama ($F_1$ untuk short, $C_1$ untuk long).
+     * `target_tp2`: Target makro ekspansi lanjutan ($F_2$ deep floor untuk short, $C_2$ deep ceiling untuk long).
+     * `direction`: Arah eksekusi sweep (`m1_dir`).
+     * `phase`: Status konfirmasi (`m1_status`, e.g. `WAITING_CLOSE_RECLAIM` atau `RECLAIMED_FADING`).
+2. **Dukungan Visual Styling M1 Sweep di Chart (`dashboard_assets.py`)**:
+   - Menambahkan warna tema oranye istitusional (`rgba(251, 146, 60, 0.95)`) untuk trajektori M1/M1B.
+   - Menambahkan penanda teks pill khusus: `1. Sweep High / Sweep Low` pada origin, dan `2. Sweep Reclaim` pada titik retest.
+3. **Penyelarasan Hierarki `target_dir` Gate Evaluator (`dashboard.py`)**:
+   - Menyelaraskan evaluasi arah Gate 2–4 dengan hierarki prioritas:
+     1. `m4_dir_override`: Arah episode Systemic Flow Regime M4 (jika aktif).
+     2. `dir_val`: Directional Lock Hysteresis State (`BUY ONLY` / `SELL ONLY` jika aktif).
+     3. Fallback ke tren struktural makro `is_bull` / `is_bear`.
+   - Gate 4 CSM kini mengevaluasi terhadap arah yang dikunci oleh G3 (`SELL [Lock Dir]`), menghilangkan 100% kontradiksi visual.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Unit Test Suite**:
+   - `tests/test_dashboard.py` (`test_m1_standbys_trajectory` & `test_gate4_directional_lock_alignment`): **7/7 PASSED (100%)**.
+2. **Visual Cockpit Runtime**:
+   - GBPUSD menampilkan G3 `Lock: SELL ONLY` dan G4 mengevaluasi terhadap arah `SELL` secara konsisten.
+   - M1A standbys mengekspor trajektori lengkap menuju $F_1$ (1.35402).
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam VI) — Penyelarasan Contextual Limit Trap Awareness M1A Sweep, Propagasi Entry Price, dan Perbaikan Directional Hysteresis Reversal
+
+### Latar Belakang & Identifikasi Masalah:
+1. **False Positive Trap Veto pada M1A Sweep di Atap Ceiling C1 (`GBPUSD`)**:
+   - Pada instrumen `GBPUSD` (H1), harga menyapu likuiditas di atas *distal ceiling* $C_1$ (1.35578 D1_VAH) hingga mencapai puncak 1.35620 (Dealing Range 91.0%), membentuk pola *Universal Liquidity Sweep & SFP*.
+   - Setup ini diidentifikasi oleh radar sebagai `M1A Universal Liquidity Sweep (BEARISH_SWEEP)`. Namun, saat melewati gate `_is_direction_allowed(-1, "BEARISH_SWEEP")`, order langsung ditolak oleh *Forbidden Trap Rule*:
+     `"Do NOT short into confirmed RBS support at 1.35400 (dist 17.8p < 25.0p)"`.
+   - Hal ini merupakan *false positive* fatal: short order dieksekusi di langit-langit $C_1$ (1.35578–1.35620), berjarak leluasa $\sim 20$ pips di atas support floor $F_1$ (1.35400). Pengecekan trap support seharusnya hanya memblokir *market chase* saat harga berada di dasar floor, bukan saat *fade rejection* di ceiling.
+2. **Ketiadaan Propagasi `entry_price` pada M1A Radar**:
+   - Panggilan `_is_direction_allowed` pada M1A Bearish Sweep dan Bullish Sweep di `src/analytics/market_scanner.py` tidak menyertakan parameter `entry_price`. Akibatnya, logika *Contextual Limit Awareness*:
+     `entry_price >= c1_lvl - 0.35 * atr_val` atau `entry_price >= f1_lvl + 0.40 * atr_val`
+     gagal aktif dan jatuh ke evaluasi harga pasar live (`current_price`), serta variabel `is_limit_setup` tidak mengenali kata kunci `"SWEEP"`.
+3. **Mismatch String Matching Directional Hysteresis**:
+   - Pada gate Hysteresis koridor makro, kondisi pembatalan bias/reversal extreme dealing range (`dr_pos >= 0.80` untuk SELL) hanya memeriksa string `"UNIVERSAL_LIQUIDITY_SWEEP"` pada `setup_label`.
+   - Namun, M1A radar mengoper label berformat `"BEARISH_SWEEP"` atau `"BULLISH_SWEEP"`, sehingga setup sweep di ekstrem Dealing Range gagal memicu pengecualian hysteresis dan diblokir secara keliru oleh directional lock.
+
+---
+
+### Solusi Perbaikan Kode (`src/analytics/market_scanner.py`):
+1. **Propagasi Parameter `entry_price` pada M1A Sweep**:
+   - Pada blok `is_bearish_sweep`: mengoper `entry_price=ref_top` ke fungsi `_is_direction_allowed(-1, "BEARISH_SWEEP", entry_price=ref_top)`.
+   - Pada blok `is_bullish_sweep`: mengoper `entry_price=ref_bot` ke fungsi `_is_direction_allowed(1, "BULLISH_SWEEP", entry_price=ref_bot)`.
+2. **Perluasan Pengenalan Limit Setup & Boundary Tolerance**:
+   - Menambahkan string `"SWEEP"` ke dalam `is_limit_retest` di `_is_direction_allowed`, sehingga seluruh setup sweep diperlakukan sebagai limit order yang sadar konteks level batas.
+   - Pengecekan Mid-Chamber Trap melonggarkan filter jika setup sweep berada di batas chamber:
+     * SELL diperbolehkan jika `dr_pos >= 0.55` atau `entry_price >= c1_lvl - 0.35 * atr_val`.
+     * BUY diperbolehkan jika `dr_pos <= 0.45` atau `entry_price <= f1_lvl + 0.35 * atr_val`.
+   - Trap support/resistance membebaskan order limit jika harga entri berada di sisi aman level yang berlawanan (`entry_price >= f1_lvl + 0.40 * atr_val` untuk short atap $C_1$).
+3. **Harmonisasi String Matching Directional Hysteresis**:
+   - Memperbarui `is_m1a_sweep` pada evaluasi `sweep_reversal` agar mencakup `"UNIVERSAL_LIQUIDITY_SWEEP"`, `"BEARISH_SWEEP"`, dan `"BULLISH_SWEEP"`, seraya tetap mengecualikan varian M1B (`"M1B"` atau `"INDUCED"`).
+4. **Definisi Eksplisit Variabel Enclosing Scope `atr_val`**:
+   - Mendeklarasikan `atr_val = atr_pts * pt` sebelum pemanggilan `_is_direction_allowed` guna mencegah `UnboundLocalError`.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Unit Test Spesifik**:
+   - `tests/test_market_scanner.py` (`test_m1a_sweep_ceiling_trap_awareness_and_hysteresis_reversal`): **1/1 PASS (0.24s)**, memvalidasi lolosnya SELL M1A di ceiling $C_1$ tanpa terblokir trap support $F_1$, serta aktivasi `sweep_reversal` pada DR 91%.
+2. **Full Test Suites**:
+   - `tests/test_market_scanner.py`: **35/35 PASSED (100%)**.
+   - `tests/test_symbol_rotation.py`: **4/4 PASSED (100%)**.
+   - `tests/test_m1b_sweep.py`, `tests/test_fresh_breakout_and_net_rr.py`, `tests/test_macro_strategic_engine.py`: **20/20 PASSED (100%)**.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam V) — Perbaikan Monotonik Proximity Tiering F1/F2 dan C1/C2 pada Dashboard Visual
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Inversi Visual Label F1/F2 dan C1/C2 di Cockpit Chart (`dashboard.py`)**:
+   - Pada grafik instrumen yang mengalami tren ekspansi kuat (seperti `CADJPY` yang melakukan *waterfall drop* 500 pips dari 116 ke 111), visualisasi chart menampilkan anomali di mana:
+     * Label `C1 [G1]` melompat jauh ke level 115.077 (SMC H1 Order Block di puncak), melewati level resistance MSE di 111.861 dan 112.028.
+     * Level resistance yang lebih dekat ke harga (`112.028`) malah dilabeli sebagai `C2 [MSE] (Deep Resistance)`, sehingga di chart $C_2$ berada di bawah $C_1$.
+     * Begitu pula di sisi support: level floor yang paling dekat dengan harga (`111.258`) dilabeli sebagai `F2 [MSE] (Deep Support)`, sedangkan level floor yang jauh di dasar (`109.982`) dilabeli sebagai `F1 [G1]`, sehingga $F_2$ berada di atas $F_1$ (tertukar secara visual).
+2. **Akar Masalah di Logika Fallback `dashboard.py`**:
+   - Pada fungsi `get_symbol_detail`, klaster ZCE dan level fallback MSE disatukan tanpa pengurutan ulang berdasarkan kedekatan jarak fisik (*physical distance*) ke harga live.
+   - Pengecekan `has_f1` menghasilkan `True` karena ZCE menyumbang satu floor di 109.982 (berlabel `F1`), sehingga MSE $F_1$ terdekat diabaikan. Namun `has_f2` menghasilkan `False`, sehingga MSE $F_2$ (111.258) disisipkan sebagai slot `F2`, menghasilkan inversi visual.
+   - Di sisi engine eksekusi MT5 (`MarketScanner`), radar sebenarnya menggunakan level yang benar ($F_1 = 111.399, C_1 = 111.861$) karena ZCE yang jaraknya $> 2.0\times\text{ATR}$ (`imm_cap`) otomatis di-reject dan di-fallback ke MSE. Kesalahan murni berada pada perakitan visual dashboard.
+
+---
+
+### Solusi Perbaikan Kode (`dashboard.py`):
+1. **Penggabungan Menyeluruh & Deduplikasi Proksimitas**:
+   - Mengumpulkan seluruh kandidat floor ($p < \text{mid}$) dan ceiling ($p > \text{mid}$) dari ZCE ladder maupun MSE baseline.
+   - Mengeliminasi duplikasi zona dalam radius toleransi `proximity_thr = max(0.20 * atr_val, 4.0 * pip_val)` dengan mempertahankan skor bobot tertinggi.
+2. **Penetapan Tier Monotonik Berdasarkan Kedekatan Jarak ke Harga**:
+   - **Floors**: Diurutkan secara *strictly descending* ($p_0 > p_1 > p_2$). Level paling dekat ke harga ($p_0$) **mutlak ditetapkan sebagai F1**, level berikutnya ($p_1$) sebagai **F2**, dan level lebih dalam sebagai **F3/F4**.
+   - **Ceilings**: Diurutkan secara *strictly ascending* ($p_0 < p_1 < p_2$). Level paling dekat ke harga ($p_0$) **mutlak ditetapkan sebagai C1**, level berikutnya ($p_1$) sebagai **C2**, dan level lebih tinggi sebagai **C3/C4**.
+   - Menjamin 100% konsistensi matematis:
+     $$\text{C4} > \text{C3} > \text{C2} > \text{C1} > \text{Price} > \text{F1} > \text{F2} > \text{F3}$$
+   - Label dinding mempertahankan atribut sumbernya (misal `F1 [MSE] 111.399 (Support Wall)` dan `F2 [G1] 109.982 (3.1 • H1 • SMC)`).
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Verifikasi Runtime CADJPY**:
+   * $F_1 = 111.399$ (`F1 [MSE] Support Wall` — support terdekat di bawah harga).
+   * $F_2 = 109.982$ (`F2 [G1] SMC` — deep support di dasar).
+   * $C_1 = 111.856$ (`C1 [MSE] Resistance Wall` — resistance terdekat di atas harga).
+   * $C_2 = 112.026$ (`C2 [MSE] Deep Resistance` — resistance di atas C1).
+   * $C_3 = 115.077$ (`C3 [G1] SMC` — macro ceiling).
+   * $C_4 = 115.251$ (`C4 [G1] OB` — macro ceiling).
+2. **Unit Test Suite**:
+   * `tests/test_dashboard_btc_xray.py`: **2/2 PASS**.
+   * `tests/test_market_scanner.py`: **100% PASS**.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam IV) — Session-Aware NY Pacific Cross Lock (Opsi 2): Eliminasi Choppy Crosses AUD/NZD di Sesi New York
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Audit Empiris Kinerja Sesi AUD/NZD (14 Hari MT5 Deals & 118 Shadow Trades)**:
+   - Evaluasi kuantitatif menunjukkan disparitas performa ekstrem pada pair ber-driver Pasifik (AUD & NZD) antar-sesi:
+     * **Sesi Asia (07:00–14:00 WIB)**: AUD/NZD Crosses mencatat Win Rate **85.7%** (+$250.82) di deal riil MT5 dan Avg MFE **0.71R** (+6.15R) di shadow trades.
+     * **Sesi London (14:00–19:00 WIB)**: AUD/NZD Crosses mencatat Win Rate **71.4%** (+$326.32) di MT5 dan Avg MFE **0.51R** (+3.70R).
+     * **Sesi New York & Overlap (19:00–24:00 WIB)**: AUD/NZD Crosses anjlok menjadi sumber kerugian utama di MT5 (**-$148.04**, rugi di `EURNZD` -$140.67 dan `GBPAUD` -$19.35), Win Rate shadow runtuh ke **11.8%**, dan **Peak MFE ambruk dari 0.71R ke 0.38R**.
+2. **Karakter Mikrostruktur Pasar Sesi NY**:
+   - Pasar domestik Sydney dan Wellington telah tutup sejak pukul 14:00 WIB. Di sesi NY, cross non-USD (`EURNZD`, `GBPAUD`, `GBPNZD`, `AUDNZD`, `AUDCAD`, `NZDCAD`, `AUDCHF`, `NZDCHF`, `AUDJPY`, `NZDJPY`) kehilangan katalisator order flow primer dan terjebak dalam *choppy micro-range*.
+   - Rata-rata ekspansi harga (MFE 0.38R) tidak mampu mencapai trigger TP1 (0.45R–0.50R), mengakibatkan posisi menggantung sideways hingga tersapu time-decay atau lonjakan spread menjelang rollover subuh.
+   - Sebaliknya, **JPY Crosses** (`USDJPY`, `EURJPY`, `GBPJPY`) tetap likuid dan mencetak tren bersih di NY berkat korelasi kuat terhadap imbal hasil obligasi AS (US Treasury Yields) dan sentimen ekuitas Wall Street.
+   - Pasangan USD Majors (`AUDUSD` dan `NZDUSD`) tetap digerakkan oleh arus makro USD.
+
+---
+
+### Komponen & Solusi Utama (Opsi 2: Exotic/Cross-Only Lock):
+1. **Konfigurasi Parameter Sesi Baru (`.env` & `config.py`)**:
+   - `NY_SESSION_START_HOUR_WIB = 19`: Batas awal transisi menuju Sesi New York (19:00 WIB).
+   - `NY_LOCK_PACIFIC_CROSSES = true`: Flag perizinan penguncian cross AUD/NZD non-USD pada sesi NY.
+2. **Helper Klasifikasi Cross Pasifik `is_pacific_cross(symbol: str) -> bool` (`config.py`)**:
+   - Mengembalikan `True` untuk cross pair yang mengandung `AUD` atau `NZD`, tetapi secara eksplisit mengecualikan pasangan USD (`AUDUSD` dan `NZDUSD`) serta instrumen Crypto (`BTCUSD.c`).
+3. **Penyelarasan Gate Sesi Radar (`src/analytics/market_scanner.py`)**:
+   - Memperbarui fungsi `is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool`:
+     * **07:00–14:00 WIB (Asia)**: Hanya pair ber-driver Pasifik/Asia (`JPY`, `AUD`, `NZD`) yang aktif.
+     * **14:00–19:00 WIB (London Core)**: Seluruh 26 simbol FX aktif secara leluasa.
+     * **19:00–23:59 WIB (New York & Overlap)**:
+       - Cross AUD/NZD non-USD (`EURNZD`, `GBPAUD`, `GBPNZD`, `AUDNZD`, `AUDCAD`, `NZDCAD`, `AUDCHF`, `NZDCHF`, `AUDJPY`, `NZDJPY`) **di-lock 100% dari pemindaian**.
+       - `AUDUSD`, `NZDUSD`, seluruh `JPY Crosses`, serta seluruh *European/American majors & crosses* (`EURUSD`, `GBPUSD`, `USDCAD`, `USDCHF`, `EURGBP`, `EURCHF`, `GBPCHF`, `EURCAD`, `GBPCAD`) **tetap aktif**.
+     * **00:00–07:00 WIB (Dead Zone)**: Seluruh instrumen FX terkunci total. Crypto `BTCUSD` aktif 24/7.
+   - Menyatukan filter session-aware router di loop teratas `scan_fast_radar` agar tidak membuang resource CPU membaca tick dari simbol yang terkunci sesi.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Unit Test Suite**:
+   - `tests/test_market_scanner.py` (`test_session_aware_pair_filtering`): **1/1 PASSED (100%)**, memvalidasi blokir Pacific Crosses di jam 20:00 WIB dan kelolosan `AUDUSD`, `NZDUSD`, `USDJPY`, `EURUSD`.
+   - `tests/test_symbol_rotation.py`, `test_m2_pullback_and_corridor.py`, `test_m3_discount_guard_and_leapfrog.py`, `test_sep8_enhancements.py`: **27/27 PASSED (100%)**.
+   - Zero regression, zero missing imports.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam III) — Rekalibrasi Presisi Dealing Range M2/M3, Pembersihan Anti-Sweep SFP Veto, Perbaikan Control Flow Fall-Through M4, dan M4 Basing Symbol Resolver
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Penurunan Frekuensi Eksekusi Pasca-Guard M3 & Corridor M2**:
+   - Pasca commit `0169c59` yang memperkenalkan batas kaku Dealing Range (M3 BUY max 0.60, M3 SELL min 0.40, M2 BUY max 0.55, M2 SELL min 0.45), bot mengalami fenomena "jarang buka posisi" di sesi sore hingga malam.
+   - Di terminal CLI teramati dominasi status `WATCH` (22 pair) dengan hanya sedikit pair yang mencapai `GO` atau `ARM`, kendati pasar sedang bergerak dalam tren ekspansi sehat.
+2. **Audit Empiris 17 Pair Terblokir (16:00–18:00 WIB vs 20:00 WIB Live)**:
+   - Evaluasi kuantitatif terhadap 17 sinyal yang diblokir oleh radar menghasilkan temuan asimetri tajam:
+     * **Bad Blocks (8 Pair, +152.7 Pips Profit Terlewat)**: Pasangan mata uang major/cross dengan momentum tren kuat (USD, EUR, GBP) diblokir oleh batas kaku Dealing Range di 60%/40% padahal tren berlanjut menghasilkan runner besar:
+       - `GBPUSD` BUY (+29.0 pips)
+       - `USDJPY` SELL (+33.7 pips)
+       - `EURJPY` SELL (+25.5 pips)
+       - `AUDUSD` BUY (+13.7 pips)
+       - `USDCAD` SELL (+11.7 pips)
+       - `EURGBP` SELL (+11.7 pips)
+       - `AUDCAD` BUY (+10.7 pips)
+       - `EURUSD` BUY (+8.7 pips)
+     * **Good Blocks (4 Pair, -55.9 Pips Adverse Excursion Terselamatkan)**: Pasangan cross NZD yang sedang mengalami koreksi tajam berhasil diselamatkan dari kerugian berkat guard DR:
+       - `EURNZD` BUY (-31.8 pips adverse drop terselamatkan)
+       - `NZDCAD` SELL (+12.5 pips adverse bounce terselamatkan)
+       - `AUDNZD` BUY (-5.9 pips adverse drop terselamatkan)
+       - `GBPNZD` BUY (-5.7 pips adverse drop terselamatkan)
+     * **Neutral (5 Pair, +0.4 Pips)**: `EURCAD` (+1.3p), `GBPJPY` (+0.7p), `GBPCHF` (+0.9p), `AUDCHF` (-1.0p), `NZDCHF` (-1.5p).
+   - **Kesimpulan Kuantitatif**: Dealing Range kaku 60%/40% bekerja sangat baik menahan false breakdown pada pair yang exhaust (cross NZD), namun **terlalu restriktif** untuk pair dengan momentum katalisator institusional kuat (USD/EUR/GBP flow).
+3. **Penemuan Dua Bug Arsitektur Kritis di Kode**:
+   - **The `continue` Control Flow Starvation Bug (`market_scanner.py`)**:
+     * Di dalam loop utama `for sym in symbols:`, cabang kegagalan filter pada M2 (baris 3745, 3870) dan M3 (baris 4054, 4060, 4073, 4079, 4085, 4259, 4264, 4278, 4284, 4290) mengeksekusi statement `continue`.
+     * Hal ini menyebabkan jika sebuah simbol gagal pada filter M2 atau M3 (misal retest window atau DR guard), iterasi simbol tersebut langsung dihentikan dan **tidak pernah jatuh ke evaluasi M4 (Systemic Flow Continuation)** di baris 4401!
+   - **M4 Mode B Basing Symbol Resolution Bug (`market_scanner.py`)**:
+     * Pada helper `_m4_pending_ready`, pemanggilan `config.mt5.copy_rates_from_pos` menggunakan `sym_clean` (misal `"GBPNZD"` tanpa broker suffix `"-ECN"`), menyebabkan MT5 mengembalikan `None`.
+     * Blok fallback memanggil `mt5_connector.get_closed_bars`, yang sebenarnya tidak ada di `mt5_connector` (`AttributeError`).
+   - **Noise Veto pada Anti-Sweep SFP (`_detect_recent_sfp_absorption`)**:
+     * Logika SFP memeriksa `nearest_psych = round(b_lo / sub_step) * sub_step` (kelipatan 25 pips) dengan syarat wick hanya 28%. Akibatnya, noise wicking candle intraday biasa pada level psikologis minor memicu SFP rejection palsu.
+
+---
+
+### Solusi Rekalibrasi & Pembenahan Arsitektur:
+1. **Rekalibrasi Dealing Range Dual-Threshold M3 (`.env` & `config.py`)**:
+   - Menggeser batas absolut ekstrem sejati:
+     * `M3_MAX_DR_BUY` dinaikkan dari `0.60` ke `0.80` (hanya memblokir BUY di pucuk ekstrim $>80\%$).
+     * `M3_MIN_DR_SELL` diturunkan dari `0.40` ke `0.20` (hanya memblokir SELL di dasar jurang ekstrim $<20\%$).
+   - Menambahkan mekanisme syarat katalisator bersyarat di zona ekspansi:
+     * `M3_CATALYST_DR_BUY_THRESHOLD = 0.60`: BUY dengan DR antara 60%–80% wajib didukung katalisator flow institusional (CSM Net Delta $\ge 1.0$ atau SFR Pro-Flow aktif).
+     * `M3_CATALYST_DR_SELL_THRESHOLD = 0.40`: SELL dengan DR antara 20%–40% wajib didukung katalisator flow institusional (CSM Net Delta $\le -1.0$ atau SFR Pro-Flow aktif).
+2. **Pelebaran Koridor M2 Pullback (`.env` & `config.py`)**:
+   - `M2_MAX_DR_BUY` dinaikkan dari `0.55` ke `0.68` (hingga `0.75` jika didukung katalisator SFR/CSM).
+   - `M2_MIN_DR_SELL` diturunkan dari `0.45` ke `0.32` (hingga `0.25` jika didukung katalisator SFR/CSM).
+3. **Pembersihan Anti-Sweep SFP Veto (`market_scanner.py`)**:
+   - Menghapus pemeriksaan `nearest_psych` (kelipatan 25 pips) sepenuhnya dari deteksi SFP. SFP kini murni hanya mengaudit level makro sejati institusional: $F_1, C_1, \text{PWL}, \text{PWH}, \text{PDL}, \text{PDH}$.
+   - Menaikkan threshold rejection wick dari `0.28` (28%) menjadi `0.42` (42%) agar fluktuasi candle biasa tidak memicu false veto.
+4. **Perbaikan Control Flow Fall-Through M4 (`market_scanner.py`)**:
+   - Mengeliminasi seluruh statement `continue` abortif di cabang kegagalan validasi M2 dan M3.
+   - Mengonversi evaluasi M3 menjadi branching bersih dengan flag `m3_buy_candidate_ok` dan `m3_sell_candidate_ok`.
+   - Simbol yang tidak memenuhi kriteria retest atau filter M2/M3 kini secara mulus jatuh ke evaluasi M4 Systemic Flow Continuation.
+5. **Perbaikan M4 Basing Broker Symbol Resolution (`market_scanner.py`)**:
+   - Memastikan helper `_m4_pending_ready` memanggil `mt5_connector.get_valid_trade_symbol(sym_clean)` sehingga broker suffix (seperti `-ECN`) terpasang dengan benar.
+   - Memperbaiki pengecekan rates MT5 dengan penanganan null yang aman.
+6. **Penyelarasan Penuh `.env` dan `config.py`**:
+   - Menyelaraskan seluruh variabel konfigurasi baru di kedua file sesuai Rule 2.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+1. **Unit Test Suite**:
+   - `tests/test_m2_pullback_and_corridor.py`: **10/10 PASSED**.
+   - `tests/test_m3_discount_guard_and_leapfrog.py`: **8/8 PASSED**.
+   - `tests/test_sep8_enhancements.py`: **5/5 PASSED**.
+   - `tests/test_m1b_sweep.py`: **5/5 PASSED**.
+   - `tests/test_m4_flow_continuation.py`: **5/5 PASSED**.
+   - `tests/test_basing_box_and_csm_bailout.py`: **7/7 PASSED**.
+   - `tests/test_market_scanner.py`: **34/34 PASSED**.
+   - `tests/test_symbol_rotation.py`, `test_macro.py`, `test_time_decay_and_vol_regime.py`: **8/8 PASSED**.
+   - Total test terverifikasi: **100% PASS (Zero Failure, Zero Missing Imports)**.
+2. **Verifikasi Live Radar MT5**:
+   - Uji radar langsung pada akun live MT5 mendeteksi setup `AUDCAD-ECN TREND_ALIGNED_PULLBACK BUY @ 0.99601` dengan Dealing Range 63.2% dan Net RR 1.32R yang sebelumnya terblokir oleh guard kaku 55%.
+
+---
+
 ## 0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam II) — Posisi Setup Grade Badges di CLI dan Standardisasi ANSI Box Direct Execution
 
 ### Latar Belakang & Identifikasi Masalah:

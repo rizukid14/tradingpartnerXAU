@@ -449,8 +449,10 @@ COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
 
 # M2 Trend-Aligned Pullback Rules
-M2_MAX_DR_BUY = _getenv_float("M2_MAX_DR_BUY", 0.55)               # Maksimal DR 55% (Discount/Equilibrium bawah) untuk M2 BUY
-M2_MIN_DR_SELL = _getenv_float("M2_MIN_DR_SELL", 0.45)             # Minimal DR 45% (Premium/Equilibrium atas) untuk M2 SELL
+M2_MAX_DR_BUY = _getenv_float("M2_MAX_DR_BUY", 0.68)               # Maksimal DR 68% (Discount/Equilibrium bawah) untuk M2 BUY
+M2_MAX_DR_BUY_CATALYST = _getenv_float("M2_MAX_DR_BUY_CATALYST", 0.75) # Maksimal DR 75% untuk M2 BUY jika didukung katalisator SFR/CSM
+M2_MIN_DR_SELL = _getenv_float("M2_MIN_DR_SELL", 0.32)             # Minimal DR 32% (Premium/Equilibrium atas) untuk M2 SELL
+M2_MIN_DR_SELL_CATALYST = _getenv_float("M2_MIN_DR_SELL_CATALYST", 0.25) # Minimal DR 25% untuk M2 SELL jika didukung katalisator SFR/CSM
 M2_EMA_CORRIDOR_TOLERANCE_ATR = _getenv_float("M2_EMA_CORRIDOR_TOLERANCE_ATR", 0.35) # Max toleransi jarak anchor ke koridor EMA20/50
 
 # M3 Fresh Breakout & Displacement Rules
@@ -459,9 +461,11 @@ M3_MIN_DISPLACEMENT_BODY = _getenv_float("M3_MIN_DISPLACEMENT_BODY", 0.55) # Min
 M3_RETEST_DEBOUNCE_HOURS = _getenv_float("M3_RETEST_DEBOUNCE_HOURS", 2.0) # 2 bar H1 (120 menit) lock jika direject
 M3_M5_REJECTION_FILTER = _getenv_bool("M3_M5_REJECTION_FILTER", True) # Filter micro-rejection M5 anti-waterfall pada retest M3
 M3_M5_MIN_WICK_RATIO = _getenv_float("M3_M5_MIN_WICK_RATIO", 0.25)   # Minimal 25% rejection wick di M5
-M3_MIN_DR_SELL = _getenv_float("M3_MIN_DR_SELL", 0.40)           # Minimal DR 40% (Equilibrium/Premium) untuk M3 SELL
-M3_MAX_DR_BUY = _getenv_float("M3_MAX_DR_BUY", 0.60)             # Maksimal DR 60% (Discount/Equilibrium) untuk M3 BUY
-M3_SFP_REJECTION_WICK = _getenv_float("M3_SFP_REJECTION_WICK", 0.28) # Minimal wick ratio 28% untuk deteksi SFP absorption
+M3_MIN_DR_SELL = _getenv_float("M3_MIN_DR_SELL", 0.20)           # Minimal DR 20% (Batas ekstrim sejati dasar jurang) untuk M3 SELL
+M3_MAX_DR_BUY = _getenv_float("M3_MAX_DR_BUY", 0.80)             # Maksimal DR 80% (Batas ekstrim sejati pucuk) untuk M3 BUY
+M3_CATALYST_DR_BUY_THRESHOLD = _getenv_float("M3_CATALYST_DR_BUY_THRESHOLD", 0.60) # Ambang DR 60% BUY yang mewajibkan konfirmasi katalisator CSM/SFR
+M3_CATALYST_DR_SELL_THRESHOLD = _getenv_float("M3_CATALYST_DR_SELL_THRESHOLD", 0.40) # Ambang DR 40% SELL yang mewajibkan konfirmasi katalisator CSM/SFR
+M3_SFP_REJECTION_WICK = _getenv_float("M3_SFP_REJECTION_WICK", 0.42) # Minimal wick ratio 42% untuk deteksi SFP absorption makro sejati
 M3_SFP_LOOKBACK_BARS = _getenv_int("M3_SFP_LOOKBACK_BARS", 4)     # 4 bar H1 lookback untuk deteksi SFP absorption
 SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS = _getenv_int("SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180) # Jeda bernapas simbol 3 menit
 SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS = _getenv_int("SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 2700) # Lockout granular 45 menit per mekanisme & arah
@@ -708,10 +712,12 @@ SPREAD_ATR_FLOOR_PTS = _getenv_int("SPREAD_ATR_FLOOR_PTS", 20)        # floor mi
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 
-# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session) ---
+# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session & NY Pacific Lock) ---
 SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
 ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)
 ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
+NY_SESSION_START_HOUR_WIB     = _getenv_int("NY_SESSION_START_HOUR_WIB", 19)
+NY_LOCK_PACIFIC_CROSSES       = _getenv_bool("NY_LOCK_PACIFIC_CROSSES", True) # Opsi 2: Lock cross AUD/NZD non-USD di sesi NY
 
 # --- SESSION LOT MULTIPLIERS (8 Sep 2026) ---
 SESSION_ASIA_LOT_MULT   = _getenv_float("SESSION_ASIA_LOT_MULT", 1.2)
@@ -752,6 +758,20 @@ def is_asian_session_pair(symbol: str) -> bool:
     if is_crypto(s):
         return True
     return any(c in s for c in ("JPY", "AUD", "NZD"))
+
+def is_pacific_cross(symbol: str) -> bool:
+    """
+    Mengembalikan True jika simbol adalah cross pair AUD atau NZD selain USD majors (AUDUSD & NZDUSD).
+    Contoh cross: EURNZD, GBPAUD, GBPNZD, AUDNZD, AUDCAD, NZDCAD, AUDCHF, NZDCHF, AUDJPY, NZDJPY.
+    AUDUSD dan NZDUSD mengembalikan False (tetap diizinkan di sesi NY).
+    Crypto (BTCUSD) mengembalikan False.
+    """
+    s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    if is_crypto(s):
+        return False
+    if s in ("AUDUSD", "NZDUSD"):
+        return False
+    return ("AUD" in s) or ("NZD" in s)
 
 def is_high_beta_pair(symbol: str) -> bool:
     """True if symbol belongs to high-beta / wild crosses category (GBPAUD, GBPNZD, EURNZD, GBPCHF)."""

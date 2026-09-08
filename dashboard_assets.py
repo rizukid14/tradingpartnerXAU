@@ -1577,7 +1577,7 @@ function renderVerticalShading() {
       const y4 = traj.target_tp2 ? candleSeries.priceToCoordinate(traj.target_tp2) : null;
 
       if (x1 !== null && y1 !== null && x2 !== null && y2 !== null && y3 !== null) {
-        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(56, 189, 248, 0.90)" : "rgba(250, 204, 21, 0.90)"));
+        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(56, 189, 248, 0.90)" : ((s.type === "M1" || s.type === "M1B") ? "rgba(251, 146, 60, 0.95)" : "rgba(250, 204, 21, 0.90)")));
         const dir = traj.direction;
 
         shadingCtx.save();
@@ -1607,6 +1607,8 @@ function renderVerticalShading() {
           originTxt = (dir === -1) ? `1. Breakdown (${traj.origin_age}b ago)` : `1. Breakout (${traj.origin_age}b ago)`;
         } else if (s.type === "M2") {
           originTxt = `1. Pullback Origin (${traj.origin_age}b ago)`;
+        } else if (s.type === "M1" || s.type === "M1B") {
+          originTxt = (dir === -1) ? `1. Sweep High (${traj.origin_age}b ago)` : `1. Sweep Low (${traj.origin_age}b ago)`;
         } else {
           originTxt = `1. Origin (${traj.origin_age}b ago)`;
         }
@@ -1633,6 +1635,8 @@ function renderVerticalShading() {
           anchorTxt = (dir === -1) ? "2. SBR & EMA Touch" : "2. RBS & EMA Touch";
         } else if (s.type === "M2") {
           anchorTxt = "2. EMA Touch";
+        } else if (s.type === "M1" || s.type === "M1B") {
+          anchorTxt = (dir === -1) ? "2. Sweep Reclaim" : "2. Sweep Reclaim";
         } else {
           anchorTxt = (dir === -1) ? "2. SBR Retest" : "2. RBS Retest";
         }
