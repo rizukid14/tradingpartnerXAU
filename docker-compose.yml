@@ -8,6 +8,7 @@ services:
     image: tradingpartner:latest
     container_name: tradingpartner_bot
     restart: unless-stopped
+    # Port 8765: Quant Decision Cockpit Dashboard (http://localhost:8765)
     ports:
       - "8765:8765"
     extra_hosts:

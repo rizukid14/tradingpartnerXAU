@@ -4,6 +4,8 @@ import sys
 import json
 import threading
 import logging
+
+logger = logging.getLogger("trading_bot")
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -1456,6 +1458,7 @@ def main():
                                 exit_price=deal.get("exit_price", 0.0)
                             )
                         except Exception as e:
+                            print(f"[TELEMETRY CLOSE ERROR] {e}")
                             logger.error(f"[TELEMETRY CLOSE ERROR] {e}")
                         try:
                             tg.alert_trade_closed(
