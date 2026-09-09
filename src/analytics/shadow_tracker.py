@@ -306,21 +306,15 @@ class QuantShadowTracker:
             now_dt = datetime.now(WIB)
             now_iso = now_dt.isoformat()
 
-            # Deduplication check: Do not duplicate if identical active/pending trade exists
+            # Deduplication check: Do not duplicate if active or pending trade exists on same symbol & direction
             for existing in self.active_trades:
-                if existing.symbol == sym and existing.direction == dir_str and existing.setup_type == setup_type:
-                    # Check if created within last 30 minutes
-                    try:
-                        ex_time = datetime.fromisoformat(existing.created_at)
-                        elapsed_s = (now_dt - ex_time).total_seconds()
-                        if elapsed_s < 1800:
-                            logger.info(
-                                f"[SHADOW DEDUPLICATED] {sym} {dir_str} ({setup_type}) sudah aktif di Paper Trade "
-                                f"(ID: {existing.shadow_id}, status: {existing.status}, age: {elapsed_s/60:.1f}m < 30m)."
-                            )
-                            return None
-                    except Exception:
-                        pass
+                if existing.symbol == sym and existing.direction == dir_str:
+                    if existing.status in ("ACTIVE", "PENDING"):
+                        logger.info(
+                            f"[SHADOW DEDUPLICATED] {sym} {dir_str} sudah memiliki posisi {existing.status} di Paper Trade "
+                            f"(ID: {existing.shadow_id}, setup: {existing.setup_type}). Menolak pembukaan tiket concurrent duplikat."
+                        )
+                        return None
 
             rr = round(tp_points / sl_points, 2) if sl_points > 0 else 1.5
 
