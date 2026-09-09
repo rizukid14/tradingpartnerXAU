@@ -737,6 +737,12 @@ class MarketScanner:
             except Exception:
                 pass
 
+        if (rates is None or len(rates) < 4) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+            try:
+                rates = mt5_connector.get_closed_bars(sym_clean, count=6, timeframe=tf_basing)
+            except Exception:
+                pass
+
         if rates is not None and len(rates) >= 4:
             try:
                 chunk = rates[-4:]
@@ -782,7 +788,7 @@ class MarketScanner:
                 pass
 
         # ── 2. FALLBACK: Classic Horizon Deep Retest ──
-        if getattr(config, "M4_ALLOW_DEEP_RETEST", True):
+        if getattr(config, "M4_ALLOW_DEEP_RETEST", False):
             if side_key == "SELL":
                 in_deep = (level - band <= mid <= level + tol)
             else:
@@ -1992,11 +1998,11 @@ class MarketScanner:
                     if m4_dir == -1:
                         anchor_tag = f"F1 ({f1_gtag})" if (f1_floor > 0 and abs(m4_lvl - f1_floor) <= 0.60 * atr_val) else "Swing Low"
                         dest_tag = f" -> F2 ({f2_gtag})" if (f2_floor > 0 and f2_floor < m4_lvl) else ""
-                        m4_lbl = f"M4 SELL RETEST: {anchor_tag}{dest_tag}" if not p.get("is_basing") else f"M4 SELL BASING: {anchor_tag}{dest_tag}"
+                        m4_lbl = f"M4 SELL DBD BASING: {anchor_tag}{dest_tag}" if p.get("is_basing") else f"M4 SELL RETEST: {anchor_tag}{dest_tag}"
                     else:
                         anchor_tag = f"C1 ({c1_gtag})" if (c1_ceiling > 0 and abs(m4_lvl - c1_ceiling) <= 0.60 * atr_val) else "Swing High"
                         dest_tag = f" -> C2 ({c2_gtag})" if (c2_ceiling > 0 and c2_ceiling > m4_lvl) else ""
-                        m4_lbl = f"M4 BUY RETEST: {anchor_tag}{dest_tag}" if not p.get("is_basing") else f"M4 BUY BASING: {anchor_tag}{dest_tag}"
+                        m4_lbl = f"M4 BUY RBR BASING: {anchor_tag}{dest_tag}" if p.get("is_basing") else f"M4 BUY RETEST: {anchor_tag}{dest_tag}"
 
                     standbys.append({
                         "type": "M4",

@@ -1059,8 +1059,8 @@ def run_scanner_trading_cycle(cand, risk):
             is_split_tix = result.get("is_split_ticket", False)
             tp_mode = result.get("tp_mode", "STANDARD_TP1_TP2")
 
-            # M4 (SYSTEMIC_FLOW_CONTINUATION) & GRADE_B Wall Scalp: struktur 1 tiket murni — larang split 2 posisi & boost TP
-            _m4_single = (cand.setup_type == config.M4_SETUP_TYPE)
+            # M4 (DBD_RBR_BREAKOUT_CONTINUATION) & GRADE_B Wall Scalp: struktur 1 tiket murni — larang split 2 posisi & boost TP
+            _m4_single = (cand.setup_type in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"))
             _is_grade_b = (action_tier_val in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or setup_grade_val == "GRADE_B")
             num_positions = 2 if (not _m4_single and not _is_grade_b and is_split_tix and remaining_slots >= 2) else 1
             

@@ -159,11 +159,12 @@ class QuantShadowTracker:
                     matched_p = next((p for p in raw_pos if p.ticket == t.mt5_ticket), None)
                     if matched_p:
                         p_comment = str(getattr(matched_p, "comment", "")).upper()
-                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                             matches = ("TREND" in p_comment and "TREND" in t.setup_type) or \
                                       ("MULTI" in p_comment and "MULTI" in t.setup_type) or \
                                       ("UNIVER" in p_comment and "UNIVER" in t.setup_type) or \
-                                      ("FLOW" in p_comment and "FLOW" in t.setup_type)
+                                      ("FLOW" in p_comment and "FLOW" in t.setup_type) or \
+                                      (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in t.setup_type or "RBR" in t.setup_type))
                             if not matches:
                                 logger.info(f"[SHADOW DETACH] Detaching mismatched ticket #{t.mt5_ticket} from {t.shadow_id} ({t.setup_type} != {p_comment})")
                                 t.mt5_ticket = None
@@ -183,11 +184,12 @@ class QuantShadowTracker:
                         if (p.symbol == t.symbol or p_clean == clean_sym) and p_dir == t.direction:
                             p_comment = str(getattr(p, "comment", "")).upper()
                             matches = True
-                            if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                            if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                                 matches = ("TREND" in p_comment and "TREND" in t.setup_type) or \
                                           ("MULTI" in p_comment and "MULTI" in t.setup_type) or \
                                           ("UNIVER" in p_comment and "UNIVER" in t.setup_type) or \
-                                          ("FLOW" in p_comment and "FLOW" in t.setup_type)
+                                          ("FLOW" in p_comment and "FLOW" in t.setup_type) or \
+                                          (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in t.setup_type or "RBR" in t.setup_type))
                             if matches:
                                 t.mt5_ticket = p.ticket
                                 t.mt5_disposition = "EXECUTED_MT5"
@@ -434,11 +436,12 @@ class QuantShadowTracker:
                     matched_p = next((p for p in raw_mt5_pos if p.ticket == trade.mt5_ticket), None)
                     if matched_p:
                         p_comment = str(getattr(matched_p, "comment", "")).upper()
-                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                             matches = ("TREND" in p_comment and "TREND" in trade.setup_type) or \
                                       ("MULTI" in p_comment and "MULTI" in trade.setup_type) or \
                                       ("UNIVER" in p_comment and "UNIVER" in trade.setup_type) or \
-                                      ("FLOW" in p_comment and "FLOW" in trade.setup_type)
+                                      ("FLOW" in p_comment and "FLOW" in trade.setup_type) or \
+                                      (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in trade.setup_type or "RBR" in trade.setup_type))
                             if not matches:
                                 logger.info(f"[SHADOW DETACH] Detaching mismatched ticket #{trade.mt5_ticket} from {trade.shadow_id} ({trade.setup_type} != {p_comment})")
                                 trade.mt5_ticket = None
@@ -495,11 +498,12 @@ class QuantShadowTracker:
                             if (p.symbol == trade.symbol or p_clean == clean_tr_sym) and p_dir == trade.direction:
                                 p_comment = str(getattr(p, "comment", "")).upper()
                                 matches = True
-                                if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                                if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                                     matches = ("TREND" in p_comment and "TREND" in trade.setup_type) or \
                                               ("MULTI" in p_comment and "MULTI" in trade.setup_type) or \
                                               ("UNIVER" in p_comment and "UNIVER" in trade.setup_type) or \
-                                              ("FLOW" in p_comment and "FLOW" in trade.setup_type)
+                                              ("FLOW" in p_comment and "FLOW" in trade.setup_type) or \
+                                              (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in trade.setup_type or "RBR" in trade.setup_type))
                                 if matches:
                                     trade.mt5_ticket = p.ticket
                                     trade.mt5_disposition = "EXECUTED_MT5"
@@ -976,7 +980,7 @@ class QuantShadowTracker:
 
             for sid, t in all_resolved.items():
                 st = t.get("setup_type", "")
-                m_key = "M1" if "SWEEP" in st else ("M2" if "PULLBACK" in st else ("M3" if "BREAKOUT" in st else ("M4" if "FLOW" in st else "M1")))
+                m_key = "M4" if any(k in st for k in ("DBD", "RBR", "FLOW", "M4")) else ("M1" if "SWEEP" in st else ("M2" if "PULLBACK" in st else ("M3" if "BREAKOUT" in st else "M1")))
                 out = str(t.get("outcome", ""))
                 nr = float(t.get("net_r") or 0.0)
 

@@ -303,7 +303,8 @@ BREACHED_WALL_MIN_DISPLACEMENT = _getenv_float("BREACHED_WALL_MIN_DISPLACEMENT",
 # keputusan user "ikut data"), TP = M4_TP_R_MULT x R (1.1R; bukan 1.0R studi, bukan >=1.25R default).
 # Forward test AKTIF di akun live cent (ZCE_MODE=full). USDJPY di-exclude (studi #1: 48.1% < netral).
 M4_ENABLED = _getenv_bool("M4_ENABLED", True)
-M4_SETUP_TYPE = "SYSTEMIC_FLOW_CONTINUATION"
+M4_SETUP_TYPE = os.getenv("M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION")
+M4_ALLOW_DEEP_RETEST = _getenv_bool("M4_ALLOW_DEEP_RETEST", False)
 M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 1.5)      # EP_Z studi: ambang episode (z quote surge / base dump)
 M4_CONT_Z = _getenv_float("M4_CONT_Z", 0.75)           # episode bertahan selama |z| >= 0.75 salah satu sisi
 M4_FLOW_WARM_BARS = _getenv_int("M4_FLOW_WARM_BARS", 720)   # warm rolling z-score (studi WARM)

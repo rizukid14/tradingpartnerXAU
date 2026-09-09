@@ -2,6 +2,126 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Pagi II) — Pemurnian M4 ke DBD / RBR Breakout Continuation & Pemisahan Penuh SFC Layer 0 Directional Regime
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Redundansi Peran M4 vs M3**:
+   - Sebelumnya, M4 (`SYSTEMIC_FLOW_CONTINUATION`) memiliki fallback `M4_ALLOW_DEEP_RETEST = True` yang menembus ke level tembusan klasik (retest dalam). Hal ini bertabrakan secara fungsional dengan M3 (`BREAKOUT_RETEST`) yang secara khusus menangani retest SBR/RBS dengan konfirmasi M5 rejection wick.
+2. **Pemisahan Peran SFC (Systemic Flow Catalyst) di Layer 0**:
+   - Audit membuktikan bahwa fungsi penentu arah tren jangka pendek sudah ditangani secara mandiri di Layer 0 oleh `get_systemic_flow_regime()` (SFC/SFR), yang memberikan Veto Lock terhadap arah berlawanan dan *Supreme Precedence* (`FULL_ALLOW`) pada arah yang searah.
+   - Oleh karena itu, M4 dapat dimurnikan 100% menjadi eksekutor pola formasi konsolidasi lanjutan di luar batas tembusan (*High-Tight Basing* $\le 0.35\times\text{ATR}$ M15/M30), yaitu Drop-Base-Drop (DBD) untuk SELL dan Rally-Base-Rally (RBR) untuk BUY.
+
+---
+
+### Solusi Perbaikan Kode (Checklist 8 File Wajib):
+1. **`config.py` & `.env`**:
+   - Mengubah `M4_SETUP_TYPE = "DBD_RBR_BREAKOUT_CONTINUATION"`.
+   - Mengubah `M4_ALLOW_DEEP_RETEST = False` (mematikan fallback retest dalam).
+2. **`src/analytics/market_scanner.py`**:
+   - Mengubah standby label telemetry menjadi `M4 SELL DBD BASING` dan `M4 BUY RBR BASING`.
+   - Menyelaraskan fallback default `M4_ALLOW_DEEP_RETEST` menjadi `False`.
+   - Menambahkan fallback `mt5_connector.get_closed_bars` pada `_m4_pending_ready` untuk konsistensi data feed.
+3. **`src/core/consensus.py`**:
+   - Menyelaraskan filter M4 (`_apply_sltp_rules`, Pure Quant Grade S Elevation, anchor broken check) agar mengenali `DBD_RBR_BREAKOUT_CONTINUATION` dengan backward-compatibility penuh terhadap `SYSTEMIC_FLOW_CONTINUATION`.
+4. **`src/analytics/position_manager.py` & `main.py`**:
+   - Menyelaraskan identifikasi posisi M4 (`is_m4` dan `is_m4_order`) agar mengenali kata kunci komentar `DBD`, `RBR`, `M4`, dan `SYSTEM`.
+   - Menyelaraskan batasan 1 tiket murni (`_m4_single`) di `main.py`.
+5. **`src/analytics/shadow_tracker.py`**:
+   - Memperbaiki pengelompokan `m_key` pada statistik kuantitatif agar setup M4 berlabel `DBD` atau `RBR` dipetakan ke `"M4"` (bukan tertukar ke `"M3"` akibat kata `BREAKOUT`).
+   - Menyelaraskan rekonsiliasi komentar tiket MT5 (`DBD` / `RBR`).
+6. **`src/core/llm_client.py`**:
+   - Menyelaraskan string prompt dossier Stage 2 untuk merefleksikan `M4 DBD / RBR BREAKOUT CONTINUATION`.
+7. **`tests/test_m4_flow_continuation.py` & Test Suite**:
+   - Menambahkan unit test `test_m4_dbd_high_tight_basing_ready` dan `test_m4_deep_retest_blocked_by_default`.
+   - Seluruh test suite (203 tests) dipastikan **100% PASS**.
+8. **`docs/CHANGELOG_SEPTEMBER_2026.md` & `AGENTS.md`**:
+   - Pencatatan detail perubahan dan pembaruan terminologi arsitektur sistem.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Pagi I) — Quant Shadow Executive Audit Engine, Interactive Standalone Dashboard, dan Pengetatan Deduplikasi Shadow Tracker
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Bias Amplifikasi Tiket Duplikat pada Shadow Paper Tracker**:
+   - Audit telemetri menemukan bahwa pada gelombang tren yang panjang (seperti reli JPY tadi malam), re-trigger radar Stage 1 setiap 30 menit menghasilkan multi-tiket pada simbol dan arah yang sama (misalnya 4 tiket `CHFJPY SELL` aktif beriringan).
+   - Akibatnya, data paper shadow tampak mencatat puluhan posisi menang berturut-turut untuk satu pergerakan tren yang sama, mendistorsi rasio winrate dan R:R secara artifisial.
+2. **Kebutuhan Evaluasi Kuantitatif Opportunity Cost & Efisiensi Risk Gate**:
+   - Pengguna membutuhkan pembuktian data empiris apakah gate-gate pembatas bot (`MAX_OPEN_POSITIONS = 6`, `ANCHOR_TOO_WIDE`, filter risk) menyelamatkan modal (*Capital Saved*) atau membuang potensi keuntungan (*Lost Opportunity*).
+   - Diperlukan alat analitik CLI dan dashboard interaktif mandiri yang dapat membedah performa per mekanisme (M1–M4), Tier (`GRADE_S` s/d `GRADE_B`), ekskursi intra-trade (MFE vs MAE), dan efisiensi proteksi Break-Even (BEP).
+
+---
+
+### Solusi Perbaikan Kode:
+1. **Engine Analitik Kuantitatif Mandiri (`src/analytics/shadow_audit_engine.py`)**:
+   - Membaca `data/quant_shadow_trades.jsonl`, `data/quant_shadow_state.json`, dan histori deal MT5 langsung dari broker.
+   - **Dual-Mode De-biasing**:
+     - *Mode De-biased Legs (Default)*: Mengonsolidasikan tiket-tiket overlap pada pair dan arah yang sama menjadi 1 *Trade Leg Episode*, mengeliminasi distorsi multi-tiket.
+     - *Mode Raw Signals*: Menghitung setiap baris sinyal radar apa adanya untuk audit frekuensi trigger.
+   - **Metrik Kuantitatif Rigor**:
+     - *Wilson Score 95% Confidence Interval* untuk evaluasi winrate tanpa overclaim.
+     - *Counterfactual Opportunity Cost Delta ($\Delta R$)*: Menghitung selisih laba/rugi posisi yang di-skip (`SKIPPED_MAX_POSITIONS`, `SKIPPED_ANCHOR_TOO_WIDE`).
+     - *Edge Attribution*: Ranking winrate, profit factor, dan net R per mekanisme M1–M4 dan Tier Grade.
+     - *Excursion Dynamics*: Menghitung distribusi MFE dan MAE untuk memvalidasi batas Stop Loss dan titik pantul.
+     - *BEP Efficiency Index*: Mengukur persentase trade `SAVED_BY_BEP` vs `STOLEN_RUNNER`.
+2. **Root CLI Command (`shadow_audit.py`)**:
+   - Menghasilkan ringkasan ANSI box formatting tingkat institusional di terminal (`py shadow_audit.py [--open] [--days <N>]`).
+   - Otomatis mengompilasi dan meluncurkan dashboard HTML ke browser default.
+3. **Interactive Standalone Executive Dashboard (`docs/shadow_executive_audit.html`)**:
+   - Single-file self-contained HTML bertema *institutional dark mode* (`#080b11`), tipografi `Inter` + `JetBrains Mono`, 0% emoji.
+   - Dilengkapi *Dual-Mode Toggle Switch* instan (De-biased vs Raw), 5 kartu KPI eksekutif, comparative cumulative equity curve, gate disposition breakdown, scatter plot MFE vs MAE, dan interactive trade table dengan live search & sorting.
+4. **Pengetatan Deduplikasi Live di `src/analytics/shadow_tracker.py`**:
+   - Memperbaiki `register_trigger`: Menolak pembukaan tiket shadow baru jika pair & arah yang sama sudah memiliki posisi aktif atau pending (`existing.status in ("ACTIVE", "PENDING")`). Mencegah 100% tiket duplikat di masa depan.
+5. **Unit Test Suite Lengkap (`tests/test_shadow_audit_engine.py`)**:
+   - 4 unit test mandiri (ingestion, de-biasing, metrics, HTML generator) dengan hasil **100% PASS**.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+- **CLI Execution (`py shadow_audit.py`)**:
+  - Sample De-biased: 102 Resolved Legs (dari 169 Raw Triggers).
+  - MT5 Real Deals (48h): 59 Deals, Winrate 69.5%, Net Profit +$285.48, Profit Factor 1.22.
+  - Opportunity Cost: Lost Profit +2.51R vs Saved Drawdown +3.60R (Netto proteksi modal positif).
+  - Top Edge Mech: M3 Breakout Retest (Winrate 67.9%, +8.17R, PF 2.38).
+  - BEP Efficiency: 100.0% Saved (2 trade terselamatkan BEP dari SL penuh).
+- **Test Suite**: 201/201 tests passed (100% OK).
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam X) — Integrasi ZCE Station Runway Delivery, Fortress Shielding SL, dan Shadow Tracking untuk Aborted Trades
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Kekakuan Batas Dealing Range Persentase (M1..M4 False Blocks)**:
+   - Evaluasi kuantitatif membuktikan bahwa filter Dealing Range kaku (misal melarang BUY di >50% atau SELL di <50%) memblokir setup tren valid saat harga sedang berada dalam fase ekspansi menuju dinding ZCE berikutnya.
+2. **Ketiadaan Tracking untuk Trade yang Dibatalkan oleh SL/TP Rules (`ANCHOR_TOO_WIDE`)**:
+   - Trade valid yang dibatalkan oleh filter runway ZCE (seperti NZDUSD 143 pts < 193 pts floor) tidak tercatat di mana pun, sehingga pengguna tidak dapat mengukur *opportunity cost* dari aturan SL/TP tersebut.
+3. **Konkurensi File Locking di Windows (`shadow_tracker_state.json`)**:
+   - `dashboard.py` yang membaca status shadow tracker secara bersamaan dengan `main.py` terkadang memicu `[WinError 5] Access is denied` saat `_save_state()` mencoba me-replace file atomic.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **ZCE Station Runway Delivery & Eliminasi Batas Kaku DR**:
+   - Menggantikan batas Dealing Range kaku dengan validasi kapasitas runway ZCE ($\text{Runway} \ge 0.50\times\text{ATR}$ atau $\ge 0.75R$) dan proteksi anti-knife Wave Regime.
+   - Memberikan kelonggaran bagi setup M1..M4 untuk beroperasi selama tersedia ruang pergerakan leluasa menuju stasiun $C_1/F_1$ atau $C_2/F_2$.
+2. **Dynamic Fortress SL Shielding & Absorption di MSE**:
+   - Menempatkan jangkar Stop Loss di balik dinding ZCE terdekat dengan bantalan pelindung (*cushion*).
+   - Mode `ASCENDING_ABSORPTION` menuju $C_2$ untuk bias HTF Bullish, dan `DESCENDING_ABSORPTION` menuju $F_2$ untuk bias HTF Bearish.
+3. **Pencatatan Otomatis Shadow Paper Tracker untuk Aborted Trades**:
+   - Proposal order yang dibatalkan oleh aturan SL/TP atau kapasitas runway ZCE otomatis didaftarkan ke `shadow_tracker` dengan disposisi `"SKIPPED_ANCHOR_TOO_WIDE"` (ditandai dengan badge ungu `PAPER (ANCHOR_TOO_WIDE)` di dashboard).
+4. **Resiliensi File Locking Windows pada `shadow_tracker._save_state()`**:
+   - Menambahkan mekanisme retry hingga 5 kali dengan jeda exponential backoff dan fallback penulisan langsung untuk mengeliminasi error akses konkuren.
+5. **Indikator ZCE Runway Target di Dashboard**:
+   - Mengganti teks statis `DR: 50%` pada baris ke-3 kartu watchlist dashboard dengan badge cyan dinamis (misal `→C1: +28p`, `→F1: +42p`) beserta tooltip rasio ATR.
+   - Memperlebar clamp viewport grafik lilin menjadi $1.25\times\text{ATR}$ (minimal 80 pips) agar dinding $F_1/F_2$ dan $C_1/C_2$ selalu terlihat jelas.
+
+---
+
+### Hasil Pengujian & Verifikasi:
+- **Unit Test Suite**: 197/197 tests passed (100% OK).
+- **Live Verifikasi**: Cockpit dashboard menampilkan badge runway dinamis dan pencatatan shadow tracker berjalan mulus tanpa error locking.
+
+---
+
 ## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 8 September 2026 (Malam IX) — Pelepasan Batas Konsentrasi Keranjang Valas di .env dan Debouncing Soft Timing Hold pada SLTP Abort
 
 ### Latar Belakang & Identifikasi Masalah:

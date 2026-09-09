@@ -130,7 +130,7 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     # Catatan 3 Sep: M4 kini TIDAK LAGI bypass safety floor total agar tidak membuka
     # SL mikro (misal 29 pts pada EURCHF) yang memicu lot raksasa > 1.0 lot.
     # Nilai M4 di-clamp ke Segmented Safety Floor dan Net R:R (menutup komisi + spread).
-    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
+    if candidate is not None and getattr(candidate, "setup_type", "") in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"):
         _md = getattr(candidate, "metadata", None) or {}
         _m4_sl = int(_md.get("m4_sl_pts") or 0)
         _m4_tp = int(_md.get("m4_tp_pts") or 0)
@@ -294,7 +294,7 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             csm_delta = abs(float(getattr(candidate, "csm_delta", 0.0) or 0.0))
             wall_grade = str(md.get("zce_wall_grade", "") or md.get("target_grade", "") or "").upper()
             is_pure_quant_grade_s = (
-                (csm_z >= getattr(config, "GRADE_S_PURE_QUANT_MIN_Z", 1.80) or getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"))
+                (csm_z >= getattr(config, "GRADE_S_PURE_QUANT_MIN_Z", 1.80) or getattr(candidate, "setup_type", "") in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"))
                 and csm_delta >= getattr(config, "GRADE_S_PURE_QUANT_MIN_CSM_DELTA", 2.00)
                 and ("GRADE_3" in wall_grade or "MACRO" in wall_grade or tp_points >= int(sl_points * 2.50))
             )
@@ -964,7 +964,7 @@ def calculate_consensus(decisions, candidate=None):
     # ── M4: anchor limit sudah terlewati market → BATAL (no market conversion; jangan fade struktur jebol) ──
     _m4_anchor_broken = False
     _m4_anchor_reason = ""
-    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
+    if candidate is not None and getattr(candidate, "setup_type", "") in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"):
         try:
             from config import mt5
             tick = mt5.symbol_info_tick(cand_sym)

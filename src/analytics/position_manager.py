@@ -315,7 +315,7 @@ def manage_all_positions():
         # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
         # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
         # - Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
-        is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+        is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
         grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
         is_grade_b = "GRADE_B" in grade or "SCALP" in grade
 
@@ -374,7 +374,7 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
 
     # Skip partial close for Grade B Wall Scalps and M4 (Single sprint target, avoid wasting quota to broker commissions)
     grade = str(_ticket_setup_grades.get(pos.ticket, "")).upper()
-    is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+    is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
     if "GRADE_B" in grade or is_m4:
         return
 
@@ -709,7 +709,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     # Grade S: 65% TP (Give breathing room to swing)
     # Grade B / Defensive / Vacuum Extension (>= 2.0R): 35% TP (Fast defensive lock)
     # Grade A+/A: 50% TP (Standard)
-    is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+    is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
     grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
 
     # Hitung SL points awal untuk evaluasi R:R aktual
@@ -1068,7 +1068,7 @@ def audit_pending_orders_thesis():
                 except Exception:
                     return default
 
-            is_m4_order = "SYSTEM" in (getattr(ord_item, "comment", "") or "").upper()
+            is_m4_order = any(k in (getattr(ord_item, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
             open_px = _safe_num(ord_item.price_open, 0.0)
             sl_px = _safe_num(getattr(ord_item, 'sl', None), 0.0)
             tp_px = _safe_num(getattr(ord_item, 'tp', None), 0.0)
