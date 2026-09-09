@@ -2,15 +2,16 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 10 September 2026 (Pagi II) — Restorasi Proven ZCE Baseline, Hierarchical Confluence Melting (Pip-Aware Spacing) & 4-Station Natural Ladder
+## 81. Perubahan 10 September 2026 (Pagi II) — Restorasi Proven ZCE Baseline, Hierarchical Confluence Melting (Pip-Aware Spacing) & Pure Sequential 4-Station Natural Ladder
 
 ### Latar Belakang & Identifikasi Masalah:
 1. **Runway Tercekik (*Choked Runway*) Akibat Banjir Micro-Noise**:
    - Setelah integrasi multi-basket (CBSS), commit sebelumnya menginjeksi seluruh structural swings LuxSMC (`bullish_structures` dan `bearish_structures`) dari timeframe M30/H1 tanpa kurasi, memicu banjir primitif di ZCE.
    - Ambang toleransi peleburan yang hanya berbasis $0.25\times\text{ATR}$ tanpa batas pip minimal menyebabkan selisih $2.3\text{ pips}$ di EURUSD tidak melebur, melainkan membelah area yang sama menjadi 39 klaster kerdil terpisah.
    - Akibatnya, plafon C1, C2, C3 berderet tiap $6-8\text{ pips}$, memotong runway riil dan membuat radar mendeteksi benturan dinding semu.
-2. **Pemaksaan Kuota 8 Layer**:
+2. **Pemaksaan Kuota 8 Layer & Pembajakan Slot G3 (Lompatan 400 Pips)**:
    - Pemaksaan pengirisan hingga 8 level (`[:8]`) memenuhi chart visual dengan garis rapat seperti jeruji, padahal secara alami struktur pasar hanya memiliki 2–4 zona benteng utama di sekitar harga live.
+   - Mekanisme pembajakan slot terakhir oleh benteng makro G3 ekstrem menyebabkan lompatan artifisial 400–500 pips (misal C3 ke C4 GBPJPY melonjak ke 213.30, F3 ke F4 GBPNZD melonjak ke 2.2836).
 
 ---
 
@@ -24,12 +25,13 @@
      * Batas pemisah antar layer dinaikkan: `min_sep = max(0.50 * atr_h1, 15.0 * pip_val)`.
      * Batas layer dinormalkan ke **4 stasiun utama** (`limit = 4`: F1..F4 dan C1..C4) tanpa pemaksaan padding jika hanya ada 2 atau 3 zona sejati (misal AUDUSD F4/C2, AUDCAD F4/C1).
      * Memulihkan tinggi chamber minimum: `min_ch = max(0.60 * atr_h1, 15.0 * pip_val)`.
+     * Menghapus pembajakan slot G3 ekstrem sehingga progresi layer 100% murni sekuensial menjauh dari harga live.
 2. **`dashboard.py`**:
    - Menyelaraskan `proximity_thr` menjadi `max(0.40 * atr_val * tf_scale, 15.0 * pip_val)`.
-   - Menyelaraskan seleksi tangga display menjadi 4 stasiun (`limit = 4`), mempertahankan cadangan benteng G3 terluar di slot F4/C4.
+   - Menyelaraskan seleksi tangga display menjadi 4 stasiun sekuensial murni (`limit = 4`), menghapus pembajakan slot G3 ekstrem yang melompati zona riil 400 pips.
    - Chart TradingView visual kembali bersih, lega, dan menampilkan runway stasiun yang riil.
 3. **Hasil Verifikasi Kuantitatif**:
-   - **Unit Tests**: `pytest tests/ -q` $\rightarrow$ **242 PASSED (100% PASS)** dalam 47.49 detik.
+   - **Unit Tests**: `pytest tests/ -q` $\rightarrow$ **242 PASSED (100% PASS)** dalam 26.34 detik.
    - **Live MT5 Audit 26 Pasang Mata Uang**:
      * **0 ANOMALI INVERSI (100% VALID)**. Seluruh pasangan memenuhi $F_1 \le cur\_price \le C_1$.
      * Runway terbebas dari jeratan micro-noise: EURUSD C1 $+25.6\text{p}$, GBPUSD F1 $-19.4\text{p}$ / C1 $+17.4\text{p}$, GBPJPY F1 $-5.6\text{p}$ / C1 $+143.0\text{p}$.
@@ -37,7 +39,7 @@
 
 ---
 
-## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 10 September 2026 (Pagi) — ZCE Strict Physical Partitioning (Floor < Price < Ceiling), Eliminasi Anomali Inversi & Penyelarasan Native H1 (300 Bar Expanded)
+## 80. Perubahan 10 September 2026 (Pagi) — ZCE Strict Physical Partitioning (Floor < Price < Ceiling), Eliminasi Anomali Inversi & Penyelarasan Native H1 (300 Bar Expanded)
 
 ### Latar Belakang & Identifikasi Masalah:
 1. **Anomali Inversi Dinding ZCE (Physical Inversion Bug)**:
