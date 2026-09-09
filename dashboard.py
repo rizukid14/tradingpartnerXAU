@@ -254,8 +254,8 @@ def _consolidate_zce_zones(
     # Sort by price
     cands.sort(key=lambda x: x["price"])
 
-    # Cluster consolidation by proximity threshold
-    proximity_thr = max(0.20 * atr_val, 4.0 * pip_val)
+    # Cluster consolidation by proximity threshold (pip-aware self-adaptive)
+    proximity_thr = max(0.40 * atr_val, 15.0 * pip_val)
     grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
 
     merged_groups: List[List[Dict[str, Any]]] = []
@@ -522,6 +522,11 @@ class CockpitDataEngine:
             f2_p = float(macro.get("floor_f2", 0.0) or 0.0)
             struct_stage = str(macro.get("structural_stage") or "")
 
+            c1_dist_pips = round((c1_p - mid) / pip_val) if (c1_p > 0 and mid > 0 and c1_p > mid) else None
+            f1_dist_pips = round((mid - f1_p) / pip_val) if (f1_p > 0 and mid > 0 and mid > f1_p) else None
+            c1_text = f"C1: {c1_dist_pips}p" if c1_dist_pips is not None else "C1: —"
+            f1_text = f"F1: {f1_dist_pips}p" if f1_dist_pips is not None else "F1: —"
+
             runway_station = "—"
             runway_pips = 0.0
             runway_atr = 0.0
@@ -626,6 +631,10 @@ class CockpitDataEngine:
                 "runway_station": runway_station,
                 "runway_pips": round(runway_pips, 1),
                 "runway_atr": round(runway_atr, 2),
+                "c1_text": c1_text,
+                "f1_text": f1_text,
+                "c1_pips": c1_dist_pips,
+                "f1_pips": f1_dist_pips,
                 "basing_box": b_box_info,
                 "wave_regime": w_regime
             })
@@ -695,7 +704,7 @@ class CockpitDataEngine:
             "M5": config.mt5.TIMEFRAME_M5
         }
         mt5_tf = tf_map.get(timeframe_str.upper(), config.mt5.TIMEFRAME_H1)
-        num_bars = 24 if timeframe_str.upper() == "M5" else 150
+        num_bars = 60 if timeframe_str.upper() == "M5" else (180 if timeframe_str.upper() == "M30" else 300)
 
         rates = config.mt5.copy_rates_from_pos(valid_sym, mt5_tf, 0, num_bars + 50)
         candles = []
@@ -821,24 +830,41 @@ class CockpitDataEngine:
                 "tag": "BASELINE_DEEP_FLOOR"
             })
 
-        proximity_thr = max(0.20 * atr_val, 4.0 * pip_val)
+        tf_upper = timeframe_str.upper()
+        tf_scale = 0.8 if tf_upper == "M30" else (0.4 if tf_upper == "M5" else 1.0)
+        proximity_thr = max(0.40 * atr_val * tf_scale, 15.0 * pip_val)
+
+        def _elect_display_ladder(merged_items: List[Dict[str, Any]], is_ceil: bool, limit: int = 4) -> List[Dict[str, Any]]:
+            if not merged_items:
+                return []
+            # 100% Pure sequential progression outward from live price
+            return list(merged_items[:limit])
 
         # Sort floors strictly descending (highest price first, i.e. closest to mid first)
         raw_floors.sort(key=lambda x: -x["price"])
         merged_floors: List[Dict[str, Any]] = []
         for fl in raw_floors:
-            if not merged_floors:
-                merged_floors.append(fl)
-            else:
-                if abs(fl["price"] - merged_floors[-1]["price"]) <= proximity_thr:
-                    if fl.get("score", 0.0) > merged_floors[-1].get("score", 0.0):
-                        merged_floors[-1] = fl
-                else:
-                    merged_floors.append(fl)
+            matched = False
+            for mf in merged_floors:
+                if abs(fl["price"] - mf["price"]) <= proximity_thr:
+                    matched = True
+                    mf["band_low"] = min(mf.get("band_low", mf["price"]), fl.get("band_low", fl["price"]))
+                    mf["band_high"] = max(mf.get("band_high", mf["price"]), fl.get("band_high", fl["price"]))
+                    if fl.get("score", 0.0) > mf.get("score", 0.0) or (fl.get("grade") == "GRADE_3_MACRO" and mf.get("grade") != "GRADE_3_MACRO"):
+                        mf["price"] = fl["price"]
+                        mf["label"] = fl.get("label", mf.get("label"))
+                        mf["grade"] = fl.get("grade", mf.get("grade"))
+                        mf["score"] = max(mf.get("score", 0.0), fl.get("score", 0.0))
+                    break
+            if not matched:
+                merged_floors.append(dict(fl))
 
-        # Monotonically assign tiers F1, F2, F3... by distance to mid
+        merged_floors.sort(key=lambda x: -x["price"])
+
+        # Monotonically assign tiers F1, F2, F3... by distance to mid with macro reservation
+        selected_floors = _elect_display_ladder(merged_floors, is_ceil=False, limit=4)
         zce_floors = []
-        for idx, fl in enumerate(merged_floors[:8]):
+        for idx, fl in enumerate(selected_floors):
             tier_name = f"F{idx + 1}"
             fl_copy = dict(fl)
             fl_copy["tier"] = tier_name
@@ -885,18 +911,27 @@ class CockpitDataEngine:
         raw_ceils.sort(key=lambda x: x["price"])
         merged_ceils: List[Dict[str, Any]] = []
         for ce in raw_ceils:
-            if not merged_ceils:
-                merged_ceils.append(ce)
-            else:
-                if abs(ce["price"] - merged_ceils[-1]["price"]) <= proximity_thr:
-                    if ce.get("score", 0.0) > merged_ceils[-1].get("score", 0.0):
-                        merged_ceils[-1] = ce
-                else:
-                    merged_ceils.append(ce)
+            matched = False
+            for mc in merged_ceils:
+                if abs(ce["price"] - mc["price"]) <= proximity_thr:
+                    matched = True
+                    mc["band_low"] = min(mc.get("band_low", mc["price"]), ce.get("band_low", ce["price"]))
+                    mc["band_high"] = max(mc.get("band_high", mc["price"]), ce.get("band_high", ce["price"]))
+                    if ce.get("score", 0.0) > mc.get("score", 0.0) or (ce.get("grade") == "GRADE_3_MACRO" and mc.get("grade") != "GRADE_3_MACRO"):
+                        mc["price"] = ce["price"]
+                        mc["label"] = ce.get("label", mc.get("label"))
+                        mc["grade"] = ce.get("grade", mc.get("grade"))
+                        mc["score"] = max(mc.get("score", 0.0), ce.get("score", 0.0))
+                    break
+            if not matched:
+                merged_ceils.append(dict(ce))
 
-        # Monotonically assign tiers C1, C2, C3... by distance to mid
+        merged_ceils.sort(key=lambda x: x["price"])
+
+        # Monotonically assign tiers C1, C2, C3... by distance to mid with macro reservation
+        selected_ceils = _elect_display_ladder(merged_ceils, is_ceil=True, limit=4)
         zce_ceils = []
-        for idx, ce in enumerate(merged_ceils[:8]):
+        for idx, ce in enumerate(selected_ceils):
             tier_name = f"C{idx + 1}"
             ce_copy = dict(ce)
             ce_copy["tier"] = tier_name
@@ -1521,10 +1556,16 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         # 5. Web UI Root
         elif self.path in ("/", "/index.html", "/dashboard"):
-            html = TEMPLATE.encode("utf-8")
+            import importlib
+            import dashboard_assets
+            importlib.reload(dashboard_assets)
+            html = dashboard_assets.TEMPLATE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(html)))
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(html)

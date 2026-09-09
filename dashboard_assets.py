@@ -684,14 +684,14 @@ html, body {
   color: var(--cyan);
 }
 .chip-btn.active-green {
-  background: rgba(0, 230, 118, 0.14);
-  border-color: #00e676;
-  color: #00e676;
+  background: rgba(56, 189, 248, 0.14);
+  border-color: #38bdf8;
+  color: #38bdf8;
 }
 .chip-btn.active-red {
-  background: rgba(255, 82, 82, 0.14);
-  border-color: #ff5252;
-  color: #ff5252;
+  background: rgba(251, 191, 36, 0.14);
+  border-color: #fbbf24;
+  color: #fbbf24;
 }
 .chip-btn.active-purple {
   background: rgba(192, 132, 252, 0.14);
@@ -1154,8 +1154,8 @@ html, body {
         <span class="pair-title-big" id="active-symbol">—</span>
         <div class="tf-group">
           <button class="tf-btn active" data-tf="H1">H1 Structure</button>
-          <button class="tf-btn" data-tf="M30">M30 JPY</button>
-          <button class="tf-btn" data-tf="M5">M5 CRO Microscope</button>
+          <button class="tf-btn" data-tf="M30">M30 Swing</button>
+          <button class="tf-btn" data-tf="M5">M5 Micro</button>
         </div>
       </div>
       <div class="pair-metrics-strip">
@@ -1221,8 +1221,8 @@ html, body {
       <div class="filter-group">
         <span class="filter-strip-title">Filter 1-1:</span>
         <div class="chip-toggle-group" id="zce-chips-group">
-          <button class="chip-btn active-green" id="chip-floor" data-chip="floors" title="Toggle Lantai Support (F1, F2, F3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#00e676;">vertical_align_bottom</span> Floors</button>
-          <button class="chip-btn active-red" id="chip-ceil" data-chip="ceils" title="Toggle Atap Resistance (C1, C2, C3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#ff5252;">vertical_align_top</span> Ceils</button>
+          <button class="chip-btn active-green" id="chip-floor" data-chip="floors" title="Toggle Lantai Support (F1, F2, F3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">vertical_align_bottom</span> Floors</button>
+          <button class="chip-btn active-red" id="chip-ceil" data-chip="ceils" title="Toggle Atap Resistance (C1, C2, C3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#fbbf24;">vertical_align_top</span> Ceils</button>
           <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#c084fc;">radar</span> M1-M4</button>
           <button class="chip-btn active" id="chip-f1" data-chip="f1" title="Toggle Level F1">F1</button>
           <button class="chip-btn active" id="chip-c1" data-chip="c1" title="Toggle Level C1">C1</button>
@@ -1506,6 +1506,10 @@ function renderVerticalShading() {
     // Map and collect raw Y coordinates
     const mapped = [];
     activeRenderedLevels.forEach(lvl => {
+      // Hard Lock: Sisi kiri 100% khusus ZCE, drop seluruh label M1..M4
+      if (lvl.label && (lvl.label.startsWith("[M1") || lvl.label.startsWith("[M2") || lvl.label.startsWith("[M3") || lvl.label.startsWith("[M4") || lvl.label.includes("Macro SFP") || lvl.label.includes("Pullback") || lvl.label.includes("Retest)"))) {
+        return;
+      }
       const rawY = candleSeries.priceToCoordinate(lvl.price);
       if (rawY !== null && rawY >= 10 && rawY <= height - 10) {
         mapped.push({
@@ -1577,7 +1581,7 @@ function renderVerticalShading() {
       const y4 = traj.target_tp2 ? candleSeries.priceToCoordinate(traj.target_tp2) : null;
 
       if (x1 !== null && y1 !== null && x2 !== null && y2 !== null && y3 !== null) {
-        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(56, 189, 248, 0.90)" : ((s.type === "M1" || s.type === "M1B") ? "rgba(251, 146, 60, 0.95)" : "rgba(250, 204, 21, 0.90)")));
+        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(129, 140, 248, 0.90)" : ((s.type === "M1" || s.type === "M1B") ? "rgba(251, 146, 60, 0.95)" : "rgba(52, 211, 153, 0.90)")));
         const dir = traj.direction;
 
         shadingCtx.save();
@@ -1860,7 +1864,8 @@ function renderChartLevels(data) {
         if (isC1) return filterChipC1;
         if (isF2C2) return filterChipF2C2;
         if (isG3) return filterChipG3;
-        return false;
+        // Outer tiers (F3..F8, C3..C8) remain visible subject to Floor/Ceil direction toggle
+        return true;
       }
       return true;
     });
@@ -1868,23 +1873,28 @@ function renderChartLevels(data) {
 
   filteredLadder.forEach(w => {
     const isFloor = (w.type === "floor" || (w.tier && w.tier.startsWith("F")));
-    let color = isFloor ? "#00e676" : "#ff5252";
-    let lineWidth = 1;
-    let lineStyle = LightweightCharts.LineStyle.Solid;
+    const baseRgb = isFloor ? "56, 189, 248" : "251, 191, 36"; // Cyan / Amber
 
-    if (w.grade === "GRADE_3_MACRO" || w.tier === "F1" || w.tier === "C1") {
-      lineWidth = 2;
-      lineStyle = LightweightCharts.LineStyle.Solid;
-      color = isFloor ? "#00e676" : "#ff5252";
-    } else if (w.grade === "GRADE_2_INTERMEDIATE") {
-      lineWidth = 1.5;
-      lineStyle = LightweightCharts.LineStyle.Dashed;
-      color = isFloor ? "#4ade80" : "#f87171";
-    } else {
-      lineWidth = 1;
-      lineStyle = LightweightCharts.LineStyle.Dotted;
-      color = isFloor ? "rgba(74, 222, 128, 0.7)" : "rgba(248, 113, 113, 0.7)";
+    // Extract numeric tier (e.g. C1 -> 1, F5 -> 5, C8 -> 8)
+    let tierNum = 1;
+    const match = (w.tier || "").match(/[CF](\d+)/i);
+    if (match) {
+      tierNum = parseInt(match[1], 10);
     }
+
+    // Opacity: C1..C3 & F1..F3 = 100% (1.00)
+    // C4..C8 & F4..F8: reduced by 10% per tier above 3
+    // C4/F4 = 90% (0.90), C5/F5 = 80% (0.80), C6/F6 = 70% (0.70), C7/F7 = 60% (0.60), C8/F8 = 50% (0.50)
+    let tierOpacity = 1.0;
+    if (tierNum > 3) {
+      tierOpacity = Math.max(0.50, 1.0 - (tierNum - 3) * 0.10);
+    }
+
+    let color = `rgba(${baseRgb}, ${tierOpacity.toFixed(2)})`;
+    let lineWidth = (w.grade === "GRADE_3_MACRO" || tierNum === 1) ? 1.2 : 1;
+    let lineStyle = (w.grade === "GRADE_3_MACRO" || tierNum === 1)
+      ? LightweightCharts.LineStyle.Solid
+      : (w.grade === "GRADE_2_INTERMEDIATE" || tierNum <= 3 ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Dotted);
 
     const titleText = w.label || `${w.tier} (${w.price.toFixed(data.digits || 5)})`;
     activeRenderedLevels.push({
@@ -1910,18 +1920,12 @@ function renderChartLevels(data) {
     data.m_standbys.forEach(s => {
       let color = "#ffd740";
       if (s.type === "M1") color = "#fb923c";
-      else if (s.type === "M1B") color = "#e879f9";
-      else if (s.type === "M2") color = "#38bdf8";
+      else if (s.type === "M1B") color = "#ec4899";
+      else if (s.type === "M2") color = "#818cf8";
       else if (s.type === "M3") color = "#c084fc";
-      else if (s.type === "M4") color = "#facc15";
-
-      const standText = `[${s.type}] ${s.label} @ ${s.price.toFixed(data.digits || 5)}`;
-      activeRenderedLevels.push({
-        price: s.price,
-        color: color,
-        label: standText
-      });
-
+      else if (s.type === "M4") color = "#34d399";
+      // Sisi kiri khusus untuk ZCE (M1..M4 tidak dimasukkan ke activeRenderedLevels)
+      // Visualisasi M1..M4 digambar langsung di dalam chart (dashed line & candle markers)
       // 1. Dashed Price Line (Garis Putus-Putus Presisi)
       const line = candleSeries.createPriceLine({
         price: s.price,
@@ -2129,7 +2133,15 @@ function renderWatchlist(pairs) {
     const biasTagClass = bName.includes("BULL") ? "htf-bull" : (bName.includes("BEAR") ? "htf-bear" : "htf-flat");
     const pipsVal = p.dist_pips !== undefined ? p.dist_pips.toFixed(1) : "0.0";
     const atrVal = p.dist_atr !== undefined ? p.dist_atr.toFixed(2) : "0.00";
-    const distText = p.dist_atr < 50 ? `${pipsVal}p (${atrVal}x ATR)` : ">50p (Idle)";
+    const trigText = p.dist_atr < 50 ? `Trig: ${pipsVal}p (${atrVal}x)` : "Trig: Idle";
+
+    let cleanSetup = (p.active_setup || "WATCH");
+    if (cleanSetup !== "WATCH") {
+      cleanSetup = cleanSetup.replace(/\s+(BEAR|BULL|BUY|SELL)$/i, "").trim() || cleanSetup;
+    }
+
+    const c1Text = p.c1_text || (p.c1_pips !== undefined && p.c1_pips !== null ? `C1: ${p.c1_pips}p` : 'C1: —');
+    const f1Text = p.f1_text || (p.f1_pips !== undefined && p.f1_pips !== null ? `F1: ${p.f1_pips}p` : 'F1: —');
 
     let m4RowClass = "";
     let m4Pill = "";
@@ -2144,7 +2156,7 @@ function renderWatchlist(pairs) {
     const boxPill = (p.basing_box && p.basing_box.is_compressing)
       ? `<span class="box-compress-pill" title="Dynamic Basing Box: ${p.basing_box.box_bars} bars, ${p.basing_box.range_atr.toFixed(2)}x ATR [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">view_in_ar</span> BOX ${p.basing_box.box_bars}b</span>`
       : ((p.basing_box && p.basing_box.is_broken && p.basing_box.broken_recency <= 4)
-        ? `<span class="box-compress-pill" style="border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,0.1);" title="Basing Box Retest: Broken ${p.basing_box.broken_recency}b ago [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">history</span> RETEST ${p.basing_box.box_bars}b</span>`
+        ? `<span class="box-compress-pill" style="border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,0.1);" title="Basing Box Retest: Broken ${p.basing_box.broken_recency}b ago [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">history</span> BRK ${p.basing_box.box_bars}b</span>`
         : '');
 
     html += `
@@ -2160,24 +2172,26 @@ function renderWatchlist(pairs) {
             <span class="tier-badge ${tierClass}">${p.perm_label}</span>
           </div>
         </div>
-        <!-- Line 2: Setup Pill, HTF Bias -->
+        <!-- Line 2: Setup Pill, C1 Wall (Top), HTF Bias -->
         <div class="pair-row-line">
           <div class="pair-col-left">
-            <span class="pair-setup-pill ${setupPillClass}">${p.active_setup || "WATCH"}</span>
+            <span class="pair-setup-pill ${setupPillClass}">${cleanSetup}</span>
             ${p.extra_count > 0 && !p.is_confluence ? `<span class="extra-setup-pill" title="${p.extra_count} additional standby setup(s)" style="margin-left:2px;">+${p.extra_count}</span>` : ''}
           </div>
-          <div class="pair-col-mid"></div>
+          <div class="pair-col-mid">
+            <span style="color:#fbbf24;font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="Ceiling Wall C1 Distance">${c1Text}</span>
+          </div>
           <div class="pair-col-right">
             <span class="htf-bias-tag ${biasTagClass}">${p.bias}</span>
           </div>
         </div>
-        <!-- Line 3: Distance, Dealing Range %, Basing Box & M4 Shock Badge -->
+        <!-- Line 3: Trigger Distance, F1 Floor (Bottom), Basing Box & M4 Shock Badge -->
         <div class="pair-row-line">
           <div class="pair-col-left">
-            <span class="pair-dist-text">${distText}</span>
+            <span class="pair-dist-text">${trigText}</span>
           </div>
           <div class="pair-col-mid">
-            <span style="color:var(--cyan);font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="ZCE Runway Target: ${p.runway_text || '—'}">${p.runway_badge || 'RW: —'}</span>
+            <span style="color:#38bdf8;font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="Floor Wall F1 Distance">${f1Text}</span>
           </div>
           <div class="pair-col-right" style="gap:3px;">
             ${boxPill}
@@ -2418,16 +2432,16 @@ function renderDrawer() {
           <div class="tele-row"><span class="tele-lbl">Reclaim Status:</span><span class="tele-val">${t.m1_reclaim || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1_wick || '0.0% (Req >=33%)'}</span></div>
         </div>
-        <div class="telemetry-card" style="border-top: 2px solid #e879f9;">
-          <div class="tele-title" style="color:#e879f9;">M1B: Trend Induced Sweep</div>
-          <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#e879f9;font-weight:700;">${t.m1b_target || '—'}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Liquidity Pool:</span><span class="tele-val" style="color:#e879f9;">${t.m1b_eqh || 'Single Anchor'}</span></div>
+        <div class="telemetry-card" style="border-top: 2px solid #ec4899;">
+          <div class="tele-title" style="color:#ec4899;">M1B: Trend Induced Sweep</div>
+          <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#ec4899;font-weight:700;">${t.m1b_target || '—'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Liquidity Pool:</span><span class="tele-val" style="color:#ec4899;">${t.m1b_eqh || 'Single Anchor'}</span></div>
           <div class="tele-row"><span class="tele-lbl">ZCE Confluence:</span><span class="tele-val">${t.m1b_zce || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Sweep Status:</span><span class="tele-val">${t.m1b_status || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1b_wick || '0.0% (Req >=30%)'}</span></div>
         </div>
-        <div class="telemetry-card" style="border-top: 2px solid #38bdf8;">
-          <div class="tele-title" style="color:#38bdf8;">M2: Trend Pullback Retest</div>
+        <div class="telemetry-card" style="border-top: 2px solid #818cf8;">
+          <div class="tele-title" style="color:#818cf8;">M2: Trend Pullback Retest</div>
           <div class="tele-row"><span class="tele-lbl">ADX Trend Strength:</span><span class="tele-val">${t.m2_adx || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Fib 50% Level:</span><span class="tele-val">${t.m2_fib50 || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Fib 61.8% Pocket:</span><span class="tele-val">${t.m2_fib618 || '—'}</span></div>
@@ -2437,11 +2451,11 @@ function renderDrawer() {
           <div class="tele-title" style="color:#c084fc;">M3: Breakout Retest Guard</div>
           <div class="tele-row"><span class="tele-lbl">Broken SBR/RBS:</span><span class="tele-val">${t.m3_level || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">15-Bar Recency:</span><span class="tele-val">${t.m3_recency || 'PASS'}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Basing Box:</span><span class="tele-val" style="color:#38bdf8;">${t.m3_basing || '—'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Basing Box:</span><span class="tele-val" style="color:#818cf8;">${t.m3_basing || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Target Runway:</span><span class="tele-val">${t.m3_runway || '1.40x ATR (Req >=0.8x)'}</span></div>
         </div>
-        <div class="telemetry-card" style="border-top: 2px solid #facc15;">
-          <div class="tele-title" style="color:#facc15;">M4: Systemic Flow Continuation</div>
+        <div class="telemetry-card" style="border-top: 2px solid #34d399;">
+          <div class="tele-title" style="color:#34d399;">M4: Systemic Flow Continuation</div>
           <div class="tele-row"><span class="tele-lbl">Currency Z-Score:</span><span class="tele-val">${t.m4_z || '—'} (Req >=1.5)</span></div>
           <div class="tele-row"><span class="tele-lbl">120-Bar Breakdown:</span><span class="tele-val">${t.m4_breakdown || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Structural SL/TP:</span><span class="tele-val">SL 0.45x ATR | TP 1.1R</span></div>
@@ -2506,7 +2520,7 @@ function renderDrawer() {
           <td style="color:${(mechs.M1?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M1?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M1?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
-          <td style="color:#38bdf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
+          <td style="color:#818cf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
           <td>${mechs.M2?.total || 0}</td><td>${mechs.M2?.tp || 0}</td><td>${mechs.M2?.sl || 0}</td><td>${mechs.M2?.bep || 0}</td>
           <td>${((mechs.M2?.tp || 0) + (mechs.M2?.sl || 0)) > 0 ? (((mechs.M2.tp || 0) / ((mechs.M2.tp || 0) + (mechs.M2.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M2?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M2?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M2?.net_r || 0).toFixed(2)}R</td>
@@ -2518,7 +2532,7 @@ function renderDrawer() {
           <td style="color:${(mechs.M3?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M3?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M3?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
-          <td style="color:#facc15;font-weight:700;">M4: Systemic Flow Continuation</td>
+          <td style="color:#34d399;font-weight:700;">M4: Systemic Flow Continuation</td>
           <td>${mechs.M4?.total || 0}</td><td>${mechs.M4?.tp || 0}</td><td>${mechs.M4?.sl || 0}</td><td>${mechs.M4?.bep || 0}</td>
           <td>${((mechs.M4?.tp || 0) + (mechs.M4?.sl || 0)) > 0 ? (((mechs.M4.tp || 0) / ((mechs.M4.tp || 0) + (mechs.M4.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M4?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M4?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M4?.net_r || 0).toFixed(2)}R</td>

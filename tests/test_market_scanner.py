@@ -1204,10 +1204,12 @@ class TestMarketScanner(unittest.TestCase):
             {'open': 1.35560, 'high': 1.35620, 'low': 1.35540, 'close': 1.35545, 'time': int(now_ts - 300)}
         ]
 
-        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
-            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch.object(config, 'ENABLE_NIGHT_FREEZE', False):
-                    with patch("src.analytics.economic_calendar.calendar", None):
+        dt_session = datetime(2026, 9, 10, 15, 0, tzinfo=WIB)
+        with patch("src.analytics.market_scanner.datetime") as mock_dt:
+            mock_dt.now.return_value = dt_session
+            mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+            with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+                    with patch.object(config, 'ENABLE_NIGHT_FREEZE', False), patch("src.analytics.economic_calendar.calendar", None):
                         with patch("config.mt5.copy_rates_from_pos", return_value=sweep_rates):
                             with patch.object(self.scanner, '_evaluate_live_candle_quality', return_value={
                                 'live_high': 1.35620,

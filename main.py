@@ -4,6 +4,7 @@ import sys
 import json
 import threading
 import logging
+logger = logging.getLogger("trading_bot")
 # Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -650,8 +651,8 @@ def _detect_filled_pending(scanner=None):
 def run_scanner_trading_cycle(cand, risk):
     """
     Stage 2 Funnel Execution:
-    Triggered when Stage 1 Python Quant Scanner identifies an A+ setup on one of 22 pairs.
-    Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
+    Triggered when Stage 1 Python Quant Scanner identifies an A+ setup on 26 pairs.
+    Fetches live candles, runs 2-Pass Cross-Examination Jury (or Pure Quant Direct Execution), and dispatches MT5 order.
     """
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
@@ -1581,7 +1582,8 @@ def main():
 
                             t_now_str = time.strftime('%H:%M:%S')
                             if candidates:
-                                print(f" {UI.GREEN}[{t_now_str} RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Diteruskan ke 3-LLM Jury.")
+                                target_engine = "3-LLM Jury" if getattr(config, "ENABLE_LLM_JURY", True) else "Pure Quant Direct Execution (No-LLM)"
+                                print(f" {UI.GREEN}[{t_now_str} RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Diteruskan ke {target_engine}.")
                                 _last_radar_log_time = now_epoch
                                 _last_radar_state_signature = _curr_signature
                             elif _state_changed or _time_for_heartbeat:
@@ -1659,7 +1661,7 @@ def main():
             _radar_anim_idx = (_radar_anim_idx + 1) % len(_radar_frames)
             anim_icon = _radar_frames[_radar_anim_idx]
             n_active = len(scanner.macro_cache) if (scanner and scanner.macro_cache) else len(config.get_scanner_symbols())
-            label_hdr = f"QUANT RADAR {anim_icon} ({n_active} Pairs)"
+            label_hdr = f"POOL {n_active} PAIRS (H1) {anim_icon}"
             
             # Live Radar States & Watchlist AoV Line
             radar_state_line = ""
@@ -1707,8 +1709,8 @@ def main():
 
                 radar_watch_line = (
                     f"  ├─ {UI.GRAY}Radar Siaga :{UI.RST} "
-                    f"🛒 Diskon: {UI.GREEN}{disc_str}{UI.RST} │ "
-                    f"🏷️ Premium: {UI.RED}{prem_str}{UI.RST}"
+                    f"[DISCOUNT] {UI.CYAN}{disc_str}{UI.RST} │ "
+                    f"[PREMIUM] {UI.YELLOW}{prem_str}{UI.RST}"
                 )
 
             csm_m15_line = ""

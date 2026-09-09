@@ -53,6 +53,9 @@ ZCE_W_KIND: Dict[str, float] = {
 }
 ZCE_HORIZON_BOOST: List[tuple] = [(100, 1.00), (150, 1.10), (250, 1.20), (10_000, 1.30)]
 
+CEIL_KINDS = {"SWING_HIGH", "EQH", "LAST_HIGH", "FRVP_VAH", "OB_BEAR", "FVG_BEAR", "C_ASIAN_HIGH", "C_PDH", "C_PWH"}
+FLOOR_KINDS = {"SWING_LOW", "EQL", "LAST_LOW", "FRVP_VAL", "OB_BULL", "FVG_BULL", "F_ASIAN_LOW", "F_PDL", "F_PWL"}
+
 
 def _horizon_boost(h: int, cap: float = 1.35) -> float:
     for limit, boost in ZCE_HORIZON_BOOST:
@@ -120,6 +123,7 @@ class ZoneCluster:
     is_vacuum: bool = False
     touch_count: int = 0
     last_touch_h1_bars_ago: Optional[int] = None
+    inherent_role: str = ""
 
     @property
     def mid(self) -> float:
@@ -196,7 +200,7 @@ class ZoneConfluenceEngine:
         p = params or {}
         self.grid = p.get("grid", ZCE_GRID)
         self.w_tf = p.get("w_tf", ZCE_W_TF)
-        self.w_kind = p.get("w_kind", ZCE_W_KIND)
+        self.w_kind = dict(p.get("w_kind", ZCE_W_KIND))
         self.grade_g2 = p.get("grade_g2", 3.5)
         self.grade_g3 = p.get("grade_g3", 6.5)
         self.merge_atr_mult = p.get("merge_atr_mult", 0.25)
@@ -206,10 +210,14 @@ class ZoneConfluenceEngine:
         self.tp_reach_atr = p.get("tp_reach_atr", 3.0)
         self.frvp_tfs = p.get("frvp_tfs", ZCE_FRVP_TFS)
         self.swing_length = p.get("swing_length", ZCE_SWING_LENGTH)
-        # Cap jarak dinding immediate (dalam satuan ATR_H1): jika zona terdekat
-        # lebih jauh dari cap, ZCE menyerahkan sisi tsb ke MSE baseline (fallback).
-        # Spesifikasi verifikasi INV-2 menuntut <= 2.0x ATR_H1 (bug "level kabur jauh").
-        self.max_imm_atr = p.get("max_imm_atr", 2.0)
+        self.max_imm_atr = p.get("max_imm_atr", float(getattr(config, "ZCE_MAX_IMM_ATR", 4.0)))
+        self.max_cluster_width_atr = p.get("max_cluster_width_atr", float(getattr(config, "ZCE_MAX_CLUSTER_WIDTH_ATR", 1.0)))
+
+    def _get_kind_weight(self, kind: str) -> float:
+        if kind in self.w_kind:
+            return self.w_kind[kind]
+        base_kind = kind.split("_")[0]
+        return self.w_kind.get(base_kind, 0.5)
 
     # ------------------------------------------------------------------ #
     # 1. Koleksi primitif per sel (tf, horizon)
@@ -222,6 +230,17 @@ class ZoneConfluenceEngine:
             return out
         swing = self.swing_length.get(tf, 5)
         horizons = [h for h in self.grid.get(tf, []) if h <= len(df)]
+
+        # Kalkulasi ATR timeframe lokal untuk ketebalan realistis wick-to-body
+        tr = np.maximum(
+            df["high"].to_numpy(dtype=float)[1:] - df["low"].to_numpy(dtype=float)[1:],
+            np.maximum(
+                np.abs(df["high"].to_numpy(dtype=float)[1:] - df["close"].to_numpy(dtype=float)[:-1]),
+                np.abs(df["low"].to_numpy(dtype=float)[1:] - df["close"].to_numpy(dtype=float)[:-1])
+            )
+        )
+        atr_tf = float(np.mean(tr[-20:])) if len(tr) >= 20 else (float(np.mean(tr)) if len(tr) > 0 else 10.0 * point_size)
+
         for h in horizons:
             w = df.iloc[-h:]
             try:
@@ -234,35 +253,62 @@ class ZoneConfluenceEngine:
             idx0 = len(df) - h  # offset global bar
             # Order blocks (bullish = demand/support, bearish = supply/resistance)
             for ob in getattr(sig, "order_blocks_bullish", []) or []:
-                out.append(ZonePrimitive("OB", tf, h, float(ob["top"]), float(ob["bottom"]),
+                out.append(ZonePrimitive("OB_BULL", tf, h, float(ob["top"]), float(ob["bottom"]),
                                          index_age=int(ob.get("index", 0)) + idx0))
             for ob in getattr(sig, "order_blocks_bearish", []) or []:
-                out.append(ZonePrimitive("OB", tf, h, float(ob["top"]), float(ob["bottom"]),
+                out.append(ZonePrimitive("OB_BEAR", tf, h, float(ob["top"]), float(ob["bottom"]),
                                          index_age=int(ob.get("index", 0)) + idx0))
             # FVG
             for fv in getattr(sig, "fvg_bullish", []) or []:
-                out.append(ZonePrimitive("FVG", tf, h, float(fv["top"]), float(fv["bottom"]),
+                out.append(ZonePrimitive("FVG_BULL", tf, h, float(fv["top"]), float(fv["bottom"]),
                                          index_age=int(fv.get("index", 0)) + idx0))
             for fv in getattr(sig, "fvg_bearish", []) or []:
-                out.append(ZonePrimitive("FVG", tf, h, float(fv["top"]), float(fv["bottom"]),
+                out.append(ZonePrimitive("FVG_BEAR", tf, h, float(fv["top"]), float(fv["bottom"]),
                                          index_age=int(fv.get("index", 0)) + idx0))
-            # EQH / EQL
+
+            # EQH / EQL Liquidity Pools sebagai Zonal Bands
             for e in getattr(sig, "equal_highs", []) or []:
-                p = float(e["price"])
-                out.append(ZonePrimitive("EQH", tf, h, p, p, index_age=0))
+                indices = e.get("indices", [])
+                if len(indices) == 2 and 0 <= indices[0] < len(w) and 0 <= indices[1] < len(w):
+                    h1 = float(w.iloc[indices[0]]["high"])
+                    h2 = float(w.iloc[indices[1]]["high"])
+                    top = max(h1, h2)
+                    bot = min(h1, h2) - 0.05 * atr_tf
+                    out.append(ZonePrimitive("EQH", tf, h, top, bot, index_age=0))
+                else:
+                    p = float(e["price"])
+                    out.append(ZonePrimitive("EQH", tf, h, p + 0.05 * atr_tf, p - 0.05 * atr_tf, index_age=0))
+
             for e in getattr(sig, "equal_lows", []) or []:
-                p = float(e["price"])
-                out.append(ZonePrimitive("EQL", tf, h, p, p, index_age=0))
-            # Confirmed LuxSMC Structural Swings (HH, LH, HL, LL)
-            for sh in getattr(sig, "bullish_structures", []) or []:
-                p = float(sh["price"])
-                out.append(ZonePrimitive("SWING_HIGH", tf, h, p, p, index_age=int(sh.get("index", 0)) + idx0))
-            for sl in getattr(sig, "bearish_structures", []) or []:
-                p = float(sl["price"])
-                out.append(ZonePrimitive("SWING_LOW", tf, h, p, p, index_age=int(sl.get("index", 0)) + idx0))
-            # Last swing extreme per horizon (Last High / Last Low)
-            out.append(ZonePrimitive("LAST_HIGH", tf, h, float(w["high"].max()), float(w["high"].max())))
-            out.append(ZonePrimitive("LAST_LOW", tf, h, float(w["low"].min()), float(w["low"].min())))
+                indices = e.get("indices", [])
+                if len(indices) == 2 and 0 <= indices[0] < len(w) and 0 <= indices[1] < len(w):
+                    l1 = float(w.iloc[indices[0]]["low"])
+                    l2 = float(w.iloc[indices[1]]["low"])
+                    bot = min(l1, l2)
+                    top = max(l1, l2) + 0.05 * atr_tf
+                    out.append(ZonePrimitive("EQL", tf, h, top, bot, index_age=0))
+                else:
+                    p = float(e["price"])
+                    out.append(ZonePrimitive("EQL", tf, h, p + 0.05 * atr_tf, p - 0.05 * atr_tf, index_age=0))
+
+            # Last swing extreme per horizon (Last High / Last Low) sebagai Wick-to-Body Bands
+            try:
+                i_max = int(w["high"].argmax())
+                bar_max = w.iloc[i_max]
+                h_max = float(bar_max["high"])
+                h_body = max(float(bar_max["open"]), float(bar_max["close"]))
+                thick_h = max(0.05 * atr_tf, min(0.35 * atr_tf, h_max - h_body))
+                out.append(ZonePrimitive("LAST_HIGH", tf, h, h_max, h_max - thick_h))
+
+                i_min = int(w["low"].argmin())
+                bar_min = w.iloc[i_min]
+                l_min = float(bar_min["low"])
+                l_body = min(float(bar_min["open"]), float(bar_min["close"]))
+                thick_l = max(0.05 * atr_tf, min(0.35 * atr_tf, l_body - l_min))
+                out.append(ZonePrimitive("LAST_LOW", tf, h, l_min + thick_l, l_min))
+            except Exception:
+                pass
+
             # FRVP (tf <= H4)
             if tf in self.frvp_tfs and "tick_volume" in w.columns and w["tick_volume"].sum() > 0:
                 try:
@@ -279,13 +325,13 @@ class ZoneConfluenceEngine:
                         val = getattr(frvp, "value_area_low", None)
                         poc = getattr(frvp, "poc", None)
                         if vah is not None:
-                            out.append(ZonePrimitive("FRVP_VAH", tf, h, float(vah), float(vah)))
+                            out.append(ZonePrimitive("FRVP_VAH", tf, h, float(vah), float(vah) - 0.05 * atr_tf))
                         if val is not None:
-                            out.append(ZonePrimitive("FRVP_VAL", tf, h, float(val), float(val)))
+                            out.append(ZonePrimitive("FRVP_VAL", tf, h, float(val) + 0.05 * atr_tf, float(val)))
                         if poc is not None:
-                            out.append(ZonePrimitive("FRVP_POC", tf, h, float(poc), float(poc)))
+                            out.append(ZonePrimitive("FRVP_POC", tf, h, float(poc) + 0.025 * atr_tf, float(poc) - 0.025 * atr_tf))
                         for n in (getattr(frvp, "hvn_nodes", None) or [])[:3]:
-                            out.append(ZonePrimitive("FRVP_POC", tf, h, float(n), float(n)))
+                            out.append(ZonePrimitive("FRVP_POC", tf, h, float(n) + 0.025 * atr_tf, float(n) - 0.025 * atr_tf))
                 except Exception:
                     pass
         return out
@@ -298,10 +344,13 @@ class ZoneConfluenceEngine:
     ) -> List[ZoneCluster]:
         if not prims:
             return []
-        tol = max(self.merge_atr_mult * atr_h1, 6.0 * point_size)
+        pip_val = 10.0 * point_size if point_size < 0.01 else point_size
+        tol = max(self.merge_atr_mult * atr_h1, 8.0 * pip_val)
+        max_width = self.max_cluster_width_atr * atr_h1
+
         # urutkan dari bobot terbesar agar seed kuat
         def _w(p: ZonePrimitive) -> float:
-            return self.w_kind.get(p.kind, 0.5) * self.w_tf.get(p.tf, 0.5)
+            return self._get_kind_weight(p.kind) * self.w_tf.get(p.tf, 0.5)
 
         used = [False] * len(prims)
         clusters: List[ZoneCluster] = []
@@ -320,22 +369,16 @@ class ZoneConfluenceEngine:
                     if used[j]:
                         continue
                     pr = prims[j]
-                    # overlap / gap <= tol
+                    cand_lo = min(b_lo, pr.bottom)
+                    cand_hi = max(b_hi, pr.top)
+                    # overlap / gap <= tol DAN candidate width <= max_width (Anti-Snowball Chaining)
                     if (pr.top >= b_lo - tol) and (pr.bottom <= b_hi + tol):
-                        members.append(pr)
-                        used[j] = True
-                        b_lo = min(b_lo, pr.bottom)
-                        b_hi = max(b_hi, pr.top)
-                        changed = True
-            if (b_hi - b_lo) > 3.5 * atr_h1 and len(members) > 1:
-                # klaster terlalu lebar -> buang outlier terjauh iteratif sampai masuk amplop
-                while (b_hi - b_lo) > 3.5 * atr_h1 and len(members) > 1:
-                    mids = np.array([m.mid for m in members])
-                    ctr = float(np.median(mids))
-                    far = int(np.argmax(np.abs(mids - ctr)))
-                    members.pop(far)
-                    b_lo = min(m.bottom for m in members)
-                    b_hi = max(m.top for m in members)
+                        if (cand_hi - cand_lo) <= max(b_hi - b_lo, max(pr.top - pr.bottom, max_width)):
+                            members.append(pr)
+                            used[j] = True
+                            b_lo, b_hi = cand_lo, cand_hi
+                            changed = True
+
             clusters.append(self._finalize_cluster(cid, members, b_lo, b_hi, atr_h1, point_size))
             cid += 1
         return clusters
@@ -347,11 +390,19 @@ class ZoneConfluenceEngine:
         # J1: score_raw = penjumlahan atas pasangan (kind, tf) UNIK — horizon tidak jadi saksi.
         pairs = {}
         hmax = 0
+        ceil_w = 0.0
+        floor_w = 0.0
         for m in members:
             key = (m.kind, m.tf)
+            w_val = self._get_kind_weight(m.kind) * self.w_tf.get(m.tf, 0.5)
             if key not in pairs:
-                pairs[key] = self.w_kind.get(m.kind, 0.5) * self.w_tf.get(m.tf, 0.5)
+                pairs[key] = w_val
             hmax = max(hmax, m.horizon)
+            if m.kind in CEIL_KINDS:
+                ceil_w += w_val
+            elif m.kind in FLOOR_KINDS:
+                floor_w += w_val
+
         score_raw = float(sum(pairs.values()))
         boost = _horizon_boost(hmax)
         c = ZoneCluster(
@@ -373,7 +424,9 @@ class ZoneConfluenceEngine:
         else:
             c.grade = "GRADE_1_MICRO"
         tfmax = max((m.tf for m in members), key=lambda t: self.w_tf.get(t, 0))
-        c.fortress_tag = f"{'+'.join(c.kinds_present)}@{tfmax}"
+        prefix = "C_" if ceil_w >= floor_w else "F_"
+        c.fortress_tag = f"{prefix}{'+'.join(c.kinds_present)}@{tfmax}"
+        c.inherent_role = "CEILING" if ceil_w >= floor_w else "FLOOR"
         return c
 
     # ------------------------------------------------------------------ #
@@ -409,47 +462,83 @@ class ZoneConfluenceEngine:
     def _elect_walls(
         self, clusters: List[ZoneCluster], cur_price: float, atr_h1: float, digits: int
     ) -> dict:
-        # RFC 11 Phase-2 & Chamber Clearance Enhancement (4 Sep 2026):
-        # Mencegah Dynamic State Mutation during Penetration (Inversion Bug).
-        # Level Plafon (C1) DILARANG melompat menjadi Floor hanya karena harga menusuk tipis (< probe_tol) di atasnya.
-        # Begitu pula Floor (F1) DILARANG melompat menjadi Ceiling saat ditusuk tipis ke bawah.
+        # RFC 11 Phase-2 & Chamber Clearance Role-Aware Architecture (Strict Physical Partitioning):
+        # Menjamin hukum invarian fisik mutlak: Floor < cur_price < Ceiling.
+        # Level Plafon (C1) DILARANG melompat menjadi Floor hanya karena harga menusuk tipis (< probe_tol) di atasnya,
+        # DAN DILARANG menjadi Plafon terbalik (C1 < cur_price).
+        # Begitu pula Floor (F1) DILARANG melompat menjadi Ceiling saat ditusuk tipis (< probe_tol) ke bawah,
+        # DAN DILARANG menjadi Floor terbalik (F1 > cur_price).
         probe_tol = float(getattr(config, "ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)) * atr_h1
+        cur_p_rnd = round(cur_price, digits)
         floor_cands: List[tuple] = []  # (price, cluster)
         ceil_cands: List[tuple] = []   # (price, cluster)
 
         for c in clusters:
-            # 1. Cleanly below price (Chamber Cleared below):
-            # Harga sudah berada di atas band_high dengan jarak >= probe_tol -> Sah menjadi Floor (RBS).
-            if c.band_high <= cur_price - probe_tol:
-                floor_cands.append((c.band_high, c))
+            role = getattr(c, "inherent_role", "")
+            if not role:
+                role = "CEILING" if c.fortress_tag.startswith("C_") else ("FLOOR" if c.fortress_tag.startswith("F_") else "NEUTRAL")
 
-            # 2. Cleanly above price (Chamber Cleared above):
-            # Harga berada di bawah band_low dengan jarak >= probe_tol -> Sah menjadi Ceiling (SBR).
-            elif c.band_low >= cur_price + probe_tol:
-                ceil_cands.append((c.band_low, c))
+            b_high_rnd = round(c.band_high, digits)
+            b_low_rnd = round(c.band_low, digits)
 
-            # 3. In the Boundary Probe Zone (cur_price between c.band_low - probe_tol and c.band_high + probe_tol):
-            # Harga sedang berinteraksi/menembus/menyapu zona ini. Level mempertahankan peran aslinya!
+            # 1. Seluruh zona berada di bawah harga live (c.band_high < cur_price):
+            # Secara fisik zona ini hanya bisa menjadi kandidat FLOOR (Support / RBS).
+            if b_high_rnd < cur_p_rnd:
+                if role == "CEILING":
+                    # Ceiling hanya sah menjadi RBS Floor jika ditembus bersih (>= probe_tol)
+                    if cur_price >= c.band_high + probe_tol:
+                        floor_cands.append((c.band_high, c))
+                    # Jika tembus tipis (< probe_tol), level sedang di-probe/sweep (belum sah RBS floor)
+                    # Dan DILARANG masuk ceil_cands karena posisinya secara fisik sudah di bawah harga!
+                else:
+                    floor_cands.append((c.band_high, c))
+
+            # 2. Seluruh zona berada di atas harga live (c.band_low > cur_price):
+            # Secara fisik zona ini hanya bisa menjadi kandidat CEILING (Resistance / SBR).
+            elif b_low_rnd > cur_p_rnd:
+                if role == "FLOOR":
+                    # Floor hanya sah menjadi SBR Ceiling jika ditembus bersih (>= probe_tol)
+                    if cur_price <= c.band_low - probe_tol:
+                        ceil_cands.append((c.band_low, c))
+                    # Jika tembus tipis (< probe_tol), level sedang di-probe/sweep (belum sah SBR ceiling)
+                    # Dan DILARANG masuk floor_cands karena posisinya secara fisik sudah di atas harga!
+                else:
+                    ceil_cands.append((c.band_low, c))
+
+            # 3. Harga live berada di dalam rentang zona / tepat di batas (b_low <= cur_price <= b_high):
             else:
-                if cur_price >= c.band_low:
-                    # Harga berada di dalam zona atau menusuk tipis ke atas band_high (< probe_tol)
-                    # Tetap pertahankan sebagai Ceiling yang sedang disapu/diuji (SFP High candidate)!
-                    ceil_cands.append((c.band_high, c))
-                    if c.band_low < cur_price - probe_tol:
+                if role == "CEILING":
+                    # Menusuk di dalam resistance: batas atas (c.band_high) bertindak sebagai penahan di atas harga
+                    if b_high_rnd > cur_p_rnd:
+                        ceil_cands.append((c.band_high, c))
+                elif role == "FLOOR":
+                    # Menusuk di dalam support: batas bawah (c.band_low) bertindak sebagai penahan di bawah harga
+                    if b_low_rnd < cur_p_rnd:
                         floor_cands.append((c.band_low, c))
                 else:
-                    # Harga berada di dalam zona mendekati bawah atau menusuk tipis ke bawah band_low (< probe_tol)
-                    # Tetap pertahankan sebagai Floor yang sedang disapu/diuji (SFP Low candidate)!
-                    floor_cands.append((c.band_low, c))
-                    if c.band_high > cur_price + probe_tol:
+                    if b_low_rnd < cur_p_rnd:
+                        floor_cands.append((c.band_low, c))
+                    if b_high_rnd > cur_p_rnd:
                         ceil_cands.append((c.band_high, c))
 
         floor_cands.sort(key=lambda k: -k[0])  # terdekat dari bawah dulu (harga terbesar)
         ceil_cands.sort(key=lambda k: k[0])    # terdekat dari atas dulu (harga terkecil)
 
-        def _pick_layers(items: List[tuple], limit: int = 6) -> List[dict]:
-            layers = []
+        pip_val = 10.0 * 10 ** (-digits) if digits in (3, 5) else 10 ** (-digits)
+
+        def _pick_layers(items: List[tuple], limit: int = 4) -> List[dict]:
+            if not items:
+                return []
+            min_sep = max(0.50 * atr_h1, 15.0 * pip_val)
+            chosen: List[tuple] = []
             for price, c in items:
+                if not any(abs(price - prev_p) < min_sep for prev_p, _ in chosen):
+                    chosen.append((price, c))
+                    if len(chosen) >= limit:
+                        break
+
+            layers = []
+            for price, c in chosen:
                 layers.append({
                     "tier": "",
                     "index": len(layers) + 1,
@@ -464,8 +553,6 @@ class ZoneConfluenceEngine:
                     "is_vacuum": c.is_vacuum,
                     "score_raw": c.score_raw,
                 })
-                if len(layers) >= limit:
-                    break
             return layers
 
         floor_layers = _pick_layers(floor_cands)
@@ -476,25 +563,27 @@ class ZoneConfluenceEngine:
             l["tier"] = f"C{i + 1}"
 
         # Pilih F1 & C1 dengan pemisahan chamber (min_chamber_height)
-        # 8 pips dalam satuan harga: 5-digit -> 0.0008 ; JPY 3-digit -> 0.08
-        min_ch = max(0.60 * atr_h1, 8.0 * 10 ** (-digits + 1))
+        min_ch = max(0.60 * atr_h1, 15.0 * pip_val)
         f1 = floor_layers[0]["price"] if floor_layers else None
         c1 = ceil_layers[0]["price"] if ceil_layers else None
-        if f1 is not None and c1 is not None and (c1 - f1) < min_ch:
-            # dinding terlalu dekat: buang yang jaraknya ke harga lebih besar
-            if (cur_price - f1) <= (c1 - cur_price):
-                c1 = ceil_layers[1]["price"] if len(ceil_layers) > 1 else None
-            else:
-                f1 = floor_layers[1]["price"] if len(floor_layers) > 1 else None
-        if f1 is not None and c1 is not None and (c1 - f1) < min_ch:
-            f1 = None  # chamber tidak valid -> serahkan ke MSE fallback
 
-        # ── Cap jarak immediate (INV-2 spec: <= 2.0x ATR_H1) ─────────────
-        # Zona terdekat yang masih > cap = pasar kosong di sisi itu (atau zona
-        # makro G3 yang memang jauh). Dinding > cap TIDAK layak dipakai sebagai
-        # immediate F1/C1 untuk SL/TP intraday -> sisi tsb di-None-kan sehingga
-        # guard pemakaian (F1 & C1 keduanya non-None) otomatis menyerahkan
-        # seluruh override ke MSE baseline yang selalu punya FALLBACK_PSYCH dekat.
+        # Jika chamber terlalu sempit (< min_ch), cari layer berikutnya yang memberikan pemisahan sehat
+        if f1 is not None and c1 is not None and (c1 - f1) < min_ch:
+            found_expanded = False
+            for c_cand in ceil_layers[1:]:
+                if (c_cand["price"] - f1) >= min_ch:
+                    c1 = c_cand["price"]
+                    found_expanded = True
+                    break
+            if not found_expanded:
+                for f_cand in floor_layers[1:]:
+                    if (c1 - f_cand["price"]) >= min_ch:
+                        f1 = f_cand["price"]
+                        found_expanded = True
+                        break
+            # Jika tetap belum mencukupi min_ch, PERTAHANKAN f1 dan c1 terdekat asli (dilarang membutakan radar dengan f1=None)
+
+        # ── Cap jarak immediate (ZCE_MAX_IMM_ATR: default 4.0x ATR_H1) ─────────────
         imm_cap = self.max_imm_atr * atr_h1
         if f1 is not None and (cur_price - f1) > imm_cap:
             f1 = None
@@ -502,8 +591,7 @@ class ZoneConfluenceEngine:
             c1 = None
 
         # Deep layer F2/C2 = layer pertama dengan jarak >= 0.5x ATR_H1 dari
-        # F1/C1 (INV-3 spec) — bukan sekadar index [1] yang bisa nempel terlalu
-        # dekat ke immediate (kasus GBPCHF F1 EQH M30 3.0p & C1 FVG H1 6.1p).
+        # F1/C1 (INV-3 spec)
         def _first_deep(layers: List[dict], ref: Optional[float], above: bool) -> Optional[float]:
             if ref is None:
                 return None
@@ -588,9 +676,9 @@ class ZoneConfluenceEngine:
         c1 = walls.get("imm_ceiling_c1")
         pos = ladder.pos_by_horizon
         pos100 = pos.get(100, 0.5)
-        danger = "SCALE_CONFLICT" in (ladder.conflict_flag or "")
+        danger = bool(ladder.conflict_flag and ladder.conflict_flag != "NONE")
         if danger:
-            return "NONE", "conflict skala makro vs lokal belum ter-resolve"
+            return "NONE", f"conflict skala makro vs lokal belum ter-resolve ({ladder.conflict_flag})"
         if f1 is None or c1 is None:
             return "NONE", "dinding F1/C1 tidak ter-elekt"
         tail = h1_df.tail(24) if h1_df is not None else None

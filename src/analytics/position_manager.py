@@ -239,6 +239,16 @@ def get_ticket_status_badge(ticket):
     return ""
 
 
+def is_london_ny_active(now_wib: Optional[datetime] = None) -> bool:
+    """
+    Mendeteksi apakah saat ini sedang dalam jendela sesi London Core s/d New York (14:00 - 24:00 WIB).
+    Sesi ini memiliki volatilitas dan wick sweep yang jauh lebih lebar (+43-51%), sehingga
+    membutuhkan parameter Anti-Sweep Cushion.
+    """
+    now = now_wib or datetime.now(WIB)
+    return 14 <= now.hour < 24
+
+
 def manage_all_positions():
     """
     Iterates ALL open bot positions (any symbol - XAU or BTC) and applies:
@@ -389,9 +399,12 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    # TP-Adaptive Partial Close (55% of actual TP target if exists, otherwise fallback)
+    # TP-Adaptive Partial Close (Tokyo: 45-50% TP, London-NY Anti-Sweep Cushion: 60% TP)
     if tp_points > 0:
-        pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.55)
+        if is_london_ny_active():
+            pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY", 0.60)
+        else:
+            pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)
         tp1_points = int(tp_points * pct)
         min_tp1 = 40 if config.is_fx(symbol) else 120
         tp1_points = max(min_tp1, tp1_points)
@@ -756,8 +769,8 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 
     # Hitung SL points awal untuk evaluasi R:R aktual
     init_sl_pts = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0)
-    # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP >= 2.0R)
-    is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and (tp_points / init_sl_pts) >= 2.0)
+    # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP > 2.0R)
+    is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and round(tp_points / init_sl_pts, 2) > 2.0)
 
     if "GRADE_S" in grade:
         bep_tp_ratio = 0.65
@@ -765,6 +778,8 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
         bep_tp_ratio = 0.35
     elif is_m4:
         bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
+    elif is_london_ny_active():
+        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.55)
     else:
         bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
 
@@ -912,6 +927,8 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         act_tp_pct = 0.75
     elif "GRADE_B" in grade:
         act_tp_pct = 0.50
+    elif is_london_ny_active():
+        act_tp_pct = getattr(config, "TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)
     else:
         act_tp_pct = config.TRAILING_ACTIVATION_TP_PCT
 
@@ -932,10 +949,10 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if config.is_fx(symbol):
         if "GRADE_S" in grade:
             if is_terminal:
-                atr_tf = mt5.TIMEFRAME_M30
+                atr_tf = mt5.TIMEFRAME_H1
                 atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
                 dist_mult = 0.75
-                min_dist_pts = 60
+                min_dist_pts = 80
                 stage_label = "GRADE-S-TERMINAL"
             else:
                 atr_tf = mt5.TIMEFRAME_H1
@@ -951,18 +968,25 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
             stage_label = "GRADE-B-TIGHT"
         else:
             if is_terminal:
-                # Stage 2: Terminal Tightening (ATR M30 lock)
-                atr_tf = mt5.TIMEFRAME_M30
+                # Stage 2: Terminal Tightening (ATR H1 lock - unified H1, M30 removed)
+                atr_tf = mt5.TIMEFRAME_H1
                 atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                dist_mult = 0.50
-                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)
-                stage_label = "TERMINAL-M30"
+                dist_mult = getattr(config, "TRAILING_TERMINAL_ATR_MULT_H1", 0.50)
+                if is_london_ny_active():
+                    min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY", 80)
+                else:
+                    min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO", 60)
+                stage_label = "TERMINAL-H1"
             else:
                 # Stage 1: Swing Breathing (ATR H1 breathing)
                 atr_tf = mt5.TIMEFRAME_H1
                 atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
-                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
+                if is_london_ny_active():
+                    dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00)
+                    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY", 150)
+                else:
+                    dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
+                    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
                 stage_label = "SWING-H1"
     elif config.is_crypto(symbol):
         atr_pts = _get_dynamic_atr_points(symbol, point)

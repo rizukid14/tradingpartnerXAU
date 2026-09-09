@@ -264,6 +264,8 @@ ZCE_CLUSTER_MERGE_ATR_MULT = _getenv_float("ZCE_CLUSTER_MERGE_ATR_MULT", 0.25)
 ZCE_GRADE_G2 = _getenv_float("ZCE_GRADE_G2", 3.5)
 ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
 ZCE_CHAMBER_CLEARANCE_ATR_MULT = _getenv_float("ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)  # Ambang clearance chamber (0.30x ATR H1)
+ZCE_MAX_IMM_ATR = _getenv_float("ZCE_MAX_IMM_ATR", 5.5)                                      # Cap jarak immediate walls F1/C1 (5.5x ATR H1)
+ZCE_MAX_CLUSTER_WIDTH_ATR = _getenv_float("ZCE_MAX_CLUSTER_WIDTH_ATR", 0.75)                # Lebar maksimum ekspansi klaster anti-snowball (0.75x ATR H1)
 # Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
 SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
 # Toleransi is_macro_wall M1 (market_scanner): selisih ref_top/ref_bot vs dinding C1/F1 agar
@@ -583,14 +585,21 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 #   - progressive SL +0.197 | adaptif/range +0.041 | fixed pips +0.128-0.180 (inferior)
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
 BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.45)  # BEP aktif saat profit >= 45% TP (padding komisi tetap dipertahankan)
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP
-TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR M30 lock)
-TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing
+BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.55)  # Sesi London-NY: 55% TP
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP (Tokyo)
+TRAILING_ACTIVATION_TP_PCT_LONDON_NY = _getenv_float("TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)  # Sesi London-NY: 75% TP
+TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR H1 lock)
+TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing (Tokyo)
+TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00)  # Multiplier ATR H1 Sesi London-NY
 TRAILING_BREAK_EVEN_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 BREAK_EVEN_TRIGGER_SL_MULT = TRAILING_BREAK_EVEN_SL_MULT
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
-TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 80)    # Floor absolut jarak normal trailing FX (8 pips)
-TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)  # Floor absolut terminal trailing (3 pips)
+TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 80)    # Floor absolut jarak normal trailing FX (8 pips Tokyo)
+TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY", 150)  # Floor jarak trailing FX London-NY (15 pips)
+TRAILING_TERMINAL_ATR_MULT_H1 = _getenv_float("TRAILING_TERMINAL_ATR_MULT_H1", 0.50)  # Multiplier Stage 2 Terminal Lock (H1 unified)
+TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO = _getenv_int("TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO", 60)  # Floor absolut terminal trailing Tokyo (6 pips)
+TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY = _getenv_int("TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY", 80)  # Floor absolut terminal trailing London-NY (8 pips)
+TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX = TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO  # Backward compatibility
 TRAILING_DISTANCE_MIN_POINTS_XAU = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_XAU", 100)  # Floor absolut jarak trailing XAU (pts)
 
 
@@ -607,7 +616,8 @@ BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 100
 # --- PARTIAL CLOSE ---
 PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
-PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)  # Partial close aktif di 45% TP
+PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)  # Partial close aktif di 45% TP (Tokyo)
+PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY", 0.60)  # Sesi London-NY: 60% TP
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
 PARTIAL_CLOSE_TP1_POINTS_XAU = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_XAU", PARTIAL_CLOSE_TP1_POINTS)

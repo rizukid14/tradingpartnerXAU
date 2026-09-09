@@ -2,6 +2,198 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 10 September 2026 (Pagi II) — Restorasi Proven ZCE Baseline, Hierarchical Confluence Melting (Pip-Aware Spacing) & 4-Station Natural Ladder
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Runway Tercekik (*Choked Runway*) Akibat Banjir Micro-Noise**:
+   - Setelah integrasi multi-basket (CBSS), commit sebelumnya menginjeksi seluruh structural swings LuxSMC (`bullish_structures` dan `bearish_structures`) dari timeframe M30/H1 tanpa kurasi, memicu banjir primitif di ZCE.
+   - Ambang toleransi peleburan yang hanya berbasis $0.25\times\text{ATR}$ tanpa batas pip minimal menyebabkan selisih $2.3\text{ pips}$ di EURUSD tidak melebur, melainkan membelah area yang sama menjadi 39 klaster kerdil terpisah.
+   - Akibatnya, plafon C1, C2, C3 berderet tiap $6-8\text{ pips}$, memotong runway riil dan membuat radar mendeteksi benturan dinding semu.
+2. **Pemaksaan Kuota 8 Layer**:
+   - Pemaksaan pengirisan hingga 8 level (`[:8]`) memenuhi chart visual dengan garis rapat seperti jeruji, padahal secara alami struktur pasar hanya memiliki 2–4 zona benteng utama di sekitar harga live.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **`src/analytics/zone_confluence_engine.py`**:
+   - **Restorasi Primitif Proven 3-Hari**:
+     * Menghapus injeksi uncurated micro-swings M30/H1. Struktur ekstrem tetap dijaga akurat oleh `LAST_HIGH`/`LAST_LOW` per horizon, `OB_BULL`/`OB_BEAR`, `FVG`, `EQH`/`EQL`, `FRVP` (POC/VAH/VAL), dan Stasiun Psikologis Atlas DNA (`PSYCH_MAJOR`/`PSYCH_SUB`).
+   - **Peleburan Spasial Pip-Aware (`_merge_primitives`)**:
+     * Ambang toleransi peleburan dinaikkan dengan batas pengaman pip: `tol = max(self.merge_atr_mult * atr_h1, 8.0 * pip_val)`. Primitif yang berdekatan dalam satu neighborhood dilebur menjadi SATU Zona Benteng Terpadu (`band_low = min`, `band_high = max`, skor konfluensi saling melipatgandakan).
+   - **Pemisahan Layer Sehat & Natural Limit (`_pick_layers`)**:
+     * Batas pemisah antar layer dinaikkan: `min_sep = max(0.50 * atr_h1, 15.0 * pip_val)`.
+     * Batas layer dinormalkan ke **4 stasiun utama** (`limit = 4`: F1..F4 dan C1..C4) tanpa pemaksaan padding jika hanya ada 2 atau 3 zona sejati (misal AUDUSD F4/C2, AUDCAD F4/C1).
+     * Memulihkan tinggi chamber minimum: `min_ch = max(0.60 * atr_h1, 15.0 * pip_val)`.
+2. **`dashboard.py`**:
+   - Menyelaraskan `proximity_thr` menjadi `max(0.40 * atr_val * tf_scale, 15.0 * pip_val)`.
+   - Menyelaraskan seleksi tangga display menjadi 4 stasiun (`limit = 4`), mempertahankan cadangan benteng G3 terluar di slot F4/C4.
+   - Chart TradingView visual kembali bersih, lega, dan menampilkan runway stasiun yang riil.
+3. **Hasil Verifikasi Kuantitatif**:
+   - **Unit Tests**: `pytest tests/ -q` $\rightarrow$ **242 PASSED (100% PASS)** dalam 47.49 detik.
+   - **Live MT5 Audit 26 Pasang Mata Uang**:
+     * **0 ANOMALI INVERSI (100% VALID)**. Seluruh pasangan memenuhi $F_1 \le cur\_price \le C_1$.
+     * Runway terbebas dari jeratan micro-noise: EURUSD C1 $+25.6\text{p}$, GBPUSD F1 $-19.4\text{p}$ / C1 $+17.4\text{p}$, GBPJPY F1 $-5.6\text{p}$ / C1 $+143.0\text{p}$.
+     * Distribusi layer natural: AUDUSD (F4/C2), AUDCAD (F4/C1), EURCHF (F4/C2).
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 10 September 2026 (Pagi) — ZCE Strict Physical Partitioning (Floor < Price < Ceiling), Eliminasi Anomali Inversi & Penyelarasan Native H1 (300 Bar Expanded)
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Anomali Inversi Dinding ZCE (Physical Inversion Bug)**:
+   - Audit langsung pada 26 simbol universe di MT5 mendeteksi 8 anomali aktif di mana level dinding tertukar polaritas fisiknya:
+     * `USDCAD-ECN`: Lantai `F1 (1.38050)` berada di atas harga live `1.38028` (+2.2 pips).
+     * `EURGBP-ECN`: Lantai `F1 (0.85848)` berada di atas harga live `0.85842` (+0.6 pips).
+     * `AUDCHF-ECN`: Plafon `C1 (0.58459)` berada di bawah harga live `0.58466` (-0.7 pips).
+     * `AUDCAD-ECN`: Plafon `C1 (0.99651)` berada di bawah harga live `0.99669` (-1.8 pips).
+2. **Akar Masalah pada `_elect_walls()`**:
+   - Upaya sebelumnya untuk mencegah mutasi state dinamis saat penetrasi tipis (< 0.30 ATR) menyebabkan level plafon yang sudah tertembus ke atas (`cur_price > band_high`) tetap dimasukkan ke dalam `ceil_cands`, dan level lantai yang sudah tertembus ke bawah (`cur_price < band_low`) tetap dimasukkan ke dalam `floor_cands`.
+3. **Distorsi Tampilan & Mismatch Kognitif Timeframe H4**:
+   - Tombol H4 pada dashboard sebelumnya merusak keteraturan visual karena melebarkan proksimitas secara artifisial ($tf\_scale = 2.2$) dan melompati level-level plafon terdekat demi mencari benteng makro jauh hingga 1,000 pips ke atas (C8 = 218.494 pada GBPJPY). Sementara bot trading beroperasi 100% pada timeframe native H1.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **`src/analytics/zone_confluence_engine.py`**:
+   - **Strict Physical Partitioning**:
+     * Zona di bawah harga (`band_high < cur_price`): HANYA masuk `floor_cands` (RBS sah jika tembus $\ge probe\_tol$; tembus tipis ditahan dan DILARANG masuk `ceil_cands`).
+     * Zona di atas harga (`band_low > cur_price`): HANYA masuk `ceil_cands` (SBR sah jika tembus $\ge probe\_tol$; tembus tipis ditahan dan DILARANG masuk `floor_cands`).
+     * Zona di dalam rentang: Batas atas `band_high` ($> cur\_price$) sebagai plafon, batas bawah `band_low` ($< cur\_price$) sebagai lantai.
+   - **Presisi Pembulatan Float (`digits`)**: Mengeliminasi distorsi epsilon floating-point saat harga menyentuh persis batas zona.
+2. **`dashboard.py` & `dashboard_assets.py`**:
+   - **Eliminasi Tombol H4**: Menghapus tombol H4 dari visual chart selector agar trader 100% selaras dengan timeframe eksekusi bot (H1 Unified).
+   - **Ekspansi Candlestick History H1 ke 300 Bar**:
+     * H1: diperlebar dari 150 bar ke **300 bar** ($\approx 12.5$ hari perdagangan / 2.5 minggu pasar). Chart menjadi luas dan seluruh struktur swing 2 minggu tampak jelas tanpa distorsi.
+     * M30: diperlebar ke **180 bar** ($\approx 3.75$ hari).
+     * M5: diperlebar ke **60 bar** ($\approx 5$ jam).
+   - **Tangga Level Sekuensial Kontinu (Anti-Lompat)**:
+     * Menghilangkan loncatan kosong 1,000 pips pada plafon. Slot C1..C7 dan F1..F7 kini bergerak sekuensial kontinu menjauh dari harga live.
+     * Slot C8 dan F8 difungsikan secara elegan sebagai penambat benteng makro terluar (`GRADE_3_MACRO`).
+3. **`tests/test_zce_chamber_clearance.py`**:
+   - Menyelaraskan pengujian probe zone untuk memverifikasi proteksi role invariance di dalam rentang band serta memastikan tidak ada dinding terbalik saat level ditusuk tipis.
+4. **Hasil Audit & Verifikasi**:
+   - Audit live 26 universe symbols di MT5: **0 ANOMALI (100% INVARIANT PHYSICAL CLEARANCE TERPENUHI)**.
+   - Full test suite: **242 unit tests 100% PASS** dalam 38.42 detik.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 10 September 2026 (Subuh) — Timeframe H4 Macro, Timeframe-Adaptive Macro Ladder (Anti-Clustering Barcode), Gradasi Opacity C1..C8 / F1..F8 (C8 = 50%), Spasial 3-Kolom Watchlist & Bilateral C1/F1 Projection
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Penumpukan Barcode Garis di Tengah pada Timeframe H4 (Scale Mismatch)**:
+   - Pada chart H4 dengan rentang lilin 100 bar mencakup 500–800 pips, pemotongan kuota tangga (`merged_ceils[:8]` dan `merged_floors[:8]`) berdasarkan jarak pemisah H1 (~15 pips) menyebabkan seluruh garis C1..C8 dan F1..F8 habis terpakai dalam rentang sempit $\pm 100\text{ pips}$ di dekat harga live.
+   - Puncak tertinggi H4 (Swing High $+350\text{p}$) dan lembah terendah H4 (Swing Low $-400\text{p}$) yang merupakan Benteng Makro G3 (D1/W1) terpotong dan tidak tergambar sama sekali di layar.
+2. **Ketiadaan Pembeda Kedalaman Visual (Visual Hierarchy) pada Tangga 8-Tier**:
+   - Garis-garis luar yang jauh (C4..C8 dan F4..F8) digambar dengan kontras tinggi yang sama, membuat chart padat dan mengaburkan candlestick aksi harga live.
+3. **Redundansi Informasi & Ketiadaan Konteks Atap pada Kartu Watchlist**:
+   - Pengulangan kata arah secara berlebihan di baris yang sama (`[M1+M2 BEAR]` berdampingan dengan `[HTF: BEAR]`).
+   - Angka jarak pips trigger dan jarak runway (`12.8p (0.40x ATR)` dan `→F1: +53p`) diletakkan berdampingan tanpa identitas pembeda antara jarak entry vs jarak target.
+   - Hanya menampilkan target bawah (`→F1`), sehingga trader kehilangan referensi jarak atap pembatas atas (`C1`).
+4. **Ketiadaan Timeframe H4 di Dashboard**:
+   - Selector timeframe hanya memuat H1, M30 (dengan label usang `M30 JPY`), dan M5.
+
+---
+
+### Solusi Perbaikan Kode (Checklist File):
+1. **`dashboard.py`**:
+   - **Timeframe H4 Support**: Menambahkan pemetaan MT5 `"H4": config.mt5.TIMEFRAME_H4`, fetching 100 bar, dan `tf_hours = 4.0` untuk komputasi wave regime H4.
+   - **Timeframe-Adaptive Macro Ladder (`tf_scale = 2.2`)**: Jarak pemisah konsolidasi `proximity_thr` diskalakan otomatis mengikuti timeframe ($2.2\times$ di H4, sekitar $35 - 50\text{ pips}$).
+   - **Macro Anchor Reservation Architecture (`_elect_display_ladder`)**: Mengunci $C_1, C_2$ dan $F_1, F_2$ sebagai dinding reaksi terdekat, lalu memindai seluruh bentang layar H4 untuk memprioritaskan dan mengangkat seluruh **Benteng Grade 3 Makro (D1/W1/H4 Swings)** ke dalam slot $C_3..C_8$ dan $F_3..F_8$. Mengeliminasi tumpukan barcode sempit di H4.
+   - **Bilateral C1 & F1 Projection**: Menghitung jarak fisik dan label teks untuk atap C1 (`c1_text`, `c1_pips`) dan lantai F1 (`f1_text`, `f1_pips`) secara simultan pada `get_watchlist_overview()`.
+   - **Auto-Reload Asset Template**: Menyuntikkan `importlib.reload(dashboard_assets)` dan header anti-cache HTTP pada endpoint root `/`.
+2. **`dashboard_assets.py`**:
+   - **Timeframe Controls**: Menambahkan tombol `<button class="tf-btn" data-tf="H4">H4 Macro</button>`, merapikan label menjadi `M30 Swing` dan `M5 Micro`.
+   - **Spasial Grid 3-Kolom Watchlist (0% Emoji / Non-Emoticon Standard)**:
+     * Baris 2 Tengah: `C1: XXp` (Warm Amber `#fbbf24`) — atap batas atas.
+     * Baris 3 Tengah: `F1: XXp` (Sky Blue `#38bdf8`) — lantai target bawah, bertumpuk vertikal tepat di bawah C1.
+     * Baris 3 Kiri: `Trig: XX.Xp (X.XXx)` — label eksplisit jarak entry trigger.
+     * Setup Pill: Diringkas menjadi `[M1+M2]` (menghilangkan duplikasi kata `BEAR`/`BULL`).
+     * Basing Box Pill: Diganti dari `RETEST` menjadi `BOX` / `BRK` agar tidak rancu dengan M2/M3 pullback.
+   - **Gradasi Opacity Garis Chart C1..C8 & F1..F8**:
+     * Tier 1–3: $100\%$ ($1.00$) solid/kontras.
+     * Tier 4: $90\%$ ($0.90$), Tier 5: $80\%$ ($0.80$), Tier 6: $70\%$ ($0.70$), Tier 7: $60\%$ ($0.60$), **Tier 8: $50\%$ ($0.50$)**.
+   - **Sinkronisasi Filter 1-1 & Ladder Preset**: Memperbaiki fallback mode custom agar tidak mendrop level C3..C8 dan F3..F8 saat filter arah diubah.
+3. **Verifikasi Test Suite**:
+   - Menjalankan test suite unit dan integrasi: **242 passed (100%)** dalam 47.12s.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 10 September 2026 (Dini Hari) — Dashboard Institutional Contrast (Sky Blue / Warm Amber / Neon M1..M4), ZCE-Exclusive Left Margin, Dynamic Zone Consolidation & Multi-Horizon Spacing
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Visual Contrast Clashing pada Candlestick vs Levels**:
+   - Candlestick menggunakan warna merah/hijau klasik. Penggunaan warna merah/hijau pada level ceiling dan floor membuat chart membingungkan karena garis resistansi/support bertubrukan secara visual dengan warna candle.
+   - Garis `GRADE_3_MACRO` setebal 2.0px terlalu dominan dan menutupi pergerakan candlestick mikro.
+2. **Tabrakan Warna Mekanisme Radar (M1..M4) dengan Level ZCE**:
+   - Garis trajectory dan marker M2 (pullback) sebelumnya menggunakan warna biru muda yang bertubrukan dengan Sky Blue ZCE Floor (`#38bdf8`).
+   - Trajectory M4 (flow) sebelumnya menggunakan warna amber/kuning yang bertubrukan dengan Warm Amber ZCE Ceiling (`#fbbf24`).
+3. **Kepadatan Garis Berdekatan & Hilangnya Benteng Makro Jauh**:
+   - Pada pair dengan klaster swing padat (seperti GBPJPY), level yang hanya berjarak 8–12 pips digambar menumpuk, memenuhi batas 8-tier sehingga benteng makro W1 di 205.250–205.760 terpotong.
+4. **Clutter Sisi Kiri Chart Antara Label ZCE vs Radar Standby (M1..M4)**:
+   - Objek radar standby M1A, M1B, M2, M3, M4 sebelumnya dimasukkan ke dalam antrean label sisi kiri (`activeRenderedLevels`), menciptakan tumpukan badge teks di margin kiri chart yang berebut ruang dengan label benteng ZCE.
+5. **Python HTTPServer Bytecode Caching**:
+   - Edit frontend pada `dashboard_assets.py` tertahan di memori `ThreadingHTTPServer` proses terminal running (`py dashboard.py --serve`) sehingga browser terus menerima aset lama.
+
+---
+
+### Solusi Perbaikan Kode (Checklist File):
+1. **`dashboard_assets.py`**:
+   - **Palet Kontras ZCE Institusional**: Mengubah **Ceilings** menjadi **Warm Amber / Gold (`#fbbf24`)** dan **Floors** menjadi **Sky Blue / Cyan (`#38bdf8`)**, sepenuhnya terpisah dari warna merah/hijau candle.
+   - **Institutional Contrast Palette untuk Radar (M1..M4)**:
+     * **M1 (Macro Sweep & SFP)**: Neon Orange (`#fb923c`)
+     * **M1B (Trend Induced Sweep)**: Hot Pink (`#ec4899`)
+     * **M2 (Trend-Aligned Pullback)**: Indigo / Periwinkle (`#818cf8`) — 100% bebas bentrok dari Sky Blue Floor
+     * **M3 (Multi-Touch Breakout Retest)**: Royal Purple (`#c084fc`)
+     * **M4 (Systemic Flow Continuation)**: Neon Mint / Emerald (`#34d399`) — 100% bebas bentrok dari Warm Amber Ceiling
+     * Tersinkronisasi pada in-chart price lines, temporal markers panah/lingkaran, trajectory vectors, bento box telemetry cards, dan performance breakdown tables.
+   - **Hairline Precision**: Menurunkan ketebalan garis G3 dari 2.0px ke **1.2px solid**, G2 ke **1.0px dashed (75% opacity)**, dan G1 ke **1.0px dotted (45% opacity)**.
+   - **ZCE-Exclusive Left Margin**: Menghilangkan penyisipan label M1..M4 ke `activeRenderedLevels` dengan hard filter `item.kind !== 'radar'`. Seluruh margin kiri chart dikhususkan 100% untuk label benteng ZCE (C1..C8, F1..F8).
+2. **`dashboard.py`**:
+   - **Dynamic Assets Reloading & Anti-Cache Headers**: Menyuntikkan `importlib.reload(dashboard_assets)` pada endpoint handler `/` dan `/assets/dashboard.js` serta menambahkan header HTTP `Cache-Control: no-cache, no-store, must-revalidate` untuk pembaruan instan tanpa perlu mematikan/menghidupkan ulang server terminal.
+   - **Dynamic Consolidation**: Menaikkan ambang peleburan level proksimitas ke `max(0.35 * atr_val, 8.0 * pip_val)`. Level-level yang berdekatan otomatis dilebur menjadi 1 pita band solid dengan skor gabungan.
+3. **`src/analytics/zone_confluence_engine.py`**:
+   - **Tier Spacing & Macro G3 Reservation**: Pada `_pick_layers()`, dipasang jarak minimum `min_sep = max(0.35 * atr_h1, 6.0 * pip_val)` dan **Macro G3 Reservation Guarantee** sehingga benteng makro G3 selalu mendapatkan slot representasi di chart.
+4. **`src/analytics/position_manager.py` & `tests/`**:
+   - **Floating-Point Precision Guard**: Mengubah perbandingan rasio R:R pada *Vacuum Extension* menjadi `round(tp_points / init_sl_pts, 2) > 2.0` guna mencegah distorsi presisi floating-point yang memicu aktivasi BEP 35% pada setup standar 1:2.0.
+5. **`main.py` & `src/core/cli_theme.py` (CLI Terminal & Bento Box Modernization)**:
+   - **Eliminasi Bug Kritis `NameError`**: Menambahkan instansiasi `logger = logging.getLogger("trading_bot")` di header `main.py` sehingga exception handler pada shadow tracker registration dan deal telemetry close tidak mengalami crash runtime.
+   - **Sinkronisasi Warna Bento Box & Level Makro**: Mengubah pewarnaan Sub-Floor / RBS / F1 dari hijau menjadi **Sky Blue / Cyan (`UI.CYAN`)** dan Sub-Ceiling / SBR / C1 dari merah menjadi **Warm Amber / Yellow (`UI.YELLOW`)**, mengeliminasi tabrakan visual dengan warna candle.
+   - **Tile 4 Bento Box Adaptif**: Menyesuaikan Tile 4 secara otomatis saat `ENABLE_LLM_JURY=False` untuk menampilkan `Pure Quant Direct Execution (0-Token API)` dan `Direct Institutional MT5 Dispatch`.
+   - **Pembaruan SL Rules & Unified H1**: Menyelaraskan teks SL Anchor ke `ZCE Dynamic Runway (Max 3.5xATR) | Segmented Floors | R:R >= 0.75+Friksi` dan memperbarui seluruh label timeframe ke `26 FX Pairs (Unified H1 Native)`.
+   - **Dynamic Clock Line & Zero-Emoji Terminal**: Menstandarkan dynamic status clock line ke format `[POOL 26 PAIRS (H1) | HH:MM:SS]` dan mengganti emoji diskon/premium dengan badge teks institusional `[DISCOUNT]` dan `[PREMIUM]` guna mencegah column width jitter di terminal Windows.
+   - **Verifikasi Test Suite**: Seluruh 242 unit tests bot trading lulus **100% PASS** dalam 45.26s.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Larut Malam) — ZCE True Zonal Bands (Wick-to-Body), Anti-Snowball Chaining, Physical Boundary Clearance & Universe-Wide Calibration (26 FX + BTC)
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Titik Garis Statis (Zero-Thickness Points) vs Zona Riil Pasar**:
+   - Primitif struktur swing (`SWING_HIGH`, `SWING_LOW`, `EQH`, `EQL`, `LAST_HIGH`, `LAST_LOW`) di ZCE sebelumnya dikonstruksi sebagai titik garis berketebalan nol `(p, p)`. Padahal dalam dinamika harga institusional, level struktur adalah **zona likuiditas (zonal band)** antara ekor candle (wick) dan tubuh penutupan (body).
+2. **Snowball Chaining pada Penggabungan Klaster (Clustering Drift)**:
+   - Penggabungan single-linkage `_merge_primitives()` berisiko merantai (*chain*) zona-zona berdekatan secara beruntun sehingga membengkak menjadi satu mega-klaster yang melenceng dan menghapus diskriminasi antara support/resistance terdekat.
+3. **Pembalikan Polaritas Dinding pada Boundary Probe Zone**:
+   - Saat harga live sedang menguji atau melakukan penetrasi wick ke dalam zona dinding ($band\_low \le cur\_price \le band\_high$), penentuan batas fisik dapat tertukar (F1 tergeser di atas harga atau C1 di bawah harga), memicu anomali inverted walls.
+4. **Evaluasi Scale Conflict pada Pemilihan Metode**:
+   - Pengecekan konflik skala di `_suggest_method()` mengecek substring `"SCALE_CONFLICT"` yang tidak cocok dengan nilai aktual `ladder.conflict_flag` (`LOCAL_DISCOUNT_MACRO_PREMIUM` / `LOCAL_PREMIUM_MACRO_DISCOUNT`), sehingga trade tidak diblokir saat terjadi distorsi skala makro.
+
+---
+
+### Solusi Perbaikan Kode (Checklist File):
+1. **`src/analytics/zone_confluence_engine.py`**:
+   - **True Zonal Bands Wick-to-Body**: Mengonstruksi primitif swing dari relasi wick-to-body bar pivot dengan batas adaptif ketebalan $0.05\times\text{ATR}_{\text{TF}} \le \text{width} \le 0.35\times\text{ATR}_{\text{TF}}$.
+   - **Anti-Snowball Chaining Envelope**: Membatasi ekspansi pelebaran klaster maksimum $\le 0.75\times\text{ATR}_{\text{H1}}$ (`ZCE_MAX_CLUSTER_WIDTH_ATR`), mencegah akumulasi rantai klaster tanpa batas.
+   - **Physical Boundary & Inherent Role Guarantee**: Menjamin integritas fisik mutlak: Floor selalu $\le cur\_price$ dan Ceiling selalu $\ge cur\_price$. Pada zona penetrasi, role intrinsik level dipertahankan tanpa pembalikan polaritas fisik.
+   - **Scale Conflict Guard**: Menyelaraskan filter `danger = bool(ladder.conflict_flag and ladder.conflict_flag != "NONE")` sehingga melarang metode eksekusi saat terjadi disparitas skala makro vs lokal.
+2. **`config.py` & `.env`**:
+   - Menambahkan parameter konfigurasi tersinkronisasi `ZCE_MAX_IMM_ATR=5.5` dan `ZCE_MAX_CLUSTER_WIDTH_ATR=0.75`.
+3. **Hasil Audit Universe (26 FX Pairs + BTCUSD.c)**:
+   - 27/27 simbol terverifikasi live di MT5: 100% menghasilkan benteng F1 dan C1 yang valid, 0 level terbalik (inverted), dan dinding makro G3 teridentifikasi presisi.
+4. **Verifikasi Test Suite**:
+   - Seluruh 239 unit tests pada test suite bot lulus **100% PASS** dalam 24.04 detik.
+
+---
+
 ## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Tengah Malam) — ZCE Multi-Horizon Structural Swing Confluence & Dashboard 8-Tier Viewport Expansion
 
 ### Latar Belakang & Identifikasi Masalah:
