@@ -136,10 +136,12 @@ def test_csm_dynamic_bailout_no_premature_exit_on_opposed_open(mock_csm, mock_te
 @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
 def test_csm_dynamic_bailout_triggers_on_sharp_adverse_shift(mock_csm, mock_telemetry):
     """
+    Pilar 1 Reform (9 Sep 2026):
     Trade opened BUY when CSM was aligned (+1.50).
     Live CSM collapsed to -2.20 (shift -3.70 against BUY).
-    Position at -0.30R.
-    Must TRIGGER bailout to protect equity from severe systemic trend reversal.
+    1. At -0.30R: Bailout does NOT trigger (-0.30R > -0.50R).
+    2. At -0.55R on first M15 bar: Records persistence, does NOT trigger (bars < 2).
+    3. At -0.55R on second M15 bar: TRIGGERS bailout and enters 90m cooldown!
     """
     mock_csm.return_value = -2.20
     mock_telemetry.return_value = {
@@ -154,19 +156,41 @@ def test_csm_dynamic_bailout_triggers_on_sharp_adverse_shift(mock_csm, mock_tele
     pos.sl = 0.99400
     pos.price_open = 0.99500
     point = 0.00001
-    profit_points = -30.0 # -0.30R
     
+    # 1. At -0.30R (loss not deep enough) -> False
+    bailout_mild = _check_csm_dynamic_bailout(
+        pos=pos,
+        symbol="EURUSD-ECN",
+        profit_points=-30.0,
+        point=point,
+        symbol_info=None,
+        now=datetime(2026, 9, 9, 10, 5)
+    )
+    assert bailout_mild is False, "CSM bailout should NOT trigger when loss is only -0.30R (min -0.50R required)"
+
+    # 2. At -0.55R on Bar 1 (10:10) -> False (waiting for 2nd bar)
+    bailout_bar1 = _check_csm_dynamic_bailout(
+        pos=pos,
+        symbol="EURUSD-ECN",
+        profit_points=-55.0,
+        point=point,
+        symbol_info=None,
+        now=datetime(2026, 9, 9, 10, 10)
+    )
+    assert bailout_bar1 is False, "CSM bailout should NOT trigger on first M15 bar (requires 2 consecutive M15 bars)"
+
+    # 3. At -0.55R on Bar 2 (10:16, next M15 bar) -> True (triggers bailout)
     with patch("src.analytics.position_manager._close_position_by_ticket", return_value=True):
-        bailout = _check_csm_dynamic_bailout(
+        bailout_bar2 = _check_csm_dynamic_bailout(
             pos=pos,
             symbol="EURUSD-ECN",
-            profit_points=profit_points,
+            profit_points=-55.0,
             point=point,
             symbol_info=None,
-            now=datetime.now()
+            now=datetime(2026, 9, 9, 10, 16)
         )
-    
-    assert bailout is True, "CSM bailout SHOULD trigger when shift is >= 2.5 against trade and loss <= -0.25R"
+    assert bailout_bar2 is True, "CSM bailout SHOULD trigger when shift is >= 2.5 against trade, loss <= -0.50R, and persisted for 2 M15 bars"
+
 
 
 def test_market_scanner_m3_radar_standbys_includes_basing_box():

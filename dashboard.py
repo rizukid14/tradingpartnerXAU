@@ -194,42 +194,40 @@ def _consolidate_zce_zones(
 
     cands: List[Dict[str, Any]] = []
 
-    # 1. Elected floors & ceilings from ZoneMapResult
+    # 1. Elected floors & ceilings from ZoneMapResult (Preserve all elected structural walls)
     for fl in getattr(zm, "floors", []) or []:
         p = float(fl.get("price", 0.0))
-        if v_lo <= p <= v_hi:
-            cands.append({
-                "price": p,
-                "band_low": float(fl.get("band_low", p)),
-                "band_high": float(fl.get("band_high", p)),
-                "tier": str(fl.get("tier", "F")),
-                "grade": str(fl.get("grade", "GRADE_1_MICRO")),
-                "score": float(fl.get("density_score", fl.get("score_raw", 1.0))),
-                "tag": str(fl.get("tag", "FORTRESS")),
-                "tfs": list(fl.get("tfs_present", [])),
-                "kinds": list(fl.get("kinds_present", [])),
-                "is_cold": bool(fl.get("is_cold", False)),
-                "is_vacuum": bool(fl.get("is_vacuum", False)),
-                "source": "elected"
-            })
+        cands.append({
+            "price": p,
+            "band_low": float(fl.get("band_low", p)),
+            "band_high": float(fl.get("band_high", p)),
+            "tier": str(fl.get("tier", "F")),
+            "grade": str(fl.get("grade", "GRADE_1_MICRO")),
+            "score": float(fl.get("density_score", fl.get("score_raw", 1.0))),
+            "tag": str(fl.get("tag", "FORTRESS")),
+            "tfs": list(fl.get("tfs_present", [])),
+            "kinds": list(fl.get("kinds_present", [])),
+            "is_cold": bool(fl.get("is_cold", False)),
+            "is_vacuum": bool(fl.get("is_vacuum", False)),
+            "source": "elected"
+        })
 
     for ce in getattr(zm, "ceilings", []) or []:
         p = float(ce.get("price", 0.0))
-        if v_lo <= p <= v_hi:
-            cands.append({
-                "price": p,
-                "band_low": float(ce.get("band_low", p)),
-                "band_high": float(ce.get("band_high", p)),
-                "tier": str(ce.get("tier", "C")),
-                "grade": str(ce.get("grade", "GRADE_1_MICRO")),
-                "score": float(ce.get("density_score", ce.get("score_raw", 1.0))),
-                "tag": str(ce.get("tag", "FORTRESS")),
-                "tfs": list(ce.get("tfs_present", [])),
-                "kinds": list(ce.get("kinds_present", [])),
-                "is_cold": bool(ce.get("is_cold", False)),
-                "is_vacuum": bool(ce.get("is_vacuum", False)),
-                "source": "elected"
-            })
+        cands.append({
+            "price": p,
+            "band_low": float(ce.get("band_low", p)),
+            "band_high": float(ce.get("band_high", p)),
+            "tier": str(ce.get("tier", "C")),
+            "grade": str(ce.get("grade", "GRADE_1_MICRO")),
+            "score": float(ce.get("density_score", ce.get("score_raw", 1.0))),
+            "tag": str(ce.get("tag", "FORTRESS")),
+            "tfs": list(ce.get("tfs_present", [])),
+            "kinds": list(ce.get("kinds_present", [])),
+            "is_cold": bool(ce.get("is_cold", False)),
+            "is_vacuum": bool(ce.get("is_vacuum", False)),
+            "source": "elected"
+        })
 
     # 2. Raw clusters from ZoneMapResult
     for cl in getattr(zm, "clusters", []) or []:
@@ -763,13 +761,13 @@ class CockpitDataEngine:
         if candles:
             c_min_lo = min(c["low"] for c in candles)
             c_max_hi = max(c["high"] for c in candles)
-            # Expand viewport clamp to 1.25 * atr_val (min 80 pips) so nearby F1/F2 and C1/C2 remain visible
-            vp_margin = max(1.25 * atr_val, 80.0 * pip_val)
+            # Expand viewport clamp to 3.5 * atr_val (min 250 pips) so macro W1/D1 fortresses remain visible
+            vp_margin = max(3.5 * atr_val, 250.0 * pip_val)
             v_lo = c_min_lo - vp_margin
             v_hi = c_max_hi + vp_margin
         else:
-            v_lo = mid - 3.5 * atr_val
-            v_hi = mid + 3.5 * atr_val
+            v_lo = mid - 5.0 * atr_val
+            v_hi = mid + 5.0 * atr_val
 
         zce_ladder = _consolidate_zce_zones(zm, mid, v_lo, v_hi, atr_val, pip_val, digits)
 
@@ -840,7 +838,7 @@ class CockpitDataEngine:
 
         # Monotonically assign tiers F1, F2, F3... by distance to mid
         zce_floors = []
-        for idx, fl in enumerate(merged_floors[:4]):
+        for idx, fl in enumerate(merged_floors[:8]):
             tier_name = f"F{idx + 1}"
             fl_copy = dict(fl)
             fl_copy["tier"] = tier_name
@@ -898,7 +896,7 @@ class CockpitDataEngine:
 
         # Monotonically assign tiers C1, C2, C3... by distance to mid
         zce_ceils = []
-        for idx, ce in enumerate(merged_ceils[:4]):
+        for idx, ce in enumerate(merged_ceils[:8]):
             tier_name = f"C{idx + 1}"
             ce_copy = dict(ce)
             ce_copy["tier"] = tier_name

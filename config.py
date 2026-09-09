@@ -659,11 +659,10 @@ def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
 # Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
 # (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
-# --- DAILY PROFIT TARGET (14 Agustus) ---
-# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
-# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
-# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
-DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
+# --- DAILY PROFIT TARGET (14 Agustus / 9 Sep 2026: 7.0% Net Equity Gain) ---
+# Begitu net equity gain harian mencapai X% dari saldo awal hari (Start Day Balance),
+# bot membekukan pembukaan order baru sampai pergantian hari subuh berikutnya.
+DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 7.0)
 DAILY_LOSS_OPENED_TODAY_ONLY = _getenv_bool("DAILY_LOSS_OPENED_TODAY_ONLY", True)
 
 
@@ -717,25 +716,41 @@ WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
 ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)
 ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
-NY_SESSION_START_HOUR_WIB     = _getenv_int("NY_SESSION_START_HOUR_WIB", 19)
+NY_SESSION_START_HOUR_WIB     = _getenv_int("NY_SESSION_START_HOUR_WIB", 18)
 NY_LOCK_PACIFIC_CROSSES       = _getenv_bool("NY_LOCK_PACIFIC_CROSSES", True) # Opsi 2: Lock cross AUD/NZD non-USD di sesi NY
 
-# --- SESSION LOT MULTIPLIERS (8 Sep 2026) ---
+# --- SESSION LOT MULTIPLIERS (8/9 Sep 2026) ---
 SESSION_ASIA_LOT_MULT   = _getenv_float("SESSION_ASIA_LOT_MULT", 1.2)
 SESSION_LONDON_LOT_MULT = _getenv_float("SESSION_LONDON_LOT_MULT", 1.0)
-SESSION_NY_LOT_MULT     = _getenv_float("SESSION_NY_LOT_MULT", 0.8)
+SESSION_NY_LOT_MULT     = _getenv_float("SESSION_NY_LOT_MULT", 0.50)
 
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (16, 0),  "lot_multiplier": SESSION_ASIA_LOT_MULT},
-    {"name": "London",            "start": (15, 0), "end": (20, 0),  "lot_multiplier": SESSION_LONDON_LOT_MULT},
-    {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": SESSION_NY_LOT_MULT},
+    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (14, 0),  "lot_multiplier": SESSION_ASIA_LOT_MULT},
+    {"name": "London",            "start": (14, 0), "end": (18, 0),  "lot_multiplier": SESSION_LONDON_LOT_MULT},
+    {"name": "New York",          "start": (18, 0), "end": (0, 0),   "lot_multiplier": SESSION_NY_LOT_MULT},
 ]
 
-# --- CSM DYNAMIC FLOW BAILOUT (8 Sep 2026) ---
-ENABLE_CSM_DYNAMIC_BAILOUT = _getenv_bool("ENABLE_CSM_DYNAMIC_BAILOUT", True)
-CSM_BAILOUT_MIN_LOSS_R     = _getenv_float("CSM_BAILOUT_MIN_LOSS_R", -0.25)
-CSM_BAILOUT_SHIFT_THRESH   = _getenv_float("CSM_BAILOUT_SHIFT_THRESH", 2.5)
-CSM_BAILOUT_ABS_THRESH     = _getenv_float("CSM_BAILOUT_ABS_THRESH", 2.0)
+# --- NIGHT FREEZE CUTOFF (9 Sep 2026) ---
+ENABLE_NIGHT_FREEZE         = _getenv_bool("ENABLE_NIGHT_FREEZE", True)
+NIGHT_FREEZE_START_HOUR_WIB = _getenv_int("NIGHT_FREEZE_START_HOUR_WIB", 23)
+
+# --- NEWS VOLATILITY BLACKOUT WINDOW (9 Sep 2026) ---
+NEWS_BLACKOUT_MINUTES_BEFORE = _getenv_int("NEWS_BLACKOUT_MINUTES_BEFORE", 30)
+NEWS_BLACKOUT_MINUTES_AFTER  = _getenv_int("NEWS_BLACKOUT_MINUTES_AFTER", 30)
+
+# --- CSM DYNAMIC FLOW BAILOUT (8/9 Sep 2026) ---
+ENABLE_CSM_DYNAMIC_BAILOUT         = _getenv_bool("ENABLE_CSM_DYNAMIC_BAILOUT", True)
+CSM_BAILOUT_MIN_LOSS_R             = _getenv_float("CSM_BAILOUT_MIN_LOSS_R", -0.50)
+CSM_BAILOUT_PERSISTENCE_BARS_M15   = _getenv_int("CSM_BAILOUT_PERSISTENCE_BARS_M15", 2)
+POST_BAILOUT_COOLDOWN_SECONDS      = _getenv_int("POST_BAILOUT_COOLDOWN_SECONDS", 5400)
+CSM_BAILOUT_SHIFT_THRESH           = _getenv_float("CSM_BAILOUT_SHIFT_THRESH", 2.5)
+CSM_BAILOUT_ABS_THRESH             = _getenv_float("CSM_BAILOUT_ABS_THRESH", 2.0)
+
+# --- CURRENCY BASKET STRUCTURAL SYNCHRONIZATION (CBSS - 9 Sep 2026) ---
+ENABLE_CBSS                    = _getenv_bool("ENABLE_CBSS", True)
+CBSS_MAX_BASKET_CONCURRENCY    = _getenv_int("CBSS_MAX_BASKET_CONCURRENCY", 2)
+CBSS_MIN_RUNWAY_ATR            = _getenv_float("CBSS_MIN_RUNWAY_ATR", 1.20)
+CBSS_G3_BARRIER_THRESHOLD_ATR  = _getenv_float("CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35)
 
 # --- DIRECTIONAL HYSTERESIS (8 Sep 2026) ---
 ENABLE_DIRECTIONAL_HYSTERESIS = _getenv_bool("ENABLE_DIRECTIONAL_HYSTERESIS", True)

@@ -18,6 +18,12 @@ from src.indicators.sweep_detector import detect as sweep_detect
 from src.indicators.wave_regime import evaluate_wave_regime, detect_dynamic_basing_box
 from src.indicators.atlas_dna import calculate_intraday_sl_tp, calculate_dynamic_stations, calculate_dual_grid_stations, get_symbol_step
 from src.analytics.currency_strength import get_csm_delta_for_symbol, evaluate_systemic_basket_lock
+from src.analytics.basket_sync_engine import (
+    is_pair_blocked_by_g3_wall,
+    calculate_pair_runway,
+    check_basket_concurrency_cap,
+    rank_basket_candidates_by_runway
+)
 from src.analytics.macro_strategic_engine import (
     macro_strategic_engine, 
     MacroStrategicDirective,
@@ -2987,7 +2993,11 @@ class MarketScanner:
 
         for sym, macro in self.macro_cache.items():
             sym_is_crypto = config.is_crypto(sym)
-            if not sym_is_crypto and (dow in (5, 6) or (0 <= h < asia_start)):
+            if not sym_is_crypto and (
+                dow in (5, 6)
+                or (0 <= h < asia_start)
+                or (getattr(config, "ENABLE_NIGHT_FREEZE", True) and h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23))
+            ):
                 continue
 
             clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
@@ -3005,7 +3015,7 @@ class MarketScanner:
             # ── SESSION-AWARE PAIR ROUTER (Asia Pacific Focus & NY Pacific Cross Lock - Opsi 2) ──
             if getattr(config, "SESSION_AWARE_ROUTING_ENABLED", True):
                 if not self.is_symbol_allowed_for_session(sym, h):
-                    if h >= getattr(config, "NY_SESSION_START_HOUR_WIB", 19):
+                    if h >= getattr(config, "NY_SESSION_START_HOUR_WIB", 18):
                         logger.debug(f"[RADAR] {sym} SKIP: Sesi NY ({h:02d}:00 WIB) mengunci AUD/NZD Cross non-USD (Opsi 2).")
                     else:
                         logger.debug(f"[RADAR] {sym} SKIP: Sesi Asia ({h:02d}:00 WIB) hanya mengizinkan pair Pasifik/Asia (AUD/NZD/JPY).")
@@ -3046,10 +3056,16 @@ class MarketScanner:
                     cal_obj = getattr(economic_calendar, "calendar", None)
                     if cal_obj:
                         cal_text = cal_obj.get_context(symbol=sym) or ""
-                        # Stage 1 High-Impact News Shield: Skip symbol if high-impact news is within 30m or just released (<10m)
-                        is_news_imminent, news_desc = cal_obj.is_high_impact_imminent(symbol=sym, window_minutes=30)
-                        if is_news_imminent:
-                            logger.debug(f"[RADAR NEWS SHIELD] {sym} SKIP: Imminent high-impact event ({news_desc})")
+                        # Stage 1 News Volatility Blackout Shield (±30m high-impact)
+                        m_before = int(getattr(config, "NEWS_BLACKOUT_MINUTES_BEFORE", 30))
+                        m_after = int(getattr(config, "NEWS_BLACKOUT_MINUTES_AFTER", 30))
+                        is_blackout, blackout_desc = cal_obj.is_in_news_blackout(
+                            symbol=sym,
+                            minutes_before=m_before,
+                            minutes_after=m_after
+                        )
+                        if is_blackout:
+                            logger.debug(f"[RADAR NEWS BLACKOUT] {sym} SKIP: {blackout_desc}")
                             continue
                 except Exception:
                     cal_text = ""
@@ -3100,6 +3116,38 @@ class MarketScanner:
                     is_basket_locked, basket_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
                     if is_basket_locked:
                         return False, "HARD_BLOCK", f"[SYSTEMIC BASKET LOCK] {basket_reason}"
+
+                    # 1B. CBSS Currency Basket Structural Synchronization (9 Sep 2026)
+                    if getattr(config, "ENABLE_CBSS", True) and not sym_is_crypto:
+                        is_continuation = not any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM", "FADE"))
+
+                        # (a) Local Pair G3 Wall Veto (The EURAUD Law):
+                        # Block continuation trades ONLY on the specific pair hitting the G3 wall
+                        is_g3_blocked, g3_reason = is_pair_blocked_by_g3_wall(sym, target_dir, self.macro_cache)
+                        if is_g3_blocked and is_continuation:
+                            return False, "HARD_BLOCK", g3_reason
+
+                        # (b) Basket Concurrency Cap (Max 2 trades per currency basket in same direction)
+                        from config import mt5
+                        try:
+                            raw_pos = mt5.positions_get() or []
+                            raw_ord = mt5.orders_get() or []
+                            cap_ok, cap_msg = check_basket_concurrency_cap(sym, target_dir, raw_pos, raw_ord)
+                            if not cap_ok:
+                                return False, "HARD_BLOCK", cap_msg
+                        except Exception:
+                            pass
+
+                        # (c) Pair ZCE Runway Sufficiency Check
+                        runway_info = calculate_pair_runway(sym, target_dir, self.macro_cache)
+                        r_atr = runway_info.get("runway_atr", 2.0)
+                        min_runway = float(getattr(config, "CBSS_MIN_RUNWAY_ATR", 1.20))
+                        # Di sesi New York (>= 18:00 WIB) atau setup Grade B scalp, runway dilonggarkan ke min 0.75x ATR
+                        _wib_h = datetime.now(WIB).hour
+                        if _wib_h >= getattr(config, "NY_SESSION_START_HOUR_WIB", 18):
+                            min_runway = float(getattr(config, "ZCE_MIN_RUNWAY_RR", 0.75))
+                        if r_atr < min_runway and is_continuation:
+                            return False, "HARD_BLOCK", f"[CBSS RUNWAY] Insufficient Runway ({r_atr:.2f}x ATR < {min_runway:.2f}x ATR) to opposing barrier"
 
                     # Supreme Precedence: Jika SFR Pro aktif, seluruh bias makro statis tunduk pada aliran SFR
                     if is_sfr_pro:

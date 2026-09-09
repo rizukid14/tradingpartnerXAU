@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 _WIB = ZoneInfo("Asia/Jakarta")
+WIB = _WIB
 
 # --- Status line terminal (Windows) ---
 _VT_OK = False
@@ -1616,6 +1617,10 @@ def main():
             now_str = time.strftime('%H:%M:%S')
             remaining_pause = risk.get_remaining_pause()
             pause_str = f" {UI.RED}[PAUSED: {remaining_pause}s]{UI.RST}" if remaining_pause > 0 else ""
+            profit_lock_str = f" {UI.BOLD}{UI.GREEN}[TARGET +7.0% LOCKED]{UI.RST}" if getattr(risk, "_daily_profit_locked", False) else ""
+            now_wib_h = datetime.now(WIB).hour
+            is_night_freeze = getattr(config, "ENABLE_NIGHT_FREEZE", True) and (now_wib_h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23) or now_wib_h < 7)
+            freeze_str = f" {UI.CYAN}[NIGHT FREEZE]{UI.RST}" if is_night_freeze else ""
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
             
@@ -1717,7 +1722,7 @@ def main():
             except Exception:
                 pass
 
-            header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
+            header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str}{profit_lock_str}{freeze_str} | {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
 
             # Wrap daftar posisi ke baris terpisah
             try:

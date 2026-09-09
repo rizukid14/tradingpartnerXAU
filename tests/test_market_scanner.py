@@ -1206,35 +1206,36 @@ class TestMarketScanner(unittest.TestCase):
 
         with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
             with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch("src.analytics.economic_calendar.calendar", None):
-                    with patch("config.mt5.copy_rates_from_pos", return_value=sweep_rates):
-                        with patch.object(self.scanner, '_evaluate_live_candle_quality', return_value={
-                            'live_high': 1.35620,
-                            'live_low': 1.35540,
-                            'direction': 'bearish',
-                            'body_ratio': 0.20,
-                            'upper_wick_pct': 0.70,
-                            'lower_wick_pct': 0.10,
-                            'max_upper_wick': 0.70,
-                            'sweep_side': 'top',
-                            'is_bearish_engulf': False,
-                            'prev_close': 1.35545
-                        }):
-                            with patch("src.analytics.market_scanner.evaluate_universal_sweep_gates", return_value=(True, "OK")):
-                                with patch("src.analytics.market_scanner.calculate_intraday_sl_tp", return_value={
-                                    'sl': 1.35750,
-                                    'tp': 1.35000,
-                                    'sl_pips': 17.0,
-                                    'tp1_pips': 25.0,
-                                    'tp2_pips': 58.0,
-                                    'risk_reward': 3.4,
-                                    'setup_grade': 'GRADE_A',
-                                    'target_station': 1.35000
-                                }):
-                                    candidates = self.scanner.scan_fast_radar(mock_connector)
-                                    m1a_cands = [c for c in candidates if c.symbol == sym and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
-                                    self.assertEqual(len(m1a_cands), 1, "M1A Bearish Sweep at C1 must produce candidate and not be blocked by F1 floor trap or hysteresis!")
-                                    self.assertEqual(m1a_cands[0].direction, -1)
+                with patch.object(config, 'ENABLE_NIGHT_FREEZE', False):
+                    with patch("src.analytics.economic_calendar.calendar", None):
+                        with patch("config.mt5.copy_rates_from_pos", return_value=sweep_rates):
+                            with patch.object(self.scanner, '_evaluate_live_candle_quality', return_value={
+                                'live_high': 1.35620,
+                                'live_low': 1.35540,
+                                'direction': 'bearish',
+                                'body_ratio': 0.20,
+                                'upper_wick_pct': 0.70,
+                                'lower_wick_pct': 0.10,
+                                'max_upper_wick': 0.70,
+                                'sweep_side': 'top',
+                                'is_bearish_engulf': False,
+                                'prev_close': 1.35545
+                            }):
+                                with patch("src.analytics.market_scanner.evaluate_universal_sweep_gates", return_value=(True, "OK")):
+                                    with patch("src.analytics.market_scanner.calculate_intraday_sl_tp", return_value={
+                                        'sl': 1.35750,
+                                        'tp': 1.35000,
+                                        'sl_pips': 17.0,
+                                        'tp1_pips': 25.0,
+                                        'tp2_pips': 58.0,
+                                        'risk_reward': 3.4,
+                                        'setup_grade': 'GRADE_A',
+                                        'target_station': 1.35000
+                                    }):
+                                        candidates = self.scanner.scan_fast_radar(mock_connector)
+                                        m1a_cands = [c for c in candidates if c.symbol == sym and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                                        self.assertEqual(len(m1a_cands), 1, "M1A Bearish Sweep at C1 must produce candidate and not be blocked by F1 floor trap or hysteresis!")
+                                        self.assertEqual(m1a_cands[0].direction, -1)
 
 
 if __name__ == "__main__":

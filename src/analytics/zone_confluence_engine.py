@@ -47,6 +47,7 @@ ZCE_W_TF: Dict[str, float] = {"M30": 0.55, "H1": 1.00, "H4": 1.60, "D1": 2.20, "
 ZCE_W_KIND: Dict[str, float] = {
     "EQH": 1.15, "EQL": 1.15, "MACRO_EXTREME": 1.20, "OB": 1.00,
     "FVG": 0.80, "FRVP_POC": 1.00, "FRVP_VAH": 0.85, "FRVP_VAL": 0.85,
+    "SWING_HIGH": 0.85, "SWING_LOW": 0.85,
     "LAST_HIGH": 0.60, "LAST_LOW": 0.60, "PSYCH_MAJOR": 0.80, "PSYCH_SUB": 0.50,
     "EMA_BAND": 0.45,
 }
@@ -252,6 +253,13 @@ class ZoneConfluenceEngine:
             for e in getattr(sig, "equal_lows", []) or []:
                 p = float(e["price"])
                 out.append(ZonePrimitive("EQL", tf, h, p, p, index_age=0))
+            # Confirmed LuxSMC Structural Swings (HH, LH, HL, LL)
+            for sh in getattr(sig, "bullish_structures", []) or []:
+                p = float(sh["price"])
+                out.append(ZonePrimitive("SWING_HIGH", tf, h, p, p, index_age=int(sh.get("index", 0)) + idx0))
+            for sl in getattr(sig, "bearish_structures", []) or []:
+                p = float(sl["price"])
+                out.append(ZonePrimitive("SWING_LOW", tf, h, p, p, index_age=int(sl.get("index", 0)) + idx0))
             # Last swing extreme per horizon (Last High / Last Low)
             out.append(ZonePrimitive("LAST_HIGH", tf, h, float(w["high"].max()), float(w["high"].max())))
             out.append(ZonePrimitive("LAST_LOW", tf, h, float(w["low"].min()), float(w["low"].min())))

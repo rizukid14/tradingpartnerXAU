@@ -558,7 +558,73 @@ class EconomicCalendar:
                         return True, f"Bank Holiday: {e.get('name')} [{c}]"
         return False, ""
 
+    def is_in_news_blackout(
+        self,
+        symbol: str = None,
+        now_wib: datetime = None,
+        minutes_before: int = 30,
+        minutes_after: int = 30
+    ) -> tuple[bool, str]:
+        """
+        News Volatility Blackout Window Gate:
+        - If US High-Impact event (CPI, PPI, NFP, ADP, FOMC, Fed, Powell, GDP, Retail Sales, PCE):
+          Freezes ALL 26 FX pairs within [now - minutes_after, now + minutes_before].
+        - If Non-USD High-Impact event (e.g. BOE, ECB, RBA, BOC, SNB, BOJ, CPI, GDP):
+          Freezes pairs containing the relevant currency (and CNY affects AUD/NZD).
+        """
+        now = now_wib or datetime.now(WIB)
+        events = self.get_events(now, symbol=None)
+
+        us_global_keywords = (
+            "FOMC", "CPI", "PPI", "NFP", "NON-FARM", "PAYROLL", "UNEMPLOYMENT",
+            "FED", "POWELL", "WARSH", "GDP", "PCE", "RETAIL SALES", "INTEREST RATE"
+        )
+
+        sym_ccys = self._symbol_currencies(symbol) if symbol else set()
+
+        for e in events:
+            imp = str(e.get("impact", "")).upper()
+            if imp not in ("HIGH", "CRITICAL"):
+                continue
+
+            e_dt = e.get("dt")
+            if not isinstance(e_dt, datetime):
+                continue
+
+            diff_sec = (e_dt - now).total_seconds()
+
+            # Check window: between -minutes_after and +minutes_before
+            if not (-(minutes_after * 60) <= diff_sec <= (minutes_before * 60)):
+                continue
+
+            e_name = str(e.get("name", "")).strip()
+            e_country = str(e.get("country", "")).upper().strip()
+            e_currency = str(e.get("currency") or self.COUNTRY_CURRENCY.get(e_country, e_country)).upper().strip()
+
+            if diff_sec >= 0:
+                timing_str = f"in {int(diff_sec / 60)}m ({e_dt.strftime('%H:%M')} WIB)"
+            else:
+                timing_str = f"released {int(abs(diff_sec) / 60)}m ago ({e_dt.strftime('%H:%M')} WIB)"
+
+            # 1. US / Global High-Impact -> Blocks ALL FX pairs
+            is_us_global = (e_country in ("US", "USD")) or any(k in e_name.upper() for k in us_global_keywords)
+            if is_us_global:
+                return True, f"US High-Impact News Blackout: [{e_country or 'US'}] {e_name} {timing_str}"
+
+            # 2. Non-USD High-Impact -> Blocks only affected currency pairs
+            if not symbol:
+                return True, f"High-Impact News Blackout: [{e_currency}] {e_name} {timing_str}"
+
+            if e_currency in sym_ccys:
+                return True, f"High-Impact News Blackout ({e_currency}): {e_name} {timing_str}"
+
+            if e_currency == "CNY" and any(c in sym_ccys for c in ("AUD", "NZD")):
+                return True, f"China High-Impact News Blackout (affects AUD/NZD): {e_name} {timing_str}"
+
+        return False, ""
+
 
 # Singleton instance
 calendar = EconomicCalendar()
+
 

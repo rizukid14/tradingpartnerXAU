@@ -93,7 +93,8 @@ python main.py
 | `src/indicators/lux_smc.py` | LuxAlgo Smart Money Concepts (OB/FVG/Strong Low/PWH-PWL) + FRVP confluence |
 | `src/indicators/atlas_dna.py` | Symbol-specific psychological step (50/100/200 pips) + dynamic stations calculator |
 | `src/analytics/currency_strength.py` | Boitoki CSM — modul mandiri, 8 mata uang dari 7 USD majors, Net Currency Delta; dibaca market_scanner (gate arah), llm_client (payload prompt), cli_theme/telegram (display). **Tidak hidup di MSE/ZCE** |
-| `src/analytics/zone_confluence_engine.py` | **ZCE (RFC 11)** — peta zona 6-TF × multi-horizon, klaster/skor J1, wall elect F1/C1; hook `zce_walls` → MSE (`ZCE_ENABLED=true`, `ZCE_MODE=full` sejak 2 Sep 2026, test akun live cent) |
+| `src/analytics/basket_sync_engine.py` | **CBSS Engine (9 Sep 2026)** — Pemetaan konstituen 8 keranjang mata uang, kalkulasi bilateral runway ZCE per-pair ($C_1/F_1$ vs $C_2/F_2$), Local Pair G3 Wall Veto (The EURAUD Law: hold pair penabrak benteng, gas pair sekeranjang lainnya yang punya runway), Basket Concurrency Cap (max 2 posisi per keranjang searah), ranking juara keranjang (Top Runway Selector). |
+| `src/analytics/zone_confluence_engine.py` | **ZCE (RFC 11 & Structural Swings)** — peta zona 6-TF × multi-horizon, klaster/skor J1, wall elect F1/C1, integrasi confirmed LuxSMC structural swings (HH, LH, HL, LL) untuk akurasi dinding benteng makro W1/D1/H4; hook `zce_walls` → MSE (`ZCE_ENABLED=true`, `ZCE_MODE=full` sejak 2 Sep 2026, test akun live cent) |
 | `src/core/llm_client.py` | High-Density Dossier Prompt (Stage 2) + 24 candle M5 untuk Pass 2 audit |
 | `src/core/consensus.py` | Weighted-confidence consensus (skor $\ge$ threshold) + `_apply_sltp_rules` floor ATR + AI re-evaluator CLOSE + Hard Risk Veto |
 | `src/core/risk_engine.py` | Filter spread, daily loss 4% equity, profit target 6%, dead zone 00:00–07:00 WIB, recovery mode, risk lot sizing, session multiplier |
@@ -102,7 +103,7 @@ python main.py
 | `src/core/telegram_bot.py` | 2-Way Interactive Telegram Controller + on-demand 3-AI analysis + `/radar` `/levels` `/smc` |
 | `src/analytics/position_manager.py` | 2-Stage Trailing (H1 Breathing 65-90% TP, M30 Terminal Lock $\ge$90% TP), BEP 45-55%, partial close 50%, time-decay stagnation, pre-rollover shield |
 | `src/analytics/macro_strategic_engine.py` | **Barrier Chamber State Machine** (6-TF Native `MN1/W1/D1/H4/H1/M30`), Density Cluster Scoring ($C_1, C_2, F_1, F_2$), Interaction Sequence Tracking (`['F1_SWEEP', 'C1_SWEEP']`), 7-State Engine, Pair-Calibrated SL Floor (35p Crosses) |
-| `dashboard.py` | Multi-Pair Cockpit Dashboard & 7-Gate X-Ray Surveillance (live candles, ZCE levels, telemetry radar M1..M4, 7-Gate audit BTC & FX) |
+| `dashboard.py` | Multi-Pair Cockpit Dashboard & 7-Gate X-Ray Surveillance (8-Tier ZCE ladder F1..F8 / C1..C8, preservasi seluruh dinding terpilih ZCE, expanded viewport margin, live candles, telemetry radar M1..M4) |
 | `dashboard_assets.py` | Single-Page Application (SPA) Assets: Lightweight Charts, 3-Row Longgar Watchlist dengan Penanda M4 Shock Emas & Standardisasi Google Material Symbols (0% Emoji) |
 
 ---
@@ -147,8 +148,10 @@ python main.py
     * Non-ZCE Legacy clamp: FX/JPY/Gold = $\max(2.5 \times \text{ATR}, 1.5 \times \text{Floor})$; BTC = $1.8 \times \text{ATR}$ (fallback 45000).
   - **R:R**: Net TP $\in [0.75\times, 3.50\times]$ SL + friction (grade-aware: Grade B $0.75-1.25R$; Grade A $1.25-1.80R$; Grade A+ $1.80-2.50R$; Grade S $2.50-3.50R$).
 - **Spread Filter**: FX = ATR-based $\max(15\% \times \text{ATR H1}, 20\text{ pts floor})$; XAU $\le 50$ pts; BTC $\le 2400$ pts.
-- **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London Core 14:00–19:00 WIB (all 26 FX permitted); Sesi New York & Overlap 19:00–00:00 WIB (Opsi 2: AUD/NZD Crosses non-USD locked; AUDUSD, NZDUSD, JPY Crosses, dan Western pairs permitted).
-- **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), daily profit target 6%, max 6 total open posisi (shared pool), max 4 active pending orders, **Friday Pre-Weekend Lock (freeze new orders mulai 23:00 WIB Jumat)**.
+- **Dead Zone & Sesi Operasional**: Dead Zone 00:00–07:00 WIB (FX & XAU skip; BTC 24/7); **Night Freeze 23:00–07:00 WIB (pembukaan order FX baru dibekukan, BTC exempt)**; Sesi Tokyo 07:00–14:00 WIB (khusus driver aktif JPY/AUD/NZD, pair Barat locked); Sesi London Core 14:00–18:00 WIB (all 26 FX permitted, lot 1.0x); **Sesi New York 18:00–00:00 WIB (flat lot multiplier 0.50x)**.
+- **Economic News Volatility Blackout Window ($\pm 30$ Menit)**: Jendela $\pm 30$ menit berita High-Impact: US news (CPI, PPI, NFP, ADP, FOMC) membekukan pembukaan trade di seluruh 26 FX pairs; Non-USD news hanya membekukan pair konstituen mata uang terkait.
+- **CBSS Local Pair G3 Wall Veto & Basket Concurrency Cap (9 Sep 2026)**: Kandidat wajib memiliki Runway ZCE $\ge 1.20\times\text{ATR}$ (atau Grade B Wall Scalp di sesi NY). Pair ditolak jika menempel benteng G3 lawan ($dist \le 0.35\times\text{ATR}$). Maksimal 2 posisi aktif per keranjang mata uang searah.
+- **Proteksi Akun**: Max daily loss **4% equity** (≈ $240 di $6k, BUKAN $50 statis), max 5 consecutive loss → recovery mode (lot ×0.5, max 3 posisi), **Daily Profit Target 7.0% Net Equity Lockout (real-time freeze new orders sampai 04:00 WIB)**, max 6 total open posisi (shared pool), max 4 active pending orders, **Friday Pre-Weekend Lock (freeze new orders mulai 23:00 WIB Jumat)**.
 - **Proteksi Posisi Real-Time (`position_manager.py`)**:
   - **Break-Even (BEP)**: Grade-Aware Dynamic Threshold — Standar (Grade A/A+) aktif di **50% TP**; Grade S di **65% TP**; Khusus Grade B / Defensive (`REDUCED_CONFIDENCE`, `TP1_ONLY_SCALP`) dan Vacuum Extension ($R:R \ge 2.0$) aktif dipercepat di **35% TP**; M4 aktif di **70% TP** (+ padding komisi round-trip + Pocket Profit 15 pts / 1.5 pips). Sinergi 1:1 antara `position_manager.py` dan `shadow_tracker.py`.
   - **Partial Close (TP1)**: aktif di **45%–55% TP**, cairkan 50% lot + geser sisa ke Risk-Free BEP (di-bypass total untuk Grade B Wall Scalp dan M4).
@@ -156,6 +159,7 @@ python main.py
     * **Stage 1 (Swing Breathing: 65% s/d < 90% TP)**: $0.75\times\text{ATR H1}$ dengan floor absolut 80 pts FX (8 pips).
     * **Stage 2 (Terminal Lock: $\ge$ 90% TP)**: $0.50\times\text{ATR M30}$ dengan floor 30 pts FX (3 pips).
   - **Peak-Aware Time-Decay Stagnation Exit**: posisi $\ge$4 jam hold di rentang $[-0.20R, +0.20R]$ ditutup jika Peak MFE $< +0.30R$.
+  - **CSM Dynamic Flow Bailout Reform (9 Sep 2026)**: Ambang rugi $\le -0.50R$, wajib konfirmasi nilai CSM Net Delta berbalik berlawanan arah selama minimal 2 bar M15 berturut-turut, lockout cooldown scanner 90 menit (5400s) guna mencegah infinite re-entry loop.
   - **Pending Order Target Proximity Invalidation**: batalkan otomatis pending limit order jika harga live telah bergerak $\ge 75\%$ menuju TP tanpa terjemput (mencegah late adverse fill pada late reverse).
   - **Pending Order Harmonisasi Invalidation CSM & Macro Alignment**: pembatalan pending limit order diselaraskan dengan scanner threshold ($|\text{csm\_delta}| \ge 1.0$, `PENDING_CSM_OPPOSED_THRESHOLD`), dengan proteksi Macro Alignment (order tidak dibatalkan oleh CSM opposed moderat jika didukung bias makro $\ge 0.35$ BUY / $\le -0.35$ SELL).
   - **Pre-Rollover Shield (03:50–04:15 WIB)**: tutup bersih di 03:50 WIB JIKA jarak fisik ke SL $\le$ threshold per-simbol (EURCHF/EURNZD 240 pts, GBPCHF 210 pts, GBPUSD 180 pts, USDJPY 150 pts, NZDCAD 140 pts, AUDCAD 130 pts). Posisi SL aman / profit tebal dibiarkan jalan.
@@ -384,6 +388,17 @@ python main.py
     - **Pelepasan Konsentrasi Keranjang Valas (`MAX_CURRENCY_BASKET_EXPOSURE=99`)**: Menyelaraskan file `.env` dan default `config.py` ke nilai 99 (mode forward test / data collection), serta menambahkan fast bypass pada `risk_engine.py`. Mengeliminasi pemblokiran false positive pada `NZDUSD` dan `USDJPY`.
     - **Debouncing Soft Timing Hold pada Abort SL/TP Rules (`main.py`)**: Menerapkan jeda bernapas 3 menit (`scanner_inst.record_soft_timing_hold`) saat order dibatalkan oleh aturan SL/TP (`ANCHOR_TOO_WIDE`), menghentikan spamming loop pada pair sempit seperti `EURGBP`.
     - **Verifikasi Kuantitatif**: 46/46 pytest suite (`test_risk_engine_magic_filter.py`, `test_dashboard.py`, `test_market_scanner.py`) 100% PASS.
+78. **Implementasi 4-Pilar Perbaikan Sistemik (CBSS Non-Redundant, Economic News Blackout, Night Freeze & NY Sizing, Real-Time Profit Lock 7%) & Reformasi CSM Bailout** (9 September 2026 — Malam):
+    - **CBSS Engine Non-Redundant (`src/analytics/basket_sync_engine.py`)**: Menghitung Bilateral Runway ZCE per-pair ($C_1/F_1$ vs $C_2/F_2$), menerapkan **Local Pair G3 Wall Veto (The EURAUD Law)** yang hanya memblokir pair penabrak benteng ($dist \le 0.35\times\text{ATR}$) tanpa memblokir pair sekeranjang yang memiliki runway lapang ($\ge 1.20\times\text{ATR}$), serta membatasi konsentrasi risiko keranjang maksimal 2 posisi aktif per arah.
+    - **Economic News Volatility Blackout Window (`economic_calendar.py` & `risk_engine.py`)**: Jendela $\pm 30$ menit sebelum dan sesudah rilis berita High-Impact: US news membekukan seluruh 26 FX pairs; non-USD news membekukan pair terkait saja.
+    - **Night Freeze & NY Session Sizing (`risk_engine.py` & `config.py`)**: Membekukan pembukaan order baru FX pada jam 23:00–07:00 WIB (BTC 24/7 dikecualikan), serta menerapkan flat multiplier `0.50x` untuk Sesi New York (18:00–00:00 WIB).
+    - **Real-Time Daily Profit Target Lockout (+7.0%)**: Mengunci pembukaan order baru seketika saat `(Equity - Start Day Balance) / Start Day Balance >= 7.0%` tercapai hingga pergantian hari (04:00 WIB).
+    - **Reformasi CSM Dynamic Flow Bailout (`position_manager.py`)**: Ambang rugi dinaikkan ke $\le -0.50R$, wajib bertahan minimal 2 bar M15 berturut-turut, dan menerapkan cooldown lockout 90 menit di scanner pasca bailout.
+    - **Verifikasi Kuantitatif Penuh**: 239/239 unit test pass (**100% PASS**) dalam 27.72 detik.
+79. **ZCE Multi-Horizon Structural Swing Confluence & Dashboard 8-Tier Viewport Expansion** (9 September 2026 — Tengah Malam):
+    - **Akurasi Penggaris ZCE (`zone_confluence_engine.py`)**: Mengintegrasikan seluruh confirmed structural swing pivots (`sig.bullish_structures` dan `sig.bearish_structures` dari LuxSMC) ke dalam primitif ZCE per timeframe dengan bobot `SWING_HIGH/LOW: 0.85`. Mengeliminasi blind spot W1 pada swing low 15.02.2026 (`207.233`) dan broken swing high 2024 (`208.109`), mendongkrak lantai `207.098` menjadi **`GRADE_3_MACRO` (Skor 7.65)** dan area `205.00–205.50` menjadi **`GRADE_3_MACRO` (Skor 10.82)**.
+    - **Ekspansi Tangga Dashboard (`dashboard.py`)**: Memperluas tangga pemantauan dari `[:4]` menjadi `[:8]` (F1..F8 dan C1..C8), serta memperlebar viewport margin ke `max(3.5*ATR, 250 pips)` dengan preservasi 100% terhadap seluruh dinding terpilih ZCE tanpa terpotong visual clamp.
+    - **Verifikasi Kuantitatif Penuh**: Seluruh 239 unit test suite (**100% PASS**) dalam 22.85 detik.
 
 ---
 

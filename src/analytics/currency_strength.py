@@ -372,6 +372,35 @@ def get_csm_delta_for_symbol(symbol: str) -> float:
     return 0.0
 
 
+def get_csm_delta_m15_for_symbol(symbol: str) -> float:
+    """
+    Mengambil continuous float net delta CSM M15 (4-hour session velocity) untuk simbol tertentu.
+    Nilai positif = base menguat vs quote di M15.
+    Nilai negatif = base melemah vs quote di M15.
+    """
+    clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
+    if "BTC" in clean_sym or len(clean_sym) < 6:
+        return 0.0
+
+    scores_m15, _ = calculate_boitoki_csm(mt5.TIMEFRAME_M15, lookback_bars=16)
+    if not scores_m15:
+        return 0.0
+
+    if "XAU" in clean_sym or "GOLD" in clean_sym:
+        usd_m15 = scores_m15.get("USD", 0.0)
+        return round(-usd_m15 / 10.0, 2)
+
+    base = clean_sym[:3]
+    quote = clean_sym[3:6]
+    if base in scores_m15 and quote in scores_m15:
+        base_score = scores_m15.get(base, 0.0)
+        quote_score = scores_m15.get(quote, 0.0)
+        net_diff = base_score - quote_score
+        return round(net_diff / 10.0, 2)
+
+    return 0.0
+
+
 def evaluate_systemic_basket_lock(
     symbol: str,
     proposed_direction: int,

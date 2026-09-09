@@ -2,6 +2,93 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Tengah Malam) — ZCE Multi-Horizon Structural Swing Confluence & Dashboard 8-Tier Viewport Expansion
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Blind Spot Swing Low HTF pada ZCE Primitive Collection**:
+   - Analisis pada chart W1 `GBPJPY` mengungkap anomali: swing low W1 terkonfirmasi pada minggu 15 Februari 2026 di level `207.233` dan swing high 2024 di `208.109` (broken into RBS) tidak dikenali sebagai benteng makro oleh ZCE. Level `207.098` hanya mendapat skor 4.17 (`GRADE_2_INTERMEDIATE`), dan area `205.00–205.50` hanya mendapat skor 2.86 (`GRADE_1_MICRO`).
+   - Akar masalah: Metode `_collect_primitives()` di `zone_confluence_engine.py` sebelumnya HANYA mengoleksi `w["high"].max()` dan `w["low"].min()` per window horizon. ZCE sama sekali tidak mengoleksi pivot struktur swing (`sig.bullish_structures` dan `sig.bearish_structures` dari LuxSMC). Karena titik terendah absolut 50/100 bar W1 adalah 197.488 / 184.378, swing low penting 207.233 di tengah rentang terlewati begitu saja.
+2. **Truncation & Viewport Drop pada Dashboard Surveillance**:
+   - Di `dashboard.py`, tampilan tangga lantai dan plafon dibatasi kaku ke `merged_floors[:4]`. Ketika terdapat level mikro intraday di dekat harga running (207.86, 207.72, 207.50, 207.395), level kunci `207.098` tergeser ke urutan ke-5 dan terpotong (truncated) dari tabel dashboard.
+   - Selain itu, filter visual viewport `v_lo = c_min_lo - vp_margin` hanya memberi buffer 80 pips, sehingga benteng makro W1/D1 di bawah 206.29 disingkirkan dari daftar kandidat.
+
+---
+
+### Solusi Perbaikan Kode (Checklist File):
+1. **`src/analytics/zone_confluence_engine.py`**:
+   - Menambahkan bobot tipe `SWING_HIGH: 0.85` dan `SWING_LOW: 0.85` pada `ZCE_W_KIND`.
+   - Mengintegrasikan ekstraksi seluruh confirmed structural swings (`sig.bullish_structures` dan `sig.bearish_structures` dari LuxSMC) ke dalam primitif ZCE per timeframe (`SWING_HIGH` & `SWING_LOW`).
+   - Hasil kalibrasi GBPJPY:
+     * Level `207.098` terangkat dari skor 4.17 (G2) menjadi **skor 7.65 (`GRADE_3_MACRO` Fortress Wall)** berkat konfluensi W1+D1+H4+H1!
+     * Level `205.00–205.50` terangkat dari skor 2.86 (G1) menjadi **skor 10.82 (`GRADE_3_MACRO` Fortress Wall)**.
+2. **`dashboard.py`**:
+   - Seluruh dinding terpilih ZCE (`zm.floors` dan `zm.ceilings`) dijamin 100% selalu dipreservasi ke daftar kandidat tanpa terpotong batas viewport.
+   - Viewport margin diperlebar ke `max(3.5 * atr_val, 250.0 * pip_val)`.
+   - Batas tier lantai dan plafon diperluas dari `[:4]` menjadi `[:8]` (F1..F8 dan C1..C8), memberikan pemetaan holistik zona mikro hingga benteng makro.
+3. **`src/analytics/market_scanner.py`**:
+   - Deklarasi waktu `_wib_h = datetime.now(WIB).hour` secara eksplisit di dalam `_is_direction_allowed()` guna mengeliminasi potensi `NameError`.
+4. **`tests/test_market_scanner.py`**:
+   - Patch `ENABLE_NIGHT_FREEZE = False` pada fixture unit test `test_m1a_sweep_ceiling_trap_awareness_and_hysteresis_reversal` agar deterministik di seluruh jam operasional.
+   - Seluruh 239 unit test dipastikan **100% PASS** dalam 22.85 detik.
+
+---
+
+## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Malam) — 4-Pilar Perbaikan Sistemik (CBSS Engine Non-Redundant, Economic News Blackout Window, Night Freeze & NY Sizing, Real-Time Profit Lock 7%) & Reformasi CSM Bailout
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Redundansi & Jebakan Blokir Buta Keranjang (The EURAUD Dilemma)**:
+   - Evaluasi kuantitatif terhadap usulan awal CBSS (Currency Basket Structural Synchronization) membuktikan bahwa memblokir buta seluruh keranjang saat 1 pair menabrak benteng makro adalah kesalahan fatal (*over-constrained false veto*). Jika `EURAUD` menempel lantai makro G3 ($dist \le 0.35\times\text{ATR}$), institusi memang sedang berebut likuiditas di sana, tetapi pair EUR lainnya seperti `EURCAD` atau `EURNZD` yang memiliki runway lapang ($\ge 1.2\times\text{ATR}$) justru merupakan *golden trade* yang wajib dieksekusi.
+   - Deteksi konsolidasi dan exhaustion juga sudah ditangani secara native oleh MSE (`WATCH_ONLY`), M4 Basing Box ($\le 0.35\times\text{ATR}$), dan Wave Regime sehingga tidak boleh diduplikasi.
+2. **Volatilitas Berita High-Impact & Night Slip Risk**:
+   - Berita US High-Impact (CPI, PPI, NFP, ADP, FOMC) mendistorsi likuiditas global dan memicu slippage spread di seluruh 26 pair FX. Di sisi lain, pembukaan posisi FX larut malam (23:00–07:00 WIB) rentan terhadap pelebaran spread rollover (04:00 WIB) dan likuiditas tipis.
+3. **Premature Cutting pada CSM Dynamic Bailout**:
+   - Implementasi awal CSM Bailout (8 Sep) memotong posisi terlalu dini pada floating loss kecil ($-0.25R$ s/d $-0.30R$) hanya berdasarkan 1 bar M15, sehingga tarikan wick normal 4–5 pips memicu exit prematur sesaat sebelum harga berbalik ke TP.
+4. **Giveback Risk Akumulasi Profit Harian**:
+   - Tanpa mekanisme penguncian profit harian berbasis *Real-Time Net Equity Gain*, keuntungan akun yang telah mencapai $\ge +7.0\%$ berisiko tergerus kembali oleh transaksi overtrading di penutupan sesi New York.
+
+---
+
+### Solusi Perbaikan Kode (Checklist 8 File Wajib):
+1. **`src/analytics/basket_sync_engine.py` (Modul Baru Pure Quant 0-Token)**:
+   - **Bilateral Runway ZCE per-Pair**: Menghitung jarak mid-price menuju benteng $C_1/F_1$ dan stasiun $C_2/F_2$ dalam kelipatan ATR H1.
+   - **Local Pair G3 Wall Veto (The EURAUD Law)**: Hanya memblokir pair yang sedang menempel benteng G3 lawan ($dist \le 0.35\times\text{ATR}$). Pair sekeranjang lainnya yang memiliki runway $\ge 1.2\times\text{ATR}$ tetap 100% diizinkan.
+   - **Basket Concurrency Cap**: Membatasi maksimal 2 pair aktif per mata uang dalam arah yang sama (mencegah over-exposure risiko keranjang).
+   - **Juara Keranjang (Top Runway Selector)**: Mengurutkan kandidat sekeranjang berdasarkan Runway ZCE terpanjang.
+2. **`src/analytics/market_scanner.py`**:
+   - Integrasi CBSS ke filter arah terpadu `_is_direction_allowed()`:
+     - Validasi `is_pair_blocked_by_g3_wall()`: Tolak pair penabrak benteng G3 dengan reason `[CBSS VETO] Pair at G3 Macro Wall (dist <= 0.35x ATR)`.
+     - Validasi Runway ZCE $\ge 1.2\times\text{ATR}$ (atau Grade B Wall Scalp di sesi NY).
+     - Validasi Concurrency Cap $\le 2$ posisi aktif per keranjang searah.
+3. **`src/analytics/economic_calendar.py` & `src/core/risk_engine.py`**:
+   - **News Volatility Blackout Window ($\pm 30$ Menit)**:
+     - Berita US High-Impact membekukan pembukaan trade baru di seluruh 26 pair FX.
+     - Berita High-Impact non-USD hanya membekukan pair konstituen mata uang terkait.
+   - **Night Freeze Cutoff Gate**:
+     - Membekukan pembukaan posisi baru untuk FX dari jam 23:00 hingga 07:00 WIB (BTC 24/7 dikecualikan).
+   - **Sesi NY 18:00–00:00 WIB Lot Multiplier**:
+     - Menerapkan lot multiplier flat `0.50x` (diturunkan dari 0.80x) untuk mengawal sesi New York yang bergejolak.
+   - **Real-Time Daily Profit Target Lockout (+7.0%)**:
+     - Menghitung `(Current Equity - Start Day Balance) / Start Day Balance >= 7.0%`.
+     - Begitu tercapai, mengunci `_daily_profit_locked = True`, membekukan order baru hingga 04:00 WIB besok (posisi terbuka tetap dikawal trailing/BEP).
+4. **`src/analytics/position_manager.py` (Reformasi CSM Dynamic Bailout)**:
+   - Ambang rugi dinaikkan ke `curr_r <= -0.50R` (eliminasi false-cut pada wick tipis).
+   - Wajib konfirmasi nilai CSM Net Delta berbalik berlawanan arah selama **minimal 2 bar M15 berturut-turut**.
+   - Post-Bailout Lockout: Mengunci simbol di scanner selama 90 menit (`POST_BAILOUT_COOLDOWN_SECONDS = 5400`) guna mencegah *infinite re-entry loop*.
+5. **`config.py` & `.env`**:
+   - Konfigurasi sinkron: `ENABLE_CBSS=True`, `CBSS_MAX_BASKET_CONCURRENCY=2`, `CBSS_MIN_RUNWAY_ATR=1.20`, `CBSS_G3_BARRIER_THRESHOLD_ATR=0.35`, `NEWS_BLACKOUT_MINUTES_BEFORE=30`, `NEWS_BLACKOUT_MINUTES_AFTER=30`, `ENABLE_NIGHT_FREEZE=True`, `NIGHT_FREEZE_START_HOUR_WIB=23`, `DAILY_PROFIT_TARGET_PERCENT=7.0`, `SESSION_NY_LOT_MULT=0.50`, `CSM_BAILOUT_MIN_LOSS_R=-0.50`, `CSM_BAILOUT_PERSISTENCE_BARS_M15=2`, `POST_BAILOUT_COOLDOWN_SECONDS=5400`.
+   - Pembersihan duplikasi baris `.env` pada `DAILY_PROFIT_TARGET_PERCENT`.
+6. **`main.py`**:
+   - Penambahan deklarasi alias global `WIB = _WIB` (memperbaiki bug `NameError: name 'WIB' is not defined`).
+   - Tampilan status clock line terminal HUD dengan badge `[TARGET +7.0% LOCKED]` dan `[NIGHT FREEZE]`.
+7. **`tests/test_cbss_and_risk_shields.py` & `tests/test_sep8_enhancements.py`**:
+   - Penambahan test suite komprehensif 10 unit test (`test_cbss_and_risk_shields.py`).
+   - Penyelarasan skenario CSM bailout di `test_sep8_enhancements.py` ke aturan $-0.50R$ + 2 bar M15.
+   - Seluruh test suite (239 unit tests) dipastikan **100% PASS** dalam 27.72 detik.
+8. **`docs/CHANGELOG_SEPTEMBER_2026.md` & `AGENTS.md`**:
+   - Sinkronisasi arsitektur sistem dan pencatatan komprehensif.
+
+---
+
 ## 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0. Perubahan 9 September 2026 (Pagi II) — Pemurnian M4 ke DBD / RBR Breakout Continuation & Pemisahan Penuh SFC Layer 0 Directional Regime
 
 ### Latar Belakang & Identifikasi Masalah:

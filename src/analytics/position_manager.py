@@ -16,6 +16,7 @@ import time
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from typing import Dict, Set, Optional, Tuple, Any
 import config
 from config import mt5
 from src.core.cli_theme import UI
@@ -200,6 +201,7 @@ def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=No
 
 # Module-level state, loaded once at import (survives within a process)
 _partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets, _peak_mfe_points, _ticket_setup_grades = _load_state()
+_csm_opposed_bars: Dict[int, set] = {}  # ticket -> set of M15 bar timestamps where flow was opposed
 
 
 def set_ticket_setup_grade(ticket: int, setup_grade: str):
@@ -587,15 +589,18 @@ def _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, n
 
 def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
     """
-    CSM Dynamic Flow Bailout:
+    CSM Dynamic Flow Bailout (Reformasi 9 Sep 2026):
     Menutup dini posisi terbuka jika arus mata uang sistemik (Boitoki CSM Net Delta)
     berbalik tajam melawan arah trade DAN posisi sedang mengalami floating rugi.
     
     Dual Gate:
-    1. Finansial: Posisi sedang floating rugi (curr_r <= -0.25R).
-    2. Arus Sistemik Ekstrim:
-       - BUY: csm_delta <= -2.0 ATAU csm_delta_shift <= -2.5
-       - SELL: csm_delta >= +2.0 ATAU csm_delta_shift >= +2.5
+    1. Finansial: Posisi sedang floating rugi signifikan (curr_r <= -0.50R).
+       Mencegah false-cut pada tarikan wick 4-5 pips normal.
+    2. Arus Sistemik M15 Persisten (>= 2 bar M15 berturut-turut):
+       - BUY: csm_delta <= -2.0 ATAU csm_m15 <= -2.0 ATAU csm_delta_shift <= -2.5
+       - SELL: csm_delta >= +2.0 ATAU csm_m15 >= +2.0 ATAU csm_delta_shift >= +2.5
+    3. Post-Bailout Lockout (90 menit):
+       Mengunci simbol di scanner agar tidak terjadi infinite re-entry loop.
     """
     if not getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
         return False
@@ -607,14 +612,16 @@ def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, n
         return False
 
     curr_r = profit_points / init_sl_pts
-    min_loss_r = getattr(config, "CSM_BAILOUT_MIN_LOSS_R", -0.25)
-    # Hanya aktif jika sedang floating rugi di bawah threshold (misal <= -0.25R)
+    min_loss_r = getattr(config, "CSM_BAILOUT_MIN_LOSS_R", -0.50)
+    # Hanya aktif jika sedang floating rugi di bawah threshold (misal <= -0.50R)
     if curr_r > min_loss_r:
+        _csm_opposed_bars.pop(pos.ticket, None)
         return False
 
     try:
-        from src.analytics.currency_strength import get_csm_delta_for_symbol
+        from src.analytics.currency_strength import get_csm_delta_for_symbol, get_csm_delta_m15_for_symbol
         csm_delta = get_csm_delta_for_symbol(symbol)
+        csm_m15 = get_csm_delta_m15_for_symbol(symbol)
     except Exception as e:
         logger.debug(f"[CSM BAILOUT] Gagal fetch CSM delta untuk {symbol}: {e}")
         return False
@@ -628,37 +635,72 @@ def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, n
     shift_thresh = float(getattr(config, "CSM_BAILOUT_SHIFT_THRESH", 2.5))
     abs_opposed_thresh = float(getattr(config, "CSM_BAILOUT_ABS_THRESH", 2.0))
 
-    should_bailout = False
+    is_opposed = False
     bail_reason = ""
 
     if pos.type == mt5.ORDER_TYPE_BUY:
         if csm_open is not None:
-            if csm_shift <= -shift_thresh:
-                should_bailout = True
-                bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against BUY (open: {csm_open:+.2f} -> now: {csm_delta:+.2f})"
+            if csm_shift <= -shift_thresh or csm_m15 <= -abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM shifted against BUY (open: {csm_open:+.2f} -> H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
             elif csm_open >= -0.50 and csm_delta <= -abs_opposed_thresh and csm_shift <= -1.50:
-                should_bailout = True
+                is_opposed = True
                 bail_reason = f"CSM Flow Inversion from {csm_open:+.2f} to extreme {csm_delta:+.2f} (shift: {csm_shift:+.2f})"
         else:
-            if csm_delta <= -abs_opposed_thresh:
-                should_bailout = True
-                bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed BUY (no open snapshot)"
+            if csm_delta <= -abs_opposed_thresh or csm_m15 <= -abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM heavily opposed BUY (H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
     else:  # SELL
         if csm_open is not None:
-            if csm_shift >= shift_thresh:
-                should_bailout = True
-                bail_reason = f"CSM Net Delta shifted {csm_shift:+.2f} against SELL (open: {csm_open:+.2f} -> now: {csm_delta:+.2f})"
+            if csm_shift >= shift_thresh or csm_m15 >= abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM shifted against SELL (open: {csm_open:+.2f} -> H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
             elif csm_open <= 0.50 and csm_delta >= abs_opposed_thresh and csm_shift >= 1.50:
-                should_bailout = True
+                is_opposed = True
                 bail_reason = f"CSM Flow Inversion from {csm_open:+.2f} to extreme {csm_delta:+.2f} (shift: {csm_shift:+.2f})"
         else:
-            if csm_delta >= abs_opposed_thresh:
-                should_bailout = True
-                bail_reason = f"CSM Net Delta {csm_delta:+.2f} heavily opposed SELL (no open snapshot)"
+            if csm_delta >= abs_opposed_thresh or csm_m15 >= abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM heavily opposed SELL (H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
 
-    if should_bailout:
-        reason = f"CSM Flow Inversion ({bail_reason}, float {curr_r:+.2f}R)"
-        return _close_position_by_ticket(pos, symbol, "[CSM BAILOUT EXIT]", comment=reason)
+    # Timestamp candle M15 saat ini untuk validasi persistensi >= 2 bar berturut-turut
+    cur_m15_time = 0
+    try:
+        rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 2)
+        if rates_m15 is not None and len(rates_m15) > 0:
+            cur_m15_time = int(rates_m15[-1]['time'])
+    except Exception:
+        pass
+    if cur_m15_time == 0:
+        now_ts = now.timestamp() if isinstance(now, datetime) else (float(now) if now else time.time())
+        cur_m15_time = int(now_ts // 900 * 900)
+
+    if is_opposed:
+        _csm_opposed_bars.setdefault(pos.ticket, set()).add(cur_m15_time)
+    else:
+        _csm_opposed_bars.pop(pos.ticket, None)
+        return False
+
+    req_bars = int(getattr(config, "CSM_BAILOUT_PERSISTENCE_BARS_M15", 2))
+    bars_seen = len(_csm_opposed_bars.get(pos.ticket, set()))
+
+    if bars_seen >= req_bars:
+        reason = f"CSM Flow Inversion Persistent ({bail_reason}, {bars_seen} M15 bars, float {curr_r:+.2f}R)"
+        closed_ok = _close_position_by_ticket(pos, symbol, "[CSM BAILOUT EXIT]", comment=reason)
+        if closed_ok:
+            _csm_opposed_bars.pop(pos.ticket, None)
+            cooldown_sec = int(getattr(config, "POST_BAILOUT_COOLDOWN_SECONDS", 5400))
+            try:
+                from src.analytics.market_scanner import MarketScanner
+                inst = getattr(MarketScanner, '_instance', None)
+                if inst and hasattr(inst, 'mark_symbol_cancelled'):
+                    inst.mark_symbol_cancelled(symbol, cooldown_seconds=cooldown_sec)
+                    logger.info(f"[CSM BAILOUT LOCK] {symbol} dikunci cooldown {cooldown_sec}s di scanner pasca bailout.")
+            except Exception as e:
+                logger.debug(f"[CSM BAILOUT LOCK ERROR] {symbol}: {e}")
+            return True
+    else:
+        logger.debug(f"[CSM BAILOUT PENDING] {symbol} #{pos.ticket}: Opposed ({bars_seen}/{req_bars} bars M15, float {curr_r:+.2f}R). Menunggu konfirmasi persistensi.")
 
     return False
 
