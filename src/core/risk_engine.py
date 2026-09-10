@@ -600,7 +600,7 @@ class RiskEngine:
             return True, ""
 
         sym = symbol or config.SYMBOL
-        if sym and config.is_crypto(sym) and getattr(config, "ENABLE_BTC_ROTATION", False):
+        if sym and config.is_crypto(sym):
             return True, ""
 
         now = now_wib or datetime.now(WIB)
