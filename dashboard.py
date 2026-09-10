@@ -523,14 +523,12 @@ def _elect_primary_standby(
     # 1: Pro-trend over Counter-trend (0 if pro-trend else 1)
     # 2: Active physical touch/retest over pending (0 if active else 1)
     # 3: Actionable over passive watch (0 if not watch else 1)
-    # 4: Suppress sub-pip intra-bar noise if not active (0 if dist_atr >= 0.15 or active else 1)
-    # 5: Distance in ATR (closest first)
+    # 4: Distance in ATR (closest first, imminent setups prioritized)
     candidates.sort(key=lambda c: (
         0 if c["is_confluence"] else 1,
         0 if c["is_pro_trend"] else 1,
         0 if c["is_active"] else 1,
         1 if c["is_watch"] else 0,
-        1 if (c["dist_atr"] < 0.15 and not c["is_active"]) else 0,
         c["dist_atr"]
     ))
 

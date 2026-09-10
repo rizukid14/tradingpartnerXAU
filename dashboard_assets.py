@@ -1596,28 +1596,11 @@ function renderVerticalShading() {
       allowedTrajDir = -1;
     }
 
-    // Filter standbys: Jika arah dominan ada, tekan 100% vektor panah proyeksi kontra-tren
-    // Serta suppress jika simbol berstatus LOCK atau setup belum terkonfirmasi aktif secara fisik
-    const permState = String(cachedSymbolData.permission_state || "").toUpperCase();
-    const isSymbolLocked = (permState === "LOCK");
-
-    const filteredStandbysWithTraj = isSymbolLocked ? [] : standbysWithTraj.filter(s => {
+    // Filter standbys: Jika arah dominan ada, selaraskan dengan arah tren
+    const filteredStandbysWithTraj = standbysWithTraj.filter(s => {
       const traj = s.trajectory;
       if (!traj) return false;
       if (allowedTrajDir !== 0 && traj.direction !== allowedTrajDir) {
-        return false;
-      }
-      const st = String(s.status || traj.phase || "").toUpperCase();
-      const isActiveState = (
-        st.includes("TOUCH_ACTIVE") ||
-        st.includes("RETEST_ACTIVE") ||
-        st.includes("RECLAIMED") ||
-        st.includes("RECLAIMED_FADING") ||
-        st.includes("WAITING_CLOSE_RECLAIM") ||
-        st.includes("ACTIVE_PIERCE") ||
-        st.includes("BASING_RETEST_ACTIVE")
-      );
-      if (!isActiveState) {
         return false;
       }
       return true;
@@ -1694,15 +1677,17 @@ function renderVerticalShading() {
 
         // Touch / Retest Anchor Pill Label
         let anchorTxt = "";
+        const stUpper = String(s.status || traj.phase || "").toUpperCase();
+        const isProjected = stUpper.includes("PROJECTED") || stUpper.includes("WAITING");
         if (s.is_confluence) {
-          anchorTxt = (dir === -1) ? "2. SBR & EMA Touch" : "2. RBS & EMA Touch";
+          anchorTxt = (dir === -1) ? (isProjected ? "2. Projected SBR" : "2. SBR & EMA Touch") : (isProjected ? "2. Projected RBS" : "2. RBS & EMA Touch");
         } else if (s.type === "M2") {
-          anchorTxt = "2. EMA Touch";
+          anchorTxt = isProjected ? "2. Projected EMA" : "2. EMA Touch";
         } else if (s.type === "M1" || s.type === "M1B") {
           const isPendingReclaim = (s.status === "WAITING_CLOSE_RECLAIM" || s.status === "ACTIVE_PIERCE");
-          anchorTxt = isPendingReclaim ? "2. Sweep Pierce" : "2. Sweep Reclaim";
+          anchorTxt = isProjected ? "2. Projected Sweep" : (isPendingReclaim ? "2. Sweep Pierce" : "2. Sweep Reclaim");
         } else {
-          anchorTxt = (dir === -1) ? "2. SBR Retest" : "2. RBS Retest";
+          anchorTxt = (dir === -1) ? (isProjected ? "2. Projected SBR" : "2. SBR Retest") : (isProjected ? "2. Projected RBS" : "2. RBS Retest");
         }
         const anchorW = shadingCtx.measureText(anchorTxt).width;
         const anchorPillX = Math.max(10, x2 - anchorW / 2);

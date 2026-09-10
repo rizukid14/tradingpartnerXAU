@@ -1794,10 +1794,8 @@ class MarketScanner:
 
             default_time = _ts_to_int(df.index[-1]) if (df is not None and len(df) > 0) else 0
             m1_t_origin = m1_event_time if m1_event_time > 0 else default_time
-            m1_t_retest = m1_event_time if m1_event_time > 0 else default_time
+            m1_t_retest = default_time if (m1_event_time == 0 or m1_event_time == m1_t_origin) else m1_event_time
 
-            # Only attach active execution trajectory if sweep is confirmed & retested/reclaimed
-            has_valid_m1_traj = (m1_status in ("RECLAIMED_FADING", "WAITING_CLOSE_RECLAIM")) and (m1_event_time > 0)
             m1_traj = {
                 "origin_time": m1_t_origin,
                 "origin_price": origin_px,
@@ -1809,7 +1807,7 @@ class MarketScanner:
                 "target_tp2": round(m1_tp2, digits),
                 "direction": m1_dir,
                 "phase": m1_status
-            } if has_valid_m1_traj else None
+            }
 
             standbys.append({
                 "type": "M1",
@@ -1912,20 +1910,26 @@ class MarketScanner:
             )
             m2_target_price = m2_tp1
 
-            # Only attach active execution trajectory if pullback touch has occurred
-            has_valid_m2_traj = (m2_status == "TOUCH_ACTIVE") and (m2_event_time > 0)
+            # Dynamic 3-point trajectory (Origin -> Retest -> Target Projection)
+            orig_idx = max(0, len(df) - max(est_bars + 3, 5)) if (df is not None and len(df) > 0) else 0
+            m2_t_orig = _ts_to_int(df.index[orig_idx]) if (df is not None and len(df) > orig_idx) else 0
+            m2_t_retest = m2_event_time if (m2_status == "TOUCH_ACTIVE" and m2_event_time > m2_t_orig) else _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0)
+            if m2_t_retest <= m2_t_orig and df is not None and len(df) > 1:
+                orig_idx = max(0, len(df) - 6)
+                m2_t_orig = _ts_to_int(df.index[orig_idx])
+
             m2_traj = {
-                "origin_time": m2_event_time if m2_event_time > 0 else _ts_to_int(df.index[max(0, len(df) - 5)] if df is not None and len(df) > 0 else 0),
+                "origin_time": m2_t_orig,
                 "origin_price": round(m2_price + (0.5 * atr_val * -m2_dir), digits),
-                "origin_age": m2_bar_age if m2_bar_age > 0 else est_bars,
-                "retest_time": m2_event_time if m2_event_time > 0 else _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0),
+                "origin_age": (len(df) - 1 - orig_idx) if (df is not None and len(df) > orig_idx) else est_bars,
+                "retest_time": m2_t_retest,
                 "retest_price": round(m2_price, digits),
                 "target_price": round(m2_target_price, digits),
                 "target_tp1": round(m2_tp1, digits),
                 "target_tp2": round(m2_tp2, digits),
                 "direction": m2_dir,
                 "phase": m2_status
-            } if has_valid_m2_traj else None
+            }
 
             standbys.append({
                 "type": "M2",
@@ -2073,20 +2077,18 @@ class MarketScanner:
         m3_target_price = m3_tp1
 
         if m3_price > 0:
-            # Only attach active execution trajectory if retest touch has occurred
-            has_valid_m3_traj = (m3_status == "RETEST_ACTIVE") and (m3_event_time > 0)
             m3_traj = {
                 "origin_time": m3_origin_time,
                 "origin_price": round(m3_origin_price, digits),
                 "origin_age": int(m3_origin_age),
-                "retest_time": m3_event_time if m3_status == "RETEST_ACTIVE" else _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0),
+                "retest_time": m3_event_time if (m3_status == "RETEST_ACTIVE" and m3_event_time > m3_origin_time) else _ts_to_int(df.index[-1] if df is not None and len(df) > 0 else 0),
                 "retest_price": round(m3_price, digits),
                 "target_price": round(m3_target_price, digits),
                 "target_tp1": round(m3_tp1, digits),
                 "target_tp2": round(m3_tp2, digits),
                 "direction": m3_dir,
                 "phase": m3_status
-            } if has_valid_m3_traj else None
+            }
 
             standbys.append({
                 "type": "M3",

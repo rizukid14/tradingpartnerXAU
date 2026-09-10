@@ -714,21 +714,14 @@ class ZoneConfluenceEngine:
 
         # Pilih F1 & C1 dengan pemisahan chamber (min_chamber_height)
         min_ch = max(0.50 * atr_h1, pip_sep)
-        # Aturan "harga di dalam zona" (P3): layer yang menempel harga bukan dinding tradeable.
-        inside_band = max(float(getattr(config, "ZCE_NODE_PRICE_BAND_MULT", 1.0)) * min_sep, 0.0)
+        # Aturan "harga di dalam zona" (P3 metadata): layer yang menempel harga ditandai at_price
+        inside_band = max(float(getattr(config, "ZCE_NODE_PRICE_BAND_MULT", 0.5)) * min_sep, 0.0)
         for _l in floor_layers + ceil_layers:
             _l["at_price"] = bool(abs(_l["price"] - cur_price) < inside_band)
 
-        def _first_tradeable(layers: List[dict], above: bool) -> Optional[float]:
-            for l in layers:
-                px = l["price"]
-                d = (px - cur_price) if above else (cur_price - px)
-                if d >= inside_band:
-                    return px
-            return layers[0]["price"] if layers else None   # fallback: jangan membutakan radar
-
-        f1 = _first_tradeable(floor_layers, above=False)
-        c1 = _first_tradeable(ceil_layers, above=True)
+        # F1 dan C1 mutlak mengambil layer pertama terdekat (Strict Physical Ladder & Zero Blind-Spot)
+        f1 = floor_layers[0]["price"] if floor_layers else None
+        c1 = ceil_layers[0]["price"] if ceil_layers else None
 
         # Jika chamber terlalu sempit (< min_ch), cari layer berikutnya yang memberikan pemisahan sehat
         if f1 is not None and c1 is not None and (c1 - f1) < min_ch:
@@ -753,20 +746,19 @@ class ZoneConfluenceEngine:
         if c1 is not None and (c1 - cur_price) > imm_cap:
             c1 = None
 
-        # Deep layer F2/C2 = layer pertama dengan jarak >= 0.5x ATR_H1 dari
-        # F1/C1 (INV-3 spec)
-        def _first_deep(layers: List[dict], ref: Optional[float], above: bool) -> Optional[float]:
-            if ref is None:
+        # Deep layer F2/C2 = layer berikutnya dalam tangga fisik (menjamin C1 != C2 dan F1 != F2)
+        def _get_deep_station(layers: List[dict], immediate_ref: Optional[float], above: bool) -> Optional[float]:
+            if not layers or immediate_ref is None:
                 return None
-            min_gap = 0.5 * atr_h1
-            for l in layers[1:]:
-                gap = (l["price"] - ref) if above else (ref - l["price"])
-                if gap >= min_gap:
+            for l in layers:
+                if above and l["price"] > immediate_ref:
+                    return l["price"]
+                elif not above and l["price"] < immediate_ref:
                     return l["price"]
             return None
 
-        deep_f2 = _first_deep(floor_layers, f1, above=False)
-        deep_c2 = _first_deep(ceil_layers, c1, above=True)
+        deep_f2 = _get_deep_station(floor_layers, f1, above=False)
+        deep_c2 = _get_deep_station(ceil_layers, c1, above=True)
 
         def _get_layer_meta(layers: List[dict], price: Optional[float]):
             if price is None:

@@ -45,7 +45,7 @@ def _walls(clusters):
     return eng._elect_walls(clusters, CUR, ATR, DIGITS)
 
 
-def test_wall_hugging_price_is_skipped_for_immediate_selection():
+def test_immediate_wall_never_skipped_and_at_price_flagged():
     clusters = [
         # menempel harga: +2..4 pips -> at_price
         _cluster(0, 1.60620, 1.60640, "CEILING", "GRADE_2_INTERMEDIATE", 5.0, 4, ["EQH"], "D1", 150),
@@ -58,10 +58,15 @@ def test_wall_hugging_price_is_skipped_for_immediate_selection():
     ]
     w = _walls(clusters)
 
-    assert w["imm_ceiling_c1"] == pytest.approx(1.60750, 1e-9), "C1 harus melewati layer yang menempel harga"
-    assert w["imm_floor_f1"] == pytest.approx(1.60360, 1e-9), "F1 harus melewati layer yang menempel harga"
+    # F1 mutlak mengambil level terdekat sejati (anti-kebutaan radar, tidak dilewati _first_tradeable)
+    assert w["imm_floor_f1"] == pytest.approx(1.60580, 1e-9), "F1 harus level terdekat di bawah harga"
+    assert w["imm_floor_f1_grade"] == "GRADE_1_MICRO"
+    # C1 diperluas ke 1.60750 karena pemisahan chamber minimum (4 pips < min_ch 8 pips)
+    assert w["imm_ceiling_c1"] == pytest.approx(1.60750, 1e-9), "C1 stasiun pemisahan chamber sehat"
     assert w["imm_ceiling_c1_grade"] == "GRADE_3_MACRO"
-    assert w["imm_floor_f1_grade"] == "GRADE_3_MACRO"
+    # Deep station F2 berada di stasiun berikutnya
+    assert w["deep_floor_f2"] == pytest.approx(1.60360, 1e-9), "F2 harus level stasiun kedua"
+    assert w["imm_floor_f1"] != w["deep_floor_f2"], "F1 dan F2 dilarang kolaps"
 
 
 def test_at_price_layers_still_listed_in_ladder_with_flag():
@@ -92,7 +97,7 @@ def test_inside_zone_and_confluence_exposed():
     assert "C1" in w["inside_tiers"] or "F1" in w["inside_tiers"]
     assert w["layer_count"] == len(w["ceilings"]) + len(w["floors"])
     assert w["imm_ceiling_c1_confluence"] == 5
-    assert w["imm_floor_f1_confluence"] == 6
+    assert w["imm_floor_f1_confluence"] == 2
 
     # tiap layer membawa metadata kekuatan
     for l in w["ceilings"] + w["floors"]:
