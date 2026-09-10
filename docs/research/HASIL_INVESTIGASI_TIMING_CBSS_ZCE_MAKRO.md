@@ -174,3 +174,31 @@ Data probabilitas dari 208 hari perdagangan bahwa posisi yang profit di pagi har
 
 ## 5. Status Dokumen
 Dokumen ini menjadi acuan spesifikasi resmi untuk pengembangan modul `timing_synthesizer` pada **MSE (Macro Strategic Engine)** dan penyelarasan filter jam pada **Fast Execution Radar (`market_scanner.py`)**.
+
+---
+
+## 6. Catatan Implementasi & Roadmap Pengawasan Live (10 September 2026)
+
+### A. `src/analytics/macro_strategic_engine.py`
+- **Implementasi**: Menambahkan fungsi `evaluate_session_confluence_timing(now_wib, zce_meta=None)`.
+  - Memetakan jam WIB ke 4 fase diurnal:
+    1. `TOKYO_EXPANSION` (07:00–10:30 WIB) $\rightarrow$ `GRADE_A_PLUS_C2`
+    2. `TOKYO_MIDDAY_LULL` (10:30–13:00 WIB) $\rightarrow$ `GRADE_B_C1`
+    3. `LONDON_CORE` (13:00–18:00 WIB) $\rightarrow$ `GRADE_A_PLUS_C2`
+    4. `NY_PEAK_VELOCITY` (18:00–00:00 WIB) $\rightarrow$ `GRADE_A_PLUS_C2`
+- **Tujuan**: Mencegah penetapan target stasiun jauh ($C_2/F_2$) pada jam-jam bensin tipis sesi Asia siang, dan secara dinamis membatasi ekspektasi pada stasiun terdekat ($C_1/F_1$).
+- **Metrik Pemantauan**: Memverifikasi apakah order yang dibuka pada sesi siang tidak lagi tersangkut akibat memasang target plafon yang terlalu jauh.
+
+### B. `src/analytics/market_scanner.py`
+- **Implementasi 1 (Gate Terpadu BSSI)**:
+  - Di `_is_direction_allowed()`: Mengunci setup kelanjutan arah (M2, M3, M4) saat keranjang struktural jenuh ($\text{BSSI} \ge 70\%$).
+  - **Pengecualian**: Setup pantulan kontra-tren M1 Universal Liquidity Sweep (SFP) tetap diloloskan karena kejenuhan keranjang justru merupakan bensin pembalikan arah likuiditas (*liquidity exhaustion*).
+- **Implementasi 2 (Tokyo Midday Lull Continuation Freeze)**:
+  - Membekukan pembukaan order kelanjutan baru pada fase Tokyo Midday Lull (10:30–13:00 WIB) jika rentang pergerakan lilin pagi hari $< 25\text{ pips}$.
+- **Tujuan**: Mengeliminasi 100% false breakout dan jebakan pucuk/lembah saat pasar memasuki fase istirahat likuiditas.
+- **Metrik Pemantauan**: Memantau apakah pembatasan ini melindungi drawdown tanpa menimbulkan penalti *opportunity loss* berlebih pada hari-hari tren impulsif kuat.
+
+### C. Transisi ke Akun Live Cent (`VTMarkets-Live 3`)
+- **Status Akun**: Live Cent Broker VT Markets (Login `27556325`, Server `VTMarkets-Live 3`, Saldo $\approx 5.520$ USC / $\$55.20$ USD).
+- **Konkurensi Paper Trade**: Modul `shadow_tracker` tetap beroperasi secara paralel 100% (Virtual Paper Trade) untuk seluruh peluang A+ yang melampaui kuota MT5 (`SKIPPED_CBSS_BASKET_CAP`).
+

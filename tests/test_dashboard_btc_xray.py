@@ -85,30 +85,38 @@ class TestDashboardBtcXray(unittest.TestCase):
                         self.assertGreater(len(detail["candles"]), 0)
                         
                         gates = detail.get("gates", [])
-                        self.assertEqual(len(gates), 7, "X-Ray Surveillance must evaluate exactly 7 decision gates")
+                        self.assertEqual(len(gates), 8, "X-Ray Surveillance must evaluate exactly 8 decision gates")
                         
                         # Gate 1: Session & Spread (BTC exempt from dead zone)
                         g1 = next(g for g in gates if g["id"] == 1)
                         self.assertNotIn("[DEAD ZONE]", g1["reason"], "BTCUSD should not be blocked by FX dead zone")
                         
-                        # Gate 2: Basket Lock (BTC exempt from fiat shock)
+                        # Gate 2: Economic Calendar & News Blackout Shield (BTC exempt)
                         g2 = next(g for g in gates if g["id"] == 2)
                         self.assertEqual(g2["status"], "PASS")
-                        self.assertIn("crypto", g2["reason"].lower())
                         
-                        # Gate 4: CSM Flow Alignment (BTC exempt from fiat CSM)
-                        g4 = next(g for g in gates if g["id"] == 4)
-                        self.assertEqual(g4["status"], "PASS")
+                        # Gate 3: Basket Lock (BTC exempt from fiat shock)
+                        g3 = next(g for g in gates if g["id"] == 3)
+                        self.assertEqual(g3["status"], "PASS")
+                        self.assertIn("crypto", g3["reason"].lower())
                         
-                        # Gate 6: Pure Quant Direct Execution (No-LLM mode)
-                        g6 = next(g for g in gates if g["id"] == 6)
-                        self.assertEqual(g6["status"], "PASS")
-                        self.assertIn("Pure Quant", g6["title"])
+                        # Gate 5: CSM Flow Alignment (BTC exempt from fiat CSM)
+                        g5 = next(g for g in gates if g["id"] == 5)
+                        self.assertEqual(g5["status"], "PASS")
                         
-                        # Gate 7: BTC Risk Floor & Ceiling
+                        # Gate 7: Pure Quant Direct Execution or Virtual Paper Trade
                         g7 = next(g for g in gates if g["id"] == 7)
-                        self.assertEqual(g7["status"], "PASS")
-                        self.assertIn(str(config.DEFAULT_SL_POINTS_BTC), g7["reason"])
+                        if config.is_paper_only("BTCUSD"):
+                            self.assertEqual(g7["status"], "PAPER")
+                            self.assertIn("Paper Trade", g7["title"])
+                        else:
+                            self.assertEqual(g7["status"], "PASS")
+                            self.assertIn("Pure Quant", g7["title"])
+                        
+                        # Gate 8: BTC Risk Floor & Ceiling
+                        g8 = next(g for g in gates if g["id"] == 8)
+                        self.assertEqual(g8["status"], "PASS")
+                        self.assertIn(str(config.DEFAULT_SL_POINTS_BTC), g8["reason"])
 
 if __name__ == "__main__":
     unittest.main()

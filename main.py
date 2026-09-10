@@ -673,6 +673,24 @@ def run_scanner_trading_cycle(cand, risk):
     )
     cbss_cap_reason = getattr(cand, "metadata", {}).get("cbss_cap_reason", "")
 
+    is_cbss_conflict = False
+    cbss_conflict_msg = ""
+    if getattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True) and not config.is_crypto(sym) and not config.is_gold(sym):
+        try:
+            from src.analytics.basket_sync_engine import check_basket_directional_conflict
+            raw_pos = config.mt5.positions_get() or []
+            raw_ord = config.mt5.orders_get() or []
+            conflict_ok, conflict_msg = check_basket_directional_conflict(sym, cand.direction, raw_pos, raw_ord)
+            if not conflict_ok:
+                is_cbss_conflict = True
+                cbss_conflict_msg = conflict_msg
+        except Exception:
+            pass
+
+    if is_cbss_conflict:
+        print(f" {UI.YELLOW}[CBSS ANTI-HEDGE VETO] {sym} [{tf_str}] dibatalkan: {cbss_conflict_msg}{UI.RST}")
+        return False
+
     if not is_cbss_blocked and getattr(config, "ENABLE_CBSS", True) and not config.is_crypto(sym):
         try:
             from src.analytics.basket_sync_engine import check_basket_concurrency_cap
@@ -686,10 +704,12 @@ def run_scanner_trading_cycle(cand, risk):
             pass
 
     # 1. Check risk gates for candidate symbol
-    can_trade_ok, risk_msg = (False, cbss_cap_reason) if is_cbss_blocked else risk.can_trade(sym)
+    can_trade_ok, risk_msg = (False, cbss_cap_reason) if is_cbss_blocked else risk.can_trade(sym, action=cand.direction)
     if not can_trade_ok:
         if is_cbss_blocked:
             print(f" {UI.YELLOW}[CBSS BASKET CAP -> PAPER TRADE] {sym} [{tf_str}] dialihkan ke Paper Trade (0 Token): {cbss_cap_reason}{UI.RST}")
+        elif config.is_paper_only(sym) or "[PAPER_ONLY]" in risk_msg:
+            print(f" {UI.CYAN}[PAPER TRADE ONLY] {sym} [{tf_str}] dialihkan ke Virtual Paper Trade (0 Token, 0 MT5 Risk).{UI.RST}")
         else:
             print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         # Masukkan ke Paper Trade (Quant Shadow Tracker) agar sinyal Stage 1 tetap dipantau
@@ -724,6 +744,8 @@ def run_scanner_trading_cycle(cand, risk):
 
             if is_cbss_blocked:
                 clean_disp = "SKIPPED_CBSS_BASKET_CAP"
+            elif config.is_paper_only(sym) or "[PAPER_ONLY]" in risk_msg:
+                clean_disp = "PAPER_TRADE_ONLY"
             elif "posisi" in risk_msg.lower() or "kuota" in risk_msg.lower():
                 clean_disp = "SKIPPED_MAX_POSITIONS"
             elif "Konsentrasi mata uang" in risk_msg:
@@ -1102,12 +1124,12 @@ def run_scanner_trading_cycle(cand, risk):
                 print(f" {UI.GREEN}[2D CONFLUENCE: {confluence_tier}] Trade {trade_signal} ({effective_lot} lot, multiplier x{sizing_mult:.2f}) [Mode: {tp_mode}]!{UI.RST}")
             
             # Final Pre-Dispatch Risk Check (guards against positions opened while LLM was reasoning)
-            can_trade_ok, risk_msg = risk.can_trade(sym)
+            can_trade_ok, risk_msg = risk.can_trade(sym, action=trade_signal)
 
             # Register into Virtual Shadow Quant Radar (Unconstrained Data Collector)
             p_sl_calc = entry_price - (sl_points * point) if trade_signal == "BUY" else entry_price + (sl_points * point)
             p_tp_calc = entry_price + (tp_points * point) if trade_signal == "BUY" else entry_price - (tp_points * point)
-            sh_disp = "EXECUTED_MT5" if can_trade_ok else f"SKIPPED_{risk_msg[:18]}"
+            sh_disp = "PAPER_TRADE_ONLY" if config.is_paper_only(sym) else ("EXECUTED_MT5" if can_trade_ok else f"SKIPPED_{risk_msg[:18]}")
             registered_shadow = shadow_tracker.register_candidate(
                 candidate=cand,
                 entry_type=entry_type,
@@ -1121,14 +1143,15 @@ def run_scanner_trading_cycle(cand, risk):
 
             if not can_trade_ok:
                 print(f" {UI.YELLOW}[PRE-DISPATCH BLOCKED] Trade {sym} dibatalkan: {risk_msg}{UI.RST}")
-                tg.alert_trade_aborted(
-                    symbol=sym,
-                    signal=trade_signal,
-                    reason_code="PRE_DISPATCH_RISK_BLOCKED",
-                    details=risk_msg,
-                    confidence=result.get("confidence", 0.0),
-                    models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
-                )
+                if not config.is_paper_only(sym):
+                    tg.alert_trade_aborted(
+                        symbol=sym,
+                        signal=trade_signal,
+                        reason_code="PRE_DISPATCH_RISK_BLOCKED",
+                        details=risk_msg,
+                        confidence=result.get("confidence", 0.0),
+                        models=result.get("agreeing_models_str") or ", ".join(result.get("agreeing_models") or [])
+                    )
                 return False
 
             # If pending order

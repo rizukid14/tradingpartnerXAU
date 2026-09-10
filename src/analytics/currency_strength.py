@@ -420,8 +420,8 @@ def evaluate_systemic_basket_lock(
         return False, "SYSTEMIC_BASKET_LOCK_DISABLED", ""
 
     clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").replace("_i", "").upper()
-    if "BTC" in clean_sym:
-        return False, "BTC_EXEMPT", ""
+    if "BTC" in clean_sym or "XAU" in clean_sym or "GOLD" in clean_sym:
+        return False, "NON_FIAT_EXEMPT", ""
 
     if scores_h1 is None:
         scores_h1, _ = calculate_boitoki_csm(mt5.TIMEFRAME_H1, lookback_bars=24)

@@ -2,6 +2,169 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 89. Perubahan 10 September 2026 (Sore) — Lead-Lag Liquidity Relay Engine (Estafet Likuiditas) & Zero-Opposing Currency Basket Coordinator
+
+### Latar Belakang & Analisis Flaw Sistemik:
+1. **Penyebab Terjadinya Triangulation Paradox & Self-Cannibalization**:
+   - Selama transisi Tokyo/London, scanner mendeteksi EURAUD SELL (Short EUR), EURNZD BUY (Long EUR), dan AUDNZD BUY (Long AUD).
+   - Penyelidikan mengungkap bahwa `MarketScanner.scan_fast_radar()` memproses kandidat secara sekuensial pair per pair (*first-come first-served race condition*). Pair yang berada di urutan alfabet awal langsung mengunci tiket tanpa koordinasi keranjang.
+   - Meskipun fungsi `select_basket_champion()` telah ada di `basket_sync_engine.py`, fungsi tersebut bersifat dorman (tidak pernah dipanggil di dalam loop scanner).
+2. **Ketiadaan Mekanisme Estafet Likuiditas (Lead-Lag Liquidity Relay)**:
+   - Ketika modal institusional membanjiri sebuah mata uang (misal EUR Inflow), pair dengan volatilitas tertinggi (Leader, misal EURAUD) melesat lebih dulu hingga menabrak benteng ZCE ($C_1/C_2$).
+   - Di titik benteng ini, ruang gerak fisik (*runway*) pair Leader menipis hingga habis ($< 0.50\times\text{ATR}$), dan harga mulai mengalami absorpsi/konsolidasi.
+   - Tanpa koordinasi keranjang, sistem rentan mengejar BUY yang mepet dinding atau mencoba memudarkan SELL yang melawan momentum makro.
+   - Sebaliknya, modal institusional berpindah (estafet) ke pair laggard dalam keranjang yang sama (misal EURNZD atau EURGBP) yang baru memantul dari Support $F_1$ dan memiliki ruang gerak ZCE lapang ($\ge 1.20\times\text{ATR}$).
+
+---
+
+### Solusi Perbaikan Kode & Komponen Utama:
+1. **`src/analytics/basket_sync_engine.py`**:
+   - **Fungsi Batch Coordinator `filter_and_rank_batch_candidates()`**:
+     * **Tahap 1 (Pengecualian Non-Fiat)**: Aset crypto (BTC) dan komoditas (XAU) lolos langsung tanpa terikat aturan basket fiat.
+     * **Tahap 2 (Anti-Internal Currency Hedge)**: Memvalidasi seluruh usulan terhadap portofolio MT5 aktif via `check_basket_directional_conflict()`. Dilarang keras membuka posisi yang berlawanan arah mata uang dengan trade aktif.
+     * **Tahap 3 (Physical ZCE Runway & Wall-Exhaustion Skip)**: Mendeteksi jika pair mepet benteng lawan ($\text{Runway Ratio} < 0.50\times\text{ATR}$ atau Local G3 Veto). Pair diberi label `WALL_EXHAUSTED` dan di-skip dari eksekusi.
+     * **Tahap 4 (Resolusi Konflik Intra-Batch via Composite Currency Vector)**: Menggunakan tanda aljabar Boitoki CSM (`CSM > 0` = Bullish, `CSM < 0` = Bearish) sebagai wasit netral jika muncul usulan berlawanan dalam 1 batch scan (misal EUR Long vs EUR Short). Proposal yang melawan arah makro digugurkan sebelum seleksi champion.
+     * **Tahap 5 (Seleksi Basket Champion)**: Memilih tepat 1 Champion terbaik per keranjang mata uang berdasarkan skor komposit: $\text{Skor} = (\text{Runway} \times 0.45) + (\text{CSM Alignment} \times 0.35) + (\text{Chamber Clearance} \times 0.20)$.
+   - **Kalkulasi Runway Fleksibel pada Breached Wall / Blue Sky Breakout**:
+     * Memperbarui `calculate_pair_runway()` untuk menangani kondisi penembusan benteng $C_1/F_1$. Jika harga telah menembus $C_1$ pada BUY setup, target dialihkan ke $C_2$, atau dinilai sebagai ekspansi unconstrained ($2.5\times\text{ATR}$) alih-alih keliru menganggap runway bernilai 0.
+2. **`src/analytics/market_scanner.py`**:
+   - Memutakhirkan `scan_fast_radar()`: Mengumpulkan seluruh sinyal awal dalam list batch `candidates`, mengalirkannya ke `filter_and_rank_batch_candidates()`, dan hanya meneruskan kandidat Champion ke tahap cooldown dan eksekusi MT5.
+3. **`dashboard.py`**:
+   - Mengintegrasikan deteksi `WALL_EXHAUSTED` pada Gate 3: Menampilkan status `WAIT` dengan deskripsi `Relay Pause: Wall Proximity` saat pair mepet benteng lawan ($< 0.50\times\text{ATR}$), serta menampilkan `PASS` dengan metrik `Runway X.Xx ATR` saat jalur lapang.
+4. **Unit Test Suite Baru (`tests/test_basket_relay.py`)**:
+   - 5 skenario uji: Resolusi konflik intra-batch via CSM sign, penolakan hedging terhadap posisi portofolio, skip wall-exhaustion, seleksi laggard champion berdasarkan runway terlebar, dan pengecualian independen BTC/XAU (5/5 PASS).
+   - Seluruh 266 unit test suite di repositori: **100% PASS**.
+
+---
+
+## 88. Perubahan 10 September 2026 (Siang/Sore IV) — Implementasi Anti-Internal Currency Hedge Gate (CBSS & Risk Engine) & Eliminasi Kanibalisasi Posisi Silang
+
+### Latar Belakang & Masalah Sistemik:
+1. **Anomali Triad Paradox (EURNZD BUY, EURAUD SELL, AUDNZD BUY)**:
+   - Teramati pada portofolio aktif MT5 live: akun memegang posisi `EURNZD-ECNc` BUY (Long EUR, Short NZD) sekaligus `EURAUD-ECNc` SELL (Short EUR, Long AUD) dan `AUDNZD-ECNc` BUY (Long AUD, Short NZD).
+   - Dekomposisi matematis menunjukkan bahwa eksposur EUR bernilai 0 (Netral / Hedged against itself), memicu kanibalisasi internal profit dan membebani akun dengan biaya spread/komisi ganda.
+   - Selain itu, kombinasi `EURNZD BUY` + `EURAUD SELL` secara sintetis sama dengan `AUDNZD BUY`, menyebabkan portofolio memegang eksposur Long AUDNZD rangkap dua (*synthetic redundancy*).
+2. **Celah Logika CBSS Concurrency Cap Sebelumnya**:
+   - Fungsi `check_basket_concurrency_cap()` hanya membatasi kuota trade yang *searah* (`item_dir == direction`, max 2).
+   - Sistem belum memiliki aturan *Anti-Internal Currency Hedge*: tidak ada filter yang melarang membuka trade berlawanan arah pada mata uang yang sama yang sudah aktif di portofolio.
+
+---
+
+### Solusi Perbaikan Kode & Konfigurasi:
+1. **`config.py` & `.env`**:
+   - Menambahkan konfigurasi `ENABLE_ANTI_INTERNAL_HEDGE=true`.
+2. **`src/analytics/basket_sync_engine.py`**:
+   - Menambahkan fungsi `check_basket_directional_conflict(symbol, direction, active_positions, active_orders) -> Tuple[bool, str]`.
+   - Mengurai dekomposisi mata uang Base dan Quote dari calon order dan membandingkannya dengan seluruh posisi dan order aktif.
+   - Jika terdeteksi adanya mata uang dengan tanda berlawanan (`cand_sign * p_sign < 0`), order langsung ditolak dengan alasan `[CBSS ANTI-HEDGE]`. Simbol kripto dan emas dikecualikan secara deterministik.
+3. **`src/analytics/market_scanner.py`**:
+   - Di `_is_direction_allowed()`, menambahkan evaluasi `check_basket_directional_conflict()`. Setup yang memicu pertentangan mata uang dengan posisi terbuka langsung di-`HARD_BLOCK` di Stage 1 radar.
+4. **`src/core/risk_engine.py`**:
+   - Mengupdate `can_trade(symbol, action)` dan menambahkan helper `_check_anti_internal_hedge(symbol, action)` sebagai rem pengaman lapis kedua sebelum pengiriman order ke MT5.
+5. **`main.py` & `dashboard.py`**:
+   - Di `main.py`: menambahkan evaluasi anti-hedge sebelum dispatch Stage 2 dan meneruskan parameter `action` ke `risk.can_trade()`.
+   - Di `dashboard.py`: Gate 3 (Systemic Basket & CBSS Guard) mengevaluasi `check_basket_directional_conflict()` dan menampilkan status `BLOCK` berlatar merah dengan deskripsi `Anti-Internal Currency Hedge Veto` saat terjadi konflik eksposur.
+6. **Unit Test Suite (`tests/test_anti_internal_hedge.py`)**:
+   - 6 test case baru: penolakan EURAUD SELL saat EURNZD BUY aktif, penerimaan AUDNZD BUY saat EURNZD BUY aktif, penolakan GBPJPY BUY saat CADJPY SELL aktif, penerimaan USDJPY SELL saat CADJPY SELL aktif, pengecualian BTC/XAU, serta integrasi `RiskEngine.can_trade()`.
+   - Seluruh 224 unit test repositori: **100% PASS**.
+
+---
+
+## 87. Perubahan 10 September 2026 (Siang/Sore III) — Pengetatan CSM Flow Opposition Gate, M3 Pre-Breakout/Breakdown Context Validator, & Re-Aktivasi Pending CSM Cancellation
+
+### Latar Belakang & Analisis Forensik:
+1. **Analisis Eksekusi EURAUD SELL (#1281471103) & AUDNZD BUY (#1281471141)**:
+   - Posisi `AUDNZD-ECNc` BUY terkena full Stop Loss setelah aliran Net CSM berbalik tajam menjadi berlawanan (`csm_delta = -1.13` melemah).
+   - Posisi `EURAUD-ECNc` SELL terpicu pada harga `1.61238` saat arus mata uang EUR sedang menguat tajam terhadap AUD (`csm_delta = +1.79` berlawanan arah SELL).
+   - Penyelidikan mengungkap dua celah mendasar:
+     * **Duplicate Key `.env`**: Baris 59 memiliki `ENABLE_CSM_FLOW_FILTER=true`, namun baris 211 `ENABLE_PENDING_CSM_CANCEL=false` dan baris 212 `ENABLE_CSM_FLOW_FILTER=false` menimpa nilai sebelumnya saat runtime sehingga hard gate CSM berada dalam mode pasif/telemetri.
+     * **Bypass `is_aligned` di Radar**: Pada `market_scanner.py:3332`, filter CSM memiliki syarat `if is_csm_opposed and not is_aligned and not is_sfr_pro:`. Karena bias makro EURAUD adalah bearish expansion (`bias_score = -0.50`), `is_aligned` bernilai True, yang meloloskan trade kelanjutan (M3 Breakdown / M2 Pullback) meskipun arus mata uang riil sedang melonjak tajam melawan arah trade.
+2. **False Breakdown Misclassification pada M3 (Support/Resistance Inversion Fallacy)**:
+   - Level `1.61238` pada EURAUD adalah swing low lama dari bar ke-45 (~100 bar lalu).
+   - Dalam 3–5 bar sebelum spike ke `1.61393`, 100% harga penutupan berada di bawah `1.61238` (level tersebut berfungsi sebagai Resistance/Plafon, bukan Support/Lantai).
+   - Ketika candle jam 08:00 WIB menusuk ke atas `1.61393` dan candle jam 09:00 WIB ditutup kembali di bawah `1.61238`, M3 salah mengklasifikasikannya sebagai *Support Breakdown Retest* padahal kenyataannya itu adalah *Resistance Liquidity Sweep (Bull Trap / SFP)* yang seharusnya ditangani oleh M1.
+
+---
+
+### Solusi Perbaikan Kode & Konfigurasi:
+1. **`.env` & `config.py`**:
+   - Menghapus override duplikat dan menetapkan `ENABLE_CSM_FLOW_FILTER=true`.
+   - Mengaktifkan pembatalan pending limit order saat arus berbalik: `ENABLE_PENDING_CSM_CANCEL=true`.
+   - Menyelaraskan ambang batas CSM di seluruh file ke desimal konsisten: `CSM_FLOW_OPPOSED_THRESHOLD=1.50` dan `PENDING_CSM_OPPOSED_THRESHOLD=1.00`.
+2. **`src/analytics/market_scanner.py`**:
+   - **Pengetatan Gate CSM di `_is_direction_allowed()`**: Menghapus bypass `not is_aligned`. Setup kelanjutan (M2 Pullback, M3 Breakout Retest) diblokir keras (`HARD_BLOCK`) jika `is_csm_opposed` aktif ($|\Delta| \ge 1.50$). Pengecualian hanya diberikan kepada M1 Universal Liquidity Sweep / SFP (yang memang bertujuan memudarkan sweep ekstrem) dan M4 Systemic Flow (`is_sfr_pro`).
+   - **Pre-Breakout & Pre-Breakdown Context Validator pada M3**:
+     * **M3 SELL (Support Breakdown)**: Menginspeksi 3–5 bar sebelum candle breakdown. Jika $\ge 60\%$ bar sebelumnya ditutup di bawah level target, level tersebut diverifikasi sebagai resistance (bukan support). Kandidat langsung di-veto (`[M3 SELL SWEEP VETO]`) dan diserahkan ke mekanisme M1.
+     * **M3 BUY (Resistance Breakout)**: Menginspeksi 3–5 bar sebelum candle breakout. Jika $\ge 60\%$ bar sebelumnya ditutup di atas level target, level tersebut diverifikasi sebagai support (bukan resistance). Kandidat di-veto (`[M3 BUY SWEEP VETO]`).
+3. **`dashboard.py`**:
+   - Menyelaraskan Gate 5 CSM Flow Opposition dengan membaca `config.CSM_FLOW_OPPOSED_THRESHOLD` (alih-alih nilai hardcode `1.0`).
+4. **Unit Test Suite (`tests/test_csm_and_m3_context_guard.py`)**:
+   - Menambahkan pengujian komprehensif untuk validasi pemblokiran CSM pada trade kelanjutan, pengecualian M1/M4, veto sweep palsu pada M3 SELL & BUY, serta penerimaan breakdown/breakout yang sah.
+   - Seluruh 218 unit test sistem: **100% PASS**.
+
+---
+
+## 86. Perubahan 10 September 2026 (Siang/Sore II) — Re-Aktivasi XAUUSD & BTCUSD Virtual Paper Trade Only, Karantina Total MT5 Live & Integrasi X-Ray Dashboard
+
+### Latar Belakang & Keputusan Pengguna:
+1. **Re-Aktivasi XAUUSD & BTCUSD Khusus Virtual Paper Trade**:
+   - Pengguna meminta untuk mengaktifkan kembali pemindaian pasar untuk `XAUUSD-ECNc` (weekday) dan `BTCUSD.c` (full 24/7) murni di **Virtual Paper Trade (`shadow_tracker`)** tanpa risiko modal apa pun di MT5 live (0 token API LLM, 0 order MT5).
+   - Simbol emas dan kripto wajib dikarantina 100% dari eksekusi riil akun Cent `VTMarkets-Live 3` (login `27556325`), namun seluruh telemetri radar kuantitatif M1..M4, level ZCE, dan shadow performance tetap aktif dipantau.
+2. **Integrasi Penuh Multi-Asset ke Dashboard Cockpit & 8-Gate X-Ray**:
+   - Menampilkan `XAUUSD-ECNc` pada watchlist utama dashboard, lightweight chart, dan panel 8-Gate X-Ray Surveillance.
+   - Penyelarasan Gate 3 (komoditas independen dari matriks shock fiat), Gate 5 (independen dari CSM), Gate 7 (badge status `PAPER` Virtual Paper Trade Execution), dan Gate 8 (floor 500 pts / $5.00, ceiling 1500 pts).
+   - Memperbarui label hardcode `ALL (26)` menjadi `ALL` dan `26-PAIR RADAR WATCHLIST` menjadi `RADAR WATCHLIST`.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **`config.py` & `.env`**:
+   - Menambahkan `ENABLE_XAU_PAPER=true`, `ENABLE_BTC_247_PAPER=true`, `PAPER_TRADE_ONLY_SYMBOLS=XAUUSD-ECNc,BTCUSD.c`, `GOLD_SYMBOL=XAUUSD-ECNc`.
+   - Menambahkan helper `is_paper_only(symbol)` yang secara ketat mendeteksi simbol karantina paper trade.
+   - Memperbarui `get_scanner_symbols(now)`: menghasilkan 28 simbol pada hari kerja (26 FX + Gold + BTC) dan `[BTCUSD.c]` pada akhir pekan.
+2. **`src/core/risk_engine.py`**:
+   - `can_trade(sym)` mengintersepsi `is_paper_only(sym)` di baris pertama dan mengembalikan `(False, "[PAPER_ONLY]...")` guna mencegah pengiriman order apa pun ke MT5.
+3. **`main.py`**:
+   - Pada Stage 2 radar dispatch (Pure Quant & LLM Jury): mendeteksi `is_paper_only` / `[PAPER_ONLY]`, mendaftarkan kandidat langsung ke `shadow_tracker.register_candidate()` dengan disposisi `PAPER_TRADE_ONLY`, mencetak alert cyan di terminal, dan mengaborsi dispatch MT5.
+4. **`dashboard.py` & `dashboard_assets.py`**:
+   - `start()`, `_build_overview_cache()`, dan `get_symbol_detail()` memuat `XAUUSD-ECNc` dengan spesifikasi point 0.01 dan digits 2.
+   - `_evaluate_8_gates()`: Gate 1, 3, 5, 7, 8 diperkaya untuk Gold dan Paper-Only status.
+   - Filter tab `ALL (26)` diselaraskan menjadi `ALL` agar adaptif terhadap universe 28 instrumen.
+5. **Unit Test Suite (`tests/test_symbol_rotation.py`, `tests/test_market_scanner.py`, `tests/test_dashboard_btc_xray.py`)**:
+   - Menyelaraskan pengujian live rotation pool (26 FX) vs scanner pool (28 instrumen) dan memvalidasi karantina `PAPER_ONLY`.
+   - Seluruh 214 unit test sistem: **100% PASS**.
+
+---
+
+## 85. Perubahan 10 September 2026 (Siang/Sore) — Transisi ke Akun Live Cent (VTMarkets-Live 3), 8-Gate X-Ray Surveillance & Catatan Riset Diurnal
+
+### Latar Belakang & Keputusan Pengguna:
+1. **Transisi ke Akun Live Cent (`VTMarkets-Live 3`)**:
+   - Pengguna memutuskan untuk memindahkan operasional trading bot ke akun Live Cent broker VT Markets (Login `27556325`, Server `VTMarkets-Live 3`, Saldo $\approx 5.520$ USC / $\$55.20$ USD).
+   - Pengujian login programatis MT5 memverifikasi keberhasilan autentikasi ke server Live 3.
+   - Modul Virtual Paper Trade (`shadow_tracker`) tetap aktif 100% secara paralel untuk mencatat peluang A+ tanpa beban kuota MT5 (`SKIPPED_CBSS_BASKET_CAP`).
+2. **Standardisasi 8-Gate X-Ray Surveillance**:
+   - Panel Decision Gates Audit pada `dashboard.py` mengadopsi struktur 8 Gate mandiri (Gate 2 khusus Economic Calendar & High-Impact News Blackout Shield $\pm 30$m).
+   - Penyelarasan assertion unit test `tests/test_dashboard_btc_xray.py` dari 7 gate ke 8 gate untuk memulihkan status **100% PASS**.
+3. **Dokumentasi Riset Timing Diurnal & Saturation**:
+   - Pencatatan Section 6 pada `docs/research/HASIL_INVESTIGASI_TIMING_CBSS_ZCE_MAKRO.md` mengenai implementasi `evaluate_session_confluence_timing()`, Gate BSSI $\ge 70\%$, dan pembekuan Tokyo Midday Lull $< 25\text{ pips}$.
+
+---
+
+### Solusi Perbaikan Kode & Konfigurasi:
+1. **`.env`**:
+   - Mengubah `MT5_ACCOUNT_MODE=live`.
+   - Mengubah `WEEKDAY_SYMBOL=GBPUSD-ECNc`, `WEEKEND_SYMBOL=BTCUSD.c`.
+   - Mengubah seluruh 26 simbol di `SCANNER_SYMBOLS` ke format cent broker live (`-ECNc`).
+2. **`tests/test_dashboard_btc_xray.py`**:
+   - Memperbarui pengujian `test_symbol_detail_and_7_gate_xray_for_btc` untuk memverifikasi tepat 8 gate (G1: Session/Spread, G2: Economic Calendar News Blackout, G3: Basket Lock, G5: CSM Flow, G7: Pure Quant, G8: Risk Floor).
+3. **`docs/research/HASIL_INVESTIGASI_TIMING_CBSS_ZCE_MAKRO.md`**:
+   - Menambahkan Section 6 yang mendokumentasikan implementasi dan metrik pemantauan live.
+4. **`AGENTS.md`**:
+   - Memperbarui ringkasan akun aktif pada branch `quant-trade-noAI` ke Live Cent `VTMarkets-Live 3` (`27556325`).
+
+---
+
 ## 84. Perubahan 10 September 2026 (Siang/Sore) — Confluence Timing, Basket Saturation (BSSI), Midday Retracement Guard (65% Rule) & Pre-News Shield
 
 ### Latar Belakang & Identifikasi Masalah:

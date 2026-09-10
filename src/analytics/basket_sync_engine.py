@@ -83,15 +83,25 @@ def get_pair_role_in_currency(symbol: str, currency: str) -> int:
     return 0
 
 
-def calculate_pair_runway(sym: str, direction: int, macro_cache: dict) -> dict:
+def calculate_pair_runway(
+    sym: str,
+    direction: int,
+    macro_cache: dict,
+    current_mid: Optional[float] = None
+) -> dict:
     """
-    Menghitung ZCE Runway bilateral (Immediate C1/F1 dan Deep C2/F2) yang dinormalisasi ATR H1.
-    direction: +1 (BUY) atau -1 (SELL).
+    Menghitung sisa runway fisik ke C1/C2 (untuk BUY) atau F1/F2 (untuk SELL)
+    dalam satuan jarak harga dan kelipatan ATR_H1.
     
     Returns:
-        dict dengan metrik:
-        - runway_atr: float (kelipatan ATR H1 ke target wall terdekat)
-        - runway_deep_atr: float (kelipatan ATR H1 ke target deep wall C2/F2)
+        dict dengan key:
+        - symbol: str
+        - clean_symbol: str
+        - direction: int
+        - mid: float
+        - atr_h1: float
+        - runway_atr: float (sisa runway ke dinding pertama C1/F1 dalam x ATR)
+        - runway_deep_atr: float (sisa runway ke dinding kedua C2/F2 dalam x ATR)
         - target_wall_price: float
         - target_wall_grade: str ('GRADE_3_MACRO', 'GRADE_2_INTERMEDIATE', 'GRADE_1_MICRO')
         - is_at_wall_g3: bool (True jika saat ini menempel benteng G3 lawan <= 0.35x ATR)
@@ -108,8 +118,8 @@ def calculate_pair_runway(sym: str, direction: int, macro_cache: dict) -> dict:
         or {}
     )
 
-    mid = float(m.get("current_mid") or m.get("current_price") or m.get("mid_price") or 0.0)
-    atr = float(m.get("current_atr") or m.get("atr_val") or m.get("atr_h1") or 0.0)
+    mid = float(current_mid or m.get("current_mid") or m.get("current_price") or m.get("mid_price") or 0.0)
+    atr = float(m.get("current_atr") or m.get("atr_val") or m.get("atr_h1") or m.get("atr") or 0.0)
     if atr <= 0:
         atr_pts = float(m.get("current_atr_pts") or m.get("atr_pts") or 0.0)
         point = float(m.get("point") or 0.00001)
@@ -119,10 +129,10 @@ def calculate_pair_runway(sym: str, direction: int, macro_cache: dict) -> dict:
             atr = 0.0010
 
     z_walls = m.get("zce_walls") or {}
-    c1 = float(m.get("immediate_ceiling_c1") or m.get("ceiling_c1") or m.get("imm_ceiling_c1") or m.get("c1_level") or m.get("cluster_resistance") or z_walls.get("c1") or 0.0)
-    f1 = float(m.get("immediate_floor_f1") or m.get("floor_f1") or m.get("imm_floor_f1") or m.get("f1_level") or m.get("cluster_support") or z_walls.get("f1") or 0.0)
-    c2 = float(m.get("ceiling_c2") or m.get("deep_target_ceiling_c2") or m.get("deep_ceiling_c2") or m.get("c2_level") or z_walls.get("c2") or c1)
-    f2 = float(m.get("floor_f2") or m.get("deep_target_floor_f2") or m.get("deep_floor_f2") or m.get("f2_level") or z_walls.get("f2") or f1)
+    c1 = float(m.get("immediate_ceiling_c1") or m.get("ceiling_c1") or m.get("imm_ceiling_c1") or m.get("c1_level") or m.get("cluster_resistance") or z_walls.get("c1") or z_walls.get("c1_price") or 0.0)
+    f1 = float(m.get("immediate_floor_f1") or m.get("floor_f1") or m.get("imm_floor_f1") or m.get("f1_level") or m.get("cluster_support") or z_walls.get("f1") or z_walls.get("f1_price") or 0.0)
+    c2 = float(m.get("ceiling_c2") or m.get("deep_target_ceiling_c2") or m.get("deep_ceiling_c2") or m.get("c2_level") or z_walls.get("c2") or z_walls.get("c2_price") or c1)
+    f2 = float(m.get("floor_f2") or m.get("deep_target_floor_f2") or m.get("deep_floor_f2") or m.get("f2_level") or z_walls.get("f2") or z_walls.get("f2_price") or f1)
 
     c1_grade = str(m.get("c1_reaction_grade") or m.get("imm_ceiling_c1_grade") or m.get("zce_c1_grade") or z_walls.get("c1_grade") or "GRADE_1_MICRO")
     f1_grade = str(m.get("f1_reaction_grade") or m.get("imm_floor_f1_grade") or m.get("zce_f1_grade") or z_walls.get("f1_grade") or "GRADE_1_MICRO")
@@ -136,36 +146,74 @@ def calculate_pair_runway(sym: str, direction: int, macro_cache: dict) -> dict:
     is_tight_chamber = chamber_width_atr < 1.00
 
     if direction == 1:  # BUY
-        # Target ke atas adalah C1 (atau C2 jika C1 sudah tertembus)
-        dist_c1 = (c1 - mid) if (c1 > mid) else 0.0
-        dist_c2 = (c2 - mid) if (c2 > mid) else dist_c1
+        if c1 > mid:
+            # Belum mencapai C1
+            dist_c1 = c1 - mid
+            runway_atr = dist_c1 / atr
+            target_wall = c1
+            target_grade = c1_grade
+            # Benteng penahan lawan di depan BUY adalah C1
+            dist_to_opp_wall = dist_c1
+            is_at_wall_g3 = (dist_to_opp_wall / atr <= threshold_g3) and ("3" in c1_grade or "MACRO" in c1_grade)
+            opp_wall_price = c1
+            opp_wall_grade = c1_grade
+        elif c2 > mid:
+            # C1 sudah tertembus / di-retest dari atas, target berikutnya adalah C2
+            dist_c2 = c2 - mid
+            runway_atr = dist_c2 / atr
+            target_wall = c2
+            target_grade = c2_grade
+            dist_to_opp_wall = dist_c2
+            is_at_wall_g3 = (dist_to_opp_wall / atr <= threshold_g3) and ("3" in c2_grade or "MACRO" in c2_grade)
+            opp_wall_price = c2
+            opp_wall_grade = c2_grade
+        else:
+            # C1 dan C2 sudah tertembus (Blue Sky / Unconstrained Expansion)
+            runway_atr = 2.5
+            target_wall = c1 + (2.5 * atr) if c1 > 0 else mid + (2.5 * atr)
+            target_grade = "UNCONSTRAINED_EXPANSION"
+            dist_to_opp_wall = 99.0 * atr
+            is_at_wall_g3 = False
+            opp_wall_price = target_wall
+            opp_wall_grade = target_grade
 
-        runway_atr = dist_c1 / atr if c1 > 0 else 2.0
-        runway_deep_atr = dist_c2 / atr if c2 > 0 else runway_atr
-        target_wall = c1 if c1 > mid else c2
-        target_grade = c1_grade if c1 > mid else c2_grade
-
-        # Benteng penahan lawan di depan BUY adalah C1
-        dist_to_opp_wall = (c1 - mid) if (c1 > mid) else 99.0 * atr
-        is_at_wall_g3 = (dist_to_opp_wall / atr <= threshold_g3) and ("3" in c1_grade or "MACRO" in c1_grade)
-        opp_wall_price = c1
-        opp_wall_grade = c1_grade
+        dist_c2 = (c2 - mid) if (c2 > mid) else dist_to_opp_wall
+        runway_deep_atr = dist_c2 / atr
 
     else:  # SELL
-        # Target ke bawah adalah F1 (atau F2 jika F1 sudah tertembus)
-        dist_f1 = (mid - f1) if (f1 > 0 and mid > f1) else 0.0
-        dist_f2 = (mid - f2) if (f2 > 0 and mid > f2) else dist_f1
+        if f1 > 0 and mid > f1:
+            # Belum mencapai F1
+            dist_f1 = mid - f1
+            runway_atr = dist_f1 / atr
+            target_wall = f1
+            target_grade = f1_grade
+            # Benteng penahan lawan di depan SELL adalah F1
+            dist_to_opp_wall = dist_f1
+            is_at_wall_g3 = (dist_to_opp_wall / atr <= threshold_g3) and ("3" in f1_grade or "MACRO" in f1_grade)
+            opp_wall_price = f1
+            opp_wall_grade = f1_grade
+        elif f2 > 0 and mid > f2:
+            # F1 sudah tertembus / di-retest dari bawah, target berikutnya adalah F2
+            dist_f2 = mid - f2
+            runway_atr = dist_f2 / atr
+            target_wall = f2
+            target_grade = f2_grade
+            dist_to_opp_wall = dist_f2
+            is_at_wall_g3 = (dist_to_opp_wall / atr <= threshold_g3) and ("3" in f2_grade or "MACRO" in f2_grade)
+            opp_wall_price = f2
+            opp_wall_grade = f2_grade
+        else:
+            # F1 dan F2 sudah tertembus (Waterfall / Unconstrained Breakdown)
+            runway_atr = 2.5
+            target_wall = max(0.0001, (f1 - (2.5 * atr)) if f1 > 0 else (mid - (2.5 * atr)))
+            target_grade = "UNCONSTRAINED_EXPANSION"
+            dist_to_opp_wall = 99.0 * atr
+            is_at_wall_g3 = False
+            opp_wall_price = target_wall
+            opp_wall_grade = target_grade
 
-        runway_atr = dist_f1 / atr if f1 > 0 else 2.0
-        runway_deep_atr = dist_f2 / atr if f2 > 0 else runway_atr
-        target_wall = f1 if (f1 > 0 and mid > f1) else f2
-        target_grade = f1_grade if (f1 > 0 and mid > f1) else f2_grade
-
-        # Benteng penahan lawan di depan SELL adalah F1
-        dist_to_opp_wall = (mid - f1) if (f1 > 0 and mid > f1) else 99.0 * atr
-        is_at_wall_g3 = (dist_to_opp_wall / atr <= threshold_g3) and ("3" in f1_grade or "MACRO" in f1_grade)
-        opp_wall_price = f1
-        opp_wall_grade = f1_grade
+        dist_f2 = (mid - f2) if (f2 > 0 and mid > f2) else dist_to_opp_wall
+        runway_deep_atr = dist_f2 / atr
 
     return {
         "symbol": sym,
@@ -185,7 +233,12 @@ def calculate_pair_runway(sym: str, direction: int, macro_cache: dict) -> dict:
     }
 
 
-def is_pair_blocked_by_g3_wall(sym: str, direction: int, macro_cache: dict) -> Tuple[bool, str]:
+def is_pair_blocked_by_g3_wall(
+    sym: str,
+    direction: int,
+    macro_cache: dict,
+    current_mid: Optional[float] = None
+) -> Tuple[bool, str]:
     """
     LOCAL PAIR VETO (The EURAUD Law):
     Memeriksa apakah pair ini sendiri sedang menabrak dinding penahan makro G3 lawan
@@ -201,7 +254,7 @@ def is_pair_blocked_by_g3_wall(sym: str, direction: int, macro_cache: dict) -> T
     if "BTC" in csym or "XAU" in csym:
         return False, "NON_FX_EXEMPT"
 
-    res = calculate_pair_runway(sym, direction, macro_cache)
+    res = calculate_pair_runway(sym, direction, macro_cache, current_mid=current_mid)
     if res["is_at_wall_g3"]:
         side = "BUY" if direction == 1 else "SELL"
         wall_name = "C1 Ceiling" if direction == 1 else "F1 Floor"
@@ -351,6 +404,80 @@ def check_basket_concurrency_cap(
     return True, ""
 
 
+def check_basket_directional_conflict(
+    symbol: str,
+    direction: int,
+    active_positions: list,
+    active_orders: list
+) -> Tuple[bool, str]:
+    """
+    Anti-Internal Currency Hedge Gate (10 Sep 2026):
+    Memeriksa apakah pembukaan posisi/order baru akan menimbulkan eksposur berlawanan
+    (hedging internal / self-cannibalization) pada mata uang yang sama terhadap posisi/order aktif.
+    
+    Contoh:
+    Jika akun sudah memiliki posisi EURNZD BUY (Long EUR, Short NZD):
+    - EURAUD SELL (Short EUR, Long AUD) -> DITOLAK (Opposing exposure on EUR).
+    - AUDNZD BUY (Long AUD, Short NZD) -> DIIZINKAN (Tidak ada eksposur berlawanan).
+    """
+    if not getattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True):
+        return True, ""
+
+    csym = clean_symbol(symbol)
+    if "BTC" in csym or "XAU" in csym:
+        return True, ""
+
+    cand_base, cand_quote = get_pair_currencies(csym)
+    if not cand_base or not cand_quote:
+        return True, ""
+
+    # Direction: +1 = BUY (Long Base, Short Quote), -1 = SELL (Short Base, Long Quote)
+    cand_exposures = {
+        cand_base: 1 if direction == 1 else -1,
+        cand_quote: -1 if direction == 1 else 1,
+    }
+
+    all_tickets = []
+    if active_positions:
+        all_tickets.extend(active_positions)
+    if active_orders:
+        all_tickets.extend(active_orders)
+
+    for item in all_tickets:
+        p_sym = getattr(item, "symbol", "") or ""
+        p_csym = clean_symbol(p_sym)
+        if p_csym == csym:
+            continue  # Pair yang sama ditangani oleh aturan max 1 posisi per simbol
+
+        p_base, p_quote = get_pair_currencies(p_csym)
+        if not p_base or not p_quote:
+            continue
+
+        p_type = getattr(item, "type", None)
+        is_buy = (p_type == 0) or ("BUY" in str(p_type).upper())
+        p_dir = 1 if is_buy else -1
+
+        p_exposures = {
+            p_base: 1 if p_dir == 1 else -1,
+            p_quote: -1 if p_dir == 1 else 1,
+        }
+
+        # Periksa apakah ada mata uang yang berlawanan tanda
+        for curr, cand_sign in cand_exposures.items():
+            if curr in p_exposures:
+                p_sign = p_exposures[curr]
+                if cand_sign * p_sign < 0:
+                    cand_action = "LONG" if cand_sign > 0 else "SHORT"
+                    p_action = "LONG" if p_sign > 0 else "SHORT"
+                    return False, (
+                        f"[CBSS ANTI-HEDGE] Konflik eksposur mata uang {curr}: "
+                        f"Portofolio aktif sudah memegang {p_action} {curr} pada {p_sym}. "
+                        f"Pembukaan {cand_action} {curr} pada {symbol} ditolak (Internal Cannibalization)."
+                    )
+
+    return True, ""
+
+
 def calculate_basket_saturation_index(
     currency: str,
     direction: int,
@@ -475,4 +602,213 @@ def select_basket_champion(
 
     scored_candidates.sort(key=lambda x: x["composite_score"], reverse=True)
     return scored_candidates[0]
+
+
+def filter_and_rank_batch_candidates(
+    candidates: List[Any],
+    macro_cache: dict,
+    active_positions: Optional[list] = None,
+    active_orders: Optional[list] = None,
+    csm_scores: Optional[dict] = None,
+    hour_wib: Optional[int] = None
+) -> List[Any]:
+    """
+    Lead-Lag Liquidity Relay & Zero-Opposing Basket Coordinator (10 Sep 2026):
+    Memproses seluruh setup kandidat dalam satu siklus radar 60-detik secara batch:
+    
+    1. Pemisahan Aset Non-Fiat (BTC & XAU) yang lolos langsung.
+    2. Anti-Internal Currency Hedge terhadap Portfolio MT5 (Zero Opposing Exposure).
+    3. Physical ZCE Runway Check & Wall-Exhaustion Skip (< 0.50x ATR).
+    4. Resolusi Konflik Intra-Batch via Composite Currency Vector (CSM Sign Arbiter).
+    5. Seleksi Basket Champion (Estafet Likuiditas ke Laggard Ber-Runway Lapang).
+    """
+    if not candidates:
+        return []
+
+    # Ambil CSM scores jika tidak disediakan
+    if csm_scores is None:
+        try:
+            from src.analytics.currency_strength import calculate_boitoki_csm
+            csm_scores, _ = calculate_boitoki_csm()
+        except Exception:
+            csm_scores = {}
+    if csm_scores is None:
+        csm_scores = {}
+
+    exempt_candidates = []
+    fx_candidates = []
+
+    for cand in candidates:
+        sym = getattr(cand, "symbol", "") or ""
+        csym = clean_symbol(sym)
+        if "BTC" in csym or "XAU" in csym:
+            exempt_candidates.append(cand)
+        else:
+            fx_candidates.append(cand)
+
+    if not fx_candidates:
+        return exempt_candidates
+
+    # ── Tahap 2: Anti-Internal Currency Hedge terhadap Portfolio MT5 ──
+    stage2_passed = []
+    for cand in fx_candidates:
+        sym = getattr(cand, "symbol", "")
+        direction = getattr(cand, "direction", 0)
+        is_safe, conflict_msg = check_basket_directional_conflict(
+            symbol=sym,
+            direction=direction,
+            active_positions=active_positions or [],
+            active_orders=active_orders or []
+        )
+        if not is_safe:
+            logger.info(f"[CBSS BATCH DROP] {conflict_msg}")
+            continue
+        stage2_passed.append(cand)
+
+    if not stage2_passed:
+        return exempt_candidates
+
+    # ── Tahap 3: Physical ZCE Runway Check & Wall-Exhaustion Skip ──
+    stage3_passed = []
+    wall_threshold = float(getattr(config, "CBSS_WALL_EXHAUSTION_THRESHOLD_ATR", 0.50))
+    for cand in stage2_passed:
+        sym = getattr(cand, "symbol", "")
+        direction = getattr(cand, "direction", 0)
+        cand_mid = float(getattr(cand, "scan_mid", 0.0) or getattr(cand, "trigger_price", 0.0))
+        runway_info = calculate_pair_runway(sym, direction, macro_cache, current_mid=cand_mid)
+        is_g3_blocked, veto_reason = is_pair_blocked_by_g3_wall(sym, direction, macro_cache, current_mid=cand_mid)
+
+        runway_atr = runway_info.get("runway_atr", 2.0)
+        if is_g3_blocked or runway_atr < wall_threshold:
+            logger.info(
+                f"[CBSS WALL EXHAUSTED] {sym} ({'BUY' if direction == 1 else 'SELL'}) di-skip: "
+                f"Runway {runway_atr:.2f}x ATR < {wall_threshold:.2f}x ATR atau menabrak benteng ({veto_reason})."
+            )
+            continue
+        if hasattr(cand, "metadata") and isinstance(cand.metadata, dict):
+            cand.metadata["runway_atr"] = runway_atr
+            cand.metadata["is_tight_chamber"] = runway_info.get("is_tight_chamber", False)
+        stage3_passed.append(cand)
+
+    if not stage3_passed:
+        return exempt_candidates
+
+    # ── Tahap 4: Resolusi Konflik Intra-Batch via Composite Currency Vector (CSM Sign) ──
+    # Cek apakah dalam batch ini ada usulan yang saling bertentangan untuk mata uang yang sama
+    def _get_cand_currency_dir(c_cand, target_curr: str) -> int:
+        c_sym = getattr(c_cand, "symbol", "")
+        base, quote = get_pair_currencies(c_sym)
+        c_dir = getattr(c_cand, "direction", 0)
+        if base == target_curr:
+            return 1 if c_dir == 1 else -1
+        elif quote == target_curr:
+            return -1 if c_dir == 1 else 1
+        return 0
+
+    disqualified_indices = set()
+    for curr in CURRENCIES:
+        cands_with_curr = [
+            (idx, c) for idx, c in enumerate(stage3_passed)
+            if _get_cand_currency_dir(c, curr) != 0 and idx not in disqualified_indices
+        ]
+        if len(cands_with_curr) < 2:
+            continue
+
+        long_cands = [(idx, c) for idx, c in cands_with_curr if _get_cand_currency_dir(c, curr) > 0]
+        short_cands = [(idx, c) for idx, c in cands_with_curr if _get_cand_currency_dir(c, curr) < 0]
+
+        if long_cands and short_cands:
+            csm_score = float(csm_scores.get(curr, 0.0))
+            if csm_score > 0.0:
+                # Arus mata uang Bullish -> Pertahankan LONG, gugurkan SHORT
+                logger.info(
+                    f"[CBSS BATCH CONFLICT] Mata uang {curr} memiliki usulan berlawanan dalam 1 batch scan. "
+                    f"CSM {curr} ({csm_score:+.2f}) > 0 -> Menangkan proposal LONG, diskualifikasi proposal SHORT: "
+                    f"{[getattr(x[1], 'symbol', '') for x in short_cands]}."
+                )
+                for idx, sc in short_cands:
+                    disqualified_indices.add(idx)
+            elif csm_score < 0.0:
+                # Arus mata uang Bearish -> Pertahankan SHORT, gugurkan LONG
+                logger.info(
+                    f"[CBSS BATCH CONFLICT] Mata uang {curr} memiliki usulan berlawanan dalam 1 batch scan. "
+                    f"CSM {curr} ({csm_score:+.2f}) < 0 -> Menangkan proposal SHORT, diskualifikasi proposal LONG: "
+                    f"{[getattr(x[1], 'symbol', '') for x in long_cands]}."
+                )
+                for idx, lc in long_cands:
+                    disqualified_indices.add(idx)
+            else:
+                # CSM netral: Gugurkan kandidat dengan runway lebih kecil
+                avg_long_runway = sum((getattr(x[1], 'metadata', {}).get('runway_atr', 1.0)) for x in long_cands) / len(long_cands)
+                avg_short_runway = sum((getattr(x[1], 'metadata', {}).get('runway_atr', 1.0)) for x in short_cands) / len(short_cands)
+                if avg_long_runway >= avg_short_runway:
+                    for idx, sc in short_cands:
+                        disqualified_indices.add(idx)
+                else:
+                    for idx, lc in long_cands:
+                        disqualified_indices.add(idx)
+
+    stage4_passed = [c for idx, c in enumerate(stage3_passed) if idx not in disqualified_indices]
+    if not stage4_passed:
+        return exempt_candidates
+
+    # ── Tahap 5: Seleksi Basket Champion (Estafet ke Laggard Ber-Runway Lapang) ──
+    try:
+        from src.analytics.currency_strength import get_csm_delta_for_symbol
+    except Exception:
+        get_csm_delta_for_symbol = lambda s: 0.0
+
+    def _compute_candidate_score(cand_obj) -> float:
+        sym_name = getattr(cand_obj, "symbol", "")
+        dir_val = getattr(cand_obj, "direction", 0)
+        r_val = (cand_obj.metadata.get("runway_atr", 1.0) if hasattr(cand_obj, "metadata") else 1.0)
+        is_tight = (cand_obj.metadata.get("is_tight_chamber", False) if hasattr(cand_obj, "metadata") else False)
+        
+        delta_val = get_csm_delta_for_symbol(sym_name)
+        alignment = max(0.0, delta_val * dir_val)
+        score = (r_val * 0.45) + (alignment * 0.35) + (1.0 if not is_tight else 0.5) * 0.20
+        return score
+
+    # Urutkan kandidat berdasarkan skor tertinggi
+    stage4_passed.sort(key=_compute_candidate_score, reverse=True)
+
+    final_champions = []
+    for cand in stage4_passed:
+        # Cek konflik terhadap champion yang sudah terpilih di batch ini
+        is_safe, conflict_msg = check_basket_directional_conflict(
+            symbol=getattr(cand, "symbol", ""),
+            direction=getattr(cand, "direction", 0),
+            active_positions=final_champions,
+            active_orders=[]
+        )
+        if not is_safe:
+            logger.info(f"[CBSS BATCH DROP] {conflict_msg}")
+            continue
+
+        # Cek Concurrency Cap
+        combined_existing = (active_positions or []) + final_champions
+        cap_ok, cap_msg = check_basket_concurrency_cap(
+            symbol=getattr(cand, "symbol", ""),
+            direction=getattr(cand, "direction", 0),
+            active_positions=combined_existing,
+            active_orders=active_orders or []
+        )
+        if not cap_ok:
+            logger.info(f"[CBSS CAP EXCEEDED] {cap_msg}")
+            continue
+
+        if hasattr(cand, "metadata") and isinstance(cand.metadata, dict):
+            cand.metadata["cbss_champion"] = True
+            cand.metadata["cbss_score"] = round(_compute_candidate_score(cand), 3)
+
+        final_champions.append(cand)
+        logger.info(
+            f"🏆 [CBSS CHAMPION SELECTED] {getattr(cand, 'symbol', '')} "
+            f"({'BUY' if getattr(cand, 'direction', 0) == 1 else 'SELL'}) "
+            f"(Score: {_compute_candidate_score(cand):.2f}, "
+            f"Runway: {cand.metadata.get('runway_atr', 0):.2f}x ATR)"
+        )
+
+    return exempt_candidates + final_champions
+
 

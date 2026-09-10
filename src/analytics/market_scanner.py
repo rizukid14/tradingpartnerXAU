@@ -22,10 +22,12 @@ from src.analytics.basket_sync_engine import (
     is_pair_blocked_by_g3_wall,
     calculate_pair_runway,
     check_basket_concurrency_cap,
+    check_basket_directional_conflict,
     rank_basket_candidates_by_runway,
     calculate_basket_saturation_index,
     select_basket_champion,
-    get_pair_currencies
+    get_pair_currencies,
+    filter_and_rank_batch_candidates
 )
 from src.analytics.macro_strategic_engine import (
     macro_strategic_engine, 
@@ -962,6 +964,8 @@ class MarketScanner:
         """
         if config.is_crypto(symbol):
             return True
+        if config.is_gold(symbol):
+            return 7 <= hour_wib <= 23
         asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
         asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
         ny_start = getattr(config, "NY_SESSION_START_HOUR_WIB", 19)
@@ -2996,11 +3000,15 @@ class MarketScanner:
 
         for sym, macro in self.macro_cache.items():
             sym_is_crypto = config.is_crypto(sym)
-            if not sym_is_crypto and (
-                dow in (5, 6)
-                or (0 <= h < asia_start)
+            sym_is_gold = config.is_gold(sym)
+            if not sym_is_crypto and dow in (5, 6):
+                continue
+            if not sym_is_crypto and not sym_is_gold and (
+                (0 <= h < asia_start)
                 or (getattr(config, "ENABLE_NIGHT_FREEZE", True) and h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23))
             ):
+                continue
+            if sym_is_gold and (0 <= h < 7):
                 continue
 
             clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
@@ -3123,7 +3131,8 @@ class MarketScanner:
                     # 1B. CBSS Currency Basket Structural Synchronization (9 Sep 2026)
                     is_cbss_cap_saturated = False
                     cbss_cap_msg = ""
-                    if getattr(config, "ENABLE_CBSS", True) and not sym_is_crypto:
+                    sym_is_gold = config.is_gold(sym)
+                    if getattr(config, "ENABLE_CBSS", True) and not sym_is_crypto and not sym_is_gold:
                         is_continuation = not any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM", "FADE"))
 
                         # (a) Local Pair G3 Wall Veto (The EURAUD Law):
@@ -3143,8 +3152,14 @@ class MarketScanner:
                             if not cap_ok:
                                 is_cbss_cap_saturated = True
                                 cbss_cap_msg = cap_msg
-                        except Exception:
-                            pass
+
+                            # (b2) Anti-Internal Currency Hedge Gate (No Opposing Currency Exposure)
+                            if getattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True):
+                                conflict_ok, conflict_msg = check_basket_directional_conflict(sym, target_dir, raw_pos, raw_ord)
+                                if not conflict_ok:
+                                    return False, "HARD_BLOCK", conflict_msg
+                        except Exception as e:
+                            logger.debug(f"[CBSS CHECK ERR] {e}")
 
                         # (c) Pair ZCE Runway Sufficiency Check
                         runway_info = calculate_pair_runway(sym, target_dir, self.macro_cache)
@@ -3322,7 +3337,8 @@ class MarketScanner:
                     is_m4_pro = is_sfr_pro
 
                     if getattr(config, "ENABLE_CSM_FLOW_FILTER", True):
-                        if is_csm_opposed and not is_aligned and not is_sfr_pro:
+                        is_sweep_setup = any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM"))
+                        if is_csm_opposed and not is_sfr_pro and not is_sweep_setup:
                             return False, "HARD_BLOCK", f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction"
 
                     if is_aligned or is_sfr_pro:
@@ -4210,11 +4226,19 @@ class MarketScanner:
                                 crossed_up = (prev_bar['close'] <= target_res and curr_bar['close'] > target_res) or \
                                              (curr_bar['low'] <= target_res and curr_bar['close'] > target_res)
                                 if crossed_up:
-                                    has_fresh_break_b = True
                                     bar_range = curr_bar['high'] - curr_bar['low']
                                     bar_body = abs(curr_bar['close'] - curr_bar['open'])
                                     body_ratio = (bar_body / bar_range) if bar_range > 0 else 0.0
                                     if body_ratio >= min_disp_body and curr_bar['close'] > curr_bar['open']:
+                                        # Context validation: target_res was genuinely resistance before breakout bar
+                                        break_abs_idx = len(df) - (len(recent_df) - idx)
+                                        prior_bars = df.iloc[max(0, break_abs_idx - 5):break_abs_idx]
+                                        if len(prior_bars) >= 3:
+                                            pct_above = sum(1 for c in prior_bars['close'] if c > target_res) / len(prior_bars)
+                                            if pct_above >= 0.60:
+                                                logger.debug(f"[M3 BUY SWEEP VETO] {sym} SKIP: target_res {target_res:.5f} was acting as support in prior bars ({pct_above*100:.0f}% closes above). Handed over to M1.")
+                                                continue
+                                        has_fresh_break_b = True
                                         is_displacement_b = True
                                         break
                         
@@ -4409,11 +4433,19 @@ class MarketScanner:
                                 crossed_down = (prev_bar['close'] >= target_sup and curr_bar['close'] < target_sup) or \
                                                (curr_bar['high'] >= target_sup and curr_bar['close'] < target_sup)
                                 if crossed_down:
-                                    has_fresh_break_s = True
                                     bar_range = curr_bar['high'] - curr_bar['low']
                                     bar_body = abs(curr_bar['close'] - curr_bar['open'])
                                     body_ratio = (bar_body / bar_range) if bar_range > 0 else 0.0
                                     if body_ratio >= min_disp_body and curr_bar['close'] < curr_bar['open']:
+                                        # Context validation: target_sup was genuinely support before breakdown bar
+                                        break_abs_idx = len(df) - (len(recent_df) - idx)
+                                        prior_bars = df.iloc[max(0, break_abs_idx - 5):break_abs_idx]
+                                        if len(prior_bars) >= 3:
+                                            pct_below = sum(1 for c in prior_bars['close'] if c < target_sup) / len(prior_bars)
+                                            if pct_below >= 0.60:
+                                                logger.debug(f"[M3 SELL SWEEP VETO] {sym} SKIP: target_sup {target_sup:.5f} was acting as resistance in prior bars ({pct_below*100:.0f}% closes below). Handed over to M1.")
+                                                continue
+                                        has_fresh_break_s = True
                                         is_displacement_s = True
                                         break
                         
@@ -4732,6 +4764,19 @@ class MarketScanner:
 
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")
+
+        # ── LEAD-LAG LIQUIDITY RELAY & ZERO-OPPOSING BASKET COORDINATOR (10 Sep 2026) ──
+        if candidates and getattr(config, "ENABLE_CBSS", True):
+            try:
+                candidates = filter_and_rank_batch_candidates(
+                    candidates=candidates,
+                    macro_cache=self.macro_cache,
+                    active_positions=positions,
+                    active_orders=orders,
+                    hour_wib=h
+                )
+            except Exception as _cbss_err:
+                logger.error(f"[CBSS BATCH ERROR] Gagal mengeksekusi filter_and_rank_batch_candidates: {_cbss_err}")
 
         for c in candidates:
             # --- A5 FIX: bind scan-time market price as drift baseline for stale-guard (trigger_price = limit anchor, not market) ---

@@ -62,6 +62,7 @@ def render_shadow_report_html() -> str:
     # Disposition Stats
     disp_stats = summary.get("disposition_breakdown", {
         "EXECUTED_MT5": 0,
+        "PAPER_TRADE_ONLY": 0,
         "SKIPPED_MAX_POSITIONS": 0,
         "SKIPPED_CBSS_BASKET_CAP": 0,
         "SKIPPED_RISK_BASKET": 0,

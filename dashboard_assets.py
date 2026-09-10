@@ -1142,16 +1142,16 @@ html, body {
     <div class="panel-header" onclick="if(document.querySelector('.workspace').classList.contains('left-collapsed')) toggleLeftPanel();">
       <div style="display:flex;align-items:center;gap:6px;">
         <span class="panel-title">26-Pair Proximity Radar</span>
-        <span id="watchlist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">26 pairs</span>
+        <span id="watchlist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">Pairs</span>
       </div>
       <button id="btn-toggle-left" class="btn-toggle-panel" onclick="event.stopPropagation(); toggleLeftPanel();" title="Toggle Proximity Watchlist"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_left</span></button>
     </div>
-    <div class="left-collapsed-label" onclick="toggleLeftPanel()" title="Klik untuk membuka 26-Pair Watchlist">
-      <span>26-PAIR RADAR WATCHLIST</span>
+    <div class="left-collapsed-label" onclick="toggleLeftPanel()" title="Klik untuk membuka Radar Watchlist">
+      <span>RADAR WATCHLIST</span>
     </div>
     <input type="text" id="pair-search" class="search-input" placeholder="Cari pair (e.g. CAD, JPY)...">
     <div class="filter-tabs">
-      <div class="filter-tab active" data-filter="all">ALL (26)</div>
+      <div class="filter-tab active" data-filter="all">ALL</div>
       <div class="filter-tab" data-filter="near">NEAR (<1x ATR)</div>
       <div class="filter-tab" data-filter="allowed">GO / ARM</div>
       <div class="filter-tab" data-filter="open">MT5 OPEN</div>

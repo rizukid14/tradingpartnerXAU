@@ -1124,14 +1124,22 @@ class TestMarketScanner(unittest.TestCase):
         allowed, msg = risk._check_weekend_entry(symbol=btc_sym)
         self.assertTrue(allowed, f"RiskEngine._check_weekend_entry should allow BTC on weekend, but got: {msg}")
 
+        # When paper-only mode is active, can_trade must safely quarantine BTC from live MT5 execution
+        val_allowed, val_msg = risk.can_trade(symbol=btc_sym)
+        if config.is_paper_only(btc_sym):
+            self.assertFalse(val_allowed)
+            self.assertIn("PAPER_ONLY", val_msg)
+
+        # When paper-only mode is disabled (live weekend trading), can_trade allows BTC
         mock_acc_dict = {"balance": 6000.0, "equity": 6000.0, "margin_free": 6000.0, "free_margin": 6000.0}
-        with patch("src.core.risk_engine.connector.get_account_info", return_value=mock_acc_dict):
-            with patch("config.mt5.positions_get", return_value=[]):
-                with patch("config.mt5.orders_get", return_value=[]):
-                    with patch("config.mt5.symbol_info_tick", return_value=MagicMock(ask=80010.0, bid=80000.0)):
-                        with patch("config.mt5.symbol_info", return_value=MagicMock(point=0.01, digits=2)):
-                            val_allowed, val_msg = risk.can_trade(symbol=btc_sym)
-                            self.assertTrue(val_allowed, f"RiskEngine.can_trade should allow BTC on weekend, but got: {val_msg}")
+        with patch.object(config, "is_paper_only", return_value=False):
+            with patch("src.core.risk_engine.connector.get_account_info", return_value=mock_acc_dict):
+                with patch("config.mt5.positions_get", return_value=[]):
+                    with patch("config.mt5.orders_get", return_value=[]):
+                        with patch("config.mt5.symbol_info_tick", return_value=MagicMock(ask=80010.0, bid=80000.0)):
+                            with patch("config.mt5.symbol_info", return_value=MagicMock(point=0.01, digits=2)):
+                                val_allowed_live, val_msg_live = risk.can_trade(symbol=btc_sym)
+                                self.assertTrue(val_allowed_live, f"RiskEngine.can_trade should allow BTC on live weekend, but got: {val_msg_live}")
 
     def test_m1a_sweep_ceiling_trap_awareness_and_hysteresis_reversal(self):
         """Verify M1A Bearish Sweep at C1 bypasses F1 floor trap and permits hysteresis reversal at extreme DR."""

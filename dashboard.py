@@ -55,6 +55,7 @@ from src.analytics.basket_sync_engine import (
     calculate_pair_runway,
     is_pair_blocked_by_g3_wall,
     check_basket_concurrency_cap,
+    check_basket_directional_conflict,
     rank_basket_candidates_by_runway,
     is_symbol_allowed_for_session,
     calculate_basket_saturation_index,
@@ -382,15 +383,18 @@ class CockpitDataEngine:
     def start(self):
         connector.initialize_mt5()
         dash_symbols = list(config.SCANNER_SYMBOLS)
-        btc_cand = getattr(config, "WEEKEND_SYMBOL", "BTCUSD")
+        btc_cand = config._normalize_symbol_for_account(getattr(config, "WEEKEND_SYMBOL", "BTCUSD.c"))
+        gold_cand = config._normalize_symbol_for_account(getattr(config, "GOLD_SYMBOL", "XAUUSD-ECNc"))
         clean_list = [s.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper() for s in dash_symbols]
         if "BTCUSD" not in clean_list:
             dash_symbols.append(btc_cand)
+        if "XAUUSD" not in clean_list:
+            dash_symbols.append(gold_cand)
         self.scanner = MarketScanner(symbols=dash_symbols)
         self._is_running = True
         t = threading.Thread(target=self._background_loop, daemon=True)
         t.start()
-        print(f"[Cockpit Engine] Background observation worker started for {len(dash_symbols)} pairs (FX + BTCUSD).")
+        print(f"[Cockpit Engine] Background observation worker started for {len(dash_symbols)} pairs (FX + BTCUSD + XAUUSD).")
 
     def _background_loop(self):
         """Refreshes MT5 macro context and 26-pair proximity every 5-8 seconds."""
@@ -437,12 +441,15 @@ class CockpitDataEngine:
 
         open_symbols = set(p.get("symbol") for p in open_pos)
 
-        # 2. Universe Proximity Analysis (26 Pairs + BTCUSD)
+        # 2. Universe Proximity Analysis (26 Pairs + BTCUSD + XAUUSD)
         symbols = list(self.scanner.symbols) if (self.scanner and self.scanner.symbols) else list(config.SCANNER_SYMBOLS)
-        btc_cand = getattr(config, "WEEKEND_SYMBOL", "BTCUSD")
+        btc_cand = config._normalize_symbol_for_account(getattr(config, "WEEKEND_SYMBOL", "BTCUSD.c"))
+        gold_cand = config._normalize_symbol_for_account(getattr(config, "GOLD_SYMBOL", "XAUUSD-ECNc"))
         clean_list = [s.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper() for s in symbols]
         if "BTCUSD" not in clean_list:
             symbols.append(btc_cand)
+        if "XAUUSD" not in clean_list:
+            symbols.append(gold_cand)
         pairs_data = []
 
         for sym in symbols:
@@ -453,9 +460,9 @@ class CockpitDataEngine:
 
             tick = config.mt5.symbol_info_tick(valid_sym)
             si = config.mt5.symbol_info(valid_sym)
-            digits = si.digits if si else (2 if "BTC" in clean_sym else 5)
-            pt = si.point if si and si.point else (1.0 if "BTC" in clean_sym else (0.001 if "JPY" in clean_sym else 0.00001))
-            pip_div = 1 if "BTC" in clean_sym else (10 if digits in (3, 5) else 1)
+            digits = si.digits if si else (2 if ("BTC" in clean_sym or "XAU" in clean_sym) else 5)
+            pt = si.point if si and si.point else (1.0 if "BTC" in clean_sym else (0.01 if "XAU" in clean_sym else (0.001 if "JPY" in clean_sym else 0.00001)))
+            pip_div = 1 if ("BTC" in clean_sym or "XAU" in clean_sym) else (10 if digits in (3, 5) else 1)
             pip_val = pt * pip_div
 
             bid = float(tick.bid) if tick else 0.0
@@ -686,7 +693,8 @@ class CockpitDataEngine:
                 "c1_pips": c1_dist_pips,
                 "f1_pips": f1_dist_pips,
                 "basing_box": b_box_info,
-                "wave_regime": w_regime
+                "wave_regime": w_regime,
+                "is_paper_only": config.is_paper_only(sym)
             })
 
         # Stable sorting by Base Currency Group: EUR, GBP, AUD, USD, CHF, CAD, NZD
@@ -1247,7 +1255,8 @@ class CockpitDataEngine:
         mid_p = (bid + ask) / 2.0
         pip_val = 0.01 if ("JPY" in symbol or "XAU" in symbol) else (1.0 if "BTC" in symbol else 0.0001)
         atr_val_pts = float(atr_pts or 300)
-        atr_price = (atr_val_pts * (0.01 if "JPY" in symbol else 0.0001)) if atr_val_pts > 0 else 0.0030
+        _pt_mult = 1.0 if "BTC" in symbol else (0.01 if ("JPY" in symbol or "XAU" in symbol) else 0.0001)
+        atr_price = (atr_val_pts * _pt_mult) if atr_val_pts > 0 else (300 * _pt_mult)
         struct_stage = str(macro.get("structural_stage") or "")
         d1_trend_str = str(macro.get("d1_trend_label") or "").upper()
         h4_trend_str = str(macro.get("h4_trend_label") or "").upper()
@@ -1480,11 +1489,12 @@ class CockpitDataEngine:
 
         # Gate 1: Operational Session & Spread Filter
         is_crypto = config.is_crypto(sym)
+        is_gold = config.is_gold(sym)
         is_dead_zone = (0 <= h < 7) and not is_crypto
         clean_s = sym.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
         is_asian = (7 <= h < 14) and not is_crypto
-        is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto
-        spread_cap = config.max_spread_points_for(sym) if is_crypto else max(int(round(atr_val * 0.15 / pt)), 20)
+        is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto or is_gold
+        spread_cap = config.max_spread_points_for(sym) if (is_crypto or is_gold) else max(int(round(atr_val * 0.15 / pt)), 20)
 
         # Dynamic Session Multiplier
         sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.2) if is_asian else (
@@ -1591,25 +1601,35 @@ class CockpitDataEngine:
 
         if is_crypto:
             g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Circuit Breaker & Concurrency Check", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
+        elif is_gold:
+            g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Commodity Asset Basket Check", "reason": "Komoditas logam (XAUUSD) beroperasi independen dari matriks basket currency fiat."}
         else:
             is_locked, b_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
             m_cache = self.scanner.macro_cache if (self.scanner and hasattr(self.scanner, "macro_cache")) else {}
             is_g3_blocked, g3_reason = is_pair_blocked_by_g3_wall(sym, target_dir, m_cache)
 
-            # Cek Basket Concurrency Cap (max 2 per mata uang searah)
+            # Cek Basket Concurrency Cap & Runway Relay
             pos_all = connector.get_all_open_positions() or []
             pend_all = connector.get_pending_orders() or []
+            conflict_ok, conflict_reason = check_basket_directional_conflict(sym, target_dir, pos_all, pend_all)
             cap_ok, cap_reason = check_basket_concurrency_cap(sym, target_dir, pos_all, pend_all)
+            runway_info = calculate_pair_runway(sym, target_dir, m_cache)
+            r_atr = runway_info.get("runway_atr", 2.0)
+            wall_th = float(getattr(config, "CBSS_WALL_EXHAUSTION_THRESHOLD_ATR", 0.50))
 
             if is_locked:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
+            elif not conflict_ok:
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Anti-Internal Currency Hedge Veto", "reason": conflict_reason}
             elif is_g3_blocked:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "CBSS Local G3 Wall Veto (The EURAUD Law)", "reason": g3_reason}
+            elif r_atr < wall_th:
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "WAIT", "desc": f"Relay Pause: Wall Proximity ({r_atr:.2f}x ATR)", "reason": f"[WALL EXHAUSTED] Jarak ke benteng lawan {r_atr:.2f}x ATR < {wall_th:.2f}x ATR. Estafet likuiditas dialihkan ke pair laggard sekeranjang."}
             elif not cap_ok:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PAPER", "desc": "CBSS Concurrency Saturated (Paper Route)", "reason": f"[CBSS SATURATED] {cap_reason} -> Dialihkan ke Virtual Paper Trade (0 Token, 0 Risiko MT5)."}
             else:
                 base_c, quote_c = get_pair_currencies(clean_s)
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Systemic Shock (<35 bps) & CBSS Cleared", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Kuota basket aman (<2 pos searah) & bebas tabrakan benteng G3 lawan."}
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": f"CBSS Cleared (Runway {r_atr:.2f}x ATR)", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Bebas tabrakan benteng G3 lawan & runway memadai ({r_atr:.2f}x ATR)."}
         gates.append(g3)
 
         # Gate 4: MSE Chamber & Forbidden Traps + Directional Hysteresis
@@ -1626,12 +1646,13 @@ class CockpitDataEngine:
         gates.append(g4)
 
         # Gate 5: Boitoki CSM Flow Alignment
-        if is_crypto:
-            g5 = {"id": 5, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": "Aset crypto (BTCUSD) independen dari arus fiat CSM (Net Delta N/A)."}
+        if is_crypto or is_gold:
+            g5 = {"id": 5, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": f"Aset non-fiat ({clean_s}) independen dari arus fiat CSM (Net Delta N/A)."}
         else:
             csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
             csm_filter_enabled = getattr(config, "ENABLE_CSM_FLOW_FILTER", True)
-            is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
+            csm_opp_thresh = float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))
+            is_csm_opposed = (target_dir == 1 and csm_d <= -csm_opp_thresh) or (target_dir == -1 and csm_d >= csm_opp_thresh)
             dir_label_g5 = "BUY" if target_dir == 1 else "SELL"
             m4_tag = " [M4 Dir]" if m4_dir_override is not None else (" [Lock Dir]" if dir_val != 0 else "")
 
@@ -1657,7 +1678,9 @@ class CockpitDataEngine:
         gates.append(g6)
 
         # Gate 7: Stage 2 3-AI Consensus Jury & CRO
-        if not getattr(config, "ENABLE_LLM_JURY", True):
+        if config.is_paper_only(sym):
+            g7 = {"id": 7, "title": "Virtual Paper Trade Execution", "status": "PAPER", "desc": "Direct Virtual Shadow Tracking (0 Token, 0 MT5 Risk)", "reason": f"Simbol {clean_s} beroperasi khusus di Virtual Paper Trade (shadow_tracker). Order riil MT5 diisolasi (0 Risiko Modal)."}
+        elif not getattr(config, "ENABLE_LLM_JURY", True):
             g7 = {"id": 7, "title": "Pure Quant Direct Execution (No-LLM)", "status": "PASS", "desc": "Direct Quant Radar Signal Dispatch (0 Token)", "reason": "Mode Pure Quant aktif (0 Token API). Sinyal kuantitatif dieksekusi langsung tanpa sidang LLM."}
         else:
             g7 = {"id": 7, "title": "Stage 2 3-AI Consensus & CRO Audit", "status": "WAIT", "desc": "OpenAI + Gemini + DeepSeek CRO Veto", "reason": "Stage 1 Fast Radar Standby (0 Token terpakai). Memicu 3-LLM Jury otomatis saat setup A+ tersentuh."}
@@ -1668,6 +1691,10 @@ class CockpitDataEngine:
             sl_floor = getattr(config, "DEFAULT_SL_POINTS_BTC", 30000)
             sl_ceil = 45000
             g8 = {"id": 8, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": f"BTC floor {sl_floor} pts, ceiling {sl_ceil} pts, {config.RISK_PERCENT_BTC}% risk", "reason": f"Sizing {config.RISK_PERCENT_BTC}% equity aman. SL floor {sl_floor} pts ($300) & plafon {sl_ceil} pts ($450) terkalibrasi."}
+        elif is_gold:
+            sl_floor = getattr(config, "DEFAULT_SL_POINTS_XAU", 500)
+            sl_ceil = 1500
+            g8 = {"id": 8, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": f"Gold floor {sl_floor} pts ($5.00), ceiling {sl_ceil} pts, {config.RISK_PERCENT_XAU}% risk", "reason": f"Sizing {config.RISK_PERCENT_XAU}% equity aman (Paper Mode). SL floor {sl_floor} pts & plafon {sl_ceil} pts valid."}
         else:
             g8 = {"id": 8, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": "SL 0.50x ATR floor, 2.5x ATR ceiling, 1.0% equity cap", "reason": f"Sizing 1.0% equity aman. Plafon SL {int(atr_val*2.5/pt)} pts valid (Zero Over-Risk)."}
         gates.append(g8)

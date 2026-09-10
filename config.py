@@ -234,6 +234,12 @@ SCANNER_SYMBOLS = [
     if s.strip()
 ]
 
+# Virtual Paper Trade Only Symbols (0 MT5 execution, 0 token API)
+ENABLE_XAU_PAPER = _getenv_bool("ENABLE_XAU_PAPER", True)
+ENABLE_BTC_247_PAPER = _getenv_bool("ENABLE_BTC_247_PAPER", True)
+PAPER_TRADE_ONLY_SYMBOLS = os.getenv("PAPER_TRADE_ONLY_SYMBOLS", "XAUUSD-ECNc,BTCUSD.c")
+GOLD_SYMBOL = _normalize_symbol_for_account(os.getenv("GOLD_SYMBOL", "XAUUSD-ECNc"))
+
 # Fast Execution Radar interval (detik) & Rejection Wick Floor
 RADAR_SCAN_INTERVAL_SECONDS = _getenv_int("RADAR_SCAN_INTERVAL_SECONDS", 60)
 RADAR_MIN_WICK_RATIO = _getenv_float("RADAR_MIN_WICK_RATIO", 0.30)
@@ -242,7 +248,7 @@ ENABLE_HOURLY_RADAR_RECAP = _getenv_bool("ENABLE_HOURLY_RADAR_RECAP", True)
 CSM_ANTI_DUMP_THRESHOLD = _getenv_float("CSM_ANTI_DUMP_THRESHOLD", -2.0)
 ENABLE_CSM_FLOW_FILTER = _getenv_bool("ENABLE_CSM_FLOW_FILTER", True)
 CSM_FLOW_OPPOSED_THRESHOLD = _getenv_float("CSM_FLOW_OPPOSED_THRESHOLD", 1.50)
-PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.50)
+PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.00)
 
 # Pure Quant Hierarchical Top-Down Macro Strategic Engine
 ENABLE_MACRO_STRATEGIC_ENGINE = _getenv_bool("ENABLE_MACRO_STRATEGIC_ENGINE", True)
@@ -762,6 +768,7 @@ CBSS_MAX_BASKET_CONCURRENCY    = _getenv_int("CBSS_MAX_BASKET_CONCURRENCY", 2)
 CBSS_MIN_RUNWAY_ATR            = _getenv_float("CBSS_MIN_RUNWAY_ATR", 1.20)
 CBSS_G3_BARRIER_THRESHOLD_ATR  = _getenv_float("CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35)
 CBSS_SATURATION_THRESHOLD      = _getenv_float("CBSS_SATURATION_THRESHOLD", 0.70)
+ENABLE_ANTI_INTERNAL_HEDGE     = _getenv_bool("ENABLE_ANTI_INTERNAL_HEDGE", True)
 
 # --- CONFLUENCE TIMING & MIDDAY RETRACEMENT GUARD (10 Sep 2026) ---
 MIDDAY_RETRACEMENT_GUARD_ENABLED    = _getenv_bool("MIDDAY_RETRACEMENT_GUARD_ENABLED", True)
@@ -930,7 +937,7 @@ PENDING_ENTRY_MAX_ATR_MULT = _getenv_float("PENDING_ENTRY_MAX_ATR_MULT", 1.5)
 PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
 ENABLE_PENDING_THESIS_AUDIT = _getenv_bool("ENABLE_PENDING_THESIS_AUDIT", True)
 ENABLE_SHADOW_PROXIMITY_CANCEL = _getenv_bool("ENABLE_SHADOW_PROXIMITY_CANCEL", True)
-ENABLE_PENDING_CSM_CANCEL = _getenv_bool("ENABLE_PENDING_CSM_CANCEL", False)
+ENABLE_PENDING_CSM_CANCEL = _getenv_bool("ENABLE_PENDING_CSM_CANCEL", True)
 ENABLE_CSM_FLOW_FILTER = _getenv_bool("ENABLE_CSM_FLOW_FILTER", True)
 
 # --- M3 DYNAMIC BASING BOX & MEAN-REVERSION (8 Sep 2026) ---
@@ -1028,6 +1035,25 @@ def is_forex(symbol):
     """True if the given symbol is a Forex currency pair (non-gold, non-crypto)."""
     return not is_gold(symbol) and not is_crypto(symbol)
 
+def is_paper_only(symbol):
+    """True if the given symbol is quarantined strictly for Virtual Paper Trade (0 MT5 live execution)."""
+    if not symbol:
+        return False
+    s = str(symbol).upper()
+    if getattr(sys.modules[__name__], "ENABLE_XAU_PAPER", True) and is_gold(s):
+        return True
+    if getattr(sys.modules[__name__], "ENABLE_BTC_247_PAPER", True) and is_crypto(s):
+        return True
+    paper_raw = getattr(sys.modules[__name__], "PAPER_TRADE_ONLY_SYMBOLS", "")
+    if paper_raw:
+        paper_list = [p.strip().upper() for p in paper_raw.split(",") if p.strip()]
+        clean_s = s.replace("-ECNC", "").replace("-ECN", "").replace(".C", "")
+        for p in paper_list:
+            clean_p = p.replace("-ECNC", "").replace("-ECN", "").replace(".C", "")
+            if clean_p and (clean_p in clean_s or clean_s in clean_p):
+                return True
+    return False
+
 
 def sltp_mode_for(symbol):
     """
@@ -1056,20 +1082,29 @@ def sltp_mode_for(symbol):
 
 def get_scanner_symbols(now=None):
     """Returns the curated universe of symbols for 2-Stage Quant Screener:
-    - Weekday: Murni 26 FX symbols (BTC selalu OFF di hari kerja)
-    - Weekend (Sabtu-Minggu): [WEEKEND_SYMBOL] jika ENABLE_BTC_ROTATION=True, else []
+    - Weekday: 26 FX pairs + XAUUSD-ECNc (Paper) + BTCUSD.c (Paper 24/7)
+    - Weekend (Sabtu-Minggu): [WEEKEND_SYMBOL] jika ENABLE_BTC_ROTATION=True atau ENABLE_BTC_247_PAPER=True, else []
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
     now = now or datetime.now(WIB)
     is_weekend = now.weekday() in (5, 6)
+    btc_sym = _normalize_symbol_for_account(getattr(sys.modules[__name__], "WEEKEND_SYMBOL", "BTCUSD.c"))
+    gold_sym = _normalize_symbol_for_account(getattr(sys.modules[__name__], "GOLD_SYMBOL", "XAUUSD-ECNc"))
+
     if is_weekend:
-        if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False):
-            return [WEEKEND_SYMBOL]
+        if getattr(sys.modules[__name__], "ENABLE_BTC_ROTATION", False) or getattr(sys.modules[__name__], "ENABLE_BTC_247_PAPER", False):
+            return [btc_sym]
         return []
-    # Weekday: Murni 26 FX pairs (BTC selalu OFF di hari kerja)
-    return [s for s in SCANNER_SYMBOLS if not is_crypto(s)]
+
+    # Weekday: Murni 26 FX pairs + XAUUSD + BTCUSD (Paper)
+    symbols = [s for s in SCANNER_SYMBOLS if not is_crypto(s) and not is_gold(s)]
+    if getattr(sys.modules[__name__], "ENABLE_XAU_PAPER", False) and gold_sym not in symbols:
+        symbols.append(gold_sym)
+    if getattr(sys.modules[__name__], "ENABLE_BTC_247_PAPER", False) and btc_sym not in symbols:
+        symbols.append(btc_sym)
+    return symbols
 
 
 def get_rotation_pool(now=None):

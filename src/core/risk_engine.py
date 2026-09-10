@@ -152,12 +152,16 @@ class RiskEngine:
     # =========================================================================
     #  MASTER GATE
     # =========================================================================
-    def can_trade(self, symbol=None):
+    def can_trade(self, symbol=None, action=None):
         """
         Master gate. Returns (bool, reason_string).
         Call this before entering any new trade.
         """
         sym = symbol or config.SYMBOL
+
+        # 0. Check Paper-Trade-Only symbols (quarantined from MT5 live execution)
+        if config.is_paper_only(sym):
+            return False, f"[PAPER_ONLY] Simbol {sym} dibatasi khusus untuk Virtual Paper Trade (0 Risiko MT5)."
 
         # 0. Check manual trading pause flag
         if getattr(config, "TRADING_PAUSED", False):
@@ -194,6 +198,11 @@ class RiskEngine:
         pos_ok, pos_msg = self._check_max_positions(symbol=sym)
         if not pos_ok:
             return False, pos_msg
+
+        # 3b. Check Anti-Internal Currency Hedge Gate (No Opposing Exposure)
+        hedge_ok, hedge_msg = self._check_anti_internal_hedge(symbol=sym, action=action)
+        if not hedge_ok:
+            return False, hedge_msg
 
         # 4. Check cooldown between trades
         cool_ok, cool_msg = self._check_cooldown()
@@ -732,6 +741,34 @@ class RiskEngine:
                     return False, f" [RISK] Konsentrasi mata uang {base_curr} di MT5 sudah mencapai batas ({base_count}/{max_curr_exposure} posisi)."
                 if quote_count >= max_curr_exposure:
                     return False, f" [RISK] Konsentrasi mata uang {quote_curr} di MT5 sudah mencapai batas ({quote_count}/{max_curr_exposure} posisi)."
+
+        return True, ""
+
+    def _check_anti_internal_hedge(self, symbol=None, action=None):
+        """
+        Anti-Internal Currency Hedge Gate (10 Sep 2026):
+        Mencegah pembukaan trade yang mengekspos mata uang berlawanan dengan posisi/order aktif.
+        """
+        if not getattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True) or action is None:
+            return True, ""
+
+        sym = symbol or config.SYMBOL
+        if not sym or config.is_crypto(sym) or config.is_gold(sym):
+            return True, ""
+
+        try:
+            from src.analytics.basket_sync_engine import check_basket_directional_conflict
+            target_dir = 1 if (action == 1 or "BUY" in str(action).upper()) else (-1 if (action == -1 or "SELL" in str(action).upper()) else 0)
+            if target_dir == 0:
+                return True, ""
+
+            raw_pos = mt5.positions_get() or []
+            raw_ord = mt5.orders_get() or []
+            conflict_ok, conflict_msg = check_basket_directional_conflict(sym, target_dir, raw_pos, raw_ord)
+            if not conflict_ok:
+                return False, f" [RISK] {conflict_msg}"
+        except Exception:
+            return True, ""
 
         return True, ""
 
