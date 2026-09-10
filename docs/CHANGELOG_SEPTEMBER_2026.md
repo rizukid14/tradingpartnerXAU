@@ -2,6 +2,115 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 84. Perubahan 10 September 2026 (Siang/Sore) — Confluence Timing, Basket Saturation (BSSI), Midday Retracement Guard (65% Rule) & Pre-News Shield
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Fenomena Retracement Pagi & Asimetri Keranjang Terbuka**:
+   - Teramati pada 6 posisi terbuka MT5 (`AUDCHF, AUDCAD, CADJPY, USDJPY, EURNZD, NZDUSD`): floating profit sempat mencapai $+\$250$, lalu mengalami penarikan nafas (*retracement*) ke $\approx +\$100$ di fase lull tengah hari (10:45–11:15 WIB), sebelum menguat kembali ke $+\$215.14$ di awal sesi Eropa.
+   - Tanpa dasar kuantitatif, panic-closing saat profit turun ke $+\$100$ akan memotong profit secara prematur, sedangkan menahan posisi tanpa batas saat struktur rusak dapat berujung drawdown.
+2. **Temuan Empiris 130.000 Candle H1 (208 Hari Trading MT5)**:
+   - Riset mendalam membuktikan 80.8% dorongan pagi di 17 pair AUD/JPY/NZD mengalami retracement $\ge 40\%$ di jam 11:00–13:00 WIB.
+   - **The 65% Pullback Boundary**:
+     * Retracement normal $\le 65\%$ dari range pagi: **81.6% probabilitas London memecahkan high/low pagi dan melanjutkan tren**.
+     * Retracement dalam $> 65\%$: **Gagal dan berbalik arah sebesar 53.4%** (risiko kegagalan struktural).
+3. **Kebutuhan Seleksi Laggard Relatif & Pre-News Stand-Off**:
+   - Jika lead pair menabrak benteng G3, sistem membutuhkan seleksi terpadu untuk memilih laggard terbaik dengan sisa runway $\ge 0.85\times\text{ATR}$ dan dorongan $\Delta\text{CSM}$.
+   - Menjelang rilis berita Tier-1 (ECB Rate Decision 19:15 WIB, US PPI 19:30 WIB), likuiditas institusional ditahan, mewajibkan proteksi darurat modal 30 menit sebelum event.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **`src/analytics/basket_sync_engine.py`**:
+   - **`calculate_basket_saturation_index(currency, direction, macro_cache)`**: Menghitung **BSSI (Basket Structural Saturation Index)**. Jika BSSI $\ge 70\%$, keranjang jenuh dan setup kelanjutan dibekukan.
+   - **`select_basket_champion(currency, direction, macro_cache, candidate_pairs, min_runway_atr=0.85, hour_wib)`**: Seleksi laggard terbaik berbasis composite ranking:
+     $$\text{Score} = (\text{Runway ATR} \times 0.45) + (\text{Net CSM Delta} \times 0.35) + (\text{Readiness} \times 0.20)$$
+2. **`src/analytics/macro_strategic_engine.py`**:
+   - **`evaluate_session_confluence_timing(symbol, hour_wib, macro_cache, has_tier1_news)`**: Memetakan 4 fase sirkadian (Tokyo Expansion, Tokyo Midday Lull, London Core, NY Peak Velocity) dan direktif target (`GRADE_B_C1` vs `GRADE_A_PLUS_C2`).
+3. **`src/analytics/market_scanner.py`**:
+   - Gate terpadu BSSI di `_is_direction_allowed()`: BSSI $\ge 0.70$ mengunci kelanjutan, namun tetap membuka pintu untuk M1 Universal Liquidity Sweep (SFP).
+   - Freeze order kelanjutan baru di jendela 10:30–13:00 WIB jika sprint pagi $< 25\text{ pips}$.
+4. **`src/analytics/position_manager.py`**:
+   - **`_check_midday_retracement_guard()`**: Pada jam 11:00–13:00 WIB, jika posisi dibuka pagi hari dan retracement $> 65\%$ dari Peak MFE, otomatis mengunci Defensive BEP (+komisi round-trip). Jika retracement $\le 65\%$, posisi dibiarkan bernafas ($0.75\times\text{ATR}$).
+   - **`_check_pre_news_emergency_shield()`**: Pada jam 18:45 WIB (30 menit sebelum Tier-1 news), posisi dengan floating tipis ($< +0.20R$) ditutup bersih di pasar (Pre-News Flat); posisi profit sehat ($\ge +0.20R$) dikunci BEP rapat.
+   - Helper deterministik `_force_move_to_bep()`.
+5. **`config.py` & `.env`**:
+   - Penyelarasan parameter konfigurasi: `MIDDAY_RETRACEMENT_GUARD_ENABLED`, `MIDDAY_RETRACEMENT_MAX_PULLBACK_PCT=0.65`, `CBSS_SATURATION_THRESHOLD=0.70`, `PRE_NEWS_EMERGENCY_SHIELD_ENABLED`, `PRE_NEWS_EMERGENCY_MIN_R=0.20`.
+6. **`dashboard.py` & `dashboard_assets.py`**:
+   - Integrasi metrik BSSI Saturation (Long/Short) dan Top 1 Champion ke dalam drawer CBSS.
+   - Header stat bar menampilkan badge `Timing Phase` real-time.
+7. **`src/core/cli_theme.py`**:
+   - Menampilkan status `Timing Phase` & rekomendasi target mode di Tile 3 Bento Box terminal HUD.
+8. **`tests/test_confluence_timing_and_laggard.py`**:
+   - Suite unit test 8 pengujian mencakup BSSI, Champion Selector, Confluence Timing, Midday 65% Guard, dan Pre-News Shield (**100% PASS**).
+
+---
+
+## 83. Perubahan 10 September 2026 (Siang) — CBSS Basket Saturation Direct-to-Paper Trade Routing (`SKIPPED_CBSS_BASKET_CAP`)
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Peluang A+ Terbuang Saat Kuota Keranjang MT5 Penuh**:
+   - Aturan CBSS (Currency Basket Structural Synchronization) membatasi maksimal 2 posisi aktif per mata uang dalam arah yang sama (`CBSS_MAX_BASKET_CONCURRENCY=2`).
+   - Sebelumnya, pengecekan ini di `market_scanner.py` (`_is_direction_allowed`) mengembalikan `False, "HARD_BLOCK", cap_msg` saat keranjang jenuh.
+   - Dampaknya, peluang setup A+ pada pair ke-3 atau ke-4 di keranjang tersebut langsung dibuang di Stage 1 Radar dan tidak pernah diteruskan ke `main.py`, sehingga Paper Trade (`shadow_tracker`) menganggur dan tidak memantau kinerja teknikal peluang tersebut.
+
+---
+
+### Solusi Perbaikan Kode:
+1. **`src/analytics/market_scanner.py`**:
+   - Pengecekan `check_basket_concurrency_cap` di `_is_direction_allowed()` tidak lagi menolak setup secara fatal jika setup teknikal lainnya valid.
+   - Mengembalikan `True, "CBSS_CAP_BLOCKED", cap_msg`, meloloskan kandidat dengan metadata `cbss_cap_blocked=True`.
+2. **`main.py`**:
+   - `run_scanner_trading_cycle()` mendeteksi flag `CBSS_CAP_BLOCKED` dan melakukan re-verifikasi kuota live MT5.
+   - Mengalihkan eksekusi langsung ke `shadow_tracker.register_candidate()` dengan disposisi `SKIPPED_CBSS_BASKET_CAP`.
+   - Menghasilkan 0 token API LLM, 0 risiko modal MT5, dan 100% data tracking aktif di Paper Trade (termasuk trailing stop, BEP, dan winrate tracking).
+3. **`src/analytics/shadow_tracker.py` & `src/analytics/shadow_report.py`**:
+   - Menambahkan disposisi `SKIPPED_CBSS_BASKET_CAP` ke dalam aggregation stats dan tabel visual HTML.
+4. **`tests/test_cbss_and_risk_shields.py`**:
+   - Menambahkan unit test `test_cbss_basket_full_routes_to_paper_trade` (22/22 unit tests PASS 100%).
+
+---
+
+## 82. Perubahan 10 September 2026 (Pagi III) — ZCE Self-Adaptive ATR-Aware Separation, Macro Fortress Supremacy & Low-Beta Pair Wall Restoration
+
+### Latar Belakang & Identifikasi Masalah:
+1. **Jebakan Floor Flat `15.0 * pip_val` Membutakan 17 Simbol FX**:
+   - Pasca commit `06189ac`, batas pemisah layer statis `min_sep = max(0.50 * atr_h1, 15.0 * pip_val)` menetapkan floor kaku 15 pips.
+   - Pada pair low-beta (AUDCHF ATR 6.5p, EURGBP ATR 3.9p, EURUSD ATR 8.4p), 15 pips bernilai $1.8\times - 3.8\times\text{ ATR H1}$. Akibatnya, benteng makro D1/W1 berbobot raksasa (`GRADE_3_MACRO`, skor 10–26) yang berjarak $0.5\times - 1.2\times\text{ ATR}$ dari harga live dibuang total dari daftar layer.
+   - Pada AUDCHF, Benteng Makro D1/W1 `0.58567` (Skor 15.49) di-drop karena berjarak 14.1 pips (< 15 pips) dari C1 `0.58426`, memicu lonjakan semu 32 pips ke level minor `0.58750` (Skor 0.40).
+2. **Kelemahan Greedy Selection (Level Minor G1 Menyingkirkan Benteng Makro G3)**:
+   - Algoritma greedy memilih kandidat murni berdasarkan jarak fisik terdekat. Saat kandidat pertama adalah level minor G1 (2 pips dari harga), benteng makro G3 di belakangnya (jarak 8-12 pips) langsung tereliminasi karena dianggap "terlalu rapat".
+
+---
+
+### Solusi Perbaikan Kode:
+1. **`src/analytics/zone_confluence_engine.py`**:
+   - **Skalasi Toleransi Peleburan Dinamis (`_merge_primitives`)**:
+     * `tol_pip = min(8.0 * pip_val, 0.40 * atr_h1)`
+     * `tol = max(self.merge_atr_mult * atr_h1, tol_pip)`
+     * Mencegah peleburan primitif lintas 8 pips pada low-beta pair, sementara tetap mempertahankan floor 8 pips pada pair bervolatilitas tinggi.
+   - **Skalasi Pemisahan Layer Adaptif (`_pick_layers`)**:
+     * `pip_sep = min(15.0 * pip_val, 0.75 * atr_h1)`
+     * `min_sep = max(0.35 * atr_h1, pip_sep)`
+     * `min_ch = max(0.50 * atr_h1, pip_sep)`
+     * Pada AUDCHF `min_sep` menjadi 4.9 pips, EURGBP menjadi 2.9 pips, dan pair volatile/JPY tetap di-clamp pada 15 pips.
+   - **Macro Fortress Supremacy & Spatial Conflict Resolution**:
+     * Mengimplementasikan resolusi hierarkis berbasis grade (`GRADE_3_MACRO > GRADE_2_INTERMEDIATE > GRADE_1_MICRO`) dan skor konfluensi.
+     * Jika ada kandidat berjarak $< \text{min\_sep}$ namun memiliki bobot/grade lebih tinggi, kandidat berkekuatan benteng makro secara otomatis memenangkan slot stasiun dan menggantikan kandidat minor.
+     * Pengurutan sekuensial strictly monotonic outward (`k[0]` untuk ceiling, `-k[0]` untuk floor).
+2. **`dashboard.py`**:
+   - Menyelaraskan `proximity_thr` pada `_consolidate_zce_zones` dan chart display ladder election menggunakan formula adaptif yang sama (`pip_thr = min(15.0 * pip_val, 0.75 * atr_val)` dan `max(0.35 * atr_val, pip_thr)`).
+   - **Eliminasi Pseudo-Floor Midpoint (`_consolidate_zce_zones`)**: Menyelaraskan penentuan tipe cluster mentah dengan aturan fisik ZCE (hanya sah RBS floor jika $cur\_price \ge band\_high + probe\_tol$). Mengeliminasi anomali di mana midpoint resistance D1 GBPUSD (`1.35569`) dibajak menjadi F1 saat harga menusuk di dalam zona. F1 GBPUSD di dashboard kini bersih di `1.35368` dan C1 di `1.35736`.
+   - Menjamin visualisasi dashboard dan engine analitik ZCE 100% kongruen.
+3. **Hasil Verifikasi Kuantitatif**:
+   - **Unit Tests**: 242/242 unit tests **100% PASS** dalam 38.65 detik.
+   - **Live Audit 26 Pasang Mata Uang**:
+     * AUDCHF memulihkan C2 `0.58567` (Skor 15.49, G3 Macro) dan F3 `0.58241` (Skor 10.91, G3 Macro).
+     * EURUSD memulihkan C1 `1.16412` (Skor 11.38, G3 Macro).
+     * GBPUSD memulihkan C1 `1.35736` (Skor 13.88, G3 Macro) dan F3 `1.35130` (Skor 17.60, G3 Macro).
+     * EURGBP memulihkan 4 stasiun sekuensial rapat (C1–C4 dan F1–F4) yang selaras dengan ATR 3.9p.
+
+---
+
 ## 81. Perubahan 10 September 2026 (Pagi II) — Restorasi Proven ZCE Baseline, Hierarchical Confluence Melting (Pip-Aware Spacing) & Pure Sequential 4-Station Natural Ladder
 
 ### Latar Belakang & Identifikasi Masalah:

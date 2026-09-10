@@ -48,6 +48,20 @@ import config
 from src.core import mt5_connector as connector
 from src.analytics.market_scanner import MarketScanner, evaluate_systemic_basket_lock
 from src.analytics.currency_strength import calculate_boitoki_csm, get_csm_delta_for_symbol
+from src.analytics.basket_sync_engine import (
+    BASKETS,
+    CURRENCIES,
+    get_pair_currencies,
+    calculate_pair_runway,
+    is_pair_blocked_by_g3_wall,
+    check_basket_concurrency_cap,
+    rank_basket_candidates_by_runway,
+    is_symbol_allowed_for_session,
+    calculate_basket_saturation_index,
+    select_basket_champion,
+    clean_symbol as cbss_clean_symbol
+)
+from src.analytics.macro_strategic_engine import evaluate_session_confluence_timing
 from src.indicators.lux_smc import LuxSMCAnalyzer
 from src.analytics.shadow_report import render_shadow_report_html, generate_and_save_shadow_report
 from dashboard_assets import TEMPLATE
@@ -209,7 +223,8 @@ def _consolidate_zce_zones(
             "kinds": list(fl.get("kinds_present", [])),
             "is_cold": bool(fl.get("is_cold", False)),
             "is_vacuum": bool(fl.get("is_vacuum", False)),
-            "source": "elected"
+            "source": "elected",
+            "type": "floor"
         })
 
     for ce in getattr(zm, "ceilings", []) or []:
@@ -226,17 +241,49 @@ def _consolidate_zce_zones(
             "kinds": list(ce.get("kinds_present", [])),
             "is_cold": bool(ce.get("is_cold", False)),
             "is_vacuum": bool(ce.get("is_vacuum", False)),
-            "source": "elected"
+            "source": "elected",
+            "type": "ceiling"
         })
 
-    # 2. Raw clusters from ZoneMapResult
+    # 2. Raw clusters from ZoneMapResult (Strict Physical Role-Aware Assignment)
+    probe_tol = float(getattr(config, "ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)) * atr_val
     for cl in getattr(zm, "clusters", []) or []:
-        p = float(getattr(cl, "mid", (getattr(cl, "band_low", 0.0) + getattr(cl, "band_high", 0.0)) / 2.0))
+        role = getattr(cl, "inherent_role", "")
+        if not role:
+            role = "CEILING" if cl.fortress_tag.startswith("C_") else ("FLOOR" if cl.fortress_tag.startswith("F_") else "NEUTRAL")
+
+        b_lo = float(getattr(cl, "band_low", 0.0))
+        b_hi = float(getattr(cl, "band_high", 0.0))
+
+        if b_hi < cur_price:
+            if role == "CEILING" and cur_price < b_hi + probe_tol:
+                # Belum sah tembus bersih ke atas (belum sah RBS floor)
+                continue
+            p = b_hi
+            cl_type = "floor"
+        elif b_lo > cur_price:
+            if role == "FLOOR" and cur_price > b_lo - probe_tol:
+                # Belum sah tembus bersih ke bawah (belum sah SBR ceiling)
+                continue
+            p = b_lo
+            cl_type = "ceiling"
+        else:
+            # Harga live berada di dalam rentang band (b_lo <= cur_price <= b_hi)
+            if role == "CEILING":
+                p = b_hi
+                cl_type = "ceiling"
+            elif role == "FLOOR":
+                p = b_lo
+                cl_type = "floor"
+            else:
+                p = b_hi if (b_hi - cur_price) < (cur_price - b_lo) else b_lo
+                cl_type = "ceiling" if p > cur_price else "floor"
+
         if v_lo <= p <= v_hi:
             cands.append({
                 "price": p,
-                "band_low": float(getattr(cl, "band_low", p)),
-                "band_high": float(getattr(cl, "band_high", p)),
+                "band_low": b_lo,
+                "band_high": b_hi,
                 "tier": "ZONE",
                 "grade": str(getattr(cl, "grade", "GRADE_1_MICRO")),
                 "score": float(getattr(cl, "score_final", 1.0)),
@@ -245,7 +292,8 @@ def _consolidate_zce_zones(
                 "kinds": list(getattr(cl, "kinds_present", [])),
                 "is_cold": bool(getattr(cl, "is_cold", False)),
                 "is_vacuum": bool(getattr(cl, "is_vacuum", False)),
-                "source": "cluster"
+                "source": "cluster",
+                "type": cl_type
             })
 
     if not cands:
@@ -255,7 +303,8 @@ def _consolidate_zce_zones(
     cands.sort(key=lambda x: x["price"])
 
     # Cluster consolidation by proximity threshold (pip-aware self-adaptive)
-    proximity_thr = max(0.40 * atr_val, 15.0 * pip_val)
+    pip_thr = min(15.0 * pip_val, 0.75 * atr_val)
+    proximity_thr = max(0.35 * atr_val, pip_thr)
     grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
 
     merged_groups: List[List[Dict[str, Any]]] = []
@@ -290,8 +339,9 @@ def _consolidate_zce_zones(
         max_score = max(x["score"] for x in grp)
         top_grade = lead["grade"]
         top_tier = lead["tier"]
+        lead_type = lead.get("type") or ("floor" if rep_price < cur_price else "ceiling")
         if top_tier == "ZONE":
-            top_tier = "FLR" if rep_price < cur_price else "CEIL"
+            top_tier = "FLR" if lead_type == "floor" else "CEIL"
 
         g_short = "G3" if top_grade == "GRADE_3_MACRO" else ("G2" if top_grade == "GRADE_2_INTERMEDIATE" else "G1")
         tf_str = "+".join(all_tfs[:3]) if all_tfs else "H1"
@@ -302,7 +352,7 @@ def _consolidate_zce_zones(
             "price": round(float(rep_price), digits),
             "band_low": round(float(min_lo), digits),
             "band_high": round(float(max_hi), digits),
-            "type": "floor" if rep_price < cur_price else "ceiling",
+            "type": lead_type,
             "tier": top_tier,
             "grade": top_grade,
             "score": round(float(max_score), 2),
@@ -365,7 +415,7 @@ class CockpitDataEngine:
 
                 self._build_overview_cache()
             except Exception as e:
-                pass
+                logger.error(f"[Cockpit Engine Error] {e}", exc_info=True)
             time.sleep(2.5)
 
     def _build_overview_cache(self):
@@ -655,6 +705,121 @@ class CockpitDataEngine:
 
         pairs_data.sort(key=_get_pair_sort_key)
 
+        # 3. CBSS Currency Basket Exposure & Runway Leaderboard Calculation
+        cbss_matrix = {}
+        max_concurrency_cap = int(getattr(config, "CBSS_MAX_BASKET_CONCURRENCY", 2))
+        pending_orders_all = connector.get_pending_orders() or []
+        all_active_tickets = list(open_pos) + list(pending_orders_all)
+
+        # A. Hitung eksposur terbuka per-mata uang (LONG / SHORT)
+        currency_exposure = {c: {"long": 0, "short": 0, "pairs_long": [], "pairs_short": []} for c in CURRENCIES}
+        for item in all_active_tickets:
+            p_sym = getattr(item, "symbol", "") if hasattr(item, "symbol") else item.get("symbol", "")
+            p_csym = cbss_clean_symbol(p_sym)
+            if not p_csym or "BTC" in p_csym or "XAU" in p_csym:
+                continue
+            base, quote = get_pair_currencies(p_csym)
+            if not base or not quote:
+                continue
+
+            p_type = getattr(item, "type", None) if hasattr(item, "type") else item.get("type", None)
+            is_buy = (p_type == 0) or ("BUY" in str(p_type).upper())
+            p_dir = 1 if is_buy else -1
+
+            # Long Base / Short Quote
+            if is_buy:
+                if base in currency_exposure:
+                    currency_exposure[base]["long"] += 1
+                    currency_exposure[base]["pairs_long"].append(p_csym)
+                if quote in currency_exposure:
+                    currency_exposure[quote]["short"] += 1
+                    currency_exposure[quote]["pairs_short"].append(p_csym)
+            else:
+                if base in currency_exposure:
+                    currency_exposure[base]["short"] += 1
+                    currency_exposure[base]["pairs_short"].append(p_csym)
+                if quote in currency_exposure:
+                    currency_exposure[quote]["long"] += 1
+                    currency_exposure[quote]["pairs_long"].append(p_csym)
+
+        # B. Hitung Runway Ranking dan G3 Veto per-mata uang
+        m_cache = self.scanner.macro_cache if (self.scanner and hasattr(self.scanner, "macro_cache")) else {}
+        baskets_summary = []
+        for c in CURRENCIES:
+            c_pairs = BASKETS.get(c, [])
+            exp_info = currency_exposure.get(c, {"long": 0, "short": 0, "pairs_long": [], "pairs_short": []})
+            is_long_saturated = (exp_info["long"] >= max_concurrency_cap)
+            is_short_saturated = (exp_info["short"] >= max_concurrency_cap)
+
+            # Evaluasi runway kandidat dengan Session-Aware Multi-Tier Ranking
+            curr_h_wib = now_wib.hour
+            candidates_eval = []
+            for cp in c_pairs:
+                base, quote = get_pair_currencies(cp)
+                orient_dir = 1 if c == base else -1
+                rw_info = calculate_pair_runway(cp, orient_dir, m_cache)
+                is_g3_blocked, veto_reason = is_pair_blocked_by_g3_wall(cp, orient_dir, m_cache)
+                is_sess_ok = is_symbol_allowed_for_session(cp, curr_h_wib)
+                candidates_eval.append({
+                    "pair": cp,
+                    "direction": "BUY" if orient_dir == 1 else "SELL",
+                    "runway_atr": rw_info.get("runway_atr", 0.0),
+                    "target_wall": rw_info.get("target_wall_price", 0.0),
+                    "target_grade": rw_info.get("target_wall_grade", "GRADE_1_MICRO"),
+                    "is_g3_blocked": is_g3_blocked,
+                    "veto_reason": veto_reason,
+                    "is_session_allowed": is_sess_ok
+                })
+
+            # Multi-Tier Sorting: Session-Allowed > Clean Wall > Highest Runway
+            candidates_eval.sort(
+                key=lambda x: (
+                    1 if x.get("is_session_allowed", True) else 0,
+                    0 if x.get("is_g3_blocked", False) else 1,
+                    x.get("runway_atr", 0.0)
+                ),
+                reverse=True
+            )
+            top_candidates = candidates_eval[:2]
+            top_candidate = top_candidates[0] if top_candidates else None
+
+            # BSSI Saturation calculation
+            bssi_long, bssi_l_col, bssi_l_tot = calculate_basket_saturation_index(c, 1, m_cache)
+            bssi_short, bssi_s_col, bssi_s_tot = calculate_basket_saturation_index(c, -1, m_cache)
+
+            # Basket Champion selection (Bilateral Composite)
+            champ_long = select_basket_champion(c, 1, m_cache, hour_wib=curr_h_wib)
+            champ_short = select_basket_champion(c, -1, m_cache, hour_wib=curr_h_wib)
+
+            baskets_summary.append({
+                "currency": c,
+                "exposure_long": exp_info["long"],
+                "exposure_short": exp_info["short"],
+                "pairs_long": exp_info["pairs_long"],
+                "pairs_short": exp_info["pairs_short"],
+                "is_long_saturated": is_long_saturated,
+                "is_short_saturated": is_short_saturated,
+                "bssi_long": bssi_long,
+                "bssi_short": bssi_short,
+                "champion_long": champ_long,
+                "champion_short": champ_short,
+                "max_cap": max_concurrency_cap,
+                "top_candidate": top_candidate,
+                "top_candidates": top_candidates,
+                "all_candidates": candidates_eval
+            })
+
+        cbss_matrix = {
+            "enabled": getattr(config, "ENABLE_CBSS", True),
+            "max_concurrency_cap": max_concurrency_cap,
+            "g3_threshold_atr": getattr(config, "CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35),
+            "saturation_threshold": getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70),
+            "baskets": baskets_summary
+        }
+
+        # Confluence Timing Directive
+        timing_info = evaluate_session_confluence_timing("GBPUSD-ECN", now_wib.hour)
+
         with self._lock:
             try:
                 from src.analytics.shadow_tracker import shadow_tracker
@@ -672,7 +837,9 @@ class CockpitDataEngine:
                     "open_count": len(open_pos),
                 },
                 "timestamp_wib": clock_str,
+                "confluence_timing": timing_info,
                 "pairs": pairs_data,
+                "cbss_matrix": cbss_matrix,
                 "shadow_radar": shadow_data
             }
 
@@ -832,7 +999,8 @@ class CockpitDataEngine:
 
         tf_upper = timeframe_str.upper()
         tf_scale = 0.8 if tf_upper == "M30" else (0.4 if tf_upper == "M5" else 1.0)
-        proximity_thr = max(0.40 * atr_val * tf_scale, 15.0 * pip_val)
+        pip_thr = min(15.0 * pip_val, 0.75 * atr_val)
+        proximity_thr = max(0.35 * atr_val * tf_scale, pip_thr)
 
         def _elect_display_ladder(merged_items: List[Dict[str, Any]], is_ceil: bool, limit: int = 4) -> List[Dict[str, Any]]:
             if not merged_items:
@@ -950,8 +1118,8 @@ class CockpitDataEngine:
         # 3. M1..M4 Reticles directly from MarketScanner 1:1 API
         m_standbys = self.scanner.get_radar_standbys(symbol, mid, macro, pt, atr_val)
 
-        # 4. Evaluate 7-Gate Inspection Matrix
-        gates = self._evaluate_7_gates(symbol, valid_sym, macro, strat, mid, spread_pts, atr_val, pt)
+        # 4. Evaluate 8-Gate Inspection Matrix
+        gates = self._evaluate_8_gates(symbol, valid_sym, macro, strat, mid, spread_pts, atr_val, pt)
 
         # 5. Open Positions & Pending Orders for this symbol
         open_pos = []
@@ -1047,6 +1215,87 @@ class CockpitDataEngine:
                 })
 
         # 6. Telemetry for Tab 2 (Extracted directly from 1:1 Radar Standbys)
+        # Pre-compute M4 Systemic Flow Shock state for telemetry & payload
+        base_curr = clean_sym[:3]
+        quote_curr = clean_sym[3:6]
+        z_dict = getattr(self.scanner, "_m4_z_last", {})
+        z_base = float(z_dict.get(base_curr, 0.0) or 0.0)
+        z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
+        m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
+        m4_active_standby = next((s for s in m_standbys if s.get("type") == "M4"), None)
+        m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
+        m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+
+        # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
+        is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+        has_active_ep = False
+        if m4_st:
+            for s_side in ("SELL", "BUY"):
+                s_d = m4_st.get(s_side, {})
+                if s_d.get("ep") is not None or s_d.get("pending") is not None:
+                    has_active_ep = True
+                    break
+        is_continuation = (not is_fresh_shock) and (has_active_ep or m4_active_standby is not None) and (abs(m4_dominant_z) >= 0.75)
+        m4_flow_state = "SHOCK" if is_fresh_shock else ("CONT" if is_continuation else "NONE")
+        m4_has_shock = (m4_flow_state == "SHOCK")
+
+        # ZCE Station Runway Target Calculation (pre-computed for telemetry & payload)
+        c1_p = float(c1 or 0.0)
+        f1_p = float(f1 or 0.0)
+        c2_p = float(c2 or 0.0)
+        f2_p = float(f2 or 0.0)
+        mid_p = (bid + ask) / 2.0
+        pip_val = 0.01 if ("JPY" in symbol or "XAU" in symbol) else (1.0 if "BTC" in symbol else 0.0001)
+        atr_val_pts = float(atr_pts or 300)
+        atr_price = (atr_val_pts * (0.01 if "JPY" in symbol else 0.0001)) if atr_val_pts > 0 else 0.0030
+        struct_stage = str(macro.get("structural_stage") or "")
+        d1_trend_str = str(macro.get("d1_trend_label") or "").upper()
+        h4_trend_str = str(macro.get("h4_trend_label") or "").upper()
+
+        runway_badge = "RW: —"
+        runway_text = "—"
+        runway_station = "—"
+        runway_pips = 0.0
+        runway_atr = 0.0
+
+        if mid_p > 0 and pip_val > 0:
+            is_bull = ("BULL" in d1_trend_str or "BULL" in h4_trend_str)
+            is_bear = ("BEAR" in d1_trend_str or "BEAR" in h4_trend_str)
+
+            if is_bull and not is_bear:
+                target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid_p >= c1_p and c2_p > c1_p)) else c1_p
+                wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
+                if target_wall > 0:
+                    runway_pips = (target_wall - mid_p) / pip_val
+                    runway_atr = (target_wall - mid_p) / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = wall_lbl
+                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            elif is_bear and not is_bull:
+                target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid_p <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
+                wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
+                if target_wall > 0:
+                    runway_pips = (mid_p - target_wall) / pip_val
+                    runway_atr = (mid_p - target_wall) / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = wall_lbl
+                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            else:
+                dist_to_c1 = (c1_p - mid_p) if c1_p > 0 else 99999
+                dist_to_f1 = (mid_p - f1_p) if f1_p > 0 else 99999
+                if dist_to_c1 < dist_to_f1 and c1_p > 0:
+                    runway_pips = dist_to_c1 / pip_val
+                    runway_atr = dist_to_c1 / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = "C1"
+                    runway_badge = f"C1: {runway_pips:.0f}p"
+                    runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+                elif f1_p > 0:
+                    runway_pips = dist_to_f1 / pip_val
+                    runway_atr = dist_to_f1 / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = "F1"
+                    runway_badge = f"F1: {runway_pips:.0f}p"
+                    runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+
         m1_item = next((s for s in m_standbys if s["type"] == "M1"), None)
         m1b_item = next((s for s in m_standbys if s["type"] == "M1B"), None)
         m2_item = next((s for s in m_standbys if s["type"] == "M2"), None)
@@ -1081,8 +1330,8 @@ class CockpitDataEngine:
             "m2_zone": "DISCOUNT" if float(macro.get("dr_pos", 0.5)) <= 0.45 else ("PREMIUM" if float(macro.get("dr_pos", 0.5)) >= 0.55 else "EQUILIBRIUM"),
             "m3_level": m3_tgt,
             "m3_recency": f"{m3_status_str} ({m3_age}b ago)" if m3_item else "PASS",
-            "m3_runaway": "1.12x ATR (Guard <=2.5x)",
-            "m3_runway": "1.35x ATR (Req >=0.8x)",
+            "m3_runaway": f"{abs(mid - m3_item['price']) / atr_val:.2f}x ATR (Guard <=2.5x)" if (m3_item and atr_val > 0) else "0.00x ATR (Guard <=2.5x)",
+            "m3_runway": f"{abs(m3_item.get('target_price', mid) - m3_item['price']) / atr_val:.2f}x ATR (Req >=0.8x)" if (m3_item and atr_val > 0) else f"{runway_atr:.2f}x ATR (Req >=0.8x)",
             "m3_basing": (
                 f"BOX {macro.get('basing_box', {}).get('box_bars', 0)}b ({macro.get('basing_box', {}).get('range_atr', 0.0):.2f}x ATR)"
                 if macro.get('basing_box', {}).get('is_compressing')
@@ -1096,8 +1345,8 @@ class CockpitDataEngine:
                     )
                 )
             ),
-            "m4_z": f"{getattr(self.scanner, '_m4_z_last', {}).get(clean_sym[:3], 1.62):+.2f}",
-            "m4_breakdown": "Confirmed 120-Bar",
+            "m4_z": f"{getattr(self.scanner, '_m4_z_last', {}).get(clean_sym[:3], 0.0):+.2f}",
+            "m4_breakdown": f"Confirmed ({m4_flow_state})" if m4_flow_state != "NONE" else "Standby (Awaiting |z|>=1.5)",
             "m4_pending": m4_tgt
         }
 
@@ -1177,89 +1426,8 @@ class CockpitDataEngine:
             "basing_box": macro.get("basing_box") or {}
         }
 
-        # ZCE Station Runway Target Calculation
-        c1_p = float(c1 or 0.0)
-        f1_p = float(f1 or 0.0)
-        c2_p = float(c2 or 0.0)
-        f2_p = float(f2 or 0.0)
-        mid_p = (bid + ask) / 2.0
-        pip_val = 0.01 if ("JPY" in symbol or "XAU" in symbol) else (1.0 if "BTC" in symbol else 0.0001)
-        atr_val_pts = float(atr_pts or 300)
-        atr_price = (atr_val_pts * (0.01 if "JPY" in symbol else 0.0001)) if atr_val_pts > 0 else 0.0030
-        struct_stage = str(macro.get("structural_stage") or "")
-        d1_trend_str = str(intel.get("d1_trend") or "").upper()
-        h4_trend_str = str(intel.get("h4_trend") or "").upper()
-
-        runway_badge = "RW: —"
-        runway_text = "—"
-        runway_station = "—"
-        runway_pips = 0.0
-        runway_atr = 0.0
-
-        if mid_p > 0 and pip_val > 0:
-            is_bull = ("BULL" in d1_trend_str or "BULL" in h4_trend_str)
-            is_bear = ("BEAR" in d1_trend_str or "BEAR" in h4_trend_str)
-
-            if is_bull and not is_bear:
-                target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid_p >= c1_p and c2_p > c1_p)) else c1_p
-                wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
-                if target_wall > 0:
-                    runway_pips = (target_wall - mid_p) / pip_val
-                    runway_atr = (target_wall - mid_p) / (atr_price if atr_price > 0 else 0.001)
-                    runway_station = wall_lbl
-                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
-                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
-            elif is_bear and not is_bull:
-                target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid_p <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
-                wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
-                if target_wall > 0:
-                    runway_pips = (mid_p - target_wall) / pip_val
-                    runway_atr = (mid_p - target_wall) / (atr_price if atr_price > 0 else 0.001)
-                    runway_station = wall_lbl
-                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
-                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
-            else:
-                dist_to_c1 = (c1_p - mid_p) if c1_p > 0 else 99999
-                dist_to_f1 = (mid_p - f1_p) if f1_p > 0 else 99999
-                if dist_to_c1 < dist_to_f1 and c1_p > 0:
-                    runway_pips = dist_to_c1 / pip_val
-                    runway_atr = dist_to_c1 / (atr_price if atr_price > 0 else 0.001)
-                    runway_station = "C1"
-                    runway_badge = f"C1: {runway_pips:.0f}p"
-                    runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
-                elif f1_p > 0:
-                    runway_pips = dist_to_f1 / pip_val
-                    runway_atr = dist_to_f1 / (atr_price if atr_price > 0 else 0.001)
-                    runway_station = "F1"
-                    runway_badge = f"F1: {runway_pips:.0f}p"
-                    runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
-
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
         dr_lbl = "DEEP DISCOUNT" if dr_val <= 38.0 else ("EXTREME PREMIUM" if dr_val >= 62.0 else "EQUILIBRIUM")
-
-        # M4 Systemic Flow Shock state
-        base_curr = clean_sym[:3]
-        quote_curr = clean_sym[3:6]
-        z_dict = getattr(self.scanner, "_m4_z_last", {})
-        z_base = float(z_dict.get(base_curr, 0.0) or 0.0)
-        z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
-        m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
-        m4_active_standby = next((s for s in m_standbys if s.get("type") == "M4"), None)
-        m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
-        m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
-
-        # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
-        is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
-        has_active_ep = False
-        if m4_st:
-            for s_side in ("SELL", "BUY"):
-                s_d = m4_st.get(s_side, {})
-                if s_d.get("ep") is not None or s_d.get("pending") is not None:
-                    has_active_ep = True
-                    break
-        is_continuation = (not is_fresh_shock) and (has_active_ep or m4_active_standby is not None) and (abs(m4_dominant_z) >= 0.75)
-        m4_flow_state = "SHOCK" if is_fresh_shock else ("CONT" if is_continuation else "NONE")
-        m4_has_shock = (m4_flow_state == "SHOCK")
 
         return {
             "symbol": symbol,
@@ -1304,13 +1472,13 @@ class CockpitDataEngine:
             "telemetry": telemetry
         }
 
-    def _evaluate_7_gates(self, sym: str, valid_sym: str, macro: dict, strat: Any, mid: float, spread_pts: int, atr_val: float, pt: float) -> List[Dict[str, Any]]:
-        """Evaluates 7 sequential decision gates for X-Ray Surveillance."""
+    def _evaluate_8_gates(self, sym: str, valid_sym: str, macro: dict, strat: Any, mid: float, spread_pts: int, atr_val: float, pt: float) -> List[Dict[str, Any]]:
+        """Evaluates 8 sequential decision gates for X-Ray Surveillance."""
         now_wib = datetime.now(WIB)
         h = now_wib.hour
         gates = []
 
-        # Gate 1: Session & Spread Filter
+        # Gate 1: Operational Session & Spread Filter
         is_crypto = config.is_crypto(sym)
         is_dead_zone = (0 <= h < 7) and not is_crypto
         clean_s = sym.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
@@ -1318,31 +1486,80 @@ class CockpitDataEngine:
         is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto
         spread_cap = config.max_spread_points_for(sym) if is_crypto else max(int(round(atr_val * 0.15 / pt)), 20)
 
-        # Dynamic Session Multiplier & Bank Holiday Detection
-        from src.analytics.economic_calendar import calendar as econ_cal
-        is_holiday, holiday_desc = econ_cal.is_bank_holiday_today("ALL")
+        # Dynamic Session Multiplier
         sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.2) if is_asian else (
             getattr(config, "SESSION_NY_LOT_MULT", 0.8) if (20 <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 1.0)
         )
 
         if is_dead_zone:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB). Hanya manage posisi."}
-        elif is_holiday and (20 <= h or h == 0) and not is_crypto:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"Bank Holiday Circuit Breaker ({holiday_desc})", "reason": f"[BANK HOLIDAY] {holiday_desc}. Sesi New York dibekukan akibat pasar antarbank tutup."}
         elif is_asian and not is_asian_allowed:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
         elif spread_pts > spread_cap:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
         else:
-            holiday_note = f" • {holiday_desc}" if is_holiday else ""
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x{holiday_note})", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap. Lot multiplier: {sess_mult}x."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap. Lot multiplier: {sess_mult}x."}
         gates.append(g1)
 
-        # Gate 2: Systemic Basket Circuit Breaker (35.0 bps)
+        # Gate 2: Economic News & Event Shield (±30m Tier-1 Window)
+        from src.analytics.economic_calendar import calendar as econ_cal
+        m_before = int(getattr(config, "NEWS_BLACKOUT_MINUTES_BEFORE", 30))
+        m_after = int(getattr(config, "NEWS_BLACKOUT_MINUTES_AFTER", 30))
+        is_news_blackout, news_reason = econ_cal.is_in_news_blackout(
+            symbol=sym,
+            now_wib=now_wib,
+            minutes_before=m_before,
+            minutes_after=m_after
+        )
+        is_holiday, holiday_desc = econ_cal.is_bank_holiday_today("ALL")
+        
+        # Next upcoming event context
+        upcoming_events = econ_cal.get_events(now_wib, symbol=sym)
+        next_event_str = "Tidak ada berita Tier-1 hari ini"
+        for ev in upcoming_events:
+            if str(ev.get("impact", "")).upper() in ("HIGH", "CRITICAL"):
+                ev_dt = ev.get("dt")
+                if ev_dt and ev_dt > now_wib:
+                    diff_m = int((ev_dt - now_wib).total_seconds() / 60)
+                    next_event_str = f"{ev.get('name')} dalam {diff_m}m ({ev_dt.strftime('%H:%M')} WIB)"
+                    break
+
+        if is_crypto:
+            g2 = {
+                "id": 2,
+                "title": "Economic News & Event Shield",
+                "status": "PASS",
+                "desc": "Crypto 24/7 Independent Asset",
+                "reason": "Bitcoin (BTCUSD) beroperasi 24/7 independen dari jadwal kalender berita fiat."
+            }
+        elif is_news_blackout:
+            g2 = {
+                "id": 2,
+                "title": "Economic News & Event Shield",
+                "status": "BLOCK",
+                "desc": f"Tier-1 Blackout Window (±{m_before}m)",
+                "reason": f"[NEWS BLACKOUT] {news_reason}. Pembukaan order baru dibekukan."
+            }
+        elif is_holiday and (20 <= h or h == 0) and not is_crypto:
+            g2 = {
+                "id": 2,
+                "title": "Economic News & Event Shield",
+                "status": "BLOCK",
+                "desc": f"Bank Holiday ({holiday_desc})",
+                "reason": f"[BANK HOLIDAY] {holiday_desc}. Pasar antarbank New York tutup."
+            }
+        else:
+            g2 = {
+                "id": 2,
+                "title": "Economic News & Event Shield",
+                "status": "PASS",
+                "desc": f"Tier-1 News Clear (±{m_before}m)",
+                "reason": f"Jendela rilis berita Tier-1 aman (±{m_before}m bebas blackout). Info event terdekat: {next_event_str}."
+            }
+        gates.append(g2)
+
+        # Gate 3: Systemic Basket & CBSS Guard
         # Tentukan target_dir & Directional Lock:
-        # Prioritas 1: M4 episode direction jika aktif
-        # Prioritas 2: Directional Hysteresis memory (dir_val != 0)
-        # Prioritas 3: Macro bias is_bull / is_bear
         dir_state = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_s, {})
         dir_val = dir_state.get("dir", 0)
         dir_label = "BUY ONLY" if dir_val == 1 else ("SELL ONLY" if dir_val == -1 else "FREE / DUAL")
@@ -1373,81 +1590,91 @@ class CockpitDataEngine:
             target_dir = 1 if macro.get("is_bull") else -1
 
         if is_crypto:
-            g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
+            g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Circuit Breaker & Concurrency Check", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
         else:
             is_locked, b_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
-            if is_locked:
-                g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
-            else:
-                g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": "Aliran basket mata uang stabil (<35 bps threshold). Tidak ada shock eksternal."}
-        gates.append(g2)
+            m_cache = self.scanner.macro_cache if (self.scanner and hasattr(self.scanner, "macro_cache")) else {}
+            is_g3_blocked, g3_reason = is_pair_blocked_by_g3_wall(sym, target_dir, m_cache)
 
-        # Gate 3: MSE Chamber & Forbidden Traps + Directional Hysteresis
+            # Cek Basket Concurrency Cap (max 2 per mata uang searah)
+            pos_all = connector.get_all_open_positions() or []
+            pend_all = connector.get_pending_orders() or []
+            cap_ok, cap_reason = check_basket_concurrency_cap(sym, target_dir, pos_all, pend_all)
+
+            if is_locked:
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
+            elif is_g3_blocked:
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "CBSS Local G3 Wall Veto (The EURAUD Law)", "reason": g3_reason}
+            elif not cap_ok:
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PAPER", "desc": "CBSS Concurrency Saturated (Paper Route)", "reason": f"[CBSS SATURATED] {cap_reason} -> Dialihkan ke Virtual Paper Trade (0 Token, 0 Risiko MT5)."}
+            else:
+                base_c, quote_c = get_pair_currencies(clean_s)
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Systemic Shock (<35 bps) & CBSS Cleared", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Kuota basket aman (<2 pos searah) & bebas tabrakan benteng G3 lawan."}
+        gates.append(g3)
+
+        # Gate 4: MSE Chamber & Forbidden Traps + Directional Hysteresis
         tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
         traps = getattr(strat, "forbidden_traps", []) or []
         trap_reason = traps[0] if traps else ""
 
         if tier == "HARD_BLOCK":
-            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
         elif tier == "WATCH_ONLY":
-            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
         else:
-            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "PASS", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"Action Tier: {tier} (Kamar terbuka untuk retest/expansion){dir_desc}."}
-        gates.append(g3)
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "PASS", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"Action Tier: {tier} (Kamar terbuka untuk retest/expansion){dir_desc}."}
+        gates.append(g4)
 
-        # Gate 4: Boitoki CSM Flow Alignment
-        # Respects ENABLE_CSM_FLOW_FILTER: jika False → tampil OBSERVE (telemetri saja, tidak hard-block)
+        # Gate 5: Boitoki CSM Flow Alignment
         if is_crypto:
-            g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": "Aset crypto (BTCUSD) independen dari arus fiat CSM (Net Delta N/A)."}
+            g5 = {"id": 5, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": "Aset crypto (BTCUSD) independen dari arus fiat CSM (Net Delta N/A)."}
         else:
             csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
             csm_filter_enabled = getattr(config, "ENABLE_CSM_FLOW_FILTER", True)
             is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
-            dir_label_g4 = "BUY" if target_dir == 1 else "SELL"
+            dir_label_g5 = "BUY" if target_dir == 1 else "SELL"
             m4_tag = " [M4 Dir]" if m4_dir_override is not None else (" [Lock Dir]" if dir_val != 0 else "")
 
             if is_csm_opposed and csm_filter_enabled:
-                # Filter aktif dan CSM berlawanan → BLOCK
-                g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK",
+                g5 = {"id": 5, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label_g4}{m4_tag})."}
+                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label_g5}{m4_tag})."}
             elif is_csm_opposed and not csm_filter_enabled:
-                # Filter dinonaktifkan → OBSERVE (forward test mode)
-                g4 = {"id": 4, "title": "Boitoki CSM Flow — OBSERVE MODE", "status": "OBSERVE",
+                g5 = {"id": 5, "title": "Boitoki CSM Flow — OBSERVE MODE", "status": "OBSERVE",
                       "desc": "Relative Net Currency Delta Flow Check (Filter Dinonaktifkan)",
-                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label_g4}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
+                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label_g5}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
             else:
-                # CSM selaras atau netral
-                g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS",
+                g5 = {"id": 5, "title": "Boitoki CSM Flow Alignment", "status": "PASS",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label_g4}{m4_tag} momentum arah."}
-        gates.append(g4)
-
-
-        # Gate 5: M1A/M1B..M4 Setup Prerequisites
-        if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":
-            g5 = {"id": 5, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
-        else:
-            g5 = {"id": 5, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
+                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label_g5}{m4_tag} momentum arah."}
         gates.append(g5)
 
-        # Gate 6: Stage 2 3-AI Consensus Jury & CRO
-        if not getattr(config, "ENABLE_LLM_JURY", True):
-            g6 = {"id": 6, "title": "Pure Quant Direct Execution (No-LLM)", "status": "PASS", "desc": "Direct Quant Radar Signal Dispatch (0 Token)", "reason": "Mode Pure Quant aktif (0 Token API). Sinyal kuantitatif dieksekusi langsung tanpa sidang LLM."}
+        # Gate 6: M1A/M1B..M4 Setup Prerequisites
+        if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":
+            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
         else:
-            g6 = {"id": 6, "title": "Stage 2 3-AI Consensus & CRO Audit", "status": "WAIT", "desc": "OpenAI + Gemini + DeepSeek CRO Veto", "reason": "Stage 1 Fast Radar Standby (0 Token terpakai). Memicu 3-LLM Jury otomatis saat setup A+ tersentuh."}
+            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
         gates.append(g6)
 
-        # Gate 7: Risk Calibration & SL/TP Rules
+        # Gate 7: Stage 2 3-AI Consensus Jury & CRO
+        if not getattr(config, "ENABLE_LLM_JURY", True):
+            g7 = {"id": 7, "title": "Pure Quant Direct Execution (No-LLM)", "status": "PASS", "desc": "Direct Quant Radar Signal Dispatch (0 Token)", "reason": "Mode Pure Quant aktif (0 Token API). Sinyal kuantitatif dieksekusi langsung tanpa sidang LLM."}
+        else:
+            g7 = {"id": 7, "title": "Stage 2 3-AI Consensus & CRO Audit", "status": "WAIT", "desc": "OpenAI + Gemini + DeepSeek CRO Veto", "reason": "Stage 1 Fast Radar Standby (0 Token terpakai). Memicu 3-LLM Jury otomatis saat setup A+ tersentuh."}
+        gates.append(g7)
+
+        # Gate 8: Risk Calibration & SL/TP Rules
         if is_crypto:
             sl_floor = getattr(config, "DEFAULT_SL_POINTS_BTC", 30000)
             sl_ceil = 45000
-            g7 = {"id": 7, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": f"BTC floor {sl_floor} pts, ceiling {sl_ceil} pts, {config.RISK_PERCENT_BTC}% risk", "reason": f"Sizing {config.RISK_PERCENT_BTC}% equity aman. SL floor {sl_floor} pts ($300) & plafon {sl_ceil} pts ($450) terkalibrasi."}
+            g8 = {"id": 8, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": f"BTC floor {sl_floor} pts, ceiling {sl_ceil} pts, {config.RISK_PERCENT_BTC}% risk", "reason": f"Sizing {config.RISK_PERCENT_BTC}% equity aman. SL floor {sl_floor} pts ($300) & plafon {sl_ceil} pts ($450) terkalibrasi."}
         else:
-            g7 = {"id": 7, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": "SL 0.50x ATR floor, 2.5x ATR ceiling, 1.0% equity cap", "reason": f"Sizing 1.0% equity aman. Plafon SL {int(atr_val*2.5/pt)} pts valid (Zero Over-Risk)."}
-        gates.append(g7)
+            g8 = {"id": 8, "title": "Risk Floor, Ceiling & Over-Risk Gate", "status": "PASS", "desc": "SL 0.50x ATR floor, 2.5x ATR ceiling, 1.0% equity cap", "reason": f"Sizing 1.0% equity aman. Plafon SL {int(atr_val*2.5/pt)} pts valid (Zero Over-Risk)."}
+        gates.append(g8)
 
         return gates
+
+    _evaluate_7_gates = _evaluate_8_gates
 
 
 # Global Engine Instance
@@ -1499,17 +1726,22 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         # 3. API: Active Rules Inventory
         elif self.path == "/api/rules":
+            is_no_ai = not getattr(config, "ENABLE_LLM_JURY", True)
+            jury_mode_str = "Pure Quant Direct (0 Token)" if is_no_ai else "Strict 3/3 Unanimous Jury"
             rules_data = [
                 {"category": "Mekanisme Radar", "param": "M1_ENABLED", "value": str(getattr(config, "M1_ENABLED", True)), "desc": "Universal Liquidity Sweep & Structural SFP (Wick >= 33.3%, penetration 0.04 ATR)"},
                 {"category": "Mekanisme Radar", "param": "M2_ENABLED", "value": str(getattr(config, "M2_ENABLED", True)), "desc": "Trend-Aligned Pullback (ADX >= 20, Fib 50% - 61.8% Golden Pocket)"},
                 {"category": "Mekanisme Radar", "param": "M3_ENABLED", "value": str(getattr(config, "M3_ENABLED", True)), "desc": "Breakout Retest (15-Bar Recency Guard, 2.5x ATR Runaway Guard, Runway >= 0.8x ATR)"},
-                {"category": "Mekanisme Radar", "param": "M4_ENABLED", "value": str(getattr(config, "M4_ENABLED", True)), "desc": "Systemic Flow Continuation (z >= 1.5, 120-bar break, SL 0.45x ATR, TP 1.1R beku)"},
-                {"category": "Circuit Breaker", "param": "SYSTEMIC_BASKET_THRESHOLD", "value": "35.0 bps", "desc": "USD, JPY, Cross & Spread Shock Threshold (Mencegah trade saat anomali lonjakan modal)"},
+                {"category": "Mekanisme Radar", "param": "M4_ENABLED", "value": str(getattr(config, "M4_ENABLED", True)), "desc": "Systemic Flow Continuation (z >= 1.5, 120-bar break, M4_STRUCTURAL_FLOORED)"},
+                {"category": "CBSS Synchronization", "param": "ENABLE_CBSS", "value": str(getattr(config, "ENABLE_CBSS", True)), "desc": "Currency Basket Structural Synchronization: ZCE Runway & Basket Concurrency Cap"},
+                {"category": "CBSS Synchronization", "param": "CBSS_MAX_BASKET_CONCURRENCY", "value": str(getattr(config, "CBSS_MAX_BASKET_CONCURRENCY", 2)), "desc": "Maksimal 2 posisi aktif per mata uang dalam arah eksposur yang sama"},
+                {"category": "CBSS Synchronization", "param": "CBSS_G3_BARRIER_THRESHOLD_ATR", "value": f"{getattr(config, 'CBSS_G3_BARRIER_THRESHOLD_ATR', 0.35)}x ATR", "desc": "Local Pair G3 Wall Veto (The EURAUD Law): blokir pair penabrak benteng lawan"},
+                {"category": "Circuit Breaker", "param": "SYSTEMIC_BASKET_THRESHOLD", "value": "35.0 bps", "desc": "USD, JPY, Cross & Spread Shock Threshold (Mencegah trade saat lonjakan anomali)"},
                 {"category": "Waktu Operasional", "param": "DEAD_ZONE_HOURS", "value": "00:00 - 07:00 WIB", "desc": "Perlindungan rollover likuiditas tipis & spread tinggi broker"},
                 {"category": "Waktu Operasional", "param": "PRE_ROLLOVER_SHIELD", "value": "03:50 WIB", "desc": "Tutup otomatis posisi berisiko sebelum lonjakan rollover 04:00 WIB"},
-                {"category": "3-AI Consensus", "param": "AI_CONSENSUS_POLICY", "value": "Strict 3/3 Unanimous", "desc": "Wajib sepakat bulat 3 model (OpenAI o4-mini + Gemini 3.1 + DeepSeek V4)"},
+                {"category": "Execution Mode", "param": "ENABLE_LLM_JURY", "value": str(getattr(config, "ENABLE_LLM_JURY", True)), "desc": f"Mode Eksekusi Aktif: {jury_mode_str}"},
                 {"category": "Risk Management", "param": "LLM_FX_FLOOR_ATR_MULT", "value": "0.50x ATR (H1)", "desc": "Batas lantai stop loss minimum FX majors & crosses (+15 pts buffer)"},
-                {"category": "Risk Management", "param": "SL_MAX_ATR_MULT", "value": "2.50x ATR", "desc": "Plafon stop loss anti-runaway (Mode ZCE anchor skips ANCHOR_TOO_WIDE)"},
+                {"category": "Risk Management", "param": "DYNAMIC_ZCE_RUNWAY_CAP", "value": "max(3.5x ATR, 1.5x Floor)", "desc": "Plafon stop loss anti-runaway & validasi kapasitas runway ZCE C1/F1"},
                 {"category": "Risk Management", "param": "MAX_DAILY_LOSS", "value": "4.0% Equity", "desc": "Hard circuit breaker harian modal akun (~$235 di akun $5800)"}
             ]
             payload = json.dumps(rules_data).encode("utf-8")

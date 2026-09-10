@@ -903,6 +903,15 @@ html, body {
 .bottom-drawer.bottom-collapsed .drawer-body {
   display: none !important;
 }
+.bottom-drawer.bottom-maximized {
+  position: absolute !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: calc(100vh - 36px) !important;
+  z-index: 100 !important;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.85);
+}
 .drawer-tabs {
   display: flex;
   background: var(--bg-base);
@@ -1018,6 +1027,7 @@ html, body {
 .status-block { background: var(--red); color: #fff; }
 .status-wait { background: var(--amber); color: #000; }
 .status-observe { background: var(--cyan); color: #000; }
+.status-paper { background: #38bdf8; color: #000; font-weight: 800; }
 
 .gate-detail {
   font-size: 10.5px;
@@ -1037,6 +1047,7 @@ html, body {
 .gate-reason-box.pass { border-left-color: var(--green); color: #86efac; }
 .gate-reason-box.wait { border-left-color: var(--amber); color: #fde047; }
 .gate-reason-box.observe { border-left-color: var(--cyan); color: #67e8f9; }
+.gate-reason-box.paper { border-left-color: #38bdf8; color: #7dd3fc; }
 
 /* TELEMETRY CARDS */
 .telemetry-grid {
@@ -1113,7 +1124,11 @@ html, body {
     </div>
     <div class="account-stat">
       <span class="stat-label">Mode:</span>
-      <span class="stat-val" style="color:var(--cyan);">STANDALONE OBSERVER</span>
+      <span class="stat-val" id="engine-mode-val" style="color:var(--cyan);font-size:10.5px;font-weight:700;">PURE QUANT DIRECT (0 TOKEN) • CBSS ACTIVE</span>
+    </div>
+    <div class="account-stat" id="timing-phase-stat">
+      <span class="stat-label">Timing:</span>
+      <span class="stat-val" id="timing-phase-val" style="color:var(--green);font-size:10.5px;font-weight:700;">EXPANSION</span>
     </div>
     <div class="clock-text" id="live-clock">--:--:-- WIB</div>
   </div>
@@ -1272,12 +1287,12 @@ html, body {
       <div class="drawer-tabs">
         <div class="drawer-tab-group">
           <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
+          <div class="drawer-tab" data-drawer="cbss">CBSS Currency Baskets Matrix</div>
           <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1A, M1B, M2, M3, M4)</div>
-          <div class="drawer-tab" data-drawer="shadow">Virtual Shadow Quant Radar</div>
-          <div class="drawer-tab" data-drawer="rules">Active Rules & .env Inventory</div>
         </div>
-        <div class="drawer-toggle-box">
-          <button id="btn-toggle-bottom" class="btn-toggle-panel" onclick="toggleBottomDrawer()" title="Toggle Bottom Drawer Height"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span></button>
+        <div class="drawer-toggle-box" style="gap:4px;">
+          <button id="btn-maximize-bottom" class="btn-toggle-panel" onclick="toggleMaximizeDrawer()" title="Perbesar Maksimal (Fullscreen / Normal)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_full</span></button>
+          <button id="btn-toggle-bottom" class="btn-toggle-panel" onclick="toggleBottomDrawer()" title="Sembunyikan / Buka Drawer"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span></button>
         </div>
       </div>
       <div class="drawer-body" id="drawer-content">
@@ -2028,7 +2043,7 @@ async function fetchOverview() {
     const data = await res.json();
     cachedOverview = data;
     document.getElementById("error-banner").style.display = "none";
-    renderHeader(data.account, data.timestamp_wib, data.shadow_radar);
+    renderHeader(data.account, data.timestamp_wib, data.shadow_radar, data.confluence_timing);
     renderWatchlist(data.pairs);
     if (currentDrawerTab === "shadow") {
       renderDrawer();
@@ -2055,7 +2070,7 @@ async function fetchSymbolData() {
 }
 
 // Render Top Header
-function renderHeader(acc, clock, shadowRadar) {
+function renderHeader(acc, clock, shadowRadar, timing) {
   if (!acc) return;
   document.getElementById("acc-login").textContent = acc.login || "Live MT5";
   document.getElementById("acc-balance").textContent = `$${(acc.balance || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
@@ -2072,6 +2087,20 @@ function renderHeader(acc, clock, shadowRadar) {
   clEl.className = `stat-val ${clVal >= 0 ? 'stat-pnl-pos' : 'stat-pnl-neg'}`;
 
   if (clock) document.getElementById("live-clock").textContent = clock;
+
+  const tmEl = document.getElementById("timing-phase-val");
+  if (tmEl && timing) {
+    const phase = timing.timing_phase || "--";
+    const mode = timing.target_mode || "--";
+    tmEl.textContent = `${phase} (${mode})`;
+    if (phase.includes("LULL")) {
+      tmEl.style.color = "var(--amber)";
+    } else if (phase.includes("DEAD")) {
+      tmEl.style.color = "var(--red)";
+    } else {
+      tmEl.style.color = "var(--green)";
+    }
+  }
 
   const shEl = document.getElementById("shadow-stat-val");
   if (shEl && shadowRadar) {
@@ -2349,6 +2378,7 @@ function renderGates(gates) {
     if (g.status === "PASS") { statusClass = "status-pass"; boxClass = "pass"; }
     else if (g.status === "BLOCK") { statusClass = "status-block"; boxClass = "block"; }
     else if (g.status === "OBSERVE") { statusClass = "status-observe"; boxClass = "observe"; }
+    else if (g.status === "PAPER") { statusClass = "status-paper"; boxClass = "paper"; }
 
     html += `
       <div class="gate-card">
@@ -2417,6 +2447,103 @@ function renderDrawer() {
     html += `</tbody></table>`;
     container.innerHTML = html;
 
+  } else if (currentDrawerTab === "cbss") {
+    const cbss = cachedOverview?.cbss_matrix;
+    if (!cbss || !cbss.baskets) {
+      container.innerHTML = `<div style="padding:10px;color:var(--text-dim);">Memuat data Currency Basket Structural Synchronization (CBSS)...</div>`;
+      return;
+    }
+
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-weight:800;font-size:11px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.5px;">
+          CBSS CURRENCY BASKET SYNCHRONIZATION (CAP: MAX ${cbss.max_concurrency_cap} POSISI SEARAH | G3 VETO: &le;${cbss.g3_threshold_atr}x ATR)
+        </div>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">Status: <span style="color:var(--green);font-weight:700;">ACTIVE</span></span>
+      </div>
+      
+      <!-- 8 Currency Cards Grid -->
+      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
+    `;
+
+    cbss.baskets.forEach(b => {
+      const isSat = b.is_long_saturated || b.is_short_saturated;
+      const cardBorder = isSat ? "var(--red)" : "var(--border)";
+      const longPill = b.is_long_saturated 
+        ? `<span style="color:var(--red);font-weight:700;">${b.exposure_long}/${b.max_cap} LONG [CAP]</span>` 
+        : `<span style="color:var(--green);">${b.exposure_long}/${b.max_cap} LONG</span>`;
+      const shortPill = b.is_short_saturated 
+        ? `<span style="color:var(--red);font-weight:700;">${b.exposure_short}/${b.max_cap} SHORT [CAP]</span>` 
+        : `<span style="color:var(--cyan);">${b.exposure_short}/${b.max_cap} SHORT</span>`;
+      
+      const topList = b.top_candidates || (b.top_candidate ? [b.top_candidate] : []);
+      const top1 = topList[0];
+      const top2 = topList[1];
+      const top1Text = top1 ? `${top1.pair} (${top1.direction} &rarr; ${top1.runway_atr.toFixed(1)}x ATR)` : '—';
+      const top2Text = top2 ? `${top2.pair} (${top2.direction} &rarr; ${top2.runway_atr.toFixed(1)}x ATR)` : '—';
+
+      html += `
+        <div class="telemetry-card" style="border-top: 2px solid ${cardBorder};">
+          <div class="tele-title" style="display:flex;justify-content:space-between;">
+            <span>BASKET ${b.currency}</span>
+            <span style="font-size:9px;color:${isSat ? 'var(--red)' : 'var(--text-dim)'};">${isSat ? 'SATURATED' : 'SAFE'}</span>
+          </div>
+          <div class="tele-row"><span class="tele-lbl">Directional Cap:</span><span class="tele-val">${longPill} &bull; ${shortPill}</span></div>
+          <div class="tele-row"><span class="tele-lbl">BSSI Wall Sat:</span><span class="tele-val" style="font-size:9.5px;font-weight:700;color:${(b.bssi_long >= 0.70 || b.bssi_short >= 0.70) ? 'var(--red)' : 'var(--green)'};">L: ${((b.bssi_long || 0)*100).toFixed(0)}% &bull; S: ${((b.bssi_short || 0)*100).toFixed(0)}%</span></div>
+          <div class="tele-row"><span class="tele-lbl">Active Longs:</span><span class="tele-val" style="font-size:9.5px;">${b.pairs_long.length ? b.pairs_long.join(', ') : 'None'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Active Shorts:</span><span class="tele-val" style="font-size:9.5px;">${b.pairs_short.length ? b.pairs_short.join(', ') : 'None'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Top #1:</span><span class="tele-val" style="color:var(--amber);font-weight:700;font-size:9.5px;">${top1Text}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Top #2:</span><span class="tele-val" style="color:#a78bfa;font-weight:600;font-size:9.5px;">${top2Text}</span></div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+
+    // Leaderboard Tabel Juara Keranjang (Top 2 Candidates per Currency)
+    html += `
+      <div style="font-weight:700;font-size:11px;color:var(--amber);margin-bottom:4px;text-transform:uppercase;">
+        Top 2 Runway Leaderboard (Session-Aware Juara &amp; Runner-up ZCE Runway serta G3 Wall Veto Radar):
+      </div>
+      <table class="data-table"><thead><tr>
+        <th>Mata Uang</th><th>Rank</th><th>Candidate Pair</th><th>Arah</th><th>Session Status</th><th>ZCE Target Wall</th><th>Wall Grade</th><th>Runway ATR</th><th>G3 Wall Veto</th><th>Catatan CBSS</th>
+      </tr></thead><tbody>
+    `;
+
+    cbss.baskets.forEach(b => {
+      const topList = b.top_candidates || (b.top_candidate ? [b.top_candidate] : []);
+      topList.forEach((cand, idx) => {
+        const isBlocked = cand.is_g3_blocked;
+        const vetoBadge = isBlocked 
+          ? `<span class="badge" style="background:rgba(239,68,68,0.18);color:var(--red);border:1px solid rgba(239,68,68,0.4);font-weight:700;">G3 VETO</span>`
+          : `<span class="badge" style="background:rgba(0,230,118,0.14);color:var(--green);border:1px solid rgba(0,230,118,0.3);font-weight:700;">CLEAR</span>`;
+        
+        const isSessOk = cand.is_session_allowed !== false;
+        const sessBadge = isSessOk
+          ? `<span class="badge" style="background:rgba(0,230,118,0.14);color:var(--green);border:1px solid rgba(0,230,118,0.3);font-weight:700;">PERMITTED</span>`
+          : `<span class="badge" style="background:rgba(245,158,11,0.15);color:var(--amber);border:1px solid rgba(245,158,11,0.35);font-weight:700;">LOCKED</span>`;
+
+        const dirCol = cand.direction === "BUY" ? "var(--green)" : "var(--red)";
+        const rankLabel = idx === 0 ? `<span style="color:var(--amber);font-weight:800;">#1 JUARA</span>` : `<span style="color:#a78bfa;font-weight:700;">#2 RUNNER-UP</span>`;
+
+        html += `<tr>
+          <td style="font-weight:800;color:var(--cyan);">${idx === 0 ? b.currency : ''}</td>
+          <td>${rankLabel}</td>
+          <td style="font-weight:700;cursor:pointer;" onclick="selectSymbol('${cand.pair}')">${cand.pair}</td>
+          <td style="color:${dirCol};font-weight:700;">${cand.direction}</td>
+          <td>${sessBadge}</td>
+          <td>${cand.target_wall.toFixed(5)}</td>
+          <td>${cand.target_grade}</td>
+          <td style="color:var(--amber);font-weight:700;">${cand.runway_atr.toFixed(2)}x ATR</td>
+          <td>${vetoBadge}</td>
+          <td style="font-size:9.5px;color:var(--text-muted);">${!isSessOk ? 'Sesi saat ini membatasi pair ini' : (cand.veto_reason || 'Runway terbuka leluasa')}</td>
+        </tr>`;
+      });
+    });
+
+    html += `</tbody></table>`;
+    container.innerHTML = html;
+
   } else if (currentDrawerTab === "telemetry") {
     if (!d || !d.telemetry) {
       container.innerHTML = `<div style="padding:10px;color:var(--text-dim);">Memuat telemetry radar...</div>`;
@@ -2463,153 +2590,7 @@ function renderDrawer() {
         </div>
       </div>
     `;
-  } else if (currentDrawerTab === "shadow") {
-    const s = cachedOverview?.shadow_radar;
-    if (!s) {
-      container.innerHTML = `<div style="padding:10px;color:var(--text-dim);">Mengambil data telemetri Virtual Shadow Quant Radar...</div>`;
-      return;
-    }
-
-    const netCol = (s.cumulative_net_r >= 0) ? "var(--green)" : "var(--red)";
-    const evCol = (s.expected_value_r >= 0) ? "var(--green)" : "var(--red)";
-
-    let html = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-weight:800;font-size:12px;color:var(--purple);text-transform:uppercase;letter-spacing:0.5px;">VIRTUAL SHADOW QUANT RADAR (UNCONSTRAINED TELEMETRY)</div>
-        <a href="/shadow" target="_blank" style="padding:4px 12px;border-radius:4px;background:rgba(192,132,252,0.22);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">analytics</span> Buka Laporan Lengkap HTML <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_new</span></a>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
-        <div class="telemetry-card">
-          <div class="tele-title">Total Radar Setups</div>
-          <div class="tele-row"><span class="tele-lbl">Total Selesai:</span><span class="tele-val" style="font-weight:800;">${s.total_resolved || 0}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Order Terjemput:</span><span class="tele-val" style="color:var(--cyan);">${s.filled_trades || (s.total_resolved - (s.expired_count || 0))}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Aktif / Pending:</span><span class="tele-val" style="color:var(--amber);">${s.active_count} / ${s.pending_count}</span></div>
-        </div>
-        <div class="telemetry-card">
-          <div class="tele-title">Winrate & Preservasi</div>
-          <div class="tele-row"><span class="tele-lbl">Decisive WR:</span><span class="tele-val" style="color:var(--green);font-weight:800;">${s.winrate_pct.toFixed(1)}%</span></div>
-          <div class="tele-row"><span class="tele-lbl">Non-Loss Rate:</span><span class="tele-val" style="color:var(--cyan);font-weight:700;">${(s.preservation_rate || 0).toFixed(1)}%</span></div>
-          <div class="tele-row"><span class="tele-lbl">Decisive Sample:</span><span class="tele-val">${s.decisive_trades} (${s.tp_hits} TP / ${s.sl_hits} SL)</span></div>
-        </div>
-        <div class="telemetry-card">
-          <div class="tele-title">Profit Factor & Edge</div>
-          <div class="tele-row"><span class="tele-lbl">Cumulative Net R:</span><span class="tele-val" style="color:${netCol};font-weight:800;">${s.cumulative_net_r >= 0 ? '+' : ''}${s.cumulative_net_r.toFixed(2)}R</span></div>
-          <div class="tele-row"><span class="tele-lbl">Profit Factor:</span><span class="tele-val" style="color:${(s.profit_factor || 0) >= 1.0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(s.profit_factor || 0).toFixed(2)}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Expected Value:</span><span class="tele-val" style="color:${evCol};">${s.expected_value_r >= 0 ? '+' : ''}${s.expected_value_r.toFixed(2)}R / trade</span></div>
-        </div>
-        <div class="telemetry-card">
-          <div class="tele-title">Distribusi Resolusi</div>
-          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--green);vertical-align:-1px;">check_circle</span> TP / <span class="material-symbols-outlined" style="font-size:11px;color:var(--cyan);vertical-align:-1px;">shield</span> BEP:</span><span class="tele-val">${s.outcome_breakdown?.tp?.count || s.tp_hits} (${s.outcome_breakdown?.tp?.pct_total || 0}%) / ${s.outcome_breakdown?.bep?.count || s.bep_hits || 0} (${s.outcome_breakdown?.bep?.pct_total || 0}%)</span></div>
-          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--amber);vertical-align:-1px;">timer</span> Time-Decay:</span><span class="tele-val">${s.outcome_breakdown?.time_decay?.count || s.time_decay_hits || 0} (${s.outcome_breakdown?.time_decay?.pct_total || 0}%)</span></div>
-          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--red);vertical-align:-1px;">cancel</span> SL / <span class="material-symbols-outlined" style="font-size:11px;color:var(--text-dim);vertical-align:-1px;">history_toggle_off</span> Exp:</span><span class="tele-val">${s.outcome_breakdown?.sl?.count || s.sl_hits} (${s.outcome_breakdown?.sl?.pct_total || 0}%) / ${s.expired_count} (${s.outcome_breakdown?.expired?.pct_total || 0}%)</span></div>
-        </div>
-      </div>
-    `;
-
-    // Mechanisms Table
-    const mechs = s.mechanisms || {};
-    html += `
-      <div style="font-weight:700;font-size:11px;color:var(--cyan);margin-bottom:4px;text-transform:uppercase;">Breakdown Performa Mekanisme Stage 1 Radar:</div>
-      <table class="data-table" style="margin-bottom:12px;"><thead><tr>
-        <th>Mekanisme</th><th>Total Setups</th><th>TP Hits</th><th>SL Hits</th><th>BEP</th><th>Winrate %</th><th>Realized Net R</th>
-      </tr></thead><tbody>
-        <tr>
-          <td style="color:#fb923c;font-weight:700;">M1: Universal Liquidity Sweep</td>
-          <td>${mechs.M1?.total || 0}</td><td>${mechs.M1?.tp || 0}</td><td>${mechs.M1?.sl || 0}</td><td>${mechs.M1?.bep || 0}</td>
-          <td>${((mechs.M1?.tp || 0) + (mechs.M1?.sl || 0)) > 0 ? (((mechs.M1.tp || 0) / ((mechs.M1.tp || 0) + (mechs.M1.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
-          <td style="color:${(mechs.M1?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M1?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M1?.net_r || 0).toFixed(2)}R</td>
-        </tr>
-        <tr>
-          <td style="color:#818cf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
-          <td>${mechs.M2?.total || 0}</td><td>${mechs.M2?.tp || 0}</td><td>${mechs.M2?.sl || 0}</td><td>${mechs.M2?.bep || 0}</td>
-          <td>${((mechs.M2?.tp || 0) + (mechs.M2?.sl || 0)) > 0 ? (((mechs.M2.tp || 0) / ((mechs.M2.tp || 0) + (mechs.M2.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
-          <td style="color:${(mechs.M2?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M2?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M2?.net_r || 0).toFixed(2)}R</td>
-        </tr>
-        <tr>
-          <td style="color:#c084fc;font-weight:700;">M3: Breakout Retest Guard</td>
-          <td>${mechs.M3?.total || 0}</td><td>${mechs.M3?.tp || 0}</td><td>${mechs.M3?.sl || 0}</td><td>${mechs.M3?.bep || 0}</td>
-          <td>${((mechs.M3?.tp || 0) + (mechs.M3?.sl || 0)) > 0 ? (((mechs.M3.tp || 0) / ((mechs.M3.tp || 0) + (mechs.M3.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
-          <td style="color:${(mechs.M3?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M3?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M3?.net_r || 0).toFixed(2)}R</td>
-        </tr>
-        <tr>
-          <td style="color:#34d399;font-weight:700;">M4: Systemic Flow Continuation</td>
-          <td>${mechs.M4?.total || 0}</td><td>${mechs.M4?.tp || 0}</td><td>${mechs.M4?.sl || 0}</td><td>${mechs.M4?.bep || 0}</td>
-          <td>${((mechs.M4?.tp || 0) + (mechs.M4?.sl || 0)) > 0 ? (((mechs.M4.tp || 0) / ((mechs.M4.tp || 0) + (mechs.M4.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
-          <td style="color:${(mechs.M4?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M4?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M4?.net_r || 0).toFixed(2)}R</td>
-        </tr>
-      </tbody></table>
-    `;
-
-    // Active & Recent Trades Table
-    const activeList = s.active_trades || [];
-    const recentList = s.recent_resolved || [];
-    const combined = [...activeList, ...recentList];
-
-    if (combined.length > 0) {
-      html += `
-        <div style="font-weight:700;font-size:11px;color:var(--purple);margin-bottom:4px;text-transform:uppercase;">Daftar Order Virtual (Aktif & Recent Resolved):</div>
-        <table class="data-table"><thead><tr>
-          <th>ID Shadow</th><th>Simbol</th><th>Arah</th><th>Entry</th><th>SL</th><th>TP</th><th>R:R</th><th>Status / Outcome</th><th>Net R</th><th>Peak MFE</th><th>Max MAE</th><th>MT5 Status</th>
-        </tr></thead><tbody>
-      `;
-      combined.forEach(tr => {
-        const isBuy = (tr.direction === "BUY");
-        const dirCol = isBuy ? "var(--green)" : "var(--red)";
-        const outCol = (tr.outcome === "TP_HIT") ? "var(--green)" : ((tr.outcome === "SL_HIT") ? "var(--red)" : "var(--amber)");
-        const netRText = (tr.net_r !== null && tr.net_r !== undefined) ? `${tr.net_r >= 0 ? '+' : ''}${tr.net_r.toFixed(2)}R` : '—';
-        const isRealMt5 = String(tr.mt5_disposition || '').includes('EXECUTED');
-        const ticketStr = tr.mt5_ticket ? `#${tr.mt5_ticket}` : '';
-        const dispBadge = isRealMt5 
-          ? `<span class="badge" style="background:rgba(0,230,118,0.18);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;color:var(--green);vertical-align:-1px;">verified</span> REAL MT5 ${ticketStr}</span>`
-          : `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;color:#c084fc;vertical-align:-1px;">science</span> PAPER (${tr.mt5_disposition?.replace('SKIPPED_', '') || 'SHADOW'})</span>`;
-
-        html += `<tr style="${isRealMt5 ? 'background:rgba(0,230,118,0.03);' : ''}">
-          <td style="font-family:var(--font-mono);font-size:10px;">${tr.shadow_id}</td>
-          <td style="font-weight:700;">${tr.symbol}</td>
-          <td style="color:${dirCol};font-weight:700;">${tr.direction}</td>
-          <td>${tr.entry_price}</td>
-          <td>${tr.sl_price}</td>
-          <td>${tr.tp_price}</td>
-          <td>${tr.risk_reward || '—'}R</td>
-          <td style="color:${outCol};font-weight:700;">${tr.outcome || tr.status}</td>
-          <td style="color:${outCol};font-weight:700;">${netRText}</td>
-          <td style="color:var(--green);">${tr.peak_mfe_r ? '+' + tr.peak_mfe_r.toFixed(2) + 'R' : '—'}</td>
-          <td style="color:var(--red);">${tr.max_mae_r ? tr.max_mae_r.toFixed(2) + 'R' : '—'}</td>
-          <td>${dispBadge}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    } else {
-      html += `<div style="color:var(--text-dim);font-family:var(--font-mono);padding:8px;">Belum ada riwayat shadow trade yang tuntas. Menunggu siklus radar Stage 1...</div>`;
-    }
-    container.innerHTML = html;
-
-  } else if (currentDrawerTab === "rules") {
-    if (!cachedRules) {
-      fetchRules();
-      container.innerHTML = `<div style="padding:10px;color:var(--text-dim);">Mengambil data inventaris konfigurasi aktif...</div>`;
-      return;
-    }
-    let html = `<table class="data-table"><thead><tr><th>Kategori Fitur</th><th>Parameter (.env / config.py)</th><th>Nilai Aktif</th><th>Deskripsi Fungsi & Formula</th></tr></thead><tbody>`;
-    cachedRules.forEach(r => {
-      html += `<tr>
-        <td style="color:var(--cyan);font-weight:700;">${r.category}</td>
-        <td style="font-weight:600;">${r.param}</td>
-        <td style="color:var(--amber);font-weight:700;">${r.value}</td>
-        <td style="color:var(--text-muted);">${r.desc}</td>
-      </tr>`;
-    });
-    html += `</tbody></table>`;
-    container.innerHTML = html;
   }
-}
-
-async function fetchRules() {
-  try {
-    const res = await fetch("/api/rules");
-    cachedRules = await res.json();
-    if (currentDrawerTab === "rules") renderDrawer();
-  } catch(e) {}
 }
 
 // Setup Event Handlers
@@ -2840,10 +2821,11 @@ function toggleLeftPanel() {
   }, 220);
 }
 
-// Toggle Bottom Drawer
+// Toggle Bottom Drawer (Collapse / Normal)
 function toggleBottomDrawer() {
   const drawer = document.getElementById("bottom-drawer");
   if (!drawer) return;
+  drawer.classList.remove("bottom-maximized");
   drawer.classList.toggle("bottom-collapsed");
   const isCollapsed = drawer.classList.contains("bottom-collapsed");
   try {
@@ -2855,6 +2837,43 @@ function toggleBottomDrawer() {
     btn.innerHTML = isCollapsed 
       ? '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_less</span>' 
       : '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span>';
+  }
+
+  const maxBtn = document.getElementById("btn-maximize-bottom");
+  if (maxBtn) {
+    maxBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_full</span>';
+  }
+
+  setTimeout(() => {
+    const container = document.getElementById("tv-chart");
+    if (chart && container) {
+      chart.resize(container.clientWidth, container.clientHeight);
+    }
+    if (typeof resizeOverlayCanvas === "function") {
+      resizeOverlayCanvas();
+    }
+  }, 220);
+}
+
+// Toggle Bottom Drawer Maximize / Fullscreen
+function toggleMaximizeDrawer() {
+  const drawer = document.getElementById("bottom-drawer");
+  if (!drawer) return;
+  drawer.classList.remove("bottom-collapsed");
+  drawer.classList.toggle("bottom-maximized");
+  const isMaximized = drawer.classList.contains("bottom-maximized");
+
+  const maxBtn = document.getElementById("btn-maximize-bottom");
+  if (maxBtn) {
+    maxBtn.innerHTML = isMaximized
+      ? '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">close_fullscreen</span>'
+      : '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_full</span>';
+    maxBtn.title = isMaximized ? "Kecilkan (Normal View)" : "Perbesar Maksimal (Fullscreen View)";
+  }
+
+  const btn = document.getElementById("btn-toggle-bottom");
+  if (btn) {
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span>';
   }
 
   setTimeout(() => {

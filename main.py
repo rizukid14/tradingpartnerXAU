@@ -666,10 +666,32 @@ def run_scanner_trading_cycle(cand, risk):
     print(f" [ZCE-RADAR] {sym} [{cand.setup_type}] | Anchor: {zce_cls} (F1: {f1_s} @ {f1_p} | C1: {c1_s} @ {c1_p})")
     record_funnel_event("stage1_detected", sym=sym, setup=cand.setup_type)
     
+    # 0. CBSS Basket Concurrency Cap Check (Direct-to-Paper Trade Route)
+    is_cbss_blocked = (
+        getattr(cand, "action_tier", "") == "CBSS_CAP_BLOCKED"
+        or getattr(cand, "metadata", {}).get("cbss_cap_blocked", False)
+    )
+    cbss_cap_reason = getattr(cand, "metadata", {}).get("cbss_cap_reason", "")
+
+    if not is_cbss_blocked and getattr(config, "ENABLE_CBSS", True) and not config.is_crypto(sym):
+        try:
+            from src.analytics.basket_sync_engine import check_basket_concurrency_cap
+            raw_pos = config.mt5.positions_get() or []
+            raw_ord = config.mt5.orders_get() or []
+            cap_ok, cap_msg = check_basket_concurrency_cap(sym, cand.direction, raw_pos, raw_ord)
+            if not cap_ok:
+                is_cbss_blocked = True
+                cbss_cap_reason = cap_msg
+        except Exception:
+            pass
+
     # 1. Check risk gates for candidate symbol
-    can_trade_ok, risk_msg = risk.can_trade(sym)
+    can_trade_ok, risk_msg = (False, cbss_cap_reason) if is_cbss_blocked else risk.can_trade(sym)
     if not can_trade_ok:
-        print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
+        if is_cbss_blocked:
+            print(f" {UI.YELLOW}[CBSS BASKET CAP -> PAPER TRADE] {sym} [{tf_str}] dialihkan ke Paper Trade (0 Token): {cbss_cap_reason}{UI.RST}")
+        else:
+            print(f" {UI.YELLOW}[RISK GATE] Trade untuk {sym} [{tf_str}] tidak diizinkan oleh Risk Engine ({risk_msg}).{UI.RST}")
         # Masukkan ke Paper Trade (Quant Shadow Tracker) agar sinyal Stage 1 tetap dipantau
         try:
             t_live = connector.get_current_tick(sym)
@@ -700,7 +722,9 @@ def run_scanner_trading_cycle(cand, risk):
             if c_tp <= 0 and pt > 0:
                 c_tp = c_entry + (c_tp_pts * pt) if c_dir == "BUY" else c_entry - (c_tp_pts * pt)
 
-            if "posisi" in risk_msg.lower() or "kuota" in risk_msg.lower():
+            if is_cbss_blocked:
+                clean_disp = "SKIPPED_CBSS_BASKET_CAP"
+            elif "posisi" in risk_msg.lower() or "kuota" in risk_msg.lower():
                 clean_disp = "SKIPPED_MAX_POSITIONS"
             elif "Konsentrasi mata uang" in risk_msg:
                 clean_disp = "SKIPPED_RISK_BASKET"

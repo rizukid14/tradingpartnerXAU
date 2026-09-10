@@ -1919,3 +1919,75 @@ class MacroStrategicEngine:
 
 # Global singleton instance
 macro_strategic_engine = MacroStrategicEngine()
+
+
+def evaluate_session_confluence_timing(
+    symbol: str,
+    hour_wib: int,
+    macro_cache: Optional[dict] = None,
+    has_tier1_news: bool = False
+) -> dict:
+    """
+    Evaluasi Direktif Confluence Timing berbasis Jam Sesi (Diurnal Profile) & Kalender Makro:
+    - 08:00 - 10:29 WIB: TOKYO_EXPANSION (Driver aktif AUD, JPY, NZD).
+    - 10:30 - 13:00 WIB: TOKYO_MIDDAY_LULL (Zona retracement 80%, bekukan kelanjutan baru).
+    - 14:00 - 18:00 WIB: LONDON_CORE (Ekspansi tren sejati).
+    - 19:00 - 23:00 WIB: NY_PEAK_VELOCITY (Kecepatan 2.4x lipat, target C2 dibuka).
+    
+    Menghasilkan direktif mode target: GRADE_B_C1 (siang/rotasi) vs GRADE_A_PLUS_C2 (malam/ekspansi).
+    """
+    is_event_day = bool(has_tier1_news)
+
+    # 1. Klasifikasi Fase Sesi
+    if 8 <= hour_wib < 10 or (hour_wib == 10 and datetime.now(WIB).minute < 30):
+        phase = "TOKYO_EXPANSION"
+        is_lull = False
+        allow_cont = True
+        default_target = "GRADE_B_C1" if is_event_day else "STANDARD_HYBRID"
+        max_rr = 1.25 if is_event_day else 1.80
+        desc = "Tokyo Opening Push: Active commercial flows for JPY, AUD, NZD."
+
+    elif (hour_wib == 10 and datetime.now(WIB).minute >= 30) or (11 <= hour_wib <= 13):
+        phase = "TOKYO_MIDDAY_LULL"
+        is_lull = True
+        allow_cont = False  # Continuation freeze (M2/M3/M4 hold fire)
+        default_target = "GRADE_B_C1"
+        max_rr = 1.15
+        desc = "Tokyo Midday Lull: 80% retracement probability, continuation freeze active."
+
+    elif 14 <= hour_wib < 19:
+        phase = "LONDON_CORE"
+        is_lull = False
+        allow_cont = True
+        default_target = "GRADE_B_C1" if is_event_day else "STANDARD_HYBRID"
+        max_rr = 1.25 if is_event_day else 2.00
+        desc = "London Core Expansion: Primary European trend delivery."
+
+    elif 19 <= hour_wib <= 23:
+        phase = "NY_PEAK_VELOCITY"
+        is_lull = False
+        allow_cont = True
+        default_target = "GRADE_A_PLUS_C2"
+        max_rr = 3.00
+        desc = "New York Peak Kinetic Discharge: 2.4x pip velocity, deep stations C2/F2 unlocked."
+
+    else:
+        phase = "NIGHT_DEAD_ZONE"
+        is_lull = True
+        allow_cont = False
+        default_target = "GRADE_B_C1"
+        max_rr = 1.00
+        desc = "Late NY / Sydney Pre-Open: Thin liquidity, new trades frozen."
+
+    return {
+        "symbol": symbol,
+        "hour_wib": hour_wib,
+        "timing_phase": phase,
+        "is_lull_window": is_lull,
+        "allow_continuation": allow_cont,
+        "target_mode": default_target,
+        "max_recommended_rr": max_rr,
+        "is_event_day": is_event_day,
+        "description": desc
+    }
+

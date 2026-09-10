@@ -62,6 +62,8 @@ def render_shadow_report_html() -> str:
     # Disposition Stats
     disp_stats = summary.get("disposition_breakdown", {
         "EXECUTED_MT5": 0,
+        "SKIPPED_MAX_POSITIONS": 0,
+        "SKIPPED_CBSS_BASKET_CAP": 0,
         "SKIPPED_RISK_BASKET": 0,
         "SKIPPED_RISK_BLOCK": 0,
         "SKIPPED_LLM_VETO": 0,
@@ -579,6 +581,11 @@ def render_shadow_report_html() -> str:
               <td><span class="badge" style="background:rgba(192,132,252,0.15);color:#c084fc;border:1px solid rgba(192,132,252,0.3);">SKIPPED_MAX_POSITIONS</span></td>
               <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_MAX_POSITIONS', 0)}</td>
               <td style="color:var(--text-dim);">Ditolak eksekusi karena slot MT5 penuh (6/6). Berjalan 100% sebagai Paper Trade murni.</td>
+            </tr>
+            <tr>
+              <td><span class="badge" style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">SKIPPED_CBSS_BASKET_CAP</span></td>
+              <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_CBSS_BASKET_CAP', 0)}</td>
+              <td style="color:var(--text-dim);">Ditolak MT5 karena kuota basket mata uang penuh (Max 2 posisi searah). Berjalan 100% sebagai Paper Trade mandiri.</td>
             </tr>
             <tr>
               <td><span class="badge" style="background:rgba(251,191,36,0.15);color:var(--amber);border:1px solid rgba(251,191,36,0.3);">SKIPPED_RISK_BASKET</span></td>

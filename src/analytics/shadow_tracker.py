@@ -1068,6 +1068,7 @@ class QuantShadowTracker:
             disp_stats = {
                 "EXECUTED_MT5": 0,
                 "SKIPPED_MAX_POSITIONS": 0,
+                "SKIPPED_CBSS_BASKET_CAP": 0,
                 "SKIPPED_RISK_BASKET": 0,
                 "SKIPPED_RISK_BLOCK": 0,
                 "SKIPPED_LLM_VETO": 0,
@@ -1078,6 +1079,8 @@ class QuantShadowTracker:
                 disp = str(t_dict.get("mt5_disposition", "OTHER") or "OTHER").upper()
                 if "EXECUTED" in disp:
                     disp_stats["EXECUTED_MT5"] += 1
+                elif "CBSS" in disp:
+                    disp_stats["SKIPPED_CBSS_BASKET_CAP"] += 1
                 elif "MAX_POSITIONS" in disp or "SLOT" in disp:
                     disp_stats["SKIPPED_MAX_POSITIONS"] += 1
                 elif "BASKET" in disp or "KONSENTRASI" in disp:

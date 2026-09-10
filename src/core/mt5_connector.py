@@ -30,7 +30,7 @@ _point_cache = {}
 
 _broker_offset_cache = {"ts": 0.0, "value": 0.0}
 
-def get_broker_offset_seconds(symbol="XAUUSD-ECN"):
+def get_broker_offset_seconds(symbol=None):
     """
     Returns the broker's offset from UTC in seconds.
     E.g. if broker is UTC+3 (GMT+3), returns 10800. Cached for 1 hour.
@@ -46,11 +46,13 @@ def get_broker_offset_seconds(symbol="XAUUSD-ECN"):
     now_utc = datetime.now(timezone.utc)
     
     # 2. Current MT5 tick time
-    symbol = get_valid_trade_symbol(symbol)
-    tick = mt5.symbol_info_tick(symbol)
+    target_sym = symbol or getattr(config, "SYMBOL", "EURUSD-ECN")
+    target_sym = get_valid_trade_symbol(target_sym)
+    tick = mt5.symbol_info_tick(target_sym) if hasattr(mt5, "symbol_info_tick") else None
     if not tick:
-        # If terminal not connected or symbol invalid, return 0 (no offset adjustment)
-        return 0.0
+        # Fallback to dynamic offset calculation or standard 3 hours (10800s)
+        hrs = server_utc_offset_hours()
+        return float(hrs * 3600)
         
     tick_time_utc = datetime.fromtimestamp(tick.time, timezone.utc)
     
@@ -1209,11 +1211,20 @@ def send_pending_order(symbol, entry_type, entry_price, lot, sl_points=None, tp_
     if tick is None:
         return {"status": "ERROR", "comment": "Tidak ada quote (tick None) — pending dibatalkan"}
 
-    # Expiration: server time (GMT+3). Pakai offset broker biar akurat.
+    # Expiration: gunakan waktu server langsung dari tick MT5 (GMT+3)
     if not expiration_minutes:
         expiration_minutes = config.get_pending_order_expiry_minutes()
-    now_server = datetime.now(timezone.utc) + timedelta(seconds=get_broker_offset_seconds(symbol))
-    expiration = int(now_server.timestamp()) + int(expiration_minutes * 60)
+
+    if tick is not None and getattr(tick, "time", 0) > 0:
+        base_server_ts = int(tick.time)
+    else:
+        # Fallback jika tick.time degenerate: UTC + offset broker (default +3 jam = 10800s)
+        offset_sec = get_broker_offset_seconds(symbol)
+        if offset_sec == 0.0:
+            offset_sec = float(server_utc_offset_hours() * 3600)
+        base_server_ts = int(time.time() + offset_sec)
+
+    expiration = base_server_ts + int(expiration_minutes * 60)
 
     digits = symbol_info.digits
     entry_price = round(float(entry_price), digits)

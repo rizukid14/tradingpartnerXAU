@@ -345,7 +345,8 @@ class ZoneConfluenceEngine:
         if not prims:
             return []
         pip_val = 10.0 * point_size if point_size < 0.01 else point_size
-        tol = max(self.merge_atr_mult * atr_h1, 8.0 * pip_val)
+        tol_pip = min(8.0 * pip_val, 0.40 * atr_h1)
+        tol = max(self.merge_atr_mult * atr_h1, tol_pip)
         max_width = self.max_cluster_width_atr * atr_h1
 
         # urutkan dari bobot terbesar agar seed kuat
@@ -525,17 +526,33 @@ class ZoneConfluenceEngine:
         ceil_cands.sort(key=lambda k: k[0])    # terdekat dari atas dulu (harga terkecil)
 
         pip_val = 10.0 * 10 ** (-digits) if digits in (3, 5) else 10 ** (-digits)
+        grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
+        pip_sep = min(15.0 * pip_val, 0.75 * atr_h1)
+        min_sep = max(0.35 * atr_h1, pip_sep)
 
-        def _pick_layers(items: List[tuple], limit: int = 4) -> List[dict]:
+        def _pick_layers(items: List[tuple], is_ceil: bool, limit: int = 4) -> List[dict]:
             if not items:
                 return []
-            min_sep = max(0.50 * atr_h1, 15.0 * pip_val)
             chosen: List[tuple] = []
             for price, c in items:
-                if not any(abs(price - prev_p) < min_sep for prev_p, _ in chosen):
-                    chosen.append((price, c))
-                    if len(chosen) >= limit:
+                matched_idx = None
+                for idx, (prev_p, prev_c) in enumerate(chosen):
+                    if abs(price - prev_p) < min_sep:
+                        matched_idx = idx
                         break
+
+                if matched_idx is None:
+                    if len(chosen) < limit:
+                        chosen.append((price, c))
+                else:
+                    # Spatial conflict resolution: Macro Supremacy & score upgrade
+                    prev_p, prev_c = chosen[matched_idx]
+                    r_new = grade_rank.get(c.grade, 1)
+                    r_prev = grade_rank.get(prev_c.grade, 1)
+                    if r_new > r_prev or (r_new == r_prev and c.score_final > prev_c.score_final):
+                        chosen[matched_idx] = (price, c)
+
+            chosen.sort(key=lambda k: k[0] if is_ceil else -k[0])
 
             layers = []
             for price, c in chosen:
@@ -555,15 +572,15 @@ class ZoneConfluenceEngine:
                 })
             return layers
 
-        floor_layers = _pick_layers(floor_cands)
-        ceil_layers = _pick_layers(ceil_cands)
+        floor_layers = _pick_layers(floor_cands, is_ceil=False)
+        ceil_layers = _pick_layers(ceil_cands, is_ceil=True)
         for i, l in enumerate(floor_layers):
             l["tier"] = f"F{i + 1}"
         for i, l in enumerate(ceil_layers):
             l["tier"] = f"C{i + 1}"
 
         # Pilih F1 & C1 dengan pemisahan chamber (min_chamber_height)
-        min_ch = max(0.60 * atr_h1, 15.0 * pip_val)
+        min_ch = max(0.50 * atr_h1, pip_sep)
         f1 = floor_layers[0]["price"] if floor_layers else None
         c1 = ceil_layers[0]["price"] if ceil_layers else None
 

@@ -323,6 +323,15 @@ def manage_all_positions():
             if _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup via bailout, lanjut ke tiket berikutnya
 
+        # --- 2C. PRE-NEWS EMERGENCY SHIELD (10 Sep 2026) ---
+        if getattr(config, "PRE_NEWS_EMERGENCY_SHIELD_ENABLED", True):
+            if _check_pre_news_emergency_shield(pos, symbol, profit_points, point, symbol_info, now):
+                continue  # Posisi ditutup via pre-news flat, lanjut ke tiket berikutnya
+
+        # --- 2D. MIDDAY RETRACEMENT GUARD (10 Sep 2026) ---
+        if getattr(config, "MIDDAY_RETRACEMENT_GUARD_ENABLED", True):
+            _check_midday_retracement_guard(pos, symbol, profit_points, point, symbol_info, now)
+
         # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
         # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
         # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
@@ -869,6 +878,187 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
         comment = result.comment if result else "Unknown error"
         print(f"\r\x1b[2K[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
 
+
+def _force_move_to_bep(pos, symbol, point, symbol_info, reason="[DEFENSIVE BEP]") -> bool:
+    """Pindahkan SL ke BEP (+komisi round-trip broker) secara deterministik."""
+    if pos.ticket in _break_even_tickets:
+        return False
+
+    entry_price = _get_entry_fill_price(pos, symbol)
+    comm_pad_pts = 15
+    try:
+        usd_per_pt = get_usd_per_point(symbol, pos.volume)
+        deals = mt5.history_deals_get(position=pos.ticket)
+        total_comm = 0.0
+        if deals:
+            for d in deals:
+                if d.entry == mt5.DEAL_ENTRY_IN:
+                    total_comm = abs(getattr(d, "commission", 0.0) or 0.0) * 2.0
+                    break
+        if total_comm <= 0.0:
+            total_comm = 6.0 * pos.volume
+
+        if config.is_crypto(symbol):
+            extra_cuan_pts = 800
+        elif config.is_fx(symbol):
+            extra_cuan_pts = 15
+        else:
+            extra_cuan_pts = 35
+
+        if usd_per_pt > 0:
+            import math
+            comm_pad_pts = int(math.ceil(total_comm / usd_per_pt)) + extra_cuan_pts
+        else:
+            comm_pad_pts = extra_cuan_pts
+    except Exception:
+        comm_pad_pts = 15
+
+    be_padding = max(config.break_even_padding_for(symbol), comm_pad_pts)
+
+    if pos.type == mt5.ORDER_TYPE_BUY:
+        be_price = entry_price + (be_padding * point)
+        if pos.sl >= be_price:
+            _break_even_tickets.add(pos.ticket)
+            _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
+            return False
+    else:
+        be_price = entry_price - (be_padding * point)
+        if pos.sl != 0 and pos.sl <= be_price:
+            _break_even_tickets.add(pos.ticket)
+            _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
+            return False
+
+    be_price = round(be_price, symbol_info.digits)
+
+    request = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "symbol": symbol,
+        "position": pos.ticket,
+        "sl": be_price,
+        "tp": pos.tp,
+        "magic": config.MAGIC_NUMBER,
+    }
+
+    result = mt5.order_send(request)
+    if is_order_success(result):
+        _break_even_tickets.add(pos.ticket)
+        _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
+        print(f"\r\x1b[2K{UI.GREEN}{reason}{UI.RST} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price} (padding: +{be_padding} pts)")
+        logger.info(f"{reason} Ticket #{pos.ticket} ({symbol}): SL dipindahkan ke entry {be_price} (padding: +{be_padding} pts)")
+        try:
+            tg.alert_break_even(pos.ticket, symbol, be_price)
+        except Exception:
+            pass
+        return True
+    else:
+        comment = result.comment if result else "Unknown error"
+        print(f"\r\x1b[2K[BE ERROR] Gagal memindahkan SL ke break-even #{pos.ticket}: {comment}")
+        return False
+
+
+def _check_midday_retracement_guard(pos, symbol, profit_points, point, symbol_info, now) -> bool:
+    """
+    Evaluasi Retracement Sesi Siang (11:00 - 13:00 WIB):
+    Berdasarkan temuan empiris 130.000 candle H1 di 26 FX pair:
+    - Retracement 40% - 65% dari puncak pagi adalah breathing wajar (81.6% lanjut reli di sesi London).
+    - Retracement > 65% gagal 53.4% dari waktu (structural breakdown).
+    
+    Logika:
+    Jika jam 11:00 - 13:00 WIB, posisi dibuka di sesi pagi (07:00 - 11:00 WIB),
+    dan peak MFE historis >= min_peak_pts (default 50 pts / 5 pips):
+    - Jika harga retrace > 65% dari peak:
+      * Jika profit_points > 0 dan belum BEP: Kunci BEP (+komisi) segera agar modal terlindungi.
+    - Jika retrace <= 65%: Pertahankan breathing room normal (0.75x ATR), tidak melakukan pengetatan prematur.
+    """
+    if not getattr(config, "MIDDAY_RETRACEMENT_GUARD_ENABLED", True):
+        return False
+
+    now_wib = datetime.now(WIB)
+    if not (11 <= now_wib.hour <= 13):
+        return False
+
+    if config.is_crypto(symbol):
+        return False
+
+    pos_open_time = getattr(pos, "time", 0)
+    if not pos_open_time or pos_open_time <= 0:
+        return False
+
+    open_dt_wib = datetime.fromtimestamp(pos_open_time, tz=WIB)
+    if open_dt_wib.date() != now_wib.date() or not (7 <= open_dt_wib.hour < 11):
+        return False
+
+    peak_pts = _peak_mfe_points.get(pos.ticket, 0.0)
+    min_peak = getattr(config, "MIDDAY_RETRACEMENT_MIN_PEAK_PTS", 50)
+    if peak_pts < min_peak:
+        return False
+
+    retraced_pts = peak_pts - profit_points
+    retrace_pct = retraced_pts / peak_pts if peak_pts > 0 else 0.0
+    max_allowed_retrace = getattr(config, "MIDDAY_RETRACEMENT_MAX_PULLBACK_PCT", 0.65)
+
+    if retrace_pct > max_allowed_retrace:
+        if profit_points > 0 and pos.ticket not in _break_even_tickets:
+            moved = _force_move_to_bep(pos, symbol, point, symbol_info, reason="[MIDDAY RETRACEMENT BEP]")
+            if moved:
+                logger.info(f"[MIDDAY RETRACEMENT GUARD] Ticket #{pos.ticket} ({symbol}): Retracement {retrace_pct*100:.1f}% > 65% (peak +{peak_pts:.0f} pts -> now +{profit_points:.0f} pts). Mengunci Defensive BEP.")
+                return True
+    return False
+
+
+def _check_pre_news_emergency_shield(pos, symbol, profit_points, point, symbol_info, now) -> bool:
+    """
+    Protokol Darurat Pre-News (30 Menit Sebelum Berita Tier-1, e.g. 18:45 WIB sebelum ECB 19:15 / PPI 19:30):
+    Mendeteksi rilis berita Tier-1 berjarak <= 30 menit:
+    1. Jika floating profit < +0.20R (mengambang tipis atau minus):
+       Tutup bersih di harga pasar (Pre-News Flat) untuk mencegah slippage gap.
+    2. Jika floating profit >= +0.20R (profit sehat):
+       Kunci BEP rapat (+komisi) jika belum berstatus BEP agar selamat dari spike dua arah.
+    """
+    if not getattr(config, "PRE_NEWS_EMERGENCY_SHIELD_ENABLED", True):
+        return False
+
+    if config.is_crypto(symbol):
+        return False
+
+    now_wib = datetime.now(WIB)
+    mins_before = getattr(config, "PRE_NEWS_EMERGENCY_MINUTES_BEFORE", 30)
+
+    try:
+        from src.analytics.economic_calendar import calendar
+        is_imminent, news_desc = calendar.is_in_news_blackout(
+            symbol=symbol,
+            now_wib=now_wib,
+            minutes_before=mins_before,
+            minutes_after=0
+        )
+    except Exception as e:
+        logger.debug(f"[PRE-NEWS SHIELD] Gagal cek kalender: {e}")
+        return False
+
+    if not is_imminent:
+        return False
+
+    init_sl_pts = _original_sl.get(pos.ticket, 0.0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0.0)
+    if init_sl_pts <= 0:
+        return False
+
+    curr_r = profit_points / init_sl_pts
+    min_safe_r = getattr(config, "PRE_NEWS_EMERGENCY_MIN_R", 0.20)
+
+    # 1. Posisi mengambang tipis / minus menjelang berita besar -> Tutup bersih
+    if curr_r < min_safe_r:
+        reason = f"Pre-News Shield ({news_desc}, floating {curr_r:+.2f}R < {min_safe_r:+.2f}R)"
+        return _close_position_by_ticket(pos, symbol, "[PRE-NEWS FLAT]", comment=reason)
+
+    # 2. Posisi profit sehat >= +0.20R -> Kunci BEP rapat
+    if pos.ticket not in _break_even_tickets:
+        moved = _force_move_to_bep(pos, symbol, point, symbol_info, reason="[PRE-NEWS BEP SHIELD]")
+        if moved:
+            logger.info(f"[PRE-NEWS SHIELD] Ticket #{pos.ticket} ({symbol}): Kunci BEP rapat sebelum {news_desc} (floating {curr_r:+.2f}R).")
+            return True
+
+    return False
 
 
 def _get_atr_points_tf(symbol, timeframe, point):

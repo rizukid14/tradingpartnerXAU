@@ -143,15 +143,15 @@ class TestDashboardCockpit(unittest.TestCase):
         detail = engine.get_symbol_detail("GBPUSD", "H1")
         gates = {g["id"]: g for g in detail.get("gates", [])}
 
-        # Gate 3 should be SELL ONLY
-        self.assertIn("3", [str(k) for k in gates.keys()])
-        g3 = gates[3]
-        self.assertIn("SELL ONLY", g3["desc"])
-
-        # Gate 4 should align with SELL direction (not BUY)
+        # Gate 4 should be SELL ONLY (MSE Chamber & Directional Lock)
         self.assertIn("4", [str(k) for k in gates.keys()])
         g4 = gates[4]
-        self.assertIn("SELL", g4["reason"])
+        self.assertIn("SELL ONLY", g4["desc"])
+
+        # Gate 5 should align with SELL direction (Boitoki CSM Flow Alignment)
+        self.assertIn("5", [str(k) for k in gates.keys()])
+        g5 = gates[5]
+        self.assertIn("SELL", g5["reason"])
 
 
 if __name__ == "__main__":

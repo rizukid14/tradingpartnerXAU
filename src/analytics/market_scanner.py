@@ -22,7 +22,10 @@ from src.analytics.basket_sync_engine import (
     is_pair_blocked_by_g3_wall,
     calculate_pair_runway,
     check_basket_concurrency_cap,
-    rank_basket_candidates_by_runway
+    rank_basket_candidates_by_runway,
+    calculate_basket_saturation_index,
+    select_basket_champion,
+    get_pair_currencies
 )
 from src.analytics.macro_strategic_engine import (
     macro_strategic_engine, 
@@ -3118,6 +3121,8 @@ class MarketScanner:
                         return False, "HARD_BLOCK", f"[SYSTEMIC BASKET LOCK] {basket_reason}"
 
                     # 1B. CBSS Currency Basket Structural Synchronization (9 Sep 2026)
+                    is_cbss_cap_saturated = False
+                    cbss_cap_msg = ""
                     if getattr(config, "ENABLE_CBSS", True) and not sym_is_crypto:
                         is_continuation = not any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM", "FADE"))
 
@@ -3128,13 +3133,16 @@ class MarketScanner:
                             return False, "HARD_BLOCK", g3_reason
 
                         # (b) Basket Concurrency Cap (Max 2 trades per currency basket in same direction)
+                        # NOTE: Jika kuota basket penuh, setup tidak di-hard block di Stage 1 radar agar
+                        # main.py dapat mengalihkan setup berkualitas ini langsung ke Virtual Paper Trade (shadow_tracker).
                         from config import mt5
                         try:
                             raw_pos = mt5.positions_get() or []
                             raw_ord = mt5.orders_get() or []
                             cap_ok, cap_msg = check_basket_concurrency_cap(sym, target_dir, raw_pos, raw_ord)
                             if not cap_ok:
-                                return False, "HARD_BLOCK", cap_msg
+                                is_cbss_cap_saturated = True
+                                cbss_cap_msg = cap_msg
                         except Exception:
                             pass
 
@@ -3149,9 +3157,34 @@ class MarketScanner:
                         if r_atr < min_runway and is_continuation:
                             return False, "HARD_BLOCK", f"[CBSS RUNWAY] Insufficient Runway ({r_atr:.2f}x ATR < {min_runway:.2f}x ATR) to opposing barrier"
 
+                        # (d) Basket Structural Saturation Index (BSSI >= 70% Climax Warning)
+                        base_c, quote_c = get_pair_currencies(clean_s)
+                        if base_c:
+                            b_ratio, b_col, b_tot = calculate_basket_saturation_index(base_c, target_dir, self.macro_cache)
+                            if b_ratio >= getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70) and is_continuation:
+                                return False, "HARD_BLOCK", f"[CBSS SATURATION] Basket {base_c} is saturated ({b_col}/{b_tot} pairs at opposing walls, BSSI {b_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP."
+                        if quote_c:
+                            q_ratio, q_col, q_tot = calculate_basket_saturation_index(quote_c, -target_dir, self.macro_cache)
+                            if q_ratio >= getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70) and is_continuation:
+                                return False, "HARD_BLOCK", f"[CBSS SATURATION] Basket {quote_c} is saturated ({q_col}/{q_tot} pairs at opposing walls, BSSI {q_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP."
+
+                        # (e) Tokyo Midday Lull Retracement Freeze (10:30 - 13:00 WIB)
+                        now_wib = datetime.now(WIB)
+                        is_tokyo_lull = (now_wib.hour == 10 and now_wib.minute >= 30) or (11 <= now_wib.hour <= 13)
+                        if is_tokyo_lull and is_continuation:
+                            m_range_pts = abs(macro.get('asian_high', 0.0) - macro.get('asian_low', 0.0)) / pt if pt > 0 else 0.0
+                            m_pips = m_range_pts / 10.0 if ('JPY' not in clean_s) else m_range_pts
+                            if m_pips < getattr(config, "TOKYO_LULL_MIN_SPRINT_PIPS", 25.0):
+                                return False, "HARD_BLOCK", f"[TOKYO MIDDAY LULL] Continuation frozen at {now_wib.strftime('%H:%M')} WIB (Morning range {m_pips:.1f}p < 25p: 80% retracement probability)."
+
+                    def _ret(tier: str, reason_str: str) -> tuple:
+                        if is_cbss_cap_saturated:
+                            return True, "CBSS_CAP_BLOCKED", cbss_cap_msg
+                        return True, tier, reason_str
+
                     # Supreme Precedence: Jika SFR Pro aktif, seluruh bias makro statis tunduk pada aliran SFR
                     if is_sfr_pro:
-                        return True, "FULL_ALLOW", f"ALIGNED_SFR_SYSTEMIC_EXPANSION [SFR_CATALYST: {sfr_catalyst}]"
+                        return _ret("FULL_ALLOW", f"ALIGNED_SFR_SYSTEMIC_EXPANSION [SFR_CATALYST: {sfr_catalyst}]")
 
                     strat_dir_sym = macro.get('strat_dir')
                     if strat_dir_sym is None:
@@ -3294,7 +3327,7 @@ class MarketScanner:
 
                     if is_aligned or is_sfr_pro:
                         flow_tag = f" [SFR_CATALYST: {sfr_catalyst}]" if is_sfr_pro else ""
-                        return True, "FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f}){flow_tag}"
+                        return _ret("FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f}){flow_tag}")
                     elif is_counter:
                         # Counter-trend allows only high quality M1 liquidity sweep / SFP with TP1 cap, M4 systemic flow, or M3 Basing Box Breakdown
                         is_basing_mean_rev = ("BASING" in setup_label.upper() or "BREAKOUT" in setup_label.upper()) and (
@@ -3302,12 +3335,12 @@ class MarketScanner:
                             (target_dir == 1 and csm_delta_val >= getattr(config, "M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50))
                         )
                         if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper() or "SYSTEMIC" in setup_label.upper() or is_basing_mean_rev:
-                            return True, "TP1_ONLY_SCALP", f"COUNTER_TREND_SCALP_PERMITTED ({bias_score:+.2f})"
+                            return _ret("TP1_ONLY_SCALP", f"COUNTER_TREND_SCALP_PERMITTED ({bias_score:+.2f})")
                         else:
                             return False, "HARD_BLOCK", f"[COUNTER TREND BLOCK] Non-sweep setup rejected against macro ({bias_score:+.2f})"
                     else:
                         # Neutral / Transition Macro
-                        return True, "REDUCED_CONFIDENCE", f"MODERATE_NEUTRAL_MACRO ({bias_score:+.2f})"
+                        return _ret("REDUCED_CONFIDENCE", f"MODERATE_NEUTRAL_MACRO ({bias_score:+.2f})")
 
                 # ── MECHANISM 1: UNIVERSAL LIQUIDITY SWEEP & STRUCTURAL SFP (H1 / M30) ──
                 if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):

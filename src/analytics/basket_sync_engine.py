@@ -111,22 +111,23 @@ def calculate_pair_runway(sym: str, direction: int, macro_cache: dict) -> dict:
     mid = float(m.get("current_mid") or m.get("current_price") or m.get("mid_price") or 0.0)
     atr = float(m.get("current_atr") or m.get("atr_val") or m.get("atr_h1") or 0.0)
     if atr <= 0:
-        atr_pts = float(m.get("atr_pts") or 0.0)
+        atr_pts = float(m.get("current_atr_pts") or m.get("atr_pts") or 0.0)
         point = float(m.get("point") or 0.00001)
         if atr_pts > 0 and point > 0:
             atr = atr_pts * point
         else:
             atr = 0.0010
 
-    c1 = float(m.get("immediate_ceiling_c1") or m.get("ceiling_c1") or m.get("imm_ceiling_c1") or m.get("c1_level") or m.get("cluster_resistance") or 0.0)
-    f1 = float(m.get("immediate_floor_f1") or m.get("floor_f1") or m.get("imm_floor_f1") or m.get("f1_level") or m.get("cluster_support") or 0.0)
-    c2 = float(m.get("ceiling_c2") or m.get("deep_target_ceiling_c2") or m.get("deep_ceiling_c2") or m.get("c2_level") or c1)
-    f2 = float(m.get("floor_f2") or m.get("deep_target_floor_f2") or m.get("deep_floor_f2") or m.get("f2_level") or f1)
+    z_walls = m.get("zce_walls") or {}
+    c1 = float(m.get("immediate_ceiling_c1") or m.get("ceiling_c1") or m.get("imm_ceiling_c1") or m.get("c1_level") or m.get("cluster_resistance") or z_walls.get("c1") or 0.0)
+    f1 = float(m.get("immediate_floor_f1") or m.get("floor_f1") or m.get("imm_floor_f1") or m.get("f1_level") or m.get("cluster_support") or z_walls.get("f1") or 0.0)
+    c2 = float(m.get("ceiling_c2") or m.get("deep_target_ceiling_c2") or m.get("deep_ceiling_c2") or m.get("c2_level") or z_walls.get("c2") or c1)
+    f2 = float(m.get("floor_f2") or m.get("deep_target_floor_f2") or m.get("deep_floor_f2") or m.get("f2_level") or z_walls.get("f2") or f1)
 
-    c1_grade = str(m.get("c1_reaction_grade") or m.get("imm_ceiling_c1_grade") or m.get("zce_c1_grade") or "GRADE_1_MICRO")
-    f1_grade = str(m.get("f1_reaction_grade") or m.get("imm_floor_f1_grade") or m.get("zce_f1_grade") or "GRADE_1_MICRO")
-    c2_grade = str(m.get("c2_reaction_grade") or m.get("deep_ceiling_c2_grade") or m.get("zce_c2_grade") or "GRADE_2_INTERMEDIATE")
-    f2_grade = str(m.get("f2_reaction_grade") or m.get("deep_floor_f2_grade") or m.get("zce_f2_grade") or "GRADE_2_INTERMEDIATE")
+    c1_grade = str(m.get("c1_reaction_grade") or m.get("imm_ceiling_c1_grade") or m.get("zce_c1_grade") or z_walls.get("c1_grade") or "GRADE_1_MICRO")
+    f1_grade = str(m.get("f1_reaction_grade") or m.get("imm_floor_f1_grade") or m.get("zce_f1_grade") or z_walls.get("f1_grade") or "GRADE_1_MICRO")
+    c2_grade = str(m.get("c2_reaction_grade") or m.get("deep_ceiling_c2_grade") or m.get("zce_c2_grade") or z_walls.get("c2_grade") or "GRADE_2_INTERMEDIATE")
+    f2_grade = str(m.get("f2_reaction_grade") or m.get("deep_floor_f2_grade") or m.get("zce_f2_grade") or z_walls.get("f2_grade") or "GRADE_2_INTERMEDIATE")
 
     threshold_g3 = float(getattr(config, "CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35))
 
@@ -213,18 +214,74 @@ def is_pair_blocked_by_g3_wall(sym: str, direction: int, macro_cache: dict) -> T
     return False, "CLEAR"
 
 
-def rank_basket_candidates_by_runway(pairs: List[str], direction: int, macro_cache: dict) -> List[dict]:
+def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
     """
-    Mengurutkan kandidat sekeranjang berdasarkan Runway ZCE terpanjang.
-    Menempatkan pair yang memiliki ruang gerak paling lapang di peringkat teratas (Juara Keranjang).
+    Session-aware symbol filter:
+    - Tokyo (07:00 - 14:00 WIB): Any symbol containing JPY, AUD, NZD.
+    - London Core (14:00 - 19:00 WIB): All configured pairs.
+    - New York (19:00 - 23:59 WIB): Locks Pacific crosses if NY_LOCK_PACIFIC_CROSSES is True.
+    - Dead Zone (00:00 - 07:00 WIB): FX locked, Crypto 24/7.
+    """
+    csym = clean_symbol(symbol)
+    if "BTC" in csym:
+        return True
+
+    asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
+    asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
+    ny_start = getattr(config, "NY_SESSION_START_HOUR_WIB", 19)
+    lock_pacific_cross = getattr(config, "NY_LOCK_PACIFIC_CROSSES", True)
+
+    if asia_start <= hour_wib < asia_end:
+        return any(c in csym for c in ("JPY", "AUD", "NZD"))
+    elif asia_end <= hour_wib < ny_start:
+        return True
+    elif ny_start <= hour_wib <= 23:
+        if lock_pacific_cross and hasattr(config, "is_pacific_cross") and config.is_pacific_cross(symbol):
+            return False
+        return True
+    return False
+
+
+def rank_basket_candidates_by_runway(
+    pairs: List[str],
+    direction: int,
+    macro_cache: dict,
+    hour_wib: Optional[int] = None
+) -> List[dict]:
+    """
+    Mengurutkan kandidat sekeranjang berdasarkan:
+    1. Kelayakan Sesi Aktif (Session-Aware: pair yang PERMITTED di jam ini diutamakan).
+    2. Kebersihan Benteng (Bebas Local G3 Wall Veto).
+    3. Runway ZCE Terpanjang (runway_atr).
     """
     ranked = []
     for p in pairs:
         info = calculate_pair_runway(p, direction, macro_cache)
+        is_g3_blocked, veto_reason = is_pair_blocked_by_g3_wall(p, direction, macro_cache)
+        info["is_g3_blocked"] = is_g3_blocked
+        info["veto_reason"] = veto_reason
+
+        # Evaluasi session eligibility
+        if hour_wib is not None and getattr(config, "SESSION_AWARE_ROUTING_ENABLED", True):
+            is_sess_ok = is_symbol_allowed_for_session(p, hour_wib)
+        else:
+            is_sess_ok = True
+        info["is_session_allowed"] = is_sess_ok
+
         ranked.append(info)
 
-    # Sort descending by runway_atr (runway terpanjang di posisi pertama)
-    ranked.sort(key=lambda x: x["runway_atr"], reverse=True)
+    # Multi-Tier Sorting:
+    # 1: is_session_allowed (True first -> 1, False -> 0)
+    # 2: not is_g3_blocked (True first -> 1, False -> 0)
+    # 3: runway_atr (Descending)
+    ranked.sort(
+        key=lambda x: (
+            1 if x.get("is_session_allowed", True) else 0,
+            0 if x.get("is_g3_blocked", False) else 1,
+            x.get("runway_atr", 0.0)
+        ),
+        reverse=True
+    )
     return ranked
 
 
@@ -292,3 +349,130 @@ def check_basket_concurrency_cap(
         return False, f"[CBSS CAP] Basket {quote} sudah memiliki {quote_count}/{max_cap} trade aktif searah."
 
     return True, ""
+
+
+def calculate_basket_saturation_index(
+    currency: str,
+    direction: int,
+    macro_cache: dict
+) -> Tuple[float, int, int]:
+    """
+    Menghitung Basket Structural Saturation Index (BSSI):
+    Rasio pair dalam satu keranjang yang secara bersamaan menabrak benteng lawan
+    (dist <= 0.35x ATR atau is_at_wall_g3 == True).
+    
+    Returns:
+        (bssi_ratio: float, colliding_count: int, total_pairs: int)
+    """
+    c = currency.upper()
+    pairs = BASKETS.get(c, [])
+    if not pairs:
+        return 0.0, 0, 0
+
+    colliding = 0
+    total = 0
+
+    threshold_atr = float(getattr(config, "CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35))
+
+    for p in pairs:
+        base, quote = get_pair_currencies(p)
+        if not base or not quote:
+            continue
+
+        # Orientasi arah pair sesuai eksposur currency
+        if base == c:
+            pair_dir = direction
+        elif quote == c:
+            pair_dir = -direction
+        else:
+            continue
+
+        runway = calculate_pair_runway(p, pair_dir, macro_cache)
+        r_atr = runway.get("runway_atr", 2.0)
+        is_g3 = runway.get("is_at_wall_g3", False)
+
+        total += 1
+        if is_g3 or r_atr <= threshold_atr:
+            colliding += 1
+
+    ratio = (colliding / total) if total > 0 else 0.0
+    return round(ratio, 2), colliding, total
+
+
+def select_basket_champion(
+    currency: str,
+    direction: int,
+    macro_cache: dict,
+    candidate_pairs: Optional[List[str]] = None,
+    min_runway_atr: float = 0.85,
+    hour_wib: Optional[int] = None
+) -> Optional[dict]:
+    """
+    Bilateral Composite Champion Selector:
+    Memilih kandidat laggard terbaik dalam satu keranjang mata uang berdasarkan:
+    1. Sesi aktif (is_session_allowed).
+    2. Kebersihan benteng (tidak menabrak dinding G3 lawan).
+    3. Sisa Runway ZCE (minimal min_runway_atr, default 0.85x ATR).
+    4. Kelemahan Quote Currency / Kekuatan Net CSM Delta.
+    
+    Returns:
+        dict info pair pemenang, atau None jika tidak ada yang memenuhi syarat.
+    """
+    c = currency.upper()
+    all_basket_pairs = BASKETS.get(c, [])
+    if candidate_pairs is not None:
+        target_pool = [p for p in all_basket_pairs if clean_symbol(p) in [clean_symbol(x) for x in candidate_pairs]]
+    else:
+        target_pool = all_basket_pairs
+
+    if not target_pool:
+        return None
+
+    # Lazy import CSM delta to avoid circular import
+    try:
+        from src.analytics.currency_strength import get_csm_delta_for_symbol
+    except Exception:
+        get_csm_delta_for_symbol = lambda s: 0.0
+
+    scored_candidates = []
+
+    for p in target_pool:
+        base, quote = get_pair_currencies(p)
+        if not base or not quote:
+            continue
+
+        pair_dir = direction if base == c else -direction
+        info = calculate_pair_runway(p, pair_dir, macro_cache)
+        is_g3_blocked, veto_reason = is_pair_blocked_by_g3_wall(p, pair_dir, macro_cache)
+
+        if is_g3_blocked:
+            continue
+
+        r_atr = info.get("runway_atr", 0.0)
+        if r_atr < min_runway_atr:
+            continue
+
+        # Session filtering
+        if hour_wib is not None and getattr(config, "SESSION_AWARE_ROUTING_ENABLED", True):
+            if not is_symbol_allowed_for_session(p, hour_wib):
+                continue
+
+        csm_delta = get_csm_delta_for_symbol(p)
+        # Evaluasi apakah CSM mendukung arah trade
+        csm_alignment = (csm_delta * pair_dir)
+
+        composite_score = (r_atr * 0.45) + (max(0.0, csm_alignment) * 0.35) + (1.0 if not info.get("is_tight_chamber") else 0.5) * 0.20
+
+        info["pair"] = p
+        info["pair_direction"] = pair_dir
+        info["csm_delta"] = csm_delta
+        info["csm_alignment"] = csm_alignment
+        info["composite_score"] = round(composite_score, 3)
+        scored_candidates.append(info)
+
+    if not scored_candidates:
+        return None
+
+    scored_candidates.sort(key=lambda x: x["composite_score"], reverse=True)
+    return scored_candidates[0]
+

@@ -572,6 +572,16 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
 
             t3_lines.append(f" CSM Macro (H1)   : {UI.CYAN}{h1_str}{UI.RST}")
             t3_lines.append(f" CSM Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
+            try:
+                from src.analytics.macro_strategic_engine import evaluate_session_confluence_timing
+                t_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+                t_dir = evaluate_session_confluence_timing("GBPUSD-ECN", t_wib.hour)
+                t_phase = t_dir.get("timing_phase", "EXPANSION")
+                t_mode = t_dir.get("target_mode", "STANDARD")
+                phase_c = UI.YELLOW if "LULL" in t_phase else (UI.RED if "DEAD" in t_phase else UI.GREEN)
+                t3_lines.append(f" Timing Phase     : {phase_c}{t_phase}{UI.RST} (Target: {t_mode})")
+            except Exception:
+                pass
             t3_lines.append(f" Macro Compass    : {UI.GREEN}26 FX Majors & Crosses (Unified H1 Native){UI.RST}")
             t3_lines.append(f" News Ticker      : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
         except Exception:

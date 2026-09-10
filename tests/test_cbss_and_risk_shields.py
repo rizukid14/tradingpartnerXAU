@@ -309,3 +309,46 @@ def test_session_ny_lot_multiplier():
     ok_ldn, _ = risk._check_session(symbol="EURUSD", now_wib=time_ldn)
     assert ok_ldn is True
     assert risk._session_lot_multiplier == pytest.approx(1.0, 0.01)
+
+
+# =============================================================================
+#  6. CBSS BASKET FULL -> PAPER TRADE ROUTING TEST
+# =============================================================================
+
+def test_cbss_basket_full_routes_to_paper_trade():
+    """When CBSS basket concurrency cap is reached, candidate is routed to paper trade (0 token)."""
+    from main import run_scanner_trading_cycle
+    from src.analytics.market_scanner import CandidateSetup
+
+    cand = CandidateSetup(
+        symbol="EURCAD-ECN",
+        setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
+        direction=1,
+        trigger_price=1.48500,
+        suggested_sl=1.48200,
+        suggested_tp=1.49100,
+        action_tier="CBSS_CAP_BLOCKED",
+        metadata={
+            "cbss_cap_blocked": True,
+            "cbss_cap_reason": "[CBSS CAP] Basket EUR saturated: 2/2 active LONG positions (EURUSD, EURGBP)"
+        }
+    )
+
+    mock_risk = MagicMock()
+    mock_risk.can_trade.return_value = (True, "")
+
+    with patch("src.analytics.shadow_tracker.shadow_tracker.register_candidate") as mock_reg, \
+         patch("src.core.mt5_connector.get_current_tick", return_value={"ask": 1.48500, "bid": 1.48480, "point": 0.00001, "spread": 20}), \
+         patch("main.record_funnel_event"):
+
+        result = run_scanner_trading_cycle(cand, mock_risk)
+
+        # MT5 live execution is blocked (returns False)
+        assert result is False
+
+        # shadow_tracker must be registered with SKIPPED_CBSS_BASKET_CAP
+        assert mock_reg.called is True
+        call_kwargs = mock_reg.call_args[1]
+        assert call_kwargs["mt5_disposition"] == "SKIPPED_CBSS_BASKET_CAP"
+        assert call_kwargs["candidate"].symbol == "EURCAD-ECN"
+
