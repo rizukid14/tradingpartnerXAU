@@ -393,10 +393,37 @@ risk = RiskEngine()
 
 
 class TeeLogger:
-    """Duplicate stdout/stderr output to terminal and a log file."""
-    def __init__(self, filename):
+    """Duplicate stdout/stderr output to terminal and a log file with size-based auto-rotation."""
+    def __init__(self, filename, max_bytes=5 * 1024 * 1024, backup_count=2):
         self.terminal = sys.stdout
-        self.log_file = open(filename, "a", encoding="utf-8", buffering=1)
+        self.filename = filename
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self._lock = threading.Lock()
+        self._open_file()
+
+    def _open_file(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.filename)), exist_ok=True)
+        self.log_file = open(self.filename, "a", encoding="utf-8", buffering=1)
+
+    def _rotate_if_needed(self):
+        try:
+            if os.path.exists(self.filename) and os.path.getsize(self.filename) >= self.max_bytes:
+                self.log_file.close()
+                for i in range(self.backup_count - 1, 0, -1):
+                    sfn = f"{self.filename}.{i}"
+                    dfn = f"{self.filename}.{i + 1}"
+                    if os.path.exists(sfn):
+                        if os.path.exists(dfn):
+                            os.remove(dfn)
+                        os.rename(sfn, dfn)
+                dfn = f"{self.filename}.1"
+                if os.path.exists(dfn):
+                    os.remove(dfn)
+                os.rename(self.filename, dfn)
+                self._open_file()
+        except Exception:
+            pass
 
     def write(self, message):
         global _status_render_count
@@ -413,14 +440,17 @@ class TeeLogger:
             # Tulis ke file log (hindari spamming baris refresh in-place 3 detik ke file log)
             if not is_status_render:
                 clean_msg = _ANSI_RE.sub("", message)
-                self.log_file.write(clean_msg)
+                with self._lock:
+                    self._rotate_if_needed()
+                    self.log_file.write(clean_msg)
         except Exception:
             pass
 
     def flush(self):
         self.terminal.flush()
         try:
-            self.log_file.flush()
+            with self._lock:
+                self.log_file.flush()
         except Exception:
             pass
 
@@ -1428,13 +1458,16 @@ def main():
     # tercatat (root logger default WARNING tanpa handler). Data ini untuk evaluasi empiris
     # keketatan gate saat ZCE mode full (hipotesis: M1 under-trade di trending market).
     try:
+        from logging.handlers import RotatingFileHandler
         _gate_logger = logging.getLogger("market_scanner")
         _gate_logger.setLevel(logging.DEBUG)
         _gate_logger.propagate = False
-        _gh = logging.FileHandler(os.path.join(config.DATA_DIR, "gate_debug.log"), mode="a", encoding="utf-8")
+        _gh_path = os.path.join(config.DATA_DIR, "gate_debug.log")
+        # Auto-rotate: max 10MB per file, simpan 2 file backup (.1 dan .2)
+        _gh = RotatingFileHandler(_gh_path, maxBytes=10 * 1024 * 1024, backupCount=2, encoding="utf-8")
         _gh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         _gate_logger.addHandler(_gh)
-        print(f"[INSTRUMENTASI] Skip-rate gate M1/M2/M3 -> {os.path.join(config.DATA_DIR, 'gate_debug.log')}")
+        print(f"[INSTRUMENTASI] Skip-rate gate M1/M2/M3 -> {_gh_path} (Auto-rotate: 10MB x 2)")
     except Exception as _gh_err:
         print(f"[WARN] Gagal setup gate_debug.log: {_gh_err}")
 

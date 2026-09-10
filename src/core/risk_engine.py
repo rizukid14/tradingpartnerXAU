@@ -327,13 +327,14 @@ class RiskEngine:
         si = mt5.symbol_info(symbol)
         is_defensive = (setup_grade == "GRADE_B" or action_tier == "REDUCED_CONFIDENCE")
         is_half_risk = (action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"))
+        is_ny = self.is_ny_session()
 
         if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
             # No SL given -> fall back to the static per-symbol lot
             lot = config.lot_size_for(symbol)
-            if is_half_risk:
+            if is_half_risk and not is_ny:
                 lot *= 0.50
-            elif is_defensive:
+            elif is_defensive and not is_ny:
                 lot *= 0.75
             elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
                 lot *= float(sizing_multiplier)
@@ -343,9 +344,9 @@ class RiskEngine:
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
         if usd_per_pt_1lot <= 0:
             lot = config.lot_size_for(symbol)
-            if is_half_risk:
+            if is_half_risk and not is_ny:
                 lot *= 0.50
-            elif is_defensive:
+            elif is_defensive and not is_ny:
                 lot *= 0.75
             elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
                 lot *= float(sizing_multiplier)
@@ -357,9 +358,9 @@ class RiskEngine:
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
-            if is_half_risk:
+            if is_half_risk and not is_ny:
                 lot *= 0.50
-            elif is_defensive:
+            elif is_defensive and not is_ny:
                 lot *= 0.75
             elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
                 lot *= float(sizing_multiplier)
@@ -391,11 +392,17 @@ class RiskEngine:
 
         # Apply 5-Tier / 2D Confluence Matrix modifiers
         if is_half_risk:
-            lot *= 0.50
-            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_SCALP / Half-Risk multiplier (x0.50) applied -> {lot:.4f}")
+            if is_ny:
+                print(f" {UI.tag('TIER SIZING', UI.CYAN)} {symbol}: NY Session Flat 0.50x active — REDUCED_SCALP tier reduction bypassed -> {lot:.4f}")
+            else:
+                lot *= 0.50
+                print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_SCALP / Half-Risk multiplier (x0.50) applied -> {lot:.4f}")
         elif is_defensive:
-            lot *= 0.75
-            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE / GRADE_B multiplier (x0.75) applied -> {lot:.4f}")
+            if is_ny:
+                print(f" {UI.tag('TIER SIZING', UI.CYAN)} {symbol}: NY Session Flat 0.50x active — GRADE_B / REDUCED_CONFIDENCE 0.75x multiplier bypassed -> {lot:.4f}")
+            else:
+                lot *= 0.75
+                print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE / GRADE_B multiplier (x0.75) applied -> {lot:.4f}")
         elif sizing_multiplier is not None and isinstance(sizing_multiplier, (int, float)) and sizing_multiplier > 0 and sizing_multiplier != 1.0:
             lot *= float(sizing_multiplier)
             print(f" {UI.tag('CONFLUENCE SIZING', UI.YELLOW)} {symbol}: 2D Confluence multiplier (x{sizing_multiplier:.2f}) applied -> {lot:.4f}")
@@ -503,6 +510,19 @@ class RiskEngine:
     @property
     def session_lot_multiplier(self):
         return self._session_lot_multiplier
+
+    def is_ny_session(self, now_wib=None) -> bool:
+        """
+        Returns True if the current operational session is New York (18:00 - 00:00 WIB, lot_mult <= 0.50x).
+        """
+        ny_mult = float(getattr(config, "SESSION_NY_LOT_MULT", 0.50))
+        if self._session_lot_multiplier <= ny_mult + 1e-4:
+            return True
+        now_wib = now_wib or datetime.now(WIB)
+        ny_start_h = int(getattr(config, "NY_SESSION_START_HOUR_WIB", 18))
+        if (ny_start_h <= now_wib.hour < 24) and self._session_lot_multiplier < 1.0:
+            return True
+        return False
 
     # =========================================================================
     #  INDIVIDUAL CHECKS

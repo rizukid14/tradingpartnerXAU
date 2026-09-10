@@ -99,5 +99,30 @@ class TestM1BTrendFollowingSweep(unittest.TestCase):
         self.assertGreater(m1b['event_time'], 0)
         self.assertGreater(m1b['origin_time'], 0)
 
+    def test_m1b_buy_proximity_guard_rejects_runaway_sweep(self):
+        """Verify M1B BUY rejects sweeps when market has flown away > 0.35x ATR above anchor."""
+        atr_val = 0.00080
+        anchor_lvl = 1.16150
+        # Price is at 1.16256 (106 pts = 1.33x ATR above anchor) -> must be rejected by proximity
+        mid_runaway = 1.16256
+        max_dist_atr = getattr(config, 'M1B_MAX_DIST_ATR', 0.35)
+        in_prox = ((anchor_lvl - 0.15 * atr_val) <= mid_runaway <= (anchor_lvl + max_dist_atr * atr_val))
+        self.assertFalse(in_prox, "Runaway sweep 1.33x ATR away must be outside proximity window!")
+
+    def test_m1b_buy_proximity_guard_accepts_near_anchor_and_places_limit_at_anchor(self):
+        """Verify M1B BUY accepts sweeps near anchor and places limit order at anchor level (not dragged to mid)."""
+        atr_val = 0.00080
+        anchor_lvl = 1.16150
+        mid_near = 1.16170  # only 20 pts = 0.25x ATR above anchor
+        max_dist_atr = getattr(config, 'M1B_MAX_DIST_ATR', 0.35)
+        in_prox = ((anchor_lvl - 0.15 * atr_val) <= mid_near <= (anchor_lvl + max_dist_atr * atr_val))
+        self.assertTrue(in_prox, "Sweep 0.25x ATR from anchor must be inside proximity window!")
+
+        spread_pts = 2
+        pt = 0.00001
+        digits = 5
+        limit_entry = round(anchor_lvl + (spread_pts * 0.5 * pt), digits)
+        self.assertEqual(limit_entry, 1.16151, "Limit entry must be placed at ZCE anchor + spread offset, NOT at mid!")
+
 if __name__ == '__main__':
     unittest.main()

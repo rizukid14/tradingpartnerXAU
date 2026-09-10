@@ -270,6 +270,26 @@ class TestSep8Enhancements(unittest.TestCase):
                         self.assertAlmostEqual(lot_b / lot_a, 0.75, places=2)
                         self.assertAlmostEqual(lot_s / lot_a, 1.25, places=2)
 
+    def test_risk_engine_ny_session_flat_multiplier_bypasses_grade_b(self):
+        """Test that in NY session (0.50x), Grade B 0.75x penalty is bypassed to maintain flat 0.50x."""
+        from src.core.risk_engine import RiskEngine
+        risk = RiskEngine()
+        risk._session_lot_multiplier = 0.50
+
+        mock_si = DummySymbolInfo(point=0.001, digits=3)
+        mock_account = MagicMock()
+        mock_account.equity = 10000.0
+
+        with patch("src.core.risk_engine.mt5.account_info", return_value=mock_account):
+            with patch("src.core.risk_engine.mt5.symbol_info", return_value=mock_si):
+                with patch("src.core.risk_engine.mt5.symbol_info_tick", return_value=MagicMock(ask=150.00, bid=150.00)):
+                    with patch.object(risk, "_apply_lot_multipliers", side_effect=lambda l, s: l * 0.50):
+                        lot_a = risk.get_effective_lot_size(sl_points=100, symbol="USDJPY-ECNc", setup_grade="GRADE_A", sizing_multiplier=1.0)
+                        lot_b = risk.get_effective_lot_size(sl_points=100, symbol="USDJPY-ECNc", setup_grade="GRADE_B", sizing_multiplier=1.0)
+                        
+                        # In NY session, lot_b must NOT be multiplied by 0.75; it stays flat equal to lot_a!
+                        self.assertEqual(lot_b, lot_a)
+
 
 if __name__ == "__main__":
     unittest.main()

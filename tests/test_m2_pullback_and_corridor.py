@@ -103,5 +103,45 @@ class TestM2PullbackAndCorridor(unittest.TestCase):
         self.assertFalse(is_ema_pullback_valid)
 
 
+    def test_m2_pullback_anchors_to_zce_g3_and_avoids_live_price_clamping(self):
+        """
+        EURCAD Pullback Scenario:
+        Mid is at 1.60613. A micro floor sits right under mid at 1.60611 (2 pts away).
+        The true ZCE Floor (F2 G3) and dynamic EMA20 corridor sit at 1.60567 / 1.60570.
+        The algorithm must strictly anchor to the ZCE G3 floor at 1.60567, rejecting the micro floor at 1.60611.
+        """
+        mid = 1.60613
+        ema20 = 1.60570
+        ema50 = 1.60520
+        atr_val = 0.00065
+
+        class MockStratDir:
+            layered_floors = [
+                {'tier': 'F1', 'price': 1.60611, 'reaction_grade': 'GRADE_1_MICRO'},
+                {'tier': 'F2', 'price': 1.60567, 'reaction_grade': 'GRADE_3_MACRO'},
+            ]
+
+        macro = {
+            "ema20": ema20,
+            "ema50": ema50,
+            "current_atr": atr_val,
+            "immediate_floor_f1": 1.60611,
+            "strat_dir": MockStratDir(),
+        }
+
+        anchor, desc = self.scanner.find_ema_confluence_anchor(
+            symbol="EURCAD-ECNc",
+            mid=mid,
+            direction=1,
+            macro=macro,
+            pt=0.00001,
+            atr_val=atr_val
+        )
+
+        self.assertEqual(anchor, 1.60567)
+        self.assertIn("F2 G3 Floor", desc)
+        self.assertNotEqual(anchor, 1.60611)
+
+
 if __name__ == "__main__":
     unittest.main()

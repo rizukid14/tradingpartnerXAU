@@ -1354,13 +1354,13 @@ class MarketScanner:
     ) -> Tuple[float, str]:
         """
         Pure Quant EMA Confluence Anchor Finder for Mechanism 2 (Trend-Aligned Pullback).
-        Calculates the institutional confluence between the dynamic EMA20/50 corridor
-        and real price structure:
+        Calculates institutional confluence between dynamic EMA20/50 corridor and real price structure:
           1. SMC Unmitigated Order Block (OB)
-          2. Structural Wall (Floor F1 for BUY, Ceiling C1 for SELL)
+          2. ZCE Structural Walls (G1, G2, G3 from layered_floors / layered_ceilings, F1/F2, RBS/SBR)
           3. SMC Fair Value Gap (FVG)
-          4. Atlas DNA Psychological Stations (1.0x Super, 0.5x Sub, or 0.25x Quarter Step)
-        Prioritizes the nearest institutional barrier tested during a pullback.
+          4. Dynamic EMA20 Baseline Anchor
+          5. Atlas DNA Psychological Stations (1.0x Super, 0.5x Sub, or 0.25x Quarter Step)
+        Strictly anchors to the genuine ZCE zone / EMA confluence, avoiding clamping to live price.
         """
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         digits = 3 if "JPY" in clean_sym else 5
@@ -1377,21 +1377,64 @@ class MarketScanner:
         search_lo = corridor_lo - ema_tol
         search_hi = corridor_hi + ema_tol
 
+        strat_dir = macro.get('strat_dir')
+        min_pullback_gap = max(0.12 * atr_val, 15.0 * pt)
+
         candidates = []
+        seen_prices = set()
+
+        def add_candidate(p_val: float, desc: str, tier: int):
+            if p_val <= 0:
+                return
+            p_round = round(p_val, digits)
+            for sp in seen_prices:
+                if abs(p_round - sp) <= 3 * pt:
+                    return
+            seen_prices.add(p_round)
+            candidates.append((p_round, desc, tier))
 
         if direction == 1:
             # Bullish Pullback: Support level must be <= mid AND within/near EMA corridor
             ob_top = float(macro.get('bullish_ob_top', 0.0) or 0.0)
             if ob_top > 0 and ob_top <= mid and (search_lo <= ob_top <= search_hi):
-                candidates.append((ob_top, f"Bullish OB ({ob_top:.{digits}f})", 1))
+                add_candidate(ob_top, f"Bullish OB ({ob_top:.{digits}f})", 1)
 
-            f1 = float(macro.get('immediate_floor_f1', 0.0) or 0.0)
-            if f1 > 0 and f1 <= mid and (search_lo <= f1 <= search_hi):
-                candidates.append((f1, f"F1 Structural Floor ({f1:.{digits}f})", 2))
+            # ZCE Layered Floors (G1, G2, G3) from strat_dir
+            if strat_dir is not None:
+                for f_info in getattr(strat_dir, 'layered_floors', []):
+                    f_pr = float(f_info.get('price', 0.0) or 0.0)
+                    if f_pr > 0 and f_pr <= mid and (search_lo <= f_pr <= search_hi):
+                        f_t = f_info.get('tier', 'F1')
+                        f_raw_gr = str(f_info.get('reaction_grade', 'GRADE_1_MICRO'))
+                        f_gr = "G3" if "3" in f_raw_gr or "MACRO" in f_raw_gr else ("G2" if "2" in f_raw_gr or "INTERMEDIATE" in f_raw_gr else "G1")
+                        add_candidate(f_pr, f"{f_t} {f_gr} Floor ({f_pr:.{digits}f})", 2)
+
+            # ZCE Structural Floors & RBS from macro context
+            zce_floors_keys = [
+                ('immediate_floor_f1', 'F1 Structural Floor'),
+                ('floor_f1', 'F1 Floor'),
+                ('floor_f2', 'F2 Floor'),
+                ('macro_floor_f2', 'Macro F2 Floor'),
+                ('deep_target_floor_f2', 'F2 Floor'),
+                ('macro_rbs_d1', 'D1 RBS Floor'),
+                ('inter_rbs_h4', 'H4 RBS Floor'),
+                ('micro_rbs_h1', 'H1 RBS Floor'),
+                ('cluster_support', 'Cluster Support'),
+                ('sub_floor_50', 'Sub Floor 50')
+            ]
+            for k_name, k_label in zce_floors_keys:
+                k_val = float(macro.get(k_name, 0.0) or 0.0)
+                if k_val > 0 and k_val <= mid and (search_lo <= k_val <= search_hi):
+                    f_desc = f"{k_label} ({k_val:.{digits}f})" if "Structural" in k_label else f"ZCE {k_label} ({k_val:.{digits}f})"
+                    add_candidate(k_val, f_desc, 2)
 
             fvg_top = float(macro.get('bullish_fvg_top', 0.0) or 0.0)
             if fvg_top > 0 and fvg_top <= mid and (search_lo <= fvg_top <= search_hi):
-                candidates.append((fvg_top, f"Bullish FVG ({fvg_top:.{digits}f})", 3))
+                add_candidate(fvg_top, f"Bullish FVG ({fvg_top:.{digits}f})", 3)
+
+            # Dynamic EMA20 barrier as baseline anchor if inside search band
+            if search_lo <= ema20 <= mid:
+                add_candidate(ema20, f"Dynamic EMA20 ({ema20:.{digits}f})", 4)
 
             for frac in [1.0, 0.5, 0.25]:
                 g_step = step * frac
@@ -1400,24 +1443,50 @@ class MarketScanner:
                 for k in range(min_k, max_k):
                     p_lvl = round(k * g_step, digits)
                     if search_lo <= p_lvl <= search_hi and p_lvl <= mid:
-                        candidates.append((p_lvl, f"Atlas Psych Level ({p_lvl:.{digits}f})", 4))
+                        add_candidate(p_lvl, f"Atlas Psych Level ({p_lvl:.{digits}f})", 5)
 
-            # Dynamic EMA20 barrier as baseline anchor if inside search band
-            if search_lo <= ema20 <= mid:
-                candidates.append((ema20, f"Dynamic EMA20 ({ema20:.{digits}f})", 4))
         else:
             # Bearish Pullback: Resistance level must be >= mid AND within/near EMA corridor
             ob_bot = float(macro.get('bearish_ob_bot', 0.0) or 0.0)
             if ob_bot > 0 and ob_bot >= mid and (search_lo <= ob_bot <= search_hi):
-                candidates.append((ob_bot, f"Bearish OB ({ob_bot:.{digits}f})", 1))
+                add_candidate(ob_bot, f"Bearish OB ({ob_bot:.{digits}f})", 1)
 
-            c1 = float(macro.get('immediate_ceiling_c1', 0.0) or 0.0)
-            if c1 > 0 and c1 >= mid and (search_lo <= c1 <= search_hi):
-                candidates.append((c1, f"C1 Structural Ceiling ({c1:.{digits}f})", 2))
+            # ZCE Layered Ceilings (G1, G2, G3) from strat_dir
+            if strat_dir is not None:
+                for c_info in getattr(strat_dir, 'layered_ceilings', []):
+                    c_pr = float(c_info.get('price', 0.0) or 0.0)
+                    if c_pr > 0 and c_pr >= mid and (search_lo <= c_pr <= search_hi):
+                        c_t = c_info.get('tier', 'C1')
+                        c_raw_gr = str(c_info.get('reaction_grade', 'GRADE_1_MICRO'))
+                        c_gr = "G3" if "3" in c_raw_gr or "MACRO" in c_raw_gr else ("G2" if "2" in c_raw_gr or "INTERMEDIATE" in c_raw_gr else "G1")
+                        add_candidate(c_pr, f"{c_t} {c_gr} Ceiling ({c_pr:.{digits}f})", 2)
+
+            # ZCE Structural Ceilings & SBR from macro context
+            zce_ceilings_keys = [
+                ('immediate_ceiling_c1', 'C1 Structural Ceiling'),
+                ('ceiling_c1', 'C1 Ceiling'),
+                ('ceiling_c2', 'C2 Ceiling'),
+                ('macro_ceiling_c2', 'Macro C2 Ceiling'),
+                ('deep_target_ceiling_c2', 'C2 Ceiling'),
+                ('macro_sbr_d1', 'D1 SBR Ceiling'),
+                ('inter_sbr_h4', 'H4 SBR Ceiling'),
+                ('micro_sbr_h1', 'H1 SBR Ceiling'),
+                ('cluster_resistance', 'Cluster Resistance'),
+                ('sub_ceiling_50', 'Sub Ceiling 50')
+            ]
+            for k_name, k_label in zce_ceilings_keys:
+                k_val = float(macro.get(k_name, 0.0) or 0.0)
+                if k_val > 0 and k_val >= mid and (search_lo <= k_val <= search_hi):
+                    c_desc = f"{k_label} ({k_val:.{digits}f})" if "Structural" in k_label else f"ZCE {k_label} ({k_val:.{digits}f})"
+                    add_candidate(k_val, c_desc, 2)
 
             fvg_bot = float(macro.get('bearish_fvg_bot', 0.0) or 0.0)
             if fvg_bot > 0 and fvg_bot >= mid and (search_lo <= fvg_bot <= search_hi):
-                candidates.append((fvg_bot, f"Bearish FVG ({fvg_bot:.{digits}f})", 3))
+                add_candidate(fvg_bot, f"Bearish FVG ({fvg_bot:.{digits}f})", 3)
+
+            # Dynamic EMA20 barrier as baseline anchor if inside search band
+            if search_hi >= ema20 >= mid:
+                add_candidate(ema20, f"Dynamic EMA20 ({ema20:.{digits}f})", 4)
 
             for frac in [1.0, 0.5, 0.25]:
                 g_step = step * frac
@@ -1426,34 +1495,35 @@ class MarketScanner:
                 for k in range(min_k, max_k):
                     p_lvl = round(k * g_step, digits)
                     if search_lo <= p_lvl <= search_hi and p_lvl >= mid:
-                        candidates.append((p_lvl, f"Atlas Psych Level ({p_lvl:.{digits}f})", 4))
-
-            # Dynamic EMA20 barrier as baseline anchor if inside search band
-            if search_hi >= ema20 >= mid:
-                candidates.append((ema20, f"Dynamic EMA20 ({ema20:.{digits}f})", 4))
+                        add_candidate(p_lvl, f"Atlas Psych Level ({p_lvl:.{digits}f})", 5)
 
         if candidates:
             valid_cands = [c for c in candidates if abs(c[0] - mid) <= 3.0 * atr_val]
             if not valid_cands:
                 valid_cands = candidates
 
-            # Physical Structural Override: If physical barriers (OB priority 1, F1/C1 priority 2)
-            # sit within 0.35x ATR of the nearest candidate, prioritize them over floating psych levels.
-            min_dist = min(abs(c[0] - mid) for c in valid_cands)
-            cluster_window = min_dist + (0.35 * atr_val)
-            nearby_cluster = [c for c in valid_cands if abs(c[0] - mid) <= cluster_window]
+            # Anti-Live-Price Clamp: If structural candidates exist deeper in the pullback corridor
+            # (distance to mid >= min_pullback_gap), prefer them over micro-levels stuck to live price
+            deeper_cands = [c for c in valid_cands if abs(c[0] - mid) >= min_pullback_gap]
+            pool = deeper_cands if deeper_cands else valid_cands
 
+            # Sort primarily by:
+            # 1. Structural Tier Priority:
+            #    tier_group 0: SMC OB (tier 1) & ZCE Structural Walls (tier 2)
+            #    tier_group 1: SMC FVG (tier 3)
+            #    tier_group 2: Dynamic EMA20 (tier 4) & Atlas Psych (tier 5)
+            # 2. Confluence with EMA20 corridor baseline: abs(price - ema20)
             def candidate_sort_key(cand):
                 price, _, p_tier = cand
                 tier_group = 0 if p_tier in (1, 2) else (1 if p_tier == 3 else 2)
-                return (tier_group, abs(price - mid))
+                dist_to_ema20 = abs(price - ema20)
+                return (tier_group, dist_to_ema20)
 
-            nearby_cluster.sort(key=candidate_sort_key)
-            best_price, best_desc, _ = nearby_cluster[0]
+            pool.sort(key=candidate_sort_key)
+            best_price, best_desc, _ = pool[0]
             label_prefix = "Bullish Pullback (EMA + " if direction == 1 else "Bearish Pullback (EMA + "
             return round(best_price, digits), f"{label_prefix}{best_desc} Confluence)"
         else:
-            # Jika harga sudah menembus koridor ke arah berlawanan, jangan buat fallback phantom
             if (direction == 1 and corridor_lo > mid) or (direction == -1 and corridor_hi < mid):
                 return 0.0, "No Valid Pullback Anchor"
             fallback = round(corridor_hi, digits) if direction == 1 else round(corridor_lo, digits)
@@ -1491,8 +1561,8 @@ class MarketScanner:
             except Exception:
                 return 0
 
-        # Minimum structural clearance from current mid to prevent intra-bar/sub-pip noise latching (e.g. 1-pip Trig)
-        min_clearance = max(0.20 * atr_val, 50 * pt)
+        # Minimum structural clearance from current mid to prevent sub-pip floating point noise
+        min_clearance = max(0.05 * atr_val, 5 * pt)
 
         if direction == -1:
             # SELL: Cari basing ceiling / swing high di atas mid yang confluence dengan ZCE Resistance
@@ -4014,7 +4084,9 @@ class MarketScanner:
 
                         if m1b_d == -1:
                             has_pen = (live_h >= anchor_lvl + (getattr(config, 'M1B_PENETRATION_ATR_MULT', 0.04) * atr_price_val)) or (c_qual.get('max_high', live_h) >= anchor_lvl + (0.04 * atr_price_val))
-                            has_reclaim = (c_qual.get('prev_close', mid) < anchor_lvl) and (mid <= anchor_lvl + 0.10 * atr_price_val)
+                            max_dist_atr = getattr(config, 'M1B_MAX_DIST_ATR', 0.35)
+                            in_proximity = ((anchor_lvl - max_dist_atr * atr_price_val) <= mid <= (anchor_lvl + 0.15 * atr_price_val))
+                            has_reclaim = (c_qual.get('prev_close', mid) < anchor_lvl) and in_proximity
                             has_wick = (c_qual.get('max_upper_wick', 0.0) >= min_wick_ratio) or (c_qual.get('upper_wick_pct', 0.0) >= min_wick_ratio) or c_qual.get('is_bearish_engulf', False)
 
                             if has_pen and has_reclaim and has_wick:
@@ -4023,8 +4095,9 @@ class MarketScanner:
                                     logger.debug(f"[M1B SELL GATE] {sym} SKIP ({tier_m1b}): {reason_m1b}")
                                     continue
 
-                                limit_entry = min(anchor_lvl, mid + (0.15 * atr_price_val))
-                                sl_pts_calc = max(int(round((live_h - limit_entry) / pt)) + spread_pts + 5, config.get_sl_floor_points(sym, spread_pts, atr_pts))
+                                limit_entry = round(anchor_lvl - (spread_pts * 0.5 * pt), digits)
+                                sl_ref = max(live_h, anchor_lvl)
+                                sl_pts_calc = max(int(round((sl_ref - limit_entry) / pt)) + spread_pts + 5, config.get_sl_floor_points(sym, spread_pts, atr_pts))
                                 sl_price = round(limit_entry + (sl_pts_calc * pt), digits)
                                 tp_pts_calc = int(round(max(1.5 * sl_pts_calc, 1.25 * atr_pts)))
                                 tp_price = round(limit_entry - (tp_pts_calc * pt), digits)
@@ -4085,7 +4158,9 @@ class MarketScanner:
                                 continue
                         else:
                             has_pen = (live_l <= anchor_lvl - (getattr(config, 'M1B_PENETRATION_ATR_MULT', 0.04) * atr_price_val)) or (c_qual.get('max_low', live_l) <= anchor_lvl - (0.04 * atr_price_val))
-                            has_reclaim = (c_qual.get('prev_close', mid) > anchor_lvl) and (mid >= anchor_lvl - 0.10 * atr_price_val)
+                            max_dist_atr = getattr(config, 'M1B_MAX_DIST_ATR', 0.35)
+                            in_proximity = ((anchor_lvl - 0.15 * atr_price_val) <= mid <= (anchor_lvl + max_dist_atr * atr_price_val))
+                            has_reclaim = (c_qual.get('prev_close', mid) > anchor_lvl) and in_proximity
                             has_wick = (c_qual.get('max_lower_wick', 0.0) >= min_wick_ratio) or (c_qual.get('lower_wick_pct', 0.0) >= min_wick_ratio) or c_qual.get('is_bullish_engulf', False)
 
                             if has_pen and has_reclaim and has_wick:
@@ -4094,8 +4169,9 @@ class MarketScanner:
                                     logger.debug(f"[M1B BUY GATE] {sym} SKIP ({tier_m1b}): {reason_m1b}")
                                     continue
 
-                                limit_entry = max(anchor_lvl, mid - (0.15 * atr_price_val))
-                                sl_pts_calc = max(int(round((limit_entry - live_l) / pt)) + spread_pts + 5, config.get_sl_floor_points(sym, spread_pts, atr_pts))
+                                limit_entry = round(anchor_lvl + (spread_pts * 0.5 * pt), digits)
+                                sl_ref = min(live_l, anchor_lvl)
+                                sl_pts_calc = max(int(round((limit_entry - sl_ref) / pt)) + spread_pts + 5, config.get_sl_floor_points(sym, spread_pts, atr_pts))
                                 sl_price = round(limit_entry - (sl_pts_calc * pt), digits)
                                 tp_pts_calc = int(round(max(1.5 * sl_pts_calc, 1.25 * atr_pts)))
                                 tp_price = round(limit_entry + (tp_pts_calc * pt), digits)
@@ -4196,7 +4272,7 @@ class MarketScanner:
                         in_action_zone = (abs(mid - base_floor) <= 0.50 * atr_val) or (live_l <= base_floor + 0.15 * atr_val) or (base_floor <= mid <= base_floor + 0.65 * atr_val)
                         has_support_hold = (mid >= base_floor - 0.15 * atr_val) or (c_qual['max_lower_wick'] >= 0.10) or (c_qual['sweep_side'] == 'bottom')
                         if in_action_zone and has_support_hold and base_floor > 0:
-                            lim_entry = base_floor + (spread_pts * 0.5 * pt)
+                            lim_entry = min(base_floor + (spread_pts * 0.5 * pt), mid - (spread_pts * 0.5 * pt)) if mid > base_floor else base_floor
                             _c1_w = macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1')
                             _f1_w = macro.get('immediate_floor_f1') or macro.get('floor_f1')
                             _c1_b = self._is_zce_wall_breached(sym, _c1_w, 1, df)
@@ -4318,7 +4394,7 @@ class MarketScanner:
                         in_action_zone = (abs(mid - base_ceiling) <= 0.50 * atr_val) or (live_h >= base_ceiling - 0.15 * atr_val) or (base_ceiling - 0.65 * atr_val <= mid <= base_ceiling)
                         has_res_hold = (mid <= base_ceiling + 0.15 * atr_val) or (c_qual['max_upper_wick'] >= 0.10) or (c_qual['sweep_side'] == 'top')
                         if in_action_zone and has_res_hold and base_ceiling > 0:
-                            lim_entry = base_ceiling - (spread_pts * 0.5 * pt)
+                            lim_entry = max(base_ceiling - (spread_pts * 0.5 * pt), mid + (spread_pts * 0.5 * pt)) if mid < base_ceiling else base_ceiling
                             _c1_w = macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1')
                             _f1_w = macro.get('immediate_floor_f1') or macro.get('floor_f1')
                             _c1_b = self._is_zce_wall_breached(sym, _c1_w, 1, df)

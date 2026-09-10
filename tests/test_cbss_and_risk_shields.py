@@ -304,11 +304,11 @@ def test_session_ny_lot_multiplier():
     assert ok is True
     assert risk._session_lot_multiplier == pytest.approx(0.50, 0.01)
 
-    # 15:00 WIB -> London session (0.75x De-Risk Reconciled)
+    # 15:00 WIB -> London session (1.00x Normal Multiplier)
     time_ldn = datetime(2026, 9, 9, 15, 0, tzinfo=WIB)
     ok_ldn, _ = risk._check_session(symbol="EURUSD", now_wib=time_ldn)
     assert ok_ldn is True
-    assert risk._session_lot_multiplier == pytest.approx(getattr(config, "SESSION_LONDON_LOT_MULT", 0.75), 0.01)
+    assert risk._session_lot_multiplier == pytest.approx(getattr(config, "SESSION_LONDON_LOT_MULT", 1.00), 0.01)
 
 
 # =============================================================================

@@ -2,6 +2,110 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 95. Perubahan 10 September 2026 (Malam IV) — Pemulihan Multiplier Sesi London ke 1.00x & Sesi New York Flat 0.50x (Bypass Compounding Grade B 0.75x)
+
+### Latar Belakang & Investigasi:
+1. **Pereduksian Ganda (*Compounding Double-Discount*) di Sesi New York**:
+   - Pada trade USDJPY-ECNc saat sesi New York (18:00–00:00 WIB), lot size dasar dipotong menjadi `0.50x` melalui `_session_lot_multiplier`.
+   - Namun, pada blok tier sizing di `risk_engine.py`, setup yang berstatus `GRADE_B` / `REDUCED_CONFIDENCE` dikalikan lagi dengan `0.75x` (`0.50 * 0.75 = 0.375x`), menyebabkan ukuran lot menyusut berlebihan menjadi `0.08` lot.
+   - Sesuai prinsip arsitektur, sesi New York dirancang beroperasi pada **flat lot multiplier 0.50x untuk semua grade setup**, tanpa penalti ganda Grade B.
+2. **Pemulihan Multiplier Sesi London ke 1.00x**:
+   - Parameter `SESSION_LONDON_LOT_MULT` sebelumnya terset `0.75` di `.env` dan `config.py`.
+   - Dipulihkan kembali ke standar normal **`1.00x`** (1x penuh).
+
+---
+
+### Solusi Perbaikan Kode & Komponen:
+1. **Konfigurasi Multiplier Sesi (`.env`, `config.py`, `dashboard.py`)**:
+   - Menyelaraskan `SESSION_LONDON_LOT_MULT=1.00` di `.env` (baris 66 dan 380), `config.py` (baris 748), dan `dashboard.py` (baris 1692).
+2. **Helper `is_ny_session` & Bypass Penalti di `risk_engine.py`**:
+   - Menambahkan method `is_ny_session()` pada class `RiskEngine`.
+   - Pada `get_effective_lot_size()`:
+     * Jika berada di sesi New York (`is_ny_session() == True`): penalti `0.75x` untuk `GRADE_B` / `REDUCED_CONFIDENCE` di-bypass total, mengunci lot pada flat `0.50x`.
+     * Jika berada di sesi London (`14:00 - 18:00 WIB`): penalti `0.75x` tetap berlaku ($1.00 \times 0.75 = \mathbf{0.75x}$).
+     * Jika berada di sesi Asia (`07:00 - 14:00 WIB`): penalti `0.75x` tetap berlaku ($1.20 \times 0.75 = \mathbf{0.90x}$).
+3. **Verifikasi Suite Test**:
+   - Menambahkan unit test `test_risk_engine_ny_session_flat_multiplier_bypasses_grade_b` di `tests/test_sep8_enhancements.py`.
+   - Memperbarui ekspektasi multiplier sesi London di `tests/test_cbss_and_risk_shields.py`.
+   - Seluruh test suite (235 unit tests) **100% PASS (Code 0)**.
+
+---
+
+## 94. Perubahan 10 September 2026 (Malam III) — Penyelarasan M2 Pullback Anchor ke Zona ZCE (F1/F2 G1/G2/G3), Anti-Live-Price Clamping & Eliminasi Sorting Flaw abs(price - mid)
+
+### Latar Belakang & Investigasi Insiden EURCAD (22:07 WIB):
+1. **Insiden Eksekusi Market di Pucuk pada EURCAD BUY (M2 Pullback)**:
+   - Pada pukul 22:07:36 WIB, setup M2 `TREND_ALIGNED_PULLBACK` pada EURCAD terdeteksi dan mengusulkan `BUY_LIMIT @ 1.60613`.
+   - Namun, saat dieksekusi di MT5 akun live, order langsung dikonversi menjadi **`MARKET ORDER @ 1.60632`** (membeli di harga pucuk Ask tanpa diskon pullback).
+   - Trader/user mencatat:
+     * Mengapa pullback order tidak diletakkan di sekitar **`1.60567`** di mana terdapat **ZCE Floor F2 ber-grade G3** yang tepat berkonfluensi dengan **Dynamic EMA20 (`1.60570`)**?
+     * Instruksi arsitektur: *"ga harus G3 wall untuk pullback boleh G1, G2, G3 intinya lagi2 rispek ke ZCE nya bukan limit didekat live price. Zona zce ya."*
+     * Countertrend di TF makro (H4) diperbolehkan selama H1 bullish dan runway ke $C_1$ memadai, tanpa peduli makro bearish kecuali runway terhadang benteng G3 skor tinggi.
+
+2. **Akar Masalah di `find_ema_confluence_anchor` (`src/analytics/market_scanner.py`)**:
+   - **Koleksi Benteng ZCE Tidak Lengkap**: Fungsi hanya membaca `immediate_floor_f1`, dan mengabaikan tangga benteng ZCE lengkap di `strat_dir.layered_floors` / `layered_ceilings` (F1, F2, F3, F4 dengan grade reaksi G1, G2, G3) serta level RBS/SBR makro. Benteng G3 di `1.60567` terlewat dari pencarian.
+   - **Cacat Fatal Sorting Key (`abs(price - mid)`)**: Algoritma mengurutkan kandidat menggunakan `(tier_group, abs(price - mid))` yang memprioritaskan level terdekat ke **harga pasar live (`mid`)**. Level mikro di `1.60611` (hanya 2 poin di bawah `mid = 1.60613`) dipilih mengalahkan zona ZCE EMA20 di `1.60567` (jarak 46 poin).
+   - **Penyebab Konversi ke Market Order**: Jarak `1.60613` ke Ask (`1.60632`) hanya 19 poin ($< 20$ poin threshold StopsLevel MT5 di `main.py`), sehingga pending limit order otomatis dieksekusi sebagai Market Order instan.
+
+---
+
+### Solusi Perbaikan Kode & Komponen:
+1. **Koleksi Komprehensif Seluruh Benteng ZCE (G1, G2, G3)**:
+   - Mengambil seluruh benteng dari `strat_dir.layered_floors` (BUY) dan `strat_dir.layered_ceilings` (SELL) beserta grade reaksinya (`G1`, `G2`, `G3`).
+   - Mengumpulkan seluruh level ZCE makro (`floor_f1`, `floor_f2`, `macro_floor_f2`, `deep_target_floor_f2`, `macro_rbs_d1`, `inter_rbs_h4`, `micro_rbs_h1`, `cluster_support`, dll) dengan deduplikasi harga toleransi $\le 3\text{ pts}$.
+2. **Anti-Live-Price Clamping**:
+   - Menetapkan `min_pullback_gap = max(0.12 * atr_val, 15.0 * pt)`.
+   - Memisahkan kandidat yang memiliki kedalaman pullback struktural (`deeper_cands = [c for c in valid_cands if abs(c[0] - mid) >= min_pullback_gap]`). Jika kandidat struktural di dalam koridor EMA tersedia, algoritma WAJIB mengabaikan level mikro yang menempel pada live price agar pending limit benar-benar menunggu retrace ke zona ZCE.
+3. **Penyelarasan Sorting Key ke Konfluensi EMA20 (`abs(price - ema20)`)**:
+   - Kandidat diurutkan berdasarkan:
+     1. Prioritas Struktural: `tier_group 0` (SMC OB & ZCE Walls G1/G2/G3) > `tier_group 1` (SMC FVG) > `tier_group 2` (Dynamic EMA20 & Atlas Psych).
+     2. Jarak ke garis basis EMA20: `dist_to_ema20 = abs(price - ema20)`. Benteng ZCE yang berhimpitan dengan EMA20 (seperti `1.60567` pada EURCAD) menang mutlak.
+4. **Penjagaan Batas Limit Entry di Evaluasi M2 BUY / SELL**:
+   - M2 BUY: `lim_entry = min(base_floor + (spread_pts * 0.5 * pt), mid - (spread_pts * 0.5 * pt)) if mid > base_floor else base_floor`.
+   - M2 SELL: `lim_entry = max(base_ceiling - (spread_pts * 0.5 * pt), mid + (spread_pts * 0.5 * pt)) if mid < base_ceiling else base_ceiling`.
+   - Menjamin bahwa limit order selalu berada di sisi limit (di bawah harga pasar untuk BUY, di atas harga pasar untuk SELL), mengeliminasi risiko konversi prematur ke Market Order.
+5. **Verifikasi Suite Test**:
+   - Menambahkan unit test `test_m2_pullback_anchors_to_zce_g3_and_avoids_live_price_clamping` di `tests/test_m2_pullback_and_corridor.py`.
+   - Seluruh test suite (234 unit tests) **100% PASS (Code 0)**.
+
+---
+
+## 93. Perubahan 10 September 2026 (Malam II) — Penyelarasan M1B Murni Berbasis Respek Zona ZCE, Eliminasi Runaway Limit Placement & Penonaktifan Unilateral Pending CSM Cancel
+
+### Latar Belakang & Diagnosa Insiden EURUSD & CADJPY:
+1. **Insiden CADJPY Pending Cancel (`[THESIS FAILURE CANCEL]`)**:
+   - Order pending `SELL_LIMIT` pada CADJPY (setup M2 Pullback) dipasang pada 21:44:39 WIB, namun 3 detik kemudian langsung dibatalkan sepihak oleh bot dengan alasan `Systemic CSM Flow reversed strongly to Bullish (+3.69 >= +1.00)`.
+   - **Akar Masalah**: Meskipun filter entry CSM (`ENABLE_CSM_FLOW_FILTER=false`) dan dynamic bailout (`ENABLE_CSM_DYNAMIC_BAILOUT=false`) sudah dinonaktifkan, parameter `ENABLE_PENDING_CSM_CANCEL=true` tertinggal masih aktif di `.env` (baris 216) dan `config.py` (baris 950) dengan ambang rendah `1.00`. Akibatnya, pending limit teknikal non-sistemik dimatikan oleh noise CSM delta pair cross.
+2. **Insiden EURUSD Buy Limit di Pucuk / Eksekusi Market di SBR (`1.16256 - 1.16269`)**:
+   - Radar mendeteksi setup M1B `TREND_ALIGNED_INDUCED_SWEEP` BUY dan mengusulkan `BUY_LIMIT @ 1.16256`, namun saat dieksekusi dikonversi ke `MARKET ORDER @ 1.16269` menabrak resisten SBR bekas support yang baru jebol di sesi sore.
+   - **Investigasi Akar Masalah di `market_scanner.py`**:
+     * **Bug Placement Limit (`mid - 0.15*ATR`)**: Baris 4097 menggunakan rumus `limit_entry = max(anchor_lvl, mid - 0.15*ATR)`. Ketika harga pasar (`mid`) sudah reli jauh meninggalkan lantai support ZCE $F_1$ (`1.16151`), rumus ini secara keliru menyeret entri naik ke pucuk reli (`1.16256`). Karena selisih jarak ke ask live hanya 1.3 pips ($< 2.0$ pips), `main.py` mengonversinya menjadi Market Order.
+     * **Asymmetric Reclaim Window (Runaway Blindness)**: Syarat `has_reclaim` BUY hanya mengecek batas bawah (`mid >= anchor_lvl - 0.10*ATR`) tanpa batas atas. Sapuan likuiditas yang sudah selesai 1–2 jam lalu dan harganya sudah melesat $1.3\times\text{ATR}$ ke atas masih dianggap sebagai "sweep aktif".
+     * **Distorsi Clearance Anchor**: Di `find_m1b_zce_basing_anchor`, parameter `min_clearance = max(0.20*ATR, 50 pts)` memaksa pencarian mengabaikan support ZCE lokal terdekat (jarak $<50$ pts) dan melompat ke support multi-hari 335 pts di bawahnya.
+
+---
+
+### Solusi Perbaikan Kode & Komponen:
+1. **Penonaktifan Unilateral Pending CSM Cancel**:
+   - Menyelaraskan `.env` (baris 216) dan `config.py` (baris 950): `ENABLE_PENDING_CSM_CANCEL = False`.
+   - Pembatalan pending order teknikal non-sistemik kini murni dikendalikan oleh *Structural Invalidation* (candle M15 *close* menembus lantai/plafon invalidasi), *Target Proximity Expiration* ($\ge 75\%$ TP tanpa terisi), dan *Timeout* (60 menit).
+2. **Penyelarasan M1B Murni Berbasis Respek Zona ZCE (`market_scanner.py`)**:
+   - **Penempatan Limit di Anchor ZCE Sejati**:
+     * BUY: `limit_entry = round(anchor_lvl + (spread_pts * 0.5 * pt), digits)` (menunggu di lantai $F_1$ / RBS yang di-sweep).
+     * SELL: `limit_entry = round(anchor_lvl - (spread_pts * 0.5 * pt), digits)` (menunggu di plafon $C_1$ / SBR yang di-sweep).
+     * Menghapus total rumus runaway `mid +/- 0.15*ATR` yang menyeret entri ke pucuk/lembah.
+   - **Batas Toleransi Kedekatan ZCE (*ZCE Proximity Guard*)**:
+     * BUY: `(anchor_lvl - 0.15*ATR) <= mid <= (anchor_lvl + 0.35*ATR)`. Jika harga sudah terbang $> 0.35\times\text{ATR}$ di atas lantai $F_1$, sweep otomatis dibatalkan sebagai *Runaway Sweep*.
+     * SELL: `(anchor_lvl - 0.35*ATR) <= mid <= (anchor_lvl + 0.15*ATR)`.
+   - **Normalisasi Clearance Anchor**: Mengembalikan `min_clearance = max(0.05 * atr_val, 5 * pt)` agar ZCE dapat mengenali lantai/plafon lokal yang sedang diuji tanpa melompat jauh ke level multi-hari.
+   - **SL Terlindung di Balik Benteng ZCE**: SL BUY dihitung dari `min(live_l, anchor_lvl)` sehingga SL tidak lagi mengambang di atas support.
+3. **Verifikasi Test Suite & Isolasi Hermetik**:
+   - Menambahkan unit test M1B proximity guard & anchor limit placement pada `tests/test_m1b_sweep.py`.
+   - Menambahkan isolasi hermetik `shadow_tracker.active_trades` pada `tests/test_market_scanner.py`.
+   - Seluruh test suite (233 unit tests) **100% PASS (Code 0)**.
+
+---
+
 ## 92. Perubahan 10 September 2026 (Malam) — Rework M4: Pure Technical Breakout Continuation (DBD/RBR Micro-Basing), CSM Telemetry Decoupling & Koreksi Mid-Chamber Trap Veto
 
 ### Latar Belakang & Investigasi Empiris:

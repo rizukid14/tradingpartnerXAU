@@ -48,6 +48,13 @@ class TestMarketScanner(unittest.TestCase):
         self.scanner._symbol_last_eval.clear()
         self.scanner._symbol_last_trigger.clear()
         self.connector = MockMT5Connector()
+        from src.analytics.shadow_tracker import shadow_tracker
+        self._orig_shadow_active = list(shadow_tracker.active_trades)
+        shadow_tracker.active_trades.clear()
+
+    def tearDown(self):
+        from src.analytics.shadow_tracker import shadow_tracker
+        shadow_tracker.active_trades = self._orig_shadow_active
 
     def test_candidate_payload_dict(self):
         cand = CandidateSetup(

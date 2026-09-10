@@ -1689,7 +1689,7 @@ class CockpitDataEngine:
         # Dynamic Session Multiplier (Reconciliation 10 Sep 2026)
         ny_start_h = getattr(config, "NY_SESSION_START_HOUR_WIB", 18)
         sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.20) if is_asian else (
-            getattr(config, "SESSION_NY_LOT_MULT", 0.50) if (ny_start_h <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 0.75)
+            getattr(config, "SESSION_NY_LOT_MULT", 0.50) if (ny_start_h <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 1.00)
         )
 
         if is_dead_zone:
