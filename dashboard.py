@@ -11,6 +11,7 @@ Usage:
 import argparse
 import http.server
 import json
+import logging
 import math
 import os
 import re
@@ -18,9 +19,12 @@ import socketserver
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger("dashboard")
 
 # Windows terminal UTF-8 encoding fix
 if sys.platform == "win32":
@@ -190,42 +194,40 @@ def _consolidate_zce_zones(
 
     cands: List[Dict[str, Any]] = []
 
-    # 1. Elected floors & ceilings from ZoneMapResult
+    # 1. Elected floors & ceilings from ZoneMapResult (Preserve all elected structural walls)
     for fl in getattr(zm, "floors", []) or []:
         p = float(fl.get("price", 0.0))
-        if v_lo <= p <= v_hi:
-            cands.append({
-                "price": p,
-                "band_low": float(fl.get("band_low", p)),
-                "band_high": float(fl.get("band_high", p)),
-                "tier": str(fl.get("tier", "F")),
-                "grade": str(fl.get("grade", "GRADE_1_MICRO")),
-                "score": float(fl.get("density_score", fl.get("score_raw", 1.0))),
-                "tag": str(fl.get("tag", "FORTRESS")),
-                "tfs": list(fl.get("tfs_present", [])),
-                "kinds": list(fl.get("kinds_present", [])),
-                "is_cold": bool(fl.get("is_cold", False)),
-                "is_vacuum": bool(fl.get("is_vacuum", False)),
-                "source": "elected"
-            })
+        cands.append({
+            "price": p,
+            "band_low": float(fl.get("band_low", p)),
+            "band_high": float(fl.get("band_high", p)),
+            "tier": str(fl.get("tier", "F")),
+            "grade": str(fl.get("grade", "GRADE_1_MICRO")),
+            "score": float(fl.get("density_score", fl.get("score_raw", 1.0))),
+            "tag": str(fl.get("tag", "FORTRESS")),
+            "tfs": list(fl.get("tfs_present", [])),
+            "kinds": list(fl.get("kinds_present", [])),
+            "is_cold": bool(fl.get("is_cold", False)),
+            "is_vacuum": bool(fl.get("is_vacuum", False)),
+            "source": "elected"
+        })
 
     for ce in getattr(zm, "ceilings", []) or []:
         p = float(ce.get("price", 0.0))
-        if v_lo <= p <= v_hi:
-            cands.append({
-                "price": p,
-                "band_low": float(ce.get("band_low", p)),
-                "band_high": float(ce.get("band_high", p)),
-                "tier": str(ce.get("tier", "C")),
-                "grade": str(ce.get("grade", "GRADE_1_MICRO")),
-                "score": float(ce.get("density_score", ce.get("score_raw", 1.0))),
-                "tag": str(ce.get("tag", "FORTRESS")),
-                "tfs": list(ce.get("tfs_present", [])),
-                "kinds": list(ce.get("kinds_present", [])),
-                "is_cold": bool(ce.get("is_cold", False)),
-                "is_vacuum": bool(ce.get("is_vacuum", False)),
-                "source": "elected"
-            })
+        cands.append({
+            "price": p,
+            "band_low": float(ce.get("band_low", p)),
+            "band_high": float(ce.get("band_high", p)),
+            "tier": str(ce.get("tier", "C")),
+            "grade": str(ce.get("grade", "GRADE_1_MICRO")),
+            "score": float(ce.get("density_score", ce.get("score_raw", 1.0))),
+            "tag": str(ce.get("tag", "FORTRESS")),
+            "tfs": list(ce.get("tfs_present", [])),
+            "kinds": list(ce.get("kinds_present", [])),
+            "is_cold": bool(ce.get("is_cold", False)),
+            "is_vacuum": bool(ce.get("is_vacuum", False)),
+            "source": "elected"
+        })
 
     # 2. Raw clusters from ZoneMapResult
     for cl in getattr(zm, "clusters", []) or []:
@@ -252,8 +254,8 @@ def _consolidate_zce_zones(
     # Sort by price
     cands.sort(key=lambda x: x["price"])
 
-    # Cluster consolidation by proximity threshold
-    proximity_thr = max(0.20 * atr_val, 4.0 * pip_val)
+    # Cluster consolidation by proximity threshold (pip-aware self-adaptive)
+    proximity_thr = max(0.40 * atr_val, 15.0 * pip_val)
     grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
 
     merged_groups: List[List[Dict[str, Any]]] = []
@@ -443,7 +445,7 @@ class CockpitDataEngine:
                 "M1": "M1:SWEEP",
                 "M2": "M2:PULLBACK",
                 "M3": "M3:BREAKOUT",
-                "M4": "M4:FLOW"
+                "M4": "M4:BASING"
             }
             for s in standbys:
                 s_lvl = float(s.get("price", 0.0))
@@ -457,15 +459,25 @@ class CockpitDataEngine:
                         dir_tag = "BULL"
                     else:
                         dir_tag = s_lbl.split()[0] if s_lbl else "SETUP"
-                    s_type_label = type_label_map.get(s.get("type", ""), s.get("type", "SETUP"))
+                    
+                    is_watch = bool(s.get("is_breakdown_watch", False))
+                    s_type = s.get("type", "")
+                    if is_watch:
+                        s_type_label = "SFR:WATCH"
+                    elif s_type == "M4":
+                        s_type_label = "M4:BASING" if "BASING" in s_lbl else "M4:RETEST"
+                    else:
+                        s_type_label = type_label_map.get(s_type, s_type or "SETUP")
+
                     short_name = f"{s_type_label} {dir_tag}"
                     setups_dist.append({
                         "name": short_name,
-                        "type": s.get("type", ""),
+                        "type": s_type,
                         "dir": dir_tag,
                         "dist_pips": dist_pips,
                         "dist_atr": dist_atr,
-                        "lvl": s_lvl
+                        "lvl": s_lvl,
+                        "is_watch": is_watch
                     })
 
             # Pick closest and evaluate multi-setup confluence
@@ -474,7 +486,8 @@ class CockpitDataEngine:
             extra_count = 0
 
             if setups_dist:
-                setups_dist.sort(key=lambda x: x["dist_atr"])  # sort by dist_atr
+                # Prioritize active actionable setups over passive background flow watching
+                setups_dist.sort(key=lambda x: (1 if x["is_watch"] else 0, x["dist_atr"]))
                 closest = setups_dist[0]
                 closest_name = closest["name"]
                 closest_pips = closest["dist_pips"]
@@ -502,6 +515,92 @@ class CockpitDataEngine:
             is_near = (closest_atr <= 1.0)
             dist_desc = f"{closest_pips:.1f} pips ({closest_atr:.2f}x ATR)" if closest_atr < 50 else ">50 pips (Idle)"
 
+            # ZCE Station Runway Target Calculation
+            c1_p = float(macro.get("immediate_ceiling_c1", macro.get("ceiling_c1", 0.0)) or 0.0)
+            f1_p = float(macro.get("immediate_floor_f1", macro.get("floor_f1", 0.0)) or 0.0)
+            c2_p = float(macro.get("ceiling_c2", 0.0) or 0.0)
+            f2_p = float(macro.get("floor_f2", 0.0) or 0.0)
+            struct_stage = str(macro.get("structural_stage") or "")
+
+            c1_dist_pips = round((c1_p - mid) / pip_val) if (c1_p > 0 and mid > 0 and c1_p > mid) else None
+            f1_dist_pips = round((mid - f1_p) / pip_val) if (f1_p > 0 and mid > 0 and mid > f1_p) else None
+            c1_text = f"C1: {c1_dist_pips}p" if c1_dist_pips is not None else "C1: —"
+            f1_text = f"F1: {f1_dist_pips}p" if f1_dist_pips is not None else "F1: —"
+
+            runway_station = "—"
+            runway_pips = 0.0
+            runway_atr = 0.0
+            runway_badge = "RW: —"
+            runway_text = "RW: —"
+
+            if mid > 0 and pip_val > 0 and atr_val > 0:
+                is_bull_orient = ("BULL" in bias) or (closest_name and ("BUY" in closest_name or "BULL" in closest_name))
+                is_bear_orient = ("BEAR" in bias) or (closest_name and ("SELL" in closest_name or "BEAR" in closest_name))
+
+                if is_bull_orient and not is_bear_orient:
+                    target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid >= c1_p and c2_p > c1_p)) else c1_p
+                    wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
+                    if target_wall > 0:
+                        runway_pips = (target_wall - mid) / pip_val
+                        runway_atr = (target_wall - mid) / atr_val
+                        runway_station = wall_lbl
+                        runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                        runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+                elif is_bear_orient and not is_bull_orient:
+                    target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
+                    wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
+                    if target_wall > 0:
+                        runway_pips = (mid - target_wall) / pip_val
+                        runway_atr = (mid - target_wall) / atr_val
+                        runway_station = wall_lbl
+                        runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                        runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+                else:
+                    dist_to_c1 = (c1_p - mid) if c1_p > 0 else 99999
+                    dist_to_f1 = (mid - f1_p) if f1_p > 0 else 99999
+                    if dist_to_c1 < dist_to_f1 and c1_p > 0:
+                        runway_pips = dist_to_c1 / pip_val
+                        runway_atr = dist_to_c1 / atr_val
+                        runway_station = "C1"
+                        runway_badge = f"C1: {runway_pips:.0f}p"
+                        runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+                    elif f1_p > 0:
+                        runway_pips = dist_to_f1 / pip_val
+                        runway_atr = dist_to_f1 / atr_val
+                        runway_station = "F1"
+                        runway_badge = f"F1: {runway_pips:.0f}p"
+                        runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+
+            # M4 Systemic Flow Shock & Dealing Range Extraction
+            dr_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
+            base_curr = clean_sym[:3]
+            quote_curr = clean_sym[3:6]
+            z_dict = getattr(self.scanner, "_m4_z_last", {})
+            z_base = float(z_dict.get(base_curr, 0.0) or 0.0)
+            z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
+            m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
+            m4_active_standby = next((s for s in standbys if s.get("type") == "M4"), None)
+            m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
+            m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+
+            # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
+            is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+            has_active_ep = False
+            if m4_st:
+                for s_side in ("SELL", "BUY"):
+                    s_d = m4_st.get(s_side, {})
+                    if s_d.get("ep") is not None or s_d.get("pending") is not None:
+                        has_active_ep = True
+                        break
+            is_continuation = (not is_fresh_shock) and (has_active_ep or m4_active_standby is not None) and (abs(m4_dominant_z) >= 0.75)
+            m4_flow_state = "SHOCK" if is_fresh_shock else ("CONT" if is_continuation else "NONE")
+            m4_has_shock = (m4_flow_state == "SHOCK")
+
+            dir_mem = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_sym)
+            dir_locked = ("BUY" if dir_mem.get("dir", 0) == 1 else "SELL") if (dir_mem and dir_mem.get("dir", 0) != 0) else None
+            b_box_info = macro.get("basing_box") or {}
+            w_regime = macro.get("wave_regime_name") or "YOUNG_OSCILLATION"
+
             pairs_data.append({
                 "symbol": sym,
                 "clean_symbol": clean_sym,
@@ -520,7 +619,24 @@ class CockpitDataEngine:
                 "has_open_pos": (sym in open_symbols or valid_sym in open_symbols),
                 "bid": bid,
                 "ask": ask,
-                "digits": digits
+                "digits": digits,
+                "m4_shock": m4_has_shock,
+                "m4_flow_state": m4_flow_state,
+                "m4_z": round(m4_dominant_z, 2),
+                "m4_dir": m4_flow_dir,
+                "dir_locked": dir_locked,
+                "dr_pct": round(dr_pct, 1),
+                "runway_badge": runway_badge,
+                "runway_text": runway_text,
+                "runway_station": runway_station,
+                "runway_pips": round(runway_pips, 1),
+                "runway_atr": round(runway_atr, 2),
+                "c1_text": c1_text,
+                "f1_text": f1_text,
+                "c1_pips": c1_dist_pips,
+                "f1_pips": f1_dist_pips,
+                "basing_box": b_box_info,
+                "wave_regime": w_regime
             })
 
         # Stable sorting by Base Currency Group: EUR, GBP, AUD, USD, CHF, CAD, NZD
@@ -588,7 +704,7 @@ class CockpitDataEngine:
             "M5": config.mt5.TIMEFRAME_M5
         }
         mt5_tf = tf_map.get(timeframe_str.upper(), config.mt5.TIMEFRAME_H1)
-        num_bars = 24 if timeframe_str.upper() == "M5" else 150
+        num_bars = 60 if timeframe_str.upper() == "M5" else (180 if timeframe_str.upper() == "M30" else 300)
 
         rates = config.mt5.copy_rates_from_pos(valid_sym, mt5_tf, 0, num_bars + 50)
         candles = []
@@ -654,13 +770,13 @@ class CockpitDataEngine:
         if candles:
             c_min_lo = min(c["low"] for c in candles)
             c_max_hi = max(c["high"] for c in candles)
-            # Expand viewport clamp to 1.25 * atr_val (min 80 pips) so nearby F1/F2 and C1/C2 remain visible
-            vp_margin = max(1.25 * atr_val, 80.0 * pip_val)
+            # Expand viewport clamp to 3.5 * atr_val (min 250 pips) so macro W1/D1 fortresses remain visible
+            vp_margin = max(3.5 * atr_val, 250.0 * pip_val)
             v_lo = c_min_lo - vp_margin
             v_hi = c_max_hi + vp_margin
         else:
-            v_lo = mid - 3.5 * atr_val
-            v_hi = mid + 3.5 * atr_val
+            v_lo = mid - 5.0 * atr_val
+            v_hi = mid + 5.0 * atr_val
 
         zce_ladder = _consolidate_zce_zones(zm, mid, v_lo, v_hi, atr_val, pip_val, digits)
 
@@ -683,102 +799,149 @@ class CockpitDataEngine:
         elif c2 is None and len(layered_ceils) == 1:
             c2 = layered_ceils[0].get("price") if isinstance(layered_ceils[0], dict) else layered_ceils[0]
 
-        zce_floors = [w for w in (zce_ladder or []) if w.get("type") == "floor"]
-        zce_ceils = [w for w in (zce_ladder or []) if w.get("type") == "ceiling"]
+        # Collect candidate floors from ZCE ladder and MSE baseline
+        raw_floors = [dict(w) for w in (zce_ladder or []) if w.get("type") == "floor" and w.get("price", 0.0) < mid]
+        if f1 and float(f1) < mid:
+            raw_floors.append({
+                "price": round(float(f1), digits),
+                "band_low": round(float(f1), digits),
+                "band_high": round(float(f1), digits),
+                "type": "floor",
+                "tier": "F1",
+                "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
+                "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
+                "score": 4.5,
+                "tfs": ["H1", "D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_FLOOR"
+            })
+        if f2 and float(f2) < mid:
+            raw_floors.append({
+                "price": round(float(f2), digits),
+                "band_low": round(float(f2), digits),
+                "band_high": round(float(f2), digits),
+                "type": "floor",
+                "tier": "F2",
+                "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
+                "grade": "GRADE_2_INTERMEDIATE",
+                "score": 3.8,
+                "tfs": ["D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_DEEP_FLOOR"
+            })
 
-        # Floor side fallback
-        if not zce_floors:
-            if f1:
-                zce_floors.append({
-                    "price": round(float(f1), digits),
-                    "band_low": round(float(f1), digits),
-                    "band_high": round(float(f1), digits),
-                    "type": "floor",
-                    "tier": "F1",
-                    "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
-                    "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
-                    "score": 4.5,
-                    "tfs": ["H1", "D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_FLOOR"
-                })
-            if f2 and f1 and float(f2) < float(f1):
-                zce_floors.append({
-                    "price": round(float(f2), digits),
-                    "band_low": round(float(f2), digits),
-                    "band_high": round(float(f2), digits),
-                    "type": "floor",
-                    "tier": "F2",
-                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_FLOOR"
-                })
-        elif len(zce_floors) == 1 and f2:
-            f_price = zce_floors[0]["price"]
-            if float(f2) < f_price - 0.20 * atr_val:
-                zce_floors.append({
-                    "price": round(float(f2), digits),
-                    "band_low": round(float(f2), digits),
-                    "band_high": round(float(f2), digits),
-                    "type": "floor",
-                    "tier": "F2",
-                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_FLOOR"
-                })
+        tf_upper = timeframe_str.upper()
+        tf_scale = 0.8 if tf_upper == "M30" else (0.4 if tf_upper == "M5" else 1.0)
+        proximity_thr = max(0.40 * atr_val * tf_scale, 15.0 * pip_val)
 
-        # Ceiling side fallback
-        if not zce_ceils:
-            if c1:
-                zce_ceils.append({
-                    "price": round(float(c1), digits),
-                    "band_low": round(float(c1), digits),
-                    "band_high": round(float(c1), digits),
-                    "type": "ceiling",
-                    "tier": "C1",
-                    "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
-                    "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
-                    "score": 4.5,
-                    "tfs": ["H1", "D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_CEIL"
-                })
-            if c2 and c1 and float(c2) > float(c1):
-                zce_ceils.append({
-                    "price": round(float(c2), digits),
-                    "band_low": round(float(c2), digits),
-                    "band_high": round(float(c2), digits),
-                    "type": "ceiling",
-                    "tier": "C2",
-                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_CEIL"
-                })
-        elif len(zce_ceils) == 1 and c2:
-            c_price = zce_ceils[0]["price"]
-            if float(c2) > c_price + 0.20 * atr_val:
-                zce_ceils.append({
-                    "price": round(float(c2), digits),
-                    "band_low": round(float(c2), digits),
-                    "band_high": round(float(c2), digits),
-                    "type": "ceiling",
-                    "tier": "C2",
-                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
-                    "grade": "GRADE_2_INTERMEDIATE",
-                    "score": 3.8,
-                    "tfs": ["D1"],
-                    "kinds": ["MSE_BASE"],
-                    "tag": "BASELINE_DEEP_CEIL"
-                })
+        def _elect_display_ladder(merged_items: List[Dict[str, Any]], is_ceil: bool, limit: int = 4) -> List[Dict[str, Any]]:
+            if not merged_items:
+                return []
+            # 100% Pure sequential progression outward from live price
+            return list(merged_items[:limit])
+
+        # Sort floors strictly descending (highest price first, i.e. closest to mid first)
+        raw_floors.sort(key=lambda x: -x["price"])
+        merged_floors: List[Dict[str, Any]] = []
+        for fl in raw_floors:
+            matched = False
+            for mf in merged_floors:
+                if abs(fl["price"] - mf["price"]) <= proximity_thr:
+                    matched = True
+                    mf["band_low"] = min(mf.get("band_low", mf["price"]), fl.get("band_low", fl["price"]))
+                    mf["band_high"] = max(mf.get("band_high", mf["price"]), fl.get("band_high", fl["price"]))
+                    if fl.get("score", 0.0) > mf.get("score", 0.0) or (fl.get("grade") == "GRADE_3_MACRO" and mf.get("grade") != "GRADE_3_MACRO"):
+                        mf["price"] = fl["price"]
+                        mf["label"] = fl.get("label", mf.get("label"))
+                        mf["grade"] = fl.get("grade", mf.get("grade"))
+                        mf["score"] = max(mf.get("score", 0.0), fl.get("score", 0.0))
+                    break
+            if not matched:
+                merged_floors.append(dict(fl))
+
+        merged_floors.sort(key=lambda x: -x["price"])
+
+        # Monotonically assign tiers F1, F2, F3... by distance to mid with macro reservation
+        selected_floors = _elect_display_ladder(merged_floors, is_ceil=False, limit=4)
+        zce_floors = []
+        for idx, fl in enumerate(selected_floors):
+            tier_name = f"F{idx + 1}"
+            fl_copy = dict(fl)
+            fl_copy["tier"] = tier_name
+            orig_label = fl_copy.get("label", "")
+            parts = orig_label.split(" ", 1)
+            if len(parts) == 2 and (parts[0].startswith("F") or parts[0].startswith("FLR")):
+                fl_copy["label"] = f"{tier_name} {parts[1]}"
+            elif not orig_label:
+                fl_copy["label"] = f"{tier_name} {fl_copy['price']:.{digits}f}"
+            zce_floors.append(fl_copy)
+
+        # Collect candidate ceilings from ZCE ladder and MSE baseline
+        raw_ceils = [dict(w) for w in (zce_ladder or []) if w.get("type") == "ceiling" and w.get("price", 0.0) > mid]
+        if c1 and float(c1) > mid:
+            raw_ceils.append({
+                "price": round(float(c1), digits),
+                "band_low": round(float(c1), digits),
+                "band_high": round(float(c1), digits),
+                "type": "ceiling",
+                "tier": "C1",
+                "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
+                "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
+                "score": 4.5,
+                "tfs": ["H1", "D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_CEIL"
+            })
+        if c2 and float(c2) > mid:
+            raw_ceils.append({
+                "price": round(float(c2), digits),
+                "band_low": round(float(c2), digits),
+                "band_high": round(float(c2), digits),
+                "type": "ceiling",
+                "tier": "C2",
+                "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
+                "grade": "GRADE_2_INTERMEDIATE",
+                "score": 3.8,
+                "tfs": ["D1"],
+                "kinds": ["MSE_BASE"],
+                "tag": "BASELINE_DEEP_CEIL"
+            })
+
+        # Sort ceilings strictly ascending (lowest price first, i.e. closest to mid first)
+        raw_ceils.sort(key=lambda x: x["price"])
+        merged_ceils: List[Dict[str, Any]] = []
+        for ce in raw_ceils:
+            matched = False
+            for mc in merged_ceils:
+                if abs(ce["price"] - mc["price"]) <= proximity_thr:
+                    matched = True
+                    mc["band_low"] = min(mc.get("band_low", mc["price"]), ce.get("band_low", ce["price"]))
+                    mc["band_high"] = max(mc.get("band_high", mc["price"]), ce.get("band_high", ce["price"]))
+                    if ce.get("score", 0.0) > mc.get("score", 0.0) or (ce.get("grade") == "GRADE_3_MACRO" and mc.get("grade") != "GRADE_3_MACRO"):
+                        mc["price"] = ce["price"]
+                        mc["label"] = ce.get("label", mc.get("label"))
+                        mc["grade"] = ce.get("grade", mc.get("grade"))
+                        mc["score"] = max(mc.get("score", 0.0), ce.get("score", 0.0))
+                    break
+            if not matched:
+                merged_ceils.append(dict(ce))
+
+        merged_ceils.sort(key=lambda x: x["price"])
+
+        # Monotonically assign tiers C1, C2, C3... by distance to mid with macro reservation
+        selected_ceils = _elect_display_ladder(merged_ceils, is_ceil=True, limit=4)
+        zce_ceils = []
+        for idx, ce in enumerate(selected_ceils):
+            tier_name = f"C{idx + 1}"
+            ce_copy = dict(ce)
+            ce_copy["tier"] = tier_name
+            orig_label = ce_copy.get("label", "")
+            parts = orig_label.split(" ", 1)
+            if len(parts) == 2 and (parts[0].startswith("C") or parts[0].startswith("CEIL")):
+                ce_copy["label"] = f"{tier_name} {parts[1]}"
+            elif not orig_label:
+                ce_copy["label"] = f"{tier_name} {ce_copy['price']:.{digits}f}"
+            zce_ceils.append(ce_copy)
 
         zce_walls = zce_floors + zce_ceils
         zce_walls.sort(key=lambda x: x["price"])
@@ -837,6 +1000,25 @@ class CockpitDataEngine:
                 else:
                     roll_str = "Safe (>180 pts)"
 
+                # Dynamic CSM shift telemetry for bailout audit
+                csm_status = "—"
+                try:
+                    from src.analytics.currency_strength import get_csm_delta_for_symbol
+                    from src.analytics.position_manager import _load_telemetry
+                    csm_curr = get_csm_delta_for_symbol(symbol)
+                    t_data = _load_telemetry()
+                    t_rec = t_data.get("trades", {}).get(str(t_id), {})
+                    csm_o = t_rec.get("csm_delta_open")
+                    if csm_o is not None:
+                        shift_v = round(csm_curr - csm_o, 2)
+                        csm_status = f"{shift_v:+.2f} (Now: {csm_curr:+.2f})"
+                        if abs(shift_v) >= 2.5:
+                            csm_status += " [BAILOUT RISK]"
+                    else:
+                        csm_status = f"Now: {csm_curr:+.2f}"
+                except Exception:
+                    pass
+
                 open_pos.append({
                     "ticket": t_id,
                     "type_str": type_str,
@@ -846,7 +1028,8 @@ class CockpitDataEngine:
                     "tp": p.get("tp"),
                     "profit": float(p.get("profit", 0.0)),
                     "mgt_badge": mgt_badge,
-                    "rollover_dist": roll_str
+                    "rollover_dist": roll_str,
+                    "csm_shift": csm_status
                 })
 
         pending_orders = []
@@ -900,6 +1083,19 @@ class CockpitDataEngine:
             "m3_recency": f"{m3_status_str} ({m3_age}b ago)" if m3_item else "PASS",
             "m3_runaway": "1.12x ATR (Guard <=2.5x)",
             "m3_runway": "1.35x ATR (Req >=0.8x)",
+            "m3_basing": (
+                f"BOX {macro.get('basing_box', {}).get('box_bars', 0)}b ({macro.get('basing_box', {}).get('range_atr', 0.0):.2f}x ATR)"
+                if macro.get('basing_box', {}).get('is_compressing')
+                else (
+                    f"BROKEN ({macro.get('basing_box', {}).get('box_bars', 0)}b, {macro.get('basing_box', {}).get('broken_recency', 0)}b ago)"
+                    if macro.get('basing_box', {}).get('is_broken')
+                    else (
+                        f"INACTIVE ({macro.get('basing_box', {}).get('current_range_atr', 0.0):.2f}x ATR, expanding)"
+                        if macro.get('basing_box', {}).get('current_range_atr', 0.0) > 0
+                        else "INACTIVE (expanding)"
+                    )
+                )
+            ),
             "m4_z": f"{getattr(self.scanner, '_m4_z_last', {}).get(clean_sym[:3], 1.62):+.2f}",
             "m4_breakdown": "Confirmed 120-Bar",
             "m4_pending": m4_tgt
@@ -977,11 +1173,93 @@ class CockpitDataEngine:
             "wave_regime_summary": last_candle.get("regime", "YOUNG_OSCILLATION"),
             "range_age_hours": last_candle.get("range_age_hours", 0.0),
             "sqz_on": last_candle.get("sqz_on", False),
-            "sqz_bars": last_candle.get("sqz_bars", 0)
+            "sqz_bars": last_candle.get("sqz_bars", 0),
+            "basing_box": macro.get("basing_box") or {}
         }
+
+        # ZCE Station Runway Target Calculation
+        c1_p = float(c1 or 0.0)
+        f1_p = float(f1 or 0.0)
+        c2_p = float(c2 or 0.0)
+        f2_p = float(f2 or 0.0)
+        mid_p = (bid + ask) / 2.0
+        pip_val = 0.01 if ("JPY" in symbol or "XAU" in symbol) else (1.0 if "BTC" in symbol else 0.0001)
+        atr_val_pts = float(atr_pts or 300)
+        atr_price = (atr_val_pts * (0.01 if "JPY" in symbol else 0.0001)) if atr_val_pts > 0 else 0.0030
+        struct_stage = str(macro.get("structural_stage") or "")
+        d1_trend_str = str(intel.get("d1_trend") or "").upper()
+        h4_trend_str = str(intel.get("h4_trend") or "").upper()
+
+        runway_badge = "RW: —"
+        runway_text = "—"
+        runway_station = "—"
+        runway_pips = 0.0
+        runway_atr = 0.0
+
+        if mid_p > 0 and pip_val > 0:
+            is_bull = ("BULL" in d1_trend_str or "BULL" in h4_trend_str)
+            is_bear = ("BEAR" in d1_trend_str or "BEAR" in h4_trend_str)
+
+            if is_bull and not is_bear:
+                target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid_p >= c1_p and c2_p > c1_p)) else c1_p
+                wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
+                if target_wall > 0:
+                    runway_pips = (target_wall - mid_p) / pip_val
+                    runway_atr = (target_wall - mid_p) / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = wall_lbl
+                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            elif is_bear and not is_bull:
+                target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid_p <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
+                wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
+                if target_wall > 0:
+                    runway_pips = (mid_p - target_wall) / pip_val
+                    runway_atr = (mid_p - target_wall) / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = wall_lbl
+                    runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
+                    runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            else:
+                dist_to_c1 = (c1_p - mid_p) if c1_p > 0 else 99999
+                dist_to_f1 = (mid_p - f1_p) if f1_p > 0 else 99999
+                if dist_to_c1 < dist_to_f1 and c1_p > 0:
+                    runway_pips = dist_to_c1 / pip_val
+                    runway_atr = dist_to_c1 / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = "C1"
+                    runway_badge = f"C1: {runway_pips:.0f}p"
+                    runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+                elif f1_p > 0:
+                    runway_pips = dist_to_f1 / pip_val
+                    runway_atr = dist_to_f1 / (atr_price if atr_price > 0 else 0.001)
+                    runway_station = "F1"
+                    runway_badge = f"F1: {runway_pips:.0f}p"
+                    runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
 
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
         dr_lbl = "DEEP DISCOUNT" if dr_val <= 38.0 else ("EXTREME PREMIUM" if dr_val >= 62.0 else "EQUILIBRIUM")
+
+        # M4 Systemic Flow Shock state
+        base_curr = clean_sym[:3]
+        quote_curr = clean_sym[3:6]
+        z_dict = getattr(self.scanner, "_m4_z_last", {})
+        z_base = float(z_dict.get(base_curr, 0.0) or 0.0)
+        z_quote = float(z_dict.get(quote_curr, 0.0) or 0.0)
+        m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_sym, {})
+        m4_active_standby = next((s for s in m_standbys if s.get("type") == "M4"), None)
+        m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
+        m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
+
+        # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
+        is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+        has_active_ep = False
+        if m4_st:
+            for s_side in ("SELL", "BUY"):
+                s_d = m4_st.get(s_side, {})
+                if s_d.get("ep") is not None or s_d.get("pending") is not None:
+                    has_active_ep = True
+                    break
+        is_continuation = (not is_fresh_shock) and (has_active_ep or m4_active_standby is not None) and (abs(m4_dominant_z) >= 0.75)
+        m4_flow_state = "SHOCK" if is_fresh_shock else ("CONT" if is_continuation else "NONE")
+        m4_has_shock = (m4_flow_state == "SHOCK")
 
         return {
             "symbol": symbol,
@@ -993,6 +1271,15 @@ class CockpitDataEngine:
             "atr_pts": int(atr_pts),
             "dr_pos": dr_val,
             "dr_label": dr_lbl,
+            "runway_text": runway_text,
+            "runway_badge": runway_badge,
+            "runway_station": runway_station,
+            "runway_pips": round(runway_pips, 1),
+            "runway_atr": round(runway_atr, 2),
+            "m4_shock": m4_has_shock,
+            "m4_flow_state": m4_flow_state,
+            "m4_z": round(m4_dominant_z, 2),
+            "m4_dir": m4_flow_dir,
             "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0),
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
             "perm_label": macro.get("permission_state", "GO"),
@@ -1010,6 +1297,10 @@ class CockpitDataEngine:
             "gates": gates,
             "open_positions": open_pos,
             "pending_orders": pending_orders,
+            "direction_lock": getattr(self.scanner, "_symbol_directional_state", {}).get(
+                symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper(),
+                {"dir": 0, "status": "FREE", "reason": "UNCONSTRAINED"}
+            ),
             "telemetry": telemetry
         }
 
@@ -1027,19 +1318,36 @@ class CockpitDataEngine:
         is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto
         spread_cap = config.max_spread_points_for(sym) if is_crypto else max(int(round(atr_val * 0.15 / pt)), 20)
 
+        # Dynamic Session Multiplier & Bank Holiday Detection
+        from src.analytics.economic_calendar import calendar as econ_cal
+        is_holiday, holiday_desc = econ_cal.is_bank_holiday_today("ALL")
+        sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.2) if is_asian else (
+            getattr(config, "SESSION_NY_LOT_MULT", 0.8) if (20 <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 1.0)
+        )
+
         if is_dead_zone:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB)."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB). Hanya manage posisi."}
+        elif is_holiday and (20 <= h or h == 0) and not is_crypto:
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"Bank Holiday Circuit Breaker ({holiday_desc})", "reason": f"[BANK HOLIDAY] {holiday_desc}. Sesi New York dibekukan akibat pasar antarbank tutup."}
         elif is_asian and not is_asian_allowed:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
         elif spread_pts > spread_cap:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
         else:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": "WIB Operational Hours & Volatility Floor", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap."}
+            holiday_note = f" • {holiday_desc}" if is_holiday else ""
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "PASS", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x{holiday_note})", "reason": f"Sesi aktif ({h:02d}:00 WIB) & spread {spread_pts} pts <= {spread_cap} pts cap. Lot multiplier: {sess_mult}x."}
         gates.append(g1)
 
         # Gate 2: Systemic Basket Circuit Breaker (35.0 bps)
-        # Tentukan target_dir: prioritaskan M4 episode direction jika ada
-        target_dir = 1 if macro.get("is_bull") else -1
+        # Tentukan target_dir & Directional Lock:
+        # Prioritas 1: M4 episode direction jika aktif
+        # Prioritas 2: Directional Hysteresis memory (dir_val != 0)
+        # Prioritas 3: Macro bias is_bull / is_bear
+        dir_state = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_s, {})
+        dir_val = dir_state.get("dir", 0)
+        dir_label = "BUY ONLY" if dir_val == 1 else ("SELL ONLY" if dir_val == -1 else "FREE / DUAL")
+        dir_desc = f" • Lock: {dir_label}"
+
         m4_dir_override = None
         try:
             m4_st = getattr(self.scanner, "_m4_state", {}).get(clean_s, {})
@@ -1056,8 +1364,13 @@ class CockpitDataEngine:
                         break
         except Exception:
             pass
+
         if m4_dir_override is not None:
             target_dir = m4_dir_override
+        elif dir_val != 0:
+            target_dir = dir_val
+        else:
+            target_dir = 1 if macro.get("is_bull") else -1
 
         if is_crypto:
             g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection", "reason": "Aset crypto (BTCUSD) beroperasi independen dari matriks basket shock fiat."}
@@ -1069,17 +1382,17 @@ class CockpitDataEngine:
                 g2 = {"id": 2, "title": "Systemic Currency Basket Lock", "status": "PASS", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": "Aliran basket mata uang stabil (<35 bps threshold). Tidak ada shock eksternal."}
         gates.append(g2)
 
-        # Gate 3: MSE Chamber & Forbidden Traps
+        # Gate 3: MSE Chamber & Forbidden Traps + Directional Hysteresis
         tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
         traps = getattr(strat, "forbidden_traps", []) or []
         trap_reason = traps[0] if traps else ""
 
         if tier == "HARD_BLOCK":
-            g3 = {"id": 3, "title": "MSE Chamber & Action Matrix", "status": "BLOCK", "desc": "Structural Chamber Gating & Trap Avoidance", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
+            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
         elif tier == "WATCH_ONLY":
-            g3 = {"id": 3, "title": "MSE Chamber & Action Matrix", "status": "WAIT", "desc": "Structural Chamber Gating & Trap Avoidance", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
+            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
         else:
-            g3 = {"id": 3, "title": "MSE Chamber & Action Matrix", "status": "PASS", "desc": "Structural Chamber Gating & Trap Avoidance", "reason": f"Action Tier: {tier} (Kamar terbuka untuk limit retest / expansion)."}
+            g3 = {"id": 3, "title": "MSE Chamber & Directional Lock", "status": "PASS", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"Action Tier: {tier} (Kamar terbuka untuk retest/expansion){dir_desc}."}
         gates.append(g3)
 
         # Gate 4: Boitoki CSM Flow Alignment
@@ -1090,24 +1403,24 @@ class CockpitDataEngine:
             csm_d = float(macro.get("csm_delta", 0.0) or 0.0)
             csm_filter_enabled = getattr(config, "ENABLE_CSM_FLOW_FILTER", True)
             is_csm_opposed = (target_dir == 1 and csm_d <= -1.0) or (target_dir == -1 and csm_d >= 1.0)
-            dir_label = "BUY" if target_dir == 1 else "SELL"
-            m4_tag = " [M4 Dir]" if m4_dir_override is not None else ""
+            dir_label_g4 = "BUY" if target_dir == 1 else "SELL"
+            m4_tag = " [M4 Dir]" if m4_dir_override is not None else (" [Lock Dir]" if dir_val != 0 else "")
 
             if is_csm_opposed and csm_filter_enabled:
                 # Filter aktif dan CSM berlawanan → BLOCK
                 g4 = {"id": 4, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label}{m4_tag})."}
+                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label_g4}{m4_tag})."}
             elif is_csm_opposed and not csm_filter_enabled:
                 # Filter dinonaktifkan → OBSERVE (forward test mode)
                 g4 = {"id": 4, "title": "Boitoki CSM Flow — OBSERVE MODE", "status": "OBSERVE",
                       "desc": "Relative Net Currency Delta Flow Check (Filter Dinonaktifkan)",
-                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
+                      "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label_g4}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
             else:
                 # CSM selaras atau netral
                 g4 = {"id": 4, "title": "Boitoki CSM Flow Alignment", "status": "PASS",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label}{m4_tag} momentum arah."}
+                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label_g4}{m4_tag} momentum arah."}
         gates.append(g4)
 
 
@@ -1243,10 +1556,16 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         # 5. Web UI Root
         elif self.path in ("/", "/index.html", "/dashboard"):
-            html = TEMPLATE.encode("utf-8")
+            import importlib
+            import dashboard_assets
+            importlib.reload(dashboard_assets)
+            html = dashboard_assets.TEMPLATE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(html)))
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(html)
@@ -1279,7 +1598,7 @@ def main():
     if args.serve:
         port = args.port
         cockpit_engine.start()
-        print(f" [🚀] Quant Decision Cockpit Server LIVE di: http://localhost:{port}")
+        print(f" [ONLINE] Quant Decision Cockpit Server LIVE di: http://localhost:{port}")
         print(f" [i] Tekan Ctrl+C untuk menghentikan server.")
         with socketserver.ThreadingTCPServer(("", port), CockpitHTTPHandler) as httpd:
             try:

@@ -269,6 +269,9 @@ RADAR_MIN_WICK_RATIO = _getenv_float("RADAR_MIN_WICK_RATIO", 0.30)
 ENABLE_HOURLY_RADAR_RECAP = _getenv_bool("ENABLE_HOURLY_RADAR_RECAP", True)
 
 CSM_ANTI_DUMP_THRESHOLD = _getenv_float("CSM_ANTI_DUMP_THRESHOLD", -2.0)
+ENABLE_CSM_FLOW_FILTER = _getenv_bool("ENABLE_CSM_FLOW_FILTER", True)
+CSM_FLOW_OPPOSED_THRESHOLD = _getenv_float("CSM_FLOW_OPPOSED_THRESHOLD", 1.50)
+PENDING_CSM_OPPOSED_THRESHOLD = _getenv_float("PENDING_CSM_OPPOSED_THRESHOLD", 1.50)
 
 # Pure Quant Hierarchical Top-Down Macro Strategic Engine
 ENABLE_MACRO_STRATEGIC_ENGINE = _getenv_bool("ENABLE_MACRO_STRATEGIC_ENGINE", True)
@@ -290,6 +293,8 @@ ZCE_CLUSTER_MERGE_ATR_MULT = _getenv_float("ZCE_CLUSTER_MERGE_ATR_MULT", 0.25)
 ZCE_GRADE_G2 = _getenv_float("ZCE_GRADE_G2", 3.5)
 ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
 ZCE_CHAMBER_CLEARANCE_ATR_MULT = _getenv_float("ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)  # Ambang clearance chamber (0.30x ATR H1)
+ZCE_MAX_IMM_ATR = _getenv_float("ZCE_MAX_IMM_ATR", 5.5)                                      # Cap jarak immediate walls F1/C1 (5.5x ATR H1)
+ZCE_MAX_CLUSTER_WIDTH_ATR = _getenv_float("ZCE_MAX_CLUSTER_WIDTH_ATR", 0.75)                # Lebar maksimum ekspansi klaster anti-snowball (0.75x ATR H1)
 # Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
 SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
 # Toleransi is_macro_wall M1 (market_scanner): selisih ref_top/ref_bot vs dinding C1/F1 agar
@@ -310,6 +315,15 @@ M1B_DR_SELL_MIN = _getenv_float("M1B_DR_SELL_MIN", 0.10)
 M1B_DR_BUY_MIN = _getenv_float("M1B_DR_BUY_MIN", 0.40)
 M1B_DR_BUY_MAX = _getenv_float("M1B_DR_BUY_MAX", 0.90)
 
+# ---------- 4-TIER SETUP QUALITY & RIGID RUNWAY ARCHITECTURE (8 Sep 2026) ----------
+GRADE_S_MIN_RR = _getenv_float("GRADE_S_MIN_RR", 2.50)
+GRADE_A_PLUS_MIN_RR = _getenv_float("GRADE_A_PLUS_MIN_RR", 1.80)
+GRADE_A_MIN_RR = _getenv_float("GRADE_A_MIN_RR", 1.25)
+GRADE_B_MIN_RR = _getenv_float("GRADE_B_MIN_RR", 0.75)
+GRADE_S_PURE_QUANT_MIN_Z = _getenv_float("GRADE_S_PURE_QUANT_MIN_Z", 1.80)
+GRADE_S_PURE_QUANT_MIN_CSM_DELTA = _getenv_float("GRADE_S_PURE_QUANT_MIN_CSM_DELTA", 2.00)
+BREACHED_WALL_MIN_DISPLACEMENT = _getenv_float("BREACHED_WALL_MIN_DISPLACEMENT", 0.50)
+
 # ---------- M4: SYSTEMIC FLOW CONTINUATION (Radar Mechanism 4 — 3 Sep 2026) ----------
 # Studi #1 (JPY surge, scratch/study_surge_retest.py) + #1b mirror 26 pair dua arah
 # (scratch/study_mirror_flow.py) membuktikan edge continuation saat currency z >= 1.5
@@ -320,13 +334,14 @@ M1B_DR_BUY_MAX = _getenv_float("M1B_DR_BUY_MAX", 0.90)
 # keputusan user "ikut data"), TP = M4_TP_R_MULT x R (1.1R; bukan 1.0R studi, bukan >=1.25R default).
 # Forward test AKTIF di akun live cent (ZCE_MODE=full). USDJPY di-exclude (studi #1: 48.1% < netral).
 M4_ENABLED = _getenv_bool("M4_ENABLED", True)
-M4_SETUP_TYPE = "SYSTEMIC_FLOW_CONTINUATION"
+M4_SETUP_TYPE = os.getenv("M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION")
+M4_ALLOW_DEEP_RETEST = _getenv_bool("M4_ALLOW_DEEP_RETEST", False)
 M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 1.5)      # EP_Z studi: ambang episode (z quote surge / base dump)
 M4_CONT_Z = _getenv_float("M4_CONT_Z", 0.75)           # episode bertahan selama |z| >= 0.75 salah satu sisi
 M4_FLOW_WARM_BARS = _getenv_int("M4_FLOW_WARM_BARS", 720)   # warm rolling z-score (studi WARM)
 M4_FLOW_LOOKBACK_BARS = _getenv_int("M4_FLOW_LOOKBACK_BARS", 24)  # jendela akumulasi flow 24-bar (studi idx24)
-M4_LOOKBACK_BARS = _getenv_int("M4_LOOKBACK_BARS", 120)     # jendela swing level [ep-LOOK:ep] (studi LOOK)
-M4_MIN_EPISODE_BARS = _getenv_int("M4_MIN_EPISODE_BARS", 6) # breakdown baru dievaluasi saat episode >= 6 bar
+M4_LOOKBACK_BARS = _getenv_int("M4_LOOKBACK_BARS", 24)       # jendela swing level fallback [ep-24:ep] (1 hari bursa H1)
+M4_MIN_EPISODE_BARS = _getenv_int("M4_MIN_EPISODE_BARS", 2)   # breakdown dievaluasi cepat paska lonjakan surge (>= 2 bar)
 M4_MAX_WAIT_BARS = _getenv_int("M4_MAX_WAIT_BARS", 48)     # jendela tunggu retest sejak break (48 bar H1 / 2 hari bursa)
 M4_MIN_GAP_BARS = _getenv_int("M4_MIN_GAP_BARS", 240)       # anti re-entry antar break (studi MIN_GAP)
 M4_SL_ATR_MULT = _getenv_float("M4_SL_ATR_MULT", 0.45)      # SL struktural = 0.45 x ATR H1 (user: ikut data)
@@ -458,11 +473,19 @@ LLM_MIN_RR_RATIO = _getenv_float("LLM_MIN_RR_RATIO", 1.25)
 SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)  # +20 pts (2.0 pips) anti-wick padding untuk pair silang NZD
 
 # Segmented Safety Floors (3 September 2026 / 4 Sep Unified H1)
-SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 120)       # 120 pts (12 pips) untuk Low-Beta & Standard FX
+SL_FLOOR_QUIET_FX_PTS = _getenv_int("SL_FLOOR_QUIET_FX_PTS", 80)       # 80 pts (8 pips) untuk Low-Beta & Standard FX
 SL_FLOOR_HIGH_BETA_PTS = _getenv_int("SL_FLOOR_HIGH_BETA_PTS", 180)     # 180 pts (18 pips) untuk High-Beta Crosses (GBPAUD, GBPNZD, EURNZD, GBPCHF)
 SL_FLOOR_JPY_PTS = _getenv_int("SL_FLOOR_JPY_PTS", 250)                 # 250 pts (25 pips) untuk JPY Crosses (H1)
+SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)        # +20 pts (2.0 pips) anti-wick padding NZD
 COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0) # $6.00 round turn ($3/side)
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
+
+# M2 Trend-Aligned Pullback Rules
+M2_MAX_DR_BUY = _getenv_float("M2_MAX_DR_BUY", 0.68)               # Maksimal DR 68% (Discount/Equilibrium bawah) untuk M2 BUY
+M2_MAX_DR_BUY_CATALYST = _getenv_float("M2_MAX_DR_BUY_CATALYST", 0.75) # Maksimal DR 75% untuk M2 BUY jika didukung katalisator SFR/CSM
+M2_MIN_DR_SELL = _getenv_float("M2_MIN_DR_SELL", 0.32)             # Minimal DR 32% (Premium/Equilibrium atas) untuk M2 SELL
+M2_MIN_DR_SELL_CATALYST = _getenv_float("M2_MIN_DR_SELL_CATALYST", 0.25) # Minimal DR 25% untuk M2 SELL jika didukung katalisator SFR/CSM
+M2_EMA_CORRIDOR_TOLERANCE_ATR = _getenv_float("M2_EMA_CORRIDOR_TOLERANCE_ATR", 0.35) # Max toleransi jarak anchor ke koridor EMA20/50
 
 # M3 Fresh Breakout & Displacement Rules
 M3_BREAKOUT_RECENCY_BARS = _getenv_int("M3_BREAKOUT_RECENCY_BARS", 4)   # Max 4 bar H1 sejak breakout
@@ -470,6 +493,12 @@ M3_MIN_DISPLACEMENT_BODY = _getenv_float("M3_MIN_DISPLACEMENT_BODY", 0.55) # Min
 M3_RETEST_DEBOUNCE_HOURS = _getenv_float("M3_RETEST_DEBOUNCE_HOURS", 2.0) # 2 bar H1 (120 menit) lock jika direject
 M3_M5_REJECTION_FILTER = _getenv_bool("M3_M5_REJECTION_FILTER", True) # Filter micro-rejection M5 anti-waterfall pada retest M3
 M3_M5_MIN_WICK_RATIO = _getenv_float("M3_M5_MIN_WICK_RATIO", 0.25)   # Minimal 25% rejection wick di M5
+M3_MIN_DR_SELL = _getenv_float("M3_MIN_DR_SELL", 0.20)           # Minimal DR 20% (Batas ekstrim sejati dasar jurang) untuk M3 SELL
+M3_MAX_DR_BUY = _getenv_float("M3_MAX_DR_BUY", 0.80)             # Maksimal DR 80% (Batas ekstrim sejati pucuk) untuk M3 BUY
+M3_CATALYST_DR_BUY_THRESHOLD = _getenv_float("M3_CATALYST_DR_BUY_THRESHOLD", 0.60) # Ambang DR 60% BUY yang mewajibkan konfirmasi katalisator CSM/SFR
+M3_CATALYST_DR_SELL_THRESHOLD = _getenv_float("M3_CATALYST_DR_SELL_THRESHOLD", 0.40) # Ambang DR 40% SELL yang mewajibkan konfirmasi katalisator CSM/SFR
+M3_SFP_REJECTION_WICK = _getenv_float("M3_SFP_REJECTION_WICK", 0.42) # Minimal wick ratio 42% untuk deteksi SFP absorption makro sejati
+M3_SFP_LOOKBACK_BARS = _getenv_int("M3_SFP_LOOKBACK_BARS", 4)     # 4 bar H1 lookback untuk deteksi SFP absorption
 SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS = _getenv_int("SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180) # Jeda bernapas simbol 3 menit
 SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS = _getenv_int("SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 2700) # Lockout granular 45 menit per mekanisme & arah
 
@@ -585,14 +614,21 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 #   - progressive SL +0.197 | adaptif/range +0.041 | fixed pips +0.128-0.180 (inferior)
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
 BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.45)  # BEP aktif saat profit >= 45% TP (padding komisi tetap dipertahankan)
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP
-TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR M30 lock)
-TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing
+BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.55)  # Sesi London-NY: 55% TP
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP (Tokyo)
+TRAILING_ACTIVATION_TP_PCT_LONDON_NY = _getenv_float("TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)  # Sesi London-NY: 75% TP
+TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR H1 lock)
+TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing (Tokyo)
+TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00)  # Multiplier ATR H1 Sesi London-NY
 TRAILING_BREAK_EVEN_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
 BREAK_EVEN_TRIGGER_SL_MULT = TRAILING_BREAK_EVEN_SL_MULT
 TRAILING_ACTIVATION_SL_MULT = _getenv_float("TRAILING_ACTIVATION_SL_MULT", 1.0)  # fallback tanpa TP: activation 1.0x SL
-TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 80)    # Floor absolut jarak normal trailing FX (8 pips)
-TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)  # Floor absolut terminal trailing (3 pips)
+TRAILING_DISTANCE_MIN_POINTS_FX = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX", 80)    # Floor absolut jarak normal trailing FX (8 pips Tokyo)
+TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY", 150)  # Floor jarak trailing FX London-NY (15 pips)
+TRAILING_TERMINAL_ATR_MULT_H1 = _getenv_float("TRAILING_TERMINAL_ATR_MULT_H1", 0.50)  # Multiplier Stage 2 Terminal Lock (H1 unified)
+TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO = _getenv_int("TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO", 60)  # Floor absolut terminal trailing Tokyo (6 pips)
+TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY = _getenv_int("TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY", 80)  # Floor absolut terminal trailing London-NY (8 pips)
+TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX = TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO  # Backward compatibility
 TRAILING_DISTANCE_MIN_POINTS_XAU = _getenv_int("TRAILING_DISTANCE_MIN_POINTS_XAU", 100)  # Floor absolut jarak trailing XAU (pts)
 
 
@@ -609,7 +645,8 @@ BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 100
 # --- PARTIAL CLOSE ---
 PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
-PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)  # Partial close aktif di 45% TP
+PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)  # Partial close aktif di 45% TP (Tokyo)
+PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY", 0.60)  # Sesi London-NY: 60% TP
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
 PARTIAL_CLOSE_TP1_POINTS_XAU = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_XAU", PARTIAL_CLOSE_TP1_POINTS)
@@ -625,7 +662,7 @@ BREAK_EVEN_TOLERANCE_USD = _getenv_float("BREAK_EVEN_TOLERANCE_USD", 0.04)
 MAX_OPEN_POSITIONS_RECOVERY = _getenv_int("MAX_OPEN_POSITIONS_RECOVERY", 3)
 MAX_OPEN_POSITIONS_LATE_NY = _getenv_int("MAX_OPEN_POSITIONS_LATE_NY", 2)  # 23:00 - 02:00 WIB max 2 posisi
 MAX_OPEN_POSITIONS_BTC = _getenv_int("MAX_OPEN_POSITIONS_BTC", 2)        # Weekend BTC trading max 2 posisi
-MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 3)  # Max open positions per single currency (USD, JPY, EUR, etc)
+MAX_CURRENCY_BASKET_EXPOSURE = _getenv_int("MAX_CURRENCY_BASKET_EXPOSURE", 99)  # Max open positions per single currency (USD, JPY, EUR, etc)
 
 
 def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
@@ -661,11 +698,10 @@ def get_max_open_positions(in_recovery_mode=False, now=None, symbol=None):
 # Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
 # X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
 # (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
-# --- DAILY PROFIT TARGET (14 Agustus) ---
-# Begitu net profit harian (WIB-midnight, dari get_closed_positions_today) mencapai
-# X% dari balance MT5, bot STOP membuka posisi baru sampai tengah malam WIB berikutnya
-# (reset otomatis karena window P/L harian = tengah malam WIB -> next-midnight).
-DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 6.0)
+# --- DAILY PROFIT TARGET (14 Agustus / 9 Sep 2026: 7.0% Net Equity Gain) ---
+# Begitu net equity gain harian mencapai X% dari saldo awal hari (Start Day Balance),
+# bot membekukan pembukaan order baru sampai pergantian hari subuh berikutnya.
+DAILY_PROFIT_TARGET_PERCENT = _getenv_float("DAILY_PROFIT_TARGET_PERCENT", 7.0)
 DAILY_LOSS_OPENED_TODAY_ONLY = _getenv_bool("DAILY_LOSS_OPENED_TODAY_ONLY", True)
 
 
@@ -715,17 +751,49 @@ SPREAD_ATR_FLOOR_PTS = _getenv_int("SPREAD_ATR_FLOOR_PTS", 20)        # floor mi
 SESSION_FILTER_ENABLED = _getenv_bool("SESSION_FILTER_ENABLED", True)
 WEEKEND_TRADING_ENABLED = _getenv_bool("WEEKEND_TRADING_ENABLED", False)
 
-# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session) ---
+# --- SESSION-AWARE PAIR ROUTING (Anti-European Trap in Asian Session & NY Pacific Lock) ---
 SESSION_AWARE_ROUTING_ENABLED = _getenv_bool("SESSION_AWARE_ROUTING_ENABLED", True)
 ASIA_SESSION_START_HOUR_WIB   = _getenv_int("ASIA_SESSION_START_HOUR_WIB", 7)
 ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
+NY_SESSION_START_HOUR_WIB     = _getenv_int("NY_SESSION_START_HOUR_WIB", 18)
+NY_LOCK_PACIFIC_CROSSES       = _getenv_bool("NY_LOCK_PACIFIC_CROSSES", True) # Opsi 2: Lock cross AUD/NZD non-USD di sesi NY
+
+# --- SESSION LOT MULTIPLIERS (8/9 Sep 2026) ---
+SESSION_ASIA_LOT_MULT   = _getenv_float("SESSION_ASIA_LOT_MULT", 1.2)
+SESSION_LONDON_LOT_MULT = _getenv_float("SESSION_LONDON_LOT_MULT", 1.0)
+SESSION_NY_LOT_MULT     = _getenv_float("SESSION_NY_LOT_MULT", 0.50)
 
 ALLOWED_SESSIONS_WIB = [
-    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (16, 0),  "lot_multiplier": 0.7},
-    {"name": "London",            "start": (15, 0), "end": (23, 0),  "lot_multiplier": 1.0},
-    {"name": "London-NY Overlap", "start": (19, 0), "end": (21, 0),  "lot_multiplier": 1.2},
-    {"name": "New York",          "start": (20, 0), "end": (0, 0),   "lot_multiplier": 1.0},
+    {"name": "Tokyo / Asia Pagi", "start": (ASIA_SESSION_START_HOUR_WIB, 0),  "end": (14, 0),  "lot_multiplier": SESSION_ASIA_LOT_MULT},
+    {"name": "London",            "start": (14, 0), "end": (18, 0),  "lot_multiplier": SESSION_LONDON_LOT_MULT},
+    {"name": "New York",          "start": (18, 0), "end": (0, 0),   "lot_multiplier": SESSION_NY_LOT_MULT},
 ]
+
+# --- NIGHT FREEZE CUTOFF (9 Sep 2026) ---
+ENABLE_NIGHT_FREEZE         = _getenv_bool("ENABLE_NIGHT_FREEZE", True)
+NIGHT_FREEZE_START_HOUR_WIB = _getenv_int("NIGHT_FREEZE_START_HOUR_WIB", 23)
+
+# --- NEWS VOLATILITY BLACKOUT WINDOW (9 Sep 2026) ---
+NEWS_BLACKOUT_MINUTES_BEFORE = _getenv_int("NEWS_BLACKOUT_MINUTES_BEFORE", 30)
+NEWS_BLACKOUT_MINUTES_AFTER  = _getenv_int("NEWS_BLACKOUT_MINUTES_AFTER", 30)
+
+# --- CSM DYNAMIC FLOW BAILOUT (8/9 Sep 2026) ---
+ENABLE_CSM_DYNAMIC_BAILOUT         = _getenv_bool("ENABLE_CSM_DYNAMIC_BAILOUT", True)
+CSM_BAILOUT_MIN_LOSS_R             = _getenv_float("CSM_BAILOUT_MIN_LOSS_R", -0.50)
+CSM_BAILOUT_PERSISTENCE_BARS_M15   = _getenv_int("CSM_BAILOUT_PERSISTENCE_BARS_M15", 2)
+POST_BAILOUT_COOLDOWN_SECONDS      = _getenv_int("POST_BAILOUT_COOLDOWN_SECONDS", 5400)
+CSM_BAILOUT_SHIFT_THRESH           = _getenv_float("CSM_BAILOUT_SHIFT_THRESH", 2.5)
+CSM_BAILOUT_ABS_THRESH             = _getenv_float("CSM_BAILOUT_ABS_THRESH", 2.0)
+
+# --- CURRENCY BASKET STRUCTURAL SYNCHRONIZATION (CBSS - 9 Sep 2026) ---
+ENABLE_CBSS                    = _getenv_bool("ENABLE_CBSS", True)
+CBSS_MAX_BASKET_CONCURRENCY    = _getenv_int("CBSS_MAX_BASKET_CONCURRENCY", 2)
+CBSS_MIN_RUNWAY_ATR            = _getenv_float("CBSS_MIN_RUNWAY_ATR", 1.20)
+CBSS_G3_BARRIER_THRESHOLD_ATR  = _getenv_float("CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35)
+
+# --- DIRECTIONAL HYSTERESIS (8 Sep 2026) ---
+ENABLE_DIRECTIONAL_HYSTERESIS = _getenv_bool("ENABLE_DIRECTIONAL_HYSTERESIS", True)
+DIRECTIONAL_LOCK_HOURS        = _getenv_float("DIRECTIONAL_LOCK_HOURS", 8.0)
 
 # Danger zones (Dead Zone subuh & rollover 00:00 - 07:00 WIB). Berlaku XAU & FX; BTC 24/7.
 DANGER_ZONES_WIB = [
@@ -746,6 +814,20 @@ def is_asian_session_pair(symbol: str) -> bool:
         return True
     return any(c in s for c in ("JPY", "AUD", "NZD"))
 
+def is_pacific_cross(symbol: str) -> bool:
+    """
+    Mengembalikan True jika simbol adalah cross pair AUD atau NZD selain USD majors (AUDUSD & NZDUSD).
+    Contoh cross: EURNZD, GBPAUD, GBPNZD, AUDNZD, AUDCAD, NZDCAD, AUDCHF, NZDCHF, AUDJPY, NZDJPY.
+    AUDUSD dan NZDUSD mengembalikan False (tetap diizinkan di sesi NY).
+    Crypto (BTCUSD) mengembalikan False.
+    """
+    s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+    if is_crypto(s):
+        return False
+    if s in ("AUDUSD", "NZDUSD"):
+        return False
+    return ("AUD" in s) or ("NZD" in s)
+
 def is_high_beta_pair(symbol: str) -> bool:
     """True if symbol belongs to high-beta / wild crosses category (GBPAUD, GBPNZD, EURNZD, GBPCHF)."""
     s = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
@@ -754,18 +836,18 @@ def is_high_beta_pair(symbol: str) -> bool:
 def get_sl_floor_points(symbol: str, spread_pts: int = 0, atr_points: int = 0) -> int:
     """
     Kalkulasi Segmented Safety Floor Stop Loss (3 September 2026 / 4 Sep Unified H1):
-    - JPY Crosses (H1): max(2*spread + 20, int(LLM_JPY_FLOOR_ATR_MULT * atr_points), SL_FLOOR_JPY_PTS)
+    - JPY Crosses (H1): max(2*spread + 20, int(0.50 * atr_points), SL_FLOOR_JPY_PTS)
     - High-Beta Crosses (H1): max(2*spread + 20, int(0.50 * atr_points), SL_FLOOR_HIGH_BETA_PTS)
     - Quiet & Standard FX (H1): max(2*spread + 15, int(0.50 * atr_points), SL_FLOOR_QUIET_FX_PTS)
     - Anti-wick padding NZD (+20 pts)
     """
     clean = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
     if "JPY" in clean:
-        floor = max(spread_pts * 2 + 20, int(LLM_JPY_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_JPY_PTS, SL_FLOOR_JPY_PTS)
+        floor = max(spread_pts * 2 + 20, int(0.50 * atr_points) if atr_points > 0 else SL_FLOOR_JPY_PTS, SL_FLOOR_JPY_PTS)
     elif is_high_beta_pair(clean):
-        floor = max(spread_pts * 2 + 20, int(LLM_FX_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_HIGH_BETA_PTS, SL_FLOOR_HIGH_BETA_PTS)
+        floor = max(spread_pts * 2 + 20, int(0.50 * atr_points) if atr_points > 0 else SL_FLOOR_HIGH_BETA_PTS, SL_FLOOR_HIGH_BETA_PTS)
     else:
-        floor = max(spread_pts * 2 + 15, int(LLM_FX_FLOOR_ATR_MULT * atr_points) if atr_points > 0 else SL_FLOOR_QUIET_FX_PTS, SL_FLOOR_QUIET_FX_PTS)
+        floor = max(spread_pts * 2 + 15, int(0.50 * atr_points) if atr_points > 0 else SL_FLOOR_QUIET_FX_PTS, SL_FLOOR_QUIET_FX_PTS)
     
     if "NZD" in clean:
         floor += SL_PADDING_NZD_POINTS
@@ -869,6 +951,15 @@ ENABLE_PENDING_THESIS_AUDIT = _getenv_bool("ENABLE_PENDING_THESIS_AUDIT", True)
 ENABLE_SHADOW_PROXIMITY_CANCEL = _getenv_bool("ENABLE_SHADOW_PROXIMITY_CANCEL", True)
 ENABLE_PENDING_CSM_CANCEL = _getenv_bool("ENABLE_PENDING_CSM_CANCEL", False)
 ENABLE_CSM_FLOW_FILTER = _getenv_bool("ENABLE_CSM_FLOW_FILTER", True)
+
+# --- M3 DYNAMIC BASING BOX & MEAN-REVERSION (8 Sep 2026) ---
+M3_BASING_BOX_ENABLED = _getenv_bool("M3_BASING_BOX_ENABLED", True)
+M3_BASING_MIN_BARS = _getenv_int("M3_BASING_MIN_BARS", 10)
+M3_BASING_MAX_BARS = _getenv_int("M3_BASING_MAX_BARS", 48)
+M3_BASING_MAX_RANGE_ATR = _getenv_float("M3_BASING_MAX_RANGE_ATR", 1.60)
+M3_MEAN_REVERSION_MIN_CSM_DELTA = _getenv_float("M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50)
+M3_MEAN_REVERSION_SL_ATR_MULT = _getenv_float("M3_MEAN_REVERSION_SL_ATR_MULT", 0.35)
+
 # File statistik "AI proven" - riwayat pending order + outcome (persist)
 PENDING_ORDERS_STATE_FILE = os.path.join(DATA_DIR, "pending_orders_state.json")
 
@@ -1355,3 +1446,8 @@ def trailing_activation_params_for(symbol):
             getattr(sys.modules[__name__], "TRAILING_ACTIVATION_MAX_POINTS_XAU", 600)
         )
 
+
+# --- ZCE STATION RUNWAY & DELIVERY MODEL (8 Sep 2026) ---
+ZCE_MIN_RUNWAY_RR = _getenv_float("ZCE_MIN_RUNWAY_RR", 0.75)
+ZCE_COUNTER_HTF_MIN_RUNWAY_RR = _getenv_float("ZCE_COUNTER_HTF_MIN_RUNWAY_RR", 1.00)
+FLOW_VULNERABILITY_CSM_THRESHOLD = _getenv_float("FLOW_VULNERABILITY_CSM_THRESHOLD", 1.50)

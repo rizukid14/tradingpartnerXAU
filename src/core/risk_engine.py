@@ -45,6 +45,9 @@ class RiskEngine:
         self._session_lot_multiplier = 1.0  # Adjusted per session
         self._known_closed = set()          # Position ids already accounted for
         self._atr_h1_pts = None             # ATR H1 dalam points, di-update tiap cycle
+        self._start_day_balance = 0.0
+        self._start_day_date = ""
+        self._daily_profit_locked = False
         self._load_state()
         self.sync_closed_positions()
 
@@ -74,6 +77,9 @@ class RiskEngine:
                 self._in_recovery_mode = bool(data.get("recovery_mode", False))
                 self._last_trade_time = float(data.get("last_trade_time", 0))
                 self._known_closed = set(data.get("known_closed", []))
+                self._start_day_balance = float(data.get("start_day_balance", 0.0))
+                self._start_day_date = str(data.get("start_day_date", ""))
+                self._daily_profit_locked = bool(data.get("daily_profit_locked", False))
         except Exception as e:
             print(f"[RISK WARNING] Gagal memuat state: {e}")
 
@@ -87,6 +93,9 @@ class RiskEngine:
                     "recovery_mode": self._in_recovery_mode,
                     "last_trade_time": self._last_trade_time,
                     "known_closed": list(self._known_closed),
+                    "start_day_balance": self._start_day_balance,
+                    "start_day_date": self._start_day_date,
+                    "daily_profit_locked": self._daily_profit_locked,
                 }, f)
         except Exception as e:
             print(f"[RISK WARNING] Gagal menyimpan state: {e}")
@@ -170,6 +179,16 @@ class RiskEngine:
         profit_ok, profit_msg = self._check_daily_profit_target()
         if not profit_ok:
             return False, profit_msg
+
+        # 2c. Check news volatility blackout window (±30m high-impact news)
+        news_ok, news_msg = self._check_news_blackout(symbol=sym)
+        if not news_ok:
+            return False, news_msg
+
+        # 2d. Check night freeze (23:00–07:00 WIB)
+        night_ok, night_msg = self._check_night_freeze(symbol=sym)
+        if not night_ok:
+            return False, night_msg
 
         # 3. Check max open positions
         pos_ok, pos_msg = self._check_max_positions(symbol=sym)
@@ -275,7 +294,7 @@ class RiskEngine:
     # =========================================================================
     #  LOT SIZE CALCULATION (risk-based)
     # =========================================================================
-    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None, sizing_multiplier=None):
+    def get_effective_lot_size(self, sl_points=None, split_count=1, symbol=None, action_tier=None, sizing_multiplier=None, setup_grade=None):
         """
         Risk-based lot sizing: lot = risk_usd / (sl_distance_usd per 1.0 lot),
         so each trade risks RISK_PERCENT_BTC/XAU of the account balance.
@@ -286,6 +305,7 @@ class RiskEngine:
 
         action_tier: 5-Tier Operational Action Matrix modifier ("REDUCED_CONFIDENCE" -> 0.75x, "REDUCED_SCALP" -> 0.50x).
         sizing_multiplier: Dynamic 2D Confluence Matrix multiplier (e.g. 1.25x for APEX, 0.50x for Half-Risk Scalp).
+        setup_grade: ZCE Runway Setup Grade ("GRADE_B" -> 0.75x defensive sizing).
         """
         symbol = connector.get_valid_trade_symbol(symbol or config.SYMBOL)
         risk_pct = config.risk_percent_for(symbol)
@@ -296,27 +316,30 @@ class RiskEngine:
             equity = 0.0
 
         si = mt5.symbol_info(symbol)
+        is_defensive = (setup_grade == "GRADE_B" or action_tier == "REDUCED_CONFIDENCE")
+        is_half_risk = (action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"))
+
         if not sl_points or sl_points <= 0 or equity <= 0 or si is None:
             # No SL given -> fall back to the static per-symbol lot
             lot = config.lot_size_for(symbol)
-            if sizing_multiplier:
-                lot *= float(sizing_multiplier)
-            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            if is_half_risk:
                 lot *= 0.50
-            elif action_tier == "REDUCED_CONFIDENCE":
+            elif is_defensive:
                 lot *= 0.75
+            elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+                lot *= float(sizing_multiplier)
             return self._apply_lot_multipliers(lot, symbol)
 
         # USD value of a 1-point move for 1.0 lot
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size) if si.trade_tick_size else 0.0
         if usd_per_pt_1lot <= 0:
             lot = config.lot_size_for(symbol)
-            if sizing_multiplier:
-                lot *= float(sizing_multiplier)
-            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            if is_half_risk:
                 lot *= 0.50
-            elif action_tier == "REDUCED_CONFIDENCE":
+            elif is_defensive:
                 lot *= 0.75
+            elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+                lot *= float(sizing_multiplier)
             return self._apply_lot_multipliers(lot, symbol)
 
         split_count = max(1, int(split_count))
@@ -325,12 +348,12 @@ class RiskEngine:
         sl_usd_per_lot = sl_points * usd_per_pt_1lot  # USD loss per 1.0 lot at this SL
         if sl_usd_per_lot <= 0:
             lot = config.lot_size_for(symbol)
-            if sizing_multiplier:
-                lot *= float(sizing_multiplier)
-            elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+            if is_half_risk:
                 lot *= 0.50
-            elif action_tier == "REDUCED_CONFIDENCE":
+            elif is_defensive:
                 lot *= 0.75
+            elif sizing_multiplier is not None and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+                lot *= float(sizing_multiplier)
             return self._apply_lot_multipliers(lot, symbol)
 
         lot_raw = risk_usd / sl_usd_per_lot
@@ -358,15 +381,15 @@ class RiskEngine:
         lot = self._apply_lot_multipliers(lot_raw, symbol)
 
         # Apply 5-Tier / 2D Confluence Matrix modifiers
-        if sizing_multiplier is not None and isinstance(sizing_multiplier, (int, float)) and sizing_multiplier > 0:
-            lot *= float(sizing_multiplier)
-            print(f" {UI.tag('CONFLUENCE SIZING', UI.YELLOW)} {symbol}: 2D Confluence multiplier (x{sizing_multiplier:.2f}) applied -> {lot:.4f}")
-        elif action_tier in ("REDUCED_SCALP", "TP1_ONLY_SCALP"):
+        if is_half_risk:
             lot *= 0.50
             print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_SCALP / Half-Risk multiplier (x0.50) applied -> {lot:.4f}")
-        elif action_tier == "REDUCED_CONFIDENCE":
+        elif is_defensive:
             lot *= 0.75
-            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE multiplier (x0.75) applied -> {lot:.4f}")
+            print(f" {UI.tag('TIER SIZING', UI.YELLOW)} {symbol}: REDUCED_CONFIDENCE / GRADE_B multiplier (x0.75) applied -> {lot:.4f}")
+        elif sizing_multiplier is not None and isinstance(sizing_multiplier, (int, float)) and sizing_multiplier > 0 and sizing_multiplier != 1.0:
+            lot *= float(sizing_multiplier)
+            print(f" {UI.tag('CONFLUENCE SIZING', UI.YELLOW)} {symbol}: 2D Confluence multiplier (x{sizing_multiplier:.2f}) applied -> {lot:.4f}")
 
         # Clamp to broker volume bounds and round DOWN to step (floor - jangan
         # pakai round(), itu bisa NAIKKAN lot di atas risk target).
@@ -505,10 +528,10 @@ class RiskEngine:
 
     def _check_daily_profit_target(self):
         """
-        Daily profit target (14 Agustus): begitu net profit harian (WIB-midnight,
-        dari get_closed_positions_today) mencapai DAILY_PROFIT_TARGET_PERCENT % dari
-        equity/balance MT5, bot BERHENTI membuka posisi baru sampai tengah malam WIB
-        berikutnya (reset otomatis karena window P/L harian = midnight WIB).
+        Daily profit target (14 Agustus / 9 Sep 2026: 7.0% Net Equity Gain):
+        Begitu net equity gain harian mencapai DAILY_PROFIT_TARGET_PERCENT % dari
+        saldo awal hari (Start Day Balance), bot membekukan pembukaan order baru sampai
+        pergantian hari subuh berikutnya (04:00 WIB rollover).
         Nilai 0.0 / negatif = fitur dimatikan.
         """
         try:
@@ -516,26 +539,108 @@ class RiskEngine:
             if target_pct <= 0:
                 return True, ""  # fitur dimatikan
 
-            closed = connector.get_closed_positions_today()
-            daily_pnl = sum(c["profit"] for c in closed)  # profit sudah NET (termasuk swap+komisi)
+            now = datetime.now(WIB)
+            # Hari trading berganti di 04:00 WIB (00:00 server MT5)
+            trade_date = (now - timedelta(hours=4)).strftime("%Y-%m-%d")
 
             account = mt5.account_info()
-            equity = float(account.equity) if account else (float(account.balance) if account else 0.0)
-            # Kalau equity/balance tidak terbaca (MT5 disconnected / None), jangan blokir
-            # trade karena target tidak bisa dihitung - biarkan gate lain yang kerja.
+            equity = float(account.equity) if account else 0.0
+            balance = float(account.balance) if account else 0.0
+
             if equity <= 0:
                 return True, ""
-            target_usd = equity * target_pct / 100.0
 
-            if daily_pnl >= target_usd:
-                return False, (f" [RISK] Target Profit Harian Tercapai! P/L: +${daily_pnl:.2f} "
-                               f"(Target: +{target_pct:.1f}% / +${target_usd:.2f}). "
-                               f"Trading dihentikan sampai besok!")
+            # Inisialisasi atau reset harian jika tanggal trading baru
+            if self._start_day_date != trade_date or self._start_day_balance <= 0:
+                self._start_day_date = trade_date
+                try:
+                    closed = connector.get_closed_positions_today()
+                    today_closed_pnl = sum(c.get("profit", 0.0) for c in (closed or []))
+                except Exception:
+                    today_closed_pnl = 0.0
+                real_start_bal = (balance - today_closed_pnl) if (balance > 0 and today_closed_pnl != 0.0) else (balance if balance > 0 else equity)
+                self._start_day_balance = max(1.0, real_start_bal)
+                self._daily_profit_locked = False
+                self._save_state()
+
+            # Jika sudah terkunci sebelumnya untuk hari ini
+            if self._daily_profit_locked:
+                return False, (f" [RISK] Target Profit Harian Telah Terkunci (+{target_pct:.1f}%). "
+                               f"Trading baru dibekukan sampai 04:00 WIB besok!")
+
+            # Hitung net equity gain relatif terhadap start_day_balance
+            if self._start_day_balance > 0:
+                net_gain_usd = equity - self._start_day_balance
+                net_gain_pct = (net_gain_usd / self._start_day_balance) * 100.0
+            else:
+                closed = connector.get_closed_positions_today()
+                net_gain_usd = sum(c["profit"] for c in closed)
+                net_gain_pct = (net_gain_usd / equity * 100.0) if equity > 0 else 0.0
+
+            if net_gain_pct >= target_pct:
+                self._daily_profit_locked = True
+                self._save_state()
+                return False, (f" [RISK] Target Profit Harian Tercapai! P/L: +${net_gain_usd:.2f} "
+                               f"(+{net_gain_pct:.2f}% >= +{target_pct:.1f}%). "
+                               f"Trading baru dibekukan sampai 04:00 WIB besok!")
             return True, ""
 
         except Exception as e:
             print(f"[RISK WARNING] Gagal memeriksa target profit harian: {e}")
             return True, ""
+
+    def _check_night_freeze(self, symbol=None, now_wib=None):
+        """
+        Night Freeze Gate (9 Sep 2026):
+        Membekukan pembukaan posisi baru FX pada jam 23:00–07:00 WIB karena likuiditas
+        pasar Barat sudah kering, dead zone rollover 04:00 WIB, dan spread melebar.
+        Crypto (BTCUSD) dikecualikan (beroperasi 24/7).
+        """
+        if not getattr(config, "ENABLE_NIGHT_FREEZE", True):
+            return True, ""
+
+        sym = symbol or config.SYMBOL
+        if sym and config.is_crypto(sym) and getattr(config, "ENABLE_BTC_ROTATION", False):
+            return True, ""
+
+        now = now_wib or datetime.now(WIB)
+        start_hour = int(getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23))
+        # 23:00 s/d 07:00 WIB
+        if now.hour >= start_hour or now.hour < 7:
+            return False, f" [RISK] Night Freeze ({now.strftime('%H:%M')} WIB). Pembukaan order FX baru dibekukan (23:00–07:00 WIB)."
+
+        return True, ""
+
+    def _check_news_blackout(self, symbol=None, now_wib=None):
+        """
+        News Volatility Blackout Window Gate (9 Sep 2026):
+        Membekukan order pada jendela ±30 menit rilis data High-Impact.
+        US High-Impact membekukan seluruh 26 FX pair.
+        Non-USD membekukan pair yang memuat mata uang terkait.
+        """
+        if not getattr(config, "ECONOMIC_NEWS_ENABLED", True):
+            return True, ""
+
+        sym = symbol or config.SYMBOL
+        if sym and config.is_crypto(sym):
+            return True, ""
+
+        try:
+            from src.analytics.economic_calendar import calendar
+            m_before = int(getattr(config, "NEWS_BLACKOUT_MINUTES_BEFORE", 30))
+            m_after = int(getattr(config, "NEWS_BLACKOUT_MINUTES_AFTER", 30))
+            is_blackout, reason = calendar.is_in_news_blackout(
+                symbol=sym,
+                now_wib=now_wib,
+                minutes_before=m_before,
+                minutes_after=m_after
+            )
+            if is_blackout:
+                return False, f" [RISK] {reason}"
+        except Exception:
+            pass
+
+        return True, ""
 
     def _check_max_positions(self, symbol=None):
         """Check if max open positions + pending orders reached - aggregated across ALL
@@ -609,8 +714,9 @@ class RiskEngine:
                 if clean_sym == o_sym:
                     return False, f" [RISK] Simbol {symbol} sudah memiliki pending order aktif (Ticket #{o.ticket})."
 
-            # 5. Currency Basket Concentration Limit (Max 3 open positions containing the same currency)
-            if len(clean_sym) >= 6:
+            # 5. Currency Basket Concentration Limit (Max positions containing the same currency)
+            max_curr_exposure = getattr(config, "MAX_CURRENCY_BASKET_EXPOSURE", 99)
+            if 0 < max_curr_exposure < 90 and len(clean_sym) >= 6:
                 base_curr = clean_sym[:3]
                 quote_curr = clean_sym[3:6]
                 base_count = 0
@@ -622,7 +728,6 @@ class RiskEngine:
                     if quote_curr in p_clean:
                         quote_count += 1
                 
-                max_curr_exposure = getattr(config, "MAX_CURRENCY_BASKET_EXPOSURE", 3)
                 if base_count >= max_curr_exposure:
                     return False, f" [RISK] Konsentrasi mata uang {base_curr} di MT5 sudah mencapai batas ({base_count}/{max_curr_exposure} posisi)."
                 if quote_count >= max_curr_exposure:

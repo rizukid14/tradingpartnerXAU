@@ -46,17 +46,25 @@ class TestZCEChamberClearance(unittest.TestCase):
 
     def test_c1_probe_zone_penetration_retains_ceiling(self):
         """
-        Saat harga menusuk tipis di atas C1 (misal 181.864, menusuk 1.4 pips di atas 181.850),
-        C1 HARUS TETAP DIKUNCI sebagai Ceiling, DILARANG lompat menjadi Floor!
+        1. Saat harga menguji di dalam zona plafon (misal 181.830 di antara 181.800-181.850),
+           C1 HARUS TETAP DIKUNCI sebagai Ceiling (181.850), DILARANG lompat menjadi Floor!
+        2. Saat harga menusuk tipis di atas band_high (< probe_tol), level ini DILARANG
+           lompat menjadi Floor (RBS belum sah) DAN DILARANG menjadi Plafon terbalik!
         """
-        cur_price = 181.864  # menusuk 0.014 (< 0.150 probe_tol)
-        walls = self.engine._elect_walls([self.ceil_cluster], cur_price, self.atr_h1, digits=3)
+        # A. Pengujian di dalam zona:
+        cur_price_inside = 181.830
+        walls_in = self.engine._elect_walls([self.ceil_cluster], cur_price_inside, self.atr_h1, digits=3)
+        self.assertIsNotNone(walls_in["imm_ceiling_c1"], "C1 harus tetap terpilih saat di dalam zona band!")
+        self.assertEqual(walls_in["imm_ceiling_c1"], 181.850)
+        self.assertGreater(walls_in["imm_ceiling_c1"], cur_price_inside, "C1 wajib lebih tinggi dari harga live!")
+        self.assertIsNone(walls_in["imm_floor_f1"], "F1 TIDAK BOLEH mengambil level C1 yang sedang diuji!")
 
-        self.assertIsNotNone(walls["imm_ceiling_c1"], "C1 harus tetap terpilih saat dalam probe zone!")
-        self.assertEqual(walls["imm_ceiling_c1"], 181.850)
-        self.assertEqual(walls["ceilings"][0]["tag"], "C_ASIAN_HIGH")
-        self.assertIsNone(walls["imm_floor_f1"], "F1 TIDAK BOLEH mengambil level C1 yang sedang ditusuk tipis!")
-        self.assertEqual(len(walls["floors"]), 0)
+        # B. Penusukan tipis di atas band_high (< probe_tol):
+        cur_price_pierce = 181.864  # menusuk 0.014 di atas band_high (< 0.150 probe_tol)
+        walls_pierce = self.engine._elect_walls([self.ceil_cluster], cur_price_pierce, self.atr_h1, digits=3)
+        self.assertIsNone(walls_pierce["imm_floor_f1"], "F1 TIDAK BOLEH mengambil level C1 yang belum sah tembus bersih!")
+        self.assertIsNone(walls_pierce["imm_ceiling_c1"], "C1 DILARANG terbalik di bawah harga live!")
+        self.assertEqual(len(walls_pierce["floors"]), 0)
 
     def test_c1_clean_breakout_migrates_to_floor(self):
         """
@@ -68,22 +76,31 @@ class TestZCEChamberClearance(unittest.TestCase):
 
         self.assertIsNotNone(walls["imm_floor_f1"], "C1 harus sah menjadi F1 setelah chamber clearance!")
         self.assertEqual(walls["imm_floor_f1"], 181.850)
+        self.assertLess(walls["imm_floor_f1"], cur_price, "F1 wajib lebih rendah dari harga live!")
         self.assertIsNone(walls["imm_ceiling_c1"], "C1 lama tidak lagi menjadi Ceiling setelah ditembus bersih!")
         self.assertEqual(len(walls["ceilings"]), 0)
 
     def test_f1_probe_zone_penetration_retains_floor(self):
         """
-        Saat harga menusuk tipis di bawah F1 (misal 179.986, menusuk 1.4 pips di bawah 180.000),
-        F1 HARUS TETAP DIKUNCI sebagai Floor, DILARANG lompat menjadi Ceiling!
+        1. Saat harga menguji di dalam zona lantai (misal 180.020 di antara 180.000-180.050),
+           F1 HARUS TETAP DIKUNCI sebagai Floor (180.000), DILARANG lompat menjadi Ceiling!
+        2. Saat harga menusuk tipis di bawah band_low (< probe_tol), level ini DILARANG
+           lompat menjadi Ceiling (SBR belum sah) DAN DILARANG menjadi Lantai terbalik!
         """
-        cur_price = 179.986  # menusuk 0.014 di bawah 180.000 (< 0.150 probe_tol)
-        walls = self.engine._elect_walls([self.floor_cluster], cur_price, self.atr_h1, digits=3)
+        # A. Pengujian di dalam zona:
+        cur_price_inside = 180.020
+        walls_in = self.engine._elect_walls([self.floor_cluster], cur_price_inside, self.atr_h1, digits=3)
+        self.assertIsNotNone(walls_in["imm_floor_f1"], "F1 harus tetap terpilih saat di dalam zona band!")
+        self.assertEqual(walls_in["imm_floor_f1"], 180.000)
+        self.assertLess(walls_in["imm_floor_f1"], cur_price_inside, "F1 wajib lebih rendah dari harga live!")
+        self.assertIsNone(walls_in["imm_ceiling_c1"], "C1 TIDAK BOLEH mengambil level F1 yang sedang diuji!")
 
-        self.assertIsNotNone(walls["imm_floor_f1"], "F1 harus tetap terpilih saat dalam probe zone!")
-        self.assertEqual(walls["imm_floor_f1"], 180.000)
-        self.assertEqual(walls["floors"][0]["tag"], "F_ASIAN_LOW")
-        self.assertIsNone(walls["imm_ceiling_c1"], "C1 TIDAK BOLEH mengambil level F1 yang sedang ditusuk tipis!")
-        self.assertEqual(len(walls["ceilings"]), 0)
+        # B. Penusukan tipis di bawah band_low (< probe_tol):
+        cur_price_pierce = 179.986  # menusuk 0.014 di bawah 180.000 (< 0.150 probe_tol)
+        walls_pierce = self.engine._elect_walls([self.floor_cluster], cur_price_pierce, self.atr_h1, digits=3)
+        self.assertIsNone(walls_pierce["imm_ceiling_c1"], "C1 TIDAK BOLEH mengambil level F1 yang belum sah tembus bersih!")
+        self.assertIsNone(walls_pierce["imm_floor_f1"], "F1 DILARANG terbalik di atas harga live!")
+        self.assertEqual(len(walls_pierce["ceilings"]), 0)
 
     def test_f1_clean_breakdown_migrates_to_ceiling(self):
         """

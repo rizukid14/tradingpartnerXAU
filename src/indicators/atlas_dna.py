@@ -118,21 +118,38 @@ def calculate_dual_grid_stations(symbol: str, current_price: float) -> dict:
     }
 
 
+try:
+    import config
+    GRADE_S_MIN_RR = getattr(config, "GRADE_S_MIN_RR", 2.50)
+    GRADE_A_PLUS_MIN_RR = getattr(config, "GRADE_A_PLUS_MIN_RR", 1.80)
+    GRADE_A_MIN_RR = getattr(config, "GRADE_A_MIN_RR", 1.25)
+    GRADE_B_MIN_RR = getattr(config, "GRADE_B_MIN_RR", 0.75)
+    GRADE_S_MAX_RR = getattr(config, "GRADE_S_MAX_RR", 3.50)
+except Exception:
+    GRADE_S_MIN_RR = 2.50
+    GRADE_A_PLUS_MIN_RR = 1.80
+    GRADE_A_MIN_RR = 1.25
+    GRADE_B_MIN_RR = 0.75
+    GRADE_S_MAX_RR = 3.50
+
+
 def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int, 
                              origin_level: float, atr_h1: float, pwl: float = None, pwh: float = None,
                              rbs: float = None, sbr: float = None, spread_pts: float = 0.0,
                              c1: float = None, f1: float = None,
                              c2: float = None, f2: float = None,
                              c1_grade: str = None, f1_grade: str = None,
-                             c1_is_vacuum: bool = False, f1_is_vacuum: bool = False) -> dict:
+                             c1_is_vacuum: bool = False, f1_is_vacuum: bool = False,
+                             c1_breached: bool = False, f1_breached: bool = False) -> dict:
     """
     Calculates precise intraday Stop Loss and Take Profit anchored to Physical Stations:
-    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL if >= 1.25R and significant)
-    2. Deep Target Station: Next Strong Barrier (C2 for BUY, F2 for SELL if C1/F1 too close or vacuum)
+    1. Primary Target Station: Next Structural Barrier (C1 for BUY, F1 for SELL if >= 0.75R + friction)
+    2. Deep Target Station: Next Strong Barrier (C2 for BUY, F2 for SELL only if C1/F1 legitimately breached or vacuum)
     3. Structural SBR/RBS
     4. Psychological Price (50-pip Sub-Station / 100-pip Big Round Number)
     - Front-running pad: [Spread + 0.15x ATR] deducted from target station
-    - Realistic Intraday R:R: Min 1.25:1 to Max 2.5:1
+    - Realistic Intraday R:R: Min 0.75:1 (Grade B Wall Scalp) to Max 3.5:1 (Grade S Super-Shock)
+    - Rigid Breached Wall Law: C2/F2 can ONLY be targeted if C1/F1 was legitimately breached with H1 close confirmation.
     """
     step = get_symbol_step(symbol)
     sub_step = step * 0.50 # 50-pip Sub-Station
@@ -140,38 +157,71 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
     stations = calculate_dynamic_stations(symbol, entry_price)
     
     pt = 0.001 if 'JPY' in symbol else (0.01 if 'XAU' in symbol or 'BTC' in symbol else 0.00001)
-    max_sl_dist = 2.5 * atr_h1 if atr_h1 > 0 else (160 * pt)
-    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-    # Segmented Minimum SL Buffer (3 Sep 2026):
-    # JPY: 200 pts, High-Beta: 180 pts, Quiet/Standard FX: 120 pts
     is_jpy = 'JPY' in symbol
     is_high_beta = any(k in symbol for k in ('GBPAUD', 'GBPNZD', 'EURNZD', 'GBPCHF'))
+    # Segmented Minimum SL Floor (8 Sep 2026 Dynamic Floor):
+    # JPY: 250 pts, High-Beta: 180 pts, Quiet/Standard FX: 80 pts (+20 pts NZD padding)
+    min_sl_floor = (250 * pt) if is_jpy else ((180 * pt) if is_high_beta else (80 * pt))
+    if 'NZD' in symbol:
+        min_sl_floor += (20 * pt)
     min_sl_buffer = (200 * pt) if is_jpy else ((180 * pt) if is_high_beta else (120 * pt))
     sl_buffer = max(0.55 * atr_h1, min_sl_buffer)
+    max_sl_dist = max(2.5 * atr_h1, min_sl_floor) if atr_h1 > 0 else (160 * pt)
+    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+    wall_cushion = max(15 * pt, 0.15 * atr_h1) + (spread_pts * pt)
     
     # Friction padding for Net R:R (Spread + ~5 pts Commission)
     comm_pts = 5
     friction_pad = (spread_pts + comm_pts) * pt
     
     if direction == 1: # BUY
-        # SL behind support origin level / RBS with calibrated buffer
-        sl_anchor = origin_level if origin_level and origin_level < entry_price else (
-            rbs if rbs and rbs < entry_price else (entry_price - 1.2 * atr_h1)
-        )
-        sl = sl_anchor - sl_buffer
+        # SL behind support origin level / ZCE F1 Floor / RBS
+        # Fortress SL Shielding: Park SL behind the safest (lowest) protective barrier
+        candidates = []
+        if origin_level and origin_level < entry_price:
+            candidates.append(origin_level - sl_buffer)
+        if f1 and f1 < entry_price:
+            candidates.append(f1 - wall_cushion)
+        if rbs and rbs < entry_price:
+            candidates.append(rbs - sl_buffer)
+
+        if candidates:
+            valid_cands = [c for c in candidates if (entry_price - c) <= max_sl_dist]
+            sl = min(valid_cands) if valid_cands else min(candidates)
+        else:
+            sl_anchor = entry_price - 1.2 * atr_h1
+            sl = sl_anchor - sl_buffer
         
-        # Apply Safety Ceiling
+        # Apply Safety Floor & Safety Ceiling
+        if (entry_price - sl) < min_sl_floor:
+            sl = entry_price - min_sl_floor
         if (entry_price - sl) > max_sl_dist:
             sl = entry_price - max_sl_dist
-        risk = max(abs(entry_price - sl), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_buffer)
+        risk = max(abs(entry_price - sl), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_floor, min_sl_floor)
         
         # TARGET HIERARCHY: 1. Next Structure C1 -> 2. Deep Ceiling C2 -> 3. SBR Ceiling -> 4. Psychological Sub-Station
         target_station = None
-        c1_valid = bool(c1 and c1 > entry_price + 1.25 * risk and (c1 - entry_price) <= 3.5 * risk)
+        min_wall_dist = (GRADE_B_MIN_RR * risk) + friction_pad
         c1_thick = bool(c1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO") and not c1_is_vacuum) if c1_grade else True
-        if c1_valid and c1_thick:
-            target_station = c1
-        elif c2 and c2 > entry_price + 1.25 * risk and (c2 - entry_price) <= 3.5 * risk:
+        
+        # Rigid Breached Wall Law:
+        # C2/SBR can ONLY be targeted if C1 was legitimately breached or flimsy (GRADE_1_MICRO) or vacuum
+        can_advance_to_c2 = c1_breached or not c1_thick or c1_is_vacuum
+        if c1 and c1 > entry_price:
+            if not can_advance_to_c2:
+                target_station = c1
+            else:
+                if c2 and c2 > entry_price + GRADE_A_MIN_RR * risk and (c2 - entry_price) <= 3.5 * risk:
+                    target_station = c2
+                elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
+                    target_station = sbr
+                elif pwh and pwl and pwh > pwl:
+                    weekly_50 = pwl + 0.50 * (pwh - pwl)
+                    if weekly_50 > entry_price + 1.15 * risk and (weekly_50 - entry_price) <= 3.5 * risk:
+                        target_station = weekly_50
+                else:
+                    target_station = c1
+        elif c2 and c2 > entry_price + GRADE_A_MIN_RR * risk and (c2 - entry_price) <= 3.5 * risk:
             target_station = c2
         elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
             target_station = sbr
@@ -188,30 +238,63 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             target_station = nearest_psych
             
         tp_target = target_station - front_pad
-        # Enforce realistic intraday clamp with Net R:R friction compensation
-        min_tp = entry_price + (1.25 * risk) + friction_pad
-        max_tp = entry_price + max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10)) + friction_pad
-        tp = max(min_tp, min(tp_target, max_tp))
+        is_wall_scalp = bool(target_station and c1 and abs(target_station - c1) < 1e-5 and (c1 - entry_price) < (GRADE_A_MIN_RR * risk + friction_pad))
+        min_tp = entry_price + (min_wall_dist if is_wall_scalp else (GRADE_A_MIN_RR * risk + friction_pad))
+        max_tp = entry_price + (GRADE_S_MAX_RR * risk) + friction_pad
+        if target_station and c1 and abs(target_station - c1) < 1e-5:
+            # Wall Target C1: TP must not overshoot C1
+            tp = min(max(tp_target, min_tp), c1)
+        else:
+            tp = max(min_tp, min(tp_target, max_tp))
             
     else: # SELL
-        # SL behind resistance origin level / SBR with calibrated buffer
-        sl_anchor = origin_level if origin_level and origin_level > entry_price else (
-            sbr if sbr and sbr > entry_price else (entry_price + 1.2 * atr_h1)
-        )
-        sl = sl_anchor + sl_buffer
+        # SL behind resistance origin level / ZCE C1 Ceiling / SBR
+        # Fortress SL Shielding: Park SL behind the safest (highest) protective barrier
+        candidates = []
+        if origin_level and origin_level > entry_price:
+            candidates.append(origin_level + sl_buffer)
+        if c1 and c1 > entry_price:
+            candidates.append(c1 + wall_cushion)
+        if sbr and sbr > entry_price:
+            candidates.append(sbr + sl_buffer)
+
+        if candidates:
+            valid_cands = [c for c in candidates if (c - entry_price) <= max_sl_dist]
+            sl = max(valid_cands) if valid_cands else max(candidates)
+        else:
+            sl_anchor = entry_price + 1.2 * atr_h1
+            sl = sl_anchor + sl_buffer
         
-        # Apply Safety Ceiling
+        # Apply Safety Floor & Safety Ceiling
+        if (sl - entry_price) < min_sl_floor:
+            sl = entry_price + min_sl_floor
         if (sl - entry_price) > max_sl_dist:
             sl = entry_price + max_sl_dist
-        risk = max(abs(sl - entry_price), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_buffer)
+        risk = max(abs(sl - entry_price), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_floor, min_sl_floor)
         
         # TARGET HIERARCHY: 1. Next Structure F1 -> 2. Deep Floor F2 -> 3. RBS Floor -> 4. Psychological Sub-Station
         target_station = None
-        f1_valid = bool(f1 and f1 < entry_price - 1.25 * risk and (entry_price - f1) <= 3.5 * risk)
+        min_wall_dist = (GRADE_B_MIN_RR * risk) + friction_pad
         f1_thick = bool(f1_grade in ("GRADE_2_INTERMEDIATE", "GRADE_3_MACRO") and not f1_is_vacuum) if f1_grade else True
-        if f1_valid and f1_thick:
-            target_station = f1
-        elif f2 and f2 < entry_price - 1.25 * risk and (entry_price - f2) <= 3.5 * risk:
+        
+        # Rigid Breached Wall Law:
+        # F2/RBS can ONLY be targeted if F1 was legitimately breached or flimsy (GRADE_1_MICRO) or vacuum
+        can_advance_to_f2 = f1_breached or not f1_thick or f1_is_vacuum
+        if f1 and f1 < entry_price:
+            if not can_advance_to_f2:
+                target_station = f1
+            else:
+                if f2 and f2 < entry_price - GRADE_A_MIN_RR * risk and (entry_price - f2) <= 3.5 * risk:
+                    target_station = f2
+                elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
+                    target_station = rbs
+                elif pwh and pwl and pwh > pwl:
+                    weekly_50 = pwl + 0.50 * (pwh - pwl)
+                    if weekly_50 < entry_price - 1.15 * risk and (entry_price - weekly_50) <= 3.5 * risk:
+                        target_station = weekly_50
+                else:
+                    target_station = f1
+        elif f2 and f2 < entry_price - GRADE_A_MIN_RR * risk and (entry_price - f2) <= 3.5 * risk:
             target_station = f2
         elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
             target_station = rbs
@@ -228,17 +311,31 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             target_station = nearest_psych
             
         tp_target = target_station + front_pad
-        # Enforce realistic intraday clamp with Net R:R friction compensation
-        min_tp = entry_price - (1.25 * risk) - friction_pad
-        max_tp = entry_price - max(2.50 * risk, min(1.80 * atr_h1, 40 * pt * 10)) - friction_pad
-        tp = min(min_tp, max(tp_target, max_tp))
+        is_wall_scalp = bool(target_station and f1 and abs(target_station - f1) < 1e-5 and (entry_price - f1) < (GRADE_A_MIN_RR * risk + friction_pad))
+        min_tp = entry_price - (min_wall_dist if is_wall_scalp else (GRADE_A_MIN_RR * risk + friction_pad))
+        max_tp = entry_price - (GRADE_S_MAX_RR * risk) - friction_pad
+        if target_station and f1 and abs(target_station - f1) < 1e-5:
+            # Wall Target F1: TP must not overshoot F1 downwards
+            tp = max(min(tp_target, min_tp), f1)
+        else:
+            tp = min(min_tp, max(tp_target, max_tp))
             
     rr = abs(tp - entry_price) / max(risk, 1e-5)
+    if rr >= GRADE_S_MIN_RR:
+        setup_grade = "GRADE_S"
+    elif rr >= GRADE_A_PLUS_MIN_RR:
+        setup_grade = "GRADE_A_PLUS"
+    elif rr >= GRADE_A_MIN_RR and not is_wall_scalp:
+        setup_grade = "GRADE_A"
+    else:
+        setup_grade = "GRADE_B"
     
     return {
         "sl": round(sl, digits),
         "tp": round(tp, digits),
         "risk": risk,
         "risk_reward": round(rr, 2),
-        "target_station": round(target_station, digits)
+        "target_station": round(target_station, digits),
+        "setup_grade": setup_grade,
+        "is_wall_scalp": is_wall_scalp
     }

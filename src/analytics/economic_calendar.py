@@ -525,12 +525,17 @@ class EconomicCalendar:
         now = datetime.now(WIB)
         events = self.get_events(now, symbol=symbol)
         for e in events:
-            if e.get("impact") not in ("HIGH", "CRITICAL"):
+            impact_val = str(e.get("impact", "")).upper()
+            if impact_val not in ("HIGH", "CRITICAL", "HOLIDAY"):
                 continue
             event_dt = e["dt"]
             diff_sec = (event_dt - now).total_seconds()
+            if impact_val == "HOLIDAY":
+                # Jika hari ini ada bank holiday pada mata uang terkait (berlaku sepanjang hari)
+                if event_dt.date() == now.date():
+                    return True, f"BANK HOLIDAY: {e.get('name')} [{e.get('country', '')}]"
             # 1. Upcoming within window_minutes
-            if 0 <= diff_sec <= (window_minutes * 60):
+            elif 0 <= diff_sec <= (window_minutes * 60):
                 mins = int(diff_sec / 60)
                 return True, f"{e.get('name')} in {mins}m [{e.get('country', '')}]"
             # 2. Released very recently (< 10m ago) during violent post-news spike
@@ -539,7 +544,87 @@ class EconomicCalendar:
                 return True, f"{e.get('name')} released {mins}m ago [{e.get('country', '')}]"
         return False, ""
 
+    def is_bank_holiday_today(self, currency_or_country: str = "US") -> tuple[bool, str]:
+        """True if there is an official bank holiday today for the currency or country."""
+        now = datetime.now(WIB)
+        events = self.get_events(now)
+        for e in events:
+            if str(e.get("impact", "")).upper() == "HOLIDAY":
+                if e["dt"].date() == now.date():
+                    c = str(e.get("country", "")).upper()
+                    cur = str(e.get("currency", "")).upper()
+                    tgt = currency_or_country.upper()
+                    if tgt in c or tgt in cur or tgt == "ALL":
+                        return True, f"Bank Holiday: {e.get('name')} [{c}]"
+        return False, ""
+
+    def is_in_news_blackout(
+        self,
+        symbol: str = None,
+        now_wib: datetime = None,
+        minutes_before: int = 30,
+        minutes_after: int = 30
+    ) -> tuple[bool, str]:
+        """
+        News Volatility Blackout Window Gate:
+        - If US High-Impact event (CPI, PPI, NFP, ADP, FOMC, Fed, Powell, GDP, Retail Sales, PCE):
+          Freezes ALL 26 FX pairs within [now - minutes_after, now + minutes_before].
+        - If Non-USD High-Impact event (e.g. BOE, ECB, RBA, BOC, SNB, BOJ, CPI, GDP):
+          Freezes pairs containing the relevant currency (and CNY affects AUD/NZD).
+        """
+        now = now_wib or datetime.now(WIB)
+        events = self.get_events(now, symbol=None)
+
+        us_global_keywords = (
+            "FOMC", "CPI", "PPI", "NFP", "NON-FARM", "PAYROLL", "UNEMPLOYMENT",
+            "FED", "POWELL", "WARSH", "GDP", "PCE", "RETAIL SALES", "INTEREST RATE"
+        )
+
+        sym_ccys = self._symbol_currencies(symbol) if symbol else set()
+
+        for e in events:
+            imp = str(e.get("impact", "")).upper()
+            if imp not in ("HIGH", "CRITICAL"):
+                continue
+
+            e_dt = e.get("dt")
+            if not isinstance(e_dt, datetime):
+                continue
+
+            diff_sec = (e_dt - now).total_seconds()
+
+            # Check window: between -minutes_after and +minutes_before
+            if not (-(minutes_after * 60) <= diff_sec <= (minutes_before * 60)):
+                continue
+
+            e_name = str(e.get("name", "")).strip()
+            e_country = str(e.get("country", "")).upper().strip()
+            e_currency = str(e.get("currency") or self.COUNTRY_CURRENCY.get(e_country, e_country)).upper().strip()
+
+            if diff_sec >= 0:
+                timing_str = f"in {int(diff_sec / 60)}m ({e_dt.strftime('%H:%M')} WIB)"
+            else:
+                timing_str = f"released {int(abs(diff_sec) / 60)}m ago ({e_dt.strftime('%H:%M')} WIB)"
+
+            # 1. US / Global High-Impact -> Blocks ALL FX pairs
+            is_us_global = (e_country in ("US", "USD")) or any(k in e_name.upper() for k in us_global_keywords)
+            if is_us_global:
+                return True, f"US High-Impact News Blackout: [{e_country or 'US'}] {e_name} {timing_str}"
+
+            # 2. Non-USD High-Impact -> Blocks only affected currency pairs
+            if not symbol:
+                return True, f"High-Impact News Blackout: [{e_currency}] {e_name} {timing_str}"
+
+            if e_currency in sym_ccys:
+                return True, f"High-Impact News Blackout ({e_currency}): {e_name} {timing_str}"
+
+            if e_currency == "CNY" and any(c in sym_ccys for c in ("AUD", "NZD")):
+                return True, f"China High-Impact News Blackout (affects AUD/NZD): {e_name} {timing_str}"
+
+        return False, ""
+
 
 # Singleton instance
 calendar = EconomicCalendar()
+
 

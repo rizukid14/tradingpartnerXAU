@@ -16,6 +16,7 @@ import time
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from typing import Dict, Set, Optional, Tuple, Any
 import config
 from config import mt5
 from src.core.cli_theme import UI
@@ -200,12 +201,18 @@ def _save_state(partial_set, be_set, extremes, original_sl=None, trail_active=No
 
 # Module-level state, loaded once at import (survives within a process)
 _partial_closed_tickets, _break_even_tickets, _trailing_extremes, _original_sl, _trailing_active_tickets, _peak_mfe_points, _ticket_setup_grades = _load_state()
+_csm_opposed_bars: Dict[int, set] = {}  # ticket -> set of M15 bar timestamps where flow was opposed
 
 
 def set_ticket_setup_grade(ticket: int, setup_grade: str):
     """Sets and persists the setup grade for an open ticket."""
     _ticket_setup_grades[int(ticket)] = str(setup_grade).upper()
     _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
+
+
+def get_ticket_setup_grade(ticket: int) -> str:
+    """Mengembalikan grade setup tiket (misal: 'GRADE_S', 'GRADE_A', 'GRADE_B', dst)."""
+    return _ticket_setup_grades.get(int(ticket), "")
 
 
 def get_peak_mfe_info(ticket, point=0.00001, volume=0.01, symbol=""):
@@ -230,6 +237,16 @@ def get_ticket_status_badge(ticket):
     if tags:
         return f" [{'/'.join(tags)}]"
     return ""
+
+
+def is_london_ny_active(now_wib: Optional[datetime] = None) -> bool:
+    """
+    Mendeteksi apakah saat ini sedang dalam jendela sesi London Core s/d New York (14:00 - 24:00 WIB).
+    Sesi ini memiliki volatilitas dan wick sweep yang jauh lebih lebar (+43-51%), sehingga
+    membutuhkan parameter Anti-Sweep Cushion.
+    """
+    now = now_wib or datetime.now(WIB)
+    return 14 <= now.hour < 24
 
 
 def manage_all_positions():
@@ -301,14 +318,21 @@ def manage_all_positions():
             if _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup, lanjut ke tiket berikutnya
 
+        # --- 2B. CSM DYNAMIC FLOW BAILOUT ---
+        if getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+            if _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
+                continue  # Posisi ditutup via bailout, lanjut ke tiket berikutnya
+
         # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
         # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
         # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
         # - Pre-Rollover Shield dan Time-Decay Stagnation di atas TETAP AKTIF melindungi modal.
-        is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+        is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
+        grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
+        is_grade_b = "GRADE_B" in grade or "SCALP" in grade
 
         # --- 3. PARTIAL CLOSE at TP1 ---
-        if not is_m4 and config.PARTIAL_CLOSE_ENABLED:
+        if not is_m4 and not is_grade_b and config.PARTIAL_CLOSE_ENABLED:
             _check_partial_close(pos, symbol, profit_points, symbol_info)
 
         # --- 4. BREAK-EVEN CHECK ---
@@ -360,6 +384,12 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
     if pos.volume <= symbol_info.volume_min:
         return
 
+    # Skip partial close for Grade B Wall Scalps and M4 (Single sprint target, avoid wasting quota to broker commissions)
+    grade = str(_ticket_setup_grades.get(pos.ticket, "")).upper()
+    is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
+    if "GRADE_B" in grade or is_m4:
+        return
+
     # Calculate actual TP distance if set (dynamic LLM/ATR target)
     tp_points = 0
     if pos.tp:
@@ -369,9 +399,12 @@ def _check_partial_close(pos, symbol, profit_points, symbol_info):
         else:
             tp_points = (pos.price_open - pos.tp) / point
 
-    # TP-Adaptive Partial Close (55% of actual TP target if exists, otherwise fallback)
+    # TP-Adaptive Partial Close (Tokyo: 45-50% TP, London-NY Anti-Sweep Cushion: 60% TP)
     if tp_points > 0:
-        pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.55)
+        if is_london_ny_active():
+            pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY", 0.60)
+        else:
+            pct = getattr(config, "PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)
         tp1_points = int(tp_points * pct)
         min_tp1 = 40 if config.is_fx(symbol) else 120
         tp1_points = max(min_tp1, tp1_points)
@@ -567,6 +600,124 @@ def _check_pre_rollover_shield(pos, symbol, profit_points, point, symbol_info, n
     return False
 
 
+def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
+    """
+    CSM Dynamic Flow Bailout (Reformasi 9 Sep 2026):
+    Menutup dini posisi terbuka jika arus mata uang sistemik (Boitoki CSM Net Delta)
+    berbalik tajam melawan arah trade DAN posisi sedang mengalami floating rugi.
+    
+    Dual Gate:
+    1. Finansial: Posisi sedang floating rugi signifikan (curr_r <= -0.50R).
+       Mencegah false-cut pada tarikan wick 4-5 pips normal.
+    2. Arus Sistemik M15 Persisten (>= 2 bar M15 berturut-turut):
+       - BUY: csm_delta <= -2.0 ATAU csm_m15 <= -2.0 ATAU csm_delta_shift <= -2.5
+       - SELL: csm_delta >= +2.0 ATAU csm_m15 >= +2.0 ATAU csm_delta_shift >= +2.5
+    3. Post-Bailout Lockout (90 menit):
+       Mengunci simbol di scanner agar tidak terjadi infinite re-entry loop.
+    """
+    if not getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+        return False
+    if config.is_crypto(symbol):
+        return False
+
+    init_sl_pts = _original_sl.get(pos.ticket, 0.0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0.0)
+    if init_sl_pts <= 0:
+        return False
+
+    curr_r = profit_points / init_sl_pts
+    min_loss_r = getattr(config, "CSM_BAILOUT_MIN_LOSS_R", -0.50)
+    # Hanya aktif jika sedang floating rugi di bawah threshold (misal <= -0.50R)
+    if curr_r > min_loss_r:
+        _csm_opposed_bars.pop(pos.ticket, None)
+        return False
+
+    try:
+        from src.analytics.currency_strength import get_csm_delta_for_symbol, get_csm_delta_m15_for_symbol
+        csm_delta = get_csm_delta_for_symbol(symbol)
+        csm_m15 = get_csm_delta_m15_for_symbol(symbol)
+    except Exception as e:
+        logger.debug(f"[CSM BAILOUT] Gagal fetch CSM delta untuk {symbol}: {e}")
+        return False
+
+    # Ambil snapshot CSM saat posisi pertama kali dibuka dari telemetry (jika ada)
+    telemetry = _load_telemetry()
+    rec = telemetry.get("trades", {}).get(str(pos.ticket), {})
+    csm_open = rec.get("csm_delta_open")
+    csm_shift = round(float(csm_delta) - float(csm_open), 2) if (csm_open is not None) else 0.0
+
+    shift_thresh = float(getattr(config, "CSM_BAILOUT_SHIFT_THRESH", 2.5))
+    abs_opposed_thresh = float(getattr(config, "CSM_BAILOUT_ABS_THRESH", 2.0))
+
+    is_opposed = False
+    bail_reason = ""
+
+    if pos.type == mt5.ORDER_TYPE_BUY:
+        if csm_open is not None:
+            if csm_shift <= -shift_thresh or csm_m15 <= -abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM shifted against BUY (open: {csm_open:+.2f} -> H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
+            elif csm_open >= -0.50 and csm_delta <= -abs_opposed_thresh and csm_shift <= -1.50:
+                is_opposed = True
+                bail_reason = f"CSM Flow Inversion from {csm_open:+.2f} to extreme {csm_delta:+.2f} (shift: {csm_shift:+.2f})"
+        else:
+            if csm_delta <= -abs_opposed_thresh or csm_m15 <= -abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM heavily opposed BUY (H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
+    else:  # SELL
+        if csm_open is not None:
+            if csm_shift >= shift_thresh or csm_m15 >= abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM shifted against SELL (open: {csm_open:+.2f} -> H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
+            elif csm_open <= 0.50 and csm_delta >= abs_opposed_thresh and csm_shift >= 1.50:
+                is_opposed = True
+                bail_reason = f"CSM Flow Inversion from {csm_open:+.2f} to extreme {csm_delta:+.2f} (shift: {csm_shift:+.2f})"
+        else:
+            if csm_delta >= abs_opposed_thresh or csm_m15 >= abs_opposed_thresh:
+                is_opposed = True
+                bail_reason = f"CSM heavily opposed SELL (H1: {csm_delta:+.2f}, M15: {csm_m15:+.2f})"
+
+    # Timestamp candle M15 saat ini untuk validasi persistensi >= 2 bar berturut-turut
+    cur_m15_time = 0
+    try:
+        rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 2)
+        if rates_m15 is not None and len(rates_m15) > 0:
+            cur_m15_time = int(rates_m15[-1]['time'])
+    except Exception:
+        pass
+    if cur_m15_time == 0:
+        now_ts = now.timestamp() if isinstance(now, datetime) else (float(now) if now else time.time())
+        cur_m15_time = int(now_ts // 900 * 900)
+
+    if is_opposed:
+        _csm_opposed_bars.setdefault(pos.ticket, set()).add(cur_m15_time)
+    else:
+        _csm_opposed_bars.pop(pos.ticket, None)
+        return False
+
+    req_bars = int(getattr(config, "CSM_BAILOUT_PERSISTENCE_BARS_M15", 2))
+    bars_seen = len(_csm_opposed_bars.get(pos.ticket, set()))
+
+    if bars_seen >= req_bars:
+        reason = f"CSM Flow Inversion Persistent ({bail_reason}, {bars_seen} M15 bars, float {curr_r:+.2f}R)"
+        closed_ok = _close_position_by_ticket(pos, symbol, "[CSM BAILOUT EXIT]", comment=reason)
+        if closed_ok:
+            _csm_opposed_bars.pop(pos.ticket, None)
+            cooldown_sec = int(getattr(config, "POST_BAILOUT_COOLDOWN_SECONDS", 5400))
+            try:
+                from src.analytics.market_scanner import MarketScanner
+                inst = getattr(MarketScanner, '_instance', None)
+                if inst and hasattr(inst, 'mark_symbol_cancelled'):
+                    inst.mark_symbol_cancelled(symbol, cooldown_seconds=cooldown_sec)
+                    logger.info(f"[CSM BAILOUT LOCK] {symbol} dikunci cooldown {cooldown_sec}s di scanner pasca bailout.")
+            except Exception as e:
+                logger.debug(f"[CSM BAILOUT LOCK ERROR] {symbol}: {e}")
+            return True
+    else:
+        logger.debug(f"[CSM BAILOUT PENDING] {symbol} #{pos.ticket}: Opposed ({bars_seen}/{req_bars} bars M15, float {curr_r:+.2f}R). Menunggu konfirmasi persistensi.")
+
+    return False
+
+
 # =============================================================================
 #  BREAK-EVEN (from XAU-60 trade_executor.py)
 # =============================================================================
@@ -613,20 +764,22 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     # Grade S: 65% TP (Give breathing room to swing)
     # Grade B / Defensive / Vacuum Extension (>= 2.0R): 35% TP (Fast defensive lock)
     # Grade A+/A: 50% TP (Standard)
-    is_m4 = "SYSTEM" in (getattr(pos, "comment", "") or "").upper()
+    is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
     grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
 
     # Hitung SL points awal untuk evaluasi R:R aktual
     init_sl_pts = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point if pos.sl else 0)
-    # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP >= 2.0R)
-    is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and (tp_points / init_sl_pts) >= 2.0)
+    # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP > 2.0R)
+    is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and round(tp_points / init_sl_pts, 2) > 2.0)
 
-    if is_m4:
-        bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
-    elif "GRADE_S" in grade and not is_vacuum_or_stretched:
+    if "GRADE_S" in grade:
         bep_tp_ratio = 0.65
     elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
         bep_tp_ratio = 0.35
+    elif is_m4:
+        bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
+    elif is_london_ny_active():
+        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.55)
     else:
         bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
 
@@ -774,6 +927,8 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         act_tp_pct = 0.75
     elif "GRADE_B" in grade:
         act_tp_pct = 0.50
+    elif is_london_ny_active():
+        act_tp_pct = getattr(config, "TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)
     else:
         act_tp_pct = config.TRAILING_ACTIVATION_TP_PCT
 
@@ -794,10 +949,10 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if config.is_fx(symbol):
         if "GRADE_S" in grade:
             if is_terminal:
-                atr_tf = mt5.TIMEFRAME_M30
+                atr_tf = mt5.TIMEFRAME_H1
                 atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
                 dist_mult = 0.75
-                min_dist_pts = 60
+                min_dist_pts = 80
                 stage_label = "GRADE-S-TERMINAL"
             else:
                 atr_tf = mt5.TIMEFRAME_H1
@@ -813,18 +968,25 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
             stage_label = "GRADE-B-TIGHT"
         else:
             if is_terminal:
-                # Stage 2: Terminal Tightening (ATR M30 lock)
-                atr_tf = mt5.TIMEFRAME_M30
+                # Stage 2: Terminal Tightening (ATR H1 lock - unified H1, M30 removed)
+                atr_tf = mt5.TIMEFRAME_H1
                 atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                dist_mult = 0.50
-                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_TERMINAL_FX", 30)
-                stage_label = "TERMINAL-M30"
+                dist_mult = getattr(config, "TRAILING_TERMINAL_ATR_MULT_H1", 0.50)
+                if is_london_ny_active():
+                    min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY", 80)
+                else:
+                    min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO", 60)
+                stage_label = "TERMINAL-H1"
             else:
                 # Stage 1: Swing Breathing (ATR H1 breathing)
                 atr_tf = mt5.TIMEFRAME_H1
                 atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
-                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
+                if is_london_ny_active():
+                    dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00)
+                    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY", 150)
+                else:
+                    dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
+                    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
                 stage_label = "SWING-H1"
     elif config.is_crypto(symbol):
         atr_pts = _get_dynamic_atr_points(symbol, point)
@@ -972,7 +1134,7 @@ def audit_pending_orders_thesis():
                 except Exception:
                     return default
 
-            is_m4_order = "SYSTEM" in (getattr(ord_item, "comment", "") or "").upper()
+            is_m4_order = any(k in (getattr(ord_item, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
             open_px = _safe_num(ord_item.price_open, 0.0)
             sl_px = _safe_num(getattr(ord_item, 'sl', None), 0.0)
             tp_px = _safe_num(getattr(ord_item, 'tp', None), 0.0)
@@ -986,7 +1148,7 @@ def audit_pending_orders_thesis():
             is_macro_aligned_sell = (bias_score <= -0.35)
 
             # 4. Check Thesis Invalidation for BUY Pending Orders
-            csm_opposed_thresh = getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.0)
+            csm_opposed_thresh = float(getattr(config, "PENDING_CSM_OPPOSED_THRESHOLD", 1.50))
             enable_csm_cancel = getattr(config, "ENABLE_PENDING_CSM_CANCEL", False)
             if ord_item.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP):
                 # Structural Invalidation Floor: use SL if defined, else anchor - 0.50x ATR

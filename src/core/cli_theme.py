@@ -87,6 +87,22 @@ class UI:
         return ""
 
     @classmethod
+    def badge_mechanism(cls, mech):
+        """Institutional Contrast color badge for M1..M4 radar mechanisms."""
+        m = str(mech or "").upper()
+        if "M1B" in m or "INDUCED" in m:
+            return f"{cls.MAGENTA}[M1B SWEEP]{cls.RST}"
+        elif "M1" in m or "SWEEP" in m or "SFP" in m:
+            return f"{cls.YELLOW}[M1 SWEEP]{cls.RST}"
+        elif "M2" in m or "PULLBACK" in m:
+            return f"{cls.BLUE}[M2 PULLBACK]{cls.RST}"
+        elif "M3" in m or "BREAKOUT" in m or "RETEST" in m:
+            return f"{cls.PURPLE}[M3 RETEST]{cls.RST}"
+        elif "M4" in m or "FLOW" in m or "CONTINUATION" in m:
+            return f"{cls.GREEN}[M4 FLOW]{cls.RST}"
+        return f"{cls.CYAN}[{m[:8]}]{cls.RST}"
+
+    @classmethod
     def badge_pnl(cls, pnl):
         if pnl > 0.04:
             return f"{cls.GREEN}+${pnl:.2f}{cls.RST}"
@@ -302,6 +318,11 @@ def render_candidate_alert_box(candidate):
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
     ]
 
+    cand_grade = getattr(candidate, "setup_grade", "GRADE_A")
+    grade_color = UI.GREEN if cand_grade in ("GRADE_S", "GRADE_A_PLUS") else (UI.CYAN if cand_grade == "GRADE_A" else UI.YELLOW)
+    action_tier_str = getattr(candidate, "action_tier", "FULL_ALLOW")
+    items.append((f"• Runway Grade : ", f"{UI.BOLD}{grade_color}{cand_grade}{UI.RST} (Tier: {action_tier_str} | Net R:R {candidate.risk_reward_ratio:.2f}:1)"))
+
     zce_cls = meta.get('zce_class')
     if zce_cls:
         f1_s = meta.get('zce_f1_src', 'MSE')
@@ -321,7 +342,7 @@ def render_candidate_alert_box(candidate):
             badge_c = UI.GREEN if "ALIGNED" in fund_eval.status_badge else (UI.RED if "CONFLICT" in fund_eval.status_badge else UI.YELLOW)
             items.append((f"• Apex FE Bias : ", f"{badge_c}{fund_eval.status_badge}{UI.RST} (Delta: {fund_eval.fundamental_delta:+.2f})"))
             grade_c = UI.GREEN if "GRADE_S" in fund_eval.setup_grade or "GRADE_A_PLUS" in fund_eval.setup_grade else UI.CYAN
-            items.append((f"• Setup Grade  : ", f"{UI.BOLD}{grade_c}{fund_eval.setup_grade}{UI.RST} (Carry: {fund_eval.carry_spread:+.2f}% | Sizing: {fund_eval.sizing_modifier}x)"))
+            items.append((f"• Apex Carry FE: ", f"{UI.BOLD}{grade_c}{fund_eval.setup_grade}{UI.RST} (Carry: {fund_eval.carry_spread:+.2f}% | Sizing: {fund_eval.sizing_modifier}x)"))
             if fund_eval.hard_veto_flag:
                 items.append((f"• Veto Alert   : ", f"{UI.BG_RED} {fund_eval.hard_veto_flag} {UI.RST} ({fund_eval.hard_veto_reason})"))
     except Exception:
@@ -379,10 +400,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             t1_lines = [
                 f" Mandat Makro : {b_color}{UI.BOLD}{d.daily_macro_bias}{UI.RST} (Stage: {UI.PURPLE}{d.structural_stage[:22]}{UI.RST})",
                 f" Eksekusi     : {e_color}{UI.BOLD}{d.primary_execution_directive}{UI.RST}",
-                f" • Macro D1   : RBS {UI.GREEN}${fmt.format(d.macro_rbs_d1)}{UI.RST} | SBR {UI.RED}${fmt.format(d.macro_sbr_d1)}{UI.RST}",
-                f" • Inter H4   : RBS {UI.GREEN}${fmt.format(d.inter_rbs_h4)}{UI.RST} | SBR {UI.RED}${fmt.format(d.inter_sbr_h4)}{UI.RST}",
-                f" • Micro H1   : RBS {UI.GREEN}${fmt.format(d.micro_rbs_h1)}{UI.RST} | SBR {UI.RED}${fmt.format(d.micro_sbr_h1)}{UI.RST}",
-                f" • Stations   : Sub-Floor {UI.GREEN}${fmt.format(d.sub_floor_50)}{UI.RST} | Sub-Ceil {UI.RED}${fmt.format(d.sub_ceiling_50)}{UI.RST}",
+                f" • Macro D1   : RBS {UI.CYAN}${fmt.format(d.macro_rbs_d1)}{UI.RST} | SBR {UI.YELLOW}${fmt.format(d.macro_sbr_d1)}{UI.RST}",
+                f" • Inter H4   : RBS {UI.CYAN}${fmt.format(d.inter_rbs_h4)}{UI.RST} | SBR {UI.YELLOW}${fmt.format(d.inter_sbr_h4)}{UI.RST}",
+                f" • Micro H1   : RBS {UI.CYAN}${fmt.format(d.micro_rbs_h1)}{UI.RST} | SBR {UI.YELLOW}${fmt.format(d.micro_sbr_h1)}{UI.RST}",
+                f" • Stations   : Sub-Floor {UI.CYAN}${fmt.format(d.sub_floor_50)}{UI.RST} | Sub-Ceil {UI.YELLOW}${fmt.format(d.sub_ceiling_50)}{UI.RST}",
                 f" • Reload Zone : {UI.YELLOW}${fmt.format(d.entry_limit_anchor)}{UI.RST} | SL {UI.RED}${fmt.format(d.intraday_sl_price)}{UI.RST} (SL {f'${d.intraday_sl_pips:.0f}' if is_btc else f'{d.intraday_sl_pips:.0f}p'})",
                 f" • Targets    : TP1 {UI.GREEN}${fmt.format(d.tp1_price)}{UI.RST} (50%) | TP2 {UI.GREEN}${fmt.format(d.tp2_price)}{UI.RST} (R:R {d.risk_reward_ratio:.2f}:1)",
                 f" • Pantangan  : {UI.YELLOW}{d.forbidden_traps[0] if d.forbidden_traps else 'None'}{UI.RST}"
@@ -391,10 +412,10 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             t1_lines = [
                 f" Mandat Makro : {UI.RED}{UI.BOLD}BEARISH_PULLBACK{UI.RST} (Stage: {UI.PURPLE}FRONTIER_EXHAUSTION{UI.RST})",
                 f" Eksekusi     : {UI.YELLOW}{UI.BOLD}HUNT_SELL_PULLBACK{UI.RST}",
-                f" • Macro D1   : RBS {UI.GREEN}$67,289.78{UI.RST} | SBR {UI.RED}$78,150.47{UI.RST}",
-                f" • Inter H4   : RBS {UI.GREEN}$67,289.78{UI.RST} | SBR {UI.RED}$78,150.47{UI.RST}",
-                f" • Micro H1   : RBS {UI.GREEN}$77,943.79{UI.RST} | SBR {UI.RED}$78,993.88{UI.RST}",
-                f" • Stations   : Sub-Floor {UI.GREEN}$78,150.46{UI.RST} | Sub-Ceil {UI.RED}$78,150.47{UI.RST}",
+                f" • Macro D1   : RBS {UI.CYAN}$67,289.78{UI.RST} | SBR {UI.YELLOW}$78,150.47{UI.RST}",
+                f" • Inter H4   : RBS {UI.CYAN}$67,289.78{UI.RST} | SBR {UI.YELLOW}$78,150.47{UI.RST}",
+                f" • Micro H1   : RBS {UI.CYAN}$77,943.79{UI.RST} | SBR {UI.YELLOW}$78,993.88{UI.RST}",
+                f" • Stations   : Sub-Floor {UI.CYAN}$78,150.46{UI.RST} | Sub-Ceil {UI.YELLOW}$78,150.47{UI.RST}",
                 f" • Reload Zone : {UI.YELLOW}$78,993.88{UI.RST} | SL {UI.RED}$78,995.48{UI.RST}",
                 f" • Targets    : TP1 $78,150.46 | TP2 $67,289.78 (R:R 7.31:1)",
                 f" • Pantangan  : {UI.YELLOW}Do NOT BUY above $78,494 (Ceiling Trap into ATH){UI.RST}"
@@ -492,7 +513,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
             t1_lines.append(f" {UI.DIM}───────────────────────────────────────────────────────────────────{UI.RST}")
             legend_parts = [
                 f"{UI.GREEN}▲{UI.RST}/{UI.RED}▼{UI.WHITE}Trend{UI.RST}",
-                f"{UI.GREEN}0%FL{UI.RST}~{UI.RED}100%CE{UI.RST}",
+                f"{UI.CYAN}0%FL{UI.RST}~{UI.YELLOW}100%CE{UI.RST}",
                 f"{UI.GREEN}●GO{UI.RST}",
                 f"{UI.CYAN}◆ARM{UI.RST}",
                 f"{UI.YELLOW}▲WATCH{UI.RST}",
@@ -551,11 +572,11 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
 
             t3_lines.append(f" CSM Macro (H1)   : {UI.CYAN}{h1_str}{UI.RST}")
             t3_lines.append(f" CSM Session (M15): {UI.BOLD}{UI.YELLOW}{m15_str}{UI.RST}")
-            t3_lines.append(f" Macro Compass    : {UI.GREEN}26 FX Majors & Crosses (H1/M30 Native){UI.RST}")
+            t3_lines.append(f" Macro Compass    : {UI.GREEN}26 FX Majors & Crosses (Unified H1 Native){UI.RST}")
             t3_lines.append(f" News Ticker      : {UI.YELLOW if 'in ' in news_str else UI.GREEN}{news_str}{UI.RST}")
         except Exception:
             t3_lines = [
-                f" Sesi     : {UI.WHITE}Dynamic Session-Adaptive (Tokyo H1 / LDN-NY M30){UI.RST}",
+                f" Sesi     : {UI.WHITE}Global Cross-Session Radar (Unified H1 Structural){UI.RST}",
                 f" London   : {UI.YELLOW}14:00 - 18:00 WIB{UI.RST} (Asian Liquidity Sweep Active)",
                 f" Structure: {UI.CYAN}100-bar H1 (Disc <=38% | Prem >=62%){UI.RST}",
                 f" News     : {UI.GREEN}ACTIVE (TradingView News Window Shield){UI.RST}"
@@ -602,9 +623,23 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     ]
     if open_positions:
         pos_strs = []
+        try:
+            from src.analytics import position_manager
+        except Exception:
+            position_manager = None
         for p in open_positions[:3]:
             s_clean = p.get("symbol", "").replace("-ECNc", "").replace(".c", "")
-            pos_strs.append(f"{s_clean}: {UI.badge_pnl(p.get('profit', 0.0))}")
+            raw_g = position_manager.get_ticket_setup_grade(p.get("ticket")) if position_manager else ""
+            g_tag = ""
+            if "GRADE_S" in raw_g:
+                g_tag = f"{UI.BOLD}{UI.GREEN}[S]{UI.RST}"
+            elif "GRADE_A_PLUS" in raw_g or "GRADE_A+" in raw_g:
+                g_tag = f"{UI.GREEN}[A+]{UI.RST}"
+            elif "GRADE_A" in raw_g:
+                g_tag = f"{UI.CYAN}[A]{UI.RST}"
+            elif "GRADE_B" in raw_g:
+                g_tag = f"{UI.YELLOW}[B]{UI.RST}"
+            pos_strs.append(f"{s_clean}{g_tag}: {UI.badge_pnl(p.get('profit', 0.0))}")
         t2_lines.append(f" Positions  : {' | '.join(pos_strs)}")
     elif orders:
         ord_strs = []
@@ -643,7 +678,7 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     t2_lines.append(f" MSE Armed  : {UI.GREEN}{in_zone_str}{UI.RST}")
     t2_lines.append(f" Vol Regime : {vol_str}")
     t2_lines.append(f" Fast Radar : {UI.CYAN}{len(all_symbols)} Pairs Swept Every 60s (0 Tokens / Background){UI.RST}")
-    t2_lines.append(f" Proteksi   : {UI.DIM}BEP 45% + Trailing 65-90% + 4h Time Decay Stagnation{UI.RST}")
+    t2_lines.append(f" Proteksi   : {UI.DIM}BEP 35-65% (Grade-Aware) + 2-Stage Trailing (65-90% TP){UI.RST}")
         
     # ── TILE 4: 2D CONFLUENCE MATRIX & THESIS SENTINEL (Bottom Right) ──
     now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
@@ -660,13 +695,21 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
     pend_cnt = len(orders or [])
     sentinel_str = f"{UI.GREEN}ACTIVE ({pend_cnt} Pending Audited){UI.RST}" if pend_cnt > 0 else f"{UI.CYAN}ACTIVE (M15 C1/F1 Guard){UI.RST}"
 
+    llm_enabled = getattr(config, "ENABLE_LLM_JURY", True)
+    if not llm_enabled:
+        engine_line = f" Engine       : {UI.BOLD}{UI.CYAN}Pure Quant Direct Execution{UI.RST} (0 Token API)"
+        consensus_line = f" Dispatch     : {UI.GREEN}Direct Institutional MT5 Dispatch{UI.RST} (Demo/Live Safety)"
+    else:
+        engine_line = f" 3-AI Jury    : {UI.WHITE}OpenAI o4-mini + Gemini 3.1 + DeepSeek V4{UI.RST}"
+        consensus_line = f" Consensus    : {UI.GREEN}3/3 Unanimous Only{UI.RST} (Zero-Tolerance Split)"
+
     t4_lines = [
-        f" 3-AI Jury    : {UI.WHITE}OpenAI o4-mini + Gemini 3.1 + DeepSeek V4{UI.RST}",
-        f" Consensus    : {UI.GREEN}3/3 Unanimous Only{UI.RST} (Zero-Tolerance Split)",
+        engine_line,
+        consensus_line,
         f" 2D Sizing    : {UI.GREEN}S (1.25x){UI.RST} | {UI.CYAN}A (1.00x){UI.RST} | {UI.YELLOW}B (0.50x TP1 Scalp){UI.RST}",
         f" Thesis Guard : {sentinel_str} | {UI.YELLOW}Hard Veto Armed{UI.RST}",
         f" Time Sync    : {UI.WHITE}{srv_str}{UI.RST} -> {UI.BOLD}{UI.CYAN}{wib_str}{UI.RST} | Shield: {shield_str}",
-        f" SL Anchor   : {UI.CYAN}ZCE (Max 2.5xATR){UI.RST} | Floor 0.50x H1 / 1.0x M30 | {UI.YELLOW}Wide→SKIP{UI.RST}"
+        f" SL Anchor   : {UI.CYAN}ZCE Dynamic Runway (Max 3.5xATR){UI.RST} | Segmented Floors | {UI.YELLOW}R:R >= 0.75+Friksi{UI.RST}"
     ]
     
     # ── ASSEMBLE 2x2 BENTO BOX ──
@@ -834,16 +877,16 @@ def render_macro_directive_card(directive, width=95):
     # ── Section 2: Structural Zones SBR & RBS (W1 / D1 / H4 / H1) ──
     lines.append(f" {c_bold}{c_cyan}[+] HIRARKI ZONA STRUKTURAL SBR & RBS (W1 / D1 / H4 / H1){c_rst}")
     if rbs_w1_s != "N/A" or sbr_w1_s != "N/A":
-        lines.append(f"  • {c_white}Macro W1 (100 bars / 1.9y){c_rst}    : RBS {c_green}{rbs_w1_s}{c_rst} │ SBR {c_red}{sbr_w1_s}{c_rst}")
-    lines.append(f"  • {c_white}Macro D1 (350 bars / 1.4y){c_rst}    : RBS {c_green}{rbs_d1_s}{c_rst} │ SBR {c_red}{sbr_d1_s}{c_rst}")
-    lines.append(f"  • {c_white}Inter H4 (400 bars / 66 days){c_rst} : RBS {c_green}{rbs_h4_s}{c_rst} │ SBR {c_red}{sbr_h4_s}{c_rst}")
-    lines.append(f"  • {c_white}Micro H1 (250 bars / 10 days){c_rst} : RBS {c_green}{rbs_h1_s}{c_rst} │ SBR {c_red}{sbr_h1_s}{c_rst}")
+        lines.append(f"  • {c_white}Macro W1 (100 bars / 1.9y){c_rst}    : RBS {c_cyan}{rbs_w1_s}{c_rst} │ SBR {c_yellow}{sbr_w1_s}{c_rst}")
+    lines.append(f"  • {c_white}Macro D1 (350 bars / 1.4y){c_rst}    : RBS {c_cyan}{rbs_d1_s}{c_rst} │ SBR {c_yellow}{sbr_d1_s}{c_rst}")
+    lines.append(f"  • {c_white}Inter H4 (400 bars / 66 days){c_rst} : RBS {c_cyan}{rbs_h4_s}{c_rst} │ SBR {c_yellow}{sbr_h4_s}{c_rst}")
+    lines.append(f"  • {c_white}Micro H1 (250 bars / 10 days){c_rst} : RBS {c_cyan}{rbs_h1_s}{c_rst} │ SBR {c_yellow}{sbr_h1_s}{c_rst}")
     lines.append("---")
     
     # ── Section 3: Dual Grid Stations ──
     lines.append(f" {c_bold}{c_cyan}[+] DUAL-GRID PSYCHOLOGICAL STATIONS & CORRIDOR (50/100 Pips){c_rst}")
-    lines.append(f"  • {c_white}Sub-Ceiling (Upper Wall){c_rst}      : {c_red}{sub_c_s}{c_rst} (Major Resistance Corridor)")
-    lines.append(f"  • {c_white}Sub-Floor (Lower Base){c_rst}        : {c_green}{sub_f_s}{c_rst} (Major Support Corridor)")
+    lines.append(f"  • {c_white}Sub-Ceiling (Upper Wall){c_rst}      : {c_yellow}{sub_c_s}{c_rst} (Major Resistance Corridor)")
+    lines.append(f"  • {c_white}Sub-Floor (Lower Base){c_rst}        : {c_cyan}{sub_f_s}{c_rst} (Major Support Corridor)")
     station_label = "Target Macro Station Ceiling" if ("BUY" in directive.primary_execution_directive or "BULLISH" in directive.daily_macro_bias) else "Target Macro Station Floor"
     lines.append(f"  • {c_white}{station_label}{c_rst}   : {c_green}{fmt.format(directive.target_station_price)}{c_rst} (Equilibrium Target)")
     lines.append("---")
@@ -866,7 +909,7 @@ def render_macro_directive_card(directive, width=95):
     state_color = c_green if "FLOOR" in m_state else (c_red if "CEILING" in m_state or "BREAKDOWN" in m_state else (c_yellow if "BREAKOUT" in m_state else c_purple))
     lines.append(f" {c_bold}{c_cyan}[+] BARRIER CHAMBER & STATE MACHINE PATHWAY{c_rst}")
     lines.append(f"  • {c_white}Active Market State{c_rst}        : {state_color}{c_bold}[{m_state}]{c_rst} (Chamber Range: {c_yellow}{ch_pos:.0%}{c_rst})")
-    lines.append(f"  • {c_white}Dealing Chamber Bounds{c_rst}     : F1 {c_green}{fmt.format(f1_val)}{c_rst} ({f1_tag} {f1_sc:.1f}p) <---> C1 {c_red}{fmt.format(c1_val)}{c_rst} ({c1_tag} {c1_sc:.1f}p)")
+    lines.append(f"  • {c_white}Dealing Chamber Bounds{c_rst}     : F1 {c_cyan}{fmt.format(f1_val)}{c_rst} ({f1_tag} {f1_sc:.1f}p) <---> C1 {c_yellow}{fmt.format(c1_val)}{c_rst} ({c1_tag} {c1_sc:.1f}p)")
     lines.append(f"  • {c_white}Deep Target Boundaries{c_rst}     : F2 {c_gray}{fmt.format(f2_val)}{c_rst} │ C2 {c_gray}{fmt.format(c2_val)}{c_rst}")
     lines.append(f"  • {c_white}Interaction Sequence{c_rst}       : {c_cyan}{seq_str}{c_rst}")
     lines.append("---")
@@ -970,8 +1013,8 @@ def render_macro_summary_table(directives, width=105):
             f"| {c_white}{sym_c:<10}{c_rst} | "
             f"{b_color}{bias_short:<18}{c_rst} | "
             f"{e_color}{exec_short:<22}{c_rst} | "
-            f"{c_green}{sf_str:<10}{c_rst} | "
-            f"{c_red}{sc_str:<10}{c_rst} | "
+            f"{c_cyan}{sf_str:<10}{c_rst} | "
+            f"{c_yellow}{sc_str:<10}{c_rst} | "
             f"{c_yellow}{d.intraday_sl_pips:<6.1f}{c_rst} | "
             f"{c_green}{d.risk_reward_ratio:<5.2f}{c_rst} |"
         )

@@ -1509,9 +1509,9 @@ def build_high_density_dossier_prompt(candidate, recent_d1_str=None, recent_h4_s
         fund_block = ""
 
     m4_ctx = ""
-    if str(getattr(candidate, "setup_type", "") or "") == config.M4_SETUP_TYPE:
+    if str(getattr(candidate, "setup_type", "") or "") in (config.M4_SETUP_TYPE, "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"):
         m4_ctx = (
-            "\n## 0. M4 SYSTEMIC FLOW CONTINUATION — QUANT-ONLY MECHANISM (SL/TP ANCHOR BEKU)\n"
+            "\n## 0. M4 DBD / RBR BREAKOUT CONTINUATION — QUANT-ONLY MECHANISM (SL/TP ANCHOR BEKU)\n"
             "- Kategori: mekanisme quant murni hasil studi statistik (scratch/study_surge_retest.py + "
             "study_mirror_flow.py), BUKAN thesis discretionary. Entry WAJIB pending limit di level retest "
             "hasil breakdown struktural 120-bar (entry_price = anchor scanner, jangan diganti market di luar anchor).\n"
@@ -1613,7 +1613,7 @@ Your mission is to evaluate candidate setups proposed by the Python Quantitative
    - Mean-Reversion / Reload Setups (M1 Universal Sweep & M2 Trend-Aligned Pullback):
      * BUY permitted ONLY during mature reload in Discount (<= 50% Dealing Range) with DEMAND_REACTION_GO or DISCOUNT_RELOAD_ARMED. Never catch falling knives (WATERFALL_LOCK).
      * SELL permitted ONLY during mature reload in Premium (>= 50% Dealing Range) with SUPPLY_REACTION_GO or PREMIUM_RELOAD_ARMED. Never front-run rocket spikes (VERTICAL_SPIKE_LOCK).
-   - Breakout Retest & Continuation Setups (M3 Breakout Retest & M4 Systemic Flow):
+   - Breakout Retest & Continuation Setups (M3 Breakout Retest & M4 DBD / RBR Breakout Continuation):
      * The 50% Dealing Range rule does NOT apply as a rejection barrier (breakout above resistance naturally occurs in Premium, and breakdown below support naturally occurs in Discount).
      * Validate against the Flipped Structural Barrier (RBS/SBR retest quality) and runway to the next station/barrier.
 5. Limit Order Preference over Hard Reject:
@@ -1983,7 +1983,7 @@ RULE: HIGH-impact event within 30 minutes → output HOLD/REJECT. Wicks and spre
 1. **Displacement Test**: Count consecutive M5 bars closing in trade direction. ≥3 = displacement (market order viable). Alternating bull/bear = chop → prefer limit at OB/retest.
 2. **Anti-FOMO & Retest Context Gate**:
    - Market Orders: Dealing Range >=85% (BUY) or <=15% (SELL) -> FORBIDDEN market order.
-   - Limit Retest Orders (BREAKOUT_RETEST / SYSTEMIC_FLOW / PULLBACK): The order is a pending limit at a broken structural flip level (SBR/RBS). If price is retesting broken support (SBR) at the Local Ceiling C1 to target lower Floor F1, this is a valid trend-continuation retest corridor -- do NOT reject solely based on the 50-bar macro range when the retest level itself is at the local ceiling. Focus your audit on the micro tape: Does the retest level show confirmed rejection wicks and displacement in trade direction, or does it show chop and buyer/seller absorption?
+   - Limit Retest Orders (BREAKOUT_RETEST / DBD_RBR_BREAKOUT / PULLBACK): The order is a pending limit at a broken structural flip level (SBR/RBS). If price is retesting broken support (SBR) at the Local Ceiling C1 to target lower Floor F1, this is a valid trend-continuation retest corridor -- do NOT reject solely based on the 50-bar macro range when the retest level itself is at the local ceiling. Focus your audit on the micro tape: Does the retest level show confirmed rejection wicks and displacement in trade direction, or does it show chop and buyer/seller absorption?
 3. **SL Anchoring**:
    - BUY: SL below the last unmitigated Bullish OB lower boundary + 0.3x ATR anti-wick buffer
    - SELL: SL above the last unmitigated Bearish OB upper boundary + 0.3x ATR anti-wick buffer

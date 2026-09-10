@@ -123,7 +123,7 @@ class TestM4FlowContinuation(unittest.TestCase):
             self.assertIn("anchor limit", str(res.get("details", "")))
 
     def test_m4_pending_ready_band(self):
-        """_m4_pending_ready returns pending dict when mid price is within approach band, None otherwise."""
+        """_m4_pending_ready returns pending dict when deep retest is explicitly enabled and mid price is within approach band."""
         sym = "AUDCAD"
         level = 0.90000
         atr = 0.00500
@@ -141,20 +141,80 @@ class TestM4FlowContinuation(unittest.TestCase):
             "BUY": {"pending": None}
         }
 
-        # Band for SELL: level - 0.35*atr <= mid <= level + 0.10*atr
-        # [0.89825 <= mid <= 0.90050]
-        # Mid inside: 0.89950 -> should return pending
-        res_inside = self.scanner._m4_pending_ready(sym, "SELL", 0.89950, atr)
-        self.assertIsNotNone(res_inside)
-        self.assertEqual(res_inside["level"], level)
+        # With M4_ALLOW_DEEP_RETEST=True:
+        with patch.object(config, 'M4_ALLOW_DEEP_RETEST', True):
+            # Band for SELL: level - 0.35*atr <= mid <= level + 0.10*atr
+            # [0.89825 <= mid <= 0.90050]
+            # Mid inside: 0.89950 -> should return pending
+            res_inside = self.scanner._m4_pending_ready(sym, "SELL", 0.89950, atr)
+            self.assertIsNotNone(res_inside)
+            self.assertEqual(res_inside["level"], level)
 
-        # Mid outside (too low, e.g. 0.89500) -> None
-        res_outside = self.scanner._m4_pending_ready(sym, "SELL", 0.89500, atr)
-        self.assertIsNone(res_outside)
+            # Mid outside (too low, e.g. 0.89500) -> None
+            res_outside = self.scanner._m4_pending_ready(sym, "SELL", 0.89500, atr)
+            self.assertIsNone(res_outside)
 
-        # Mid reclaimed too high (e.g. 0.90200) -> None
-        res_reclaimed = self.scanner._m4_pending_ready(sym, "SELL", 0.90200, atr)
-        self.assertIsNone(res_reclaimed)
+            # Mid reclaimed too high (e.g. 0.90200) -> None
+            res_reclaimed = self.scanner._m4_pending_ready(sym, "SELL", 0.90200, atr)
+            self.assertIsNone(res_reclaimed)
+
+    def test_m4_deep_retest_blocked_by_default(self):
+        """When M4_ALLOW_DEEP_RETEST=False, non-basing deep retest is rejected."""
+        sym = "AUDCAD"
+        level = 0.90000
+        atr = 0.00500
+        self.scanner._m4_universe = [sym]
+        self.scanner._m4_state[sym] = {
+            "SELL": {
+                "pending": {
+                    "level": level,
+                    "sl": level + 0.45 * atr,
+                    "tp": level - 1.1 * 0.45 * atr,
+                    "atr": atr,
+                    "time": 1000
+                }
+            },
+            "BUY": {"pending": None}
+        }
+        with patch.object(config, 'M4_ALLOW_DEEP_RETEST', False):
+            res = self.scanner._m4_pending_ready(sym, "SELL", 0.89950, atr)
+            self.assertIsNone(res)
+
+    def test_m4_dbd_high_tight_basing_ready(self):
+        """M4 DBD High-Tight Basing triggers when M15/M30 bars compress within 0.35x ATR below broken support."""
+        sym = "AUDCAD"
+        level = 0.90000
+        atr = 0.00500
+        self.scanner._m4_universe = [sym]
+        self.scanner._m4_state[sym] = {
+            "SELL": {
+                "pending": {
+                    "level": level,
+                    "sl": level + 0.45 * atr,
+                    "tp": level - 1.1 * 0.45 * atr,
+                    "atr": atr,
+                    "time": 1000
+                }
+            },
+            "BUY": {"pending": None}
+        }
+
+        # Mock 4 M15 bars compressing between 0.89700 and 0.89800 (range = 0.00100 <= 0.35 * 0.005 = 0.00175)
+        # c_hi = 0.89800 <= level + 0.10*atr (0.90050)
+        mock_bars = [
+            {"high": 0.89780, "low": 0.89710, "close": 0.89750},
+            {"high": 0.89790, "low": 0.89720, "close": 0.89760},
+            {"high": 0.89800, "low": 0.89700, "close": 0.89740},
+            {"high": 0.89795, "low": 0.89715, "close": 0.89780},
+        ]
+        mock_connector = MagicMock()
+        mock_connector.get_closed_bars.return_value = mock_bars
+
+        # Mid within 0.20 * atr (0.00100) from c_hi 0.89800: e.g. 0.89770
+        res = self.scanner._m4_pending_ready(sym, "SELL", 0.89770, atr, mt5_connector=mock_connector)
+        self.assertIsNotNone(res)
+        self.assertTrue(res.get("is_basing"))
+        self.assertEqual(res.get("level"), 0.89800)
 
     def test_m4_pending_expiry_120_minutes(self):
         """M4 pending orders must have 120 minutes (2 hours) expiry."""
@@ -383,7 +443,8 @@ class TestM4FlowContinuation(unittest.TestCase):
             atr_h1=atr,
             f1=195.950, # Distance 0.150 < 1.25R (~0.350)
             f2=195.200, # Deep floor
-            f1_grade="GRADE_3_MACRO"
+            f1_grade="GRADE_3_MACRO",
+            f1_breached=True
         )
         # Target must skip F1 and anchor toward F2
         self.assertLess(res["tp"], 195.950)

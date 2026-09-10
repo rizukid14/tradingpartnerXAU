@@ -130,13 +130,15 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     # Catatan 3 Sep: M4 kini TIDAK LAGI bypass safety floor total agar tidak membuka
     # SL mikro (misal 29 pts pada EURCHF) yang memicu lot raksasa > 1.0 lot.
     # Nilai M4 di-clamp ke Segmented Safety Floor dan Net R:R (menutup komisi + spread).
-    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
+    if candidate is not None and getattr(candidate, "setup_type", "") in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"):
         _md = getattr(candidate, "metadata", None) or {}
         _m4_sl = int(_md.get("m4_sl_pts") or 0)
         _m4_tp = int(_md.get("m4_tp_pts") or 0)
         if _m4_sl > 0 and _m4_tp > 0:
             sym_m4 = symbol or config.SYMBOL
-            min_sl_m4 = config.get_sl_floor_points(sym_m4, spread_pts=0, atr_points=0)
+            cand_spread = int(getattr(candidate, "current_spread_pts", 0) or 0)
+            cand_atr = int(getattr(candidate, "current_atr_pts", 0) or 0)
+            min_sl_m4 = config.get_sl_floor_points(sym_m4, spread_pts=cand_spread, atr_points=cand_atr)
             if _m4_sl < min_sl_m4:
                 _last_sltp_adjustments.append(f"M4 SL {_m4_sl} pts < safety floor ({min_sl_m4} pts). Menyesuaikan ke {min_sl_m4} pts.")
                 _m4_sl = min_sl_m4
@@ -181,6 +183,14 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     except Exception:
         pass
 
+    usd_per_pt_1lot = 0.0
+    if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
+        usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
+    
+    comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
+    comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
+    friction_pts = spread_pts + comm_pts
+
     mode = config.sltp_mode_for(sym)
 
     if mode == "LLM":
@@ -215,7 +225,7 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                 _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon BTC ($450 USD). Menyesuaikan SL ke {max_sl} pts.")
                 sl_points = max_sl
         else:
-            # Aset non-BTC (FX/JPY/Gold): ceiling berbasis ATR (default SL_MAX_ATR_MULT=2.5x)
+            # Aset non-BTC (FX/JPY/Gold):
             static_fallback = 800 if is_xau else 350
             if atr_points <= 0:
                 if zce_wall_mode:
@@ -224,23 +234,81 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                     return sl_points, tp_points, False, note
                 max_sl = static_fallback
             else:
-                raw_max = int(atr_points * sl_max_mult)
-                # Harmonization: Plafon ceiling wajib lebih besar daripada safety floor minimal (bebas deadlock Ceiling < Floor)
-                max_sl = max(raw_max, int(min_sl * 1.5))
-            if sl_points > max_sl:
+                # Dynamic ZCE Runway & Capacity Gate:
+                # Plafon ekstrim struktural anti-runaway (swing multi-hari)
+                runaway_ceiling = max(int(atr_points * 3.5), 350)
+                
                 if zce_wall_mode:
-                    note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {max_sl} pts "
-                            f"({sl_max_mult}x ATR, floor {min_sl} pts). SKIP trade — clamp akan memarkir SL di tengah struktur.")
-                    _last_sltp_adjustments.append(note)
-                    return sl_points, tp_points, False, note
-                label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")
-                _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon {label} ({sl_max_mult}x ATR). Menyesuaikan SL ke {max_sl} pts.")
-                sl_points = max_sl
+                    # 1. Extremo runaway anchor check (anti swing liar yang memecahkan kapasitas H1)
+                    if sl_points > runaway_ceiling:
+                        note = (f"ANCHOR_TOO_WIDE: SL anchor {sl_points} pts > ceiling {runaway_ceiling} pts "
+                                f"(3.5x ATR). SKIP trade — clamp akan memarkir SL di tengah struktur.")
+                        _last_sltp_adjustments.append(note)
+                        return sl_points, tp_points, False, note
+
+                    # 2. ZCE Runway Capacity Gate (Friction-Compensated Net Target Floor):
+                    # Menilai apakah jarak target menuju dinding lawan (Runway) mencukupi net return.
+                    # - Jika target TP < (0.75x SL + friksi): ruang gerak terhimpit dinding terdekat -> SKIP trade.
+                    # - Jika (0.75x SL + friksi) <= target TP < (1.25x SL + friksi): target C1/F1 valid sebagai GRADE_B Wall Scalp
+                    #   (eksekusi 1 tiket, target dinding C1/F1 murni, tanpa partial close, BEP di 35% TP).
+                    runway_target_pts = tp_points if tp_points > 0 else config.default_tp_points_for(sym)
+                    min_wall_floor = int(sl_points * getattr(config, "GRADE_B_MIN_RR", 0.75)) + friction_pts
+                    required_standard_runway = int(sl_points * config.LLM_MIN_RR_RATIO) + friction_pts
+                    if runway_target_pts > 0 and runway_target_pts < min_wall_floor:
+                        note = (f"ANCHOR_TOO_WIDE: ZCE Runway ke target terhalang dinding terdekat "
+                                f"({runway_target_pts} pts < 0.75x SL {sl_points} pts + {friction_pts} pts friksi = {min_wall_floor} pts). "
+                                f"SKIP trade — kapasitas net runway tidak mencukupi.")
+                        _last_sltp_adjustments.append(note)
+                        return sl_points, tp_points, False, note
+                    elif runway_target_pts > 0 and runway_target_pts < required_standard_runway:
+                        setup_grade = "GRADE_B"
+                        action_tier = "GRADE_B"
+                        if candidate is not None:
+                            try:
+                                candidate.setup_grade = "GRADE_B"
+                                candidate.action_tier = "GRADE_B"
+                            except Exception:
+                                pass
+                        _last_sltp_adjustments.append(
+                            f"ZCE Runway ({runway_target_pts} pts | Net {(runway_target_pts - friction_pts)/sl_points:.2f}R) < standard {config.LLM_MIN_RR_RATIO}x SL ({sl_points} pts) tapi >= Net 0.75x SL. "
+                            f"Menyesuaikan setup ke GRADE_B Wall Scalp."
+                        )
+
+                    max_sl = runaway_ceiling
+                else:
+                    # Legacy non-ZCE clamp: batasi dengan ATR multiplier standard
+                    raw_max = int(atr_points * sl_max_mult)
+                    max_sl = max(raw_max, int(min_sl * 1.5))
+                    if sl_points > max_sl:
+                        label = "Gold" if is_xau else ("JPY" if is_jpy else "FX")
+                        _last_sltp_adjustments.append(f"SL {sl_points} pts melebihi plafon {label} ({sl_max_mult}x ATR). Menyesuaikan SL ke {max_sl} pts.")
+                        sl_points = max_sl
 
         if tp_points <= 0:
             tp_points = config.default_tp_points_for(sym)
 
-        min_rr = config.LLM_MIN_RR_RATIO
+        # Pure Quant No-AI Grade S Elevation Check (M4 Shock |z| >= 1.80 + CSM Delta >= 2.00)
+        if candidate is not None and not getattr(config, "ENABLE_LLM_JURY", True):
+            md = getattr(candidate, "metadata", {}) or {}
+            csm_z = abs(float(md.get("m4_z_score", 0.0) or md.get("z_score", 0.0) or 0.0))
+            csm_delta = abs(float(getattr(candidate, "csm_delta", 0.0) or 0.0))
+            wall_grade = str(md.get("zce_wall_grade", "") or md.get("target_grade", "") or "").upper()
+            is_pure_quant_grade_s = (
+                (csm_z >= getattr(config, "GRADE_S_PURE_QUANT_MIN_Z", 1.80) or getattr(candidate, "setup_type", "") in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"))
+                and csm_delta >= getattr(config, "GRADE_S_PURE_QUANT_MIN_CSM_DELTA", 2.00)
+                and ("GRADE_3" in wall_grade or "MACRO" in wall_grade or tp_points >= int(sl_points * 2.50))
+            )
+            if is_pure_quant_grade_s and tp_points >= int(sl_points * 2.50):
+                setup_grade = "GRADE_S"
+                try:
+                    candidate.setup_grade = "GRADE_S"
+                except Exception:
+                    pass
+                _last_sltp_adjustments.append(
+                    f"[GRADE_S PURE QUANT ELEVATION] Super-Shock Flow (|z|={csm_z:.2f}, |Δ|={csm_delta:.2f}) -> Macro Expansion Target unlocked (R:R {tp_points/sl_points:.2f}:1)."
+                )
+
+        min_rr = getattr(config, "GRADE_A_MIN_RR", 1.25)
         max_rr = getattr(config, "LLM_MAX_RR_RATIO", 3.0)
 
         # Dynamic Grade-Aware Multipliers
@@ -250,27 +318,20 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             max_rr = 3.50
         elif "GRADE_B" in grade_str or "REDUCED_SCALP" in grade_str or "REDUCED_SCALP" in act_str:
             max_rr = 1.25
+            min_rr = getattr(config, "GRADE_B_MIN_RR", 0.75)
         elif "GRADE_A_PLUS" in grade_str:
             max_rr = 2.50
 
         # 5-Tier Action Matrix R:R constraints
-        if action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP") or "REDUCED_SCALP" in grade_str or "TP1_ONLY" in act_str:
+        if action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or "REDUCED_SCALP" in grade_str or "TP1_ONLY" in act_str or "GRADE_B" in act_str:
             max_rr = min(max_rr, 1.25)
-            min_rr = min(min_rr, 1.00)
+            min_rr = min(min_rr, getattr(config, "GRADE_B_MIN_RR", 0.75))
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
-        # Net R:R Commission & Spread Compensation (3 Sep 2026):
+        # Net R:R Commission & Spread Compensation:
         # Biaya transaksi (Spread + Round-Turn Komisi) dihitung ke dalam target TP minimal
         # agar Net R:R setelah potongan broker tetap murni >= min_rr : 1.
-        usd_per_pt_1lot = 0.0
-        if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
-            usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
-        
-        comm_usd_round = getattr(config, "COMMISSION_USD_PER_LOT_ROUND", 6.0)
-        comm_pts = int(round(comm_usd_round / usd_per_pt_1lot)) if usd_per_pt_1lot > 0 else 5
-        friction_pts = spread_pts + comm_pts
-
         min_tp = int(sl_points * min_rr) + friction_pts
         max_tp = int(sl_points * max_rr) + friction_pts
         if tp_points < min_tp:
@@ -903,7 +964,7 @@ def calculate_consensus(decisions, candidate=None):
     # ── M4: anchor limit sudah terlewati market → BATAL (no market conversion; jangan fade struktur jebol) ──
     _m4_anchor_broken = False
     _m4_anchor_reason = ""
-    if candidate is not None and getattr(candidate, "setup_type", "") == getattr(config, "M4_SETUP_TYPE", "SYSTEMIC_FLOW_CONTINUATION"):
+    if candidate is not None and getattr(candidate, "setup_type", "") in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"):
         try:
             from config import mt5
             tick = mt5.symbol_info_tick(cand_sym)

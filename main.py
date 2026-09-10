@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 _WIB = ZoneInfo("Asia/Jakarta")
+WIB = _WIB
 
 # --- Status line terminal (Windows) ---
 _VT_OK = False
@@ -649,8 +650,8 @@ def _detect_filled_pending(scanner=None):
 def run_scanner_trading_cycle(cand, risk):
     """
     Stage 2 Funnel Execution:
-    Triggered when Stage 1 Python Quant Scanner identifies an A+ setup on one of 22 pairs.
-    Fetches live candles, runs 2-Pass Cross-Examination Jury, evaluates consensus, and dispatches MT5 order.
+    Triggered when Stage 1 Python Quant Scanner identifies an A+ setup on 26 pairs.
+    Fetches live candles, runs 2-Pass Cross-Examination Jury (or Pure Quant Direct Execution), and dispatches MT5 order.
     """
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
@@ -788,11 +789,15 @@ def run_scanner_trading_cycle(cand, risk):
                 "tp_mode": "QUANT_STRUCTURAL_TARGET"
             }
 
-            print(f"\n {UI.CYAN}{UI.BOLD}╔═══════════════════════════════════════════════════════════════════════════════════════╗{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ [PURE QUANT DIRECT EXECUTION] {sym} [{cand.setup_type}]                                ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ • Signal     : {trade_signal} ({entry_type.upper()} @ {entry_price})                                     ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ║ • SL / TP Raw: SL {raw_sl_pts} pts ({cand.suggested_sl}) | TP {raw_tp_pts} pts ({cand.suggested_tp})             ║{UI.RST}")
-            print(f" {UI.CYAN}{UI.BOLD}  ╚═══════════════════════════════════════════════════════════════════════════════════════╝{UI.RST}\n")
+            realized_rr = round(raw_tp_pts / max(raw_sl_pts, 1), 2)
+            c_grade = getattr(cand, "setup_grade", "GRADE_A")
+            fill_tag = "Market Fill (Slippage/Drift)" if entry_type == "market" else "Limit Entry"
+            box_items = [
+                ("• Signal     : ", f"{trade_signal} ({entry_type.upper()} @ {entry_price})"),
+                ("• SL / TP Raw: ", f"SL {raw_sl_pts} pts ({cand.suggested_sl}) | TP {raw_tp_pts} pts ({cand.suggested_tp})"),
+                ("• Grade / R:R: ", f"Grade {c_grade} | Realized R:R {realized_rr:.2f}:1 [{fill_tag}]"),
+            ]
+            print("\n" + UI.make_box(f"PURE QUANT DIRECT EXECUTION: {sym} [{cand.setup_type}]", box_items, width=76, border_color=UI.CYAN) + "\n")
         else:
             # 2. Fetch live candles (M15 & M5 Micro Microscope, H1, H4) from MT5
             try:
@@ -856,6 +861,34 @@ def run_scanner_trading_cycle(cand, risk):
             return False
             
         elif trade_signal == "HOLD":
+            # ATR Gate / ANCHOR_TOO_WIDE rejection in multi-LLM consensus: route to Paper Trade Shadow Book
+            if result.get("hold_type") == "atr_gate":
+                sltp_reason = result.get("sltp_reason", "")
+                try:
+                    cand_signal = result.get("candidate_signal", "BUY")
+                    t_live = connector.get_current_tick(sym)
+                    pt = t_live.get("point", 0.00001) if t_live else 0.00001
+                    p_entry_calc = result.get("entry_price") or (t_live.get("ask", 0.0) if cand_signal == "BUY" else t_live.get("bid", 0.0)) if t_live else getattr(cand, "scan_mid", 0.0)
+                    sh_sl_pts = result.get("sl_points", 0) or getattr(cand, "sl_points", 0) or config.default_sl_points_for(sym)
+                    sh_tp_pts = result.get("tp_points", 0) or getattr(cand, "tp_points", 0) or config.default_tp_points_for(sym)
+                    p_sl_calc = result.get("invalidation_price") or (p_entry_calc - (sh_sl_pts * pt) if cand_signal == "BUY" else p_entry_calc + (sh_sl_pts * pt))
+                    p_tp_calc = result.get("target_price") or (p_entry_calc + (sh_tp_pts * pt) if cand_signal == "BUY" else p_entry_calc - (sh_tp_pts * pt))
+                    clean_disp = "SKIPPED_ANCHOR_TOO_WIDE" if "ANCHOR_TOO_WIDE" in str(sltp_reason) else "SKIPPED_SLTP_RULES"
+                    shadow_trade = shadow_tracker.register_candidate(
+                        candidate=cand,
+                        entry_type=result.get("entry_type") or "market",
+                        entry_price=p_entry_calc,
+                        sl_price=p_sl_calc,
+                        tp_price=p_tp_calc,
+                        sl_points=sh_sl_pts,
+                        tp_points=sh_tp_pts,
+                        mt5_disposition=clean_disp
+                    )
+                    if shadow_trade:
+                        print(f" {UI.MAGENTA}[SHADOW RADAR REGISTERED] {sym} ({cand.setup_type}) dicatat ke Paper Trade ({clean_disp}).{UI.RST}")
+                except Exception as shadow_err:
+                    logger.debug(f"[SHADOW_REGISTER_HOLD_ATR_FAIL] {sym}: {shadow_err}")
+
             # BIFURCATED REJECTION LOGIC (4 Sep 2026):
             # 1. Hard Risk VETO (45m Lockout): Khusus jika ada fatal risk flag (counter-trend, waterfall, dump, news, trap).
             # 2. Soft Timing HOLD (3m Breathing Only): Jika penolakan murni karena timing / boundary belum tersentuh.
@@ -952,8 +985,46 @@ def run_scanner_trading_cycle(cand, risk):
             sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
                 sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
             )
+            # Re-read potentially adjusted action_tier and setup_grade (e.g. auto-transition to GRADE_B Wall Scalp)
+            action_tier_val = getattr(cand, "action_tier", action_tier_val)
+            setup_grade_val = getattr(cand, "setup_grade", setup_grade_val)
+
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
+                try:
+                    from src.analytics.market_scanner import MarketScanner
+                    scanner_inst = getattr(MarketScanner, '_instance', None)
+                    if scanner_inst:
+                        cand_type = getattr(cand, 'setup_type', '')
+                        cand_dir = getattr(cand, 'direction', 0)
+                        dir_str = "BUY" if cand_dir == 1 else ("SELL" if cand_dir == -1 else "ALL")
+                        scanner_inst.record_soft_timing_hold(sym, cand_type, dir_str)
+                except Exception:
+                    pass
+
+                # Virtual Shadow Quant Radar: Masukkan trade yang dibatalkan SL/TP (misal ANCHOR_TOO_WIDE) ke paper trade shadow
+                try:
+                    p_entry_calc = entry_price if (entry_price and entry_price > 0) else ref_price
+                    sh_sl_pts = sl_points if (sl_points and sl_points > 0) else config.default_sl_points_for(sym)
+                    sh_tp_pts = tp_points if (tp_points and tp_points > 0) else config.default_tp_points_for(sym)
+                    p_sl_calc = p_entry_calc - (sh_sl_pts * point) if trade_signal == "BUY" else p_entry_calc + (sh_sl_pts * point)
+                    p_tp_calc = p_entry_calc + (sh_tp_pts * point) if trade_signal == "BUY" else p_entry_calc - (sh_tp_pts * point)
+                    clean_disp = "SKIPPED_ANCHOR_TOO_WIDE" if "ANCHOR_TOO_WIDE" in str(sltp_reason) else "SKIPPED_SLTP_RULES"
+                    shadow_trade = shadow_tracker.register_candidate(
+                        candidate=cand,
+                        entry_type=entry_type,
+                        entry_price=p_entry_calc,
+                        sl_price=p_sl_calc,
+                        tp_price=p_tp_calc,
+                        sl_points=sh_sl_pts,
+                        tp_points=sh_tp_pts,
+                        mt5_disposition=clean_disp
+                    )
+                    if shadow_trade:
+                        print(f" {UI.MAGENTA}[SHADOW RADAR REGISTERED] {sym} ({cand.setup_type}) dicatat ke Paper Trade ({clean_disp}).{UI.RST}")
+                except Exception as shadow_err:
+                    logger.debug(f"[SHADOW_REGISTER_SLTP_FAIL] {sym}: {shadow_err}")
+
                 tg.alert_trade_aborted(
                     symbol=sym,
                     signal=trade_signal,
@@ -966,7 +1037,7 @@ def run_scanner_trading_cycle(cand, risk):
                 
             # High Confidence Multi-Position sizing:
             # If 3/3 AI agree and confidence >= 0.80 and at least 2 slots remaining in MT5 capacity -> Open 2 positions (+25% boost per pos)
-            # CRITICAL: If action_tier == "TP1_ONLY_SCALP", enforce single position only (no 2nd extended runner against macro)
+            # CRITICAL: If action_tier == "TP1_ONLY_SCALP" or setup is GRADE_B, enforce single position only (no 2nd extended runner against macro)
             bot_magic = getattr(config, "MAGIC_NUMBER", 20260625)
             def _is_bot_trade(item):
                 m = getattr(item, "magic", 0)
@@ -989,11 +1060,12 @@ def run_scanner_trading_cycle(cand, risk):
             is_split_tix = result.get("is_split_ticket", False)
             tp_mode = result.get("tp_mode", "STANDARD_TP1_TP2")
 
-            # M4 (SYSTEMIC_FLOW_CONTINUATION): struktur studi 1 tiket — larang split 2 posisi & boost TP
-            _m4_single = (cand.setup_type == config.M4_SETUP_TYPE)
-            num_positions = 2 if (not _m4_single and is_split_tix and remaining_slots >= 2 and action_tier_val not in ("TP1_ONLY_SCALP", "REDUCED_SCALP")) else 1
+            # M4 (DBD_RBR_BREAKOUT_CONTINUATION) & GRADE_B Wall Scalp: struktur 1 tiket murni — larang split 2 posisi & boost TP
+            _m4_single = (cand.setup_type in (getattr(config, "M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION"), "DBD_RBR_BREAKOUT_CONTINUATION", "SYSTEMIC_FLOW_CONTINUATION"))
+            _is_grade_b = (action_tier_val in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or setup_grade_val == "GRADE_B")
+            num_positions = 2 if (not _m4_single and not _is_grade_b and is_split_tix and remaining_slots >= 2) else 1
             
-            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult)
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult, setup_grade=setup_grade_val)
             if num_positions == 2:
                 effective_lot = round(base_lot * 0.625, 2)
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
@@ -1073,7 +1145,8 @@ def run_scanner_trading_cycle(cand, risk):
                             csm_delta=getattr(cand, "csm_delta", 0.0),
                             setup_type=f"{cand.setup_type} (Pending P{i+1})"
                         )
-                        position_manager.set_ticket_setup_grade(pending_res.get("ticket"), getattr(cand, "action_tier", "GRADE_A"))
+                        eff_grade = getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A")
+                        position_manager.set_ticket_setup_grade(pending_res.get("ticket"), eff_grade)
                         risk.record_trade_opened()
                         record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": pending_res.get("ticket"), "type": entry_type})
                         _recent_trihourly_opened.append({
@@ -1138,7 +1211,8 @@ def run_scanner_trading_cycle(cand, risk):
                         csm_delta=getattr(cand, "csm_delta", 0.0),
                         setup_type=f"{cand.setup_type} (Market P{i+1})"
                     )
-                    position_manager.set_ticket_setup_grade(order_res.get("ticket"), getattr(cand, "action_tier", "GRADE_A"))
+                    eff_grade = getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A")
+                    position_manager.set_ticket_setup_grade(order_res.get("ticket"), eff_grade)
                     risk.record_trade_opened()
                     record_funnel_event("executed", sym=sym, setup=cand.setup_type, details={"ticket": order_res.get("ticket"), "type": "market"})
                     _recent_trihourly_opened.append({
@@ -1516,7 +1590,8 @@ def main():
 
                             t_now_str = time.strftime('%H:%M:%S')
                             if candidates:
-                                print(f" {UI.GREEN}[{t_now_str} RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Diteruskan ke 3-LLM Jury.")
+                                target_engine = "3-LLM Jury" if getattr(config, "ENABLE_LLM_JURY", True) else "Pure Quant Direct Execution (No-LLM)"
+                                print(f" {UI.GREEN}[{t_now_str} RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Diteruskan ke {target_engine}.")
                                 _last_radar_log_time = now_epoch
                                 _last_radar_state_signature = _curr_signature
                             elif _state_changed or _time_for_heartbeat:
@@ -1550,6 +1625,10 @@ def main():
             now_str = time.strftime('%H:%M:%S')
             remaining_pause = risk.get_remaining_pause()
             pause_str = f" {UI.RED}[PAUSED: {remaining_pause}s]{UI.RST}" if remaining_pause > 0 else ""
+            profit_lock_str = f" {UI.BOLD}{UI.GREEN}[TARGET +7.0% LOCKED]{UI.RST}" if getattr(risk, "_daily_profit_locked", False) else ""
+            now_wib_h = datetime.now(WIB).hour
+            is_night_freeze = getattr(config, "ENABLE_NIGHT_FREEZE", True) and (now_wib_h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23) or now_wib_h < 7)
+            freeze_str = f" {UI.CYAN}[NIGHT FREEZE]{UI.RST}" if is_night_freeze else ""
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
             
@@ -1563,8 +1642,23 @@ def main():
                     float_s = sum(x.get("profit", 0.0) for x in plist)
                     sym_clean = sym.replace("-ECNc", "").replace(".c", "")
                     count_str = f"({len(plist)})" if len(plist) > 1 else ""
+                    
+                    # Tampilkan badge setup grade (S / A+ / A / B)
+                    g_tags = []
+                    for x in plist:
+                        raw_g = position_manager.get_ticket_setup_grade(x.get("ticket"))
+                        if "GRADE_S" in raw_g:
+                            g_tags.append(f"{UI.BOLD}{UI.GREEN}[S]{UI.RST}")
+                        elif "GRADE_A_PLUS" in raw_g or "GRADE_A+" in raw_g:
+                            g_tags.append(f"{UI.GREEN}[A+]{UI.RST}")
+                        elif "GRADE_A" in raw_g:
+                            g_tags.append(f"{UI.CYAN}[A]{UI.RST}")
+                        elif "GRADE_B" in raw_g:
+                            g_tags.append(f"{UI.YELLOW}[B]{UI.RST}")
+                    grade_str = "".join(g_tags) if g_tags else ""
+
                     badges = "".join(position_manager.get_ticket_status_badge(x.get("ticket")) for x in plist)
-                    pos_parts.append(f"{sym_clean}{count_str}: {UI.badge_pnl(float_s)}{badges}")
+                    pos_parts.append(f"{sym_clean}{grade_str}{count_str}: {UI.badge_pnl(float_s)}{badges}")
                 pos_str = f" | {UI.GRAY}pos:{UI.RST} " + " | ".join(pos_parts)
             else:
                 pos_str = f" | {UI.GRAY}pos: No active pos{UI.RST}"
@@ -1573,7 +1667,7 @@ def main():
             _radar_anim_idx = (_radar_anim_idx + 1) % len(_radar_frames)
             anim_icon = _radar_frames[_radar_anim_idx]
             n_active = len(scanner.macro_cache) if (scanner and scanner.macro_cache) else len(config.get_scanner_symbols())
-            label_hdr = f"QUANT RADAR {anim_icon} ({n_active} Pairs)"
+            label_hdr = f"POOL {n_active} PAIRS (H1) {anim_icon}"
             
             # Live Radar States & Watchlist AoV Line
             radar_state_line = ""
@@ -1621,8 +1715,8 @@ def main():
 
                 radar_watch_line = (
                     f"  ├─ {UI.GRAY}Radar Siaga :{UI.RST} "
-                    f"🛒 Diskon: {UI.GREEN}{disc_str}{UI.RST} │ "
-                    f"🏷️ Premium: {UI.RED}{prem_str}{UI.RST}"
+                    f"[DISCOUNT] {UI.CYAN}{disc_str}{UI.RST} │ "
+                    f"[PREMIUM] {UI.YELLOW}{prem_str}{UI.RST}"
                 )
 
             csm_m15_line = ""
@@ -1636,7 +1730,7 @@ def main():
             except Exception:
                 pass
 
-            header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str} | {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
+            header_part = f"[{UI.BOLD}{label_hdr}{UI.RST} | {UI.CYAN}{now_str}{UI.RST}]{pause_str}{profit_lock_str}{freeze_str} | {UI.GREEN}{_last_radar_status}{UI.RST} | P/L Today: {pnl_str}"
 
             # Wrap daftar posisi ke baris terpisah
             try:

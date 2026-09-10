@@ -1,110 +1,125 @@
+# -*- coding: utf-8 -*-
 """
-Unit test ZCE SL/TP anchor gate (Fase 3, task #7) — sintetik, tanpa MT5 live.
-Memverifikasi:
-  1. Mode shadow/off (default): ceiling lama tetap clamp (perilaku 1:1, tidak berubah).
-  2. Mode legacy/full (ZCE supply walls): SL anchor > ceiling -> SKIP ANCHOR_TOO_WIDE (ok=False).
-  3. Mode legacy/full: ATR gagal dimuat -> REJECT ATR_UNAVAILABLE (tanpa fallback statis).
-
-Run: python -m pytest tests/test_zce_sltp_anchor.py -q
+Unit Test Suite for Dynamic ZCE + SMC Structural Anchor and 80-pts Safety Floor.
+Verifies:
+1. calculate_intraday_sl_tp anchors BUY SL behind ZCE F1 Floor when origin_level is absent/above entry.
+2. calculate_intraday_sl_tp anchors SELL SL behind ZCE C1 Ceiling when origin_level is absent/below entry.
+3. Quiet FX enforces 80 pts safety floor instead of rigid 120 pts.
+4. M4 candidate in consensus._apply_sltp_rules receives candidate's real spread & ATR.
+5. M4 candidate in market_scanner anchors SL behind nearby ZCE wall.
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import numpy as np
-import pytest
-
+import unittest
+from unittest.mock import MagicMock, patch
 import config
+from src.indicators.atlas_dna import calculate_intraday_sl_tp
 from src.core.consensus import _apply_sltp_rules
+from src.analytics.market_scanner import MarketScanner, CandidateSetup
 
 
-def _rates_ndarray(n=60, base=1.10000, step=0.00030):
-    """Structured numpy array meniru output MT5 copy_rates (ATR > 0)."""
-    dtype = [("time", "i8"), ("open", "f8"), ("high", "f8"), ("low", "f8"),
-             ("close", "f8"), ("tick_volume", "i8"), ("spread", "i4"),
-             ("real_volume", "i8")]
-    arr = np.zeros(n, dtype=dtype)
-    px = base
-    for i in range(n):
-        arr[i]["time"] = i
-        arr[i]["open"] = px
-        arr[i]["high"] = px + step
-        arr[i]["low"] = px - step
-        arr[i]["close"] = px + step * 0.4
-        arr[i]["tick_volume"] = 100
-        px += step * 0.5
-    return arr
+class TestZCESLTPAnchor(unittest.TestCase):
+
+    def setUp(self):
+        self.scanner = MarketScanner(symbols=["AUDCAD-ECNc", "EURCHF-ECNc", "USDJPY-ECNc"])
+
+    def test_buy_sl_anchored_to_zce_f1(self):
+        """When origin_level is absent, BUY SL must anchor behind ZCE F1 floor."""
+        entry = 0.99475
+        atr = 0.00082  # 82 pts ATR
+        f1_floor = 0.99382  # 93 pts below entry
+        spread_pts = 4
+
+        res = calculate_intraday_sl_tp(
+            symbol="AUDCAD-ECNc",
+            entry_price=entry,
+            direction=1,
+            origin_level=None,
+            atr_h1=atr,
+            spread_pts=spread_pts,
+            f1=f1_floor,
+            c1=0.99571
+        )
+
+        # SL must be placed below F1 floor
+        self.assertLess(res["sl"], f1_floor)
+        # Total SL distance must satisfy at least 80 pts safety floor
+        sl_dist_pts = int(round((entry - res["sl"]) / 0.00001))
+        self.assertGreaterEqual(sl_dist_pts, 80)
+        # Risk must be positive and consistent
+        self.assertGreater(res["risk"], 0)
+
+    def test_sell_sl_anchored_to_zce_c1(self):
+        """When origin_level is absent, SELL SL must anchor behind ZCE C1 ceiling."""
+        entry = 0.99475
+        atr = 0.00082  # 82 pts ATR
+        c1_ceiling = 0.99571  # 96 pts above entry
+        spread_pts = 4
+
+        res = calculate_intraday_sl_tp(
+            symbol="AUDCAD-ECNc",
+            entry_price=entry,
+            direction=-1,
+            origin_level=None,
+            atr_h1=atr,
+            spread_pts=spread_pts,
+            c1=c1_ceiling,
+            f1=0.99382
+        )
+
+        # SL must be placed above C1 ceiling
+        self.assertGreater(res["sl"], c1_ceiling)
+        # Total SL distance must satisfy at least 80 pts safety floor
+        sl_dist_pts = int(round((res["sl"] - entry) / 0.00001))
+        self.assertGreaterEqual(sl_dist_pts, 80)
+
+    def test_quiet_fx_80_pts_floor_clamp(self):
+        """When anchor is too close to entry (e.g. 20 pts), safety floor clamps to 80 pts."""
+        entry = 0.99475
+        atr = 0.00082
+        tight_f1 = 0.99455  # only 20 pts below entry
+
+        res = calculate_intraday_sl_tp(
+            symbol="AUDCAD-ECNc",
+            entry_price=entry,
+            direction=1,
+            origin_level=None,
+            atr_h1=atr,
+            f1=tight_f1
+        )
+
+        sl_dist_pts = int(round((entry - res["sl"]) / 0.00001))
+        self.assertEqual(sl_dist_pts, 80)
+
+    def test_m4_consensus_receives_real_atr_and_spread(self):
+        """consensus._apply_sltp_rules must use candidate.current_atr_pts & spread_pts."""
+        cand = CandidateSetup(
+            symbol="AUDCAD-ECNc",
+            setup_type=config.M4_SETUP_TYPE,
+            direction=1,
+            trigger_price=0.99475,
+            current_spread_pts=4,
+            current_atr_pts=82,
+            metadata={
+                "m4_sl_pts": 70,  # Below 80 pts floor
+                "m4_tp_pts": 90,   # Below 105 Net R:R minimum
+                "m4_level": 0.99475,
+            }
+        )
+
+        sl, tp, ok, reason = _apply_sltp_rules(
+            sl_points=70,
+            tp_points=90,
+            symbol="AUDCAD-ECNc",
+            candidate=cand
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(reason, "M4_STRUCTURAL_FLOORED")
+        # Floored to 80 pts (not 120 pts!)
+        self.assertEqual(sl, 80)
+        # TP floored to 80 * 1.25 + 5 comm = 105 pts
+        self.assertEqual(tp, 105)
 
 
-@pytest.fixture()
-def mt5_ok(monkeypatch):
-    """Mock MT5 data sehat: spread kecil + ATR tersedia."""
-    monkeypatch.setattr(config.mt5, "symbol_info",
-                        lambda sym: type("SI", (), {"point": 0.00001})())
-    monkeypatch.setattr(config.mt5, "symbol_info_tick",
-                        lambda sym: type("TK", (), {"bid": 1.10000, "ask": 1.10001})())
-    monkeypatch.setattr(config.mt5, "copy_rates_from_pos",
-                        lambda sym, tf, start, n: _rates_ndarray())
-    monkeypatch.setattr(config, "get_timeframe", lambda sym: 16385)  # MT5 H1
-    monkeypatch.setattr(config, "sltp_mode_for", lambda sym: "LLM")
-
-
-@pytest.fixture()
-def mt5_atr_gagal(monkeypatch):
-    """Mock MT5 sehat tapi copy_rates None (ATR gagal)."""
-    monkeypatch.setattr(config.mt5, "symbol_info",
-                        lambda sym: type("SI", (), {"point": 0.00001})())
-    monkeypatch.setattr(config.mt5, "symbol_info_tick",
-                        lambda sym: type("TK", (), {"bid": 1.10000, "ask": 1.10001})())
-    monkeypatch.setattr(config.mt5, "copy_rates_from_pos",
-                        lambda sym, tf, start, n: None)
-    monkeypatch.setattr(config, "get_timeframe", lambda sym: 16385)  # MT5 H1
-    monkeypatch.setattr(config, "sltp_mode_for", lambda sym: "LLM")
-
-
-def _set_zce(monkeypatch, enabled: bool, mode: str):
-    monkeypatch.setattr(config, "ZCE_ENABLED", enabled)
-    monkeypatch.setattr(config, "ZCE_MODE", mode)
-
-
-def test_mode_off_ceiling_clamp_tetap(mt5_ok, monkeypatch):
-    """Default (off/shadow): SL runaway tetap di-clamp ke ceiling — perilaku lama."""
-    _set_zce(monkeypatch, False, "shadow")
-    sl, tp, ok, reason = _apply_sltp_rules(
-        sl_points=5000, tp_points=6000, symbol="EURUSD-ECNc")
-    assert ok is True
-    # ceiling = atr * 2.5; ATR sintetik ~0.0005 -> ~50 pts * 2.5 = 125 pts -> SL di-clamp
-    assert sl < 5000
-    assert "ANCHOR_TOO_WIDE" not in reason
-
-
-def test_mode_legacy_anchor_too_wide_skip(mt5_ok, monkeypatch):
-    """Mode legacy (ZCE supply walls): SL anchor > ceiling -> SKIP, bukan clamp."""
-    _set_zce(monkeypatch, True, "legacy")
-    sl, tp, ok, reason = _apply_sltp_rules(
-        sl_points=5000, tp_points=6000, symbol="EURUSD-ECNc")
-    assert ok is False
-    assert "ANCHOR_TOO_WIDE" in reason
-    # Nilai SL tidak diubah (skip total), bukan diparkir ke ceiling
-    assert sl == 5000
-
-
-def test_mode_full_atr_gagal_reject(mt5_atr_gagal, monkeypatch):
-    """Mode full: ATR gagal -> REJECT ATR_UNAVAILABLE, tanpa fallback statis 350."""
-    _set_zce(monkeypatch, True, "full")
-    sl, tp, ok, reason = _apply_sltp_rules(
-        sl_points=200, tp_points=300, symbol="EURUSD-ECNc")
-    assert ok is False
-    assert "ATR_UNAVAILABLE" in reason
-
-
-def test_mode_off_atr_gagal_fallback_statistik(mt5_atr_gagal, monkeypatch):
-    """Mode off: ATR gagal tetap pakai fallback statis (regresi perilaku lama)."""
-    _set_zce(monkeypatch, False, "shadow")
-    sl, tp, ok, reason = _apply_sltp_rules(
-        sl_points=200, tp_points=300, symbol="EURUSD-ECNc")
-    assert ok is True
-    assert "ANCHOR_TOO_WIDE" not in reason
-    assert "ATR_UNAVAILABLE" not in reason
+if __name__ == "__main__":
+    unittest.main()

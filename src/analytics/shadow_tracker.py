@@ -159,11 +159,12 @@ class QuantShadowTracker:
                     matched_p = next((p for p in raw_pos if p.ticket == t.mt5_ticket), None)
                     if matched_p:
                         p_comment = str(getattr(matched_p, "comment", "")).upper()
-                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                             matches = ("TREND" in p_comment and "TREND" in t.setup_type) or \
                                       ("MULTI" in p_comment and "MULTI" in t.setup_type) or \
                                       ("UNIVER" in p_comment and "UNIVER" in t.setup_type) or \
-                                      ("FLOW" in p_comment and "FLOW" in t.setup_type)
+                                      ("FLOW" in p_comment and "FLOW" in t.setup_type) or \
+                                      (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in t.setup_type or "RBR" in t.setup_type))
                             if not matches:
                                 logger.info(f"[SHADOW DETACH] Detaching mismatched ticket #{t.mt5_ticket} from {t.shadow_id} ({t.setup_type} != {p_comment})")
                                 t.mt5_ticket = None
@@ -183,11 +184,12 @@ class QuantShadowTracker:
                         if (p.symbol == t.symbol or p_clean == clean_sym) and p_dir == t.direction:
                             p_comment = str(getattr(p, "comment", "")).upper()
                             matches = True
-                            if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                            if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                                 matches = ("TREND" in p_comment and "TREND" in t.setup_type) or \
                                           ("MULTI" in p_comment and "MULTI" in t.setup_type) or \
                                           ("UNIVER" in p_comment and "UNIVER" in t.setup_type) or \
-                                          ("FLOW" in p_comment and "FLOW" in t.setup_type)
+                                          ("FLOW" in p_comment and "FLOW" in t.setup_type) or \
+                                          (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in t.setup_type or "RBR" in t.setup_type))
                             if matches:
                                 t.mt5_ticket = p.ticket
                                 t.mt5_disposition = "EXECUTED_MT5"
@@ -242,10 +244,30 @@ class QuantShadowTracker:
                 tmp_path = SHADOW_STATE_FILE + ".tmp"
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
-                if os.path.exists(SHADOW_STATE_FILE):
-                    os.replace(tmp_path, SHADOW_STATE_FILE)
-                else:
-                    os.rename(tmp_path, SHADOW_STATE_FILE)
+                
+                # Retry replace up to 5 times to handle Windows file locking from concurrent readers (e.g. dashboard.py)
+                saved = False
+                for attempt in range(5):
+                    try:
+                        if os.path.exists(SHADOW_STATE_FILE):
+                            os.replace(tmp_path, SHADOW_STATE_FILE)
+                        else:
+                            os.rename(tmp_path, SHADOW_STATE_FILE)
+                        saved = True
+                        break
+                    except (PermissionError, OSError):
+                        time.sleep(0.05 * (attempt + 1))
+
+                if not saved:
+                    # Fallback direct write if os.replace is held by Windows reader
+                    with open(SHADOW_STATE_FILE, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+
                 if os.path.exists(SHADOW_STATE_FILE):
                     self._last_state_mtime = os.path.getmtime(SHADOW_STATE_FILE)
             except Exception as e:
@@ -286,21 +308,15 @@ class QuantShadowTracker:
             now_dt = datetime.now(WIB)
             now_iso = now_dt.isoformat()
 
-            # Deduplication check: Do not duplicate if identical active/pending trade exists
+            # Deduplication check: Do not duplicate if active or pending trade exists on same symbol & direction
             for existing in self.active_trades:
-                if existing.symbol == sym and existing.direction == dir_str and existing.setup_type == setup_type:
-                    # Check if created within last 30 minutes
-                    try:
-                        ex_time = datetime.fromisoformat(existing.created_at)
-                        elapsed_s = (now_dt - ex_time).total_seconds()
-                        if elapsed_s < 1800:
-                            logger.info(
-                                f"[SHADOW DEDUPLICATED] {sym} {dir_str} ({setup_type}) sudah aktif di Paper Trade "
-                                f"(ID: {existing.shadow_id}, status: {existing.status}, age: {elapsed_s/60:.1f}m < 30m)."
-                            )
-                            return None
-                    except Exception:
-                        pass
+                if existing.symbol == sym and existing.direction == dir_str:
+                    if existing.status in ("ACTIVE", "PENDING"):
+                        logger.info(
+                            f"[SHADOW DEDUPLICATED] {sym} {dir_str} sudah memiliki posisi {existing.status} di Paper Trade "
+                            f"(ID: {existing.shadow_id}, setup: {existing.setup_type}). Menolak pembukaan tiket concurrent duplikat."
+                        )
+                        return None
 
             rr = round(tp_points / sl_points, 2) if sl_points > 0 else 1.5
 
@@ -331,6 +347,7 @@ class QuantShadowTracker:
                 bep_activated=False,
                 trailing_activated=False,
                 metadata={
+                    "setup_grade": getattr(candidate, "setup_grade", "GRADE_A"),
                     "current_atr_pts": getattr(candidate, "current_atr_pts", 0.0),
                     "current_spread_pts": getattr(candidate, "current_spread_pts", 0),
                     "dealing_range_pos": getattr(candidate, "dealing_range_pos", 0.5),
@@ -419,11 +436,12 @@ class QuantShadowTracker:
                     matched_p = next((p for p in raw_mt5_pos if p.ticket == trade.mt5_ticket), None)
                     if matched_p:
                         p_comment = str(getattr(matched_p, "comment", "")).upper()
-                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                        if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                             matches = ("TREND" in p_comment and "TREND" in trade.setup_type) or \
                                       ("MULTI" in p_comment and "MULTI" in trade.setup_type) or \
                                       ("UNIVER" in p_comment and "UNIVER" in trade.setup_type) or \
-                                      ("FLOW" in p_comment and "FLOW" in trade.setup_type)
+                                      ("FLOW" in p_comment and "FLOW" in trade.setup_type) or \
+                                      (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in trade.setup_type or "RBR" in trade.setup_type))
                             if not matches:
                                 logger.info(f"[SHADOW DETACH] Detaching mismatched ticket #{trade.mt5_ticket} from {trade.shadow_id} ({trade.setup_type} != {p_comment})")
                                 trade.mt5_ticket = None
@@ -480,11 +498,12 @@ class QuantShadowTracker:
                             if (p.symbol == trade.symbol or p_clean == clean_tr_sym) and p_dir == trade.direction:
                                 p_comment = str(getattr(p, "comment", "")).upper()
                                 matches = True
-                                if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW")):
+                                if any(k in p_comment for k in ("TREND", "MULTI", "UNIVER", "FLOW", "DBD", "RBR")):
                                     matches = ("TREND" in p_comment and "TREND" in trade.setup_type) or \
                                               ("MULTI" in p_comment and "MULTI" in trade.setup_type) or \
                                               ("UNIVER" in p_comment and "UNIVER" in trade.setup_type) or \
-                                              ("FLOW" in p_comment and "FLOW" in trade.setup_type)
+                                              ("FLOW" in p_comment and "FLOW" in trade.setup_type) or \
+                                              (("DBD" in p_comment or "RBR" in p_comment) and ("DBD" in trade.setup_type or "RBR" in trade.setup_type))
                                 if matches:
                                     trade.mt5_ticket = p.ticket
                                     trade.mt5_disposition = "EXECUTED_MT5"
@@ -789,29 +808,30 @@ class QuantShadowTracker:
                                     self._record_resolved(trade)
                                     continue
 
-                        # Check Peak-Aware Time-Decay Stagnation Exit
+                        # Check Peak-Aware Time-Decay Stagnation Exit (Only for unlinked shadow paper trades)
                         try:
-                            f_time_str = trade.fill_time or trade.created_at
-                            f_time = datetime.fromisoformat(f_time_str)
-                            hold_hours = (now_dt - f_time).total_seconds() / 3600.0
-                            if hold_hours >= 4.0 and trade.peak_mfe_r < 0.30 and (-0.20 <= curr_r <= 0.20):
-                                trade.status = "RESOLVED"
-                                trade.outcome = "TIME_DECAY_EXIT"
-                                trade.resolved_time = now_iso
-                                trade.exit_price = mid
-                                trade.net_r = round(curr_r, 2)
-                                newly_resolved.append(trade)
-                                self._record_resolved(trade)
-                                continue
-                            elif hold_hours >= 24.0:
-                                trade.status = "RESOLVED"
-                                trade.outcome = "TIME_DECAY_EXIT"
-                                trade.resolved_time = now_iso
-                                trade.exit_price = mid
-                                trade.net_r = round(curr_r, 2)
-                                newly_resolved.append(trade)
-                                self._record_resolved(trade)
-                                continue
+                            if not is_live_mt5:
+                                f_time_str = trade.fill_time or trade.created_at
+                                f_time = datetime.fromisoformat(f_time_str)
+                                hold_hours = (now_dt - f_time).total_seconds() / 3600.0
+                                if hold_hours >= 4.0 and trade.peak_mfe_r < 0.30 and (-0.20 <= curr_r <= 0.20):
+                                    trade.status = "RESOLVED"
+                                    trade.outcome = "TIME_DECAY_EXIT"
+                                    trade.resolved_time = now_iso
+                                    trade.exit_price = mid
+                                    trade.net_r = round(curr_r, 2)
+                                    newly_resolved.append(trade)
+                                    self._record_resolved(trade)
+                                    continue
+                                elif hold_hours >= 24.0:
+                                    trade.status = "RESOLVED"
+                                    trade.outcome = "TIME_DECAY_EXIT"
+                                    trade.resolved_time = now_iso
+                                    trade.exit_price = mid
+                                    trade.net_r = round(curr_r, 2)
+                                    newly_resolved.append(trade)
+                                    self._record_resolved(trade)
+                                    continue
                         except Exception:
                             pass
 
@@ -960,7 +980,7 @@ class QuantShadowTracker:
 
             for sid, t in all_resolved.items():
                 st = t.get("setup_type", "")
-                m_key = "M1" if "SWEEP" in st else ("M2" if "PULLBACK" in st else ("M3" if "BREAKOUT" in st else ("M4" if "FLOW" in st else "M1")))
+                m_key = "M4" if any(k in st for k in ("DBD", "RBR", "FLOW", "M4")) else ("M1" if "SWEEP" in st else ("M2" if "PULLBACK" in st else ("M3" if "BREAKOUT" in st else "M1")))
                 out = str(t.get("outcome", ""))
                 nr = float(t.get("net_r") or 0.0)
 
@@ -1096,8 +1116,8 @@ class QuantShadowTracker:
             }
 
     def get_all_resolved_trades(self, limit: int = 200) -> List[Dict[str, Any]]:
-        """Reads historical resolved shadow trades from JSONL log, newest first."""
-        trades = []
+        """Reads historical resolved shadow trades from JSONL log with deduplication by shadow_id, newest first."""
+        trades_dict = {}
         try:
             if os.path.exists(SHADOW_TRADES_LOG):
                 with open(SHADOW_TRADES_LOG, "r", encoding="utf-8") as f:
@@ -1105,14 +1125,19 @@ class QuantShadowTracker:
                         line = line.strip()
                         if line:
                             try:
-                                trades.append(json.loads(line))
+                                obj = json.loads(line)
+                                sid = obj.get("shadow_id")
+                                if sid:
+                                    trades_dict[sid] = obj
                             except Exception:
                                 pass
         except Exception as e:
             logger.error(f"[SHADOW READ LOG ERROR] {e}")
 
-        if trades:
-            return trades[::-1][:limit]
+        if trades_dict:
+            trades = list(trades_dict.values())
+            trades.sort(key=lambda t: t.get("resolved_time") or t.get("created_at") or "", reverse=True)
+            return trades[:limit]
         return list(reversed(self._recent_resolved[-limit:]))
 
 

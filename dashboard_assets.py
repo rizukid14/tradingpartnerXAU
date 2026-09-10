@@ -12,6 +12,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 <!-- TradingView Lightweight Charts v4.1.1 CDN -->
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -43,6 +44,16 @@ TEMPLATE = r"""<!DOCTYPE html>
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+  -webkit-font-smoothing: antialiased;
+}
 html, body {
   height: 100%;
   width: 100%;
@@ -115,6 +126,41 @@ html, body {
 .workspace.xray-collapsed {
   grid-template-columns: 340px 1fr 38px;
 }
+.workspace.left-collapsed {
+  grid-template-columns: 38px 1fr 330px;
+}
+.workspace.left-collapsed.xray-collapsed {
+  grid-template-columns: 38px 1fr 38px;
+}
+.workspace.left-collapsed .left-panel .panel-header span,
+.workspace.left-collapsed .left-panel .search-input,
+.workspace.left-collapsed .left-panel .filter-tabs,
+.workspace.left-collapsed .left-panel .watchlist-scroll {
+  display: none !important;
+}
+.workspace.left-collapsed .left-panel {
+  cursor: pointer;
+}
+.workspace.left-collapsed .left-collapsed-label {
+  display: flex !important;
+}
+.left-collapsed-label {
+  display: none;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 15px 0;
+  cursor: pointer;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
 .workspace.xray-collapsed .right-panel .panel-header span,
 .workspace.xray-collapsed #gates-container {
   display: none !important;
@@ -141,6 +187,25 @@ html, body {
   height: 100%;
   align-items: center;
   justify-content: center;
+}
+.btn-toggle-panel {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-toggle-panel:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: rgba(0,229,255,0.1);
 }
 .btn-toggle-xray {
   background: rgba(255,255,255,0.06);
@@ -225,8 +290,8 @@ html, body {
 .pair-row {
   display: flex;
   flex-direction: column;
-  gap: 3.5px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 9px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.03);
   cursor: pointer;
   user-select: none;
@@ -235,7 +300,85 @@ html, body {
 .pair-row:hover { background: var(--bg-hover); }
 .pair-row.selected {
   background: var(--bg-elevated);
-  border-left: 3px solid var(--cyan);
+  border-left: 3.5px solid var(--cyan);
+}
+.pair-row.m4-shock-row {
+  border-left: 3.5px solid #facc15;
+  background: rgba(250, 204, 21, 0.04);
+}
+.pair-row.m4-shock-row:hover {
+  background: rgba(250, 204, 21, 0.08);
+}
+.pair-row.m4-shock-row.selected {
+  background: rgba(250, 204, 21, 0.12);
+  border-left: 3.5px solid #facc15;
+}
+.m4-shock-pill {
+  background: rgba(250, 204, 21, 0.16);
+  color: #facc15;
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  padding: 1px 5px;
+  border-radius: 2.5px;
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.pair-row.m4-cont-row {
+  border-left: 3.5px solid rgba(56, 189, 248, 0.65);
+  background: rgba(56, 189, 248, 0.03);
+}
+.pair-row.m4-cont-row:hover {
+  background: rgba(56, 189, 248, 0.06);
+}
+.pair-row.m4-cont-row.selected {
+  background: rgba(56, 189, 248, 0.10);
+  border-left: 3.5px solid #38bdf8;
+}
+.m4-cont-pill {
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 1px 5px;
+  border-radius: 2.5px;
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.box-compress-pill {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  padding: 1px 4px;
+  border-radius: 2.5px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.m4-hero-banner {
+  background: linear-gradient(90deg, rgba(250, 204, 21, 0.15) 0%, rgba(250, 204, 21, 0.04) 100%);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  color: #fde047;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 6px 14px;
 }
 .pair-row-line {
   display: flex;
@@ -459,13 +602,18 @@ html, body {
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   user-select: none;
+  overflow-x: auto;
+}
+.filter-strip-bar::-webkit-scrollbar {
+  height: 2px;
 }
 .filter-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .filter-strip-title {
   font-family: var(--font-ui);
@@ -474,6 +622,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--text-dim);
+  white-space: nowrap;
 }
 .strip-btn-group {
   display: flex;
@@ -493,6 +642,7 @@ html, body {
   background: transparent;
   user-select: none;
   transition: all 0.12s ease;
+  white-space: nowrap;
 }
 .strip-btn:hover {
   color: var(--text-main);
@@ -501,10 +651,63 @@ html, body {
   background: var(--cyan);
   color: #000;
 }
+.chip-toggle-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.chip-btn {
+  padding: 2px 7px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-muted);
+  user-select: none;
+  transition: all 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.chip-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+.chip-btn.active {
+  background: rgba(0, 229, 255, 0.14);
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.chip-btn.active-green {
+  background: rgba(56, 189, 248, 0.14);
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+.chip-btn.active-red {
+  background: rgba(251, 191, 36, 0.14);
+  border-color: #fbbf24;
+  color: #fbbf24;
+}
+.chip-btn.active-purple {
+  background: rgba(192, 132, 252, 0.14);
+  border-color: #c084fc;
+  color: #c084fc;
+}
+.chip-btn.active-amber {
+  background: rgba(251, 191, 36, 0.14);
+  border-color: #facc15;
+  color: #facc15;
+}
 .filter-divider {
   width: 1px;
   height: 14px;
   background: var(--border-strong);
+  flex-shrink: 0;
 }
 
 /* CHART CONTAINER */
@@ -529,9 +732,43 @@ html, body {
 }
 
 /* MINI LEGEND OVERLAY (Context-Aware Legend) */
-.chart-mini-legend {
+/* EMA LEGEND OVERLAY (Top-Right) */
+.chart-ema-legend {
   position: absolute;
   top: 10px;
+  right: 65px;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-main);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.ema-leg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ema-leg-bar {
+  width: 12px;
+  height: 2.5px;
+  border-radius: 1px;
+  display: inline-block;
+}
+
+/* MINI LEGEND OVERLAY (Context-Aware Legend) */
+.chart-mini-legend {
+  position: absolute;
+  top: 38px;
   right: 65px;
   z-index: 3;
   pointer-events: none;
@@ -572,7 +809,7 @@ html, body {
   pointer-events: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 .hud-line-1 {
   display: flex;
@@ -623,7 +860,7 @@ html, body {
   border-color: rgba(255, 215, 64, 0.35);
   background: rgba(255, 215, 64, 0.12);
 }
-.hud-line-2 {
+.hud-line-2, .hud-line-3 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -658,11 +895,29 @@ html, body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: height 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bottom-drawer.bottom-collapsed {
+  height: 28px !important;
+}
+.bottom-drawer.bottom-collapsed .drawer-body {
+  display: none !important;
 }
 .drawer-tabs {
   display: flex;
   background: var(--bg-base);
   border-bottom: 1px solid var(--border);
+  justify-content: space-between;
+  align-items: center;
+}
+.drawer-tab-group {
+  display: flex;
+  align-items: center;
+}
+.drawer-toggle-box {
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
 }
 .drawer-tab {
   padding: 6px 14px;
@@ -820,7 +1075,7 @@ html, body {
 </head>
 <body>
 
-<div id="error-banner">⚠️ Terputus dari server backend atau terminal MT5. Mencoba menghubungkan kembali...</div>
+<div id="error-banner"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;margin-right:4px;">warning</span>Terputus dari server backend atau terminal MT5. Mencoba menghubungkan kembali...</div>
 
 <!-- TOP STATUS BAR -->
 <div class="header-bar">
@@ -854,7 +1109,7 @@ html, body {
     <div class="account-stat">
       <span class="stat-label">Virtual Shadow:</span>
       <span class="stat-val" id="shadow-stat-val" style="color:var(--purple);font-size:10.5px;">0 rec (0% WR)</span>
-      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:5px;padding:2px 6px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9.5px;font-weight:700;">📊 LAPORAN</a>
+      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:5px;padding:2px 6px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">monitoring</span> LAPORAN</a>
     </div>
     <div class="account-stat">
       <span class="stat-label">Mode:</span>
@@ -869,9 +1124,15 @@ html, body {
   
   <!-- LEFT: PROXIMITY WATCHLIST -->
   <div class="left-panel">
-    <div class="panel-header">
-      <span class="panel-title">26-Pair Proximity Radar</span>
-      <span id="watchlist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">26 pairs</span>
+    <div class="panel-header" onclick="if(document.querySelector('.workspace').classList.contains('left-collapsed')) toggleLeftPanel();">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="panel-title">26-Pair Proximity Radar</span>
+        <span id="watchlist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">26 pairs</span>
+      </div>
+      <button id="btn-toggle-left" class="btn-toggle-panel" onclick="event.stopPropagation(); toggleLeftPanel();" title="Toggle Proximity Watchlist"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_left</span></button>
+    </div>
+    <div class="left-collapsed-label" onclick="toggleLeftPanel()" title="Klik untuk membuka 26-Pair Watchlist">
+      <span>26-PAIR RADAR WATCHLIST</span>
     </div>
     <input type="text" id="pair-search" class="search-input" placeholder="Cari pair (e.g. CAD, JPY)...">
     <div class="filter-tabs">
@@ -893,8 +1154,8 @@ html, body {
         <span class="pair-title-big" id="active-symbol">—</span>
         <div class="tf-group">
           <button class="tf-btn active" data-tf="H1">H1 Structure</button>
-          <button class="tf-btn" data-tf="M30">M30 JPY</button>
-          <button class="tf-btn" data-tf="M5">M5 CRO Microscope</button>
+          <button class="tf-btn" data-tf="M30">M30 Swing</button>
+          <button class="tf-btn" data-tf="M5">M5 Micro</button>
         </div>
       </div>
       <div class="pair-metrics-strip">
@@ -911,8 +1172,8 @@ html, body {
           <span class="strip-val" id="strip-atr">— pts</span>
         </div>
         <div class="strip-item">
-          <span class="strip-lbl">Dealing Range</span>
-          <span class="strip-val" id="strip-dr">—%</span>
+          <span class="strip-lbl">ZCE Runway</span>
+          <span class="strip-val" id="strip-dr" style="color:var(--cyan);font-weight:600;">—</span>
         </div>
         <div class="strip-item">
           <span class="strip-lbl">CSM Delta</span>
@@ -925,10 +1186,16 @@ html, body {
       </div>
     </div>
 
+    <!-- SFR SYSTEMIC SHOCK HERO BANNER -->
+    <div id="m4-hero-banner" class="m4-hero-banner" style="display:none;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:#facc15;">bolt</span>
+      <span><strong>SYSTEMIC FLOW REGIME (SFR) ACTIVE</strong> &bull; Dominant Currency z: <span id="m4-hero-z">+0.0</span> (<span id="m4-hero-dir">BULL</span>) &bull; Direction Locked &bull; Watching Basing / Structure</span>
+    </div>
+
     <!-- FILTER STRIP BAR (High-Density Multi-Horizon Control) -->
     <div class="filter-strip-bar">
       <div class="filter-group">
-        <span class="filter-strip-title">Vertical Shading:</span>
+        <span class="filter-strip-title">Vertical:</span>
         <div class="strip-btn-group" id="vertical-filter-group">
           <button class="strip-btn active" data-vertical="sessions">Sessions</button>
           <button class="strip-btn" data-vertical="regimes">Regimes</button>
@@ -936,13 +1203,31 @@ html, body {
           <button class="strip-btn" data-vertical="off">Off</button>
         </div>
       </div>
+
       <div class="filter-divider"></div>
+
       <div class="filter-group">
-        <span class="filter-strip-title">ZCE Fortress Ladder:</span>
+        <span class="filter-strip-title">Ladder Preset:</span>
         <div class="strip-btn-group" id="zce-filter-group">
-          <button class="strip-btn active" data-zce="all">All Zones (Clustered)</button>
-          <button class="strip-btn" data-zce="macro">G2+G3 Macro</button>
-          <button class="strip-btn" data-zce="primary">F1/C1 Primary</button>
+          <button class="strip-btn active" data-zce="primary" title="Hanya Dinding Primer F1 & C1 (Rekomendasi)">F1/C1</button>
+          <button class="strip-btn" data-zce="macro" title="Dinding F1/C1 + HTF Macro Wall">Macro G3</button>
+          <button class="strip-btn" data-zce="all" title="Semua Klaster Multi-Horizon">All Zones</button>
+          <button class="strip-btn" data-zce="off" title="Matikan Semua Garis (Chart Bersih)">Off</button>
+        </div>
+      </div>
+
+      <div class="filter-divider"></div>
+
+      <div class="filter-group">
+        <span class="filter-strip-title">Filter 1-1:</span>
+        <div class="chip-toggle-group" id="zce-chips-group">
+          <button class="chip-btn active-green" id="chip-floor" data-chip="floors" title="Toggle Lantai Support (F1, F2, F3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">vertical_align_bottom</span> Floors</button>
+          <button class="chip-btn active-red" id="chip-ceil" data-chip="ceils" title="Toggle Atap Resistance (C1, C2, C3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#fbbf24;">vertical_align_top</span> Ceils</button>
+          <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#c084fc;">radar</span> M1-M4</button>
+          <button class="chip-btn active" id="chip-f1" data-chip="f1" title="Toggle Level F1">F1</button>
+          <button class="chip-btn active" id="chip-c1" data-chip="c1" title="Toggle Level C1">C1</button>
+          <button class="chip-btn" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 / C2">F2/C2</button>
+          <button class="chip-btn" id="chip-g3" data-chip="g3" title="Toggle Macro G3">G3</button>
         </div>
       </div>
     </div>
@@ -951,6 +1236,11 @@ html, body {
     <div class="chart-wrapper">
       <div id="tv-chart"></div>
       <canvas id="chart-shading-canvas"></canvas>
+      <div id="chart-ema-legend" class="chart-ema-legend">
+        <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#00e5ff;"></span>EMA 20</div>
+        <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#ffd740;"></span>EMA 50</div>
+        <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#b388ff;"></span>EMA 200</div>
+      </div>
       <div id="chart-mini-legend" class="chart-mini-legend"></div>
       <div class="chart-intel-hud" id="chart-intel-hud">
         <div class="hud-line-1">
@@ -968,7 +1258,8 @@ html, body {
           <span class="hud-metric">STATE: <span class="hud-highlight" id="hud-state">—</span></span>
           <span class="hud-dot">•</span>
           <span class="hud-metric">SESSION: <span class="hud-highlight" id="hud-session">—</span></span>
-          <span class="hud-dot">•</span>
+        </div>
+        <div class="hud-line-3">
           <span class="hud-metric">WAVE REGIME: <span class="hud-highlight" id="hud-wave-regime">—</span></span>
           <span class="hud-dot">•</span>
           <span class="hud-metric">PRE-ROLLOVER: <span class="hud-highlight" id="hud-rollover">—</span></span>
@@ -977,12 +1268,17 @@ html, body {
     </div>
 
     <!-- BOTTOM DRAWER -->
-    <div class="bottom-drawer">
+    <div class="bottom-drawer" id="bottom-drawer">
       <div class="drawer-tabs">
-        <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
-        <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1A, M1B, M2, M3, M4)</div>
-        <div class="drawer-tab" data-drawer="shadow">Virtual Shadow Quant Radar</div>
-        <div class="drawer-tab" data-drawer="rules">Active Rules & .env Inventory</div>
+        <div class="drawer-tab-group">
+          <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
+          <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1A, M1B, M2, M3, M4)</div>
+          <div class="drawer-tab" data-drawer="shadow">Virtual Shadow Quant Radar</div>
+          <div class="drawer-tab" data-drawer="rules">Active Rules & .env Inventory</div>
+        </div>
+        <div class="drawer-toggle-box">
+          <button id="btn-toggle-bottom" class="btn-toggle-panel" onclick="toggleBottomDrawer()" title="Toggle Bottom Drawer Height"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span></button>
+        </div>
       </div>
       <div class="drawer-body" id="drawer-content">
         <!-- Content injected via JS -->
@@ -994,7 +1290,7 @@ html, body {
   <div class="right-panel">
     <div class="panel-header" onclick="if(document.querySelector('.workspace').classList.contains('xray-collapsed')) toggleXrayPanel();">
       <div style="display:flex;align-items:center;gap:6px;">
-        <button id="btn-toggle-xray" class="btn-toggle-xray" onclick="event.stopPropagation(); toggleXrayPanel();" title="Toggle Decision Gates Audit (X-Ray)">▶</button>
+        <button id="btn-toggle-xray" class="btn-toggle-xray" onclick="event.stopPropagation(); toggleXrayPanel();" title="Toggle Decision Gates Audit (X-Ray)"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_right</span></button>
         <span class="panel-title">Decision Gates Audit (X-Ray)</span>
       </div>
       <span id="gate-symbol-label" style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);">—</span>
@@ -1016,7 +1312,14 @@ let currentTF = "H1";
 let currentFilter = "all";
 let currentDrawerTab = "orders";
 let activeVerticalFilter = "sessions"; // "sessions", "regimes", "both", "off"
-let activeZceFilter = "all"; // "all", "macro", "primary"
+let activeZcePreset = "primary"; // "primary", "macro", "all", "off", "custom"
+let filterShowFloors = true;
+let filterShowCeils = true;
+let filterShowRadar = true;
+let filterChipF1 = true;
+let filterChipC1 = true;
+let filterChipF2C2 = false;
+let filterChipG3 = false;
 let chart = null;
 let candleSeries = null;
 let ema20Series = null;
@@ -1203,6 +1506,10 @@ function renderVerticalShading() {
     // Map and collect raw Y coordinates
     const mapped = [];
     activeRenderedLevels.forEach(lvl => {
+      // Hard Lock: Sisi kiri 100% khusus ZCE, drop seluruh label M1..M4
+      if (lvl.label && (lvl.label.startsWith("[M1") || lvl.label.startsWith("[M2") || lvl.label.startsWith("[M3") || lvl.label.startsWith("[M4") || lvl.label.includes("Macro SFP") || lvl.label.includes("Pullback") || lvl.label.includes("Retest)"))) {
+        return;
+      }
       const rawY = candleSeries.priceToCoordinate(lvl.price);
       if (rawY !== null && rawY >= 10 && rawY <= height - 10) {
         mapped.push({
@@ -1253,7 +1560,7 @@ function renderVerticalShading() {
   }
 
   // 3. Render Dynamic 3-Point Trajectory Vectors (Origin -> Retest -> Target Projection)
-  if (cachedSymbolData && cachedSymbolData.m_standbys && candleSeries && chart) {
+  if (filterShowRadar && cachedSymbolData && cachedSymbolData.m_standbys && candleSeries && chart) {
     const timeScale = chart.timeScale();
     const standbysWithTraj = cachedSymbolData.m_standbys.filter(s => s.trajectory && s.trajectory.origin_time > 0);
 
@@ -1274,7 +1581,7 @@ function renderVerticalShading() {
       const y4 = traj.target_tp2 ? candleSeries.priceToCoordinate(traj.target_tp2) : null;
 
       if (x1 !== null && y1 !== null && x2 !== null && y2 !== null && y3 !== null) {
-        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(56, 189, 248, 0.90)" : "rgba(250, 204, 21, 0.90)"));
+        const strokeCol = s.is_confluence ? "rgba(192, 132, 252, 0.95)" : (s.type === "M3" ? "rgba(192, 132, 252, 0.90)" : (s.type === "M2" ? "rgba(129, 140, 248, 0.90)" : ((s.type === "M1" || s.type === "M1B") ? "rgba(251, 146, 60, 0.95)" : "rgba(52, 211, 153, 0.90)")));
         const dir = traj.direction;
 
         shadingCtx.save();
@@ -1304,6 +1611,8 @@ function renderVerticalShading() {
           originTxt = (dir === -1) ? `1. Breakdown (${traj.origin_age}b ago)` : `1. Breakout (${traj.origin_age}b ago)`;
         } else if (s.type === "M2") {
           originTxt = `1. Pullback Origin (${traj.origin_age}b ago)`;
+        } else if (s.type === "M1" || s.type === "M1B") {
+          originTxt = (dir === -1) ? `1. Sweep High (${traj.origin_age}b ago)` : `1. Sweep Low (${traj.origin_age}b ago)`;
         } else {
           originTxt = `1. Origin (${traj.origin_age}b ago)`;
         }
@@ -1330,6 +1639,8 @@ function renderVerticalShading() {
           anchorTxt = (dir === -1) ? "2. SBR & EMA Touch" : "2. RBS & EMA Touch";
         } else if (s.type === "M2") {
           anchorTxt = "2. EMA Touch";
+        } else if (s.type === "M1" || s.type === "M1B") {
+          anchorTxt = (dir === -1) ? "2. Sweep Reclaim" : "2. Sweep Reclaim";
         } else {
           anchorTxt = (dir === -1) ? "2. SBR Retest" : "2. RBS Retest";
         }
@@ -1452,9 +1763,27 @@ function initChart() {
     wickDownColor: "#ff5252"
   });
 
-  ema20Series = chart.addLineSeries({ color: "#00e5ff", lineWidth: 1, title: "EMA20" });
-  ema50Series = chart.addLineSeries({ color: "#ffd740", lineWidth: 1, title: "EMA50" });
-  ema200Series = chart.addLineSeries({ color: "#b388ff", lineWidth: 1.5, title: "EMA200" });
+  ema20Series = chart.addLineSeries({
+    color: "#00e5ff",
+    lineWidth: 1,
+    title: "",
+    priceLineVisible: false,
+    lastValueVisible: false
+  });
+  ema50Series = chart.addLineSeries({
+    color: "#ffd740",
+    lineWidth: 1,
+    title: "",
+    priceLineVisible: false,
+    lastValueVisible: false
+  });
+  ema200Series = chart.addLineSeries({
+    color: "#b388ff",
+    lineWidth: 1.5,
+    title: "",
+    priceLineVisible: false,
+    lastValueVisible: false
+  });
 
   initOverlayCanvas();
 
@@ -1495,33 +1824,77 @@ function renderChartLevels(data) {
   const rawLadder = (data.zce_walls && data.zce_walls.length > 0) ? data.zce_walls : (data.zce_ladder || []);
   let filteredLadder = [];
 
-  if (activeZceFilter === "primary") {
-    filteredLadder = rawLadder.filter(w => w.tier === "F1" || w.tier === "C1");
-  } else if (activeZceFilter === "macro") {
-    filteredLadder = rawLadder.filter(w => w.tier === "F1" || w.tier === "C1" || w.tier === "F2" || w.tier === "C2" || w.grade === "GRADE_3_MACRO" || w.grade === "GRADE_2_INTERMEDIATE");
-  } else {
-    filteredLadder = rawLadder;
+  // Guarantee primary floor and ceiling fallbacks
+  let primaryFloor = rawLadder.find(w => w.tier === "F1");
+  if (!primaryFloor) {
+    const fls = rawLadder.filter(w => w.type === "floor" || (w.tier && w.tier.startsWith("F")));
+    if (fls.length > 0) primaryFloor = fls[0];
+  }
+  let primaryCeil = rawLadder.find(w => w.tier === "C1");
+  if (!primaryCeil) {
+    const cls = rawLadder.filter(w => w.type === "ceiling" || w.type === "ceil" || (w.tier && w.tier.startsWith("C")));
+    if (cls.length > 0) primaryCeil = cls[0];
+  }
+
+  if (activeZcePreset !== "off") {
+    filteredLadder = rawLadder.filter(w => {
+      // 1. Direction Filter
+      const isFloor = (w.type === "floor" || (w.tier && w.tier.startsWith("F")));
+      const isCeil = (w.type === "ceiling" || w.type === "ceil" || (w.tier && w.tier.startsWith("C")));
+      if (isFloor && !filterShowFloors) return false;
+      if (isCeil && !filterShowCeils) return false;
+
+      // 2. Granular Tier & Grade Checks
+      const isF1 = (w.tier === "F1") || (primaryFloor && w === primaryFloor);
+      const isC1 = (w.tier === "C1") || (primaryCeil && w === primaryCeil);
+      const isF2C2 = w.tier === "F2" || w.tier === "C2";
+      const isG3 = w.grade === "GRADE_3_MACRO";
+
+      if (activeZcePreset === "primary") {
+        return (isF1 && filterChipF1) || (isC1 && filterChipC1);
+      }
+      if (activeZcePreset === "macro") {
+        return (isF1 && filterChipF1) || (isC1 && filterChipC1) || (isF2C2 && filterChipF2C2) || (isG3 && filterChipG3) || (w.grade === "GRADE_2_INTERMEDIATE");
+      }
+      if (activeZcePreset === "all") {
+        return true;
+      }
+      if (activeZcePreset === "custom") {
+        if (isF1) return filterChipF1;
+        if (isC1) return filterChipC1;
+        if (isF2C2) return filterChipF2C2;
+        if (isG3) return filterChipG3;
+        // Outer tiers (F3..F8, C3..C8) remain visible subject to Floor/Ceil direction toggle
+        return true;
+      }
+      return true;
+    });
   }
 
   filteredLadder.forEach(w => {
-    const isFloor = w.type === "floor";
-    let color = isFloor ? "#00e676" : "#ff5252";
-    let lineWidth = 1;
-    let lineStyle = LightweightCharts.LineStyle.Solid;
+    const isFloor = (w.type === "floor" || (w.tier && w.tier.startsWith("F")));
+    const baseRgb = isFloor ? "56, 189, 248" : "251, 191, 36"; // Cyan / Amber
 
-    if (w.grade === "GRADE_3_MACRO" || w.tier === "F1" || w.tier === "C1") {
-      lineWidth = 2;
-      lineStyle = LightweightCharts.LineStyle.Solid;
-      color = isFloor ? "#00e676" : "#ff5252";
-    } else if (w.grade === "GRADE_2_INTERMEDIATE") {
-      lineWidth = 1.5;
-      lineStyle = LightweightCharts.LineStyle.Dashed;
-      color = isFloor ? "#4ade80" : "#f87171";
-    } else {
-      lineWidth = 1;
-      lineStyle = LightweightCharts.LineStyle.Dotted;
-      color = isFloor ? "rgba(74, 222, 128, 0.7)" : "rgba(248, 113, 113, 0.7)";
+    // Extract numeric tier (e.g. C1 -> 1, F5 -> 5, C8 -> 8)
+    let tierNum = 1;
+    const match = (w.tier || "").match(/[CF](\d+)/i);
+    if (match) {
+      tierNum = parseInt(match[1], 10);
     }
+
+    // Opacity: C1..C3 & F1..F3 = 100% (1.00)
+    // C4..C8 & F4..F8: reduced by 10% per tier above 3
+    // C4/F4 = 90% (0.90), C5/F5 = 80% (0.80), C6/F6 = 70% (0.70), C7/F7 = 60% (0.60), C8/F8 = 50% (0.50)
+    let tierOpacity = 1.0;
+    if (tierNum > 3) {
+      tierOpacity = Math.max(0.50, 1.0 - (tierNum - 3) * 0.10);
+    }
+
+    let color = `rgba(${baseRgb}, ${tierOpacity.toFixed(2)})`;
+    let lineWidth = (w.grade === "GRADE_3_MACRO" || tierNum === 1) ? 1.2 : 1;
+    let lineStyle = (w.grade === "GRADE_3_MACRO" || tierNum === 1)
+      ? LightweightCharts.LineStyle.Solid
+      : (w.grade === "GRADE_2_INTERMEDIATE" || tierNum <= 3 ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Dotted);
 
     const titleText = w.label || `${w.tier} (${w.price.toFixed(data.digits || 5)})`;
     activeRenderedLevels.push({
@@ -1543,22 +1916,16 @@ function renderChartLevels(data) {
 
   // 2. M1..M4 Radar Standbys (Dashed Price Lines & Temporal Candle Markers)
   const temporalMarkers = [];
-  if (data.m_standbys && data.m_standbys.length > 0) {
+  if (filterShowRadar && data.m_standbys && data.m_standbys.length > 0) {
     data.m_standbys.forEach(s => {
       let color = "#ffd740";
       if (s.type === "M1") color = "#fb923c";
-      else if (s.type === "M1B") color = "#e879f9";
-      else if (s.type === "M2") color = "#38bdf8";
+      else if (s.type === "M1B") color = "#ec4899";
+      else if (s.type === "M2") color = "#818cf8";
       else if (s.type === "M3") color = "#c084fc";
-      else if (s.type === "M4") color = "#facc15";
-
-      const standText = `[${s.type}] ${s.label} @ ${s.price.toFixed(data.digits || 5)}`;
-      activeRenderedLevels.push({
-        price: s.price,
-        color: color,
-        label: standText
-      });
-
+      else if (s.type === "M4") color = "#34d399";
+      // Sisi kiri khusus untuk ZCE (M1..M4 tidak dimasukkan ke activeRenderedLevels)
+      // Visualisasi M1..M4 digambar langsung di dalam chart (dashed line & candle markers)
       // 1. Dashed Price Line (Garis Putus-Putus Presisi)
       const line = candleSeries.createPriceLine({
         price: s.price,
@@ -1618,9 +1985,16 @@ function renderChartLevels(data) {
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
           markerText = `[M2 ${dirStr} PULLBACK] EMA Touch @ ${s.price.toFixed(data.digits || 5)}`;
         } else if (s.type === "M4") {
-          shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
+          shape = s.is_breakdown_watch ? "circle" : ((s.direction === 1) ? "arrowUp" : "arrowDown");
           const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          markerText = `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
+          if (s.label && s.label.startsWith("M4")) {
+            markerText = `[${s.label}] @ ${s.price.toFixed(data.digits || 5)}`;
+          } else {
+            const lvlTag = (s.direction === 1) ? "Swing High" : "Swing Low";
+            markerText = s.is_breakdown_watch 
+              ? `[M4 ${dirStr} WATCH] ${lvlTag} @ ${s.price.toFixed(data.digits || 5)}`
+              : `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
+          }
         }
 
         temporalMarkers.push({
@@ -1759,32 +2133,69 @@ function renderWatchlist(pairs) {
     const biasTagClass = bName.includes("BULL") ? "htf-bull" : (bName.includes("BEAR") ? "htf-bear" : "htf-flat");
     const pipsVal = p.dist_pips !== undefined ? p.dist_pips.toFixed(1) : "0.0";
     const atrVal = p.dist_atr !== undefined ? p.dist_atr.toFixed(2) : "0.00";
-    const distText = p.dist_atr < 50 ? `${pipsVal}p (${atrVal}x ATR)` : ">50p (Idle)";
+    const trigText = p.dist_atr < 50 ? `Trig: ${pipsVal}p (${atrVal}x)` : "Trig: Idle";
+
+    let cleanSetup = (p.active_setup || "WATCH");
+    if (cleanSetup !== "WATCH") {
+      cleanSetup = cleanSetup.replace(/\s+(BEAR|BULL|BUY|SELL)$/i, "").trim() || cleanSetup;
+    }
+
+    const c1Text = p.c1_text || (p.c1_pips !== undefined && p.c1_pips !== null ? `C1: ${p.c1_pips}p` : 'C1: —');
+    const f1Text = p.f1_text || (p.f1_pips !== undefined && p.f1_pips !== null ? `F1: ${p.f1_pips}p` : 'F1: —');
+
+    let m4RowClass = "";
+    let m4Pill = "";
+    if (p.m4_flow_state === "SHOCK" || p.m4_shock) {
+      m4RowClass = "m4-shock-row";
+      m4Pill = `<span class="m4-shock-pill" title="Systemic Flow Shock Active (|z| >= 1.50)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">bolt</span> SFR SHOCK | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
+    } else if (p.m4_flow_state === "CONT") {
+      m4RowClass = "m4-cont-row";
+      m4Pill = `<span class="m4-cont-pill" title="Systemic Flow Continuation Phase (Decaying |z| >= 0.75)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">trending_flat</span> FLOW CONT | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
+    }
+
+    const boxPill = (p.basing_box && p.basing_box.is_compressing)
+      ? `<span class="box-compress-pill" title="Dynamic Basing Box: ${p.basing_box.box_bars} bars, ${p.basing_box.range_atr.toFixed(2)}x ATR [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">view_in_ar</span> BOX ${p.basing_box.box_bars}b</span>`
+      : ((p.basing_box && p.basing_box.is_broken && p.basing_box.broken_recency <= 4)
+        ? `<span class="box-compress-pill" style="border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,0.1);" title="Basing Box Retest: Broken ${p.basing_box.broken_recency}b ago [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">history</span> BRK ${p.basing_box.box_bars}b</span>`
+        : '');
 
     html += `
-      <div class="pair-row ${isSelected}" onclick="selectSymbol('${p.symbol}')">
+      <div class="pair-row ${isSelected} ${m4RowClass}" onclick="selectSymbol('${p.symbol}')">
+        <!-- Line 1: Symbol, CSM, Tier Badge -->
         <div class="pair-row-line">
           <div class="pair-col-left">
             <span class="pair-symbol">${cleanSym}</span>
             <span class="csm-text ${csmClass}">${csmText}</span>
           </div>
-          <div class="pair-col-mid">
-            <span class="pair-dist-text">${distText}</span>
-          </div>
+          <div class="pair-col-mid"></div>
           <div class="pair-col-right">
             <span class="tier-badge ${tierClass}">${p.perm_label}</span>
           </div>
         </div>
+        <!-- Line 2: Setup Pill, C1 Wall (Top), HTF Bias -->
         <div class="pair-row-line">
           <div class="pair-col-left">
-            <span class="pair-setup-pill ${setupPillClass}">${p.active_setup || "WATCH"}</span>
+            <span class="pair-setup-pill ${setupPillClass}">${cleanSetup}</span>
             ${p.extra_count > 0 && !p.is_confluence ? `<span class="extra-setup-pill" title="${p.extra_count} additional standby setup(s)" style="margin-left:2px;">+${p.extra_count}</span>` : ''}
           </div>
           <div class="pair-col-mid">
-            ${p.tactical_tag ? `<span class="tactical-pill">${p.tactical_tag}</span>` : ''}
+            <span style="color:#fbbf24;font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="Ceiling Wall C1 Distance">${c1Text}</span>
           </div>
           <div class="pair-col-right">
             <span class="htf-bias-tag ${biasTagClass}">${p.bias}</span>
+          </div>
+        </div>
+        <!-- Line 3: Trigger Distance, F1 Floor (Bottom), Basing Box & M4 Shock Badge -->
+        <div class="pair-row-line">
+          <div class="pair-col-left">
+            <span class="pair-dist-text">${trigText}</span>
+          </div>
+          <div class="pair-col-mid">
+            <span style="color:#38bdf8;font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="Floor Wall F1 Distance">${f1Text}</span>
+          </div>
+          <div class="pair-col-right" style="gap:3px;">
+            ${boxPill}
+            ${m4Pill}
           </div>
         </div>
       </div>
@@ -1809,13 +2220,14 @@ function renderSymbolHeader(d) {
   document.getElementById("strip-price").textContent = `${d.bid.toFixed(d.digits)} / ${d.ask.toFixed(d.digits)}`;
   document.getElementById("strip-spread").textContent = `${d.spread_pts} pts`;
   document.getElementById("strip-atr").textContent = `${d.atr_pts} pts`;
-  document.getElementById("strip-dr").textContent = `${d.dr_pos.toFixed(1)}% (${d.dr_label})`;
+  document.getElementById("strip-dr").textContent = d.runway_text || (d.dr_pos !== undefined ? `${d.dr_pos.toFixed(1)}% (${d.dr_label})` : '—');
   
   const csmEl = document.getElementById("strip-csm");
   csmEl.textContent = `${d.csm_delta >= 0 ? '+' : ''}${d.csm_delta.toFixed(2)}`;
   csmEl.className = `strip-val ${d.csm_delta >= 0 ? 'stat-pnl-pos' : 'stat-pnl-neg'}`;
 
-  document.getElementById("strip-tier").textContent = `${d.action_tier} (${d.perm_label})`;
+  const dirLock = d.direction_lock ? (d.direction_lock.dir === 1 ? "BUY ONLY" : (d.direction_lock.dir === -1 ? "SELL ONLY" : "FREE")) : "FREE";
+  document.getElementById("strip-tier").textContent = `${d.action_tier} (${d.perm_label}) • DIR: ${dirLock}`;
 
   // Render Multi-TF Compass & State HUD
   document.getElementById("hud-sym-tag").textContent = d.tactical_desc ? `${clean} ${currentTF} • ${d.tactical_desc}` : `${clean} ${currentTF}`;
@@ -1837,6 +2249,26 @@ function renderSymbolHeader(d) {
       waveEl.style.color = reg.includes("SUPER") ? "#ec4899" : (reg.includes("MATURE") ? "#f59e0b" : "#38bdf8");
     }
     document.getElementById("hud-rollover").textContent = it.pre_rollover_countdown;
+  }
+
+  // Render M4 Systemic Flow Shock Hero Banner
+  const m4Banner = document.getElementById("m4-hero-banner");
+  if (m4Banner) {
+    if (d.m4_flow_state === "SHOCK" || d.m4_shock) {
+      m4Banner.style.display = "flex";
+      m4Banner.style.background = "rgba(250, 204, 21, 0.08)";
+      m4Banner.style.borderColor = "rgba(250, 204, 21, 0.4)";
+      m4Banner.style.color = "#facc15";
+      m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#facc15;">bolt</span> <span><strong>SYSTEMIC FLOW SHOCK (SFR) ACTIVE</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Direction Locked &bull; Watching Basing / Structure</span>`;
+    } else if (d.m4_flow_state === "CONT") {
+      m4Banner.style.display = "flex";
+      m4Banner.style.background = "rgba(56, 189, 248, 0.08)";
+      m4Banner.style.borderColor = "rgba(56, 189, 248, 0.35)";
+      m4Banner.style.color = "#38bdf8";
+      m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#38bdf8;">trending_flat</span> <span><strong>SYSTEMIC FLOW CONTINUATION</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Episode Active &bull; Watching Retest / Basing</span>`;
+    } else {
+      m4Banner.style.display = "none";
+    }
   }
 }
 
@@ -1948,7 +2380,7 @@ function renderDrawer() {
     }
 
     let html = `<table class="data-table"><thead><tr>
-      <th>Ticket</th><th>Type</th><th>Volume</th><th>Open Price</th><th>Current SL</th><th>Current TP</th><th>Profit</th><th>Management Stage</th><th>Pre-Rollover Dist</th>
+      <th>Ticket</th><th>Type</th><th>Volume</th><th>Open Price</th><th>Current SL</th><th>Current TP</th><th>Profit</th><th>Management Stage</th><th>Pre-Rollover Dist</th><th>CSM Shift</th>
     </tr></thead><tbody>`;
 
     (d.open_positions || []).forEach(p => {
@@ -1963,6 +2395,7 @@ function renderDrawer() {
         <td class="${pnlClass}" style="font-weight:700;">${p.profit >= 0 ? '+' : ''}$${p.profit.toFixed(2)}</td>
         <td><span style="color:var(--cyan);font-weight:600;">${p.mgt_badge || 'ACTIVE BREATHING'}</span></td>
         <td>${p.rollover_dist || 'Safe (>200 pts)'}</td>
+        <td style="font-family:var(--font-mono);font-size:11px;">${p.csm_shift || '—'}</td>
       </tr>`;
     });
 
@@ -1976,6 +2409,7 @@ function renderDrawer() {
         <td>${o.tp ? o.tp.toFixed(d.digits) : '—'}</td>
         <td>PENDING</td>
         <td><span style="color:var(--amber);">WAITING FILL</span></td>
+        <td>—</td>
         <td>—</td>
       </tr>`;
     });
@@ -1998,16 +2432,16 @@ function renderDrawer() {
           <div class="tele-row"><span class="tele-lbl">Reclaim Status:</span><span class="tele-val">${t.m1_reclaim || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1_wick || '0.0% (Req >=33%)'}</span></div>
         </div>
-        <div class="telemetry-card" style="border-top: 2px solid #e879f9;">
-          <div class="tele-title" style="color:#e879f9;">M1B: Trend Induced Sweep</div>
-          <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#e879f9;font-weight:700;">${t.m1b_target || '—'}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Liquidity Pool:</span><span class="tele-val" style="color:#e879f9;">${t.m1b_eqh || 'Single Anchor'}</span></div>
+        <div class="telemetry-card" style="border-top: 2px solid #ec4899;">
+          <div class="tele-title" style="color:#ec4899;">M1B: Trend Induced Sweep</div>
+          <div class="tele-row"><span class="tele-lbl">Anchor Level:</span><span class="tele-val" style="color:#ec4899;font-weight:700;">${t.m1b_target || '—'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Liquidity Pool:</span><span class="tele-val" style="color:#ec4899;">${t.m1b_eqh || 'Single Anchor'}</span></div>
           <div class="tele-row"><span class="tele-lbl">ZCE Confluence:</span><span class="tele-val">${t.m1b_zce || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Sweep Status:</span><span class="tele-val">${t.m1b_status || 'Unconfirmed'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Rejection Wick:</span><span class="tele-val">${t.m1b_wick || '0.0% (Req >=30%)'}</span></div>
         </div>
-        <div class="telemetry-card" style="border-top: 2px solid #38bdf8;">
-          <div class="tele-title" style="color:#38bdf8;">M2: Trend Pullback Retest</div>
+        <div class="telemetry-card" style="border-top: 2px solid #818cf8;">
+          <div class="tele-title" style="color:#818cf8;">M2: Trend Pullback Retest</div>
           <div class="tele-row"><span class="tele-lbl">ADX Trend Strength:</span><span class="tele-val">${t.m2_adx || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Fib 50% Level:</span><span class="tele-val">${t.m2_fib50 || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Fib 61.8% Pocket:</span><span class="tele-val">${t.m2_fib618 || '—'}</span></div>
@@ -2017,11 +2451,11 @@ function renderDrawer() {
           <div class="tele-title" style="color:#c084fc;">M3: Breakout Retest Guard</div>
           <div class="tele-row"><span class="tele-lbl">Broken SBR/RBS:</span><span class="tele-val">${t.m3_level || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">15-Bar Recency:</span><span class="tele-val">${t.m3_recency || 'PASS'}</span></div>
-          <div class="tele-row"><span class="tele-lbl">Runaway Push:</span><span class="tele-val">${t.m3_runaway || '1.10x ATR (Max 2.5x)'}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Basing Box:</span><span class="tele-val" style="color:#818cf8;">${t.m3_basing || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Target Runway:</span><span class="tele-val">${t.m3_runway || '1.40x ATR (Req >=0.8x)'}</span></div>
         </div>
-        <div class="telemetry-card" style="border-top: 2px solid #facc15;">
-          <div class="tele-title" style="color:#facc15;">M4: Systemic Flow Continuation</div>
+        <div class="telemetry-card" style="border-top: 2px solid #34d399;">
+          <div class="tele-title" style="color:#34d399;">M4: Systemic Flow Continuation</div>
           <div class="tele-row"><span class="tele-lbl">Currency Z-Score:</span><span class="tele-val">${t.m4_z || '—'} (Req >=1.5)</span></div>
           <div class="tele-row"><span class="tele-lbl">120-Bar Breakdown:</span><span class="tele-val">${t.m4_breakdown || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Structural SL/TP:</span><span class="tele-val">SL 0.45x ATR | TP 1.1R</span></div>
@@ -2042,7 +2476,7 @@ function renderDrawer() {
     let html = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
         <div style="font-weight:800;font-size:12px;color:var(--purple);text-transform:uppercase;letter-spacing:0.5px;">VIRTUAL SHADOW QUANT RADAR (UNCONSTRAINED TELEMETRY)</div>
-        <a href="/shadow" target="_blank" style="padding:4px 12px;border-radius:4px;background:rgba(192,132,252,0.22);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:6px;">📊 Buka Laporan Lengkap HTML ↗</a>
+        <a href="/shadow" target="_blank" style="padding:4px 12px;border-radius:4px;background:rgba(192,132,252,0.22);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">analytics</span> Buka Laporan Lengkap HTML <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_new</span></a>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:12px;">
         <div class="telemetry-card">
@@ -2065,9 +2499,9 @@ function renderDrawer() {
         </div>
         <div class="telemetry-card">
           <div class="tele-title">Distribusi Resolusi</div>
-          <div class="tele-row"><span class="tele-lbl">🟢 TP / 🔵 BEP:</span><span class="tele-val">${s.outcome_breakdown?.tp?.count || s.tp_hits} (${s.outcome_breakdown?.tp?.pct_total || 0}%) / ${s.outcome_breakdown?.bep?.count || s.bep_hits || 0} (${s.outcome_breakdown?.bep?.pct_total || 0}%)</span></div>
-          <div class="tele-row"><span class="tele-lbl">🟡 Time-Decay:</span><span class="tele-val">${s.outcome_breakdown?.time_decay?.count || s.time_decay_hits || 0} (${s.outcome_breakdown?.time_decay?.pct_total || 0}%)</span></div>
-          <div class="tele-row"><span class="tele-lbl">🔴 SL / ⚪ Exp:</span><span class="tele-val">${s.outcome_breakdown?.sl?.count || s.sl_hits} (${s.outcome_breakdown?.sl?.pct_total || 0}%) / ${s.expired_count} (${s.outcome_breakdown?.expired?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--green);vertical-align:-1px;">check_circle</span> TP / <span class="material-symbols-outlined" style="font-size:11px;color:var(--cyan);vertical-align:-1px;">shield</span> BEP:</span><span class="tele-val">${s.outcome_breakdown?.tp?.count || s.tp_hits} (${s.outcome_breakdown?.tp?.pct_total || 0}%) / ${s.outcome_breakdown?.bep?.count || s.bep_hits || 0} (${s.outcome_breakdown?.bep?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--amber);vertical-align:-1px;">timer</span> Time-Decay:</span><span class="tele-val">${s.outcome_breakdown?.time_decay?.count || s.time_decay_hits || 0} (${s.outcome_breakdown?.time_decay?.pct_total || 0}%)</span></div>
+          <div class="tele-row"><span class="tele-lbl"><span class="material-symbols-outlined" style="font-size:11px;color:var(--red);vertical-align:-1px;">cancel</span> SL / <span class="material-symbols-outlined" style="font-size:11px;color:var(--text-dim);vertical-align:-1px;">history_toggle_off</span> Exp:</span><span class="tele-val">${s.outcome_breakdown?.sl?.count || s.sl_hits} (${s.outcome_breakdown?.sl?.pct_total || 0}%) / ${s.expired_count} (${s.outcome_breakdown?.expired?.pct_total || 0}%)</span></div>
         </div>
       </div>
     `;
@@ -2086,7 +2520,7 @@ function renderDrawer() {
           <td style="color:${(mechs.M1?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M1?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M1?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
-          <td style="color:#38bdf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
+          <td style="color:#818cf8;font-weight:700;">M2: Trend-Aligned Pullback</td>
           <td>${mechs.M2?.total || 0}</td><td>${mechs.M2?.tp || 0}</td><td>${mechs.M2?.sl || 0}</td><td>${mechs.M2?.bep || 0}</td>
           <td>${((mechs.M2?.tp || 0) + (mechs.M2?.sl || 0)) > 0 ? (((mechs.M2.tp || 0) / ((mechs.M2.tp || 0) + (mechs.M2.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M2?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M2?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M2?.net_r || 0).toFixed(2)}R</td>
@@ -2098,7 +2532,7 @@ function renderDrawer() {
           <td style="color:${(mechs.M3?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M3?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M3?.net_r || 0).toFixed(2)}R</td>
         </tr>
         <tr>
-          <td style="color:#facc15;font-weight:700;">M4: Systemic Flow Continuation</td>
+          <td style="color:#34d399;font-weight:700;">M4: Systemic Flow Continuation</td>
           <td>${mechs.M4?.total || 0}</td><td>${mechs.M4?.tp || 0}</td><td>${mechs.M4?.sl || 0}</td><td>${mechs.M4?.bep || 0}</td>
           <td>${((mechs.M4?.tp || 0) + (mechs.M4?.sl || 0)) > 0 ? (((mechs.M4.tp || 0) / ((mechs.M4.tp || 0) + (mechs.M4.sl || 0))) * 100).toFixed(1) : '0.0'}%</td>
           <td style="color:${(mechs.M4?.net_r || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(mechs.M4?.net_r || 0) >= 0 ? '+' : ''}${(mechs.M4?.net_r || 0).toFixed(2)}R</td>
@@ -2126,8 +2560,8 @@ function renderDrawer() {
         const isRealMt5 = String(tr.mt5_disposition || '').includes('EXECUTED');
         const ticketStr = tr.mt5_ticket ? `#${tr.mt5_ticket}` : '';
         const dispBadge = isRealMt5 
-          ? `<span class="badge" style="background:rgba(0,230,118,0.18);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;">🟢 REAL MT5 ${ticketStr}</span>`
-          : `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;">🟣 PAPER (${tr.mt5_disposition?.replace('SKIPPED_', '') || 'SHADOW'})</span>`;
+          ? `<span class="badge" style="background:rgba(0,230,118,0.18);color:var(--green);border:1px solid rgba(0,230,118,0.4);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;color:var(--green);vertical-align:-1px;">verified</span> REAL MT5 ${ticketStr}</span>`
+          : `<span class="badge" style="background:rgba(192,132,252,0.18);color:#c084fc;border:1px solid rgba(192,132,252,0.4);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;color:#c084fc;vertical-align:-1px;">science</span> PAPER (${tr.mt5_disposition?.replace('SKIPPED_', '') || 'SHADOW'})</span>`;
 
         html += `<tr style="${isRealMt5 ? 'background:rgba(0,230,118,0.03);' : ''}">
           <td style="font-family:var(--font-mono);font-size:10px;">${tr.shadow_id}</td>
@@ -2203,6 +2637,10 @@ function setupEvents() {
   // Drawer tabs
   document.querySelectorAll(".drawer-tab").forEach(tab => {
     tab.addEventListener("click", () => {
+      const drawer = document.getElementById("bottom-drawer");
+      if (drawer && drawer.classList.contains("bottom-collapsed")) {
+        toggleBottomDrawer();
+      }
       document.querySelectorAll(".drawer-tab").forEach(t => t.classList.remove("active"));
       tab.classList.add("active");
       currentDrawerTab = tab.getAttribute("data-drawer");
@@ -2220,20 +2658,214 @@ function setupEvents() {
     });
   });
 
-  // ZCE ladder filter strip buttons
+  // ZCE ladder filter preset buttons
   document.querySelectorAll("#zce-filter-group .strip-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      activeZceFilter = btn.getAttribute("data-zce");
-      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+      const preset = btn.getAttribute("data-zce");
+      syncChipsWithPreset(preset);
     });
   });
+
+  // Granular ZCE Chip toggles
+  const chipFloor = document.getElementById("chip-floor");
+  if (chipFloor) {
+    chipFloor.addEventListener("click", () => {
+      filterShowFloors = !filterShowFloors;
+      chipFloor.classList.toggle("active-green", filterShowFloors);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipCeil = document.getElementById("chip-ceil");
+  if (chipCeil) {
+    chipCeil.addEventListener("click", () => {
+      filterShowCeils = !filterShowCeils;
+      chipCeil.classList.toggle("active-red", filterShowCeils);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipRadar = document.getElementById("chip-radar");
+  if (chipRadar) {
+    chipRadar.addEventListener("click", () => {
+      filterShowRadar = !filterShowRadar;
+      chipRadar.classList.toggle("active-purple", filterShowRadar);
+      try {
+        localStorage.setItem("zce_radar", filterShowRadar ? "1" : "0");
+      } catch(e) {}
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipF1 = document.getElementById("chip-f1");
+  if (chipF1) {
+    chipF1.addEventListener("click", () => {
+      filterChipF1 = !filterChipF1;
+      chipF1.classList.toggle("active", filterChipF1);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipC1 = document.getElementById("chip-c1");
+  if (chipC1) {
+    chipC1.addEventListener("click", () => {
+      filterChipC1 = !filterChipC1;
+      chipC1.classList.toggle("active", filterChipC1);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipF2C2 = document.getElementById("chip-f2c2");
+  if (chipF2C2) {
+    chipF2C2.addEventListener("click", () => {
+      filterChipF2C2 = !filterChipF2C2;
+      chipF2C2.classList.toggle("active", filterChipF2C2);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipG3 = document.getElementById("chip-g3");
+  if (chipG3) {
+    chipG3.addEventListener("click", () => {
+      filterChipG3 = !filterChipG3;
+      chipG3.classList.toggle("active", filterChipG3);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
 
   // Search input
   document.getElementById("pair-search").addEventListener("input", () => {
     if (cachedOverview) renderWatchlist(cachedOverview.pairs);
   });
+}
+
+// Synchronize granular chips with preset
+function syncChipsWithPreset(preset) {
+  activeZcePreset = preset;
+  if (preset === "primary") {
+    filterChipF1 = true;
+    filterChipC1 = true;
+    filterChipF2C2 = false;
+    filterChipG3 = false;
+    filterShowFloors = true;
+    filterShowCeils = true;
+  } else if (preset === "macro") {
+    filterChipF1 = true;
+    filterChipC1 = true;
+    filterChipF2C2 = true;
+    filterChipG3 = true;
+    filterShowFloors = true;
+    filterShowCeils = true;
+  } else if (preset === "all") {
+    filterChipF1 = true;
+    filterChipC1 = true;
+    filterChipF2C2 = true;
+    filterChipG3 = true;
+    filterShowFloors = true;
+    filterShowCeils = true;
+  } else if (preset === "off") {
+    filterChipF1 = false;
+    filterChipC1 = false;
+    filterChipF2C2 = false;
+    filterChipG3 = false;
+  }
+
+  const chipFloor = document.getElementById("chip-floor");
+  if (chipFloor) chipFloor.classList.toggle("active-green", filterShowFloors);
+
+  const chipCeil = document.getElementById("chip-ceil");
+  if (chipCeil) chipCeil.classList.toggle("active-red", filterShowCeils);
+
+  const chipRadar = document.getElementById("chip-radar");
+  if (chipRadar) chipRadar.classList.toggle("active-purple", filterShowRadar);
+
+  const chipF1 = document.getElementById("chip-f1");
+  if (chipF1) chipF1.classList.toggle("active", filterChipF1);
+
+  const chipC1 = document.getElementById("chip-c1");
+  if (chipC1) chipC1.classList.toggle("active", filterChipC1);
+
+  const chipF2C2 = document.getElementById("chip-f2c2");
+  if (chipF2C2) chipF2C2.classList.toggle("active", filterChipF2C2);
+
+  const chipG3 = document.getElementById("chip-g3");
+  if (chipG3) chipG3.classList.toggle("active", filterChipG3);
+
+  try {
+    localStorage.setItem("zce_preset", preset);
+  } catch(e) {}
+
+  if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+}
+
+// Toggle Left Panel (Watchlist Drawer)
+function toggleLeftPanel() {
+  const ws = document.querySelector(".workspace");
+  if (!ws) return;
+  ws.classList.toggle("left-collapsed");
+  const isCollapsed = ws.classList.contains("left-collapsed");
+  try {
+    localStorage.setItem("left_collapsed", isCollapsed ? "1" : "0");
+  } catch(e) {}
+
+  const btn = document.getElementById("btn-toggle-left");
+  if (btn) {
+    btn.innerHTML = isCollapsed 
+      ? '<span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_right</span>' 
+      : '<span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_left</span>';
+  }
+
+  setTimeout(() => {
+    const container = document.getElementById("tv-chart");
+    if (chart && container) {
+      chart.resize(container.clientWidth, container.clientHeight);
+    }
+    if (typeof resizeOverlayCanvas === "function") {
+      resizeOverlayCanvas();
+    }
+  }, 220);
+}
+
+// Toggle Bottom Drawer
+function toggleBottomDrawer() {
+  const drawer = document.getElementById("bottom-drawer");
+  if (!drawer) return;
+  drawer.classList.toggle("bottom-collapsed");
+  const isCollapsed = drawer.classList.contains("bottom-collapsed");
+  try {
+    localStorage.setItem("bottom_collapsed", isCollapsed ? "1" : "0");
+  } catch(e) {}
+
+  const btn = document.getElementById("btn-toggle-bottom");
+  if (btn) {
+    btn.innerHTML = isCollapsed 
+      ? '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_less</span>' 
+      : '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span>';
+  }
+
+  setTimeout(() => {
+    const container = document.getElementById("tv-chart");
+    if (chart && container) {
+      chart.resize(container.clientWidth, container.clientHeight);
+    }
+    if (typeof resizeOverlayCanvas === "function") {
+      resizeOverlayCanvas();
+    }
+  }, 220);
 }
 
 // Toggle Right Panel X-Ray Audit
@@ -2247,7 +2879,9 @@ function toggleXrayPanel() {
   } catch(e) {}
 
   const btn = document.getElementById("btn-toggle-xray");
-  if (btn) btn.textContent = isCollapsed ? "◀" : "▶";
+  if (btn) btn.innerHTML = isCollapsed 
+    ? '<span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_left</span>' 
+    : '<span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_right</span>';
 
   setTimeout(() => {
     const container = document.getElementById("tv-chart");
@@ -2268,10 +2902,28 @@ window.addEventListener("DOMContentLoaded", () => {
   fetchSymbolData();
   fetchRules();
 
-  // Restore X-Ray collapse state
+  // Restore Panel collapse states & Filter preferences
   try {
+    if (localStorage.getItem("left_collapsed") === "1") {
+      toggleLeftPanel();
+    }
+    if (localStorage.getItem("bottom_collapsed") === "1") {
+      toggleBottomDrawer();
+    }
     if (localStorage.getItem("xray_collapsed") === "1") {
       toggleXrayPanel();
+    }
+    const savedPreset = localStorage.getItem("zce_preset");
+    if (savedPreset) {
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-zce") === savedPreset);
+      });
+      syncChipsWithPreset(savedPreset);
+    }
+    if (localStorage.getItem("zce_radar") === "0") {
+      filterShowRadar = false;
+      const cr = document.getElementById("chip-radar");
+      if (cr) cr.classList.remove("active-purple");
     }
   } catch(e) {}
 
