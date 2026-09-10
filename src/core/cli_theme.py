@@ -98,8 +98,8 @@ class UI:
             return f"{cls.BLUE}[M2 PULLBACK]{cls.RST}"
         elif "M3" in m or "BREAKOUT" in m or "RETEST" in m:
             return f"{cls.PURPLE}[M3 RETEST]{cls.RST}"
-        elif "M4" in m or "FLOW" in m or "CONTINUATION" in m:
-            return f"{cls.GREEN}[M4 FLOW]{cls.RST}"
+        elif "M4" in m or "BASING" in m or "DBD" in m or "RBR" in m or "CONTINUATION" in m or "FLOW" in m:
+            return f"{cls.GREEN}[M4 BASING]{cls.RST}"
         return f"{cls.CYAN}[{m[:8]}]{cls.RST}"
 
     @classmethod

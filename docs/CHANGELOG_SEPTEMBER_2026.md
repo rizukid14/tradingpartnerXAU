@@ -2,6 +2,48 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 92. Perubahan 10 September 2026 (Malam) — Rework M4: Pure Technical Breakout Continuation (DBD/RBR Micro-Basing), CSM Telemetry Decoupling & Koreksi Mid-Chamber Trap Veto
+
+### Latar Belakang & Investigasi Empiris:
+1. **Audit Drawdown Hari Ini & Evaluasi CSM (Boitoki Currency Strength Matrix)**:
+   - Evaluasi performa Virtual Paper Trade (Shadow Tracker) mendapati penurunan performa hari ini (-6.56R, 14 loss) dibanding 3 hari sebelumnya (+1.51R, +15.38R, +17.39R).
+   - Analisis mendalam telemetri 90 trade riil pada akun live MT5 membuktikan:
+     * **Trade CSM OPPOSED saat Open** (membuka posisi saat harga sedang diskon melawan momentum CSM sesaat): 18 trade, **WinRate 66.7%**, P/L bersih **+$130.78**.
+     * **Trade CSM ALIGNED saat Open** (membuka posisi mengejar momentum searah CSM): 69 trade, **WinRate 55.1%**, P/L bersih **-$914.84**.
+   - Kesimpulan matematis: Menjadikan CSM sebagai *hard veto leading indicator* menyaring trade menang yang sedang pullback dan memaksa bot membeli di pucuk / menjual di lembah. Selain itu, fitur `CSM Dynamic Flow Bailout` memotong dini posisi secara prematur (misal EURUSD -$25.48 dan USDCHF -$18.17) akibat fluktuasi sesaat M15 sebelum invalidasi teknikal tersentuh.
+2. **Rekonseptualisasi M4 (Breakout Continuation vs Systemic Flow)**:
+   - Generator sinyal M4 sebelumnya bergantung pada rolling 720-bar currency z-score `zb`/`zq`.
+   - Pola alami M4 sejatinya adalah aksi harga lokal: kelanjutan dari breakout impulsif yang membentuk *high-tight / low-tight micro-basing* (RBR = Rally-Base-Rally, DBD = Drop-Base-Drop), bukan sekadar kuantitas flow mata uang global.
+3. **Koreksi Mid-Chamber Trap Veto**:
+   - Veto konsolidasi tengah chamber di MSE sangat bermanfaat untuk M1 (Sweep) guna mencegah *internal chop fakeout*.
+   - Namun, memblokir seluruh trade di mid-chamber merusak M2 (Pullback EMA50) dan M4 (Micro-Basing Continuation) yang secara alami bertumpu pada konsolidasi di paruh tengah dealing range.
+
+---
+
+### Solusi Perbaikan Kode & Komponen:
+1. **Rework Generator M4 (`_detect_m4_breakout_continuation` di `market_scanner.py`)**:
+   - **RBR (BUY)**: Candle H1 impulsif ($Close > Open$, body ratio $\ge 50\%$) menembus *recent swing high* 20-bar $\rightarrow$ diikuti *High-Tight Basing* 2–6 bar (range $\le 0.35\times\text{ATR}$ H1, lantai basing bertahan di paruh atas breakout bar) $\rightarrow$ emisi pending `buy_limit` di atap basing (`base_ceil`).
+   - **DBD (SELL)**: Candle H1 impulsif ($Close < Open$, body ratio $\ge 50\%$) menembus *recent swing low* 20-bar $\rightarrow$ diikuti *Low-Tight Basing* 2–6 bar (range $\le 0.35\times\text{ATR}$ H1, atap basing bertahan di paruh bawah breakdown bar) $\rightarrow$ emisi pending `sell_limit` di lantai basing (`base_floor`).
+   - Penentuan SL presisi di balik basing box ditambah safety floor & ZCE next barrier targeting ($C_1/C_2$ atau $F_1/F_2$).
+2. **Pemisahan Definitif Systemic Flow sebagai Layer 0**:
+   - M4 murni berbasis pola chart teknikal OHLC lokal pair.
+   - *Systemic Flow* tetap hidup mandiri di Layer 0 (`get_systemic_flow_regime`, `evaluate_systemic_basket_lock`, dan `CBSS Basket Concurrency Cap`), tanpa mem-veto order teknikal individual.
+3. **Penonaktifan CSM Hard Veto & Dynamic Bailout (Mode Telemetri / Observasi)**:
+   - Diselaraskan di `.env` dan `config.py`: `ENABLE_CSM_FLOW_FILTER = False` dan `ENABLE_CSM_DYNAMIC_BAILOUT = False`.
+   - Gate 4/5 di Dashboard Cockpit menampilkan status **`OBSERVE` (Cyan)** informatif tanpa memblokir eksekusi.
+4. **Pembebasan M2 dan M4 dari Mid-Chamber Trap Veto**:
+   - Di `_is_direction_allowed()` (`market_scanner.py`), penolakan mid-chamber trap dipertahankan untuk M1 dan M3 di batas chamber, namun dilewati (`continue`) untuk M2 (Pullback) dan M4 (Basing Continuation).
+5. **Sinkronisasi Feed Dashboard Real-Time (`get_radar_standbys` di `market_scanner.py`)**:
+   - Menghubungkan fungsi `get_radar_standbys()` ke generator `_detect_m4_breakout_continuation()`:
+     * Saat setup RBR / DBD aktif, emisi standby bertipe `"M4"` dengan harga entry limit basing box, status `WAITING_BASING_RETEST`, dan vektor trajektori 3-titik (*origin* $\rightarrow$ *retest* $\rightarrow$ *target* TP1/TP2 ZCE).
+     * Dashboard chart Lightweight Charts otomatis menggambar reticle garis putus-putus warna hijau zamrud (`#34d399`) beserta panah trajektori, dan Watchlist merender badge pill `M4:BASING`.
+     * Mempertahankan fallback observasi Layer 0 SFR Shock (`_m4_state`) jika belum ada pola teknikal basing matang pada sisi tersebut.
+6. **Verifikasi Unit Test Suite**:
+   - Dibuat suite baru `tests/test_m4_breakout_continuation.py` (4 test: RBR, DBD, rejection basing melebar, dan validasi emisi standby trajektori M4 untuk dashboard).
+   - Seluruh pengujian unit test suite di repositori: **100% PASS (Code 0)**.
+
+---
+
 ## 91. Perubahan 10 September 2026 (Sore III) — Pelepasan Belenggu Anti-Internal Hedge & Restorasi Seleksi Berbasis Struktur Alami (ZCE Runway, MSE Structure & G3 Wall Clearance)
 
 ### Latar Belakang & Evaluasi Operasional:

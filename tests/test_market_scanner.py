@@ -961,21 +961,22 @@ class TestMarketScanner(unittest.TestCase):
         ]
 
         with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
-            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch("src.analytics.market_scanner.datetime") as mock_dt:
-                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
-                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
-                    candidates = self.scanner.scan_fast_radar(mock_connector)
-                    sweep_cands = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
-                    self.assertEqual(len(sweep_cands), 0, "G1 Micro level in RANGE_BOUND market must be strictly REJECTED!")
+            with patch("src.analytics.economic_calendar.calendar.is_in_news_blackout", return_value=(False, "")):
+                with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                    with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                        mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                        mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                        candidates = self.scanner.scan_fast_radar(mock_connector)
+                        sweep_cands = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                        self.assertEqual(len(sweep_cands), 0, "G1 Micro level in RANGE_BOUND market must be strictly REJECTED!")
 
-                    # Now change grade to GRADE_2_INTERMEDIATE and clear breathing cooldown -> Must produce candidate!
-                    self.scanner._symbol_last_eval.clear()
-                    self.scanner._symbol_last_trigger.clear()
-                    self.scanner.macro_cache["EURUSD-ECNc"]["c1_reaction_grade"] = "GRADE_2_INTERMEDIATE"
-                    candidates_g2 = self.scanner.scan_fast_radar(mock_connector)
-                    sweep_cands_g2 = [c for c in candidates_g2 if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
-                    self.assertEqual(len(sweep_cands_g2), 1, "G2 Fortress wall in RANGE_BOUND market must be APPROVED!")
+                        # Now change grade to GRADE_2_INTERMEDIATE and clear breathing cooldown -> Must produce candidate!
+                        self.scanner._symbol_last_eval.clear()
+                        self.scanner._symbol_last_trigger.clear()
+                        self.scanner.macro_cache["EURUSD-ECNc"]["c1_reaction_grade"] = "GRADE_2_INTERMEDIATE"
+                        candidates_g2 = self.scanner.scan_fast_radar(mock_connector)
+                        sweep_cands_g2 = [c for c in candidates_g2 if c.symbol == "EURUSD-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
+                        self.assertEqual(len(sweep_cands_g2), 1, "G2 Fortress wall in RANGE_BOUND market must be APPROVED!")
 
     def test_m4_grade_3_macro_gate_demands_basing(self):
         """Verify M4 breaking Grade 3 Macro Wall requires H1 basing box (WATCH_BASING_FORMATION)."""
@@ -1044,37 +1045,40 @@ class TestMarketScanner(unittest.TestCase):
         mock_connector.get_live_tick.return_value = mock_connector.get_current_tick.return_value
 
         with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
-            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch("src.analytics.market_scanner.datetime") as mock_dt:
-                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
-                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
-                    with patch.object(self.scanner, '_m4_pending_ready', return_value=p_no_basing):
-                        candidates = self.scanner.scan_fast_radar(mock_connector)
-                        m4_cands = [c for c in candidates if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
-                        self.assertEqual(len(m4_cands), 0, "M4 breaking Grade 3 Wall without basing must be held back!")
-
-                        # Verify get_radar_standbys marks status as WATCH_BASING_FORMATION
-                        standbys = self.scanner.get_radar_standbys(sym, mid=1.30530, macro=self.scanner.macro_cache[sym])
-                        m4_sb = next((s for s in standbys if s["type"] == "M4"), None)
-                        self.assertIsNotNone(m4_sb)
-                        self.assertEqual(m4_sb["status"], "WATCH_BASING_FORMATION")
+            with patch("src.analytics.economic_calendar.calendar.is_in_news_blackout", return_value=(False, "")):
+                with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                    with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                        mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                        mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                        with patch.object(self.scanner, '_detect_m4_breakout_continuation', return_value=None):
+                            candidates = self.scanner.scan_fast_radar(mock_connector)
+                            m4_cands = [c for c in candidates if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                            self.assertEqual(len(m4_cands), 0, "M4 without basing continuation must produce no candidates!")
 
         # Case 2: M4 pending WITH basing (is_basing = True)
         self.scanner._symbol_last_eval.clear()
         self.scanner._symbol_last_trigger.clear()
-        p_with_basing = dict(p_no_basing)
-        p_with_basing["is_basing"] = True
-        self.scanner._m4_state[clean_sym]["BUY"]["pending"] = p_with_basing
+        m4_res_sample = {
+            "side": "BUY",
+            "pattern": "RALLY_BASE_RALLY",
+            "level": 1.30520,
+            "entry": 1.30520,
+            "sl": 1.30070,
+            "basing_ceiling": 1.30520,
+            "basing_floor": 1.30400,
+            "basing_range_atr": 0.12
+        }
 
         with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
-            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
-                with patch("src.analytics.market_scanner.datetime") as mock_dt:
-                    mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
-                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
-                    with patch.object(self.scanner, '_m4_pending_ready', return_value=p_with_basing):
-                        candidates2 = self.scanner.scan_fast_radar(mock_connector)
-                        m4_cands2 = [c for c in candidates2 if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
-                        self.assertEqual(len(m4_cands2), 1, "M4 breaking Grade 3 Wall WITH basing must be APPROVED!")
+            with patch("src.analytics.economic_calendar.calendar.is_in_news_blackout", return_value=(False, "")):
+                with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                    with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                        mock_dt.now.return_value = datetime(2026, 8, 31, 15, 0, 0, tzinfo=WIB)
+                        mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                        with patch.object(self.scanner, '_detect_m4_breakout_continuation', return_value=m4_res_sample):
+                            candidates2 = self.scanner.scan_fast_radar(mock_connector)
+                            m4_cands2 = [c for c in candidates2 if c.symbol == sym and c.setup_type == config.M4_SETUP_TYPE]
+                            self.assertEqual(len(m4_cands2), 1, "M4 breaking with basing must be APPROVED!")
 
     def test_btc_weekend_scanner_and_risk_entry_allowed(self):
         """Verify that on weekends (Saturday/Sunday), BTCUSD.c is scanned by radar and risk engine allows entry."""

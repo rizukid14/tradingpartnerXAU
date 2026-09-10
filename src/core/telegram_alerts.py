@@ -388,6 +388,7 @@ def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos
 
     pnl_str = f"+${profit:.2f}" if profit >= 0 else f"-${abs(profit):.2f}"
     pos_str = f"- Arah: `{pos_type}`\n" if pos_type else ""
+    comm_str = f"\n- Catatan: `{comment}`" if (comment and comment.lower() not in ("sl", "tp", "manual", reason_str)) else ""
 
     text = (
         f"{title}\n"
@@ -395,7 +396,7 @@ def alert_trade_closed(ticket, symbol, profit, reason_code=None, comment="", pos
         f"- Ticket: `#{ticket}`\n"
         f"{pos_str}"
         f"- Hasil P/L: `{pnl_str}`\n"
-        f"- Detail: {status}"
+        f"- Detail: {status}{comm_str}"
     )
     send_message(text)
 

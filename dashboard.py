@@ -523,12 +523,14 @@ def _elect_primary_standby(
     # 1: Pro-trend over Counter-trend (0 if pro-trend else 1)
     # 2: Active physical touch/retest over pending (0 if active else 1)
     # 3: Actionable over passive watch (0 if not watch else 1)
-    # 4: Distance in ATR (closest first)
+    # 4: Suppress sub-pip intra-bar noise if not active (0 if dist_atr >= 0.15 or active else 1)
+    # 5: Distance in ATR (closest first)
     candidates.sort(key=lambda c: (
         0 if c["is_confluence"] else 1,
         0 if c["is_pro_trend"] else 1,
         0 if c["is_active"] else 1,
         1 if c["is_watch"] else 0,
+        1 if (c["dist_atr"] < 0.15 and not c["is_active"]) else 0,
         c["dist_atr"]
     ))
 
@@ -1827,11 +1829,15 @@ class CockpitDataEngine:
         tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
         traps = getattr(strat, "forbidden_traps", []) or []
         trap_reason = traps[0] if traps else ""
+        f1_lvl = float(macro.get("immediate_floor_f1", 0.0) or 0.0)
+        c1_lvl = float(macro.get("immediate_ceiling_c1", 0.0) or 0.0)
+        digits = 3 if ("JPY" in clean_s) else (2 if (is_crypto or is_gold) else 5)
 
         if tier == "HARD_BLOCK":
             g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
         elif tier == "WATCH_ONLY":
-            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] Harga di consolidation reload zone: {trap_reason or 'Menunggu konfirmasi structural breakout.'}"}
+            ch_desc = trap_reason if trap_reason else (f"Konsolidasi Kamar: Menunggu pendekatan benteng Floor F1 ({f1_lvl:.{digits}f}) atau Ceiling C1 ({c1_lvl:.{digits}f}). Setup limit & sweep tetap aktif dipindai." if (f1_lvl > 0 and c1_lvl > 0) else "Konsolidasi Kamar: Menunggu konfirmasi structural breakout.")
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] {ch_desc}"}
         else:
             g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "PASS", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"Action Tier: {tier} (Kamar terbuka untuk retest/expansion){dir_desc}."}
         gates.append(g4)
@@ -1865,7 +1871,7 @@ class CockpitDataEngine:
         if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":
             g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
         else:
-            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / flow z>=1.5 M4."}
+            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / breakout basing M4."}
         gates.append(g6)
 
         # Gate 7: Stage 2 3-AI Consensus Jury & CRO
@@ -2005,7 +2011,7 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(html)
 
         # 5. Web UI Root
-        elif self.path in ("/", "/index.html", "/dashboard"):
+        elif self.path in ("/", "/index.html", "/dashboard", "/dashboard.html"):
             import importlib
             import dashboard_assets
             importlib.reload(dashboard_assets)

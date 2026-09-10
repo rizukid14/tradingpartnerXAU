@@ -577,7 +577,7 @@ class EconomicCalendar:
 
         us_global_keywords = (
             "FOMC", "CPI", "PPI", "NFP", "NON-FARM", "PAYROLL", "UNEMPLOYMENT",
-            "FED", "POWELL", "WARSH", "GDP", "PCE", "RETAIL SALES", "INTEREST RATE"
+            "FED", "POWELL", "WARSH", "GDP", "PCE", "RETAIL SALES"
         )
 
         sym_ccys = self._symbol_currencies(symbol) if symbol else set()
@@ -607,7 +607,9 @@ class EconomicCalendar:
                 timing_str = f"released {int(abs(diff_sec) / 60)}m ago ({e_dt.strftime('%H:%M')} WIB)"
 
             # 1. US / Global High-Impact -> Blocks ALL FX pairs
-            is_us_global = (e_country in ("US", "USD")) or any(k in e_name.upper() for k in us_global_keywords)
+            is_us = (e_country in ("US", "USD")) or (e_currency == "USD")
+            is_global_us_named = any(k in e_name.upper() for k in ("FOMC", "FEDERAL RESERVE", "FED CHAIR", "POWELL", "WARSH"))
+            is_us_global = (is_us and (imp in ("HIGH", "CRITICAL") or any(k in e_name.upper() for k in us_global_keywords))) or is_global_us_named
             if is_us_global:
                 return True, f"US High-Impact News Blackout: [{e_country or 'US'}] {e_name} {timing_str}"
 

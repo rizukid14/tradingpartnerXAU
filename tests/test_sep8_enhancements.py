@@ -85,17 +85,18 @@ class TestSep8Enhancements(unittest.TestCase):
         position_manager._csm_opposed_bars.pop(4001, None)
 
         profit_points = -260.0  # -0.52R <= -0.50R threshold
-        with patch("src.analytics.currency_strength.get_csm_delta_for_symbol", return_value=-2.5):
-            with patch("src.analytics.position_manager._close_position_by_ticket", return_value=True) as mock_close:
-                # Bar 1: Should not close yet (waiting for 2 consecutive M15 bars)
-                closed1 = position_manager._check_csm_dynamic_bailout(pos, "GBPUSD-ECNc", profit_points, point, si, now)
-                self.assertFalse(closed1)
-                self.assertFalse(mock_close.called)
+        with patch.object(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+            with patch("src.analytics.currency_strength.get_csm_delta_for_symbol", return_value=-2.5):
+                with patch("src.analytics.position_manager._close_position_by_ticket", return_value=True) as mock_close:
+                    # Bar 1: Should not close yet (waiting for 2 consecutive M15 bars)
+                    closed1 = position_manager._check_csm_dynamic_bailout(pos, "GBPUSD-ECNc", profit_points, point, si, now)
+                    self.assertFalse(closed1)
+                    self.assertFalse(mock_close.called)
 
-                # Bar 2: Next M15 bar (now + 900s) -> Should trigger bailout
-                closed2 = position_manager._check_csm_dynamic_bailout(pos, "GBPUSD-ECNc", profit_points, point, si, now + 900)
-                self.assertTrue(closed2)
-                self.assertTrue(mock_close.called)
+                    # Bar 2: Next M15 bar (now + 900s) -> Should trigger bailout
+                    closed2 = position_manager._check_csm_dynamic_bailout(pos, "GBPUSD-ECNc", profit_points, point, si, now + 900)
+                    self.assertTrue(closed2)
+                    self.assertTrue(mock_close.called)
 
         profit_points = +50.0
         with patch("src.analytics.currency_strength.get_csm_delta_for_symbol", return_value=-2.5):

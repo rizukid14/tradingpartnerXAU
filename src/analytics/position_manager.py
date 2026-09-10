@@ -320,7 +320,7 @@ def manage_all_positions():
                 continue  # Posisi ditutup, lanjut ke tiket berikutnya
 
         # --- 2B. CSM DYNAMIC FLOW BAILOUT ---
-        if getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+        if getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", False):
             if _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, now):
                 continue  # Posisi ditutup via bailout, lanjut ke tiket berikutnya
 
@@ -625,7 +625,7 @@ def _check_csm_dynamic_bailout(pos, symbol, profit_points, point, symbol_info, n
     3. Post-Bailout Lockout (90 menit):
        Mengunci simbol di scanner agar tidak terjadi infinite re-entry loop.
     """
-    if not getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True):
+    if not getattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", False):
         return False
     if config.is_crypto(symbol):
         return False

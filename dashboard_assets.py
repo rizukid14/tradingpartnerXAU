@@ -1596,14 +1596,29 @@ function renderVerticalShading() {
       allowedTrajDir = -1;
     }
 
-    // Filter standbys: Jika arah dominan ada, tekan vektor panah proyeksi kontra-tren
-    const filteredStandbysWithTraj = standbysWithTraj.filter(s => {
+    // Filter standbys: Jika arah dominan ada, tekan 100% vektor panah proyeksi kontra-tren
+    // Serta suppress jika simbol berstatus LOCK atau setup belum terkonfirmasi aktif secara fisik
+    const permState = String(cachedSymbolData.permission_state || "").toUpperCase();
+    const isSymbolLocked = (permState === "LOCK");
+
+    const filteredStandbysWithTraj = isSymbolLocked ? [] : standbysWithTraj.filter(s => {
       const traj = s.trajectory;
       if (!traj) return false;
       if (allowedTrajDir !== 0 && traj.direction !== allowedTrajDir) {
-        if (s.type !== primSetup.type && s.status !== "RECLAIMED_FADING") {
-          return false;
-        }
+        return false;
+      }
+      const st = String(s.status || traj.phase || "").toUpperCase();
+      const isActiveState = (
+        st.includes("TOUCH_ACTIVE") ||
+        st.includes("RETEST_ACTIVE") ||
+        st.includes("RECLAIMED") ||
+        st.includes("RECLAIMED_FADING") ||
+        st.includes("WAITING_CLOSE_RECLAIM") ||
+        st.includes("ACTIVE_PIERCE") ||
+        st.includes("BASING_RETEST_ACTIVE")
+      );
+      if (!isActiveState) {
+        return false;
       }
       return true;
     });
@@ -1684,7 +1699,8 @@ function renderVerticalShading() {
         } else if (s.type === "M2") {
           anchorTxt = "2. EMA Touch";
         } else if (s.type === "M1" || s.type === "M1B") {
-          anchorTxt = (dir === -1) ? "2. Sweep Reclaim" : "2. Sweep Reclaim";
+          const isPendingReclaim = (s.status === "WAITING_CLOSE_RECLAIM" || s.status === "ACTIVE_PIERCE");
+          anchorTxt = isPendingReclaim ? "2. Sweep Pierce" : "2. Sweep Reclaim";
         } else {
           anchorTxt = (dir === -1) ? "2. SBR Retest" : "2. RBS Retest";
         }
@@ -2058,7 +2074,7 @@ function renderChartLevels(data) {
         }
 
         // Filter out opposing directional arrow shapes on candle markers
-        const isOpposedMarker = (allowedMarkerDir !== 0 && s.direction !== allowedMarkerDir && s.status !== "RECLAIMED_FADING");
+        const isOpposedMarker = (allowedMarkerDir !== 0 && s.direction !== allowedMarkerDir);
         if (isOpposedMarker && shape !== "circle") {
           shape = "circle";
         }

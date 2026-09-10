@@ -36,50 +36,84 @@ class TestCSMAndM3ContextGuard(unittest.TestCase):
 
     def test_csm_opposed_blocks_continuation_even_with_aligned_macro(self):
         """
-        Verify that when CSM is opposed (e.g. Net Delta = +1.79 on SELL),
+        Verify that when CSM is opposed (e.g. Net Delta = +1.79 on SELL) AND filter is enabled,
         a continuation setup (M3 BREAKOUT or M2 PULLBACK) is HARD_BLOCKED.
         """
-        # 1. Continuation setup: MULTI_TOUCH_BREAKOUT_RETEST
-        allowed, tier, reason = check_csm_opposition_gate(
-            target_dir=-1,
-            setup_label="MULTI_TOUCH_BREAKOUT_RETEST",
-            csm_delta_val=+1.79,
-            sfr_catalyst=""
-        )
-        self.assertFalse(allowed)
-        self.assertEqual(tier, "HARD_BLOCK")
-        self.assertIn("CSM OPPOSED", reason)
+        orig_val = getattr(config, "ENABLE_CSM_FLOW_FILTER", False)
+        config.ENABLE_CSM_FLOW_FILTER = True
+        try:
+            # 1. Continuation setup: MULTI_TOUCH_BREAKOUT_RETEST
+            allowed, tier, reason = check_csm_opposition_gate(
+                target_dir=-1,
+                setup_label="MULTI_TOUCH_BREAKOUT_RETEST",
+                csm_delta_val=+1.79,
+                sfr_catalyst=""
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(tier, "HARD_BLOCK")
+            self.assertIn("CSM OPPOSED", reason)
 
-        # 2. Continuation setup: PULLBACK
-        allowed_pb, tier_pb, reason_pb = check_csm_opposition_gate(
-            target_dir=-1,
-            setup_label="TREND_ALIGNED_PULLBACK",
-            csm_delta_val=+1.79,
-            sfr_catalyst=""
-        )
-        self.assertFalse(allowed_pb)
-        self.assertEqual(tier_pb, "HARD_BLOCK")
-        self.assertIn("CSM OPPOSED", reason_pb)
+            # 2. Continuation setup: PULLBACK
+            allowed_pb, tier_pb, reason_pb = check_csm_opposition_gate(
+                target_dir=-1,
+                setup_label="TREND_ALIGNED_PULLBACK",
+                csm_delta_val=+1.79,
+                sfr_catalyst=""
+            )
+            self.assertFalse(allowed_pb)
+            self.assertEqual(tier_pb, "HARD_BLOCK")
+            self.assertIn("CSM OPPOSED", reason_pb)
 
-        # 3. Sweep / SFP setup: UNIVERSAL_LIQUIDITY_SWEEP is permitted
-        allowed_sw, tier_sw, reason_sw = check_csm_opposition_gate(
-            target_dir=-1,
-            setup_label="UNIVERSAL_LIQUIDITY_SWEEP",
-            csm_delta_val=+1.79,
-            sfr_catalyst=""
-        )
-        self.assertTrue(allowed_sw)
-        self.assertEqual(tier_sw, "PASS")
+            # 3. Sweep / SFP setup: UNIVERSAL_LIQUIDITY_SWEEP is permitted
+            allowed_sw, tier_sw, reason_sw = check_csm_opposition_gate(
+                target_dir=-1,
+                setup_label="UNIVERSAL_LIQUIDITY_SWEEP",
+                csm_delta_val=+1.79,
+                sfr_catalyst=""
+            )
+            self.assertTrue(allowed_sw)
+            self.assertEqual(tier_sw, "PASS")
 
-        # 4. SFR Systemic Pro setup is permitted
-        allowed_sfr, tier_sfr, reason_sfr = check_csm_opposition_gate(
-            target_dir=-1,
-            setup_label="M4_SYSTEMIC_FLOW",
-            csm_delta_val=+1.79,
-            sfr_catalyst="BEARISH_FLOW"
-        )
-        self.assertTrue(allowed_sfr)
-        self.assertEqual(tier_sfr, "PASS")
+            # 4. SFR Systemic Pro setup is permitted
+            allowed_sfr, tier_sfr, reason_sfr = check_csm_opposition_gate(
+                target_dir=-1,
+                setup_label="M4_SYSTEMIC_FLOW",
+                csm_delta_val=+1.79,
+                sfr_catalyst="BEARISH_FLOW"
+            )
+            self.assertTrue(allowed_sfr)
+            self.assertEqual(tier_sfr, "PASS")
+        finally:
+            config.ENABLE_CSM_FLOW_FILTER = orig_val
+
+    def test_csm_observe_mode_permits_trades_when_filter_disabled(self):
+        """
+        Verify that in OBSERVE mode (ENABLE_CSM_FLOW_FILTER = False),
+        continuation setups (M1, M2, M3, M4) are NOT hard-blocked by opposing CSM Net Delta.
+        """
+        orig_val = getattr(config, "ENABLE_CSM_FLOW_FILTER", False)
+        config.ENABLE_CSM_FLOW_FILTER = False
+        try:
+            allowed, tier, reason = check_csm_opposition_gate(
+                target_dir=-1,
+                setup_label="TREND_ALIGNED_PULLBACK",
+                csm_delta_val=+2.50,
+                sfr_catalyst=""
+            )
+            self.assertTrue(allowed)
+            self.assertEqual(tier, "PASS")
+            self.assertEqual(reason, "CSM_ALLOWED")
+
+            allowed_m3, tier_m3, _ = check_csm_opposition_gate(
+                target_dir=1,
+                setup_label="MULTI_TOUCH_BREAKOUT_RETEST",
+                csm_delta_val=-2.50,
+                sfr_catalyst=""
+            )
+            self.assertTrue(allowed_m3)
+            self.assertEqual(tier_m3, "PASS")
+        finally:
+            config.ENABLE_CSM_FLOW_FILTER = orig_val
 
     def test_m3_sell_pre_breakdown_context_veto(self):
         """

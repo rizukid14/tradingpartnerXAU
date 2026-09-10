@@ -1706,13 +1706,13 @@ class MacroStrategicEngine:
             tp2_price = round(deep_ceiling_c2 - front_pad, digits)
             
             stage_label = f"CHAMBER_CONSOLIDATION_[{imm_floor_f1:.{digits}f}-{imm_ceiling_c1:.{digits}f}]"
-            thesis = f"{symbol} is consolidating inside dealing chamber (Range: {chamber_pos:.0%}). Market orders require waiting for boundary touch at {imm_floor_f1:.{digits}f} or {imm_ceiling_c1:.{digits}f}; Pending Limit Orders at extreme boundaries or structural retests are fully permitted."
+            thesis = f"{symbol} is consolidating inside dealing chamber (Range: {chamber_pos:.0%}) between Floor F1 ({imm_floor_f1:.{digits}f}) and Ceiling C1 ({imm_ceiling_c1:.{digits}f})."
             confidence_score = 70
             hard_circuit_breaker = False
             action_tier = "WATCH_ONLY"
             max_allowed_buy = round(imm_floor_f1 + (0.15 * atr_h1), digits)
             min_allowed_sell = round(imm_ceiling_c1 - (0.15 * atr_h1), digits)
-            forbidden_traps = [f"Do NOT execute MARKET chase orders in mid-chamber (Range: {chamber_pos:.0%}). Pending Limit Orders at Floor F1 ({imm_floor_f1:.{digits}f}) or Ceiling C1 ({imm_ceiling_c1:.{digits}f}) are permitted (select REVISE)."]
+            forbidden_traps = []
             macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
 
@@ -1763,6 +1763,9 @@ class MacroStrategicEngine:
             if fund_eval.hard_veto_flag:
                 hard_circuit_breaker = True
                 action_tier = "HARD_BLOCK"
+                veto_msg = f"News Veto [{fund_eval.hard_veto_flag}]: {fundamental_backing}"
+                if veto_msg not in forbidden_traps:
+                    forbidden_traps.insert(0, veto_msg)
         except Exception: pass
 
         vol_ratio = atr_h1 / max((atr_d1 / 24.0), 1e-6)

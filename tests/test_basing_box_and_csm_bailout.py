@@ -134,7 +134,7 @@ def test_csm_dynamic_bailout_no_premature_exit_on_opposed_open(mock_csm, mock_te
 
 @patch("src.analytics.position_manager._load_telemetry")
 @patch("src.analytics.currency_strength.get_csm_delta_for_symbol")
-def test_csm_dynamic_bailout_triggers_on_sharp_adverse_shift(mock_csm, mock_telemetry):
+def test_csm_dynamic_bailout_triggers_on_sharp_adverse_shift(mock_csm, mock_telemetry, monkeypatch):
     """
     Pilar 1 Reform (9 Sep 2026):
     Trade opened BUY when CSM was aligned (+1.50).
@@ -143,6 +143,8 @@ def test_csm_dynamic_bailout_triggers_on_sharp_adverse_shift(mock_csm, mock_tele
     2. At -0.55R on first M15 bar: Records persistence, does NOT trigger (bars < 2).
     3. At -0.55R on second M15 bar: TRIGGERS bailout and enters 90m cooldown!
     """
+    import config
+    monkeypatch.setattr(config, "ENABLE_CSM_DYNAMIC_BAILOUT", True)
     mock_csm.return_value = -2.20
     mock_telemetry.return_value = {
         "trades": {

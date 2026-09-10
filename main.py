@@ -1194,6 +1194,19 @@ def run_scanner_trading_cycle(cand, risk):
                     )
                 return False
 
+            # Setup mechanism mapping and comment prefix
+            _st_map = {
+                "UNIVERSAL_LIQUIDITY_SWEEP": "M1",
+                "TREND_ALIGNED_PULLBACK": "M2",
+                "MULTI_TOUCH_BREAKOUT_RETEST": "M3",
+                "SYSTEMIC_FLOW_CONTINUATION": "M4",
+                "DBD_RBR_BREAKOUT_CONTINUATION": "M4",
+            }
+            m_code = _st_map.get(cand.setup_type, cand.setup_type[:4].upper())
+            is_quant_direct = not getattr(config, "ENABLE_LLM_JURY", True)
+            pfx = "QUANT" if is_quant_direct else "JURY"
+            exec_label = "STAGE 2 QUANT" if is_quant_direct else "STAGE 2 JURY"
+
             # If pending order
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and entry_type != "market" and entry_price:
                 pending_expiry = getattr(config, "M4_PENDING_EXPIRY_MINUTES", 120) if _m4_single else config.get_pending_order_expiry_minutes()
@@ -1209,7 +1222,7 @@ def run_scanner_trading_cycle(cand, risk):
                         lot=effective_lot,
                         sl_points=sl_points,
                         tp_points=pos_tp_pts,
-                        comment=f"JURY {cand.setup_type[:6]} P{i+1}",
+                        comment=f"{pfx} {m_code} P{i+1}",
                         sl_price=p_sl_price,
                         tp_price=p_tp_price,
                         expiration_minutes=pending_expiry
@@ -1221,9 +1234,9 @@ def run_scanner_trading_cycle(cand, risk):
                             target_sh.mt5_disposition = "EXECUTED_MT5"
                             shadow_tracker._save_state()
                         if config.DRY_RUN:
-                            print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
+                            print(f" {UI.YELLOW}[{exec_label} DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
                         else:
-                            print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
+                            print(f" {UI.GREEN}[{exec_label} SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
                         print(f" [ZCE-AUDIT] Ticket #{pending_res.get('ticket')} | {sym} {entry_type.upper()} | Entry={entry_price} SL={p_sl_price} ({sl_points}pts) TP={p_tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
                         position_manager.record_trade_open_telemetry(
                             ticket=pending_res.get("ticket"),
@@ -1275,7 +1288,7 @@ def run_scanner_trading_cycle(cand, risk):
                     lot=effective_lot,
                     sl_points=sl_points,
                     tp_points=pos_tp_pts,
-                    comment=f"JURY {cand.setup_type[:6]} P{i+1}",
+                    comment=f"{pfx} {m_code} P{i+1}",
                     sl_price=sl_price,
                     tp_price=tp_price,
                     atr_h1_pts=cand.current_atr_pts,
@@ -1287,9 +1300,9 @@ def run_scanner_trading_cycle(cand, risk):
                         target_sh.mt5_disposition = "EXECUTED_MT5"
                         shadow_tracker._save_state()
                     if config.DRY_RUN:
-                        print(f" {UI.YELLOW}[STAGE 2 JURY DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
+                        print(f" {UI.YELLOW}[{exec_label} DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
                     else:
-                        print(f" {UI.GREEN}[STAGE 2 JURY SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
+                        print(f" {UI.GREEN}[{exec_label} SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
                     print(f" [ZCE-AUDIT] Ticket #{order_res.get('ticket')} | {sym} {trade_signal} | Entry={ref_price} SL={sl_price} ({sl_points}pts) TP={tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
                     position_manager.record_trade_open_telemetry(
                         ticket=order_res.get("ticket"),
@@ -1592,7 +1605,15 @@ def main():
                         bep_flag = " [BEP]" if getattr(r_sh, "bep_activated", False) else ""
                         trail_flag = " [TRAIL]" if getattr(r_sh, "trailing_activated", False) else ""
                         flag_str = trail_flag if trail_flag else bep_flag
-                        print(f" {UI.MAGENTA}[SHADOW RADAR RESOLVED] {r_sh.symbol} ({r_sh.setup_type[:6]}) -> {r_sh.outcome}{flag_str} ({net_r_str}) | MFE: {r_sh.peak_mfe_r:+.2f}R | MAE: {r_sh.max_mae_r:+.2f}R{UI.RST}")
+                        sh_map = {
+                            "UNIVERSAL_LIQUIDITY_SWEEP": "M1",
+                            "TREND_ALIGNED_PULLBACK": "M2",
+                            "MULTI_TOUCH_BREAKOUT_RETEST": "M3",
+                            "SYSTEMIC_FLOW_CONTINUATION": "M4",
+                            "DBD_RBR_BREAKOUT_CONTINUATION": "M4",
+                        }
+                        sh_code = sh_map.get(r_sh.setup_type, r_sh.setup_type[:6])
+                        print(f" {UI.MAGENTA}[SHADOW RADAR RESOLVED] {r_sh.symbol} ({sh_code}) -> {r_sh.outcome}{flag_str} ({net_r_str}) | MFE: {r_sh.peak_mfe_r:+.2f}R | MAE: {r_sh.max_mae_r:+.2f}R{UI.RST}")
                 except Exception as e:
                     pass
 
@@ -1606,8 +1627,9 @@ def main():
                         d_reason = deal.get("reason")
                         d_comment = deal.get("comment", "")
                         d_type = deal.get("type", "")
+                        d_desc = f"{d_reason} [{d_comment}]" if (d_comment and d_comment != d_reason) else (d_reason or 'unknown')
                         print(f"[CLOSE DETECTED] #{d_ticket} {d_symbol} {d_type} "
-                              f"ditutup (P/L: {d_profit:+.2f}, reason: {d_reason or 'unknown'})")
+                              f"ditutup (P/L: {d_profit:+.2f}, reason: {d_desc})")
                         try:
                             from src.analytics.currency_strength import get_csm_delta_for_symbol
                             csm_close_val = get_csm_delta_for_symbol(d_symbol)
@@ -1615,7 +1637,7 @@ def main():
                                 ticket=d_ticket,
                                 symbol=d_symbol,
                                 profit=d_profit,
-                                reason=d_reason or "unknown",
+                                reason=d_desc,
                                 csm_delta_close=csm_close_val,
                                 exit_price=deal.get("exit_price", 0.0)
                             )
