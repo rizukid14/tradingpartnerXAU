@@ -153,6 +153,88 @@ class TestDashboardCockpit(unittest.TestCase):
         g5 = gates[5]
         self.assertIn("SELL", g5["reason"])
 
+    def test_elect_primary_standby_pro_trend_priority(self):
+        """In a Bullish trend, pro-trend active M2/M3 must be elected over counter-trend M1 sweep."""
+        macro = {
+            "is_bull": True,
+            "is_bear": False,
+            "immediate_floor_f1": 0.94135,
+            "immediate_ceiling_c1": 0.94411
+        }
+        standbys = [
+            {
+                "type": "M1",
+                "direction": -1,
+                "price": 0.94261,
+                "label": "M1A Bearish Sweep Resistance [Asian High] (Macro SFP)",
+                "status": "WAITING_CLOSE_RECLAIM",
+                "target_price": 0.94135
+            },
+            {
+                "type": "M2",
+                "direction": 1,
+                "price": 0.94190,
+                "label": "Bullish Pullback (EMA + Dynamic EMA20 (0.94190) Confluence)",
+                "status": "TOUCH_ACTIVE",
+                "target_price": 0.94411
+            },
+            {
+                "type": "M3",
+                "direction": 1,
+                "price": 0.94135,
+                "label": "Breakout Structural Floor (F1 Retest)",
+                "status": "RETEST_ACTIVE",
+                "target_price": 0.94411
+            }
+        ]
+        mid = 0.94275
+        pt = 0.00001
+        atr_val = 0.0060
+        pip_val = 0.00010
+
+        elected = dashboard._elect_primary_standby(standbys, macro, mid, pt, atr_val, pip_val, dir_lock=0)
+        self.assertEqual(elected["type"], "M2")
+        self.assertEqual(elected["dir_int"], 1)
+        self.assertEqual(elected["dir"], "BULL")
+        self.assertTrue(elected["is_confluence"])
+        self.assertEqual(elected["confluence_name"], "M2+M3 BULL")
+        self.assertEqual(elected["lvl"], 0.94190)
+
+    def test_elect_primary_standby_respects_directional_lock(self):
+        """When Direction Lock is SELL ONLY, counter-directional BUY setups must yield to SELL."""
+        macro = {
+            "is_bull": True,
+            "is_bear": False,
+        }
+        standbys = [
+            {
+                "type": "M1",
+                "direction": -1,
+                "price": 1.35600,
+                "label": "M1A Bearish Sweep Resistance",
+                "status": "RECLAIMED_FADING",
+                "target_price": 1.35400
+            },
+            {
+                "type": "M2",
+                "direction": 1,
+                "price": 1.35520,
+                "label": "Bullish Pullback",
+                "status": "TOUCH_ACTIVE",
+                "target_price": 1.35700
+            }
+        ]
+        mid = 1.35550
+        pt = 0.00001
+        atr_val = 0.00125
+        pip_val = 0.00010
+
+        # Enforce SELL ONLY (dir_lock = -1)
+        elected = dashboard._elect_primary_standby(standbys, macro, mid, pt, atr_val, pip_val, dir_lock=-1)
+        self.assertEqual(elected["type"], "M1")
+        self.assertEqual(elected["dir_int"], -1)
+        self.assertEqual(elected["dir"], "BEAR")
+
 
 if __name__ == "__main__":
     unittest.main()

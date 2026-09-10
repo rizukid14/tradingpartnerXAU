@@ -61,7 +61,8 @@ def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_
     data = _load_telemetry()
     now_iso = datetime.now(WIB).isoformat()
 
-    is_opposed = (direction == "BUY" and csm_delta <= -0.35) or (direction == "SELL" and csm_delta >= 0.35)
+    _csm_opp_thr = float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))
+    is_opposed = (direction == "BUY" and csm_delta <= -_csm_opp_thr) or (direction == "SELL" and csm_delta >= _csm_opp_thr)
 
     data["trades"][str(t_int)] = {
         "ticket": t_int,

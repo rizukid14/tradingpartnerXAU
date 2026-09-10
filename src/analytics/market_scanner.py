@@ -2813,7 +2813,7 @@ class MarketScanner:
                 pass
             tf_cfg = [("MN1", getattr(config.mt5, "TIMEFRAME_MN1", 49167), 100),
                       ("W1", getattr(config.mt5, "TIMEFRAME_W1", 32769), 200),
-                      ("D1", getattr(config.mt5, "TIMEFRAME_D1", 16408), 350),
+                      ("D1", getattr(config.mt5, "TIMEFRAME_D1", 16408), 550),
                       ("H4", getattr(config.mt5, "TIMEFRAME_H4", 16388), 400),
                       ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 520),
                       ("M30", getattr(config.mt5, "TIMEFRAME_M30", 16386), 600)]
@@ -2985,9 +2985,9 @@ class MarketScanner:
         # Catat posisi dan pending order untuk deduplikasi per-simbol (active_symbols).
         # Radar TIDAK membekukan pemindaian saat kuota MT5 penuh (6/6), agar sinyal A+ pada pair
         # lain tetap terdeteksi dan tercatat ke Virtual Shadow Tracker (Unconstrained Paper Trade).
-        positions = config.mt5.positions_get() if hasattr(config.mt5, "positions_get") else []
-        orders = config.mt5.orders_get() if hasattr(config.mt5, "orders_get") else []
-        total_active = len(positions or []) + len(orders or [])
+        positions = list(config.mt5.positions_get() or []) if hasattr(config.mt5, "positions_get") else []
+        orders = list(config.mt5.orders_get() or []) if hasattr(config.mt5, "orders_get") else []
+        total_active = len(positions) + len(orders)
         max_positions = config.get_max_open_positions()
 
         active_symbols = set()
@@ -3161,16 +3161,14 @@ class MarketScanner:
                         except Exception as e:
                             logger.debug(f"[CBSS CHECK ERR] {e}")
 
-                        # (c) Pair ZCE Runway Sufficiency Check
+                        # (c) Pair ZCE Runway Sufficiency Check (Decoupled: M4 1.20x vs Chamber 0.60x)
                         runway_info = calculate_pair_runway(sym, target_dir, self.macro_cache)
                         r_atr = runway_info.get("runway_atr", 2.0)
-                        min_runway = float(getattr(config, "CBSS_MIN_RUNWAY_ATR", 1.20))
-                        # Di sesi New York (>= 18:00 WIB) atau setup Grade B scalp, runway dilonggarkan ke min 0.75x ATR
-                        _wib_h = datetime.now(WIB).hour
-                        if _wib_h >= getattr(config, "NY_SESSION_START_HOUR_WIB", 18):
-                            min_runway = float(getattr(config, "ZCE_MIN_RUNWAY_RR", 0.75))
+                        is_m4_flow = is_sfr_pro or "SYSTEMIC" in setup_label.upper()
+                        min_runway = float(getattr(config, "CBSS_MIN_RUNWAY_ATR", 1.20)) if is_m4_flow else float(getattr(config, "CBSS_MIN_CHAMBER_RUNWAY_ATR", 0.60))
                         if r_atr < min_runway and is_continuation:
-                            return False, "HARD_BLOCK", f"[CBSS RUNWAY] Insufficient Runway ({r_atr:.2f}x ATR < {min_runway:.2f}x ATR) to opposing barrier"
+                            flow_tag = "M4 Systemic Flow" if is_m4_flow else "Chamber Setup"
+                            return False, "HARD_BLOCK", f"[CBSS RUNWAY] Insufficient Runway ({r_atr:.2f}x ATR < {min_runway:.2f}x ATR) to opposing barrier ({flow_tag})"
 
                         # (d) Basket Structural Saturation Index (BSSI >= 70% Climax Warning)
                         base_c, quote_c = get_pair_currencies(clean_s)
@@ -3183,14 +3181,17 @@ class MarketScanner:
                             if q_ratio >= getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70) and is_continuation:
                                 return False, "HARD_BLOCK", f"[CBSS SATURATION] Basket {quote_c} is saturated ({q_col}/{q_tot} pairs at opposing walls, BSSI {q_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP."
 
-                        # (e) Tokyo Midday Lull Retracement Freeze (10:30 - 13:00 WIB)
-                        now_wib = datetime.now(WIB)
-                        is_tokyo_lull = (now_wib.hour == 10 and now_wib.minute >= 30) or (11 <= now_wib.hour <= 13)
-                        if is_tokyo_lull and is_continuation:
-                            m_range_pts = abs(macro.get('asian_high', 0.0) - macro.get('asian_low', 0.0)) / pt if pt > 0 else 0.0
-                            m_pips = m_range_pts / 10.0 if ('JPY' not in clean_s) else m_range_pts
-                            if m_pips < getattr(config, "TOKYO_LULL_MIN_SPRINT_PIPS", 25.0):
-                                return False, "HARD_BLOCK", f"[TOKYO MIDDAY LULL] Continuation frozen at {now_wib.strftime('%H:%M')} WIB (Morning range {m_pips:.1f}p < 25p: 80% retracement probability)."
+                    # 1C. Tokyo Midday Lull Retracement Freeze (10:30 - 13:00 WIB, Dynamic ATR Scaling)
+                    now_wib = datetime.now(WIB)
+                    is_tokyo_lull = (now_wib.hour == 10 and now_wib.minute >= 30) or (11 <= now_wib.hour <= 13)
+                    is_continuation = not any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM", "FADE"))
+                    if is_tokyo_lull and is_continuation and not sym_is_crypto and not sym_is_gold:
+                        m_range_pts = abs(macro.get('asian_high', 0.0) - macro.get('asian_low', 0.0)) / pt if pt > 0 else 0.0
+                        m_pips = m_range_pts / 10.0 if ('JPY' not in clean_s) else m_range_pts
+                        atr_pips = (cur_atr / pt / 10.0) if ('JPY' not in clean_s) else (cur_atr / pt) if pt > 0 else 30.0
+                        lull_min_pips = max(0.40 * atr_pips, 12.0)
+                        if m_pips < lull_min_pips:
+                            return False, "HARD_BLOCK", f"[TOKYO MIDDAY LULL] Continuation frozen at {now_wib.strftime('%H:%M')} WIB (Morning range {m_pips:.1f}p < {lull_min_pips:.1f}p: 80% retracement probability)."
 
                     def _ret(tier: str, reason_str: str) -> tuple:
                         if is_cbss_cap_saturated:

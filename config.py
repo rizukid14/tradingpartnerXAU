@@ -272,6 +272,12 @@ ZCE_GRADE_G3 = _getenv_float("ZCE_GRADE_G3", 6.5)
 ZCE_CHAMBER_CLEARANCE_ATR_MULT = _getenv_float("ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)  # Ambang clearance chamber (0.30x ATR H1)
 ZCE_MAX_IMM_ATR = _getenv_float("ZCE_MAX_IMM_ATR", 5.5)                                      # Cap jarak immediate walls F1/C1 (5.5x ATR H1)
 ZCE_MAX_CLUSTER_WIDTH_ATR = _getenv_float("ZCE_MAX_CLUSTER_WIDTH_ATR", 0.75)                # Lebar maksimum ekspansi klaster anti-snowball (0.75x ATR H1)
+ZCE_MAX_PRIM_WIDTH_ATR = _getenv_float("ZCE_MAX_PRIM_WIDTH_ATR", 0.15)                      # Clamp lebar primitif per-TF (anti-jembatan OB/FVG raksasa)
+ZCE_NODE_PRICE_BAND_MULT = _getenv_float("ZCE_NODE_PRICE_BAND_MULT", 1.0)                    # Band "harga di dalam zona" = mult x min_sep (dinding nempel harga bukan wall)
+# --- P2: Edge-based Node Engine (pengganti snowball band-merge) ---
+ZCE_NODE_ENGINE_ENABLED = _getenv_bool("ZCE_NODE_ENGINE_ENABLED", True)                      # True: node dari titik edge + skor confluence lintas-sel
+ZCE_NODE_TOL_ATR = _getenv_float("ZCE_NODE_TOL_ATR", 0.35)                                   # Toleransi pengelompokan edge -> node (x ATR H1)
+ZCE_SCORE_RADIUS_ATR = _getenv_float("ZCE_SCORE_RADIUS_ATR", 0.50)                           # Radius confluence untuk skor node (x ATR H1)
 # Ceiling SL dinamis (anti-runaway) — pengganti hardcode atr_points*2.5 di consensus._apply_sltp_rules
 SL_MAX_ATR_MULT = _getenv_float("SL_MAX_ATR_MULT", 2.5)
 # Toleransi is_macro_wall M1 (market_scanner): selisih ref_top/ref_bot vs dinding C1/F1 agar
@@ -735,9 +741,9 @@ ASIA_SESSION_END_HOUR_WIB     = _getenv_int("ASIA_SESSION_END_HOUR_WIB", 14)
 NY_SESSION_START_HOUR_WIB     = _getenv_int("NY_SESSION_START_HOUR_WIB", 18)
 NY_LOCK_PACIFIC_CROSSES       = _getenv_bool("NY_LOCK_PACIFIC_CROSSES", True) # Opsi 2: Lock cross AUD/NZD non-USD di sesi NY
 
-# --- SESSION LOT MULTIPLIERS (8/9 Sep 2026) ---
-SESSION_ASIA_LOT_MULT   = _getenv_float("SESSION_ASIA_LOT_MULT", 1.2)
-SESSION_LONDON_LOT_MULT = _getenv_float("SESSION_LONDON_LOT_MULT", 1.0)
+# --- SESSION LOT MULTIPLIERS (8/9/10 Sep 2026 - De-Risk Reconciled) ---
+SESSION_ASIA_LOT_MULT   = _getenv_float("SESSION_ASIA_LOT_MULT", 1.20)
+SESSION_LONDON_LOT_MULT = _getenv_float("SESSION_LONDON_LOT_MULT", 0.75)
 SESSION_NY_LOT_MULT     = _getenv_float("SESSION_NY_LOT_MULT", 0.50)
 
 ALLOWED_SESSIONS_WIB = [
@@ -762,13 +768,15 @@ POST_BAILOUT_COOLDOWN_SECONDS      = _getenv_int("POST_BAILOUT_COOLDOWN_SECONDS"
 CSM_BAILOUT_SHIFT_THRESH           = _getenv_float("CSM_BAILOUT_SHIFT_THRESH", 2.5)
 CSM_BAILOUT_ABS_THRESH             = _getenv_float("CSM_BAILOUT_ABS_THRESH", 2.0)
 
-# --- CURRENCY BASKET STRUCTURAL SYNCHRONIZATION (CBSS - 9 Sep 2026) ---
-ENABLE_CBSS                    = _getenv_bool("ENABLE_CBSS", True)
-CBSS_MAX_BASKET_CONCURRENCY    = _getenv_int("CBSS_MAX_BASKET_CONCURRENCY", 2)
-CBSS_MIN_RUNWAY_ATR            = _getenv_float("CBSS_MIN_RUNWAY_ATR", 1.20)
-CBSS_G3_BARRIER_THRESHOLD_ATR  = _getenv_float("CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35)
+# --- CURRENCY BASKET STRUCTURAL SYNCHRONIZATION (CBSS - 9/10 Sep 2026) ---
+ENABLE_CBSS                     = _getenv_bool("ENABLE_CBSS", True)
+CBSS_MAX_BASKET_CONCURRENCY     = _getenv_int("CBSS_MAX_BASKET_CONCURRENCY", 2)
+CBSS_MIN_RUNWAY_ATR             = _getenv_float("CBSS_MIN_RUNWAY_ATR", 1.20)         # M4 Systemic Flow threshold
+CBSS_MIN_CHAMBER_RUNWAY_ATR     = _getenv_float("CBSS_MIN_CHAMBER_RUNWAY_ATR", 0.60) # M2/M3 Chamber setups threshold
+CBSS_G3_BARRIER_THRESHOLD_ATR   = _getenv_float("CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35)
 CBSS_SATURATION_THRESHOLD      = _getenv_float("CBSS_SATURATION_THRESHOLD", 0.70)
-ENABLE_ANTI_INTERNAL_HEDGE     = _getenv_bool("ENABLE_ANTI_INTERNAL_HEDGE", True)
+ENABLE_ANTI_INTERNAL_HEDGE     = _getenv_bool("ENABLE_ANTI_INTERNAL_HEDGE", False)
+ENABLE_NY_M3_PAPER_ROUTE       = _getenv_bool("ENABLE_NY_M3_PAPER_ROUTE", True) # Route M3 in NY (>= 18 WIB) to Paper Trade
 
 # --- CONFLUENCE TIMING & MIDDAY RETRACEMENT GUARD (10 Sep 2026) ---
 MIDDAY_RETRACEMENT_GUARD_ENABLED    = _getenv_bool("MIDDAY_RETRACEMENT_GUARD_ENABLED", True)

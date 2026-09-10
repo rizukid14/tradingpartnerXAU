@@ -2,6 +2,70 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 91. Perubahan 10 September 2026 (Sore III) — Pelepasan Belenggu Anti-Internal Hedge & Restorasi Seleksi Berbasis Struktur Alami (ZCE Runway, MSE Structure & G3 Wall Clearance)
+
+### Latar Belakang & Evaluasi Operasional:
+1. **Dampak Penolakan Masif Gate Anti-Internal Hedge**:
+   - Audit log radar mengungkap `[CBSS ANTI-HEDGE]` melakukan penolakan masif (801 penolakan, mencakup 75.3% universe).
+   - Larangan kaku aljabar silang mata uang memblokir peluang berkualitas tinggi di satu pair hanya karena pair lain di keranjang yang sama memegang eksposur berlawanan (misalnya memblokir `GBPCHF BUY` hanya karena memegang `EURGBP BUY` yang secara teknikal merupakan short GBP di pair lambat Eropa).
+2. **Restorasi Prinsip Eksekusi Alami**:
+   - Solusi sejati untuk anomali historis (seperti USDCAD) adalah **Local G3 Wall Veto** dan **ZCE Runway Clearance**, bukan melarang trade searah struktur.
+   - Sesuai arahan arsitektur, fitur Anti-Internal Hedge dinonaktifkan (`ENABLE_ANTI_INTERNAL_HEDGE=false`) agar sistem kembali mengevaluasi peluang secara alami berlandaskan ZCE Runway, struktur MSE HTF, dan Local Wall Clearance.
+
+---
+
+### Solusi Perbaikan Kode & Hasil Live MT5:
+1. **Konfigurasi (`config.py` & `.env`)**:
+   - Menyelaraskan `ENABLE_ANTI_INTERNAL_HEDGE=false` di `.env` (single source of truth) dan `config.py`.
+2. **Verifikasi Live MT5 & Pembukaan Posisi Alami**:
+   - Begitu bot direstart, radar Stage 1 langsung mendeteksi dan mengeksekusi order `GBPCHF-ECNc` (Ticket #1282261758, BUY 0.17 lot @ 1.09725, SL 1.09536, TP 1.10045, R:R 1.69:1).
+   - Lot terhitung presisi menerapkan de-risking Sesi London ($0.2334 \times 0.75x = 0.17\text{ lot}$).
+   - Log `gate_debug.log` terkonfirmasi 100% bebas dari penolakan `[CBSS ANTI-HEDGE]`.
+3. **Penyelarasan Unit Test Suite (`tests/test_basket_relay.py` & `tests/test_anti_internal_hedge.py`)**:
+   - Memutakhirkan `test_portfolio_conflict_blocking` dengan fixture `monkeypatch.setattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True)` agar fungsionalitas algoritma tetap teruji mandiri saat diaktifkan.
+   - Seluruh 40 test di seluruh suite rekonsiliasi dan proteksi risiko: **100% PASS**.
+
+---
+
+## 90. Perubahan 10 September 2026 (Sore II) — Rekonsiliasi Holistik: Session De-Risk Sizing, Runway Decoupling CBSS, Dynamic Tokyo Lull, NY M3 Virtual Paper Route & Anti-CLI Noise Suppression
+
+### Latar Belakang & Investigasi Mendalam:
+1. **Asimetri Payout Sesi London**:
+   - Audit data telemetry mendapati Sesi Asia mencetak WR 70.0% (+$460.98), sedangkan Sesi London mencetak WR 56.2% namun merugi net -$757.80.
+   - Evaluasi payout London mengungkap 18 win rata-rata +$33.5 vs 14 loss rata-rata -$97.3 (rasio loss : win = 2.9 : 1).
+   - Masalah utama bukan pada akurasi entry, melainkan ukuran loss per tiket yang membengkak di sesi pasar Barat. Solusi struktural adalah de-risking sizing per sesi, bukan menambah gate momentum.
+2. **CBSS Runway Deadlock & Chamber Shrinkage**:
+   - Ditemukan 4.285 baris penolakan `[CBSS RUNWAY]` di `gate_debug.log`. Ambang kaku $1.20\times\text{ATR}$ memblokir setup chamber M2/M3 intraday yang secara alami berosilasi di rentang $0.80\times - 1.00\times\text{ATR}$.
+3. **M3 Sesi New York (Sampel Tipis N=5)**:
+   - Data NY M3 menunjukkan 1W-4L (-$233.62), namun $N=5$ (Wilson CI $[3.6\%, 62.5\%]$) belum memenuhi syarat kuantitatif $N \ge 60$ untuk veto keras permanen.
+4. **CLI Spamming Alert Box pada Trade Paper yang Sudah Berjalan**:
+   - Setiap cycle radar (60s), simbol paper-only (XAUUSD, BTCUSD) atau simbol yang terkena limit keranjang (AUDCAD) terus menerus merender alert box bento raksasa dan mencetak ulang status paper trade, mengaburkan log terminal.
+
+---
+
+### Solusi Perbaikan Kode & Komponen:
+1. **Fase 1 — Session Sizing De-Risk (`risk_engine.py`, `config.py`, `.env`)**:
+   - Multiplier lot per sesi diselaraskan: Asia 1.20x, London 0.75x, New York 0.50x.
+   - Di `risk_engine.py`, multiplier sesi $< 1.0$ berlaku sebagai hard cap: `effective_mult = min(vol_mult, sess_mult)`.
+   - Logika overlap sesi di `_check_session` diubah untuk memilih multiplier terendah/paling defensif.
+2. **Fase 2 — Runway Decoupling & CBSS Sync (`market_scanner.py`, `basket_sync_engine.py`)**:
+   - Ambang runway CBSS dipisahkan: M4 Systemic Flow tetap $\ge 1.20\times\text{ATR}$ (`CBSS_MIN_RUNWAY_ATR`), sementara setup chamber M2/M3 memakai $\ge 0.60\times\text{ATR}$ (`CBSS_MIN_CHAMBER_RUNWAY_ATR`).
+   - Memfungsikan parameter `hour_wib` di `filter_and_rank_batch_candidates` untuk session driver confluence (+0.20 skor pada keranjang mata uang primer aktif).
+   - Memindahkan evaluasi Tokyo Midday Lull keluar dari blok CBSS ke layer sesi independen.
+3. **Fase 3 — Dynamic Tokyo Lull & ZCE Adaptive Floor (`zone_confluence_engine.py`, `dashboard.py`)**:
+   - Tokyo Lull diubah dari 25p statis menjadi dinamis $\max(0.40\times\text{ATR}, 12\text{p})$.
+   - Penyelarasan ZCE Natural Chamber di `zone_confluence_engine.py`: `pip_floor = 8.0 * pip_val`, `pip_sep = max(pip_floor, min(15.0 * pip_val, 0.75 * atr_h1))`.
+   - Dashboard Cockpit: Menambahkan visualisasi Chamber Height (`chamber_pips`, `chamber_atr`), badge sesi dinamis, dan sinkronisasi threshold layer.
+4. **Fase 4 — NY M3 Paper Route & Anti-CLI Noise Suppression (`main.py`, `shadow_tracker.py`, `shadow_report.py`)**:
+   - Setup M3 Breakout Retest di sesi NY ($\ge 18:00$ WIB) dialihkan ke Virtual Paper Trade dengan disposisi `SKIPPED_NY_M3_PAPER` (0 token API, 0 risiko modal MT5, mengumpulkan sampel menuju $N \ge 60$).
+   - Menambahkan guard deduplikasi di awal `run_scanner_trading_cycle` di `main.py`: jika simbol paper-only atau terblokir risk/CBSS sudah memiliki order aktif/pending di `shadow_tracker`, rendering alert box raksasa di-bypass total untuk menjaga kebersihan log CLI.
+   - Integrasi disposisi `SKIPPED_NY_M3_PAPER` pada tabel dan breakdown laporan virtual `shadow_report.py`.
+5. **Verifikasi Unit Test**:
+   - Dibuat suite baru `tests/test_session_adaptive_reconciliation.py` (5 test).
+   - Seluruh 33 test unit suite (`test_session_adaptive_reconciliation.py`, `test_cbss_and_risk_shields.py`, `test_basket_relay.py`, `test_zce_chamber_clearance.py`, `test_time_decay_and_vol_regime.py`): **100% PASS**.
+
+---
+
 ## 89. Perubahan 10 September 2026 (Sore) — Lead-Lag Liquidity Relay Engine (Estafet Likuiditas) & Zero-Opposing Currency Basket Coordinator
 
 ### Latar Belakang & Analisis Flaw Sistemik:

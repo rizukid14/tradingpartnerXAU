@@ -1579,8 +1579,37 @@ function renderVerticalShading() {
     const timeScale = chart.timeScale();
     const standbysWithTraj = cachedSymbolData.m_standbys.filter(s => s.trajectory && s.trajectory.origin_time > 0);
 
+    // Direction Lock & Pro-Trend Alignment Filter:
+    const primSetup = cachedSymbolData.primary_setup || {};
+    const dirLock = (cachedSymbolData.direction_lock && cachedSymbolData.direction_lock.dir) ? cachedSymbolData.direction_lock.dir : 0;
+    const htfBull = cachedSymbolData.intel && (cachedSymbolData.intel.d1_trend === "BULL" || cachedSymbolData.intel.w1_trend === "BULL");
+    const htfBear = cachedSymbolData.intel && (cachedSymbolData.intel.d1_trend === "BEAR" || cachedSymbolData.intel.w1_trend === "BEAR");
+
+    let allowedTrajDir = 0;
+    if (dirLock !== 0) {
+      allowedTrajDir = dirLock;
+    } else if (primSetup.direction && primSetup.direction !== 0) {
+      allowedTrajDir = primSetup.direction;
+    } else if (htfBull && !htfBear) {
+      allowedTrajDir = 1;
+    } else if (htfBear && !htfBull) {
+      allowedTrajDir = -1;
+    }
+
+    // Filter standbys: Jika arah dominan ada, tekan vektor panah proyeksi kontra-tren
+    const filteredStandbysWithTraj = standbysWithTraj.filter(s => {
+      const traj = s.trajectory;
+      if (!traj) return false;
+      if (allowedTrajDir !== 0 && traj.direction !== allowedTrajDir) {
+        if (s.type !== primSetup.type && s.status !== "RECLAIMED_FADING") {
+          return false;
+        }
+      }
+      return true;
+    });
+
     const drawnKeys = new Set();
-    standbysWithTraj.forEach(s => {
+    filteredStandbysWithTraj.forEach(s => {
       const traj = s.trajectory;
       const key = `${traj.retest_price}_${traj.direction}`;
       if (drawnKeys.has(key)) return;
@@ -1932,6 +1961,22 @@ function renderChartLevels(data) {
   // 2. M1..M4 Radar Standbys (Dashed Price Lines & Temporal Candle Markers)
   const temporalMarkers = [];
   if (filterShowRadar && data.m_standbys && data.m_standbys.length > 0) {
+    const primSetup = data.primary_setup || {};
+    const dirLock = (data.direction_lock && data.direction_lock.dir) ? data.direction_lock.dir : 0;
+    const htfBull = data.intel && (data.intel.d1_trend === "BULL" || data.intel.w1_trend === "BULL");
+    const htfBear = data.intel && (data.intel.d1_trend === "BEAR" || data.intel.w1_trend === "BEAR");
+
+    let allowedMarkerDir = 0;
+    if (dirLock !== 0) {
+      allowedMarkerDir = dirLock;
+    } else if (primSetup.direction && primSetup.direction !== 0) {
+      allowedMarkerDir = primSetup.direction;
+    } else if (htfBull && !htfBear) {
+      allowedMarkerDir = 1;
+    } else if (htfBear && !htfBull) {
+      allowedMarkerDir = -1;
+    }
+
     data.m_standbys.forEach(s => {
       let color = "#ffd740";
       if (s.type === "M1") color = "#fb923c";
@@ -2010,6 +2055,12 @@ function renderChartLevels(data) {
               ? `[M4 ${dirStr} WATCH] ${lvlTag} @ ${s.price.toFixed(data.digits || 5)}`
               : `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
           }
+        }
+
+        // Filter out opposing directional arrow shapes on candle markers
+        const isOpposedMarker = (allowedMarkerDir !== 0 && s.direction !== allowedMarkerDir && s.status !== "RECLAIMED_FADING");
+        if (isOpposedMarker && shape !== "circle") {
+          shape = "circle";
         }
 
         temporalMarkers.push({

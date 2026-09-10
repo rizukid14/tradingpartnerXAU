@@ -17,6 +17,11 @@ class TestAntiInternalHedge(unittest.TestCase):
 
     def setUp(self):
         self.risk = RiskEngine()
+        self._orig_hedge = getattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", False)
+        config.ENABLE_ANTI_INTERNAL_HEDGE = True
+
+    def tearDown(self):
+        config.ENABLE_ANTI_INTERNAL_HEDGE = self._orig_hedge
 
     def test_euraud_sell_blocked_when_eurnzd_buy_active(self):
         """

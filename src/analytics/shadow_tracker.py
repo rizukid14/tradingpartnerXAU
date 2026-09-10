@@ -352,7 +352,7 @@ class QuantShadowTracker:
                     "current_spread_pts": getattr(candidate, "current_spread_pts", 0),
                     "dealing_range_pos": getattr(candidate, "dealing_range_pos", 0.5),
                     "csm_delta_open": float(getattr(candidate, "csm_delta", 0.0)),
-                    "csm_opposed_open": bool((dir_str == "BUY" and getattr(candidate, "csm_delta", 0.0) <= -0.35) or (dir_str == "SELL" and getattr(candidate, "csm_delta", 0.0) >= 0.35))
+                    "csm_opposed_open": bool((dir_str == "BUY" and getattr(candidate, "csm_delta", 0.0) <= -float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))) or (dir_str == "SELL" and getattr(candidate, "csm_delta", 0.0) >= float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))))
                 }
             )
 
@@ -1069,6 +1069,7 @@ class QuantShadowTracker:
                 "EXECUTED_MT5": 0,
                 "SKIPPED_MAX_POSITIONS": 0,
                 "SKIPPED_CBSS_BASKET_CAP": 0,
+                "SKIPPED_NY_M3_PAPER": 0,
                 "SKIPPED_RISK_BASKET": 0,
                 "SKIPPED_RISK_BLOCK": 0,
                 "SKIPPED_LLM_VETO": 0,
@@ -1081,6 +1082,8 @@ class QuantShadowTracker:
                     disp_stats["EXECUTED_MT5"] += 1
                 elif "CBSS" in disp:
                     disp_stats["SKIPPED_CBSS_BASKET_CAP"] += 1
+                elif "NY_M3" in disp:
+                    disp_stats["SKIPPED_NY_M3_PAPER"] += 1
                 elif "MAX_POSITIONS" in disp or "SLOT" in disp:
                     disp_stats["SKIPPED_MAX_POSITIONS"] += 1
                 elif "BASKET" in disp or "KONSENTRASI" in disp:

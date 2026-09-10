@@ -33,11 +33,11 @@ from src.indicators.atlas_dna import calculate_dual_grid_stations
 # ----------------------------------------------------------------------------- #
 ZCE_GRID: Dict[str, List[int]] = {
     "M30": [50, 150],
-    "H1": [50, 100, 150, 250],
-    "H4": [50, 100, 150],
-    "D1": [50, 100, 150, 250],
-    "W1": [50, 100],
-    "MN1": [50],
+    "H1": [50, 100, 150, 250, 350, 500],
+    "H4": [50, 100, 150, 250],
+    "D1": [50, 100, 150, 250, 350, 500],
+    "W1": [50, 100, 150],
+    "MN1": [50, 100],
 }
 ZCE_LADDER_H1: List[int] = [50, 100, 150, 250, 500]
 ZCE_FRVP_TFS = ("M30", "H1", "H4")          # FRVP hanya tf dengan tick_volume valid
@@ -51,7 +51,7 @@ ZCE_W_KIND: Dict[str, float] = {
     "LAST_HIGH": 0.60, "LAST_LOW": 0.60, "PSYCH_MAJOR": 0.80, "PSYCH_SUB": 0.50,
     "EMA_BAND": 0.45,
 }
-ZCE_HORIZON_BOOST: List[tuple] = [(100, 1.00), (150, 1.10), (250, 1.20), (10_000, 1.30)]
+ZCE_HORIZON_BOOST: List[tuple] = [(100, 1.00), (150, 1.10), (250, 1.20), (350, 1.30), (600, 1.35)]
 
 CEIL_KINDS = {"SWING_HIGH", "EQH", "LAST_HIGH", "FRVP_VAH", "OB_BEAR", "FVG_BEAR", "C_ASIAN_HIGH", "C_PDH", "C_PWH"}
 FLOOR_KINDS = {"SWING_LOW", "EQL", "LAST_LOW", "FRVP_VAL", "OB_BULL", "FVG_BULL", "F_ASIAN_LOW", "F_PDL", "F_PWL"}
@@ -124,6 +124,7 @@ class ZoneCluster:
     touch_count: int = 0
     last_touch_h1_bars_ago: Optional[int] = None
     inherent_role: str = ""
+    confluence: int = 0          # jumlah pasangan unik (kind, tf) penyusun skor
 
     @property
     def mid(self) -> float:
@@ -157,6 +158,11 @@ class ZoneMapResult:
     deep_ceiling_c2_grade: Optional[str] = None
     deep_floor_f2_score: float = 0.0
     deep_ceiling_c2_score: float = 0.0
+    immediate_floor_f1_confluence: int = 0
+    immediate_ceiling_c1_confluence: int = 0
+    inside_zone: bool = False
+    inside_tiers: List[str] = field(default_factory=list)
+    layer_count: int = 0
     ladder: ScaleLadder = field(default_factory=ScaleLadder)
     suggested_method: str = "NONE"
     method_reason: str = ""
@@ -187,6 +193,11 @@ class ZoneMapResult:
             "f2_grade": self.deep_floor_f2_grade,
             "c1_score": self.immediate_ceiling_c1_score,
             "f1_score": self.immediate_floor_f1_score,
+            # P3 (backward-compatible, opsional): kekuatan confluence & status harga-di-dalam-zona
+            "c1_confluence": self.immediate_ceiling_c1_confluence,
+            "f1_confluence": self.immediate_floor_f1_confluence,
+            "inside_zone": self.inside_zone,
+            "layer_count": self.layer_count,
             "symbol": self.symbol,
             "zone_count": len(self.clusters),
         }
@@ -212,6 +223,7 @@ class ZoneConfluenceEngine:
         self.swing_length = p.get("swing_length", ZCE_SWING_LENGTH)
         self.max_imm_atr = p.get("max_imm_atr", float(getattr(config, "ZCE_MAX_IMM_ATR", 4.0)))
         self.max_cluster_width_atr = p.get("max_cluster_width_atr", float(getattr(config, "ZCE_MAX_CLUSTER_WIDTH_ATR", 1.0)))
+        self.max_prim_width_atr = p.get("max_prim_width_atr", float(getattr(config, "ZCE_MAX_PRIM_WIDTH_ATR", 0.15)))
 
     def _get_kind_weight(self, kind: str) -> float:
         if kind in self.w_kind:
@@ -334,6 +346,17 @@ class ZoneConfluenceEngine:
                             out.append(ZonePrimitive("FRVP_POC", tf, h, float(n) + 0.025 * atr_tf, float(n) - 0.025 * atr_tf))
                 except Exception:
                     pass
+
+        # Clamp lebar primitif (anti-jembatan): OB/FVG raksasa dipotong simetris terhadap mid
+        # agar tidak menjembatani dua node struktural yang sebenarnya berjauhan.
+        max_w = float(getattr(self, "max_prim_width_atr", 0.15)) * atr_tf
+        if max_w > 0:
+            half = max_w * 0.5
+            for p in out:
+                if (p.top - p.bottom) > max_w:
+                    mid = (p.top + p.bottom) * 0.5
+                    p.top = mid + half
+                    p.bottom = mid - half
         return out
 
     # ------------------------------------------------------------------ #
@@ -384,6 +407,110 @@ class ZoneConfluenceEngine:
             cid += 1
         return clusters
 
+    # ------------------------------------------------------------------ #
+    # 2b. P2: Edge-based NODE engine (pengganti snowball band-merge)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _prim_edge(p: ZonePrimitive) -> float:
+        """Titik acuan struktural: ceiling -> bottom, floor -> top, netral -> mid."""
+        if p.kind in CEIL_KINDS:
+            return p.bottom
+        if p.kind in FLOOR_KINDS:
+            return p.top
+        return (p.top + p.bottom) * 0.5
+
+    def _build_nodes(
+        self, prims: List[ZonePrimitive], atr_h1: float, point_size: float
+    ) -> List[ZoneCluster]:
+        """Bentuk NODE dari titik edge (bukan band), lalu skor via confluence lintas-sel.
+
+        Kunci perbedaan dari `_merge_primitives`:
+        - Pengelompokan memakai TITIK EDGE, sehingga primitif lebar tak bisa menjembatani.
+        - Sweep berbasis ANCHOR (bukan single-linkage) -> tidak ada chaining/snowball.
+        - Skor = confluence SEMUA primitif dalam `score_radius` dari anchor (lintas sel TF x horizon).
+        """
+        if not prims:
+            return []
+        pip_val = 10.0 * point_size if point_size < 0.01 else point_size
+        pip_floor = 8.0 * pip_val
+        node_tol = max(float(getattr(config, "ZCE_NODE_TOL_ATR", 0.35)) * atr_h1, pip_floor)
+        score_radius = max(float(getattr(config, "ZCE_SCORE_RADIUS_ATR", 0.50)) * atr_h1, pip_floor)
+
+        edges = sorted(((self._prim_edge(p), p) for p in prims), key=lambda x: x[0])
+
+        # Sweep berbasis anchor: hindari chaining (tiap node hanya menerima edge
+        # yang jaraknya <= node_tol dari edge pertama/anchor node itu).
+        groups: List[tuple] = []
+        i = 0
+        n = len(edges)
+        while i < n:
+            anchor = edges[i][0]
+            grp = [edges[i]]
+            j = i + 1
+            while j < n and (edges[j][0] - anchor) <= node_tol:
+                grp.append(edges[j])
+                j += 1
+            groups.append((anchor, grp))
+            i = j
+
+        nodes: List[ZoneCluster] = []
+        for cid, (anchor, grp) in enumerate(groups):
+            members = [p for _, p in grp]
+
+            # --- Skor confluence LINTAS-SEL: semua primitif (semua TF x horizon) dalam radius ---
+            pairs: Dict[tuple, float] = {}
+            ceil_w = 0.0
+            floor_w = 0.0
+            hmax = 0
+            for p in prims:
+                if abs(self._prim_edge(p) - anchor) <= score_radius:
+                    k = (p.kind, p.tf)
+                    if k not in pairs:
+                        w = self._get_kind_weight(p.kind) * self.w_tf.get(p.tf, 0.5)
+                        pairs[k] = w
+                        if p.kind in CEIL_KINDS:
+                            ceil_w += w
+                        elif p.kind in FLOOR_KINDS:
+                            floor_w += w
+                    hmax = max(hmax, p.horizon)
+
+            score_raw = float(sum(pairs.values()))
+            score_final = round(score_raw * _horizon_boost(hmax), 3)
+
+            # --- Band node: mengikuti anchor (titik edge), di-clamp agar tetap sempit ---
+            b_lo = min(anchor, min(p.bottom for p in members))
+            b_hi = max(anchor, max(p.top for p in members))
+            if (b_hi - b_lo) > (2.0 * node_tol):
+                b_lo, b_hi = anchor - node_tol, anchor + node_tol
+
+            role = "CEILING" if ceil_w >= floor_w else "FLOOR"
+            kinds_present = sorted({p.kind for p in members})
+            tfs_present = sorted({p.tf for p in members})
+            tfmax = max(tfs_present, key=lambda t: self.w_tf.get(t, 0)) if tfs_present else "H1"
+            c = ZoneCluster(
+                cluster_id=cid,
+                band_low=b_lo,
+                band_high=b_hi,
+                members=members,
+                score_raw=score_raw,
+                score_final=score_final,
+                horizon_max=hmax,
+                tfs_present=tfs_present,
+                kinds_present=kinds_present,
+                width_atr=round((b_hi - b_lo) / max(atr_h1, 1e-9), 3),
+                inherent_role=role,
+                confluence=len(pairs),
+            )
+            c.fortress_tag = f"{'C_' if role == 'CEILING' else 'F_'}{'+'.join(kinds_present)}@{tfmax}"
+            if c.score_final >= self.grade_g3:
+                c.grade = "GRADE_3_MACRO"
+            elif c.score_final >= self.grade_g2:
+                c.grade = "GRADE_2_INTERMEDIATE"
+            else:
+                c.grade = "GRADE_1_MICRO"
+            nodes.append(c)
+        return nodes
+
     def _finalize_cluster(
         self, cid: int, members: List[ZonePrimitive], b_lo: float, b_hi: float,
         atr_h1: float, point_size: float,
@@ -428,6 +555,7 @@ class ZoneConfluenceEngine:
         prefix = "C_" if ceil_w >= floor_w else "F_"
         c.fortress_tag = f"{prefix}{'+'.join(c.kinds_present)}@{tfmax}"
         c.inherent_role = "CEILING" if ceil_w >= floor_w else "FLOOR"
+        c.confluence = len(pairs)
         return c
 
     # ------------------------------------------------------------------ #
@@ -527,7 +655,9 @@ class ZoneConfluenceEngine:
 
         pip_val = 10.0 * 10 ** (-digits) if digits in (3, 5) else 10 ** (-digits)
         grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
-        pip_sep = min(15.0 * pip_val, 0.75 * atr_h1)
+        # Floor absolut kecil (8 pips) + adaptive ATR fraction (Reconciliation 10 Sep 2026)
+        pip_floor = 8.0 * pip_val
+        pip_sep = max(pip_floor, min(15.0 * pip_val, 0.75 * atr_h1))
         min_sep = max(0.35 * atr_h1, pip_sep)
 
         def _pick_layers(items: List[tuple], is_ceil: bool, limit: int = 4) -> List[dict]:
@@ -569,6 +699,9 @@ class ZoneConfluenceEngine:
                     "is_cold": c.is_cold,
                     "is_vacuum": c.is_vacuum,
                     "score_raw": c.score_raw,
+                    "confluence": int(getattr(c, "confluence", 0)),
+                    "tf_max": (max(c.tfs_present, key=lambda t: self.w_tf.get(t, 0.0)) if c.tfs_present else ""),
+                    "horizon_max": int(c.horizon_max),
                 })
             return layers
 
@@ -581,8 +714,21 @@ class ZoneConfluenceEngine:
 
         # Pilih F1 & C1 dengan pemisahan chamber (min_chamber_height)
         min_ch = max(0.50 * atr_h1, pip_sep)
-        f1 = floor_layers[0]["price"] if floor_layers else None
-        c1 = ceil_layers[0]["price"] if ceil_layers else None
+        # Aturan "harga di dalam zona" (P3): layer yang menempel harga bukan dinding tradeable.
+        inside_band = max(float(getattr(config, "ZCE_NODE_PRICE_BAND_MULT", 1.0)) * min_sep, 0.0)
+        for _l in floor_layers + ceil_layers:
+            _l["at_price"] = bool(abs(_l["price"] - cur_price) < inside_band)
+
+        def _first_tradeable(layers: List[dict], above: bool) -> Optional[float]:
+            for l in layers:
+                px = l["price"]
+                d = (px - cur_price) if above else (cur_price - px)
+                if d >= inside_band:
+                    return px
+            return layers[0]["price"] if layers else None   # fallback: jangan membutakan radar
+
+        f1 = _first_tradeable(floor_layers, above=False)
+        c1 = _first_tradeable(ceil_layers, above=True)
 
         # Jika chamber terlalu sempit (< min_ch), cari layer berikutnya yang memberikan pemisahan sehat
         if f1 is not None and c1 is not None and (c1 - f1) < min_ch:
@@ -635,6 +781,16 @@ class ZoneConfluenceEngine:
         f2_grade, f2_score = _get_layer_meta(floor_layers, deep_f2)
         c2_grade, c2_score = _get_layer_meta(ceil_layers, deep_c2)
 
+        def _get_layer_confluence(layers: List[dict], price: Optional[float]) -> int:
+            if price is None:
+                return 0
+            for l in layers:
+                if abs(l["price"] - price) < 1e-6:
+                    return int(l.get("confluence", 0))
+            return 0
+
+        inside_tiers = [l["tier"] for l in (floor_layers + ceil_layers) if l.get("at_price")]
+
         return {
             "floors": floor_layers,
             "ceilings": ceil_layers,
@@ -650,6 +806,11 @@ class ZoneConfluenceEngine:
             "deep_floor_f2_score": f2_score,
             "deep_ceiling_c2_grade": c2_grade,
             "deep_ceiling_c2_score": c2_score,
+            "imm_floor_f1_confluence": _get_layer_confluence(floor_layers, f1),
+            "imm_ceiling_c1_confluence": _get_layer_confluence(ceil_layers, c1),
+            "inside_zone": bool(inside_tiers),
+            "inside_tiers": inside_tiers,
+            "layer_count": len(floor_layers) + len(ceil_layers),
         }
 
     # ------------------------------------------------------------------ #
@@ -770,7 +931,11 @@ class ZoneConfluenceEngine:
         except Exception:
             pass
 
-        clusters = self._merge_primitives(prims, atr_h1, point_size)
+        # P2: pilih mesin pembentuk zona — node berbasis edge (baru) atau band-merge (lama).
+        if bool(getattr(config, "ZCE_NODE_ENGINE_ENABLED", True)):
+            clusters = self._build_nodes(prims, atr_h1, point_size)
+        else:
+            clusters = self._merge_primitives(prims, atr_h1, point_size)
         self._stamp_freshness(clusters, h1, cur_price, atr_h1)
         clusters.sort(key=lambda c: -c.score_final)
 
@@ -797,6 +962,11 @@ class ZoneConfluenceEngine:
             deep_ceiling_c2_grade=walls.get("deep_ceiling_c2_grade"),
             deep_floor_f2_score=walls.get("deep_floor_f2_score", 0.0),
             deep_ceiling_c2_score=walls.get("deep_ceiling_c2_score", 0.0),
+            immediate_floor_f1_confluence=walls.get("imm_floor_f1_confluence", 0),
+            immediate_ceiling_c1_confluence=walls.get("imm_ceiling_c1_confluence", 0),
+            inside_zone=bool(walls.get("inside_zone", False)),
+            inside_tiers=walls.get("inside_tiers", []) or [],
+            layer_count=int(walls.get("layer_count", 0)),
             ladder=ladder,
             suggested_method=method,
             method_reason=reason,

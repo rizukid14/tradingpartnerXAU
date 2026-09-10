@@ -65,6 +65,7 @@ def render_shadow_report_html() -> str:
         "PAPER_TRADE_ONLY": 0,
         "SKIPPED_MAX_POSITIONS": 0,
         "SKIPPED_CBSS_BASKET_CAP": 0,
+        "SKIPPED_NY_M3_PAPER": 0,
         "SKIPPED_RISK_BASKET": 0,
         "SKIPPED_RISK_BLOCK": 0,
         "SKIPPED_LLM_VETO": 0,
@@ -587,6 +588,11 @@ def render_shadow_report_html() -> str:
               <td><span class="badge" style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">SKIPPED_CBSS_BASKET_CAP</span></td>
               <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_CBSS_BASKET_CAP', 0)}</td>
               <td style="color:var(--text-dim);">Ditolak MT5 karena kuota basket mata uang penuh (Max 2 posisi searah). Berjalan 100% sebagai Paper Trade mandiri.</td>
+            </tr>
+            <tr>
+              <td><span class="badge" style="background:rgba(168,85,247,0.15);color:#a855f7;border:1px solid rgba(168,85,247,0.3);">SKIPPED_NY_M3_PAPER</span></td>
+              <td style="font-weight:700;font-family:var(--font-mono);">{disp_stats.get('SKIPPED_NY_M3_PAPER', 0)}</td>
+              <td style="color:var(--text-dim);">Ditolak MT5 karena sesi New York (>=18 WIB) M3 Breakout dialihkan ke Paper Trade (Pengumpulan Sampel N >= 60).</td>
             </tr>
             <tr>
               <td><span class="badge" style="background:rgba(251,191,36,0.15);color:var(--amber);border:1px solid rgba(251,191,36,0.3);">SKIPPED_RISK_BASKET</span></td>

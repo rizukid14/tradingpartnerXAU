@@ -440,7 +440,7 @@ class RiskEngine:
 
         current_atr_pts = self._atr_h1_pts
         if not current_atr_pts or current_atr_pts <= 0:
-            return "NORMAL", self._session_lot_multiplier, 1.0
+            return "NORMAL", 1.0, 1.0
 
         # Hitung baseline ATR H1 dari 120 candle H1 terakhir (~5 hari trading aktif)
         baseline_atr_pts = None
@@ -481,12 +481,15 @@ class RiskEngine:
             lot *= config.RECOVERY_LOT_MULTIPLIER
             print(f" {UI.tag('RECOVERY', UI.YELLOW)} Lot dikurangi: x{config.RECOVERY_LOT_MULTIPLIER}")
 
-        # Ide 4: Ganti jam dinding statis dengan Dynamic Volatility Sizing (ATR Percentile)
+        # Dynamic Volatility Sizing capped by Session De-Risk Multiplier (Reconciliation 10 Sep 2026)
         if getattr(config, "VOL_REGIME_SCALING_ENABLED", True) and not config.is_crypto(symbol):
             regime, vol_mult, ratio = self.get_volatility_regime_and_multiplier(symbol)
-            lot *= vol_mult
-            if vol_mult != 1.0:
-                print(f" {UI.tag('VOL REGIME', UI.CYAN)} {symbol}: Volatility {regime} (Ratio {ratio:.2f}x baseline) -> Dynamic Sizing Mult x{vol_mult}")
+            sess_mult = self._session_lot_multiplier
+            # Sizing de-risk: if session multiplier < 1.0 (London 0.75, NY 0.50), it acts as a hard cap
+            effective_mult = min(vol_mult, sess_mult) if sess_mult < 1.0 else (vol_mult * sess_mult)
+            lot *= effective_mult
+            if effective_mult != 1.0:
+                print(f" {UI.tag('VOL REGIME', UI.CYAN)} {symbol}: Volatility {regime} (Ratio {ratio:.2f}x) x Session ({sess_mult:.2f}x) -> Effective Mult x{effective_mult:.2f}")
         else:
             lot *= self._session_lot_multiplier
 
@@ -886,8 +889,8 @@ class RiskEngine:
         now_wib = now_wib or datetime.now(WIB)
         current_minutes = now_wib.hour * 60 + now_wib.minute
 
-        # Pick the HIGHEST multiplier among all matching sessions so overlapping
-        # windows (e.g. London 1.0x inside London-NY 1.2x) apply the best one.
+        # Pick the LOWEST multiplier among all matching sessions so overlapping
+        # windows (e.g. London 0.75x inside London-NY 0.50x) apply the most defensive one.
         best_multiplier = None
         for session in config.ALLOWED_SESSIONS_WIB:
             start = session["start"][0] * 60 + session["start"][1]
@@ -901,7 +904,7 @@ class RiskEngine:
 
             if in_session:
                 mult = session.get("lot_multiplier", 1.0)
-                if best_multiplier is None or mult > best_multiplier:
+                if best_multiplier is None or mult < best_multiplier:
                     best_multiplier = mult
 
         if best_multiplier is not None:

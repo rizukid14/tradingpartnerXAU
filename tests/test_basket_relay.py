@@ -72,12 +72,13 @@ def test_intra_batch_directional_conflict_resolution():
     assert champions[0].metadata.get("cbss_champion") is True
 
 
-def test_portfolio_conflict_blocking():
+def test_portfolio_conflict_blocking(monkeypatch):
     """
     Uji Anti-Internal Currency Hedge terhadap posisi portfolio:
     Jika portofolio aktif memegang EURNZD BUY (Long EUR), maka kandidat
-    EURAUD SELL (Short EUR) wajib ditolak.
+    EURAUD SELL (Short EUR) wajib ditolak saat fitur diaktifkan.
     """
+    monkeypatch.setattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True)
     existing_pos = [DummyPosition(ticket=1001, symbol="EURNZD-ECNc", type=0)]  # 0 = BUY
     cand = DummyCandidate(symbol="EURAUD-ECNc", direction=-1)  # SELL
 
@@ -175,3 +176,36 @@ def test_crypto_and_gold_exempt():
     symbols = [c.symbol for c in champions]
     assert "BTCUSD.c" in symbols
     assert "XAUUSD-ECNc" in symbols
+
+
+def test_tuple_active_positions_does_not_crash():
+    """
+    Uji ketahanan tipe data: MT5 mengembalikan positions dan orders bertipe tuple.
+    Memastikan filter_and_rank_batch_candidates tidak melempar TypeError saat menerima tuple.
+    """
+    cand = DummyCandidate(symbol="EURUSD-ECNc", direction=1)
+    macro_cache = {
+        "EURUSD-ECNc": {
+            "atr_h1": 0.0010,
+            "c1_price": 1.1000,
+            "f1_price": 1.0900,
+            "immediate_ceiling_c1": 1.1000,
+            "immediate_floor_f1": 1.0900,
+            "c1_reaction_grade": "GRADE_1_MICRO",
+            "f1_reaction_grade": "GRADE_1_MICRO"
+        }
+    }
+
+    # Pass tuple bertipe TradePosition dummy
+    dummy_pos = (DummyPosition(ticket=1001, symbol="GBPUSD-ECNc", type=0),)
+    dummy_ord = (DummyPosition(ticket=2001, symbol="USDJPY-ECNc", type=1),)
+
+    champions = filter_and_rank_batch_candidates(
+        candidates=[cand],
+        macro_cache=macro_cache,
+        active_positions=dummy_pos, # TUPLE dari MT5
+        active_orders=dummy_ord,    # TUPLE dari MT5
+        csm_scores={"EUR": 1.5, "USD": -1.0}
+    )
+
+    assert isinstance(champions, list)

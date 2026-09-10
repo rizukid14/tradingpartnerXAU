@@ -63,6 +63,7 @@ from src.analytics.basket_sync_engine import (
     clean_symbol as cbss_clean_symbol
 )
 from src.analytics.macro_strategic_engine import evaluate_session_confluence_timing
+from src.analytics.zone_confluence_engine import ZCE_W_TF
 from src.indicators.lux_smc import LuxSMCAnalyzer
 from src.analytics.shadow_report import render_shadow_report_html, generate_and_save_shadow_report
 from dashboard_assets import TEMPLATE
@@ -224,6 +225,10 @@ def _consolidate_zce_zones(
             "kinds": list(fl.get("kinds_present", [])),
             "is_cold": bool(fl.get("is_cold", False)),
             "is_vacuum": bool(fl.get("is_vacuum", False)),
+            "confluence": int(fl.get("confluence", 0)),
+            "tf_max": str(fl.get("tf_max", "")),
+            "horizon_max": int(fl.get("horizon_max", 0)),
+            "at_price": bool(fl.get("at_price", False)),
             "source": "elected",
             "type": "floor"
         })
@@ -242,6 +247,10 @@ def _consolidate_zce_zones(
             "kinds": list(ce.get("kinds_present", [])),
             "is_cold": bool(ce.get("is_cold", False)),
             "is_vacuum": bool(ce.get("is_vacuum", False)),
+            "confluence": int(ce.get("confluence", 0)),
+            "tf_max": str(ce.get("tf_max", "")),
+            "horizon_max": int(ce.get("horizon_max", 0)),
+            "at_price": bool(ce.get("at_price", False)),
             "source": "elected",
             "type": "ceiling"
         })
@@ -293,6 +302,10 @@ def _consolidate_zce_zones(
                 "kinds": list(getattr(cl, "kinds_present", [])),
                 "is_cold": bool(getattr(cl, "is_cold", False)),
                 "is_vacuum": bool(getattr(cl, "is_vacuum", False)),
+                "confluence": int(getattr(cl, "confluence", 0)),
+                "tf_max": (max(getattr(cl, "tfs_present", []), key=lambda t: ZCE_W_TF.get(t, 0.0)) if getattr(cl, "tfs_present", None) else ""),
+                "horizon_max": int(getattr(cl, "horizon_max", 0)),
+                "at_price": False,
                 "source": "cluster",
                 "type": cl_type
             })
@@ -347,7 +360,10 @@ def _consolidate_zce_zones(
         g_short = "G3" if top_grade == "GRADE_3_MACRO" else ("G2" if top_grade == "GRADE_2_INTERMEDIATE" else "G1")
         tf_str = "+".join(all_tfs[:3]) if all_tfs else "H1"
         kind_str = "+".join(all_kinds[:2]) if all_kinds else "SMC"
-        label = f"{top_tier} [{g_short}] {rep_price:.{digits}f} ({max_score:.1f} • {tf_str} • {kind_str})"
+        confl_n = int(lead.get("confluence", 0))
+        confl_tag = f" • {confl_n}src" if confl_n > 0 else ""
+        at_tag = "~" if lead.get("at_price") else ""
+        label = f"{at_tag}{top_tier} [{g_short}] {rep_price:.{digits}f} ({max_score:.1f} • {tf_str} • {kind_str}{confl_tag})"
 
         result.append({
             "price": round(float(rep_price), digits),
@@ -362,10 +378,180 @@ def _consolidate_zce_zones(
             "tag": lead["tag"],
             "label": label,
             "is_cold": any(x["is_cold"] for x in grp),
-            "is_vacuum": any(x["is_vacuum"] for x in grp)
+            "is_vacuum": any(x["is_vacuum"] for x in grp),
+            "confluence": int(lead.get("confluence", 0)),
+            "tf_max": str(lead.get("tf_max", "")),
+            "horizon_max": int(lead.get("horizon_max", 0)),
+            "at_price": bool(lead.get("at_price", False)),
         })
 
     return result
+
+
+def _elect_primary_standby(
+    standbys: List[Dict[str, Any]],
+    macro: Dict[str, Any],
+    mid: float,
+    pt: float,
+    atr_val: float,
+    pip_val: float,
+    dir_lock: int = 0
+) -> Dict[str, Any]:
+    """
+    Unified 1:1 Primary Standby Selector.
+    Synchronizes Watchlist active_setup, HUD operational_phase, and Canvas Trajectory.
+    Prioritizes:
+      1. Confluence setups (is_confluence == True).
+      2. Active physical interaction (TOUCH_ACTIVE, RETEST_ACTIVE, ACTIVE_PIERCE)
+         aligned with macro trend or Direction Lock.
+      3. Pro-trend actionable setups closest to market (min dist_atr).
+      4. Counter-trend / watch setups only if no pro-trend setup exists.
+    """
+    if not standbys or mid <= 0:
+        return {
+            "name": "IDLE",
+            "type": "",
+            "dir": "NEUTRAL",
+            "dir_int": 0,
+            "dist_pips": 999.0,
+            "dist_atr": 99.0,
+            "lvl": 0.0,
+            "target": 0.0,
+            "is_confluence": False,
+            "confluence_name": "",
+            "extra_count": 0,
+            "standby": None
+        }
+
+    # Determine preferred institutional direction
+    if dir_lock in (1, -1):
+        preferred_dir = dir_lock
+    elif macro.get("is_bear") and not macro.get("is_bull"):
+        preferred_dir = -1
+    elif macro.get("is_bull") and not macro.get("is_bear"):
+        preferred_dir = 1
+    else:
+        bias_lbl = str(macro.get("trend_label") or macro.get("trend_compass") or "").upper()
+        if "BEAR" in bias_lbl and "BULL" not in bias_lbl:
+            preferred_dir = -1
+        elif "BULL" in bias_lbl and "BEAR" not in bias_lbl:
+            preferred_dir = 1
+        else:
+            preferred_dir = 0
+
+    type_label_map = {
+        "M1": "M1:SWEEP",
+        "M1B": "M1B:SWEEP",
+        "M2": "M2:PULLBACK",
+        "M3": "M3:BREAKOUT",
+        "M4": "M4:BASING"
+    }
+
+    candidates = []
+    for s in standbys:
+        s_lvl = float(s.get("price", 0.0))
+        if s_lvl <= 0:
+            continue
+        dist_pips = abs(mid - s_lvl) / pip_val if pip_val > 0 else 0.0
+        dist_atr = abs(mid - s_lvl) / atr_val if atr_val > 0 else 99.0
+        s_dir = int(s.get("direction", 0) or 0)
+        s_lbl = str(s.get("label", "")).upper()
+
+        if s_dir == 1 or "BULL" in s_lbl or "RBS" in s_lbl or "BUY" in s_lbl:
+            dir_tag = "BULL"
+            dir_int = 1
+        elif s_dir == -1 or "BEAR" in s_lbl or "SBR" in s_lbl or "SELL" in s_lbl:
+            dir_tag = "BEAR"
+            dir_int = -1
+        else:
+            dir_tag = "SETUP"
+            dir_int = 0
+
+        is_watch = bool(s.get("is_breakdown_watch", False))
+        s_type = s.get("type", "")
+        if is_watch:
+            s_type_label = "SFR:WATCH"
+        elif s_type == "M4":
+            s_type_label = "M4:BASING" if "BASING" in s_lbl else "M4:RETEST"
+        else:
+            s_type_label = type_label_map.get(s_type, s_type or "SETUP")
+
+        short_name = f"{s_type_label} {dir_tag}"
+        st_val = str(s.get("status", "")).upper()
+        is_active = any(k in st_val for k in ("ACTIVE", "TOUCH", "RETEST", "RECLAIM"))
+        is_pro_trend = (preferred_dir == 0) or (dir_int == preferred_dir)
+        is_confl = bool(s.get("is_confluence", False))
+
+        candidates.append({
+            "name": short_name,
+            "type": s_type,
+            "dir": dir_tag,
+            "dir_int": dir_int,
+            "dist_pips": dist_pips,
+            "dist_atr": dist_atr,
+            "lvl": s_lvl,
+            "target": float(s.get("target_price", 0.0) or 0.0),
+            "is_watch": is_watch,
+            "is_active": is_active,
+            "is_pro_trend": is_pro_trend,
+            "is_confluence": is_confl,
+            "standby": s
+        })
+
+    if not candidates:
+        return {
+            "name": "IDLE",
+            "type": "",
+            "dir": "NEUTRAL",
+            "dir_int": 0,
+            "dist_pips": 999.0,
+            "dist_atr": 99.0,
+            "lvl": 0.0,
+            "target": 0.0,
+            "is_confluence": False,
+            "confluence_name": "",
+            "extra_count": 0,
+            "standby": None
+        }
+
+    # Proximity count (<= 1.5x ATR)
+    near_setups = [c for c in candidates if c["dist_atr"] <= 1.5]
+    extra_count = max(0, len(near_setups) - 1)
+
+    # Sort key:
+    # 0: Confluence first
+    # 1: Pro-trend over Counter-trend (0 if pro-trend else 1)
+    # 2: Active physical touch/retest over pending (0 if active else 1)
+    # 3: Actionable over passive watch (0 if not watch else 1)
+    # 4: Distance in ATR (closest first)
+    candidates.sort(key=lambda c: (
+        0 if c["is_confluence"] else 1,
+        0 if c["is_pro_trend"] else 1,
+        0 if c["is_active"] else 1,
+        1 if c["is_watch"] else 0,
+        c["dist_atr"]
+    ))
+
+    elected = dict(candidates[0])
+
+    # Confluence fusion: >= 2 setups in same direction within <= 0.35x ATR
+    is_confluence = elected["is_confluence"]
+    confluence_name = ""
+    if len(near_setups) >= 2 and not is_confluence:
+        same_dir = [c for c in near_setups if c["dir"] == elected["dir"]]
+        if len(same_dir) >= 2:
+            min_lvl = min(c["lvl"] for c in same_dir)
+            max_lvl = max(c["lvl"] for c in same_dir)
+            if (max_lvl - min_lvl) <= 0.35 * atr_val:
+                c_types = [c["type"] for c in same_dir]
+                confluence_name = f"{'+'.join(c_types)} {elected['dir']}"
+                is_confluence = True
+                elected["name"] = confluence_name
+
+    elected["is_confluence"] = is_confluence
+    elected["confluence_name"] = confluence_name
+    elected["extra_count"] = extra_count
+    return elected
 
 
 class CockpitDataEngine:
@@ -497,77 +683,20 @@ class CockpitDataEngine:
 
             # 1:1 Radar Standbys directly from MarketScanner
             standbys = self.scanner.get_radar_standbys(sym, mid, macro, pt, atr_val)
-            setups_dist = []
-            type_label_map = {
-                "M1": "M1:SWEEP",
-                "M2": "M2:PULLBACK",
-                "M3": "M3:BREAKOUT",
-                "M4": "M4:BASING"
-            }
-            for s in standbys:
-                s_lvl = float(s.get("price", 0.0))
-                if s_lvl > 0 and mid > 0:
-                    dist_pips = abs(mid - s_lvl) / pip_val
-                    dist_atr = abs(mid - s_lvl) / atr_val
-                    s_lbl = s.get("label", "").upper()
-                    if "BEAR" in s_lbl or "SBR" in s_lbl or "SELL" in s_lbl:
-                        dir_tag = "BEAR"
-                    elif "BULL" in s_lbl or "RBS" in s_lbl or "BUY" in s_lbl:
-                        dir_tag = "BULL"
-                    else:
-                        dir_tag = s_lbl.split()[0] if s_lbl else "SETUP"
-                    
-                    is_watch = bool(s.get("is_breakdown_watch", False))
-                    s_type = s.get("type", "")
-                    if is_watch:
-                        s_type_label = "SFR:WATCH"
-                    elif s_type == "M4":
-                        s_type_label = "M4:BASING" if "BASING" in s_lbl else "M4:RETEST"
-                    else:
-                        s_type_label = type_label_map.get(s_type, s_type or "SETUP")
 
-                    short_name = f"{s_type_label} {dir_tag}"
-                    setups_dist.append({
-                        "name": short_name,
-                        "type": s_type,
-                        "dir": dir_tag,
-                        "dist_pips": dist_pips,
-                        "dist_atr": dist_atr,
-                        "lvl": s_lvl,
-                        "is_watch": is_watch
-                    })
+            dir_mem = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_sym)
+            dir_lock_val = int(dir_mem.get("dir", 0) or 0) if dir_mem else 0
 
-            # Pick closest and evaluate multi-setup confluence
-            is_confluence = False
-            confluence_name = ""
-            extra_count = 0
+            elected = _elect_primary_standby(
+                standbys, macro, mid, pt, atr_val, pip_val, dir_lock=dir_lock_val
+            )
 
-            if setups_dist:
-                # Prioritize active actionable setups over passive background flow watching
-                setups_dist.sort(key=lambda x: (1 if x["is_watch"] else 0, x["dist_atr"]))
-                closest = setups_dist[0]
-                closest_name = closest["name"]
-                closest_pips = closest["dist_pips"]
-                closest_atr = closest["dist_atr"]
-                closest_lvl = closest["lvl"]
-
-                # Near setups within reasonable operational proximity (<= 1.5x ATR)
-                near_setups = [s for s in setups_dist if s["dist_atr"] <= 1.5]
-                extra_count = max(0, len(near_setups) - 1)
-
-                # Confluence check: >= 2 setups in same direction within <= 0.35x ATR
-                if len(near_setups) >= 2:
-                    same_dir_setups = [s for s in near_setups if s["dir"] == closest["dir"]]
-                    if len(same_dir_setups) >= 2:
-                        min_lvl = min(s["lvl"] for s in same_dir_setups)
-                        max_lvl = max(s["lvl"] for s in same_dir_setups)
-                        if (max_lvl - min_lvl) <= 0.35 * atr_val:
-                            confl_types = [s["type"] for s in same_dir_setups]
-                            confluence_name = f"{'+'.join(confl_types)} {closest['dir']}"
-                            is_confluence = True
-                            closest_name = confluence_name
-            else:
-                closest_name, closest_pips, closest_atr, closest_lvl = ("IDLE", 999.0, 99.0, 0.0)
+            closest_name = elected["name"]
+            closest_pips = elected["dist_pips"]
+            closest_atr = elected["dist_atr"]
+            closest_lvl = elected["lvl"]
+            is_confluence = elected["is_confluence"]
+            extra_count = elected["extra_count"]
 
             is_near = (closest_atr <= 1.0)
             dist_desc = f"{closest_pips:.1f} pips ({closest_atr:.2f}x ATR)" if closest_atr < 50 else ">50 pips (Idle)"
@@ -581,8 +710,20 @@ class CockpitDataEngine:
 
             c1_dist_pips = round((c1_p - mid) / pip_val) if (c1_p > 0 and mid > 0 and c1_p > mid) else None
             f1_dist_pips = round((mid - f1_p) / pip_val) if (f1_p > 0 and mid > 0 and mid > f1_p) else None
+
+            # ZCE layer strength (P3/P4): jumlah sumber confluence di dinding immediate
+            _zm = getattr(self.scanner, "_zce_maps", {}).get(valid_sym) or getattr(self.scanner, "_zce_maps", {}).get(sym)
+            c1_confl = int(getattr(_zm, "immediate_ceiling_c1_confluence", 0) or 0)
+            f1_confl = int(getattr(_zm, "immediate_floor_f1_confluence", 0) or 0)
+            c1_grade = str(getattr(_zm, "immediate_ceiling_c1_grade", "") or "")
+            f1_grade = str(getattr(_zm, "immediate_floor_f1_grade", "") or "")
+
             c1_text = f"C1: {c1_dist_pips}p" if c1_dist_pips is not None else "C1: —"
             f1_text = f"F1: {f1_dist_pips}p" if f1_dist_pips is not None else "F1: —"
+            if c1_dist_pips is not None and c1_confl > 0:
+                c1_text += f" •{c1_confl}x"
+            if f1_dist_pips is not None and f1_confl > 0:
+                f1_text += f" •{f1_confl}x"
 
             runway_station = "—"
             runway_pips = 0.0
@@ -683,6 +824,9 @@ class CockpitDataEngine:
                 "m4_dir": m4_flow_dir,
                 "dir_locked": dir_locked,
                 "dr_pct": round(dr_pct, 1),
+                "chamber_pips": round((c1_p - f1_p) / pip_val, 1) if (c1_p > 0 and f1_p > 0 and c1_p > f1_p) else 0.0,
+                "chamber_atr": round((c1_p - f1_p) / atr_val, 2) if (c1_p > 0 and f1_p > 0 and c1_p > f1_p and atr_val > 0) else 0.0,
+                "chamber_text": f"CH: {round((c1_p - f1_p) / pip_val, 1)}p ({round((c1_p - f1_p) / atr_val, 2)}x)" if (c1_p > 0 and f1_p > 0 and c1_p > f1_p and atr_val > 0) else "CH: —",
                 "runway_badge": runway_badge,
                 "runway_text": runway_text,
                 "runway_station": runway_station,
@@ -692,6 +836,10 @@ class CockpitDataEngine:
                 "f1_text": f1_text,
                 "c1_pips": c1_dist_pips,
                 "f1_pips": f1_dist_pips,
+                "c1_confluence": c1_confl,
+                "f1_confluence": f1_confl,
+                "c1_grade": c1_grade,
+                "f1_grade": f1_grade,
                 "basing_box": b_box_info,
                 "wave_regime": w_regime,
                 "is_paper_only": config.is_paper_only(sym)
@@ -1007,7 +1155,8 @@ class CockpitDataEngine:
 
         tf_upper = timeframe_str.upper()
         tf_scale = 0.8 if tf_upper == "M30" else (0.4 if tf_upper == "M5" else 1.0)
-        pip_thr = min(15.0 * pip_val, 0.75 * atr_val)
+        pip_floor = 8.0 * pip_val
+        pip_thr = max(pip_floor, min(15.0 * pip_val, 0.75 * atr_val))
         proximity_thr = max(0.35 * atr_val * tf_scale, pip_thr)
 
         def _elect_display_ladder(merged_items: List[Dict[str, Any]], is_ceil: bool, limit: int = 4) -> List[Dict[str, Any]]:
@@ -1031,6 +1180,10 @@ class CockpitDataEngine:
                         mf["label"] = fl.get("label", mf.get("label"))
                         mf["grade"] = fl.get("grade", mf.get("grade"))
                         mf["score"] = max(mf.get("score", 0.0), fl.get("score", 0.0))
+                        mf["confluence"] = int(fl.get("confluence", mf.get("confluence", 0)))
+                        mf["tf_max"] = fl.get("tf_max", mf.get("tf_max", ""))
+                        mf["horizon_max"] = int(fl.get("horizon_max", mf.get("horizon_max", 0)))
+                        mf["at_price"] = bool(fl.get("at_price", mf.get("at_price", False)))
                     break
             if not matched:
                 merged_floors.append(dict(fl))
@@ -1098,6 +1251,10 @@ class CockpitDataEngine:
                         mc["label"] = ce.get("label", mc.get("label"))
                         mc["grade"] = ce.get("grade", mc.get("grade"))
                         mc["score"] = max(mc.get("score", 0.0), ce.get("score", 0.0))
+                        mc["confluence"] = int(ce.get("confluence", mc.get("confluence", 0)))
+                        mc["tf_max"] = ce.get("tf_max", mc.get("tf_max", ""))
+                        mc["horizon_max"] = int(ce.get("horizon_max", mc.get("horizon_max", 0)))
+                        mc["at_price"] = bool(ce.get("at_price", mc.get("at_price", False)))
                     break
             if not matched:
                 merged_ceils.append(dict(ce))
@@ -1386,31 +1543,33 @@ class CockpitDataEngine:
         adx_val = float(macro.get("adx_14", 24.5) or 24.5)
         bias_score = float(getattr(strat, "macro_bias_score", macro.get("macro_bias_score", 0.0)) or 0.0)
 
-        # Determine rich operational phase from active radar standbys
+        # Determine rich operational phase and primary setup using unified election helper
+        dir_mem = getattr(self.scanner, "_symbol_directional_state", {}).get(clean_sym)
+        dir_lock_val = int(dir_mem.get("dir", 0) or 0) if dir_mem else 0
+        elected_primary = _elect_primary_standby(
+            m_standbys, macro, mid, pt, atr_val, pip_val, dir_lock=dir_lock_val
+        )
+
         operational_phase = mse_state
-        if m_standbys:
-            confl_item = next((s for s in m_standbys if s.get("is_confluence")), None)
-            if confl_item:
-                dir_txt = "SELL" if confl_item.get("direction") == -1 else "BUY"
+        if elected_primary and elected_primary.get("standby"):
+            active_s = elected_primary["standby"]
+            s_type = active_s.get("type", "M3")
+            dir_txt = "SELL" if elected_primary.get("dir_int") == -1 else "BUY"
+            tgt_txt = f"{elected_primary.get('target', 0.0):.{digits}f}"
+            if elected_primary.get("is_confluence"):
                 struct_txt = "SBR" if dir_txt == "SELL" else "RBS"
-                tgt_txt = f"{confl_item.get('target_price', 0.0):.{digits}f}"
-                operational_phase = f"RETESTING {struct_txt} {confl_item['price']:.{digits}f} -> TARGET {tgt_txt} [{dir_txt} CONFLUENCE]"
-            else:
-                active_s = next((s for s in m_standbys if "ACTIVE" in str(s.get("status", ""))), None) or m_standbys[0]
-                s_type = active_s.get("type", "M3")
-                dir_txt = "SELL" if active_s.get("direction") == -1 else "BUY"
-                tgt_txt = f"{active_s.get('target_price', 0.0):.{digits}f}"
-                if s_type == "M3":
-                    struct_txt = "SBR" if dir_txt == "SELL" else "RBS"
-                    operational_phase = f"RETESTING {struct_txt} {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
-                elif s_type == "M2":
-                    operational_phase = f"PULLBACK TOUCH @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
-                elif s_type == "M1":
-                    operational_phase = f"MACRO SWEEP @ {active_s['price']:.{digits}f} [M1A {dir_txt}]"
-                elif s_type == "M1B":
-                    operational_phase = f"TREND SWEEP @ {active_s['price']:.{digits}f} [M1B {dir_txt}]"
-                elif s_type == "M4":
-                    operational_phase = f"FLOW RETEST @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
+                operational_phase = f"RETESTING {struct_txt} {elected_primary['lvl']:.{digits}f} -> TARGET {tgt_txt} [{dir_txt} CONFLUENCE]"
+            elif s_type == "M3":
+                struct_txt = "SBR" if dir_txt == "SELL" else "RBS"
+                operational_phase = f"RETESTING {struct_txt} {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
+            elif s_type == "M2":
+                operational_phase = f"PULLBACK TOUCH @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
+            elif s_type == "M1":
+                operational_phase = f"MACRO SWEEP @ {active_s['price']:.{digits}f} [M1A {dir_txt}]"
+            elif s_type == "M1B":
+                operational_phase = f"TREND SWEEP @ {active_s['price']:.{digits}f} [M1B {dir_txt}]"
+            elif s_type == "M4":
+                operational_phase = f"FLOW RETEST @ {active_s['price']:.{digits}f} -> TARGET {tgt_txt} [{s_type} {dir_txt}]"
 
         now_session_info = _get_session_info(now_wib, symbol)
         last_candle = candles[-1] if candles else {}
@@ -1438,6 +1597,19 @@ class CockpitDataEngine:
         dr_val = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
         dr_lbl = "DEEP DISCOUNT" if dr_val <= 38.0 else ("EXTREME PREMIUM" if dr_val >= 62.0 else "EQUILIBRIUM")
 
+        now_h = datetime.now(WIB).hour
+        if 7 <= now_h < 14:
+            sess_badge = {"label": "ASIA ACTIVE", "desc": "M1, M2, M3 FULLY ARMED", "color": "#10b981"}
+        elif 14 <= now_h < 18:
+            sess_badge = {"label": "LONDON CORE", "desc": "M1, M2, M3 ARMED (0.75x DE-RISK SIZING)", "color": "#38bdf8"}
+        elif now_h >= 18:
+            sess_badge = {"label": "NY EXPANSION", "desc": "M3 PAPER ONLY • M1 & M2 ARMED (0.50x SIZING)", "color": "#a855f7"}
+        else:
+            sess_badge = {"label": "DEAD ZONE", "desc": "00:00-07:00 WIB • FX REST", "color": "#ef4444"}
+
+        ch_h_pips = round((float(c1) - float(f1)) / pip_val, 1) if (c1 and f1 and float(c1) > float(f1) and pip_val > 0) else 0.0
+        ch_h_atr = round((float(c1) - float(f1)) / atr_val, 2) if (c1 and f1 and float(c1) > float(f1) and atr_val > 0) else 0.0
+
         return {
             "symbol": symbol,
             "digits": digits,
@@ -1448,6 +1620,9 @@ class CockpitDataEngine:
             "atr_pts": int(atr_pts),
             "dr_pos": dr_val,
             "dr_label": dr_lbl,
+            "chamber_pips": ch_h_pips,
+            "chamber_atr": ch_h_atr,
+            "session_badge": sess_badge,
             "runway_text": runway_text,
             "runway_badge": runway_badge,
             "runway_station": runway_station,
@@ -1466,11 +1641,26 @@ class CockpitDataEngine:
             "f2": round(float(f2), digits) if f2 else None,
             "c1": round(float(c1), digits) if c1 else None,
             "c2": round(float(c2), digits) if c2 else None,
+            "c1_grade": getattr(zm, "immediate_ceiling_c1_grade", None),
+            "f1_grade": getattr(zm, "immediate_floor_f1_grade", None),
+            "c1_confluence": int(getattr(zm, "immediate_ceiling_c1_confluence", 0) or 0),
+            "f1_confluence": int(getattr(zm, "immediate_floor_f1_confluence", 0) or 0),
+            "inside_zone": bool(getattr(zm, "inside_zone", False)),
+            "inside_tiers": list(getattr(zm, "inside_tiers", []) or []),
+            "layer_count": int(getattr(zm, "layer_count", 0) or 0),
             "candles": candles,
             "zce_walls": zce_walls,
             "zce_ladder": zce_ladder,
             "intel": intel,
             "m_standbys": m_standbys,
+            "primary_setup": {
+                "type": elected_primary.get("type", ""),
+                "name": elected_primary.get("name", ""),
+                "direction": elected_primary.get("dir_int", 0),
+                "price": elected_primary.get("lvl", 0.0),
+                "target": elected_primary.get("target", 0.0),
+                "is_confluence": elected_primary.get("is_confluence", False)
+            } if elected_primary else None,
             "gates": gates,
             "open_positions": open_pos,
             "pending_orders": pending_orders,
@@ -1496,9 +1686,10 @@ class CockpitDataEngine:
         is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto or is_gold
         spread_cap = config.max_spread_points_for(sym) if (is_crypto or is_gold) else max(int(round(atr_val * 0.15 / pt)), 20)
 
-        # Dynamic Session Multiplier
-        sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.2) if is_asian else (
-            getattr(config, "SESSION_NY_LOT_MULT", 0.8) if (20 <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 1.0)
+        # Dynamic Session Multiplier (Reconciliation 10 Sep 2026)
+        ny_start_h = getattr(config, "NY_SESSION_START_HOUR_WIB", 18)
+        sess_mult = getattr(config, "SESSION_ASIA_LOT_MULT", 1.20) if is_asian else (
+            getattr(config, "SESSION_NY_LOT_MULT", 0.50) if (ny_start_h <= h or h == 0) else getattr(config, "SESSION_LONDON_LOT_MULT", 0.75)
         )
 
         if is_dead_zone:

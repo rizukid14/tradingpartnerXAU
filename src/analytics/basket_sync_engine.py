@@ -129,15 +129,15 @@ def calculate_pair_runway(
             atr = 0.0010
 
     z_walls = m.get("zce_walls") or {}
-    c1 = float(m.get("immediate_ceiling_c1") or m.get("ceiling_c1") or m.get("imm_ceiling_c1") or m.get("c1_level") or m.get("cluster_resistance") or z_walls.get("c1") or z_walls.get("c1_price") or 0.0)
-    f1 = float(m.get("immediate_floor_f1") or m.get("floor_f1") or m.get("imm_floor_f1") or m.get("f1_level") or m.get("cluster_support") or z_walls.get("f1") or z_walls.get("f1_price") or 0.0)
-    c2 = float(m.get("ceiling_c2") or m.get("deep_target_ceiling_c2") or m.get("deep_ceiling_c2") or m.get("c2_level") or z_walls.get("c2") or z_walls.get("c2_price") or c1)
-    f2 = float(m.get("floor_f2") or m.get("deep_target_floor_f2") or m.get("deep_floor_f2") or m.get("f2_level") or z_walls.get("f2") or z_walls.get("f2_price") or f1)
+    c1 = float(m.get("immediate_ceiling_c1") or m.get("ceiling_c1") or m.get("imm_ceiling_c1") or m.get("c1_level") or m.get("cluster_resistance") or z_walls.get("imm_ceiling_c1") or z_walls.get("c1") or z_walls.get("c1_price") or 0.0)
+    f1 = float(m.get("immediate_floor_f1") or m.get("floor_f1") or m.get("imm_floor_f1") or m.get("f1_level") or m.get("cluster_support") or z_walls.get("imm_floor_f1") or z_walls.get("f1") or z_walls.get("f1_price") or 0.0)
+    c2 = float(m.get("ceiling_c2") or m.get("deep_target_ceiling_c2") or m.get("deep_ceiling_c2") or m.get("c2_level") or z_walls.get("deep_ceiling_c2") or z_walls.get("c2") or z_walls.get("c2_price") or c1)
+    f2 = float(m.get("floor_f2") or m.get("deep_target_floor_f2") or m.get("deep_floor_f2") or m.get("f2_level") or z_walls.get("deep_floor_f2") or z_walls.get("f2") or z_walls.get("f2_price") or f1)
 
-    c1_grade = str(m.get("c1_reaction_grade") or m.get("imm_ceiling_c1_grade") or m.get("zce_c1_grade") or z_walls.get("c1_grade") or "GRADE_1_MICRO")
-    f1_grade = str(m.get("f1_reaction_grade") or m.get("imm_floor_f1_grade") or m.get("zce_f1_grade") or z_walls.get("f1_grade") or "GRADE_1_MICRO")
-    c2_grade = str(m.get("c2_reaction_grade") or m.get("deep_ceiling_c2_grade") or m.get("zce_c2_grade") or z_walls.get("c2_grade") or "GRADE_2_INTERMEDIATE")
-    f2_grade = str(m.get("f2_reaction_grade") or m.get("deep_floor_f2_grade") or m.get("zce_f2_grade") or z_walls.get("f2_grade") or "GRADE_2_INTERMEDIATE")
+    c1_grade = str(m.get("c1_reaction_grade") or m.get("imm_ceiling_c1_grade") or m.get("zce_c1_grade") or z_walls.get("imm_ceiling_c1_grade") or z_walls.get("c1_grade") or "GRADE_1_MICRO")
+    f1_grade = str(m.get("f1_reaction_grade") or m.get("imm_floor_f1_grade") or m.get("zce_f1_grade") or z_walls.get("imm_floor_f1_grade") or z_walls.get("f1_grade") or "GRADE_1_MICRO")
+    c2_grade = str(m.get("c2_reaction_grade") or m.get("deep_ceiling_c2_grade") or m.get("zce_c2_grade") or z_walls.get("deep_ceiling_c2_grade") or z_walls.get("c2_grade") or "GRADE_2_INTERMEDIATE")
+    f2_grade = str(m.get("f2_reaction_grade") or m.get("deep_floor_f2_grade") or m.get("zce_f2_grade") or z_walls.get("deep_floor_f2_grade") or z_walls.get("f2_grade") or "GRADE_2_INTERMEDIATE")
 
     threshold_g3 = float(getattr(config, "CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35))
 
@@ -625,6 +625,9 @@ def filter_and_rank_batch_candidates(
     if not candidates:
         return []
 
+    active_pos_list = list(active_positions or [])
+    active_ord_list = list(active_orders or [])
+
     # Ambil CSM scores jika tidak disediakan
     if csm_scores is None:
         try:
@@ -657,8 +660,8 @@ def filter_and_rank_batch_candidates(
         is_safe, conflict_msg = check_basket_directional_conflict(
             symbol=sym,
             direction=direction,
-            active_positions=active_positions or [],
-            active_orders=active_orders or []
+            active_positions=active_pos_list,
+            active_orders=active_ord_list
         )
         if not is_safe:
             logger.info(f"[CBSS BATCH DROP] {conflict_msg}")
@@ -766,7 +769,20 @@ def filter_and_rank_batch_candidates(
         
         delta_val = get_csm_delta_for_symbol(sym_name)
         alignment = max(0.0, delta_val * dir_val)
-        score = (r_val * 0.45) + (alignment * 0.35) + (1.0 if not is_tight else 0.5) * 0.20
+        score = (r_val * 0.45) + (alignment * 0.35) + ((1.0 if not is_tight else 0.5) * 0.20)
+
+        # Session-Aware Driver Confluence (Reconciliation 10 Sep 2026)
+        h = hour_wib
+        if h is not None:
+            base_c, quote_c = get_pair_currencies(sym_name)
+            pair_currs = {base_c, quote_c}
+            if 7 <= h < 14 and any(c in pair_currs for c in ("JPY", "AUD", "NZD")):
+                score += 0.20
+            elif 14 <= h < 18 and any(c in pair_currs for c in ("EUR", "GBP", "CHF")):
+                score += 0.20
+            elif h >= 18 and any(c in pair_currs for c in ("USD", "CAD")):
+                score += 0.20
+
         return score
 
     # Urutkan kandidat berdasarkan skor tertinggi
@@ -786,12 +802,12 @@ def filter_and_rank_batch_candidates(
             continue
 
         # Cek Concurrency Cap
-        combined_existing = (active_positions or []) + final_champions
+        combined_existing = active_pos_list + final_champions
         cap_ok, cap_msg = check_basket_concurrency_cap(
             symbol=getattr(cand, "symbol", ""),
             direction=getattr(cand, "direction", 0),
             active_positions=combined_existing,
-            active_orders=active_orders or []
+            active_orders=active_ord_list
         )
         if not cap_ok:
             logger.info(f"[CBSS CAP EXCEEDED] {cap_msg}")

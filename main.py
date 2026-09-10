@@ -656,6 +656,27 @@ def run_scanner_trading_cycle(cand, risk):
     """
     sym = cand.symbol
     tf_str = getattr(cand, "timeframe", "H1")
+    c_dir = "BUY" if cand.direction == 1 else "SELL"
+
+    # Pre-check: Deduplikasi terhadap Shadow Trades yang sedang aktif / pending
+    # Mencegah CLI spamming alert box untuk simbol paper-only atau simbol kena cap yang posisinya sudah berjalan
+    existing_sh = None
+    with shadow_tracker._lock:
+        for t in shadow_tracker.active_trades:
+            if t.symbol == sym and t.direction == c_dir and t.status in ("ACTIVE", "PENDING"):
+                existing_sh = t
+                break
+
+    is_cbss_pre_blocked = (
+        getattr(cand, "action_tier", "") == "CBSS_CAP_BLOCKED"
+        or getattr(cand, "metadata", {}).get("cbss_cap_blocked", False)
+    )
+    if existing_sh:
+        can_trade_pre, _ = (False, "CBSS") if is_cbss_pre_blocked else risk.can_trade(sym, action=cand.direction)
+        if config.is_paper_only(sym) or is_cbss_pre_blocked or not can_trade_pre:
+            logger.debug(f"[RADAR DEDUP] {sym} {c_dir} sudah berjalan di Paper Trade [{existing_sh.status} | ID: {existing_sh.shadow_id}]. Alert ditekan.")
+            return False
+
     print("\n" + render_candidate_alert_box(cand))
     meta = getattr(cand, 'metadata', {}) or {}
     zce_cls = meta.get('zce_class', 'MSE_BASE')
@@ -672,6 +693,17 @@ def run_scanner_trading_cycle(cand, risk):
         or getattr(cand, "metadata", {}).get("cbss_cap_blocked", False)
     )
     cbss_cap_reason = getattr(cand, "metadata", {}).get("cbss_cap_reason", "")
+
+    # 0B. NY Session M3 Breakout Retest Paper Trade Route (Reconciliation 10 Sep 2026)
+    is_ny_m3_paper = False
+    ny_m3_reason = ""
+    now_wib = datetime.now(WIB)
+    ny_start_h = getattr(config, "NY_SESSION_START_HOUR_WIB", 18)
+    if getattr(config, "ENABLE_NY_M3_PAPER_ROUTE", True) and now_wib.hour >= ny_start_h and not config.is_crypto(sym) and not config.is_gold(sym):
+        stype = str(getattr(cand, "setup_type", "")).upper()
+        if "BREAKOUT" in stype or "M3" in stype:
+            is_ny_m3_paper = True
+            ny_m3_reason = f"[NY M3 PAPER ROUTE] Breakout Retest at {now_wib.strftime('%H:%M')} WIB routed to Paper Trade (0 MT5 Risk, sample-gathering mode)."
 
     is_cbss_conflict = False
     cbss_conflict_msg = ""
@@ -704,10 +736,16 @@ def run_scanner_trading_cycle(cand, risk):
             pass
 
     # 1. Check risk gates for candidate symbol
-    can_trade_ok, risk_msg = (False, cbss_cap_reason) if is_cbss_blocked else risk.can_trade(sym, action=cand.direction)
+    can_trade_ok, risk_msg = (
+        (False, cbss_cap_reason) if is_cbss_blocked
+        else ((False, ny_m3_reason) if is_ny_m3_paper
+        else risk.can_trade(sym, action=cand.direction))
+    )
     if not can_trade_ok:
         if is_cbss_blocked:
             print(f" {UI.YELLOW}[CBSS BASKET CAP -> PAPER TRADE] {sym} [{tf_str}] dialihkan ke Paper Trade (0 Token): {cbss_cap_reason}{UI.RST}")
+        elif is_ny_m3_paper:
+            print(f" {UI.PURPLE}[NY M3 -> PAPER TRADE] {sym} [{tf_str}] dialihkan ke Virtual Paper Trade (0 Token, 0 MT5 Risk): {ny_m3_reason}{UI.RST}")
         elif config.is_paper_only(sym) or "[PAPER_ONLY]" in risk_msg:
             print(f" {UI.CYAN}[PAPER TRADE ONLY] {sym} [{tf_str}] dialihkan ke Virtual Paper Trade (0 Token, 0 MT5 Risk).{UI.RST}")
         else:
@@ -744,6 +782,8 @@ def run_scanner_trading_cycle(cand, risk):
 
             if is_cbss_blocked:
                 clean_disp = "SKIPPED_CBSS_BASKET_CAP"
+            elif is_ny_m3_paper:
+                clean_disp = "SKIPPED_NY_M3_PAPER"
             elif config.is_paper_only(sym) or "[PAPER_ONLY]" in risk_msg:
                 clean_disp = "PAPER_TRADE_ONLY"
             elif "posisi" in risk_msg.lower() or "kuota" in risk_msg.lower():
