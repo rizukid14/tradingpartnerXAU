@@ -3832,7 +3832,7 @@ class MarketScanner:
                     now_wib = datetime.now(WIB)
                     is_tokyo_lull = (now_wib.hour == 10 and now_wib.minute >= 30) or (11 <= now_wib.hour <= 13)
                     is_continuation = not any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM", "FADE"))
-                    if is_tokyo_lull and is_continuation and not sym_is_crypto and not sym_is_gold:
+                    if getattr(config, "ENABLE_TOKYO_LULL_FREEZE", False) and is_tokyo_lull and is_continuation and not sym_is_crypto and not sym_is_gold:
                         m_range_pts = abs(macro.get('asian_high', 0.0) - macro.get('asian_low', 0.0)) / pt if pt > 0 else 0.0
                         m_pips = m_range_pts / 10.0 if ('JPY' not in clean_s) else m_range_pts
                         atr_pips = (atr_val / pt / 10.0) if ('JPY' not in clean_s) else (atr_val / pt) if pt > 0 else 30.0
@@ -3842,7 +3842,7 @@ class MarketScanner:
 
                     # 1D. London Open Defensive Window (15:00 - 17:59 WIB, Pilar 5)
                     # Data: SELL WR 18.2%, kerugian terkonsentrasi di false pullback/retest awal London
-                    if getattr(config, "ENABLE_LDN_DEFENSIVE_WINDOW", True) and not sym_is_crypto:
+                    if getattr(config, "ENABLE_LDN_DEFENSIVE_WINDOW", False) and not sym_is_crypto:
                         if target_dir == -1 and 15 <= now_wib.hour < 18:
                             is_sweep = any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM"))
                             if not is_sweep:

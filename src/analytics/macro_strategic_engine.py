@@ -1575,33 +1575,62 @@ class MacroStrategicEngine:
 
         if market_state in ("FLOOR_REJECTION", "CHAMBER_FLOOR_TEST"):
             htf_bearish = is_h4_bear or last_d1_bear
-            if market_state == "FLOOR_REJECTION" and htf_bearish and has_runway_down:
-                macro_bias = "BEARISH_EXPANSION"
-                primary_directive = "HUNT_SELL_BREAKDOWN_RETEST"
-                macro_bias_score = -0.65
-                entry_anchor = round(imm_floor_f1, digits)
-                entry_zone_proximal = round(entry_anchor + reload_width, digits)
-                calculated_sl = imm_ceiling_c1 + anti_wick_buffer
-                if (calculated_sl - entry_anchor) < min_sl_dist:
-                    calculated_sl = entry_anchor + min_sl_dist
-                elif (calculated_sl - entry_anchor) > max_sl_dist:
-                    calculated_sl = entry_anchor + max_sl_dist
-                intraday_sl = round(calculated_sl, digits)
-                macro_invalidation = round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
-                target_station_final = deep_floor_f2
-                hard_circuit_breaker = False
-                action_tier = "FULL_ALLOW"
-                sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
-                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_target = entry_anchor - max(1.25 * sl_dist, 0.50 * abs(entry_anchor - deep_floor_f2))
-                tp1_price = round(max(tp1_target, deep_floor_f2 + front_pad), digits)
-                tp2_price = round(deep_floor_f2 + front_pad, digits)
-                stage_label = f"DESCENDING_ABSORPTION_AT_{imm_floor_f1:.{digits}f}"
-                thesis = f"{symbol} in descending absorption at floor {imm_floor_f1:.{digits}f}. Multi-day bear alignment targeting {deep_floor_f2:.{digits}f}."
-                confidence_score = 80
-                max_allowed_buy = 0.0
-                min_allowed_sell = round(deep_floor_f2, digits)
-                forbidden_traps = [f"Do NOT buy into descending bear momentum at {imm_floor_f1:.{digits}f}"]
+            if htf_bearish:
+                if has_runway_down:
+                    macro_bias = "BEARISH_EXPANSION"
+                    primary_directive = "HUNT_SELL_BREAKDOWN_RETEST"
+                    macro_bias_score = -0.65
+                    entry_anchor = round(imm_floor_f1, digits)
+                    entry_zone_proximal = round(entry_anchor + reload_width, digits)
+                    calculated_sl = imm_ceiling_c1 + anti_wick_buffer
+                    if (calculated_sl - entry_anchor) < min_sl_dist:
+                        calculated_sl = entry_anchor + min_sl_dist
+                    elif (calculated_sl - entry_anchor) > max_sl_dist:
+                        calculated_sl = entry_anchor + max_sl_dist
+                    intraday_sl = round(calculated_sl, digits)
+                    macro_invalidation = round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
+                    target_station_final = deep_floor_f2
+                    hard_circuit_breaker = False
+                    action_tier = "FULL_ALLOW"
+                    sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
+                    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                    tp1_target = entry_anchor - max(1.25 * sl_dist, 0.50 * abs(entry_anchor - deep_floor_f2))
+                    tp1_price = round(max(tp1_target, deep_floor_f2 + front_pad), digits)
+                    tp2_price = round(deep_floor_f2 + front_pad, digits)
+                    stage_label = f"DESCENDING_ABSORPTION_AT_{imm_floor_f1:.{digits}f}"
+                    thesis = f"{symbol} in descending absorption at floor {imm_floor_f1:.{digits}f}. Multi-day bear alignment targeting {deep_floor_f2:.{digits}f}."
+                    confidence_score = 80
+                    max_allowed_buy = 0.0
+                    min_allowed_sell = round(deep_floor_f2, digits)
+                    forbidden_traps = [f"Do NOT buy into descending bear momentum at {imm_floor_f1:.{digits}f}"]
+                else:
+                    # Narrow runway down: Floor compression within HTF bear trend (never invert to Bullish BUY)
+                    macro_bias = "RANGE_BOUND"
+                    primary_directive = "WAIT_BREAKDOWN_OR_ROTATION"
+                    macro_bias_score = -0.35 # Lean bearish aligned with HTF structure
+                    entry_anchor = round(imm_floor_f1, digits)
+                    entry_zone_proximal = round(entry_anchor + reload_width, digits)
+                    calculated_sl = imm_ceiling_c1 + anti_wick_buffer
+                    if (calculated_sl - entry_anchor) < min_sl_dist:
+                        calculated_sl = entry_anchor + min_sl_dist
+                    elif (calculated_sl - entry_anchor) > max_sl_dist:
+                        calculated_sl = entry_anchor + max_sl_dist
+                    intraday_sl = round(calculated_sl, digits)
+                    macro_invalidation = round(imm_ceiling_c1 + (0.35 * atr_d1), digits)
+                    target_station_final = deep_floor_f2
+                    hard_circuit_breaker = False
+                    action_tier = "FULL_ALLOW"
+                    sl_dist = max(abs(intraday_sl - entry_anchor), pt * 10)
+                    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                    tp1_target = entry_anchor - max(1.25 * sl_dist, 0.50 * abs(entry_anchor - deep_floor_f2))
+                    tp1_price = round(max(tp1_target, deep_floor_f2 + front_pad), digits)
+                    tp2_price = round(deep_floor_f2 + front_pad, digits)
+                    stage_label = f"FLOOR_COMPRESSION_BEAR_{imm_floor_f1:.{digits}f}"
+                    thesis = f"{symbol} in floor compression at {imm_floor_f1:.{digits}f} within HTF bear trend. Awaiting breakdown or rotation."
+                    confidence_score = 75
+                    max_allowed_buy = 0.0
+                    min_allowed_sell = round(deep_floor_f2, digits)
+                    forbidden_traps = [] # Zero traps forbidding short in HTF bear trend
             else:
                 macro_bias = "BULLISH_PULLBACK"
                 primary_directive = "HUNT_BUY_AT_RBS"
@@ -1694,33 +1723,62 @@ class MacroStrategicEngine:
 
         elif market_state in ("CEILING_REJECTION", "CHAMBER_CEILING_TEST"):
             htf_bullish = is_h4_bull or last_d1_bull
-            if market_state == "CEILING_REJECTION" and htf_bullish and has_runway_up:
-                macro_bias = "BULLISH_EXPANSION"
-                primary_directive = "HUNT_BUY_BREAKOUT_RETEST"
-                macro_bias_score = 0.65
-                entry_anchor = round(imm_ceiling_c1, digits)
-                entry_zone_proximal = round(entry_anchor - reload_width, digits)
-                calculated_sl = imm_floor_f1 - anti_wick_buffer
-                if (entry_anchor - calculated_sl) < min_sl_dist:
-                    calculated_sl = entry_anchor - min_sl_dist
-                elif (entry_anchor - calculated_sl) > max_sl_dist:
-                    calculated_sl = entry_anchor - max_sl_dist
-                intraday_sl = round(calculated_sl, digits)
-                macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
-                target_station_final = deep_ceiling_c2
-                hard_circuit_breaker = False
-                action_tier = "FULL_ALLOW"
-                sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
-                front_pad = (0.15 * atr_h1) + (spread_pts * pt)
-                tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(deep_ceiling_c2 - entry_anchor))
-                tp1_price = round(min(tp1_target, deep_ceiling_c2 - front_pad), digits)
-                tp2_price = round(deep_ceiling_c2 - front_pad, digits)
-                stage_label = f"ASCENDING_ABSORPTION_AT_{imm_ceiling_c1:.{digits}f}"
-                thesis = f"{symbol} in ascending absorption at ceiling {imm_ceiling_c1:.{digits}f}. Multi-day bull alignment targeting {deep_ceiling_c2:.{digits}f}."
-                confidence_score = 80
-                max_allowed_buy = round(deep_ceiling_c2, digits)
-                min_allowed_sell = 0.0
-                forbidden_traps = [f"Do NOT short into ascending bull momentum at {imm_ceiling_c1:.{digits}f}"]
+            if htf_bullish:
+                if has_runway_up:
+                    macro_bias = "BULLISH_EXPANSION"
+                    primary_directive = "HUNT_BUY_BREAKOUT_RETEST"
+                    macro_bias_score = 0.65
+                    entry_anchor = round(imm_ceiling_c1, digits)
+                    entry_zone_proximal = round(entry_anchor - reload_width, digits)
+                    calculated_sl = imm_floor_f1 - anti_wick_buffer
+                    if (entry_anchor - calculated_sl) < min_sl_dist:
+                        calculated_sl = entry_anchor - min_sl_dist
+                    elif (entry_anchor - calculated_sl) > max_sl_dist:
+                        calculated_sl = entry_anchor - max_sl_dist
+                    intraday_sl = round(calculated_sl, digits)
+                    macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
+                    target_station_final = deep_ceiling_c2
+                    hard_circuit_breaker = False
+                    action_tier = "FULL_ALLOW"
+                    sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+                    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                    tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(deep_ceiling_c2 - entry_anchor))
+                    tp1_price = round(min(tp1_target, deep_ceiling_c2 - front_pad), digits)
+                    tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+                    stage_label = f"ASCENDING_ABSORPTION_AT_{imm_ceiling_c1:.{digits}f}"
+                    thesis = f"{symbol} in ascending absorption at ceiling {imm_ceiling_c1:.{digits}f}. Multi-day bull alignment targeting {deep_ceiling_c2:.{digits}f}."
+                    confidence_score = 80
+                    max_allowed_buy = round(deep_ceiling_c2, digits)
+                    min_allowed_sell = 0.0
+                    forbidden_traps = [f"Do NOT short into ascending bull momentum at {imm_ceiling_c1:.{digits}f}"]
+                else:
+                    # Narrow runway up: Ceiling compression within HTF bull trend (never invert to Bearish SELL)
+                    macro_bias = "RANGE_BOUND"
+                    primary_directive = "WAIT_BREAKOUT_OR_ROTATION"
+                    macro_bias_score = +0.35 # Lean bullish aligned with HTF structure
+                    entry_anchor = round(imm_ceiling_c1, digits)
+                    entry_zone_proximal = round(entry_anchor - reload_width, digits)
+                    calculated_sl = imm_floor_f1 - anti_wick_buffer
+                    if (entry_anchor - calculated_sl) < min_sl_dist:
+                        calculated_sl = entry_anchor - min_sl_dist
+                    elif (entry_anchor - calculated_sl) > max_sl_dist:
+                        calculated_sl = entry_anchor - max_sl_dist
+                    intraday_sl = round(calculated_sl, digits)
+                    macro_invalidation = round(imm_floor_f1 - (0.35 * atr_d1), digits)
+                    target_station_final = deep_ceiling_c2
+                    hard_circuit_breaker = False
+                    action_tier = "FULL_ALLOW"
+                    sl_dist = max(abs(entry_anchor - intraday_sl), pt * 10)
+                    front_pad = (0.15 * atr_h1) + (spread_pts * pt)
+                    tp1_target = entry_anchor + max(1.25 * sl_dist, 0.50 * abs(deep_ceiling_c2 - entry_anchor))
+                    tp1_price = round(min(tp1_target, deep_ceiling_c2 - front_pad), digits)
+                    tp2_price = round(deep_ceiling_c2 - front_pad, digits)
+                    stage_label = f"CEILING_COMPRESSION_BULL_{imm_ceiling_c1:.{digits}f}"
+                    thesis = f"{symbol} in ceiling compression at {imm_ceiling_c1:.{digits}f} within HTF bull trend. Awaiting breakout or rotation."
+                    confidence_score = 75
+                    max_allowed_buy = round(deep_ceiling_c2, digits)
+                    min_allowed_sell = 0.0
+                    forbidden_traps = [] # Zero traps forbidding buy in HTF bull trend
             elif market_state == "CEILING_REJECTION":
                 macro_bias = "BEARISH_PULLBACK"
                 primary_directive = "HUNT_SELL_PULLBACK"

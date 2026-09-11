@@ -3561,6 +3561,27 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
   - `tests/test_time_decay_and_vol_regime.py`: 8/8 tests PASSED (termasuk verifikasi BEP 35% Grade B live MT5).
   - Suite lengkap 5 file: 31/31 tests PASSED (100% OK).
 
+---
+
+## 103. 11 September 2026 — Eliminasi Inversi Palsu MSE pada Uji Lantai/Plafon HTF, Penyelarasan CSM Sebagai Directional Tailwind, & Pembukaan M3 NY Live
+- **Eliminasi Inversi Palsu di Uji Lantai & Plafon (`macro_strategic_engine.py`)**:
+  - **Diagnosa Masalah (Kasus EURJPY BUY vs GBPJPY SELL)**: Ketika harga menguji lantai $F_1$ dalam tren D1/H4 Bearish, jika jarak ke $F_2$ sempit ($< 35\text{ pips}$ pada JPY), kode jatuh ke blok `else` yang membalikkan bias secara keliru menjadi `BULLISH_PULLBACK` (+0.85) dan memasang trap `Do NOT short into confirmed RBS support`.
+  - **Perbaikan Kode**:
+    * Uji Lantai ($F_1$): Jika tren HTF Bearish (`is_h4_bear or last_d1_bear`), status diatur ke `BEARISH_EXPANSION` (-0.65) jika runway terbuka, atau `RANGE_BOUND` / `WAIT_BREAKDOWN_OR_ROTATION` (-0.35) jika runway sempit. Dilarang membalikkan bias menjadi Bullish BUY atau memasang trap larangan short.
+    * Uji Plafon ($C_1$): Symmetrically, jika tren HTF Bullish (`is_h4_bull or last_d1_bull`), status diatur ke `BULLISH_EXPANSION` (+0.65) jika runway terbuka, atau `RANGE_BOUND` / `WAIT_BREAKOUT_OR_ROTATION` (+0.35) jika runway sempit. Dilarang membalikkan bias menjadi Bearish SELL atau memasang trap larangan buy.
+- **Penyelarasan CSM Delta Sebagai Directional Tailwind Murni (`market_scanner.py`, `config.py`, `.env`)**:
+  - `ENABLE_CSM_FLOW_FILTER = false` dipertahankan: CSM Delta tidak pernah menjadi Hard Gate yang memblokir trade.
+  - Sesuai prinsip kuantitatif: Struktur Makro HTF adalah jangkar primer, CSM Delta bertindak sebagai penguat probabilitas dan penentu bobot kandidat intra-simbol (`1.5 * micro_score`).
+  - Target jauh TP $\ge 2.50\times\text{ATR}$ (`_apply_conditional_far_target`) tetap tunduk pada rezim struktural (Tokyo session + $|\Delta| \ge 2.00$ atau konfirmasi penembusan fisik dinding).
+- **Pemulihan M3 Breakout Retest NY ke Live MT5 & Nonaktifkan Filter Sesi Restriktif**:
+  - `ENABLE_NY_M3_PAPER_ROUTE = false` (M3 NY kembali dieksekusi langsung ke live MT5).
+  - `ENABLE_LDN_DEFENSIVE_WINDOW = false` (Larangan sell limit awal London dinonaktifkan).
+  - `ENABLE_TOKYO_LULL_FREEZE = false` (Pembekuan Tokyo midday dinonaktifkan).
+- **Hasil Verifikasi Kuantitatif Lengkap**:
+  - Simulasi spesifik EURJPY narrow runway: terbukti lolos tanpa inversi palsu (`daily_macro_bias: RANGE_BOUND`, score `-0.35`, forbidden traps kosong).
+  - Full Unit Test Suite: **265/265 tests PASSED (100% OK, 0 Error, 0 Failure)**.
+
+
 
 
 
