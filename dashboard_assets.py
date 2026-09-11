@@ -366,6 +366,34 @@ html, body {
   gap: 2px;
   white-space: nowrap;
 }
+.w1-conflict-pill {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  padding: 1px 4px;
+  border-radius: 2.5px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.w1-slope-banner {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.15) 0%, rgba(245, 158, 11, 0.04) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 6px 14px;
+}
 .m4-hero-banner {
   background: linear-gradient(90deg, rgba(250, 204, 21, 0.15) 0%, rgba(250, 204, 21, 0.04) 100%);
   border: 1px solid rgba(250, 204, 21, 0.45);
@@ -1207,6 +1235,12 @@ html, body {
       <span><strong>SYSTEMIC FLOW REGIME (SFR) ACTIVE</strong> &bull; Dominant Currency z: <span id="m4-hero-z">+0.0</span> (<span id="m4-hero-dir">BULL</span>) &bull; Direction Locked &bull; Watching Basing / Structure</span>
     </div>
 
+    <!-- W1 DUAL-HORIZON SLOPE HERO BANNER -->
+    <div id="w1-slope-banner" class="w1-slope-banner" style="display:none;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:#f59e0b;">trending_down</span>
+      <span><strong>W1 DUAL-HORIZON SLOPE CEILING DETECTED</strong> &bull; Upper Tangent Slope @ <span id="w1-slope-val">—</span> &bull; Intermediate: <span id="w1-slope-inter">BEARISH</span> (Secular: <span id="w1-slope-sec">BULLISH</span>) &bull; <span style="color:#ff5252;font-weight:700;">BUY ORDERS BLOCKED</span></span>
+    </div>
+
     <!-- FILTER STRIP BAR (High-Density Multi-Horizon Control) -->
     <div class="filter-strip-bar">
       <div class="filter-group">
@@ -1767,6 +1801,72 @@ function renderVerticalShading() {
       }
     });
   }
+
+  // 4. Render W1 Descending Slope Diagonal Envelope (Anchor Peak Law)
+  if (cachedSymbolData && cachedSymbolData.w1_lower_highs && cachedSymbolData.w1_lower_highs.length >= 2 && candleSeries && chart) {
+    const timeScale = chart.timeScale();
+    const lhs = cachedSymbolData.w1_lower_highs;
+    const p0 = lhs[0];
+    const p_last = lhs[lhs.length - 1];
+    const y0 = candleSeries.priceToCoordinate(p0.price);
+    const y_last = candleSeries.priceToCoordinate(p_last.price);
+    const y_live = (cachedSymbolData.w1_slope_ceiling) ? candleSeries.priceToCoordinate(cachedSymbolData.w1_slope_ceiling) : null;
+
+    if (y_live !== null && y_last !== null) {
+      shadingCtx.save();
+      const x_live = width - 25;
+      const x_last = p_last.time > 0 ? timeScale.timeToCoordinate(p_last.time) : null;
+      const x0 = p0.time > 0 ? timeScale.timeToCoordinate(p0.time) : null;
+
+      let startX = x0 !== null ? x0 : 0;
+      let startY = y0 !== null ? y0 : y_last;
+
+      if (x0 === null && x_last !== null && x_last < x_live) {
+        const slopeY = (y_live - y_last) / Math.max(1, (x_live - x_last));
+        startX = 0;
+        startY = y_last - slopeY * x_last;
+      }
+
+      shadingCtx.beginPath();
+      shadingCtx.setLineDash([6, 4]);
+      shadingCtx.lineWidth = 1.8;
+      shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.85)";
+      shadingCtx.moveTo(startX, startY);
+      shadingCtx.lineTo(x_live, y_live);
+      shadingCtx.stroke();
+
+      // Pill label at right end
+      shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+      const slopeTxt = `W1 DESC SLOPE [${cachedSymbolData.w1_slope_ceiling.toFixed(cachedSymbolData.digits || 5)}]`;
+      const txtW = shadingCtx.measureText(slopeTxt).width;
+      const pillX = Math.max(14, x_live - txtW - 8);
+      const pillY = Math.max(12, y_live - 8);
+      shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
+      shadingCtx.fillRect(pillX - 4, pillY, txtW + 8, 15);
+      shadingCtx.fillStyle = "#f59e0b";
+      shadingCtx.fillText(slopeTxt, pillX, pillY + 11);
+
+      // Render LH circle nodes if within viewport
+      lhs.forEach(pt => {
+        if (pt.time > 0) {
+          const ptX = timeScale.timeToCoordinate(pt.time);
+          const ptY = candleSeries.priceToCoordinate(pt.price);
+          if (ptX !== null && ptY !== null && ptX >= 0 && ptX <= width) {
+            shadingCtx.fillStyle = "#f59e0b";
+            shadingCtx.beginPath();
+            shadingCtx.arc(ptX, ptY, 3.5, 0, 2 * Math.PI);
+            shadingCtx.fill();
+            shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
+            shadingCtx.fillRect(ptX - 16, ptY - 17, 32, 12);
+            shadingCtx.fillStyle = "#fbbf24";
+            shadingCtx.fillText(pt.label || "LH", ptX - 12, ptY - 8);
+          }
+        }
+      });
+
+      shadingCtx.restore();
+    }
+  }
 }
 
 // Initialize Lightweight Chart
@@ -1959,8 +2059,45 @@ function renderChartLevels(data) {
     priceLines.push(line);
   });
 
-  // 2. M1..M4 Radar Standbys (Dashed Price Lines & Temporal Candle Markers)
+  // 1B. W1 Dual-Horizon Descending Slope Ceiling & Lower Highs Markers
   const temporalMarkers = [];
+  if (data.w1_slope_ceiling && data.w1_slope_ceiling > 0) {
+    const slopeColor = "#f59e0b"; // Warm Amber
+    const slopePrice = data.w1_slope_ceiling;
+    const slopeLabel = `[W1 SLOPE] ${slopePrice.toFixed(data.digits || 5)}`;
+
+    activeRenderedLevels.push({
+      price: slopePrice,
+      color: slopeColor,
+      label: slopeLabel
+    });
+
+    const slopeLine = candleSeries.createPriceLine({
+      price: slopePrice,
+      color: slopeColor,
+      lineWidth: 1.8,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: ""
+    });
+    priceLines.push(slopeLine);
+
+    if (data.w1_lower_highs && data.w1_lower_highs.length > 0) {
+      data.w1_lower_highs.forEach(lh => {
+        if (lh.time && lh.time > 0) {
+          temporalMarkers.push({
+            time: lh.time,
+            position: "aboveBar",
+            color: "#f59e0b",
+            shape: "arrowDown",
+            text: `[W1 ${lh.label || 'LH'}] @ ${lh.price.toFixed(data.digits || 5)}`
+          });
+        }
+      });
+    }
+  }
+
+  // 2. M1..M4 Radar Standbys (Dashed Price Lines & Temporal Candle Markers)
   if (filterShowRadar && data.m_standbys && data.m_standbys.length > 0) {
     const primSetup = data.primary_setup || {};
     const dirLock = (data.direction_lock && data.direction_lock.dir) ? data.direction_lock.dir : 0;
@@ -2228,7 +2365,7 @@ function renderWatchlist(pairs) {
     let m4Pill = "";
     if (p.m4_flow_state === "SHOCK" || p.m4_shock) {
       m4RowClass = "m4-shock-row";
-      m4Pill = `<span class="m4-shock-pill" title="Systemic Flow Shock Active (|z| >= 1.50)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">bolt</span> SFR SHOCK | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
+      m4Pill = `<span class="m4-shock-pill" title="Systemic Flow Shock Active (|z| >= 2.00)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">bolt</span> SFR SHOCK | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
     } else if (p.m4_flow_state === "CONT") {
       m4RowClass = "m4-cont-row";
       m4Pill = `<span class="m4-cont-pill" title="Systemic Flow Continuation Phase (Decaying |z| >= 0.75)"><span class="material-symbols-outlined" style="font-size:11px;line-height:1;">trending_flat</span> FLOW CONT | z: ${p.m4_z > 0 ? '+' : ''}${p.m4_z}</span>`;
@@ -2239,6 +2376,10 @@ function renderWatchlist(pairs) {
       : ((p.basing_box && p.basing_box.is_broken && p.basing_box.broken_recency <= 4)
         ? `<span class="box-compress-pill" style="border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,0.1);" title="Basing Box Retest: Broken ${p.basing_box.broken_recency}b ago [${p.basing_box.box_floor.toFixed(p.digits || 5)} - ${p.basing_box.box_ceiling.toFixed(p.digits || 5)}]"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">history</span> BRK ${p.basing_box.box_bars}b</span>`
         : '');
+
+    const w1Pill = p.w1_horizon_conflict
+      ? `<span class="w1-conflict-pill" title="W1 Slope Conflict: Price testing descending slope barrier @ ${p.w1_slope_ceiling ? p.w1_slope_ceiling.toFixed(p.digits || 5) : ''} (BUY Blocked)"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">trending_down</span> W1 SLOPE</span>`
+      : '';
 
     html += `
       <div class="pair-row ${isSelected} ${m4RowClass}" onclick="selectSymbol('${p.symbol}')">
@@ -2266,7 +2407,7 @@ function renderWatchlist(pairs) {
             <span class="htf-bias-tag ${biasTagClass}">${p.bias}</span>
           </div>
         </div>
-        <!-- Line 3: Trigger Distance, F1 Floor (Bottom), Basing Box & M4 Shock Badge -->
+        <!-- Line 3: Trigger Distance, F1 Floor (Bottom), Basing Box, W1 Slope & M4 Shock Badge -->
         <div class="pair-row-line">
           <div class="pair-col-left">
             <span class="pair-dist-text">${trigText}</span>
@@ -2276,6 +2417,7 @@ function renderWatchlist(pairs) {
           </div>
           <div class="pair-col-right" style="gap:3px;">
             ${boxPill}
+            ${w1Pill}
             ${m4Pill}
           </div>
         </div>
@@ -2349,6 +2491,22 @@ function renderSymbolHeader(d) {
       m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#38bdf8;">trending_flat</span> <span><strong>SYSTEMIC FLOW CONTINUATION</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Episode Active &bull; Watching Retest / Basing</span>`;
     } else {
       m4Banner.style.display = "none";
+    }
+  }
+
+  // Render W1 Dual-Horizon Slope Hero Banner
+  const w1Banner = document.getElementById("w1-slope-banner");
+  if (w1Banner) {
+    if (d.w1_horizon_conflict && d.w1_slope_ceiling) {
+      w1Banner.style.display = "flex";
+      const w1Val = document.getElementById("w1-slope-val");
+      if (w1Val) w1Val.textContent = d.w1_slope_ceiling.toFixed(d.digits || 5);
+      const w1Inter = document.getElementById("w1-slope-inter");
+      if (w1Inter) w1Inter.textContent = d.w1_intermediate_regime || "BEARISH";
+      const w1Sec = document.getElementById("w1-slope-sec");
+      if (w1Sec) w1Sec.textContent = d.w1_secular_regime || "BULLISH";
+    } else {
+      w1Banner.style.display = "none";
     }
   }
 }
@@ -2635,7 +2793,7 @@ function renderDrawer() {
         </div>
         <div class="telemetry-card" style="border-top: 2px solid #34d399;">
           <div class="tele-title" style="color:#34d399;">M4: Systemic Flow Continuation</div>
-          <div class="tele-row"><span class="tele-lbl">Currency Z-Score:</span><span class="tele-val">${t.m4_z || '—'} (Req >=1.5)</span></div>
+          <div class="tele-row"><span class="tele-lbl">Currency Z-Score:</span><span class="tele-val">${t.m4_z || '—'} (Req >=2.0)</span></div>
           <div class="tele-row"><span class="tele-lbl">120-Bar Breakdown:</span><span class="tele-val">${t.m4_breakdown || '—'}</span></div>
           <div class="tele-row"><span class="tele-lbl">Structural SL/TP:</span><span class="tele-val">SL 0.45x ATR | TP 1.1R</span></div>
           <div class="tele-row"><span class="tele-lbl">Standby Order:</span><span class="tele-val">${t.m4_pending || 'None'}</span></div>

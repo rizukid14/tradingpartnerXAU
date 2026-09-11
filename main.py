@@ -1267,14 +1267,27 @@ def run_scanner_trading_cycle(cand, risk):
                             print(f" {UI.YELLOW}[{exec_label} DRY RUN] Simulasi Pending #{i+1} {entry_type.upper()} @ {entry_price} tercatat untuk {sym} (TIDAK kirim order ke MT5)!{UI.RST}")
                         else:
                             print(f" {UI.GREEN}[{exec_label} SUCCESS] Pending #{i+1} {entry_type.upper()} @ {entry_price} terpasang untuk {sym} (Ticket #{pending_res.get('ticket')})!{UI.RST}")
-                        print(f" [ZCE-AUDIT] Ticket #{pending_res.get('ticket')} | {sym} {entry_type.upper()} | Entry={entry_price} SL={p_sl_price} ({sl_points}pts) TP={p_tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
+                        _cand_meta = getattr(cand, 'metadata', {}) or {}
+                        _z_f1 = _cand_meta.get('zce_f1') or _cand_meta.get('zce_f1_price') or getattr(cand, 'floor_f1', 0.0) or getattr(cand, 'f1', 0.0)
+                        _z_c1 = _cand_meta.get('zce_c1') or _cand_meta.get('zce_c1_price') or getattr(cand, 'ceiling_c1', 0.0) or getattr(cand, 'c1', 0.0)
+                        _zf1_s = f"{_z_f1:.5f}" if isinstance(_z_f1, (int, float)) and _z_f1 > 0 else (str(_z_f1) if _z_f1 else f"DR_Lo:{getattr(cand, 'key_support', 0.0)}")
+                        _zc1_s = f"{_z_c1:.5f}" if isinstance(_z_c1, (int, float)) and _z_c1 > 0 else (str(_z_c1) if _z_c1 else f"DR_Hi:{getattr(cand, 'key_resistance', 0.0)}")
+                        print(f" [ZCE-AUDIT] Ticket #{pending_res.get('ticket')} | {sym} {entry_type.upper()} | Entry={entry_price} SL={p_sl_price} ({sl_points}pts) TP={p_tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | ZCE_F1={_zf1_s} ZCE_C1={_zc1_s}")
                         position_manager.record_trade_open_telemetry(
                             ticket=pending_res.get("ticket"),
                             symbol=sym,
                             direction=trade_signal,
                             entry_price=entry_price,
                             csm_delta=getattr(cand, "csm_delta", 0.0),
-                            setup_type=f"{cand.setup_type} (Pending P{i+1})"
+                            setup_type=f"{cand.setup_type} (Pending P{i+1})",
+                            metadata={
+                                "zce_f1": _z_f1,
+                                "zce_c1": _z_c1,
+                                "f1_grade": _cand_meta.get("f1_grade"),
+                                "c1_grade": _cand_meta.get("c1_grade"),
+                                "wall_grade": _cand_meta.get("f1_grade") if trade_signal == "BUY" else _cand_meta.get("c1_grade"),
+                                "setup_grade": getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A"),
+                            }
                         )
                         eff_grade = getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A")
                         position_manager.set_ticket_setup_grade(pending_res.get("ticket"), eff_grade)
@@ -1333,14 +1346,27 @@ def run_scanner_trading_cycle(cand, risk):
                         print(f" {UI.YELLOW}[{exec_label} DRY RUN] Simulasi Market #{i+1} {trade_signal} tercatat untuk {sym} (Lot: {effective_lot}, TIDAK kirim order ke MT5)!{UI.RST}")
                     else:
                         print(f" {UI.GREEN}[{exec_label} SUCCESS] Market #{i+1} {trade_signal} dieksekusi untuk {sym} (Ticket #{order_res.get('ticket')}, Lot: {effective_lot})!{UI.RST}")
-                    print(f" [ZCE-AUDIT] Ticket #{order_res.get('ticket')} | {sym} {trade_signal} | Entry={ref_price} SL={sl_price} ({sl_points}pts) TP={tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | F1={getattr(cand, 'key_support', 0.0)} C1={getattr(cand, 'key_resistance', 0.0)}")
+                    _cand_meta = getattr(cand, 'metadata', {}) or {}
+                    _z_f1 = _cand_meta.get('zce_f1') or _cand_meta.get('zce_f1_price') or getattr(cand, 'floor_f1', 0.0) or getattr(cand, 'f1', 0.0)
+                    _z_c1 = _cand_meta.get('zce_c1') or _cand_meta.get('zce_c1_price') or getattr(cand, 'ceiling_c1', 0.0) or getattr(cand, 'c1', 0.0)
+                    _zf1_s = f"{_z_f1:.5f}" if isinstance(_z_f1, (int, float)) and _z_f1 > 0 else (str(_z_f1) if _z_f1 else f"DR_Lo:{getattr(cand, 'key_support', 0.0)}")
+                    _zc1_s = f"{_z_c1:.5f}" if isinstance(_z_c1, (int, float)) and _z_c1 > 0 else (str(_z_c1) if _z_c1 else f"DR_Hi:{getattr(cand, 'key_resistance', 0.0)}")
+                    print(f" [ZCE-AUDIT] Ticket #{order_res.get('ticket')} | {sym} {trade_signal} | Entry={ref_price} SL={sl_price} ({sl_points}pts) TP={tp_price} ({pos_tp_pts}pts) | ATR={cand.current_atr_pts:.1f}pts | ZCE_F1={_zf1_s} ZCE_C1={_zc1_s}")
                     position_manager.record_trade_open_telemetry(
                         ticket=order_res.get("ticket"),
                         symbol=sym,
                         direction=trade_signal,
                         entry_price=ref_price,
                         csm_delta=getattr(cand, "csm_delta", 0.0),
-                        setup_type=f"{cand.setup_type} (Market P{i+1})"
+                        setup_type=f"{cand.setup_type} (Market P{i+1})",
+                        metadata={
+                            "zce_f1": _z_f1,
+                            "zce_c1": _z_c1,
+                            "f1_grade": _cand_meta.get("f1_grade"),
+                            "c1_grade": _cand_meta.get("c1_grade"),
+                            "wall_grade": _cand_meta.get("f1_grade") if trade_signal == "BUY" else _cand_meta.get("c1_grade"),
+                            "setup_grade": getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A"),
+                        }
                     )
                     eff_grade = getattr(cand, "setup_grade", None) or getattr(cand, "action_tier", "GRADE_A")
                     position_manager.set_ticket_setup_grade(order_res.get("ticket"), eff_grade)
@@ -1567,6 +1593,7 @@ def main():
     if config.SCANNER_MODE:
         try:
             scanner = MarketScanner()
+            print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro 26 simbol universe (H1/H4/D1/W1)... Mohon tunggu ~25 detik.")
             scanner.update_macro_context(connector, force=True)
             acc_info = connector.get_account_info()
             open_pos = connector.get_all_open_positions()

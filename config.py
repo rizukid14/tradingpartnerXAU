@@ -319,7 +319,7 @@ BREACHED_WALL_MIN_DISPLACEMENT = _getenv_float("BREACHED_WALL_MIN_DISPLACEMENT",
 M4_ENABLED = _getenv_bool("M4_ENABLED", True)
 M4_SETUP_TYPE = os.getenv("M4_SETUP_TYPE", "DBD_RBR_BREAKOUT_CONTINUATION")
 M4_ALLOW_DEEP_RETEST = _getenv_bool("M4_ALLOW_DEEP_RETEST", False)
-M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 1.5)      # EP_Z studi: ambang episode (z quote surge / base dump)
+M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 2.0)      # EP_Z studi: ambang episode (z quote surge / base dump, elevated to 2.0 sigma)
 M4_CONT_Z = _getenv_float("M4_CONT_Z", 0.75)           # episode bertahan selama |z| >= 0.75 salah satu sisi
 M4_FLOW_WARM_BARS = _getenv_int("M4_FLOW_WARM_BARS", 720)   # warm rolling z-score (studi WARM)
 M4_FLOW_LOOKBACK_BARS = _getenv_int("M4_FLOW_LOOKBACK_BARS", 24)  # jendela akumulasi flow 24-bar (studi idx24)
@@ -466,6 +466,11 @@ COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
 
 # M2 Trend-Aligned Pullback Rules
+ENABLE_M2_WALL_QUALITY       = _getenv_bool("ENABLE_M2_WALL_QUALITY", True)
+M2_MARUBOZU_BODY_RATIO       = _getenv_float("M2_MARUBOZU_BODY_RATIO", 0.55)
+M2_MARUBOZU_MAX_WICK_RATIO   = _getenv_float("M2_MARUBOZU_MAX_WICK_RATIO", 0.20)
+M2_G1_MIN_WICK_RATIO         = _getenv_float("M2_G1_MIN_WICK_RATIO", 0.25)
+M2_G1_PROXIMITY_ATR          = _getenv_float("M2_G1_PROXIMITY_ATR", 0.35)
 M2_MAX_DR_BUY = _getenv_float("M2_MAX_DR_BUY", 0.68)               # Maksimal DR 68% (Discount/Equilibrium bawah) untuk M2 BUY
 M2_MAX_DR_BUY_CATALYST = _getenv_float("M2_MAX_DR_BUY_CATALYST", 0.75) # Maksimal DR 75% untuk M2 BUY jika didukung katalisator SFR/CSM
 M2_MIN_DR_SELL = _getenv_float("M2_MIN_DR_SELL", 0.32)             # Minimal DR 32% (Premium/Equilibrium atas) untuk M2 SELL
@@ -598,11 +603,31 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 #   - TRAIL act70 + dist 0.5x ATR = +0.272 (terbaik, nyaris setara baseline +0.302)
 #   - progressive SL +0.197 | adaptif/range +0.041 | fixed pips +0.128-0.180 (inferior)
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
-BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.45)  # BEP aktif saat profit >= 45% TP (padding komisi tetap dipertahankan)
-BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.55)  # Sesi London-NY: 55% TP
-TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.65)  # trailing aktif saat profit >= 65% TP (Tokyo)
-TRAILING_ACTIVATION_TP_PCT_LONDON_NY = _getenv_float("TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)  # Sesi London-NY: 75% TP
-TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)      # Terminal tightening aktif saat profit >= 90% TP (ATR H1 lock)
+BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.60)  # BEP aktif saat profit >= 60% TP (padding komisi tetap dipertahankan)
+BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.60)  # Sesi London-NY: 60% TP
+GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)  # BEP dipercepat ke 35% TP untuk Grade B / Defensive
+TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.75)  # trailing Tier 1 aktif saat profit >= 75% TP
+TRAILING_ACTIVATION_TP_PCT_LONDON_NY = _getenv_float("TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)
+TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)
+
+# 3-Tier Progressive Trailing Ladder Parameters (11 Sep 2026)
+TRAILING_TIER_1_TRIGGER_PCT = _getenv_float("TRAILING_TIER_1_TRIGGER_PCT", 0.75)  # Tier 1: 75% TP -> lock 50% TP
+TRAILING_TIER_1_LOCK_PCT = _getenv_float("TRAILING_TIER_1_LOCK_PCT", 0.50)
+TRAILING_TIER_2_TRIGGER_PCT = _getenv_float("TRAILING_TIER_2_TRIGGER_PCT", 0.90)  # Tier 2: 90% TP -> lock 80% TP
+TRAILING_TIER_2_LOCK_PCT = _getenv_float("TRAILING_TIER_2_LOCK_PCT", 0.80)
+TRAILING_TIER_3_TRIGGER_PCT = _getenv_float("TRAILING_TIER_3_TRIGGER_PCT", 0.95)  # Tier 3: 95% TP -> lock 90% TP
+TRAILING_TIER_3_LOCK_PCT = _getenv_float("TRAILING_TIER_3_LOCK_PCT", 0.90)
+
+GRADE_B_MIN_RR = _getenv_float("GRADE_B_MIN_RR", 0.50)  # Min R:R untuk reachable M30 ZCE station targets (0.50R net)
+
+# ZCE Special G3 Protocol & Dynamic EMA Parameters (11 Sep 2026)
+ZCE_GRADE_G2_THRESHOLD = _getenv_float("ZCE_GRADE_G2_THRESHOLD", 5.0)  # Intermediate Confluence threshold
+ZCE_GRADE_G3_THRESHOLD = _getenv_float("ZCE_GRADE_G3_THRESHOLD", 8.5)  # Strict Macro Wall threshold
+ZCE_EMA_WEIGHT = _getenv_float("ZCE_EMA_WEIGHT", 0.25)                # Dynamic EMA Band proportional weight
+CBSS_WALL_EXHAUSTION_G2_ATR = _getenv_float("CBSS_WALL_EXHAUSTION_G2_ATR", 0.0)   # Disabled (G2 penetrable, 0.0x ATR)
+CBSS_WALL_EXHAUSTION_G3_ATR = _getenv_float("CBSS_WALL_EXHAUSTION_G3_ATR", 0.35)  # Macro G3 wall veto threshold (0.35x ATR)
+CBSS_WALL_EXHAUSTION_THRESHOLD_ATR = CBSS_WALL_EXHAUSTION_G3_ATR  # Backward compatibility fallback
+
 TRAILING_DISTANCE_ATR_MULT_H1 = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1", 0.75)  # Multiplier ATR H1 untuk normal swing trailing (Tokyo)
 TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY = _getenv_float("TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00)  # Multiplier ATR H1 Sesi London-NY
 TRAILING_BREAK_EVEN_SL_MULT = _getenv_float("BREAK_EVEN_TRIGGER_SL_MULT", 0.6)  # fallback tanpa TP: BEP di 0.6x SL
@@ -628,10 +653,10 @@ BREAK_EVEN_TRIGGER_POINTS_BTC = _getenv_int("BREAK_EVEN_TRIGGER_POINTS_BTC", 335
 BREAK_EVEN_PADDING_POINTS_BTC = _getenv_int("BREAK_EVEN_PADDING_POINTS_BTC", 1000)
 
 # --- PARTIAL CLOSE ---
-PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", True)
+PARTIAL_CLOSE_ENABLED = _getenv_bool("PARTIAL_CLOSE_ENABLED", False)  # Dinonaktifkan: 100% lot capture (11 Sep 2026)
 PARTIAL_CLOSE_PERCENT = _getenv_float("PARTIAL_CLOSE_PERCENT", 50.0)
-PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)  # Partial close aktif di 45% TP (Tokyo)
-PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY", 0.60)  # Sesi London-NY: 60% TP
+PARTIAL_CLOSE_TRIGGER_TP_PCT = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT", 0.45)
+PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("PARTIAL_CLOSE_TRIGGER_TP_PCT_LONDON_NY", 0.60)
 PARTIAL_CLOSE_TP1_POINTS = _getenv_int("PARTIAL_CLOSE_TP1_POINTS", 400)
 
 PARTIAL_CLOSE_TP1_POINTS_XAU = _getenv_int("PARTIAL_CLOSE_TP1_POINTS_XAU", PARTIAL_CLOSE_TP1_POINTS)
@@ -771,7 +796,7 @@ CSM_BAILOUT_SHIFT_THRESH           = _getenv_float("CSM_BAILOUT_SHIFT_THRESH", 2
 CSM_BAILOUT_ABS_THRESH             = _getenv_float("CSM_BAILOUT_ABS_THRESH", 2.0)
 
 # --- CURRENCY BASKET STRUCTURAL SYNCHRONIZATION (CBSS - 9/10 Sep 2026) ---
-ENABLE_CBSS                     = _getenv_bool("ENABLE_CBSS", True)
+ENABLE_CBSS                     = _getenv_bool("ENABLE_CBSS", False)
 CBSS_MAX_BASKET_CONCURRENCY     = _getenv_int("CBSS_MAX_BASKET_CONCURRENCY", 2)
 CBSS_MIN_RUNWAY_ATR             = _getenv_float("CBSS_MIN_RUNWAY_ATR", 1.20)         # M4 Systemic Flow threshold
 CBSS_MIN_CHAMBER_RUNWAY_ATR     = _getenv_float("CBSS_MIN_CHAMBER_RUNWAY_ATR", 0.60) # M2/M3 Chamber setups threshold
@@ -850,6 +875,23 @@ def get_sl_floor_points(symbol: str, spread_pts: int = 0, atr_points: int = 0) -
     if "NZD" in clean:
         floor += SL_PADDING_NZD_POINTS
     return floor
+
+# ---------- TRADE GEOMETRY DECOUPLING & STRUCTURAL RISK (11 Sep 2026) ----------
+MAX_POSITION_LOT = _getenv_float("MAX_POSITION_LOT", 0.50)
+FRICTION_FLOOR_DIVISOR = _getenv_float("FRICTION_FLOOR_DIVISOR", 0.20)
+SL_ATR_MULT = _getenv_float("SL_ATR_MULT", 1.00)
+ENABLE_M2_WALL_QUALITY = _getenv_bool("ENABLE_M2_WALL_QUALITY", True)
+M2_MARUBOZU_BODY_RATIO = _getenv_float("M2_MARUBOZU_BODY_RATIO", 0.55)
+M2_MARUBOZU_MAX_WICK_RATIO = _getenv_float("M2_MARUBOZU_MAX_WICK_RATIO", 0.20)
+ENABLE_LDN_DEFENSIVE_WINDOW = _getenv_bool("ENABLE_LDN_DEFENSIVE_WINDOW", True)
+
+def friction_floor_points(spread_pts: int, comm_pts: int = 6) -> int:
+    """
+    Menghitung floor Stop Loss minimum turunan friksi (Friction-Derivative Floor).
+    Memastikan total biaya broker (Spread + Komisi) tidak melebihi 20% jarak SL.
+    """
+    divisor = max(FRICTION_FLOOR_DIVISOR, 0.01)
+    return int(round((spread_pts + comm_pts) / divisor))
 
 # --- WEEKEND PROTECTION ---
 WEEKEND_CLOSE_ENABLED = _getenv_bool("WEEKEND_CLOSE_ENABLED", True)
@@ -1408,3 +1450,11 @@ def trailing_activation_params_for(symbol):
 ZCE_MIN_RUNWAY_RR = _getenv_float("ZCE_MIN_RUNWAY_RR", 0.75)
 ZCE_COUNTER_HTF_MIN_RUNWAY_RR = _getenv_float("ZCE_COUNTER_HTF_MIN_RUNWAY_RR", 1.00)
 FLOW_VULNERABILITY_CSM_THRESHOLD = _getenv_float("FLOW_VULNERABILITY_CSM_THRESHOLD", 1.50)
+
+# --- DUAL-HORIZON & TRENDLINE SLOPE ENGINE (11 Sep 2026) ---
+ENABLE_DUAL_HORIZON_W1 = _getenv_bool("ENABLE_DUAL_HORIZON_W1", True)
+W1_INTERMEDIATE_LOOKBACK_BARS = _getenv_int("W1_INTERMEDIATE_LOOKBACK_BARS", 52)
+W1_SECULAR_LOOKBACK_BARS = _getenv_int("W1_SECULAR_LOOKBACK_BARS", 156)
+W1_SLOPE_PROXIMITY_TOL_ATR = _getenv_float("W1_SLOPE_PROXIMITY_TOL_ATR", 0.50)
+W1_SLOPE_MIN_TOUCHES = _getenv_int("W1_SLOPE_MIN_TOUCHES", 3)
+

@@ -192,33 +192,40 @@ class TestTimeDecayAndVolRegime(unittest.TestCase):
         dummy_res = MagicMock()
         dummy_res.retcode = config.mt5.TRADE_RETCODE_DONE
 
-        # 1. Di Sesi Tokyo (10:00 WIB): BEP aktif di 45% TP (450 pts)
-        with patch("src.analytics.position_manager.is_london_ny_active", return_value=False):
-            with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
-                # Profit 440 pts (< 450 pts) -> Belum BEP
-                position_manager._check_break_even(pos, "GBPUSD-ECNc", 440.0, point, si)
-                self.assertNotIn(4001, position_manager._break_even_tickets)
-                # Profit 460 pts (>= 450 pts) -> BEP aktif
-                position_manager._check_break_even(pos, "GBPUSD-ECNc", 460.0, point, si)
-                self.assertIn(4001, position_manager._break_even_tickets)
-                self.assertTrue(mock_send.called)
+        # Evaluasi BEP terpadu: aktif di 60% TP (600 pts)
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+            # Profit 580 pts (< 600 pts) -> Belum BEP
+            position_manager._check_break_even(pos, "GBPUSD-ECNc", 580.0, point, si)
+            self.assertNotIn(4001, position_manager._break_even_tickets)
+            # Profit 620 pts (>= 600 pts) -> BEP aktif
+            position_manager._check_break_even(pos, "GBPUSD-ECNc", 620.0, point, si)
+            self.assertIn(4001, position_manager._break_even_tickets)
+            self.assertTrue(mock_send.called)
 
         # Reset state
         position_manager._break_even_tickets.discard(4001)
 
-        # 2. Di Sesi London/NY (16:00 WIB): BEP aktif di 55% TP (550 pts)
-        with patch("src.analytics.position_manager.is_london_ny_active", return_value=True):
-            with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
-                # Profit 460 pts (< 550 pts) -> JANGAN BEP (memberi ruang nafas wick di London/NY)
-                position_manager._check_break_even(pos, "GBPUSD-ECNc", 460.0, point, si)
-                self.assertNotIn(4001, position_manager._break_even_tickets)
-                # Profit 560 pts (>= 550 pts) -> BEP aktif
-                position_manager._check_break_even(pos, "GBPUSD-ECNc", 560.0, point, si)
-                self.assertIn(4001, position_manager._break_even_tickets)
-                self.assertTrue(mock_send.called)
+    def test_grade_b_break_even_accelerated_35_percent(self):
+        point = 0.00001
+        si = DummySymbolInfo(point=point)
+        position_manager._break_even_tickets.discard(4002)
+        pos = DummyPosition(ticket=4002, price_open=1.35000, tp=1.36000, sl=1.34500, volume=0.10)
+        position_manager._ticket_setup_grades[4002] = "GRADE_B"
 
-        # Reset state
-        position_manager._break_even_tickets.discard(4001)
+        dummy_res = MagicMock()
+        dummy_res.retcode = config.mt5.TRADE_RETCODE_DONE
+
+        # Evaluasi BEP Grade B: aktif di 35% TP (350 pts)
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+            # Profit 320 pts (< 350 pts) -> Belum BEP
+            position_manager._check_break_even(pos, "GBPUSD-ECNc", 320.0, point, si)
+            self.assertNotIn(4002, position_manager._break_even_tickets)
+            # Profit 360 pts (>= 350 pts) -> BEP aktif di 35% TP!
+            position_manager._check_break_even(pos, "GBPUSD-ECNc", 360.0, point, si)
+            self.assertIn(4002, position_manager._break_even_tickets)
+            self.assertTrue(mock_send.called)
+
+        position_manager._break_even_tickets.discard(4002)
 
     def test_session_adaptive_trailing_and_h1_terminal(self):
         point = 0.00001
@@ -231,47 +238,34 @@ class TestTimeDecayAndVolRegime(unittest.TestCase):
         dummy_res = MagicMock()
         dummy_res.retcode = config.mt5.TRADE_RETCODE_DONE
 
-        # 1. Sesi Tokyo: Trailing aktif di 65% TP (650 pts), Stage 1 breathing 0.75x H1
-        with patch("src.analytics.position_manager.is_london_ny_active", return_value=False):
-            with patch("src.analytics.position_manager._get_atr_points_tf", return_value=200.0) as mock_atr:
-                with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
-                    # Profit 640 pts (< 650 pts) -> Belum aktif
-                    position_manager._check_trailing_stop(pos, "GBPUSD-ECNc", 640.0, 1.35640, point, si)
-                    self.assertFalse(mock_send.called)
-                    # Profit 660 pts (>= 650 pts) -> Aktif Stage 1 Breathing (0.75x H1 = 150 pts)
-                    position_manager._check_trailing_stop(pos, "GBPUSD-ECNc", 660.0, 1.35660, point, si)
-                    self.assertTrue(mock_send.called)
-                    # new_sl = trail_ref (1.35660) - 150 pts (0.00150) = 1.35510
-                    call_args = mock_send.call_args[0][0]
-                    self.assertAlmostEqual(call_args["sl"], 1.35510, places=4)
+        # 1. 3-Tier Progressive Trailing: Tier 1 aktif di 75% TP (750 pts) -> Kunci 50% TP
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+            # Profit 700 pts (< 750 pts) -> Belum aktif
+            position_manager._check_trailing_stop(pos, "GBPUSD-ECNc", 700.0, 1.35700, point, si)
+            self.assertFalse(mock_send.called)
+            # Profit 760 pts (>= 750 pts) -> Aktif Tier 1 (kunci 50% TP = 500 pts -> 1.35500)
+            position_manager._check_trailing_stop(pos, "GBPUSD-ECNc", 760.0, 1.35760, point, si)
+            self.assertTrue(mock_send.called)
+            call_args = mock_send.call_args[0][0]
+            self.assertAlmostEqual(call_args["sl"], 1.35500, places=4)
 
-        # 2. Sesi London/NY: Trailing aktif di 75% TP (750 pts), Stage 1 breathing 1.00x H1
-        pos_ny = DummyPosition(ticket=5002, price_open=1.35000, tp=1.36000, sl=1.34500, volume=0.10)
-        with patch("src.analytics.position_manager.is_london_ny_active", return_value=True):
-            with patch("src.analytics.position_manager._get_atr_points_tf", return_value=200.0) as mock_atr:
-                with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
-                    # Profit 660 pts (< 750 pts) -> Di London/NY JANGAN aktif dulu (cushion)
-                    position_manager._check_trailing_stop(pos_ny, "GBPUSD-ECNc", 660.0, 1.35660, point, si)
-                    self.assertFalse(mock_send.called)
-                    # Profit 760 pts (>= 750 pts) -> Aktif Stage 1 Breathing London/NY (1.00x H1 = 200 pts)
-                    position_manager._check_trailing_stop(pos_ny, "GBPUSD-ECNc", 760.0, 1.35760, point, si)
-                    self.assertTrue(mock_send.called)
-                    # new_sl = trail_ref (1.35760) - 200 pts (0.00200) = 1.35560
-                    call_args = mock_send.call_args[0][0]
-                    self.assertAlmostEqual(call_args["sl"], 1.35560, places=4)
+        # 2. Tier 2: Aktif di 90% TP (900 pts) -> Kunci 80% TP (800 pts = 1.35800)
+        pos_term = DummyPosition(ticket=5002, price_open=1.35000, tp=1.36000, sl=1.34500, volume=0.10)
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+            # Profit 920 pts (>= 90% TP) -> Tier 2 Lock 80% TP
+            position_manager._check_trailing_stop(pos_term, "GBPUSD-ECNc", 920.0, 1.35920, point, si)
+            self.assertTrue(mock_send.called)
+            call_args = mock_send.call_args[0][0]
+            self.assertAlmostEqual(call_args["sl"], 1.35800, places=4)
 
-        # 3. Stage 2 Terminal Lock: Verifikasi bahwa TIMEFRAME_H1 dipakai (BUKAN M30)
-        pos_term = DummyPosition(ticket=5003, price_open=1.35000, tp=1.36000, sl=1.34500, volume=0.10)
-        with patch("src.analytics.position_manager.is_london_ny_active", return_value=True):
-            with patch("src.analytics.position_manager._get_atr_points_tf") as mock_atr:
-                mock_atr.return_value = 200.0
-                with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
-                    # Profit 920 pts (>= 90% TP) -> Terminal Lock
-                    position_manager._check_trailing_stop(pos_term, "GBPUSD-ECNc", 920.0, 1.35920, point, si)
-                    self.assertTrue(mock_send.called)
-                    # Periksa bahwa timeframe yang dioper ke _get_atr_points_tf adalah TIMEFRAME_H1 (bukan M30)
-                    tf_arg = mock_atr.call_args[0][1]
-                    self.assertEqual(tf_arg, config.mt5.TIMEFRAME_H1)
+        # 3. Tier 3 Terminal Lock: Aktif di 95% TP (950 pts) -> Kunci 90% TP (900 pts = 1.35900)
+        pos_term3 = DummyPosition(ticket=5003, price_open=1.35000, tp=1.36000, sl=1.34500, volume=0.10)
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+            # Profit 960 pts (>= 95% TP) -> Tier 3 Lock 90% TP
+            position_manager._check_trailing_stop(pos_term3, "GBPUSD-ECNc", 960.0, 1.35960, point, si)
+            self.assertTrue(mock_send.called)
+            call_args = mock_send.call_args[0][0]
+            self.assertAlmostEqual(call_args["sl"], 1.35900, places=4)
 
 
 if __name__ == "__main__":

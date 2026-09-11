@@ -412,7 +412,8 @@ class RiskEngine:
         volume_min = getattr(si, "volume_min", 0.01)
         volume_max = getattr(si, "volume_max", 100.0)
         volume_step = getattr(si, "volume_step", 0.01)
-        lot = max(volume_min, min(volume_max, lot))
+        account_max = float(getattr(config, "MAX_POSITION_LOT", 0.50))
+        lot = max(volume_min, min(min(volume_max, account_max), lot))
         lot = math.floor(lot / volume_step + 1e-9) * volume_step
         lot = max(volume_min, lot)  # jangan jatuh di bawah volume_min broker
         lot = round(lot, 2)

@@ -28,12 +28,21 @@ class TestPureQuantExecution(unittest.TestCase):
             timeframe="H1",
             current_atr_pts=30000.0,
             current_spread_pts=200,
-            suggested_sl=94000.0,
-            suggested_tp=97500.0,
+            suggested_sl=40000.0,
+            suggested_tp=210000.0,
             action_tier="FULL_ALLOW"
         )
 
         # Isolate side-effects to production telemetry, shadow tracker, and funnel metrics
+        from src.analytics.shadow_tracker import shadow_tracker
+        self._orig_active_trades = list(shadow_tracker.active_trades)
+        shadow_tracker.active_trades.clear()
+        self.addCleanup(lambda: setattr(shadow_tracker, "active_trades", self._orig_active_trades))
+
+        self.patch_paper = patch.object(config, "is_paper_only", return_value=False)
+        self.mock_paper = self.patch_paper.start()
+        self.addCleanup(self.patch_paper.stop)
+
         self.patch_shadow = patch("main.shadow_tracker.register_candidate")
         self.mock_shadow = self.patch_shadow.start()
         self.addCleanup(self.patch_shadow.stop)

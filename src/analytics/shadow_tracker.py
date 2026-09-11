@@ -59,6 +59,12 @@ class ShadowTrade:
     current_sl: Optional[float] = None
     bep_activated: bool = False
     trailing_activated: bool = False
+    invalidation_dist: Optional[float] = None
+    sl_effective: Optional[int] = None
+    sl_atr_ratio: Optional[float] = None
+    tp_atr_ratio: Optional[float] = None
+    friction_ratio: Optional[float] = None
+    session_window: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -100,6 +106,7 @@ class QuantShadowTracker:
             "cumulative_net_r": 0.0
         }
         self._recent_resolved: List[Dict[str, Any]] = []
+        self._resolved_ids: set = set()
         self._load_state()
         self._initialized = True
         logger.info(f"[SHADOW TRACKER] Initialized with {len(self.active_trades)} active/pending shadow trades.")
@@ -115,6 +122,7 @@ class QuantShadowTracker:
                     self.active_trades = [ShadowTrade.from_dict(t) for t in data.get("active_trades", [])]
                     self._stats = data.get("stats", self._stats)
                     self._recent_resolved = data.get("recent_resolved", [])
+                    self._resolved_ids = {r.get("shadow_id") for r in self._recent_resolved if r.get("shadow_id")}
             except Exception as e:
                 logger.error(f"[SHADOW TRACKER LOAD ERROR] {e}")
                 self.active_trades = []
@@ -170,6 +178,56 @@ class QuantShadowTracker:
                                 t.mt5_ticket = None
                                 t.mt5_disposition = "SKIPPED_MAX_POSITIONS"
                                 state_needs_save = True
+                    else:
+                        # Tiket tidak ada di posisi open MT5: cek apakah deal closed atau pending order cancelled/expired
+                        is_resolved = False
+                        outcome_tag = "EXPIRED_MT5"
+                        exit_price = t.entry_price
+                        net_r = 0.0
+                        if hasattr(config, "mt5"):
+                            try:
+                                if hasattr(config.mt5, "history_deals_get"):
+                                    deals = config.mt5.history_deals_get(position=t.mt5_ticket)
+                                    if deals:
+                                        for d in deals:
+                                            entry_val = getattr(d, "entry", -1)
+                                            if entry_val == 1:  # DEAL_ENTRY_OUT
+                                                is_resolved = True
+                                                exit_price = float(getattr(d, "price", t.entry_price))
+                                                p_usd = float(getattr(d, "profit", 0.0))
+                                                risk_dist = abs(t.entry_price - t.sl_price)
+                                                if risk_dist > 0:
+                                                    realized_pts = (exit_price - t.entry_price) if t.direction == "BUY" else (t.entry_price - exit_price)
+                                                    net_r = round(realized_pts / risk_dist, 2)
+                                                outcome_tag = "TP_HIT" if p_usd > 0 else ("SL_HIT" if p_usd < 0 else "RESOLVED_CLOSED")
+                                                break
+                                if not is_resolved and hasattr(config.mt5, "history_orders_get"):
+                                    h_orders = config.mt5.history_orders_get(ticket=t.mt5_ticket)
+                                    if h_orders:
+                                        ord_state = getattr(h_orders[0], "state", 0)
+                                        pos_id = getattr(h_orders[0], "position_id", 0)
+                                        if ord_state in (2, 5, 6) and pos_id == 0:
+                                            is_resolved = True
+                                            outcome_tag = "EXPIRED_MT5"
+                                            net_r = 0.0
+                            except Exception:
+                                pass
+
+                        if is_resolved:
+                            logger.info(f"[SHADOW DETACH RESOLVED] Resolving inactive MT5 ticket #{t.mt5_ticket} from {t.shadow_id} ({outcome_tag})")
+                            t.status = "RESOLVED"
+                            t.outcome = outcome_tag
+                            t.resolved_time = datetime.now(WIB).isoformat()
+                            t.exit_price = exit_price
+                            t.net_r = net_r
+                            t.mt5_ticket = None
+                            if outcome_tag in ("TP_HIT", "SL_HIT", "RESOLVED_CLOSED"):
+                                t.mt5_disposition = "EXECUTED_MT5_RESOLVED"
+                            elif outcome_tag == "EXPIRED_MT5":
+                                t.mt5_disposition = "MT5_ORDER_CANCELLED"
+                            else:
+                                t.mt5_disposition = "SKIPPED_EXPIRED"
+                            state_needs_save = True
 
             # 2. Match unclaimed MT5 open positions
             claimed_tickets = {t.mt5_ticket for t in self.active_trades if t.mt5_ticket}
@@ -227,9 +285,13 @@ class QuantShadowTracker:
                 enriched.append(d)
 
             if state_needs_save:
+                resolved_now = [t for t in self.active_trades if t.status == "RESOLVED"]
+                for r in resolved_now:
+                    self._record_resolved(r)
+                self.active_trades = [t for t in self.active_trades if t.status in ("ACTIVE", "PENDING")]
                 self._save_state()
 
-            return enriched
+            return [d for d in enriched if d.get("status") in ("ACTIVE", "PENDING")]
 
     def _save_state(self):
         """Persists active state to quant_shadow_state.json atomically."""
@@ -325,6 +387,29 @@ class QuantShadowTracker:
             initial_status = "ACTIVE" if entry_type == "market" else "PENDING"
             fill_time = now_iso if initial_status == "ACTIVE" else None
 
+            c_meta = getattr(candidate, "metadata", {}) or {}
+            f1_grade = c_meta.get("f1_grade") or getattr(candidate, "f1_reaction_grade", None) or "UNKNOWN"
+            c1_grade = c_meta.get("c1_grade") or getattr(candidate, "c1_reaction_grade", None) or "UNKNOWN"
+            wall_grade = f1_grade if dir_str == "BUY" else c1_grade
+            z_f1 = c_meta.get("zce_f1") or c_meta.get("zce_f1_price") or getattr(candidate, "floor_f1", None) or getattr(candidate, "f1", None)
+            z_c1 = c_meta.get("zce_c1") or c_meta.get("zce_c1_price") or getattr(candidate, "ceiling_c1", None) or getattr(candidate, "c1", None)
+
+            # 6 Telemetry Fields (11 Sep 2026 - Pilar 0 Telemetry Engine)
+            cand_atr = float(getattr(candidate, "current_atr_pts", 0.0) or 0.0)
+            cand_spr = int(getattr(candidate, "current_spread_pts", 0) or 0)
+            sl_eff = int(sl_points)
+            sl_atr_r = round(sl_eff / cand_atr, 2) if cand_atr > 0 else None
+            tp_atr_r = round(int(tp_points) / cand_atr, 2) if cand_atr > 0 else None
+            comm_pts = 6
+            fric_r = round((cand_spr + comm_pts) / max(sl_eff, 1), 4) if sl_eff > 0 else None
+            now_h = now_dt.hour
+            sess_win = "Tokyo" if 7 <= now_h < 14 else ("London" if 14 <= now_h < 18 else ("NY" if 18 <= now_h < 24 else "DeadZone"))
+            inv_dist = c_meta.get("invalidation_dist") or getattr(candidate, "invalidation_dist", None)
+            if inv_dist is None:
+                orig = c_meta.get("anchor_level") or (getattr(candidate, "key_support", None) if dir_str == "BUY" else getattr(candidate, "key_resistance", None))
+                if orig and isinstance(orig, (int, float)) and orig > 0:
+                    inv_dist = round(abs(entry_price - orig), 5)
+
             trade = ShadowTrade(
                 shadow_id=shadow_id,
                 symbol=sym,
@@ -346,13 +431,30 @@ class QuantShadowTracker:
                 current_sl=sl_price,
                 bep_activated=False,
                 trailing_activated=False,
+                invalidation_dist=inv_dist,
+                sl_effective=sl_eff,
+                sl_atr_ratio=sl_atr_r,
+                tp_atr_ratio=tp_atr_r,
+                friction_ratio=fric_r,
+                session_window=sess_win,
                 metadata={
                     "setup_grade": getattr(candidate, "setup_grade", "GRADE_A"),
+                    "wall_grade": str(wall_grade),
+                    "f1_reaction_grade": str(f1_grade),
+                    "c1_reaction_grade": str(c1_grade),
+                    "zce_f1": float(z_f1) if isinstance(z_f1, (int, float)) and z_f1 > 0 else None,
+                    "zce_c1": float(z_c1) if isinstance(z_c1, (int, float)) and z_c1 > 0 else None,
                     "current_atr_pts": getattr(candidate, "current_atr_pts", 0.0),
                     "current_spread_pts": getattr(candidate, "current_spread_pts", 0),
                     "dealing_range_pos": getattr(candidate, "dealing_range_pos", 0.5),
                     "csm_delta_open": float(getattr(candidate, "csm_delta", 0.0)),
-                    "csm_opposed_open": bool((dir_str == "BUY" and getattr(candidate, "csm_delta", 0.0) <= -float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))) or (dir_str == "SELL" and getattr(candidate, "csm_delta", 0.0) >= float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))))
+                    "csm_opposed_open": bool((dir_str == "BUY" and getattr(candidate, "csm_delta", 0.0) <= -float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))) or (dir_str == "SELL" and getattr(candidate, "csm_delta", 0.0) >= float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50)))),
+                    "invalidation_dist": inv_dist,
+                    "sl_effective": sl_eff,
+                    "sl_atr_ratio": sl_atr_r,
+                    "tp_atr_ratio": tp_atr_r,
+                    "friction_ratio": fric_r,
+                    "session_window": sess_win,
                 }
             )
 
@@ -471,7 +573,7 @@ class QuantShadowTracker:
                                     h_ord = h_orders[0]
                                     ord_state = getattr(h_ord, "state", 0)
                                     pos_id = getattr(h_ord, "position_id", 0)
-                                    if ord_state in (4, 6) and pos_id == 0:  # 4=CANCELED, 6=EXPIRED
+                                    if ord_state in (2, 5, 6) and pos_id == 0:  # 2=CANCELED, 5=REJECTED, 6=EXPIRED
                                         trade.status = "RESOLVED"
                                         trade.outcome = "EXPIRED_MT5"
                                         trade.resolved_time = now_iso
@@ -579,6 +681,25 @@ class QuantShadowTracker:
                                             newly_resolved.append(trade)
                                             self._record_resolved(trade)
                                             continue
+
+                                    # Jika tidak ada deal penutupan, periksa apakah pending order MT5 aslinya batal/expired
+                                    if hasattr(config.mt5, "history_orders_get"):
+                                        h_orders = config.mt5.history_orders_get(ticket=trade.mt5_ticket)
+                                        if h_orders:
+                                            h_ord = h_orders[0]
+                                            ord_state = getattr(h_ord, "state", 0)
+                                            pos_id = getattr(h_ord, "position_id", 0)
+                                            if ord_state in (2, 5, 6) and pos_id == 0:  # 2=CANCELED, 5=REJECTED, 6=EXPIRED
+                                                trade.status = "RESOLVED"
+                                                trade.outcome = "EXPIRED_MT5"
+                                                trade.resolved_time = now_iso
+                                                trade.net_r = 0.0
+                                                trade.exit_price = trade.entry_price
+                                                trade.mt5_disposition = "SKIPPED_EXPIRED"
+                                                logger.info(f"[SHADOW ACTIVE EXPIRED SYNC] {trade.shadow_id} (Ticket #{trade.mt5_ticket}) resolved EXPIRED_MT5 (order cancelled in MT5, state={ord_state})")
+                                                newly_resolved.append(trade)
+                                                self._record_resolved(trade)
+                                                continue
                             except Exception as e:
                                 logger.debug(f"[SHADOW MT5 RECONCILE ERROR] {trade.shadow_id}: {e}")
 
@@ -692,13 +813,20 @@ class QuantShadowTracker:
                             trade.peak_mfe_r = max(trade.peak_mfe_r, round(curr_r, 2))
                             trade.max_mae_r = min(trade.max_mae_r, round(curr_r, 2))
 
-                            # Dynamic BEP Threshold: 35% TP for vacuum / defensive setups, 50% TP standard
+                            # Dynamic Grade-Aware BEP Threshold (11 Sep 2026)
                             tp_dist = abs(trade.tp_price - trade.entry_price)
                             tp_progress = ((mid - trade.entry_price) / tp_dist) if tp_dist > 0 else 0.0
-                            is_defensive = (trade.action_tier in ("REDUCED_CONFIDENCE", "TP1_ONLY_SCALP") or trade.risk_reward >= 2.0)
-                            bep_tp_ratio = 0.35 if is_defensive else getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.50)
+                            sg = str(trade.metadata.get("setup_grade") or trade.action_tier or "GRADE_A").upper()
+                            if "GRADE_S" in sg:
+                                bep_tp_ratio = 0.65
+                            elif "M4" in str(trade.setup_type):
+                                bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
+                            elif "GRADE_B" in sg or "REDUCED" in sg:
+                                bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)
+                            else:
+                                bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 
-                            # 1. Virtual Break-Even (BEP) Trigger (based on % TP)
+                            # 1. Virtual Break-Even (BEP) Trigger
                             if tp_progress >= bep_tp_ratio and not trade.bep_activated:
                                 b_sl = round(trade.entry_price + (15 * point), digits)
                                 if trade.current_sl < b_sl:
@@ -706,13 +834,29 @@ class QuantShadowTracker:
                                 trade.bep_activated = True
                                 logger.info(f"[SHADOW BEP] {trade.shadow_id} | {trade.symbol} BUY moved SL to BEP @ {trade.current_sl} (+15 pts, trigger: {bep_tp_ratio*100:.0f}% TP)")
 
-                            # 2. Virtual Dynamic Trailing Stop Trigger: curr_r >= 0.80
-                            if curr_r >= 0.80:
+                            # 2. Virtual Dynamic Trailing Stop Trigger: 3-Tier Progressive Ladder
+                            tier1_trig = getattr(config, "TRAILING_TIER_1_TRIGGER_PCT", 0.75)
+                            tier1_lock = getattr(config, "TRAILING_TIER_1_LOCK_PCT", 0.50)
+                            tier2_trig = getattr(config, "TRAILING_TIER_2_TRIGGER_PCT", 0.90)
+                            tier2_lock = getattr(config, "TRAILING_TIER_2_LOCK_PCT", 0.80)
+                            tier3_trig = getattr(config, "TRAILING_TIER_3_TRIGGER_PCT", 0.95)
+                            tier3_lock = getattr(config, "TRAILING_TIER_3_LOCK_PCT", 0.90)
+
+                            ladder_floor = None
+                            if tp_dist > 0:
+                                if tp_progress >= tier3_trig:
+                                    ladder_floor = round(trade.entry_price + (tier3_lock * tp_dist), digits)
+                                elif tp_progress >= tier2_trig:
+                                    ladder_floor = round(trade.entry_price + (tier2_lock * tp_dist), digits)
+                                elif tp_progress >= tier1_trig:
+                                    ladder_floor = round(trade.entry_price + (tier1_lock * tp_dist), digits)
+                            elif curr_r >= 0.80:
+                                ladder_floor = round(trade.entry_price + ((curr_r - 0.40) * risk_amount), digits)
+
+                            if ladder_floor is not None and trade.current_sl < ladder_floor:
+                                trade.current_sl = ladder_floor
                                 trade.trailing_activated = True
-                                trail_floor = round(trade.entry_price + ((curr_r - 0.40) * risk_amount), digits)
-                                if trade.current_sl < trail_floor:
-                                    trade.current_sl = trail_floor
-                                    logger.debug(f"[SHADOW TRAILING] {trade.shadow_id} | {trade.symbol} BUY trailed SL to @ {trade.current_sl} (+{curr_r - 0.40:.2f}R)")
+                                logger.debug(f"[SHADOW TRAILING] {trade.shadow_id} | {trade.symbol} BUY trailed SL to @ {trade.current_sl}")
 
                             is_live_mt5 = bool(trade.mt5_ticket and trade.mt5_ticket in open_mt5_tickets)
 
@@ -735,10 +879,13 @@ class QuantShadowTracker:
                                     trade.status = "RESOLVED"
                                     trade.resolved_time = now_iso
                                     trade.exit_price = active_sl
-                                    if trade.bep_activated or trade.trailing_activated:
-                                        realized_r = round((active_sl - trade.entry_price) / risk_amount, 2)
+                                    realized_r = round((active_sl - trade.entry_price) / risk_amount, 2)
+                                    if trade.trailing_activated and realized_r >= 0.20:
                                         trade.net_r = max(0.0, realized_r)
-                                        trade.outcome = "TRAILING_SL_HIT" if realized_r >= 0.20 else "BEP_HIT"
+                                        trade.outcome = "TRAILING_SL_HIT"
+                                    elif trade.bep_activated or realized_r >= -0.05:
+                                        trade.net_r = max(0.0, realized_r)
+                                        trade.outcome = "BEP_HIT"
                                     else:
                                         trade.outcome = "SL_HIT"
                                         trade.net_r = -1.0
@@ -754,13 +901,20 @@ class QuantShadowTracker:
                             trade.peak_mfe_r = max(trade.peak_mfe_r, round(curr_r, 2))
                             trade.max_mae_r = min(trade.max_mae_r, round(curr_r, 2))
 
-                            # Dynamic BEP Threshold: 35% TP for vacuum / defensive setups, 50% TP standard
+                            # Dynamic Grade-Aware BEP Threshold (11 Sep 2026)
                             tp_dist = abs(trade.tp_price - trade.entry_price)
                             tp_progress = ((trade.entry_price - mid) / tp_dist) if tp_dist > 0 else 0.0
-                            is_defensive = (trade.action_tier in ("REDUCED_CONFIDENCE", "TP1_ONLY_SCALP") or trade.risk_reward >= 2.0)
-                            bep_tp_ratio = 0.35 if is_defensive else getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.50)
+                            sg = str(trade.metadata.get("setup_grade") or trade.action_tier or "GRADE_A").upper()
+                            if "GRADE_S" in sg:
+                                bep_tp_ratio = 0.65
+                            elif "M4" in str(trade.setup_type):
+                                bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
+                            elif "GRADE_B" in sg or "REDUCED" in sg:
+                                bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)
+                            else:
+                                bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 
-                            # 1. Virtual Break-Even (BEP) Trigger (based on % TP)
+                            # 1. Virtual Break-Even (BEP) Trigger
                             if tp_progress >= bep_tp_ratio and not trade.bep_activated:
                                 b_sl = round(trade.entry_price - (15 * point), digits)
                                 if trade.current_sl > b_sl:
@@ -768,13 +922,29 @@ class QuantShadowTracker:
                                 trade.bep_activated = True
                                 logger.info(f"[SHADOW BEP] {trade.shadow_id} | {trade.symbol} SELL moved SL to BEP @ {trade.current_sl} (+15 pts, trigger: {bep_tp_ratio*100:.0f}% TP)")
 
-                            # 2. Virtual Dynamic Trailing Stop Trigger: curr_r >= 0.80
-                            if curr_r >= 0.80:
+                            # 2. Virtual Dynamic Trailing Stop Trigger: 3-Tier Progressive Ladder
+                            tier1_trig = getattr(config, "TRAILING_TIER_1_TRIGGER_PCT", 0.75)
+                            tier1_lock = getattr(config, "TRAILING_TIER_1_LOCK_PCT", 0.50)
+                            tier2_trig = getattr(config, "TRAILING_TIER_2_TRIGGER_PCT", 0.90)
+                            tier2_lock = getattr(config, "TRAILING_TIER_2_LOCK_PCT", 0.80)
+                            tier3_trig = getattr(config, "TRAILING_TIER_3_TRIGGER_PCT", 0.95)
+                            tier3_lock = getattr(config, "TRAILING_TIER_3_LOCK_PCT", 0.90)
+
+                            ladder_ceil = None
+                            if tp_dist > 0:
+                                if tp_progress >= tier3_trig:
+                                    ladder_ceil = round(trade.entry_price - (tier3_lock * tp_dist), digits)
+                                elif tp_progress >= tier2_trig:
+                                    ladder_ceil = round(trade.entry_price - (tier2_lock * tp_dist), digits)
+                                elif tp_progress >= tier1_trig:
+                                    ladder_ceil = round(trade.entry_price - (tier1_lock * tp_dist), digits)
+                            elif curr_r >= 0.80:
+                                ladder_ceil = round(trade.entry_price - ((curr_r - 0.40) * risk_amount), digits)
+
+                            if ladder_ceil is not None and trade.current_sl > ladder_ceil:
+                                trade.current_sl = ladder_ceil
                                 trade.trailing_activated = True
-                                trail_ceil = round(trade.entry_price - ((curr_r - 0.40) * risk_amount), digits)
-                                if trade.current_sl > trail_ceil:
-                                    trade.current_sl = trail_ceil
-                                    logger.debug(f"[SHADOW TRAILING] {trade.shadow_id} | {trade.symbol} SELL trailed SL to @ {trade.current_sl} (+{curr_r - 0.40:.2f}R)")
+                                logger.debug(f"[SHADOW TRAILING] {trade.shadow_id} | {trade.symbol} SELL trailed SL to @ {trade.current_sl}")
 
                             is_live_mt5 = bool(trade.mt5_ticket and trade.mt5_ticket in open_mt5_tickets)
 
@@ -797,10 +967,13 @@ class QuantShadowTracker:
                                     trade.status = "RESOLVED"
                                     trade.resolved_time = now_iso
                                     trade.exit_price = active_sl
-                                    if trade.bep_activated or trade.trailing_activated:
-                                        realized_r = round((trade.entry_price - active_sl) / risk_amount, 2)
+                                    realized_r = round((trade.entry_price - active_sl) / risk_amount, 2)
+                                    if trade.trailing_activated and realized_r >= 0.20:
                                         trade.net_r = max(0.0, realized_r)
-                                        trade.outcome = "TRAILING_SL_HIT" if realized_r >= 0.20 else "BEP_HIT"
+                                        trade.outcome = "TRAILING_SL_HIT"
+                                    elif trade.bep_activated or realized_r >= -0.05:
+                                        trade.net_r = max(0.0, realized_r)
+                                        trade.outcome = "BEP_HIT"
                                     else:
                                         trade.outcome = "SL_HIT"
                                         trade.net_r = -1.0
@@ -894,7 +1067,14 @@ class QuantShadowTracker:
             return newly_resolved
 
     def _record_resolved(self, trade: ShadowTrade):
-        """Updates stats and appends to persistent trade log."""
+        """Updates stats and appends to persistent trade log (idempotent)."""
+        if not hasattr(self, "_resolved_ids"):
+            self._resolved_ids = set()
+        if trade.shadow_id in self._resolved_ids:
+            logger.debug(f"[SHADOW TRACKER] Trade {trade.shadow_id} already resolved, skipping duplicate record.")
+            return
+        self._resolved_ids.add(trade.shadow_id)
+
         try:
             from src.analytics.currency_strength import get_csm_delta_for_symbol
             csm_close = get_csm_delta_for_symbol(trade.symbol)

@@ -166,7 +166,7 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         min_sl_floor += (20 * pt)
     min_sl_buffer = (200 * pt) if is_jpy else ((180 * pt) if is_high_beta else (120 * pt))
     sl_buffer = max(0.55 * atr_h1, min_sl_buffer)
-    max_sl_dist = max(2.5 * atr_h1, min_sl_floor) if atr_h1 > 0 else (160 * pt)
+    max_sl_dist = max(getattr(config, "SL_MAX_ATR_MULT", 2.5) * atr_h1, 1.5 * atr_h1) if atr_h1 > 0 else (160 * pt)
     front_pad = (0.15 * atr_h1) + (spread_pts * pt)
     wall_cushion = max(15 * pt, 0.15 * atr_h1) + (spread_pts * pt)
     
@@ -175,29 +175,23 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
     friction_pad = (spread_pts + comm_pts) * pt
     
     if direction == 1: # BUY
-        # SL behind support origin level / ZCE F1 Floor / RBS
-        # Fortress SL Shielding: Park SL behind the safest (lowest) protective barrier
-        candidates = []
-        if origin_level and origin_level < entry_price:
-            candidates.append(origin_level - sl_buffer)
-        if f1 and f1 < entry_price:
-            candidates.append(f1 - wall_cushion)
-        if rbs and rbs < entry_price:
-            candidates.append(rbs - sl_buffer)
+        # --- PILAR 4: BALANCED 3-TERM SL FORMULA (11 Sep 2026) ---
+        invalidation_buffer = max(0.15 * atr_h1, (2 * spread_pts + 10) * pt)
+        origin = origin_level if (origin_level is not None and origin_level > 0) else (f1 if (f1 is not None and f1 > 0) else (rbs if (rbs is not None and rbs > 0) else entry_price))
+        struct_dist = abs(entry_price - origin) + invalidation_buffer
 
-        if candidates:
-            valid_cands = [c for c in candidates if (entry_price - c) <= max_sl_dist]
-            sl = min(valid_cands) if valid_cands else min(candidates)
+        atr_floor = getattr(config, "SL_ATR_MULT", 1.00) * atr_h1 if atr_h1 > 0 else (100 * pt)
+        if hasattr(config, "friction_floor_points"):
+            fric_floor = config.friction_floor_points(int(spread_pts)) * pt
         else:
-            sl_anchor = entry_price - 1.2 * atr_h1
-            sl = sl_anchor - sl_buffer
-        
-        # Apply Safety Floor & Safety Ceiling
-        if (entry_price - sl) < min_sl_floor:
-            sl = entry_price - min_sl_floor
-        if (entry_price - sl) > max_sl_dist:
-            sl = entry_price - max_sl_dist
-        risk = max(abs(entry_price - sl), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_floor, min_sl_floor)
+            fric_floor = int(round((spread_pts + 6) / 0.20)) * pt
+
+        sl_dist = max(struct_dist, atr_floor, fric_floor)
+        if max_sl_dist and max_sl_dist > 0:
+            sl_dist = min(sl_dist, max_sl_dist)
+
+        sl = entry_price - sl_dist
+        risk = sl_dist
         
         # TARGET HIERARCHY: 1. Next Structure C1 -> 2. Deep Ceiling C2 -> 3. SBR Ceiling -> 4. Psychological Sub-Station
         target_station = None
@@ -211,23 +205,23 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             if not can_advance_to_c2:
                 target_station = c1
             else:
-                if c2 and c2 > entry_price + GRADE_A_MIN_RR * risk and (c2 - entry_price) <= 3.5 * risk:
+                if c2 and c2 > entry_price + GRADE_A_MIN_RR * risk:
                     target_station = c2
-                elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
+                elif sbr and sbr > entry_price + 1.15 * risk:
                     target_station = sbr
                 elif pwh and pwl and pwh > pwl:
                     weekly_50 = pwl + 0.50 * (pwh - pwl)
-                    if weekly_50 > entry_price + 1.15 * risk and (weekly_50 - entry_price) <= 3.5 * risk:
+                    if weekly_50 > entry_price + 1.15 * risk:
                         target_station = weekly_50
                 else:
-                    target_station = c1
-        elif c2 and c2 > entry_price + GRADE_A_MIN_RR * risk and (c2 - entry_price) <= 3.5 * risk:
+                    target_station = c2 if c2 else c1
+        elif c2 and c2 > entry_price + GRADE_A_MIN_RR * risk:
             target_station = c2
-        elif sbr and sbr > entry_price + 1.15 * risk and (sbr - entry_price) <= 3.5 * risk:
+        elif sbr and sbr > entry_price + 1.15 * risk:
             target_station = sbr
         elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 > entry_price + 1.15 * risk and (weekly_50 - entry_price) <= 3.5 * risk:
+            if weekly_50 > entry_price + 1.15 * risk:
                 target_station = weekly_50
                 
         if target_station is None:
@@ -248,29 +242,23 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             tp = max(min_tp, min(tp_target, max_tp))
             
     else: # SELL
-        # SL behind resistance origin level / ZCE C1 Ceiling / SBR
-        # Fortress SL Shielding: Park SL behind the safest (highest) protective barrier
-        candidates = []
-        if origin_level and origin_level > entry_price:
-            candidates.append(origin_level + sl_buffer)
-        if c1 and c1 > entry_price:
-            candidates.append(c1 + wall_cushion)
-        if sbr and sbr > entry_price:
-            candidates.append(sbr + sl_buffer)
+        # --- PILAR 4: BALANCED 3-TERM SL FORMULA (11 Sep 2026) ---
+        invalidation_buffer = max(0.15 * atr_h1, (2 * spread_pts + 10) * pt)
+        origin = origin_level if (origin_level is not None and origin_level > 0) else (c1 if (c1 is not None and c1 > 0) else (sbr if (sbr is not None and sbr > 0) else entry_price))
+        struct_dist = abs(entry_price - origin) + invalidation_buffer
 
-        if candidates:
-            valid_cands = [c for c in candidates if (c - entry_price) <= max_sl_dist]
-            sl = max(valid_cands) if valid_cands else max(candidates)
+        atr_floor = getattr(config, "SL_ATR_MULT", 1.00) * atr_h1 if atr_h1 > 0 else (100 * pt)
+        if hasattr(config, "friction_floor_points"):
+            fric_floor = config.friction_floor_points(int(spread_pts)) * pt
         else:
-            sl_anchor = entry_price + 1.2 * atr_h1
-            sl = sl_anchor + sl_buffer
-        
-        # Apply Safety Floor & Safety Ceiling
-        if (sl - entry_price) < min_sl_floor:
-            sl = entry_price + min_sl_floor
-        if (sl - entry_price) > max_sl_dist:
-            sl = entry_price + max_sl_dist
-        risk = max(abs(sl - entry_price), 0.55 * atr_h1 if atr_h1 > 0 else min_sl_floor, min_sl_floor)
+            fric_floor = int(round((spread_pts + 6) / 0.20)) * pt
+
+        sl_dist = max(struct_dist, atr_floor, fric_floor)
+        if max_sl_dist and max_sl_dist > 0:
+            sl_dist = min(sl_dist, max_sl_dist)
+
+        sl = entry_price + sl_dist
+        risk = sl_dist
         
         # TARGET HIERARCHY: 1. Next Structure F1 -> 2. Deep Floor F2 -> 3. RBS Floor -> 4. Psychological Sub-Station
         target_station = None
@@ -284,23 +272,23 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
             if not can_advance_to_f2:
                 target_station = f1
             else:
-                if f2 and f2 < entry_price - GRADE_A_MIN_RR * risk and (entry_price - f2) <= 3.5 * risk:
+                if f2 and f2 < entry_price - GRADE_A_MIN_RR * risk:
                     target_station = f2
-                elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
+                elif rbs and rbs < entry_price - 1.15 * risk:
                     target_station = rbs
                 elif pwh and pwl and pwh > pwl:
                     weekly_50 = pwl + 0.50 * (pwh - pwl)
-                    if weekly_50 < entry_price - 1.15 * risk and (entry_price - weekly_50) <= 3.5 * risk:
+                    if weekly_50 < entry_price - 1.15 * risk:
                         target_station = weekly_50
                 else:
-                    target_station = f1
-        elif f2 and f2 < entry_price - GRADE_A_MIN_RR * risk and (entry_price - f2) <= 3.5 * risk:
+                    target_station = f2 if f2 else f1
+        elif f2 and f2 < entry_price - GRADE_A_MIN_RR * risk:
             target_station = f2
-        elif rbs and rbs < entry_price - 1.15 * risk and (entry_price - rbs) <= 3.5 * risk:
+        elif rbs and rbs < entry_price - 1.15 * risk:
             target_station = rbs
         elif pwh and pwl and pwh > pwl:
             weekly_50 = pwl + 0.50 * (pwh - pwl)
-            if weekly_50 < entry_price - 1.15 * risk and (entry_price - weekly_50) <= 3.5 * risk:
+            if weekly_50 < entry_price - 1.15 * risk:
                 target_station = weekly_50
                 
         if target_station is None:
@@ -337,5 +325,7 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         "risk_reward": round(rr, 2),
         "target_station": round(target_station, digits),
         "setup_grade": setup_grade,
-        "is_wall_scalp": is_wall_scalp
+        "is_wall_scalp": is_wall_scalp,
+        "invalidation_dist": round(struct_dist, digits),
+        "sl_dist_points": int(round(sl_dist / pt))
     }

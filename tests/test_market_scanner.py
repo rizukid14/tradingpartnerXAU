@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 from datetime import datetime
@@ -1257,6 +1257,191 @@ class TestMarketScanner(unittest.TestCase):
                                         m1a_cands = [c for c in candidates if c.symbol == sym and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP"]
                                         self.assertEqual(len(m1a_cands), 1, "M1A Bearish Sweep at C1 must produce candidate and not be blocked by F1 floor trap or hysteresis!")
                                         self.assertEqual(m1a_cands[0].direction, -1)
+
+    def test_same_direction_confluence_fusion(self):
+        """Verify that same-direction candidates within <= 0.35x ATR fuse into confluence and upgrade grade."""
+        macro = {
+            "macro_bias_score": -0.40,
+            "csm_delta": -1.5,
+            "dealing_range_pos": 0.75,
+            "trend_label": "BEARISH_EXPANSION"
+        }
+        cand1 = CandidateSetup(
+            symbol="EURUSD-ECNc",
+            setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
+            direction=-1,
+            trigger_price=1.1020,
+            suggested_sl=1.1040,
+            suggested_tp=1.0960,
+            risk_reward_ratio=3.0,
+            setup_grade="GRADE_A",
+            current_atr_pts=50,
+            current_spread_pts=10,
+            metadata={"entry_type": "sell_limit", "action_tier": "FULL_ALLOW"}
+        )
+        cand2 = CandidateSetup(
+            symbol="EURUSD-ECNc",
+            setup_type="MULTI_TOUCH_BREAKOUT_RETEST",
+            direction=-1,
+            trigger_price=1.1023,  # Difference is 0.0003 <= 0.35 * 0.0050 (0.00175)
+            suggested_sl=1.1043,
+            suggested_tp=1.0960,
+            risk_reward_ratio=2.9,
+            setup_grade="GRADE_A",
+            current_atr_pts=50,
+            current_spread_pts=10,
+            metadata={"entry_type": "sell_limit", "action_tier": "FULL_ALLOW"}
+        )
+        best = self.scanner._resolve_best_mechanism_candidate(
+            candidates=[cand1, cand2],
+            macro=macro,
+            mid=1.1018,
+            atr_val=0.0050,
+            csm_delta=-1.5,
+            h=15,
+            pt=0.00001
+        )
+        self.assertIsNotNone(best)
+        self.assertEqual(best.direction, -1)
+        self.assertTrue(best.metadata.get("is_confluence"))
+        self.assertIn("M1+M3", best.metadata.get("confluence_label"))
+        self.assertEqual(best.setup_grade, "GRADE_A+")
+
+    def test_opposing_direction_runway_and_macro_resolution(self):
+        """Verify that when opposing setups exist, the one with longer runway and micro CSM alignment wins."""
+        macro = {
+            "macro_bias_score": 0.10,  # Slightly bullish macro
+            "csm_delta": -2.15,        # Strongly bearish micro CSM
+            "dealing_range_pos": 0.85, # Near C1 ceiling
+            "trend_label": "RANGE_BOUND"
+        }
+        # Buy pullback with small runway running into ceiling
+        buy_cand = CandidateSetup(
+            symbol="AUDCHF-ECNc",
+            setup_type="TREND_ALIGNED_PULLBACK",
+            direction=1,
+            trigger_price=0.5835,
+            suggested_sl=0.5815,
+            suggested_tp=0.5845,      # Small runway: 0.0010 (0.33x ATR)
+            risk_reward_ratio=0.5,
+            setup_grade="GRADE_B",
+            current_atr_pts=30,
+            current_spread_pts=12,
+            metadata={"entry_type": "buy_limit", "action_tier": "REDUCED_CONFIDENCE"}
+        )
+        # Sell sweep fading the ceiling with long runway down to F1 floor
+        sell_cand = CandidateSetup(
+            symbol="AUDCHF-ECNc",
+            setup_type="UNIVERSAL_LIQUIDITY_SWEEP",
+            direction=-1,
+            trigger_price=0.5838,
+            suggested_sl=0.5858,
+            suggested_tp=0.5780,     # Wide runway: 0.0058 (1.93x ATR)
+            risk_reward_ratio=2.9,
+            setup_grade="GRADE_A",
+            current_atr_pts=30,
+            current_spread_pts=12,
+            metadata={"entry_type": "sell_limit", "action_tier": "REDUCED_CONFIDENCE"}
+        )
+        best = self.scanner._resolve_best_mechanism_candidate(
+            candidates=[buy_cand, sell_cand],
+            macro=macro,
+            mid=0.5836,
+            atr_val=0.0030,
+            csm_delta=-2.15,
+            h=15,
+            pt=0.00001
+        )
+        self.assertIsNotNone(best)
+        # SELL must win due to wide runway, negative CSM delta, and ceiling position
+        self.assertEqual(best.direction, -1)
+        self.assertEqual(best.setup_type, "UNIVERSAL_LIQUIDITY_SWEEP")
+
+    def test_m1_sweep_dealing_range_locks_veto_discount_sell_and_premium_buy(self):
+        """Verify M1 Sweep strictly enforces Premium for SELL (dr_pos >= 0.55) and Discount for BUY (dr_pos <= 0.45)."""
+        # 1. EURGBP Scenario: M1 SELL at dr_pos 0.42 (Discount) must be blocked
+        self.scanner.macro_cache["EURGBP-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 39,
+            'dealing_range_pos': 0.427,
+            'dealing_range_low': 0.85708,
+            'dealing_range_high': 0.86001,
+            'is_bull': False,
+            'is_bear': True,
+            'trend_label': 'BEARISH',
+            'permission_state': 'GO',
+            'csm_delta': -0.5,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': -0.5,
+            'macro_corridor': 'BEARISH_CORRIDOR',
+            'daily_macro_bias': 'BEARISH_EXPANSION',
+            'immediate_floor_f1': 0.85752,
+            'immediate_ceiling_c1': 0.85836, # Micro SBR in discount territory
+            'c1_reaction_grade': 'GRADE_2_INTERMEDIATE',
+            'asian_high': 0.85969,
+            'asian_low': 0.85903,
+            'pdh': 0.86001,
+            'pdl': 0.85759,
+            'ema20': 0.85880,
+            'ema50': 0.85910
+        }
+
+        mock_connector = MagicMock()
+        mock_connector.get_live_tick.return_value = {'ask': 0.85837, 'bid': 0.85835, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 0.85844, 'high': 0.85872, 'low': 0.85836, 'close': 0.85842, 'time': 1700000000}
+        ]
+
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 9, 11, 17, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    sweep_sells = [c for c in candidates if c.symbol == "EURGBP-ECNc" and c.setup_type == "UNIVERSAL_LIQUIDITY_SWEEP" and c.direction == -1]
+                    self.assertEqual(len(sweep_sells), 0, "M1 SELL in discount zone (dr_pos 0.427) must be 100% blocked by Dealing Range lock!")
+
+    def test_m2_and_m3_dealing_range_boundary_guards(self):
+        """Verify M2 and M3 boundary collision and exhaustion guards block extreme entries without runway/breach."""
+        # 1. M2 BUY at dr_pos 0.85 colliding with C1 ceiling
+        self.scanner.macro_cache["EURUSD-ECNc"] = {
+            'point': 0.00001,
+            'atr_pts': 100,
+            'dealing_range_pos': 0.85,
+            'dealing_range_low': 1.0800,
+            'dealing_range_high': 1.0900,
+            'is_bull': True,
+            'is_bear': False,
+            'trend_label': 'BULLISH',
+            'permission_state': 'GO',
+            'csm_delta': 1.5,
+            'action_tier': 'FULL_ALLOW',
+            'macro_bias_score': 0.8,
+            'macro_corridor': 'BULLISH_CORRIDOR',
+            'daily_macro_bias': 'BULLISH_EXPANSION',
+            'immediate_floor_f1': 1.0820,
+            'immediate_ceiling_c1': 1.0890, # Jarak ke mid (1.0885) cuma 5 pts (< 40 pts)
+            'c1_reaction_grade': 'GRADE_3_MACRO',
+            'asian_high': 1.0880,
+            'asian_low': 1.0840,
+            'pdh': 1.0890,
+            'pdl': 1.0820,
+            'ema20': 1.0875,
+            'ema50': 1.0860
+        }
+        mock_connector = MagicMock()
+        mock_connector.get_live_tick.return_value = {'ask': 1.0886, 'bid': 1.0884, 'time': int(datetime.now(WIB).timestamp())}
+        mock_connector.get_closed_bars.return_value = [
+            {'open': 1.0870, 'high': 1.0888, 'low': 1.0868, 'close': 1.0885, 'time': 1700000000}
+        ]
+        with patch("src.analytics.market_scanner.evaluate_systemic_basket_lock", return_value=(False, "", None)):
+            with patch.object(self.scanner, 'is_symbol_allowed_for_session', return_value=True):
+                with patch("src.analytics.market_scanner.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 9, 11, 17, 0, 0, tzinfo=WIB)
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    candidates = self.scanner.scan_fast_radar(mock_connector)
+                    m2_buys = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "TREND_ALIGNED_PULLBACK"]
+                    self.assertEqual(len(m2_buys), 0, "M2 BUY colliding into C1 ceiling at dr_pos 0.85 must be blocked!")
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ def _save_telemetry(data: dict):
         logger.error(f"[TELEMETRY SAVE ERROR] {e}")
 
 
-def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_price: float, csm_delta: float, setup_type: str = ""):
+def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_price: float, csm_delta: float, setup_type: str = "", metadata: Optional[Dict[str, Any]] = None):
     """Catat snapshot nilai CSM dan atribut entry saat posisi/pending order dibuka."""
     t_int = int(ticket)
     data = _load_telemetry()
@@ -63,6 +63,25 @@ def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_
 
     _csm_opp_thr = float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))
     is_opposed = (direction == "BUY" and csm_delta <= -_csm_opp_thr) or (direction == "SELL" and csm_delta >= _csm_opp_thr)
+
+    meta = metadata or {}
+    z_f1 = meta.get("zce_f1") or meta.get("zce_f1_price")
+    z_c1 = meta.get("zce_c1") or meta.get("zce_c1_price")
+    f1_gr = meta.get("f1_grade") or meta.get("f1_reaction_grade")
+    c1_gr = meta.get("c1_grade") or meta.get("c1_reaction_grade")
+    w_gr = meta.get("wall_grade") or (f1_gr if direction == "BUY" else c1_gr)
+
+    sl_eff = int(meta.get("sl_points", 0) or meta.get("sl_effective", 0) or 0)
+    cand_atr = float(meta.get("current_atr_pts", 0.0) or 0.0)
+    cand_spr = int(meta.get("current_spread_pts", 0) or 0)
+    comm_pts = 6
+    now_h = datetime.now(WIB).hour
+    sess_win = meta.get("session_window") or ("Tokyo" if 7 <= now_h < 14 else ("London" if 14 <= now_h < 18 else ("NY" if 18 <= now_h < 24 else "DeadZone")))
+    sl_atr_r = meta.get("sl_atr_ratio") or (round(sl_eff / cand_atr, 2) if cand_atr > 0 and sl_eff > 0 else None)
+    tp_pts = int(meta.get("tp_points", 0) or 0)
+    tp_atr_r = meta.get("tp_atr_ratio") or (round(tp_pts / cand_atr, 2) if cand_atr > 0 and tp_pts > 0 else None)
+    fric_r = meta.get("friction_ratio") or (round((cand_spr + comm_pts) / max(sl_eff, 1), 4) if sl_eff > 0 else None)
+    inv_dist = meta.get("invalidation_dist")
 
     data["trades"][str(t_int)] = {
         "ticket": t_int,
@@ -72,6 +91,18 @@ def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_
         "entry_price": float(entry_price),
         "csm_delta_open": float(csm_delta),
         "csm_opposed_open": bool(is_opposed),
+        "wall_grade": str(w_gr) if w_gr else None,
+        "f1_reaction_grade": str(f1_gr) if f1_gr else None,
+        "c1_reaction_grade": str(c1_gr) if c1_gr else None,
+        "zce_f1": float(z_f1) if isinstance(z_f1, (int, float)) and z_f1 > 0 else None,
+        "zce_c1": float(z_c1) if isinstance(z_c1, (int, float)) and z_c1 > 0 else None,
+        "setup_grade": meta.get("setup_grade"),
+        "invalidation_dist": inv_dist,
+        "sl_effective": sl_eff,
+        "sl_atr_ratio": sl_atr_r,
+        "tp_atr_ratio": tp_atr_r,
+        "friction_ratio": fric_r,
+        "session_window": sess_win,
         "open_time": now_iso,
         "status": "OPEN",
         "would_be_cancelled": False,
@@ -386,6 +417,9 @@ def manage_all_positions():
 
 def _check_partial_close(pos, symbol, profit_points, symbol_info):
     """Close a portion of the position at TP1 to lock in some profit."""
+    if not getattr(config, "PARTIAL_CLOSE_ENABLED", False):
+        return  # Bypassed: 100% lot capture (11 Sep 2026)
+
     if pos.ticket in _partial_closed_tickets:
         return  # Already partially closed
 
@@ -763,9 +797,9 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     tp_points = 0
     if pos.tp:
         if pos.type == mt5.ORDER_TYPE_BUY:
-            tp_points = (pos.tp - pos.price_open) / point
+            tp_points = int(round((pos.tp - pos.price_open) / point))
         else:
-            tp_points = (pos.price_open - pos.tp) / point
+            tp_points = int(round((pos.price_open - pos.tp) / point))
 
     min_trigger = 30 if config.is_fx(symbol) else 100
 
@@ -773,7 +807,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     # M4: 70% TP (Memberi ruang nafas fluktuasi shock, mengunci profit bila mencapai 70% target)
     # Grade S: 65% TP (Give breathing room to swing)
     # Grade B / Defensive / Vacuum Extension (>= 2.0R): 35% TP (Fast defensive lock)
-    # Grade A+/A: 50% TP (Standard)
+    # Grade A+/A: 60% TP (Standard)
     is_m4 = any(k in (getattr(pos, "comment", "") or "").upper() for k in ("SYSTEM", "M4", "DBD", "RBR"))
     grade = str(_ticket_setup_grades.get(pos.ticket, "GRADE_A")).upper()
 
@@ -784,14 +818,12 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
 
     if "GRADE_S" in grade:
         bep_tp_ratio = 0.65
-    elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
-        bep_tp_ratio = 0.35
     elif is_m4:
         bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
-    elif is_london_ny_active():
-        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.55)
+    elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
+        bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)
     else:
-        bep_tp_ratio = config.BREAK_EVEN_TRIGGER_TP_PCT
+        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 
     if tp_points > 0:
         be_trigger = max(min_trigger, int(tp_points * bep_tp_ratio))
@@ -1101,13 +1133,13 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     tp_points = 0
     if pos.tp:
         if pos.type == mt5.ORDER_TYPE_BUY:
-            tp_points = (pos.tp - pos.price_open) / point
+            tp_points = int(round((pos.tp - pos.price_open) / point))
         else:
-            tp_points = (pos.price_open - pos.tp) / point
+            tp_points = int(round((pos.price_open - pos.tp) / point))
 
     # Jarak SL posisi (fallback tanpa TP). Pakai SL ORIGINAL
     if pos.sl:
-        sl_points = _original_sl.get(pos.ticket, 0) or (abs(pos.sl - pos.price_open) / point)
+        sl_points = _original_sl.get(pos.ticket, 0) or int(round(abs(pos.sl - pos.price_open) / point))
     else:
         sl_points = 0
 
@@ -1123,72 +1155,92 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     else:
         act_tp_pct = config.TRAILING_ACTIVATION_TP_PCT
 
+    # 3-Tier Progressive Trailing Ladder Parameters (11 Sep 2026)
+    entry_fill = _get_entry_fill_price(pos, symbol)
+    tier1_trig = getattr(config, "TRAILING_TIER_1_TRIGGER_PCT", 0.75)
+    tier1_lock = getattr(config, "TRAILING_TIER_1_LOCK_PCT", 0.50)
+    tier2_trig = getattr(config, "TRAILING_TIER_2_TRIGGER_PCT", 0.90)
+    tier2_lock = getattr(config, "TRAILING_TIER_2_LOCK_PCT", 0.80)
+    tier3_trig = getattr(config, "TRAILING_TIER_3_TRIGGER_PCT", 0.95)
+    tier3_lock = getattr(config, "TRAILING_TIER_3_LOCK_PCT", 0.90)
+
+    ladder_sl = None
+    stage_label = "SWING"
+
     # Activation GLOBAL % TP (fallback SL-based kalau posisi tanpa TP)
     if tp_points > 0:
-        activation = max(int(tp_points * act_tp_pct), min_act)
-        tp_progress = profit_points / tp_points if tp_points > 0 else 0.0
+        activation = max(int(tp_points * tier1_trig), min_act)
+        tp_progress = round(profit_points / tp_points, 4) if tp_points > 0 else 0.0
+        if tp_progress >= tier3_trig:
+            stage_label = "TRAIL-95-LOCK-90"
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                ladder_sl = entry_fill + (tier3_lock * tp_points * point)
+            else:
+                ladder_sl = entry_fill - (tier3_lock * tp_points * point)
+        elif tp_progress >= tier2_trig:
+            stage_label = "TRAIL-90-LOCK-80"
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                ladder_sl = entry_fill + (tier2_lock * tp_points * point)
+            else:
+                ladder_sl = entry_fill - (tier2_lock * tp_points * point)
+        elif tp_progress >= tier1_trig:
+            stage_label = "TRAIL-75-LOCK-50"
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                ladder_sl = entry_fill + (tier1_lock * tp_points * point)
+            else:
+                ladder_sl = entry_fill - (tier1_lock * tp_points * point)
     elif sl_points > 0:
         activation = max(int(sl_points * config.TRAILING_ACTIVATION_SL_MULT), min_act)
-        tp_progress = profit_points / (sl_points * 2.0) if sl_points > 0 else 0.0
+        tp_progress = round(profit_points / (sl_points * 2.0), 4) if sl_points > 0 else 0.0
+        stage_label = "SWING-SL"
     else:
         activation = min_act
         tp_progress = 0.0
+        stage_label = "MIN-ACT"
 
-    # Evaluasi 2-Stage Dynamic Trailing Distance:
+    # Evaluasi Dynamic Trailing Distance:
     is_terminal = (tp_progress >= getattr(config, "TRAILING_TERMINAL_TP_PCT", 0.90))
 
     if config.is_fx(symbol):
         if "GRADE_S" in grade:
-            if is_terminal:
-                atr_tf = mt5.TIMEFRAME_H1
-                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                dist_mult = 0.75
-                min_dist_pts = 80
-                stage_label = "GRADE-S-TERMINAL"
-            else:
-                atr_tf = mt5.TIMEFRAME_H1
-                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                dist_mult = 1.25
-                min_dist_pts = 120  # 12 pips FX floor
-                stage_label = "GRADE-S-BREATHING"
+            atr_tf = mt5.TIMEFRAME_H1
+            atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
+            dist_mult = 0.75 if is_terminal else 1.25
+            min_dist_pts = 80 if is_terminal else 120
+            if ladder_sl is None:
+                stage_label = "GRADE-S-TERMINAL" if is_terminal else "GRADE-S-BREATHING"
         elif "GRADE_B" in grade:
             atr_tf = mt5.TIMEFRAME_M30
             atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
             dist_mult = 0.40
             min_dist_pts = 30
-            stage_label = "GRADE-B-TIGHT"
+            if ladder_sl is None:
+                stage_label = "GRADE-B-TIGHT"
         else:
+            atr_tf = mt5.TIMEFRAME_H1
+            atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
             if is_terminal:
-                # Stage 2: Terminal Tightening (ATR H1 lock - unified H1, M30 removed)
-                atr_tf = mt5.TIMEFRAME_H1
-                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
                 dist_mult = getattr(config, "TRAILING_TERMINAL_ATR_MULT_H1", 0.50)
-                if is_london_ny_active():
-                    min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY", 80)
-                else:
-                    min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO", 60)
-                stage_label = "TERMINAL-H1"
+                min_dist_pts = getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_LONDON_NY", 80) if is_london_ny_active() else getattr(config, "TRAILING_TERMINAL_MIN_POINTS_FX_TOKYO", 60)
+                if ladder_sl is None:
+                    stage_label = "TERMINAL-H1"
             else:
-                # Stage 1: Swing Breathing (ATR H1 breathing)
-                atr_tf = mt5.TIMEFRAME_H1
-                atr_pts = _get_atr_points_tf(symbol, atr_tf, point)
-                if is_london_ny_active():
-                    dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00)
-                    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY", 150)
-                else:
-                    dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
-                    min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
-                stage_label = "SWING-H1"
+                dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1_LONDON_NY", 1.00) if is_london_ny_active() else getattr(config, "TRAILING_DISTANCE_ATR_MULT_H1", 0.75)
+                min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX_LONDON_NY", 150) if is_london_ny_active() else getattr(config, "TRAILING_DISTANCE_MIN_POINTS_FX", 80)
+                if ladder_sl is None:
+                    stage_label = "SWING-H1"
     elif config.is_crypto(symbol):
         atr_pts = _get_dynamic_atr_points(symbol, point)
         dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_BTC", 0.5)
         min_dist_pts = 0
-        stage_label = "CRYPTO"
+        if ladder_sl is None:
+            stage_label = "CRYPTO"
     else:  # Gold (XAU)
         atr_pts = _get_dynamic_atr_points(symbol, point)
         dist_mult = getattr(config, "TRAILING_DISTANCE_ATR_MULT_XAU", 0.5)
         min_dist_pts = getattr(config, "TRAILING_DISTANCE_MIN_POINTS_XAU", 100)
-        stage_label = "XAU"
+        if ladder_sl is None:
+            stage_label = "XAU"
 
     if atr_pts > 0:
         trail_distance = max(int(atr_pts * dist_mult), 1) * point
@@ -1218,13 +1270,13 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
         return
 
     if pos.type == mt5.ORDER_TYPE_BUY:
-        new_sl = trail_ref - trail_distance
+        new_sl = ladder_sl if ladder_sl is not None else (trail_ref - trail_distance)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL up, never down
         if pos.sl >= new_sl:
             return
     else:  # SELL
-        new_sl = trail_ref + trail_distance
+        new_sl = ladder_sl if ladder_sl is not None else (trail_ref + trail_distance)
         new_sl = round(new_sl, symbol_info.digits)
         # Only move SL down, never up
         if pos.sl != 0 and pos.sl <= new_sl:
@@ -1243,8 +1295,8 @@ def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbo
     if is_order_success(result):
         _trailing_active_tickets.add(pos.ticket)
         _save_state(_partial_closed_tickets, _break_even_tickets, _trailing_extremes)
-        dist_pts = int(trail_distance / point) if point > 0 else 0
-        print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP | {stage_label}]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts ATR)")
+        dist_pts = int(round(abs(current_price - new_sl) / point)) if point > 0 else 0
+        print(f"\r\x1b[2K{UI.GREEN}[TRAILING STOP | {stage_label}]{UI.RST} Ticket #{pos.ticket} ({symbol}): SL digeser ke {new_sl} (profit: +{profit_points:.0f} pts, dist: {dist_pts} pts)")
     else:
         comment = result.comment if result else "Unknown error"
         print(f"\r\x1b[2K[TRAIL ERROR] Gagal menggeser SL #{pos.ticket}: {comment}")

@@ -111,7 +111,7 @@ def test_wall_exhaustion_skip():
     macro_cache = {
         "EURAUD-ECNc": {
             "atr": 0.0050,
-            "zce_walls": {"f1_price": 1.60000, "c1_price": 1.62000, "f1_grade": "G1", "c1_grade": "G1"}
+            "zce_walls": {"f1_price": 1.60000, "c1_price": 1.62000, "f1_grade": "GRADE_3_MACRO", "c1_grade": "GRADE_3_MACRO"}
         }
     }
 

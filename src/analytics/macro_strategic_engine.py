@@ -226,7 +226,13 @@ class MacroStrategicDirective:
     current_mid: float = 0.0
     primitive_state: Optional[PrimitiveState] = None
     contingency_graph: Optional[ContingencyPath] = None
+    w1_secular_regime: str = "SECULAR_RANGE"
+    w1_intermediate_regime: str = "NEUTRAL_OSCILLATION"
+    w1_slope_ceiling: Optional[float] = None
+    w1_lower_highs: List[Dict[str, Any]] = field(default_factory=list)
+    htf_horizon_conflict: bool = False
     raw_payload: Dict[str, Any] = field(default_factory=dict)
+
 
 
 class MacroStrategicEngine:
@@ -439,6 +445,118 @@ class MacroStrategicEngine:
                 return round(float(h[i]), digits), round(float(l[i]), digits)
         return None, None
 
+    @staticmethod
+    def _evaluate_dual_horizon_w1(
+        df_w1: pd.DataFrame,
+        atr_w1: float,
+        digits: int,
+        curr_mid: float
+    ) -> Dict[str, Any]:
+        """
+        Dual-Horizon W1 Structural & Upper Tangent Slope Barrier (Anchor Peak Law).
+        
+        1. Secular Horizon (up to 156 bars / ~3 years):
+           - Evaluasi posisi harga terhadap 156-bar low & high (Secular expansion vs contraction).
+           
+        2. Intermediate Structural Horizon (52 bars / ~1 year) with Anchor Peak Law:
+           - Descending Slope Ceiling (Lower Highs):
+             * Titik Jangkar P0 = Peak tertinggi mutlak dalam 52 bar (np.max(high)).
+             * P0 wajib berjarak >= 8 bar dari bar aktif.
+             * Garis Outer Tangent Resistance ditarik dari P0 ke High[k] (k > P0 + 3).
+             * KONDISI MUTLAK: Seluruh candle W1 sejak P0 tidak boleh close > line + 0.15*ATR_W1 (unbreached).
+             * Wajib minimal 3 sentuhan (touch tolerance <= 0.30*ATR_W1).
+             * Menghasilkan proyeksi resistensi pada bar live (proj_live).
+        """
+        default_res = {
+            "secular_regime": "SECULAR_RANGE",
+            "intermediate_regime": "NEUTRAL_OSCILLATION",
+            "slope_ceiling": None,
+            "lower_highs": [],
+            "horizon_conflict": False
+        }
+        if df_w1 is None or len(df_w1) < 40:
+            return default_res
+
+        hi = df_w1['high'].values
+        lo = df_w1['low'].values
+        cl = df_w1['close'].values
+        n = len(df_w1)
+        if atr_w1 <= 0:
+            atr_w1 = float((hi - lo)[-14:].mean()) if n >= 14 else 0.001
+
+        # 1. Secular Horizon (up to 156 bars)
+        sec_n = min(n, int(getattr(config, "W1_SECULAR_LOOKBACK_BARS", 156)))
+        sec_lo = float(np.min(lo[-sec_n:]))
+        sec_hi = float(np.max(hi[-sec_n:]))
+        sec_rng = max(sec_hi - sec_lo, 1e-5)
+        sec_pos = (curr_mid - sec_lo) / sec_rng
+        secular_regime = "BULLISH_EXPANSION" if sec_pos >= 0.60 else ("BEARISH_CONTRACTION" if sec_pos <= 0.40 else "SECULAR_RANGE")
+
+        # 2. Intermediate Horizon (Anchor Peak Law & Outer Tangent Envelope)
+        inter_n = min(n, int(getattr(config, "W1_INTERMEDIATE_LOOKBACK_BARS", 52)))
+        start_idx = n - inter_n
+        slice_hi = hi[start_idx:n]
+        anchor_idx = start_idx + int(np.argmax(slice_hi))
+        x0, y0 = anchor_idx, float(hi[anchor_idx])
+
+        slope_ceiling = None
+        lower_highs: List[Dict[str, Any]] = []
+        intermediate_regime = "NEUTRAL_OSCILLATION"
+
+        # Validasi: Anchor High wajib berada >= 8 bar yang lalu
+        min_touches = int(getattr(config, "W1_SLOPE_MIN_TOUCHES", 3))
+        if (n - 1 - anchor_idx) >= 8:
+            valid_lines = []
+            for k in range(x0 + 4, n):
+                m = (hi[k] - y0) / (k - x0)
+                if m >= 0:
+                    continue  # Hanya descending slope
+                
+                breached = False
+                touches = 0
+                touching_bars = []
+                for i in range(x0 + 1, n):
+                    line_val = y0 + m * (i - x0)
+                    if cl[i] > line_val + (0.15 * atr_w1):
+                        breached = True
+                        break
+                    if hi[i] > line_val + (0.35 * atr_w1):
+                        breached = True
+                        break
+                    if abs(hi[i] - line_val) <= (0.30 * atr_w1):
+                        touches += 1
+                        touching_bars.append({"idx": int(i), "price": round(float(hi[i]), digits)})
+                        
+                if not breached and touches >= min_touches:
+                    proj_live = y0 + m * ((n - 1) - x0)
+                    valid_lines.append((m, proj_live, touches, touching_bars, k))
+
+            if valid_lines:
+                best_line = min(valid_lines, key=lambda x: abs(x[1] - cl[-1]))
+                slope_ceiling = round(float(best_line[1]), digits)
+                intermediate_regime = "BEARISH_LOWER_HIGHS_COMPRESSION"
+                lower_highs = [{"idx": int(x0), "price": round(y0, digits), "label": "P0_ANCHOR"}] + [
+                    {"idx": int(tb["idx"]), "price": tb["price"], "label": f"LH_{idx+1}"}
+                    for idx, tb in enumerate(best_line[3])
+                ]
+
+        # 3. Horizon Conflict Detection:
+        # Jika harga saat ini mendekati garis slope ceiling (<= W1_SLOPE_PROXIMITY_TOL_ATR x ATR_W1)
+        horizon_conflict = False
+        if slope_ceiling is not None:
+            prox_tol = float(getattr(config, "W1_SLOPE_PROXIMITY_TOL_ATR", 0.50)) * atr_w1
+            dist_to_slope = abs(curr_mid - slope_ceiling)
+            if dist_to_slope <= prox_tol and curr_mid <= slope_ceiling + (0.20 * atr_w1):
+                horizon_conflict = True
+
+        return {
+            "secular_regime": secular_regime,
+            "intermediate_regime": intermediate_regime,
+            "slope_ceiling": slope_ceiling,
+            "lower_highs": lower_highs,
+            "horizon_conflict": horizon_conflict
+        }
+
     def compute_directive(self, symbol: str, mt5_connector=None, zce_walls=None) -> MacroStrategicDirective:
         """
         Calculates the complete Pure Quant Top-Down Strategic Directive for a symbol.
@@ -488,10 +606,21 @@ class MacroStrategicEngine:
             curr_mid = float(df_d1['close'].iloc[-1])
 
         # 2. Multi-Timeframe ATR Calculations
+        atr_w1 = self._calc_atr(df_w1) if not df_w1.empty else 0.002
         atr_d1 = self._calc_atr(df_d1)
         atr_h4 = self._calc_atr(df_h4)
         atr_h1 = self._calc_atr(df_h1)
         atr_m30 = self._calc_atr(df_m30)
+
+        # 2b. Dual-Horizon W1 Structural & Slope Analysis (Anchor Peak Law)
+        dual_w1 = self._evaluate_dual_horizon_w1(df_w1, atr_w1, digits, curr_mid) if getattr(config, "ENABLE_DUAL_HORIZON_W1", True) else {
+            "secular_regime": "SECULAR_RANGE",
+            "intermediate_regime": "NEUTRAL_OSCILLATION",
+            "slope_ceiling": None,
+            "lower_highs": [],
+            "horizon_conflict": False
+        }
+
 
         # 3. Macro Horizon Extremes
         mn1_low = float(df_mn1['low'].min()) if not df_mn1.empty else curr_mid * 0.8
@@ -785,6 +914,10 @@ class MacroStrategicEngine:
             raw_up_elements.append((round(d1_annual_high, digits), 4.5, "ANNUAL_HIGH"))
         if mn1_high and mn1_high > curr_mid + (0.01 * atr_h1):
             raw_up_elements.append((round(mn1_high, digits), 5.0, "MN1_HIGH"))
+
+        # W1 Descending Slope Barrier (Anchor Peak Law)
+        if dual_w1.get("slope_ceiling") and dual_w1["slope_ceiling"] > curr_mid + (0.01 * atr_h1):
+            raw_up_elements.append((round(dual_w1["slope_ceiling"], digits), 6.5, "W1_DESC_SLOPE_CEILING"))
 
         # Multi-Month Equal Highs (EQH) Liquidity Pools
         for eqh_p in eqh_d1_cands:
@@ -1716,6 +1849,17 @@ class MacroStrategicEngine:
             macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
 
+        # ── 4b. ANTI-FAKE EXPANSION GATE (HTF Lower High Ceiling Conflict) ──
+        if dual_w1.get("horizon_conflict") and dual_w1.get("slope_ceiling"):
+            if "BULLISH" in str(macro_bias).upper():
+                macro_bias = "HTF_LOWER_HIGH_CEILING_TEST"
+                action_tier = "WATCH_ONLY"
+                primary_directive = "HUNT_SELL_REJECTION"
+                max_allowed_buy = 0.0
+                forbidden_traps.insert(0, f"Do NOT buy into W1 Descending Slope Barrier at {dual_w1['slope_ceiling']:.{digits}f}")
+                stage_label = f"W1_SLOPE_TEST_AT_{dual_w1['slope_ceiling']:.{digits}f}"
+                thesis = f"{symbol} testing W1 Major Descending Slope Barrier ({dual_w1['slope_ceiling']:.{digits}f}). Local rally constrained by W1 Lower High resistance."
+
         if is_crypto:
             sl_pips = round(abs(intraday_sl - entry_anchor), 1)
             tp1_pips = round(abs(entry_anchor - tp1_price), 1)
@@ -1860,6 +2004,11 @@ class MacroStrategicEngine:
             current_mid=round(curr_mid, digits),
             primitive_state=primitive,
             contingency_graph=contingency_graph,
+            w1_secular_regime=dual_w1.get("secular_regime", "SECULAR_RANGE"),
+            w1_intermediate_regime=dual_w1.get("intermediate_regime", "NEUTRAL_OSCILLATION"),
+            w1_slope_ceiling=dual_w1.get("slope_ceiling"),
+            w1_lower_highs=dual_w1.get("lower_highs", []),
+            htf_horizon_conflict=dual_w1.get("horizon_conflict", False),
             raw_payload={
                 "market_state": market_state,
                 "primitive_location": primitive.location.value,
@@ -1868,6 +2017,11 @@ class MacroStrategicEngine:
                 "chamber_pos": chamber_pos,
                 "c1": imm_ceiling_c1,
                 "f1": imm_floor_f1,
+                "w1_slope_ceiling": dual_w1.get("slope_ceiling"),
+                "w1_lower_highs": dual_w1.get("lower_highs", []),
+                "htf_horizon_conflict": dual_w1.get("horizon_conflict", False),
+                "w1_secular_regime": dual_w1.get("secular_regime", "SECULAR_RANGE"),
+                "w1_intermediate_regime": dual_w1.get("intermediate_regime", "NEUTRAL_OSCILLATION"),
                 "c1_density_score": c1_density_score,
                 "f1_density_score": f1_density_score,
                 "c1_fortress_tag": c1_fortress_tag,

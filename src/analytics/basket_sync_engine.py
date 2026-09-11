@@ -673,7 +673,6 @@ def filter_and_rank_batch_candidates(
 
     # ── Tahap 3: Physical ZCE Runway Check & Wall-Exhaustion Skip ──
     stage3_passed = []
-    wall_threshold = float(getattr(config, "CBSS_WALL_EXHAUSTION_THRESHOLD_ATR", 0.50))
     for cand in stage2_passed:
         sym = getattr(cand, "symbol", "")
         direction = getattr(cand, "direction", 0)
@@ -682,10 +681,18 @@ def filter_and_rank_batch_candidates(
         is_g3_blocked, veto_reason = is_pair_blocked_by_g3_wall(sym, direction, macro_cache, current_mid=cand_mid)
 
         runway_atr = runway_info.get("runway_atr", 2.0)
-        if is_g3_blocked or runway_atr < wall_threshold:
+        opp_grade = runway_info.get("opp_wall_grade", "")
+        is_opp_g3 = ("3" in opp_grade or "MACRO" in opp_grade)
+        wall_threshold_g3 = float(getattr(config, "CBSS_WALL_EXHAUSTION_G3_ATR", 0.35))
+
+        # Eksklusif G3 Wall Exhaustion (11 Sep 2026):
+        # HANYA benteng makro sejati G3 yang memicu Wall Exhaustion / Relay Pause.
+        # Dinding G1 dan G2 adalah level minor/intermediate yang dapat ditembus (tidak memicu skip).
+        if is_g3_blocked or (is_opp_g3 and runway_atr < wall_threshold_g3):
             logger.info(
                 f"[CBSS WALL EXHAUSTED] {sym} ({'BUY' if direction == 1 else 'SELL'}) di-skip: "
-                f"Runway {runway_atr:.2f}x ATR < {wall_threshold:.2f}x ATR atau menabrak benteng ({veto_reason})."
+                f"Runway {runway_atr:.2f}x ATR < {wall_threshold_g3:.2f}x ATR menabrak benteng makro G3 ({opp_grade}) "
+                f"atau menabrak benteng ({veto_reason})."
             )
             continue
         if hasattr(cand, "metadata") and isinstance(cand.metadata, dict):

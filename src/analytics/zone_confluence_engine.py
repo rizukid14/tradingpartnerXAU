@@ -49,7 +49,7 @@ ZCE_W_KIND: Dict[str, float] = {
     "FVG": 0.80, "FRVP_POC": 1.00, "FRVP_VAH": 0.85, "FRVP_VAL": 0.85,
     "SWING_HIGH": 0.85, "SWING_LOW": 0.85,
     "LAST_HIGH": 0.60, "LAST_LOW": 0.60, "PSYCH_MAJOR": 0.80, "PSYCH_SUB": 0.50,
-    "EMA_BAND": 0.45,
+    "EMA_BAND": 0.25,
 }
 ZCE_HORIZON_BOOST: List[tuple] = [(100, 1.00), (150, 1.10), (250, 1.20), (350, 1.30), (600, 1.35)]
 
@@ -212,8 +212,9 @@ class ZoneConfluenceEngine:
         self.grid = p.get("grid", ZCE_GRID)
         self.w_tf = p.get("w_tf", ZCE_W_TF)
         self.w_kind = dict(p.get("w_kind", ZCE_W_KIND))
-        self.grade_g2 = p.get("grade_g2", 3.5)
-        self.grade_g3 = p.get("grade_g3", 6.5)
+        self.w_kind["EMA_BAND"] = float(p.get("ema_weight", getattr(config, "ZCE_EMA_WEIGHT", 0.25)))
+        self.grade_g2 = float(p.get("grade_g2", getattr(config, "ZCE_GRADE_G2_THRESHOLD", 5.0)))
+        self.grade_g3 = float(p.get("grade_g3", getattr(config, "ZCE_GRADE_G3_THRESHOLD", 8.5)))
         self.merge_atr_mult = p.get("merge_atr_mult", 0.25)
         self.cold_days = p.get("cold_days", 21)
         self.vacuum_days = p.get("vacuum_days", 60)
@@ -346,6 +347,24 @@ class ZoneConfluenceEngine:
                             out.append(ZonePrimitive("FRVP_POC", tf, h, float(n) + 0.025 * atr_tf, float(n) - 0.025 * atr_tf))
                 except Exception:
                     pass
+
+        # Dynamic EMA Bands (20, 50, 100, 200) untuk H1, H4, D1
+        if tf in ("H1", "H4", "D1"):
+            for span in (20, 50, 100, 200):
+                if len(df) >= span:
+                    try:
+                        ema_val = float(df["close"].ewm(span=span, adjust=False).mean().iloc[-1])
+                        half_thick = 0.03 * atr_tf
+                        out.append(ZonePrimitive(
+                            kind="EMA_BAND",
+                            tf=tf,
+                            horizon=span,
+                            top=ema_val + half_thick,
+                            bottom=ema_val - half_thick,
+                            index_age=0
+                        ))
+                    except Exception:
+                        pass
 
         # Clamp lebar primitif (anti-jembatan): OB/FVG raksasa dipotong simetris terhadap mid
         # agar tidak menjembatani dua node struktural yang sebenarnya berjauhan.
@@ -502,14 +521,47 @@ class ZoneConfluenceEngine:
                 confluence=len(pairs),
             )
             c.fortress_tag = f"{'C_' if role == 'CEILING' else 'F_'}{'+'.join(kinds_present)}@{tfmax}"
-            if c.score_final >= self.grade_g3:
-                c.grade = "GRADE_3_MACRO"
-            elif c.score_final >= self.grade_g2:
-                c.grade = "GRADE_2_INTERMEDIATE"
-            else:
-                c.grade = "GRADE_1_MICRO"
+            # Special G3 Protocol: evaluasi seluruh primitif yang berkontribusi ke skor node
+            active_prims = members + [p for p in prims if abs(self._prim_edge(p) - anchor) <= score_radius]
+            c.grade = self._assign_cluster_grade(c, active_prims)
             nodes.append(c)
         return nodes
+
+    def _assign_cluster_grade(self, cluster: ZoneCluster, prims_list: List[ZonePrimitive]) -> str:
+        """
+        Special G3 Protocol (11 Sep 2026):
+        - Syarat GRADE_3_MACRO: score_final >= self.grade_g3 (8.5) DAN wajib memiliki
+          jangkar makro sejati:
+            1. Primitive LAST_LOW / LAST_HIGH / SWING_LOW / SWING_HIGH / EQL / EQH / OB_BULL / OB_BEAR
+               pada timeframe makro D1, W1, atau MN1.
+            2. Primitive LAST_LOW / LAST_HIGH pada H4 dengan horizon deep (horizon >= 100).
+            3. Primitive PSYCH_MAJOR (level bulat utama, e.g. 1.60000, 1.61000).
+        - Jika score_final >= self.grade_g3 tapi TIDAK punya jangkar makro sejati,
+          grade di-cap maksimal ke GRADE_2_INTERMEDIATE (mencegah inflasi skor dari tumpukan mikro).
+        - GRADE_2_INTERMEDIATE: score_final >= self.grade_g2 (5.0).
+        - Sisanya: GRADE_1_MICRO.
+        """
+        score = cluster.score_final
+        if score >= self.grade_g3:
+            has_macro_anchor = any(
+                (
+                    p.tf in ("D1", "W1", "MN1")
+                    and p.kind in ("LAST_LOW", "LAST_HIGH", "SWING_LOW", "SWING_HIGH", "EQL", "EQH", "OB_BULL", "OB_BEAR")
+                )
+                or (
+                    p.tf == "H4"
+                    and p.kind in ("LAST_LOW", "LAST_HIGH")
+                    and getattr(p, "horizon", 0) >= 100
+                )
+                or (p.kind == "PSYCH_MAJOR")
+                for p in prims_list
+            )
+            if has_macro_anchor:
+                return "GRADE_3_MACRO"
+            return "GRADE_2_INTERMEDIATE"
+        elif score >= self.grade_g2:
+            return "GRADE_2_INTERMEDIATE"
+        return "GRADE_1_MICRO"
 
     def _finalize_cluster(
         self, cid: int, members: List[ZonePrimitive], b_lo: float, b_hi: float,
@@ -545,12 +597,7 @@ class ZoneConfluenceEngine:
             kinds_present=sorted({m.kind for m in members}),
             width_atr=round((b_hi - b_lo) / max(atr_h1, 1e-9), 3),
         )
-        if c.score_final >= self.grade_g3:
-            c.grade = "GRADE_3_MACRO"
-        elif c.score_final >= self.grade_g2:
-            c.grade = "GRADE_2_INTERMEDIATE"
-        else:
-            c.grade = "GRADE_1_MICRO"
+        c.grade = self._assign_cluster_grade(c, members)
         tfmax = max((m.tf for m in members), key=lambda t: self.w_tf.get(t, 0))
         prefix = "C_" if ceil_w >= floor_w else "F_"
         c.fortress_tag = f"{prefix}{'+'.join(c.kinds_present)}@{tfmax}"

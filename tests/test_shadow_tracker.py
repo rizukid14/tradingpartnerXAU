@@ -330,8 +330,8 @@ class TestQuantShadowTracker(unittest.TestCase):
             tp_points=400
         )
         mock_connector = MagicMock()
-        # Price moves up to 1.10150 (+150 pts, 37.5% TP >= 35% TP threshold of 400 pts) -> BEP triggers (+15 pts above entry -> 1.10015)
-        mock_connector.get_current_tick.return_value = {"ask": 1.10155, "bid": 1.10145, "point": 0.00001, "digits": 5}
+        # Price moves up to 1.10245 (+245 pts, 61.25% TP >= 60% TP threshold of 400 pts) -> BEP triggers (+15 pts above entry -> 1.10015)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10250, "bid": 1.10240, "point": 0.00001, "digits": 5}
         self.tracker.update_shadow_orders(mock_connector)
 
         trade = self.tracker.active_trades[0]
@@ -360,27 +360,84 @@ class TestQuantShadowTracker(unittest.TestCase):
             tp_points=400
         )
         mock_connector = MagicMock()
-        # Price surges to 1.10200 (+200 pts, +1.00R, like EURUSD today)
-        # Trailing triggers: current_sl = entry + (1.00 - 0.40) * 0.00200 = 1.10120 (+0.60R)
-        mock_connector.get_current_tick.return_value = {"ask": 1.10205, "bid": 1.10195, "point": 0.00001, "digits": 5}
+        # Price surges to 1.10310 (+310 pts, 77.5% TP >= 75% TP Tier 1)
+        # Trailing triggers Tier 1: lock 50% TP (200 pts above entry = 1.10200)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10315, "bid": 1.10305, "point": 0.00001, "digits": 5}
         self.tracker.update_shadow_orders(mock_connector)
 
         trade = self.tracker.active_trades[0]
         self.assertTrue(trade.bep_activated)
         self.assertTrue(trade.trailing_activated)
-        self.assertEqual(trade.current_sl, 1.10120)
+        self.assertEqual(trade.current_sl, 1.10200)
 
-        # Price pulls back and hits trailing SL (ask <= 1.10120)
-        mock_connector.get_current_tick.return_value = {"ask": 1.10115, "bid": 1.10110, "point": 0.00001, "digits": 5}
+        # Price surges further to 1.10370 (+370 pts, 92.5% TP >= 90% TP Tier 2)
+        # Trailing triggers Tier 2: lock 80% TP (320 pts above entry = 1.10320)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10375, "bid": 1.10365, "point": 0.00001, "digits": 5}
+        self.tracker.update_shadow_orders(mock_connector)
+        self.assertEqual(trade.current_sl, 1.10320)
+
+        # Price pulls back and hits trailing SL (ask <= 1.10320)
+        mock_connector.get_current_tick.return_value = {"ask": 1.10315, "bid": 1.10310, "point": 0.00001, "digits": 5}
         resolved = self.tracker.update_shadow_orders(mock_connector)
 
         self.assertEqual(len(resolved), 1)
         self.assertEqual(resolved[0].outcome, "TRAILING_SL_HIT")
-        self.assertEqual(resolved[0].net_r, 0.60)
-        self.assertEqual(resolved[0].exit_price, 1.10120)
+        self.assertEqual(resolved[0].net_r, 1.60)  # 320 pts / 200 pts risk = 1.60R
+        self.assertEqual(resolved[0].exit_price, 1.10320)
 
         summary = self.tracker.get_performance_summary()
-        self.assertEqual(summary["cumulative_net_r"], 0.60)
+        self.assertEqual(summary["cumulative_net_r"], 1.60)
+
+    def test_grade_b_bep_accelerated_to_35_percent_tp(self):
+        """Verify that GRADE_B setup triggers BEP at 35% TP rather than standard 60% TP."""
+        cand = self._make_candidate(direction=1)
+        cand.setup_grade = "GRADE_B"
+        # BUY: entry 1.10000, sl 1.09800 (risk 200 pts), tp 1.10400 (400 pts)
+        self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=1.10000,
+            sl_price=1.09800,
+            tp_price=1.10400,
+            sl_points=200,
+            tp_points=400,
+        )
+        mock_connector = MagicMock()
+        # Price reaches 38% TP (+152 pts, price 1.10152):
+        # Grade B (35% threshold) MUST trigger BEP!
+        # Standard Grade A (60% threshold) would NOT trigger BEP.
+        mock_connector.get_current_tick.return_value = {"ask": 1.10155, "bid": 1.10150, "point": 0.00001, "digits": 5}
+        self.tracker.update_shadow_orders(mock_connector)
+
+        trade = self.tracker.active_trades[0]
+        self.assertTrue(trade.bep_activated, "Expected BEP to be activated at 38% TP for GRADE_B (threshold 35%)")
+        self.assertEqual(trade.current_sl, 1.10015)  # Entry + 15 pts
+
+    def test_record_resolved_idempotency(self):
+        """Verify that _record_resolved does not double-count stats or duplicate records."""
+        cand = self._make_candidate(direction=1)
+        trade = self.tracker.register_candidate(
+            candidate=cand,
+            entry_type="market",
+            entry_price=1.10000,
+            sl_price=1.09800,
+            tp_price=1.10400,
+            sl_points=200,
+            tp_points=400,
+        )
+        trade.status = "RESOLVED"
+        trade.outcome = "TP_HIT"
+        trade.net_r = 2.0
+
+        # Call _record_resolved multiple times
+        self.tracker._record_resolved(trade)
+        self.tracker._record_resolved(trade)
+        self.tracker._record_resolved(trade)
+
+        # Cumulative net_r and total_resolved must only be counted once
+        self.assertEqual(self.tracker._stats["total_resolved"], 1)
+        self.assertEqual(self.tracker._stats["tp_hits"], 1)
+        self.assertEqual(self.tracker._stats["cumulative_net_r"], 2.0)
 
 
 if __name__ == "__main__":

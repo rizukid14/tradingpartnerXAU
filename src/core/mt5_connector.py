@@ -163,10 +163,13 @@ def init_mt5():
         _register_mt5_atexit()
 
     if config.MT5_LOGIN and config.MT5_PASSWORD:
-        if not mt5.login(int(config.MT5_LOGIN), password=str(config.MT5_PASSWORD), server=str(config.MT5_SERVER)):
-            last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
-            print(f"[MT5 ERROR] Could not login to MT5 account #{config.MT5_LOGIN} on server {config.MT5_SERVER}: {last_err}")
-            return False
+        cur_acc = mt5.account_info() if hasattr(mt5, "account_info") and callable(mt5.account_info) else None
+        cur_login = getattr(cur_acc, "login", None)
+        if cur_login != int(config.MT5_LOGIN):
+            if not mt5.login(int(config.MT5_LOGIN), password=str(config.MT5_PASSWORD), server=str(config.MT5_SERVER)):
+                last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
+                print(f"[MT5 ERROR] Could not login to MT5 account #{config.MT5_LOGIN} on server {config.MT5_SERVER}: {last_err}")
+                return False
 
     # Institutional Safety Guard: MT5_ACCOUNT_MODE validation
     if hasattr(mt5, "account_info") and callable(mt5.account_info):

@@ -2,6 +2,326 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 103. Perubahan 11 September 2026 (Malam III) — Penguncian Ketat Dealing Range pada Mekanisme Radar (M1, M2, M3) & Eliminasi Total Anomali Sweep di Zona Diskon (Resolusi Kasus EURGBP)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kebocoran Klausa Bypass M1 Universal Liquidity Sweep (`market_scanner.py:4054, 4224`)**:
+   - Pada pukul 17:26:20 WIB, bot mengeksekusi order riil `EURGBP-ECNc SELL` via M1 Universal Liquidity Sweep di harga `0.85836`.
+   - Investigasi forensik membuktikan bahwa harga `0.85836` berada di **42.7% Dealing Range** (`dr_pos = 0.427`), yang merupakan **Lantai Support Intraday / Zona Diskon** (di bawah garis ekuilibrium 50%).
+   - Ditemukan klausa bypass:
+     `is_premium_sweep = (dr_pos_val >= 0.55) or (intraday_dr_pos >= 0.50) or (ref_top > 0 and mid >= ref_top - (0.35 * atr_price_val))`
+   - Klausa ketiga mem-bypass total syarat Premium sehingga level plafon mikro di area support diskon dipungut oleh `min(valid_tops)` dan dianggap sebagai "Bearish Stop Hunt / SFP High".
+2. **Ketiadaan Boundary Collision Guard di M2 dan M3**:
+   - M2 Pullback berpotensi membeli saat harga sudah menempel plafon atas ($dr\_pos \ge 0.80$) atau menjual di dasar lantai ($dr\_pos \le 0.20$) jika runway menuju benteng lawan sempit.
+   - M3 Breakout Retest berpotensi mengejar breakout di puncak ekstrim ($dr\_pos \ge 0.85$) atau dasar ekstrim ($dr\_pos \le 0.15$) tanpa konfirmasi jebolnya dinding ZCE C1/F1.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Penguncian Mati Dealing Range pada M1 Sweep (`market_scanner.py`)**:
+   - Menghapus total klausa bypass `or (ref_top > 0 and mid >= ref_top - 0.35*atr)` pada M1 SELL dan `or (ref_bot > 0 and mid <= ref_bot + 0.35*atr)` pada M1 BUY.
+   - **M1 SELL**: Wajib memenuhi `dr_pos_val >= 0.55` atau `intraday_dr_pos >= 0.50`. Jika tidak, order langsung ditolak dengan log `[SWEEP SELL DISCOUNT VETO]`.
+   - **M1 BUY**: Wajib memenuhi `dr_pos_val <= 0.45` atau `intraday_dr_pos <= 0.50`. Jika tidak, order langsung ditolak dengan log `[SWEEP BUY PREMIUM VETO]`.
+   - **Zone Integrity Filter**: Level plafon (`valid_tops`) dilarang memungut level di zona Diskon ($dr < 0.50$), dan level lantai (`valid_bots`) dilarang memungut level di zona Premium ($dr > 0.50$).
+2. **Boundary Collision Guard pada M2 Pullback (`market_scanner.py`)**:
+   - M2 BUY: Dilarang beli jika $dr\_pos \ge 0.80$ dan runway ke plafon lawan $C_1 < 0.40\times\text{ATR}$ (`[PULLBACK BUY CEILING COLLISION]`).
+   - M2 SELL: Dilarang jual jika $dr\_pos \le 0.20$ dan runway ke lantai lawan $F_1 < 0.40\times\text{ATR}$ (`[PULLBACK SELL FLOOR COLLISION]`).
+3. **Exhaustion Retest Guard pada M3 Breakout Retest (`market_scanner.py`)**:
+   - M3 BUY: Dilarang mengejar retest di puncak ekstrim $dr\_pos \ge 0.85$ tanpa konfirmasi dinding $C_1$ telah jebol fisik (`[BREAKOUT BUY EXHAUSTION]`).
+   - M3 SELL: Dilarang mengejar retest di dasar ekstrim $dr\_pos \le 0.15$ tanpa konfirmasi dinding $F_1$ telah jebol fisik (`[BREAKOUT SELL EXHAUSTION]`).
+4. **Unit Testing & Verifikasi Penuh**:
+   - Penambahan unit test `test_m1_sweep_dealing_range_locks_veto_discount_sell_and_premium_buy` dan `test_m2_and_m3_dealing_range_boundary_guards` di `tests/test_market_scanner.py`.
+   - Seluruh 265 unit test pada sistem berstatus **100% PASS** (`OK`).
+
+---
+
+## 102. Perubahan 11 September 2026 (Malam II) — Resolusi Konflik Multi-Mekanisme Radar (M1, M1B, M2, M3, M4) Berbasis ZCE Runway & Keselarasan Makro/Mikro serta Harmonisasi 1:1 Dashboard Cockpit
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Short-Circuit `continue` Prematur di Radar Engine (`market_scanner.py`)**:
+   - Fungsi `scan_fast_radar` sebelumnya langsung memanggil `continue` setelah menemukan suatu mekanisme (M1 -> skip M2-M4, M2 -> skip M3-M4).
+   - Akibatnya, pada satu simbol yang sama, jika M2 (Pullback) terdeteksi di EMA, bot mengabaikan M3 (Breakout Retest terkonfirmasi di level struktural) atau M4 (Basing Box Continuation) yang mungkin memiliki R:R dan runway jauh lebih superior.
+2. **Desinkronisasi Arah Standby Dashboard vs Engine (Kasus AUDCHF & Pasangan JPY)**:
+   - Dashboard Cockpit `_elect_primary_standby` hanya menyortir berdasarkan flag tren D1 (`macro['is_bull']`), mengabaikan posisi dealing range harga di plafon C1 dan momentum mikro (Boitoki CSM Net Delta).
+   - Akibatnya, pada AUDCHF di mana harga berada di plafon C1 (0.5838) dengan CSM Delta AUD -2.15 (bearish), dashboard menampilkan sinyal BUY sementara engine radar mengeksekusi SELL.
+   - Demikian pula pada pasangan JPY (EURJPY vs CADJPY), seleksi kandidat tanpa penilaian runway menyebabkan benturan arah.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Peniadaan `continue` Prematur & Intra-Symbol Mechanism Resolution (`market_scanner.py`)**:
+   - Menghapus seluruh `continue` prematur di M1 BUY/SELL, M1B BUY/SELL, M2 BUY/SELL, dan M3 BUY/SELL.
+   - Mengumpulkan seluruh setup kandidat dalam satu siklus scan per simbol ke `sym_candidates = []`.
+   - Mengimplementasikan helper `_resolve_best_mechanism_candidate()`:
+     * **Confluence Fusion**: Melebur setup yang searah dalam jarak $\le 0.35\times\text{ATR}$ menjadi satu tiket konfluensi berkekuatan ganda (misal: `M1+M3_CONFLUENCE`, `M2+M3_CONFLUENCE`, `M1+M1B+M3_CONFLUENCE`), dan meningkatkan grade setup (`GRADE_A` $\rightarrow$ `GRADE_A+` $\rightarrow$ `GRADE_S`).
+     * **Composite Scoring untuk Setup Berlawanan**:
+       $$\text{Score} = (2.0 \times \text{macro\_score}) + (1.5 \times \text{micro\_score}) + (1.5 \times \min(3.5, \text{runway\_atr})) + \text{chamber\_bonus}$$
+     * Memberikan penalti bagi arah yang menabrak plafon/lantai terdekat dan memberikan bonus bagi pemudaran (*fade*) plafon C1 / lantai F1.
+2. **Harmonisasi 1:1 Dashboard Cockpit (`dashboard.py`)**:
+   - Memperbarui `_elect_primary_standby` agar mendeteksi posisi Dealing Range ekstrem ($dr\_pos \ge 0.80$ dengan CSM bearish membalikkan preferred direction ke SELL; $dr\_pos \le 0.20$ dengan CSM bullish membalikkan ke BUY).
+   - Mengintegrasikan evaluasi kapasitas runway `runway_atr` (dengan ambang `has_healthy_runway >= 0.25x ATR`).
+   - Menerapkan sorting hirarki institusional:
+     `Confluence > Preferred Direction > Active Physical Interaction > Actionable > Healthy Runway > Distance to Market (Proximity)`.
+   - Menyelaraskan kartu visual watchlist, retikel trajectory, dan HUD phase secara 1:1 dengan engine radar.
+3. **Unit Testing & Verifikasi Penuh**:
+   - Penambahan unit test `test_same_direction_confluence_fusion` dan `test_opposing_direction_runway_and_macro_resolution` di `tests/test_market_scanner.py`.
+   - Penyelarasan `test_elect_primary_standby_pro_trend_priority` di `tests/test_dashboard.py`.
+   - Verifikasi 263 unit test di seluruh repositori: **100% PASS** (`OK`).
+
+---
+
+## 101. Perubahan 11 September 2026 (Malam) — Rekonstruksi Geometri Trade Kuantitatif MT5 (Pilar 0–7) & Resolusi Tuntas Kasus Forensik AUDNZD (Anti-Marubozu Waterfall, MSE Mid-Chamber Leak Closure, dan Projected SBR / Breached Wall Law)
+
+### Latar Belakang & Investigasi Kuantitatif:
+1. **Pembedahan Data 1 Minggu (165 Live Trades & 219 Shadow Trades)**:
+   - Evaluasi asimetri performa arah: Buy win rate konsisten menguntungkan, sementara Sell mengalami anomali tajam pada candle ekspansif lawan (*Marubozu Waterfall*), terutama pada pair Crosses seperti AUDNZD @ RBS 1.22800.
+   - Analisis geometri menunjukkan 3 cacat kritis pada formula lama:
+     * *Struct_dist* bernilai nol pada order limit M2/M3 karena `entry_lim = origin_level`, menyebabkan SL hanya bergantung pada suku statis atau lantai bawah.
+     * Keterikatan artifisial TP pada kelipatan SL (`min_tp = 1.25 * SL + friction`) di mode ZCE memaksa target menjauh melompati benteng alami terdekat, memotong win rate secara drastis.
+     * Ketiadaan batas atas lot pada akun Cent menyebabkan SL ketat (<60 pts) melompatkan volume posisi hingga $\ge 1.20 - 2.00$ lot.
+2. **Kasus Forensik AUDNZD SELL @ 1.22800**:
+   - Bot memasang `sell_limit` tepat di puncak candle Marubozu bullish yang sedang menembus level RBS.
+   - Ditemukan kebocoran struktural: bypass `is_limit_retest` membocorkan entry di lorong transit terlarang Mid-Chamber MSE, dan level yang sedang ditembus (*breached*) dipungut sebagai anchor limit tanpa validasi penutupan badan lilin.
+
+---
+
+### Solusi Arsitektur & Perubahan Komponen (Pilar 0–7):
+1. **Pilar 0 — Telemetri Geometri 6 Kolom (`shadow_tracker.py` & `position_manager.py`)**:
+   - Menambahkan 6 kolom telemetri struktural pada `ShadowTrade` dan `trade_lifecycle_telemetry.json`:
+     `invalidation_dist`, `sl_effective`, `sl_atr_ratio`, `tp_atr_ratio`, `friction_ratio`, dan `session_window`.
+2. **Pilar 1 — Plafon Lot Maksimal Akun Cent (`config.py`, `.env`, `risk_engine.py`)**:
+   - Mengunci `MAX_POSITION_LOT = 0.50` di `.env` dan `config.py`.
+   - `risk_engine.py` secara tegas meng-clamp ukuran lot efektif maksimal ke `0.50 lot` agar trade dengan SL rapat tidak mengambil eksposur risiko abnormal.
+3. **Pilar 2 — Dekopel TP dari Kelipatan SL (`consensus.py`)**:
+   - Memisahkan penanganan non-ZCE legacy (sesuaikan ke `min_tp` untuk backward-compatibility test) dari mode ZCE produksi.
+   - Pada mode ZCE aktif, target struktural ZCE dipertahankan apa adanya selama memenuhi kapasitas runway Grade B floor ($0.50\times\text{SL} + \text{friksi}$) tanpa menaikkan TP secara artifisial.
+4. **Pilar 3 — Floor Turunan Friksi (`config.py`, `.env`)**:
+   - Parameter `FRICTION_FLOOR_DIVISOR = 0.20` via helper `config.friction_floor_points(spread_pts, comm_pts=6)` memastikan total friksi broker (spread + round-turn komisi) tidak melebihi 20% dari jarak Stop Loss.
+5. **Pilar 4 — Formula SL Seimbang Tiga Suku di Atlas DNA (`atlas_dna.py`)**:
+   - Reformulasi Stop Loss:
+     $$\text{invalidation\_buffer} = \max(0.15\times\text{ATR}, (2\times\text{spread} + 10)\times\text{pt})$$
+     $$\text{struct\_dist} = |\text{entry} - \text{origin}| + \text{invalidation\_buffer}$$
+     $$\text{SL} = \max(\text{struct\_dist}, 1.00\times\text{ATR}, \text{fric\_floor})$$
+   - Mencegah formula degenerate menjadi nol saat entry berimpit dengan anchor limit di M2/M3.
+   - Menghapus pembatasan redundan `(c2 - entry) <= 3.5 * risk` pada pemilihan `target_station` saat dinding C1/F1 telah jebol (`c1_breached` / `f1_breached`), sehingga stasiun target mengakui benteng berikutnya (C2/F2) sementara eksekusi TP tetap ter-clamp aman pada $3.50\times\text{risk}$.
+6. **Pilar 5 — Defensif London 15:00–17:59 WIB (`market_scanner.py`)**:
+   - Mengaktifkan `ENABLE_LDN_DEFENSIVE_WINDOW = True`.
+   - Melarang pemasangan `sell_limit` pasif pada jendela London Open 15:00–17:59 WIB (`[LDN15-17 DEFENSIVE]`), memitigasi anomali performa SELL di jam volatil pembukaan pasar Eropa.
+7. **Pilar 6 — Target Jauh Bersyarat $\ge 2.5\times\text{ATR}$ (`market_scanner.py`)**:
+   - Injeksi helper `_apply_conditional_far_target` ke seluruh mekanisme (M1 BUY/SELL, M2 BUY/SELL, M3 BUY/SELL, M4).
+   - Target TP $\ge 2.5\times\text{ATR}$ hanya diizinkan jika didukung oleh rezim Tokyo dengan $|\text{CSM Delta}| \ge 2.00$ atau konfirmasi dinding ZCE telah ditembus (`c1_breached` / `f1_breached`). Jika tidak, target otomatis disesuaikan ke ambang batas netral $2.5\times\text{ATR}$.
+8. **Pilar 7 — Proteksi Momentum Lilin & Integritas Kamar (Resolusi Kasus AUDNZD)**:
+   - **Anti-Marubozu Waterfall Guard di M3 Retest**: Memanggil `_evaluate_m2_wall_quality` pada setup M3 BUY & SELL. Jika lilin mendekati anchor dengan momentum ekspansi counter-trend (`body_ratio >= 0.55` dan `rejection_wick < 0.20`), order langsung DITOLAK TOTAL (`MARUBOZU_WATERFALL`).
+   - **Penutupan Kebocoran Mid-Chamber MSE**: Menghapus bypass naif `if is_limit_retest: continue` untuk `MID-CHAMBER` di `market_scanner.py`. Membatasi order SELL hanya di area plafon sejati ($entry \ge C_1 - 0.25\times\text{ATR}$) dan BUY di lantai sejati ($entry \le F_1 + 0.25\times\text{ATR}$). Jika berada di koridor transit: `[MID-CHAMBER FREEZE] Entry ditolak`.
+   - **Projected SBR / Breached Wall Law**: Menambahkan filter `_is_zce_wall_breached` pada pencarian anchor M3 agar level yang telah ditembus badan lilin tidak dipilih sebagai limit anchor.
+
+---
+
+### Verifikasi & Suite Pengujian:
+- Pembuatan test suite komprehensif baru `tests/test_trade_geometry_and_audnzd_guard.py` (10 test cases: 10/10 PASS).
+- Penyelarasan test warisan: `tests/test_m3_discount_guard_and_leapfrog.py` (9/9 PASS), `tests/test_pure_quant_execution.py` (2/2 PASS), `tests/test_sep8_enhancements.py` (10/10 PASS).
+- Seluruh 261 unit test pada sistem berstatus **100% PASS** (`OK`).
+
+---
+
+## 100. Perubahan 11 September 2026 (Sore) — Rekonsiliasi Kritis Tesis Chamber-to-Chamber vs Telemetri Empiris: Proteksi Edge Diskon Mid-Chamber, Persistensi Telemetri Grade Dinding, Soft-Gate GRADE_B pada Dinding G1, dan Marubozu Guard pada Mechanism 2 (M2 Pullback)
+
+### Latar Belakang & Investigasi Telemetri Empiris (219 Shadow Trades & 43 Live Trades):
+1. **Audit Kritis Dokumen Tesis (`THESIS_CHAMBER_TO_CHAMBER_AND_MOMENTUM_CONFIRMATION.md`)**:
+   - Tesis mendalilkan kegagalan trade M2 SELL AUDUSD @ 0.71723 sebagai "Mid-Chamber Trap" dan merekomendasikan penghapusan bypass `is_limit_retest` di `market_scanner.py:3576`.
+   - **Hasil Uji Kohort Empiris (DeepSeek)**:
+     * **Boundary ($\le 0.35 / \ge 0.65$, $n=96$) vs Mid-Range ($0.35-0.65$, $n=78$)**:
+       - Take Profit (TP Hit): 30.2% vs 20.5% (Chi-square $p = 0.166$, tidak signifikan).
+       - Stop Loss (SL Hit): **21.9% vs 24.4%** (Chi-square $p = 0.699$, **praktis identik!**).
+       - Cumulative Net R: +17.75 R vs -1.88 R (Gain jika mid dibuang hanya +1.88 R, sedangkan noise harian M2 adalah 7.96 R: efeknya cuma $0.24\times$ noise).
+       - Mean R: +0.185 R vs -0.024 R (Permutasi $p = 0.039$, Bootstrap 95% CI $[+0.014, +0.399]\text{R}$).
+     * **Mekanisme Tesis Terbantahkan**: Klaim bahwa order mid-chamber "diinjak waterfall" terbukti keliru karena tingkat hard-SL identik. Masalah sejati adalah efisiensi exit (trade mid-range terpotong di BEP/trailing sebelum sempat lari karena runway sempit).
+     * **Bypass Baris 3576 Wajib Dipertahankan**: Limit order diskon dalam chamber terbukti menghasilkan Win Rate 66.7% (vs 55.1% pada chasing breakout). Menghapus bypass ini akan merusak setup diskon M2 dan M4 berbasis R:R asimetris.
+     * **Missed M1 BUY AUDUSD**: Terjadi bukan karena toleransi sweep (`sweep_tol`), melainkan akibat `[SFR VETO]` (Supreme Precedence di `market_scanner.py:3453`) yang mengunci keranjang systemic USD.
+     * **Akar Masalah M2 SELL AUDUSD**: Bot mengeksekusi limit order tepat di benteng ZCE C1 saat itu (`0.71724`). Namun M2 tidak memiliki Wall Quality Gate dan memiliki klausa trivial `has_res_hold = (mid <= base_ceiling + 0.15*ATR)` yang selalu bernilai True, sehingga bot memasang limit order menabrak candle Marubozu bullish bertenaga tinggi (body 71%, upper wick 13%) di benteng `GRADE_1_MICRO`.
+     * **Ilusi Log Audit**: Baris `[ZCE-AUDIT]` di `main.py` salah mencetak level Stop Loss dan Take Profit sebagai F1/C1, menimbulkan ilusi bahwa bot masuk di level ngawur.
+
+---
+
+### Solusi Arsitektur & Perubahan Komponen (Checklist 8 File Wajib):
+1. **`src/analytics/shadow_tracker.py` & `src/analytics/position_manager.py` (Persistensi Telemetri Grade Dinding)**:
+   - Menyimpan `wall_grade`, `f1_reaction_grade`, `c1_reaction_grade`, `zce_f1`, dan `zce_c1` ke dalam metadata `quant_shadow_trades.jsonl`, `quant_shadow_state.json`, dan `trade_lifecycle_telemetry.json`.
+   - Mengakhiri keterbatasan ketiadaan data historis grade dinding, memungkinkan audit counterfactual yang akurat setelah terkumpul $\ge 60-100$ trade berikutnya.
+2. **`main.py`**:
+   - Menyelaraskan baris cetak `[ZCE-AUDIT]` (market & pending order) agar mengambil level `ZCE_F1` dan `ZCE_C1` sejati dari metadata kandidat radar, bukan lagi Stop Loss (`sl`) atau `dealing_range_low`.
+   - Meneruskan metadata ZCE ke `position_manager.record_trade_open_telemetry()`.
+3. **`src/analytics/market_scanner.py`**:
+   - Menyuntikkan `zce_f1`, `zce_c1`, `f1_grade`, dan `c1_grade` langsung ke `zce_meta` di setiap kandidat radar.
+   - **Soft-Gate G1 Micro-Wall (M2 BUY & M2 SELL)**: Jika anchor bertengger di benteng `GRADE_1_MICRO` tanpa konfirmasi wick rejection $\ge 25\%$, setup di-soft-gate ke **`GRADE_B`** (1 tiket murni, no partial, BEP dipercepat ke 35% TP) alih-alih di-hard-block, mempertahankan kelengkapan sampel trade.
+   - **Momentum Exhaustion Gate (Marubozu Guard)**: Melarang keras limit order dipasang menabrak candle ekspansif (body $\ge 55\%$ dengan rejection wick $< 20\%$) tanpa adanya tanda kelelahan momentum.
+   - **Pembersihan Logika `has_res_hold` / `has_support_hold`**: Menghapus klausa longgar `(mid <= base_ceiling + 0.15*ATR)` yang sebelumnya memicu eksekusi buta.
+   - **Key Levels Alignment**: Memetakan `key_support` dan `key_resistance` ke benteng struktural asli, bukan Stop Loss.
+4. **`docs/superpowers/specs/2026-09-11-RECONCILIATION-chamber-thesis-vs-telemetry.md`**:
+   - Dokumentasi formal audit kuantitatif komprehensif mencakup tabel kohort DeepSeek, pengujian statistik permutasi & chi-square, rasionalisasi penolakan penghapusan bypass mid-chamber, dan adopsi soft-gate.
+5. **`tests/test_m2_wall_quality_and_exhaustion.py`**:
+   - Penambahan unit test suite khusus 6 skenario (G1 micro wall soft-gate ke GRADE_B, Marubozu guard BUY/SELL, valid rejection pass, ZCE-AUDIT formatting, dan verifikasi persistensi telemetri grade).
+   - Seluruh test dipastikan **100% PASS** dalam 1.54 detik.
+6. **Status Parameter CBSS**:
+   - Sesuai arahan pengguna, modul CBSS tetap dipertahankan nonaktif (`ENABLE_CBSS=false` di `.env` dan `config.py`).
+
+---
+
+## 99. Perubahan 11 September 2026 (Siang) — Dual-Horizon Multi-Timeframe Structural Engine (MSE & ZCE): Eliminasi Kebutaan Horizon (Horizon Blindness) via Anchor Peak Law & Anti-Fake Expansion Gate
+
+### Latar Belakang & Investigasi Kuantitatif:
+1. **Diagnosis Anomali Kasus EURNZD-ECNc**:
+   - Pada chart H1/D1, bot mendeteksi kenaikan +520 pips dalam 5 hari terakhir sebagai `D1_BULLISH_EXPANSION` dan memicu order BUY limit di harga `1.99226` dengan target `1.99369` (menjelang level psikologis bulat `2.00000`).
+   - Secara visual manusia pada chart Weekly (W1), harga sebenarnya berada di ujung atas pola penolakan keras (*Descending Trendline / Channel Compression*) dengan 5 Lower Highs berurutan:
+     * $LH_1: 2.06807 > LH_2: 2.04397 > LH_3: 2.03128 > LH_4: 2.02378 > LH_5: 2.00406$.
+   - **Kebutaan Horizon (*Horizon Blindness*)**:
+     * Single lookback window W1 mengaburkan perbedaan antara tren sekuler multi-tahun (156 minggu/3 tahun: Bullish dari 1.56800) dan tren intermediet struktural (52 minggu/1 tahun: Bearish Lower Highs beruntun).
+     * Akibatnya, bot menganggap retest atap miring W1 sebagai setup ekspansi baru padahal merupakan zona bahaya penolakan keras institusional.
+
+---
+
+### Solusi Arsitektur & Perubahan Komponen:
+1. **Dual-Horizon Lookback Engine W1 (`src/analytics/macro_strategic_engine.py`)**:
+   - Membagi analisis W1 menjadi dua horizon waktu independen:
+     * **Secular Horizon (156 bar / ~3 tahun)**: Menentukan konteks siklus makro besar.
+     * **Intermediate Horizon (52 bar / ~1 tahun)**: Menentukan struktur ayunan aktif.
+2. **Algoritma Outer Tangent Envelope (Anchor Peak Law)**:
+   - Titik awal $P_0$ wajib berupa Puncak Tertinggi Mutlak dalam 52 minggu terakhir ($2.06807$).
+   - Menghitung garis miring menuju Lower Highs berikutnya yang memenuhi syarat:
+     * Garis tidak tertembus oleh penutupan fisik lilin W1 (`Close <= Line + 0.15 ATR`).
+     * Wajib memiliki $\ge 3$ titik sentuhan (*3-Touch Confirmation*) dalam batas toleransi $\le 0.30\times\text{ATR W1}$.
+   - Memproyeksikan level resistensi miring aktif ke bar saat ini: pada EURNZD, level presisi live berada di **`2.00406`**!
+3. **Injeksi Node ZCE (`W1_DESC_SLOPE_CEILING`)**:
+   - Node resistensi miring diinjeksi ke `raw_up_elements` dengan bobot Grade 3 Macro (6.5) sehingga ZCE secara otomatis memperhitungkan atap miring ini sebagai benteng resistensi.
+4. **Demarkasi W1 Slope: Murni Penggaris Visual & Telemetri (Zero Hard Gating)**:
+   - Sesuai prinsip mikrostruktur pasar institusional bahwa likuiditas sejati bertumpu pada level horizontal (ZCE True Zonal Bands, SMC Order Blocks, dan Liquidity Sweeps), trendline miring W1 difungsikan sebagai **penggaris visual & awareness context** di dashboard (tidak memblokir eksekusi secara kaku agar peluang SFP / breakout tidak terbunuh prematur).
+   - Seluruh validasi gating eksekusi tetap dipercayakan secara murni kepada benteng horizontal ZCE, SMC, dan FRVP.
+4B. **Perbaikan Runtime Bug `NameError: name 'cur_atr' is not defined` di Tokyo Midday Lull Gate (`market_scanner.py`)**:
+   - Logika gate Tokyo Midday Lull (10:30–13:00 WIB) di baris 3529 sebelumnya memanggil variabel `cur_atr` yang tidak terdefinisi di scope fungsi, menyebabkan radar crash diam-diam saat memindai setup continuation pada pair Pasifik/Asia (`GBPJPY`, `AUDCHF`, `CADJPY`, `NZDCAD`, `NZDUSD`, `GBPNZD`).
+   - Diselaraskan menjadi `atr_val = (macro.get('current_atr', atr_pts * pt))` sehingga radar kembali memindai 28 simbol secara 100% mulus tanpa error.
+5. **Visualisasi Komprehensif di Dashboard (`dashboard_assets.py` & `dashboard.py`)**:
+   - **Hero Banner**: Banner amber interaktif `#w1-slope-banner` di atas chart saat pair sedang menabrak garis slope W1.
+   - **Canvas Overlay**: Garis diagonal putus-putus emas (`rgba(245, 158, 11, 0.85)`) yang ditarik dari anchor peak melintasi chart menuju bar live, dilengkapi titik-titik node $LH_1..LH_n$.
+   - **Price Line**: Garis resistensi horizontal putus-putus pada level slope aktif.
+   - **Watchlist Pill**: Badge `<span class="w1-conflict-pill">W1 SLOPE</span>` pada kartu pair yang terdampak.
+6. **Anti-Disruption Architecture (Graceful Degradation)**:
+   - Pasangan mata uang trending (USDJPY, USDCHF, CADJPY) atau sideways horizontal murni secara otomatis menghasilkan `None`, sehingga 100% aman dan tidak mengganggu 25 pair FX lainnya.
+7. **Penyelarasan Konfigurasi `.env` dan `config.py`**:
+   - `ENABLE_DUAL_HORIZON_W1=true`
+   - `W1_INTERMEDIATE_LOOKBACK_BARS=52`
+   - `W1_SECULAR_LOOKBACK_BARS=156`
+   - `W1_SLOPE_PROXIMITY_TOL_ATR=0.50`
+   - `W1_SLOPE_MIN_TOUCHES=3`
+8. **Pengujian Unit Test**:
+   - Unit test baru `tests/test_dual_horizon_w1.py` lulus 100% (3/3 PASS).
+   - Seluruh test suite (305 unit tests) lulus 100% (305/305 PASS).
+
+---
+
+## 98. Perubahan 11 September 2026 (Pagi III) — Perbaikan Rekonsiliasi Pending Order MT5 Batal/Expired di Shadow Tracker & Eliminasi Tiket Hantu
+
+### Latar Belakang & Investigasi:
+1. **Tiket Hantu MT5 `#1282833785` (EURCHF-ECNc) Terus Berstatus ACTIVE di Dashboard**:
+   - Order `#1282833785` aslinya adalah pending limit buy di MT5 yang telah dibatalkan (`ORDER_STATE_CANCELED = 2`, `position_id = 0`) pada 10 September 17:46 WIB.
+   - Karena harga pasar sempat menyentuh level limit secara virtual, `shadow_tracker` mengubah statusnya menjadi `ACTIVE`.
+   - Pada siklus rekonsiliasi:
+     * `shadow_tracker` mencari deal penutupan di `history_deals_get(position=1282833785)`. Karena pending order dibatalkan sebelum terisi, tidak ada deal yang pernah tercipta.
+     * Pengecekan order kedaluwarsa (`history_orders_get`) sebelumnya hanya berjalan jika status bernilai `PENDING` dan salah memeriksa konstanta `ord_state in (4, 6)` (di mana 4 adalah `ORDER_STATE_FILLED`, bukan canceled).
+     * Akibatnya, trade menggantung sebagai `ACTIVE REAL MT5` tanpa pernah dilepaskan.
+
+---
+
+### Solusi Arsitektur & Perubahan Komponen:
+1. **Penyempurnaan Rekonsiliasi Pending Order MT5 (`src/analytics/shadow_tracker.py`)**:
+   - Menyelaraskan status order MT5 yang batal/kedaluwarsa: `ord_state in (2, 5, 6)` (`2=ORDER_STATE_CANCELED`, `5=ORDER_STATE_REJECTED`, `6=ORDER_STATE_EXPIRED`).
+   - Di `update_shadow_orders()` dan `get_active_trades_enriched()`:
+     * Jika sebuah trade ber-tiket MT5 tidak lagi ada di posisi terbuka (`positions_get`) dan tidak memiliki deal penutupan di `history_deals_get`, sistem secara otomatis memeriksa `history_orders_get(ticket=mt5_ticket)`.
+     * Jika order berstatus batal/expired dengan `position_id == 0`, trade seketika diselesaikan sebagai **`EXPIRED_MT5`** (`net_r = 0.0`), melepaskan tiket MT5, dan dibersihkan dari daftar trade aktif.
+2. **Eliminasi Tiket Hantu dari Dashboard**:
+   - `get_active_trades_enriched()` kini otomatis membersihkan tiket MT5 yang tidak aktif bahkan saat `main.py` sedang tidak berjalan.
+3. **Verifikasi Suite Test**:
+   - `tests/test_shadow_tracker.py` lulus 100% (11/11 PASS).
+   - `tests/test_sep8_enhancements.py` & `tests/test_cbss_and_risk_shields.py` lulus 100% (21/21 PASS).
+
+---
+
+## 97. Perubahan 11 September 2026 (Pagi II) — Special G3 Protocol ZCE: Eliminasi Inflasi Skor Mikro, Injeksi Dynamic EMA Bands (20/50/100/200) & Tiered Wall Exhaustion (G3: 0.35x, G2: 0.20x, G1: 0.10x)
+
+### Latar Belakang & Investigasi Kuantitatif:
+1. **Diagnosis False Alarm `[WALL EXHAUSTED]` & `[CBSS VETO] Local G3 Wall Collision` pada EURCAD & GBPCHF**:
+   - Audit visual dan telemetri menunjukkan bot membatalkan setup atau menahan order di EURCAD dan GBPCHF dengan pesan `[WALL EXHAUSTED] Jarak ke benteng lawan < 0.50x ATR` atau benteng G3 collision.
+   - **Akar Masalah 1 (Inflasi Skor ZCE / "G3 Terlalu Murah")**:
+     * Pada status quo ZCE, ambang batas `GRADE_3_MACRO` disetel rendah pada skor $\ge 6.5$.
+     * Hampir semua level intraday (C1..C4, F1..F3) menyandang status `GRADE_3_MACRO` hanya karena tumpukan indikator mikro H1/M30 (`EQH/EQL/FVG/OB/LAST_HIGH`), padahal **TIDAK memiliki konfluensi struktural swing makro D1/W1**.
+     * Level minor berjarak puluhan pips dari harga dianggap "benteng beton makro" yang mematikan peluang kelanjutan.
+   - **Akar Masalah 2 (Ketiadaan Dynamic EMA Band di Primitif ZCE)**:
+     * Level kunci seperti `1.61000` di EURCAD (tempat beradanya konfluensi EMA 50, EMA 100, dan EMA 200 D1 serta level psikologis bulat) justru ber-status G2 karena modul `_collect_primitives` di `zone_confluence_engine.py` sebelumnya belum pernah menginjeksi EMA ke dalam daftar primitif.
+   - **Akar Masalah 3 (Pukul Rata Ambang Wall Exhaustion 0.50x ATR)**:
+     * `basket_sync_engine.py` menerapkan filter kaku `runway_atr < 0.50x ATR` secara flat ke semua grade dinding, memperlakukan level rapuh G1/G2 sama dengan dinding beton G3.
+
+---
+
+### Solusi Arsitektur & Perubahan Komponen:
+1. **Special G3 Protocol (Syarat Mutlak Benteng Makro Sejati)**:
+   - Menaikkan ambang batas skor: `ZCE_GRADE_G2_THRESHOLD = 5.0`, `ZCE_GRADE_G3_THRESHOLD = 8.5`.
+   - **Aturan Verifikasi Jangkar Makro (`_assign_cluster_grade`)**:
+     * Syarat 1: `score_final >= 8.5`.
+     * Syarat 2: Wajib memiliki minimal satu dari jangkar makro sejati:
+       - Primitive `LAST_LOW`, `LAST_HIGH`, `SWING_LOW`, `SWING_HIGH`, `EQL`, `EQH`, `OB_BULL`, `OB_BEAR` pada timeframe makro **D1, W1, atau MN1**.
+       - Primitive `LAST_LOW`, `LAST_HIGH` pada **H4 dengan horizon deep ($\ge 100$ bar)**.
+       - Primitive **`PSYCH_MAJOR`** (level psikologis bulat utama seperti `1.60000`, `1.61000`).
+     * Jika skor $\ge 8.5$ namun tidak memiliki jangkar makro sejati di atas, level **di-cap maksimal ke `GRADE_2_INTERMEDIATE`** (eliminasi 100% inflasi skor dari tumpukan mikro).
+2. **Injeksi Dynamic EMA Bands (20, 50, 100, 200) di H1, H4, D1**:
+   - Menghitung Exponential Moving Average untuk span 20, 50, 100, 200 pada data H1, H4, dan D1.
+   - Diberikan bobot proporsional `ZCE_EMA_WEIGHT = 0.25` dengan ketebalan band simetris $0.03\times\text{ATR}$.
+   - Mengangkat level konfluensi EMA makro (seperti EURCAD `1.61000`) ke status benteng yang dihormati.
+3. **Eksklusif G3 Wall Exhaustion di CBSS (`basket_sync_engine.py`)**:
+   - Membatasi status `[WALL EXHAUSTED]` secara eksklusif **HANYA untuk benteng makro sejati `GRADE_3_MACRO`** pada jarak `< 0.35x ATR` (`CBSS_WALL_EXHAUSTION_G3_ATR = 0.35`).
+   - Dinding **`GRADE_2_INTERMEDIATE`** dan **`GRADE_1_MICRO`** dinyatakan **bebas ditembus (*penetrable*)** dan tidak lagi memblokir atau men-skip trade kelanjutan meskipun jaraknya rapat ($\le 0.20\text{x ATR}$).
+4. **Pembaruan Telemetri Cockpit Dashboard (`dashboard.py`)**:
+   - Gate 3 (Systemic Basket & CBSS Guard) hanya memicu status `WAIT (Relay Pause)` saat menempel benteng makro G3.
+   - Jika berhadapan dengan level G1/G2, Gate 3 meloloskan status **`PASS (CBSS Cleared)`** dengan anotasi `(G2/G1 Penetrable)`.
+5. **Verifikasi Suite Test**:
+   - Penambahan unit test baru di `tests/test_zce_special_g3_and_ema.py` (5/5 PASS).
+   - Seluruh unit test ZCE eksisting tetap 100% PASS.
+
+---
+
+## 96. Perubahan 11 September 2026 (Pagi) — Reformasi Manajemen Trade M30: Eliminasi Partial Close, BEP 60% TP & 3-Tier Progressive Trailing Ladder (75%→50%, 90%→80%, 95%→90%)
+
+### Latar Belakang & Investigasi Kuantitatif:
+1. **Audit Kuantitatif Performa Trade (Demo vs Live vs Shadow Tracker)**:
+   - Evaluasi menyeluruh terhadap 68 trade Demo MT5 (58.8% Win, +$130.47), 15 trade Live MT5 (53.3% Win, -$143.49), dan 417 Virtual Shadow Trades.
+   - **Diagnosis "Runway Sebenarnya Reachable Tapi Dibunuh Trailing / BEP Prematur"**:
+     * Pada sistem lama, Trailing Stop diaktifkan terlalu dini (65% TP) dengan jarak dinamis yang sering kali menabrak noise mikro pasar sebelum mencapai TP penuh.
+     * Partial Close (50% volume di 50% TP) memotong potensi laba (MFE median mencapai +242 pts / 2.83x ATR M30), sementara kerugian ditanggung penuh saat terkena SL penuh atau tergerus komisi.
+   - **Evaluasi Validitas ZCE & Timeframe M30**:
+     * Backtest empiris 5 hari terakhir terhadap $N = 1.005$ titik sentuh dinding ZCE di 26 pair FX membuktikan bahwa level benteng ZCE ($C_1/F_1$) memiliki presisi sniper tinggi:
+       - **Median MAE = 0.0 points** (75% posisi memiliki MAE $\le 46$ pts / 0.66x ATR M30).
+       - ZCE telah menghitung konfluensi M30 secara native (600 bar M30).
+     * Kesimpulan: Entry sniper di dinding ZCE dipertahankan 100%, namun target runway dan pengawalan trade diselaraskan dengan kapasitas gerak intraday M30 (~50–90 pts, Net R:R $\ge 0.50$).
+
+---
+
+### Solusi Arsitektur & Perubahan Komponen:
+1. **Eliminasi Total Partial Close (`PARTIAL_CLOSE_ENABLED = False`)**:
+   - Menghapus pemotongan volume di tengah jalan agar trade dapat menangkap 100% pergerakan penuh hingga TP.
+2. **BEP Diperketat ke 60% TP (`BREAK_EVEN_TRIGGER_TP_PCT = 0.60`)**:
+   - Menggeser trigger Break-Even dari 50% ke **60% TP** (+15 pts pocket profit / komisi round-trip broker) guna memberikan ruang nafas bagi wick retracement normal tanpa premature lock.
+3. **3-Tier Progressive Trailing Ladder Monotonik**:
+   - Menggantikan trailing stop berbasis ATR yang rawan terkena gocekan wick dengan tangga proteksi bertingkat:
+     * **Tier 1 (Trigger $\ge 75\%$ TP)**: Mengunci floating profit sebesar **50% TP**.
+     * **Tier 2 (Trigger $\ge 90\%$ TP)**: Mengunci floating profit sebesar **80% TP**.
+     * **Tier 3 (Trigger $\ge 95\%$ TP)**: Mengunci floating profit sebesar **90% TP** (*Terminal Lock* sebelum sentuhan TP).
+4. **Harmonisasi Parameter & Sinkronisasi 1:1**:
+   - Diselaraskan di `.env`, `config.py`, `src/analytics/position_manager.py`, `src/analytics/shadow_tracker.py`, dan `src/core/consensus.py`.
+   - Menurunkan batas minimum Net R:R Grade B (`GRADE_B_MIN_RR`) ke `0.50` agar setup pantulan dinding M30 terdekat tetap valid dieksekusi.
+5. **Verifikasi Suite Test**:
+   - Pembuatan unit test komprehensif `tests/test_progressive_trailing_ladder.py` (4/4 PASS).
+   - Penyelarasan `tests/test_time_decay_and_vol_regime.py` (7/7 PASS) dan `tests/test_shadow_tracker.py` (11/11 PASS).
+   - Seluruh 239 unit test pada suite bot lulus 100% (**Ran 239 tests in 21.4s, OK**).
+
+---
+
 ## 95. Perubahan 10 September 2026 (Malam IV) — Pemulihan Multiplier Sesi London ke 1.00x & Sesi New York Flat 0.50x (Bypass Compounding Grade B 0.75x)
 
 ### Latar Belakang & Investigasi:
@@ -3172,5 +3492,76 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 6. **Verifikasi Kuantitatif Penuh**:
    - Unit test suite: `tests/test_sep8_enhancements.py` mencakup test spesifik `test_risk_engine_defensive_grade_b_with_neutral_multiplier`.
    - Seluruh test suite unit test: **199/199 tests PASSED (100% OK)**.
+
+---
+
+## 99. 11 September 2026 — Systemic Flow Shock (SFR) Z-Score Threshold Elevation to 2.0 Sigma & Multiplier Shield
+
+### 🎯 Rasional Kuantitatif & Problem Statement:
+- **Diagnosa Masalah**: Ambang batas Z-score untuk Layer 0 Systemic Flow Regime (SFR) Shock sebelumnya ditetapkan pada $|z| \ge 1.50$. Dalam distribusi normal kurva $Z$, $|Z| \ge 1.50$ merepresentasikan peluang ekor $13.36\%$. Pada universe 26 simbol FX yang tersusun dari 8 keranjang mata uang (di mana 1 mata uang menyusun 6-7 pair), kehadiran 2 mata uang saja dengan $|z| \ge 1.50$ (misalnya AUD $z = -2.27$ dan USD $z = +1.75$) memicu *Basket Multiplier Effect* yang menyebabkan 13 dari 26 pair (50% dashboard) langsung berstatus `⚡ SFR SHOCK`, memicu *alarm fatigue* dan mengaburkan perbedaan antara guncangan anomali ekstrim sejati vs momentum ekspansi teratur.
+- **Penyelarasan Kuantitatif ke $2.0\sigma$ ($|Z| \ge 2.00$)**:
+  - Ambang batas trigger shock dinaikkan ke $2.00$ ($2\sigma$, peluang ekor ekstrim $4.5\%$).
+  - Pasangan mata uang dengan $1.50 \le |z| < 2.00$ (seperti USD) diklasifikasikan dengan benar sebagai `FLOW CONT` (biru langit).
+  - Status `⚡ SFR SHOCK` (kuning emas) dikhususkan hanya untuk anomali ekstrim sejati (seperti AUD $z = -2.27$), memangkas alarm visual dashboard dari 13 pair (50%) menjadi hanya 7 pair konstituen AUD (27%).
+
+### 🛠️ File yang Diselaraskan:
+1. `.env`: Menambahkan konfigurasi eksplisit `M4_TRIGGER_Z=2.0` dan `M4_CONT_Z=0.75`.
+2. `config.py`: Memperbarui default fallback `M4_TRIGGER_Z = _getenv_float("M4_TRIGGER_Z", 2.0)`.
+3. `dashboard.py`: Menghapus hardcoded `1.50` di baris 785 dan 1395, diselaraskan menggunakan `float(getattr(config, "M4_TRIGGER_Z", 2.0))`.
+4. `dashboard_assets.py`: Menyelaraskan tooltip dan label UI dari `(|z| >= 1.50)` / `(Req >=1.5)` menjadi `(|z| >= 2.00)` dan `(Req >=2.0)`.
+
+---
+
+## 100. 11 September 2026 — Rekonsiliasi Kuantitatif: Tesis Chamber vs Data Telemetri Empiris
+- **Temuan Kuantitatif Kohort (DeepSeek Review)**:
+  - M2 Anchor Boundary vs Mid-Chamber: $N=96$ vs $78$, median return $+0.73R$ vs $+0.71R$, $p=0.039$ (permutasi), namun hard-SL identik ($21.9\%$ vs $24.4\%$, $p=0.699$).
+  - Perbedaan return disebabkan oleh run-up (+1.88R), bukan kebocoran catastropic mid-chamber.
+  - Tesis "kebocoran mid-chamber parah" ditolak secara kuantitatif. Solusi data-driven diadopsi: Soft-gate M2 pada benteng G1 Micro ke `GRADE_B` alih-alih hard block.
+- **Audit Logging ZCE (`main.py`)**:
+  - Memperbaiki pencetakan log `[ZCE-AUDIT]`: `ZCE_F1` dan `ZCE_C1` kini membaca level zona ZCE riil dari metadata kandidat alih-alih nilai Stop Loss.
+- **Persistensi Telemetri Tingkat Dinding (`shadow_tracker.py` & `position_manager.py`)**:
+  - Menambahkan persistensi field `wall_grade`, `f1_reaction_grade`, `c1_reaction_grade`, `zce_f1`, dan `zce_c1` ke dalam database `quant_shadow_trades.jsonl` dan `trade_lifecycle_telemetry.json` untuk pengujian counterfactual bersih di masa mendatang.
+
+---
+
+## 101. 11 September 2026 — Ekstraksi Modular M2 Wall Quality, Lazy M5 Micro-Rejection, & Optimasi Startup MT5
+- **Ekstraksi Produksi Murni `_evaluate_m2_wall_quality` (`market_scanner.py`)**:
+  - Memindahkan logika evaluasi kualitas dinding, anti-marubozu waterfall guard, dan G1 soft-gate dari inline block M2 BUY / M2 SELL ke method produksi mandiri `_evaluate_m2_wall_quality`.
+  - Mengintegrasikan pengecekan lazy M5: `_verify_m5_rejection_wick` hanya dipanggil jika H1 belum memiliki konfirmasi rejection wick yang memadai, memangkas ~85% panggilan MT5 rate copy pada loop radar.
+- **Konfigurasi Threshold Anti-Hardcode (`config.py` & `.env`)**:
+  - `ENABLE_M2_WALL_QUALITY=true`
+  - `M2_MARUBOZU_BODY_RATIO=0.55`
+  - `M2_MARUBOZU_MAX_WICK_RATIO=0.20`
+  - `M2_G1_MIN_WICK_RATIO=0.25`
+  - `M2_G1_PROXIMITY_ATR=0.35`
+  - Menghapus entri usang `ZCE_GRADE_G2=3.5` / `ZCE_GRADE_G3=6.5` dan duplikat `M4_TRIGGER_Z=1.5` di `.env`.
+- **Optimasi Latensi Booting MT5 (`mt5_connector.py` & `main.py`)**:
+  - `init_mt5`: Memeriksa akun aktif terminal desktop sebelum memanggil `mt5.login()`. Jika sudah terhubung ke akun live yang sama, handshake redundan dilewati (memangkas waktu inisialisasi dari 15-20 detik menjadi 3.5 detik).
+  - `main.py`: Menambahkan pesan progres `[RADAR BOOT] Memuat konteks makro 26 simbol universe (H1/H4/D1/W1)... Mohon tunggu ~25 detik` agar terminal tidak terkesan membeku saat inisialisasi awal.
+- **Validasi Unit Test Suite**:
+  - `tests/test_m2_wall_quality_and_exhaustion.py`: 6/6 tests PASSED secara langsung memanggil method produksi.
+  - Seluruh suite unit test terverifikasi 100% PASS.
+
+---
+
+## 102. 11 September 2026 — Implementasi Penuh BEP 35% Grade B, Idempotensi Resolver, & Standardisasi Telemetri
+- **Implementasi Nyata BEP 35% TP Grade B (`position_manager.py` & `shadow_tracker.py`)**:
+  - `position_manager.py`: Memperbaiki jalur `tp_points > 0` dengan menambahkan cabang `elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:` untuk mengaktifkan BEP di **35% TP** (`GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT=0.35`).
+  - `shadow_tracker.py`: Menyelaraskan evaluasi virtual BEP BUY/SELL agar membaca `setup_grade` atau `action_tier`, memicu BEP di 35% TP untuk Grade B alih-alih tertahan di 60% TP.
+  - `config.py` & `.env`: Menambahkan parameter resmi `GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT=0.35`.
+- **Idempotensi `_record_resolved` (`shadow_tracker.py`)**:
+  - Menambahkan set `self._resolved_ids` guna mencegah *double-counting* statistik in-memory jika terjadi trigger resolusi berulang pada order yang sama.
+- **Koreksi Label Disposisi MT5 & Preservasi Outcome (`shadow_tracker.py`)**:
+  - Tiket MT5 yang tertutup oleh TP/SL kini dicatat secara akurat sebagai `EXECUTED_MT5_RESOLVED` (bukan ditimpa `SKIPPED_EXPIRED`).
+  - Klasifikasi outcome `TRAILING_SL_HIT` vs `BEP_HIT` disempurnakan dengan syarat `realized_r >= 0.20` untuk trailing dan range `[-0.05R, +0.20R]` untuk BEP guna mencegah distorsi statistik retroaktif.
+- **Dokumentasi Git Resmi**:
+  - Dibuat [`docs/WALKTHROUGH_SEPTEMBER_2026.md`](file:///c:/Vibe/tradingpartner/docs/WALKTHROUGH_SEPTEMBER_2026.md) langsung di root repository sehingga terlacak penuh dalam `git status`.
+- **Hasil Pengujian**:
+  - `tests/test_shadow_tracker.py`: 13/13 tests PASSED (termasuk verifikasi BEP 35% Grade B dan idempotensi).
+  - `tests/test_time_decay_and_vol_regime.py`: 8/8 tests PASSED (termasuk verifikasi BEP 35% Grade B live MT5).
+  - Suite lengkap 5 file: 31/31 tests PASSED (100% OK).
+
+
+
 
 

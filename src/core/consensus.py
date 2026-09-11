@@ -183,6 +183,11 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
     except Exception:
         pass
 
+    if atr_points <= 0 and candidate is not None and getattr(candidate, "current_atr_pts", 0):
+        atr_points = int(candidate.current_atr_pts)
+    if spread_pts <= 0 and candidate is not None and getattr(candidate, "current_spread_pts", 0):
+        spread_pts = int(candidate.current_spread_pts)
+
     usd_per_pt_1lot = 0.0
     if si is not None and getattr(si, 'trade_tick_size', 0) and getattr(si, 'point', 0):
         usd_per_pt_1lot = si.trade_tick_value * 1.0 * (si.point / si.trade_tick_size)
@@ -252,11 +257,12 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                     # - Jika (0.75x SL + friksi) <= target TP < (1.25x SL + friksi): target C1/F1 valid sebagai GRADE_B Wall Scalp
                     #   (eksekusi 1 tiket, target dinding C1/F1 murni, tanpa partial close, BEP di 35% TP).
                     runway_target_pts = tp_points if tp_points > 0 else config.default_tp_points_for(sym)
-                    min_wall_floor = int(sl_points * getattr(config, "GRADE_B_MIN_RR", 0.75)) + friction_pts
+                    grade_b_rr = getattr(config, "GRADE_B_MIN_RR", 0.50)
+                    min_wall_floor = int(sl_points * grade_b_rr) + friction_pts
                     required_standard_runway = int(sl_points * config.LLM_MIN_RR_RATIO) + friction_pts
                     if runway_target_pts > 0 and runway_target_pts < min_wall_floor:
                         note = (f"ANCHOR_TOO_WIDE: ZCE Runway ke target terhalang dinding terdekat "
-                                f"({runway_target_pts} pts < 0.75x SL {sl_points} pts + {friction_pts} pts friksi = {min_wall_floor} pts). "
+                                f"({runway_target_pts} pts < {grade_b_rr:.2f}x SL {sl_points} pts + {friction_pts} pts friksi = {min_wall_floor} pts). "
                                 f"SKIP trade — kapasitas net runway tidak mencukupi.")
                         _last_sltp_adjustments.append(note)
                         return sl_points, tp_points, False, note
@@ -270,7 +276,7 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
                             except Exception:
                                 pass
                         _last_sltp_adjustments.append(
-                            f"ZCE Runway ({runway_target_pts} pts | Net {(runway_target_pts - friction_pts)/sl_points:.2f}R) < standard {config.LLM_MIN_RR_RATIO}x SL ({sl_points} pts) tapi >= Net 0.75x SL. "
+                            f"ZCE Runway ({runway_target_pts} pts | Net {(runway_target_pts - friction_pts)/sl_points:.2f}R) < standard {config.LLM_MIN_RR_RATIO}x SL ({sl_points} pts) tapi >= Net {grade_b_rr:.2f}x SL. "
                             f"Menyesuaikan setup ke GRADE_B Wall Scalp."
                         )
 
@@ -318,14 +324,14 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
             max_rr = 3.50
         elif "GRADE_B" in grade_str or "REDUCED_SCALP" in grade_str or "REDUCED_SCALP" in act_str:
             max_rr = 1.25
-            min_rr = getattr(config, "GRADE_B_MIN_RR", 0.75)
+            min_rr = getattr(config, "GRADE_B_MIN_RR", 0.50)
         elif "GRADE_A_PLUS" in grade_str:
             max_rr = 2.50
 
         # 5-Tier Action Matrix R:R constraints
         if action_tier in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or "REDUCED_SCALP" in grade_str or "TP1_ONLY" in act_str or "GRADE_B" in act_str:
             max_rr = min(max_rr, 1.25)
-            min_rr = min(min_rr, getattr(config, "GRADE_B_MIN_RR", 0.75))
+            min_rr = min(min_rr, getattr(config, "GRADE_B_MIN_RR", 0.50))
         elif action_tier == "REDUCED_CONFIDENCE":
             max_rr = min(max_rr, 2.00)
 
@@ -335,8 +341,21 @@ def _apply_sltp_rules(sl_points, tp_points, symbol=None, action_tier=None, setup
         min_tp = int(sl_points * min_rr) + friction_pts
         max_tp = int(sl_points * max_rr) + friction_pts
         if tp_points < min_tp:
-            _last_sltp_adjustments.append(f"TP {tp_points} pts < Net R:R ({min_rr}x SL + {friction_pts} pts friksi). Menyesuaikan TP ke {min_tp} pts.")
-            tp_points = min_tp
+            if not zce_wall_mode:
+                # Mode Legacy / Non-ZCE (e.g. Unit Tests / Fallback): sesuaikan ke min_tp
+                _last_sltp_adjustments.append(f"TP {tp_points} pts < Net R:R ({min_rr}x SL + {friction_pts} pts friksi). Menyesuaikan TP ke {min_tp} pts.")
+                tp_points = min_tp
+            else:
+                # PILAR 2 (DECOUPLING TP ZCE): Validasi kapasitas runway, JANGAN paksa jarak buatan.
+                # Jika target struktural ZCE masih memenuhi ambang Grade B floor, biarkan di dinding alami.
+                # Tolak jika runway benar-benar tidak mencukupi (terhalang dinding lawan terlalu dekat).
+                grade_b_floor = int(sl_points * getattr(config, "GRADE_B_MIN_RR", 0.50)) + friction_pts
+                if tp_points < grade_b_floor:
+                    note = f"RUNWAY_INSUFFICIENT: TP {tp_points} pts < Grade B floor {grade_b_floor} pts ({min_rr}x SL + friksi)."
+                    _last_sltp_adjustments.append(note)
+                    return sl_points, tp_points, False, note
+                else:
+                    _last_sltp_adjustments.append(f"TP {tp_points} pts dipertahankan di dinding struktural ZCE (Grade B Wall Scalp, Net R:R {tp_points/max(sl_points, 1):.2f}x).")
         elif tp_points > max_tp:
             tier_msg = f" [{setup_grade or action_tier} Cap]" if (setup_grade or action_tier) else ""
             

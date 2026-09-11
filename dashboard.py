@@ -424,8 +424,17 @@ def _elect_primary_standby(
         }
 
     # Determine preferred institutional direction
+    csm_delta = float(macro.get("csm_delta", 0.0) or 0.0)
+    dr_pos = float(macro.get("dealing_range_pos", 0.5) or 0.5)
+
     if dir_lock in (1, -1):
         preferred_dir = dir_lock
+    elif dr_pos >= 0.80 and (csm_delta <= -1.0 or macro.get("is_bear")):
+        # At ceiling with bearish micro flow -> Fade ceiling
+        preferred_dir = -1
+    elif dr_pos <= 0.20 and (csm_delta >= 1.0 or macro.get("is_bull")):
+        # At floor with bullish micro flow -> Fade floor
+        preferred_dir = 1
     elif macro.get("is_bear") and not macro.get("is_bull"):
         preferred_dir = -1
     elif macro.get("is_bull") and not macro.get("is_bear"):
@@ -482,6 +491,11 @@ def _elect_primary_standby(
         is_pro_trend = (preferred_dir == 0) or (dir_int == preferred_dir)
         is_confl = bool(s.get("is_confluence", False))
 
+        target_p = float(s.get("target_price", 0.0) or 0.0)
+        runway_dist = abs(target_p - s_lvl) if target_p > 0 else (1.5 * atr_val)
+        runway_atr = runway_dist / max(atr_val, 1e-5)
+        has_healthy_runway = (runway_atr >= 0.25)
+
         candidates.append({
             "name": short_name,
             "type": s_type,
@@ -490,7 +504,9 @@ def _elect_primary_standby(
             "dist_pips": dist_pips,
             "dist_atr": dist_atr,
             "lvl": s_lvl,
-            "target": float(s.get("target_price", 0.0) or 0.0),
+            "target": target_p,
+            "runway_atr": runway_atr,
+            "has_healthy_runway": has_healthy_runway,
             "is_watch": is_watch,
             "is_active": is_active,
             "is_pro_trend": is_pro_trend,
@@ -518,17 +534,19 @@ def _elect_primary_standby(
     near_setups = [c for c in candidates if c["dist_atr"] <= 1.5]
     extra_count = max(0, len(near_setups) - 1)
 
-    # Sort key:
+    # Multi-Tier Institutional Sort:
     # 0: Confluence first
-    # 1: Pro-trend over Counter-trend (0 if pro-trend else 1)
-    # 2: Active physical touch/retest over pending (0 if active else 1)
-    # 3: Actionable over passive watch (0 if not watch else 1)
-    # 4: Distance in ATR (closest first, imminent setups prioritized)
+    # 1: Pro-trend / Preferred direction over Counter-trend (0 if is_pro_trend else 1)
+    # 2: Active physical touch/retest over pending (0 if is_active else 1)
+    # 3: Actionable over passive watch (0 if not is_watch else 1)
+    # 4: Healthy runway over blocked runway (0 if has_healthy_runway else 1)
+    # 5: Distance in ATR (closest first, imminent setups prioritized)
     candidates.sort(key=lambda c: (
         0 if c["is_confluence"] else 1,
         0 if c["is_pro_trend"] else 1,
         0 if c["is_active"] else 1,
         1 if c["is_watch"] else 0,
+        0 if c["has_healthy_runway"] else 1,
         c["dist_atr"]
     ))
 
@@ -781,8 +799,9 @@ class CockpitDataEngine:
             m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
             m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
 
-            # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
-            is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+            # Layer 0 SFR Differentiation: Fresh Shock (>=config.M4_TRIGGER_Z) vs Flow Continuation (>=0.75)
+            sfr_shock_z = float(getattr(config, "M4_TRIGGER_Z", 2.0))
+            is_fresh_shock = (abs(z_base) >= sfr_shock_z or abs(z_quote) >= sfr_shock_z)
             has_active_ep = False
             if m4_st:
                 for s_side in ("SELL", "BUY"):
@@ -842,7 +861,12 @@ class CockpitDataEngine:
                 "f1_grade": f1_grade,
                 "basing_box": b_box_info,
                 "wave_regime": w_regime,
-                "is_paper_only": config.is_paper_only(sym)
+                "is_paper_only": config.is_paper_only(sym),
+                "w1_slope_ceiling": getattr(macro.get("strat_dir"), "w1_slope_ceiling", None),
+                "w1_secular_regime": getattr(macro.get("strat_dir"), "w1_secular_regime", "SECULAR_RANGE"),
+                "w1_intermediate_regime": getattr(macro.get("strat_dir"), "w1_intermediate_regime", "NEUTRAL_OSCILLATION"),
+                "w1_horizon_conflict": getattr(macro.get("strat_dir"), "htf_horizon_conflict", False),
+                "w1_lower_highs": getattr(macro.get("strat_dir"), "w1_lower_highs", [])
             })
 
         # Stable sorting by Base Currency Group: EUR, GBP, AUD, USD, CHF, CAD, NZD
@@ -1391,8 +1415,9 @@ class CockpitDataEngine:
         m4_dominant_z = z_base if abs(z_base) >= abs(z_quote) else -z_quote
         m4_flow_dir = "BULL" if m4_dominant_z > 0 else "BEAR"
 
-        # Layer 0 SFR Differentiation: Fresh Shock (>=1.50) vs Flow Continuation (>=0.75)
-        is_fresh_shock = (abs(z_base) >= 1.50 or abs(z_quote) >= 1.50)
+        # Layer 0 SFR Differentiation: Fresh Shock (>=config.M4_TRIGGER_Z) vs Flow Continuation (>=0.75)
+        sfr_shock_z = float(getattr(config, "M4_TRIGGER_Z", 2.0))
+        is_fresh_shock = (abs(z_base) >= sfr_shock_z or abs(z_quote) >= sfr_shock_z)
         has_active_ep = False
         if m4_st:
             for s_side in ("SELL", "BUY"):
@@ -1517,11 +1542,18 @@ class CockpitDataEngine:
         }
 
         # 7. Multi-TF Compass & State Intelligence
-        w1_lbl = str(macro.get("w1_trend_label") or "SIDEWAYS").upper()
+        strat = macro.get("strat_dir")
+        w1_inter = getattr(strat, "w1_intermediate_regime", None)
+        if w1_inter and "BEAR" in w1_inter:
+            w1_trend = "BEAR"
+        elif w1_inter and "BULL" in w1_inter:
+            w1_trend = "BULL"
+        else:
+            w1_lbl = str(macro.get("w1_trend_label") or "SIDEWAYS").upper()
+            w1_trend = "BULL" if "BULL" in w1_lbl else ("BEAR" if "BEAR" in w1_lbl else "SIDE")
         d1_lbl = str(macro.get("d1_trend_label") or "SIDEWAYS").upper()
         h4_lbl = str(macro.get("h4_trend_label") or "SIDEWAYS").upper()
 
-        w1_trend = "BULL" if "BULL" in w1_lbl else ("BEAR" if "BEAR" in w1_lbl else "SIDE")
         d1_trend = "BULL" if "BULL" in d1_lbl else ("BEAR" if "BEAR" in d1_lbl else "SIDE")
         h4_trend = "BULL" if "BULL" in h4_lbl else ("BEAR" if "BEAR" in h4_lbl else "SIDE")
 
@@ -1668,7 +1700,12 @@ class CockpitDataEngine:
                 symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper(),
                 {"dir": 0, "status": "FREE", "reason": "UNCONSTRAINED"}
             ),
-            "telemetry": telemetry
+            "telemetry": telemetry,
+            "w1_slope_ceiling": getattr(strat, "w1_slope_ceiling", None),
+            "w1_secular_regime": getattr(strat, "w1_secular_regime", "SECULAR_RANGE"),
+            "w1_intermediate_regime": getattr(strat, "w1_intermediate_regime", "NEUTRAL_OSCILLATION"),
+            "w1_horizon_conflict": getattr(strat, "htf_horizon_conflict", False),
+            "w1_lower_highs": getattr(strat, "w1_lower_highs", [])
         }
 
     def _evaluate_8_gates(self, sym: str, valid_sym: str, macro: dict, strat: Any, mid: float, spread_pts: int, atr_val: float, pt: float) -> List[Dict[str, Any]]:
@@ -1806,7 +1843,9 @@ class CockpitDataEngine:
             cap_ok, cap_reason = check_basket_concurrency_cap(sym, target_dir, pos_all, pend_all)
             runway_info = calculate_pair_runway(sym, target_dir, m_cache)
             r_atr = runway_info.get("runway_atr", 2.0)
-            wall_th = float(getattr(config, "CBSS_WALL_EXHAUSTION_THRESHOLD_ATR", 0.50))
+            opp_grade = runway_info.get("opp_wall_grade", "")
+            is_opp_g3 = ("3" in opp_grade or "MACRO" in opp_grade)
+            wall_th_g3 = float(getattr(config, "CBSS_WALL_EXHAUSTION_G3_ATR", 0.35))
 
             if is_locked:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
@@ -1814,13 +1853,14 @@ class CockpitDataEngine:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Anti-Internal Currency Hedge Veto", "reason": conflict_reason}
             elif is_g3_blocked:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "CBSS Local G3 Wall Veto (The EURAUD Law)", "reason": g3_reason}
-            elif r_atr < wall_th:
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "WAIT", "desc": f"Relay Pause: Wall Proximity ({r_atr:.2f}x ATR)", "reason": f"[WALL EXHAUSTED] Jarak ke benteng lawan {r_atr:.2f}x ATR < {wall_th:.2f}x ATR. Estafet likuiditas dialihkan ke pair laggard sekeranjang."}
+            elif is_opp_g3 and r_atr < wall_th_g3:
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "WAIT", "desc": f"Relay Pause: Macro G3 Proximity ({r_atr:.2f}x ATR)", "reason": f"[WALL EXHAUSTED] Jarak ke benteng makro {opp_grade} {r_atr:.2f}x ATR < {wall_th_g3:.2f}x ATR. Estafet likuiditas dialihkan ke pair laggard sekeranjang."}
             elif not cap_ok:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PAPER", "desc": "CBSS Concurrency Saturated (Paper Route)", "reason": f"[CBSS SATURATED] {cap_reason} -> Dialihkan ke Virtual Paper Trade (0 Token, 0 Risiko MT5)."}
             else:
                 base_c, quote_c = get_pair_currencies(clean_s)
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": f"CBSS Cleared (Runway {r_atr:.2f}x ATR)", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Bebas tabrakan benteng G3 lawan & runway memadai ({r_atr:.2f}x ATR)."}
+                pen_note = f" ({opp_grade} Penetrable)" if (not is_opp_g3 and r_atr < 0.35) else ""
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": f"CBSS Cleared (Runway {r_atr:.2f}x ATR){pen_note}", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Bebas tabrakan benteng G3 lawan & runway memadai ({r_atr:.2f}x ATR)."}
         gates.append(g3)
 
         # Gate 4: MSE Chamber & Forbidden Traps + Directional Hysteresis

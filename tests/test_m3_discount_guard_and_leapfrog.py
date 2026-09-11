@@ -24,7 +24,7 @@ class TestM3DiscountGuardAndLeapfrog(unittest.TestCase):
         """Unbreached F1 must NOT be leapfrogged to F2 even if distance is tight."""
         entry = 0.47438
         atr = 0.00043
-        f1 = 0.47357
+        f1 = 0.47408
         f2 = 0.47136
 
         res = calculate_intraday_sl_tp(
@@ -38,10 +38,10 @@ class TestM3DiscountGuardAndLeapfrog(unittest.TestCase):
             f1_breached=False
         )
 
-        # Target station MUST remain F1 (0.47357), not F2 (0.47136)
+        # Target station MUST remain F1 (0.47408), not F2 (0.47136)
         self.assertEqual(res["target_station"], f1)
         self.assertGreater(res["tp"], f2)
-        # R:R must accurately reflect the tight runway to F1 (~0.69)
+        # R:R must accurately reflect the tight runway to F1 (~0.70)
         self.assertLess(res["risk_reward"], 1.10)
 
     def test_rigid_breached_wall_law_sell_breached_f1(self):

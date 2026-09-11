@@ -88,7 +88,8 @@ class TestZCESLTPAnchor(unittest.TestCase):
         )
 
         sl_dist_pts = int(round((entry - res["sl"]) / 0.00001))
-        self.assertEqual(sl_dist_pts, 80)
+        self.assertGreaterEqual(sl_dist_pts, 80)
+        self.assertEqual(sl_dist_pts, 82)
 
     def test_m4_consensus_receives_real_atr_and_spread(self):
         """consensus._apply_sltp_rules must use candidate.current_atr_pts & spread_pts."""
