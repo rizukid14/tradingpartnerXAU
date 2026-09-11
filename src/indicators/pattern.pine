@@ -1,0 +1,866 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © MarkitTick
+
+//@version=6
+indicator("Auto Pattern Detector Targets [MarkitTick]", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_bars_back=1000)
+
+// ── INPUTS ──────────────────────────────────────────────────────────────────
+grp_gen = "General"
+grp_pat = "Patterns"
+grp_piv = "Pivot"
+grp_vis = "Vis"
+grp_flt = "Filters"
+string GRP_DASH = "📊 Dashboard Settings"
+
+cooldown          = input.int(5,      "Pattern Cooldown (Bars)",    minval=1,    group=grp_gen)
+sym_tol           = input.float(10.0, "Symmetry Tolerance (%)",     minval=1.0,  step=0.5,  group=grp_gen) / 100
+lvl_tol           = input.float(3.0,  "Level Tolerance (%)",        minval=0.1,  step=0.1,  group=grp_gen) / 100
+min_size_pct      = input.float(0.5,  "Min Pattern Size (% of Price)", minval=0.1, group=grp_gen) / 100
+min_atr_mult      = input.float(1.0,  "Min Pattern Size (ATR Multiplier)", minval=0.1, step=0.1, group=grp_gen)
+
+show_dt_top       = input.bool(true,  "Double Top",                 group=grp_pat)
+show_dt_bot       = input.bool(true,  "Double Bottom",              group=grp_pat)
+show_tt_top       = input.bool(true,  "Triple Top",                 group=grp_pat)
+show_tt_bot       = input.bool(true,  "Triple Bottom",              group=grp_pat)
+show_hs_std       = input.bool(true,  "Head and Shoulders",         group=grp_pat)
+show_hs_inv       = input.bool(true,  "Inverted Head and Shoulders",group=grp_pat)
+show_flag_bull    = input.bool(true,  "Bullish Flag",               group=grp_pat)
+show_flag_bear    = input.bool(true,  "Bearish Flag",               group=grp_pat)
+show_pennant_bull = input.bool(true,  "Bullish Pennant",            group=grp_pat)
+show_pennant_bear = input.bool(true,  "Bearish Pennant",            group=grp_pat)
+show_wedge_rise   = input.bool(true,  "Rising Wedge",               group=grp_pat)
+show_wedge_fall   = input.bool(true,  "Falling Wedge",              group=grp_pat)
+show_tri_gen      = input.bool(true,  "Triangle",                   group=grp_pat)
+show_rect_gen     = input.bool(true,  "Rectangle",                  group=grp_pat)
+show_cup_std      = input.bool(true,  "Cup and Handle",             group=grp_pat)
+show_cup_inv      = input.bool(true,  "Inverted Cup and Handle",    group=grp_pat)
+
+lb_left          = input.int(10,   "Pivot Lookback Left",    minval=1,   group=grp_piv)
+lb_right         = input.int(10,   "Pivot Lookback Right",   minval=1,   group=grp_piv)
+max_piv_hist     = input.int(500, "Max Pivots to Remember", minval=5, maxval=1000, group=grp_piv)
+
+req_close_brk    = input.bool(false,  "Require Candle Close Outside?",    group=grp_flt)
+req_body_brk     = input.bool(false, "Require Full Body Breakout?",       group=grp_flt)
+use_atr_brk      = input.bool(true, "Use ATR for Threshold?",           group=grp_flt)
+break_atr        = input.float(1.0,  "Breakout Threshold (ATR)",  minval=0.1, step=0.1, group=grp_flt)
+break_pct        = input.float(0.3,  "Breakout Threshold (%)",    minval=0.0, step=0.1, group=grp_flt) / 100
+brk_confirm_bars = input.int(1,      "Confirmation Bars (Consecutive)", minval=1, group=grp_flt)
+show_ignore_conf = input.bool(false, "Show Patterns Without Confirmation", group=grp_flt)
+min_brk_bar      = input.int(1,      "Scan Lookback Bars",           minval=1,   group=grp_flt)
+req_vol          = input.bool(false,  "Require Volume Spike?",               group=grp_flt)
+vol_mult         = input.float(1,    "Volume Multiplier",  minval=1.0, step=0.1, group=grp_flt)
+vol_len          = input.int(20,     "Volume SMA Length",                   group=grp_flt)
+min_rr           = input.float(1.0,  "Min Risk:Reward Ratio",  minval=0.1, step=0.1, group=grp_flt)
+slippage_ticks   = input.float(1.0,  "Slippage (Ticks)",       minval=0.0, step=0.1, group=grp_flt)
+commission_pct   = input.float(0.0001,"Commission (%)",         minval=0.0, step=0.0001, group=grp_flt)
+
+col_bull         = input.color(color.rgb(0, 255, 180, 0),    "Bullish Color",       group=grp_vis)
+col_bear         = input.color(color.rgb(255, 30, 120, 0),   "Bearish Color",       group=grp_vis)
+col_neu          = input.color(color.rgb(160, 80, 255, 0),   "Neutral/Text Color",  group=grp_vis)
+col_pend         = input.color(color.rgb(0, 200, 255, 0),    "Pending Pattern Color", group=grp_vis)
+fill_transp      = input.int(80, "Fill Transparency", minval=50, maxval=99, group=grp_vis)
+show_tgt         = input.bool(true,  "Show Measured Targets",     group=grp_vis)
+stop_buffer      = input.float(0.5,  "Stop Loss ATR Buffer", minval=0.0, step=0.1, group=grp_vis)
+use_sl_pct_tgt   = input.bool(true, "SL as % of Target Dist", group=grp_vis)
+sl_pct_tgt       = input.float(25.0, "SL % of Target Dist",    minval=1.0, maxval=100.0, step=0.5, group=grp_vis) / 100
+max_patterns     = input.int(1,      "Max Patterns Displayed", minval=1, maxval=50, group=grp_vis)
+extend_lines     = input.bool(false, "Extend Breakout Lines",      group=grp_vis)
+col_entry        = input.color(color.rgb(255, 220, 0, 0),    "Entry Line Color",  group=grp_vis)
+col_stop         = input.color(color.rgb(255, 50, 130, 0),   "Stop Line Color",   group=grp_vis)
+col_target       = input.color(color.rgb(0, 255, 160, 0),    "Target Line Color", group=grp_vis)
+
+color  dash_bg_color  = input.color(color.rgb(10, 10, 18, 5),    "Background Color", group=GRP_DASH)
+color  dash_txt_color = input.color(color.rgb(220, 220, 235, 0), "Text Color",       group=GRP_DASH)
+string GRP_ALRT = "Alerts"
+string GRP_RISK = "Risk"
+string GRP_VOL  = "Volatility"
+string GRP_UX   = "UI/UX"
+bool   alert_en      = input.bool(true, "Enable Alerts",           group=GRP_ALRT)
+bool   rr_dyn_en     = input.bool(false, "Dynamic R:R Multiplier",  group=GRP_RISK)
+float  rr_dyn_mult   = input.float(2.0,  "R:R Multiplier", minval=0.1, step=0.1, group=GRP_RISK)
+bool   atr_norm_en   = input.bool(false, "Normalized ATR Display",  group=GRP_VOL)
+bool   lbl_scale_en  = input.bool(false, "Custom Label Scaling",    group=GRP_UX)
+string lbl_scale_sel = input.string("Normal", "Label Size", options=["Small", "Normal", "Large"], group=GRP_UX)
+
+// ── USER-DEFINED TYPES ───────────────────────────────────────────────────────
+type Pivot
+    float p
+    int   i
+
+type PatternResult
+    bool   detected
+    string name
+    bool   isBullish
+    float  entryPrice
+    float  stopPrice
+    float  targetPrice
+    line   l_upper
+    line   l_lower
+    int    start_idx
+    int    breakout_idx
+    int    fux1
+    float  fuy1
+    int    fux2
+    float  fuy2
+    int    flx1
+    float  fly1
+    int    flx2
+    float  fly2
+    int    lux1
+    float  luy1
+    int    lux2
+    float  luy2
+    int    llx1
+    float  lly1
+    int    llx2
+    float  lly2
+
+type PatternDrawings
+    line[]  lns
+    label[] lbls
+
+// ── PERSISTENT STATE ─────────────────────────────────────────────────────────
+var PatternResult EMPTY_RES = PatternResult.new(false, "", false, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na, na)
+var array<Pivot> pivotHighs = array.new<Pivot>()
+var array<Pivot> pivotLows  = array.new<Pivot>()
+
+var array<PatternDrawings> pat_history = array.new<PatternDrawings>()
+
+var bool active_shown  = false
+var float SLIP_COST_ABS = slippage_ticks * syminfo.mintick
+var string dash_pat_name   = "—"
+var bool   dash_pat_bull   = false
+var int    dash_last_bar   = 0
+var float  dash_entry      = na
+var float  dash_stop       = na
+var float  dash_target     = na
+
+string clean_ticker = syminfo.prefix + ':' + syminfo.ticker
+
+// ── GLOBAL CALCULATIONS ──────────────────────────────────────────────────────
+vol_sma = ta.sma(volume, math.max(1, math.min(vol_len, bar_index + 1)))
+atr_val = ta.atr(14)
+
+int   dash_piv_total = array.size(pivotHighs) + array.size(pivotLows)
+int   dash_bars_since = bar_index - dash_last_bar
+float dash_vol_ratio  = vol_sma > 0 ? volume / vol_sma : 1.0
+float dash_vol_score  = math.min(math.max((dash_vol_ratio - 1.0) / 4.0 * 10.0, 0.0), 10.0)
+
+float dash_rr_raw     = not na(dash_entry) and not na(dash_stop) and not na(dash_target) and math.abs(dash_entry - dash_stop) > 0 ? math.abs(dash_target - dash_entry) / math.abs(dash_entry - dash_stop) : 0.0
+float dash_rr_score   = math.min(dash_rr_raw / 5.0 * 10.0, 10.0)
+float dash_piv_score  = math.min(int(dash_piv_total) / 20.0 * 10.0, 10.0)
+
+f_blockBar(float score) =>
+    int    n = math.min(math.max(math.round(score), 0), 10)
+    string s = ''
+    for i = 1 to 10
+        s += i <= n ? '█' : '░'
+    s + ' ' + str.tostring(math.round(score / 10.0 * 100.0), '##0') + '%'
+
+f_blockColor(float score) =>
+    score >= 7.0 ? color.rgb(0, 255, 120) : score >= 4.0 ? color.rgb(80, 255, 0) : score >= 1.5 ? color.rgb(200, 200, 0) : color.rgb(110, 110, 110)
+
+string dash_vol_str   = f_blockBar(dash_vol_score)
+string dash_rr_str    = f_blockBar(dash_rr_score)
+string dash_piv_str   = f_blockBar(dash_piv_score)
+
+color  dash_vol_col   = f_blockColor(dash_vol_score)
+color  dash_rr_col    = f_blockColor(dash_rr_score)
+color  dash_piv_col   = f_blockColor(dash_piv_score)
+
+string dash_bias_str  = dash_pat_bull ? "▲ Bull" : "▼ Bear"
+color  dash_bias_col  = dash_pat_bull ? color.rgb(0, 255, 120) : color.rgb(255, 60, 80)
+string dash_name_str  = dash_pat_name
+color  dash_name_col  = dash_pat_bull ? color.rgb(0, 255, 120) : color.rgb(255, 60, 80)
+string dash_atr_str   = atr_norm_en ? str.tostring(math.round(atr_val / syminfo.mintick), "##0") + " ticks" : str.tostring(atr_val, format.mintick)
+string dash_since_str = "⏳ " + str.tostring(dash_bars_since) + " Bars"
+
+// ── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
+f_pivotHigh(series float src, simple int len) =>
+    float candidate = src[len]
+    bool  isValid   = true
+    for i = 1 to len * 2
+        if i != len and src[i] >= candidate
+            isValid := false
+    isValid ? candidate : na
+
+f_pivotLow(series float src, simple int len) =>
+    float candidate = src[len]
+    bool  isValid   = true
+    for i = 1 to len * 2
+        if i != len and src[i] <= candidate
+            isValid := false
+    isValid ? candidate : na
+
+f_project(float x1, float y1, float x2, float y2, float target_x) =>
+    x2 == x1 ? y1 : y1 + ((y2 - y1) / (x2 - x1)) * (target_x - x1)
+
+f_isNear(float v1, float v2, float tol_pct) =>
+    math.abs(v1 - v2) <= ((v1 + v2) / 2) * tol_pct
+
+f_neck_at_break(int nl_i, float nl_p, int nr_i, float nr_p, int b_idx) =>
+    na(nl_i) and na(nr_i) ? na :
+     na(nl_i) ? nr_p :
+     na(nr_i) ? nl_p :
+     nl_i == nr_i ? nl_p : f_project(nl_i, nl_p, nr_i, nr_p, b_idx)
+
+f_isValidSize(float height, float price) =>
+    height > math.max(price * min_size_pct, atr_val * min_atr_mult)
+
+f_apply_buffer(float price, bool isBullish) =>
+    isBullish ? price - (atr_val * stop_buffer) : price + (atr_val * stop_buffer)
+
+f_sl_pat(float anchor, bool isBull, float entry_p, float target_p) =>
+    if use_sl_pct_tgt and not na(entry_p) and not na(target_p)
+        float _dist = math.abs(target_p - entry_p)
+        isBull ? entry_p - _dist * sl_pct_tgt : entry_p + _dist * sl_pct_tgt
+    else
+        f_apply_buffer(anchor, isBull)
+
+f_get_entry_price(int b_idx) =>
+    int offs = bar_index - b_idx
+    offs >= 1 ? open[offs] : na
+
+f_get_break_idx_precise(float x1, float y1, float x2, float y2, bool isUp) =>
+    int   b_idx      = na
+    int   scan_limit = math.max(min_brk_bar, lb_right) + 10
+    float m          = x2 == x1 ? 0.0 : (y2 - y1) / (x2 - x1)
+    for i = scan_limit to 1
+        if (bar_index - i) < 0
+            continue
+        float proj_price  = x2 == x1 ? y1 : y1 + m * ((bar_index - i) - x1)
+        float margin      = use_atr_brk ? atr_val[i] * break_atr : proj_price * break_pct
+        float up_thresh   = proj_price + margin
+        float down_thresh = proj_price - margin
+        float check_val   = req_close_brk ? close[i] : isUp ? high[i] : low[i]
+        bool  is_broken   = isUp ? check_val > up_thresh : check_val < down_thresh
+        if req_body_brk and is_broken and not show_ignore_conf
+            is_broken := isUp ? open[i] > up_thresh and close[i] > up_thresh : open[i] < down_thresh and close[i] < down_thresh
+        if is_broken
+            bool confirmed = true
+            if brk_confirm_bars > 1 and not show_ignore_conf
+                for k = 1 to brk_confirm_bars - 1
+                    int check_idx = i - k
+                    if check_idx < 0
+                        confirmed := false
+                        break
+                    float proj_k   = x2 == x1 ? y1 : y1 + m * ((bar_index - check_idx) - x1)
+                    float margin_k = use_atr_brk ? atr_val[check_idx] * break_atr : proj_k * break_pct
+                    if isUp and close[check_idx] <= proj_k + margin_k
+                        confirmed := false
+                        break
+                    else if not isUp and close[check_idx] >= proj_k - margin_k
+                        confirmed := false
+                        break
+            if confirmed
+                b_idx := bar_index - i
+                break
+    b_idx
+
+f_validate_pattern(int b_idx, float entry_p, float stop_p, float target_p) =>
+    if show_ignore_conf
+        true
+    else
+        bool valid = true
+        if req_vol and not na(b_idx)
+            int offs = bar_index - b_idx
+            if offs >= 0 and offs < bar_index
+                float sma_at_offs = vol_sma[offs]
+                if not na(sma_at_offs) and volume[offs] <= sma_at_offs * vol_mult
+                    valid := false
+        if valid and not na(entry_p)
+            float total_cost = SLIP_COST_ABS + entry_p * (commission_pct / 100) * 2
+            float risk       = math.abs(entry_p - stop_p)
+            float reward_adj = math.max(0, math.abs(target_p - entry_p) - total_cost)
+            if risk == 0 or reward_adj / risk < min_rr
+                valid := false
+        valid
+
+f_fill_sliced(int ux1, float uy1, int ux2, float uy2, int lx1, float ly1, int lx2, float ly2, color fill_col, array<line> lns_arr) =>
+    line ln_top = line.new(ux1, uy1, ux2, uy2, color=color.new(fill_col, 100), width=1)
+    line ln_bot = line.new(lx1, ly1, lx2, ly2, color=color.new(fill_col, 100), width=1)
+    linefill.new(ln_top, ln_bot, color.new(fill_col, fill_transp))
+    array.push(lns_arr, ln_top)
+    array.push(lns_arr, ln_bot)
+
+f_manage_drawings(int max_items) =>
+    while array.size(pat_history) > max_items
+        PatternDrawings old_pat = array.shift(pat_history)
+        for _ln in old_pat.lns
+            if not na(_ln)
+                line.delete(_ln)
+        for _lb in old_pat.lbls
+            if not na(_lb)
+                label.delete(_lb)
+
+// ── PATTERN DETECTION FUNCTIONS ──────────────────────────────────────────────
+detectHS() =>
+    res = EMPTY_RES
+    _has_hs  = pivotHighs.size() >= 3 and pivotLows.size() >= 2
+    _has_ihs = pivotLows.size() >= 3 and pivotHighs.size() >= 2
+    _rs       = _has_hs  ? pivotHighs.get(0) : Pivot.new(na, na)
+    _head     = _has_hs  ? pivotHighs.get(1) : Pivot.new(na, na)
+    _ls       = _has_hs  ? pivotHighs.get(2) : Pivot.new(na, na)
+    _l_neck_r = _has_hs  ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l_neck_l = _has_hs  ? pivotLows.get(1)  : Pivot.new(na, na)
+    _rs_inv   = _has_ihs ? pivotLows.get(0)   : Pivot.new(na, na)
+    _head_inv = _has_ihs ? pivotLows.get(1)   : Pivot.new(na, na)
+    _ls_inv   = _has_ihs ? pivotLows.get(2)   : Pivot.new(na, na)
+    _h_neck_r = _has_ihs ? pivotHighs.get(0)  : Pivot.new(na, na)
+    _h_neck_l = _has_ihs ? pivotHighs.get(1)  : Pivot.new(na, na)
+    int   _b_hs      = f_get_break_idx_precise(_l_neck_l.i, _l_neck_l.p, _l_neck_r.i, _l_neck_r.p, false)
+    int   _b_ihs     = f_get_break_idx_precise(_h_neck_l.i, _h_neck_l.p, _h_neck_r.i, _h_neck_r.p, true)
+    float _ep_hs     = f_get_entry_price(_b_hs)
+    float _na_hs     = f_neck_at_break(_l_neck_l.i, _l_neck_l.p, _l_neck_r.i, _l_neck_r.p, nz(_b_hs))
+    float _neck_avg  = (nz(_l_neck_r.p) + nz(_l_neck_l.p)) / 2
+    float _ht_hs     = nz(_head.p) - _neck_avg
+    float _tp_hs     = _na_hs - _ht_hs
+    float _sp_hs     = f_sl_pat(_rs.p, false, _ep_hs, _tp_hs)
+    bool  _val_hs    = f_validate_pattern(_b_hs, _ep_hs, _sp_hs, _tp_hs)
+    float _ep_ihs    = f_get_entry_price(_b_ihs)
+    float _na_ihs    = f_neck_at_break(_h_neck_l.i, _h_neck_l.p, _h_neck_r.i, _h_neck_r.p, nz(_b_ihs))
+    float _neck_avg_inv = (nz(_h_neck_r.p) + nz(_h_neck_l.p)) / 2
+    float _ht_ihs    = _neck_avg_inv - nz(_head_inv.p)
+    float _tp_ihs    = _na_ihs + _ht_ihs
+    float _sp_ihs    = f_sl_pat(_rs_inv.p, true, _ep_ihs, _tp_ihs)
+    bool  _val_ihs   = f_validate_pattern(_b_ihs, _ep_ihs, _sp_ihs, _tp_ihs)
+    if _has_hs
+        if _rs.i > _l_neck_r.i and _l_neck_r.i > _head.i and _head.i > _l_neck_l.i and _l_neck_l.i > _ls.i
+            if _head.p > _rs.p and _head.p > _ls.p and f_isNear(_ls.p, _rs.p, sym_tol)
+                if f_isValidSize(_ht_hs, close)
+                    if not na(_b_hs)
+                        if not na(_ep_hs) and _val_hs and show_hs_std
+                            res         := PatternResult.new(true, "Head & Shoulders", false, _ep_hs, _sp_hs, _tp_hs, na, na, _ls.i, _b_hs, _ls.i, _head.p, _b_hs, _na_hs, _l_neck_l.i, _l_neck_l.p, _b_hs, _na_hs, na, na, na, na, _l_neck_l.i, _l_neck_l.p, _b_hs, _na_hs)
+    if not res.detected and _has_ihs
+        if _rs_inv.i > _h_neck_r.i and _h_neck_r.i > _head_inv.i and _head_inv.i > _h_neck_l.i and _h_neck_l.i > _ls_inv.i
+            if _head_inv.p < _rs_inv.p and _head_inv.p < _ls_inv.p and f_isNear(_ls_inv.p, _rs_inv.p, sym_tol)
+                if f_isValidSize(_ht_ihs, close)
+                    if not na(_b_ihs)
+                        if not na(_ep_ihs) and _val_ihs and show_hs_inv
+                            res         := PatternResult.new(true, "Inv Head & Shoulders", true, _ep_ihs, _sp_ihs, _tp_ihs, na, na, _ls_inv.i, _b_ihs, _h_neck_l.i, _h_neck_l.p, _b_ihs, _na_ihs, _ls_inv.i, _head_inv.p, _b_ihs, _na_ihs, _h_neck_l.i, _h_neck_l.p, _b_ihs, _na_ihs, na, na, na, na)
+    res
+
+detectDouble() =>
+    res = EMPTY_RES
+    _has_dt  = pivotHighs.size() >= 2 and pivotLows.size() >= 1
+    _has_db  = pivotLows.size() >= 2 and pivotHighs.size() >= 1
+    _p1      = _has_dt ? pivotHighs.get(0) : Pivot.new(na, na)
+    _p2      = _has_dt ? pivotHighs.get(1) : Pivot.new(na, na)
+    _mid     = _has_dt ? pivotLows.get(0)  : Pivot.new(na, na)
+    _p1b     = _has_db ? pivotLows.get(0)   : Pivot.new(na, na)
+    _p2b     = _has_db ? pivotLows.get(1)   : Pivot.new(na, na)
+    _mid_b   = _has_db ? pivotHighs.get(0)  : Pivot.new(na, na)
+    int   _b_dt   = f_get_break_idx_precise(_mid.i, _mid.p, bar_index, _mid.p, false)
+    int   _b_db   = f_get_break_idx_precise(_mid_b.i, _mid_b.p, bar_index, _mid_b.p, true)
+    float _ep_dt  = f_get_entry_price(_b_dt)
+    float _avg_top = (nz(_p1.p) + nz(_p2.p)) / 2
+    float _ht_dt  = _avg_top - nz(_mid.p)
+    float _tp_dt  = nz(_mid.p) - _ht_dt
+    float _sp_dt  = f_sl_pat(math.max(nz(_p1.p), nz(_p2.p)), false, _ep_dt, _tp_dt)
+    bool  _val_dt = f_validate_pattern(_b_dt, _ep_dt, _sp_dt, _tp_dt)
+    float _ep_db  = f_get_entry_price(_b_db)
+    float _avg_bot = (nz(_p1b.p) + nz(_p2b.p)) / 2
+    float _ht_db  = nz(_mid_b.p) - _avg_bot
+    float _tp_db  = nz(_mid_b.p) + _ht_db
+    float _sp_db  = f_sl_pat(math.min(nz(_p1b.p), nz(_p2b.p)), true, _ep_db, _tp_db)
+    bool  _val_db = f_validate_pattern(_b_db, _ep_db, _sp_db, _tp_db)
+    if _has_dt
+        if _p1.i > _mid.i and _mid.i > _p2.i and f_isNear(_p1.p, _p2.p, lvl_tol)
+            if f_isValidSize(_ht_dt, close)
+                if not na(_b_dt)
+                    if not na(_ep_dt) and _val_dt and show_dt_top
+                        res := PatternResult.new(true, "Double Top", false, _ep_dt, _sp_dt, _tp_dt, na, na, _p2.i, _b_dt, _p2.i, _avg_top, _b_dt, _avg_top, _mid.i, _mid.p, _b_dt, _mid.p, na, na, na, na, _mid.i, _mid.p, _b_dt, _mid.p)
+    if not res.detected and _has_db
+        if _p1b.i > _mid_b.i and _mid_b.i > _p2b.i and f_isNear(_p1b.p, _p2b.p, lvl_tol)
+            if f_isValidSize(_ht_db, close)
+                if not na(_b_db)
+                    if not na(_ep_db) and _val_db and show_dt_bot
+                        res := PatternResult.new(true, "Double Bottom", true, _ep_db, _sp_db, _tp_db, na, na, _p2b.i, _b_db, _mid_b.i, _mid_b.p, _b_db, _mid_b.p, _p2b.i, _avg_bot, _b_db, _avg_bot, _mid_b.i, _mid_b.p, _b_db, _mid_b.p, na, na, na, na)
+    res
+
+detectTriple() =>
+    res = EMPTY_RES
+    _has_tt  = pivotHighs.size() >= 3 and pivotLows.size() >= 2
+    _has_tb  = pivotLows.size() >= 3 and pivotHighs.size() >= 2
+    _h1      = _has_tt ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h2      = _has_tt ? pivotHighs.get(1) : Pivot.new(na, na)
+    _h3      = _has_tt ? pivotHighs.get(2) : Pivot.new(na, na)
+    _l1t     = _has_tt ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l2t     = _has_tt ? pivotLows.get(1)  : Pivot.new(na, na)
+    _l1b     = _has_tb ? pivotLows.get(0)   : Pivot.new(na, na)
+    _l2b     = _has_tb ? pivotLows.get(1)   : Pivot.new(na, na)
+    _l3b     = _has_tb ? pivotLows.get(2)   : Pivot.new(na, na)
+    _h1b     = _has_tb ? pivotHighs.get(0)  : Pivot.new(na, na)
+    _h2b     = _has_tb ? pivotHighs.get(1)  : Pivot.new(na, na)
+    float _neck_tt    = math.min(nz(_l1t.p), nz(_l2t.p))
+    float _ht_tt      = math.max(nz(_h1.p), math.max(nz(_h2.p), nz(_h3.p))) - _neck_tt
+    float _neck_tb    = math.max(nz(_h1b.p), nz(_h2b.p))
+    float _ht_tb      = _neck_tb - math.min(nz(_l1b.p), math.min(nz(_l2b.p), nz(_l3b.p)))
+    int   _b_tt       = f_get_break_idx_precise(_l2t.i, _l2t.p, _l1t.i, _l1t.p, false)
+    int   _b_tb       = f_get_break_idx_precise(_h2b.i, _neck_tb, _h1b.i, _neck_tb, true)
+    float _na_tt      = f_neck_at_break(_l2t.i, _l2t.p, _l1t.i, _l1t.p, nz(_b_tt))
+    float _na_tb      = f_neck_at_break(_h2b.i, _neck_tb, _h1b.i, _neck_tb, nz(_b_tb))
+    float _ep_tt      = f_get_entry_price(_b_tt)
+    float _ep_tb      = f_get_entry_price(_b_tb)
+    float _tp_tt      = _na_tt - _ht_tt
+    float _tp_tb      = _na_tb + _ht_tb
+    float _sp_tt      = f_sl_pat(math.max(nz(_h1.p), math.max(nz(_h2.p), nz(_h3.p))), false, _ep_tt, _tp_tt)
+    float _sp_tb      = f_sl_pat(math.min(nz(_l1b.p), math.min(nz(_l2b.p), nz(_l3b.p))), true, _ep_tb, _tp_tb)
+    bool  _val_tt     = f_validate_pattern(_b_tt, _ep_tt, _sp_tt, _tp_tt)
+    bool  _val_tb     = f_validate_pattern(_b_tb, _ep_tb, _sp_tb, _tp_tb)
+    if _has_tt
+        if _h1.i > _l1t.i and _l1t.i > _h2.i and _h2.i > _l2t.i and _l2t.i > _h3.i
+            if f_isNear(_h1.p, _h2.p, lvl_tol) and f_isNear(_h2.p, _h3.p, lvl_tol)
+                if f_isValidSize(_ht_tt, close)
+                    if not na(_b_tt)
+                        if not na(_ep_tt) and _val_tt and show_tt_top
+                            float _avg_top_tt = math.max(_h1.p, math.max(_h2.p, _h3.p))
+                            res := PatternResult.new(true, "Triple Top", false, _ep_tt, _sp_tt, _tp_tt, na, na, _h3.i, _b_tt, _h3.i, _avg_top_tt, _b_tt, _avg_top_tt, _l2t.i, _neck_tt, _b_tt, _na_tt, na, na, na, na, _l2t.i, _neck_tt, _b_tt, _na_tt)
+    if not res.detected and _has_tb
+        if _l1b.i > _h1b.i and _h1b.i > _l2b.i and _l2b.i > _h2b.i and _h2b.i > _l3b.i
+            if f_isNear(_l1b.p, _l2b.p, lvl_tol) and f_isNear(_l2b.p, _l3b.p, lvl_tol)
+                if f_isValidSize(_ht_tb, close)
+                    if not na(_b_tb)
+                        if not na(_ep_tb) and _val_tb and show_tt_bot
+                            float _avg_bot_tt = math.min(_l1b.p, math.min(_l2b.p, _l3b.p))
+                            res := PatternResult.new(true, "Triple Bottom", true, _ep_tb, _sp_tb, _tp_tb, na, na, _l3b.i, _b_tb, _h2b.i, _neck_tb, _b_tb, _na_tb, _l3b.i, _avg_bot_tt, _b_tb, _avg_bot_tt, _h2b.i, _neck_tb, _b_tb, _na_tb, na, na, na, na)
+    res
+
+detectCupHandle() =>
+    res = EMPTY_RES
+    _has_cup  = pivotHighs.size() >= 2 and pivotLows.size() >= 2
+    _h_rim    = _has_cup ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h_left   = _has_cup ? pivotHighs.get(1) : Pivot.new(na, na)
+    _l_handle = _has_cup ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l_bot    = _has_cup ? pivotLows.get(1)  : Pivot.new(na, na)
+    _l_rim    = _has_cup ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l_left   = _has_cup ? pivotLows.get(1)  : Pivot.new(na, na)
+    _h_handle = _has_cup ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h_top    = _has_cup ? pivotHighs.get(1) : Pivot.new(na, na)
+    float _cup_h_std  = nz(_h_rim.p) - nz(_l_bot.p)
+    float _cup_h_inv  = nz(_h_top.p) - nz(_l_rim.p)
+    int   _b_cup      = f_get_break_idx_precise(_h_rim.i, _h_rim.p, bar_index, _h_rim.p, true)
+    int   _b_inv      = f_get_break_idx_precise(_l_rim.i, _l_rim.p, bar_index, _l_rim.p, false)
+    float _na_cup     = f_neck_at_break(_h_left.i, _h_left.p, _h_rim.i, _h_rim.p, nz(_b_cup))
+    float _na_inv     = f_neck_at_break(_l_left.i, _l_left.p, _l_rim.i, _l_rim.p, nz(_b_inv))
+    float _ep_cup     = f_get_entry_price(_b_cup)
+    float _ep_inv     = f_get_entry_price(_b_inv)
+    float _tp_cup     = _na_cup + _cup_h_std
+    float _tp_inv     = _na_inv - _cup_h_inv
+    float _sp_cup     = f_sl_pat(_l_handle.p, true, _ep_cup, _tp_cup)
+    float _sp_inv     = f_sl_pat(_h_handle.p, false, _ep_inv, _tp_inv)
+    bool  _val_cup    = f_validate_pattern(_b_cup, _ep_cup, _sp_cup, _tp_cup)
+    bool  _val_inv    = f_validate_pattern(_b_inv, _ep_inv, _sp_inv, _tp_inv)
+    if _has_cup
+        if _l_handle.i > _h_rim.i and _h_rim.i > _l_bot.i and _l_bot.i > _h_left.i
+            if f_isNear(_h_rim.p, _h_left.p, sym_tol) and _l_handle.p > _l_bot.p and _l_handle.p < _h_rim.p
+                if f_isValidSize(_cup_h_std, close)
+                    if not na(_b_cup)
+                        if not na(_ep_cup) and _val_cup and show_cup_std
+                            res := PatternResult.new(true, "Cup & Handle", true, _ep_cup, _sp_cup, _tp_cup, na, na, _h_left.i, _b_cup, _h_left.i, _h_left.p, _b_cup, _na_cup, _h_left.i, _l_bot.p, _b_cup, _l_handle.p, _h_left.i, _h_rim.p, _b_cup, _na_cup, na, na, na, na)
+    if not res.detected and _has_cup
+        if _h_handle.i > _l_rim.i and _l_rim.i > _h_top.i and _h_top.i > _l_left.i
+            if f_isNear(_l_rim.p, _l_left.p, sym_tol) and _h_handle.p < _h_top.p and _h_handle.p > _l_rim.p
+                if f_isValidSize(_cup_h_inv, close)
+                    if not na(_b_inv)
+                        if not na(_ep_inv) and _val_inv and show_cup_inv
+                            res := PatternResult.new(true, "Inv Cup & Handle", false, _ep_inv, _sp_inv, _tp_inv, na, na, _l_left.i, _b_inv, _l_left.i, _h_top.p, _b_inv, _h_handle.p, _l_left.i, _l_left.p, _b_inv, _na_inv, na, na, na, na, _l_left.i, _l_rim.p, _b_inv, _na_inv)
+    res
+
+detectFlagPennant() =>
+    res = EMPTY_RES
+    _has = pivotHighs.size() >= 2 and pivotLows.size() >= 2
+    _h1  = _has ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h2  = _has ? pivotHighs.get(1) : Pivot.new(na, na)
+    _l1  = _has ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l2  = _has ? pivotLows.get(1)  : Pivot.new(na, na)
+    int   _start_bar  = math.min(nz(_h2.i), nz(_l2.i))
+    int   _pole_len   = math.min(200, bar_index - _start_bar + 1)
+    float _pole_move  = ta.highest(high, _pole_len) - ta.lowest(low, _pole_len)
+    float _slope_u    = _h1.i == _h2.i ? 0.0 : (nz(_h1.p) - nz(_h2.p)) / math.max(1, _h1.i - _h2.i)
+    float _slope_l    = _l1.i == _l2.i ? 0.0 : (nz(_l1.p) - nz(_l2.p)) / math.max(1, _l1.i - _l2.i)
+    bool  _parallel   = f_isNear(_slope_u, _slope_l, 0.2)
+    int   _b_bull     = f_get_break_idx_precise(_h2.i, _h2.p, _h1.i, _h1.p, true)
+    int   _b_bear     = f_get_break_idx_precise(_l2.i, _l2.p, _l1.i, _l1.p, false)
+    float _ub_bull    = f_project(_h2.i, _h2.p, _h1.i, _h1.p, nz(_b_bull))
+    float _lb_bull    = f_project(_l2.i, _l2.p, _l1.i, _l1.p, nz(_b_bull))
+    float _ub_bear    = f_project(_h2.i, _h2.p, _h1.i, _h1.p, nz(_b_bear))
+    float _lb_bear    = f_project(_l2.i, _l2.p, _l1.i, _l1.p, nz(_b_bear))
+    float _ep_bull    = f_get_entry_price(_b_bull)
+    float _ep_bear    = f_get_entry_price(_b_bear)
+    float _tp_bull    = _ub_bull + _pole_move
+    float _tp_bear    = _lb_bear - _pole_move
+    float _sp_bull    = f_sl_pat(_lb_bull, true, _ep_bull, _tp_bull)
+    float _sp_bear    = f_sl_pat(_ub_bear, false, _ep_bear, _tp_bear)
+    bool  _val_bull   = f_validate_pattern(_b_bull, _ep_bull, _sp_bull, _tp_bull)
+    bool  _val_bear   = f_validate_pattern(_b_bear, _ep_bear, _sp_bear, _tp_bear)
+    if _has and _pole_move > atr_val * 3
+        if _slope_u < 0 and _slope_l < 0
+            if not na(_b_bull)
+                if not na(_ep_bull) and _val_bull
+                    if (_parallel and show_flag_bull) or (not _parallel and show_pennant_bull)
+                        res := PatternResult.new(true, _parallel ? "Bullish Flag" : "Bullish Pennant", true, _ep_bull, _sp_bull, _tp_bull, na, na, _h2.i, _b_bull, _h2.i, _h2.p, _b_bull, _ub_bull, _l2.i, _l2.p, _b_bull, _lb_bull, na, na, na, na, na, na, na, na)
+        else if _slope_u > 0 and _slope_l > 0
+            if not na(_b_bear)
+                if not na(_ep_bear) and _val_bear
+                    if (_parallel and show_flag_bear) or (not _parallel and show_pennant_bear)
+                        res := PatternResult.new(true, _parallel ? "Bearish Flag" : "Bearish Pennant", false, _ep_bear, _sp_bear, _tp_bear, na, na, _h2.i, _b_bear, _h2.i, _h2.p, _b_bear, _ub_bear, _l2.i, _l2.p, _b_bear, _lb_bear, na, na, na, na, na, na, na, na)
+    if res.detected
+        int   _sb  = math.min(_h2.i, _l2.i)
+        int   _bi  = res.breakout_idx
+        float _ubs = f_project(_h2.i, _h2.p, _h1.i, _h1.p, _bi)
+        float _lbs = f_project(_l2.i, _l2.p, _l1.i, _l1.p, _bi)
+        float _uss = f_project(_h2.i, _h2.p, _h1.i, _h1.p, _sb)
+        float _lss = f_project(_l2.i, _l2.p, _l1.i, _l1.p, _sb)
+        res.fux1  := _sb
+        res.fuy1  := _uss
+        res.fux2  := _bi
+        res.fuy2  := _ubs
+        res.flx1  := _sb
+        res.fly1  := _lss
+        res.flx2  := _bi
+        res.fly2  := _lbs
+        res.lux1  := _sb
+        res.luy1  := _uss
+        res.lux2  := _bi
+        res.luy2  := _ubs
+        res.llx1  := _sb
+        res.lly1  := _lss
+        res.llx2  := _bi
+        res.lly2  := _lbs
+    res
+
+detectWedge() =>
+    res = EMPTY_RES
+    _has = pivotHighs.size() >= 2 and pivotLows.size() >= 2
+    _h1  = _has ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h2  = _has ? pivotHighs.get(1) : Pivot.new(na, na)
+    _l1  = _has ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l2  = _has ? pivotLows.get(1)  : Pivot.new(na, na)
+    float _slope_u         = _h1.i == _h2.i ? 0.0 : (nz(_h1.p) - nz(_h2.p)) / math.max(1, _h1.i - _h2.i)
+    float _slope_l         = _l1.i == _l2.i ? 0.0 : (nz(_l1.p) - nz(_l2.p)) / math.max(1, _l1.i - _l2.i)
+    int   _start_idx_wedge = math.min(nz(_h2.i), nz(_l2.i))
+    float _wedge_base_h    = math.abs(f_project(_h2.i, _h2.p, _h1.i, _h1.p, _start_idx_wedge) - f_project(_l2.i, _l2.p, _l1.i, _l1.p, _start_idx_wedge))
+    float _proj_u_now      = f_project(_h2.i, _h2.p, _h1.i, _h1.p, bar_index)
+    float _proj_l_now      = f_project(_l2.i, _l2.p, _l1.i, _l1.p, bar_index)
+    float _height_now      = _proj_u_now - _proj_l_now
+    int   _b_fall          = f_get_break_idx_precise(_h2.i, _h2.p, _h1.i, _h1.p, true)
+    int   _b_rise          = f_get_break_idx_precise(_l2.i, _l2.p, _l1.i, _l1.p, false)
+    float _ub_fall         = f_project(_h2.i, _h2.p, _h1.i, _h1.p, nz(_b_fall))
+    float _lb_fall         = f_project(_l2.i, _l2.p, _l1.i, _l1.p, nz(_b_fall))
+    float _ub_rise         = f_project(_h2.i, _h2.p, _h1.i, _h1.p, nz(_b_rise))
+    float _lb_rise         = f_project(_l2.i, _l2.p, _l1.i, _l1.p, nz(_b_rise))
+    float _ep_fall         = f_get_entry_price(_b_fall)
+    float _ep_rise         = f_get_entry_price(_b_rise)
+    float _tp_fall         = nz(_h2.p)
+    float _tp_rise         = nz(_l2.p)
+    float _sp_fall         = f_sl_pat(_lb_fall, true, _ep_fall, _tp_fall)
+    float _sp_rise         = f_sl_pat(_ub_rise, false, _ep_rise, _tp_rise)
+    bool  _val_fall        = f_validate_pattern(_b_fall, _ep_fall, _sp_fall, _tp_fall)
+    bool  _val_rise        = f_validate_pattern(_b_rise, _ep_rise, _sp_rise, _tp_rise)
+    if _has and _height_now > 0
+        if _slope_u < 0 and _slope_l < 0 and _slope_l < _slope_u
+            if not na(_b_fall)
+                if not na(_ep_fall) and _val_fall and show_wedge_fall
+                    res := PatternResult.new(true, "Falling Wedge", true, _ep_fall, _sp_fall, _tp_fall, na, na, _h2.i, _b_fall)
+        else if _slope_u > 0 and _slope_l > 0 and _slope_l > _slope_u
+            if not na(_b_rise)
+                if not na(_ep_rise) and _val_rise and show_wedge_rise
+                    res := PatternResult.new(true, "Rising Wedge", false, _ep_rise, _sp_rise, _tp_rise, na, na, _h2.i, _b_rise)
+    if res.detected
+        int   _sb  = math.min(_h2.i, _l2.i)
+        int   _bi  = res.breakout_idx
+        float _ubs = f_project(_h2.i, _h2.p, _h1.i, _h1.p, _bi)
+        float _lbs = f_project(_l2.i, _l2.p, _l1.i, _l1.p, _bi)
+        float _uss = f_project(_h2.i, _h2.p, _h1.i, _h1.p, _sb)
+        float _lss = f_project(_l2.i, _l2.p, _l1.i, _l1.p, _sb)
+        res.fux1  := _h2.i
+        res.fuy1  := _h2.p
+        res.fux2  := _bi
+        res.fuy2  := _ubs
+        res.flx1  := _l2.i
+        res.fly1  := _l2.p
+        res.flx2  := _bi
+        res.fly2  := _lbs
+        res.lux1  := _sb
+        res.luy1  := _uss
+        res.lux2  := _bi
+        res.luy2  := _ubs
+        res.llx1  := _sb
+        res.lly1  := _lss
+        res.llx2  := _bi
+        res.lly2  := _lbs
+    res
+
+detectTriangles() =>
+    res = EMPTY_RES
+    _has = pivotHighs.size() >= 2 and pivotLows.size() >= 2
+    _h1  = _has ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h2  = _has ? pivotHighs.get(1) : Pivot.new(na, na)
+    _l1  = _has ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l2  = _has ? pivotLows.get(1)  : Pivot.new(na, na)
+    float _slope_u      = _h1.i == _h2.i ? 0.0 : (nz(_h1.p) - nz(_h2.p)) / math.max(1, _h1.i - _h2.i)
+    float _slope_l      = _l1.i == _l2.i ? 0.0 : (nz(_l1.p) - nz(_l2.p)) / math.max(1, _l1.i - _l2.i)
+    int   _start_tri    = math.min(nz(_h2.i), nz(_l2.i))
+    float _base_height  = math.abs(f_project(_h2.i, _h2.p, _h1.i, _h1.p, _start_tri) - f_project(_l2.i, _l2.p, _l1.i, _l1.p, _start_tri))
+    float _flat_tol     = close * 0.0005
+    bool  _converging   = f_project(_h2.i, _h2.p, _h1.i, _h1.p, bar_index) > f_project(_l2.i, _l2.p, _l1.i, _l1.p, bar_index)
+    int   _b_bull       = f_get_break_idx_precise(_h2.i, _h2.p, _h1.i, _h1.p, true)
+    int   _b_bear       = f_get_break_idx_precise(_l2.i, _l2.p, _l1.i, _l1.p, false)
+    float _ub_bull      = f_project(_h2.i, _h2.p, _h1.i, _h1.p, nz(_b_bull))
+    float _lb_bull      = f_project(_l2.i, _l2.p, _l1.i, _l1.p, nz(_b_bull))
+    float _ub_bear      = f_project(_h2.i, _h2.p, _h1.i, _h1.p, nz(_b_bear))
+    float _lb_bear      = f_project(_l2.i, _l2.p, _l1.i, _l1.p, nz(_b_bear))
+    float _ep_bull      = f_get_entry_price(_b_bull)
+    float _ep_bear      = f_get_entry_price(_b_bear)
+    float _tp_bull      = _ub_bull + _base_height
+    float _tp_bear      = _lb_bear - _base_height
+    float _sp_bull      = f_sl_pat(_lb_bull, true, _ep_bull, _tp_bull)
+    float _sp_bear      = f_sl_pat(_ub_bear, false, _ep_bear, _tp_bear)
+    bool  _val_bull     = f_validate_pattern(_b_bull, _ep_bull, _sp_bull, _tp_bull)
+    bool  _val_bear     = f_validate_pattern(_b_bear, _ep_bear, _sp_bear, _tp_bear)
+    if _has and _converging and f_isValidSize(_base_height, close)
+        if (_slope_u < 0 and _slope_l > 0) or (math.abs(_slope_u) < _flat_tol and _slope_l > 0)
+            if not na(_b_bull)
+                if not na(_ep_bull) and _val_bull and show_tri_gen
+                    bool _isBullish = math.abs(_slope_u) < _flat_tol
+                    res := PatternResult.new(true, _isBullish ? "Ascending Triangle" : "Symmetrical Triangle", true, _ep_bull, _sp_bull, _tp_bull, na, na, _h2.i, _b_bull)
+        if not res.detected and ((_slope_u < 0 and _slope_l > 0) or (_slope_u < 0 and math.abs(_slope_l) < _flat_tol))
+            if not na(_b_bear)
+                if not na(_ep_bear) and _val_bear and show_tri_gen
+                    bool _isBearish = math.abs(_slope_l) < _flat_tol
+                    res := PatternResult.new(true, _isBearish ? "Descending Triangle" : "Symmetrical Triangle", false, _ep_bear, _sp_bear, _tp_bear, na, na, _h2.i, _b_bear)
+    if res.detected
+        int   _sb  = math.min(_h2.i, _l2.i)
+        int   _bi  = res.breakout_idx
+        float _ubs = f_project(_h2.i, _h2.p, _h1.i, _h1.p, _bi)
+        float _lbs = f_project(_l2.i, _l2.p, _l1.i, _l1.p, _bi)
+        float _uss = f_project(_h2.i, _h2.p, _h1.i, _h1.p, _sb)
+        float _lss = f_project(_l2.i, _l2.p, _l1.i, _l1.p, _sb)
+        res.fux1  := _h2.i
+        res.fuy1  := _h2.p
+        res.fux2  := _bi
+        res.fuy2  := _ubs
+        res.flx1  := _l2.i
+        res.fly1  := _l2.p
+        res.flx2  := _bi
+        res.fly2  := _lbs
+        res.lux1  := _sb
+        res.luy1  := _uss
+        res.lux2  := _bi
+        res.luy2  := _ubs
+        res.llx1  := _sb
+        res.lly1  := _lss
+        res.llx2  := _bi
+        res.lly2  := _lbs
+    res
+
+detectRectangles() =>
+    res = EMPTY_RES
+    _has = pivotHighs.size() >= 2 and pivotLows.size() >= 2
+    _h1  = _has ? pivotHighs.get(0) : Pivot.new(na, na)
+    _h2  = _has ? pivotHighs.get(1) : Pivot.new(na, na)
+    _l1  = _has ? pivotLows.get(0)  : Pivot.new(na, na)
+    _l2  = _has ? pivotLows.get(1)  : Pivot.new(na, na)
+    float _slope_u      = _h1.i == _h2.i ? 0.0 : (nz(_h1.p) - nz(_h2.p)) / math.max(1, _h1.i - _h2.i)
+    float _slope_l      = _l1.i == _l2.i ? 0.0 : (nz(_l1.p) - nz(_l2.p)) / math.max(1, _l1.i - _l2.i)
+    float _flat_tol_r   = atr_val * 0.05
+    bool  _is_flat      = math.abs(_slope_u) < _flat_tol_r and math.abs(_slope_l) < _flat_tol_r
+    int   _start_rect   = math.min(nz(_h2.i), nz(_l2.i))
+    float _avg_top      = (nz(_h1.p) + nz(_h2.p)) / 2
+    float _avg_bot      = (nz(_l1.p) + nz(_l2.p)) / 2
+    float _height       = _avg_top - _avg_bot
+    int   _b_bull       = f_get_break_idx_precise(_start_rect, _avg_top, bar_index, _avg_top, true)
+    int   _b_bear       = f_get_break_idx_precise(_start_rect, _avg_bot, bar_index, _avg_bot, false)
+    float _ep_bull      = f_get_entry_price(_b_bull)
+    float _ep_bear      = f_get_entry_price(_b_bear)
+    float _tp_bull      = _avg_top + _height
+    float _tp_bear      = _avg_bot - _height
+    float _sp_bull      = f_sl_pat(_avg_bot, true, _ep_bull, _tp_bull)
+    float _sp_bear      = f_sl_pat(_avg_top, false, _ep_bear, _tp_bear)
+    bool  _val_bull     = f_validate_pattern(_b_bull, _ep_bull, _sp_bull, _tp_bull)
+    bool  _val_bear     = f_validate_pattern(_b_bear, _ep_bear, _sp_bear, _tp_bear)
+    if _has and _is_flat and f_isNear(_slope_u, _slope_l, 0.5) and f_isValidSize(_height, close)
+        if not na(_b_bull)
+            if not na(_ep_bull) and _val_bull and show_rect_gen
+                res := PatternResult.new(true, "Rectangle", true, _ep_bull, _sp_bull, _tp_bull, na, na, _h2.i, _b_bull, _start_rect, _avg_top, _b_bull, _avg_top, _start_rect, _avg_bot, _b_bull, _avg_bot, na, na, na, na, na, na, na, na)
+        if not res.detected and not na(_b_bear)
+            if not na(_ep_bear) and _val_bear and show_rect_gen
+                res := PatternResult.new(true, "Rectangle", false, _ep_bear, _sp_bear, _tp_bear, na, na, _h2.i, _b_bear, _start_rect, _avg_top, _b_bear, _avg_top, _start_rect, _avg_bot, _b_bear, _avg_bot, na, na, na, na, na, na, na, na)
+    if res.detected
+        int   _sb  = math.min(_h2.i, _l2.i)
+        int   _bi  = res.breakout_idx
+        res.lux1  := _sb
+        res.luy1  := _avg_top
+        res.lux2  := _bi
+        res.luy2  := _avg_top
+        res.llx1  := _sb
+        res.lly1  := _avg_bot
+        res.llx2  := _bi
+        res.lly2  := _avg_bot
+    res
+
+// ── PIVOT COLLECTION & PENDING LINES ─────────────────────────────────────────
+float ph = f_pivotHigh(high, lb_left)
+float pl = f_pivotLow(low, lb_left)
+if not na(ph)
+    pivotHighs.unshift(Pivot.new(ph, bar_index - lb_right))
+    if pivotHighs.size() > max_piv_hist
+        pivotHighs.pop()
+if not na(pl)
+    pivotLows.unshift(Pivot.new(pl, bar_index - lb_right))
+    if pivotLows.size() > max_piv_hist
+        pivotLows.pop()
+bool has_pivots = pivotHighs.size() >= 2 and pivotLows.size() >= 2
+
+// ── PATTERN ENGINE & SIGNAL DISPATCH ─────────────────────────────────────────
+var int last_idx = 0
+var int frozen_start_idx = na
+PatternResult _r_dbl  = detectDouble()
+PatternResult _r_tri  = detectTriple()
+PatternResult _r_hs   = detectHS()
+PatternResult _r_fp   = detectFlagPennant()
+PatternResult _r_wdg  = detectWedge()
+PatternResult _r_trng = detectTriangles()
+PatternResult _r_rect = detectRectangles()
+PatternResult _r_cup  = detectCupHandle()
+PatternResult res = EMPTY_RES
+
+bool _gate = bar_index > 600 and has_pivots
+if _gate
+    if (show_dt_top or show_dt_bot) and not res.detected and _r_dbl.detected
+        res := _r_dbl
+    if (show_tt_top or show_tt_bot) and not res.detected and _r_tri.detected
+        res := _r_tri
+    if (show_hs_std or show_hs_inv) and not res.detected and _r_hs.detected
+        res := _r_hs
+    if (show_flag_bull or show_flag_bear or show_pennant_bull or show_pennant_bear) and not res.detected and _r_fp.detected
+        res := _r_fp
+    if (show_wedge_rise or show_wedge_fall) and not res.detected and _r_wdg.detected
+        res := _r_wdg
+    if show_tri_gen and not res.detected and _r_trng.detected
+        res := _r_trng
+    if show_rect_gen and not res.detected and _r_rect.detected
+        res := _r_rect
+    if (show_cup_std or show_cup_inv) and not res.detected and _r_cup.detected
+        res := _r_cup
+
+// ── RENDERING & DRAWING ──────────────────────────────────────────────────────
+bool _is_new_pattern = res.detected and barstate.isconfirmed and (na(frozen_start_idx) or math.abs(res.start_idx - frozen_start_idx) > cooldown)
+if _is_new_pattern and rr_dyn_en and not na(res.entryPrice) and not na(res.stopPrice)
+    float _rr_risk   = math.abs(res.entryPrice - res.stopPrice)
+    res.targetPrice := res.isBullish ? res.entryPrice + _rr_risk * rr_dyn_mult : res.entryPrice - _rr_risk * rr_dyn_mult
+if _is_new_pattern
+    PatternDrawings current_pat = PatternDrawings.new(array.new_line(), array.new_label())
+
+    last_idx             := bar_index
+    frozen_start_idx     := res.start_idx
+    active_shown         := true
+    dash_pat_name        := res.name
+    dash_pat_bull        := res.isBullish
+    dash_last_bar        := last_idx
+    dash_entry           := res.entryPrice
+    dash_stop            := res.stopPrice
+    dash_target          := res.targetPrice
+
+    color  col = res.isBullish ? col_bull : col_bear
+    string txt = res.name
+
+    if not na(res.fux1) and not na(res.fuy1) and not na(res.fux2) and not na(res.fuy2)
+        f_fill_sliced(res.fux1, res.fuy1, res.fux2, res.fuy2, res.flx1, res.fly1, res.flx2, res.fly2, col, current_pat.lns)
+        
+    if not na(res.lux1)
+        ln_u = line.new(res.lux1, res.luy1, res.lux2, res.luy2, color=col, width=2)
+        if extend_lines
+            line.set_extend(ln_u, extend.right)
+        array.push(current_pat.lns, ln_u)
+        
+    if not na(res.llx1)
+        ln_l = line.new(res.llx1, res.lly1, res.llx2, res.lly2, color=col, width=2)
+        if extend_lines
+            line.set_extend(ln_l, extend.right)
+        array.push(current_pat.lns, ln_l)
+        
+    if not na(res.start_idx) and not na(res.breakout_idx)
+        int   _cx      = (res.start_idx + res.breakout_idx) / 2
+        float _uy_mid  = not na(res.lux1) ? f_project(res.lux1, res.luy1, res.lux2, res.luy2, _cx) : not na(res.fux1) ? f_project(res.fux1, res.fuy1, res.fux2, res.fuy2, _cx) : na
+        float _ly_mid  = not na(res.llx1) ? f_project(res.llx1, res.lly1, res.llx2, res.lly2, _cx) : not na(res.flx1) ? f_project(res.flx1, res.fly1, res.flx2, res.fly2, _cx) : na
+        float _cy      = not na(_uy_mid) and not na(_ly_mid) ? (_uy_mid + _ly_mid) / 2 : not na(_uy_mid) ? _uy_mid : not na(_ly_mid) ? _ly_mid : na
+        if not na(_cy)
+            string _lbl_sz_ctr = lbl_scale_en ? (lbl_scale_sel == "Small" ? size.small : lbl_scale_sel == "Large" ? size.large : size.normal) : size.small
+            lbl = label.new(_cx, _cy, txt, color=color.rgb(0, 0, 0, 0), textcolor=color.white, style=label.style_label_center, size=_lbl_sz_ctr)
+            array.push(current_pat.lbls, lbl)
+
+    if alert_en and not na(res.entryPrice) and not na(res.targetPrice) and not na(res.stopPrice)
+        string _alert_json = "{" + str.format('"ticker":"{0}","pattern":"{1}","bias":"{2}","entry":{3},"tp":{4},"sl":{5}', syminfo.tickerid, txt, res.isBullish ? "bull" : "bear", str.tostring(res.entryPrice, format.mintick), str.tostring(res.targetPrice, format.mintick), str.tostring(res.stopPrice, format.mintick)) + "}"
+        alert(_alert_json, alert.freq_once_per_bar_close)
+
+    if show_tgt and not na(res.breakout_idx) and not na(res.entryPrice) and not na(res.stopPrice) and not na(res.targetPrice)
+        int offs = bar_index - res.breakout_idx
+        if offs >= 1
+            int   _x1        = res.breakout_idx
+            int   _x2        = res.breakout_idx + 50
+            int   _lx        = _x2 + 1
+            float _ep        = res.entryPrice
+            
+            float total_cost = SLIP_COST_ABS + _ep * (commission_pct / 100) * 2
+            float risk_val   = math.abs(_ep - res.stopPrice)
+            float reward_adj = math.max(0, math.abs(res.targetPrice - _ep) - total_cost)
+            float rr_adj     = risk_val == 0 ? 0 : reward_adj / risk_val
+            
+            string _ep_str   = str.tostring(_ep,             format.mintick)
+            string _sp_str   = str.tostring(res.stopPrice,   format.mintick)
+            string _tp_str   = str.tostring(res.targetPrice, format.mintick)
+            string _rr_str   = str.tostring(rr_adj, "#.##")
+            
+            line  ln_entry   = line.new(_x1, _ep,             _x2, _ep,             color=col_entry,  style=line.style_dashed, width=1)
+            line  ln_stop    = line.new(_x1, res.stopPrice,   _x2, res.stopPrice,   color=col_stop,   style=line.style_dashed, width=1)
+            line  ln_target  = line.new(_x1, res.targetPrice, _x2, res.targetPrice, color=col_target, style=line.style_dashed, width=1)
+            
+            string _lbl_sz = lbl_scale_en ? (lbl_scale_sel == "Small" ? size.small : lbl_scale_sel == "Large" ? size.large : size.normal) : size.small
+            label lbl_entry  = label.new(_lx, _ep,             "▶ [" + txt + "] Entry  " + _ep_str,                       style=label.style_label_left, color=color.new(col_entry,  70), textcolor=col_entry,  size=_lbl_sz)
+            label lbl_stop   = label.new(_lx, res.stopPrice,   "▶ [" + txt + "] Stop   " + _sp_str,                       style=label.style_label_left, color=color.new(col_stop,   70), textcolor=col_stop,   size=_lbl_sz)
+            label lbl_target = label.new(_lx, res.targetPrice, "▶ [" + txt + "] Target " + _tp_str + "   R:R " + _rr_str, style=label.style_label_left, color=color.new(col_target, 70), textcolor=col_target, size=_lbl_sz)
+            
+            array.push(current_pat.lns,  ln_entry)
+            array.push(current_pat.lns,  ln_stop)
+            array.push(current_pat.lns,  ln_target)
+            array.push(current_pat.lbls, lbl_entry)
+            array.push(current_pat.lbls, lbl_stop)
+            array.push(current_pat.lbls, lbl_target)
+
+    array.push(pat_history, current_pat)
+    
+    f_manage_drawings(max_patterns)
+    active_shown := array.size(pat_history) > 0
+
+// ── DASHBOARD ────────────────────────────────────────────────────────────────
+var table dash = table.new(position.top_right, 2, 9,
+     border_width = 1,
+     border_color = color.rgb(50, 50, 70, 20),
+     frame_width  = 1,
+     frame_color  = color.rgb(60, 60, 90, 10))
+
+color hdrBg = color.rgb(30, 30, 45, 10)
+color altBg = color.rgb(20, 20, 25, 10)
+color oddBg = dash_bg_color
+
+table.cell(dash, 0, 0, "  Pattern Detector", bgcolor=hdrBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 0, clean_ticker + " · " + timeframe.period, bgcolor=hdrBg, text_color=dash_txt_color, text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 1, "  Pattern Bias",   bgcolor=altBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 1, dash_bias_str,       bgcolor=altBg, text_color=dash_bias_col,  text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 2, "  Active Pattern",  bgcolor=oddBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 2, dash_name_str,        bgcolor=oddBg, text_color=dash_name_col,  text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 3, "  ATR (14)",        bgcolor=altBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 3, dash_atr_str,         bgcolor=altBg, text_color=color.rgb(200, 200, 60), text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 4, "  Vol Spike",       bgcolor=oddBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 4, dash_vol_str,         bgcolor=oddBg, text_color=dash_vol_col,  text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 5, "  R:R Quality",     bgcolor=altBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 5, dash_rr_str,          bgcolor=altBg, text_color=dash_rr_col,   text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 6, "  Pivot Depth",     bgcolor=oddBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 6, dash_piv_str,         bgcolor=oddBg, text_color=dash_piv_col,  text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 7, "  Bars Since Brk",  bgcolor=altBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 7, dash_since_str,       bgcolor=altBg, text_color=color.rgb(140, 180, 255), text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 0, 8, "  Pivot Count",     bgcolor=oddBg, text_color=dash_txt_color, text_halign=text.align_left,  text_font_family=font.family_monospace, text_size=size.small)
+table.cell(dash, 1, 8, "⏳ " + str.tostring(dash_piv_total) + " Pivots", bgcolor=oddBg, text_color=color.rgb(140, 180, 255), text_halign=text.align_right, text_font_family=font.family_monospace, text_size=size.small)

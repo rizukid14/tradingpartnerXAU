@@ -1,9 +1,4 @@
-"""
-dashboard_assets.py — Anti-UI-Slop Institutional Quant Decision Cockpit Assets.
-Terminal-grade TradingView Lightweight Charts + 7-Gate X-Ray Surveillance + Proximity Radar.
-"""
-
-TEMPLATE = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
@@ -66,56 +61,44 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* TOP STATUS BAR (44px Institutional Standard) */
+/* TOP STATUS BAR (36px) */
 .header-bar {
-  height: 44px;
+  height: 36px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 0 14px;
   user-select: none;
-  gap: 12px;
-  overflow-x: auto;
-}
-.header-bar::-webkit-scrollbar {
-  display: none;
 }
 .header-left, .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
-  white-space: nowrap;
-  flex-shrink: 0;
+  gap: 16px;
 }
 .app-brand {
-  font-weight: 800;
-  font-size: 11.5px;
+  font-weight: 700;
+  font-size: 12px;
   letter-spacing: 0.5px;
   color: var(--cyan);
   display: flex;
   align-items: center;
   gap: 6px;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 .heartbeat-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--green);
-  box-shadow: 0 0 5px var(--green);
-  flex-shrink: 0;
+  box-shadow: 0 0 6px var(--green);
 }
 .account-stat {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  white-space: nowrap;
-  flex-shrink: 0;
+  font-size: 11px;
 }
 .stat-label { color: var(--text-dim); text-transform: uppercase; font-size: 10px; font-family: var(--font-ui); font-weight: 600; }
 .stat-val { color: var(--text-main); font-weight: 600; }
@@ -125,15 +108,13 @@ html, body {
   font-family: var(--font-mono);
   color: var(--text-muted);
   font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 /* MAIN WORKSPACE GRID */
 .workspace {
   display: grid;
   grid-template-columns: 340px 1fr 330px;
-  height: calc(100vh - 44px);
+  height: calc(100vh - 36px);
   width: 100vw;
   transition: grid-template-columns 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -394,39 +375,33 @@ html, body {
   gap: 2px;
   white-space: nowrap;
 }
-.header-alerts-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 6px;
-}
-.header-alert-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
+.w1-slope-banner {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.15) 0%, rgba(245, 158, 11, 0.04) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+  padding: 5px 12px;
   border-radius: 4px;
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  cursor: help;
-  transition: all 0.15s ease;
-  user-select: none;
-  line-height: 1.2;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 6px 14px;
 }
-.header-alert-chip.chip-m4 {
-  background: rgba(250, 204, 21, 0.12);
+.m4-hero-banner {
+  background: linear-gradient(90deg, rgba(250, 204, 21, 0.15) 0%, rgba(250, 204, 21, 0.04) 100%);
   border: 1px solid rgba(250, 204, 21, 0.45);
-  color: #facc15;
-}
-.header-alert-chip.chip-w1 {
-  background: rgba(245, 158, 11, 0.15);
-  border: 1px solid rgba(245, 158, 11, 0.50);
-  color: #fbbf24;
-}
-.header-alert-chip:hover {
-  filter: brightness(1.25);
-  transform: translateY(-1px);
+  color: #fde047;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 6px 14px;
 }
 .pair-row-line {
   display: flex;
@@ -573,7 +548,6 @@ html, body {
 
 /* CENTER STAGE */
 .center-panel {
-  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--bg-base);
@@ -752,11 +726,6 @@ html, body {
   border-color: #facc15;
   color: #facc15;
 }
-.chip-btn.active-cyan {
-  background: rgba(56, 189, 248, 0.14);
-  border-color: #38bdf8;
-  color: #38bdf8;
-}
 .filter-divider {
   width: 1px;
   height: 14px;
@@ -766,11 +735,10 @@ html, body {
 
 /* CHART CONTAINER */
 .chart-wrapper {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1;
   position: relative;
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 #tv-chart {
   width: 100%;
@@ -786,148 +754,148 @@ html, body {
   z-index: 1;
 }
 
-/* FILTER STRIP LEGENDS (Right Aligned on Toolbar) */
-.filter-strip-legends {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  padding: 2px 8px;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-
-/* HORIZONTAL HUD ROW: 100% FULL WIDTH INFO OVERLAY */
-.chart-hud-row {
+/* MINI LEGEND OVERLAY (Context-Aware Legend) */
+/* EMA LEGEND OVERLAY (Top-Right) */
+.chart-ema-legend {
   position: absolute;
   top: 10px;
-  left: 12px;
-  right: 70px;
+  right: 65px;
+  z-index: 3;
+  pointer-events: none;
   display: flex;
   align-items: center;
-  pointer-events: none;
-  z-index: 2;
-}
-.chart-intel-hud {
-  pointer-events: auto;
-  width: 100%;
-  min-width: 0;
-}
-
-/* MINI LEGEND OVERLAY (Context-Aware Legend) */
-.toolbar-ema-legend {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 600;
-  color: var(--text-muted);
-  white-space: nowrap;
+  color: var(--text-main);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 .ema-leg-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 .ema-leg-bar {
-  width: 10px;
-  height: 2px;
+  width: 12px;
+  height: 2.5px;
   border-radius: 1px;
   display: inline-block;
 }
 
-.toolbar-mini-legend {
-  display: inline-flex;
+/* MINI LEGEND OVERLAY (Context-Aware Legend) */
+.chart-mini-legend {
+  position: absolute;
+  top: 38px;
+  right: 65px;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 9px;
   color: var(--text-dim);
-  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.2s ease;
 }
 .mini-legend-item {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   white-space: nowrap;
 }
 .mini-legend-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 2px;
   display: inline-block;
   flex-shrink: 0;
 }
 
-/* SINGLE-LINE MINIMAL GLASS HUD CAPSULE */
-.hud-capsule {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 12px;
-  background: rgba(15, 23, 42, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: 20px;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  user-select: none;
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* MULTI-TF COMPASS & STATE HUD */
+.chart-intel-hud {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 2;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
-.hud-capsule-sym {
+.hud-line-1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hud-symbol-tag {
+  font-family: var(--font-mono);
   font-weight: 800;
-  color: #f8fafc;
-  letter-spacing: 0.3px;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  color: var(--text-main);
+  background: rgba(18, 22, 31, 0.85);
+  border: 1px solid var(--border-strong);
+  padding: 2px 7px;
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
 }
 .compass-pills {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
 }
 .compass-pill {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 2px;
+  padding: 2px 6px;
+  border-radius: 3px;
   text-transform: uppercase;
   background: rgba(18, 22, 31, 0.85);
   border: 1px solid var(--border);
+  backdrop-filter: blur(4px);
 }
-.pill-bull { color: var(--green); border-color: rgba(0, 230, 118, 0.35); background: rgba(0, 230, 118, 0.12); }
-.pill-bear { color: var(--red); border-color: rgba(255, 82, 82, 0.35); background: rgba(255, 82, 82, 0.12); }
-.pill-side { color: var(--amber); border-color: rgba(255, 215, 64, 0.35); background: rgba(255, 215, 64, 0.12); }
-.hud-capsule-sep {
-  color: rgba(255, 255, 255, 0.22);
-  font-size: 8px;
+.pill-bull {
+  color: var(--green);
+  border-color: rgba(0, 230, 118, 0.35);
+  background: rgba(0, 230, 118, 0.12);
 }
-.hud-capsule-item {
-  display: inline-flex;
+.pill-bear {
+  color: var(--red);
+  border-color: rgba(255, 82, 82, 0.35);
+  background: rgba(255, 82, 82, 0.12);
+}
+.pill-side {
+  color: var(--amber);
+  border-color: rgba(255, 215, 64, 0.35);
+  background: rgba(255, 215, 64, 0.12);
+}
+.hud-line-2, .hud-line-3 {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   color: var(--text-muted);
-}
-.hud-capsule-badge {
-  font-weight: 700;
-  font-size: 9.5px;
-  padding: 1px 5px;
+  background: rgba(18, 22, 31, 0.80);
+  border: 1px solid var(--border);
+  padding: 3px 8px;
   border-radius: 3px;
-  background: rgba(56, 189, 248, 0.12);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.35);
-}
-.hud-capsule-pat {
-  font-weight: 700;
-  color: #fbbf24;
+  backdrop-filter: blur(4px);
+  width: fit-content;
 }
 .hud-metric {
   display: inline-flex;
@@ -944,8 +912,7 @@ html, body {
 
 /* BOTTOM DRAWER / TABS */
 .bottom-drawer {
-  height: 200px;
-  flex-shrink: 0;
+  height: 190px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
   display: flex;
@@ -955,19 +922,17 @@ html, body {
 }
 .bottom-drawer.bottom-collapsed {
   height: 28px !important;
-  flex-shrink: 0;
 }
 .bottom-drawer.bottom-collapsed .drawer-body {
   display: none !important;
 }
 .bottom-drawer.bottom-maximized {
   position: absolute !important;
-  top: 0 !important;
   bottom: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  height: 100% !important;
-  z-index: 50 !important;
+  height: calc(100vh - 36px) !important;
+  z-index: 100 !important;
   box-shadow: 0 -8px 24px rgba(0,0,0,0.85);
 }
 .drawer-tabs {
@@ -1149,40 +1114,40 @@ html, body {
 <!-- TOP STATUS BAR -->
 <div class="header-bar">
   <div class="header-left">
-    <div class="app-brand" title="Quant Institutional Decision Cockpit">
+    <div class="app-brand">
       <div class="heartbeat-dot" id="live-dot"></div>
-      <span>QUANT X-RAY</span>
+      <span>QUANT X-RAY COCKPIT</span>
     </div>
     <div class="account-stat">
       <span class="stat-label">Acct:</span>
       <span class="stat-val" id="acc-login">—</span>
     </div>
     <div class="account-stat">
-      <span class="stat-label">Bal:</span>
+      <span class="stat-label">Balance:</span>
       <span class="stat-val" id="acc-balance">$0.00</span>
     </div>
     <div class="account-stat">
-      <span class="stat-label">Eq:</span>
+      <span class="stat-label">Equity:</span>
       <span class="stat-val" id="acc-equity">$0.00</span>
     </div>
     <div class="account-stat">
-      <span class="stat-label">Float:</span>
+      <span class="stat-label">Float P/L:</span>
       <span class="stat-val" id="acc-float">$0.00</span>
     </div>
     <div class="account-stat">
-      <span class="stat-label">Closed:</span>
+      <span class="stat-label">Closed Today:</span>
       <span class="stat-val" id="acc-closed">$0.00</span>
     </div>
   </div>
   <div class="header-right">
     <div class="account-stat">
-      <span class="stat-label">Shadow:</span>
+      <span class="stat-label">Virtual Shadow:</span>
       <span class="stat-val" id="shadow-stat-val" style="color:var(--purple);font-size:10.5px;">0 rec (0% WR)</span>
-      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:4px;padding:2px 5px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9px;font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">monitoring</span> LAPORAN</a>
+      <a href="/shadow" target="_blank" title="Buka Laporan Lengkap Quant Shadow (HTML)" style="margin-left:5px;padding:2px 6px;border-radius:3px;background:rgba(192,132,252,0.18);border:1px solid #c084fc;color:#c084fc;text-decoration:none;font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">monitoring</span> LAPORAN</a>
     </div>
     <div class="account-stat">
       <span class="stat-label">Mode:</span>
-      <span class="stat-val" id="engine-mode-val" style="color:var(--cyan);font-size:10.5px;font-weight:700;" title="Pure Quant Direct Execution (0 Token API) • CBSS Lead-Lag Active">QUANT (0-TOKEN)</span>
+      <span class="stat-val" id="engine-mode-val" style="color:var(--cyan);font-size:10.5px;font-weight:700;">PURE QUANT DIRECT (0 TOKEN) • CBSS ACTIVE</span>
     </div>
     <div class="account-stat" id="timing-phase-stat">
       <span class="stat-label">Timing:</span>
@@ -1193,7 +1158,7 @@ html, body {
 </div>
 
 <!-- WORKSPACE -->
-<div class="workspace left-collapsed xray-collapsed">
+<div class="workspace">
   
   <!-- LEFT: PROXIMITY WATCHLIST -->
   <div class="left-panel">
@@ -1202,7 +1167,7 @@ html, body {
         <span class="panel-title">26-Pair Proximity Radar</span>
         <span id="watchlist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">Pairs</span>
       </div>
-      <button id="btn-toggle-left" class="btn-toggle-panel" onclick="event.stopPropagation(); toggleLeftPanel();" title="Toggle Proximity Watchlist"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_right</span></button>
+      <button id="btn-toggle-left" class="btn-toggle-panel" onclick="event.stopPropagation(); toggleLeftPanel();" title="Toggle Proximity Watchlist"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px;">chevron_left</span></button>
     </div>
     <div class="left-collapsed-label" onclick="toggleLeftPanel()" title="Klik untuk membuka Radar Watchlist">
       <span>RADAR WATCHLIST</span>
@@ -1230,16 +1195,6 @@ html, body {
           <button class="tf-btn active" data-tf="H1">H1 Structure</button>
           <button class="tf-btn" data-tf="M30">M30 Swing</button>
           <button class="tf-btn" data-tf="M5">M5 Micro</button>
-        </div>
-        <div class="header-alerts-inline" id="header-alerts-inline">
-          <span id="chip-m4-shock" class="header-alert-chip chip-m4" style="display:none;" title="Systemic Flow Shock">
-            <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">bolt</span>
-            <span id="m4-chip-label">SFR ACTIVE</span>
-          </span>
-          <span id="chip-w1-slope" class="header-alert-chip chip-w1" style="display:none;" title="W1 Slope Ceiling">
-            <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">trending_down</span>
-            <span id="w1-chip-label">W1 SLOPE CEILING</span>
-          </span>
         </div>
       </div>
       <div class="pair-metrics-strip">
@@ -1270,13 +1225,25 @@ html, body {
       </div>
     </div>
 
+    <!-- SFR SYSTEMIC SHOCK HERO BANNER -->
+    <div id="m4-hero-banner" class="m4-hero-banner" style="display:none;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:#facc15;">bolt</span>
+      <span><strong>SYSTEMIC FLOW REGIME (SFR) ACTIVE</strong> &bull; Dominant Currency z: <span id="m4-hero-z">+0.0</span> (<span id="m4-hero-dir">BULL</span>) &bull; Direction Locked &bull; Watching Basing / Structure</span>
+    </div>
+
+    <!-- W1 DUAL-HORIZON SLOPE HERO BANNER -->
+    <div id="w1-slope-banner" class="w1-slope-banner" style="display:none;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:#f59e0b;">trending_down</span>
+      <span><strong>W1 DUAL-HORIZON SLOPE CEILING DETECTED</strong> &bull; Upper Tangent Slope @ <span id="w1-slope-val">—</span> &bull; Intermediate: <span id="w1-slope-inter">BEARISH</span> (Secular: <span id="w1-slope-sec">BULLISH</span>) &bull; <span style="color:#ff5252;font-weight:700;">BUY ORDERS BLOCKED</span></span>
+    </div>
+
     <!-- FILTER STRIP BAR (High-Density Multi-Horizon Control) -->
     <div class="filter-strip-bar">
       <div class="filter-group">
         <span class="filter-strip-title">Vertical:</span>
         <div class="strip-btn-group" id="vertical-filter-group">
-          <button class="strip-btn" data-vertical="sessions">Sessions</button>
-          <button class="strip-btn active" data-vertical="regimes">Regimes</button>
+          <button class="strip-btn active" data-vertical="sessions">Sessions</button>
+          <button class="strip-btn" data-vertical="regimes">Regimes</button>
           <button class="strip-btn" data-vertical="both">Both</button>
           <button class="strip-btn" data-vertical="off">Off</button>
         </div>
@@ -1285,26 +1252,28 @@ html, body {
       <div class="filter-divider"></div>
 
       <div class="filter-group">
-        <span class="filter-strip-title">Filter 1-1:</span>
-        <div class="chip-toggle-group" id="zce-chips-group">
-          <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#c084fc;">radar</span> M1-M4</button>
-          <button class="chip-btn active" id="chip-f1c1" data-chip="f1c1" title="Toggle Level F1 & C1 (Primary Support & Resistance)">F1/C1</button>
-          <button class="chip-btn active" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 & C2 (Secondary Support & Resistance)">F2/C2</button>
-          <button class="chip-btn active" id="chip-ext" data-chip="ext" title="Toggle Level Extension di atas F2 & C2 (F3+, C3+)">EXT</button>
-          <button class="chip-btn active-amber" id="chip-pattern" data-chip="pattern" title="Toggle Garis Pola Geometris (Wedge, Triangle, Pennant, Channel)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#facc15;">polyline</span> Patterns</button>
-          <button class="chip-btn active-cyan" id="chip-ema" data-chip="ema" title="Toggle Garis EMA (20, 50, 200)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">show_chart</span> EMA</button>
+        <span class="filter-strip-title">Ladder Preset:</span>
+        <div class="strip-btn-group" id="zce-filter-group">
+          <button class="strip-btn active" data-zce="primary" title="Hanya Dinding Primer F1 & C1 (Rekomendasi)">F1/C1</button>
+          <button class="strip-btn" data-zce="macro" title="Dinding F1/C1 + HTF Macro Wall">Macro G3</button>
+          <button class="strip-btn" data-zce="all" title="Semua Klaster Multi-Horizon">All Zones</button>
+          <button class="strip-btn" data-zce="off" title="Matikan Semua Garis (Chart Bersih)">Off</button>
         </div>
       </div>
 
-      <!-- LEGENDS ALIGNED TO RIGHT OF TOOLBAR -->
-      <div class="filter-strip-legends">
-        <div id="chart-ema-legend" class="toolbar-ema-legend">
-          <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#00e5ff;"></span>EMA 20</div>
-          <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#ffd740;"></span>EMA 50</div>
-          <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#b388ff;"></span>EMA 200</div>
+      <div class="filter-divider"></div>
+
+      <div class="filter-group">
+        <span class="filter-strip-title">Filter 1-1:</span>
+        <div class="chip-toggle-group" id="zce-chips-group">
+          <button class="chip-btn active-green" id="chip-floor" data-chip="floors" title="Toggle Lantai Support (F1, F2, F3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">vertical_align_bottom</span> Floors</button>
+          <button class="chip-btn active-red" id="chip-ceil" data-chip="ceils" title="Toggle Atap Resistance (C1, C2, C3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#fbbf24;">vertical_align_top</span> Ceils</button>
+          <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#c084fc;">radar</span> M1-M4</button>
+          <button class="chip-btn active" id="chip-f1" data-chip="f1" title="Toggle Level F1">F1</button>
+          <button class="chip-btn active" id="chip-c1" data-chip="c1" title="Toggle Level C1">C1</button>
+          <button class="chip-btn" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 / C2">F2/C2</button>
+          <button class="chip-btn" id="chip-g3" data-chip="g3" title="Toggle Macro G3">G3</button>
         </div>
-        <span class="hud-capsule-sep" id="chart-mini-legend-sep">•</span>
-        <div id="chart-mini-legend" class="toolbar-mini-legend"></div>
       </div>
     </div>
 
@@ -1312,41 +1281,48 @@ html, body {
     <div class="chart-wrapper">
       <div id="tv-chart"></div>
       <canvas id="chart-shading-canvas"></canvas>
-      
-      <!-- HORIZONTAL HUD ROW: 100% FULL WIDTH INFO -->
-      <div class="chart-hud-row">
-        <div class="chart-intel-hud" id="chart-intel-hud">
-          <div class="hud-capsule">
-            <span class="hud-capsule-sym" id="hud-sym-tag">EURUSD H1</span>
-            <div class="compass-pills" id="compass-pills">
-              <span class="compass-pill pill-side" id="pill-w1">W1: —</span>
-              <span class="compass-pill pill-side" id="pill-d1">D1: —</span>
-              <span class="compass-pill pill-side" id="pill-h4">H4: —</span>
-              <span class="compass-pill pill-side" id="pill-h1">H1: —</span>
-            </div>
-            <span class="hud-capsule-sep">•</span>
-            <span class="hud-capsule-item" id="hud-session">LONDON</span>
-            <span class="hud-capsule-sep">•</span>
-            <span class="hud-capsule-item">ADX <strong id="hud-adx" class="hud-highlight">—</strong></span>
-            <span class="hud-capsule-sep">•</span>
-            <span class="hud-capsule-badge" id="hud-state">—</span>
-            <span class="hud-capsule-sep">•</span>
-            <span class="hud-capsule-pat" id="hud-pattern-capsule">
-              <strong id="hud-pattern-name">—</strong>
-            </span>
-            <!-- Hidden fallback nodes to maintain backward compatibility -->
-            <span id="hud-upper-slope" style="display:none;"></span>
-            <span id="hud-lower-slope" style="display:none;"></span>
-            <span id="hud-pattern-tau" style="display:none;"></span>
-            <span id="hud-wave-regime" style="display:none;"></span>
-            <span id="hud-rollover" style="display:none;"></span>
+      <div id="chart-ema-legend" class="chart-ema-legend">
+        <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#00e5ff;"></span>EMA 20</div>
+        <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#ffd740;"></span>EMA 50</div>
+        <div class="ema-leg-item"><span class="ema-leg-bar" style="background:#b388ff;"></span>EMA 200</div>
+      </div>
+      <div id="chart-mini-legend" class="chart-mini-legend"></div>
+      <div class="chart-intel-hud" id="chart-intel-hud">
+        <div class="hud-line-1">
+          <div class="hud-symbol-tag" id="hud-sym-tag">EURCAD H1</div>
+          <div class="compass-pills">
+            <span class="compass-pill pill-side" id="pill-w1">W1: —</span>
+            <span class="compass-pill pill-side" id="pill-d1">D1: —</span>
+            <span class="compass-pill pill-side" id="pill-h4">H4: —</span>
+            <span class="compass-pill pill-side" id="pill-h1">H1: —</span>
           </div>
+        </div>
+        <div class="hud-line-2">
+          <span class="hud-metric">ADX: <span class="hud-highlight" id="hud-adx">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">STATE: <span class="hud-highlight" id="hud-state">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">SESSION: <span class="hud-highlight" id="hud-session">—</span></span>
+        </div>
+        <div class="hud-line-3">
+          <span class="hud-metric">WAVE REGIME: <span class="hud-highlight" id="hud-wave-regime">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">PRE-ROLLOVER: <span class="hud-highlight" id="hud-rollover">—</span></span>
+        </div>
+        <div class="hud-line-4" id="hud-line-pattern" style="display:flex;align-items:center;gap:5px;font-size:10px;">
+          <span class="hud-metric">H4 PATTERN: <span class="hud-highlight" id="hud-pattern-name">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">UPPER: <span class="hud-highlight" id="hud-upper-slope">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">LOWER: <span class="hud-highlight" id="hud-lower-slope">—</span></span>
+          <span class="hud-dot">•</span>
+          <span class="hud-metric">TAU: <span class="hud-highlight" id="hud-pattern-tau">—</span></span>
         </div>
       </div>
     </div>
 
     <!-- BOTTOM DRAWER -->
-    <div class="bottom-drawer bottom-collapsed" id="bottom-drawer">
+    <div class="bottom-drawer" id="bottom-drawer">
       <div class="drawer-tabs">
         <div class="drawer-tab-group">
           <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
@@ -1355,7 +1331,7 @@ html, body {
         </div>
         <div class="drawer-toggle-box" style="gap:4px;">
           <button id="btn-maximize-bottom" class="btn-toggle-panel" onclick="toggleMaximizeDrawer()" title="Perbesar Maksimal (Fullscreen / Normal)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_full</span></button>
-          <button id="btn-toggle-bottom" class="btn-toggle-panel" onclick="toggleBottomDrawer()" title="Sembunyikan / Buka Drawer"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_less</span></button>
+          <button id="btn-toggle-bottom" class="btn-toggle-panel" onclick="toggleBottomDrawer()" title="Sembunyikan / Buka Drawer"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">expand_more</span></button>
         </div>
       </div>
       <div class="drawer-body" id="drawer-content">
@@ -1389,14 +1365,15 @@ let currentSymbol = "EURCAD-ECNc";
 let currentTF = "H1";
 let currentFilter = "all";
 let currentDrawerTab = "orders";
-let activeVerticalFilter = "regimes"; // "sessions", "regimes", "both", "off"
-let activeZcePreset = "all"; // "primary", "macro", "all", "off", "custom"
+let activeVerticalFilter = "sessions"; // "sessions", "regimes", "both", "off"
+let activeZcePreset = "primary"; // "primary", "macro", "all", "off", "custom"
+let filterShowFloors = true;
+let filterShowCeils = true;
 let filterShowRadar = true;
-let filterShowPatterns = true;
-let filterShowEMA = true;
-let filterChipF1C1 = true;
-let filterChipF2C2 = true;
-let filterChipEXT = true;
+let filterChipF1 = true;
+let filterChipC1 = true;
+let filterChipF2C2 = false;
+let filterChipG3 = false;
 let chart = null;
 let candleSeries = null;
 let ema20Series = null;
@@ -1435,17 +1412,14 @@ function resizeOverlayCanvas() {
 
 function updateMiniLegend() {
   const legendEl = document.getElementById("chart-mini-legend");
-  const sepEl = document.getElementById("chart-mini-legend-sep");
   if (!legendEl) return;
 
   if (activeVerticalFilter === "off") {
     legendEl.style.display = "none";
-    if (sepEl) sepEl.style.display = "none";
     return;
   }
 
   legendEl.style.display = "flex";
-  if (sepEl) sepEl.style.display = "inline";
   let html = "";
 
   const isBtc = currentSymbol.toUpperCase().includes("BTC");
@@ -1900,138 +1874,208 @@ function renderVerticalShading() {
   }
 
   // 5. Render Macro H4 Structural Swings & Pattern Corridor
-  if (filterShowPatterns && cachedSymbolData && cachedSymbolData.envelope_visual && candleSeries && chart) {
+  if (cachedSymbolData && cachedSymbolData.envelope_visual && candleSeries && chart) {
     const timeScale = chart.timeScale();
     const ev = cachedSymbolData.envelope_visual;
     const ss = ev.swing_structure || {};
     const uBody = ev.upper_body || [];
     const lBody = ev.lower_body || [];
 
-    // 5a. Render HTF Dealing Range & Equilibrium Bands (SMC Foundation)
-    const dr = ev.dealing_range || ss.dealing_range || null;
-    const dol = ev.draw_on_liquidity || ss.draw_on_liquidity || null;
-    const oflow = ev.order_flow || ss.order_flow || null;
+    shadingCtx.save();
 
-    if (dr && dr.range_high > 0 && dr.range_low > 0) {
-      const yHigh = candleSeries.priceToCoordinate(dr.range_high);
-      const yLow = candleSeries.priceToCoordinate(dr.range_low);
-      const yEq = candleSeries.priceToCoordinate(dr.equilibrium_50);
+    // 5a. Subtle Background Envelope Contour (Low opacity to avoid Bollinger Band clutter)
+    if (uBody.length > 0 && lBody.length > 0) {
+      shadingCtx.beginPath();
+      let firstPoint = true;
+      for (let i = 0; i < uBody.length; i++) {
+        const x = timeScale.timeToCoordinate(uBody[i].time);
+        const y = candleSeries.priceToCoordinate(uBody[i].value);
+        if (x !== null && y !== null) {
+          if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+          else { shadingCtx.lineTo(x, y); }
+        }
+      }
+      for (let i = lBody.length - 1; i >= 0; i--) {
+        const x = timeScale.timeToCoordinate(lBody[i].time);
+        const y = candleSeries.priceToCoordinate(lBody[i].value);
+        if (x !== null && y !== null) shadingCtx.lineTo(x, y);
+      }
+      shadingCtx.closePath();
+      shadingCtx.fillStyle = "rgba(56, 189, 248, 0.015)";
+      shadingCtx.fill();
 
-      if (yHigh !== null && yLow !== null && yEq !== null) {
-        // Premium Zone Shading (yHigh down to yEq)
-        shadingCtx.fillStyle = "rgba(244, 63, 94, 0.03)"; // Soft red
-        shadingCtx.fillRect(0, yHigh, width, Math.max(0, yEq - yHigh));
+      // Faint hairline envelope boundaries
+      shadingCtx.setLineDash([3, 5]);
+      shadingCtx.lineWidth = 0.8;
+      shadingCtx.strokeStyle = "rgba(251, 191, 36, 0.20)";
+      shadingCtx.beginPath();
+      firstPoint = true;
+      for (let i = 0; i < uBody.length; i++) {
+        const x = timeScale.timeToCoordinate(uBody[i].time);
+        const y = candleSeries.priceToCoordinate(uBody[i].value);
+        if (x !== null && y !== null) {
+          if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+          else { shadingCtx.lineTo(x, y); }
+        }
+      }
+      shadingCtx.stroke();
 
-        // Discount Zone Shading (yEq down to yLow)
-        shadingCtx.fillStyle = "rgba(16, 185, 129, 0.03)"; // Soft green
-        shadingCtx.fillRect(0, yEq, width, Math.max(0, yLow - yEq));
+      shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.20)";
+      shadingCtx.beginPath();
+      firstPoint = true;
+      for (let i = 0; i < lBody.length; i++) {
+        const x = timeScale.timeToCoordinate(lBody[i].time);
+        const y = candleSeries.priceToCoordinate(lBody[i].value);
+        if (x !== null && y !== null) {
+          if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+          else { shadingCtx.lineTo(x, y); }
+        }
+      }
+      shadingCtx.stroke();
+      shadingCtx.setLineDash([]);
+    }
 
-        // 1. Dealing Range High (BSL External Pool)
+    // 5b. All Consecutive Swing High & Low Structural Segments across 100 bars
+    const upperSegs = ss.all_upper_segments || [];
+    const lowerSegs = ss.all_lower_segments || [];
+
+    // Draw historical upper segments (amber hairline 1.2px)
+    upperSegs.forEach(seg => {
+      const x1 = seg.p1.time > 0 ? timeScale.timeToCoordinate(seg.p1.time) : null;
+      const y1 = candleSeries.priceToCoordinate(seg.p1.price);
+      const x2 = seg.p2.time > 0 ? timeScale.timeToCoordinate(seg.p2.time) : null;
+      const y2 = candleSeries.priceToCoordinate(seg.p2.price);
+      if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
         shadingCtx.beginPath();
-        shadingCtx.setLineDash([6, 4]);
-        shadingCtx.lineWidth = 1.6;
-        shadingCtx.strokeStyle = "rgba(192, 132, 252, 0.85)"; // Purple BSL
-        shadingCtx.moveTo(10, yHigh);
-        shadingCtx.lineTo(width - 25, yHigh);
+        shadingCtx.lineWidth = 1.2;
+        shadingCtx.strokeStyle = "rgba(251, 191, 36, 0.40)";
+        shadingCtx.moveTo(x1, y1);
+        shadingCtx.lineTo(x2, y2);
+        shadingCtx.stroke();
+      }
+    });
+
+    // Draw historical lower segments (cyan hairline 1.2px)
+    lowerSegs.forEach(seg => {
+      const x1 = seg.p1.time > 0 ? timeScale.timeToCoordinate(seg.p1.time) : null;
+      const y1 = candleSeries.priceToCoordinate(seg.p1.price);
+      const x2 = seg.p2.time > 0 ? timeScale.timeToCoordinate(seg.p2.time) : null;
+      const y2 = candleSeries.priceToCoordinate(seg.p2.price);
+      if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+        shadingCtx.beginPath();
+        shadingCtx.lineWidth = 1.2;
+        shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.40)";
+        shadingCtx.moveTo(x1, y1);
+        shadingCtx.lineTo(x2, y2);
+        shadingCtx.stroke();
+      }
+    });
+
+    // 5c. Latest Active Structural Rays & Forward Projections (The Primary Pattern Lines)
+    const uLine = ss.upper_line || {};
+    const lLine = ss.lower_line || {};
+
+    // Upper Active Ray (P1 -> P2 -> Proj)
+    if (uLine.p1 && uLine.p2) {
+      const x1 = uLine.p1.time > 0 ? timeScale.timeToCoordinate(uLine.p1.time) : null;
+      const y1 = candleSeries.priceToCoordinate(uLine.p1.price);
+      const x2 = uLine.p2.time > 0 ? timeScale.timeToCoordinate(uLine.p2.time) : null;
+      const y2 = candleSeries.priceToCoordinate(uLine.p2.price);
+      const xProj = uLine.proj_time > 0 ? timeScale.timeToCoordinate(uLine.proj_time) : (width - 25);
+      const yProj = uLine.proj_price > 0 ? candleSeries.priceToCoordinate(uLine.proj_price) : null;
+
+      if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+        // Solid Ray between last 2 confirmed peaks
+        shadingCtx.beginPath();
+        shadingCtx.lineWidth = 2.0;
+        shadingCtx.strokeStyle = "#fbbf24"; // Bright Amber
+        shadingCtx.moveTo(x1, y1);
+        shadingCtx.lineTo(x2, y2);
         shadingCtx.stroke();
 
-        // High Pill Label
-        const bslTxt = `RANGE HIGH (BSL) ${dr.range_high.toFixed(cachedSymbolData.digits || 5)}${dr.high_confirmed ? ' [CONFIRMED]' : ''}`;
-        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-        const bslW = shadingCtx.measureText(bslTxt).width;
-        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-        shadingCtx.fillRect(width - bslW - 35, yHigh - 15, bslW + 8, 13);
-        shadingCtx.fillStyle = "#c084fc";
-        shadingCtx.fillText(bslTxt, width - bslW - 31, yHigh - 5);
+        // Dashed Forward Projection to live candle
+        if (xProj !== null && yProj !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([4, 4]);
+          shadingCtx.lineWidth = 1.6;
+          shadingCtx.strokeStyle = "rgba(251, 191, 36, 0.85)";
+          shadingCtx.moveTo(x2, y2);
+          shadingCtx.lineTo(xProj, yProj);
+          shadingCtx.stroke();
+          shadingCtx.setLineDash([]);
 
-        // 2. 50% Equilibrium Line
-        shadingCtx.beginPath();
-        shadingCtx.setLineDash([3, 3]);
+          // Terminal dot
+          shadingCtx.beginPath();
+          shadingCtx.arc(xProj, yProj, 3.5, 0, 2 * Math.PI);
+          shadingCtx.fillStyle = "#fbbf24";
+          shadingCtx.fill();
+        }
+
+        // Floating Slope Pill on Upper Ray
+        const midX = (x1 + x2) / 2;
+        const midY = (y1 + y2) / 2;
+        const slopeTxt = `Upper Slope: ${uLine.slope_pips > 0 ? '+' : ''}${uLine.slope_pips} p/b (${uLine.p2.label || 'H'})`;
+        shadingCtx.font = "bold 9.5px 'JetBrains Mono', monospace";
+        const txtW = shadingCtx.measureText(slopeTxt).width;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
+        shadingCtx.fillRect(midX - txtW / 2 - 5, midY - 18, txtW + 10, 15);
+        shadingCtx.strokeStyle = "#fbbf24";
         shadingCtx.lineWidth = 1.0;
-        shadingCtx.strokeStyle = "rgba(148, 163, 184, 0.70)"; // Slate Hairline
-        shadingCtx.moveTo(10, yEq);
-        shadingCtx.lineTo(width - 25, yEq);
-        shadingCtx.stroke();
-
-        // EQ Pill Label
-        const eqTxt = `50% EQ ${dr.equilibrium_50.toFixed(cachedSymbolData.digits || 5)} [${dr.zone_status}]`;
-        const eqW = shadingCtx.measureText(eqTxt).width;
-        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
-        shadingCtx.fillRect(width - eqW - 35, yEq - 7, eqW + 8, 13);
-        shadingCtx.fillStyle = dr.zone_status.includes("PREMIUM") ? "#f43f5e" : "#10b981";
-        shadingCtx.fillText(eqTxt, width - eqW - 31, yEq + 3);
-
-        // 3. Dealing Range Low (SSL External Pool)
-        shadingCtx.beginPath();
-        shadingCtx.setLineDash([6, 4]);
-        shadingCtx.lineWidth = 1.6;
-        shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.85)"; // Sky Blue SSL
-        shadingCtx.moveTo(10, yLow);
-        shadingCtx.lineTo(width - 25, yLow);
-        shadingCtx.stroke();
-
-        // Low Pill Label
-        const sslTxt = `RANGE LOW (SSL) ${dr.range_low.toFixed(cachedSymbolData.digits || 5)}${dr.low_confirmed ? ' [CONFIRMED]' : ''}`;
-        const sslW = shadingCtx.measureText(sslTxt).width;
-        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-        shadingCtx.fillRect(width - sslW - 35, yLow + 2, sslW + 8, 13);
-        shadingCtx.fillStyle = "#38bdf8";
-        shadingCtx.fillText(sslTxt, width - sslW - 31, yLow + 12);
-
-        shadingCtx.setLineDash([]);
+        shadingCtx.strokeRect(midX - txtW / 2 - 5, midY - 18, txtW + 10, 15);
+        shadingCtx.fillStyle = "#fbbf24";
+        shadingCtx.fillText(slopeTxt, midX - txtW / 2, midY - 7);
       }
     }
 
-    // 5b. Render Order Flow Backbone Trajectory (HH/HL/LH/LL Zigzag Wave)
-    const ofSegments = ss.order_flow_segments || ev.order_flow_segments || [];
-    if (ofSegments.length > 0) {
-      ofSegments.forEach(seg => {
-        const fn = seg.from_node;
-        const tn = seg.to_node;
-        if (fn && tn) {
-          const x1 = fn.time > 0 ? timeScale.timeToCoordinate(fn.time) : null;
-          const y1 = candleSeries.priceToCoordinate(fn.price);
-          const x2 = tn.time > 0 ? timeScale.timeToCoordinate(tn.time) : null;
-          const y2 = candleSeries.priceToCoordinate(tn.price);
+    // Lower Active Ray (V1 -> V2 -> Proj)
+    if (lLine.p1 && lLine.p2) {
+      const x1 = lLine.p1.time > 0 ? timeScale.timeToCoordinate(lLine.p1.time) : null;
+      const y1 = candleSeries.priceToCoordinate(lLine.p1.price);
+      const x2 = lLine.p2.time > 0 ? timeScale.timeToCoordinate(lLine.p2.time) : null;
+      const y2 = candleSeries.priceToCoordinate(lLine.p2.price);
+      const xProj = lLine.proj_time > 0 ? timeScale.timeToCoordinate(lLine.proj_time) : (width - 25);
+      const yProj = lLine.proj_price > 0 ? candleSeries.priceToCoordinate(lLine.proj_price) : null;
 
-          if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
-            const isBull = seg.direction === "BULLISH";
-            shadingCtx.beginPath();
-            shadingCtx.lineWidth = 2.0;
-            shadingCtx.strokeStyle = isBull ? "rgba(16, 185, 129, 0.80)" : "rgba(244, 63, 94, 0.80)";
-            shadingCtx.moveTo(x1, y1);
-            shadingCtx.lineTo(x2, y2);
-            shadingCtx.stroke();
-
-            // Direction arrow on wave leg
-            const mx = (x1 + x2) / 2;
-            const my = (y1 + y2) / 2;
-            const angle = Math.atan2(y2 - y1, x2 - x1);
-            const aLen = 6.5;
-            shadingCtx.fillStyle = isBull ? "#10b981" : "#f43f5e";
-            shadingCtx.beginPath();
-            shadingCtx.moveTo(mx, my);
-            shadingCtx.lineTo(mx - aLen * Math.cos(angle - Math.PI / 6), my - aLen * Math.sin(angle - Math.PI / 6));
-            shadingCtx.lineTo(mx - aLen * Math.cos(angle + Math.PI / 6), my - aLen * Math.sin(angle + Math.PI / 6));
-            shadingCtx.closePath();
-            shadingCtx.fill();
-          }
-        }
-      });
-    }
-
-    // 5c. Draw on Liquidity (DOL) Magnet Flag on Live Bar
-    if (dol && dol.target_price > 0 && candleSeries) {
-      const yDol = candleSeries.priceToCoordinate(dol.target_price);
-      if (yDol !== null) {
-        const xDol = width - 25;
+      if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+        // Solid Ray between last 2 confirmed troughs
         shadingCtx.beginPath();
-        shadingCtx.arc(xDol, yDol, 4.5, 0, 2 * Math.PI);
-        shadingCtx.fillStyle = dol.direction.includes("BSL") ? "#c084fc" : "#38bdf8";
-        shadingCtx.fill();
-        shadingCtx.lineWidth = 1.2;
-        shadingCtx.strokeStyle = "#ffffff";
+        shadingCtx.lineWidth = 2.0;
+        shadingCtx.strokeStyle = "#38bdf8"; // Bright Sky Blue
+        shadingCtx.moveTo(x1, y1);
+        shadingCtx.lineTo(x2, y2);
         shadingCtx.stroke();
+
+        // Dashed Forward Projection to live candle
+        if (xProj !== null && yProj !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([4, 4]);
+          shadingCtx.lineWidth = 1.6;
+          shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.85)";
+          shadingCtx.moveTo(x2, y2);
+          shadingCtx.lineTo(xProj, yProj);
+          shadingCtx.stroke();
+          shadingCtx.setLineDash([]);
+
+          // Terminal dot
+          shadingCtx.beginPath();
+          shadingCtx.arc(xProj, yProj, 3.5, 0, 2 * Math.PI);
+          shadingCtx.fillStyle = "#38bdf8";
+          shadingCtx.fill();
+        }
+
+        // Floating Slope Pill on Lower Ray
+        const midX = (x1 + x2) / 2;
+        const midY = (y1 + y2) / 2;
+        const slopeTxt = `Lower Slope: ${lLine.slope_pips > 0 ? '+' : ''}${lLine.slope_pips} p/b (${lLine.p2.label || 'L'})`;
+        shadingCtx.font = "bold 9.5px 'JetBrains Mono', monospace";
+        const txtW = shadingCtx.measureText(slopeTxt).width;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
+        shadingCtx.fillRect(midX - txtW / 2 - 5, midY + 4, txtW + 10, 15);
+        shadingCtx.strokeStyle = "#38bdf8";
+        shadingCtx.lineWidth = 1.0;
+        shadingCtx.strokeRect(midX - txtW / 2 - 5, midY + 4, txtW + 10, 15);
+        shadingCtx.fillStyle = "#38bdf8";
+        shadingCtx.fillText(slopeTxt, midX - txtW / 2, midY + 15);
       }
     }
 
@@ -2087,67 +2131,8 @@ function renderVerticalShading() {
       }
     });
 
-    // 5e. Geometric Pattern Breakout Reference & Measured Target Projection
-    const geom = ss.geometric_pattern || null;
-    if (geom && geom.name !== "NONE" && geom.neckline_price > 0 && candleSeries) {
-      const isWedgeOrTriangle = geom.name.includes("WEDGE") || geom.name.includes("TRIANGLE") || geom.name.includes("PENNANT") || geom.name.includes("CHANNEL");
-      const isForming = geom.status === "FORMING";
-      const xRight = width - 25;
-      const xStart = Math.max(10, width - 260);
-
-      // Hanya gambar garis acuan horizontal jika BUKAN Wedge/Triangle saat FORMING
-      if (!isWedgeOrTriangle || !isForming) {
-        const yNeck = candleSeries.priceToCoordinate(geom.neckline_price);
-        if (yNeck !== null && yNeck >= 0 && yNeck <= height) {
-          shadingCtx.beginPath();
-          shadingCtx.setLineDash([4, 3]);
-          shadingCtx.lineWidth = 1.4;
-          shadingCtx.strokeStyle = "rgba(192, 132, 252, 0.85)";
-          shadingCtx.moveTo(xStart, yNeck);
-          shadingCtx.lineTo(xRight, yNeck);
-          shadingCtx.stroke();
-          shadingCtx.setLineDash([]);
-
-          let neckLabelPrefix = "NECKLINE";
-          if (isWedgeOrTriangle) {
-            neckLabelPrefix = geom.bias === "BULLISH" ? "BREAKOUT RES" : "BREAKOUT SUP";
-          }
-          const neckTxt = `${neckLabelPrefix}: ${geom.neckline_price.toFixed(cachedSymbolData.digits || 5)} [${geom.status}]`;
-          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-          const nW = shadingCtx.measureText(neckTxt).width;
-          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-          shadingCtx.fillRect(xStart, yNeck - 14, nW + 8, 13);
-          shadingCtx.fillStyle = "#c084fc";
-          shadingCtx.fillText(neckTxt, xStart + 4, yNeck - 4);
-        }
-      }
-
-      // Measured Target Line (green if bullish, red if bearish)
-      const yTgt = (geom.target_geom_price && geom.target_geom_price > 0) ? candleSeries.priceToCoordinate(geom.target_geom_price) : null;
-      if (yTgt !== null && yTgt >= 0 && yTgt <= height) {
-        const isBull = geom.bias === "BULLISH";
-        const tgtCol = isBull ? "#10b981" : "#f43f5e";
-        shadingCtx.beginPath();
-        shadingCtx.setLineDash([5, 3]);
-        shadingCtx.lineWidth = 1.6;
-        shadingCtx.strokeStyle = tgtCol;
-        shadingCtx.moveTo(xStart + 30, yTgt);
-        shadingCtx.lineTo(xRight, yTgt);
-        shadingCtx.stroke();
-        shadingCtx.setLineDash([]);
-
-        // Target Pill
-        const tgtTxt = `TARGET (${geom.name}): ${geom.target_geom_price.toFixed(cachedSymbolData.digits || 5)} (${geom.target_pips > 0 ? '+' : ''}${geom.target_pips}p)`;
-        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-        const tW = shadingCtx.measureText(tgtTxt).width;
-        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-        shadingCtx.fillRect(xRight - tW - 8, yTgt - 14, tW + 8, 13);
-        shadingCtx.fillStyle = tgtCol;
-        shadingCtx.fillText(tgtTxt, xRight - tW - 4, yTgt - 4);
-      }
-    }
-
     shadingCtx.restore();
+  }
   }
 }
 
@@ -2225,35 +2210,10 @@ function initChart() {
     if (e.buttons > 0) requestAnimationFrame(renderVerticalShading);
   });
 
-  // Zero-glitch responsive resizing via ResizeObserver & window resize
   window.addEventListener("resize", () => {
-    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
-      chart.resize(container.clientWidth, container.clientHeight);
-      resizeOverlayCanvas();
-    }
+    chart.resize(container.clientWidth, container.clientHeight);
+    resizeOverlayCanvas();
   });
-
-  document.addEventListener("fullscreenchange", () => {
-    setTimeout(() => {
-      if (container && container.clientWidth > 0 && container.clientHeight > 0) {
-        chart.resize(container.clientWidth, container.clientHeight);
-        resizeOverlayCanvas();
-      }
-    }, 80);
-  });
-
-  if (window.ResizeObserver) {
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const cr = entry.contentRect;
-        if (cr.width > 0 && cr.height > 0 && chart) {
-          chart.resize(cr.width, cr.height);
-          resizeOverlayCanvas();
-        }
-      }
-    });
-    ro.observe(container);
-  }
 }
 
 // Clear active price lines & temporal markers
@@ -2288,23 +2248,37 @@ function renderChartLevels(data) {
     if (cls.length > 0) primaryCeil = cls[0];
   }
 
-  if (activeZcePreset === "off") {
-    filteredLadder = [];
-  } else {
+  if (activeZcePreset !== "off") {
     filteredLadder = rawLadder.filter(w => {
-      let tierNum = 1;
-      const match = (w.tier || "").match(/[CF](\d+)/i);
-      if (match) {
-        tierNum = parseInt(match[1], 10);
+      // 1. Direction Filter
+      const isFloor = (w.type === "floor" || (w.tier && w.tier.startsWith("F")));
+      const isCeil = (w.type === "ceiling" || w.type === "ceil" || (w.tier && w.tier.startsWith("C")));
+      if (isFloor && !filterShowFloors) return false;
+      if (isCeil && !filterShowCeils) return false;
+
+      // 2. Granular Tier & Grade Checks
+      const isF1 = (w.tier === "F1") || (primaryFloor && w === primaryFloor);
+      const isC1 = (w.tier === "C1") || (primaryCeil && w === primaryCeil);
+      const isF2C2 = w.tier === "F2" || w.tier === "C2";
+      const isG3 = w.grade === "GRADE_3_MACRO";
+
+      if (activeZcePreset === "primary") {
+        return (isF1 && filterChipF1) || (isC1 && filterChipC1);
       }
-
-      const isF1C1 = (tierNum === 1) || (w.tier === "F1" || w.tier === "C1") || (primaryFloor && w === primaryFloor) || (primaryCeil && w === primaryCeil);
-      const isF2C2 = (tierNum === 2) || (w.tier === "F2" || w.tier === "C2");
-      const isEXT = (tierNum >= 3);
-
-      if (isF1C1) return filterChipF1C1;
-      if (isF2C2) return filterChipF2C2;
-      if (isEXT) return filterChipEXT;
+      if (activeZcePreset === "macro") {
+        return (isF1 && filterChipF1) || (isC1 && filterChipC1) || (isF2C2 && filterChipF2C2) || (isG3 && filterChipG3) || (w.grade === "GRADE_2_INTERMEDIATE");
+      }
+      if (activeZcePreset === "all") {
+        return true;
+      }
+      if (activeZcePreset === "custom") {
+        if (isF1) return filterChipF1;
+        if (isC1) return filterChipC1;
+        if (isF2C2) return filterChipF2C2;
+        if (isG3) return filterChipG3;
+        // Outer tiers (F3..F8, C3..C8) remain visible subject to Floor/Ceil direction toggle
+        return true;
+      }
       return true;
     });
   }
@@ -2568,25 +2542,13 @@ function renderHeader(acc, clock, shadowRadar, timing) {
   clEl.textContent = `${clVal >= 0 ? '+' : ''}$${clVal.toFixed(2)}`;
   clEl.className = `stat-val ${clVal >= 0 ? 'stat-pnl-pos' : 'stat-pnl-neg'}`;
 
-  if (clock) {
-    const clockEl = document.getElementById("live-clock");
-    if (clockEl) {
-      const parts = clock.split("•");
-      clockEl.textContent = parts[0].trim();
-      clockEl.title = clock;
-    }
-  }
+  if (clock) document.getElementById("live-clock").textContent = clock;
 
   const tmEl = document.getElementById("timing-phase-val");
   if (tmEl && timing) {
     const phase = timing.timing_phase || "--";
     const mode = timing.target_mode || "--";
-    let shortPhase = phase;
-    if (phase.includes("DEAD")) shortPhase = "DEAD ZONE";
-    else if (phase.includes("LULL")) shortPhase = "MIDDAY LULL";
-    else if (phase.includes("EXPANSION")) shortPhase = "EXPANSION";
-    tmEl.textContent = shortPhase;
-    tmEl.title = `${phase} (${mode})`;
+    tmEl.textContent = `${phase} (${mode})`;
     if (phase.includes("LULL")) {
       tmEl.style.color = "var(--amber)";
     } else if (phase.includes("DEAD")) {
@@ -2603,8 +2565,7 @@ function renderHeader(acc, clock, shadowRadar, timing) {
     const netR = shadowRadar.cumulative_net_r || 0;
     const act = shadowRadar.active_count || 0;
     const pend = shadowRadar.pending_count || 0;
-    shEl.textContent = `${tot} rec • WR ${wr.toFixed(0)}% (${netR >= 0 ? '+' : ''}${netR.toFixed(1)}R)`;
-    shEl.title = `Virtual Shadow Tracker:\nTotal: ${tot} records\nActive: ${act} positions, Pending: ${pend}\nWinrate: ${wr.toFixed(1)}%\nCumulative Net R: ${netR >= 0 ? '+' : ''}${netR.toFixed(2)}R`;
+    shEl.textContent = `${tot} rec (${act} act, ${pend} pend) | WR ${wr.toFixed(0)}% (${netR >= 0 ? '+' : ''}${netR.toFixed(1)}R)`;
     shEl.style.color = (netR >= 0) ? "var(--green)" : "var(--red)";
   }
 }
@@ -2759,11 +2720,7 @@ function renderSymbolHeader(d) {
   document.getElementById("strip-tier").textContent = `${d.action_tier} (${d.perm_label}) • DIR: ${dirLock}`;
 
   // Render Multi-TF Compass & State HUD
-  const symTagEl = document.getElementById("hud-sym-tag");
-  if (symTagEl) {
-    symTagEl.textContent = `${clean} ${currentTF}`;
-    if (d.tactical_desc) symTagEl.title = `${clean} ${currentTF} • ${d.tactical_desc}`;
-  }
+  document.getElementById("hud-sym-tag").textContent = d.tactical_desc ? `${clean} ${currentTF} • ${d.tactical_desc}` : `${clean} ${currentTF}`;
   if (d.intel) {
     const it = d.intel;
     setCompassPill("pill-w1", "W1", it.w1_trend);
@@ -2772,31 +2729,8 @@ function renderSymbolHeader(d) {
     setCompassPill("pill-h1", "H1", it.h1_trend);
 
     document.getElementById("hud-adx").textContent = `${it.adx}`;
-
-    const stateEl = document.getElementById("hud-state");
-    if (stateEl) {
-      const fullState = it.operational_phase || it.mse_state || d.action_tier || "WATCH";
-      let shortState = it.mse_state || d.action_tier || "WATCH";
-      if (fullState.includes("RETEST")) shortState = "M3 RETEST";
-      else if (fullState.includes("SWEEP")) shortState = "M1 SWEEP";
-      else if (fullState.includes("PULLBACK")) shortState = "M2 PULLBACK";
-      else if (fullState.includes("CONT")) shortState = "M4 CONT";
-      stateEl.textContent = shortState;
-      stateEl.title = fullState;
-    }
-
-    const sessEl = document.getElementById("hud-session");
-    if (sessEl) {
-      const fullSess = it.active_session || "ASIA";
-      let shortSess = fullSess;
-      if (fullSess.toLowerCase().includes("weekend") || fullSess.toLowerCase().includes("closed")) shortSess = "WEEKEND";
-      else if (fullSess.toLowerCase().includes("london")) shortSess = "LONDON";
-      else if (fullSess.toLowerCase().includes("new york") || fullSess.toLowerCase().includes("ny")) shortSess = "NEW YORK";
-      else if (fullSess.toLowerCase().includes("asian") || fullSess.toLowerCase().includes("tokyo")) shortSess = "TOKYO";
-      sessEl.textContent = shortSess;
-      sessEl.title = fullSess;
-    }
-
+    document.getElementById("hud-state").textContent = it.operational_phase || it.mse_state;
+    document.getElementById("hud-session").textContent = it.active_session;
     const waveEl = document.getElementById("hud-wave-regime");
     if (waveEl) {
       const reg = it.wave_regime_summary || "YOUNG_OSCILLATION";
@@ -2813,68 +2747,18 @@ function renderSymbolHeader(d) {
     const loSlopeEl = document.getElementById("hud-lower-slope");
     const patTauEl = document.getElementById("hud-pattern-tau");
     if (envData && patNameEl) {
-      const ev = d.envelope_visual || {};
-      const ss = ev.swing_structure || {};
-      const dr = ev.dealing_range || envData.dealing_range || null;
-      const oflow = ev.order_flow || envData.order_flow || null;
-      const dol = ev.draw_on_liquidity || envData.draw_on_liquidity || null;
-      const geom = ss.geometric_pattern || (envData && envData.geometric_pattern) || null;
-      const mGeom = ss.macro_pattern || (envData && envData.macro_pattern) || null;
+      const pTrend = envData.structural_trend || "RANGING";
+      patNameEl.textContent = pTrend;
+      patNameEl.style.color = pTrend.includes("BULL") ? "#10b981" : (pTrend.includes("BEAR") ? "#f43f5e" : (pTrend.includes("COMPRESSION") ? "#ec4899" : "#fbbf24"));
 
-      if (dr && dr.range_high > 0 && oflow) {
-        const ofRegime = (oflow.regime || "").replace("_ORDER_FLOW", "") || "CHOPPY";
-        const ofSeq = oflow.sequence_summary || (oflow.last_peak_label && oflow.last_trough_label ? `${oflow.last_peak_label}/${oflow.last_trough_label}` : "");
-        const ofLabel = ofSeq ? `${ofRegime} (${ofSeq})` : ofRegime;
-
-        const dolTarget = (dol && dol.target_price > 0) ? `${dol.direction === 'SEEKING_BSL' ? 'BSL' : 'SSL'} @ ${dol.target_price.toFixed(cachedSymbolData.digits || 5)}` : "—";
-        const drPct = dr.dr_position_pct !== undefined ? `${dr.dr_position_pct}%` : `${Math.round(d.dr_pos || 50)}%`;
-        const drZone = dr.zone_status || d.dr_label || "EQ";
-
-        let combinedLabel = `OF: ${ofLabel} • DOL: ${dolTarget} • DR: ${drPct} (${drZone})`;
-        if (geom && geom.name !== "NONE" && geom.status === "CONFIRMED_BREAKOUT") {
-          combinedLabel += ` • [${geom.name}]`;
-        }
-
-        const fullTitle = `HTF Dealing Range: [${dr.range_low.toFixed(cachedSymbolData.digits || 5)} .. ${dr.range_high.toFixed(cachedSymbolData.digits || 5)}]\n50% EQ: ${dr.equilibrium_50.toFixed(cachedSymbolData.digits || 5)} [${dr.zone_status}]\nDraw on Liquidity: ${dol ? dol.pool_type : '—'} (${dol ? dol.distance_pips : 0}p away)\nOrder Flow: ${oflow.regime || 'CHOPPY'}`;
-
-        patNameEl.textContent = combinedLabel;
-        patNameEl.title = fullTitle;
-        patNameEl.style.color = ofRegime.includes("BULL") ? "#10b981" : (ofRegime.includes("BEAR") ? "#f43f5e" : "#fbbf24");
-      } else {
-        let pDisplay = envData.pattern_display_label || (geom && geom.name !== "NONE" ? geom.name : (envData.structural_trend || "RANGING"));
-        let mDisplay = mGeom && mGeom.name !== "NONE" ? mGeom.name : "";
-
-        let tooltipTgt = "";
-        if (geom && geom.target_geom_price > 0 && geom.target_pips) {
-          tooltipTgt = `Target: ${geom.target_geom_price.toFixed(cachedSymbolData.digits || 5)} (${geom.target_pips > 0 ? '+' : ''}${geom.target_pips}p)`;
-        }
-        let fullTitle = tooltipTgt ? `${pDisplay} • ${tooltipTgt}` : (geom && geom.status ? `${pDisplay} [${geom.status}]` : pDisplay);
-        if (mDisplay && mDisplay !== geom?.name) {
-          fullTitle += ` • Macro: ${mDisplay}`;
-        }
-
-        let combinedLabel = pDisplay;
-        if (mDisplay && mDisplay !== geom?.name && mDisplay !== "RANGING") {
-          combinedLabel = `${pDisplay} • [M: ${mDisplay}]`;
-        }
-        patNameEl.textContent = combinedLabel;
-        patNameEl.title = fullTitle;
-        patNameEl.style.color = (geom && geom.bias === "BULLISH") || pDisplay.includes("BULL") ? "#10b981" : ((geom && geom.bias === "BEARISH") || pDisplay.includes("BEAR") ? "#f43f5e" : (pDisplay.includes("COMPRESSION") || pDisplay.includes("TRIANGLE") || pDisplay.includes("WEDGE") ? "#ec4899" : "#fbbf24"));
-      }
-
-      const uSl = (envData.upper_slope !== undefined) ? envData.upper_slope : (ss.upper_slope || 0.0);
-      const lSl = (envData.lower_slope !== undefined) ? envData.lower_slope : (ss.lower_slope || 0.0);
-      const mUSl = (envData.macro_upper_slope !== undefined) ? envData.macro_upper_slope : (ss.macro_upper_slope || 0.0);
-      const mLSl = (envData.macro_lower_slope !== undefined) ? envData.macro_lower_slope : (ss.macro_lower_slope || 0.0);
-
+      const uSl = (envData.upper_slope !== undefined) ? envData.upper_slope : (d.envelope_visual && d.envelope_visual.swing_structure ? d.envelope_visual.swing_structure.upper_slope : 0.0);
+      const lSl = (envData.lower_slope !== undefined) ? envData.lower_slope : (d.envelope_visual && d.envelope_visual.swing_structure ? d.envelope_visual.swing_structure.lower_slope : 0.0);
       if (upSlopeEl) {
         upSlopeEl.textContent = `${uSl > 0 ? '+' : ''}${uSl.toFixed(1)} p/b`;
-        upSlopeEl.title = `Tactical: ${uSl > 0 ? '+' : ''}${uSl.toFixed(1)} p/b | Macro: ${mUSl > 0 ? '+' : ''}${mUSl.toFixed(1)} p/b`;
         upSlopeEl.style.color = uSl > 0 ? "#10b981" : (uSl < 0 ? "#f43f5e" : "var(--text-secondary)");
       }
       if (loSlopeEl) {
         loSlopeEl.textContent = `${lSl > 0 ? '+' : ''}${lSl.toFixed(1)} p/b`;
-        loSlopeEl.title = `Tactical: ${lSl > 0 ? '+' : ''}${lSl.toFixed(1)} p/b | Macro: ${mLSl > 0 ? '+' : ''}${mLSl.toFixed(1)} p/b`;
         loSlopeEl.style.color = lSl > 0 ? "#10b981" : (lSl < 0 ? "#f43f5e" : "var(--text-secondary)");
       }
       if (patTauEl) {
@@ -2884,34 +2768,39 @@ function renderSymbolHeader(d) {
     }
   }
 
-  // Render M4 Systemic Flow Shock Alert Chip
-  const m4Chip = document.getElementById("chip-m4-shock");
-  if (m4Chip) {
+  // Render M4 Systemic Flow Shock Hero Banner
+  const m4Banner = document.getElementById("m4-hero-banner");
+  if (m4Banner) {
     if (d.m4_flow_state === "SHOCK" || d.m4_shock) {
-      m4Chip.style.display = "inline-flex";
-      m4Chip.title = `SYSTEMIC FLOW SHOCK (SFR) ACTIVE\nDominant Currency z: ${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)} (${d.m4_dir || 'BULL'})\nDirection Locked • Watching Basing / Structure`;
-      const lbl = document.getElementById("m4-chip-label");
-      if (lbl) lbl.textContent = `SFR SHOCK ${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(1)}z (${d.m4_dir || 'BULL'})`;
+      m4Banner.style.display = "flex";
+      m4Banner.style.background = "rgba(250, 204, 21, 0.08)";
+      m4Banner.style.borderColor = "rgba(250, 204, 21, 0.4)";
+      m4Banner.style.color = "#facc15";
+      m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#facc15;">bolt</span> <span><strong>SYSTEMIC FLOW SHOCK (SFR) ACTIVE</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Direction Locked &bull; Watching Basing / Structure</span>`;
     } else if (d.m4_flow_state === "CONT") {
-      m4Chip.style.display = "inline-flex";
-      m4Chip.title = `SYSTEMIC FLOW CONTINUATION\nDominant Currency z: ${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)} (${d.m4_dir || 'BULL'})\nEpisode Active • Watching Retest / Basing`;
-      const lbl = document.getElementById("m4-chip-label");
-      if (lbl) lbl.textContent = `SFR CONT ${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(1)}z`;
+      m4Banner.style.display = "flex";
+      m4Banner.style.background = "rgba(56, 189, 248, 0.08)";
+      m4Banner.style.borderColor = "rgba(56, 189, 248, 0.35)";
+      m4Banner.style.color = "#38bdf8";
+      m4Banner.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px;color:#38bdf8;">trending_flat</span> <span><strong>SYSTEMIC FLOW CONTINUATION</strong> &bull; Dominant Currency z: <strong>${d.m4_z > 0 ? '+' : ''}${d.m4_z.toFixed(2)}</strong> (${d.m4_dir || 'BULL'}) &bull; Episode Active &bull; Watching Retest / Basing</span>`;
     } else {
-      m4Chip.style.display = "none";
+      m4Banner.style.display = "none";
     }
   }
 
-  // Render W1 Dual-Horizon Slope Alert Chip
-  const w1Chip = document.getElementById("chip-w1-slope");
-  if (w1Chip) {
+  // Render W1 Dual-Horizon Slope Hero Banner
+  const w1Banner = document.getElementById("w1-slope-banner");
+  if (w1Banner) {
     if (d.w1_horizon_conflict && d.w1_slope_ceiling) {
-      w1Chip.style.display = "inline-flex";
-      w1Chip.title = `W1 DUAL-HORIZON SLOPE CEILING DETECTED\nUpper Tangent Slope @ ${d.w1_slope_ceiling.toFixed(d.digits || 5)}\nIntermediate: ${d.w1_intermediate_regime || 'BEARISH'} (Secular: ${d.w1_secular_regime || 'BULLISH'})\nBUY ORDERS BLOCKED`;
-      const lbl = document.getElementById("w1-chip-label");
-      if (lbl) lbl.textContent = `W1 SLOPE @ ${d.w1_slope_ceiling.toFixed(d.digits || 5)} [BUY LOCKED]`;
+      w1Banner.style.display = "flex";
+      const w1Val = document.getElementById("w1-slope-val");
+      if (w1Val) w1Val.textContent = d.w1_slope_ceiling.toFixed(d.digits || 5);
+      const w1Inter = document.getElementById("w1-slope-inter");
+      if (w1Inter) w1Inter.textContent = d.w1_intermediate_regime || "BEARISH";
+      const w1Sec = document.getElementById("w1-slope-sec");
+      if (w1Sec) w1Sec.textContent = d.w1_secular_regime || "BULLISH";
     } else {
-      w1Chip.style.display = "none";
+      w1Banner.style.display = "none";
     }
   }
 }
@@ -2960,20 +2849,9 @@ function renderChartData(d) {
   });
 
   candleSeries.setData(candleData);
-
-  if (ema20Data.length > 0) ema20Series.setData(ema20Data);
-  if (ema50Data.length > 0) ema50Series.setData(ema50Data);
-  if (ema200Data.length > 0) ema200Series.setData(ema200Data);
-
-  ema20Series.applyOptions({ visible: filterShowEMA });
-  ema50Series.applyOptions({ visible: filterShowEMA });
-  ema200Series.applyOptions({ visible: filterShowEMA });
-
-  // Toggle HUD EMA Legend visibility
-  const emaLegEl = document.getElementById("chart-ema-legend");
-  const emaSepEl = document.getElementById("chart-mini-legend-sep");
-  if (emaLegEl) emaLegEl.style.display = filterShowEMA ? "inline-flex" : "none";
-  if (emaSepEl) emaSepEl.style.display = filterShowEMA ? "inline" : "none";
+  ema20Series.setData(ema20Data);
+  ema50Series.setData(ema50Data);
+  ema200Series.setData(ema200Data);
 
   // 3. Auto-scale & Snap to Center HANYA saat ganti pair/timeframe (Zero flicker saat polling 3 detik)
   if (isScopeChanged) {
@@ -3265,8 +3143,39 @@ function setupEvents() {
     });
   });
 
+  // ZCE ladder filter preset buttons
+  document.querySelectorAll("#zce-filter-group .strip-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const preset = btn.getAttribute("data-zce");
+      syncChipsWithPreset(preset);
+    });
+  });
 
   // Granular ZCE Chip toggles
+  const chipFloor = document.getElementById("chip-floor");
+  if (chipFloor) {
+    chipFloor.addEventListener("click", () => {
+      filterShowFloors = !filterShowFloors;
+      chipFloor.classList.toggle("active-green", filterShowFloors);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipCeil = document.getElementById("chip-ceil");
+  if (chipCeil) {
+    chipCeil.addEventListener("click", () => {
+      filterShowCeils = !filterShowCeils;
+      chipCeil.classList.toggle("active-red", filterShowCeils);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
   const chipRadar = document.getElementById("chip-radar");
   if (chipRadar) {
     chipRadar.addEventListener("click", () => {
@@ -3279,12 +3188,24 @@ function setupEvents() {
     });
   }
 
-  const chipF1C1 = document.getElementById("chip-f1c1");
-  if (chipF1C1) {
-    chipF1C1.addEventListener("click", () => {
-      filterChipF1C1 = !filterChipF1C1;
-      chipF1C1.classList.toggle("active", filterChipF1C1);
-      try { localStorage.setItem("zce_f1c1", filterChipF1C1 ? "1" : "0"); } catch(e) {}
+  const chipF1 = document.getElementById("chip-f1");
+  if (chipF1) {
+    chipF1.addEventListener("click", () => {
+      filterChipF1 = !filterChipF1;
+      chipF1.classList.toggle("active", filterChipF1);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
+      if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  const chipC1 = document.getElementById("chip-c1");
+  if (chipC1) {
+    chipC1.addEventListener("click", () => {
+      filterChipC1 = !filterChipC1;
+      chipC1.classList.toggle("active", filterChipC1);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
       if (cachedSymbolData) renderChartLevels(cachedSymbolData);
     });
   }
@@ -3294,44 +3215,20 @@ function setupEvents() {
     chipF2C2.addEventListener("click", () => {
       filterChipF2C2 = !filterChipF2C2;
       chipF2C2.classList.toggle("active", filterChipF2C2);
-      try { localStorage.setItem("zce_f2c2", filterChipF2C2 ? "1" : "0"); } catch(e) {}
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
       if (cachedSymbolData) renderChartLevels(cachedSymbolData);
     });
   }
 
-  const chipEXT = document.getElementById("chip-ext");
-  if (chipEXT) {
-    chipEXT.addEventListener("click", () => {
-      filterChipEXT = !filterChipEXT;
-      chipEXT.classList.toggle("active", filterChipEXT);
-      try { localStorage.setItem("zce_ext", filterChipEXT ? "1" : "0"); } catch(e) {}
+  const chipG3 = document.getElementById("chip-g3");
+  if (chipG3) {
+    chipG3.addEventListener("click", () => {
+      filterChipG3 = !filterChipG3;
+      chipG3.classList.toggle("active", filterChipG3);
+      activeZcePreset = "custom";
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => b.classList.remove("active"));
       if (cachedSymbolData) renderChartLevels(cachedSymbolData);
-    });
-  }
-
-  const chipPattern = document.getElementById("chip-pattern");
-  if (chipPattern) {
-    chipPattern.addEventListener("click", () => {
-      filterShowPatterns = !filterShowPatterns;
-      chipPattern.classList.toggle("active-amber", filterShowPatterns);
-      try { localStorage.setItem("zce_patterns", filterShowPatterns ? "1" : "0"); } catch(e) {}
-      renderVerticalShading();
-    });
-  }
-
-  const chipEMA = document.getElementById("chip-ema");
-  if (chipEMA) {
-    chipEMA.addEventListener("click", () => {
-      filterShowEMA = !filterShowEMA;
-      chipEMA.classList.toggle("active-cyan", filterShowEMA);
-      try { localStorage.setItem("zce_ema", filterShowEMA ? "1" : "0"); } catch(e) {}
-      if (ema20Series) ema20Series.applyOptions({ visible: filterShowEMA });
-      if (ema50Series) ema50Series.applyOptions({ visible: filterShowEMA });
-      if (ema200Series) ema200Series.applyOptions({ visible: filterShowEMA });
-      const emaLegEl = document.getElementById("chart-ema-legend");
-      const emaSepEl = document.getElementById("chart-mini-legend-sep");
-      if (emaLegEl) emaLegEl.style.display = filterShowEMA ? "inline-flex" : "none";
-      if (emaSepEl) emaSepEl.style.display = filterShowEMA ? "inline" : "none";
     });
   }
 
@@ -3345,34 +3242,53 @@ function setupEvents() {
 function syncChipsWithPreset(preset) {
   activeZcePreset = preset;
   if (preset === "primary") {
-    filterChipF1C1 = true;
+    filterChipF1 = true;
+    filterChipC1 = true;
     filterChipF2C2 = false;
-    filterChipEXT = false;
+    filterChipG3 = false;
+    filterShowFloors = true;
+    filterShowCeils = true;
   } else if (preset === "macro") {
-    filterChipF1C1 = true;
+    filterChipF1 = true;
+    filterChipC1 = true;
     filterChipF2C2 = true;
-    filterChipEXT = false;
+    filterChipG3 = true;
+    filterShowFloors = true;
+    filterShowCeils = true;
   } else if (preset === "all") {
-    filterChipF1C1 = true;
+    filterChipF1 = true;
+    filterChipC1 = true;
     filterChipF2C2 = true;
-    filterChipEXT = true;
+    filterChipG3 = true;
+    filterShowFloors = true;
+    filterShowCeils = true;
   } else if (preset === "off") {
-    filterChipF1C1 = false;
+    filterChipF1 = false;
+    filterChipC1 = false;
     filterChipF2C2 = false;
-    filterChipEXT = false;
+    filterChipG3 = false;
   }
+
+  const chipFloor = document.getElementById("chip-floor");
+  if (chipFloor) chipFloor.classList.toggle("active-green", filterShowFloors);
+
+  const chipCeil = document.getElementById("chip-ceil");
+  if (chipCeil) chipCeil.classList.toggle("active-red", filterShowCeils);
 
   const chipRadar = document.getElementById("chip-radar");
   if (chipRadar) chipRadar.classList.toggle("active-purple", filterShowRadar);
 
-  const chipF1C1 = document.getElementById("chip-f1c1");
-  if (chipF1C1) chipF1C1.classList.toggle("active", filterChipF1C1);
+  const chipF1 = document.getElementById("chip-f1");
+  if (chipF1) chipF1.classList.toggle("active", filterChipF1);
+
+  const chipC1 = document.getElementById("chip-c1");
+  if (chipC1) chipC1.classList.toggle("active", filterChipC1);
 
   const chipF2C2 = document.getElementById("chip-f2c2");
   if (chipF2C2) chipF2C2.classList.toggle("active", filterChipF2C2);
 
-  const chipEXT = document.getElementById("chip-ext");
-  if (chipEXT) chipEXT.classList.toggle("active", filterChipEXT);
+  const chipG3 = document.getElementById("chip-g3");
+  if (chipG3) chipG3.classList.toggle("active", filterChipG3);
 
   try {
     localStorage.setItem("zce_preset", preset);
@@ -3507,47 +3423,30 @@ window.addEventListener("DOMContentLoaded", () => {
   setupEvents();
   fetchOverview();
   fetchSymbolData();
+  fetchRules();
 
-  // Restore Panel collapse states & Filter preferences (Default is Clean Docked Focus Mode)
+  // Restore Panel collapse states & Filter preferences
   try {
-    if (localStorage.getItem("left_collapsed") === "0") {
-      toggleLeftPanel(); // Open if user previously expanded it
+    if (localStorage.getItem("left_collapsed") === "1") {
+      toggleLeftPanel();
     }
-    if (localStorage.getItem("bottom_collapsed") === "0") {
-      toggleBottomDrawer(); // Open if user previously expanded it
+    if (localStorage.getItem("bottom_collapsed") === "1") {
+      toggleBottomDrawer();
     }
-    if (localStorage.getItem("xray_collapsed") === "0") {
-      toggleXrayPanel(); // Open if user previously expanded it
+    if (localStorage.getItem("xray_collapsed") === "1") {
+      toggleXrayPanel();
+    }
+    const savedPreset = localStorage.getItem("zce_preset");
+    if (savedPreset) {
+      document.querySelectorAll("#zce-filter-group .strip-btn").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-zce") === savedPreset);
+      });
+      syncChipsWithPreset(savedPreset);
     }
     if (localStorage.getItem("zce_radar") === "0") {
       filterShowRadar = false;
       const cr = document.getElementById("chip-radar");
       if (cr) cr.classList.remove("active-purple");
-    }
-    if (localStorage.getItem("zce_f1c1") === "0") {
-      filterChipF1C1 = false;
-      const c = document.getElementById("chip-f1c1");
-      if (c) c.classList.remove("active");
-    }
-    if (localStorage.getItem("zce_f2c2") === "0") {
-      filterChipF2C2 = false;
-      const c = document.getElementById("chip-f2c2");
-      if (c) c.classList.remove("active");
-    }
-    if (localStorage.getItem("zce_ext") === "0") {
-      filterChipEXT = false;
-      const c = document.getElementById("chip-ext");
-      if (c) c.classList.remove("active");
-    }
-    if (localStorage.getItem("zce_patterns") === "0") {
-      filterShowPatterns = false;
-      const cp = document.getElementById("chip-pattern");
-      if (cp) cp.classList.remove("active-amber");
-    }
-    if (localStorage.getItem("zce_ema") === "0") {
-      filterShowEMA = false;
-      const ce = document.getElementById("chip-ema");
-      if (ce) ce.classList.remove("active-cyan");
     }
   } catch(e) {}
 
@@ -3558,4 +3457,3 @@ window.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
-"""

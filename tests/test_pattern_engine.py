@@ -9,9 +9,11 @@ import pytest
 from src.analytics.pattern_engine import (
     MacroEnvelopeEngine,
     MacroEnvelopeResult,
+    GeometricPattern,
     clean_outliers_and_rollover,
     extract_causal_pivots,
     classify_structural_trend,
+    detect_geometric_patterns,
     savgol_smooth,
     _compute_savgol_weights
 )
@@ -169,3 +171,248 @@ def test_performance_sub_millisecond():
     avg_ms = ((t1 - t0) / n_runs) * 1000.0
     print(f"\n[BENCHMARK] MacroEnvelopeEngine average runtime: {avg_ms:.2f} ms")
     assert avg_ms < 5.0, f"Engine too slow: {avg_ms:.2f} ms > 5.0 ms"
+
+
+def test_detect_double_top_and_bottom():
+    """Verify Double Top detection, neckline, and measured move target."""
+    peaks = [
+        {"index": 20, "price": 1.1050, "label": "H"},
+        {"index": 40, "price": 1.1052, "label": "EH"}  # Diff = 2 pips (well within 0.18*ATR)
+    ]
+    troughs = [
+        {"index": 30, "price": 1.0950, "label": "L"}  # Neckline at 1.0950
+    ]
+    closes = np.array([1.1000] * 40 + [1.0960])  # Close at 1.0960 (above neckline 1.0950 -> FORMING)
+    highs = np.array([1.1050] * 41)
+    lows = np.array([1.0950] * 41)
+    cur_atr = 0.0030  # 30 pips ATR
+    
+    pat = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=0.0,
+        lower_slope=0.0,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    
+    assert pat.name == "DOUBLE_TOP"
+    assert pat.bias == "BEARISH"
+    assert pat.status == "FORMING"
+    assert np.isclose(pat.neckline_price, 1.0950)
+    # Height = ~101 pips, Target = 1.0950 - 0.0101 = 1.0849
+    assert pat.target_geom_price < 1.0900
+    assert pat.height_pips > 90.0
+
+
+def test_detect_wedges_falling_and_rising():
+    """Verify Falling Wedge and Rising Wedge via slope convergence."""
+    peaks = [{"index": 10, "price": 1.1000}, {"index": 30, "price": 1.0950}]
+    troughs = [{"index": 5, "price": 1.0950}, {"index": 25, "price": 1.0850}]
+    closes = np.array([1.0920] * 35)
+    highs = np.array([1.1005] * 35)
+    lows = np.array([1.0840] * 35)
+    cur_atr = 0.0025
+
+    # 1. Falling Wedge: m_u < 0, m_l < 0, |m_l| > |m_u|
+    pat_fw = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=-0.50,
+        lower_slope=-1.20,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    assert pat_fw.name == "FALLING_WEDGE"
+    assert pat_fw.bias == "BULLISH"
+    assert pat_fw.target_geom_price > 1.0950
+
+    # 2. Rising Wedge: m_u > 0, m_l > 0, m_l > m_u
+    pat_rw = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=0.40,
+        lower_slope=1.10,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    assert pat_rw.name == "RISING_WEDGE"
+    assert pat_rw.bias == "BEARISH"
+    assert pat_rw.target_geom_price < 1.0850
+
+
+def test_detect_triangles_multi_slope():
+    """Verify Ascending, Descending, and Symmetrical Triangle detection via multi-slope thresholds."""
+    peaks = [{"index": 10, "price": 1.1000}, {"index": 30, "price": 1.1002}]
+    troughs = [{"index": 5, "price": 1.0900}, {"index": 20, "price": 1.0950}]
+    closes = np.array([1.0980] * 35)
+    highs = np.array([1.1005] * 35)
+    lows = np.array([1.0900] * 35)
+    cur_atr = 0.0020
+
+    # 1. Ascending Triangle: |m_u| <= 0.10, m_l > 0.10
+    pat_asc = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=0.05,
+        lower_slope=0.80,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    assert pat_asc.name == "ASCENDING_TRIANGLE"
+    assert pat_asc.bias == "BULLISH"
+
+    # 2. Descending Triangle: m_u < -0.10, |m_l| <= 0.10
+    pat_desc = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=-0.80,
+        lower_slope=-0.05,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    assert pat_desc.name == "DESCENDING_TRIANGLE"
+    assert pat_desc.bias == "BEARISH"
+
+    # 3. Symmetrical Triangle: m_u < -0.10, m_l > 0.10
+    pat_sym = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=-0.60,
+        lower_slope=0.60,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    assert pat_sym.name == "SYMMETRICAL_TRIANGLE"
+
+
+def test_detect_bull_and_bear_flag():
+    """Verify Bull and Bear Flag continuation patterns."""
+    cur_atr = 0.0020
+    # Create 35 bars with large pole in bars 0..20 (e.g. 1.0800 to 1.0950 = 150 pips = 7.5x ATR)
+    highs = np.array([1.0850] * 10 + [1.0950] * 15 + [1.0920] * 10)
+    lows = np.array([1.0800] * 10 + [1.0880] * 15 + [1.0890] * 10)
+    closes = np.array([1.0840] * 10 + [1.0940] * 15 + [1.0900] * 10)
+    peaks = [{"index": 20, "price": 1.0950}]
+    troughs = [{"index": 5, "price": 1.0800}]
+
+    # Bull Flag: pole up, consolidation channels downward (|m_u - m_l| <= 0.20, both < -0.10)
+    pat_bull_flag = detect_geometric_patterns(
+        peaks=peaks,
+        troughs=troughs,
+        upper_slope=-0.25,
+        lower_slope=-0.30,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        cur_atr=cur_atr,
+        pip_size=0.0001
+    )
+    assert pat_bull_flag.name == "BULL_FLAG"
+    assert pat_bull_flag.bias == "BULLISH"
+    assert pat_bull_flag.target_geom_price > 1.0950
+
+
+def test_atr_breakout_tolerance_gate():
+    """Verify that a breakout is only confirmed when close exceeds neckline +/- 0.15*ATR."""
+    peaks = [{"index": 10, "price": 1.1050}, {"index": 30, "price": 1.1050}]
+    troughs = [{"index": 20, "price": 1.0950}]  # Neckline = 1.0950
+    cur_atr = 0.0020  # 20 pips -> 0.15*ATR = 3 pips (0.00030)
+    # Breakout threshold = 1.0950 - 0.0003 = 1.09470
+    
+    # Case 1: Close is 1.09490 (below neckline, but NOT below 1.09470 threshold) -> TESTING_BREAKOUT
+    closes_testing = np.array([1.1000] * 35 + [1.09490])
+    highs = np.array([1.1050] * 36)
+    lows = np.array([1.0940] * 36)
+    
+    pat_test = detect_geometric_patterns(
+        peaks=peaks, troughs=troughs, upper_slope=0, lower_slope=0,
+        highs=highs, lows=lows, closes=closes_testing, cur_atr=cur_atr, pip_size=0.0001
+    )
+    assert pat_test.status == "TESTING_BREAKOUT"
+
+    # Case 2: Close is 1.09450 (below 1.09470 threshold) -> CONFIRMED_BREAKOUT
+    closes_confirmed = np.array([1.1000] * 35 + [1.09450])
+    pat_conf = detect_geometric_patterns(
+        peaks=peaks, troughs=troughs, upper_slope=0, lower_slope=0,
+        highs=highs, lows=lows, closes=closes_confirmed, cur_atr=cur_atr, pip_size=0.0001
+    )
+    assert pat_conf.status == "CONFIRMED_BREAKOUT"
+
+
+def test_dual_horizon_pattern_extraction():
+    """
+    Verify Dual-Horizon Pattern Engine:
+    - Tactical Horizon (near, last confirmed pivots)
+    - Macro Horizon (far, Anchor Peak Law across 40-100 bars)
+    """
+    df = _generate_synthetic_h4_df(n_bars=100, trend="compression")
+    engine = MacroEnvelopeEngine()
+    res = engine.analyze(df, symbol="EURCAD", pip_size=0.0001)
+
+    assert res.macro_pattern is not None
+    assert "macro_upper_line" in res.visual_payload["swing_structure"]
+    assert "macro_lower_line" in res.visual_payload["swing_structure"]
+    assert "macro_pattern" in res.visual_payload["swing_structure"]
+    assert hasattr(res, "macro_upper_slope")
+    assert hasattr(res, "macro_lower_slope")
+
+
+def test_inducement_dealing_range_and_order_flow():
+    """
+    Verify Inducement Dealing Range, Order Flow Backbone, and DOL extraction.
+    """
+    from src.analytics.pattern_engine import compute_inducement_dealing_range
+
+    # Synthetic series with Range High 1.1000 and Range Low 1.0800
+    n = 60
+    highs = np.array([1.0900] * n)
+    lows = np.array([1.0850] * n)
+    closes = np.array([1.0880] * n)
+    highs[20] = 1.1000
+    lows[35] = 1.0800
+
+    # Put a confirmed peak at idx 20 (1.1000) and confirmed trough at idx 35 (1.0800)
+    peaks = [{"index": 20, "price": 1.1000, "label": "HH", "time": 1000}]
+    troughs = [{"index": 35, "price": 1.0800, "label": "LL", "time": 2000}]
+    time_vals = list(range(n))
+
+    dr, oflow, dol, segments = compute_inducement_dealing_range(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        peaks=peaks,
+        troughs=troughs,
+        time_vals=time_vals,
+        cur_atr=0.0020,
+        pip_size=0.0001
+    )
+
+    assert dr["range_high"] == 1.1000
+    assert dr["range_low"] == 1.0800
+    assert np.isclose(dr["equilibrium_50"], 1.0900)
+    assert dr["zone_status"] in ["DISCOUNT", "EQUILIBRIUM", "DEEP_DISCOUNT"]
+    assert dol["direction"] in ["SEEKING_BSL", "SEEKING_SSL", "ROTATING_TO_BSL", "ROTATING_TO_SSL"]
+    assert oflow["regime"] in ["BULLISH_ORDER_FLOW", "BEARISH_ORDER_FLOW", "CHOPPY", "NEUTRAL_FLOW"]
+    assert len(segments) >= 1
+
+
+

@@ -1046,12 +1046,13 @@ class CockpitDataEngine:
 
         # 1. Fetch Candlesticks
         tf_map = {
+            "H4": config.mt5.TIMEFRAME_H4,
             "H1": config.mt5.TIMEFRAME_H1,
             "M30": config.mt5.TIMEFRAME_M30,
             "M5": config.mt5.TIMEFRAME_M5
         }
         mt5_tf = tf_map.get(timeframe_str.upper(), config.mt5.TIMEFRAME_H1)
-        num_bars = 60 if timeframe_str.upper() == "M5" else (180 if timeframe_str.upper() == "M30" else 300)
+        num_bars = 60 if timeframe_str.upper() == "M5" else (180 if timeframe_str.upper() == "M30" else (120 if timeframe_str.upper() == "H4" else 450))
 
         rates = config.mt5.copy_rates_from_pos(valid_sym, mt5_tf, 0, num_bars + 50)
         candles = []
@@ -1063,7 +1064,7 @@ class CockpitDataEngine:
             df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
             df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
 
-            tf_hours = 1.0 if timeframe_str.upper() == "H1" else (0.5 if timeframe_str.upper() == "M30" else 5.0 / 60.0)
+            tf_hours = 4.0 if timeframe_str.upper() == "H4" else (1.0 if timeframe_str.upper() == "H1" else (0.5 if timeframe_str.upper() == "M30" else 5.0 / 60.0))
             wave_series = classify_wave_regimes_series(
                 highs=df['high'].tolist(),
                 lows=df['low'].tolist(),
