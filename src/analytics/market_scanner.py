@@ -4168,6 +4168,8 @@ class MarketScanner:
                                     rr_val = round(abs(limit_entry - tp) / max(abs(limit_entry - sl), 1e-5), 2)
                                     if abs(limit_entry - mid) > 1.0 * atr_price_val:
                                         logger.debug(f"[M1 SELL DISTANCE GUARD] {sym} SKIP: limit_entry {limit_entry:.5f} too far from mid {mid:.5f}")
+                                    elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":
+                                        logger.debug(f"[M1 SELL RR GUARD] {sym} SKIP: R:R {rr_val:.2f} < 0.50 minimum floor")
                                     elif abs(limit_entry - sl) / pt >= 15:
                                         sym_candidates.append(CandidateSetup(
                                             symbol=sym,
@@ -4352,6 +4354,8 @@ class MarketScanner:
                                     rr_val = round(abs(tp - limit_entry) / max(abs(limit_entry - sl), 1e-5), 2)
                                     if abs(limit_entry - mid) > 1.0 * atr_price_val:
                                         logger.debug(f"[M1 BUY DISTANCE GUARD] {sym} SKIP: limit_entry {limit_entry:.5f} too far from mid {mid:.5f}")
+                                    elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":
+                                        logger.debug(f"[M1 BUY RR GUARD] {sym} SKIP: R:R {rr_val:.2f} < 0.50 minimum floor")
                                     elif abs(limit_entry - sl) / pt >= 15:
                                         sym_candidates.append(CandidateSetup(
                                             symbol=sym,
@@ -4687,6 +4691,8 @@ class MarketScanner:
                             rr_val = round(abs(tp - lim_entry) / max(abs(lim_entry - sl), 1e-5), 2)
                             if abs(lim_entry - mid) > 1.0 * atr_val:
                                 logger.debug(f"[M2 BUY DISTANCE GUARD] {sym} SKIP: lim_entry {lim_entry:.5f} too far from mid {mid:.5f}")
+                            elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":
+                                logger.debug(f"[M2 BUY RR GUARD] {sym} SKIP: R:R {rr_val:.2f} < 0.50 minimum floor")
                             elif abs(lim_entry - sl) / pt >= 15:
                                 sym_candidates.append(CandidateSetup(
                                     symbol=sym,
@@ -4828,6 +4834,8 @@ class MarketScanner:
                             rr_val = round(abs(lim_entry - tp) / max(abs(sl - lim_entry), 1e-5), 2)
                             if abs(lim_entry - mid) > 1.0 * atr_val:
                                 logger.debug(f"[M2 SELL DISTANCE GUARD] {sym} SKIP: lim_entry {lim_entry:.5f} too far from mid {mid:.5f}")
+                            elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":
+                                logger.debug(f"[M2 SELL RR GUARD] {sym} SKIP: R:R {rr_val:.2f} < 0.50 minimum floor")
                             elif abs(sl - lim_entry) / pt >= 15:
                                 sym_candidates.append(CandidateSetup(
                                     symbol=sym,
@@ -5070,6 +5078,8 @@ class MarketScanner:
                                 rr_val = sl_tp['risk_reward']
                             if abs(entry_lim - mid) > 1.0 * atr_val:
                                 logger.debug(f"[M3 BUY DISTANCE GUARD] {sym} SKIP: entry_lim {entry_lim:.5f} too far from mid {mid:.5f}")
+                            elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":
+                                logger.debug(f"[M3 BUY RR GUARD] {sym} SKIP: R:R {rr_val:.2f} < 0.50 minimum floor")
                             elif abs(entry_lim - sl) / pt >= 15:
                                 sym_candidates.append(CandidateSetup(
                                     symbol=sym,
@@ -5294,6 +5304,8 @@ class MarketScanner:
                                 rr_val = sl_tp['risk_reward']
                             if abs(entry_lim - mid) > 1.0 * atr_val:
                                 logger.debug(f"[M3 SELL DISTANCE GUARD] {sym} SKIP: entry_lim {entry_lim:.5f} too far from mid {mid:.5f}")
+                            elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":
+                                logger.debug(f"[M3 SELL RR GUARD] {sym} SKIP: R:R {rr_val:.2f} < 0.50 minimum floor")
                             elif abs(sl - entry_lim) / pt >= 15:
                                 sym_candidates.append(CandidateSetup(
                                     symbol=sym,

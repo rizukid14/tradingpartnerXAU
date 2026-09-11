@@ -2,6 +2,35 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 104. Perubahan 11 September 2026 (Malam IV) — Penegakan Hard Floor R:R 0.50:1 Lintas Mekanisme (M1, M2, M3) & Eliminasi Setup Target Station Semu (Resolusi Anomali XAUUSD R:R 0.02:1)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Anomali R:R 0.02:1 pada Setup XAUUSD-ECNc**:
+   - Radar memicu setup paper trade berulang pada XAUUSD-ECNc dengan SL $25.00 ($2500 pts) dan TP hanya $0.40 ($40 pts), menghasilkan $R:R = 0.02:1$.
+2. **Ketiadaan Validasi Jarak Minimum ke Target Station di Atlas DNA (`atlas_dna.py`)**:
+   - Jika entry berjarak sangat dekat dengan dinding terdekat $C_1$ atau $F_1$ (misal hanya 40 sen di XAUUSD), fungsi `calculate_intraday_sl_tp` tetap memilih dinding tersebut sebagai `target_station` tanpa memeriksa apakah $(entry - F_1) \ge \text{min\_wall\_dist}$.
+   - Nilai TP kemudian dijepit ke $F_1$, menghasilkan TP mikro yang tidak proporsional terhadap SL.
+   - Blok klasifikasi grade jatuh ke `else: setup_grade = "GRADE_B"` tanpa memeriksa batas bawah $R:R \ge 0.50$, sehingga setup 0.02:1 salah dilabeli sebagai Grade B yang sah.
+3. **Ketiadaan Pintu Tolak R:R di Market Scanner (`market_scanner.py`)**:
+   - Seluruh blok M1 BUY, M1 SELL, M2 BUY, M2 SELL, M3 BUY, dan M3 SELL hanya mengecek jarak SL absolut (`abs(entry - sl) / pt >= 15`), tanpa mengecek rasio R:R minimum maupun tag `INVALID_RR`.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Validasi Runway Minimum Dinding ZCE & Klasifikasi `INVALID_RR` (`atlas_dna.py`)**:
+   - Menambahkan syarat runway minimum `(c1 - entry_price) >= min_wall_dist` (BUY) dan `(entry_price - f1) >= min_wall_dist` (SELL) sebelum menetapkan $C_1/F_1$ sebagai `target_station`.
+   - Mengunci grade classification: hanya $R:R \ge 0.50$ yang dapat menerima status `GRADE_B`. Setup dengan $R:R < 0.50$ otomatis diklasifikasikan sebagai `INVALID_RR`.
+2. **Penegakan Hard Floor R:R $\ge 0.50$ Lintas Mekanisme di Radar (`market_scanner.py`)**:
+   - Menambahkan guard `elif rr_val < 0.50 or sl_tp.get("setup_grade") == "INVALID_RR":` pada seluruh blok eksekusi:
+     * M1 SELL & M1 BUY (Universal Liquidity Sweep)
+     * M2 BUY & M2 SELL (Trend-Aligned Pullback)
+     * M3 BUY & M3 SELL (Multi-Touch Breakout Retest)
+   - Setup yang tidak memenuhi rasio minimum 0.50R langsung ditolak sebelum antrean radar dengan log `[M{1,2,3} {BUY/SELL} RR GUARD]`.
+3. **Verifikasi Suite Lengkap**:
+   - Seluruh 265 unit test (`python -m unittest discover -s tests -p "test_*.py"`) berjalan sukses 100% PASS (`OK`).
+
+---
+
 ## 103. Perubahan 11 September 2026 (Malam III) — Penguncian Ketat Dealing Range pada Mekanisme Radar (M1, M2, M3) & Eliminasi Total Anomali Sweep di Zona Diskon (Resolusi Kasus EURGBP)
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

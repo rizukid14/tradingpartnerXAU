@@ -202,9 +202,9 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         # C2/SBR can ONLY be targeted if C1 was legitimately breached or flimsy (GRADE_1_MICRO) or vacuum
         can_advance_to_c2 = c1_breached or not c1_thick or c1_is_vacuum
         if c1 and c1 > entry_price:
-            if not can_advance_to_c2:
+            if not can_advance_to_c2 and (c1 - entry_price) >= min_wall_dist:
                 target_station = c1
-            else:
+            elif can_advance_to_c2:
                 if c2 and c2 > entry_price + GRADE_A_MIN_RR * risk:
                     target_station = c2
                 elif sbr and sbr > entry_price + 1.15 * risk:
@@ -269,9 +269,9 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         # F2/RBS can ONLY be targeted if F1 was legitimately breached or flimsy (GRADE_1_MICRO) or vacuum
         can_advance_to_f2 = f1_breached or not f1_thick or f1_is_vacuum
         if f1 and f1 < entry_price:
-            if not can_advance_to_f2:
+            if not can_advance_to_f2 and (entry_price - f1) >= min_wall_dist:
                 target_station = f1
-            else:
+            elif can_advance_to_f2:
                 if f2 and f2 < entry_price - GRADE_A_MIN_RR * risk:
                     target_station = f2
                 elif rbs and rbs < entry_price - 1.15 * risk:
@@ -315,8 +315,10 @@ def calculate_intraday_sl_tp(symbol: str, entry_price: float, direction: int,
         setup_grade = "GRADE_A_PLUS"
     elif rr >= GRADE_A_MIN_RR and not is_wall_scalp:
         setup_grade = "GRADE_A"
-    else:
+    elif rr >= 0.50:
         setup_grade = "GRADE_B"
+    else:
+        setup_grade = "INVALID_RR"
     
     return {
         "sl": round(sl, digits),
