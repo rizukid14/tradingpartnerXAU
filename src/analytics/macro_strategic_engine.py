@@ -231,6 +231,7 @@ class MacroStrategicDirective:
     w1_slope_ceiling: Optional[float] = None
     w1_lower_highs: List[Dict[str, Any]] = field(default_factory=list)
     htf_horizon_conflict: bool = False
+    macro_envelope: Optional[Dict[str, Any]] = None
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -621,6 +622,10 @@ class MacroStrategicEngine:
             "horizon_conflict": False
         }
 
+
+        # 2c. Macro Dynamic Envelope & Manifold (H4 Pattern Engine)
+        from src.analytics.pattern_engine import MacroEnvelopeEngine
+        envelope_res = MacroEnvelopeEngine().analyze(df_h4, symbol=symbol, point_size=pt, pip_size=pt * pip_div)
 
         # 3. Macro Horizon Extremes
         mn1_low = float(df_mn1['low'].min()) if not df_mn1.empty else curr_mid * 0.8
@@ -2067,8 +2072,11 @@ class MacroStrategicEngine:
             w1_slope_ceiling=dual_w1.get("slope_ceiling"),
             w1_lower_highs=dual_w1.get("lower_highs", []),
             htf_horizon_conflict=dual_w1.get("horizon_conflict", False),
+            macro_envelope=envelope_res.to_dict() if envelope_res else None,
             raw_payload={
                 "market_state": market_state,
+                "macro_envelope": envelope_res.to_dict() if envelope_res else {},
+                "envelope_visual": envelope_res.visual_payload if envelope_res else {},
                 "primitive_location": primitive.location.value,
                 "primitive_event": primitive.event.value,
                 "primitive_trajectory": primitive.trajectory.value,

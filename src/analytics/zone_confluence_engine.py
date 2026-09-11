@@ -213,6 +213,8 @@ class ZoneConfluenceEngine:
         self.w_tf = p.get("w_tf", ZCE_W_TF)
         self.w_kind = dict(p.get("w_kind", ZCE_W_KIND))
         self.w_kind["EMA_BAND"] = float(p.get("ema_weight", getattr(config, "ZCE_EMA_WEIGHT", 0.25)))
+        self.w_kind["ENVELOPE_CEIL"] = float(p.get("envelope_weight", 0.35))
+        self.w_kind["ENVELOPE_FLOOR"] = float(p.get("envelope_weight", 0.35))
         self.grade_g2 = float(p.get("grade_g2", getattr(config, "ZCE_GRADE_G2_THRESHOLD", 5.0)))
         self.grade_g3 = float(p.get("grade_g3", getattr(config, "ZCE_GRADE_G3_THRESHOLD", 8.5)))
         self.merge_atr_mult = p.get("merge_atr_mult", 0.25)
@@ -365,6 +367,35 @@ class ZoneConfluenceEngine:
                         ))
                     except Exception:
                         pass
+
+        # Macro Dynamic Envelope Bands (H4)
+        if tf == "H4" and len(df) >= 25:
+            try:
+                from src.analytics.pattern_engine import MacroEnvelopeEngine
+                pip_val = 10.0 * point_size if point_size < 0.01 else point_size
+                env_res = MacroEnvelopeEngine().analyze(df, symbol="", point_size=point_size, pip_size=pip_val)
+                if env_res.envelope_upper > 0:
+                    half_thick = 0.04 * atr_tf
+                    out.append(ZonePrimitive(
+                        kind="ENVELOPE_CEIL",
+                        tf="H4",
+                        horizon=100,
+                        top=env_res.envelope_upper + half_thick,
+                        bottom=env_res.envelope_upper - half_thick,
+                        index_age=0
+                    ))
+                if env_res.envelope_lower > 0:
+                    half_thick = 0.04 * atr_tf
+                    out.append(ZonePrimitive(
+                        kind="ENVELOPE_FLOOR",
+                        tf="H4",
+                        horizon=100,
+                        top=env_res.envelope_lower + half_thick,
+                        bottom=env_res.envelope_lower - half_thick,
+                        index_age=0
+                    ))
+            except Exception:
+                pass
 
         # Clamp lebar primitif (anti-jembatan): OB/FVG raksasa dipotong simetris terhadap mid
         # agar tidak menjembatani dua node struktural yang sebenarnya berjauhan.

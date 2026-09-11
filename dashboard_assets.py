@@ -1867,6 +1867,113 @@ function renderVerticalShading() {
       shadingCtx.restore();
     }
   }
+
+  // 5. Render Macro H4 Dynamic Envelope Ribbon & Wick Cloud
+  if (cachedSymbolData && cachedSymbolData.envelope_visual && candleSeries && chart) {
+    const timeScale = chart.timeScale();
+    const ev = cachedSymbolData.envelope_visual;
+    const uBody = ev.upper_body || [];
+    const lBody = ev.lower_body || [];
+    const uWick = ev.upper_wick || [];
+    const lWick = ev.lower_wick || [];
+
+    if (uBody.length > 0 && lBody.length > 0) {
+      shadingCtx.save();
+
+      // a. Translucent shaded envelope ribbon between Upper Body and Lower Body
+      shadingCtx.beginPath();
+      let firstPoint = true;
+      for (let i = 0; i < uBody.length; i++) {
+        const x = timeScale.timeToCoordinate(uBody[i].time);
+        const y = candleSeries.priceToCoordinate(uBody[i].value);
+        if (x !== null && y !== null) {
+          if (firstPoint) {
+            shadingCtx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            shadingCtx.lineTo(x, y);
+          }
+        }
+      }
+      for (let i = lBody.length - 1; i >= 0; i--) {
+        const x = timeScale.timeToCoordinate(lBody[i].time);
+        const y = candleSeries.priceToCoordinate(lBody[i].value);
+        if (x !== null && y !== null) {
+          shadingCtx.lineTo(x, y);
+        }
+      }
+      shadingCtx.closePath();
+      shadingCtx.fillStyle = "rgba(56, 189, 248, 0.04)";
+      shadingCtx.fill();
+
+      // b. Upper Body Line (amber boundary)
+      shadingCtx.beginPath();
+      shadingCtx.lineWidth = 1.4;
+      shadingCtx.strokeStyle = "rgba(251, 191, 36, 0.70)";
+      firstPoint = true;
+      for (let i = 0; i < uBody.length; i++) {
+        const x = timeScale.timeToCoordinate(uBody[i].time);
+        const y = candleSeries.priceToCoordinate(uBody[i].value);
+        if (x !== null && y !== null) {
+          if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+          else { shadingCtx.lineTo(x, y); }
+        }
+      }
+      shadingCtx.stroke();
+
+      // c. Lower Body Line (sky blue boundary)
+      shadingCtx.beginPath();
+      shadingCtx.lineWidth = 1.4;
+      shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
+      firstPoint = true;
+      for (let i = 0; i < lBody.length; i++) {
+        const x = timeScale.timeToCoordinate(lBody[i].time);
+        const y = candleSeries.priceToCoordinate(lBody[i].value);
+        if (x !== null && y !== null) {
+          if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+          else { shadingCtx.lineTo(x, y); }
+        }
+      }
+      shadingCtx.stroke();
+
+      // d. Wick Outer Clouds (faint dashed contour)
+      if (uWick.length > 0) {
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([2, 4]);
+        shadingCtx.lineWidth = 1.0;
+        shadingCtx.strokeStyle = "rgba(251, 191, 36, 0.35)";
+        firstPoint = true;
+        for (let i = 0; i < uWick.length; i++) {
+          const x = timeScale.timeToCoordinate(uWick[i].time);
+          const y = candleSeries.priceToCoordinate(uWick[i].value);
+          if (x !== null && y !== null) {
+            if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+            else { shadingCtx.lineTo(x, y); }
+          }
+        }
+        shadingCtx.stroke();
+      }
+
+      if (lWick.length > 0) {
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([2, 4]);
+        shadingCtx.lineWidth = 1.0;
+        shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+        firstPoint = true;
+        for (let i = 0; i < lWick.length; i++) {
+          const x = timeScale.timeToCoordinate(lWick[i].time);
+          const y = candleSeries.priceToCoordinate(lWick[i].value);
+          if (x !== null && y !== null) {
+            if (firstPoint) { shadingCtx.moveTo(x, y); firstPoint = false; }
+            else { shadingCtx.lineTo(x, y); }
+          }
+        }
+        shadingCtx.stroke();
+      }
+
+      shadingCtx.restore();
+    }
+  }
 }
 
 // Initialize Lightweight Chart

@@ -3610,6 +3610,27 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
   - Simulasi spesifik EURJPY narrow runway: terbukti lolos tanpa inversi palsu (`daily_macro_bias: RANGE_BOUND`, score `-0.35`, forbidden traps kosong).
   - Full Unit Test Suite: **265/265 tests PASSED (100% OK, 0 Error, 0 Failure)**.
 
+---
+
+## 104. 11 September 2026 (Malam III) — Pembangunan Macro Dynamic Envelope & Pattern Recognition Engine (Decoupled Dual-Track)
+- **Pembersihan Modul Usang**:
+  - Menghapus modul usang micro-whisper `src/analytics/pattern_detector.py` dan database lama `src/analytics/whisper_registry.json`.
+- **Pembangunan Engine Kuantitatif Mandiri `src/analytics/pattern_engine.py`**:
+  - **Arsitektur Decoupled Dual-Track**:
+    * **Track A (Causal Decision Engine — 100% Anti-Repaint)**: Menggunakan konfirmasi pivot kausal $N=3$ bar H4 (bar $t \in [97, 99]$ dilabeli `PROVISIONAL_PENDING`). Memetakan tren struktural ($\text{HH/HL}$ Bullish Expansion, $\text{LH/LL}$ Bearish Expansion, $\text{LH/HL}$ Compression, $\text{HH/LL}$ Broadening).
+    * **Wick-to-Body Rejection & Absorption Density Matrix**: Menghitung ketebalan ekor relatif $\rho_{\text{reject}}$ dan $\rho_{\text{absorb}}$ ternormalisasi ATR. Akumulasi 10-bar menghasilkan `net_wick_delta` sebagai sinyal aktif tekanan likuiditas institusional.
+    * **Pembersihan Outlier & Rollover Clamping**: Algoritma MAD & ATR-relative winsorizing untuk membuang lonjakan spread spike palsu pada jendela rollover (03:55–04:15 WIB), khususnya pada pair CHF.
+    * **Track B (Visual Manifold Ribbon)**: Rolling extremum filter ($U_{\text{raw}}, L_{\text{raw}}$ window 3) dihaluskan menggunakan polinomial Savitzky-Golay analitis murni di NumPy (0 dependency ke scipy, eksekusi $< 4\text{ ms}$). Menghasilkan koordinat kurva halus $U(t)$ dan $L(t)$ serta batas pita ekor $U_{\text{wick}}(t)$ dan $L_{\text{wick}}(t)$.
+- **Integrasi ke Macro Strategic Engine & Zone Confluence Engine**:
+  - `macro_strategic_engine.py`: Mengintegrasikan `MacroEnvelopeResult` di `compute_directive`, menyalurkan data envelope ke `MacroStrategicDirective`, dan mengekspos payload visual di `raw_payload`.
+  - `zone_confluence_engine.py`: Mengoleksi zona batas atas `ENVELOPE_CEIL` dan zona batas bawah `ENVELOPE_FLOOR` pada timeframe H4 ke dalam matriks konfluensi ZCE dengan bobot 0.35.
+- **Porting Visual ke Dashboard Cockpit (`dashboard.py` & `dashboard_assets.py`)**:
+  - `dashboard.py`: Menambahkan field `envelope_visual` dan `macro_envelope` pada endpoint get symbol data.
+  - `dashboard_assets.py`: Menambahkan layer visual ke-5 pada canvas overlay Lightweight Charts: rendering area pita transparan halus (*translucent institutional cyan wash*), garis batas body (amber ceiling & sky blue floor), serta awan ekor luar (*wick outer contour*).
+- **Hasil Pengujian Komprehensif**:
+  - `tests/test_pattern_engine.py`: 6/6 tests PASSED (bobot SG murni, outlier clamping CHF, invariansi kausal anti-repainting, densitas ekor, format visual, performa 3.93 ms).
+  - Regression Test Suite (38 tests lintas ZCE, MSE, Trade Geometry, dan Pure Quant): **38/38 PASSED (100% OK)**.
+
 
 
 

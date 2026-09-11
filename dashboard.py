@@ -1681,6 +1681,8 @@ class CockpitDataEngine:
             "inside_tiers": list(getattr(zm, "inside_tiers", []) or []),
             "layer_count": int(getattr(zm, "layer_count", 0) or 0),
             "candles": candles,
+            "envelope_visual": (getattr(strat, "macro_envelope", {}) or {}).get("visual_payload") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}),
+            "macro_envelope": (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
             "zce_walls": zce_walls,
             "zce_ladder": zce_ladder,
             "intel": intel,
