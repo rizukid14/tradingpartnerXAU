@@ -437,6 +437,114 @@ class TestDashboardCockpit(unittest.TestCase):
         self.assertLessEqual(frvp["val_price"], frvp["poc_price"])
         self.assertGreaterEqual(frvp["va_volume"], 0.65 * frvp["total_volume"])
 
+    def test_calculate_sequential_flight_path_sell(self):
+        """calculate_sequential_flight_path must compute 3-tier monotonic targets for SELL."""
+        macro = {
+            "d1_trend_label": "BEARISH",
+            "immediate_ceiling_c1": 1.16500,
+            "immediate_floor_f1": 1.15500,
+            "floor_f2": 1.15000,
+        }
+        dr_payload = {
+            "range_high": 1.16500,
+            "range_low": 1.15500
+        }
+        ss = {
+            "peaks": [{"price": 1.16400}],
+            "troughs": [{"price": 1.15800}, {"price": 1.15600}]
+        }
+        fp = dashboard.calculate_sequential_flight_path(
+            macro=macro,
+            dr_payload=dr_payload,
+            ss=ss,
+            zce_ladder=[],
+            mid=1.16100,
+            pip_val=0.0001,
+            atr_val=0.0050,
+            digits=5
+        )
+
+        self.assertEqual(fp["direction"], "SELL")
+        self.assertIn("tp1", fp)
+        self.assertIn("tp2", fp)
+        self.assertIn("tp3", fp)
+        self.assertLess(fp["tp1"]["price"], fp["live_price"])
+        self.assertLessEqual(fp["tp2"]["price"], fp["tp1"]["price"])
+        self.assertLess(fp["tp3"]["price"], fp["tp2"]["price"])
+        self.assertIn("KUNCI BEP", fp["tp1"]["action"])
+        self.assertIn("50% PROFIT", fp["tp2"]["action"])
+        self.assertIn("RUNNER", fp["tp3"]["action"])
+
+    def test_calculate_sequential_flight_path_buy(self):
+        """calculate_sequential_flight_path must compute 3-tier monotonic targets for BUY."""
+        macro = {
+            "d1_trend_label": "BULLISH",
+            "immediate_ceiling_c1": 0.72500,
+            "ceiling_c2": 0.73000,
+            "immediate_floor_f1": 0.71500,
+        }
+        dr_payload = {
+            "range_high": 0.72500,
+            "range_low": 0.71500
+        }
+        ss = {
+            "peaks": [{"price": 0.72200}, {"price": 0.72400}],
+            "troughs": [{"price": 0.71600}]
+        }
+        fp = dashboard.calculate_sequential_flight_path(
+            macro=macro,
+            dr_payload=dr_payload,
+            ss=ss,
+            zce_ladder=[],
+            mid=0.71800,
+            pip_val=0.0001,
+            atr_val=0.0040,
+            digits=5
+        )
+
+        self.assertEqual(fp["direction"], "BUY")
+        self.assertIn("tp1", fp)
+        self.assertIn("tp2", fp)
+        self.assertIn("tp3", fp)
+        self.assertGreater(fp["tp1"]["price"], fp["live_price"])
+        self.assertGreaterEqual(fp["tp2"]["price"], fp["tp1"]["price"])
+        self.assertGreater(fp["tp3"]["price"], fp["tp2"]["price"])
+
+    def test_refined_historical_trigger_directional_close(self):
+        """A green close candle at resistance must NOT trigger M1A SELL (absorption, not sweep)."""
+        import pandas as pd
+        t0 = 1700000000
+        # Candle with large upper wick but green close (close > open)
+        bars = [
+            {"time": t0 + i * 3600, "open": 1.1600, "high": 1.1605, "low": 1.1595, "close": 1.1600, "tick_volume": 100}
+            for i in range(15)
+        ]
+        # Target test bar: Open 1.1630, High 1.1660, Low 1.1628, Close 1.1634 (green close, upper wick 26 pips)
+        bars.append({"time": t0 + 15 * 3600, "open": 1.1630, "high": 1.1660, "low": 1.1628, "close": 1.1634, "tick_volume": 200})
+        df = pd.DataFrame(bars)
+
+        macro = {
+            "immediate_ceiling_c1": 1.1650,
+            "immediate_floor_f1": 1.1550,
+            "dr_pos": 0.85
+        }
+        markers = dashboard.detect_historical_triggers(
+            df=df,
+            symbol="EURUSD",
+            pip_size=0.0001,
+            point=0.00001,
+            lookback_bars=20,
+            macro=macro,
+            c1=1.1650,
+            f1=1.1550,
+            atr_val=0.0050,
+            zce_ladder=[]
+        )
+
+        # None of the markers on the final bar should be M1A SELL
+        last_bar_m1_sell = [m for m in markers if m["time"] == bars[-1]["time"] and "M1" in m["type"] and m["direction"] == -1]
+        self.assertEqual(len(last_bar_m1_sell), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

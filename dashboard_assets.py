@@ -764,6 +764,96 @@ html, body {
   flex-shrink: 0;
 }
 
+/* SEQUENTIAL FLIGHT PATH (PROBABILITY TARGETING) STRIP */
+.flight-path-strip {
+  padding: 4px 14px;
+  background: rgba(18, 22, 31, 0.96);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-x: auto;
+  user-select: none;
+}
+.flight-path-strip::-webkit-scrollbar {
+  height: 2px;
+}
+.fp-dir-badge {
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.fp-dir-buy {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+.fp-dir-sell {
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+.fp-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.fp-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(26, 32, 44, 0.85);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: default;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.fp-pill:hover {
+  background: rgba(34, 41, 56, 1);
+  border-color: var(--cyan);
+}
+.fp-tag {
+  font-weight: 800;
+  font-size: 9.5px;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+.fp-tp1 .fp-tag { background: rgba(16, 185, 129, 0.2); color: var(--green); }
+.fp-tp2 .fp-tag { background: rgba(245, 158, 11, 0.2); color: var(--amber); }
+.fp-tp3 .fp-tag { background: rgba(168, 85, 247, 0.2); color: var(--purple); }
+.fp-name {
+  color: var(--text-main);
+  font-weight: 600;
+}
+.fp-price {
+  color: #fff;
+  font-weight: 700;
+}
+.fp-dist {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+.fp-action-badge {
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(0, 229, 255, 0.12);
+  color: var(--cyan);
+}
+.fp-arrow {
+  color: var(--text-dim);
+  font-weight: bold;
+}
+
 /* CHART CONTAINER */
 .chart-wrapper {
   flex: 1 1 0;
@@ -1358,6 +1448,12 @@ html, body {
         <span class="hud-capsule-sep" id="chart-mini-legend-sep">•</span>
         <div id="chart-mini-legend" class="toolbar-mini-legend"></div>
       </div>
+    </div>
+
+    <!-- SEQUENTIAL FLIGHT PATH (PROBABILITY TARGETING) STRIP -->
+    <div class="flight-path-strip" id="flight-path-strip" style="display:none;">
+      <div class="fp-dir-badge" id="fp-dir-badge">PATH: —</div>
+      <div class="fp-steps" id="fp-steps-container"></div>
     </div>
 
     <!-- CHART WRAPPER -->
@@ -2275,6 +2371,67 @@ function renderVerticalShading() {
       }
     }
   }
+
+  // 8. Render Sequential Flight Path Target Badges on Right Margin (Minimal, Hoverable)
+  if (cachedSymbolData && cachedSymbolData.flight_path && candleSeries && chart) {
+    const fp = cachedSymbolData.flight_path;
+    const dDigits = cachedSymbolData.digits || 5;
+    const targets = [
+      { key: "TP1", data: fp.tp1, color: "#10b981", bg: "rgba(16, 185, 129, 0.12)" },
+      { key: "TP2", data: fp.tp2, color: "#f59e0b", bg: "rgba(245, 158, 11, 0.12)" },
+      { key: "TP3", data: fp.tp3, color: "#a855f7", bg: "rgba(168, 85, 247, 0.12)" }
+    ];
+
+    shadingCtx.save();
+    shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+    shadingCtx.textBaseline = "middle";
+
+    targets.forEach(t => {
+      if (!t.data || !t.data.price) return;
+      const y = candleSeries.priceToCoordinate(t.data.price);
+      if (y === null || y < 10 || y > height - 10) {
+        t.data.box = null;
+        return;
+      }
+
+      // Minimal Pill Box on Right Margin (aligned right, clean, no candlestick clutter)
+      const pillW = 88;
+      const pillH = 15;
+      const pillX = Math.max(10, width - pillW - 65);
+      const pillY = y - pillH / 2;
+
+      t.data.box = { x: pillX, y: pillY, w: pillW, h: pillH, color: t.color };
+
+      // Subtle horizontal dash guideline extending to right price axis
+      shadingCtx.beginPath();
+      shadingCtx.strokeStyle = t.color;
+      shadingCtx.lineWidth = 1;
+      shadingCtx.setLineDash([2, 4]);
+      shadingCtx.moveTo(pillX - 25, y);
+      shadingCtx.lineTo(width - 55, y);
+      shadingCtx.stroke();
+      shadingCtx.setLineDash([]);
+
+      // Draw Pill Background
+      shadingCtx.fillStyle = "rgba(11, 14, 20, 0.94)";
+      shadingCtx.fillRect(pillX, pillY, pillW, pillH);
+
+      // Left Accent Strip
+      shadingCtx.fillStyle = t.color;
+      shadingCtx.fillRect(pillX, pillY, 3, pillH);
+
+      // Pill Border
+      shadingCtx.strokeStyle = t.color;
+      shadingCtx.lineWidth = 1;
+      shadingCtx.strokeRect(pillX, pillY, pillW, pillH);
+
+      // Text: "TP1 1.15924"
+      shadingCtx.fillStyle = "#ffffff";
+      shadingCtx.fillText(`${t.key} ${t.data.price.toFixed(dDigits)}`, pillX + 6, pillY + pillH / 2);
+    });
+
+    shadingCtx.restore();
+  }
 }
 
 // Initialize Lightweight Chart
@@ -2441,6 +2598,41 @@ function initChart() {
         tooltipEl.style.display = "block";
         tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, hoveredWait.box.x + hoveredWait.box.w + 10))}px`;
         tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredWait.box.y - 10))}px`;
+        return;
+      }
+
+      // 1C. Check Flight Path TP Targets hover (Right Margin Minimal Badges)
+      let hoveredTP = null;
+      if (cachedSymbolData && cachedSymbolData.flight_path) {
+        const fp = cachedSymbolData.flight_path;
+        for (const key of ['tp1', 'tp2', 'tp3']) {
+          const tpItem = fp[key];
+          if (tpItem && tpItem.box && mx >= tpItem.box.x && mx <= tpItem.box.x + tpItem.box.w && my >= tpItem.box.y && my <= tpItem.box.y + tpItem.box.h) {
+            hoveredTP = { ...tpItem, key: key.toUpperCase(), color: tpItem.box.color };
+            break;
+          }
+        }
+      }
+
+      if (hoveredTP) {
+        chartWrapper.style.cursor = "pointer";
+        const dDigits = (cachedSymbolData && cachedSymbolData.digits) || 5;
+        tooltipEl.innerHTML = `
+          <div class="zce-tt-header">
+            <span class="zce-tt-tier" style="color:${hoveredTP.color};font-weight:bold;">${hoveredTP.key} • ${hoveredTP.label}</span>
+            <span class="badge" style="background:rgba(255,255,255,0.08);color:${hoveredTP.color};font-weight:bold;">${hoveredTP.risk_label}</span>
+          </div>
+          <div class="zce-tt-confluences" style="margin:6px 0;color:#fff;font-weight:700;font-size:10.5px;">
+            ${hoveredTP.action}
+          </div>
+          <div class="zce-tt-meta" style="margin-top:4px;">
+            <span>Target: <b>${hoveredTP.price.toFixed(dDigits)}</b></span>
+            <span>Dist: <b>+${hoveredTP.pips}p (${hoveredTP.atr}x ATR)</b></span>
+          </div>
+        `;
+        tooltipEl.style.display = "block";
+        tooltipEl.style.left = `${Math.max(10, hoveredTP.box.x - 290)}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredTP.box.y - 10))}px`;
         return;
       }
 
@@ -3113,6 +3305,9 @@ function renderSymbolHeader(d) {
       w1Chip.style.display = "none";
     }
   }
+
+  // Render Flight Path Strip
+  renderFlightPathStrip(d);
 }
 
 function setCompassPill(id, tfName, trend) {
@@ -3121,6 +3316,52 @@ function setCompassPill(id, tfName, trend) {
   const tr = (trend || "SIDE").toUpperCase();
   el.textContent = `${tfName}: ${tr}`;
   el.className = `compass-pill ${tr === 'BULL' ? 'pill-bull' : (tr === 'BEAR' ? 'pill-bear' : 'pill-side')}`;
+}
+
+function renderFlightPathStrip(d) {
+  const stripEl = document.getElementById("flight-path-strip");
+  if (!stripEl) return;
+  const fp = d.flight_path;
+  if (!fp || !fp.direction || !fp.tp1) {
+    stripEl.style.display = "none";
+    return;
+  }
+  stripEl.style.display = "flex";
+  const isBuy = (fp.direction === "BUY");
+  const dirBadge = document.getElementById("fp-dir-badge");
+  if (dirBadge) {
+    dirBadge.textContent = `${fp.direction} PATH`;
+    dirBadge.className = `fp-dir-badge ${isBuy ? 'fp-dir-buy' : 'fp-dir-sell'}`;
+  }
+  const stepsContainer = document.getElementById("fp-steps-container");
+  if (stepsContainer) {
+    const dDigits = d.digits || 5;
+    stepsContainer.innerHTML = `
+      <div class="fp-pill fp-tp1" title="${fp.tp1.action} (${fp.tp1.risk_label})">
+        <span class="fp-tag">TP1</span>
+        <span class="fp-name">${fp.tp1.label}</span>
+        <span class="fp-price">${fp.tp1.price.toFixed(dDigits)}</span>
+        <span class="fp-dist">+${fp.tp1.pips}p (${fp.tp1.atr}x)</span>
+        <span class="fp-action-badge">BEP LOCK</span>
+      </div>
+      <span class="fp-arrow">&rarr;</span>
+      <div class="fp-pill fp-tp2" title="${fp.tp2.action} (${fp.tp2.risk_label})">
+        <span class="fp-tag">TP2</span>
+        <span class="fp-name">${fp.tp2.label}</span>
+        <span class="fp-price">${fp.tp2.price.toFixed(dDigits)}</span>
+        <span class="fp-dist">+${fp.tp2.pips}p (${fp.tp2.atr}x)</span>
+        <span class="fp-action-badge">TAKE 50%</span>
+      </div>
+      <span class="fp-arrow">&rarr;</span>
+      <div class="fp-pill fp-tp3" title="${fp.tp3.action} (${fp.tp3.risk_label})">
+        <span class="fp-tag">TP3</span>
+        <span class="fp-name">${fp.tp3.label}</span>
+        <span class="fp-price">${fp.tp3.price.toFixed(dDigits)}</span>
+        <span class="fp-dist">+${fp.tp3.pips}p (${fp.tp3.atr}x)</span>
+        <span class="fp-action-badge">RUNNER</span>
+      </div>
+    `;
+  }
 }
 
 // Render Candlestick & EMA
@@ -3437,7 +3678,54 @@ function renderDrawer() {
           Dealing Range Position: <strong style="color:var(--amber);">${(pm.dr_position_pct || 50).toFixed(1)}%</strong> &bull; Live Mid: <strong style="color:#fff;">${((d.bid + d.ask)/2).toFixed(d.digits || 5)}</strong>
         </span>
       </div>
+    `;
 
+    if (d.flight_path && d.flight_path.tp1) {
+      const fp = d.flight_path;
+      const isBuy = (fp.direction === "BUY");
+      const dDigits = d.digits || 5;
+      html += `
+        <div style="background:rgba(26,32,44,0.7);border:1px solid var(--border-strong);border-radius:4px;padding:8px 12px;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="material-symbols-outlined" style="font-size:14px;color:var(--cyan);">alt_route</span>
+              <span style="font-size:10px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:0.5px;">SEQUENTIAL STATION FLIGHT PATH (PROBABILITY TARGETING)</span>
+            </div>
+            <span class="badge" style="background:${isBuy ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)'};color:${isBuy ? 'var(--green)' : 'var(--red)'};font-weight:800;">
+              ${fp.direction} PATH
+            </span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;">
+            <div style="background:rgba(11,14,20,0.8);border-left:3px solid var(--green);padding:6px 8px;border-radius:3px;">
+              <div style="display:flex;justify-content:space-between;font-size:9.5px;margin-bottom:2px;">
+                <strong style="color:var(--green);">TP1 • ${fp.tp1.label}</strong>
+                <span style="color:var(--green);font-weight:700;">${fp.tp1.risk_label.split('-')[0].trim()}</span>
+              </div>
+              <div style="font-size:12px;font-weight:800;color:#fff;margin-bottom:2px;">${fp.tp1.price.toFixed(dDigits)} <span style="font-size:9.5px;color:var(--amber);font-weight:600;">(+${fp.tp1.pips}p / ${fp.tp1.atr}x)</span></div>
+              <div style="font-size:9px;color:var(--cyan);font-weight:600;">${fp.tp1.action}</div>
+            </div>
+            <div style="background:rgba(11,14,20,0.8);border-left:3px solid var(--amber);padding:6px 8px;border-radius:3px;">
+              <div style="display:flex;justify-content:space-between;font-size:9.5px;margin-bottom:2px;">
+                <strong style="color:var(--amber);">TP2 • ${fp.tp2.label}</strong>
+                <span style="color:var(--amber);font-weight:700;">FRICTION NODE</span>
+              </div>
+              <div style="font-size:12px;font-weight:800;color:#fff;margin-bottom:2px;">${fp.tp2.price.toFixed(dDigits)} <span style="font-size:9.5px;color:var(--amber);font-weight:600;">(+${fp.tp2.pips}p / ${fp.tp2.atr}x)</span></div>
+              <div style="font-size:9px;color:var(--red);font-weight:600;">${fp.tp2.action}</div>
+            </div>
+            <div style="background:rgba(11,14,20,0.8);border-left:3px solid var(--purple);padding:6px 8px;border-radius:3px;">
+              <div style="display:flex;justify-content:space-between;font-size:9.5px;margin-bottom:2px;">
+                <strong style="color:var(--purple);">TP3 • ${fp.tp3.label}</strong>
+                <span style="color:var(--purple);font-weight:700;">EXTENSION RUNNER</span>
+              </div>
+              <div style="font-size:12px;font-weight:800;color:#fff;margin-bottom:2px;">${fp.tp3.price.toFixed(dDigits)} <span style="font-size:9.5px;color:var(--amber);font-weight:600;">(+${fp.tp3.pips}p / ${fp.tp3.atr}x)</span></div>
+              <div style="font-size:9px;color:var(--text-muted);font-weight:600;">${fp.tp3.action}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    html += `
       <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:10px;">
     `;
 
