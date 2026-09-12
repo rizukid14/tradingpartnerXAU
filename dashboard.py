@@ -757,8 +757,24 @@ def detect_historical_triggers(
                             reason_text = f"Internal Inducement Sweep Low {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Wick (Bullish Close)"
 
             # 2. M2: TREND-ALIGNED PULLBACK (Point-in-Time EMA Corridor: M2S Shallow vs M2D Deep)
-            if not cand_type and c_rng >= 0.30 * c_atr:
-                if ema20[i] > ema50[i] and c_close > c_open:
+            # Anti-Consolidation Guard: Veto M2 if market is in squeeze or horizontal basing box
+            is_consolidation = False
+            if "sqz_on" in eval_df.columns and bool(eval_df.loc[i, "sqz_on"]):
+                is_consolidation = True
+            elif "regime" in eval_df.columns:
+                reg_str = str(eval_df.loc[i, "regime"]).upper()
+                if "SQUEEZE" in reg_str or "CONSOLIDATION" in reg_str:
+                    is_consolidation = True
+
+            if not is_consolidation and i >= 9:
+                r10 = (np.max(highs[i - 9:i + 1]) - np.min(lows[i - 9:i + 1])) / c_atr
+                if r10 < 1.10 and abs(ema20[i] - ema50[i]) < 0.20 * c_atr:
+                    is_consolidation = True
+
+            ema_sep = abs(ema20[i] - ema50[i])
+            if not cand_type and not is_consolidation and ema_sep >= 0.15 * c_atr and c_rng >= 0.30 * c_atr:
+                ema20_slope = (ema20[i] - ema20[max(0, i - 3)]) / c_atr
+                if ema20[i] > ema50[i] and c_close > c_open and ema20_slope >= 0.04:
                     ema_hi = max(ema20[i], ema50[i])
                     ema_lo = min(ema20[i], ema50[i])
                     if (c_low <= ema_hi + 0.15 * c_atr) and (c_close >= ema_lo - 0.20 * c_atr):
@@ -772,7 +788,7 @@ def detect_historical_triggers(
                             cand_type = "M2S"
                             zone_name = "PREMIUM_CORRIDOR"
                             reason_text = f"Shallow Premium Corridor Rebound ({c_rng/c_atr:.1f}x ATR)"
-                elif ema20[i] < ema50[i] and c_close < c_open:
+                elif ema20[i] < ema50[i] and c_close < c_open and ema20_slope <= -0.04:
                     ema_hi = max(ema20[i], ema50[i])
                     ema_lo = min(ema20[i], ema50[i])
                     if (c_high >= ema_lo - 0.15 * c_atr) and (c_close <= ema_hi + 0.20 * c_atr):
@@ -791,6 +807,11 @@ def detect_historical_triggers(
             lifecycle_seq = []
             if not cand_type:
                 for pk in prior_pks:
+                    # Level cooldown: prevent duplicate M3 triggers on same price level within 15 bars
+                    recent_m3 = any(t["type"] == "M3" and abs(t.get("level", 0.0) - pk) <= 0.25 * c_atr and (i - t.get("bar_index", 0)) <= 15 for t in triggers)
+                    if recent_m3:
+                        continue
+
                     if abs(c_low - pk) <= 0.25 * c_atr and c_close > pk and c_close > c_open:
                         start_j = max(0, i - 40)
                         break_idx = None
@@ -799,37 +820,25 @@ def detect_historical_triggers(
                                 break_idx = j
                                 break
 
-                        touches_list = []
-                        if break_idx is not None:
-                            for j in range(start_j, break_idx):
-                                if abs(highs[j] - pk) <= 0.22 * c_atr and closes[j] <= pk + 0.08 * c_atr:
-                                    if not touches_list or (j - touches_list[-1]["bar_index"] >= 2):
-                                        touches_list.append({
-                                            "label": str(len(touches_list) + 1),
-                                            "role": "TOUCH",
-                                            "bar_index": j,
-                                            "time": int(times[j]),
-                                            "price": round(float(highs[j]), digits),
-                                            "level": round(float(pk), digits)
-                                        })
+                        if break_idx is None:
+                            continue
 
-                        if not touches_list:
-                            raw_tb = [j for j in range(start_j, i) if abs(highs[j] - pk) <= 0.25 * c_atr or abs(lows[j] - pk) <= 0.25 * c_atr]
-                            filtered_tb = []
-                            for tb in raw_tb:
-                                if not filtered_tb or (tb - filtered_tb[-1] >= 2):
-                                    filtered_tb.append(tb)
-                            for idx_t, tb in enumerate(filtered_tb[:4]):
-                                touches_list.append({
-                                    "label": str(idx_t + 1),
-                                    "role": "TOUCH",
-                                    "bar_index": tb,
-                                    "time": int(times[tb]),
-                                    "price": round(float(highs[tb]), digits),
-                                    "level": round(float(pk), digits)
-                                })
-                            if len(filtered_tb) >= 1 and break_idx is None:
-                                break_idx = min(i - 1, filtered_tb[-1] + 1)
+                        touches_list = []
+                        for j in range(start_j, break_idx):
+                            if abs(highs[j] - pk) <= 0.22 * c_atr and closes[j] <= pk + 0.08 * c_atr:
+                                if not touches_list or (j - touches_list[-1]["bar_index"] >= 2):
+                                    touches_list.append({
+                                        "label": str(len(touches_list) + 1),
+                                        "role": "TOUCH",
+                                        "bar_index": j,
+                                        "time": int(times[j]),
+                                        "price": round(float(highs[j]), digits),
+                                        "level": round(float(pk), digits)
+                                    })
+
+                        # CRITICAL: STRICT >= 2 TOUCHES BEFORE BREAKOUT
+                        if len(touches_list) < 2:
+                            continue
 
                         cand_type = "M3"
                         cand_dir = 1
@@ -838,15 +847,14 @@ def detect_historical_triggers(
                         touches = len(touches_list)
 
                         lifecycle_seq = list(touches_list)
-                        if break_idx is not None:
-                            lifecycle_seq.append({
-                                "label": "B",
-                                "role": "BREAK",
-                                "bar_index": break_idx,
-                                "time": int(times[break_idx]),
-                                "price": round(float(closes[break_idx]), digits),
-                                "level": round(float(pk), digits)
-                            })
+                        lifecycle_seq.append({
+                            "label": "B",
+                            "role": "BREAK",
+                            "bar_index": break_idx,
+                            "time": int(times[break_idx]),
+                            "price": round(float(closes[break_idx]), digits),
+                            "level": round(float(pk), digits)
+                        })
                         lifecycle_seq.append({
                             "label": "M3",
                             "role": "RETEST",
@@ -861,6 +869,11 @@ def detect_historical_triggers(
 
                 if not cand_type:
                     for tr_p in prior_trs:
+                        # Level cooldown: prevent duplicate M3 triggers on same price level within 15 bars
+                        recent_m3 = any(t["type"] == "M3" and abs(t.get("level", 0.0) - tr_p) <= 0.25 * c_atr and (i - t.get("bar_index", 0)) <= 15 for t in triggers)
+                        if recent_m3:
+                            continue
+
                         if abs(c_high - tr_p) <= 0.25 * c_atr and c_close < tr_p and c_close < c_open:
                             start_j = max(0, i - 40)
                             break_idx = None
@@ -869,37 +882,25 @@ def detect_historical_triggers(
                                     break_idx = j
                                     break
 
-                            touches_list = []
-                            if break_idx is not None:
-                                for j in range(start_j, break_idx):
-                                    if abs(lows[j] - tr_p) <= 0.22 * c_atr and closes[j] >= tr_p - 0.08 * c_atr:
-                                        if not touches_list or (j - touches_list[-1]["bar_index"] >= 2):
-                                            touches_list.append({
-                                                "label": str(len(touches_list) + 1),
-                                                "role": "TOUCH",
-                                                "bar_index": j,
-                                                "time": int(times[j]),
-                                                "price": round(float(lows[j]), digits),
-                                                "level": round(float(tr_p), digits)
-                                            })
+                            if break_idx is None:
+                                continue
 
-                            if not touches_list:
-                                raw_tb = [j for j in range(start_j, i) if abs(highs[j] - tr_p) <= 0.25 * c_atr or abs(lows[j] - tr_p) <= 0.25 * c_atr]
-                                filtered_tb = []
-                                for tb in raw_tb:
-                                    if not filtered_tb or (tb - filtered_tb[-1] >= 2):
-                                        filtered_tb.append(tb)
-                                for idx_t, tb in enumerate(filtered_tb[:4]):
-                                    touches_list.append({
-                                        "label": str(idx_t + 1),
-                                        "role": "TOUCH",
-                                        "bar_index": tb,
-                                        "time": int(times[tb]),
-                                        "price": round(float(lows[tb]), digits),
-                                        "level": round(float(tr_p), digits)
-                                    })
-                                if len(filtered_tb) >= 1 and break_idx is None:
-                                    break_idx = min(i - 1, filtered_tb[-1] + 1)
+                            touches_list = []
+                            for j in range(start_j, break_idx):
+                                if abs(lows[j] - tr_p) <= 0.22 * c_atr and closes[j] >= tr_p - 0.08 * c_atr:
+                                    if not touches_list or (j - touches_list[-1]["bar_index"] >= 2):
+                                        touches_list.append({
+                                            "label": str(len(touches_list) + 1),
+                                            "role": "TOUCH",
+                                            "bar_index": j,
+                                            "time": int(times[j]),
+                                            "price": round(float(lows[j]), digits),
+                                            "level": round(float(tr_p), digits)
+                                        })
+
+                            # CRITICAL: STRICT >= 2 TOUCHES BEFORE BREAKOUT
+                            if len(touches_list) < 2:
+                                continue
 
                             cand_type = "M3"
                             cand_dir = -1
@@ -908,15 +909,14 @@ def detect_historical_triggers(
                             touches = len(touches_list)
 
                             lifecycle_seq = list(touches_list)
-                            if break_idx is not None:
-                                lifecycle_seq.append({
-                                    "label": "B",
-                                    "role": "BREAK",
-                                    "bar_index": break_idx,
-                                    "time": int(times[break_idx]),
-                                    "price": round(float(closes[break_idx]), digits),
-                                    "level": round(float(tr_p), digits)
-                                })
+                            lifecycle_seq.append({
+                                "label": "B",
+                                "role": "BREAK",
+                                "bar_index": break_idx,
+                                "time": int(times[break_idx]),
+                                "price": round(float(closes[break_idx]), digits),
+                                "level": round(float(tr_p), digits)
+                            })
                             lifecycle_seq.append({
                                 "label": "M3",
                                 "role": "RETEST",
@@ -1045,6 +1045,7 @@ def detect_historical_triggers(
                 "dr_pos_pct": dr_pos_pct,
                 "zone": zone_name,
                 "label": cand_type,
+                "level": round(float(entry_p), digits),
                 "touch_count": max(1, touches),
                 "lifecycle_sequence": lifecycle_seq,
                 "runway_atr": round(runway_dist, 2),
@@ -2118,6 +2119,9 @@ class CockpitDataEngine:
                 timeframe_hours=tf_hours
             )
 
+            df['sqz_on'] = [w.get('sqz_on', False) for w in wave_series]
+            df['regime'] = [w.get('regime', 'YOUNG_OSCILLATION') for w in wave_series]
+
             # Keep requested window
             tail_df = df.tail(num_bars)
             tail_indices = tail_df.index.tolist()
@@ -3153,6 +3157,12 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 pass
 
     def _handle_do_get(self):
+        # 0. Favicon: Prevent 404 log spam in browser console
+        if self.path == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
+            return
+
         # 1. API: Overview 26-pair
         if self.path == "/api/overview":
             with cockpit_engine._lock:
