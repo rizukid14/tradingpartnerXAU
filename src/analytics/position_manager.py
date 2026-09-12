@@ -22,6 +22,7 @@ from config import mt5
 from src.core.cli_theme import UI
 from src.core.mt5_connector import is_order_success, get_usd_per_point
 from src.core import telegram_alerts as tg
+from src.analytics.twin_trade_manager import twin_manager, calculate_cushion_sl, calculate_twin_lot
 
 logger = logging.getLogger("trading_bot")
 WIB = ZoneInfo("Asia/Jakarta")
@@ -281,6 +282,62 @@ def is_london_ny_active(now_wib: Optional[datetime] = None) -> bool:
     return 14 <= now.hour < 24
 
 
+def _manage_twin_trades(positions):
+    """Audits active twin trades, triggers cushion lock, and advances milestones."""
+    active_twins = twin_manager.get_active_twins()
+    if not active_twins:
+        return
+    pos_map = {p.ticket: p for p in positions} if positions else {}
+
+    def _get_deals(ticket):
+        try:
+            return mt5.history_deals_get(position=ticket) or []
+        except Exception:
+            return []
+
+    def _modify_sl(ticket, sl_price):
+        pos = pos_map.get(ticket)
+        if not pos:
+            poses = mt5.positions_get(ticket=ticket)
+            if poses:
+                pos = poses[0]
+        if not pos:
+            return False
+        req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": pos.symbol,
+            "position": ticket,
+            "sl": float(sl_price),
+            "tp": pos.tp,
+            "magic": config.MAGIC_NUMBER,
+        }
+        res = mt5.order_send(req)
+        return is_order_success(res)
+
+    def _sym_info(sym):
+        return mt5.symbol_info(sym)
+
+    def _tick(sym):
+        return mt5.symbol_info_tick(sym)
+
+    def _atr(sym):
+        try:
+            from src.core.risk_engine import get_symbol_atr
+            return get_symbol_atr(sym)
+        except Exception:
+            pt = getattr(mt5.symbol_info(sym), "point", 0.00001) or 0.00001
+            return 300 * pt
+
+    twin_manager.audit_cycle(
+        open_positions=pos_map,
+        get_deals_fn=_get_deals,
+        modify_sl_fn=_modify_sl,
+        symbol_info_provider=_sym_info,
+        tick_provider=_tick,
+        atr_provider=_atr
+    )
+
+
 def manage_all_positions():
     """
     Iterates ALL open bot positions (any symbol - XAU or BTC) and applies:
@@ -296,7 +353,11 @@ def manage_all_positions():
     """
     positions = mt5.positions_get()
     if positions is None or len(positions) == 0:
+        _manage_twin_trades([])
         return
+
+    # 0. Twin-Order Cushion & Milestone Step-Lock Audit
+    _manage_twin_trades(positions)
 
     max_age = config.POSITION_MANAGER_MAX_TICK_AGE_SECONDS
     now = time.time()
@@ -363,6 +424,12 @@ def manage_all_positions():
         # --- 2D. MIDDAY RETRACEMENT GUARD (10 Sep 2026) ---
         if getattr(config, "MIDDAY_RETRACEMENT_GUARD_ENABLED", True):
             _check_midday_retracement_guard(pos, symbol, profit_points, point, symbol_info, now)
+
+        # Twin-Trade Guard: Jika posisi ini dikelola oleh TwinTradeManager,
+        # bypass single-ticket partial close, BEP statis, dan trailing stop
+        # karena step-lock governed oleh milestone (Cushion -> TP1 Lock -> TP2 Lock).
+        if twin_manager.get_twin_by_ticket(pos.ticket):
+            continue
 
         # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
         # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.

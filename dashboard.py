@@ -756,26 +756,36 @@ def detect_historical_triggers(
                             zone_name = "INTERNAL_INDUCEMENT"
                             reason_text = f"Internal Inducement Sweep Low {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Wick (Bullish Close)"
 
-            # 2. M2: TREND-ALIGNED PULLBACK (Point-in-Time EMA Corridor)
+            # 2. M2: TREND-ALIGNED PULLBACK (Point-in-Time EMA Corridor: M2S Shallow vs M2D Deep)
             if not cand_type and c_rng >= 0.30 * c_atr:
                 if ema20[i] > ema50[i] and c_close > c_open:
                     ema_hi = max(ema20[i], ema50[i])
                     ema_lo = min(ema20[i], ema50[i])
                     if (c_low <= ema_hi + 0.15 * c_atr) and (c_close >= ema_lo - 0.20 * c_atr):
-                        cand_type = "M2"
                         cand_dir = 1
                         entry_p = c_close
-                        zone_name = "PREMIUM_CORRIDOR" if eff_dr_pos >= 0.50 else "DISCOUNT_CORRIDOR"
-                        reason_text = f"Pullback Touch to EMA20/50, Bullish Rebound ({c_rng/c_atr:.1f}x ATR)"
+                        if eff_dr_pos <= 0.50:
+                            cand_type = "M2D"
+                            zone_name = "DISCOUNT_CORRIDOR"
+                            reason_text = f"Deep Discount Corridor Rebound ({c_rng/c_atr:.1f}x ATR)"
+                        else:
+                            cand_type = "M2S"
+                            zone_name = "PREMIUM_CORRIDOR"
+                            reason_text = f"Shallow Premium Corridor Rebound ({c_rng/c_atr:.1f}x ATR)"
                 elif ema20[i] < ema50[i] and c_close < c_open:
                     ema_hi = max(ema20[i], ema50[i])
                     ema_lo = min(ema20[i], ema50[i])
                     if (c_high >= ema_lo - 0.15 * c_atr) and (c_close <= ema_hi + 0.20 * c_atr):
-                        cand_type = "M2"
                         cand_dir = -1
                         entry_p = c_close
-                        zone_name = "DISCOUNT_CORRIDOR" if eff_dr_pos < 0.50 else "PREMIUM_CORRIDOR"
-                        reason_text = f"Pullback Rally to EMA20/50, Bearish Rejection ({c_rng/c_atr:.1f}x ATR)"
+                        if eff_dr_pos >= 0.50:
+                            cand_type = "M2D"
+                            zone_name = "PREMIUM_CORRIDOR"
+                            reason_text = f"Deep Premium Corridor Rejection ({c_rng/c_atr:.1f}x ATR)"
+                        else:
+                            cand_type = "M2S"
+                            zone_name = "DISCOUNT_CORRIDOR"
+                            reason_text = f"Shallow Discount Corridor Rejection ({c_rng/c_atr:.1f}x ATR)"
 
             # 3. M3: BREAKOUT RETEST (RBS / SBR Structure Flip)
             if not cand_type:
@@ -841,8 +851,8 @@ def detect_historical_triggers(
             if runway_dist < 0.40:
                 continue  # Vetoed by Runway Deficit
 
-            # Gate B: Collision Guard (M2) & Exhaustion Guard (M3)
-            if cand_type == "M2":
+            # Gate B: Collision Guard (M2S / M2D) & Exhaustion Guard (M3)
+            if cand_type in ("M2", "M2S", "M2D"):
                 if cand_dir == 1 and eff_dr_pos >= 0.80 and (eff_c1 > entry_p and (eff_c1 - entry_p) < 0.40 * c_atr):
                     continue
                 if cand_dir == -1 and eff_dr_pos <= 0.20 and (eff_f1 > 0 and eff_f1 < entry_p and (entry_p - eff_f1) < 0.40 * c_atr):

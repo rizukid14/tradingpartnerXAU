@@ -1,3 +1,4 @@
+from typing import Optional, Dict, Any, Tuple, List
 import time
 import atexit
 from datetime import datetime, timezone, timedelta
@@ -1390,3 +1391,253 @@ def cancel_pending_order(ticket):
     except Exception as e:
         print(f" [MT5] Error cancel pending #{ticket}: {e}")
         return False
+
+
+def send_twin_trade_order(
+    symbol: str,
+    action: str,
+    total_lot: float,
+    sl_price: float,
+    tp1_price: float,
+    tp2_price: Optional[float] = None,
+    tp3_price: Optional[float] = None,
+    setup_grade: str = "GRADE_A",
+    comment: str = "TWIN",
+    atr_h1_pts: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Dispatches a Twin-Order pair according to setup grading:
+    - GRADE_B or total_lot <= 0.01: Single order targeting TP1.
+    - GRADE_A: Ticket A -> TP1 (50%), Ticket B -> TP2 (50%).
+    - GRADE_A+ / GRADE_S: Ticket A -> TP1 (50%), Ticket B -> TP3 (50%).
+    Registers active pair with twin_manager.
+    """
+    from src.analytics.twin_trade_manager import calculate_twin_lot, twin_manager
+
+    sym = get_valid_trade_symbol(symbol)
+    sym_info = mt5.symbol_info(sym)
+    lot_min = getattr(sym_info, "volume_min", 0.01) if sym_info else 0.01
+    lot_step = getattr(sym_info, "volume_step", 0.01) if sym_info else 0.01
+
+    lot_a, lot_b, is_twin = calculate_twin_lot(total_lot, lot_min, lot_step, setup_grade)
+    pair_id = f"{sym}_{datetime.now(WIB).strftime('%Y%m%d_%H%M%S')}"
+
+    if not is_twin or lot_b <= 0:
+        res = send_trade_order(
+            symbol=sym,
+            action=action,
+            lot=lot_a,
+            sl_price=sl_price,
+            tp_price=tp1_price,
+            comment=f"{comment}:SINGLE:TP1",
+            atr_h1_pts=atr_h1_pts
+        )
+        ticket_a = res.get("ticket", 0) if res.get("status") == "SUCCESS" else 0
+        if ticket_a > 0:
+            twin_manager.register_pair(
+                pair_id=pair_id,
+                symbol=sym,
+                direction=1 if action == "BUY" else -1,
+                ticket_a=ticket_a,
+                ticket_b=None,
+                volume_a=lot_a,
+                volume_b=0.0,
+                entry_price=res.get("price", 0.0) or (sym_info.ask if action == "BUY" else sym_info.bid),
+                sl_initial=sl_price,
+                tp1=tp1_price,
+                tp2=tp2_price or 0.0,
+                tp3=tp3_price or 0.0,
+                setup_grade=setup_grade
+            )
+        return {
+            "status": res.get("status"),
+            "mode": "SINGLE",
+            "pair_id": pair_id,
+            "ticket_a": ticket_a,
+            "ticket_b": None,
+            "lot_a": lot_a,
+            "lot_b": 0.0
+        }
+
+    # Twin order mode:
+    if ("GRADE_A_PLUS" in setup_grade or "GRADE_S" in setup_grade) and tp3_price and tp3_price > 0:
+        target_b = tp3_price
+    else:
+        target_b = tp2_price if (tp2_price and tp2_price > 0) else tp1_price
+
+    res_a = send_trade_order(
+        symbol=sym,
+        action=action,
+        lot=lot_a,
+        sl_price=sl_price,
+        tp_price=tp1_price,
+        comment=f"{comment}:A:TP1",
+        atr_h1_pts=atr_h1_pts
+    )
+    if res_a.get("status") != "SUCCESS":
+        return res_a
+
+    res_b = send_trade_order(
+        symbol=sym,
+        action=action,
+        lot=lot_b,
+        sl_price=sl_price,
+        tp_price=target_b,
+        comment=f"{comment}:B:RUNNER",
+        atr_h1_pts=atr_h1_pts
+    )
+
+    ticket_a = res_a.get("ticket", 0)
+    ticket_b = res_b.get("ticket", 0) if res_b.get("status") == "SUCCESS" else None
+
+    tick = mt5.symbol_info_tick(sym)
+    entry_p = (tick.ask if action == "BUY" else tick.bid) if tick else 0.0
+
+    twin_manager.register_pair(
+        pair_id=pair_id,
+        symbol=sym,
+        direction=1 if action == "BUY" else -1,
+        ticket_a=ticket_a,
+        ticket_b=ticket_b,
+        volume_a=lot_a,
+        volume_b=lot_b if ticket_b else 0.0,
+        entry_price=entry_p,
+        sl_initial=sl_price,
+        tp1=tp1_price,
+        tp2=tp2_price or 0.0,
+        tp3=tp3_price or 0.0,
+        setup_grade=setup_grade
+    )
+
+    return {
+        "status": "SUCCESS",
+        "mode": "TWIN",
+        "pair_id": pair_id,
+        "ticket_a": ticket_a,
+        "ticket_b": ticket_b,
+        "lot_a": lot_a,
+        "lot_b": lot_b
+    }
+
+
+def send_twin_pending_order(
+    symbol: str,
+    entry_type: str,
+    entry_price: float,
+    total_lot: float,
+    sl_price: float,
+    tp1_price: float,
+    tp2_price: Optional[float] = None,
+    tp3_price: Optional[float] = None,
+    setup_grade: str = "GRADE_A",
+    comment: str = "TWIN_LIMIT",
+    expiration_minutes: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Dispatches a Twin-Order pending limit/stop pair according to setup grading.
+    """
+    from src.analytics.twin_trade_manager import calculate_twin_lot, twin_manager
+
+    sym = get_valid_trade_symbol(symbol)
+    sym_info = mt5.symbol_info(sym)
+    lot_min = getattr(sym_info, "volume_min", 0.01) if sym_info else 0.01
+    lot_step = getattr(sym_info, "volume_step", 0.01) if sym_info else 0.01
+
+    lot_a, lot_b, is_twin = calculate_twin_lot(total_lot, lot_min, lot_step, setup_grade)
+    pair_id = f"{sym}_{datetime.now(WIB).strftime('%Y%m%d_%H%M%S')}"
+
+    if not is_twin or lot_b <= 0:
+        res = send_pending_order(
+            symbol=sym,
+            entry_type=entry_type,
+            entry_price=entry_price,
+            lot=lot_a,
+            sl_price=sl_price,
+            tp_price=tp1_price,
+            comment=f"{comment}:SINGLE:TP1",
+            expiration_minutes=expiration_minutes
+        )
+        ticket_a = res.get("ticket", 0) if res.get("status") == "SUCCESS" else 0
+        if ticket_a > 0:
+            twin_manager.register_pair(
+                pair_id=pair_id,
+                symbol=sym,
+                direction=1 if "buy" in entry_type.lower() else -1,
+                ticket_a=ticket_a,
+                ticket_b=None,
+                volume_a=lot_a,
+                volume_b=0.0,
+                entry_price=entry_price,
+                sl_initial=sl_price,
+                tp1=tp1_price,
+                tp2=tp2_price or 0.0,
+                tp3=tp3_price or 0.0,
+                setup_grade=setup_grade
+            )
+        return {
+            "status": res.get("status"),
+            "mode": "SINGLE",
+            "pair_id": pair_id,
+            "ticket_a": ticket_a,
+            "ticket_b": None,
+            "lot_a": lot_a,
+            "lot_b": 0.0
+        }
+
+    if ("GRADE_A_PLUS" in setup_grade or "GRADE_S" in setup_grade) and tp3_price and tp3_price > 0:
+        target_b = tp3_price
+    else:
+        target_b = tp2_price if (tp2_price and tp2_price > 0) else tp1_price
+
+    res_a = send_pending_order(
+        symbol=sym,
+        entry_type=entry_type,
+        entry_price=entry_price,
+        lot=lot_a,
+        sl_price=sl_price,
+        tp_price=tp1_price,
+        comment=f"{comment}:A:TP1",
+        expiration_minutes=expiration_minutes
+    )
+    if res_a.get("status") != "SUCCESS":
+        return res_a
+
+    res_b = send_pending_order(
+        symbol=sym,
+        entry_type=entry_type,
+        entry_price=entry_price,
+        lot=lot_b,
+        sl_price=sl_price,
+        tp_price=target_b,
+        comment=f"{comment}:B:RUNNER",
+        expiration_minutes=expiration_minutes
+    )
+
+    ticket_a = res_a.get("ticket", 0)
+    ticket_b = res_b.get("ticket", 0) if res_b.get("status") == "SUCCESS" else None
+
+    twin_manager.register_pair(
+        pair_id=pair_id,
+        symbol=sym,
+        direction=1 if "buy" in entry_type.lower() else -1,
+        ticket_a=ticket_a,
+        ticket_b=ticket_b,
+        volume_a=lot_a,
+        volume_b=lot_b if ticket_b else 0.0,
+        entry_price=entry_price,
+        sl_initial=sl_price,
+        tp1=tp1_price,
+        tp2=tp2_price or 0.0,
+        tp3=tp3_price or 0.0,
+        setup_grade=setup_grade
+    )
+
+    return {
+        "status": "SUCCESS",
+        "mode": "TWIN",
+        "pair_id": pair_id,
+        "ticket_a": ticket_a,
+        "ticket_b": ticket_b,
+        "lot_a": lot_a,
+        "lot_b": lot_b
+    }

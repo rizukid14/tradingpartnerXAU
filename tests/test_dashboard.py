@@ -264,7 +264,7 @@ class TestDashboardCockpit(unittest.TestCase):
         self.assertIsInstance(markers, list)
         for m in markers:
             self.assertIn("type", m)
-            self.assertIn(m["type"], ("M1A", "M1B", "M2", "M3", "M4"))
+            self.assertIn(m["type"], ("M1A", "M1B", "M2", "M2S", "M2D", "M3", "M4"))
             self.assertIn("direction", m)
             self.assertIn("price", m)
             self.assertIn("time", m)
@@ -544,6 +544,42 @@ class TestDashboardCockpit(unittest.TestCase):
         # None of the markers on the final bar should be M1A SELL
         last_bar_m1_sell = [m for m in markers if m["time"] == bars[-1]["time"] and "M1" in m["type"] and m["direction"] == -1]
         self.assertEqual(len(last_bar_m1_sell), 0)
+
+    def test_m2s_vs_m2d_classification(self):
+        """M2 pullbacks in discount (<=0.50) must classify as M2D, while in upper corridor (>0.50) as M2S."""
+        import pandas as pd
+        t0 = 1700000000
+        # Create 55 bars uptrend where EMA20 > EMA50
+        bars = []
+        for i in range(60):
+            p = 0.7100 + (i * 0.0002)
+            bars.append({"time": t0 + i * 3600, "open": p, "high": p + 0.0005, "low": p - 0.0002, "close": p + 0.0003, "tick_volume": 100})
+
+        # Bar in discount (dr_pos <= 0.50):
+        # Range low 0.7100, range high 0.7250, mid = 0.7175
+        bars.append({"time": t0 + 60 * 3600, "open": 0.7150, "high": 0.7160, "low": 0.7145, "close": 0.7158, "tick_volume": 150})
+        df = pd.DataFrame(bars)
+
+        markers = dashboard.detect_historical_triggers(
+            df=df,
+            symbol="AUDUSD",
+            pip_size=0.0001,
+            point=0.00001,
+            lookback_bars=60,
+            macro={"immediate_ceiling_c1": 0.7250, "immediate_floor_f1": 0.7100, "dr_pos": 0.40},
+            c1=0.7250,
+            f1=0.7100,
+            atr_val=0.0020,
+            zce_ladder=[]
+        )
+
+        m2_markers = [m for m in markers if "M2" in m["type"]]
+        for m in m2_markers:
+            self.assertIn(m["type"], ("M2S", "M2D"))
+            if m.get("dr_pos", 0.5) <= 0.50:
+                self.assertEqual(m["type"], "M2D")
+            elif m.get("dr_pos", 0.5) > 0.50:
+                self.assertEqual(m["type"], "M2S")
 
 
 if __name__ == "__main__":

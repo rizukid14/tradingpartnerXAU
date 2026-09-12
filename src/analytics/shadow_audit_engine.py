@@ -325,7 +325,9 @@ class ShadowAuditEngine:
         # -------------------------------------------------------------
         mech_map: Dict[str, Dict[str, Any]] = {
             "M1": {"label": "M1 Universal Liquidity Sweep", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
-            "M2": {"label": "M2 Trend-Aligned Pullback", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
+            "M2": {"label": "M2 Trend-Aligned Pullback (Total)", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
+            "M2D": {"label": "M2D Deep Retest (Discount/Premium)", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
+            "M2S": {"label": "M2S Shallow Corridor Momentum", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
             "M3": {"label": "M3 Breakout Retest", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
             "M4": {"label": "M4 Systemic Flow Continuation", "count": 0, "tp": 0, "sl": 0, "bep": 0, "net_r": 0.0, "gross_win": 0.0, "gross_loss": 0.0},
         }
@@ -339,6 +341,7 @@ class ShadowAuditEngine:
 
         for t in resolved:
             stype = str(t.get("setup_type", ""))
+            meta = t.get("metadata", {}) or {}
             key = "M1" if "UNIVER" in stype or "SWEEP" in stype else (
                 "M2" if "PULLBACK" in stype or "TREND" in stype else (
                     "M3" if "BREAK" in stype or "MULTI" in stype else (
@@ -346,17 +349,32 @@ class ShadowAuditEngine:
                     )
                 )
             )
-            if key in mech_map:
-                m = mech_map[key]
-                m["count"] += 1
-                nr = float(t.get("net_r", 0.0) or 0.0)
-                m["net_r"] += nr
-                if nr > 0: m["gross_win"] += nr
-                elif nr < 0: m["gross_loss"] += abs(nr)
-                out = t.get("outcome")
-                if out == "TP_HIT": m["tp"] += 1
-                elif out == "SL_HIT": m["sl"] += 1
-                elif out in ("BEP_HIT", "TRAILING_SL_HIT"): m["bep"] += 1
+
+            keys_to_update = [key]
+            if key == "M2":
+                m2_sub = meta.get("m2_subtype")
+                if not m2_sub:
+                    dr_p = float(t.get("dealing_range_pos", 0.5) or 0.5)
+                    tdir = 1 if (t.get("direction") == "BUY" or t.get("direction") == 1) else -1
+                    if tdir == 1:
+                        m2_sub = "M2D" if dr_p <= 0.50 else "M2S"
+                    else:
+                        m2_sub = "M2D" if dr_p >= 0.50 else "M2S"
+                if m2_sub in ("M2D", "M2S"):
+                    keys_to_update.append(m2_sub)
+
+            for k in keys_to_update:
+                if k in mech_map:
+                    m = mech_map[k]
+                    m["count"] += 1
+                    nr = float(t.get("net_r", 0.0) or 0.0)
+                    m["net_r"] += nr
+                    if nr > 0: m["gross_win"] += nr
+                    elif nr < 0: m["gross_loss"] += abs(nr)
+                    out = t.get("outcome")
+                    if out == "TP_HIT": m["tp"] += 1
+                    elif out == "SL_HIT": m["sl"] += 1
+                    elif out in ("BEP_HIT", "TRAILING_SL_HIT"): m["bep"] += 1
 
             meta = t.get("metadata", {}) or {}
             g_grade = str(meta.get("setup_grade") or t.get("setup_grade") or "GRADE_A")

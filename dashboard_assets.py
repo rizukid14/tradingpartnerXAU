@@ -2214,6 +2214,12 @@ function renderVerticalShading() {
       } else if (m.type === "M1B" || m.type === "M1B_INDUCEMENT") {
         baseColor = "#f59e0b";
         shortTag = isBuy ? "▲ M1B" : "▼ M1B";
+      } else if (m.type === "M2D" || m.type === "M2_DEEP") {
+        baseColor = isBuy ? "#10b981" : "#f43f5e";
+        shortTag = isBuy ? "▲ M2D" : "▼ M2D";
+      } else if (m.type === "M2S" || m.type === "M2_SHALLOW") {
+        baseColor = isBuy ? "#06b6d4" : "#f97316";
+        shortTag = isBuy ? "▲ M2S" : "▼ M2S";
       } else if (m.type === "M2" || m.type === "M2_PULLBACK") {
         baseColor = isBuy ? "#06b6d4" : "#818cf8";
         shortTag = isBuy ? "▲ M2" : "▼ M2";
