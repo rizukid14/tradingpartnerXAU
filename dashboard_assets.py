@@ -2057,49 +2057,6 @@ function renderVerticalShading() {
 
     shadingCtx.restore();
   }
-
-  // 7. Render Predictive Waiting Station Badges on Right Margin
-  if (filterShowRadar && cachedSymbolData && cachedSymbolData.predictive_matrix && cachedSymbolData.predictive_matrix.stations && candleSeries) {
-    const stations = cachedSymbolData.predictive_matrix.stations;
-    shadingCtx.save();
-    shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
-    shadingCtx.textBaseline = "middle";
-
-    stations.forEach(st => {
-      const y = candleSeries.priceToCoordinate(st.target_price);
-      if (y === null || y < 15 || y > height - 15) return;
-
-      let baseColor = "#06b6d4";
-      if (st.type === "SWEEP") baseColor = "#fb923c";
-      else if (st.type === "EXPANSION") baseColor = "#fbbf24";
-
-      const pipsSign = st.distance_pips > 0 ? `+${st.distance_pips}` : `${st.distance_pips}`;
-      const badgeTxt = `WAIT: ${st.type} (${st.direction}) ${st.target_price.toFixed(cachedSymbolData.digits || 5)} [${pipsSign}p]`;
-      const badgeW = shadingCtx.measureText(badgeTxt).width + 10;
-      const badgeH = 15;
-      const badgeX = width - badgeW - 25;
-      const badgeY = y - badgeH / 2;
-
-      // Draw subtle pill background
-      shadingCtx.fillStyle = "rgba(11, 14, 20, 0.90)";
-      shadingCtx.fillRect(badgeX, badgeY, badgeW, badgeH);
-
-      // Pill border
-      shadingCtx.strokeStyle = baseColor;
-      shadingCtx.lineWidth = 1;
-      shadingCtx.strokeRect(badgeX, badgeY, badgeW, badgeH);
-
-      // Left color accent bar
-      shadingCtx.fillStyle = baseColor;
-      shadingCtx.fillRect(badgeX, badgeY, 2.5, badgeH);
-
-      // Label text
-      shadingCtx.fillStyle = baseColor;
-      shadingCtx.fillText(badgeTxt, badgeX + 6, badgeY + badgeH / 2);
-    });
-
-    shadingCtx.restore();
-  }
 }
 
 // Initialize Lightweight Chart
@@ -2488,22 +2445,34 @@ function renderChartLevels(data) {
     priceLines.push(slopeLine);
   }
 
-  // 1C. Predictive Matrix ("Where to Wait" Target Lines)
+  // 1C. Predictive Matrix ("Where to Wait" Target Lines Snapped to Price Axis)
   if (filterShowRadar && data.predictive_matrix && data.predictive_matrix.stations) {
     data.predictive_matrix.stations.forEach(st => {
       let lineColor = "#06b6d4";
-      if (st.type === "SWEEP") lineColor = "#fb923c";
-      else if (st.type === "EXPANSION") lineColor = "#fbbf24";
+      let lineTitle = `WAIT M2/M3 (${st.direction})`;
+      let targetP = st.target_price;
 
-      const stLine = candleSeries.createPriceLine({
-        price: st.target_price,
-        color: lineColor,
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        axisLabelVisible: false,
-        title: ""
-      });
-      priceLines.push(stLine);
+      if (st.type === "SWEEP") {
+        lineColor = "#fb923c";
+        lineTitle = `WAIT M1A SWEEP (${st.direction})`;
+        targetP = st.target_price;
+      } else if (st.type === "EXPANSION") {
+        lineColor = "#fbbf24";
+        lineTitle = `TARGET M4 EXPANSION (${st.direction})`;
+        targetP = (st.expansion_target && st.expansion_target > 0) ? st.expansion_target : st.target_price;
+      }
+
+      if (targetP && targetP > 0) {
+        const stLine = candleSeries.createPriceLine({
+          price: targetP,
+          color: lineColor,
+          lineWidth: 1.5,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: lineTitle
+        });
+        priceLines.push(stLine);
+      }
     });
   }
 
