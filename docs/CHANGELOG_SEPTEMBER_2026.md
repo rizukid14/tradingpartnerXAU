@@ -2,6 +2,42 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 105. Perubahan 12 September 2026 — Integrasi Dedicated Macro Seed 30 Tahun (FBS), Auto-Seeding Engine, Kalibrasi W1 Secular Slope, dan Rich ZCE Confluence Telemetry
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Keterbatasan Riwayat Makro Broker MT5 Live**:
+   - Akun live broker hanya menyediakan data W1/MN1 terbatas (~100-200 bar), menyebabkan garis tren sekuler jangka panjang (multi-dekade) dan level makro institusional tidak terpetakan secara utuh.
+2. **Kerapuhan Wick Breach pada Garis Tren Sekuler W1**:
+   - Aturan deteksi trendline sebelumnya membatalkan garis tren jika terdapat satu sumbu lilin (*wick*) menembus garis, padahal lonjakan likuiditas agresif (misal wicking Jan 2026 pada EURUSD) ditutup kembali di bawah garis (rejeksi), sehingga garis tren sekuler 8 tahun dari puncak 2018 (1.25556) keliru dianulir.
+3. **Anomali Telemetry Hover Level ZCE Dashboard ("1src Dummy")**:
+   - Tooltip hover level ZCE pada dashboard menampilkan informasi seragam bernilai dummy: `TFs: H1 (1 src)` dan `Structural S/R Anchor` akibat ketiadaan transfer data primitif penyusun klaster dari `_pick_layers` di `zone_confluence_engine.py` ke pipeline `dashboard.py` dan `dashboard_assets.py`.
+4. **Distorsi Visual Garis Diagonal W1 & Pola Geometris**:
+   - Garis diagonal miring yang dirender di kanvas 2D mengalami distorsi/shearing saat chart di-zoom atau digeser, serta menyisakan garis proyeksi eksperimental Falling Wedge.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Dedicated Multi-Decade Macro Seed (`assets/macro_history/`) & Auto-Seeding Engine (`src/analytics/macro_data_loader.py`)**:
+   - Mengunduh riwayat lengkap W1 (618–1.793 bar, ~1995–2026) dan MN1 (143–441 bar, ~1990–2026) dari FBS MT5 untuk seluruh **28 pair universe**.
+   - Menyimpan dataset ke folder dedicated `assets/macro_history/` dalam 56 file `.csv.gz` terkompresi ringkas (**947 KB total**, dilacak Git).
+   - Membangun `MacroDataLoader.get_deep_macro_rates()` yang menggabungkan baseline FBS dengan live broker bars secara sub-milidetik, dilengkapi mekanisme **auto-seeding** otomatis setiap penutupan candle W1 (1 minggu) dan MN1 (1 bulan).
+2. **Kalibrasi W1 Secular Slope Barrier & SMC Close Breach (`src/analytics/macro_strategic_engine.py`)**:
+   - Memperpanjang horizon sekuler `W1_SECULAR_LOOKBACK_BARS = 480` (~9.2 tahun) di `config.py` dan `.env`.
+   - Mengganti wick breach kaku dengan **SMC Close Breach Law** (`Close > Line + 0.15 * ATR_W1`).
+   - Berhasil mendeteksi Puncak Sekuler 2018 (High 1.25556), memetakan plafon tren sekuler EURUSD di level **1.18033** (18 confirmed touch points) dengan outer boundary di **1.19517**.
+3. **Rich ZCE Confluence Hover Telemetry (`zone_confluence_engine.py`, `dashboard.py`, `dashboard_assets.py`)**:
+   - Mengekstrak primitif struktural riil (`c.members`) di `_pick_layers` (`sources`, `tfs_present`, `kinds_present`, `confluence`).
+   - Mempertahankan dan mengakumulasikan metadata saat proses *proximity consolidation* di `dashboard.py`.
+   - Menampilkan telemetry konfluensi multi-sumber yang kaya pada tooltip hover (misal `5src` s/d `12src`, `D1+H1+H4+M30+PSY`, struktur `OB_BEAR (M30) • EQH (H4) • LAST_HIGH (H1) • EMA_BAND (H1)`), serta jumlah touch point asli pada W1 Slope (`18 touches`).
+4. **Pembersihan Geometri Grafik Dashboard (`dashboard_assets.py`)**:
+   - Menghapus rendering kanvas garis miring diagonal W1 DESC SLOPE untuk mengeliminasi distorsi zoom, menggantikannya dengan garis harga horizontal putus-putus yang bersih.
+   - Membersihkan sisa elemen Falling Wedge dan memperbarui label toolbar menjadi `SMC Range`.
+5. **Verifikasi Suite Lengkap**:
+   - Seluruh 34 unit test (`test_pattern_engine.py`, `test_dashboard.py`, `test_symbol_rotation.py`, `test_time_decay_and_vol_regime.py`) lulus **100% PASS**.
+   - Verifikasi live API `/api/symbol/EURUSD` dan `/api/overview` terkonfirmasi aktif dengan metadata valid.
+
+---
+
 ## 104. Perubahan 11 September 2026 (Malam IV) — Penegakan Hard Floor R:R 0.50:1 Lintas Mekanisme (M1, M2, M3) & Eliminasi Setup Target Station Semu (Resolusi Anomali XAUUSD R:R 0.02:1)
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
