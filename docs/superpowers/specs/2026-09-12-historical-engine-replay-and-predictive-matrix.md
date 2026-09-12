@@ -3,10 +3,10 @@
 ## 1. Executive Summary & Problem Context
 
 Dalam sistem trading partner XAU/FX saat ini, arsitektur kuantitatif inti kita telah dilengkapi dengan modul-modul institusional berkemampuan tinggi:
-1. **Macro Strategic Engine (MSE)**: Pemetaan 6-Timeframe Native Sockets (`MN1/W1/D1/H4/H1/M30`), stasiun benteng $C_1..C_4$ dan $F_1..F_4$, serta 5-Tier Action Matrix.
-2. **Zone Confluence Engine (ZCE)**: True Zonal Bands, Dynamic EMA Bands (20/50/100/200), dan penandaan level Support-Become-Resistance (SBR) serta Resistance-Become-Support (RBS).
+1. **Zone Confluence Engine (ZCE)**: Pemetaan Multi-Timeframe komprehensif di 6 Timeframe (`MN1, W1, D1, H4, H1, M30`) x Multi-Horizon (OB, FVG, EQH/EQL, FRVP POC/VAH/VAL, Last Swing High/Low, Dynamic EMA 20/50/100/200, dan Dual-Grid Psychological Stations), menghasilkan Tangga Benteng Terpadu $C_1..C_4$ dan $F_1..F_4$ lengkap dengan scoring konfluensi multi-TF.
+2. **Macro Strategic Engine (MSE)**: Konsumsi tangga ZCE untuk mengevaluasi Directional Trend, Clearance Headroom kamar $C_1 - F_1$, dan 5-Tier Action Matrix (Permission Gate BUY/SELL).
 3. **Macro Envelope & Pattern Engine**: Deteksi Active Inducement Dealing Range, Order Flow Backbone Zigzag, dan klasifikasi pola geometris.
-4. **Wave Regime Engine**: Pengenalan rezim pasar (`YOUNG_OSCILLATION`, `COMPRESSION_BOX`, `MATURE_RANGE`, `EXHAUSTION`).
+4. **Wave Regime Engine**: Pengenalan siklus pasar (`YOUNG_OSCILLATION`, `COMPRESSION_BOX`, `MATURE_RANGE`, `EXHAUSTION`).
 
 Namun, fungsi penanda historis pada dashboard (`detect_historical_triggers`) sebelumnya dibangun secara terpisah menggunakan rumus lokal yang disederhanakan (*isolated stateless checklist*). Hal ini menimbulkan diskoneksi:
 - Penanda di masa lalu tidak mencerminkan narasi struktural yang utuh (seperti siklus: *Impulse $\to$ Retracement 50% EQ $\to$ Box Compression $\to$ Inducement Sweep M1B $\to$ Breakdown Expansion M4 $\to$ SBR Retest M3*).
