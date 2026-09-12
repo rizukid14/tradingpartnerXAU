@@ -261,12 +261,15 @@ class TestDashboardCockpit(unittest.TestCase):
         self.assertIsInstance(markers, list)
         for m in markers:
             self.assertIn("type", m)
+            self.assertIn(m["type"], ("M1A", "M1B", "M2", "M3", "M4"))
             self.assertIn("direction", m)
             self.assertIn("price", m)
             self.assertIn("time", m)
             self.assertIn("dr_pos_pct", m)
             self.assertIn("zone", m)
             self.assertIn("reason", m)
+            self.assertIn("touch_count", m)
+            self.assertGreaterEqual(m["touch_count"], 1)
 
 
 if __name__ == "__main__":

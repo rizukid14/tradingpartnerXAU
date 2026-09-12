@@ -2193,21 +2193,21 @@ function renderVerticalShading() {
       let baseColor = "#38bdf8";
       let shortTag = m.label || m.type || "M";
 
-      if (m.type === "M1_SWEEP") {
+      if (m.type === "M1A" || m.type === "M1_SWEEP" || m.type === "M1") {
         baseColor = isBuy ? "#10b981" : "#f43f5e";
-        shortTag = isBuy ? "▲ M1 SWEEP" : "▼ M1 SWEEP";
-      } else if (m.type === "M1B_INDUCEMENT") {
+        shortTag = isBuy ? "▲ M1A" : "▼ M1A";
+      } else if (m.type === "M1B" || m.type === "M1B_INDUCEMENT") {
         baseColor = "#f59e0b";
-        shortTag = isBuy ? "▲ M1B INDUCE" : "▼ M1B INDUCE";
-      } else if (m.type === "M2_PULLBACK") {
+        shortTag = isBuy ? "▲ M1B" : "▼ M1B";
+      } else if (m.type === "M2" || m.type === "M2_PULLBACK") {
         baseColor = isBuy ? "#06b6d4" : "#818cf8";
-        shortTag = isBuy ? "▲ M2 PULLBACK" : "▼ M2 PULLBACK";
-      } else if (m.type === "M3_RETEST") {
+        shortTag = isBuy ? "▲ M2" : "▼ M2";
+      } else if (m.type === "M3" || m.type === "M3_RETEST") {
         baseColor = isBuy ? "#a855f7" : "#c084fc";
-        shortTag = isBuy ? "▲ M3 RETEST" : "▼ M3 RETEST";
-      } else if (m.type === "M4_EXPANSION") {
+        shortTag = isBuy ? "▲ M3" : "▼ M3";
+      } else if (m.type === "M4" || m.type === "M4_EXPANSION") {
         baseColor = "#fbbf24";
-        shortTag = isBuy ? "🚀 M4 EXPAND" : "💥 M4 BREAK";
+        shortTag = isBuy ? "▲ M4" : "▼ M4";
       }
 
       const txt = shortTag;
@@ -2353,11 +2353,15 @@ function initChart() {
         const isB = (hoveredMarker.direction === "BUY");
         const dirBadge = isB ? '<span style="color:#10b981;font-weight:bold;">BUY</span>' : '<span style="color:#f43f5e;font-weight:bold;">SELL</span>';
         const dDigits = cachedSymbolData ? (cachedSymbolData.digits || 5) : 5;
+        const touchHtml = (hoveredMarker.touch_count && hoveredMarker.touch_count > 1)
+          ? `<div style="display:flex;align-items:center;gap:6px;margin:4px 0 3px 0;font-size:10px;color:#fbbf24;font-weight:600;"><span style="background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:3px;border:1px solid rgba(251,191,36,0.4);">⚡ Touch Count: ${hoveredMarker.touch_count}x</span><span style="color:#cbd5e1;">(Level tested ${hoveredMarker.touch_count} times)</span></div>`
+          : ((hoveredMarker.type === "M3" || hoveredMarker.type === "M1B") ? `<div style="margin:4px 0 3px 0;font-size:10px;color:#94a3b8;"><span style="background:rgba(148,163,184,0.12);padding:1px 6px;border-radius:3px;">⚡ Touch Count: 1st Test</span></div>` : '');
         tooltipEl.innerHTML = `
           <div class="zce-tt-header">
             <span class="zce-tt-tier" style="color:${hoveredMarker.box.color};">${hoveredMarker.label} [${dirBadge}] @ ${hoveredMarker.price.toFixed(dDigits)}</span>
             <span class="zce-tt-score">DR ${hoveredMarker.dr_pos_pct}%</span>
           </div>
+          ${touchHtml}
           <div class="zce-tt-confluences">${hoveredMarker.reason}</div>
           <div class="zce-tt-meta">
             <span>Zone: <b style="color:${hoveredMarker.box.color};">${hoveredMarker.zone}</b></span>
@@ -2366,7 +2370,7 @@ function initChart() {
         `;
         tooltipEl.style.display = "block";
         tooltipEl.style.left = `${Math.min(rect.width - 280, Math.max(10, hoveredMarker.box.x + hoveredMarker.box.w + 10))}px`;
-        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 110, hoveredMarker.box.y - 10))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 125, hoveredMarker.box.y - 10))}px`;
         return;
       }
 
@@ -2592,7 +2596,6 @@ function renderChartLevels(data) {
   });
 
   // 1B. W1 Dual-Horizon Descending Slope Ceiling
-  const temporalMarkers = [];
   if (data.w1_slope_ceiling && data.w1_slope_ceiling > 0) {
     const slopeColor = "#f59e0b"; // Warm Amber
     const slopePrice = data.w1_slope_ceiling;
@@ -2661,89 +2664,11 @@ function renderChartLevels(data) {
         title: "" // Sisi kanan tetap bersih
       });
       priceLines.push(line);
-
-      // 2. Temporal Candle Marker (Titik Terjadinya / Proyeksi Kapan)
-      if (s.event_time && s.event_time > 0) {
-        // Multi-setup confluence fusion: Skip separate M2 marker if confluent with M3
-        if (s.is_confluence && s.type === "M2") {
-          return;
-        }
-
-        let shape = "circle";
-        let pos = (s.direction === 1) ? "belowBar" : "aboveBar";
-        let markerText = `[${s.type}]`;
-
-        if (s.is_confluence) {
-          shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          const structStr = (s.direction === 1) ? "RBS" : "SBR";
-          const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
-          markerText = `[M2+M3 ${dirStr} CONFLUENCE] ${structStr} & EMA Touch @ ${s.price.toFixed(data.digits || 5)} (${ageDesc})`;
-          color = "#c084fc";
-        } else if (s.type === "M3") {
-          shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          const structStr = (s.direction === 1) ? "RBS" : "SBR";
-          const statusDesc = (s.status === 'WAITING_RETEST') ? 'Waiting' : 'Retesting';
-          const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
-          markerText = `[M3 ${dirStr} RETEST] ${structStr} ${statusDesc} (${ageDesc})`;
-        } else if (s.type === "M1B") {
-          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          const poolStr = (s.direction === 1) ? "EQL POOL" : "EQH POOL";
-          const touchDesc = (s.touches && s.touches > 1) ? `${s.touches}x ` : "";
-          const ageDesc = s.bar_age > 0 ? `${s.bar_age}b ago` : 'now';
-          if (s.status === 'WAITING_SWEEP') {
-            shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-            markerText = `[M1B ${touchDesc}${poolStr}] ${s.label} (${ageDesc})`;
-          } else {
-            shape = "circle";
-            const statusDesc = (s.status === 'RECLAIMED') ? 'Reclaimed SFP' : 'Piercing';
-            markerText = `[M1B ${dirStr} INDUCED SWEEP] ${statusDesc} (${ageDesc})`;
-          }
-        } else if (s.type === "M1") {
-          shape = "circle";
-          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          const statusDesc = (s.status === 'WAITING_CLOSE_RECLAIM') ? 'Waiting Close Reclaim' : (s.status === 'RECLAIMED_FADING' ? 'Reclaimed & Fading' : 'Sweep Watch');
-          markerText = `[M1A ${dirStr} MACRO SWEEP] ${statusDesc}`;
-        } else if (s.type === "M2") {
-          shape = (s.direction === 1) ? "arrowUp" : "arrowDown";
-          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          markerText = `[M2 ${dirStr} PULLBACK] EMA Touch @ ${s.price.toFixed(data.digits || 5)}`;
-        } else if (s.type === "M4") {
-          shape = s.is_breakdown_watch ? "circle" : ((s.direction === 1) ? "arrowUp" : "arrowDown");
-          const dirStr = (s.direction === 1) ? "BUY" : "SELL";
-          if (s.label && s.label.startsWith("M4")) {
-            markerText = `[${s.label}] @ ${s.price.toFixed(data.digits || 5)}`;
-          } else {
-            const lvlTag = (s.direction === 1) ? "Swing High" : "Swing Low";
-            markerText = s.is_breakdown_watch 
-              ? `[M4 ${dirStr} WATCH] ${lvlTag} @ ${s.price.toFixed(data.digits || 5)}`
-              : `[M4 ${dirStr} FLOW] Retest @ ${s.price.toFixed(data.digits || 5)}`;
-          }
-        }
-
-        // Filter out opposing directional arrow shapes on candle markers
-        const isOpposedMarker = (allowedMarkerDir !== 0 && s.direction !== allowedMarkerDir);
-        if (isOpposedMarker && shape !== "circle") {
-          shape = "circle";
-        }
-
-        temporalMarkers.push({
-          time: s.event_time,
-          position: pos,
-          color: color,
-          shape: shape,
-          text: markerText
-        });
-      }
     });
   }
 
-  // Set sorted temporal markers on candlestick series
-  if (temporalMarkers.length > 0 && candleSeries) {
-    temporalMarkers.sort((a, b) => a.time - b.time);
-    candleSeries.setMarkers(temporalMarkers);
-  } else if (candleSeries) {
+  // Ensure native series markers are clean (all historical strategy audit badges rendered in Section 6)
+  if (candleSeries) {
     candleSeries.setMarkers([]);
   }
 

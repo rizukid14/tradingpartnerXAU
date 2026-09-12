@@ -678,8 +678,8 @@ def detect_historical_triggers(
 
             bar_trigger = None
 
-            # 1. M1: UNIVERSAL LIQUIDITY SWEEP (Reversal at Range Extremes)
-            # M1 SELL: Swept recent peak, upper wick >= 30%, in Deep Premium (>= 61.8%)
+            # 1. M1A: UNIVERSAL LIQUIDITY SWEEP (Reversal at Range Extremes)
+            # M1A SELL: Swept recent peak, upper wick >= 30%, in Deep Premium (>= 61.8%)
             if dr_pos >= 0.618 and upper_wick >= 0.30 and prior_pks:
                 swept_pk = max(prior_pks)
                 if c_high >= swept_pk and c_close < c_high:
@@ -688,14 +688,15 @@ def detect_historical_triggers(
                         "bar_age": n - 1 - i,
                         "time": c_time,
                         "price": c_high,
-                        "type": "M1_SWEEP",
+                        "type": "M1A",
                         "direction": "SELL",
                         "dr_pos_pct": dr_pos_pct,
                         "zone": "DEEP_PREMIUM",
-                        "label": "M1 SWEEP",
+                        "label": "M1A",
+                        "touch_count": 1,
                         "reason": f"Swept High {swept_pk:.{5 if point < 0.01 else 2}f} with {upper_wick*100:.0f}% Upper Wick at DR {dr_pos_pct}%"
                     }
-            # M1 BUY: Swept recent trough, lower wick >= 30%, in Deep Discount (<= 38.2%)
+            # M1A BUY: Swept recent trough, lower wick >= 30%, in Deep Discount (<= 38.2%)
             elif dr_pos <= 0.382 and lower_wick >= 0.30 and prior_trs:
                 swept_tr = min(prior_trs)
                 if c_low <= swept_tr and c_close > c_low:
@@ -704,41 +705,48 @@ def detect_historical_triggers(
                         "bar_age": n - 1 - i,
                         "time": c_time,
                         "price": c_low,
-                        "type": "M1_SWEEP",
+                        "type": "M1A",
                         "direction": "BUY",
                         "dr_pos_pct": dr_pos_pct,
                         "zone": "DEEP_DISCOUNT",
-                        "label": "M1 SWEEP",
+                        "label": "M1A",
+                        "touch_count": 1,
                         "reason": f"Swept Low {swept_tr:.{5 if point < 0.01 else 2}f} with {lower_wick*100:.0f}% Lower Wick at DR {dr_pos_pct}%"
                     }
 
             # 2. M1B: INTERNAL INDUCEMENT SWEEP (Mid-Range Trap)
             if not bar_trigger and 0.382 < dr_pos < 0.618 and (upper_wick >= 0.35 or lower_wick >= 0.35):
                 if upper_wick >= 0.35 and prior_pks and c_high >= max(prior_pks):
+                    swept_pk = max(prior_pks)
+                    touches = sum(1 for j in range(max(0, i - 30), i + 1) if abs(highs[j] - swept_pk) <= 0.20 * c_atr)
                     bar_trigger = {
                         "bar_index": i,
                         "bar_age": n - 1 - i,
                         "time": c_time,
                         "price": c_high,
-                        "type": "M1B_INDUCEMENT",
+                        "type": "M1B",
                         "direction": "SELL",
                         "dr_pos_pct": dr_pos_pct,
                         "zone": "SHALLOW_PREMIUM",
-                        "label": "M1B INDUCE",
-                        "reason": f"Internal Inducement Sweep High with {upper_wick*100:.0f}% Wick at DR {dr_pos_pct}%"
+                        "label": "M1B",
+                        "touch_count": max(1, touches),
+                        "reason": f"Internal Inducement Sweep High with {upper_wick*100:.0f}% Wick • Cluster {max(1, touches)}x at DR {dr_pos_pct}%"
                     }
                 elif lower_wick >= 0.35 and prior_trs and c_low <= min(prior_trs):
+                    swept_tr = min(prior_trs)
+                    touches = sum(1 for j in range(max(0, i - 30), i + 1) if abs(lows[j] - swept_tr) <= 0.20 * c_atr)
                     bar_trigger = {
                         "bar_index": i,
                         "bar_age": n - 1 - i,
                         "time": c_time,
                         "price": c_low,
-                        "type": "M1B_INDUCEMENT",
+                        "type": "M1B",
                         "direction": "BUY",
                         "dr_pos_pct": dr_pos_pct,
                         "zone": "SHALLOW_DISCOUNT",
-                        "label": "M1B INDUCE",
-                        "reason": f"Internal Inducement Sweep Low with {lower_wick*100:.0f}% Wick at DR {dr_pos_pct}%"
+                        "label": "M1B",
+                        "touch_count": max(1, touches),
+                        "reason": f"Internal Inducement Sweep Low with {lower_wick*100:.0f}% Wick • Cluster {max(1, touches)}x at DR {dr_pos_pct}%"
                     }
 
             # 3. M2: TREND-ALIGNED PULLBACK (EMA Corridor Retest)
@@ -752,11 +760,12 @@ def detect_historical_triggers(
                             "bar_age": n - 1 - i,
                             "time": c_time,
                             "price": c_low,
-                            "type": "M2_PULLBACK",
+                            "type": "M2",
                             "direction": "BUY",
                             "dr_pos_pct": dr_pos_pct,
                             "zone": "DISCOUNT_CORRIDOR",
-                            "label": "M2 PULLBACK",
+                            "label": "M2",
+                            "touch_count": 1,
                             "reason": f"Pullback Touch to EMA20/50 in Discount ({dr_pos_pct}%), Bullish Rebound"
                         }
                 elif dr_pos >= 0.500 and ema20[i] < ema50[i]:
@@ -768,11 +777,12 @@ def detect_historical_triggers(
                             "bar_age": n - 1 - i,
                             "time": c_time,
                             "price": c_high,
-                            "type": "M2_PULLBACK",
+                            "type": "M2",
                             "direction": "SELL",
                             "dr_pos_pct": dr_pos_pct,
                             "zone": "PREMIUM_CORRIDOR",
-                            "label": "M2 PULLBACK",
+                            "label": "M2",
+                            "touch_count": 1,
                             "reason": f"Pullback Rally to EMA20/50 in Premium ({dr_pos_pct}%), Bearish Rejection"
                         }
 
@@ -780,34 +790,38 @@ def detect_historical_triggers(
             if not bar_trigger:
                 for pk in prior_pks:
                     if abs(c_low - pk) <= 0.25 * c_atr and c_close > pk and (0.35 <= dr_pos <= 0.80):
+                        touches = sum(1 for j in range(max(0, i - 40), i + 1) if (abs(lows[j] - pk) <= 0.25 * c_atr or abs(highs[j] - pk) <= 0.25 * c_atr))
                         bar_trigger = {
                             "bar_index": i,
                             "bar_age": n - 1 - i,
                             "time": c_time,
                             "price": pk,
-                            "type": "M3_RETEST",
+                            "type": "M3",
                             "direction": "BUY",
                             "dr_pos_pct": dr_pos_pct,
                             "zone": "RBS_RETEST",
-                            "label": "M3 RETEST",
-                            "reason": f"Retest of Broken Resistance {pk:.{5 if point < 0.01 else 2}f} (now RBS floor) at DR {dr_pos_pct}%"
+                            "label": "M3",
+                            "touch_count": max(1, touches),
+                            "reason": f"Retest of Broken Resistance {pk:.{5 if point < 0.01 else 2}f} (now RBS floor) • Touch #{max(1, touches)} at DR {dr_pos_pct}%"
                         }
                         break
 
                 if not bar_trigger:
                     for tr_p in prior_trs:
                         if abs(c_high - tr_p) <= 0.25 * c_atr and c_close < tr_p and (0.20 <= dr_pos <= 0.65):
+                            touches = sum(1 for j in range(max(0, i - 40), i + 1) if (abs(highs[j] - tr_p) <= 0.25 * c_atr or abs(lows[j] - tr_p) <= 0.25 * c_atr))
                             bar_trigger = {
                                 "bar_index": i,
                                 "bar_age": n - 1 - i,
                                 "time": c_time,
                                 "price": tr_p,
-                                "type": "M3_RETEST",
+                                "type": "M3",
                                 "direction": "SELL",
                                 "dr_pos_pct": dr_pos_pct,
                                 "zone": "SBR_RETEST",
-                                "label": "M3 RETEST",
-                                "reason": f"Retest of Broken Support {tr_p:.{5 if point < 0.01 else 2}f} (now SBR ceiling) at DR {dr_pos_pct}%"
+                                "label": "M3",
+                                "touch_count": max(1, touches),
+                                "reason": f"Retest of Broken Support {tr_p:.{5 if point < 0.01 else 2}f} (now SBR ceiling) • Touch #{max(1, touches)} at DR {dr_pos_pct}%"
                             }
                             break
 
@@ -819,11 +833,12 @@ def detect_historical_triggers(
                         "bar_age": n - 1 - i,
                         "time": c_time,
                         "price": c_close,
-                        "type": "M4_EXPANSION",
+                        "type": "M4",
                         "direction": "BUY",
                         "dr_pos_pct": dr_pos_pct,
                         "zone": "RANGE_BREAKOUT",
-                        "label": "M4 EXPAND",
+                        "label": "M4",
+                        "touch_count": 1,
                         "reason": f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) above Range High {r_high:.{5 if point < 0.01 else 2}f}"
                     }
                 elif c_close < r_low and c_close < c_open:
@@ -832,11 +847,12 @@ def detect_historical_triggers(
                         "bar_age": n - 1 - i,
                         "time": c_time,
                         "price": c_close,
-                        "type": "M4_EXPANSION",
+                        "type": "M4",
                         "direction": "SELL",
                         "dr_pos_pct": dr_pos_pct,
                         "zone": "RANGE_BREAKDOWN",
-                        "label": "M4 EXPAND",
+                        "label": "M4",
+                        "touch_count": 1,
                         "reason": f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) below Range Low {r_low:.{5 if point < 0.01 else 2}f}"
                     }
 
