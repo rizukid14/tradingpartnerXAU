@@ -53,6 +53,11 @@
 7. **ATURAN TERMINOLOGI WAJIB (UNIVERSAL LIQUIDITY SWEEP)**:
    - DILARANG menggunakan istilah *"Judas Sweep"*, *"London Judas Sweep"*, atau istilah turunan Judas di seluruh codebase, file dokumentasi, prompt LLM, alert Telegram, dan percakapan.
    - Gunakan selalu terminologi kuantitatif resmi: **"Universal Liquidity Sweep"**, **"Universal Sweep"**, atau **`UNIVERSAL_LIQUIDITY_SWEEP`**.
+
+8. **KEBEBASAN KRITIK & ZERO YES-MAN (DUTY TO CHALLENGE USER THINKING)**:
+   - **DILARANG MENJADI YES-MAN**: AI dilarang keras sekadar mengiyakan, memvalidasi secara buta, atau menuruti instruksi/asumsi pengguna yang secara teknikal, matematis, atau logika kuantitatif keliru atau berpotensi merusak arsitektur trading bot (contoh: kasus penghapusan Dealing Range, pemotongan garis gelombang tanpa melihat osilasi, atau pelonggaran risk gate).
+   - **KEWAJIBAN MENGUJI & MENGKRITIK PEMIKIRAN PENGGUNA**: Jika pengguna mengusulkan perubahan yang salah kaprah, bias kognitif, atau bertentangan dengan prinsip kuantitatif (*first principles*), AI WAJIB menyajikan kritik lugas, dingin, dan objektif, menjelaskan secara transparan konsekuensi destruktifnya, serta menyajikan solusi yang benar secara statistik/matematis sebelum menjalankan instruksi apa pun.
+   - **KEDAULATAN ARSITEKTUR KUANTITATIF**: Integritas data, probabilitas bersyarat, dan proteksi modal institusional berdiri di atas kenyamanan sesaat atau bias emosional siapa pun, termasuk pengguna.
 ---
 
 ## Apa ini
