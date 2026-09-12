@@ -1615,7 +1615,7 @@ class CockpitDataEngine:
             "m2_adx": f"{macro.get('adx_14', 24.5):.1f} (Trend Aligned)",
             "m2_fib50": m2_tgt,
             "m2_fib618": f"{m2_desc.replace('Bullish Pullback (', '').replace('Bearish Pullback (', '').replace(')', '')} [Est: {m2_item.get('est_time', 'Active')}]" if m2_item else "—",
-            "m2_zone": "DISCOUNT" if float(macro.get("dr_pos", 0.5)) <= 0.45 else ("PREMIUM" if float(macro.get("dr_pos", 0.5)) >= 0.55 else "EQUILIBRIUM"),
+            "m2_zone": "DISCOUNT" if float(macro.get("dr_pos", 0.5)) <= 0.382 else ("PREMIUM" if float(macro.get("dr_pos", 0.5)) >= 0.618 else "EQUILIBRIUM"),
             "m3_level": m3_tgt,
             "m3_recency": f"{m3_status_str} ({m3_age}b ago)" if m3_item else "PASS",
             "m3_runaway": f"{abs(mid - m3_item['price']) / atr_val:.2f}x ATR (Guard <=2.5x)" if (m3_item and atr_val > 0) else "0.00x ATR (Guard <=2.5x)",

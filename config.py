@@ -465,6 +465,10 @@ SL_PADDING_NZD_POINTS = _getenv_int("SL_PADDING_NZD_POINTS", 20)        # +20 pt
 COMMISSION_USD_PER_LOT_ROUND = _getenv_float("COMMISSION_USD_PER_LOT_ROUND", 6.0) # $6.00 round turn ($3/side)
 MAX_FRICTION_TO_SL_RATIO = _getenv_float("MAX_FRICTION_TO_SL_RATIO", 0.20) # Max 20% friction (spread + comm) to SL
 
+# M1 Universal Liquidity Sweep Rules (ComLucro SMC / OTE Thresholds)
+M1_MIN_DR_SELL = _getenv_float("M1_MIN_DR_SELL", 0.618) # Minimal DR 61.8% (Deep Premium OTE) untuk M1 SELL
+M1_MAX_DR_BUY  = _getenv_float("M1_MAX_DR_BUY", 0.382)  # Maksimal DR 38.2% (Deep Discount OTE) untuk M1 BUY
+
 # M2 Trend-Aligned Pullback Rules
 ENABLE_M2_WALL_QUALITY       = _getenv_bool("ENABLE_M2_WALL_QUALITY", True)
 M2_MARUBOZU_BODY_RATIO       = _getenv_float("M2_MARUBOZU_BODY_RATIO", 0.55)

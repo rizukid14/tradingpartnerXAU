@@ -104,7 +104,7 @@
 
 1. **Strict Unanimous 3/3 Consensus**: Wajib 100% kesepakatan bulat 3 model aktif (3/3 BUY atau 3/3 SELL). Jika ada split vote atau HOLD $ightarrow$ otomatis **HOLD**.
 2. **Dealing Range Boundary Integrity**:
-   - **M1 Sweep SELL** wajib di area Premium ($dr\_pos \ge 0.55$); **M1 Sweep BUY** wajib di area Discount ($dr\_pos \le 0.45$).
+   - **M1 Sweep SELL** wajib di area Deep Premium ($dr\_pos \ge 0.618$); **M1 Sweep BUY** wajib di area Deep Discount ($dr\_pos \le 0.382$).
    - **M2 Pullback Collision Guard**: Veto BUY jika $dr\_pos \ge 0.80$ & jarak ke $C_1 < 0.40	imes	ext{ATR}$; Veto SELL jika $dr\_pos \le 0.20$ & jarak ke $F_1 < 0.40	imes	ext{ATR}$.
    - **M3 Exhaustion Retest Guard**: Veto BUY jika $dr\_pos \ge 0.85$ tanpa physical breach $C_1$; Veto SELL jika $dr\_pos \le 0.15$ tanpa physical breach $F_1$.
 3. **Plafon Lot Maksimal Akun Cent**: Lot terkunci $\le 0.50$ lot pada akun Cent (`MAX_POSITION_LOT = 0.50`).

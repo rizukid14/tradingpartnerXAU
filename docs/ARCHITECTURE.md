@@ -49,7 +49,7 @@ Pemindaian dilakukan paralel setiap 60 detik (`market_scanner.py`):
 
 1. **M1: Universal Liquidity Sweep & SFP (Swing Failure Pattern)**:
    - Deteksi sapuan likuiditas di atas Range High (BSL) atau di bawah Range Low (SSL) dengan pembalikan cepat (reclaim) ke dalam range.
-   - Wajib memenuhi syarat: BUY hanya di area Diskon ($dr_pos \le 0.45$), SELL hanya di area Premium ($dr_pos \ge 0.55$).
+   - Wajib memenuhi syarat: BUY hanya di area Deep Diskon ($dr_pos \le 0.382$), SELL hanya di area Deep Premium ($dr_pos \ge 0.618$).
 2. **M2: Trend-Aligned Pullback & Delayed Limit Retest**:
    - Pullback searah tren makro menuju batas Action Zone ($F_1$ Floor untuk BUY / $C_1$ Ceiling untuk SELL) dengan toleransi $\le 0.20\times\text{ATR}$.
    - Veto tabrakan: Dilarang BUY jika $dr_pos \ge 0.80$, dilarang SELL jika $dr_pos \le 0.20$.

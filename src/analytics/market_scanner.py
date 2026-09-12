@@ -4065,12 +4065,13 @@ class MarketScanner:
                     fallback_ceil = imm_c1 if _is_valid_ceiling_level(imm_c1) else (asian_h or (mid + atr_price_val))
                     ref_top = min(valid_tops) if valid_tops else fallback_ceil
 
-                    # Kunci Mati Dealing Range: M1 SELL wajib di Premium (dr_pos_val >= 0.55 atau intraday >= 0.50)
-                    is_premium_sweep = (dr_pos_val >= 0.55) or (intraday_dr_pos >= 0.50)
+                    # Kunci Mati Dealing Range: M1 SELL wajib di Deep Premium OTE (dr_pos_val >= 0.618 atau intraday >= 0.60)
+                    min_dr_sell = getattr(config, "M1_MIN_DR_SELL", 0.618)
+                    is_premium_sweep = (dr_pos_val >= min_dr_sell) or (intraday_dr_pos >= 0.60)
                     if is_m1_s_locked:
                         logger.debug(f"[SWEEP SELL LOCK] {sym} SKIP: {m1_s_lock_reason}")
                     elif not is_premium_sweep:
-                        logger.debug(f"[SWEEP SELL DISCOUNT VETO] {sym} SKIP: dr_pos {dr_pos_val:.2f} (<0.55) and intraday_dr_pos {intraday_dr_pos:.2f} (<0.50) is in discount territory.")
+                        logger.debug(f"[SWEEP SELL DISCOUNT VETO] {sym} SKIP: dr_pos {dr_pos_val:.2f} (<{min_dr_sell:.3f}) and intraday_dr_pos {intraday_dr_pos:.2f} (<0.60) is not in deep premium territory.")
                     elif (ref_top > 0) and (ref_top - sweep_tol <= mid <= ref_top + (atr_pts * 0.50 * pt)):
                         allowed_m1_s, action_tier_m1_s, reason_m1_s = _is_direction_allowed(-1, "BEARISH_SWEEP", entry_price=ref_top)
                         if not allowed_m1_s:
@@ -4251,12 +4252,13 @@ class MarketScanner:
                     fallback_floor = imm_f1 if _is_valid_floor_level(imm_f1) else (asian_l or (mid - atr_price_val))
                     ref_bot = max(valid_bots) if valid_bots else fallback_floor
 
-                    # Kunci Mati Dealing Range: M1 BUY wajib di Diskon (dr_pos_val <= 0.45 atau intraday <= 0.50)
-                    is_discount_sweep = (dr_pos_val <= 0.45) or (intraday_dr_pos <= 0.50)
+                    # Kunci Mati Dealing Range: M1 BUY wajib di Deep Discount OTE (dr_pos_val <= 0.382 atau intraday <= 0.40)
+                    max_dr_buy = getattr(config, "M1_MAX_DR_BUY", 0.382)
+                    is_discount_sweep = (dr_pos_val <= max_dr_buy) or (intraday_dr_pos <= 0.40)
                     if is_m1_b_locked:
                         logger.debug(f"[SWEEP BUY LOCK] {sym} SKIP: {m1_b_lock_reason}")
                     elif not is_discount_sweep:
-                        logger.debug(f"[SWEEP BUY PREMIUM VETO] {sym} SKIP: dr_pos {dr_pos_val:.2f} (>0.45) and intraday_dr_pos {intraday_dr_pos:.2f} (>0.50) is in premium territory.")
+                        logger.debug(f"[SWEEP BUY PREMIUM VETO] {sym} SKIP: dr_pos {dr_pos_val:.2f} (>{max_dr_buy:.3f}) and intraday_dr_pos {intraday_dr_pos:.2f} (>0.40) is not in deep discount territory.")
                     elif (ref_bot > 0) and (ref_bot - (atr_pts * 0.50 * pt) <= mid <= ref_bot + sweep_tol):
                         allowed_m1_b, action_tier_m1_b, reason_m1_b = _is_direction_allowed(1, "BULLISH_SWEEP", entry_price=ref_bot)
                         if not allowed_m1_b:
