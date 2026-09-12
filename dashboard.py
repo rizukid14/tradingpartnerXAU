@@ -692,13 +692,17 @@ def detect_historical_triggers(
             dr_pos = (c_close - r_low) / span
             dr_pos_pct = round(dr_pos * 100.0, 1)
 
+            # Active Dealing Range Scope Guard: Exclude bars from outdated regimes outside active structure
+            if dr_pos < -0.15 or dr_pos > 1.15:
+                continue
+
             upper_wick = (c_high - max(c_open, c_close)) / c_rng
             lower_wick = (min(c_open, c_close) - c_low) / c_rng
             body_ratio = abs(c_close - c_open) / c_rng
 
-            # Check prior peaks & troughs in preceding 35 bars
-            prior_pks = [p["price"] for p in peaks if p.get("index", 0) < i and (i - p.get("index", 0)) <= 35]
-            prior_trs = [t["price"] for t in troughs if t.get("index", 0) < i and (i - t.get("index", 0)) <= 35]
+            # Check prior peaks & troughs in preceding 48 hours (time-based causal lookup)
+            prior_pks = [p["price"] for p in peaks if p.get("time", 0) < c_time and (c_time - p.get("time", 0)) <= 48 * 3600]
+            prior_trs = [t["price"] for t in troughs if t.get("time", 0) < c_time and (c_time - t.get("time", 0)) <= 48 * 3600]
 
             swept_pks = [pk for pk in prior_pks if c_high >= pk and c_close < pk]
             swept_trs = [tr for tr in prior_trs if c_low <= tr and c_close > tr]
@@ -711,16 +715,16 @@ def detect_historical_triggers(
             touches = 1
 
             # 1. M1A: UNIVERSAL LIQUIDITY SWEEP (Reversal at Range Extremes)
-            if (dr_pos >= 0.618 or c_high >= r_high - 0.15 * c_atr) and upper_wick >= 0.30 and prior_pks:
-                swept_pk = max(swept_pks) if swept_pks else max(prior_pks)
+            if dr_pos >= 0.618 and upper_wick >= 0.30 and (swept_pks or c_high >= r_high - 0.10 * c_atr):
+                swept_pk = max(swept_pks) if swept_pks else r_high
                 if c_high >= swept_pk and c_close < c_high:
                     cand_type = "M1A"
                     cand_dir = -1
                     entry_p = c_close
                     zone_name = "DEEP_PREMIUM"
                     reason_text = f"Swept High {swept_pk:.{digits}f} with {upper_wick*100:.0f}% Upper Wick at DR {dr_pos_pct}%"
-            elif (dr_pos <= 0.382 or c_low <= r_low + 0.15 * c_atr) and lower_wick >= 0.30 and prior_trs:
-                swept_tr = min(swept_trs) if swept_trs else min(prior_trs)
+            elif dr_pos <= 0.382 and lower_wick >= 0.30 and (swept_trs or c_low <= r_low + 0.10 * c_atr):
+                swept_tr = min(swept_trs) if swept_trs else r_low
                 if c_low <= swept_tr and c_close > c_low:
                     cand_type = "M1A"
                     cand_dir = 1
@@ -729,7 +733,7 @@ def detect_historical_triggers(
                     reason_text = f"Swept Low {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Lower Wick at DR {dr_pos_pct}%"
 
             # 2. M1B: INTERNAL INDUCEMENT SWEEP (Box / Mid-Range Trap)
-            if not cand_type and 0.30 <= dr_pos <= 0.70 and (upper_wick >= 0.30 or lower_wick >= 0.30):
+            if not cand_type and 0.25 <= dr_pos <= 0.75 and (upper_wick >= 0.30 or lower_wick >= 0.30):
                 if upper_wick >= 0.30 and swept_pks:
                     swept_pk = max(swept_pks)
                     cand_type = "M1B"
@@ -771,7 +775,7 @@ def detect_historical_triggers(
             # 4. M3: BREAKOUT RETEST (Horizontal Key Level Retest)
             if not cand_type:
                 for pk in prior_pks:
-                    if abs(c_low - pk) <= 0.25 * c_atr and c_close > pk and (0.35 <= dr_pos <= 0.80):
+                    if abs(c_low - pk) <= 0.25 * c_atr and c_close > pk and (0.30 <= dr_pos <= 0.85):
                         cand_type = "M3"
                         cand_dir = 1
                         entry_p = pk
@@ -781,7 +785,7 @@ def detect_historical_triggers(
                         break
                 if not cand_type:
                     for tr_p in prior_trs:
-                        if abs(c_high - tr_p) <= 0.25 * c_atr and c_close < tr_p and (0.20 <= dr_pos <= 0.65):
+                        if abs(c_high - tr_p) <= 0.25 * c_atr and c_close < tr_p and (0.15 <= dr_pos <= 0.70):
                             cand_type = "M3"
                             cand_dir = -1
                             entry_p = tr_p
@@ -792,21 +796,37 @@ def detect_historical_triggers(
 
             # 5. M4: MOMENTUM EXPANSION SUPER-SHOCK
             if not cand_type and c_rng >= 1.4 * c_atr and body_ratio >= 0.65:
-                if c_close > r_high and c_close > c_open:
+                if (c_close > r_high or (prior_pks and c_close > max(prior_pks))) and c_close > c_open:
                     cand_type = "M4"
                     cand_dir = 1
                     entry_p = c_close
                     zone_name = "RANGE_BREAKOUT"
-                    reason_text = f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) above Range High {r_high:.{digits}f}"
-                elif c_close < r_low and c_close < c_open:
+                    reason_text = f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) Breakout"
+                elif (c_close < r_low or (prior_trs and c_close < min(prior_trs))) and c_close < c_open:
                     cand_type = "M4"
                     cand_dir = -1
                     entry_p = c_close
                     zone_name = "RANGE_BREAKDOWN"
-                    reason_text = f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) below Range Low {r_low:.{digits}f}"
+                    reason_text = f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) Breakdown"
 
             if not cand_type:
                 continue
+
+            # ── GATE 0: STRUCTURAL CONFLUENCE GATE ──
+            # Valid entries MUST occur in physical proximity (<= 0.25x ATR) to a structural landmark:
+            # 1) Dealing Range Extremes (r_high / r_low)
+            # 2) Dynamic EMA corridor (EMA20 / EMA50)
+            # 3) SBR/RBS key level (prior peak/trough)
+            # 4) Macro boundaries / Active ZCE ladder walls
+            near_dr_extreme = (abs(c_high - r_high) <= 0.25 * c_atr) or (abs(c_low - r_low) <= 0.25 * c_atr)
+            near_ema = (c_low <= max(ema20[i], ema50[i]) + 0.20 * c_atr) and (c_high >= min(ema20[i], ema50[i]) - 0.20 * c_atr)
+            near_sbr_rbs = any(abs(c_high - p) <= 0.25 * c_atr or abs(c_low - p) <= 0.25 * c_atr for p in (prior_pks + prior_trs))
+            near_macro = (eff_c1 > 0 and abs(c_high - eff_c1) <= 0.25 * c_atr) or (eff_f1 > 0 and abs(c_low - eff_f1) <= 0.25 * c_atr)
+            near_ladder = any(abs(c_close - float(w.get("price", 0.0))) <= 0.25 * c_atr for w in ladder if w.get("price")) if ladder else False
+
+            has_confluence = near_dr_extreme or near_ema or near_sbr_rbs or near_macro or near_ladder
+            if not has_confluence:
+                continue  # Vetoed: No Man's Land (vacuum between structural landmarks)
 
             # ── 1:1 ENGINE GATES VERIFICATION ──
 

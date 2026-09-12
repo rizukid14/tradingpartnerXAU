@@ -280,6 +280,34 @@ class TestDashboardCockpit(unittest.TestCase):
             self.assertIn("rr", m)
             self.assertGreaterEqual(m["rr"], 1.25)
 
+    def test_historical_triggers_confluence_gate(self):
+        """Historical triggers must satisfy active Dealing Range and Structural Confluence."""
+        import pandas as pd
+        import numpy as np
+
+        t0 = 1700000000
+        bars = []
+        base_p = 1.1500
+        for i in range(50):
+            o = base_p + np.sin(i * 0.2) * 0.0050
+            h = o + 0.0020
+            l = o - 0.0020
+            c = o + 0.0005
+            bars.append({"time": t0 + i * 3600, "open": o, "high": h, "low": l, "close": c})
+        df = pd.DataFrame(bars)
+
+        markers = dashboard.detect_historical_triggers(
+            df, "EURUSD", 0.0001, 0.00001, lookback_bars=50,
+            c1=1.1600, f1=1.1400, atr_val=0.0015
+        )
+        # Every marker must lie within active Dealing Range bounds [-15%, 115%]
+        self.assertGreater(len(markers), 0)
+        for m in markers:
+            self.assertGreaterEqual(m["dr_pos_pct"], -15.0)
+            self.assertLessEqual(m["dr_pos_pct"], 115.0)
+            self.assertIn("reason", m)
+            self.assertIn("type", m)
+
     def test_calculate_predictive_matrix_bearish(self):
         """calculate_predictive_matrix must construct 3 stations (Pullback, Sweep, Expansion) for Bearish regime."""
         macro = {
