@@ -1793,6 +1793,76 @@ function renderVerticalShading() {
     });
   }
 
+  // 3. Render 1:1 ZCE Fortress Touch Nodes on Candlestick Wicks
+  if (activeRenderedLevels && activeRenderedLevels.length > 0 && candleSeries && chart) {
+    const timeScale = chart.timeScale();
+    shadingCtx.save();
+    shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
+    shadingCtx.textAlign = "center";
+    shadingCtx.textBaseline = "middle";
+
+    activeRenderedLevels.forEach(lvl => {
+      lvl.node_boxes = [];
+      const w = lvl.wall;
+      if (!w || !w.touch_nodes || !Array.isArray(w.touch_nodes) || w.touch_nodes.length === 0) return;
+      const tColor = lvl.color || (w.type === "floor" ? "#38bdf8" : "#fbbf24");
+
+      w.touch_nodes.forEach(node => {
+        const nX = timeScale.timeToCoordinate(node.time);
+        if (nX === null || nX < -20 || nX > width + 20) return;
+
+        // Strictly lock touch price to the exact wick tip of the candle closest to this ZCE level
+        let exactPrice = node.price;
+        if (cachedSymbolData && cachedSymbolData.candles) {
+          const c = cachedSymbolData.candles.find(cd => cd.time === node.time);
+          if (c) {
+            const distH = Math.abs(c.high - w.price);
+            const distL = Math.abs(c.low - w.price);
+            exactPrice = (distH <= distL) ? c.high : c.low;
+          }
+        }
+
+        const nY = candleSeries.priceToCoordinate(exactPrice);
+        if (nY === null) return;
+
+        const circleR = node.is_sweep_wick ? 7.0 : 6.0;
+
+        // Circle fill
+        shadingCtx.beginPath();
+        shadingCtx.arc(nX, nY, circleR, 0, Math.PI * 2);
+        shadingCtx.fillStyle = "rgba(11, 14, 20, 0.94)";
+        shadingCtx.fill();
+
+        // Circle border
+        shadingCtx.strokeStyle = tColor;
+        shadingCtx.lineWidth = node.is_sweep_wick ? 1.8 : 1.2;
+        shadingCtx.stroke();
+
+        // Circle text: Plain digits (1, 2, 3...)
+        shadingCtx.fillStyle = tColor;
+        const num = node.touch_num || 1;
+        shadingCtx.fillText(String(num), nX, nY);
+
+        // Register node bounding box for interactive tooltip
+        lvl.node_boxes.push({
+          x: nX - circleR,
+          y: nY - circleR,
+          w: circleR * 2,
+          h: circleR * 2,
+          touch_num: num,
+          price: exactPrice,
+          time: node.time,
+          is_sweep: node.is_sweep_wick,
+          is_breach: node.is_breach,
+          level: w.price,
+          tier: w.tier,
+          color: tColor
+        });
+      });
+    });
+    shadingCtx.restore();
+  }
+
   // 4. (W1 Descending Slope rendered cleanly as horizontal price line in renderChartLevels)
 
   // 5. Render Macro H4 Structural Swings & Pattern Corridor
@@ -2287,103 +2357,6 @@ function renderVerticalShading() {
       const boxBottom = isBuy ? (pillY + pillH) : yExtreme;
       m.box = { x: pillX, y: boxTop, w: pillW, h: Math.max(18, boxBottom - boxTop), color: baseColor };
 
-      // C. Render M3 Lifecycle Nodes (Touch ①, ②, ③, Break [B])
-      if (m.type === "M3" && m.lifecycle_sequence && Array.isArray(m.lifecycle_sequence) && m.lifecycle_sequence.length > 0) {
-        const seqCoords = [];
-
-        m.lifecycle_sequence.forEach(node => {
-          const nX = timeScale.timeToCoordinate(node.time);
-          const nY = candleSeries.priceToCoordinate(node.price);
-          if (nX !== null && nY !== null && nX >= -20 && nX <= width + 20) {
-            seqCoords.push({ x: nX, y: nY, node: node });
-
-            if (node.role === "TOUCH") {
-              const circleR = 6.5;
-              const tColor = isBuy ? "#06b6d4" : "#f97316";
-
-              // Circle fill
-              shadingCtx.beginPath();
-              shadingCtx.arc(nX, nY, circleR, 0, Math.PI * 2);
-              shadingCtx.fillStyle = "rgba(11, 14, 20, 0.94)";
-              shadingCtx.fill();
-
-              // Circle border
-              shadingCtx.strokeStyle = tColor;
-              shadingCtx.lineWidth = 1.3;
-              shadingCtx.stroke();
-
-              // Circle text (1, 2, 3...)
-              shadingCtx.fillStyle = tColor;
-              shadingCtx.font = "bold 8px 'JetBrains Mono', monospace";
-              shadingCtx.textAlign = "center";
-              shadingCtx.textBaseline = "middle";
-              shadingCtx.fillText(node.label, nX, nY);
-
-              // Register interactive node box for hover
-              if (!m.node_boxes) m.node_boxes = [];
-              m.node_boxes.push({
-                x: nX - circleR,
-                y: nY - circleR,
-                w: circleR * 2,
-                h: circleR * 2,
-                role: "TOUCH",
-                label: `Touch #${node.label}`,
-                price: node.price,
-                color: tColor
-              });
-
-            } else if (node.role === "BREAK") {
-              const circleR = 7.5;
-              const bColor = "#c084fc";
-
-              // Circle fill (deep purple)
-              shadingCtx.beginPath();
-              shadingCtx.arc(nX, nY, circleR, 0, Math.PI * 2);
-              shadingCtx.fillStyle = "rgba(46, 16, 101, 0.94)";
-              shadingCtx.fill();
-
-              // Circle border
-              shadingCtx.strokeStyle = bColor;
-              shadingCtx.lineWidth = 1.5;
-              shadingCtx.stroke();
-
-              // Circle text ("B")
-              shadingCtx.fillStyle = "#ffffff";
-              shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
-              shadingCtx.textAlign = "center";
-              shadingCtx.textBaseline = "middle";
-              shadingCtx.fillText("B", nX, nY);
-
-              // Register interactive node box for hover
-              if (!m.node_boxes) m.node_boxes = [];
-              m.node_boxes.push({
-                x: nX - circleR,
-                y: nY - circleR,
-                w: circleR * 2,
-                h: circleR * 2,
-                role: "BREAK",
-                label: "Breakout [B]",
-                price: node.price,
-                color: bColor
-              });
-            }
-          }
-        });
-
-        // Draw guideline connecting Touch 1 -> Touch 2 -> Break B -> Retest M3
-        if (seqCoords.length >= 2) {
-          shadingCtx.beginPath();
-          shadingCtx.strokeStyle = isBuy ? "rgba(6, 182, 212, 0.45)" : "rgba(249, 115, 22, 0.45)";
-          shadingCtx.lineWidth = 1.1;
-          shadingCtx.setLineDash([3, 3]);
-          shadingCtx.moveTo(seqCoords[0].x, seqCoords[0].y);
-          for (let k = 1; k < seqCoords.length; k++) {
-            shadingCtx.lineTo(seqCoords[k].x, seqCoords[k].y);
-          }
-          shadingCtx.stroke();
-          shadingCtx.setLineDash([]);
-        }
-      }
     });
 
     shadingCtx.restore();
@@ -2413,15 +2386,22 @@ function renderVerticalShading() {
 
           if (st.type === "SWEEP") {
             const isBuy = (st.direction === "BUY");
-            const isM1B = (st.subtype === "M1B" || st.subtype === "M1S" || (st.label && (st.label.includes("M1B") || st.label.includes("M1S"))));
-            if (isM1B) {
-              baseColor = "#f59e0b";
-              zoneBg = "rgba(245, 158, 11, 0.12)";
-              cleanLabel = isBuy ? "▲ WAIT M1B" : "▼ WAIT M1B";
+            const isCoil = (st.status === "VETOED_COIL" || st.is_coil);
+            if (isCoil) {
+              baseColor = "#f43f5e";
+              zoneBg = "rgba(244, 63, 94, 0.16)";
+              cleanLabel = "⛔ VETO COIL";
             } else {
-              baseColor = isBuy ? "#10b981" : "#f43f5e";
-              zoneBg = isBuy ? "rgba(16, 185, 129, 0.12)" : "rgba(244, 63, 94, 0.12)";
-              cleanLabel = isBuy ? "▲ WAIT M1A" : "▼ WAIT M1A";
+              const isM1B = (st.subtype === "M1B" || st.subtype === "M1S" || (st.label && (st.label.includes("M1B") || st.label.includes("M1S"))));
+              if (isM1B) {
+                baseColor = "#f59e0b";
+                zoneBg = "rgba(245, 158, 11, 0.12)";
+                cleanLabel = isBuy ? "▲ WAIT M1B" : "▼ WAIT M1B";
+              } else {
+                baseColor = isBuy ? "#10b981" : "#f43f5e";
+                zoneBg = isBuy ? "rgba(16, 185, 129, 0.12)" : "rgba(244, 63, 94, 0.12)";
+                cleanLabel = isBuy ? "▲ WAIT M1A" : "▼ WAIT M1A";
+              }
             }
           } else if (st.type === "PULLBACK") {
             const isBuy = (st.direction === "BUY");
@@ -2510,7 +2490,7 @@ function renderVerticalShading() {
   }
 
   // 8. Render Sequential Flight Path Target Badges on Right Margin (Minimal, Hoverable)
-  if (cachedSymbolData && cachedSymbolData.flight_path && candleSeries && chart) {
+  if (cachedSymbolData && cachedSymbolData.flight_path && cachedSymbolData.flight_path.tp1 && candleSeries && chart) {
     const fp = cachedSymbolData.flight_path;
     const dDigits = cachedSymbolData.digits || 5;
     const targets = [
@@ -2816,6 +2796,7 @@ function initChart() {
       }
 
       let hoveredLevel = null;
+      let hoveredZceNode = null;
       for (let i = 0; i < activeRenderedLevels.length; i++) {
         const lvl = activeRenderedLevels[i];
         if (lvl.box) {
@@ -2824,6 +2805,17 @@ function initChart() {
             hoveredLevel = lvl;
             break;
           }
+        }
+        if (lvl.node_boxes && Array.isArray(lvl.node_boxes)) {
+          for (let nb = 0; nb < lvl.node_boxes.length; nb++) {
+            const nBox = lvl.node_boxes[nb];
+            if (mx >= nBox.x - 3 && mx <= nBox.x + nBox.w + 3 && my >= nBox.y - 3 && my <= nBox.y + nBox.h + 3) {
+              hoveredLevel = lvl;
+              hoveredZceNode = nBox;
+              break;
+            }
+          }
+          if (hoveredLevel) break;
         }
       }
 
@@ -2835,11 +2827,16 @@ function initChart() {
           const diffPips = ((hoveredLevel.price - cachedSymbolData.bid) / pt).toFixed(1);
           pipsDiff = `${diffPips >= 0 ? '+' : ''}${diffPips}p from live`;
         }
+        const freshHtml = (hoveredLevel.freshness_label) ? `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:10px;color:#fbbf24;font-weight:700;"><span style="background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:3px;border:1px solid rgba(251,191,36,0.4);">⚡ Freshness: ${hoveredLevel.freshness_label}</span></div>` : '';
+        const nodeAuditNote = hoveredZceNode ? `<div style="margin-bottom:4px;padding:2px 6px;background:rgba(255,255,255,0.08);border-radius:3px;font-size:9.5px;color:${hoveredZceNode.color};font-weight:bold;">Focus: Touch #${hoveredZceNode.touch_num} @ ${Number(hoveredZceNode.price).toFixed(cachedSymbolData ? cachedSymbolData.digits : 5)}${hoveredZceNode.is_sweep ? ' (Sweep Wick)' : (hoveredZceNode.is_breach ? ' (Breach)' : '')}</div>` : '';
+
         tooltipEl.innerHTML = `
           <div class="zce-tt-header">
             <span class="zce-tt-tier" style="color:${hoveredLevel.color};">${hoveredLevel.tier} ${hoveredLevel.grade_str} @ ${hoveredLevel.price.toFixed(cachedSymbolData ? cachedSymbolData.digits : 5)}</span>
             <span class="zce-tt-score">${hoveredLevel.score > 0 ? hoveredLevel.score.toFixed(1) + ' pts' : ''}</span>
           </div>
+          ${nodeAuditNote}
+          ${freshHtml}
           <div class="zce-tt-confluences">${hoveredLevel.confluences}</div>
           <div class="zce-tt-meta">
             <span>${hoveredLevel.is_slope ? `TF: W1 (${hoveredLevel.sources_count} touches)` : `TFs: ${hoveredLevel.timeframes || 'H1'} (${hoveredLevel.sources_count} src)`}</span>
@@ -2847,8 +2844,10 @@ function initChart() {
           </div>
         `;
         tooltipEl.style.display = "block";
-        tooltipEl.style.left = `${hoveredLevel.box.x + hoveredLevel.box.w + 10}px`;
-        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 90, hoveredLevel.box.y - 10))}px`;
+        const targetX = hoveredZceNode ? (hoveredZceNode.x + 15) : (hoveredLevel.box ? (hoveredLevel.box.x + hoveredLevel.box.w + 10) : 10);
+        const targetY = hoveredZceNode ? (hoveredZceNode.y - 10) : (hoveredLevel.box ? (hoveredLevel.box.y - 10) : 10);
+        tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, targetX))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 110, targetY))}px`;
       } else {
         chartWrapper.style.cursor = "default";
         tooltipEl.style.display = "none";
@@ -2947,13 +2946,36 @@ function renderChartLevels(data) {
 
   filteredLadder.forEach(w => {
     const isFloor = (w.type === "floor" || (w.tier && w.tier.startsWith("F")));
-    const baseRgb = isFloor ? "56, 189, 248" : "251, 191, 36"; // Cyan / Amber
 
     // Extract numeric tier (e.g. C1 -> 1, F5 -> 5, C8 -> 8)
     let tierNum = 1;
     const match = (w.tier || "").match(/[CF](\d+)/i);
     if (match) {
       tierNum = parseInt(match[1], 10);
+    }
+
+    // Distinct Institutional Color Palette per Level Tier:
+    // Plafon / Ceilings (C):
+    //   C1: Amber (251, 191, 36) #fbbf24
+    //   C2: Coral Orange (249, 115, 22) #f97316
+    //   C3: Rose Red (244, 63, 94) #f43f5e
+    //   C4+: Violet Purple (192, 132, 252) #c084fc
+    // Lantai / Floors (F):
+    //   F1: Sky Blue (56, 189, 248) #38bdf8
+    //   F2: Emerald Green (16, 185, 129) #10b981
+    //   F3: Royal Blue (59, 130, 246) #3b82f6
+    //   F4+: Royal Indigo (129, 140, 248) #818cf8
+    let baseRgb = "251, 191, 36";
+    if (isFloor) {
+      if (tierNum === 1) baseRgb = "56, 189, 248";
+      else if (tierNum === 2) baseRgb = "16, 185, 129";
+      else if (tierNum === 3) baseRgb = "59, 130, 246";
+      else baseRgb = "129, 140, 248";
+    } else {
+      if (tierNum === 1) baseRgb = "251, 191, 36";
+      else if (tierNum === 2) baseRgb = "249, 115, 22";
+      else if (tierNum === 3) baseRgb = "244, 63, 94";
+      else baseRgb = "192, 132, 252";
     }
 
     // Opacity: C1..C3 & F1..F3 = 100% (1.00)
@@ -2971,7 +2993,11 @@ function renderChartLevels(data) {
       : (w.grade === "GRADE_2_INTERMEDIATE" || tierNum <= 3 ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Dotted);
 
     const gStr = w.grade === "GRADE_3_MACRO" ? "G3" : (w.grade === "GRADE_2_INTERMEDIATE" ? "G2" : "G1");
-    const shortLabel = `${w.tier} [${gStr}] ${w.price.toFixed(data.digits || 5)}`;
+    let freshSuffix = "";
+    if (w.freshness_label && typeof w.freshness_label === "string" && w.freshness_label.trim().length > 0) {
+      freshSuffix = ` • ${w.freshness_label}`;
+    }
+    const shortLabel = `${w.tier} [${gStr}] ${w.price.toFixed(data.digits || 5)}${freshSuffix}`;
 
     // Build confluences string for hover tooltip
     let confStr = "";
@@ -3016,6 +3042,10 @@ function renderChartLevels(data) {
       confluences: confStr,
       timeframes: tfsStr,
       sources_count: srcCount,
+      freshness_label: w.freshness_label || "",
+      freshness_state: w.freshness_state || "",
+      compression_type: w.compression_type || "",
+      touch_nodes: w.touch_nodes || [],
       fullLabel: w.label || shortLabel,
       wall: w
     });
@@ -3895,6 +3925,16 @@ function renderDrawer() {
               <div style="font-size:9px;color:var(--text-muted);font-weight:600;">${fp.tp3.action}</div>
             </div>
           </div>
+        </div>
+      `;
+    } else {
+      html += `
+        <div style="background:rgba(26,32,44,0.35);border:1px dashed var(--border-subtle);border-radius:4px;padding:6px 12px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">radar</span>
+            <span style="font-size:9.5px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">FLIGHT PATH TP TARGETS</span>
+          </div>
+          <span style="font-size:9.5px;color:var(--text-muted);font-family:var(--font-mono);">Awaiting Confirmed Setup Trigger...</span>
         </div>
       `;
     }

@@ -125,6 +125,10 @@ class ZoneCluster:
     last_touch_h1_bars_ago: Optional[int] = None
     inherent_role: str = ""
     confluence: int = 0          # jumlah pasangan unik (kind, tf) penyusun skor
+    freshness_state: str = "FRESH_VIRGIN"  # 'FRESH_VIRGIN', 'TESTED_VALID', 'ABSORPTION_COIL', 'EXHAUSTED'
+    freshness_label: str = "0x FRESH (Virgin)"
+    compression_type: str = "NONE"          # 'HIGHER_LOWS', 'LOWER_HIGHS', 'FLAT', 'NONE'
+    touch_nodes: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def mid(self) -> float:
@@ -160,6 +164,14 @@ class ZoneMapResult:
     deep_ceiling_c2_score: float = 0.0
     immediate_floor_f1_confluence: int = 0
     immediate_ceiling_c1_confluence: int = 0
+    c1_freshness_state: str = "FRESH_VIRGIN"
+    c1_freshness_label: str = "0x FRESH (Virgin)"
+    c1_touch_count: int = 0
+    c1_compression_type: str = "NONE"
+    f1_freshness_state: str = "FRESH_VIRGIN"
+    f1_freshness_label: str = "0x FRESH (Virgin)"
+    f1_touch_count: int = 0
+    f1_compression_type: str = "NONE"
     inside_zone: bool = False
     inside_tiers: List[str] = field(default_factory=list)
     layer_count: int = 0
@@ -196,6 +208,14 @@ class ZoneMapResult:
             # P3 (backward-compatible, opsional): kekuatan confluence & status harga-di-dalam-zona
             "c1_confluence": self.immediate_ceiling_c1_confluence,
             "f1_confluence": self.immediate_floor_f1_confluence,
+            "c1_freshness_state": self.c1_freshness_state,
+            "c1_freshness_label": self.c1_freshness_label,
+            "c1_touch_count": self.c1_touch_count,
+            "c1_compression_type": self.c1_compression_type,
+            "f1_freshness_state": self.f1_freshness_state,
+            "f1_freshness_label": self.f1_freshness_label,
+            "f1_touch_count": self.f1_touch_count,
+            "f1_compression_type": self.f1_compression_type,
             "inside_zone": self.inside_zone,
             "layer_count": self.layer_count,
             "symbol": self.symbol,
@@ -218,7 +238,7 @@ class ZoneConfluenceEngine:
         self.grade_g2 = float(p.get("grade_g2", getattr(config, "ZCE_GRADE_G2_THRESHOLD", 5.0)))
         self.grade_g3 = float(p.get("grade_g3", getattr(config, "ZCE_GRADE_G3_THRESHOLD", 8.5)))
         self.merge_atr_mult = p.get("merge_atr_mult", 0.25)
-        self.cold_days = p.get("cold_days", 21)
+        self.cold_days = p.get("cold_days", float(getattr(config, "ZCE_COLD_DAYS", 5.0)))
         self.vacuum_days = p.get("vacuum_days", 60)
         self.conflict_gap = p.get("conflict_gap", 0.45)
         self.tp_reach_atr = p.get("tp_reach_atr", 3.0)
@@ -637,31 +657,193 @@ class ZoneConfluenceEngine:
         return c
 
     # ------------------------------------------------------------------ #
-    # 3. Freshness: sentuhan terakhir dari tape H1
+    # 3. Freshness: sentuhan terakhir dari tape H1 & Analisis Kompresi
     # ------------------------------------------------------------------ #
     def _stamp_freshness(
-        self, clusters: List[ZoneCluster], h1_df: pd.DataFrame, cur_price: float, atr_h1: float
+        self, clusters: List[ZoneCluster], h1_df: pd.DataFrame, cur_price: float, atr_h1: float, digits: int = 5
     ) -> None:
         if h1_df is None or len(h1_df) < 2:
             return
-        low = h1_df["low"].to_numpy(dtype=float)
-        high = h1_df["high"].to_numpy(dtype=float)
-        n = len(h1_df)
+
+        lookback_bars = int(getattr(config, "ZCE_TOUCH_LOOKBACK_BARS", 120))
+        eval_df = h1_df.tail(lookback_bars).reset_index(drop=True)
+        highs = eval_df["high"].to_numpy(dtype=float)
+        lows = eval_df["low"].to_numpy(dtype=float)
+        closes = eval_df["close"].to_numpy(dtype=float)
+        times = eval_df["time"].to_numpy() if "time" in eval_df.columns else np.arange(len(eval_df))
+        n_eval = len(eval_df)
+        n_total = len(h1_df)
+
         bars_cold = max(1, int(self.cold_days * 24))
         bars_vac = max(1, int(self.vacuum_days * 24))
+
+        touch_tol = 0.25 * atr_h1
+        penetration_max = 0.45 * atr_h1
+
+        all_low = h1_df["low"].to_numpy(dtype=float)
+        all_high = h1_df["high"].to_numpy(dtype=float)
+
         for c in clusters:
-            c.touch_count = int(np.sum((low <= c.band_high) & (high >= c.band_low)))
-            hits = np.where((low <= c.band_high) & (high >= c.band_low))[0]
+            # Anchor level_price to the physical barrier edge that price interacts with:
+            # If the cluster is below current price, it acts as a Floor -> barrier is c.band_high
+            # If the cluster is above current price, it acts as a Ceiling -> barrier is c.band_low
+            level_price = c.band_high if c.mid < cur_price else c.band_low
+
+            touch_nodes: List[Dict[str, Any]] = []
+            t_indices: List[int] = []
+            state = "DEPARTED"
+            min_dep_pips = 6.0 * (10 ** (-digits) * 10 if digits in (3, 5) else 10 ** (-digits))
+            dep_dist = max(0.50 * atr_h1, min_dep_pips)
+
+            for k in range(n_eval):
+                h_k = highs[k]
+                l_k = lows[k]
+                c_k = closes[k]
+
+                dist_high = abs(h_k - level_price)
+                dist_low = abs(l_k - level_price)
+
+                is_touch = False
+                is_sweep = False
+                is_breach = False
+                touch_price = h_k
+                is_high_closer = (dist_high <= dist_low)
+
+                # Menentukan ujung candle yang paling dekat dengan level ZCE
+                if is_high_closer:
+                    # Ujung atas (high wick) paling dekat ke level ZCE (pengujian dari bawah atau tusukan ke atas)
+                    touch_price = h_k
+                    if (level_price - touch_tol <= h_k <= level_price + penetration_max) and (l_k <= level_price + 0.15 * atr_h1):
+                        is_touch = True
+                        if h_k >= level_price and c_k < level_price:
+                            is_sweep = True
+                        elif c_k >= level_price:
+                            is_breach = True
+                else:
+                    # Ujung bawah (low wick) paling dekat ke level ZCE (pengujian dari atas atau tusukan ke bawah)
+                    touch_price = l_k
+                    if (level_price - penetration_max <= l_k <= level_price + touch_tol) and (h_k >= level_price - 0.15 * atr_h1):
+                        is_touch = True
+                        if l_k <= level_price and c_k > level_price:
+                            is_sweep = True
+                        elif c_k <= level_price:
+                            is_breach = True
+
+                if is_touch:
+                    t_val = times[k]
+                    t_int = int(t_val) if isinstance(t_val, (int, np.integer)) else (int(t_val.timestamp()) if hasattr(t_val, "timestamp") else k)
+
+                    if state == "DEPARTED":
+                        # Membuka siklus sentuhan baru dari gelombang ayunan yang terbukti independen
+                        touch_nodes.append({
+                            "touch_num": len(touch_nodes) + 1,
+                            "bar_index": k,
+                            "time": t_int,
+                            "price": round(float(touch_price), digits),
+                            "is_sweep_wick": is_sweep,
+                            "is_breach": is_breach,
+                            "level": round(float(level_price), digits),
+                            "level_type": "ceiling" if is_high_closer else "floor",
+                        })
+                        t_indices.append(k)
+                        state = "IN_TOUCH"
+                    else:
+                        # Masih dalam gelombang interaksi yang sama (sideways/multiple candle di level yang sama)
+                        # DILARANG menambah nomor sentuhan: lebur dan update ke ekor yang paling ekstrem
+                        if is_high_closer:
+                            if touch_price > touch_nodes[-1]["price"]:
+                                touch_nodes[-1]["price"] = round(float(touch_price), digits)
+                                touch_nodes[-1]["bar_index"] = k
+                                touch_nodes[-1]["time"] = t_int
+                                touch_nodes[-1]["is_sweep_wick"] = is_sweep or touch_nodes[-1]["is_sweep_wick"]
+                                touch_nodes[-1]["is_breach"] = is_breach or touch_nodes[-1]["is_breach"]
+                                t_indices[-1] = k
+                        else:
+                            if touch_price < touch_nodes[-1]["price"]:
+                                touch_nodes[-1]["price"] = round(float(touch_price), digits)
+                                touch_nodes[-1]["bar_index"] = k
+                                touch_nodes[-1]["time"] = t_int
+                                touch_nodes[-1]["is_sweep_wick"] = is_sweep or touch_nodes[-1]["is_sweep_wick"]
+                                touch_nodes[-1]["is_breach"] = is_breach or touch_nodes[-1]["is_breach"]
+                                t_indices[-1] = k
+                else:
+                    # Lilin tidak menyentuh level: periksa apakah harga sudah benar-benar menjauh (Departure)
+                    if is_high_closer:
+                        if h_k <= level_price - dep_dist or l_k >= level_price + dep_dist:
+                            state = "DEPARTED"
+                    else:
+                        if l_k >= level_price + dep_dist or h_k <= level_price - dep_dist:
+                            state = "DEPARTED"
+
+            c.touch_nodes = touch_nodes
+            c.touch_count = len(touch_nodes)
+
+            # Cold / vacuum backward compatibility check
+            hits = np.where((all_low <= c.band_high) & (all_high >= c.band_low))[0]
             if len(hits):
-                c.last_touch_h1_bars_ago = int(n - 1 - hits[-1])
+                c.last_touch_h1_bars_ago = int(n_total - 1 - hits[-1])
             else:
-                c.last_touch_h1_bars_ago = n
+                c.last_touch_h1_bars_ago = n_total
             c.is_cold = c.last_touch_h1_bars_ago > bars_cold
             c.is_vacuum = (
                 c.is_cold
                 and c.last_touch_h1_bars_ago > bars_vac
                 and abs(c.mid - cur_price) > 1.0 * atr_h1
             )
+
+            # Freshness State & Compression
+            if c.touch_count == 0:
+                c.freshness_state = "FRESH_VIRGIN"
+                c.freshness_label = "0x FRESH (Virgin)"
+                c.compression_type = "NONE"
+            elif c.touch_count in (1, 2):
+                c.freshness_state = "TESTED_VALID"
+                c.freshness_label = f"{c.touch_count}x TESTED"
+                c.compression_type = "NONE"
+            else:
+                is_level_above = (level_price >= cur_price)
+                if is_level_above:
+                    troughs = []
+                    for idx_i in range(len(t_indices) - 1):
+                        s_i = t_indices[idx_i]
+                        e_i = t_indices[idx_i + 1]
+                        if e_i > s_i + 1:
+                            troughs.append(float(np.min(lows[s_i + 1:e_i])))
+                    is_hl = False
+                    if len(troughs) >= 2 and (troughs[-1] > troughs[0] + 0.08 * atr_h1):
+                        is_hl = True
+                    elif len(troughs) == 1 and (lows[t_indices[-1]] > troughs[0] + 0.08 * atr_h1):
+                        is_hl = True
+
+                    if is_hl:
+                        c.freshness_state = "ABSORPTION_COIL"
+                        c.freshness_label = f"{c.touch_count}x COIL [HL]"
+                        c.compression_type = "HIGHER_LOWS"
+                    else:
+                        c.freshness_state = "EXHAUSTED"
+                        c.freshness_label = f"{c.touch_count}x EXHAUSTED"
+                        c.compression_type = "FLAT"
+                else:
+                    peaks = []
+                    for idx_i in range(len(t_indices) - 1):
+                        s_i = t_indices[idx_i]
+                        e_i = t_indices[idx_i + 1]
+                        if e_i > s_i + 1:
+                            peaks.append(float(np.max(highs[s_i + 1:e_i])))
+                    is_lh = False
+                    if len(peaks) >= 2 and (peaks[-1] < peaks[0] - 0.08 * atr_h1):
+                        is_lh = True
+                    elif len(peaks) == 1 and (highs[t_indices[-1]] < peaks[0] - 0.08 * atr_h1):
+                        is_lh = True
+
+                    if is_lh:
+                        c.freshness_state = "ABSORPTION_COIL"
+                        c.freshness_label = f"{c.touch_count}x SQUEEZE [LH]"
+                        c.compression_type = "LOWER_HIGHS"
+                    else:
+                        c.freshness_state = "EXHAUSTED"
+                        c.freshness_label = f"{c.touch_count}x EXHAUSTED"
+                        c.compression_type = "FLAT"
 
     # ------------------------------------------------------------------ #
     # 4. Elekt dinding F1..Fn / C1..Cm
@@ -794,6 +976,11 @@ class ZoneConfluenceEngine:
                     "tfs_present": list(getattr(c, "tfs_present", [])),
                     "kinds_present": list(getattr(c, "kinds_present", [])),
                     "sources": sources_list,
+                    "touch_count": int(getattr(c, "touch_count", 0)),
+                    "freshness_state": str(getattr(c, "freshness_state", "FRESH_VIRGIN")),
+                    "freshness_label": str(getattr(c, "freshness_label", "0x FRESH (Virgin)")),
+                    "compression_type": str(getattr(c, "compression_type", "NONE")),
+                    "touch_nodes": list(getattr(c, "touch_nodes", [])),
                 })
             return layers
 
@@ -873,6 +1060,22 @@ class ZoneConfluenceEngine:
                     return int(l.get("confluence", 0))
             return 0
 
+        def _get_layer_freshness(layers: List[dict], price: Optional[float]):
+            if price is None:
+                return "FRESH_VIRGIN", "0x FRESH (Virgin)", 0, "NONE"
+            for l in layers:
+                if abs(l["price"] - price) < 1e-6:
+                    return (
+                        l.get("freshness_state", "FRESH_VIRGIN"),
+                        l.get("freshness_label", "0x FRESH (Virgin)"),
+                        int(l.get("touch_count", 0)),
+                        l.get("compression_type", "NONE")
+                    )
+            return "FRESH_VIRGIN", "0x FRESH (Virgin)", 0, "NONE"
+
+        f1_fresh_st, f1_fresh_lbl, f1_touch_cnt, f1_comp = _get_layer_freshness(floor_layers, f1)
+        c1_fresh_st, c1_fresh_lbl, c1_touch_cnt, c1_comp = _get_layer_freshness(ceil_layers, c1)
+
         inside_tiers = [l["tier"] for l in (floor_layers + ceil_layers) if l.get("at_price")]
 
         return {
@@ -892,6 +1095,14 @@ class ZoneConfluenceEngine:
             "deep_ceiling_c2_score": c2_score,
             "imm_floor_f1_confluence": _get_layer_confluence(floor_layers, f1),
             "imm_ceiling_c1_confluence": _get_layer_confluence(ceil_layers, c1),
+            "c1_freshness_state": c1_fresh_st,
+            "c1_freshness_label": c1_fresh_lbl,
+            "c1_touch_count": c1_touch_cnt,
+            "c1_compression_type": c1_comp,
+            "f1_freshness_state": f1_fresh_st,
+            "f1_freshness_label": f1_fresh_lbl,
+            "f1_touch_count": f1_touch_cnt,
+            "f1_compression_type": f1_comp,
             "inside_zone": bool(inside_tiers),
             "inside_tiers": inside_tiers,
             "layer_count": len(floor_layers) + len(ceil_layers),
@@ -1020,7 +1231,7 @@ class ZoneConfluenceEngine:
             clusters = self._build_nodes(prims, atr_h1, point_size)
         else:
             clusters = self._merge_primitives(prims, atr_h1, point_size)
-        self._stamp_freshness(clusters, h1, cur_price, atr_h1)
+        self._stamp_freshness(clusters, h1, cur_price, atr_h1, digits=digits)
         clusters.sort(key=lambda c: -c.score_final)
 
         walls = self._elect_walls(clusters, cur_price, atr_h1, digits)
@@ -1048,6 +1259,14 @@ class ZoneConfluenceEngine:
             deep_ceiling_c2_score=walls.get("deep_ceiling_c2_score", 0.0),
             immediate_floor_f1_confluence=walls.get("imm_floor_f1_confluence", 0),
             immediate_ceiling_c1_confluence=walls.get("imm_ceiling_c1_confluence", 0),
+            c1_freshness_state=walls.get("c1_freshness_state", "FRESH_VIRGIN"),
+            c1_freshness_label=walls.get("c1_freshness_label", "0x FRESH (Virgin)"),
+            c1_touch_count=walls.get("c1_touch_count", 0),
+            c1_compression_type=walls.get("c1_compression_type", "NONE"),
+            f1_freshness_state=walls.get("f1_freshness_state", "FRESH_VIRGIN"),
+            f1_freshness_label=walls.get("f1_freshness_label", "0x FRESH (Virgin)"),
+            f1_touch_count=walls.get("f1_touch_count", 0),
+            f1_compression_type=walls.get("f1_compression_type", "NONE"),
             inside_zone=bool(walls.get("inside_zone", False)),
             inside_tiers=walls.get("inside_tiers", []) or [],
             layer_count=int(walls.get("layer_count", 0)),

@@ -234,6 +234,11 @@ def _consolidate_zce_zones(
             "tf_max": str(fl.get("tf_max", "")),
             "horizon_max": int(fl.get("horizon_max", 0)),
             "at_price": bool(fl.get("at_price", False)),
+            "touch_count": int(fl.get("touch_count", 0)),
+            "freshness_state": str(fl.get("freshness_state", "FRESH_VIRGIN")),
+            "freshness_label": str(fl.get("freshness_label", "0x FRESH (Virgin)")),
+            "compression_type": str(fl.get("compression_type", "NONE")),
+            "touch_nodes": list(fl.get("touch_nodes", [])),
             "source": "elected",
             "type": "floor"
         })
@@ -260,6 +265,11 @@ def _consolidate_zce_zones(
             "tf_max": str(ce.get("tf_max", "")),
             "horizon_max": int(ce.get("horizon_max", 0)),
             "at_price": bool(ce.get("at_price", False)),
+            "touch_count": int(ce.get("touch_count", 0)),
+            "freshness_state": str(ce.get("freshness_state", "FRESH_VIRGIN")),
+            "freshness_label": str(ce.get("freshness_label", "0x FRESH (Virgin)")),
+            "compression_type": str(ce.get("compression_type", "NONE")),
+            "touch_nodes": list(ce.get("touch_nodes", [])),
             "source": "elected",
             "type": "ceiling"
         })
@@ -322,6 +332,11 @@ def _consolidate_zce_zones(
                 "tf_max": (max(getattr(cl, "tfs_present", []), key=lambda t: ZCE_W_TF.get(t, 0.0)) if getattr(cl, "tfs_present", None) else ""),
                 "horizon_max": int(getattr(cl, "horizon_max", 0)),
                 "at_price": False,
+                "touch_count": int(getattr(cl, "touch_count", 0)),
+                "freshness_state": str(getattr(cl, "freshness_state", "FRESH_VIRGIN")),
+                "freshness_label": str(getattr(cl, "freshness_label", "0x FRESH (Virgin)")),
+                "compression_type": str(getattr(cl, "compression_type", "NONE")),
+                "touch_nodes": list(getattr(cl, "touch_nodes", [])),
                 "source": "cluster",
                 "type": cl_type
             })
@@ -386,7 +401,9 @@ def _consolidate_zce_zones(
         kind_str = "+".join(all_kinds[:2]) if all_kinds else "SMC"
         confl_tag = f" • {effective_confl}src" if effective_confl > 0 else ""
         at_tag = "~" if lead.get("at_price") else ""
-        label = f"{at_tag}{top_tier} [{g_short}] {rep_price:.{digits}f} ({max_score:.1f} • {tf_str} • {kind_str}{confl_tag})"
+        fresh_lbl = lead.get("freshness_label")
+        fresh_tag = f" • {fresh_lbl}" if fresh_lbl else ""
+        label = f"{at_tag}{top_tier} [{g_short}] {rep_price:.{digits}f}{fresh_tag} ({max_score:.1f} • {tf_str} • {kind_str}{confl_tag})"
 
         confluences_desc = " • ".join(all_sources[:4]) if all_sources else (" + ".join(all_kinds[:3]) if all_kinds else "Structural S/R Anchor")
 
@@ -412,6 +429,11 @@ def _consolidate_zce_zones(
             "tf_max": str(lead.get("tf_max", "")),
             "horizon_max": int(lead.get("horizon_max", 0)),
             "at_price": bool(lead.get("at_price", False)),
+            "touch_count": int(lead.get("touch_count", 0)),
+            "freshness_state": str(lead.get("freshness_state", "FRESH_VIRGIN")),
+            "freshness_label": str(lead.get("freshness_label", "0x FRESH (Virgin)")),
+            "compression_type": str(lead.get("compression_type", "NONE")),
+            "touch_nodes": list(lead.get("touch_nodes", [])),
         })
 
     return result
@@ -1228,7 +1250,8 @@ def calculate_predictive_matrix(
     pip_val: float,
     point: float,
     digits: int,
-    candles: List[Dict[str, Any]]
+    candles: List[Dict[str, Any]],
+    zce_ladder: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
     Constructs the canonical 3-Station 'Where to Wait' Predictive Radar Matrix:
@@ -1259,22 +1282,67 @@ def calculate_predictive_matrix(
     def _calc_dr_pos(p: float) -> float:
         return (p - dr_lo) / dr_span
 
+    def _find_matching_zce_wall(lvl: float) -> Optional[Dict[str, Any]]:
+        if not zce_ladder or lvl <= 0:
+            return None
+        closest_wall = None
+        min_dist = 999999.0
+        for w in zce_ladder:
+            w_p = float(w.get("price", 0.0) or 0.0)
+            d = abs(w_p - lvl)
+            if d <= 0.25 * atr_val and d < min_dist:
+                min_dist = d
+                closest_wall = w
+        return closest_wall
+
     def _count_level_touches(lvl: float) -> Tuple[int, List[Dict[str, Any]], str]:
-        if not candles or lvl <= 0:
+        if lvl <= 0:
             return 0, [], "Fresh Level (0x)"
-        c_highs = [float(c.get("high", c.get("close", 0))) for c in candles[-40:]]
-        c_lows = [float(c.get("low", c.get("close", 0))) for c in candles[-40:]]
-        c_times = [int(c.get("time", 0)) for c in candles[-40:]]
+        matched_wall = _find_matching_zce_wall(lvl)
+        if matched_wall and matched_wall.get("touch_nodes"):
+            t_nodes = matched_wall["touch_nodes"]
+            glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
+            touch_tags = []
+            for tn in t_nodes:
+                num = int(tn.get("touch_num", 1))
+                g = glyphs[min(num - 1, len(glyphs) - 1)]
+                touch_tags.append({"num": num, "glyph": g, "time": int(tn.get("time", 0))})
+            fresh_lbl = matched_wall.get("freshness_label", "")
+            desc = f"{fresh_lbl} ({', '.join(t['glyph'] for t in touch_tags)})" if fresh_lbl else f"Tested {len(t_nodes)}x ({', '.join(t['glyph'] for t in touch_tags)})"
+            return len(t_nodes), touch_tags, desc
+
+        if not candles:
+            return 0, [], "Fresh Level (0x)"
+        lb_touch = int(getattr(config, "ZCE_TOUCH_LOOKBACK_BARS", 120))
+        c_highs = [float(c.get("high", c.get("close", 0))) for c in candles[-lb_touch:]]
+        c_lows = [float(c.get("low", c.get("close", 0))) for c in candles[-lb_touch:]]
+        c_times = [int(c.get("time", 0)) for c in candles[-lb_touch:]]
         t_bars = []
         touch_tags = []
         glyphs = ["①", "②", "③", "④", "⑤"]
+        fb_state = "DEPARTED"
+        fb_dep_dist = max(0.50 * atr_val, 6.0 * pip_val)
+
         for k in range(len(c_highs)):
-            if abs(c_highs[k] - lvl) <= 0.22 * atr_val or abs(c_lows[k] - lvl) <= 0.22 * atr_val:
-                if not t_bars or (k - t_bars[-1] >= 2):
+            h_k = c_highs[k]
+            l_k = c_lows[k]
+            is_touch = (abs(h_k - lvl) <= 0.22 * atr_val) or (abs(l_k - lvl) <= 0.22 * atr_val)
+
+            if is_touch:
+                if fb_state == "DEPARTED":
                     t_bars.append(k)
                     num = len(t_bars)
                     g = glyphs[min(num - 1, len(glyphs) - 1)]
                     touch_tags.append({"num": num, "glyph": g, "time": c_times[k]})
+                    fb_state = "IN_TOUCH"
+                else:
+                    if touch_tags:
+                        touch_tags[-1]["time"] = c_times[k]
+                    if t_bars:
+                        t_bars[-1] = k
+            else:
+                if (h_k <= lvl - fb_dep_dist) or (l_k >= lvl + fb_dep_dist):
+                    fb_state = "DEPARTED"
         desc = f"Tested {len(t_bars)}x ({', '.join(t['glyph'] for t in touch_tags)})" if t_bars else "Fresh Level (0x tested)"
         return len(t_bars), touch_tags, desc
 
@@ -1356,6 +1424,17 @@ def calculate_predictive_matrix(
         sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
         sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
+        sw_wall = _find_matching_zce_wall(sw_price)
+        sw_freshness = sw_wall.get("freshness_state") if sw_wall else macro.get("f1_freshness_state", "FRESH_VIRGIN")
+        sw_fresh_lbl = sw_wall.get("freshness_label") if sw_wall else macro.get("f1_freshness_label", "")
+        sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
+        if sw_is_coil:
+            sw_status = "VETOED_COIL"
+            sw_trigger_cond = f"Level F1 ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Lower Highs squeeze'}). VETO FADE BUY — antisipasi breakdown M4 / retest M3."
+        else:
+            sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+            sw_trigger_cond = f"Tunggu harga menusuk bawah {sw_price:.{digits}f} ({sw_td}) sapu SSL, lalu reclaim dengan lower wick >= 30%."
+
         stations.append({
             "id": "station_sweep",
             "type": "SWEEP",
@@ -1372,8 +1451,10 @@ def calculate_predictive_matrix(
             "touch_count": sw_tc,
             "touch_tags": sw_tt,
             "touch_desc": sw_td,
-            "trigger_condition": f"Tunggu harga menusuk bawah {sw_price:.{digits}f} ({sw_td}) sapu SSL, lalu reclaim dengan lower wick >= 30%.",
-            "status": "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+            "freshness_state": sw_freshness,
+            "is_coil": sw_is_coil,
+            "trigger_condition": sw_trigger_cond,
+            "status": sw_status
         })
     else:
         sw_price = c1 if (c1 > mid) else (mid + 1.2 * atr_val)
@@ -1385,6 +1466,17 @@ def calculate_predictive_matrix(
         sw_subtype = "M1A" if (sw_dr >= 0.618 or (c1 > 0 and abs(sw_price - c1) <= 0.25 * atr_val)) else "M1B"
         sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
         sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
+
+        sw_wall = _find_matching_zce_wall(sw_price)
+        sw_freshness = sw_wall.get("freshness_state") if sw_wall else macro.get("c1_freshness_state", "FRESH_VIRGIN")
+        sw_fresh_lbl = sw_wall.get("freshness_label") if sw_wall else macro.get("c1_freshness_label", "")
+        sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
+        if sw_is_coil:
+            sw_status = "VETOED_COIL"
+            sw_trigger_cond = f"Level C1 ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Higher Lows accumulation'}). VETO FADE SELL — antisipasi breakout M4 / retest M3."
+        else:
+            sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+            sw_trigger_cond = f"Tunggu harga menusuk atas {sw_price:.{digits}f} ({sw_td}) sapu BSL, lalu reclaim dengan upper wick >= 30%."
 
         stations.append({
             "id": "station_sweep",
@@ -1402,8 +1494,10 @@ def calculate_predictive_matrix(
             "touch_count": sw_tc,
             "touch_tags": sw_tt,
             "touch_desc": sw_td,
-            "trigger_condition": f"Tunggu harga menusuk atas {sw_price:.{digits}f} ({sw_td}) sapu BSL, lalu reclaim dengan upper wick >= 30%.",
-            "status": "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+            "freshness_state": sw_freshness,
+            "is_coil": sw_is_coil,
+            "trigger_condition": sw_trigger_cond,
+            "status": sw_status
         })
 
     # 3. STATION EXPANSION: M4 BREAKDOWN / BREAKOUT CONTINUATION
@@ -1464,7 +1558,8 @@ def calculate_sequential_flight_path(
     mid: float,
     pip_val: float,
     atr_val: float,
-    digits: int
+    digits: int,
+    forced_direction: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Computes 3-Tier Sequential Station Flight Path (Probability Targeting):
@@ -1490,11 +1585,13 @@ def calculate_sequential_flight_path(
     peaks = [float(p.get("price", 0.0)) for p in ss.get("peaks", []) if p.get("price")]
     troughs = [float(t.get("price", 0.0)) for t in ss.get("troughs", []) if t.get("price")]
 
-    # Direction bias from macro
+    # Direction bias from macro or locked by detected setup
     d1_trend = str(macro.get("d1_trend_label", "")).upper()
     h4_trend = str(macro.get("h4_trend_label", "")).upper()
 
-    if "BEAR" in d1_trend or "BEAR" in h4_trend or (mid < eq_price and "BULL" not in d1_trend):
+    if forced_direction:
+        direction = forced_direction.upper()
+    elif "BEAR" in d1_trend or "BEAR" in h4_trend or (mid < eq_price and "BULL" not in d1_trend):
         direction = "SELL"
     elif "BULL" in d1_trend or "BULL" in h4_trend or mid >= eq_price:
         direction = "BUY"
@@ -2293,6 +2390,12 @@ class CockpitDataEngine:
                         mf["tf_max"] = fl.get("tf_max", mf.get("tf_max", ""))
                         mf["horizon_max"] = int(fl.get("horizon_max", mf.get("horizon_max", 0)))
                         mf["at_price"] = bool(fl.get("at_price", mf.get("at_price", False)))
+                    if fl.get("touch_nodes"):
+                        mf["touch_nodes"] = fl["touch_nodes"]
+                        mf["touch_count"] = fl.get("touch_count", len(fl["touch_nodes"]))
+                        mf["freshness_state"] = fl.get("freshness_state", "TESTED_VALID")
+                        mf["freshness_label"] = fl.get("freshness_label", "")
+                        mf["compression_type"] = fl.get("compression_type", "NONE")
                     break
             if not matched:
                 merged_floors.append(dict(fl))
@@ -2398,6 +2501,12 @@ class CockpitDataEngine:
                         mc["tf_max"] = ce.get("tf_max", mc.get("tf_max", ""))
                         mc["horizon_max"] = int(ce.get("horizon_max", mc.get("horizon_max", 0)))
                         mc["at_price"] = bool(ce.get("at_price", mc.get("at_price", False)))
+                    if ce.get("touch_nodes"):
+                        mc["touch_nodes"] = ce["touch_nodes"]
+                        mc["touch_count"] = ce.get("touch_count", len(ce["touch_nodes"]))
+                        mc["freshness_state"] = ce.get("freshness_state", "TESTED_VALID")
+                        mc["freshness_label"] = ce.get("freshness_label", "")
+                        mc["compression_type"] = ce.get("compression_type", "NONE")
                     break
             if not matched:
                 merged_ceils.append(dict(ce))
@@ -2426,7 +2535,7 @@ class CockpitDataEngine:
         # Detect Historical Strategy Audit Triggers (M1..M4) with 1:1 Quantitative Engine Gates
         if not tail_df.empty:
             try:
-                strat_audit_markers = detect_historical_triggers(
+                raw_audit_markers = detect_historical_triggers(
                     df=tail_df,
                     symbol=valid_sym,
                     pip_size=pip_val,
@@ -2438,6 +2547,10 @@ class CockpitDataEngine:
                     atr_val=float(atr_val or 0.0),
                     zce_ladder=zce_ladder
                 )
+                # Filter strictly to active live setups (bar_age <= 1).
+                # Retrospective past markers are removed to keep the chart clean,
+                # while preserving the exact M1..M4 badge design whenever a live setup appears.
+                strat_audit_markers = [t for t in (raw_audit_markers or []) if t.get("bar_age", 999) <= 1]
             except Exception as e:
                 logger.warning(f"[DASHBOARD] Gagal deteksi 1:1 historical triggers untuk {symbol}: {e}")
 
@@ -2791,7 +2904,8 @@ class CockpitDataEngine:
             pip_val=pip_val,
             point=pt,
             digits=digits,
-            candles=candles
+            candles=candles,
+            zce_ladder=zce_ladder
         )
 
         # Fixed Range Volume Profile (FRVP) & Sequential Flight Path across Active Dealing Range
@@ -2820,20 +2934,31 @@ class CockpitDataEngine:
             logger.warning(f"[DASHBOARD] Gagal kalkulasi FRVP untuk {symbol}: {e}")
 
         # Sequential Station Flight Path (Probability Targeting)
+        # HANYA dikalkulasi jika ada setup terdeteksi (live trigger di bar_age <= 1 atau open position aktif)
+        has_detected_setup = bool(strat_audit_markers) or bool(open_pos)
         flight_path = {}
-        try:
-            flight_path = calculate_sequential_flight_path(
-                macro=macro,
-                dr_payload=dr_payload,
-                ss=ss_payload,
-                zce_ladder=zce_ladder,
-                mid=mid,
-                pip_val=pip_val,
-                atr_val=atr_val,
-                digits=digits
-            )
-        except Exception as e:
-            logger.warning(f"[DASHBOARD] Gagal kalkulasi Flight Path untuk {symbol}: {e}")
+        if has_detected_setup:
+            try:
+                setup_dir = None
+                if strat_audit_markers:
+                    setup_dir = strat_audit_markers[0].get("direction")
+                elif open_pos:
+                    pos_type = str(open_pos[0].get("type", "")).upper()
+                    setup_dir = "BUY" if ("BUY" in pos_type or pos_type == "0") else "SELL"
+
+                flight_path = calculate_sequential_flight_path(
+                    macro=macro,
+                    dr_payload=dr_payload,
+                    ss=ss_payload,
+                    zce_ladder=zce_ladder,
+                    mid=mid,
+                    pip_val=pip_val,
+                    atr_val=atr_val,
+                    digits=digits,
+                    forced_direction=setup_dir
+                )
+            except Exception as e:
+                logger.warning(f"[DASHBOARD] Gagal kalkulasi Flight Path untuk {symbol}: {e}")
 
         return {
             "symbol": symbol,

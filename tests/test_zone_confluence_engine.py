@@ -14,6 +14,7 @@ import pytest
 
 from src.analytics.zone_confluence_engine import (
     ZoneConfluenceEngine,
+    ZoneCluster,
     ZonePrimitive,
     merge_primitives_public,
     atr_from_df,
@@ -160,6 +161,78 @@ class TestFreshness:
         assert res.atr_h1 > 0
         assert isinstance(res.readiness_score, float)
         assert res.wall_override["enable"] is True
+
+    def test_touch_node_anchors_to_closer_wick_tip(self):
+        eng = ZoneConfluenceEngine()
+        c = ZoneCluster(
+            cluster_id=1,
+            band_low=1.16000,
+            band_high=1.16020,
+            members=[],
+            score_raw=8.0,
+            score_final=8.0,
+            horizon_max=50,
+            tfs_present=["H1"],
+            kinds_present=["SWING_HIGH"],
+            width_atr=0.2,
+            inherent_role="CEILING"
+        )
+        # Skenario: Lilin berada di atas level (1.16020), low wick menyentuh 1.16025 (retest dari atas)
+        # High wick berada di 1.16100.
+        # Ujung candle yang lebih dekat ke level 1.16020 adalah LOW (1.16025), bukan HIGH (1.16100).
+        times = [1000 + i * 3600 for i in range(10)]
+        df = pd.DataFrame({
+            "time": times,
+            "open": [1.16080] * 10,
+            "high": [1.16100] * 10,
+            "low": [1.16025] * 10,
+            "close": [1.16070] * 10,
+        })
+        eng._stamp_freshness([c], df, cur_price=1.16080, atr_h1=0.0015, digits=5)
+        assert len(c.touch_nodes) > 0
+        for node in c.touch_nodes:
+            # Wajib menempel di low wick (1.16025), BUKAN high wick (1.16100)
+            assert node["price"] == 1.16025
+            assert node["level_type"] == "floor"
+        # 10 candle konsolidasi di level yang sama WAJIB dilebur menjadi tepat 1 sentuhan valid
+        assert len(c.touch_nodes) == 1
+        assert c.touch_count == 1
+
+    def test_touch_departure_creates_second_touch_after_pullback(self):
+        eng = ZoneConfluenceEngine()
+        c = ZoneCluster(
+            cluster_id=2,
+            band_low=1.16000,
+            band_high=1.16020,
+            members=[],
+            score_raw=8.0,
+            score_final=8.0,
+            horizon_max=50,
+            tfs_present=["H1"],
+            kinds_present=["SWING_HIGH"],
+            width_atr=0.2,
+            inherent_role="FLOOR"
+        )
+        # Skenario:
+        # Bar 0-2: Sentuh floor di 1.16025 (Touch #1)
+        # Bar 3-5: Pullback naik menjauh ke 1.16200 (naik 18 pip > 0.50 ATR = 7.5 pip) -> DEPARTED
+        # Bar 6-7: Turun kembali menguji floor di 1.16022 (Touch #2)
+        times = [1000 + i * 3600 for i in range(8)]
+        highs = [1.16100, 1.16090, 1.16080, 1.16200, 1.16250, 1.16200, 1.16100, 1.16080]
+        lows =  [1.16025, 1.16030, 1.16020, 1.16120, 1.16150, 1.16110, 1.16022, 1.16030]
+        closes = [1.16070, 1.16060, 1.16050, 1.16180, 1.16220, 1.16150, 1.16040, 1.16050]
+        opens =  [1.16080, 1.16070, 1.16060, 1.16050, 1.16180, 1.16220, 1.16150, 1.16040]
+        df = pd.DataFrame({"time": times, "open": opens, "high": highs, "low": lows, "close": closes})
+
+        eng._stamp_freshness([c], df, cur_price=1.16050, atr_h1=0.0015, digits=5)
+        assert len(c.touch_nodes) == 2
+        assert c.touch_count == 2
+        assert c.touch_nodes[0]["touch_num"] == 1
+        assert c.touch_nodes[1]["touch_num"] == 2
+        # Bar index sentuhan pertama harus mengambil ekor terendah di bar 2 (1.16020)
+        assert c.touch_nodes[0]["price"] == 1.16020
+        # Bar index sentuhan kedua di bar 6 (1.16022)
+        assert c.touch_nodes[1]["price"] == 1.16022
 
 
 class TestEndToEnd:

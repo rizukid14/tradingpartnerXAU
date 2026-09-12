@@ -262,8 +262,8 @@ ZCE_ENABLED = _getenv_bool("ZCE_ENABLED", False)
 ZCE_MODE = os.getenv("ZCE_MODE", "shadow")
 ZCE_REFRESH_ROTATION = _getenv_int("ZCE_REFRESH_ROTATION", 6)          # simbol diproses per siklus 60s
 ZCE_REFRESH_INTERVAL_SECONDS = _getenv_int("ZCE_REFRESH_INTERVAL_SECONDS", 900)  # interval rebuild macro_cache saat ZCE legacy/full (15 mnt; dinding ZCE basi maks ~15 mnt, bukan 60 mnt)
-ZCE_TP_REACH_ATR_MULT = _getenv_float("ZCE_TP_REACH_ATR_MULT", 3.0)    # reachability TP1 intraday (x ATR H1)
-ZCE_COLD_DAYS = _getenv_int("ZCE_COLD_DAYS", 21)                       # tidak tersentuh > N hari -> COLD
+ZCE_TOUCH_LOOKBACK_BARS = _getenv_int("ZCE_TOUCH_LOOKBACK_BARS", 120)  # Jendela lookback evaluasi sentuhan H1 (120 bar = 1 minggu bursa)
+ZCE_COLD_DAYS = _getenv_int("ZCE_COLD_DAYS", 5)                       # Tidak tersentuh > N hari -> COLD (5 hari = 1 minggu bursa)
 ZCE_VACUUM_DAYS = _getenv_int("ZCE_VACUUM_DAYS", 60)                   # COLD + tanpa aktivitas H1 -> VACUUM
 ZCE_CONFLICT_GAP = _getenv_float("ZCE_CONFLICT_GAP", 0.45)             # selisih posisi antar-horizon -> SCALE_CONFLICT
 ZCE_CLUSTER_MERGE_ATR_MULT = _getenv_float("ZCE_CLUSTER_MERGE_ATR_MULT", 0.25)

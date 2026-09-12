@@ -1305,9 +1305,11 @@ class MarketScanner:
                 and c_qual.get('lower_wick_pct', 0.0) < marubozu_max_wick
             )
             f1_react_gr = str(macro.get('f1_reaction_grade', 'GRADE_1_MICRO'))
+            f1_fresh = str(macro.get('f1_freshness_state', 'FRESH_VIRGIN'))
             imm_val = float(macro.get('immediate_floor_f1', 0.0) or macro.get('floor_f1', 0.0) or 0.0)
             is_micro_wall = (f1_react_gr == "GRADE_1_MICRO") and (imm_val > 0 and abs(base_level - imm_val) <= g1_prox_atr * atr_val)
             h1_wick_for_g1 = c_qual.get('max_lower_wick', 0.0)
+            target_freshness = f1_fresh
         else:  # SELL into ceiling
             has_h1_rejection = (
                 (c_qual.get('max_upper_wick', 0.0) >= 0.20)
@@ -1320,9 +1322,17 @@ class MarketScanner:
                 and c_qual.get('upper_wick_pct', 0.0) < marubozu_max_wick
             )
             c1_react_gr = str(macro.get('c1_reaction_grade', 'GRADE_1_MICRO'))
+            c1_fresh = str(macro.get('c1_freshness_state', 'FRESH_VIRGIN'))
             imm_val = float(macro.get('immediate_ceiling_c1', 0.0) or macro.get('ceiling_c1', 0.0) or 0.0)
             is_micro_wall = (c1_react_gr == "GRADE_1_MICRO") and (imm_val > 0 and abs(base_level - imm_val) <= g1_prox_atr * atr_val)
             h1_wick_for_g1 = c_qual.get('max_upper_wick', 0.0)
+            target_freshness = c1_fresh
+
+        # 0. ZCE Absorption Coil Hard-Veto (Lower Highs into floor / Higher Lows into ceiling)
+        if target_freshness == "ABSORPTION_COIL":
+            side_str = "Floor F1" if direction == 1 else "Ceiling C1"
+            comp_str = "Lower Highs squeeze into floor" if direction == 1 else "Higher Lows squeeze into ceiling"
+            return False, False, f"ABSORPTION_COIL_VETO ({side_str} in ABSORPTION_COIL: {comp_str}. Dangerous pullback anchor.)"
 
         # 1. Marubozu Waterfall check: If strong counter-trend bar has no H1 rejection wick, reject.
         if is_counter_marubozu and not has_h1_rejection:
@@ -1330,19 +1340,20 @@ class MarketScanner:
             wick_pct = c_qual.get('lower_wick_pct' if direction == 1 else 'upper_wick_pct', 0.0) * 100
             return False, False, f"MARUBOZU_WATERFALL ({candle_dir} marubozu approaching anchor {base_level:.5f}, wick {wick_pct:.1f}% < {marubozu_max_wick*100:.0f}%)"
 
-        # 2. Lazy M5 check: only fetch M5 if H1 doesn't already provide strong rejection or if G1 needs verification
+        # 2. Lazy M5 check: only fetch M5 if H1 doesn't already provide strong rejection or if G1/Exhausted wall needs verification
+        is_exhausted = (target_freshness == "EXHAUSTED")
         m5_rejection_ok = False
         m5_reason = "SKIPPED_H1_CONFIRMED"
-        if not has_h1_rejection or (is_micro_wall and h1_wick_for_g1 < g1_min_wick):
+        if not has_h1_rejection or ((is_micro_wall or is_exhausted) and h1_wick_for_g1 < g1_min_wick):
             m5_rejection_ok, m5_reason = self._verify_m5_rejection_wick(sym, base_level, direction, atr_val, pt, mt5_connector)
 
         has_hold = has_h1_rejection or m5_rejection_ok
         if not has_hold:
             return False, False, f"NO_REJECTION_HOLD ({m5_reason})"
 
-        # 3. G1 Micro-Wall Soft-Gate to GRADE_B
+        # 3. G1 Micro-Wall or Exhausted Multi-Tested Wall Soft-Gate to GRADE_B
         is_soft_g1 = False
-        if is_micro_wall and not (h1_wick_for_g1 >= g1_min_wick or m5_rejection_ok):
+        if (is_micro_wall or is_exhausted) and not (h1_wick_for_g1 >= g1_min_wick or m5_rejection_ok):
             is_soft_g1 = True
 
         return has_hold, is_soft_g1, "HOLD_CONFIRMED"
@@ -2128,8 +2139,12 @@ class MarketScanner:
         # ── 3. M3: MULTI-TOUCH CLUSTER BREAKOUT & DELAYED RETEST ──
         c_res = float(macro.get('cluster_resistance', 0.0) or 0.0)
         c_sup = float(macro.get('cluster_support', 0.0) or 0.0)
-        t_res = int(macro.get('touches_resistance', 0) or 0)
-        t_sup = int(macro.get('touches_support', 0) or 0)
+        zce_c1_tc = int(macro.get('c1_touch_count', 0) or 0)
+        zce_f1_tc = int(macro.get('f1_touch_count', 0) or 0)
+        c1_fresh = str(macro.get('c1_freshness_state', 'FRESH_VIRGIN'))
+        f1_fresh = str(macro.get('f1_freshness_state', 'FRESH_VIRGIN'))
+        t_res = max(int(macro.get('touches_resistance', 0) or 0), zce_c1_tc)
+        t_sup = max(int(macro.get('touches_support', 0) or 0), zce_f1_tc)
         pdh_b = float(macro.get('pdh', 0.0) or 0.0)
         pwh_b = float(macro.get('pwh', 0.0) or 0.0)
         pdl_b = float(macro.get('pdl', 0.0) or 0.0)
@@ -2167,8 +2182,13 @@ class MarketScanner:
         m3_origin_price = 0.0
 
         if m3_dir == 1:
+            # Priority 0: Broken ZCE C1 Ceiling with ABSORPTION_COIL / EXHAUSTED (Pristine Squeeze Breakout)
+            broken_c1 = c1_ceiling if (c1_ceiling > 0 and c1_ceiling < mid and abs(mid - c1_ceiling) <= 2.5 * atr_val) else 0.0
+            if broken_c1 > 0 and (c1_fresh in ("ABSORPTION_COIL", "EXHAUSTED") or zce_c1_tc >= 2):
+                m3_price = broken_c1
+                m3_lbl = f"ZCE C1 Squeeze Breakout ({zce_c1_tc}x {c1_fresh})"
             # Priority 1: Multi-Touch Cluster with >= 2 touches
-            if c_res > 0 and t_res >= 2 and c_res < mid:
+            elif c_res > 0 and t_res >= 2 and c_res < mid:
                 m3_price = c_res
                 m3_lbl = f"Multi-Touch Cluster Breakout ({t_res}x Touches)"
             elif b_ceil > 0 and b_ceil < mid and abs(mid - b_ceil) <= 2.5 * atr_val:
@@ -2182,7 +2202,13 @@ class MarketScanner:
                 m3_price = max(cand_res) if cand_res else (rbs_b or f1_floor or 0.0)
                 m3_lbl = f"Basing Box Breakout Retest ({b_box.get('box_bars', 0)}b)" if (b_ceil > 0 and m3_price == b_ceil) else "Broken Resistance RBS Retest"
         else:
-            if c_sup > 0 and t_sup >= 2 and c_sup > mid:
+            # Priority 0: Broken ZCE F1 Floor with ABSORPTION_COIL / EXHAUSTED (Pristine Squeeze Breakdown)
+            broken_f1 = f1_floor if (f1_floor > 0 and f1_floor > mid and abs(f1_floor - mid) <= 2.5 * atr_val) else 0.0
+            if broken_f1 > 0 and (f1_fresh in ("ABSORPTION_COIL", "EXHAUSTED") or zce_f1_tc >= 2):
+                m3_price = broken_f1
+                m3_lbl = f"ZCE F1 Squeeze Breakdown ({zce_f1_tc}x {f1_fresh})"
+            # Priority 1: Multi-Touch Cluster with >= 2 touches
+            elif c_sup > 0 and t_sup >= 2 and c_sup > mid:
                 m3_price = c_sup
                 m3_lbl = f"Multi-Touch Cluster Breakdown ({t_sup}x Touches)"
             elif b_flr > 0 and b_flr > mid and abs(b_flr - mid) <= 2.5 * atr_val:
@@ -3072,6 +3098,14 @@ class MarketScanner:
             elif w1_regime and "BULL" in w1_regime:
                 w1_trend_label = "W1_BULLISH_EXPANSION"
 
+            # Reconcile touches with ZCE Quant Touch Engine
+            zce_tc_c1 = getattr(strat_dir, 'c1_touch_count', 0) if strat_dir else 0
+            zce_tc_f1 = getattr(strat_dir, 'f1_touch_count', 0) if strat_dir else 0
+            if zce_tc_c1 > 0:
+                touches_res = max(touches_res, zce_tc_c1)
+            if zce_tc_f1 > 0:
+                touches_sup = max(touches_sup, zce_tc_f1)
+
             return valid_sym, {
                 'symbol': valid_sym,
                 'trend_label': combined_trend_label,
@@ -3202,6 +3236,14 @@ class MarketScanner:
                 'daily_mandate_thesis': getattr(strat_dir, 'daily_mandate_thesis', '') if strat_dir else '',
                 'structural_stage': getattr(strat_dir, 'structural_stage', '') if strat_dir else '',
                 'strategic_raw_payload': getattr(strat_dir, 'raw_payload', {}) if strat_dir else {},
+                'c1_freshness_state': getattr(strat_dir, 'c1_freshness_state', 'FRESH_VIRGIN') if strat_dir else 'FRESH_VIRGIN',
+                'c1_freshness_label': getattr(strat_dir, 'c1_freshness_label', '0x FRESH (Virgin)') if strat_dir else '0x FRESH (Virgin)',
+                'c1_touch_count': getattr(strat_dir, 'c1_touch_count', 0) if strat_dir else 0,
+                'c1_compression_type': getattr(strat_dir, 'c1_compression_type', 'NONE') if strat_dir else 'NONE',
+                'f1_freshness_state': getattr(strat_dir, 'f1_freshness_state', 'FRESH_VIRGIN') if strat_dir else 'FRESH_VIRGIN',
+                'f1_freshness_label': getattr(strat_dir, 'f1_freshness_label', '0x FRESH (Virgin)') if strat_dir else '0x FRESH (Virgin)',
+                'f1_touch_count': getattr(strat_dir, 'f1_touch_count', 0) if strat_dir else 0,
+                'f1_compression_type': getattr(strat_dir, 'f1_compression_type', 'NONE') if strat_dir else 'NONE',
                 'zce_meta': zce_meta,
                 'point': pt,
             }
@@ -3880,6 +3922,21 @@ class MarketScanner:
                         return False, "HARD_BLOCK", f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})"
                     if strat_tier == "HARD_LOCK":
                         return False, "HARD_BLOCK", f"[MSE GATING] Hard Lock ({strat_tier})"
+
+                    # 1E. Absorption Coil Veto for M1 Sweep Fade (Higher Lows into Resistance / Lower Highs into Support)
+                    c1_fresh = macro.get("c1_freshness_state") or getattr(strat_dir_sym, "c1_freshness_state", "FRESH_VIRGIN")
+                    f1_fresh = macro.get("f1_freshness_state") or getattr(strat_dir_sym, "f1_freshness_state", "FRESH_VIRGIN")
+                    is_sweep_candidate = any(k in setup_label.upper() for k in ("SWEEP", "UNIVERSAL_LIQUIDITY_SWEEP", "M1A", "M1B"))
+
+                    if is_sweep_candidate:
+                        if target_dir == -1 and c1_fresh == "ABSORPTION_COIL":
+                            return False, "HARD_BLOCK", f"[M1 SWEEP VETO] C1 is in ABSORPTION_COIL (Higher Lows into ceiling). Veto counter-trend fade short."
+                        if target_dir == 1 and f1_fresh == "ABSORPTION_COIL":
+                            return False, "HARD_BLOCK", f"[M1 SWEEP VETO] F1 is in ABSORPTION_COIL (Lower Highs into floor). Veto counter-trend bounce long."
+                        if target_dir == -1 and c1_fresh == "EXHAUSTED" and strat_tier == "FULL_ALLOW":
+                            strat_tier = "TP1_ONLY_SCALP"
+                        if target_dir == 1 and f1_fresh == "EXHAUSTED" and strat_tier == "FULL_ALLOW":
+                            strat_tier = "TP1_ONLY_SCALP"
 
                     bias_score = getattr(strat_dir_sym, 'macro_bias_score', 0.0)
                     circuit_breaker = getattr(strat_dir_sym, 'hard_circuit_breaker', False)
@@ -4942,8 +4999,15 @@ class MarketScanner:
                     rbs_barrier = macro.get('micro_rbs_h1') or macro.get('inter_rbs_h4') or 0.0
 
                     # Broken resistance candidate levels (must be physically below current mid price)
+                    # Priority 0: Broken ZCE C1 with ABSORPTION_COIL / EXHAUSTED / >= 2 touches (Institutional Squeeze Breakout)
+                    imm_c1_m3 = float(macro.get('immediate_ceiling_c1') or macro.get('ceiling_c1') or 0.0)
+                    zce_c1_tc = int(macro.get('c1_touch_count', 0) or 0)
+                    c1_fresh = str(macro.get('c1_freshness_state', 'FRESH_VIRGIN'))
+
+                    if imm_c1_m3 > 0 and imm_c1_m3 < mid and (c1_fresh in ("ABSORPTION_COIL", "EXHAUSTED") or zce_c1_tc >= 2):
+                        target_res = imm_c1_m3
                     # Priority 1: Multi-Touch Cluster with >= 2 touches (The Core Edge of M3)
-                    if c_res > 0 and t_res >= 2 and c_res < mid:
+                    elif c_res > 0 and (t_res >= 2 or zce_c1_tc >= 2) and c_res < mid:
                         target_res = c_res
                     else:
                         cand_res_list = [lvl for lvl in (pdh_barrier, pwh_barrier, bos_barrier, rbs_barrier, m4_basing_ceiling, basing_ceil) if (lvl > 0 and lvl < mid)]
@@ -5168,8 +5232,15 @@ class MarketScanner:
                     sbr_barrier = macro.get('micro_sbr_h1') or macro.get('inter_sbr_h4') or 0.0
 
                     # Broken support candidate levels (must be physically above current mid price)
+                    # Priority 0: Broken ZCE F1 with ABSORPTION_COIL / EXHAUSTED / >= 2 touches (Institutional Squeeze Breakdown)
+                    imm_f1_m3 = float(macro.get('immediate_floor_f1') or macro.get('floor_f1') or 0.0)
+                    zce_f1_tc = int(macro.get('f1_touch_count', 0) or 0)
+                    f1_fresh = str(macro.get('f1_freshness_state', 'FRESH_VIRGIN'))
+
+                    if imm_f1_m3 > 0 and imm_f1_m3 > mid and (f1_fresh in ("ABSORPTION_COIL", "EXHAUSTED") or zce_f1_tc >= 2):
+                        target_sup = imm_f1_m3
                     # Priority 1: Multi-Touch Cluster with >= 2 touches (The Core Edge of M3)
-                    if c_sup > 0 and t_sup >= 2 and c_sup > mid:
+                    elif c_sup > 0 and (t_sup >= 2 or zce_f1_tc >= 2) and c_sup > mid:
                         target_sup = c_sup
                     else:
                         cand_sup_list = [lvl for lvl in (pdl_barrier, pwl_barrier, bos_sup_barrier, sbr_barrier, m4_basing_floor, basing_floor) if (lvl > 0 and lvl > mid)]
@@ -5462,7 +5533,14 @@ class MarketScanner:
                                     _tp = _entry - (_tp_pts * pt) if _side_key == "SELL" else _entry + (_tp_pts * pt)
 
                                     if _side_key == "SELL":
-                                        if f1_struct > 0 and f1_struct < _entry - 0.50 * atr_now:
+                                        f1_fresh_m4 = str(macro.get("f1_freshness_state", "FRESH_VIRGIN"))
+                                        f1_is_weak = (f1_fresh_m4 in ("EXHAUSTED", "ABSORPTION_COIL"))
+                                        if f1_is_weak and f2_struct > 0 and f2_struct < _entry - 0.50 * atr_now:
+                                            _dist_pts = int(round((_entry - f2_struct) / pt))
+                                            if _dist_pts >= _r_pts * 0.75:
+                                                _tp = f2_struct + (5 * pt)
+                                                _tp_pts = max(1, int(round(abs(_tp - _entry) / pt)))
+                                        elif f1_struct > 0 and f1_struct < _entry - 0.50 * atr_now:
                                             _dist_pts = int(round((_entry - f1_struct) / pt))
                                             if _dist_pts >= _r_pts * 0.75:
                                                 _tp = f1_struct + (5 * pt)
@@ -5473,7 +5551,14 @@ class MarketScanner:
                                                 _tp = f2_struct + (5 * pt)
                                                 _tp_pts = max(1, int(round(abs(_tp - _entry) / pt)))
                                     elif _side_key == "BUY":
-                                        if c1_struct > 0 and c1_struct > _entry + 0.50 * atr_now:
+                                        c1_fresh_m4 = str(macro.get("c1_freshness_state", "FRESH_VIRGIN"))
+                                        c1_is_weak = (c1_fresh_m4 in ("EXHAUSTED", "ABSORPTION_COIL"))
+                                        if c1_is_weak and c2_struct > 0 and c2_struct > _entry + 0.50 * atr_now:
+                                            _dist_pts = int(round((c2_struct - _entry) / pt))
+                                            if _dist_pts >= _r_pts * 0.75:
+                                                _tp = c2_struct - (5 * pt)
+                                                _tp_pts = max(1, int(round(abs(_tp - _entry) / pt)))
+                                        elif c1_struct > 0 and c1_struct > _entry + 0.50 * atr_now:
                                             _dist_pts = int(round((c1_struct - _entry) / pt))
                                             if _dist_pts >= _r_pts * 0.75:
                                                 _tp = c1_struct - (5 * pt)

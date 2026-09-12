@@ -2,6 +2,36 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 106. Perubahan 13 September 2026 — Implementasi Swing-Cycle Departure State Machine pada ZCE Freshness, Eliminasi Inflasi Sentuhan Naive, dan Standarisasi ZCE_TOUCH_LOOKBACK_BARS 1 Minggu Bursa (120 Bar)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Inflasi Sentuhan Naive pada Konsolidasi Sempit (`zone_confluence_engine.py`)**:
+   - Filter lama `k - t_indices[-1] >= 2` mencatat sentuhan baru hanya berdasarkan selang 2 candle H1. Jika harga berkonsolidasi rapat atau sideways selama beberapa jam di satu level ZCE, level tersebut keliru dihitung sebagai 3x–4x sentuhan terpisah padahal harga belum pernah memantul menjauh.
+   - Hal ini memicu status *false exhaustion* prematur di `MacroStrategicEngine` (`c1_touch_count` / `f1_touch_count` membengkak) dan merusak gating strategi re-test.
+2. **Keterbatasan Jendela Lookback Sentuhan Mikro (72 Bar)**:
+   - Jendela statis 72 bar (3 hari) mengabaikan interaksi harga penting pada awal minggu perdagangan (Weekly High/Low dan Weekly Open re-test).
+3. **Ambiguitas Penamaan Konfigurasi**:
+   - Penamaan konfigurasi lookback perlu dipisahkan secara eksplisit agar tidak tertukar antara pencarian zona makro multi-horizon (`MN1..M30`) dengan evaluasi sentuhan mikro H1.
+
+---
+
+### ✨ Komponen & Solusi Utama:
+1. **Swing-Cycle Departure State Machine (`src/analytics/zone_confluence_engine.py`)**:
+   - Mengganti filter 2-bar naive dengan State Machine 2 status: `DEPARTED` (siap mencatat sentuhan baru) vs `IN_TOUCH` (sedang dalam satu gelombang interaksi).
+   - Ambang batas menjauh (*departure distance*): $\text{dep\_dist} = \max(0.50 \times \text{ATR}_{\text{H1}}, 6\text{ pips})$.
+   - Untuk Plafon: Sentuhan baru hanya sah jika candle sebelumnya terbukti pernah turun hingga $\text{High} \le \text{Level} - \text{dep\_dist}$.
+   - Untuk Lantai: Sentuhan baru hanya sah jika candle sebelumnya terbukti pernah naik hingga $\text{Low} \ge \text{Level} + \text{dep\_dist}$.
+   - Lilin berulang dalam 1 gelombang interaksi dilebur menjadi 1 sentuhan valid dan titik sentuhan disempurnakan ke ujung wick paling ekstrem.
+2. **Standarisasi Konfigurasi 1 Minggu Bursa Penuh (`config.py` & `.env`)**:
+   - Menambahkan parameter dedicated: `ZCE_TOUCH_LOOKBACK_BARS = 120` (120 bar H1 = 5 hari bursa penuh).
+   - Menyelaraskan inaktivitas: `ZCE_COLD_DAYS = 5` (level yang tidak tersentuh $\ge 120$ bar resmi berstatus `0x FRESH (Virgin)` untuk siklus minggu berjalan).
+3. **Penyelarasan Fallback di Backend Cockpit (`dashboard.py`)**:
+   - Menyelaraskan `_count_level_touches()` fallback dengan `ZCE_TOUCH_LOOKBACK_BARS` (120 bar) dan state machine departure yang sama.
+4. **Verifikasi Suite Lengkap**:
+   - Seluruh **364 unit test** di repositori berstatus **100% PASS**.
+
+---
+
 ## 105. Perubahan 12 September 2026 — Integrasi Dedicated Macro Seed 30 Tahun (FBS), Auto-Seeding Engine, Kalibrasi W1 Secular Slope, dan Rich ZCE Confluence Telemetry
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
@@ -3667,8 +3697,25 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
   - `tests/test_pattern_engine.py`: 6/6 tests PASSED (bobot SG murni, outlier clamping CHF, invariansi kausal anti-repainting, densitas ekor, format visual, performa 3.93 ms).
   - Regression Test Suite (38 tests lintas ZCE, MSE, Trade Geometry, dan Pure Quant): **38/38 PASSED (100% OK)**.
 
+---
 
+## 105. 13 September 2026 (Dini Hari) — ZCE Departure State Machine, Multi-Pair Universe Audit, F3 Royal Blue Contrast, Setup-Gated TP Projection, & Integrasi Touch M1..M4
 
-
-
-
+- **ZCE Swing-Cycle Departure State Machine (`zone_confluence_engine.py`)**:
+  - Mengganti debouncing bar linier sederhana dengan state machine 2-keadaan (`DEPARTED` vs `IN_TOUCH`) menggunakan ambang batas departure dinamis $\max(0.50 \times \text{ATR}_{\text{H1}}, 6\text{ pips})$.
+  - Bar konsolidasi berulang pada level yang sama secara otomatis dikolaps menjadi 1 sentuhan dengan mengunci sumbu candle paling ekstrem (`wick tip`).
+- **Audit Kuantitatif Multi-Pair Universe (29 Simbol)**:
+  - Menguji perhitungan sentuhan pada seluruh 28 pasangan FX dan XAUUSD via script empiris MT5 `scratch/audit_all_pairs.py`.
+  - Hasil audit: **0 kalkulasi anomali**, `touch_count` sinkron 100% dengan `len(touch_nodes)`, dan seluruh node sentuhan berada dalam toleransi jarak $\le 0.60\times\text{ATR}$.
+- **Pembedaan Visual Lantai F2 vs F3 (`dashboard_assets.py`)**:
+  - Mengubah kode warna F3 dari Teal (`#14b8a6` / `20, 184, 166`) menjadi **Royal Blue (`#3b82f6` / `59, 130, 246`)** agar F2 (Emerald Green `#10b981`) dan F3 memiliki kontras warna tinggi dan mudah dibedakan saat memantau level lantai bertingkat.
+- **Setup-Gated Flight Path TP Projection (`dashboard.py` & `dashboard_assets.py`)**:
+  - Membatasi proyeksi target TP1/TP2/TP3 dan garis proyeksi putus-putus pada chart: hanya ditampilkan saat terdapat sinyal setup aktif (`has_detected_setup`), mencegah polusi visual target saat market dalam mode standby/monitoring.
+- **Integrasi Penuh Sentuhan & Freshness ZCE ke Mekanisme M1..M4 (`market_scanner.py`)**:
+  - **M1 Sweep Reversal**: Mempertahankan hard veto pada dinding berstatus `ABSORPTION_COIL`. Menambahkan penalti/downgrade pada dinding berstatus `EXHAUSTED` ($\ge 3$ sentuhan) dengan membatasi target ke `TP1_ONLY_SCALP` dan mewajibkan konfirmasi sumbu pin bar yang lebih tebal.
+  - **M2 Trend-Aligned Pullback**: Di `_evaluate_m2_wall_quality()`, memblokir keras (`ABSORPTION_COIL_VETO`) pullback BUY pada lantai yang sedang mengalami kompresi Lower Highs dan pullback SELL pada plafon yang sedang mengalami kompresi Higher Lows. Dinding `EXHAUSTED` otomatis diturunkan ke `is_soft_g1 = True` (GRADE_B).
+  - **M3 Multi-Touch Breakout & Retest**: Menggantikan estimasi 40-bar linier dengan sentuhan kuantitatif ZCE (`c1_touch_count` & `f1_touch_count`). Menetapkan dinding C1/F1 tertembus yang berstatus `ABSORPTION_COIL` atau `EXHAUSTED` sebagai Prioritas 0 untuk retest SBR/RBS berkualitas tinggi.
+  - **M4 Breakout Continuation**: Memungkinkan target ekspansi melompat (*leapfrog*) melewati dinding F1/C1 yang telah `EXHAUSTED` atau berada dalam `ABSORPTION_COIL` langsung menuju sasaran C2/F2.
+- **Hasil Pengujian**:
+  - Seluruh unit test suite: **364/364 tests PASSED (100% OK, 0 Failure)**.
+  - Cockpit Dashboard berjalan sehat pada port 8765 (`HTTP 200 OK`).

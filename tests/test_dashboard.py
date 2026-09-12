@@ -720,6 +720,83 @@ class TestDashboardCockpit(unittest.TestCase):
         break_step = next(s for s in seq if s["role"] == "BREAK")
         self.assertEqual(break_step["label"], "B")
 
+    def test_consolidate_zce_zones_preserves_freshness_and_touch_nodes(self):
+        """_consolidate_zce_zones must preserve freshness_state, freshness_label, and touch_nodes."""
+        from types import SimpleNamespace
+        dummy_touch_nodes = [
+            {"touch_num": 1, "bar_index": 10, "time": 1700000000, "price": 1.0500, "is_sweep_wick": False, "is_breach": False},
+            {"touch_num": 2, "bar_index": 15, "time": 1700018000, "price": 1.0505, "is_sweep_wick": True, "is_breach": False},
+            {"touch_num": 3, "bar_index": 20, "time": 1700036000, "price": 1.0502, "is_sweep_wick": True, "is_breach": False}
+        ]
+        fl = {
+            "price": 1.0500,
+            "band_low": 1.0495,
+            "band_high": 1.0505,
+            "tier": "F1",
+            "grade": "GRADE_3_MACRO",
+            "density_score": 8.5,
+            "tag": "F_FORTRESS",
+            "tfs_present": ["H1", "D1"],
+            "kinds_present": ["EQL"],
+            "sources": ["EQL (H1)"],
+            "confluence": 4,
+            "touch_count": 3,
+            "freshness_state": "ABSORPTION_COIL",
+            "freshness_label": "3x SQUEEZE [LH]",
+            "compression_type": "LOWER_HIGHS",
+            "touch_nodes": dummy_touch_nodes,
+        }
+        zm = SimpleNamespace(floors=[fl], ceilings=[], clusters=[])
+        res = dashboard._consolidate_zce_zones(zm, cur_price=1.0550, v_lo=1.0400, v_hi=1.0700, atr_val=0.0050, pip_val=0.0001, digits=5)
+        self.assertTrue(len(res) > 0)
+        wall = res[0]
+        self.assertEqual(wall["freshness_state"], "ABSORPTION_COIL")
+        self.assertEqual(wall["freshness_label"], "3x SQUEEZE [LH]")
+        self.assertEqual(wall["compression_type"], "LOWER_HIGHS")
+        self.assertEqual(len(wall["touch_nodes"]), 3)
+        self.assertIn("3x SQUEEZE [LH]", wall["label"])
+
+    def test_predictive_matrix_sweep_vetoed_on_absorption_coil(self):
+        """calculate_predictive_matrix must veto Station 2 Sweep when target level is in ABSORPTION_COIL."""
+        zce_ladder = [{
+            "price": 1.0500,
+            "tier": "F1",
+            "type": "floor",
+            "freshness_state": "ABSORPTION_COIL",
+            "freshness_label": "3x SQUEEZE [LH]",
+            "compression_type": "LOWER_HIGHS",
+            "touch_count": 3,
+            "touch_nodes": [
+                {"touch_num": 1, "time": 1700000000, "price": 1.0500},
+                {"touch_num": 2, "time": 1700018000, "price": 1.0502},
+                {"touch_num": 3, "time": 1700036000, "price": 1.0501}
+            ]
+        }]
+        res = dashboard.calculate_predictive_matrix(
+            symbol="EURUSD",
+            mid=1.0550,
+            macro={"is_bear": True, "h1_trend": "BEAR"},
+            c1=1.0650,
+            f1=1.0500,
+            c2=1.0750,
+            f2=1.0400,
+            atr_val=0.0040,
+            pip_val=0.0001,
+            point=0.00001,
+            digits=5,
+            candles=[{"time": 1700050000, "close": 1.0550, "high": 1.0560, "low": 1.0540, "ema20": 1.0570, "ema50": 1.0600}],
+            zce_ladder=zce_ladder
+        )
+        stations = res.get("stations", [])
+        sweep_st = next((s for s in stations if s["type"] == "SWEEP"), None)
+        self.assertIsNotNone(sweep_st)
+        self.assertEqual(sweep_st["status"], "VETOED_COIL")
+        self.assertTrue(sweep_st["is_coil"])
+        self.assertIn("VETO FADE", sweep_st["trigger_condition"])
+        self.assertEqual(sweep_st["touch_count"], 3)
+        self.assertEqual(len(sweep_st["touch_tags"]), 3)
+        self.assertEqual(sweep_st["touch_tags"][0]["glyph"], "①")
+
 
 if __name__ == "__main__":
     unittest.main()

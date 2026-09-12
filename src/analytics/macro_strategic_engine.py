@@ -30,7 +30,7 @@ from src.indicators.atlas_dna import get_symbol_step, calculate_dynamic_stations
 # ── 3-PROFILE PAIR DNA (Based on 4.3-Year Multi-TF Empirical Research) ──
 CLEAN_RESPECT_PAIRS = {"EURGBP", "AUDCHF", "NZDCHF", "EURCHF", "AUDUSD"}
 SWEEP_SPECIALIST_PAIRS = {"USDCAD", "EURUSD", "GBPUSD", "USDJPY", "NZDCAD", "CADJPY", "GBPCHF", "GBPCAD", "EURCAD"}
-MOMENTUM_RUNNER_PAIRS = {"GBPNZD", "GBPJPY", "EURNZD", "XAUUSD", "BTCUSD"}
+MOMENTUM_RUNNER_PAIRS = {"GBPNZD", "GBPJPY", "EURNZD", "XAUUSD", "BTCUSD", "EURJPY"}
 from src.indicators.lux_smc import LuxSMCAnalyzer
 
 logger = logging.getLogger("macro_strategic_engine")
@@ -232,6 +232,14 @@ class MacroStrategicDirective:
     w1_lower_highs: List[Dict[str, Any]] = field(default_factory=list)
     htf_horizon_conflict: bool = False
     macro_envelope: Optional[Dict[str, Any]] = None
+    c1_freshness_state: str = "FRESH_VIRGIN"
+    c1_freshness_label: str = "0x FRESH (Virgin)"
+    c1_touch_count: int = 0
+    c1_compression_type: str = "NONE"
+    f1_freshness_state: str = "FRESH_VIRGIN"
+    f1_freshness_label: str = "0x FRESH (Virgin)"
+    f1_touch_count: int = 0
+    f1_compression_type: str = "NONE"
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -1381,6 +1389,25 @@ class MacroStrategicEngine:
                             "density_score": f2_density_score,
                         }
 
+        # ── INGEST ZCE FRESHNESS & COMPRESSION METADATA ──
+        c1_freshness_state = "FRESH_VIRGIN"
+        c1_freshness_label = "0x FRESH (Virgin)"
+        c1_touch_count = 0
+        c1_compression_type = "NONE"
+        f1_freshness_state = "FRESH_VIRGIN"
+        f1_freshness_label = "0x FRESH (Virgin)"
+        f1_touch_count = 0
+        f1_compression_type = "NONE"
+        if zce_walls is not None and zce_walls.get("enable"):
+            c1_freshness_state = str(zce_walls.get("c1_freshness_state", "FRESH_VIRGIN"))
+            c1_freshness_label = str(zce_walls.get("c1_freshness_label", "0x FRESH (Virgin)"))
+            c1_touch_count = int(zce_walls.get("c1_touch_count", 0))
+            c1_compression_type = str(zce_walls.get("c1_compression_type", "NONE"))
+            f1_freshness_state = str(zce_walls.get("f1_freshness_state", "FRESH_VIRGIN"))
+            f1_freshness_label = str(zce_walls.get("f1_freshness_label", "0x FRESH (Virgin)"))
+            f1_touch_count = int(zce_walls.get("f1_touch_count", 0))
+            f1_compression_type = str(zce_walls.get("f1_compression_type", "NONE"))
+
         # Enforce strict monotonic ladder ordering (F2 < F1 and C2 > C1)
         if floor_f2 is not None and floor_f2 >= floor_f1:
             floor_f2 = deep_floor_f2 if (deep_floor_f2 is not None and deep_floor_f2 < floor_f1) else None
@@ -1505,7 +1532,7 @@ class MacroStrategicEngine:
         elif location == Location.CEILING:
             # Ascending Pre-Breakout Compression (Trend Aligned Uptrend grinding at ceiling with structural runway above)
             htf_bullish = is_h4_bull or last_d1_bull
-            if htf_bullish and has_runway_up and not (peak_u_wick_pct >= 45 and last_h1_bear):
+            if c1_freshness_state == "ABSORPTION_COIL" or (htf_bullish and has_runway_up and not (peak_u_wick_pct >= 45 and last_h1_bear)):
                 event = StructuralEvent.COMPRESSION
             elif any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
@@ -1518,7 +1545,7 @@ class MacroStrategicEngine:
         elif location == Location.FLOOR:
             # Descending Pre-Breakdown Compression (Trend Aligned Downtrend grinding at floor with structural runway below)
             htf_bearish = is_h4_bear or last_d1_bear
-            if htf_bearish and has_runway_down and not (peak_l_wick_pct >= 45 and last_h1_bull):
+            if f1_freshness_state == "ABSORPTION_COIL" or (htf_bearish and has_runway_down and not (peak_l_wick_pct >= 45 and last_h1_bull)):
                 event = StructuralEvent.COMPRESSION
             elif any("SWEEP" in s for s in interaction_seq[-2:]):
                 event = StructuralEvent.SWEEP
@@ -2080,6 +2107,14 @@ class MacroStrategicEngine:
             w1_lower_highs=dual_w1.get("lower_highs", []),
             htf_horizon_conflict=dual_w1.get("horizon_conflict", False),
             macro_envelope=envelope_res.to_dict() if envelope_res else None,
+            c1_freshness_state=c1_freshness_state,
+            c1_freshness_label=c1_freshness_label,
+            c1_touch_count=c1_touch_count,
+            c1_compression_type=c1_compression_type,
+            f1_freshness_state=f1_freshness_state,
+            f1_freshness_label=f1_freshness_label,
+            f1_touch_count=f1_touch_count,
+            f1_compression_type=f1_compression_type,
             raw_payload={
                 "market_state": market_state,
                 "macro_envelope": envelope_res.to_dict() if envelope_res else {},
@@ -2103,6 +2138,14 @@ class MacroStrategicEngine:
                 "f1_structure_tags": f1_tag,
                 "f2_deep": deep_floor_f2,
                 "c2_deep": deep_ceiling_c2,
+                "c1_freshness_state": c1_freshness_state,
+                "c1_freshness_label": c1_freshness_label,
+                "c1_touch_count": c1_touch_count,
+                "c1_compression_type": c1_compression_type,
+                "f1_freshness_state": f1_freshness_state,
+                "f1_freshness_label": f1_freshness_label,
+                "f1_touch_count": f1_touch_count,
+                "f1_compression_type": f1_compression_type,
                 "interaction_sequence": interaction_seq,
                 "sweep_offset": sweep_offset,
                 "NARRATIVE_STORYTELLING": {
