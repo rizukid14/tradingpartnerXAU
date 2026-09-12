@@ -952,24 +952,7 @@ def compute_inducement_dealing_range(
     last_close = float(closes[-1]) if n > 0 else 0.0
 
     # 1. Bangun Urutan Kronologis Zigzag (Order Flow Backbone)
-    all_swings = []
-    for p in peaks:
-        all_swings.append({
-            "type": "PEAK",
-            "index": p["index"],
-            "price": p["price"],
-            "time": p.get("time", 0),
-            "label": p.get("label", "H")
-        })
-    for t in troughs:
-        all_swings.append({
-            "type": "TROUGH",
-            "index": t["index"],
-            "price": t["price"],
-            "time": t.get("time", 0),
-            "label": t.get("label", "L")
-        })
-    all_swings.sort(key=lambda x: x["index"])
+    all_swings = sorted(peaks + troughs, key=lambda x: x["index"])
 
     order_flow_segments = []
     for i in range(len(all_swings) - 1):
