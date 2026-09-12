@@ -977,43 +977,65 @@ def compute_inducement_dealing_range(
         elif hh_hl_count >= 2 and hh_hl_count > lh_ll_count:
             order_flow_regime = "BULLISH_ORDER_FLOW"
 
-    # 2. Active SMC Dealing Range Calculation
-    # Sesuai ComLucro 'Trade Liquidity Like the Pros':
-    # Dealing range diikat pada origin impulse expansion leg yang menghasilkan BOS aktif
+    # 2. Active SMC Dealing Range Calculation (LuxAlgo SMC v6 Standard)
+    # Dealing range diikat pada swing struktural aktif terkini (bukan swing purba puluhan bar lalu).
     raw_high = None
     raw_low = None
     raw_max_idx = None
     raw_min_idx = None
 
-    if order_flow_regime == "BEARISH_ORDER_FLOW" and troughs:
-        recent_lls = [t for t in troughs if t.get("label") == "LL"]
-        active_ll = recent_lls[-1] if recent_lls else troughs[-1]
-        raw_low = float(active_ll["price"])
-        raw_min_idx = int(active_ll["index"])
+    # Filter swings dalam horizon taktis aktif (maksimal 45 bar terakhir atau 3-4 swing terkini)
+    recent_peaks = [p for p in peaks if (n - p["index"]) <= 45]
+    recent_troughs = [t for t in troughs if (n - t["index"]) <= 45]
 
-        prior_peaks = [p for p in peaks if p["index"] < active_ll["index"]]
-        if prior_peaks:
-            lookback_peaks = [p for p in prior_peaks if p["index"] >= active_ll["index"] - 40]
-            active_origin_high = max(lookback_peaks, key=lambda x: x["price"]) if lookback_peaks else prior_peaks[-1]
-            raw_high = float(active_origin_high["price"])
-            raw_max_idx = int(active_origin_high["index"])
+    if not recent_peaks:
+        recent_peaks = peaks[-3:] if peaks else []
+    if not recent_troughs:
+        recent_troughs = troughs[-3:] if troughs else []
 
-    elif order_flow_regime == "BULLISH_ORDER_FLOW" and peaks:
-        recent_hhs = [p for p in peaks if p.get("label") == "HH"]
-        active_hh = recent_hhs[-1] if recent_hhs else peaks[-1]
-        raw_high = float(active_hh["price"])
-        raw_max_idx = int(active_hh["index"])
+    if recent_peaks and recent_troughs:
+        if order_flow_regime == "BEARISH_ORDER_FLOW":
+            # Pada downtrend: Range Low adalah swing low terendah dari swing terkini (target SSL)
+            active_trough = min(recent_troughs[-3:], key=lambda x: x["price"])
+            raw_low = float(active_trough["price"])
+            raw_min_idx = int(active_trough["index"])
 
-        prior_troughs = [t for t in troughs if t["index"] < active_hh["index"]]
-        if prior_troughs:
-            lookback_troughs = [t for t in prior_troughs if t["index"] >= active_hh["index"] - 40]
-            active_origin_low = min(lookback_troughs, key=lambda x: x["price"]) if lookback_troughs else prior_troughs[-1]
-            raw_low = float(active_origin_low["price"])
-            raw_min_idx = int(active_origin_low["index"])
+            # Range High adalah Protected/Strong Swing High terdekat yang memicu dorongan turun
+            prior_peaks = [p for p in recent_peaks if p["index"] <= active_trough["index"]]
+            if not prior_peaks:
+                prior_peaks = recent_peaks
+            proximate = [p for p in prior_peaks if (active_trough["index"] - p["index"]) <= 30]
+            chosen_peak = max(proximate, key=lambda x: x["price"]) if proximate else prior_peaks[-1]
+            raw_high = float(chosen_peak["price"])
+            raw_max_idx = int(chosen_peak["index"])
 
-    # Fallback jika belum terisi atau amplitude terlalu sempit (< 0.8 * ATR)
-    if raw_high is None or raw_low is None or (raw_high - raw_low) < (0.8 * cur_atr):
-        active_window = min(n, 60)
+        elif order_flow_regime == "BULLISH_ORDER_FLOW":
+            # Pada uptrend: Range High adalah swing high tertinggi dari swing terkini (target BSL)
+            active_peak = max(recent_peaks[-3:], key=lambda x: x["price"])
+            raw_high = float(active_peak["price"])
+            raw_max_idx = int(active_peak["index"])
+
+            # Range Low adalah Protected/Strong Swing Low terdekat yang memicu dorongan naik
+            prior_troughs = [t for t in recent_troughs if t["index"] <= active_peak["index"]]
+            if not prior_troughs:
+                prior_troughs = recent_troughs
+            proximate = [t for t in prior_troughs if (active_peak["index"] - t["index"]) <= 30]
+            chosen_trough = min(proximate, key=lambda x: x["price"]) if proximate else prior_troughs[-1]
+            raw_low = float(chosen_trough["price"])
+            raw_min_idx = int(chosen_trough["index"])
+
+        else:
+            # NEUTRAL_FLOW / Konsolidasi: Ambil peak dan trough terkini
+            chosen_peak = max(recent_peaks[-2:], key=lambda x: x["price"])
+            chosen_trough = min(recent_troughs[-2:], key=lambda x: x["price"])
+            raw_high = float(chosen_peak["price"])
+            raw_max_idx = int(chosen_peak["index"])
+            raw_low = float(chosen_trough["price"])
+            raw_min_idx = int(chosen_trough["index"])
+
+    # Fallback jika belum terisi, amplitude < 0.8*ATR, atau raw_high <= raw_low
+    if raw_high is None or raw_low is None or raw_high <= raw_low or (raw_high - raw_low) < (0.8 * cur_atr):
+        active_window = min(n, 40)
         w_highs = highs[-active_window:] if n > 0 else np.array([last_close * 1.01])
         w_lows = lows[-active_window:] if n > 0 else np.array([last_close * 0.99])
         w_offset = max(0, n - active_window)
@@ -1021,6 +1043,15 @@ def compute_inducement_dealing_range(
         raw_min_idx = int(w_offset + np.argmin(w_lows))
         raw_high = float(highs[raw_max_idx]) if n > 0 else last_close * 1.01
         raw_low = float(lows[raw_min_idx]) if n > 0 else last_close * 0.99
+
+    # LUXALGO SMC v6 Trailing Extremes (Anti-Overshoot saat Ekspansi Aktif)
+    if n > 0:
+        if highs[-1] > raw_high:
+            raw_high = float(highs[-1])
+            raw_max_idx = n - 1
+        if lows[-1] < raw_low:
+            raw_low = float(lows[-1])
+            raw_min_idx = n - 1
 
     # Konfirmasi Inducement Sweep
     high_confirmed = False
