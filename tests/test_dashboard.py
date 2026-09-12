@@ -399,6 +399,44 @@ class TestDashboardCockpit(unittest.TestCase):
         self.assertEqual(exp["direction"], "BUY")
         self.assertGreaterEqual(exp["target_price"], mid)
 
+    def test_calculate_fixed_range_volume_profile(self):
+        """calculate_fixed_range_volume_profile must compute POC, VAH, and VAL spanning >= 70% volume."""
+        import pandas as pd
+        import numpy as np
+
+        t0 = 1700000000
+        bars = []
+        base_p = 1.1500
+        for i in range(50):
+            o = base_p + np.sin(i * 0.2) * 0.0050
+            h = o + 0.0015
+            l = o - 0.0015
+            c = o + 0.0003
+            vol = 1000 + int(np.random.rand() * 500)
+            bars.append({"time": t0 + i * 3600, "open": o, "high": h, "low": l, "close": c, "tick_volume": vol})
+        df = pd.DataFrame(bars)
+
+        frvp = dashboard.calculate_fixed_range_volume_profile(
+            df=df,
+            start_time=t0,
+            range_high=1.1600,
+            range_low=1.1400,
+            digits=5,
+            num_bins=30
+        )
+
+        self.assertIn("poc_price", frvp)
+        self.assertIn("vah_price", frvp)
+        self.assertIn("val_price", frvp)
+        self.assertIn("total_volume", frvp)
+        self.assertIn("va_volume", frvp)
+        self.assertIn("bins", frvp)
+
+        self.assertEqual(len(frvp["bins"]), 30)
+        self.assertGreaterEqual(frvp["vah_price"], frvp["poc_price"])
+        self.assertLessEqual(frvp["val_price"], frvp["poc_price"])
+        self.assertGreaterEqual(frvp["va_volume"], 0.65 * frvp["total_volume"])
+
 
 if __name__ == "__main__":
     unittest.main()

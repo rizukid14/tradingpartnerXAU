@@ -1343,6 +1343,7 @@ html, body {
           <button class="chip-btn" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 & C2 (Secondary Support & Resistance)">F2/C2</button>
           <button class="chip-btn" id="chip-ext" data-chip="ext" title="Toggle Level Extension di atas F2 & C2 (F3+, C3+)">EXT</button>
           <button class="chip-btn active-cyan" id="chip-pattern" data-chip="pattern" title="Toggle SMC Dealing Range & Order Flow"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">tune</span> SMC Range</button>
+          <button class="chip-btn active-amber" id="chip-frvp" data-chip="frvp" title="Toggle Fixed Range Volume Profile (POC, VAH, VAL)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#f59e0b;">bar_chart</span> FRVP</button>
           <button class="chip-btn active-cyan" id="chip-ema" data-chip="ema" title="Toggle Garis EMA (20, 50, 200)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">show_chart</span> EMA</button>
         </div>
       </div>
@@ -1447,6 +1448,7 @@ let activeZcePreset = "primary"; // "primary", "macro", "all", "off", "custom"
 let filterShowRadar = true;
 let filterShowPatterns = true;
 let filterShowEMA = true;
+let filterShowFRVP = true;
 let filterChipF1C1 = true;
 let filterChipF2C2 = false;
 let filterChipEXT = false;
@@ -1838,6 +1840,116 @@ function renderVerticalShading() {
 
         shadingCtx.setLineDash([]);
       }
+    }
+
+    // 5a-2. Render Fixed Range Volume Profile (FRVP)
+    if (filterShowFRVP && cachedSymbolData && cachedSymbolData.frvp && cachedSymbolData.frvp.bins && candleSeries && chart) {
+      const frvp = cachedSymbolData.frvp;
+      const bins = frvp.bins;
+      const digits = cachedSymbolData.digits || 5;
+      const rightMargin = 45;
+      const maxBarW = Math.min(160, width * 0.20);
+
+      // Render each price bin histogram bar
+      for (let b = 0; b < bins.length; b++) {
+        const bin = bins[b];
+        const yTop = candleSeries.priceToCoordinate(bin.price_high);
+        const yBot = candleSeries.priceToCoordinate(bin.price_low);
+        if (yTop === null || yBot === null) continue;
+
+        const barH = Math.max(1.5, Math.abs(yBot - yTop));
+        const barY = Math.min(yTop, yBot);
+
+        const totalBarW = Math.max(2, bin.rel_pct * maxBarW);
+        const totVol = Math.max(1, bin.total_vol);
+        const buyFraction = bin.buy_vol / totVol;
+        const buyW = totalBarW * buyFraction;
+        const sellW = totalBarW - buyW;
+
+        const barStartX = (width - rightMargin) - totalBarW;
+
+        // Buy volume (soft emerald/teal)
+        shadingCtx.fillStyle = bin.in_va ? "rgba(16, 185, 129, 0.40)" : "rgba(16, 185, 129, 0.15)";
+        shadingCtx.fillRect(barStartX, barY, buyW, barH);
+
+        // Sell volume (soft ruby/coral)
+        shadingCtx.fillStyle = bin.in_va ? "rgba(244, 63, 94, 0.40)" : "rgba(244, 63, 94, 0.15)";
+        shadingCtx.fillRect(barStartX + buyW, barY, sellW, barH);
+
+        // Border outline for POC bar
+        if (bin.is_poc) {
+          shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.95)";
+          shadingCtx.lineWidth = 1.4;
+          shadingCtx.strokeRect(barStartX, barY, totalBarW, barH);
+        }
+      }
+
+      // Render VAH Line & Badge
+      if (frvp.vah_price) {
+        const yVah = candleSeries.priceToCoordinate(frvp.vah_price);
+        if (yVah !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([3, 3]);
+          shadingCtx.lineWidth = 1.0;
+          shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
+          shadingCtx.moveTo(width - rightMargin - maxBarW - 40, yVah);
+          shadingCtx.lineTo(width - 25, yVah);
+          shadingCtx.stroke();
+
+          const vahTxt = `VAH ${frvp.vah_price.toFixed(digits)}`;
+          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+          const vahW = shadingCtx.measureText(vahTxt).width;
+          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
+          shadingCtx.fillRect(width - vahW - 35, yVah - 7, vahW + 8, 13);
+          shadingCtx.fillStyle = "#38bdf8";
+          shadingCtx.fillText(vahTxt, width - vahW - 31, yVah + 3);
+        }
+      }
+
+      // Render VAL Line & Badge
+      if (frvp.val_price) {
+        const yVal = candleSeries.priceToCoordinate(frvp.val_price);
+        if (yVal !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([3, 3]);
+          shadingCtx.lineWidth = 1.0;
+          shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
+          shadingCtx.moveTo(width - rightMargin - maxBarW - 40, yVal);
+          shadingCtx.lineTo(width - 25, yVal);
+          shadingCtx.stroke();
+
+          const valTxt = `VAL ${frvp.val_price.toFixed(digits)}`;
+          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+          const valW = shadingCtx.measureText(valTxt).width;
+          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
+          shadingCtx.fillRect(width - valW - 35, yVal - 7, valW + 8, 13);
+          shadingCtx.fillStyle = "#38bdf8";
+          shadingCtx.fillText(valTxt, width - valW - 31, yVal + 3);
+        }
+      }
+
+      // Render POC Line & Glowing Badge
+      if (frvp.poc_price) {
+        const yPoc = candleSeries.priceToCoordinate(frvp.poc_price);
+        if (yPoc !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([]);
+          shadingCtx.lineWidth = 1.8;
+          shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.95)";
+          shadingCtx.moveTo(width - rightMargin - maxBarW - 60, yPoc);
+          shadingCtx.lineTo(width - 25, yPoc);
+          shadingCtx.stroke();
+
+          const pocTxt = `POC ${frvp.poc_price.toFixed(digits)}`;
+          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+          const pocW = shadingCtx.measureText(pocTxt).width;
+          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
+          shadingCtx.fillRect(width - pocW - 38, yPoc - 7, pocW + 12, 14);
+          shadingCtx.fillStyle = "#f59e0b";
+          shadingCtx.fillText(pocTxt, width - pocW - 32, yPoc + 3);
+        }
+      }
+      shadingCtx.setLineDash([]);
     }
 
     // 5b. Render Structural Channel Envelope Rails (High-to-High Ceiling & Low-to-Low Floor)
@@ -3466,6 +3578,16 @@ function setupEvents() {
     });
   }
 
+  const chipFRVP = document.getElementById("chip-frvp");
+  if (chipFRVP) {
+    chipFRVP.addEventListener("click", () => {
+      filterShowFRVP = !filterShowFRVP;
+      chipFRVP.classList.toggle("active-amber", filterShowFRVP);
+      try { localStorage.setItem("zce_frvp", filterShowFRVP ? "1" : "0"); } catch(e) {}
+      renderVerticalShading();
+    });
+  }
+
   const chipEMA = document.getElementById("chip-ema");
   if (chipEMA) {
     chipEMA.addEventListener("click", () => {
@@ -3698,6 +3820,11 @@ window.addEventListener("DOMContentLoaded", () => {
       filterShowPatterns = false;
       const cp = document.getElementById("chip-pattern");
       if (cp) cp.classList.remove("active-amber");
+    }
+    if (localStorage.getItem("zce_frvp") === "0") {
+      filterShowFRVP = false;
+      const cfrvp = document.getElementById("chip-frvp");
+      if (cfrvp) cfrvp.classList.remove("active-amber");
     }
     if (localStorage.getItem("zce_ema") === "0") {
       filterShowEMA = false;

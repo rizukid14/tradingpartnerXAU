@@ -919,6 +919,159 @@ def detect_historical_triggers(
         return []
 
 
+def calculate_fixed_range_volume_profile(
+    df: Any,
+    start_time: int = 0,
+    range_high: float = 0.0,
+    range_low: float = 0.0,
+    digits: int = 5,
+    num_bins: int = 40
+) -> Dict[str, Any]:
+    """
+    Computes Fixed Range Volume Profile (FRVP) across Active Dealing Range:
+    1. Distributes tick_volume across horizontal price bins
+    2. Identifies Point of Control (POC - peak transaction price)
+    3. Calculates 70% Value Area (VAH & VAL) with Buy/Sell delta volume
+    """
+    if df is None or len(df) == 0:
+        return {}
+
+    try:
+        import numpy as np
+
+        # Filter candles within Dealing Range scope
+        slice_df = df[df["time"] >= start_time] if start_time > 0 else df.tail(45)
+        if len(slice_df) < 5:
+            slice_df = df.tail(45)
+
+        times = slice_df["time"].values
+        highs = slice_df["high"].values.astype(float)
+        lows = slice_df["low"].values.astype(float)
+        opens = slice_df["open"].values.astype(float)
+        closes = slice_df["close"].values.astype(float)
+
+        if "tick_volume" in slice_df.columns:
+            vols = slice_df["tick_volume"].values.astype(float)
+        elif "volume" in slice_df.columns:
+            vols = slice_df["volume"].values.astype(float)
+        else:
+            vols = np.full(len(slice_df), 100.0, dtype=float)
+
+        r_hi = float(range_high if range_high > 0 else np.max(highs))
+        r_lo = float(range_low if range_low > 0 else np.min(lows))
+        if r_hi <= r_lo:
+            r_hi = float(np.max(highs))
+            r_lo = float(np.min(lows))
+
+        span = max(r_hi - r_lo, 1e-6)
+        bin_size = span / num_bins
+
+        bin_bounds = [r_lo + i * bin_size for i in range(num_bins + 1)]
+        buy_vols = np.zeros(num_bins, dtype=float)
+        sell_vols = np.zeros(num_bins, dtype=float)
+
+        for i in range(len(slice_df)):
+            c_h = highs[i]
+            c_l = lows[i]
+            c_o = opens[i]
+            c_c = closes[i]
+            c_v = max(float(vols[i]), 1.0)
+
+            is_buy = (c_c >= c_o)
+
+            # Map candle range to overlapping bins
+            idx_lo = max(0, min(num_bins - 1, int((c_l - r_lo) / bin_size)))
+            idx_hi = max(0, min(num_bins - 1, int((c_h - r_lo) / bin_size)))
+
+            count_bins = max(1, idx_hi - idx_lo + 1)
+            distributed_vol = c_v / count_bins
+
+            for b in range(idx_lo, idx_hi + 1):
+                if is_buy:
+                    buy_vols[b] += distributed_vol
+                else:
+                    sell_vols[b] += distributed_vol
+
+        total_vols = buy_vols + sell_vols
+        sum_tot = float(np.sum(total_vols))
+        if sum_tot <= 0:
+            sum_tot = 1.0
+
+        poc_idx = int(np.argmax(total_vols))
+        poc_price = (bin_bounds[poc_idx] + bin_bounds[poc_idx + 1]) / 2.0
+
+        # Calculate Value Area (70% total volume radiating outward from POC)
+        va_target = 0.70 * sum_tot
+        va_vols = float(total_vols[poc_idx])
+        in_va = [False] * num_bins
+        in_va[poc_idx] = True
+
+        up_idx = poc_idx + 1
+        down_idx = poc_idx - 1
+
+        while va_vols < va_target and (up_idx < num_bins or down_idx >= 0):
+            next_up_vol = total_vols[up_idx] if up_idx < num_bins else -1.0
+            next_down_vol = total_vols[down_idx] if down_idx >= 0 else -1.0
+
+            if next_up_vol >= next_down_vol and up_idx < num_bins:
+                va_vols += next_up_vol
+                in_va[up_idx] = True
+                up_idx += 1
+            elif down_idx >= 0:
+                va_vols += next_down_vol
+                in_va[down_idx] = True
+                down_idx -= 1
+            elif up_idx < num_bins:
+                va_vols += next_up_vol
+                in_va[up_idx] = True
+                up_idx += 1
+
+        va_indices = [idx for idx, val in enumerate(in_va) if val]
+        val_idx = min(va_indices) if va_indices else poc_idx
+        vah_idx = max(va_indices) if va_indices else poc_idx
+
+        vah_price = bin_bounds[vah_idx + 1]
+        val_price = bin_bounds[val_idx]
+
+        max_bin_vol = max(float(np.max(total_vols)), 1.0)
+
+        bins_data = []
+        for b in range(num_bins):
+            b_lo = bin_bounds[b]
+            b_hi = bin_bounds[b + 1]
+            b_mid = (b_lo + b_hi) / 2.0
+            tot = total_vols[b]
+            buy = buy_vols[b]
+            sell = sell_vols[b]
+            bins_data.append({
+                "price_low": round(b_lo, digits),
+                "price_high": round(b_hi, digits),
+                "price_mid": round(b_mid, digits),
+                "total_vol": int(tot),
+                "buy_vol": int(buy),
+                "sell_vol": int(sell),
+                "is_poc": bool(b == poc_idx),
+                "in_va": bool(in_va[b]),
+                "rel_pct": round(float(tot / max_bin_vol), 4)
+            })
+
+        return {
+            "start_time": int(times[0]),
+            "end_time": int(times[-1]),
+            "range_high": round(r_hi, digits),
+            "range_low": round(r_lo, digits),
+            "poc_price": round(poc_price, digits),
+            "vah_price": round(vah_price, digits),
+            "val_price": round(val_price, digits),
+            "total_volume": int(sum_tot),
+            "va_volume": int(va_vols),
+            "bins": bins_data
+        }
+    except Exception as e:
+        logger.warning(f"[DASHBOARD] Error calculating FRVP: {e}")
+        return {}
+
+
 def calculate_predictive_matrix(
     symbol: str,
     mid: float,
@@ -2270,6 +2423,24 @@ class CockpitDataEngine:
             candles=candles
         )
 
+        # Fixed Range Volume Profile (FRVP) across Active Dealing Range
+        frvp_data = {}
+        try:
+            dr_payload = (getattr(strat, "macro_envelope", {}) or {}).get("dealing_range") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}).get("dealing_range")) or {}
+            dr_hi = float(dr_payload.get("range_high") or (float(c1) if c1 else 0.0))
+            dr_lo = float(dr_payload.get("range_low") or (float(f1) if f1 else 0.0))
+            dr_st = int(dr_payload.get("start_time") or 0)
+            frvp_data = calculate_fixed_range_volume_profile(
+                df=tail_df,
+                start_time=dr_st,
+                range_high=dr_hi,
+                range_low=dr_lo,
+                digits=digits,
+                num_bins=40
+            )
+        except Exception as e:
+            logger.warning(f"[DASHBOARD] Gagal kalkulasi FRVP untuk {symbol}: {e}")
+
         return {
             "symbol": symbol,
             "digits": digits,
@@ -2311,6 +2482,7 @@ class CockpitDataEngine:
             "candles": candles,
             "strategy_audit_markers": strat_audit_markers,
             "predictive_matrix": predictive_matrix,
+            "frvp": frvp_data,
             "envelope_visual": (getattr(strat, "macro_envelope", {}) or {}).get("visual_payload") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}),
             "macro_envelope": (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
             "zce_walls": zce_walls,
