@@ -1124,9 +1124,18 @@ def compute_inducement_dealing_range(
             dol_pips = round((raw_high - last_close) / max(pip_size, 1e-6), 1)
             dol_direction = "ROTATING_TO_BSL"
 
+    start_idx = int(min(raw_max_idx, raw_min_idx)) if (raw_max_idx is not None and raw_min_idx is not None) else 0
+    t_high = time_vals[raw_max_idx] if (raw_max_idx is not None and raw_max_idx < len(time_vals)) else (time_vals[-1] if time_vals else 0)
+    t_low = time_vals[raw_min_idx] if (raw_min_idx is not None and raw_min_idx < len(time_vals)) else (time_vals[-1] if time_vals else 0)
+    start_ts = min(t_high, t_low) if (t_high > 0 and t_low > 0) else max(t_high, t_low)
+
     dealing_range_dict = {
         "range_high": round(raw_high, 5),
         "range_low": round(raw_low, 5),
+        "high_index": int(raw_max_idx) if raw_max_idx is not None else 0,
+        "low_index": int(raw_min_idx) if raw_min_idx is not None else 0,
+        "start_index": start_idx,
+        "start_time": int(start_ts),
         "equilibrium_50": eq_50,
         "fib_382": fib_382,
         "fib_618": fib_618,
@@ -1136,8 +1145,8 @@ def compute_inducement_dealing_range(
         "high_confirmed": high_confirmed,
         "low_confirmed": low_confirmed,
         "is_valid_range": is_valid_range,
-        "high_time": time_vals[raw_max_idx] if raw_max_idx < len(time_vals) else (time_vals[-1] if time_vals else 0),
-        "low_time": time_vals[raw_min_idx] if raw_min_idx < len(time_vals) else (time_vals[-1] if time_vals else 0),
+        "high_time": t_high,
+        "low_time": t_low,
     }
 
     order_flow_dict = {
@@ -1199,12 +1208,12 @@ class MacroEnvelopeEngine:
             time_vals = (w.index.values.astype('datetime64[s]').astype('int64')).tolist()
         elif "time" in w.columns:
             t_col = w["time"]
-            try:
-                time_vals = (pd.to_datetime(t_col).values.astype('datetime64[s]').astype('int64')).tolist()
-            except Exception:
-                if len(t_col) > 0 and isinstance(t_col.iloc[0], (int, float, np.integer, np.floating)):
-                    time_vals = [int(x) if x > 1e6 else int(x * 1000) for x in t_col]
-                else:
+            if len(t_col) > 0 and isinstance(t_col.iloc[0], (int, float, np.integer, np.floating)):
+                time_vals = [int(x) if x > 1e6 else int(x * 1000) for x in t_col]
+            else:
+                try:
+                    time_vals = (pd.to_datetime(t_col).values.astype('datetime64[s]').astype('int64')).tolist()
+                except Exception:
                     time_vals = [0] * n
         else:
             base_ts = int(datetime.now(WIB).timestamp()) - (n * 14400)

@@ -670,12 +670,30 @@ def detect_historical_triggers(
         eff_f1 = float(f1 or 0.0)
         ladder = zce_ladder or []
 
+        # Determine inception timestamp of CURRENT Active Dealing Range
+        # Only evaluate bars that formed strictly within the current dealing range lifecycle
+        dr_start_time = int(dr.get("start_time", 0) or 0)
+        if dr_start_time <= 0:
+            t_hi = int(dr.get("high_time", 0) or 0)
+            t_lo = int(dr.get("low_time", 0) or 0)
+            if t_hi > 0 and t_lo > 0:
+                dr_start_time = min(t_hi, t_lo)
+            elif t_hi > 0:
+                dr_start_time = t_hi
+            elif t_lo > 0:
+                dr_start_time = t_lo
+
         for i in range(15, n):
+            c_time = int(times[i])
+
+            # ── DEALING RANGE BOUNDARY FILTER: ONLY CURRENT ACTIVE DEALING RANGE ──
+            if dr_start_time > 0 and c_time < dr_start_time:
+                continue
+
             c_open = float(opens[i])
             c_high = float(highs[i])
             c_low = float(lows[i])
             c_close = float(closes[i])
-            c_time = int(times[i])
             c_atr = max(float(atr_series[i]), 1e-6)
             c_rng = max(c_high - c_low, 1e-6)
 
