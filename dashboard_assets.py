@@ -2033,29 +2033,57 @@ function renderVerticalShading() {
       }
     }
 
-    // 5b. Render Order Flow Backbone Trajectory (HH/HL/LH/LL Zigzag Wave - Sleek Line)
-    const ofSegments = ss.order_flow_segments || ev.order_flow_segments || [];
-    if (ofSegments.length > 0) {
-      ofSegments.forEach(seg => {
-        const fn = seg.from_node;
-        const tn = seg.to_node;
-        if (fn && tn) {
-          const x1 = fn.time > 0 ? timeScale.timeToCoordinate(fn.time) : null;
-          const y1 = candleSeries.priceToCoordinate(fn.price);
-          const x2 = tn.time > 0 ? timeScale.timeToCoordinate(tn.time) : null;
-          const y2 = candleSeries.priceToCoordinate(tn.price);
+    // 5b. Render Structural Channel Envelope Rails (High-to-High Ceiling & Low-to-Low Floor)
+    // Upper Rail (Plafon: High to High)
+    const upperSegments = ss.all_upper_segments || [];
+    if (upperSegments.length > 0) {
+      shadingCtx.beginPath();
+      shadingCtx.setLineDash([4, 3]);
+      shadingCtx.lineWidth = 1.4;
+      shadingCtx.strokeStyle = "rgba(251, 191, 36, 0.75)"; // Amber / Gold Ceiling Rail
+      upperSegments.forEach(seg => {
+        const p1 = seg.p1;
+        const p2 = seg.p2;
+        if (p1 && p2) {
+          const x1 = p1.time > 0 ? timeScale.timeToCoordinate(p1.time) : null;
+          const y1 = candleSeries.priceToCoordinate(p1.price);
+          const x2 = p2.time > 0 ? timeScale.timeToCoordinate(p2.time) : null;
+          const y2 = candleSeries.priceToCoordinate(p2.price);
 
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
-            const isBull = seg.direction === "BULLISH";
-            shadingCtx.beginPath();
-            shadingCtx.lineWidth = 1.2;
-            shadingCtx.strokeStyle = isBull ? "rgba(16, 185, 129, 0.50)" : "rgba(244, 63, 94, 0.50)";
             shadingCtx.moveTo(x1, y1);
             shadingCtx.lineTo(x2, y2);
-            shadingCtx.stroke();
           }
         }
       });
+      shadingCtx.stroke();
+      shadingCtx.setLineDash([]);
+    }
+
+    // Lower Rail (Lantai: Low to Low)
+    const lowerSegments = ss.all_lower_segments || [];
+    if (lowerSegments.length > 0) {
+      shadingCtx.beginPath();
+      shadingCtx.setLineDash([4, 3]);
+      shadingCtx.lineWidth = 1.4;
+      shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.75)"; // Sky Blue Floor Rail
+      lowerSegments.forEach(seg => {
+        const p1 = seg.p1;
+        const p2 = seg.p2;
+        if (p1 && p2) {
+          const x1 = p1.time > 0 ? timeScale.timeToCoordinate(p1.time) : null;
+          const y1 = candleSeries.priceToCoordinate(p1.price);
+          const x2 = p2.time > 0 ? timeScale.timeToCoordinate(p2.time) : null;
+          const y2 = candleSeries.priceToCoordinate(p2.price);
+
+          if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+            shadingCtx.moveTo(x1, y1);
+            shadingCtx.lineTo(x2, y2);
+          }
+        }
+      });
+      shadingCtx.stroke();
+      shadingCtx.setLineDash([]);
     }
 
     // 5c. Draw on Liquidity (DOL) Magnet Flag on Live Bar
