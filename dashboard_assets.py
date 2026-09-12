@@ -1338,13 +1338,13 @@ html, body {
       <div class="filter-group">
         <span class="filter-strip-title">Filter 1-1:</span>
         <div class="chip-toggle-group" id="zce-chips-group">
-          <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#c084fc;">radar</span> M1-M4</button>
+          <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">radar</span> M1-M4</button>
           <button class="chip-btn active" id="chip-f1c1" data-chip="f1c1" title="Toggle Level F1 & C1 (Primary Support & Resistance)">F1/C1</button>
           <button class="chip-btn" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 & C2 (Secondary Support & Resistance)">F2/C2</button>
           <button class="chip-btn" id="chip-ext" data-chip="ext" title="Toggle Level Extension di atas F2 & C2 (F3+, C3+)">EXT</button>
-          <button class="chip-btn active-cyan" id="chip-pattern" data-chip="pattern" title="Toggle SMC Dealing Range & Order Flow"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">tune</span> SMC Range</button>
-          <button class="chip-btn active-amber" id="chip-frvp" data-chip="frvp" title="Toggle Fixed Range Volume Profile (POC, VAH, VAL)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#f59e0b;">bar_chart</span> FRVP</button>
-          <button class="chip-btn active-cyan" id="chip-ema" data-chip="ema" title="Toggle Garis EMA (20, 50, 200)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">show_chart</span> EMA</button>
+          <button class="chip-btn active-cyan" id="chip-pattern" data-chip="pattern" title="Toggle SMC Dealing Range & Order Flow"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">tune</span> SMC Range</button>
+          <button class="chip-btn active-amber" id="chip-frvp" data-chip="frvp" title="Toggle Fixed Range Volume Profile (POC, VAH, VAL)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">bar_chart</span> FRVP</button>
+          <button class="chip-btn active-cyan" id="chip-ema" data-chip="ema" title="Toggle Garis EMA (20, 50, 200)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">show_chart</span> EMA</button>
         </div>
       </div>
 
@@ -3572,7 +3572,7 @@ function setupEvents() {
   if (chipPattern) {
     chipPattern.addEventListener("click", () => {
       filterShowPatterns = !filterShowPatterns;
-      chipPattern.classList.toggle("active-amber", filterShowPatterns);
+      chipPattern.classList.toggle("active-cyan", filterShowPatterns);
       try { localStorage.setItem("zce_patterns", filterShowPatterns ? "1" : "0"); } catch(e) {}
       renderVerticalShading();
     });
@@ -3819,7 +3819,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (localStorage.getItem("zce_patterns") === "0") {
       filterShowPatterns = false;
       const cp = document.getElementById("chip-pattern");
-      if (cp) cp.classList.remove("active-amber");
+      if (cp) cp.classList.remove("active-cyan");
     }
     if (localStorage.getItem("zce_frvp") === "0") {
       filterShowFRVP = false;
