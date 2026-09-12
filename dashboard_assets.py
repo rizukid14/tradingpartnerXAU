@@ -2057,6 +2057,112 @@ function renderVerticalShading() {
 
     shadingCtx.restore();
   }
+
+  // 7. Render Forward Predictive Waiting Zones & Badges Locked to Live Candle ("dizonain")
+  if (filterShowRadar && cachedSymbolData && cachedSymbolData.predictive_matrix && cachedSymbolData.predictive_matrix.stations && candleSeries && chart) {
+    const timeScale = chart.timeScale();
+    const candles = cachedSymbolData.candles || [];
+    const lastCandle = (candles.length > 0) ? candles[candles.length - 1] : null;
+
+    if (lastCandle) {
+      const xLive = timeScale.timeToCoordinate(lastCandle.time);
+
+      // Hanya render jika lilin live berada dalam jangkauan pandang horizontal
+      if (xLive !== null && xLive >= -40 && xLive <= width + 80) {
+        const stations = cachedSymbolData.predictive_matrix.stations;
+        shadingCtx.save();
+        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+        shadingCtx.textBaseline = "middle";
+
+        stations.forEach((st, idx) => {
+          let targetPrice = st.target_price;
+          let baseColor = "#06b6d4";
+          let zoneBg = "rgba(6, 182, 212, 0.12)";
+          let cleanLabel = "WAIT M2";
+
+          if (st.type === "SWEEP") {
+            const isBuy = (st.direction === "BUY");
+            baseColor = isBuy ? "#10b981" : "#f43f5e";
+            zoneBg = isBuy ? "rgba(16, 185, 129, 0.12)" : "rgba(244, 63, 94, 0.12)";
+            cleanLabel = isBuy ? "▲ WAIT M1" : "▼ WAIT M1";
+          } else if (st.type === "PULLBACK") {
+            const isBuy = (st.direction === "BUY");
+            baseColor = isBuy ? "#06b6d4" : "#818cf8";
+            zoneBg = isBuy ? "rgba(6, 182, 212, 0.12)" : "rgba(129, 140, 248, 0.12)";
+            cleanLabel = isBuy ? "▲ WAIT M2" : "▼ WAIT M2";
+          } else if (st.type === "EXPANSION") {
+            baseColor = "#fbbf24";
+            zoneBg = "rgba(251, 191, 36, 0.10)";
+            cleanLabel = (st.direction === "BUY") ? "▲ WAIT M4" : "▼ WAIT M4";
+            targetPrice = (st.expansion_target && st.expansion_target > 0) ? st.expansion_target : st.target_price;
+          }
+
+          const y = candleSeries.priceToCoordinate(targetPrice);
+          if (y === null || y < 10 || y > height - 10) {
+            st.box = null;
+            return;
+          }
+
+          // A. DIZONAIN: Shaded Horizontal Zone Box extending forward from live candle
+          const zoneX1 = Math.max(0, xLive - 6);
+          const zoneW = Math.max(60, width - zoneX1);
+          const zoneH = 14;
+          const zoneY = y - zoneH / 2;
+
+          shadingCtx.fillStyle = zoneBg;
+          shadingCtx.fillRect(zoneX1, zoneY, zoneW, zoneH);
+
+          shadingCtx.beginPath();
+          shadingCtx.strokeStyle = baseColor;
+          shadingCtx.lineWidth = 1;
+          shadingCtx.setLineDash([3, 3]);
+          shadingCtx.strokeRect(zoneX1, zoneY, zoneW, zoneH);
+          shadingCtx.setLineDash([]);
+
+          // B. KELOCK DI CANDLENYA: Pill Badge pinned directly to live candle X coordinate
+          const txt = cleanLabel;
+          const metrics = shadingCtx.measureText(txt);
+          const pillW = metrics.width + 12;
+          const pillH = 15;
+          // Stagger badges slightly horizontally so multiple stations never collide
+          const pillX = xLive + 6 + (idx * 4);
+          const pillY = y - pillH / 2;
+
+          // Save bounding box for mouse hover tooltip
+          st.box = { x: pillX, y: pillY, w: pillW, h: pillH, color: baseColor };
+
+          // Micro connector line connecting badge to candle center
+          shadingCtx.beginPath();
+          shadingCtx.strokeStyle = baseColor;
+          shadingCtx.lineWidth = 1;
+          shadingCtx.setLineDash([2, 2]);
+          shadingCtx.moveTo(xLive, y);
+          shadingCtx.lineTo(pillX, y);
+          shadingCtx.stroke();
+          shadingCtx.setLineDash([]);
+
+          // Draw Pill background
+          shadingCtx.fillStyle = "rgba(11, 14, 20, 0.95)";
+          shadingCtx.fillRect(pillX, pillY, pillW, pillH);
+
+          // Left accent color bar
+          shadingCtx.fillStyle = baseColor;
+          shadingCtx.fillRect(pillX, pillY, 2.5, pillH);
+
+          // Pill border
+          shadingCtx.strokeStyle = baseColor;
+          shadingCtx.lineWidth = 1;
+          shadingCtx.strokeRect(pillX, pillY, pillW, pillH);
+
+          // Text label
+          shadingCtx.fillStyle = baseColor;
+          shadingCtx.fillText(txt, pillX + 6, pillY + pillH / 2);
+        });
+
+        shadingCtx.restore();
+      }
+    }
+  }
 }
 
 // Initialize Lightweight Chart
@@ -2189,6 +2295,40 @@ function initChart() {
         tooltipEl.style.display = "block";
         tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, hoveredMarker.box.x + hoveredMarker.box.w + 10))}px`;
         tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredMarker.box.y - 10))}px`;
+        return;
+      }
+
+      // 1B. Check Forward WAIT Station Badge hover
+      let hoveredWait = null;
+      if (filterShowRadar && cachedSymbolData && cachedSymbolData.predictive_matrix && cachedSymbolData.predictive_matrix.stations) {
+        for (let k = 0; k < cachedSymbolData.predictive_matrix.stations.length; k++) {
+          const wst = cachedSymbolData.predictive_matrix.stations[k];
+          if (wst.box && mx >= wst.box.x && mx <= wst.box.x + wst.box.w && my >= wst.box.y && my <= wst.box.y + wst.box.h) {
+            hoveredWait = wst;
+            break;
+          }
+        }
+      }
+
+      if (hoveredWait) {
+        chartWrapper.style.cursor = "pointer";
+        const dirCol = (hoveredWait.direction === "BUY") ? "#10b981" : "#f43f5e";
+        const dDigits = (cachedSymbolData && cachedSymbolData.digits) || 5;
+        tooltipEl.innerHTML = `
+          <div class="zce-tt-header">
+            <span class="zce-tt-tier" style="color:${hoveredWait.box.color};font-weight:bold;">${hoveredWait.setup_name}</span>
+            <span class="badge" style="background:rgba(255,255,255,0.08);color:${dirCol};font-weight:bold;">${hoveredWait.direction}</span>
+          </div>
+          <div class="zce-tt-confluences" style="margin:4px 0;color:var(--text-main);">${hoveredWait.trigger_condition}</div>
+          <div class="zce-tt-meta" style="margin-top:4px;">
+            <span>Target: <b>${hoveredWait.target_price.toFixed(dDigits)}</b></span>
+            <span>Dist: <b>${hoveredWait.distance_pips > 0 ? '+' : ''}${hoveredWait.distance_pips}p (${hoveredWait.distance_atr}x ATR)</b></span>
+            <span>R:R <b>1:${hoveredWait.rr}</b></span>
+          </div>
+        `;
+        tooltipEl.style.display = "block";
+        tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, hoveredWait.box.x + hoveredWait.box.w + 10))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredWait.box.y - 10))}px`;
         return;
       }
 
@@ -2443,37 +2583,6 @@ function renderChartLevels(data) {
       title: ""
     });
     priceLines.push(slopeLine);
-  }
-
-  // 1C. Predictive Matrix ("Where to Wait" Target Lines Snapped to Price Axis)
-  if (filterShowRadar && data.predictive_matrix && data.predictive_matrix.stations) {
-    data.predictive_matrix.stations.forEach(st => {
-      let lineColor = "#06b6d4";
-      let lineTitle = `WAIT M2/M3 (${st.direction})`;
-      let targetP = st.target_price;
-
-      if (st.type === "SWEEP") {
-        lineColor = "#fb923c";
-        lineTitle = `WAIT M1A SWEEP (${st.direction})`;
-        targetP = st.target_price;
-      } else if (st.type === "EXPANSION") {
-        lineColor = "#fbbf24";
-        lineTitle = `TARGET M4 EXPANSION (${st.direction})`;
-        targetP = (st.expansion_target && st.expansion_target > 0) ? st.expansion_target : st.target_price;
-      }
-
-      if (targetP && targetP > 0) {
-        const stLine = candleSeries.createPriceLine({
-          price: targetP,
-          color: lineColor,
-          lineWidth: 1.5,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: lineTitle
-        });
-        priceLines.push(stLine);
-      }
-    });
   }
 
   // Ensure native series markers are clean (all historical strategy audit badges rendered in Section 6)
