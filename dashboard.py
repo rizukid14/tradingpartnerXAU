@@ -765,7 +765,7 @@ def detect_historical_triggers(
                         cand_type = "M2"
                         cand_dir = 1
                         entry_p = c_close
-                        zone_name = "DISCOUNT_CORRIDOR"
+                        zone_name = "PREMIUM_CORRIDOR" if eff_dr_pos >= 0.50 else "DISCOUNT_CORRIDOR"
                         reason_text = f"Pullback Touch to EMA20/50, Bullish Rebound ({c_rng/c_atr:.1f}x ATR)"
                 elif ema20[i] < ema50[i] and c_close < c_open:
                     ema_hi = max(ema20[i], ema50[i])
@@ -774,7 +774,7 @@ def detect_historical_triggers(
                         cand_type = "M2"
                         cand_dir = -1
                         entry_p = c_close
-                        zone_name = "PREMIUM_CORRIDOR"
+                        zone_name = "DISCOUNT_CORRIDOR" if eff_dr_pos < 0.50 else "PREMIUM_CORRIDOR"
                         reason_text = f"Pullback Rally to EMA20/50, Bearish Rejection ({c_rng/c_atr:.1f}x ATR)"
 
             # 3. M3: BREAKOUT RETEST (RBS / SBR Structure Flip)
@@ -843,14 +843,14 @@ def detect_historical_triggers(
 
             # Gate B: Collision Guard (M2) & Exhaustion Guard (M3)
             if cand_type == "M2":
-                if cand_dir == 1 and (eff_dr_pos >= 0.80 or (eff_c1 > 0 and (eff_c1 - entry_p) < 0.40 * c_atr)):
+                if cand_dir == 1 and eff_dr_pos >= 0.80 and (eff_c1 > entry_p and (eff_c1 - entry_p) < 0.40 * c_atr):
                     continue
-                if cand_dir == -1 and (eff_dr_pos <= 0.20 or (eff_f1 > 0 and (entry_p - eff_f1) < 0.40 * c_atr)):
+                if cand_dir == -1 and eff_dr_pos <= 0.20 and (eff_f1 > 0 and eff_f1 < entry_p and (entry_p - eff_f1) < 0.40 * c_atr):
                     continue
             elif cand_type == "M3":
-                if cand_dir == 1 and eff_dr_pos >= 0.85 and (eff_c1 > 0 and c_high <= eff_c1):
+                if cand_dir == 1 and eff_dr_pos >= 0.85 and (eff_c1 > entry_p and c_high <= eff_c1):
                     continue
-                if cand_dir == -1 and eff_dr_pos <= 0.15 and (eff_f1 > 0 and c_low >= eff_f1):
+                if cand_dir == -1 and eff_dr_pos <= 0.15 and (eff_f1 > 0 and eff_f1 < entry_p and c_low >= eff_f1):
                     continue
 
             # Gate C: Local G3 Macro Wall Veto (The EURAUD Law)
