@@ -280,8 +280,100 @@ class TestDashboardCockpit(unittest.TestCase):
             self.assertIn("rr", m)
             self.assertGreaterEqual(m["rr"], 1.25)
 
+    def test_calculate_predictive_matrix_bearish(self):
+        """calculate_predictive_matrix must construct 3 stations (Pullback, Sweep, Expansion) for Bearish regime."""
+        macro = {
+            "is_bear": True,
+            "is_bull": False,
+            "h1_trend": "BEARISH",
+            "dealing_range_pos": 0.25
+        }
+        mid = 110.000
+        candles = [{"ema20": 110.400, "ema50": 110.600}]
+        res = dashboard.calculate_predictive_matrix(
+            symbol="AUDJPY",
+            mid=mid,
+            macro=macro,
+            c1=110.500,
+            f1=109.500,
+            c2=111.200,
+            f2=108.800,
+            atr_val=0.500,
+            pip_val=0.010,
+            point=0.001,
+            digits=3,
+            candles=candles
+        )
+        self.assertEqual(res["symbol"], "AUDJPY")
+        self.assertEqual(res["market_regime"], "BEARISH_EXPANSION")
+        self.assertEqual(len(res["stations"]), 3)
+
+        st_types = [s["type"] for s in res["stations"]]
+        self.assertIn("PULLBACK", st_types)
+        self.assertIn("SWEEP", st_types)
+        self.assertIn("EXPANSION", st_types)
+
+        # Pullback in Bearish should be SELL above mid
+        pb = next(s for s in res["stations"] if s["type"] == "PULLBACK")
+        self.assertEqual(pb["direction"], "SELL")
+        self.assertGreater(pb["target_price"], mid)
+        self.assertGreater(pb["distance_pips"], 0)
+        self.assertGreater(pb["rr"], 0)
+
+        # Sweep in Bearish should be BUY at/below F1
+        sw = next(s for s in res["stations"] if s["type"] == "SWEEP")
+        self.assertEqual(sw["direction"], "BUY")
+        self.assertLessEqual(sw["target_price"], mid)
+        self.assertGreater(sw["distance_pips"], 0)
+
+        # Expansion in Bearish should be SELL breakdown below F1
+        exp = next(s for s in res["stations"] if s["type"] == "EXPANSION")
+        self.assertEqual(exp["direction"], "SELL")
+        self.assertLessEqual(exp["target_price"], mid)
+
+    def test_calculate_predictive_matrix_bullish(self):
+        """calculate_predictive_matrix must construct 3 stations for Bullish regime."""
+        macro = {
+            "is_bear": False,
+            "is_bull": True,
+            "h1_trend": "BULLISH",
+            "dealing_range_pos": 0.75
+        }
+        mid = 1.35000
+        candles = [{"ema20": 1.34700, "ema50": 1.34500}]
+        res = dashboard.calculate_predictive_matrix(
+            symbol="GBPUSD",
+            mid=mid,
+            macro=macro,
+            c1=1.35500,
+            f1=1.34600,
+            c2=1.36000,
+            f2=1.34000,
+            atr_val=0.00150,
+            pip_val=0.00010,
+            point=0.00001,
+            digits=5,
+            candles=candles
+        )
+        self.assertEqual(res["symbol"], "GBPUSD")
+        self.assertEqual(res["market_regime"], "BULLISH_EXPANSION")
+        self.assertEqual(len(res["stations"]), 3)
+
+        pb = next(s for s in res["stations"] if s["type"] == "PULLBACK")
+        self.assertEqual(pb["direction"], "BUY")
+        self.assertLess(pb["target_price"], mid)
+
+        sw = next(s for s in res["stations"] if s["type"] == "SWEEP")
+        self.assertEqual(sw["direction"], "SELL")
+        self.assertGreaterEqual(sw["target_price"], mid)
+
+        exp = next(s for s in res["stations"] if s["type"] == "EXPANSION")
+        self.assertEqual(exp["direction"], "BUY")
+        self.assertGreaterEqual(exp["target_price"], mid)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

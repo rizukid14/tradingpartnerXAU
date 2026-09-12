@@ -670,25 +670,8 @@ def detect_historical_triggers(
         eff_f1 = float(f1 or 0.0)
         ladder = zce_ladder or []
 
-        # Determine inception timestamp of CURRENT Active Dealing Range
-        # Only evaluate bars that formed strictly within the current dealing range lifecycle
-        dr_start_time = int(dr.get("start_time", 0) or 0)
-        if dr_start_time <= 0:
-            t_hi = int(dr.get("high_time", 0) or 0)
-            t_lo = int(dr.get("low_time", 0) or 0)
-            if t_hi > 0 and t_lo > 0:
-                dr_start_time = min(t_hi, t_lo)
-            elif t_hi > 0:
-                dr_start_time = t_hi
-            elif t_lo > 0:
-                dr_start_time = t_lo
-
         for i in range(15, n):
             c_time = int(times[i])
-
-            # ── DEALING RANGE BOUNDARY FILTER: ONLY CURRENT ACTIVE DEALING RANGE ──
-            if dr_start_time > 0 and c_time < dr_start_time:
-                continue
 
             c_open = float(opens[i])
             c_high = float(highs[i])
@@ -713,9 +696,12 @@ def detect_historical_triggers(
             lower_wick = (min(c_open, c_close) - c_low) / c_rng
             body_ratio = abs(c_close - c_open) / c_rng
 
-            # Check prior peaks & troughs in preceding 25 bars
-            prior_pks = [p["price"] for p in peaks if p.get("index", 0) < i and (i - p.get("index", 0)) <= 25]
-            prior_trs = [t["price"] for t in troughs if t.get("index", 0) < i and (i - t.get("index", 0)) <= 25]
+            # Check prior peaks & troughs in preceding 35 bars
+            prior_pks = [p["price"] for p in peaks if p.get("index", 0) < i and (i - p.get("index", 0)) <= 35]
+            prior_trs = [t["price"] for t in troughs if t.get("index", 0) < i and (i - t.get("index", 0)) <= 35]
+
+            swept_pks = [pk for pk in prior_pks if c_high >= pk and c_close < pk]
+            swept_trs = [tr for tr in prior_trs if c_low <= tr and c_close > tr]
 
             cand_type = None
             cand_dir = 0
@@ -725,16 +711,16 @@ def detect_historical_triggers(
             touches = 1
 
             # 1. M1A: UNIVERSAL LIQUIDITY SWEEP (Reversal at Range Extremes)
-            if dr_pos >= 0.618 and upper_wick >= 0.30 and prior_pks:
-                swept_pk = max(prior_pks)
+            if (dr_pos >= 0.618 or c_high >= r_high - 0.15 * c_atr) and upper_wick >= 0.30 and prior_pks:
+                swept_pk = max(swept_pks) if swept_pks else max(prior_pks)
                 if c_high >= swept_pk and c_close < c_high:
                     cand_type = "M1A"
                     cand_dir = -1
                     entry_p = c_close
                     zone_name = "DEEP_PREMIUM"
                     reason_text = f"Swept High {swept_pk:.{digits}f} with {upper_wick*100:.0f}% Upper Wick at DR {dr_pos_pct}%"
-            elif dr_pos <= 0.382 and lower_wick >= 0.30 and prior_trs:
-                swept_tr = min(prior_trs)
+            elif (dr_pos <= 0.382 or c_low <= r_low + 0.15 * c_atr) and lower_wick >= 0.30 and prior_trs:
+                swept_tr = min(swept_trs) if swept_trs else min(prior_trs)
                 if c_low <= swept_tr and c_close > c_low:
                     cand_type = "M1A"
                     cand_dir = 1
@@ -742,24 +728,24 @@ def detect_historical_triggers(
                     zone_name = "DEEP_DISCOUNT"
                     reason_text = f"Swept Low {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Lower Wick at DR {dr_pos_pct}%"
 
-            # 2. M1B: INTERNAL INDUCEMENT SWEEP (Mid-Range Trap)
-            if not cand_type and 0.382 < dr_pos < 0.618 and (upper_wick >= 0.35 or lower_wick >= 0.35):
-                if upper_wick >= 0.35 and prior_pks and c_high >= max(prior_pks):
-                    swept_pk = max(prior_pks)
+            # 2. M1B: INTERNAL INDUCEMENT SWEEP (Box / Mid-Range Trap)
+            if not cand_type and 0.30 <= dr_pos <= 0.70 and (upper_wick >= 0.30 or lower_wick >= 0.30):
+                if upper_wick >= 0.30 and swept_pks:
+                    swept_pk = max(swept_pks)
                     cand_type = "M1B"
                     cand_dir = -1
                     entry_p = c_close
                     zone_name = "SHALLOW_PREMIUM"
                     touches = sum(1 for j in range(max(0, i - 30), i + 1) if abs(highs[j] - swept_pk) <= 0.20 * c_atr)
-                    reason_text = f"Internal Inducement Sweep High with {upper_wick*100:.0f}% Wick • Cluster {max(1, touches)}x at DR {dr_pos_pct}%"
-                elif lower_wick >= 0.35 and prior_trs and c_low <= min(prior_trs):
-                    swept_tr = min(prior_trs)
+                    reason_text = f"Internal Inducement Sweep High {swept_pk:.{digits}f} with {upper_wick*100:.0f}% Wick • Cluster {max(1, touches)}x at DR {dr_pos_pct}%"
+                elif lower_wick >= 0.30 and swept_trs:
+                    swept_tr = min(swept_trs)
                     cand_type = "M1B"
                     cand_dir = 1
                     entry_p = c_close
                     zone_name = "SHALLOW_DISCOUNT"
                     touches = sum(1 for j in range(max(0, i - 30), i + 1) if abs(lows[j] - swept_tr) <= 0.20 * c_atr)
-                    reason_text = f"Internal Inducement Sweep Low with {lower_wick*100:.0f}% Wick • Cluster {max(1, touches)}x at DR {dr_pos_pct}%"
+                    reason_text = f"Internal Inducement Sweep Low {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Wick • Cluster {max(1, touches)}x at DR {dr_pos_pct}%"
 
             # 3. M2: TREND-ALIGNED PULLBACK (EMA Corridor Retest)
             if not cand_type:
@@ -824,7 +810,7 @@ def detect_historical_triggers(
 
             # ── 1:1 ENGINE GATES VERIFICATION ──
 
-            # Gate A: ZCE Fortress Runway Floor (>= 0.50x ATR to Opposing Wall)
+            # Gate A: ZCE Fortress Runway Floor (>= 0.40x ATR to Opposing Wall)
             if cand_dir == 1:
                 runway_target = eff_c1 if (eff_c1 > entry_p) else (entry_p + 1.5 * c_atr)
                 runway_dist = (runway_target - entry_p) / c_atr
@@ -832,7 +818,7 @@ def detect_historical_triggers(
                 runway_target = eff_f1 if (eff_f1 > 0 and eff_f1 < entry_p) else (entry_p - 1.5 * c_atr)
                 runway_dist = (entry_p - runway_target) / c_atr
 
-            if runway_dist < 0.50:
+            if runway_dist < 0.40:
                 continue  # Vetoed by Runway Deficit
 
             # Gate B: Collision Guard (M2) & Exhaustion Guard (M3)
@@ -911,6 +897,185 @@ def detect_historical_triggers(
     except Exception as e:
         logger.warning(f"[DASHBOARD] Error detecting historical triggers for {symbol}: {e}")
         return []
+
+
+def calculate_predictive_matrix(
+    symbol: str,
+    mid: float,
+    macro: Dict[str, Any],
+    c1: float,
+    f1: float,
+    c2: float,
+    f2: float,
+    atr_val: float,
+    pip_val: float,
+    point: float,
+    digits: int,
+    candles: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Constructs the canonical 3-Station 'Where to Wait' Predictive Radar Matrix:
+    1. Station Upper: Pullback Retest Zone (M2 Trend Pullback / M3 SBR Ceiling)
+    2. Station Lower: Extreme Liquidity Sweep Zone (M1A Universal Sweep at F1 / 0% DR)
+    3. Station Expansion: Structural Breakdown/Breakout (M4 Expansion)
+    """
+    if mid <= 0:
+        return {}
+
+    is_bear = bool(macro.get("is_bear", False))
+    is_bull = bool(macro.get("is_bull", False))
+    h1_trend = str(macro.get("h1_trend", "RANGE")).upper()
+    if "BEAR" in h1_trend or "DOWN" in h1_trend:
+        is_bear = True
+    elif "BULL" in h1_trend or "UP" in h1_trend:
+        is_bull = True
+
+    # Current EMA20 and EMA50 from last candle
+    ema20 = float(candles[-1].get("ema20", mid)) if candles else mid
+    ema50 = float(candles[-1].get("ema50", mid)) if candles else mid
+
+    dr_pos_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
+
+    stations = []
+
+    # 1. STATION PULLBACK: M2 EMA / M3 SBR RETEST
+    if is_bear:
+        pb_candidates = [p for p in [ema20, ema50, c1] if p > mid]
+        pb_price = min(pb_candidates) if pb_candidates else (mid + 0.8 * atr_val)
+        pb_pips = round((pb_price - mid) / max(pip_val, 1e-6), 1)
+        pb_sl = pb_price + max(0.60 * atr_val, 15.0 * point)
+        pb_tp = f1 if (f1 > 0 and f1 < mid) else (mid - 1.5 * atr_val)
+        pb_rr = round(abs(pb_tp - pb_price) / max(abs(pb_sl - pb_price), 1e-5), 2)
+
+        stations.append({
+            "id": "station_pullback",
+            "type": "PULLBACK",
+            "setup_name": "M2 Pullback / M3 SBR Retest",
+            "direction": "SELL",
+            "target_price": round(pb_price, digits),
+            "distance_pips": pb_pips,
+            "distance_atr": round((pb_price - mid) / max(atr_val, 1e-5), 2),
+            "sl": round(pb_sl, digits),
+            "tp": round(pb_tp, digits),
+            "rr": pb_rr,
+            "trigger_condition": f"Tunggu rally ke area {pb_price:.{digits}f}, konfirmasi bearish rejection wick >= 20% di koridor EMA20/50 atau SBR.",
+            "status": "ARMED_WAITING" if pb_pips > 0 else "TESTING"
+        })
+    else:
+        pb_candidates = [p for p in [ema20, ema50, f1] if 0 < p < mid]
+        pb_price = max(pb_candidates) if pb_candidates else (mid - 0.8 * atr_val)
+        pb_pips = round((mid - pb_price) / max(pip_val, 1e-6), 1)
+        pb_sl = pb_price - max(0.60 * atr_val, 15.0 * point)
+        pb_tp = c1 if (c1 > mid) else (mid + 1.5 * atr_val)
+        pb_rr = round(abs(pb_tp - pb_price) / max(abs(pb_price - pb_sl), 1e-5), 2)
+
+        stations.append({
+            "id": "station_pullback",
+            "type": "PULLBACK",
+            "setup_name": "M2 Pullback / M3 RBS Retest",
+            "direction": "BUY",
+            "target_price": round(pb_price, digits),
+            "distance_pips": pb_pips,
+            "distance_atr": round((mid - pb_price) / max(atr_val, 1e-5), 2),
+            "sl": round(pb_sl, digits),
+            "tp": round(pb_tp, digits),
+            "rr": pb_rr,
+            "trigger_condition": f"Tunggu retrace ke area {pb_price:.{digits}f}, konfirmasi bullish rebound wick >= 20% di koridor EMA20/50 atau RBS.",
+            "status": "ARMED_WAITING" if pb_pips > 0 else "TESTING"
+        })
+
+    # 2. STATION SWEEP: M1A EXTREME LIQUIDITY SWEEP
+    if is_bear:
+        sw_price = f1 if (f1 > 0 and f1 < mid) else (mid - 1.2 * atr_val)
+        sw_pips = round((mid - sw_price) / max(pip_val, 1e-6), 1)
+        sw_sl = sw_price - max(0.60 * atr_val, 15.0 * point)
+        sw_tp = mid + 1.2 * atr_val
+        sw_rr = round(abs(sw_tp - sw_price) / max(abs(sw_price - sw_sl), 1e-5), 2)
+
+        stations.append({
+            "id": "station_sweep",
+            "type": "SWEEP",
+            "setup_name": "M1A Liquidity Sweep (SFP)",
+            "direction": "BUY",
+            "target_price": round(sw_price, digits),
+            "distance_pips": sw_pips,
+            "distance_atr": round((mid - sw_price) / max(atr_val, 1e-5), 2),
+            "sl": round(sw_sl, digits),
+            "tp": round(sw_tp, digits),
+            "rr": sw_rr,
+            "trigger_condition": f"Tunggu harga menusuk bawah {sw_price:.{digits}f} sapu likuiditas SSL, lalu reclaim kembali ke atas level dengan lower wick >= 30%.",
+            "status": "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+        })
+    else:
+        sw_price = c1 if (c1 > mid) else (mid + 1.2 * atr_val)
+        sw_pips = round((sw_price - mid) / max(pip_val, 1e-6), 1)
+        sw_sl = sw_price + max(0.60 * atr_val, 15.0 * point)
+        sw_tp = mid - 1.2 * atr_val
+        sw_rr = round(abs(sw_price - sw_tp) / max(abs(sw_sl - sw_price), 1e-5), 2)
+
+        stations.append({
+            "id": "station_sweep",
+            "type": "SWEEP",
+            "setup_name": "M1A Liquidity Sweep (SFP)",
+            "direction": "SELL",
+            "target_price": round(sw_price, digits),
+            "distance_pips": sw_pips,
+            "distance_atr": round((sw_price - mid) / max(atr_val, 1e-5), 2),
+            "sl": round(sw_sl, digits),
+            "tp": round(sw_tp, digits),
+            "rr": sw_rr,
+            "trigger_condition": f"Tunggu harga menusuk atas {sw_price:.{digits}f} sapu likuiditas BSL, lalu reclaim kembali ke bawah level dengan upper wick >= 30%.",
+            "status": "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+        })
+
+    # 3. STATION EXPANSION: M4 BREAKDOWN / BREAKOUT CONTINUATION
+    if is_bear:
+        exp_trigger_p = f1 if (f1 > 0) else (mid - 0.5 * atr_val)
+        exp_target_p = f2 if (f2 > 0 and f2 < exp_trigger_p) else (exp_trigger_p - 1.8 * atr_val)
+        exp_pips = round((mid - exp_trigger_p) / max(pip_val, 1e-6), 1)
+
+        stations.append({
+            "id": "station_expansion",
+            "type": "EXPANSION",
+            "setup_name": "M4 Breakdown Expansion",
+            "direction": "SELL",
+            "target_price": round(exp_trigger_p, digits),
+            "expansion_target": round(exp_target_p, digits),
+            "distance_pips": exp_pips,
+            "distance_atr": round((mid - exp_trigger_p) / max(atr_val, 1e-5), 2),
+            "sl": round(exp_trigger_p + 0.60 * atr_val, digits),
+            "tp": round(exp_target_p, digits),
+            "rr": round(abs(exp_target_p - exp_trigger_p) / max(0.60 * atr_val, 1e-5), 2),
+            "trigger_condition": f"Tunggu H1 physical breach tutup bersih di bawah {exp_trigger_p:.{digits}f} dengan range >= 1.4x ATR dan body ratio >= 65%.",
+            "status": "ARMED_WAITING"
+        })
+    else:
+        exp_trigger_p = c1 if (c1 > 0) else (mid + 0.5 * atr_val)
+        exp_target_p = c2 if (c2 > 0 and c2 > exp_trigger_p) else (exp_trigger_p + 1.8 * atr_val)
+        exp_pips = round((exp_trigger_p - mid) / max(pip_val, 1e-6), 1)
+
+        stations.append({
+            "id": "station_expansion",
+            "type": "EXPANSION",
+            "setup_name": "M4 Breakout Expansion",
+            "direction": "BUY",
+            "target_price": round(exp_trigger_p, digits),
+            "expansion_target": round(exp_target_p, digits),
+            "distance_pips": exp_pips,
+            "distance_atr": round((exp_trigger_p - mid) / max(atr_val, 1e-5), 2),
+            "sl": round(exp_trigger_p - 0.60 * atr_val, digits),
+            "tp": round(exp_target_p, digits),
+            "rr": round(abs(exp_target_p - exp_trigger_p) / max(0.60 * atr_val, 1e-5), 2),
+            "trigger_condition": f"Tunggu H1 physical breach tutup bersih di atas {exp_trigger_p:.{digits}f} dengan range >= 1.4x ATR dan body ratio >= 65%.",
+            "status": "ARMED_WAITING"
+        })
+
+    return {
+        "symbol": symbol,
+        "market_regime": "BEARISH_EXPANSION" if is_bear else ("BULLISH_EXPANSION" if is_bull else "RANGE_ROTATION"),
+        "dr_position_pct": dr_pos_pct,
+        "stations": stations
+    }
 
 
 class CockpitDataEngine:
@@ -2070,6 +2235,21 @@ class CockpitDataEngine:
         ch_h_pips = round((float(c1) - float(f1)) / pip_val, 1) if (c1 and f1 and float(c1) > float(f1) and pip_val > 0) else 0.0
         ch_h_atr = round((float(c1) - float(f1)) / atr_val, 2) if (c1 and f1 and float(c1) > float(f1) and atr_val > 0) else 0.0
 
+        predictive_matrix = calculate_predictive_matrix(
+            symbol=symbol,
+            mid=mid,
+            macro=macro,
+            c1=float(c1 or 0.0),
+            f1=float(f1 or 0.0),
+            c2=float(c2 or 0.0),
+            f2=float(f2 or 0.0),
+            atr_val=atr_val,
+            pip_val=pip_val,
+            point=pt,
+            digits=digits,
+            candles=candles
+        )
+
         return {
             "symbol": symbol,
             "digits": digits,
@@ -2110,6 +2290,7 @@ class CockpitDataEngine:
             "layer_count": int(getattr(zm, "layer_count", 0) or 0),
             "candles": candles,
             "strategy_audit_markers": strat_audit_markers,
+            "predictive_matrix": predictive_matrix,
             "envelope_visual": (getattr(strat, "macro_envelope", {}) or {}).get("visual_payload") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}),
             "macro_envelope": (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
             "zce_walls": zce_walls,

@@ -1404,6 +1404,7 @@ html, body {
           <div class="drawer-tab active" data-drawer="orders">MT5 Live Positions & Pending</div>
           <div class="drawer-tab" data-drawer="cbss">CBSS Currency Baskets Matrix</div>
           <div class="drawer-tab" data-drawer="telemetry">Radar Telemetry (M1A, M1B, M2, M3, M4)</div>
+          <div class="drawer-tab" data-drawer="predictive">Where to Wait (Next Stations)</div>
         </div>
         <div class="drawer-toggle-box" style="gap:4px;">
           <button id="btn-maximize-bottom" class="btn-toggle-panel" onclick="toggleMaximizeDrawer()" title="Perbesar Maksimal (Fullscreen / Normal)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">open_in_full</span></button>
@@ -2056,6 +2057,49 @@ function renderVerticalShading() {
 
     shadingCtx.restore();
   }
+
+  // 7. Render Predictive Waiting Station Badges on Right Margin
+  if (filterShowRadar && cachedSymbolData && cachedSymbolData.predictive_matrix && cachedSymbolData.predictive_matrix.stations && candleSeries) {
+    const stations = cachedSymbolData.predictive_matrix.stations;
+    shadingCtx.save();
+    shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
+    shadingCtx.textBaseline = "middle";
+
+    stations.forEach(st => {
+      const y = candleSeries.priceToCoordinate(st.target_price);
+      if (y === null || y < 15 || y > height - 15) return;
+
+      let baseColor = "#06b6d4";
+      if (st.type === "SWEEP") baseColor = "#fb923c";
+      else if (st.type === "EXPANSION") baseColor = "#fbbf24";
+
+      const pipsSign = st.distance_pips > 0 ? `+${st.distance_pips}` : `${st.distance_pips}`;
+      const badgeTxt = `WAIT: ${st.type} (${st.direction}) ${st.target_price.toFixed(cachedSymbolData.digits || 5)} [${pipsSign}p]`;
+      const badgeW = shadingCtx.measureText(badgeTxt).width + 10;
+      const badgeH = 15;
+      const badgeX = width - badgeW - 25;
+      const badgeY = y - badgeH / 2;
+
+      // Draw subtle pill background
+      shadingCtx.fillStyle = "rgba(11, 14, 20, 0.90)";
+      shadingCtx.fillRect(badgeX, badgeY, badgeW, badgeH);
+
+      // Pill border
+      shadingCtx.strokeStyle = baseColor;
+      shadingCtx.lineWidth = 1;
+      shadingCtx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+      // Left color accent bar
+      shadingCtx.fillStyle = baseColor;
+      shadingCtx.fillRect(badgeX, badgeY, 2.5, badgeH);
+
+      // Label text
+      shadingCtx.fillStyle = baseColor;
+      shadingCtx.fillText(badgeTxt, badgeX + 6, badgeY + badgeH / 2);
+    });
+
+    shadingCtx.restore();
+  }
 }
 
 // Initialize Lightweight Chart
@@ -2442,6 +2486,25 @@ function renderChartLevels(data) {
       title: ""
     });
     priceLines.push(slopeLine);
+  }
+
+  // 1C. Predictive Matrix ("Where to Wait" Target Lines)
+  if (filterShowRadar && data.predictive_matrix && data.predictive_matrix.stations) {
+    data.predictive_matrix.stations.forEach(st => {
+      let lineColor = "#06b6d4";
+      if (st.type === "SWEEP") lineColor = "#fb923c";
+      else if (st.type === "EXPANSION") lineColor = "#fbbf24";
+
+      const stLine = candleSeries.createPriceLine({
+        price: st.target_price,
+        color: lineColor,
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted,
+        axisLabelVisible: false,
+        title: ""
+      });
+      priceLines.push(stLine);
+    });
   }
 
   // Ensure native series markers are clean (all historical strategy audit badges rendered in Section 6)
@@ -3162,6 +3225,66 @@ function renderDrawer() {
         </div>
       </div>
     `;
+  } else if (currentDrawerTab === "predictive") {
+    if (!d || !d.predictive_matrix || !d.predictive_matrix.stations) {
+      container.innerHTML = `<div style="padding:10px;color:var(--text-dim);">Memuat data predictive matrix Where to Wait...</div>`;
+      return;
+    }
+    const pm = d.predictive_matrix;
+    const regimeColor = pm.market_regime.includes("BULL") ? "var(--green)" : (pm.market_regime.includes("BEAR") ? "var(--red)" : "var(--cyan)");
+    
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-weight:800;font-size:11px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.5px;">
+            WHERE TO WAIT MATRIX (NEXT STATIONS: PULLBACK • SWEEP • EXPANSION)
+          </span>
+          <span class="badge" style="background:rgba(56,189,248,0.12);color:${regimeColor};border:1px solid ${regimeColor};font-weight:700;">
+            ${pm.market_regime}
+          </span>
+        </div>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">
+          Dealing Range Position: <strong style="color:var(--amber);">${(pm.dr_position_pct || 50).toFixed(1)}%</strong> &bull; Live Mid: <strong style="color:#fff;">${((d.bid + d.ask)/2).toFixed(d.digits || 5)}</strong>
+        </span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:10px;">
+    `;
+
+    pm.stations.forEach(st => {
+      let cardBorder = "#38bdf8";
+      let dirColor = (st.direction === "BUY") ? "var(--green)" : "var(--red)";
+      let tagBg = (st.direction === "BUY") ? "rgba(16,185,129,0.15)" : "rgba(244,63,94,0.15)";
+      if (st.type === "PULLBACK") cardBorder = "#06b6d4";
+      else if (st.type === "SWEEP") cardBorder = "#fb923c";
+      else if (st.type === "EXPANSION") cardBorder = "#fbbf24";
+
+      html += `
+        <div class="telemetry-card" style="border-top: 3px solid ${cardBorder};background:rgba(15,23,42,0.6);">
+          <div class="tele-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="color:${cardBorder};font-weight:800;font-size:11px;">${st.setup_name}</span>
+            <span style="background:${tagBg};color:${dirColor};font-weight:800;padding:1px 6px;border-radius:2px;font-size:9.5px;font-family:var(--font-mono);">${st.direction}</span>
+          </div>
+
+          <div style="background:rgba(0,0,0,0.25);padding:6px 8px;border-radius:3px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:baseline;">
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">TARGET LEVEL:</span>
+            <span style="font-family:var(--font-mono);font-size:14px;font-weight:800;color:#fff;">${st.target_price.toFixed(d.digits || 5)}</span>
+          </div>
+
+          <div class="tele-row"><span class="tele-lbl">Jarak dari Live:</span><span class="tele-val" style="color:var(--amber);font-weight:700;">${st.distance_pips > 0 ? '+' : ''}${st.distance_pips} pips (${st.distance_atr}x ATR)</span></div>
+          <div class="tele-row"><span class="tele-lbl">Proteksi SL:</span><span class="tele-val" style="color:var(--red);font-family:var(--font-mono);">${st.sl.toFixed(d.digits || 5)}</span></div>
+          <div class="tele-row"><span class="tele-lbl">Target TP:</span><span class="tele-val" style="color:var(--green);font-family:var(--font-mono);">${st.tp.toFixed(d.digits || 5)} (RR 1:${st.rr})</span></div>
+          <div class="tele-row"><span class="tele-lbl">Status Stasiun:</span><span class="tele-val" style="color:var(--cyan);font-weight:700;">${st.status}</span></div>
+
+          <div style="margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.08);font-size:9.5px;line-height:1.4;color:var(--text-muted);">
+            <strong style="color:var(--text-main);">Trigger Rule:</strong> ${st.trigger_condition}
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+    container.innerHTML = html;
   }
 }
 
