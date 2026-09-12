@@ -4622,6 +4622,9 @@ class MarketScanner:
                     is_ema_pullback_valid_b = (mid >= ema50 - 0.45 * atr_val) and (mid <= ema20 + 0.45 * atr_val)
                     c1_ceiling = macro.get('immediate_ceiling_c1', 0.0) or macro.get('ceiling_c1', 0.0)
                     is_c1_collision_b = (pos_in_range >= 0.80) and (c1_ceiling > 0) and ((c1_ceiling - mid) < 0.40 * atr_val)
+                    is_shallow_noise_b = (pos_in_range > 0.618)
+                    is_inducement_trap_b = (0.500 < pos_in_range <= 0.618)
+                    has_strong_confluence_b = (macro.get('f1_reaction_grade') in ('GRADE_2_INTERMEDIATE', 'GRADE_3_MACRO')) or (csm_delta_val >= 2.0)
 
                     is_m2_b_locked, m2_b_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", 1)
                     if is_m2_b_locked:
@@ -4630,6 +4633,10 @@ class MarketScanner:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
                     elif can_buy_m2 and is_valid_pullback_range_b and is_c1_collision_b:
                         logger.debug(f"[PULLBACK BUY CEILING COLLISION] {sym} SKIP: dr_pos {pos_in_range:.2f} >= 0.80 and runway to C1 {c1_ceiling - mid:.5f} < 0.40x ATR")
+                    elif can_buy_m2 and is_valid_pullback_range_b and is_shallow_noise_b:
+                        logger.debug(f"[PULLBACK BUY SHALLOW NOISE] {sym} SKIP: dr_pos {pos_in_range:.2f} > 0.618 (Retracement < 38.2% invalid)")
+                    elif can_buy_m2 and is_valid_pullback_range_b and is_inducement_trap_b and not has_strong_confluence_b:
+                        logger.debug(f"[PULLBACK BUY INDUCEMENT TRAP] {sym} SKIP: dr_pos {pos_in_range:.2f} in shallow premium without G2/G3 ZCE wall or strong CSM")
                     elif can_buy_m2 and is_valid_pullback_range_b and not is_ema_pullback_valid_b:
                         logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
                     elif can_buy_m2 and is_valid_pullback_range_b and is_ema_pullback_valid_b:
@@ -4765,6 +4772,9 @@ class MarketScanner:
                     is_ema_pullback_valid_s = (mid <= ema50 + 0.45 * atr_val) and (mid >= ema20 - 0.45 * atr_val)
                     f1_floor_val = macro.get('immediate_floor_f1', 0.0) or macro.get('floor_f1', 0.0)
                     is_f1_collision_s = (pos_in_range <= 0.20) and (f1_floor_val > 0) and ((mid - f1_floor_val) < 0.40 * atr_val)
+                    is_shallow_noise_s = (pos_in_range < 0.382)
+                    is_inducement_trap_s = (0.382 <= pos_in_range < 0.500)
+                    has_strong_confluence_s = (macro.get('c1_reaction_grade') in ('GRADE_2_INTERMEDIATE', 'GRADE_3_MACRO')) or (csm_delta_val <= -2.0)
 
                     is_m2_s_locked, m2_s_lock_reason = self.is_mechanism_locked(clean_sym, "TREND_ALIGNED_PULLBACK", -1)
                     if is_m2_s_locked:
@@ -4773,6 +4783,10 @@ class MarketScanner:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
                     elif can_sell_m2 and is_valid_pullback_range_s and is_f1_collision_s:
                         logger.debug(f"[PULLBACK SELL FLOOR COLLISION] {sym} SKIP: dr_pos {pos_in_range:.2f} <= 0.20 and runway to F1 {mid - f1_floor_val:.5f} < 0.40x ATR")
+                    elif can_sell_m2 and is_valid_pullback_range_s and is_shallow_noise_s:
+                        logger.debug(f"[PULLBACK SELL SHALLOW NOISE] {sym} SKIP: dr_pos {pos_in_range:.2f} < 0.382 (Retracement < 38.2% invalid)")
+                    elif can_sell_m2 and is_valid_pullback_range_s and is_inducement_trap_s and not has_strong_confluence_s:
+                        logger.debug(f"[PULLBACK SELL INDUCEMENT TRAP] {sym} SKIP: dr_pos {pos_in_range:.2f} in shallow discount without G2/G3 ZCE wall or strong CSM")
                     elif can_sell_m2 and is_valid_pullback_range_s and not is_ema_pullback_valid_s:
                         logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
                     elif can_sell_m2 and is_valid_pullback_range_s and is_ema_pullback_valid_s:

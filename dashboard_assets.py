@@ -786,6 +786,57 @@ html, body {
   z-index: 1;
 }
 
+/* ZCE INTERACTIVE HOVER MICRO-POPUP */
+.zce-hover-tooltip {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 8px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-main);
+  max-width: 320px;
+  transition: opacity 0.1s ease;
+}
+.zce-tt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.zce-tt-tier {
+  font-weight: 700;
+  font-size: 11px;
+}
+.zce-tt-score {
+  color: var(--amber);
+  font-weight: 700;
+}
+.zce-tt-confluences {
+  color: var(--text-muted);
+  font-size: 9.5px;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.zce-tt-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-dim);
+  font-size: 9px;
+  border-top: 1px dashed var(--border);
+  padding-top: 3px;
+}
+
 /* FILTER STRIP LEGENDS (Right Aligned on Toolbar) */
 .filter-strip-legends {
   margin-left: auto;
@@ -1289,9 +1340,9 @@ html, body {
         <div class="chip-toggle-group" id="zce-chips-group">
           <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#c084fc;">radar</span> M1-M4</button>
           <button class="chip-btn active" id="chip-f1c1" data-chip="f1c1" title="Toggle Level F1 & C1 (Primary Support & Resistance)">F1/C1</button>
-          <button class="chip-btn active" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 & C2 (Secondary Support & Resistance)">F2/C2</button>
-          <button class="chip-btn active" id="chip-ext" data-chip="ext" title="Toggle Level Extension di atas F2 & C2 (F3+, C3+)">EXT</button>
-          <button class="chip-btn active-amber" id="chip-pattern" data-chip="pattern" title="Toggle Garis Pola Geometris (Wedge, Triangle, Pennant, Channel)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#facc15;">polyline</span> Patterns</button>
+          <button class="chip-btn" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 & C2 (Secondary Support & Resistance)">F2/C2</button>
+          <button class="chip-btn" id="chip-ext" data-chip="ext" title="Toggle Level Extension di atas F2 & C2 (F3+, C3+)">EXT</button>
+          <button class="chip-btn active-cyan" id="chip-pattern" data-chip="pattern" title="Toggle SMC Dealing Range & Order Flow"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">tune</span> SMC Range</button>
           <button class="chip-btn active-cyan" id="chip-ema" data-chip="ema" title="Toggle Garis EMA (20, 50, 200)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;color:#38bdf8;">show_chart</span> EMA</button>
         </div>
       </div>
@@ -1312,6 +1363,7 @@ html, body {
     <div class="chart-wrapper">
       <div id="tv-chart"></div>
       <canvas id="chart-shading-canvas"></canvas>
+      <div id="zce-hover-tooltip" class="zce-hover-tooltip"></div>
       
       <!-- HORIZONTAL HUD ROW: 100% FULL WIDTH INFO -->
       <div class="chart-hud-row">
@@ -1390,13 +1442,13 @@ let currentTF = "H1";
 let currentFilter = "all";
 let currentDrawerTab = "orders";
 let activeVerticalFilter = "regimes"; // "sessions", "regimes", "both", "off"
-let activeZcePreset = "all"; // "primary", "macro", "all", "off", "custom"
+let activeZcePreset = "primary"; // "primary", "macro", "all", "off", "custom"
 let filterShowRadar = true;
 let filterShowPatterns = true;
 let filterShowEMA = true;
 let filterChipF1C1 = true;
-let filterChipF2C2 = true;
-let filterChipEXT = true;
+let filterChipF2C2 = false;
+let filterChipEXT = false;
 let chart = null;
 let candleSeries = null;
 let ema20Series = null;
@@ -1625,6 +1677,9 @@ function renderVerticalShading() {
       const badgeX = (y < 70) ? 310 : 14;
       const badgeY = y - badgeH / 2;
 
+      // Save bounding box for interactive hover micro-popup
+      lvl.box = { x: badgeX, y: badgeY, w: txtW + 12, h: badgeH };
+
       // Draw subtle pill background
       shadingCtx.fillStyle = "rgba(11, 14, 20, 0.90)";
       shadingCtx.fillRect(badgeX, badgeY, txtW + 12, badgeH);
@@ -1833,71 +1888,7 @@ function renderVerticalShading() {
     });
   }
 
-  // 4. Render W1 Descending Slope Diagonal Envelope (Anchor Peak Law)
-  if (cachedSymbolData && cachedSymbolData.w1_lower_highs && cachedSymbolData.w1_lower_highs.length >= 2 && candleSeries && chart) {
-    const timeScale = chart.timeScale();
-    const lhs = cachedSymbolData.w1_lower_highs;
-    const p0 = lhs[0];
-    const p_last = lhs[lhs.length - 1];
-    const y0 = candleSeries.priceToCoordinate(p0.price);
-    const y_last = candleSeries.priceToCoordinate(p_last.price);
-    const y_live = (cachedSymbolData.w1_slope_ceiling) ? candleSeries.priceToCoordinate(cachedSymbolData.w1_slope_ceiling) : null;
-
-    if (y_live !== null && y_last !== null) {
-      shadingCtx.save();
-      const x_live = width - 25;
-      const x_last = p_last.time > 0 ? timeScale.timeToCoordinate(p_last.time) : null;
-      const x0 = p0.time > 0 ? timeScale.timeToCoordinate(p0.time) : null;
-
-      let startX = x0 !== null ? x0 : 0;
-      let startY = y0 !== null ? y0 : y_last;
-
-      if (x0 === null && x_last !== null && x_last < x_live) {
-        const slopeY = (y_live - y_last) / Math.max(1, (x_live - x_last));
-        startX = 0;
-        startY = y_last - slopeY * x_last;
-      }
-
-      shadingCtx.beginPath();
-      shadingCtx.setLineDash([6, 4]);
-      shadingCtx.lineWidth = 1.8;
-      shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.85)";
-      shadingCtx.moveTo(startX, startY);
-      shadingCtx.lineTo(x_live, y_live);
-      shadingCtx.stroke();
-
-      // Pill label at right end
-      shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-      const slopeTxt = `W1 DESC SLOPE [${cachedSymbolData.w1_slope_ceiling.toFixed(cachedSymbolData.digits || 5)}]`;
-      const txtW = shadingCtx.measureText(slopeTxt).width;
-      const pillX = Math.max(14, x_live - txtW - 8);
-      const pillY = Math.max(12, y_live - 8);
-      shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
-      shadingCtx.fillRect(pillX - 4, pillY, txtW + 8, 15);
-      shadingCtx.fillStyle = "#f59e0b";
-      shadingCtx.fillText(slopeTxt, pillX, pillY + 11);
-
-      // Render LH circle nodes if within viewport
-      lhs.forEach(pt => {
-        if (pt.time > 0) {
-          const ptX = timeScale.timeToCoordinate(pt.time);
-          const ptY = candleSeries.priceToCoordinate(pt.price);
-          if (ptX !== null && ptY !== null && ptX >= 0 && ptX <= width) {
-            shadingCtx.fillStyle = "#f59e0b";
-            shadingCtx.beginPath();
-            shadingCtx.arc(ptX, ptY, 3.5, 0, 2 * Math.PI);
-            shadingCtx.fill();
-            shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-            shadingCtx.fillRect(ptX - 16, ptY - 17, 32, 12);
-            shadingCtx.fillStyle = "#fbbf24";
-            shadingCtx.fillText(pt.label || "LH", ptX - 12, ptY - 8);
-          }
-        }
-      });
-
-      shadingCtx.restore();
-    }
-  }
+  // 4. (W1 Descending Slope rendered cleanly as horizontal price line in renderChartLevels)
 
   // 5. Render Macro H4 Structural Swings & Pattern Corridor
   if (filterShowPatterns && cachedSymbolData && cachedSymbolData.envelope_visual && candleSeries && chart) {
@@ -1916,15 +1907,36 @@ function renderVerticalShading() {
       const yHigh = candleSeries.priceToCoordinate(dr.range_high);
       const yLow = candleSeries.priceToCoordinate(dr.range_low);
       const yEq = candleSeries.priceToCoordinate(dr.equilibrium_50);
+      const span = dr.range_high - dr.range_low;
+      const f382 = dr.fib_382 || (dr.range_low + 0.382 * span);
+      const f618 = dr.fib_618 || (dr.range_low + 0.618 * span);
+      const y382 = candleSeries.priceToCoordinate(f382);
+      const y618 = candleSeries.priceToCoordinate(f618);
 
       if (yHigh !== null && yLow !== null && yEq !== null) {
-        // Premium Zone Shading (yHigh down to yEq)
-        shadingCtx.fillStyle = "rgba(244, 63, 94, 0.03)"; // Soft red
-        shadingCtx.fillRect(0, yHigh, width, Math.max(0, yEq - yHigh));
+        // Deep Premium Zone (yHigh down to y618) - Institutional OTE Sell
+        if (y618 !== null) {
+          shadingCtx.fillStyle = "rgba(244, 63, 94, 0.04)";
+          shadingCtx.fillRect(0, yHigh, width, Math.max(0, y618 - yHigh));
+        }
 
-        // Discount Zone Shading (yEq down to yLow)
-        shadingCtx.fillStyle = "rgba(16, 185, 129, 0.03)"; // Soft green
-        shadingCtx.fillRect(0, yEq, width, Math.max(0, yLow - yEq));
+        // Shallow Premium Inducement Corridor (y618 down to yEq)
+        if (y618 !== null) {
+          shadingCtx.fillStyle = "rgba(245, 158, 11, 0.025)";
+          shadingCtx.fillRect(0, y618, width, Math.max(0, yEq - y618));
+        }
+
+        // Shallow Discount Inducement Corridor (yEq down to y382)
+        if (y382 !== null) {
+          shadingCtx.fillStyle = "rgba(245, 158, 11, 0.025)";
+          shadingCtx.fillRect(0, yEq, width, Math.max(0, y382 - yEq));
+        }
+
+        // Deep Discount Zone (y382 down to yLow) - Institutional OTE Buy
+        if (y382 !== null) {
+          shadingCtx.fillStyle = "rgba(16, 185, 129, 0.04)";
+          shadingCtx.fillRect(0, y382, width, Math.max(0, yLow - y382));
+        }
 
         // 1. Dealing Range High (BSL External Pool)
         shadingCtx.beginPath();
@@ -1944,7 +1956,26 @@ function renderVerticalShading() {
         shadingCtx.fillStyle = "#c084fc";
         shadingCtx.fillText(bslTxt, width - bslW - 31, yHigh - 5);
 
-        // 2. 50% Equilibrium Line
+        // 2. 61.8% OTE Line (Subtle hairline)
+        if (y618 !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([2, 4]);
+          shadingCtx.lineWidth = 0.7;
+          shadingCtx.strokeStyle = "rgba(192, 132, 252, 0.35)";
+          shadingCtx.moveTo(10, y618);
+          shadingCtx.lineTo(width - 25, y618);
+          shadingCtx.stroke();
+
+          const oteTxt = `61.8% OTE ${f618.toFixed(cachedSymbolData.digits || 5)}`;
+          shadingCtx.font = "bold 8px 'JetBrains Mono', monospace";
+          const oteW = shadingCtx.measureText(oteTxt).width;
+          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.75)";
+          shadingCtx.fillRect(width - oteW - 35, y618 - 6, oteW + 6, 12);
+          shadingCtx.fillStyle = "rgba(192, 132, 252, 0.65)";
+          shadingCtx.fillText(oteTxt, width - oteW - 32, y618 + 3);
+        }
+
+        // 3. 50% Equilibrium Line
         shadingCtx.beginPath();
         shadingCtx.setLineDash([3, 3]);
         shadingCtx.lineWidth = 1.0;
@@ -1955,13 +1986,33 @@ function renderVerticalShading() {
 
         // EQ Pill Label
         const eqTxt = `50% EQ ${dr.equilibrium_50.toFixed(cachedSymbolData.digits || 5)} [${dr.zone_status}]`;
+        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
         const eqW = shadingCtx.measureText(eqTxt).width;
         shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
         shadingCtx.fillRect(width - eqW - 35, yEq - 7, eqW + 8, 13);
-        shadingCtx.fillStyle = dr.zone_status.includes("PREMIUM") ? "#f43f5e" : "#10b981";
+        shadingCtx.fillStyle = dr.zone_status.includes("PREMIUM") ? "#f43f5e" : (dr.zone_status.includes("INDUCEMENT") ? "#f59e0b" : "#10b981");
         shadingCtx.fillText(eqTxt, width - eqW - 31, yEq + 3);
 
-        // 3. Dealing Range Low (SSL External Pool)
+        // 4. 38.2% Inducement Boundary Line (Subtle hairline)
+        if (y382 !== null) {
+          shadingCtx.beginPath();
+          shadingCtx.setLineDash([2, 4]);
+          shadingCtx.lineWidth = 0.7;
+          shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+          shadingCtx.moveTo(10, y382);
+          shadingCtx.lineTo(width - 25, y382);
+          shadingCtx.stroke();
+
+          const indTxt = `38.2% INDUCEMENT ${f382.toFixed(cachedSymbolData.digits || 5)}`;
+          shadingCtx.font = "bold 8px 'JetBrains Mono', monospace";
+          const indW = shadingCtx.measureText(indTxt).width;
+          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.75)";
+          shadingCtx.fillRect(width - indW - 35, y382 - 6, indW + 6, 12);
+          shadingCtx.fillStyle = "rgba(56, 189, 248, 0.65)";
+          shadingCtx.fillText(indTxt, width - indW - 32, y382 + 3);
+        }
+
+        // 5. Dealing Range Low (SSL External Pool)
         shadingCtx.beginPath();
         shadingCtx.setLineDash([6, 4]);
         shadingCtx.lineWidth = 1.6;
@@ -1982,7 +2033,7 @@ function renderVerticalShading() {
       }
     }
 
-    // 5b. Render Order Flow Backbone Trajectory (HH/HL/LH/LL Zigzag Wave)
+    // 5b. Render Order Flow Backbone Trajectory (HH/HL/LH/LL Zigzag Wave - Sleek Line)
     const ofSegments = ss.order_flow_segments || ev.order_flow_segments || [];
     if (ofSegments.length > 0) {
       ofSegments.forEach(seg => {
@@ -1997,24 +2048,11 @@ function renderVerticalShading() {
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
             const isBull = seg.direction === "BULLISH";
             shadingCtx.beginPath();
-            shadingCtx.lineWidth = 2.0;
-            shadingCtx.strokeStyle = isBull ? "rgba(16, 185, 129, 0.80)" : "rgba(244, 63, 94, 0.80)";
+            shadingCtx.lineWidth = 1.2;
+            shadingCtx.strokeStyle = isBull ? "rgba(16, 185, 129, 0.50)" : "rgba(244, 63, 94, 0.50)";
             shadingCtx.moveTo(x1, y1);
             shadingCtx.lineTo(x2, y2);
             shadingCtx.stroke();
-
-            // Direction arrow on wave leg
-            const mx = (x1 + x2) / 2;
-            const my = (y1 + y2) / 2;
-            const angle = Math.atan2(y2 - y1, x2 - x1);
-            const aLen = 6.5;
-            shadingCtx.fillStyle = isBull ? "#10b981" : "#f43f5e";
-            shadingCtx.beginPath();
-            shadingCtx.moveTo(mx, my);
-            shadingCtx.lineTo(mx - aLen * Math.cos(angle - Math.PI / 6), my - aLen * Math.sin(angle - Math.PI / 6));
-            shadingCtx.lineTo(mx - aLen * Math.cos(angle + Math.PI / 6), my - aLen * Math.sin(angle + Math.PI / 6));
-            shadingCtx.closePath();
-            shadingCtx.fill();
           }
         }
       });
@@ -2035,117 +2073,69 @@ function renderVerticalShading() {
       }
     }
 
-    // 5d. Pivot Point Circles & Labels (HH / LH, HL / LL)
+    // 5d. Pivot Point Circles & Labels (HH / LH, HL / LL) with Anti-Collision
     const peaks = ss.peaks || [];
     const troughs = ss.troughs || [];
 
     // Peaks markers
+    let lastPeakX = -999;
     peaks.forEach(pk => {
       const x = pk.time > 0 ? timeScale.timeToCoordinate(pk.time) : null;
       const y = candleSeries.priceToCoordinate(pk.price);
       if (x !== null && y !== null) {
+        const isDense = (Math.abs(x - lastPeakX) < 28);
+        if (!isDense) lastPeakX = x;
+
         shadingCtx.beginPath();
-        shadingCtx.arc(x, y, 4.0, 0, 2 * Math.PI);
+        shadingCtx.arc(x, y, isDense ? 2.0 : 3.5, 0, 2 * Math.PI);
         shadingCtx.fillStyle = "#fbbf24";
         shadingCtx.fill();
-        shadingCtx.lineWidth = 1.5;
+        shadingCtx.lineWidth = 1.2;
         shadingCtx.strokeStyle = "#0f172a";
         shadingCtx.stroke();
 
-        const lbl = pk.label || "H";
-        const bgCol = lbl === "HH" ? "rgba(16, 185, 129, 0.90)" : (lbl === "LH" ? "rgba(244, 63, 94, 0.90)" : "rgba(251, 191, 36, 0.90)");
-        shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
-        const lblW = shadingCtx.measureText(lbl).width;
-        shadingCtx.fillStyle = bgCol;
-        shadingCtx.fillRect(x - lblW / 2 - 3, y - 16, lblW + 6, 11);
-        shadingCtx.fillStyle = "#ffffff";
-        shadingCtx.fillText(lbl, x - lblW / 2, y - 7);
+        if (!isDense) {
+          const lbl = pk.label || "H";
+          const bgCol = lbl === "HH" ? "rgba(16, 185, 129, 0.90)" : (lbl === "LH" ? "rgba(244, 63, 94, 0.90)" : "rgba(251, 191, 36, 0.90)");
+          shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
+          const lblW = shadingCtx.measureText(lbl).width;
+          shadingCtx.fillStyle = bgCol;
+          shadingCtx.fillRect(x - lblW / 2 - 3, y - 16, lblW + 6, 11);
+          shadingCtx.fillStyle = "#ffffff";
+          shadingCtx.fillText(lbl, x - lblW / 2, y - 7);
+        }
       }
     });
 
     // Troughs markers
+    let lastTroughX = -999;
     troughs.forEach(tr => {
       const x = tr.time > 0 ? timeScale.timeToCoordinate(tr.time) : null;
       const y = candleSeries.priceToCoordinate(tr.price);
       if (x !== null && y !== null) {
+        const isDense = (Math.abs(x - lastTroughX) < 28);
+        if (!isDense) lastTroughX = x;
+
         shadingCtx.beginPath();
-        shadingCtx.arc(x, y, 4.0, 0, 2 * Math.PI);
+        shadingCtx.arc(x, y, isDense ? 2.0 : 3.5, 0, 2 * Math.PI);
         shadingCtx.fillStyle = "#38bdf8";
         shadingCtx.fill();
-        shadingCtx.lineWidth = 1.5;
+        shadingCtx.lineWidth = 1.2;
         shadingCtx.strokeStyle = "#0f172a";
         shadingCtx.stroke();
 
-        const lbl = tr.label || "L";
-        const bgCol = lbl === "HL" ? "rgba(16, 185, 129, 0.90)" : (lbl === "LL" ? "rgba(244, 63, 94, 0.90)" : "rgba(56, 189, 248, 0.90)");
-        shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
-        const lblW = shadingCtx.measureText(lbl).width;
-        shadingCtx.fillStyle = bgCol;
-        shadingCtx.fillRect(x - lblW / 2 - 3, y + 6, lblW + 6, 11);
-        shadingCtx.fillStyle = "#ffffff";
-        shadingCtx.fillText(lbl, x - lblW / 2, y + 15);
-      }
-    });
-
-    // 5e. Geometric Pattern Breakout Reference & Measured Target Projection
-    const geom = ss.geometric_pattern || null;
-    if (geom && geom.name !== "NONE" && geom.neckline_price > 0 && candleSeries) {
-      const isWedgeOrTriangle = geom.name.includes("WEDGE") || geom.name.includes("TRIANGLE") || geom.name.includes("PENNANT") || geom.name.includes("CHANNEL");
-      const isForming = geom.status === "FORMING";
-      const xRight = width - 25;
-      const xStart = Math.max(10, width - 260);
-
-      // Hanya gambar garis acuan horizontal jika BUKAN Wedge/Triangle saat FORMING
-      if (!isWedgeOrTriangle || !isForming) {
-        const yNeck = candleSeries.priceToCoordinate(geom.neckline_price);
-        if (yNeck !== null && yNeck >= 0 && yNeck <= height) {
-          shadingCtx.beginPath();
-          shadingCtx.setLineDash([4, 3]);
-          shadingCtx.lineWidth = 1.4;
-          shadingCtx.strokeStyle = "rgba(192, 132, 252, 0.85)";
-          shadingCtx.moveTo(xStart, yNeck);
-          shadingCtx.lineTo(xRight, yNeck);
-          shadingCtx.stroke();
-          shadingCtx.setLineDash([]);
-
-          let neckLabelPrefix = "NECKLINE";
-          if (isWedgeOrTriangle) {
-            neckLabelPrefix = geom.bias === "BULLISH" ? "BREAKOUT RES" : "BREAKOUT SUP";
-          }
-          const neckTxt = `${neckLabelPrefix}: ${geom.neckline_price.toFixed(cachedSymbolData.digits || 5)} [${geom.status}]`;
-          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-          const nW = shadingCtx.measureText(neckTxt).width;
-          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-          shadingCtx.fillRect(xStart, yNeck - 14, nW + 8, 13);
-          shadingCtx.fillStyle = "#c084fc";
-          shadingCtx.fillText(neckTxt, xStart + 4, yNeck - 4);
+        if (!isDense) {
+          const lbl = tr.label || "L";
+          const bgCol = lbl === "HL" ? "rgba(16, 185, 129, 0.90)" : (lbl === "LL" ? "rgba(244, 63, 94, 0.90)" : "rgba(56, 189, 248, 0.90)");
+          shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
+          const lblW = shadingCtx.measureText(lbl).width;
+          shadingCtx.fillStyle = bgCol;
+          shadingCtx.fillRect(x - lblW / 2 - 3, y + 6, lblW + 6, 11);
+          shadingCtx.fillStyle = "#ffffff";
+          shadingCtx.fillText(lbl, x - lblW / 2, y + 15);
         }
       }
-
-      // Measured Target Line (green if bullish, red if bearish)
-      const yTgt = (geom.target_geom_price && geom.target_geom_price > 0) ? candleSeries.priceToCoordinate(geom.target_geom_price) : null;
-      if (yTgt !== null && yTgt >= 0 && yTgt <= height) {
-        const isBull = geom.bias === "BULLISH";
-        const tgtCol = isBull ? "#10b981" : "#f43f5e";
-        shadingCtx.beginPath();
-        shadingCtx.setLineDash([5, 3]);
-        shadingCtx.lineWidth = 1.6;
-        shadingCtx.strokeStyle = tgtCol;
-        shadingCtx.moveTo(xStart + 30, yTgt);
-        shadingCtx.lineTo(xRight, yTgt);
-        shadingCtx.stroke();
-        shadingCtx.setLineDash([]);
-
-        // Target Pill
-        const tgtTxt = `TARGET (${geom.name}): ${geom.target_geom_price.toFixed(cachedSymbolData.digits || 5)} (${geom.target_pips > 0 ? '+' : ''}${geom.target_pips}p)`;
-        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-        const tW = shadingCtx.measureText(tgtTxt).width;
-        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
-        shadingCtx.fillRect(xRight - tW - 8, yTgt - 14, tW + 8, 13);
-        shadingCtx.fillStyle = tgtCol;
-        shadingCtx.fillText(tgtTxt, xRight - tW - 4, yTgt - 4);
-      }
-    }
+    });
 
     shadingCtx.restore();
   }
@@ -2224,6 +2214,66 @@ function initChart() {
   container.addEventListener("pointermove", (e) => {
     if (e.buttons > 0) requestAnimationFrame(renderVerticalShading);
   });
+
+  // Interactive Hover Micro-Popup on ZCE Level Badges
+  const chartWrapper = container.parentElement;
+  const tooltipEl = document.getElementById("zce-hover-tooltip");
+
+  if (chartWrapper && tooltipEl) {
+    chartWrapper.addEventListener("pointermove", (e) => {
+      if (!activeRenderedLevels || activeRenderedLevels.length === 0) {
+        tooltipEl.style.display = "none";
+        return;
+      }
+      const rect = chartWrapper.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      let hoveredLevel = null;
+      for (let i = 0; i < activeRenderedLevels.length; i++) {
+        const lvl = activeRenderedLevels[i];
+        if (lvl.box) {
+          if (mx >= lvl.box.x && mx <= lvl.box.x + lvl.box.w &&
+              my >= lvl.box.y && my <= lvl.box.y + lvl.box.h) {
+            hoveredLevel = lvl;
+            break;
+          }
+        }
+      }
+
+      if (hoveredLevel) {
+        chartWrapper.style.cursor = "pointer";
+        let pipsDiff = "";
+        if (cachedSymbolData && cachedSymbolData.bid) {
+          const pt = (cachedSymbolData.digits === 3 || cachedSymbolData.digits === 5) ? 0.0001 : 0.01;
+          const diffPips = ((hoveredLevel.price - cachedSymbolData.bid) / pt).toFixed(1);
+          pipsDiff = `${diffPips >= 0 ? '+' : ''}${diffPips}p from live`;
+        }
+        tooltipEl.innerHTML = `
+          <div class="zce-tt-header">
+            <span class="zce-tt-tier" style="color:${hoveredLevel.color};">${hoveredLevel.tier} ${hoveredLevel.grade_str} @ ${hoveredLevel.price.toFixed(cachedSymbolData ? cachedSymbolData.digits : 5)}</span>
+            <span class="zce-tt-score">${hoveredLevel.score > 0 ? hoveredLevel.score.toFixed(1) + ' pts' : ''}</span>
+          </div>
+          <div class="zce-tt-confluences">${hoveredLevel.confluences}</div>
+          <div class="zce-tt-meta">
+            <span>${hoveredLevel.is_slope ? `TF: W1 (${hoveredLevel.sources_count} touches)` : `TFs: ${hoveredLevel.timeframes || 'H1'} (${hoveredLevel.sources_count} src)`}</span>
+            <span>${pipsDiff}</span>
+          </div>
+        `;
+        tooltipEl.style.display = "block";
+        tooltipEl.style.left = `${hoveredLevel.box.x + hoveredLevel.box.w + 10}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 90, hoveredLevel.box.y - 10))}px`;
+      } else {
+        chartWrapper.style.cursor = "default";
+        tooltipEl.style.display = "none";
+      }
+    });
+
+    chartWrapper.addEventListener("pointerleave", () => {
+      tooltipEl.style.display = "none";
+      chartWrapper.style.cursor = "default";
+    });
+  }
 
   // Zero-glitch responsive resizing via ResizeObserver & window resize
   window.addEventListener("resize", () => {
@@ -2334,11 +2384,54 @@ function renderChartLevels(data) {
       ? LightweightCharts.LineStyle.Solid
       : (w.grade === "GRADE_2_INTERMEDIATE" || tierNum <= 3 ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Dotted);
 
-    const titleText = w.label || `${w.tier} (${w.price.toFixed(data.digits || 5)})`;
+    const gStr = w.grade === "GRADE_3_MACRO" ? "G3" : (w.grade === "GRADE_2_INTERMEDIATE" ? "G2" : "G1");
+    const shortLabel = `${w.tier} [${gStr}] ${w.price.toFixed(data.digits || 5)}`;
+
+    // Build confluences string for hover tooltip
+    let confStr = "";
+    if (w.confluences && typeof w.confluences === "string" && w.confluences.trim().length > 0) {
+      confStr = w.confluences;
+    } else if (w.sources && Array.isArray(w.sources) && w.sources.length > 0) {
+      confStr = w.sources.slice(0, 4).map(s => typeof s === 'string' ? s : (s.type || s.id || s)).join(" • ");
+    } else if (w.confluences && Array.isArray(w.confluences) && w.confluences.length > 0) {
+      confStr = w.confluences.join(" • ");
+    } else if (w.kinds && Array.isArray(w.kinds) && w.kinds.length > 0) {
+      confStr = w.kinds.slice(0, 4).join(" • ");
+    } else if (typeof w.confluence_types === "string" && w.confluence_types.trim().length > 0) {
+      confStr = w.confluence_types;
+    } else {
+      confStr = "Structural S/R Anchor";
+    }
+
+    let tfsStr = "";
+    if (w.timeframes && typeof w.timeframes === "string" && w.timeframes.trim().length > 0) {
+      tfsStr = w.timeframes;
+    } else if (w.timeframes && Array.isArray(w.timeframes) && w.timeframes.length > 0) {
+      tfsStr = w.timeframes.join("+");
+    } else if (w.tfs && Array.isArray(w.tfs) && w.tfs.length > 0) {
+      tfsStr = w.tfs.join("+");
+    } else {
+      tfsStr = "H1";
+    }
+
+    let srcCount = 1;
+    if (typeof w.num_sources === "number" && w.num_sources > 0) srcCount = w.num_sources;
+    else if (typeof w.confluence === "number" && w.confluence > 0) srcCount = w.confluence;
+    else if (w.sources && Array.isArray(w.sources) && w.sources.length > 0) srcCount = w.sources.length;
+    else if (w.kinds && Array.isArray(w.kinds) && w.kinds.length > 0) srcCount = w.kinds.length;
+
     activeRenderedLevels.push({
       price: w.price,
       color: color,
-      label: titleText
+      label: shortLabel,
+      tier: w.tier,
+      grade_str: `[${gStr}]`,
+      score: (typeof w.score === "number") ? w.score : (w.total_score || 0),
+      confluences: confStr,
+      timeframes: tfsStr,
+      sources_count: srcCount,
+      fullLabel: w.label || shortLabel,
+      wall: w
     });
 
     const line = candleSeries.createPriceLine({
@@ -2346,48 +2439,43 @@ function renderChartLevels(data) {
       color: color,
       lineWidth: lineWidth,
       lineStyle: lineStyle,
-      axisLabelVisible: true,
+      axisLabelVisible: false, // Tidak di-highlight di vertical axis (permintaan user)
       title: "" // Dikosongkan agar sisi kanan (candle live) tidak tertutup
     });
     priceLines.push(line);
   });
 
-  // 1B. W1 Dual-Horizon Descending Slope Ceiling & Lower Highs Markers
+  // 1B. W1 Dual-Horizon Descending Slope Ceiling
   const temporalMarkers = [];
   if (data.w1_slope_ceiling && data.w1_slope_ceiling > 0) {
     const slopeColor = "#f59e0b"; // Warm Amber
     const slopePrice = data.w1_slope_ceiling;
-    const slopeLabel = `[W1 SLOPE] ${slopePrice.toFixed(data.digits || 5)}`;
+    const slopeLabel = `W1 SLOPE ${slopePrice.toFixed(data.digits || 5)}`;
+    const slopeTouches = (data.w1_slope_touches && data.w1_slope_touches > 0) ? data.w1_slope_touches : 1;
 
     activeRenderedLevels.push({
       price: slopePrice,
       color: slopeColor,
-      label: slopeLabel
+      label: slopeLabel,
+      tier: "W1 SLOPE",
+      grade_str: "[MACRO]",
+      score: 0,
+      confluences: `W1 Major Descending Slope Barrier (Anchor Peak Law • ${slopeTouches} touches)`,
+      timeframes: "W1",
+      sources_count: slopeTouches,
+      is_slope: true,
+      fullLabel: `W1 Descending Slope Barrier @ ${slopePrice.toFixed(data.digits || 5)} (${slopeTouches} touches)`
     });
 
     const slopeLine = candleSeries.createPriceLine({
       price: slopePrice,
       color: slopeColor,
-      lineWidth: 1.8,
+      lineWidth: 1.2,
       lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
+      axisLabelVisible: false, // Bersih dari sumbu harga kanan
       title: ""
     });
     priceLines.push(slopeLine);
-
-    if (data.w1_lower_highs && data.w1_lower_highs.length > 0) {
-      data.w1_lower_highs.forEach(lh => {
-        if (lh.time && lh.time > 0) {
-          temporalMarkers.push({
-            time: lh.time,
-            position: "aboveBar",
-            color: "#f59e0b",
-            shape: "arrowDown",
-            text: `[W1 ${lh.label || 'LH'}] @ ${lh.price.toFixed(data.digits || 5)}`
-          });
-        }
-      });
-    }
   }
 
   // 2. M1..M4 Radar Standbys (Dashed Price Lines & Temporal Candle Markers)
@@ -2828,18 +2916,28 @@ function renderSymbolHeader(d) {
 
         const dolTarget = (dol && dol.target_price > 0) ? `${dol.direction === 'SEEKING_BSL' ? 'BSL' : 'SSL'} @ ${dol.target_price.toFixed(cachedSymbolData.digits || 5)}` : "—";
         const drPct = dr.dr_position_pct !== undefined ? `${dr.dr_position_pct}%` : `${Math.round(d.dr_pos || 50)}%`;
-        const drZone = dr.zone_status || d.dr_label || "EQ";
+        
+        let drZoneLabel = dr.zone_status || d.dr_label || "EQ";
+        if (drZoneLabel.includes("SHALLOW")) {
+          drZoneLabel = "INDUCEMENT TRAP";
+        } else if (drZoneLabel === "DEEP_DISCOUNT") {
+          drZoneLabel = "DEEP DISCOUNT (OTE)";
+        } else if (drZoneLabel === "DEEP_PREMIUM") {
+          drZoneLabel = "DEEP PREMIUM (OTE)";
+        }
 
-        let combinedLabel = `OF: ${ofLabel} • DOL: ${dolTarget} • DR: ${drPct} (${drZone})`;
+        let combinedLabel = `OF: ${ofLabel} • DOL: ${dolTarget} • DR: ${drPct} [${drZoneLabel}]`;
         if (geom && geom.name !== "NONE" && geom.status === "CONFIRMED_BREAKOUT") {
           combinedLabel += ` • [${geom.name}]`;
         }
 
-        const fullTitle = `HTF Dealing Range: [${dr.range_low.toFixed(cachedSymbolData.digits || 5)} .. ${dr.range_high.toFixed(cachedSymbolData.digits || 5)}]\n50% EQ: ${dr.equilibrium_50.toFixed(cachedSymbolData.digits || 5)} [${dr.zone_status}]\nDraw on Liquidity: ${dol ? dol.pool_type : '—'} (${dol ? dol.distance_pips : 0}p away)\nOrder Flow: ${oflow.regime || 'CHOPPY'}`;
+        const f382Val = dr.fib_382 ? dr.fib_382.toFixed(cachedSymbolData.digits || 5) : "—";
+        const f618Val = dr.fib_618 ? dr.fib_618.toFixed(cachedSymbolData.digits || 5) : "—";
+        const fullTitle = `HTF Dealing Range: [${dr.range_low.toFixed(cachedSymbolData.digits || 5)} .. ${dr.range_high.toFixed(cachedSymbolData.digits || 5)}]\n61.8% OTE: ${f618Val}\n50% EQ: ${dr.equilibrium_50.toFixed(cachedSymbolData.digits || 5)} [${dr.zone_status}]\n38.2% Inducement: ${f382Val}\nRange Valid: ${dr.is_valid_range ? 'YES (Confirmed)' : 'PROVISIONAL'}\nDraw on Liquidity: ${dol ? dol.pool_type : '—'} (${dol ? dol.distance_pips : 0}p away)\nOrder Flow: ${oflow.regime || 'CHOPPY'}`;
 
         patNameEl.textContent = combinedLabel;
         patNameEl.title = fullTitle;
-        patNameEl.style.color = ofRegime.includes("BULL") ? "#10b981" : (ofRegime.includes("BEAR") ? "#f43f5e" : "#fbbf24");
+        patNameEl.style.color = drZoneLabel.includes("INDUCEMENT") ? "#f59e0b" : (ofRegime.includes("BULL") ? "#10b981" : (ofRegime.includes("BEAR") ? "#f43f5e" : "#fbbf24"));
       } else {
         let pDisplay = envData.pattern_display_label || (geom && geom.name !== "NONE" ? geom.name : (envData.structural_trend || "RANGING"));
         let mDisplay = mGeom && mGeom.name !== "NONE" ? mGeom.name : "";
@@ -3529,12 +3627,20 @@ window.addEventListener("DOMContentLoaded", () => {
       const c = document.getElementById("chip-f1c1");
       if (c) c.classList.remove("active");
     }
-    if (localStorage.getItem("zce_f2c2") === "0") {
+    if (localStorage.getItem("zce_f2c2") === "1") {
+      filterChipF2C2 = true;
+      const c = document.getElementById("chip-f2c2");
+      if (c) c.classList.add("active");
+    } else {
       filterChipF2C2 = false;
       const c = document.getElementById("chip-f2c2");
       if (c) c.classList.remove("active");
     }
-    if (localStorage.getItem("zce_ext") === "0") {
+    if (localStorage.getItem("zce_ext") === "1") {
+      filterChipEXT = true;
+      const c = document.getElementById("chip-ext");
+      if (c) c.classList.add("active");
+    } else {
       filterChipEXT = false;
       const c = document.getElementById("chip-ext");
       if (c) c.classList.remove("active");

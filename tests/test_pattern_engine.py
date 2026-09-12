@@ -409,7 +409,10 @@ def test_inducement_dealing_range_and_order_flow():
     assert dr["range_high"] == 1.1000
     assert dr["range_low"] == 1.0800
     assert np.isclose(dr["equilibrium_50"], 1.0900)
-    assert dr["zone_status"] in ["DISCOUNT", "EQUILIBRIUM", "DEEP_DISCOUNT"]
+    assert np.isclose(dr["fib_382"], 1.08764)
+    assert np.isclose(dr["fib_618"], 1.09236)
+    assert dr["zone_status"] == "SHALLOW_DISCOUNT_INDUCEMENT"
+    assert "is_valid_range" in dr
     assert dol["direction"] in ["SEEKING_BSL", "SEEKING_SSL", "ROTATING_TO_BSL", "ROTATING_TO_SSL"]
     assert oflow["regime"] in ["BULLISH_ORDER_FLOW", "BEARISH_ORDER_FLOW", "CHOPPY", "NEUTRAL_FLOW"]
     assert len(segments) >= 1

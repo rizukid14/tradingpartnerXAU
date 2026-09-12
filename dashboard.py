@@ -213,6 +213,9 @@ def _consolidate_zce_zones(
     # 1. Elected floors & ceilings from ZoneMapResult (Preserve all elected structural walls)
     for fl in getattr(zm, "floors", []) or []:
         p = float(fl.get("price", 0.0))
+        fl_sources = list(fl.get("sources", []))
+        fl_tfs = list(fl.get("tfs_present", []))
+        fl_kinds = list(fl.get("kinds_present", []))
         cands.append({
             "price": p,
             "band_low": float(fl.get("band_low", p)),
@@ -221,11 +224,12 @@ def _consolidate_zce_zones(
             "grade": str(fl.get("grade", "GRADE_1_MICRO")),
             "score": float(fl.get("density_score", fl.get("score_raw", 1.0))),
             "tag": str(fl.get("tag", "FORTRESS")),
-            "tfs": list(fl.get("tfs_present", [])),
-            "kinds": list(fl.get("kinds_present", [])),
+            "tfs": fl_tfs,
+            "kinds": fl_kinds,
+            "sources": fl_sources,
             "is_cold": bool(fl.get("is_cold", False)),
             "is_vacuum": bool(fl.get("is_vacuum", False)),
-            "confluence": int(fl.get("confluence", 0)),
+            "confluence": int(fl.get("confluence", len(fl_sources))),
             "tf_max": str(fl.get("tf_max", "")),
             "horizon_max": int(fl.get("horizon_max", 0)),
             "at_price": bool(fl.get("at_price", False)),
@@ -235,6 +239,9 @@ def _consolidate_zce_zones(
 
     for ce in getattr(zm, "ceilings", []) or []:
         p = float(ce.get("price", 0.0))
+        ce_sources = list(ce.get("sources", []))
+        ce_tfs = list(ce.get("tfs_present", []))
+        ce_kinds = list(ce.get("kinds_present", []))
         cands.append({
             "price": p,
             "band_low": float(ce.get("band_low", p)),
@@ -243,11 +250,12 @@ def _consolidate_zce_zones(
             "grade": str(ce.get("grade", "GRADE_1_MICRO")),
             "score": float(ce.get("density_score", ce.get("score_raw", 1.0))),
             "tag": str(ce.get("tag", "FORTRESS")),
-            "tfs": list(ce.get("tfs_present", [])),
-            "kinds": list(ce.get("kinds_present", [])),
+            "tfs": ce_tfs,
+            "kinds": ce_kinds,
+            "sources": ce_sources,
             "is_cold": bool(ce.get("is_cold", False)),
             "is_vacuum": bool(ce.get("is_vacuum", False)),
-            "confluence": int(ce.get("confluence", 0)),
+            "confluence": int(ce.get("confluence", len(ce_sources))),
             "tf_max": str(ce.get("tf_max", "")),
             "horizon_max": int(ce.get("horizon_max", 0)),
             "at_price": bool(ce.get("at_price", False)),
@@ -290,6 +298,12 @@ def _consolidate_zce_zones(
                 cl_type = "ceiling" if p > cur_price else "floor"
 
         if v_lo <= p <= v_hi:
+            cl_sources = []
+            for m in getattr(cl, "members", []) or []:
+                s_name = f"{m.kind} ({m.tf})" if getattr(m, "tf", None) else str(m.kind)
+                if s_name not in cl_sources:
+                    cl_sources.append(s_name)
+
             cands.append({
                 "price": p,
                 "band_low": b_lo,
@@ -300,9 +314,10 @@ def _consolidate_zce_zones(
                 "tag": str(getattr(cl, "fortress_tag", "FORTRESS")),
                 "tfs": list(getattr(cl, "tfs_present", [])),
                 "kinds": list(getattr(cl, "kinds_present", [])),
+                "sources": cl_sources,
                 "is_cold": bool(getattr(cl, "is_cold", False)),
                 "is_vacuum": bool(getattr(cl, "is_vacuum", False)),
-                "confluence": int(getattr(cl, "confluence", 0)),
+                "confluence": int(getattr(cl, "confluence", len(cl_sources))),
                 "tf_max": (max(getattr(cl, "tfs_present", []), key=lambda t: ZCE_W_TF.get(t, 0.0)) if getattr(cl, "tfs_present", None) else ""),
                 "horizon_max": int(getattr(cl, "horizon_max", 0)),
                 "at_price": False,
@@ -345,12 +360,20 @@ def _consolidate_zce_zones(
 
         all_tfs = sorted(list(set(tf for x in grp for tf in x.get("tfs", []))))
         all_kinds = sorted(list(set(k for x in grp for k in x.get("kinds", []))))
+        all_sources = []
+        for x in grp:
+            for s in x.get("sources", []):
+                if s not in all_sources:
+                    all_sources.append(s)
+
         avg_price = sum(x["price"] for x in grp) / len(grp)
         rep_price = lead["price"] if lead["source"] == "elected" else avg_price
 
         min_lo = min(x["band_low"] for x in grp)
         max_hi = max(x["band_high"] for x in grp)
         max_score = max(x["score"] for x in grp)
+        max_confl = max(x.get("confluence", len(x.get("sources", []))) for x in grp)
+        effective_confl = max(max_confl, len(all_sources))
         top_grade = lead["grade"]
         top_tier = lead["tier"]
         lead_type = lead.get("type") or ("floor" if rep_price < cur_price else "ceiling")
@@ -360,10 +383,11 @@ def _consolidate_zce_zones(
         g_short = "G3" if top_grade == "GRADE_3_MACRO" else ("G2" if top_grade == "GRADE_2_INTERMEDIATE" else "G1")
         tf_str = "+".join(all_tfs[:3]) if all_tfs else "H1"
         kind_str = "+".join(all_kinds[:2]) if all_kinds else "SMC"
-        confl_n = int(lead.get("confluence", 0))
-        confl_tag = f" • {confl_n}src" if confl_n > 0 else ""
+        confl_tag = f" • {effective_confl}src" if effective_confl > 0 else ""
         at_tag = "~" if lead.get("at_price") else ""
         label = f"{at_tag}{top_tier} [{g_short}] {rep_price:.{digits}f} ({max_score:.1f} • {tf_str} • {kind_str}{confl_tag})"
+
+        confluences_desc = " • ".join(all_sources[:4]) if all_sources else (" + ".join(all_kinds[:3]) if all_kinds else "Structural S/R Anchor")
 
         result.append({
             "price": round(float(rep_price), digits),
@@ -375,11 +399,15 @@ def _consolidate_zce_zones(
             "score": round(float(max_score), 2),
             "tfs": all_tfs,
             "kinds": all_kinds,
+            "sources": all_sources,
+            "num_sources": effective_confl,
+            "confluences": confluences_desc,
+            "timeframes": "+".join(all_tfs) if all_tfs else "H1",
             "tag": lead["tag"],
             "label": label,
             "is_cold": any(x["is_cold"] for x in grp),
             "is_vacuum": any(x["is_vacuum"] for x in grp),
-            "confluence": int(lead.get("confluence", 0)),
+            "confluence": effective_confl,
             "tf_max": str(lead.get("tf_max", "")),
             "horizon_max": int(lead.get("horizon_max", 0)),
             "at_price": bool(lead.get("at_price", False)),
@@ -1160,7 +1188,12 @@ class CockpitDataEngine:
                 "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
                 "score": 4.5,
                 "tfs": ["H1", "D1"],
-                "kinds": ["MSE_BASE"],
+                "kinds": ["MSE_BASE", "MACRO_SWING"],
+                "sources": ["MSE Structural SBR/RBS (D1)", "Macro Swing Low (H1)"],
+                "confluences": "MSE Structural SBR/RBS (D1) • Macro Swing Low (H1)",
+                "timeframes": "H1+D1",
+                "confluence": 2,
+                "num_sources": 2,
                 "tag": "BASELINE_FLOOR"
             })
         if f2 and float(f2) < mid:
@@ -1175,6 +1208,11 @@ class CockpitDataEngine:
                 "score": 3.8,
                 "tfs": ["D1"],
                 "kinds": ["MSE_BASE"],
+                "sources": ["MSE Structural SBR/RBS (D1)"],
+                "confluences": "MSE Structural SBR/RBS (D1)",
+                "timeframes": "D1",
+                "confluence": 1,
+                "num_sources": 1,
                 "tag": "BASELINE_DEEP_FLOOR"
             })
 
@@ -1200,12 +1238,36 @@ class CockpitDataEngine:
                     matched = True
                     mf["band_low"] = min(mf.get("band_low", mf["price"]), fl.get("band_low", fl["price"]))
                     mf["band_high"] = max(mf.get("band_high", mf["price"]), fl.get("band_high", fl["price"]))
+                    # Accumulate confluences & sources
+                    if fl.get("sources"):
+                        mf_src = mf.setdefault("sources", [])
+                        for s in fl["sources"]:
+                            if s not in mf_src:
+                                mf_src.append(s)
+                    if fl.get("tfs"):
+                        mf_tfs = mf.setdefault("tfs", [])
+                        for t in fl["tfs"]:
+                            if t not in mf_tfs:
+                                mf_tfs.append(t)
+                    if fl.get("kinds"):
+                        mf_kinds = mf.setdefault("kinds", [])
+                        for k in fl["kinds"]:
+                            if k not in mf_kinds:
+                                mf_kinds.append(k)
+
+                    eff_confl = max(mf.get("confluence", 0), fl.get("confluence", 0), len(mf.get("sources", [])))
+                    mf["confluence"] = eff_confl
+                    mf["num_sources"] = eff_confl
+                    if mf.get("sources"):
+                        mf["confluences"] = " • ".join(mf["sources"][:4])
+                    if mf.get("tfs"):
+                        mf["timeframes"] = "+".join(sorted(mf["tfs"]))
+
                     if fl.get("score", 0.0) > mf.get("score", 0.0) or (fl.get("grade") == "GRADE_3_MACRO" and mf.get("grade") != "GRADE_3_MACRO"):
                         mf["price"] = fl["price"]
                         mf["label"] = fl.get("label", mf.get("label"))
                         mf["grade"] = fl.get("grade", mf.get("grade"))
                         mf["score"] = max(mf.get("score", 0.0), fl.get("score", 0.0))
-                        mf["confluence"] = int(fl.get("confluence", mf.get("confluence", 0)))
                         mf["tf_max"] = fl.get("tf_max", mf.get("tf_max", ""))
                         mf["horizon_max"] = int(fl.get("horizon_max", mf.get("horizon_max", 0)))
                         mf["at_price"] = bool(fl.get("at_price", mf.get("at_price", False)))
@@ -1243,7 +1305,12 @@ class CockpitDataEngine:
                 "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
                 "score": 4.5,
                 "tfs": ["H1", "D1"],
-                "kinds": ["MSE_BASE"],
+                "kinds": ["MSE_BASE", "MACRO_SWING"],
+                "sources": ["MSE Structural SBR/RBS (D1)", "Macro Swing High (H1)"],
+                "confluences": "MSE Structural SBR/RBS (D1) • Macro Swing High (H1)",
+                "timeframes": "H1+D1",
+                "confluence": 2,
+                "num_sources": 2,
                 "tag": "BASELINE_CEIL"
             })
         if c2 and float(c2) > mid:
@@ -1258,6 +1325,11 @@ class CockpitDataEngine:
                 "score": 3.8,
                 "tfs": ["D1"],
                 "kinds": ["MSE_BASE"],
+                "sources": ["MSE Structural SBR/RBS (D1)"],
+                "confluences": "MSE Structural SBR/RBS (D1)",
+                "timeframes": "D1",
+                "confluence": 1,
+                "num_sources": 1,
                 "tag": "BASELINE_DEEP_CEIL"
             })
 
@@ -1271,12 +1343,36 @@ class CockpitDataEngine:
                     matched = True
                     mc["band_low"] = min(mc.get("band_low", mc["price"]), ce.get("band_low", ce["price"]))
                     mc["band_high"] = max(mc.get("band_high", mc["price"]), ce.get("band_high", ce["price"]))
+                    # Accumulate confluences & sources
+                    if ce.get("sources"):
+                        mc_src = mc.setdefault("sources", [])
+                        for s in ce["sources"]:
+                            if s not in mc_src:
+                                mc_src.append(s)
+                    if ce.get("tfs"):
+                        mc_tfs = mc.setdefault("tfs", [])
+                        for t in ce["tfs"]:
+                            if t not in mc_tfs:
+                                mc_tfs.append(t)
+                    if ce.get("kinds"):
+                        mc_kinds = mc.setdefault("kinds", [])
+                        for k in ce["kinds"]:
+                            if k not in mc_kinds:
+                                mc_kinds.append(k)
+
+                    eff_confl = max(mc.get("confluence", 0), ce.get("confluence", 0), len(mc.get("sources", [])))
+                    mc["confluence"] = eff_confl
+                    mc["num_sources"] = eff_confl
+                    if mc.get("sources"):
+                        mc["confluences"] = " • ".join(mc["sources"][:4])
+                    if mc.get("tfs"):
+                        mc["timeframes"] = "+".join(sorted(mc["tfs"]))
+
                     if ce.get("score", 0.0) > mc.get("score", 0.0) or (ce.get("grade") == "GRADE_3_MACRO" and mc.get("grade") != "GRADE_3_MACRO"):
                         mc["price"] = ce["price"]
                         mc["label"] = ce.get("label", mc.get("label"))
                         mc["grade"] = ce.get("grade", mc.get("grade"))
                         mc["score"] = max(mc.get("score", 0.0), ce.get("score", 0.0))
-                        mc["confluence"] = int(ce.get("confluence", mc.get("confluence", 0)))
                         mc["tf_max"] = ce.get("tf_max", mc.get("tf_max", ""))
                         mc["horizon_max"] = int(ce.get("horizon_max", mc.get("horizon_max", 0)))
                         mc["at_price"] = bool(ce.get("at_price", mc.get("at_price", False)))

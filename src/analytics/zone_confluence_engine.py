@@ -764,6 +764,17 @@ class ZoneConfluenceEngine:
 
             layers = []
             for price, c in chosen:
+                # Gather unique human-readable source primitives
+                sources_list = []
+                for p in getattr(c, "members", []) or []:
+                    src_str = f"{p.kind} ({p.tf})" if getattr(p, "tf", None) else str(p.kind)
+                    if src_str not in sources_list:
+                        sources_list.append(src_str)
+                if not sources_list:
+                    for k in getattr(c, "kinds_present", []) or []:
+                        tf_lbl = c.tfs_present[0] if getattr(c, "tfs_present", None) else "H1"
+                        sources_list.append(f"{k} ({tf_lbl})")
+
                 layers.append({
                     "tier": "",
                     "index": len(layers) + 1,
@@ -777,9 +788,12 @@ class ZoneConfluenceEngine:
                     "is_cold": c.is_cold,
                     "is_vacuum": c.is_vacuum,
                     "score_raw": c.score_raw,
-                    "confluence": int(getattr(c, "confluence", 0)),
+                    "confluence": int(getattr(c, "confluence", len(sources_list))),
                     "tf_max": (max(c.tfs_present, key=lambda t: self.w_tf.get(t, 0.0)) if c.tfs_present else ""),
                     "horizon_max": int(c.horizon_max),
+                    "tfs_present": list(getattr(c, "tfs_present", [])),
+                    "kinds_present": list(getattr(c, "kinds_present", [])),
+                    "sources": sources_list,
                 })
             return layers
 

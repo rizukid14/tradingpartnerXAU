@@ -485,17 +485,16 @@ class MacroStrategicEngine:
         if atr_w1 <= 0:
             atr_w1 = float((hi - lo)[-14:].mean()) if n >= 14 else 0.001
 
-        # 1. Secular Horizon (up to 156 bars)
-        sec_n = min(n, int(getattr(config, "W1_SECULAR_LOOKBACK_BARS", 156)))
+        # 1. Secular Horizon (up to 450 bars ~ 8.6 years)
+        sec_n = min(n, int(getattr(config, "W1_SECULAR_LOOKBACK_BARS", 450)))
         sec_lo = float(np.min(lo[-sec_n:]))
         sec_hi = float(np.max(hi[-sec_n:]))
         sec_rng = max(sec_hi - sec_lo, 1e-5)
         sec_pos = (curr_mid - sec_lo) / sec_rng
         secular_regime = "BULLISH_EXPANSION" if sec_pos >= 0.60 else ("BEARISH_CONTRACTION" if sec_pos <= 0.40 else "SECULAR_RANGE")
 
-        # 2. Intermediate Horizon (Anchor Peak Law & Outer Tangent Envelope)
-        inter_n = min(n, int(getattr(config, "W1_INTERMEDIATE_LOOKBACK_BARS", 52)))
-        start_idx = n - inter_n
+        # 2. Intermediate & Secular Slope Horizon (Anchor Peak Law & Outer Tangent Envelope)
+        start_idx = n - sec_n
         slice_hi = hi[start_idx:n]
         anchor_idx = start_idx + int(np.argmax(slice_hi))
         x0, y0 = anchor_idx, float(hi[anchor_idx])
@@ -505,7 +504,7 @@ class MacroStrategicEngine:
         intermediate_regime = "NEUTRAL_OSCILLATION"
 
         # Validasi: Anchor High wajib berada >= 8 bar yang lalu
-        min_touches = int(getattr(config, "W1_SLOPE_MIN_TOUCHES", 3))
+        min_touches = int(getattr(config, "W1_SLOPE_MIN_TOUCHES", 2))
         if (n - 1 - anchor_idx) >= 8:
             valid_lines = []
             for k in range(x0 + 4, n):
@@ -518,13 +517,12 @@ class MacroStrategicEngine:
                 touching_bars = []
                 for i in range(x0 + 1, n):
                     line_val = y0 + m * (i - x0)
+                    # SMC Breakout Rule: Breach requires candle physical CLOSE above slope
                     if cl[i] > line_val + (0.15 * atr_w1):
                         breached = True
                         break
-                    if hi[i] > line_val + (0.35 * atr_w1):
-                        breached = True
-                        break
-                    if abs(hi[i] - line_val) <= (0.30 * atr_w1):
+                    # Touch or rejection wick proximity (within 0.45 ATR)
+                    if abs(hi[i] - line_val) <= (0.45 * atr_w1):
                         touches += 1
                         touching_bars.append({"idx": int(i), "price": round(float(hi[i]), digits)})
                         
@@ -533,7 +531,11 @@ class MacroStrategicEngine:
                     valid_lines.append((m, proj_live, touches, touching_bars, k))
 
             if valid_lines:
-                best_line = min(valid_lines, key=lambda x: abs(x[1] - cl[-1]))
+                above_lines = [l for l in valid_lines if l[1] >= curr_mid]
+                if above_lines:
+                    best_line = min(above_lines, key=lambda x: (x[1] - curr_mid))
+                else:
+                    best_line = min(valid_lines, key=lambda x: abs(x[1] - cl[-1]))
                 slope_ceiling = round(float(best_line[1]), digits)
                 intermediate_regime = "BEARISH_LOWER_HIGHS_COMPRESSION"
                 lower_highs = [{"idx": int(x0), "price": round(y0, digits), "label": "P0_ANCHOR"}] + [
@@ -588,9 +590,14 @@ class MacroStrategicEngine:
         curr_mid = (curr_bid + curr_ask) / 2.0 if (curr_bid > 0 and curr_ask > 0) else curr_bid
         spread_pts = int(round(abs(curr_ask - curr_bid) / pt)) if (curr_ask > 0 and curr_bid > 0 and pt > 0) else 10
 
-        # 1. Fetch 6 Timeframes Native from MT5
-        rates_mn1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_MN1, 0, 50)
-        rates_w1  = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_W1, 0, 100)
+        # 1. Fetch 6 Timeframes Native from MT5 & MacroDataLoader (W1 & MN1 Deep History)
+        from src.analytics.macro_data_loader import MacroDataLoader
+        rates_mn1 = MacroDataLoader.get_deep_macro_rates(symbol, mt5.TIMEFRAME_MN1, mt5_connector=mt5_connector)
+        rates_w1  = MacroDataLoader.get_deep_macro_rates(symbol, mt5.TIMEFRAME_W1, mt5_connector=mt5_connector)
+        if rates_mn1 is None or len(rates_mn1) == 0:
+            rates_mn1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_MN1, 0, 50)
+        if rates_w1 is None or len(rates_w1) == 0:
+            rates_w1  = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_W1, 0, 100)
         rates_d1  = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 350)
         rates_h4  = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H4, 0, 400)
         rates_h1  = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 250)

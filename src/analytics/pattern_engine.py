@@ -987,14 +987,40 @@ def compute_inducement_dealing_range(
 
     range_span = max(raw_high - raw_low, 1e-6)
     eq_50 = round((raw_high + raw_low) / 2.0, 5)
+    fib_382 = round(raw_low + 0.382 * range_span, 5)
+    fib_618 = round(raw_low + 0.618 * range_span, 5)
     dr_pos = float(np.clip((last_close - raw_low) / range_span, 0.0, 1.0))
     dr_pos_pct = round(dr_pos * 100.0, 1)
 
-    zone_status = "PREMIUM" if dr_pos > 0.50 else "DISCOUNT"
-    if dr_pos >= 0.80:
-        zone_status = "DEEP_PREMIUM"
-    elif dr_pos <= 0.20:
+    # 5-Tier SMC Zone Classification (ComLucro SMC Standard)
+    if dr_pos <= 0.382:
         zone_status = "DEEP_DISCOUNT"
+    elif dr_pos < 0.500:
+        zone_status = "SHALLOW_DISCOUNT_INDUCEMENT"
+    elif np.isclose(dr_pos, 0.500, atol=0.01):
+        zone_status = "EQUILIBRIUM"
+    elif dr_pos < 0.618:
+        zone_status = "SHALLOW_PREMIUM_INDUCEMENT"
+    else:
+        zone_status = "DEEP_PREMIUM"
+
+    # Verifikasi Validitas Range Sesuai Aturan Video:
+    # 1. Impulse leg harus memiliki retracement minimal 50% (Equilibrium test)
+    # 2. Batas eksternal dikonfirmasi oleh sweep internal inducement
+    retraced_to_50 = False
+    if len(lows) > 0 and len(highs) > 0:
+        if raw_max_idx > raw_min_idx and raw_max_idx < len(lows):
+            # Bullish expansion leg: cek apakah setelah puncak ada pullback mencapai <= 50% EQ
+            if np.any(lows[raw_max_idx:] <= eq_50):
+                retraced_to_50 = True
+        elif raw_min_idx > raw_max_idx and raw_min_idx < len(highs):
+            # Bearish expansion leg: cek apakah setelah lembah ada pullback mencapai >= 50% EQ
+            if np.any(highs[raw_min_idx:] >= eq_50):
+                retraced_to_50 = True
+        else:
+            retraced_to_50 = True
+
+    is_valid_range = bool((high_confirmed or low_confirmed) and retraced_to_50)
 
     # 3. Draw on Liquidity (DOL)
     if order_flow_regime == "BEARISH_ORDER_FLOW":
@@ -1023,11 +1049,14 @@ def compute_inducement_dealing_range(
         "range_high": round(raw_high, 5),
         "range_low": round(raw_low, 5),
         "equilibrium_50": eq_50,
+        "fib_382": fib_382,
+        "fib_618": fib_618,
         "range_span_pips": round(range_span / max(pip_size, 1e-6), 1),
         "dr_position_pct": dr_pos_pct,
         "zone_status": zone_status,
         "high_confirmed": high_confirmed,
         "low_confirmed": low_confirmed,
+        "is_valid_range": is_valid_range,
         "high_time": time_vals[raw_max_idx] if raw_max_idx < len(time_vals) else (time_vals[-1] if time_vals else 0),
         "low_time": time_vals[raw_min_idx] if raw_min_idx < len(time_vals) else (time_vals[-1] if time_vals else 0),
     }
