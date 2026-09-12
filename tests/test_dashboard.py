@@ -235,6 +235,39 @@ class TestDashboardCockpit(unittest.TestCase):
         self.assertEqual(elected["dir_int"], -1)
         self.assertEqual(elected["dir"], "BEAR")
 
+    def test_detect_historical_triggers(self):
+        """detect_historical_triggers must parse candlestick history into canonical M1..M4 markers."""
+        import pandas as pd
+        import numpy as np
+
+        # 1. Edge case: None or too short
+        self.assertEqual(dashboard.detect_historical_triggers(None, "EURUSD", 0.0001, 0.00001), [])
+        short_df = pd.DataFrame([{"time": 1000 + i, "open": 1.1, "high": 1.11, "low": 1.09, "close": 1.1} for i in range(10)])
+        self.assertEqual(dashboard.detect_historical_triggers(short_df, "EURUSD", 0.0001, 0.00001), [])
+
+        # 2. Synthetic series with 50 bars
+        t0 = 1700000000
+        bars = []
+        base_p = 1.1500
+        for i in range(50):
+            o = base_p + np.sin(i * 0.2) * 0.0050
+            h = o + 0.0020
+            l = o - 0.0020
+            c = o + 0.0005
+            bars.append({"time": t0 + i * 3600, "open": o, "high": h, "low": l, "close": c})
+        df = pd.DataFrame(bars)
+
+        markers = dashboard.detect_historical_triggers(df, "EURUSD", 0.0001, 0.00001, lookback_bars=50)
+        self.assertIsInstance(markers, list)
+        for m in markers:
+            self.assertIn("type", m)
+            self.assertIn("direction", m)
+            self.assertIn("price", m)
+            self.assertIn("time", m)
+            self.assertIn("dr_pos_pct", m)
+            self.assertIn("zone", m)
+            self.assertIn("reason", m)
+
 
 if __name__ == "__main__":
     unittest.main()

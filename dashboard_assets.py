@@ -2167,6 +2167,89 @@ function renderVerticalShading() {
 
     shadingCtx.restore();
   }
+
+  // 6. Render Historical M1..M4 Strategy Audit Markers (Dealing Range Intersection)
+  if (filterShowRadar && cachedSymbolData && cachedSymbolData.strategy_audit_markers && candleSeries && chart) {
+    const timeScale = chart.timeScale();
+    const markers = cachedSymbolData.strategy_audit_markers;
+    shadingCtx.save();
+    shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+    shadingCtx.textBaseline = "middle";
+
+    markers.forEach(m => {
+      const x = timeScale.timeToCoordinate(m.time);
+      if (x === null || x < -30 || x > width + 30) {
+        m.box = null;
+        return;
+      }
+
+      const y = candleSeries.priceToCoordinate(m.price);
+      if (y === null) {
+        m.box = null;
+        return;
+      }
+
+      const isBuy = (m.direction === "BUY");
+      let baseColor = "#38bdf8";
+      let shortTag = m.label || m.type || "M";
+
+      if (m.type === "M1_SWEEP") {
+        baseColor = isBuy ? "#10b981" : "#f43f5e";
+        shortTag = isBuy ? "▲ M1 SWEEP" : "▼ M1 SWEEP";
+      } else if (m.type === "M1B_INDUCEMENT") {
+        baseColor = "#f59e0b";
+        shortTag = isBuy ? "▲ M1B INDUCE" : "▼ M1B INDUCE";
+      } else if (m.type === "M2_PULLBACK") {
+        baseColor = isBuy ? "#06b6d4" : "#818cf8";
+        shortTag = isBuy ? "▲ M2 PULLBACK" : "▼ M2 PULLBACK";
+      } else if (m.type === "M3_RETEST") {
+        baseColor = isBuy ? "#a855f7" : "#c084fc";
+        shortTag = isBuy ? "▲ M3 RETEST" : "▼ M3 RETEST";
+      } else if (m.type === "M4_EXPANSION") {
+        baseColor = "#fbbf24";
+        shortTag = isBuy ? "🚀 M4 EXPAND" : "💥 M4 BREAK";
+      }
+
+      const txt = shortTag;
+      const metrics = shadingCtx.measureText(txt);
+      const pillW = metrics.width + 12;
+      const pillH = 15;
+      const pillX = x - pillW / 2;
+      const pillY = isBuy ? (y + 10) : (y - pillH - 10);
+
+      // Save bounding box for mouse hover tooltip
+      m.box = { x: pillX, y: pillY, w: pillW, h: pillH, color: baseColor };
+
+      // Micro dashed line connecting badge to candle extreme
+      shadingCtx.beginPath();
+      shadingCtx.strokeStyle = baseColor;
+      shadingCtx.lineWidth = 1;
+      shadingCtx.setLineDash([2, 2]);
+      shadingCtx.moveTo(x, y);
+      shadingCtx.lineTo(x, isBuy ? pillY : (pillY + pillH));
+      shadingCtx.stroke();
+      shadingCtx.setLineDash([]);
+
+      // Draw Pill background
+      shadingCtx.fillStyle = "rgba(11, 14, 20, 0.94)";
+      shadingCtx.fillRect(pillX, pillY, pillW, pillH);
+
+      // Draw left accent border indicator
+      shadingCtx.fillStyle = baseColor;
+      shadingCtx.fillRect(pillX, pillY, 2.5, pillH);
+
+      // Outline pill border
+      shadingCtx.strokeStyle = baseColor;
+      shadingCtx.lineWidth = 1;
+      shadingCtx.strokeRect(pillX, pillY, pillW, pillH);
+
+      // Text label
+      shadingCtx.fillStyle = baseColor;
+      shadingCtx.fillText(txt, pillX + 6, pillY + pillH / 2);
+    });
+
+    shadingCtx.restore();
+  }
 }
 
 // Initialize Lightweight Chart
@@ -2249,13 +2332,48 @@ function initChart() {
 
   if (chartWrapper && tooltipEl) {
     chartWrapper.addEventListener("pointermove", (e) => {
+      const rect = chartWrapper.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      // 1. Check Strategy Audit Marker hover (M1..M4 historical triggers)
+      let hoveredMarker = null;
+      if (filterShowRadar && cachedSymbolData && cachedSymbolData.strategy_audit_markers) {
+        for (let j = 0; j < cachedSymbolData.strategy_audit_markers.length; j++) {
+          const mk = cachedSymbolData.strategy_audit_markers[j];
+          if (mk.box && mx >= mk.box.x && mx <= mk.box.x + mk.box.w && my >= mk.box.y && my <= mk.box.y + mk.box.h) {
+            hoveredMarker = mk;
+            break;
+          }
+        }
+      }
+
+      if (hoveredMarker) {
+        chartWrapper.style.cursor = "pointer";
+        const isB = (hoveredMarker.direction === "BUY");
+        const dirBadge = isB ? '<span style="color:#10b981;font-weight:bold;">BUY</span>' : '<span style="color:#f43f5e;font-weight:bold;">SELL</span>';
+        const dDigits = cachedSymbolData ? (cachedSymbolData.digits || 5) : 5;
+        tooltipEl.innerHTML = `
+          <div class="zce-tt-header">
+            <span class="zce-tt-tier" style="color:${hoveredMarker.box.color};">${hoveredMarker.label} [${dirBadge}] @ ${hoveredMarker.price.toFixed(dDigits)}</span>
+            <span class="zce-tt-score">DR ${hoveredMarker.dr_pos_pct}%</span>
+          </div>
+          <div class="zce-tt-confluences">${hoveredMarker.reason}</div>
+          <div class="zce-tt-meta">
+            <span>Zone: <b style="color:${hoveredMarker.box.color};">${hoveredMarker.zone}</b></span>
+            <span>${hoveredMarker.bar_age} bars ago</span>
+          </div>
+        `;
+        tooltipEl.style.display = "block";
+        tooltipEl.style.left = `${Math.min(rect.width - 280, Math.max(10, hoveredMarker.box.x + hoveredMarker.box.w + 10))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 110, hoveredMarker.box.y - 10))}px`;
+        return;
+      }
+
       if (!activeRenderedLevels || activeRenderedLevels.length === 0) {
         tooltipEl.style.display = "none";
         return;
       }
-      const rect = chartWrapper.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
 
       let hoveredLevel = null;
       for (let i = 0; i < activeRenderedLevels.length; i++) {

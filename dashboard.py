@@ -65,6 +65,7 @@ from src.analytics.basket_sync_engine import (
 from src.analytics.macro_strategic_engine import evaluate_session_confluence_timing
 from src.analytics.zone_confluence_engine import ZCE_W_TF
 from src.indicators.lux_smc import LuxSMCAnalyzer
+from src.analytics.pattern_engine import MacroEnvelopeEngine
 from src.analytics.shadow_report import render_shadow_report_html, generate_and_save_shadow_report
 from dashboard_assets import TEMPLATE
 
@@ -600,6 +601,257 @@ def _elect_primary_standby(
     return elected
 
 
+def detect_historical_triggers(
+    df: Any,
+    symbol: str,
+    pip_size: float,
+    point: float,
+    lookback_bars: int = 200
+) -> List[Dict[str, Any]]:
+    """
+    Evaluates historical candlesticks to identify canonical M1, M1B, M2, M3, M4 trigger bars
+    relative to the Active Dealing Range and EMA/Structure corridors.
+    Returns list of trigger markers with bar index, timestamp, price, strategy, direction, and DR position.
+    """
+    if df is None or len(df) < 20:
+        return []
+
+    try:
+        import numpy as np
+        import pandas as pd
+
+        # Analyze using MacroEnvelopeEngine
+        engine = MacroEnvelopeEngine()
+        eval_df = df.tail(lookback_bars).copy().reset_index(drop=True)
+        res = engine.analyze(eval_df, symbol=symbol, point_size=point, pip_size=pip_size)
+        dr = res.visual_payload.get("dealing_range", {})
+        ss = res.visual_payload.get("swing_structure", {})
+
+        r_high = float(dr.get("range_high", 0.0) or 0.0)
+        r_low = float(dr.get("range_low", 0.0) or 0.0)
+        span = max(r_high - r_low, 1e-6)
+        if r_high <= 0 or r_low <= 0 or span <= 1e-5:
+            return []
+
+        peaks = ss.get("peaks", [])
+        troughs = ss.get("troughs", [])
+
+        highs = eval_df["high"].values
+        lows = eval_df["low"].values
+        opens = eval_df["open"].values
+        closes = eval_df["close"].values
+        times = eval_df["time"].values
+        n = len(closes)
+
+        # EMA20, EMA50, ATR
+        eval_df["ema20"] = eval_df["close"].ewm(span=20, adjust=False).mean()
+        eval_df["ema50"] = eval_df["close"].ewm(span=50, adjust=False).mean()
+        ema20 = eval_df["ema20"].values
+        ema50 = eval_df["ema50"].values
+
+        tr = np.maximum(highs[1:] - lows[1:], np.maximum(abs(highs[1:] - closes[:-1]), abs(lows[1:] - closes[:-1])))
+        tr = np.insert(tr, 0, tr[0] if len(tr) > 0 else 0.002)
+        atr = pd.Series(tr).rolling(14, min_periods=1).mean().values
+
+        triggers: List[Dict[str, Any]] = []
+
+        for i in range(15, n):
+            c_open = float(opens[i])
+            c_high = float(highs[i])
+            c_low = float(lows[i])
+            c_close = float(closes[i])
+            c_time = int(times[i])
+            c_atr = max(float(atr[i]), 1e-6)
+            c_rng = max(c_high - c_low, 1e-6)
+
+            # Bar Dealing Range Position
+            dr_pos = (c_close - r_low) / span
+            dr_pos_pct = round(dr_pos * 100.0, 1)
+
+            upper_wick = (c_high - max(c_open, c_close)) / c_rng
+            lower_wick = (min(c_open, c_close) - c_low) / c_rng
+            body_ratio = abs(c_close - c_open) / c_rng
+
+            # Check prior peaks & troughs in preceding 25 bars
+            prior_pks = [p["price"] for p in peaks if p.get("index", 0) < i and (i - p.get("index", 0)) <= 25]
+            prior_trs = [t["price"] for t in troughs if t.get("index", 0) < i and (i - t.get("index", 0)) <= 25]
+
+            bar_trigger = None
+
+            # 1. M1: UNIVERSAL LIQUIDITY SWEEP (Reversal at Range Extremes)
+            # M1 SELL: Swept recent peak, upper wick >= 30%, in Deep Premium (>= 61.8%)
+            if dr_pos >= 0.618 and upper_wick >= 0.30 and prior_pks:
+                swept_pk = max(prior_pks)
+                if c_high >= swept_pk and c_close < c_high:
+                    bar_trigger = {
+                        "bar_index": i,
+                        "bar_age": n - 1 - i,
+                        "time": c_time,
+                        "price": c_high,
+                        "type": "M1_SWEEP",
+                        "direction": "SELL",
+                        "dr_pos_pct": dr_pos_pct,
+                        "zone": "DEEP_PREMIUM",
+                        "label": "M1 SWEEP",
+                        "reason": f"Swept High {swept_pk:.{5 if point < 0.01 else 2}f} with {upper_wick*100:.0f}% Upper Wick at DR {dr_pos_pct}%"
+                    }
+            # M1 BUY: Swept recent trough, lower wick >= 30%, in Deep Discount (<= 38.2%)
+            elif dr_pos <= 0.382 and lower_wick >= 0.30 and prior_trs:
+                swept_tr = min(prior_trs)
+                if c_low <= swept_tr and c_close > c_low:
+                    bar_trigger = {
+                        "bar_index": i,
+                        "bar_age": n - 1 - i,
+                        "time": c_time,
+                        "price": c_low,
+                        "type": "M1_SWEEP",
+                        "direction": "BUY",
+                        "dr_pos_pct": dr_pos_pct,
+                        "zone": "DEEP_DISCOUNT",
+                        "label": "M1 SWEEP",
+                        "reason": f"Swept Low {swept_tr:.{5 if point < 0.01 else 2}f} with {lower_wick*100:.0f}% Lower Wick at DR {dr_pos_pct}%"
+                    }
+
+            # 2. M1B: INTERNAL INDUCEMENT SWEEP (Mid-Range Trap)
+            if not bar_trigger and 0.382 < dr_pos < 0.618 and (upper_wick >= 0.35 or lower_wick >= 0.35):
+                if upper_wick >= 0.35 and prior_pks and c_high >= max(prior_pks):
+                    bar_trigger = {
+                        "bar_index": i,
+                        "bar_age": n - 1 - i,
+                        "time": c_time,
+                        "price": c_high,
+                        "type": "M1B_INDUCEMENT",
+                        "direction": "SELL",
+                        "dr_pos_pct": dr_pos_pct,
+                        "zone": "SHALLOW_PREMIUM",
+                        "label": "M1B INDUCE",
+                        "reason": f"Internal Inducement Sweep High with {upper_wick*100:.0f}% Wick at DR {dr_pos_pct}%"
+                    }
+                elif lower_wick >= 0.35 and prior_trs and c_low <= min(prior_trs):
+                    bar_trigger = {
+                        "bar_index": i,
+                        "bar_age": n - 1 - i,
+                        "time": c_time,
+                        "price": c_low,
+                        "type": "M1B_INDUCEMENT",
+                        "direction": "BUY",
+                        "dr_pos_pct": dr_pos_pct,
+                        "zone": "SHALLOW_DISCOUNT",
+                        "label": "M1B INDUCE",
+                        "reason": f"Internal Inducement Sweep Low with {lower_wick*100:.0f}% Wick at DR {dr_pos_pct}%"
+                    }
+
+            # 3. M2: TREND-ALIGNED PULLBACK (EMA Corridor Retest)
+            if not bar_trigger:
+                if dr_pos <= 0.500 and ema20[i] > ema50[i]:
+                    ema_hi = max(ema20[i], ema50[i])
+                    ema_lo = min(ema20[i], ema50[i])
+                    if (c_low <= ema_hi + 0.15 * c_atr) and (c_close >= ema_lo - 0.20 * c_atr) and (lower_wick >= 0.20 or c_close > c_open):
+                        bar_trigger = {
+                            "bar_index": i,
+                            "bar_age": n - 1 - i,
+                            "time": c_time,
+                            "price": c_low,
+                            "type": "M2_PULLBACK",
+                            "direction": "BUY",
+                            "dr_pos_pct": dr_pos_pct,
+                            "zone": "DISCOUNT_CORRIDOR",
+                            "label": "M2 PULLBACK",
+                            "reason": f"Pullback Touch to EMA20/50 in Discount ({dr_pos_pct}%), Bullish Rebound"
+                        }
+                elif dr_pos >= 0.500 and ema20[i] < ema50[i]:
+                    ema_hi = max(ema20[i], ema50[i])
+                    ema_lo = min(ema20[i], ema50[i])
+                    if (c_high >= ema_lo - 0.15 * c_atr) and (c_close <= ema_hi + 0.20 * c_atr) and (upper_wick >= 0.20 or c_close < c_open):
+                        bar_trigger = {
+                            "bar_index": i,
+                            "bar_age": n - 1 - i,
+                            "time": c_time,
+                            "price": c_high,
+                            "type": "M2_PULLBACK",
+                            "direction": "SELL",
+                            "dr_pos_pct": dr_pos_pct,
+                            "zone": "PREMIUM_CORRIDOR",
+                            "label": "M2 PULLBACK",
+                            "reason": f"Pullback Rally to EMA20/50 in Premium ({dr_pos_pct}%), Bearish Rejection"
+                        }
+
+            # 4. M3: BREAKOUT RETEST (Horizontal Key Level Retest)
+            if not bar_trigger:
+                for pk in prior_pks:
+                    if abs(c_low - pk) <= 0.25 * c_atr and c_close > pk and (0.35 <= dr_pos <= 0.80):
+                        bar_trigger = {
+                            "bar_index": i,
+                            "bar_age": n - 1 - i,
+                            "time": c_time,
+                            "price": pk,
+                            "type": "M3_RETEST",
+                            "direction": "BUY",
+                            "dr_pos_pct": dr_pos_pct,
+                            "zone": "RBS_RETEST",
+                            "label": "M3 RETEST",
+                            "reason": f"Retest of Broken Resistance {pk:.{5 if point < 0.01 else 2}f} (now RBS floor) at DR {dr_pos_pct}%"
+                        }
+                        break
+
+                if not bar_trigger:
+                    for tr_p in prior_trs:
+                        if abs(c_high - tr_p) <= 0.25 * c_atr and c_close < tr_p and (0.20 <= dr_pos <= 0.65):
+                            bar_trigger = {
+                                "bar_index": i,
+                                "bar_age": n - 1 - i,
+                                "time": c_time,
+                                "price": tr_p,
+                                "type": "M3_RETEST",
+                                "direction": "SELL",
+                                "dr_pos_pct": dr_pos_pct,
+                                "zone": "SBR_RETEST",
+                                "label": "M3 RETEST",
+                                "reason": f"Retest of Broken Support {tr_p:.{5 if point < 0.01 else 2}f} (now SBR ceiling) at DR {dr_pos_pct}%"
+                            }
+                            break
+
+            # 5. M4: MOMENTUM EXPANSION SUPER-SHOCK
+            if not bar_trigger and c_rng >= 1.4 * c_atr and body_ratio >= 0.65:
+                if c_close > r_high and c_close > c_open:
+                    bar_trigger = {
+                        "bar_index": i,
+                        "bar_age": n - 1 - i,
+                        "time": c_time,
+                        "price": c_close,
+                        "type": "M4_EXPANSION",
+                        "direction": "BUY",
+                        "dr_pos_pct": dr_pos_pct,
+                        "zone": "RANGE_BREAKOUT",
+                        "label": "M4 EXPAND",
+                        "reason": f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) above Range High {r_high:.{5 if point < 0.01 else 2}f}"
+                    }
+                elif c_close < r_low and c_close < c_open:
+                    bar_trigger = {
+                        "bar_index": i,
+                        "bar_age": n - 1 - i,
+                        "time": c_time,
+                        "price": c_close,
+                        "type": "M4_EXPANSION",
+                        "direction": "SELL",
+                        "dr_pos_pct": dr_pos_pct,
+                        "zone": "RANGE_BREAKDOWN",
+                        "label": "M4 EXPAND",
+                        "reason": f"Super-Shock Momentum Expansion ({c_rng/c_atr:.1f}x ATR) below Range Low {r_low:.{5 if point < 0.01 else 2}f}"
+                    }
+
+            if bar_trigger:
+                # Anti-clustering throttle: skip if same strategy & direction triggered within past 3 bars
+                recent_same = [t for t in triggers if t["type"] == bar_trigger["type"] and t["direction"] == bar_trigger["direction"] and (i - t["bar_index"]) <= 3]
+                if not recent_same:
+                    triggers.append(bar_trigger)
+
+        return triggers
+    except Exception as e:
+        logger.warning(f"[DASHBOARD] Error detecting historical triggers for {symbol}: {e}")
+        return []
+
+
 class CockpitDataEngine:
     """Singleton background engine that keeps real-time cache of MT5 & Quant Funnel."""
 
@@ -1084,6 +1336,7 @@ class CockpitDataEngine:
 
         rates = config.mt5.copy_rates_from_pos(valid_sym, mt5_tf, 0, num_bars + 50)
         candles = []
+        strat_audit_markers = []
         if rates is not None and len(rates) > 0:
             import pandas as pd
             from src.indicators.wave_regime import classify_wave_regimes_series
@@ -1103,6 +1356,18 @@ class CockpitDataEngine:
             # Keep requested window
             tail_df = df.tail(num_bars)
             tail_indices = tail_df.index.tolist()
+
+            # Detect Historical Strategy Audit Triggers (M1..M4) for visual verification
+            try:
+                strat_audit_markers = detect_historical_triggers(
+                    df=tail_df,
+                    symbol=valid_sym,
+                    pip_size=pip_val,
+                    point=pt,
+                    lookback_bars=num_bars
+                )
+            except Exception as e:
+                logger.warning(f"[DASHBOARD] Gagal deteksi historical triggers untuk {symbol}: {e}")
 
             for orig_idx, (_, r) in zip(tail_indices, tail_df.iterrows()):
                 c_time = int(r['time'])
@@ -1778,6 +2043,7 @@ class CockpitDataEngine:
             "inside_tiers": list(getattr(zm, "inside_tiers", []) or []),
             "layer_count": int(getattr(zm, "layer_count", 0) or 0),
             "candles": candles,
+            "strategy_audit_markers": strat_audit_markers,
             "envelope_visual": (getattr(strat, "macro_envelope", {}) or {}).get("visual_payload") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}),
             "macro_envelope": (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
             "zce_walls": zce_walls,
