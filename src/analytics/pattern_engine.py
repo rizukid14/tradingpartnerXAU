@@ -235,14 +235,15 @@ def extract_causal_pivots(
     highs: np.ndarray,
     lows: np.ndarray,
     n_confirm: int = 3,
-    time_vals: Optional[List[int]] = None
+    time_vals: Optional[List[int]] = None,
+    cur_atr: float = 0.0
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], bool]:
     """
-    Ekstraksi titik balik puncak (peaks) dan lembah (troughs) secara 100% kausal.
-    Titik balik pada bar k hanya dikonfirmasi jika ada n_confirm bar di sebelah kanan
-    yang tidak melampaui harga ekstrem tersebut.
-
-    Semua bar dalam interval [n - n_confirm, n - 1] berstatus PROVISIONAL.
+    Ekstraksi titik balik puncak (peaks) dan lembah (troughs) secara 100% kausal
+    dengan pelabelan SMC Structural Hierarchy (External vs Internal Structure):
+    - Mencegah false HH pada minor bounce lokal di dalam downtrend.
+    - True HH hanya jika melampaui active structural high (+ ATR noise buffer).
+    - True LL hanya jika menembus active structural low (- ATR noise buffer).
     """
     n = len(highs)
     peaks = []
@@ -252,8 +253,11 @@ def extract_causal_pivots(
     if n < (2 * n_confirm + 1):
         return peaks, troughs, has_provisional_extreme
 
-    # 1. Cari titik puncak konfirmasi (k <= n - 1 - n_confirm)
+    # 1. Ekstraksi seluruh kandidat pivot puncak dan lembah kausal (k <= n - 1 - n_confirm)
     max_confirmed_idx = n - 1 - n_confirm
+    raw_peaks = []
+    raw_troughs = []
+
     for k in range(n_confirm, max_confirmed_idx + 1):
         hk = highs[k]
         is_peak = True
@@ -262,22 +266,11 @@ def extract_causal_pivots(
                 is_peak = False
                 break
         if is_peak:
-            p_price = float(hk)
-            p_time = time_vals[k] if (time_vals and k < len(time_vals)) else 0
-            if len(peaks) == 0:
-                p_label = "H"
-            elif p_price > peaks[-1]["price"]:
-                p_label = "HH"
-            elif p_price < peaks[-1]["price"]:
-                p_label = "LH"
-            else:
-                p_label = "EH"
-            peaks.append({
+            raw_peaks.append({
                 "index": int(k),
-                "time": p_time,
-                "price": p_price,
+                "time": time_vals[k] if (time_vals and k < len(time_vals)) else 0,
+                "price": float(hk),
                 "type": "PEAK",
-                "label": p_label,
                 "bar_age": int(n - 1 - k)
             })
 
@@ -289,26 +282,65 @@ def extract_causal_pivots(
                 is_trough = False
                 break
         if is_trough:
-            t_price = float(lk)
-            t_time = time_vals[k] if (time_vals and k < len(time_vals)) else 0
-            if len(troughs) == 0:
-                t_label = "L"
-            elif t_price > troughs[-1]["price"]:
-                t_label = "HL"
-            elif t_price < troughs[-1]["price"]:
-                t_label = "LL"
-            else:
-                t_label = "EL"
-            troughs.append({
+            raw_troughs.append({
                 "index": int(k),
-                "time": t_time,
-                "price": t_price,
+                "time": time_vals[k] if (time_vals and k < len(time_vals)) else 0,
+                "price": float(lk),
                 "type": "TROUGH",
-                "label": t_label,
                 "bar_age": int(n - 1 - k)
             })
 
-    # 2. Cek apakah ada calon ekstrem di bar provisional [max_confirmed_idx + 1 .. n - 1]
+    # 2. Sequential SMC Structural Hierarchy Labeling
+    noise_buffer = 0.15 * cur_atr if cur_atr > 0 else 1e-5
+    active_major_high = None
+    active_major_low = None
+    last_peak_candidate = None
+    last_trough_candidate = None
+
+    all_pivots = []
+    for p in raw_peaks:
+        all_pivots.append(p)
+    for t in raw_troughs:
+        all_pivots.append(t)
+    all_pivots.sort(key=lambda x: x["index"])
+
+    for piv in all_pivots:
+        if piv["type"] == "PEAK":
+            price = piv["price"]
+            if active_major_high is None:
+                lbl = "H"
+                active_major_high = piv
+            elif price > active_major_high["price"] + noise_buffer:
+                lbl = "HH"  # True External Higher High
+                active_major_high = piv
+                if last_trough_candidate is not None:
+                    active_major_low = last_trough_candidate
+            elif abs(price - active_major_high["price"]) <= noise_buffer:
+                lbl = "EH"
+            else:
+                lbl = "LH"  # Lower High relative to active structural high
+            piv["label"] = lbl
+            last_peak_candidate = piv
+            peaks.append(piv)
+        else:  # TROUGH
+            price = piv["price"]
+            if active_major_low is None:
+                lbl = "L"
+                active_major_low = piv
+            elif price < active_major_low["price"] - noise_buffer:
+                lbl = "LL"  # True External Lower Low
+                active_major_low = piv
+                if last_peak_candidate is not None:
+                    active_major_high = last_peak_candidate
+            elif abs(price - active_major_low["price"]) <= noise_buffer:
+                lbl = "EL"
+            else:
+                lbl = "HL"  # Higher Low relative to active structural low
+            piv["label"] = lbl
+            last_trough_candidate = piv
+            troughs.append(piv)
+
+    # 3. Cek apakah ada calon ekstrem di bar provisional [max_confirmed_idx + 1 .. n - 1]
     recent_highs = highs[max_confirmed_idx + 1:]
     recent_lows = lows[max_confirmed_idx + 1:]
     if len(peaks) > 0 and len(recent_highs) > 0 and np.max(recent_highs) > peaks[-1]["price"]:
@@ -962,17 +994,50 @@ def compute_inducement_dealing_range(
         elif hh_hl_count >= 2 and hh_hl_count > lh_ll_count:
             order_flow_regime = "BULLISH_ORDER_FLOW"
 
-    # 2. Dealing Range Calculation
-    if len(highs) > 0 and len(lows) > 0:
-        raw_max_idx = int(np.argmax(highs))
-        raw_min_idx = int(np.argmin(lows))
-        raw_high = float(highs[raw_max_idx])
-        raw_low = float(lows[raw_min_idx])
-    else:
-        raw_high = last_close * 1.01
-        raw_low = last_close * 0.99
-        raw_max_idx = 0
-        raw_min_idx = 0
+    # 2. Active SMC Dealing Range Calculation
+    # Sesuai ComLucro 'Trade Liquidity Like the Pros':
+    # Dealing range diikat pada origin impulse expansion leg yang menghasilkan BOS aktif
+    raw_high = None
+    raw_low = None
+    raw_max_idx = None
+    raw_min_idx = None
+
+    if order_flow_regime == "BEARISH_ORDER_FLOW" and troughs:
+        recent_lls = [t for t in troughs if t.get("label") == "LL"]
+        active_ll = recent_lls[-1] if recent_lls else troughs[-1]
+        raw_low = float(active_ll["price"])
+        raw_min_idx = int(active_ll["index"])
+
+        prior_peaks = [p for p in peaks if p["index"] < active_ll["index"]]
+        if prior_peaks:
+            lookback_peaks = [p for p in prior_peaks if p["index"] >= active_ll["index"] - 40]
+            active_origin_high = max(lookback_peaks, key=lambda x: x["price"]) if lookback_peaks else prior_peaks[-1]
+            raw_high = float(active_origin_high["price"])
+            raw_max_idx = int(active_origin_high["index"])
+
+    elif order_flow_regime == "BULLISH_ORDER_FLOW" and peaks:
+        recent_hhs = [p for p in peaks if p.get("label") == "HH"]
+        active_hh = recent_hhs[-1] if recent_hhs else peaks[-1]
+        raw_high = float(active_hh["price"])
+        raw_max_idx = int(active_hh["index"])
+
+        prior_troughs = [t for t in troughs if t["index"] < active_hh["index"]]
+        if prior_troughs:
+            lookback_troughs = [t for t in prior_troughs if t["index"] >= active_hh["index"] - 40]
+            active_origin_low = min(lookback_troughs, key=lambda x: x["price"]) if lookback_troughs else prior_troughs[-1]
+            raw_low = float(active_origin_low["price"])
+            raw_min_idx = int(active_origin_low["index"])
+
+    # Fallback jika belum terisi atau amplitude terlalu sempit (< 0.8 * ATR)
+    if raw_high is None or raw_low is None or (raw_high - raw_low) < (0.8 * cur_atr):
+        active_window = min(n, 60)
+        w_highs = highs[-active_window:] if n > 0 else np.array([last_close * 1.01])
+        w_lows = lows[-active_window:] if n > 0 else np.array([last_close * 0.99])
+        w_offset = max(0, n - active_window)
+        raw_max_idx = int(w_offset + np.argmax(w_highs))
+        raw_min_idx = int(w_offset + np.argmin(w_lows))
+        raw_high = float(highs[raw_max_idx]) if n > 0 else last_close * 1.01
+        raw_low = float(lows[raw_min_idx]) if n > 0 else last_close * 0.99
 
     # Konfirmasi Inducement Sweep
     high_confirmed = False
@@ -1166,7 +1231,7 @@ class MacroEnvelopeEngine:
         # TRACK A: CAUSAL QUANT DECISION ENGINE (100% Anti-Repaint)
         # ------------------------------------------------------------- #
         peaks, troughs, has_provisional = extract_causal_pivots(
-            h_clean, l_clean, n_confirm=self.confirm_window, time_vals=time_vals
+            h_clean, l_clean, n_confirm=self.confirm_window, time_vals=time_vals, cur_atr=cur_atr
         )
         structural_trend = classify_structural_trend(peaks, troughs)
         provisional_state = "PROVISIONAL_PENDING" if has_provisional else "CONFIRMED"
