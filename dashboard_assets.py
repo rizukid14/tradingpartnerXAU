@@ -2205,68 +2205,185 @@ function renderVerticalShading() {
       }
 
       const isBuy = (m.direction === "BUY");
-      let baseColor = "#38bdf8";
-      let shortTag = m.label || m.type || "M";
 
-      if (m.type === "M1A" || m.type === "M1_SWEEP" || m.type === "M1") {
-        baseColor = isBuy ? "#10b981" : "#f43f5e";
-        shortTag = isBuy ? "▲ M1A" : "▼ M1A";
-      } else if (m.type === "M1B" || m.type === "M1B_INDUCEMENT") {
-        baseColor = "#f59e0b";
-        shortTag = isBuy ? "▲ M1B" : "▼ M1B";
-      } else if (m.type === "M2D" || m.type === "M2_DEEP") {
-        baseColor = isBuy ? "#10b981" : "#f43f5e";
-        shortTag = isBuy ? "▲ M2D" : "▼ M2D";
-      } else if (m.type === "M2S" || m.type === "M2_SHALLOW") {
-        baseColor = isBuy ? "#06b6d4" : "#f97316";
-        shortTag = isBuy ? "▲ M2S" : "▼ M2S";
-      } else if (m.type === "M2" || m.type === "M2_PULLBACK") {
-        baseColor = isBuy ? "#06b6d4" : "#818cf8";
-        shortTag = isBuy ? "▲ M2" : "▼ M2";
-      } else if (m.type === "M3" || m.type === "M3_RETEST") {
-        baseColor = isBuy ? "#a855f7" : "#c084fc";
-        shortTag = isBuy ? "▲ M3" : "▼ M3";
-      } else if (m.type === "M4" || m.type === "M4_EXPANSION") {
-        baseColor = "#fbbf24";
-        shortTag = isBuy ? "▲ M4" : "▼ M4";
+      // Find candle to get physical High and Low
+      let candHigh = m.high;
+      let candLow = m.low;
+      if ((!candHigh || !candLow) && cachedSymbolData && cachedSymbolData.candles) {
+        const c = cachedSymbolData.candles.find(cd => cd.time === m.time);
+        if (c) {
+          candHigh = c.high;
+          candLow = c.low;
+        }
+      }
+      if (!candHigh) candHigh = m.price;
+      if (!candLow) candLow = m.price;
+
+      const yExtreme = isBuy ? candleSeries.priceToCoordinate(candLow) : candleSeries.priceToCoordinate(candHigh);
+      if (yExtreme === null) {
+        m.box = null;
+        return;
       }
 
-      const txt = shortTag;
-      const metrics = shadingCtx.measureText(txt);
-      const pillW = metrics.width + 12;
-      const pillH = 15;
+      let baseColor = "#38bdf8";
+      let cleanTag = m.label || m.type || "M";
+
+      if (m.type === "M1A" || m.type === "M1D" || m.type === "M1_SWEEP" || m.type === "M1") {
+        baseColor = isBuy ? "#10b981" : "#f43f5e";
+        cleanTag = "M1A";
+      } else if (m.type === "M1B" || m.type === "M1S" || m.type === "M1B_INDUCEMENT") {
+        baseColor = "#f59e0b";
+        cleanTag = "M1B";
+      } else if (m.type === "M2D" || m.type === "M2_DEEP") {
+        baseColor = isBuy ? "#10b981" : "#f43f5e";
+        cleanTag = "M2D";
+      } else if (m.type === "M2S" || m.type === "M2_SHALLOW") {
+        baseColor = isBuy ? "#06b6d4" : "#f97316";
+        cleanTag = "M2S";
+      } else if (m.type === "M2" || m.type === "M2_PULLBACK") {
+        baseColor = isBuy ? "#06b6d4" : "#818cf8";
+        cleanTag = "M2";
+      } else if (m.type === "M3" || m.type === "M3_RETEST") {
+        baseColor = isBuy ? "#a855f7" : "#c084fc";
+        cleanTag = "M3";
+      } else if (m.type === "M4" || m.type === "M4_EXPANSION") {
+        baseColor = "#fbbf24";
+        cleanTag = "M4";
+      }
+
+      // A. Arrow Glyph: Pointing directly to the extreme candle wick
+      const arrowGlyph = isBuy ? "▲" : "▼";
+      const arrowY = isBuy ? (yExtreme + 6) : (yExtreme - 6);
+
+      shadingCtx.fillStyle = baseColor;
+      shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+      shadingCtx.textAlign = "center";
+      shadingCtx.textBaseline = "middle";
+      shadingCtx.fillText(arrowGlyph, x, arrowY);
+
+      // B. Setup Label Badge: Stacked vertically outside the arrow
+      shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
+      const metrics = shadingCtx.measureText(cleanTag);
+      const pillW = metrics.width + 8;
+      const pillH = 13;
       const pillX = x - pillW / 2;
-      const pillY = isBuy ? (y + 10) : (y - pillH - 10);
-
-      // Save bounding box for mouse hover tooltip
-      m.box = { x: pillX, y: pillY, w: pillW, h: pillH, color: baseColor };
-
-      // Micro dashed line connecting badge to candle extreme
-      shadingCtx.beginPath();
-      shadingCtx.strokeStyle = baseColor;
-      shadingCtx.lineWidth = 1;
-      shadingCtx.setLineDash([2, 2]);
-      shadingCtx.moveTo(x, y);
-      shadingCtx.lineTo(x, isBuy ? pillY : (pillY + pillH));
-      shadingCtx.stroke();
-      shadingCtx.setLineDash([]);
+      const pillY = isBuy ? (arrowY + 5) : (arrowY - 5 - pillH);
 
       // Draw Pill background
       shadingCtx.fillStyle = "rgba(11, 14, 20, 0.94)";
       shadingCtx.fillRect(pillX, pillY, pillW, pillH);
 
-      // Draw left accent border indicator
-      shadingCtx.fillStyle = baseColor;
-      shadingCtx.fillRect(pillX, pillY, 2.5, pillH);
-
-      // Outline pill border
+      // Draw Pill border
       shadingCtx.strokeStyle = baseColor;
-      shadingCtx.lineWidth = 1;
+      shadingCtx.lineWidth = 1.1;
       shadingCtx.strokeRect(pillX, pillY, pillW, pillH);
 
-      // Text label
+      // Text inside pill (centered)
       shadingCtx.fillStyle = baseColor;
-      shadingCtx.fillText(txt, pillX + 6, pillY + pillH / 2);
+      shadingCtx.fillText(cleanTag, x, pillY + pillH / 2);
+
+      // Save bounding box for mouse hover tooltip
+      const boxTop = isBuy ? yExtreme : pillY;
+      const boxBottom = isBuy ? (pillY + pillH) : yExtreme;
+      m.box = { x: pillX, y: boxTop, w: pillW, h: Math.max(18, boxBottom - boxTop), color: baseColor };
+
+      // C. Render M3 Lifecycle Nodes (Touch ①, ②, ③, Break [B])
+      if (m.type === "M3" && m.lifecycle_sequence && Array.isArray(m.lifecycle_sequence) && m.lifecycle_sequence.length > 0) {
+        const seqCoords = [];
+
+        m.lifecycle_sequence.forEach(node => {
+          const nX = timeScale.timeToCoordinate(node.time);
+          const nY = candleSeries.priceToCoordinate(node.price);
+          if (nX !== null && nY !== null && nX >= -20 && nX <= width + 20) {
+            seqCoords.push({ x: nX, y: nY, node: node });
+
+            if (node.role === "TOUCH") {
+              const circleR = 6.5;
+              const tColor = isBuy ? "#06b6d4" : "#f97316";
+
+              // Circle fill
+              shadingCtx.beginPath();
+              shadingCtx.arc(nX, nY, circleR, 0, Math.PI * 2);
+              shadingCtx.fillStyle = "rgba(11, 14, 20, 0.94)";
+              shadingCtx.fill();
+
+              // Circle border
+              shadingCtx.strokeStyle = tColor;
+              shadingCtx.lineWidth = 1.3;
+              shadingCtx.stroke();
+
+              // Circle text (1, 2, 3...)
+              shadingCtx.fillStyle = tColor;
+              shadingCtx.font = "bold 8px 'JetBrains Mono', monospace";
+              shadingCtx.textAlign = "center";
+              shadingCtx.textBaseline = "middle";
+              shadingCtx.fillText(node.label, nX, nY);
+
+              // Register interactive node box for hover
+              if (!m.node_boxes) m.node_boxes = [];
+              m.node_boxes.push({
+                x: nX - circleR,
+                y: nY - circleR,
+                w: circleR * 2,
+                h: circleR * 2,
+                role: "TOUCH",
+                label: `Touch #${node.label}`,
+                price: node.price,
+                color: tColor
+              });
+
+            } else if (node.role === "BREAK") {
+              const circleR = 7.5;
+              const bColor = "#c084fc";
+
+              // Circle fill (deep purple)
+              shadingCtx.beginPath();
+              shadingCtx.arc(nX, nY, circleR, 0, Math.PI * 2);
+              shadingCtx.fillStyle = "rgba(46, 16, 101, 0.94)";
+              shadingCtx.fill();
+
+              // Circle border
+              shadingCtx.strokeStyle = bColor;
+              shadingCtx.lineWidth = 1.5;
+              shadingCtx.stroke();
+
+              // Circle text ("B")
+              shadingCtx.fillStyle = "#ffffff";
+              shadingCtx.font = "bold 8.5px 'JetBrains Mono', monospace";
+              shadingCtx.textAlign = "center";
+              shadingCtx.textBaseline = "middle";
+              shadingCtx.fillText("B", nX, nY);
+
+              // Register interactive node box for hover
+              if (!m.node_boxes) m.node_boxes = [];
+              m.node_boxes.push({
+                x: nX - circleR,
+                y: nY - circleR,
+                w: circleR * 2,
+                h: circleR * 2,
+                role: "BREAK",
+                label: "Breakout [B]",
+                price: node.price,
+                color: bColor
+              });
+            }
+          }
+        });
+
+        // Draw guideline connecting Touch 1 -> Touch 2 -> Break B -> Retest M3
+        if (seqCoords.length >= 2) {
+          shadingCtx.beginPath();
+          shadingCtx.strokeStyle = isBuy ? "rgba(6, 182, 212, 0.45)" : "rgba(249, 115, 22, 0.45)";
+          shadingCtx.lineWidth = 1.1;
+          shadingCtx.setLineDash([3, 3]);
+          shadingCtx.moveTo(seqCoords[0].x, seqCoords[0].y);
+          for (let k = 1; k < seqCoords.length; k++) {
+            shadingCtx.lineTo(seqCoords[k].x, seqCoords[k].y);
+          }
+          shadingCtx.stroke();
+          shadingCtx.setLineDash([]);
+        }
+      }
     });
 
     shadingCtx.restore();
@@ -2296,14 +2413,28 @@ function renderVerticalShading() {
 
           if (st.type === "SWEEP") {
             const isBuy = (st.direction === "BUY");
-            baseColor = isBuy ? "#10b981" : "#f43f5e";
-            zoneBg = isBuy ? "rgba(16, 185, 129, 0.12)" : "rgba(244, 63, 94, 0.12)";
-            cleanLabel = isBuy ? "▲ WAIT M1" : "▼ WAIT M1";
+            const isM1B = (st.subtype === "M1B" || st.subtype === "M1S" || (st.label && (st.label.includes("M1B") || st.label.includes("M1S"))));
+            if (isM1B) {
+              baseColor = "#f59e0b";
+              zoneBg = "rgba(245, 158, 11, 0.12)";
+              cleanLabel = isBuy ? "▲ WAIT M1B" : "▼ WAIT M1B";
+            } else {
+              baseColor = isBuy ? "#10b981" : "#f43f5e";
+              zoneBg = isBuy ? "rgba(16, 185, 129, 0.12)" : "rgba(244, 63, 94, 0.12)";
+              cleanLabel = isBuy ? "▲ WAIT M1A" : "▼ WAIT M1A";
+            }
           } else if (st.type === "PULLBACK") {
             const isBuy = (st.direction === "BUY");
-            baseColor = isBuy ? "#06b6d4" : "#818cf8";
-            zoneBg = isBuy ? "rgba(6, 182, 212, 0.12)" : "rgba(129, 140, 248, 0.12)";
-            cleanLabel = isBuy ? "▲ WAIT M2" : "▼ WAIT M2";
+            const isM2S = (st.subtype === "M2S" || (st.label && st.label.includes("M2S")));
+            if (isM2S) {
+              baseColor = isBuy ? "#06b6d4" : "#f97316";
+              zoneBg = isBuy ? "rgba(6, 182, 212, 0.12)" : "rgba(249, 115, 22, 0.12)";
+              cleanLabel = isBuy ? "▲ WAIT M2S" : "▼ WAIT M2S";
+            } else {
+              baseColor = isBuy ? "#10b981" : "#f43f5e";
+              zoneBg = isBuy ? "rgba(16, 185, 129, 0.12)" : "rgba(244, 63, 94, 0.12)";
+              cleanLabel = isBuy ? "▲ WAIT M2D" : "▼ WAIT M2D";
+            }
           } else if (st.type === "EXPANSION") {
             baseColor = "#fbbf24";
             zoneBg = "rgba(251, 191, 36, 0.10)";
@@ -2526,12 +2657,24 @@ function initChart() {
 
       // 1. Check Strategy Audit Marker hover (M1..M4 historical triggers)
       let hoveredMarker = null;
+      let hoveredNode = null;
       if (filterShowRadar && cachedSymbolData && cachedSymbolData.strategy_audit_markers) {
         for (let j = 0; j < cachedSymbolData.strategy_audit_markers.length; j++) {
           const mk = cachedSymbolData.strategy_audit_markers[j];
           if (mk.box && mx >= mk.box.x && mx <= mk.box.x + mk.box.w && my >= mk.box.y && my <= mk.box.y + mk.box.h) {
             hoveredMarker = mk;
             break;
+          }
+          if (mk.node_boxes && Array.isArray(mk.node_boxes)) {
+            for (let nb = 0; nb < mk.node_boxes.length; nb++) {
+              const nBox = mk.node_boxes[nb];
+              if (mx >= nBox.x - 3 && mx <= nBox.x + nBox.w + 3 && my >= nBox.y - 3 && my <= nBox.y + nBox.h + 3) {
+                hoveredMarker = mk;
+                hoveredNode = nBox;
+                break;
+              }
+            }
+            if (hoveredMarker) break;
           }
         }
       }
@@ -2544,6 +2687,27 @@ function initChart() {
         const touchHtml = (hoveredMarker.touch_count && hoveredMarker.touch_count > 1)
           ? `<div style="display:flex;align-items:center;gap:6px;margin:4px 0 3px 0;font-size:10px;color:#fbbf24;font-weight:600;"><span style="background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:3px;border:1px solid rgba(251,191,36,0.4);">⚡ Touch Count: ${hoveredMarker.touch_count}x</span><span style="color:#cbd5e1;">(Level tested ${hoveredMarker.touch_count} times)</span></div>`
           : ((hoveredMarker.type === "M3" || hoveredMarker.type === "M1B") ? `<div style="margin:4px 0 3px 0;font-size:10px;color:#94a3b8;"><span style="background:rgba(148,163,184,0.12);padding:1px 6px;border-radius:3px;">⚡ Touch Count: 1st Test</span></div>` : '');
+        
+        let lifecycleHtml = '';
+        if (hoveredMarker.lifecycle_sequence && hoveredMarker.lifecycle_sequence.length > 0) {
+          const stepsHtml = hoveredMarker.lifecycle_sequence.map(step => {
+            const isTouch = (step.role === "TOUCH");
+            const isBrk = (step.role === "BREAK");
+            const bg = isTouch ? "rgba(6,182,212,0.18)" : (isBrk ? "rgba(168,85,247,0.22)" : "rgba(16,185,129,0.18)");
+            const col = isTouch ? "#06b6d4" : (isBrk ? "#c084fc" : "#10b981");
+            const borderCol = isTouch ? "rgba(6,182,212,0.45)" : (isBrk ? "rgba(168,85,247,0.5)" : "rgba(16,185,129,0.45)");
+            const nodeHighlight = (hoveredNode && hoveredNode.label && hoveredNode.label.includes(step.label)) ? 'outline:2px solid #fff;' : '';
+            return `<span style="background:${bg};color:${col};border:1px solid ${borderCol};${nodeHighlight}padding:1px 5px;border-radius:3px;font-size:9.5px;font-family:var(--font-mono);font-weight:700;">${step.label}: ${step.role} @ ${Number(step.price).toFixed(dDigits)}</span>`;
+          }).join(' <span style="color:#64748b;font-size:8.5px;">➔</span> ');
+
+          lifecycleHtml = `
+            <div style="margin:5px 0 4px 0;background:rgba(15,23,42,0.7);border:1px solid rgba(255,255,255,0.08);border-radius:4px;padding:4px 6px;">
+              <div style="font-size:9px;color:#94a3b8;font-weight:700;margin-bottom:3px;letter-spacing:0.3px;">STRUCTURE LIFECYCLE AUDIT:</div>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px;">${stepsHtml}</div>
+            </div>
+          `;
+        }
+
         const verdictBadge = `<span style="background:rgba(16,185,129,0.16);color:#10b981;padding:1px 6px;border-radius:3px;font-weight:700;font-size:9px;letter-spacing:0.4px;border:1px solid rgba(16,185,129,0.3);">✓ 8-GATE PASS [A+ VALID]</span>`;
         const metricsHtml = (hoveredMarker.runway_atr !== undefined)
           ? `<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:10px;color:#94a3b8;margin:5px 0 3px 0;border-top:1px dashed rgba(255,255,255,0.1);padding-top:4px;">
@@ -2553,23 +2717,27 @@ function initChart() {
                ${hoveredMarker.tp ? `<span>TP: <b style="color:#10b981;">${hoveredMarker.tp}</b></span>` : ''}
              </div>`
           : '';
+        const execTxt = hoveredMarker.exec_price ? ` • Exec @ ${hoveredMarker.exec_price.toFixed(dDigits)}` : '';
+        const nodeAuditNote = hoveredNode ? `<div style="margin-bottom:4px;padding:2px 6px;background:rgba(255,255,255,0.08);border-radius:3px;font-size:9.5px;color:${hoveredNode.color};font-weight:bold;">Focus: ${hoveredNode.label} @ ${Number(hoveredNode.price).toFixed(dDigits)}</div>` : '';
         tooltipEl.innerHTML = `
           <div class="zce-tt-header">
             <span class="zce-tt-tier" style="color:${hoveredMarker.box.color};">${hoveredMarker.label} [${dirBadge}] @ ${hoveredMarker.price.toFixed(dDigits)}</span>
             <span class="zce-tt-score">DR ${hoveredMarker.dr_pos_pct}%</span>
           </div>
+          ${nodeAuditNote}
           <div style="margin:3px 0 2px 0;">${verdictBadge}</div>
           ${touchHtml}
+          ${lifecycleHtml}
           <div class="zce-tt-confluences">${hoveredMarker.reason}</div>
           ${metricsHtml}
           <div class="zce-tt-meta" style="margin-top:4px;">
             <span>Zone: <b style="color:${hoveredMarker.box.color};">${hoveredMarker.zone}</b></span>
-            <span>${hoveredMarker.bar_age} bars ago</span>
+            <span>Signal: <b>Bar ${hoveredMarker.bar_age} ago</b>${execTxt}</span>
           </div>
         `;
         tooltipEl.style.display = "block";
-        tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, hoveredMarker.box.x + hoveredMarker.box.w + 10))}px`;
-        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredMarker.box.y - 10))}px`;
+        tooltipEl.style.left = `${Math.min(rect.width - 320, Math.max(10, (hoveredNode ? hoveredNode.x : hoveredMarker.box.x) + 15))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 180, (hoveredNode ? hoveredNode.y : hoveredMarker.box.y) - 10))}px`;
         return;
       }
 
@@ -3739,9 +3907,13 @@ function renderDrawer() {
       let cardBorder = "#38bdf8";
       let dirColor = (st.direction === "BUY") ? "var(--green)" : "var(--red)";
       let tagBg = (st.direction === "BUY") ? "rgba(16,185,129,0.15)" : "rgba(244,63,94,0.15)";
-      if (st.type === "PULLBACK") cardBorder = "#06b6d4";
-      else if (st.type === "SWEEP") cardBorder = "#fb923c";
-      else if (st.type === "EXPANSION") cardBorder = "#fbbf24";
+      if (st.type === "PULLBACK") {
+        cardBorder = (st.subtype === "M2S") ? "#06b6d4" : ((st.direction === "BUY") ? "#10b981" : "#f43f5e");
+      } else if (st.type === "SWEEP") {
+        cardBorder = (st.subtype === "M1B" || st.subtype === "M1S") ? "#f59e0b" : ((st.direction === "BUY") ? "#10b981" : "#f43f5e");
+      } else if (st.type === "EXPANSION") {
+        cardBorder = "#fbbf24";
+      }
 
       html += `
         <div class="telemetry-card" style="border-top: 3px solid ${cardBorder};background:rgba(15,23,42,0.6);">
@@ -3759,6 +3931,7 @@ function renderDrawer() {
           <div class="tele-row"><span class="tele-lbl">Proteksi SL:</span><span class="tele-val" style="color:var(--red);font-family:var(--font-mono);">${st.sl.toFixed(d.digits || 5)}</span></div>
           <div class="tele-row"><span class="tele-lbl">Target TP:</span><span class="tele-val" style="color:var(--green);font-family:var(--font-mono);">${st.tp.toFixed(d.digits || 5)} (RR 1:${st.rr})</span></div>
           <div class="tele-row"><span class="tele-lbl">Status Stasiun:</span><span class="tele-val" style="color:var(--cyan);font-weight:700;">${st.status}</span></div>
+          ${st.touch_desc ? `<div class="tele-row"><span class="tele-lbl">Level Testing:</span><span class="tele-val" style="color:#fbbf24;font-weight:700;font-family:var(--font-mono);">${st.touch_desc}</span></div>` : ''}
 
           <div style="margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.08);font-size:9.5px;line-height:1.4;color:var(--text-muted);">
             <strong style="color:var(--text-main);">Trigger Rule:</strong> ${st.trigger_condition}

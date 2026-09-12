@@ -83,13 +83,14 @@ def test_cbss_pair_runway_calculation():
     assert sell_info["runway_atr"] == pytest.approx(1.0, 0.05)
 
 
-def test_cbss_local_pair_veto_the_euraud_law():
+def test_cbss_local_pair_veto_the_euraud_law(monkeypatch):
     """
     CRITICAL USER REQUIREMENT TEST (The EURAUD Law):
     If EURAUD is right at a G3 macro floor (dist <= 0.35x ATR),
     EURAUD SELL is BLOCKED.
     However, EURCAD with ample runway (>= 1.2x ATR) is CLEAR (NOT BLOCKED)!
     """
+    monkeypatch.setattr(config, "ENABLE_CBSS", True)
     macro_cache = {
         "EURAUD": {
             "current_mid": 1.6205,
@@ -117,8 +118,9 @@ def test_cbss_local_pair_veto_the_euraud_law():
     assert reason_ec == "CLEAR"
 
 
-def test_cbss_basket_concurrency_cap():
+def test_cbss_basket_concurrency_cap(monkeypatch):
     """Test concurrency cap (max 2 active positions per currency in same direction)."""
+    monkeypatch.setattr(config, "ENABLE_CBSS", True)
     # Create 2 mock EUR BUY positions
     pos1 = MagicMock()
     pos1.symbol = "EURUSD-ECN"

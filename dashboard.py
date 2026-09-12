@@ -21,7 +21,7 @@ import threading
 import time
 import traceback
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("dashboard")
@@ -732,7 +732,7 @@ def detect_historical_triggers(
                             cand_dir = -1
                             entry_p = c_close
                             zone_name = "DEEP_PREMIUM"
-                            reason_text = f"Swept High {swept_pk:.{digits}f} with {upper_wick*100:.0f}% Wick (Bearish Close)"
+                            reason_text = f"Deep Macro High Sweep {swept_pk:.{digits}f} with {upper_wick*100:.0f}% Wick (Bearish Close)"
                         else:
                             cand_type = "M1B"
                             cand_dir = -1
@@ -748,7 +748,7 @@ def detect_historical_triggers(
                             cand_dir = 1
                             entry_p = c_close
                             zone_name = "DEEP_DISCOUNT"
-                            reason_text = f"Swept Low {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Wick (Bullish Close)"
+                            reason_text = f"Deep Macro Low Sweep {swept_tr:.{digits}f} with {lower_wick*100:.0f}% Wick (Bullish Close)"
                         else:
                             cand_type = "M1B"
                             cand_dir = 1
@@ -788,25 +788,145 @@ def detect_historical_triggers(
                             reason_text = f"Shallow Discount Corridor Rejection ({c_rng/c_atr:.1f}x ATR)"
 
             # 3. M3: BREAKOUT RETEST (RBS / SBR Structure Flip)
+            lifecycle_seq = []
             if not cand_type:
                 for pk in prior_pks:
                     if abs(c_low - pk) <= 0.25 * c_atr and c_close > pk and c_close > c_open:
+                        start_j = max(0, i - 40)
+                        break_idx = None
+                        for j in range(i - 1, start_j, -1):
+                            if closes[j] > pk + 0.10 * c_atr and (opens[j] <= pk + 0.10 * c_atr or closes[j - 1] <= pk + 0.05 * c_atr):
+                                break_idx = j
+                                break
+
+                        touches_list = []
+                        if break_idx is not None:
+                            for j in range(start_j, break_idx):
+                                if abs(highs[j] - pk) <= 0.22 * c_atr and closes[j] <= pk + 0.08 * c_atr:
+                                    if not touches_list or (j - touches_list[-1]["bar_index"] >= 2):
+                                        touches_list.append({
+                                            "label": str(len(touches_list) + 1),
+                                            "role": "TOUCH",
+                                            "bar_index": j,
+                                            "time": int(times[j]),
+                                            "price": round(float(highs[j]), digits),
+                                            "level": round(float(pk), digits)
+                                        })
+
+                        if not touches_list:
+                            raw_tb = [j for j in range(start_j, i) if abs(highs[j] - pk) <= 0.25 * c_atr or abs(lows[j] - pk) <= 0.25 * c_atr]
+                            filtered_tb = []
+                            for tb in raw_tb:
+                                if not filtered_tb or (tb - filtered_tb[-1] >= 2):
+                                    filtered_tb.append(tb)
+                            for idx_t, tb in enumerate(filtered_tb[:4]):
+                                touches_list.append({
+                                    "label": str(idx_t + 1),
+                                    "role": "TOUCH",
+                                    "bar_index": tb,
+                                    "time": int(times[tb]),
+                                    "price": round(float(highs[tb]), digits),
+                                    "level": round(float(pk), digits)
+                                })
+                            if len(filtered_tb) >= 1 and break_idx is None:
+                                break_idx = min(i - 1, filtered_tb[-1] + 1)
+
                         cand_type = "M3"
                         cand_dir = 1
                         entry_p = pk
                         zone_name = "RBS_RETEST"
-                        touches = sum(1 for j in range(max(0, i - 40), i + 1) if (abs(lows[j] - pk) <= 0.25 * c_atr or abs(highs[j] - pk) <= 0.25 * c_atr))
-                        reason_text = f"RBS Retest of {pk:.{digits}f} • Touch #{max(1, touches)}"
+                        touches = len(touches_list)
+
+                        lifecycle_seq = list(touches_list)
+                        if break_idx is not None:
+                            lifecycle_seq.append({
+                                "label": "B",
+                                "role": "BREAK",
+                                "bar_index": break_idx,
+                                "time": int(times[break_idx]),
+                                "price": round(float(closes[break_idx]), digits),
+                                "level": round(float(pk), digits)
+                            })
+                        lifecycle_seq.append({
+                            "label": "M3",
+                            "role": "RETEST",
+                            "bar_index": i,
+                            "time": int(c_time),
+                            "price": round(float(c_low), digits),
+                            "level": round(float(pk), digits)
+                        })
+
+                        reason_text = f"RBS Retest of {pk:.{digits}f} • Tested {max(1, touches)}x before Break [B]"
                         break
+
                 if not cand_type:
                     for tr_p in prior_trs:
                         if abs(c_high - tr_p) <= 0.25 * c_atr and c_close < tr_p and c_close < c_open:
+                            start_j = max(0, i - 40)
+                            break_idx = None
+                            for j in range(i - 1, start_j, -1):
+                                if closes[j] < tr_p - 0.10 * c_atr and (opens[j] >= tr_p - 0.10 * c_atr or closes[j - 1] >= tr_p - 0.05 * c_atr):
+                                    break_idx = j
+                                    break
+
+                            touches_list = []
+                            if break_idx is not None:
+                                for j in range(start_j, break_idx):
+                                    if abs(lows[j] - tr_p) <= 0.22 * c_atr and closes[j] >= tr_p - 0.08 * c_atr:
+                                        if not touches_list or (j - touches_list[-1]["bar_index"] >= 2):
+                                            touches_list.append({
+                                                "label": str(len(touches_list) + 1),
+                                                "role": "TOUCH",
+                                                "bar_index": j,
+                                                "time": int(times[j]),
+                                                "price": round(float(lows[j]), digits),
+                                                "level": round(float(tr_p), digits)
+                                            })
+
+                            if not touches_list:
+                                raw_tb = [j for j in range(start_j, i) if abs(highs[j] - tr_p) <= 0.25 * c_atr or abs(lows[j] - tr_p) <= 0.25 * c_atr]
+                                filtered_tb = []
+                                for tb in raw_tb:
+                                    if not filtered_tb or (tb - filtered_tb[-1] >= 2):
+                                        filtered_tb.append(tb)
+                                for idx_t, tb in enumerate(filtered_tb[:4]):
+                                    touches_list.append({
+                                        "label": str(idx_t + 1),
+                                        "role": "TOUCH",
+                                        "bar_index": tb,
+                                        "time": int(times[tb]),
+                                        "price": round(float(lows[tb]), digits),
+                                        "level": round(float(tr_p), digits)
+                                    })
+                                if len(filtered_tb) >= 1 and break_idx is None:
+                                    break_idx = min(i - 1, filtered_tb[-1] + 1)
+
                             cand_type = "M3"
                             cand_dir = -1
                             entry_p = tr_p
                             zone_name = "SBR_RETEST"
-                            touches = sum(1 for j in range(max(0, i - 40), i + 1) if (abs(highs[j] - tr_p) <= 0.25 * c_atr or abs(lows[j] - tr_p) <= 0.25 * c_atr))
-                            reason_text = f"SBR Retest of {tr_p:.{digits}f} • Touch #{max(1, touches)}"
+                            touches = len(touches_list)
+
+                            lifecycle_seq = list(touches_list)
+                            if break_idx is not None:
+                                lifecycle_seq.append({
+                                    "label": "B",
+                                    "role": "BREAK",
+                                    "bar_index": break_idx,
+                                    "time": int(times[break_idx]),
+                                    "price": round(float(closes[break_idx]), digits),
+                                    "level": round(float(tr_p), digits)
+                                })
+                            lifecycle_seq.append({
+                                "label": "M3",
+                                "role": "RETEST",
+                                "bar_index": i,
+                                "time": int(c_time),
+                                "price": round(float(c_high), digits),
+                                "level": round(float(tr_p), digits)
+                            })
+
+                            reason_text = f"SBR Retest of {tr_p:.{digits}f} • Tested {max(1, touches)}x before Break [B]"
                             break
 
             # 4. M4: MOMENTUM EXPANSION SUPER-SHOCK
@@ -899,21 +1019,34 @@ def detect_historical_triggers(
 
             # Anti-clustering throttle: skip if same strategy & direction within past 3 bars
             direction_str = "BUY" if cand_dir == 1 else "SELL"
-            recent_same = [t for t in triggers if t["type"] == cand_type and t["direction"] == direction_str and (i - t["bar_index"]) <= 3]
+            recent_same = [t for t in triggers if t["type"] == cand_type and t["direction"] == direction_str and (i - t.get("signal_bar_index", t["bar_index"])) <= 3]
             if recent_same:
                 continue
+
+            # Anchor trigger visually to signal bar i (where rejection wick / pattern formed)
+            if i < n - 1:
+                exec_time = int(times[i + 1])
+                exec_price = float(opens[i + 1])
+            else:
+                exec_time = int(c_time)
+                exec_price = float(entry_p)
 
             bar_trigger = {
                 "bar_index": i,
                 "bar_age": n - 1 - i,
                 "time": c_time,
                 "price": round(entry_p, digits),
+                "high": round(c_high, digits),
+                "low": round(c_low, digits),
+                "exec_time": exec_time,
+                "exec_price": round(exec_price, digits),
                 "type": cand_type,
                 "direction": direction_str,
                 "dr_pos_pct": dr_pos_pct,
                 "zone": zone_name,
                 "label": cand_type,
                 "touch_count": max(1, touches),
+                "lifecycle_sequence": lifecycle_seq,
                 "runway_atr": round(runway_dist, 2),
                 "sl": round(sl, digits),
                 "tp": round(tp, digits),
@@ -1118,10 +1251,35 @@ def calculate_predictive_matrix(
     ema50 = float(candles[-1].get("ema50", mid)) if candles else mid
 
     dr_pos_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
+    dr_hi = c1 if c1 > 0 else (mid + 1.5 * atr_val)
+    dr_lo = f1 if (f1 > 0 and f1 < dr_hi) else (mid - 1.5 * atr_val)
+    dr_span = max(dr_hi - dr_lo, 1e-6)
+
+    def _calc_dr_pos(p: float) -> float:
+        return (p - dr_lo) / dr_span
+
+    def _count_level_touches(lvl: float) -> Tuple[int, List[Dict[str, Any]], str]:
+        if not candles or lvl <= 0:
+            return 0, [], "Fresh Level (0x)"
+        c_highs = [float(c.get("high", c.get("close", 0))) for c in candles[-40:]]
+        c_lows = [float(c.get("low", c.get("close", 0))) for c in candles[-40:]]
+        c_times = [int(c.get("time", 0)) for c in candles[-40:]]
+        t_bars = []
+        touch_tags = []
+        glyphs = ["①", "②", "③", "④", "⑤"]
+        for k in range(len(c_highs)):
+            if abs(c_highs[k] - lvl) <= 0.22 * atr_val or abs(c_lows[k] - lvl) <= 0.22 * atr_val:
+                if not t_bars or (k - t_bars[-1] >= 2):
+                    t_bars.append(k)
+                    num = len(t_bars)
+                    g = glyphs[min(num - 1, len(glyphs) - 1)]
+                    touch_tags.append({"num": num, "glyph": g, "time": c_times[k]})
+        desc = f"Tested {len(t_bars)}x ({', '.join(t['glyph'] for t in touch_tags)})" if t_bars else "Fresh Level (0x tested)"
+        return len(t_bars), touch_tags, desc
 
     stations = []
 
-    # 1. STATION PULLBACK: M2 EMA / M3 SBR RETEST
+    # 1. STATION PULLBACK: M2S / M2D EMA & SBR/RBS RETEST
     if is_bear:
         pb_candidates = [p for p in [ema20, ema50, c1] if p > mid]
         pb_price = min(pb_candidates) if pb_candidates else (mid + 0.8 * atr_val)
@@ -1129,11 +1287,17 @@ def calculate_predictive_matrix(
         pb_sl = pb_price + max(0.60 * atr_val, 15.0 * point)
         pb_tp = f1 if (f1 > 0 and f1 < mid) else (mid - 1.5 * atr_val)
         pb_rr = round(abs(pb_tp - pb_price) / max(abs(pb_sl - pb_price), 1e-5), 2)
+        pb_dr = _calc_dr_pos(pb_price)
+        pb_subtype = "M2D" if pb_dr >= 0.50 else "M2S"
+        pb_title = f"{pb_subtype} Bearish Retest ({'Deep Premium' if pb_subtype == 'M2D' else 'Shallow Corridor'})"
+        pb_tc, pb_tt, pb_td = _count_level_touches(pb_price)
 
         stations.append({
             "id": "station_pullback",
             "type": "PULLBACK",
-            "setup_name": "M2 Pullback / M3 SBR Retest",
+            "subtype": pb_subtype,
+            "label": f"WAIT {pb_subtype}",
+            "setup_name": pb_title,
             "direction": "SELL",
             "target_price": round(pb_price, digits),
             "distance_pips": pb_pips,
@@ -1141,7 +1305,10 @@ def calculate_predictive_matrix(
             "sl": round(pb_sl, digits),
             "tp": round(pb_tp, digits),
             "rr": pb_rr,
-            "trigger_condition": f"Tunggu rally ke area {pb_price:.{digits}f}, konfirmasi bearish rejection wick >= 20% di koridor EMA20/50 atau SBR.",
+            "touch_count": pb_tc,
+            "touch_tags": pb_tt,
+            "touch_desc": pb_td,
+            "trigger_condition": f"Tunggu rally ke area {pb_price:.{digits}f} ({pb_td}), konfirmasi bearish rejection wick >= 20% di koridor EMA20/50 ({pb_subtype}).",
             "status": "ARMED_WAITING" if pb_pips > 0 else "TESTING"
         })
     else:
@@ -1151,11 +1318,17 @@ def calculate_predictive_matrix(
         pb_sl = pb_price - max(0.60 * atr_val, 15.0 * point)
         pb_tp = c1 if (c1 > mid) else (mid + 1.5 * atr_val)
         pb_rr = round(abs(pb_tp - pb_price) / max(abs(pb_price - pb_sl), 1e-5), 2)
+        pb_dr = _calc_dr_pos(pb_price)
+        pb_subtype = "M2D" if pb_dr <= 0.50 else "M2S"
+        pb_title = f"{pb_subtype} Bullish Retest ({'Deep Discount' if pb_subtype == 'M2D' else 'Shallow Corridor'})"
+        pb_tc, pb_tt, pb_td = _count_level_touches(pb_price)
 
         stations.append({
             "id": "station_pullback",
             "type": "PULLBACK",
-            "setup_name": "M2 Pullback / M3 RBS Retest",
+            "subtype": pb_subtype,
+            "label": f"WAIT {pb_subtype}",
+            "setup_name": pb_title,
             "direction": "BUY",
             "target_price": round(pb_price, digits),
             "distance_pips": pb_pips,
@@ -1163,22 +1336,31 @@ def calculate_predictive_matrix(
             "sl": round(pb_sl, digits),
             "tp": round(pb_tp, digits),
             "rr": pb_rr,
-            "trigger_condition": f"Tunggu retrace ke area {pb_price:.{digits}f}, konfirmasi bullish rebound wick >= 20% di koridor EMA20/50 atau RBS.",
+            "touch_count": pb_tc,
+            "touch_tags": pb_tt,
+            "touch_desc": pb_td,
+            "trigger_condition": f"Tunggu retrace ke area {pb_price:.{digits}f} ({pb_td}), konfirmasi bullish rebound wick >= 20% di koridor EMA20/50 ({pb_subtype}).",
             "status": "ARMED_WAITING" if pb_pips > 0 else "TESTING"
         })
 
-    # 2. STATION SWEEP: M1A EXTREME LIQUIDITY SWEEP
+    # 2. STATION SWEEP: M1A / M1B LIQUIDITY SWEEP
     if is_bear:
         sw_price = f1 if (f1 > 0 and f1 < mid) else (mid - 1.2 * atr_val)
         sw_pips = round((mid - sw_price) / max(pip_val, 1e-6), 1)
         sw_sl = sw_price - max(0.60 * atr_val, 15.0 * point)
         sw_tp = mid + 1.2 * atr_val
         sw_rr = round(abs(sw_tp - sw_price) / max(abs(sw_price - sw_sl), 1e-5), 2)
+        sw_dr = _calc_dr_pos(sw_price)
+        sw_subtype = "M1A" if (sw_dr <= 0.382 or (f1 > 0 and abs(sw_price - f1) <= 0.25 * atr_val)) else "M1B"
+        sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
+        sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
         stations.append({
             "id": "station_sweep",
             "type": "SWEEP",
-            "setup_name": "M1A Liquidity Sweep (SFP)",
+            "subtype": sw_subtype,
+            "label": f"WAIT {sw_subtype}",
+            "setup_name": sw_title,
             "direction": "BUY",
             "target_price": round(sw_price, digits),
             "distance_pips": sw_pips,
@@ -1186,7 +1368,10 @@ def calculate_predictive_matrix(
             "sl": round(sw_sl, digits),
             "tp": round(sw_tp, digits),
             "rr": sw_rr,
-            "trigger_condition": f"Tunggu harga menusuk bawah {sw_price:.{digits}f} sapu likuiditas SSL, lalu reclaim kembali ke atas level dengan lower wick >= 30%.",
+            "touch_count": sw_tc,
+            "touch_tags": sw_tt,
+            "touch_desc": sw_td,
+            "trigger_condition": f"Tunggu harga menusuk bawah {sw_price:.{digits}f} ({sw_td}) sapu SSL, lalu reclaim dengan lower wick >= 30%.",
             "status": "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
         })
     else:
@@ -1195,11 +1380,17 @@ def calculate_predictive_matrix(
         sw_sl = sw_price + max(0.60 * atr_val, 15.0 * point)
         sw_tp = mid - 1.2 * atr_val
         sw_rr = round(abs(sw_price - sw_tp) / max(abs(sw_sl - sw_price), 1e-5), 2)
+        sw_dr = _calc_dr_pos(sw_price)
+        sw_subtype = "M1A" if (sw_dr >= 0.618 or (c1 > 0 and abs(sw_price - c1) <= 0.25 * atr_val)) else "M1B"
+        sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
+        sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
         stations.append({
             "id": "station_sweep",
             "type": "SWEEP",
-            "setup_name": "M1A Liquidity Sweep (SFP)",
+            "subtype": sw_subtype,
+            "label": f"WAIT {sw_subtype}",
+            "setup_name": sw_title,
             "direction": "SELL",
             "target_price": round(sw_price, digits),
             "distance_pips": sw_pips,
@@ -1207,7 +1398,10 @@ def calculate_predictive_matrix(
             "sl": round(sw_sl, digits),
             "tp": round(sw_tp, digits),
             "rr": sw_rr,
-            "trigger_condition": f"Tunggu harga menusuk atas {sw_price:.{digits}f} sapu likuiditas BSL, lalu reclaim kembali ke bawah level dengan upper wick >= 30%.",
+            "touch_count": sw_tc,
+            "touch_tags": sw_tt,
+            "touch_desc": sw_td,
+            "trigger_condition": f"Tunggu harga menusuk atas {sw_price:.{digits}f} ({sw_td}) sapu BSL, lalu reclaim dengan upper wick >= 30%.",
             "status": "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
         })
 

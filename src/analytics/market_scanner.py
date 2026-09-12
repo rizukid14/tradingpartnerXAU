@@ -1882,7 +1882,8 @@ class MarketScanner:
         valid_tops = [v for v in [asian_h, pdh_val, pwh_val, c1_val] if v > 0 and v >= mid - 0.50 * atr_val]
         top_price = min(valid_tops) if valid_tops else (c1_val or asian_h or (mid + 0.5 * atr_val))
         top_tag = "Asian High" if top_price == asian_h else ("PDH" if top_price == pdh_val else ("PWH" if top_price == pwh_val else "Macro Wall C1"))
-        top_lbl = f"M1A Bearish Sweep Resistance [{top_tag}] (Macro SFP)"
+        top_sub = "M1A" if (top_price == c1_val or top_price == pwh_val or dr_pos >= 0.618) else "M1B"
+        top_lbl = f"{top_sub} Bearish Sweep Resistance [{top_tag}] ({'Macro SFP' if top_sub == 'M1A' else 'Internal Inducement'})"
         top_event_time = 0
         top_bar_age = 999
         top_status = "WAITING_SWEEP"
@@ -1898,7 +1899,8 @@ class MarketScanner:
         valid_bots = [v for v in [asian_l, pdl_val, pwl_val, f1_val] if v > 0 and v <= mid + 0.50 * atr_val]
         bot_price = max(valid_bots) if valid_bots else (f1_val or asian_l or (mid - 0.5 * atr_val))
         bot_tag = "Asian Low" if bot_price == asian_l else ("PDL" if bot_price == pdl_val else ("PWL" if bot_price == pwl_val else "Macro Wall F1"))
-        bot_lbl = f"M1A Bullish Sweep Support [{bot_tag}] (Macro SFP)"
+        bot_sub = "M1A" if (bot_price == f1_val or bot_price == pwl_val or dr_pos <= 0.382) else "M1B"
+        bot_lbl = f"{bot_sub} Bullish Sweep Support [{bot_tag}] ({'Macro SFP' if bot_sub == 'M1A' else 'Internal Inducement'})"
         bot_event_time = 0
         bot_bar_age = 999
         bot_status = "WAITING_SWEEP"
@@ -1937,12 +1939,14 @@ class MarketScanner:
         if m1_dir == -1:
             m1_price = top_price
             m1_lbl = top_lbl
+            m1_sub = top_sub
             m1_event_time = top_event_time
             m1_bar_age = top_bar_age if top_bar_age < 999 else 0
             m1_status = top_status
         else:
             m1_price = bot_price
             m1_lbl = bot_lbl
+            m1_sub = bot_sub
             m1_event_time = bot_event_time
             m1_bar_age = bot_bar_age if bot_bar_age < 999 else 0
             m1_status = bot_status
@@ -1978,6 +1982,7 @@ class MarketScanner:
 
             standbys.append({
                 "type": "M1",
+                "subtype": m1_sub,
                 "price": round(m1_price, digits),
                 "label": m1_lbl,
                 "event_time": m1_event_time,
@@ -2019,6 +2024,7 @@ class MarketScanner:
 
                 standbys.append({
                     "type": "M1B",
+                    "subtype": "M1B",
                     "price": round(m1b_lvl, digits),
                     "label": lbl_text,
                     "event_time": m1b_event_time,
@@ -2098,8 +2104,15 @@ class MarketScanner:
                 "phase": m2_status
             }
 
+            m2_dr_pos = (m2_price - f1_floor) / max(c1_ceiling - f1_floor, 1e-6) if (c1_ceiling > f1_floor > 0) else dr_pos
+            if m2_dir == 1:
+                m2_sub = "M2D" if m2_dr_pos <= 0.50 else "M2S"
+            else:
+                m2_sub = "M2D" if m2_dr_pos >= 0.50 else "M2S"
+
             standbys.append({
                 "type": "M2",
+                "subtype": m2_sub,
                 "price": round(m2_price, digits),
                 "label": m2_lbl,
                 "event_time": m2_event_time,

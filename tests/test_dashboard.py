@@ -264,7 +264,7 @@ class TestDashboardCockpit(unittest.TestCase):
         self.assertIsInstance(markers, list)
         for m in markers:
             self.assertIn("type", m)
-            self.assertIn(m["type"], ("M1A", "M1B", "M2", "M2S", "M2D", "M3", "M4"))
+            self.assertIn(m["type"], ("M1A", "M1B", "M1D", "M1S", "M2", "M2S", "M2D", "M3", "M4"))
             self.assertIn("direction", m)
             self.assertIn("price", m)
             self.assertIn("time", m)
@@ -580,6 +580,145 @@ class TestDashboardCockpit(unittest.TestCase):
                 self.assertEqual(m["type"], "M2D")
             elif m.get("dr_pos", 0.5) > 0.50:
                 self.assertEqual(m["type"], "M2S")
+
+    def test_m1d_vs_m1s_classification_and_execution_bar_shift(self):
+        """M1 sweeps at macro extremes must classify as M1D and markers align to bar i+1 (Opsi B)."""
+        import pandas as pd
+        t0 = 1700000000 + 9 * 3600
+        bars = []
+        # Setup base bars
+        for i in range(25):
+            bars.append({"time": t0 + i * 3600, "open": 1.1500, "high": 1.1510, "low": 1.1490, "close": 1.1505, "tick_volume": 100})
+
+        # Bar 25: Deep macro sweep at C1 (1.1650): High 1.1660, close 1.1630 (red close, 75% upper wick)
+        bars.append({"time": t0 + 25 * 3600, "open": 1.1645, "high": 1.1660, "low": 1.1625, "close": 1.1630, "tick_volume": 200})
+        # Bar 26: Subsequent bar where execution actually takes place
+        bars.append({"time": t0 + 26 * 3600, "open": 1.1630, "high": 1.1635, "low": 1.1610, "close": 1.1615, "tick_volume": 150})
+        df = pd.DataFrame(bars)
+
+        macro = {
+            "immediate_ceiling_c1": 1.1650,
+            "immediate_floor_f1": 1.1450,
+            "dr_pos": 0.90
+        }
+        markers = dashboard.detect_historical_triggers(
+            df=df,
+            symbol="EURUSD",
+            pip_size=0.0001,
+            point=0.00001,
+            lookback_bars=30,
+            macro=macro,
+            c1=1.1650,
+            f1=1.1450,
+            atr_val=0.0040,
+            zce_ladder=[]
+        )
+
+        m1_sells = [m for m in markers if m.get("bar_index") == 25 and "M1" in m["type"]]
+        self.assertTrue(len(m1_sells) > 0)
+        m1 = m1_sells[0]
+        self.assertEqual(m1["type"], "M1A")
+        self.assertEqual(m1["direction"], "SELL")
+        # Visual anchor is signal bar 25 where the sweep wick occurred
+        self.assertEqual(m1["time"], t0 + 25 * 3600)
+        self.assertEqual(m1["high"], 1.1660)
+        self.assertEqual(m1["price"], 1.1630)
+        self.assertEqual(m1["exec_time"], t0 + 26 * 3600)
+
+    def test_predictive_matrix_m2s_m2d_and_m1a_m1b(self):
+        """Predictive matrix must generate WAIT M2S/M2D and WAIT M1A/M1B stations."""
+        macro = {
+            "is_bull": True,
+            "is_bear": False,
+            "immediate_ceiling_c1": 1.1650,
+            "immediate_floor_f1": 1.1450,
+            "dr_pos": 0.45
+        }
+        candles = [
+            {"time": 1700000000, "close": 1.1520, "ema20": 1.1510, "ema50": 1.1490}
+        ]
+        pm = dashboard.calculate_predictive_matrix(
+            symbol="EURUSD",
+            mid=1.1520,
+            macro=macro,
+            c1=1.1650,
+            f1=1.1450,
+            c2=1.1750,
+            f2=1.1350,
+            atr_val=0.0030,
+            pip_val=0.0001,
+            point=0.00001,
+            digits=5,
+            candles=candles
+        )
+        self.assertIn("stations", pm)
+        stations = pm["stations"]
+        pb = next((s for s in stations if s["type"] == "PULLBACK"), None)
+        sw = next((s for s in stations if s["type"] == "SWEEP"), None)
+
+        self.assertIsNotNone(pb)
+        self.assertIn(pb["subtype"], ("M2S", "M2D"))
+        self.assertIn(pb["label"], ("WAIT M2S", "WAIT M2D"))
+
+        self.assertIsNotNone(sw)
+        self.assertIn(sw["subtype"], ("M1A", "M1B"))
+        self.assertIn(sw["label"], ("WAIT M1A", "WAIT M1B"))
+
+    def test_m3_lifecycle_sequence_touch_and_break(self):
+        """M3 triggers must export full chronological lifecycle sequence: Touch 1, Touch 2, Break B, Retest M3."""
+        import pandas as pd
+        t0 = 1700000000 + 8 * 3600
+        bars = []
+        # Level to test: 1.1500 (Resistance to Support Flip)
+        for i in range(20):
+            bars.append({"time": t0 + i * 3600, "open": 1.1350 + i * 0.0003, "high": 1.1355 + i * 0.0003, "low": 1.1345 + i * 0.0003, "close": 1.1352 + i * 0.0003, "tick_volume": 100})
+        # Bar 20: Touch 1 at 1.1500
+        bars.append({"time": t0 + 20 * 3600, "open": 1.1470, "high": 1.1500, "low": 1.1465, "close": 1.1480, "tick_volume": 150})
+        # Bar 21..22: Pullback
+        bars.append({"time": t0 + 21 * 3600, "open": 1.1480, "high": 1.1485, "low": 1.1460, "close": 1.1465, "tick_volume": 100})
+        bars.append({"time": t0 + 22 * 3600, "open": 1.1465, "high": 1.1475, "low": 1.1455, "close": 1.1470, "tick_volume": 100})
+        # Bar 23: Touch 2 at 1.1500
+        bars.append({"time": t0 + 23 * 3600, "open": 1.1470, "high": 1.1500, "low": 1.1468, "close": 1.1485, "tick_volume": 160})
+        # Bar 24: Breakout [B] firmly above 1.1500
+        bars.append({"time": t0 + 24 * 3600, "open": 1.1485, "high": 1.1560, "low": 1.1480, "close": 1.1555, "tick_volume": 250})
+        # Bar 25: Retest [M3] tests 1.1500 from above and closes green
+        bars.append({"time": t0 + 25 * 3600, "open": 1.1510, "high": 1.1565, "low": 1.1500, "close": 1.1540, "tick_volume": 200})
+        # Bar 26: Follow through expansion
+        bars.append({"time": t0 + 26 * 3600, "open": 1.1540, "high": 1.1680, "low": 1.1530, "close": 1.1650, "tick_volume": 100})
+        df = pd.DataFrame(bars)
+
+        markers = dashboard.detect_historical_triggers(
+            df=df,
+            symbol="EURUSD",
+            pip_size=0.0001,
+            point=0.00001,
+            lookback_bars=30,
+            c1=1.1700,
+            f1=1.1300,
+            atr_val=0.0020,
+            zce_ladder=[]
+        )
+
+        m3_list = [m for m in markers if m.get("type") == "M3"]
+        self.assertTrue(len(m3_list) > 0, "M3 Breakout Retest should trigger on Bar 25")
+        m3 = m3_list[0]
+        self.assertIn("lifecycle_sequence", m3)
+        seq = m3["lifecycle_sequence"]
+        self.assertTrue(len(seq) >= 3, "Lifecycle sequence must have at least Touch, Break, and Retest")
+
+        # Verify roles
+        roles = [s["role"] for s in seq]
+        self.assertIn("TOUCH", roles)
+        self.assertIn("BREAK", roles)
+        self.assertIn("RETEST", roles)
+
+        # Verify chronological ordering
+        bar_indices = [s["bar_index"] for s in seq]
+        self.assertEqual(bar_indices, sorted(bar_indices), "Lifecycle steps must be strictly chronological")
+
+        # Verify Break is labeled "B"
+        break_step = next(s for s in seq if s["role"] == "BREAK")
+        self.assertEqual(break_step["label"], "B")
 
 
 if __name__ == "__main__":

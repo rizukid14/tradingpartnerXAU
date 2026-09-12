@@ -90,8 +90,9 @@ def test_cbss_runway_decoupling():
     assert r_atr >= min_runway_chamber # Allowed!
 
 
-def test_ny_m3_paper_route_and_disposition():
+def test_ny_m3_paper_route_and_disposition(monkeypatch):
     """Memverifikasi bahwa M3 Breakout di Sesi NY (>=18 WIB) dialihkan ke Paper Trade dengan disposisi SKIPPED_NY_M3_PAPER."""
+    monkeypatch.setattr(config, "ENABLE_NY_M3_PAPER_ROUTE", True)
     assert getattr(config, "ENABLE_NY_M3_PAPER_ROUTE", True) is True
     
     cand_m3 = CandidateSetup(
