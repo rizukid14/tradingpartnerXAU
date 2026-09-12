@@ -2162,21 +2162,32 @@ function initChart() {
         const touchHtml = (hoveredMarker.touch_count && hoveredMarker.touch_count > 1)
           ? `<div style="display:flex;align-items:center;gap:6px;margin:4px 0 3px 0;font-size:10px;color:#fbbf24;font-weight:600;"><span style="background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:3px;border:1px solid rgba(251,191,36,0.4);">⚡ Touch Count: ${hoveredMarker.touch_count}x</span><span style="color:#cbd5e1;">(Level tested ${hoveredMarker.touch_count} times)</span></div>`
           : ((hoveredMarker.type === "M3" || hoveredMarker.type === "M1B") ? `<div style="margin:4px 0 3px 0;font-size:10px;color:#94a3b8;"><span style="background:rgba(148,163,184,0.12);padding:1px 6px;border-radius:3px;">⚡ Touch Count: 1st Test</span></div>` : '');
+        const verdictBadge = `<span style="background:rgba(16,185,129,0.16);color:#10b981;padding:1px 6px;border-radius:3px;font-weight:700;font-size:9px;letter-spacing:0.4px;border:1px solid rgba(16,185,129,0.3);">✓ 8-GATE PASS [A+ VALID]</span>`;
+        const metricsHtml = (hoveredMarker.runway_atr !== undefined)
+          ? `<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:10px;color:#94a3b8;margin:5px 0 3px 0;border-top:1px dashed rgba(255,255,255,0.1);padding-top:4px;">
+               <span>Runway: <b style="color:#38bdf8;">${hoveredMarker.runway_atr}x ATR</b></span>
+               ${hoveredMarker.rr ? `<span>Net R:R: <b style="color:#10b981;">1:${hoveredMarker.rr}</b></span>` : ''}
+               ${hoveredMarker.sl ? `<span>SL: <b style="color:#f43f5e;">${hoveredMarker.sl}</b></span>` : ''}
+               ${hoveredMarker.tp ? `<span>TP: <b style="color:#10b981;">${hoveredMarker.tp}</b></span>` : ''}
+             </div>`
+          : '';
         tooltipEl.innerHTML = `
           <div class="zce-tt-header">
             <span class="zce-tt-tier" style="color:${hoveredMarker.box.color};">${hoveredMarker.label} [${dirBadge}] @ ${hoveredMarker.price.toFixed(dDigits)}</span>
             <span class="zce-tt-score">DR ${hoveredMarker.dr_pos_pct}%</span>
           </div>
+          <div style="margin:3px 0 2px 0;">${verdictBadge}</div>
           ${touchHtml}
           <div class="zce-tt-confluences">${hoveredMarker.reason}</div>
-          <div class="zce-tt-meta">
+          ${metricsHtml}
+          <div class="zce-tt-meta" style="margin-top:4px;">
             <span>Zone: <b style="color:${hoveredMarker.box.color};">${hoveredMarker.zone}</b></span>
             <span>${hoveredMarker.bar_age} bars ago</span>
           </div>
         `;
         tooltipEl.style.display = "block";
-        tooltipEl.style.left = `${Math.min(rect.width - 280, Math.max(10, hoveredMarker.box.x + hoveredMarker.box.w + 10))}px`;
-        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 125, hoveredMarker.box.y - 10))}px`;
+        tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, hoveredMarker.box.x + hoveredMarker.box.w + 10))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredMarker.box.y - 10))}px`;
         return;
       }
 

@@ -257,7 +257,10 @@ class TestDashboardCockpit(unittest.TestCase):
             bars.append({"time": t0 + i * 3600, "open": o, "high": h, "low": l, "close": c})
         df = pd.DataFrame(bars)
 
-        markers = dashboard.detect_historical_triggers(df, "EURUSD", 0.0001, 0.00001, lookback_bars=50)
+        markers = dashboard.detect_historical_triggers(
+            df, "EURUSD", 0.0001, 0.00001, lookback_bars=50,
+            c1=1.1600, f1=1.1400, atr_val=0.0015
+        )
         self.assertIsInstance(markers, list)
         for m in markers:
             self.assertIn("type", m)
@@ -270,6 +273,12 @@ class TestDashboardCockpit(unittest.TestCase):
             self.assertIn("reason", m)
             self.assertIn("touch_count", m)
             self.assertGreaterEqual(m["touch_count"], 1)
+            self.assertIn("verdict", m)
+            self.assertEqual(m["verdict"], "8-GATE PASS [A+ VALID]")
+            self.assertIn("runway_atr", m)
+            self.assertGreaterEqual(m["runway_atr"], 0.50)
+            self.assertIn("rr", m)
+            self.assertGreaterEqual(m["rr"], 1.25)
 
 
 if __name__ == "__main__":
