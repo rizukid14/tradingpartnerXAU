@@ -239,7 +239,7 @@ class ZoneConfluenceEngine:
         self.grade_g3 = float(p.get("grade_g3", getattr(config, "ZCE_GRADE_G3_THRESHOLD", 8.5)))
         self.merge_atr_mult = p.get("merge_atr_mult", 0.25)
         self.cold_days = p.get("cold_days", float(getattr(config, "ZCE_COLD_DAYS", 5.0)))
-        self.vacuum_days = p.get("vacuum_days", 60)
+        self.vacuum_days = p.get("vacuum_days", float(getattr(config, "ZCE_VACUUM_DAYS", 60)))
         self.conflict_gap = p.get("conflict_gap", 0.45)
         self.tp_reach_atr = p.get("tp_reach_atr", 3.0)
         self.frvp_tfs = p.get("frvp_tfs", ZCE_FRVP_TFS)
@@ -787,7 +787,7 @@ class ZoneConfluenceEngine:
             c.is_cold = c.last_touch_h1_bars_ago > bars_cold
             c.is_vacuum = (
                 c.is_cold
-                and c.last_touch_h1_bars_ago > bars_vac
+                and c.last_touch_h1_bars_ago >= min(bars_vac, max(1, int(n_total * 0.88)))
                 and abs(c.mid - cur_price) > 1.0 * atr_h1
             )
 

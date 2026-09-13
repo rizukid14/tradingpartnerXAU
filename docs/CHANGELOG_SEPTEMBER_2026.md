@@ -2,7 +2,46 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 107. Perubahan 13 September 2026 — Tiga Bugfix Engine: Rollover Timezone Mask, ZCE_VACUUM_DAYS Dead Config, dan is_vacuum Always-False
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Audit end-to-end ZCE dan Pattern Engine mengidentifikasi tiga bug senyap yang tidak memicu crash tetapi merusak kalkulasi secara sistematis:
+
+1. **Rollover Timezone Mask Salah (`pattern_engine.py:clean_outliers_and_rollover`)**: Fungsi `clean_outliers_and_rollover` mendeteksi rollover pada jam UTC `{0, 3, 4}` (= 07:00, 10:00, 11:00 WIB) — bukan pada jam rollover MT5 yang sesungguhnya. Rollover VTMarkets-Live 3 (GMT+3) = 00:00 Server = **21:00 UTC = 04:00 WIB**. Akibatnya, H4 bar normal yang selalu ada di UTC 00:00 dan 04:00 setiap hari menyebabkan `np.any(is_rollover)` selalu bernilai `True`, mengunci `atr_mult_thresh` permanen di **2.0× ATR** untuk seluruh pair non-CHF. Spike valid di jam London open (07:00–09:00 UTC) ikut dipotong, sehingga `ENVELOPE_CEIL`/`FLOOR` yang diterima ZCE lebih sempit dari seharusnya.
+
+2. **`ZCE_VACUUM_DAYS` Config Mati (`zone_confluence_engine.py:__init__`)**: `config.py` mendefinisikan `ZCE_VACUUM_DAYS` dari `.env` dengan benar, namun `ZoneConfluenceEngine.__init__` hardcode `p.get("vacuum_days", 60)` tanpa merujuk `config.ZCE_VACUUM_DAYS`. Melanggar Rule 2 AGENTS.md: `.env` sebagai single source of truth.
+
+3. **`is_vacuum` Selalu False (`zone_confluence_engine.py:_stamp_freshness`)**: `bars_vac = int(vacuum_days × 24) = 1440` (60 hari × 24 jam H1), namun H1 DataFrame hanya tersedia 520 bar (~21 hari). Kondisi `last_touch_h1_bars_ago > 1440` tidak pernah bisa terpenuhi dalam window 520 bar. Akibatnya, `c1_is_vacuum` dan `f1_is_vacuum` selalu `False`, gate `can_advance_to_c2 = c1_breached or not c1_thick or c1_is_vacuum` tidak pernah aktif via vacuum path, dan zona yang sudah lama kering diperlakukan sama dengan zona aktif.
+
+---
+
+### ✨ Solusi & Perubahan:
+
+1. **Fix Rollover Mask UTC (`src/analytics/pattern_engine.py`)**:
+   - Ganti mask `(h_arr == 4) | (h_arr == 3) | (h_arr == 0)` → `(h_arr == 20) | (h_arr == 21) | (h_arr == 22)` di semua 5 branch deteksi (L193, 197, 202, 206, 209).
+   - Window `{20, 21, 22}` UTC = ±1 jam sekitar 21:00 UTC (rollover MT5 VTMarkets GMT+3).
+   - Efek: `atr_mult_thresh` kini bernilai **2.5× ATR** untuk pair non-CHF di luar window rollover (sebelumnya terkunci 2.0× karena false positive), H4 envelope band lebih akurat.
+
+2. **Wire `ZCE_VACUUM_DAYS` dari Config (`src/analytics/zone_confluence_engine.py:242`)**:
+   - `self.vacuum_days = p.get("vacuum_days", 60)` → `self.vacuum_days = p.get("vacuum_days", float(getattr(config, "ZCE_VACUUM_DAYS", 60)))`
+   - `.env` key `ZCE_VACUUM_DAYS` kini aktif sebagai override.
+
+3. **Fix `is_vacuum` Reachable (`src/analytics/zone_confluence_engine.py:788–792`)**:
+   - Threshold absolut `bars_vac` di-cap ke `min(bars_vac, max(1, int(n_total * 0.88)))` — artinya zona dikategorikan vacuum jika tidak tersentuh dalam ≥88% dari seluruh H1 history yang tersedia.
+   - Operator diubah dari `>` ke `>=` untuk konsistensi batas bawah.
+   - Efek: `c1_is_vacuum`/`f1_is_vacuum` kini bisa bernilai `True` → gate advance ke C2/F2 via vacuum path aktif untuk zona yang sudah lama tidak diuji pasar.
+
+---
+
+### 📊 Verifikasi:
+- 364/364 unit tests PASS.
+- File diubah: `src/analytics/pattern_engine.py`, `src/analytics/zone_confluence_engine.py`.
+- Total baris diubah: 7 baris di 2 file.
+
+---
+
 ## 106. Perubahan 13 September 2026 — Implementasi Swing-Cycle Departure State Machine pada ZCE Freshness, Eliminasi Inflasi Sentuhan Naive, dan Standarisasi ZCE_TOUCH_LOOKBACK_BARS 1 Minggu Bursa (120 Bar)
+
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Inflasi Sentuhan Naive pada Konsolidasi Sempit (`zone_confluence_engine.py`)**:

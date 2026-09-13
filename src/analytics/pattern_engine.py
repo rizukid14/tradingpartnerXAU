@@ -190,23 +190,23 @@ def clean_outliers_and_rollover(
         t_col = d["time"]
         if hasattr(t_col, "dt"):
             h_arr = t_col.dt.hour.to_numpy()
-            is_rollover = (h_arr == 4) | (h_arr == 3) | (h_arr == 0)
+            is_rollover = (h_arr == 20) | (h_arr == 21) | (h_arr == 22)
         elif hasattr(t_col, "values") and str(t_col.dtype).startswith("datetime64"):
             try:
                 h_arr = t_col.values.astype('datetime64[h]').astype(int) % 24
-                is_rollover = (h_arr == 4) | (h_arr == 3) | (h_arr == 0)
+                is_rollover = (h_arr == 20) | (h_arr == 21) | (h_arr == 22)
             except Exception:
                 pass
         elif len(t_col) > 0 and hasattr(t_col.iloc[0], "hour"):
             h_arr = np.array([t.hour for t in t_col])
-            is_rollover = (h_arr == 4) | (h_arr == 3) | (h_arr == 0)
+            is_rollover = (h_arr == 20) | (h_arr == 21) | (h_arr == 22)
     elif isinstance(d.index, pd.DatetimeIndex):
         try:
             h_arr = d.index.hour.to_numpy()
-            is_rollover = (h_arr == 4) | (h_arr == 3) | (h_arr == 0)
+            is_rollover = (h_arr == 20) | (h_arr == 21) | (h_arr == 22)
         except Exception:
             h_arr = d.index.values.astype('datetime64[h]').astype(int) % 24
-            is_rollover = (h_arr == 4) | (h_arr == 3) | (h_arr == 0)
+            is_rollover = (h_arr == 20) | (h_arr == 21) | (h_arr == 22)
 
     is_chf = "CHF" in symbol.upper()
     atr_mult_thresh = 2.0 if (is_chf or np.any(is_rollover)) else 2.5
