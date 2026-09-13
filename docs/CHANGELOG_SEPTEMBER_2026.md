@@ -2,6 +2,24 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 113. Perubahan 14 September 2026 — Sinkronisasi Gate 3 Dashboard dengan Status Nonaktif Modul CBSS (ENABLE_CBSS=False)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Modul CBSS telah dinonaktifkan di engine trading (`ENABLE_CBSS=False` di `config.py:808`), sehingga `main.py` dan `market_scanner.py` tidak memblokir order berdasarkan benteng lawan G3 maupun batasan concurrency basket. Namun, evaluasi Gate 3 ("Systemic Basket & CBSS Guard") di `dashboard.py:3259` mengevaluasi jarak benteng G3 tanpa memeriksa status `ENABLE_CBSS`, menghasilkan status false alarm `WAIT / [WALL EXHAUSTED]` di antarmuka cockpit.
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **`dashboard.py` (Gate 3 Evaluation)**:
+   - Menambahkan guard `enable_cbss = getattr(config, "ENABLE_CBSS", False)`.
+   - Jika `ENABLE_CBSS=False`, Gate 3 tetap memeriksa Systemic Basket Shock (35.0 bps) untuk proteksi fluktuasi ekstrem, namun melewati (bypass) kalkulasi G3 Wall Exhaustion dan Basket Concurrency Cap, menghasilkan status `PASS` (*"Systemic Basket Shock Cleared (CBSS Off)"*).
+   - Menyelaraskan fallback `ENABLE_CBSS` di `cbss_matrix` dan tabel parameter ke `False`.
+2. **`.env`**:
+   - Menambahkan deklarasi eksplisit `ENABLE_CBSS=false` sebagai Single Source of Truth.
+
+### ✅ Hasil Verifikasi:
+- **Unit Test Suite**: 81/81 test PASS (100%).
+
+---
+
 ## 112. Perubahan 14 September 2026 — Penyelarasan Holistik Dead Zone & Night Freeze 06:00 WIB (Risk Engine, Main, Scanner, Dashboard)
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

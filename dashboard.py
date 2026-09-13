@@ -2163,7 +2163,7 @@ class CockpitDataEngine:
             })
 
         cbss_matrix = {
-            "enabled": getattr(config, "ENABLE_CBSS", True),
+            "enabled": getattr(config, "ENABLE_CBSS", False),
             "max_concurrency_cap": max_concurrency_cap,
             "g3_threshold_atr": getattr(config, "CBSS_G3_BARRIER_THRESHOLD_ATR", 0.35),
             "saturation_threshold": getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70),
@@ -3235,34 +3235,40 @@ class CockpitDataEngine:
             g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Commodity Asset Basket Check", "reason": "Komoditas logam (XAUUSD) beroperasi independen dari matriks basket currency fiat."}
         else:
             is_locked, b_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
-            m_cache = self.scanner.macro_cache if (self.scanner and hasattr(self.scanner, "macro_cache")) else {}
-            is_g3_blocked, g3_reason = is_pair_blocked_by_g3_wall(sym, target_dir, m_cache)
-
-            # Cek Basket Concurrency Cap & Runway Relay
-            pos_all = connector.get_all_open_positions() or []
-            pend_all = connector.get_pending_orders() or []
-            conflict_ok, conflict_reason = check_basket_directional_conflict(sym, target_dir, pos_all, pend_all)
-            cap_ok, cap_reason = check_basket_concurrency_cap(sym, target_dir, pos_all, pend_all)
-            runway_info = calculate_pair_runway(sym, target_dir, m_cache)
-            r_atr = runway_info.get("runway_atr", 2.0)
-            opp_grade = runway_info.get("opp_wall_grade", "")
-            is_opp_g3 = ("3" in opp_grade or "MACRO" in opp_grade)
-            wall_th_g3 = float(getattr(config, "CBSS_WALL_EXHAUSTION_G3_ATR", 0.35))
+            enable_cbss = getattr(config, "ENABLE_CBSS", False)
 
             if is_locked:
                 g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Circuit Breaker Shock Protection (35.0 bps)", "reason": f"[BASKET LOCKED] {b_reason}"}
-            elif not conflict_ok:
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Anti-Internal Currency Hedge Veto", "reason": conflict_reason}
-            elif is_g3_blocked:
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "CBSS Local G3 Wall Veto (The EURAUD Law)", "reason": g3_reason}
-            elif is_opp_g3 and r_atr < wall_th_g3:
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "WAIT", "desc": f"Relay Pause: Macro G3 Proximity ({r_atr:.2f}x ATR)", "reason": f"[WALL EXHAUSTED] Jarak ke benteng makro {opp_grade} {r_atr:.2f}x ATR < {wall_th_g3:.2f}x ATR. Estafet likuiditas dialihkan ke pair laggard sekeranjang."}
-            elif not cap_ok:
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PAPER", "desc": "CBSS Concurrency Saturated (Paper Route)", "reason": f"[CBSS SATURATED] {cap_reason} -> Dialihkan ke Virtual Paper Trade (0 Token, 0 Risiko MT5)."}
-            else:
+            elif not enable_cbss:
                 base_c, quote_c = get_pair_currencies(clean_s)
-                pen_note = f" ({opp_grade} Penetrable)" if (not is_opp_g3 and r_atr < 0.35) else ""
-                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": f"CBSS Cleared (Runway {r_atr:.2f}x ATR){pen_note}", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Bebas tabrakan benteng G3 lawan & runway memadai ({r_atr:.2f}x ATR)."}
+                g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": "Systemic Basket Shock Cleared (CBSS Off)", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Modul CBSS non-aktif (ENABLE_CBSS=False)."}
+            else:
+                m_cache = self.scanner.macro_cache if (self.scanner and hasattr(self.scanner, "macro_cache")) else {}
+                is_g3_blocked, g3_reason = is_pair_blocked_by_g3_wall(sym, target_dir, m_cache)
+
+                # Cek Basket Concurrency Cap & Runway Relay
+                pos_all = connector.get_all_open_positions() or []
+                pend_all = connector.get_pending_orders() or []
+                conflict_ok, conflict_reason = check_basket_directional_conflict(sym, target_dir, pos_all, pend_all)
+                cap_ok, cap_reason = check_basket_concurrency_cap(sym, target_dir, pos_all, pend_all)
+                runway_info = calculate_pair_runway(sym, target_dir, m_cache)
+                r_atr = runway_info.get("runway_atr", 2.0)
+                opp_grade = runway_info.get("opp_wall_grade", "")
+                is_opp_g3 = ("3" in opp_grade or "MACRO" in opp_grade)
+                wall_th_g3 = float(getattr(config, "CBSS_WALL_EXHAUSTION_G3_ATR", 0.35))
+
+                if not conflict_ok:
+                    g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "Anti-Internal Currency Hedge Veto", "reason": conflict_reason}
+                elif is_g3_blocked:
+                    g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "BLOCK", "desc": "CBSS Local G3 Wall Veto (The EURAUD Law)", "reason": g3_reason}
+                elif is_opp_g3 and r_atr < wall_th_g3:
+                    g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "WAIT", "desc": f"Relay Pause: Macro G3 Proximity ({r_atr:.2f}x ATR)", "reason": f"[WALL EXHAUSTED] Jarak ke benteng makro {opp_grade} {r_atr:.2f}x ATR < {wall_th_g3:.2f}x ATR. Estafet likuiditas dialihkan ke pair laggard sekeranjang."}
+                elif not cap_ok:
+                    g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PAPER", "desc": "CBSS Concurrency Saturated (Paper Route)", "reason": f"[CBSS SATURATED] {cap_reason} -> Dialihkan ke Virtual Paper Trade (0 Token, 0 Risiko MT5)."}
+                else:
+                    base_c, quote_c = get_pair_currencies(clean_s)
+                    pen_note = f" ({opp_grade} Penetrable)" if (not is_opp_g3 and r_atr < 0.35) else ""
+                    g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": f"CBSS Cleared (Runway {r_atr:.2f}x ATR){pen_note}", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Bebas tabrakan benteng G3 lawan & runway memadai ({r_atr:.2f}x ATR)."}
         gates.append(g3)
 
         # Gate 4: MSE Chamber & Forbidden Traps + Directional Hysteresis
@@ -3403,7 +3409,7 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 {"category": "Mekanisme Radar", "param": "M2_ENABLED", "value": str(getattr(config, "M2_ENABLED", True)), "desc": "Trend-Aligned Pullback (ADX >= 20, Fib 50% - 61.8% Golden Pocket)"},
                 {"category": "Mekanisme Radar", "param": "M3_ENABLED", "value": str(getattr(config, "M3_ENABLED", True)), "desc": "Breakout Retest (15-Bar Recency Guard, 2.5x ATR Runaway Guard, Runway >= 0.8x ATR)"},
                 {"category": "Mekanisme Radar", "param": "M4_ENABLED", "value": str(getattr(config, "M4_ENABLED", True)), "desc": "Systemic Flow Continuation (z >= 1.5, 120-bar break, M4_STRUCTURAL_FLOORED)"},
-                {"category": "CBSS Synchronization", "param": "ENABLE_CBSS", "value": str(getattr(config, "ENABLE_CBSS", True)), "desc": "Currency Basket Structural Synchronization: ZCE Runway & Basket Concurrency Cap"},
+                {"category": "CBSS Synchronization", "param": "ENABLE_CBSS", "value": str(getattr(config, "ENABLE_CBSS", False)), "desc": "Currency Basket Structural Synchronization: ZCE Runway & Basket Concurrency Cap"},
                 {"category": "CBSS Synchronization", "param": "CBSS_MAX_BASKET_CONCURRENCY", "value": str(getattr(config, "CBSS_MAX_BASKET_CONCURRENCY", 2)), "desc": "Maksimal 2 posisi aktif per mata uang dalam arah eksposur yang sama"},
                 {"category": "CBSS Synchronization", "param": "CBSS_G3_BARRIER_THRESHOLD_ATR", "value": f"{getattr(config, 'CBSS_G3_BARRIER_THRESHOLD_ATR', 0.35)}x ATR", "desc": "Local Pair G3 Wall Veto (The EURAUD Law): blokir pair penabrak benteng lawan"},
                 {"category": "Circuit Breaker", "param": "SYSTEMIC_BASKET_THRESHOLD", "value": "35.0 bps", "desc": "USD, JPY, Cross & Spread Shock Threshold (Mencegah trade saat lonjakan anomali)"},
