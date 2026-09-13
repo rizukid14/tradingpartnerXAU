@@ -2,6 +2,69 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 108. Perubahan 13 September 2026 — ZCE: PDH/PDL/PWH/PWL sebagai Primitif + Horizon Boost Fallback Fix
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Audit parity test ZCE (via scratchpad `zce_parity.py`) mengonfirmasi dua gap struktural:
+
+1. **PDH/PDL/PWH/PWL tidak pernah menjadi primitif ZCE**: Bot menggunakan `pdh_barrier`/`pwh_barrier`/`pdl_barrier`/`pwl_barrier` sebagai anchor entry M3 Priority 2 (market_scanner.py:5013), tapi level-level ini tidak pernah masuk peta ZCE. Akibatnya: tidak ada `freshness_state`, tidak ada COIL veto, tidak ada vacuum gate untuk level yang dipakai sebagai target retest. Slot `C_PDH`/`F_PDL`/`C_PWH`/`F_PWL` sudah ada di `CEIL_KINDS`/`FLOOR_KINDS` namun tidak ada kode produksi dan tidak ada weight.
+
+2. **Horizon boost fallback terbalik**: `ZCE_HORIZON_BOOST` tabel berhenti di `(600, 1.35)`, dan fallback-nya `return min(1.30, cap)` — artinya level yang berumur ≥600 bar (macro extremes multi-tahun) mendapat boost **1.30**, lebih rendah dari level 350–599 bar yang mendapat **1.35**. Level yang paling tua justru dihukum.
+
+### 🔧 Patch A — PDH/PDL/PWH/PWL sebagai ZCE Primitif:
+
+**File: `src/analytics/zone_confluence_engine.py`**
+
+1. **`ZCE_W_KIND` (+4 entry)**:
+   - `"C_PDH": 0.90, "F_PDL": 0.90` — Previous Day High/Low, daily key level
+   - `"C_PWH": 1.05, "F_PWL": 1.05` — Previous Week High/Low, weekly = lebih kuat
+   - Rasional: di atas `LAST_HIGH` (0.60), di bawah `EQH` (1.15). PWH > PDH karena weekly level lebih jarang dan lebih kuat secara institusional.
+
+2. **`_collect_primitives` (+25 baris, sebelum clamp block)**:
+   - Saat TF=D1 dan `len(df) >= 2`: ekstrak `df.iloc[-2]['high']` sebagai C_PDH, `df.iloc[-2]['low']` sebagai F_PDL
+   - Saat TF=W1 dan `len(df) >= 2`: ekstrak `df.iloc[-2]['high']` sebagai C_PWH, `df.iloc[-2]['low']` sebagai F_PWL
+   - `horizon = 0` (non-window, seperti PSYCH) — PDH berubah setiap hari, bukan struktur multi-horizon permanen
+   - Band thickness = `max(0.05×ATR, min(0.20×ATR, 10% × daily range))`
+
+**Efek downstream (tanpa perubahan kode di file lain):**
+- Cluster di sekitar PDH/PDL mendapat bobot +1.98 poin (0.90×2.20) → lebih mudah naik ke G2
+- Cluster PWH/PWL mendapat +2.94 poin (1.05×2.80) → bisa naik G2 sendiri jika ada OB W1 di dekat
+- `_stamp_freshness` otomatis menghitung touch count untuk cluster PDH/PDL baru → COIL/EXHAUSTED/VACUUM gating aktif
+- M3 Priority 0 (`imm_c1_m3`) otomatis menangkap PDH yang sudah dibreakout → tidak lagi perlu fallback Priority 2
+- Dashboard menampilkan `C_PDH`/`F_PDL` di kinds_present dan tooltip tanpa perubahan kode
+
+**Grade threshold TIDAK diubah** (G2=5.0, G3=8.5): Special G3 Protocol sudah memproteksi inflasi — `C_PDH` tidak masuk daftar macro anchor, sehingga PDH sendiri tidak bisa membawa cluster ke G3.
+
+### 🔧 Patch B — Horizon Boost Fallback Fix:
+
+**File: `src/analytics/zone_confluence_engine.py`**
+
+```python
+# SEBELUM
+ZCE_HORIZON_BOOST = [(100, 1.00), (150, 1.10), (250, 1.20), (350, 1.30), (600, 1.35)]
+def _horizon_boost(h, cap=1.35):
+    ...
+    return min(1.30, cap)  # BUG: h>=600 → 1.30 < h=350-599 → 1.35
+
+# SESUDAH
+ZCE_HORIZON_BOOST = [
+    (100, 1.00), (150, 1.10), (250, 1.20),
+    (350, 1.30), (600, 1.35), (9999, 1.40),   # ← ditambah
+]
+def _horizon_boost(h, cap=1.40):
+    ...
+    return min(1.40, cap)  # fallback aman, tabel cover semua range
+```
+
+Monotonitas dipulihkan: `boost(350)=1.35 < boost(600)=1.40 = boost(700)=1.40`.
+
+### ✅ Verifikasi:
+- **Smoke test**: `C_PDH`, `F_PDL`, `C_PWH`, `F_PWL` muncul di `kinds_present` clusters
+- `horizon_boost(350)=1.35`, `horizon_boost(600)=1.40`, `horizon_boost(700)=1.40` ✅
+- **364/364 tests PASS** (62.94s)
+
+---
+
 ## 107. Perubahan 13 September 2026 — Tiga Bugfix Engine: Rollover Timezone Mask, ZCE_VACUUM_DAYS Dead Config, dan is_vacuum Always-False
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
