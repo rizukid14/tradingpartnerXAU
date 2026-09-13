@@ -2,7 +2,78 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 112. Perubahan 14 September 2026 — Penyelarasan Holistik Dead Zone & Night Freeze 06:00 WIB (Risk Engine, Main, Scanner, Dashboard)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Meskipun variabel `ASIA_SESSION_START_HOUR_WIB` telah diuji, evaluasi runtime mendeteksi sisa hardcode `< 7` di beberapa layer sistem yang menyebabkan kondisi **Split-Brain**:
+1. `src/core/risk_engine.py`: `_check_night_freeze()` mengecek hardcode `now.hour < 7`, menolak setiap order baru di jam 06:00–06:59 WIB dengan status `[RISK] Night Freeze`.
+2. `main.py`: Status banner loop mengecek `now_wib_h < 7`, tetap memasang label `[NIGHT FREEZE]`.
+3. `src/analytics/market_scanner.py`: Pengecekan sesi Gold hardcoded `7 <= hour_wib` dan `0 <= h < 7`.
+4. `dashboard.py`: Gate 1 `Session & Spread Filter` dan `_get_session_info()` mengecek hardcode `0 <= h < 7`, menghasilkan status `BLOCK` berlabel `[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB`.
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **`.env` & `config.py`**:
+   - Menambahkan `ASIA_SESSION_START_HOUR_WIB=6` dan `NIGHT_FREEZE_END_HOUR_WIB=6` di `.env`.
+   - Di `config.py`, default `ASIA_SESSION_START_HOUR_WIB = 6` dan menambah `NIGHT_FREEZE_END_HOUR_WIB = _getenv_int("NIGHT_FREEZE_END_HOUR_WIB", ASIA_SESSION_START_HOUR_WIB)`.
+2. **`src/core/risk_engine.py`**:
+   - Menjadikan `end_hour` dinamis di `_check_night_freeze()` membaca `NIGHT_FREEZE_END_HOUR_WIB`. Jam 06:00–06:59 WIB kini diizinkan (PASS).
+3. **`main.py`**:
+   - Banner terminal menggunakan `night_end_h` dinamis membaca `NIGHT_FREEZE_END_HOUR_WIB`.
+4. **`src/analytics/market_scanner.py`**:
+   - Menyelaraskan filter Gold dan fallback `asia_start` ke 6 secara dinamis.
+5. **`dashboard.py`**:
+   - Menyelaraskan `_get_session_info()`, Gate 1 `Session & Spread Filter`, dan tabel parameter `DEAD_ZONE_HOURS` dinamis mengikuti `ASIA_SESSION_START_HOUR_WIB`.
+
+### ✅ Hasil Verifikasi:
+- **Unit Test Suite**: 81/81 test PASS (100%) mencakup `test_cbss_and_risk_shields.py`, `test_market_scanner.py`, `test_dashboard_shading.py`, `test_dashboard.py`.
+
+---
+
+## 111. Perubahan 14 September 2026 — .env Cleanup, Live Mode, USD-Only News Blackout Guard & Dead Zone 06:00 WIB
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Audit `.env` menemukan **24 duplikat kunci**, **3 kunci mati** (dead keys), dan **4 konflik nilai** pada variabel `SYSTEMIC_BASKET_*_THRESHOLD` (2.0 vs 3.5). Selain itu, mode akun masih terkunci di `demo`, news filter non-USD masih memicu lock/autocut secara tidak tepat, dan dead zone berakhir terlalu larut (07:00 WIB) sehingga melewatkan 1 jam pertama sesi Asia Tokyo.
+
+### 🔧 Rincian Perubahan Arsitektur:
+
+**File: `.env`**
+1. **Cleanup 29 baris bermasalah**: Hapus 24 kunci duplikat, 3 kunci mati (`ZCE_TP_REACH_ATR_MULT`, `CBSS_WALL_EXHAUSTION_THRESHOLD_ATR`, `DANGER_ZONES_WIB`), dan 2 baris konflik nilai. File berkurang dari 472 → 443 baris.
+2. **Perbaiki `SYSTEMIC_BASKET_*_THRESHOLD`**: Nilai konflik (2.0 vs 3.5) diselaraskan ke nilai yang benar: **3.5** untuk semua varian (`SYSTEMIC_BASKET_BULL/BEAR/DIFF_THRESHOLD`).
+3. **Switch Live Mode**: `MT5_ACCOUNT_MODE=demo` → `MT5_ACCOUNT_MODE=live` (akun Cent VTMarkets-Live 3, login `27556325`, suffix `-ECNc` aktif).
+4. **Tambah `NEWS_BLACKOUT_USD_ONLY=true`**: Hanya berita US/Global yang memicu lock order baru dan autocut posisi. Berita regional non-USD tidak memicu apapun.
+5. **Geser Dead Zone**: `ASIA_SESSION_START_HOUR_WIB=7` → `ASIA_SESSION_START_HOUR_WIB=6`. Dead zone berakhir pukul 06:00 WIB, bot aktif 1 jam lebih awal menangkap awal sesi Tokyo.
+
+**File: `config.py`**
+1. **Tambah `NEWS_BLACKOUT_USD_ONLY`**: Parameter baru dengan `_getenv_bool("NEWS_BLACKOUT_USD_ONLY", True)`. Default `True` agar aman meskipun `.env` tidak diset.
+
+**File: `src/analytics/economic_calendar.py`** — fungsi `is_in_news_blackout()`
+1. **Implementasi USD-Only Bypass**: Import runtime `config.NEWS_BLACKOUT_USD_ONLY` di dalam loop event. Jika `True` (default), blok non-USD (section 2: GB/EU/NZ/AU/CA/JP/CH) dilewati sepenuhnya dengan `continue`.
+2. **Logika alur baru**:
+   - **US/Global** (FOMC, NFP, CPI, PCE, GDP, Powell, Fed, Warsh) → selalu `BLOCK ALL` pair.
+   - **Non-USD regional** (BOE, ECB, RBA, RBNZ, BOC, BOJ) → `BYPASS TOTAL` jika `NEWS_BLACKOUT_USD_ONLY=True`. Tidak ada lock, tidak ada autocut, tidak ada force-BEP.
+3. **Semua 3 consumer otomatis ikut** tanpa perubahan tambahan: `position_manager.py` (pre-news shield), `market_scanner.py` (Stage 1 radar), `risk_engine.py` (hard gate sebelum order).
+
+**File: `AGENTS.md`**
+1. Update komentar Dead Zone dari `00:00–07:00 WIB` → `00:00–06:00 WIB` di bagian HARD EXECUTION GATES.
+
+**File: `tests/test_cbss_and_risk_shields.py`**
+1. **Update `test_news_blackout_non_usd_pair_specific`**: BOE Rate Decision sekarang harus **TIDAK** memblokir GBPUSD saat `NEWS_BLACKOUT_USD_ONLY=True` (assert `is False`, bukan `is True`).
+2. **Tambah `test_news_blackout_non_usd_pair_specific_opt_out`** (test baru): Memverifikasi path opt-out — saat `NEWS_BLACKOUT_USD_ONLY=False`, BOE masih memblokir GBPUSD, tapi tidak memblokir AUDCAD.
+
+**File: `tests/test_market_scanner.py`**
+1. **Update `test_session_aware_pair_filtering`**:
+   - Seksi 1b: Verifikasi Asia session start jam **06:00 WIB** (JPY/AUD/NZD diizinkan, pure EUR/GBP/CAD masih diblokir).
+   - Seksi 1c: Dead zone assertion digeser ke jam **05:00 WIB** (masih di dalam 00:00–06:00 WIB dead zone). Jam 06:00 kini bukan dead zone.
+
+### ✅ Hasil Verifikasi:
+- **Runtime check**: `config.ASIA_SESSION_START_HOUR_WIB = 6`, `DANGER_ZONES_WIB[0] = "Overnight Rollover Dead Zone (00:00 - 06:00 WIB)"`, `MT5_ACCOUNT_MODE = live`.
+- **Full Test Suite**: **366/366 PASS 100%** (43.93s) — naik 1 test dari 365 karena penambahan `test_news_blackout_non_usd_pair_specific_opt_out`.
+- **Git commit**: `80e4c87` — `fix(news/session): USD-only blackout guard, dead zone 06:00 WIB, .env cleanup & live mode`.
+
+---
+
 ## 110. Perubahan 13 September 2026 — ZCE: Zero-Displacement Discrete Levels (PDH/PDL/PWH/PWL) & Normalisasi Fortress Tag
+
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 Audit empiris lintas-simbol (`EURUSD`, `USDJPY`, `GBPJPY`, `EURGBP`, `AUDNZD`, `USDCAD`, `XAUUSD`) mengungkap 4 kelemahan fatal pada integrasi awal level sesi di ZCE:

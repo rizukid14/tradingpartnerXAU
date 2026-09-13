@@ -115,11 +115,12 @@ def _get_session_info(dt_wib: datetime, symbol: str = "") -> Dict[str, Any]:
                 "name": "CLOSED"
             }
 
-    if 0 <= h < 7:
+    asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
+    if 0 <= h < asia_start:
         if (h == 3 and dt_wib.minute >= 50) or (h == 4 and dt_wib.minute <= 15):
             lbl = "Rollover Spread Spike (03:50–04:15 WIB)"
         else:
-            lbl = "Dead Zone: Rollover & Thin Liquidity (00:00–07:00 WIB)"
+            lbl = f"Dead Zone: Rollover & Thin Liquidity (00:00–{asia_start:02d}:00 WIB)"
         return {
             "type": "DEAD_ZONE",
             "status": "BLOCKED",
@@ -128,7 +129,7 @@ def _get_session_info(dt_wib: datetime, symbol: str = "") -> Dict[str, Any]:
             "border_color": "rgba(239, 68, 68, 0.40)",
             "name": "DEAD_ZONE"
         }
-    elif 7 <= h < 14:
+    elif asia_start <= h < 14:
         is_asian_allowed = (not clean) or any(k in clean for k in ("JPY", "AUD", "NZD"))
         if is_asian_allowed:
             lbl = f"Tokyo Active Driver ({clean} Permitted)" if clean else "Tokyo Active Session"
@@ -3117,9 +3118,10 @@ class CockpitDataEngine:
         # Gate 1: Operational Session & Spread Filter
         is_crypto = config.is_crypto(sym)
         is_gold = config.is_gold(sym)
-        is_dead_zone = (0 <= h < 7) and not is_crypto
+        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
+        is_dead_zone = (0 <= h < asia_start) and not is_crypto
         clean_s = sym.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
-        is_asian = (7 <= h < 14) and not is_crypto
+        is_asian = (asia_start <= h < 14) and not is_crypto
         is_asian_allowed = any(k in clean_s for k in ("JPY", "AUD", "NZD")) or is_crypto or is_gold
         spread_cap = config.max_spread_points_for(sym) if (is_crypto or is_gold) else max(int(round(atr_val * 0.15 / pt)), 20)
 
@@ -3130,9 +3132,9 @@ class CockpitDataEngine:
         )
 
         if is_dead_zone:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–07:00 WIB (Current: {h:02d}:00 WIB). Hanya manage posisi."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[DEAD ZONE] Trading non-aktif pada 00:00–{asia_start:02d}:00 WIB (Current: {h:02d}:00 WIB). Hanya manage posisi."}
         elif is_asian and not is_asian_allowed:
-            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SESSION LOCKED] Sesi Tokyo (07:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
+            g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SESSION LOCKED] Sesi Tokyo ({asia_start:02d}:00-14:00 WIB) hanya izinkan driver JPY/AUD/NZD. {clean_s} dikunci."}
         elif spread_pts > spread_cap:
             g1 = {"id": 1, "title": "Session & Spread Filter", "status": "BLOCK", "desc": f"WIB Operational Hours (Sess Mult: {sess_mult}x)", "reason": f"[SPREAD SPIKE] Spread ({spread_pts} pts) melebihi batas ({spread_cap} pts)."}
         else:
@@ -3405,7 +3407,7 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 {"category": "CBSS Synchronization", "param": "CBSS_MAX_BASKET_CONCURRENCY", "value": str(getattr(config, "CBSS_MAX_BASKET_CONCURRENCY", 2)), "desc": "Maksimal 2 posisi aktif per mata uang dalam arah eksposur yang sama"},
                 {"category": "CBSS Synchronization", "param": "CBSS_G3_BARRIER_THRESHOLD_ATR", "value": f"{getattr(config, 'CBSS_G3_BARRIER_THRESHOLD_ATR', 0.35)}x ATR", "desc": "Local Pair G3 Wall Veto (The EURAUD Law): blokir pair penabrak benteng lawan"},
                 {"category": "Circuit Breaker", "param": "SYSTEMIC_BASKET_THRESHOLD", "value": "35.0 bps", "desc": "USD, JPY, Cross & Spread Shock Threshold (Mencegah trade saat lonjakan anomali)"},
-                {"category": "Waktu Operasional", "param": "DEAD_ZONE_HOURS", "value": "00:00 - 07:00 WIB", "desc": "Perlindungan rollover likuiditas tipis & spread tinggi broker"},
+                {"category": "Waktu Operasional", "param": "DEAD_ZONE_HOURS", "value": f"00:00 - {getattr(config, 'ASIA_SESSION_START_HOUR_WIB', 6):02d}:00 WIB", "desc": "Perlindungan rollover likuiditas tipis & spread tinggi broker"},
                 {"category": "Waktu Operasional", "param": "PRE_ROLLOVER_SHIELD", "value": "03:50 WIB", "desc": "Tutup otomatis posisi berisiko sebelum lonjakan rollover 04:00 WIB"},
                 {"category": "Execution Mode", "param": "ENABLE_LLM_JURY", "value": str(getattr(config, "ENABLE_LLM_JURY", True)), "desc": f"Mode Eksekusi Aktif: {jury_mode_str}"},
                 {"category": "Risk Management", "param": "LLM_FX_FLOOR_ATR_MULT", "value": "0.50x ATR (H1)", "desc": "Batas lantai stop loss minimum FX majors & crosses (+15 pts buffer)"},

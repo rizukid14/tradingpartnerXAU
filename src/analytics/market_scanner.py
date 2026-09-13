@@ -1091,9 +1091,9 @@ class MarketScanner:
         """
         if config.is_crypto(symbol):
             return True
+        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
         if config.is_gold(symbol):
-            return 7 <= hour_wib <= 23
-        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
+            return asia_start <= hour_wib <= 23
         asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
         ny_start = getattr(config, "NY_SESSION_START_HOUR_WIB", 19)
         lock_pacific_cross = getattr(config, "NY_LOCK_PACIFIC_CROSSES", True)
@@ -3664,7 +3664,7 @@ class MarketScanner:
         h = now.hour
         dow = now.weekday()
 
-        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
+        asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
         is_asian = (asia_start <= h < 17)
         req_body = 0.30 if is_asian else 0.40
         req_wick = 0.25 if is_asian else 0.333
@@ -3741,7 +3741,7 @@ class MarketScanner:
                 or (getattr(config, "ENABLE_NIGHT_FREEZE", True) and h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23))
             ):
                 continue
-            if sym_is_gold and (0 <= h < 7):
+            if sym_is_gold and (0 <= h < asia_start):
                 continue
 
             clean_sym = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
