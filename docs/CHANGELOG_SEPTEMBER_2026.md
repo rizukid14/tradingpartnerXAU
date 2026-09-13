@@ -3893,3 +3893,26 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 - **Hasil Pengujian**:
   - Seluruh unit test suite: **364/364 tests PASSED (100% OK, 0 Failure)**.
   - Cockpit Dashboard berjalan sehat pada port 8765 (`HTTP 200 OK`).
+
+---
+
+## 106. 14 September 2026 — Zero-Flicker Cockpit, Dedicated Target TP Filter, Decoupled FRVP, Enhanced WAIT Tooltips, & ZCE Touch Count Integrity
+
+- **Eliminasi Layar Berkedip & Stabilisasi Target TP (`dashboard.py` & `dashboard_assets.py`)**:
+  - **Closed-Bar Evaluation**: Membatasi loop `detect_historical_triggers` pada lilin tertutup `range(15, n - 1)`. Mencegah jitter tick 0.1 pip dari bolak-balik mengubah status sinyal/Net R:R pada bar aktif.
+  - **Zero Height Jump Standby Strip**: Ketika belum ada setup aktif terkonfirmasi, elemen `#flight-path-strip` tetap ditampilkan dengan tinggi konstan 27px bertuliskan status `STANDBY`, mengeliminasi kedipan (*flicker*) akibat `ResizeObserver` memicu resize chart.
+  - **ZCE Ladder Cache & In-Place Candle Updates**: Menghentikan pembersihan dan penggambaran ulang garis horizontal ZCE setiap polling 3 detik, serta beralih ke `candleSeries.update(lastCandle)` dan `emaSeries.update(...)`.
+- **Dedicated Target TP Filter Chip & Decoupled FRVP (`dashboard_assets.py`)**:
+  - Menambahkan chip filter dedicated `Target TP` di toolbar atas dengan penyimpanan preferensi di `localStorage`.
+  - Memisahkan blok rendering Fixed Range Volume Profile (FRVP) agar tidak lagi terikat pada status on/off filter SMC Range.
+- **Perluasan Hitbox & Rule Tooltip Stasiun WAIT (`dashboard_assets.py`)**:
+  - Memperluas bounding box interaktif stasiun WAIT melintasi garis horizontal hingga margin kanan chart.
+  - Menambahkan blok detail `🎯 TRIGGER RULE (IF)` pada tooltip hover stasiun WAIT.
+- **Restorasi Presisi Touch Count & Freshness ZCE (`dashboard.py` & `dashboard_assets.py`)**:
+  - **Anchor-Based Fortress Consolidation**: Mengisolasi dinding benteng terpilih (`zm.floors`, `zm.ceilings`) dari efek *single-linkage chaining* saat digabung dengan klaster mentah di `_consolidate_zce_zones`. Menjamin benteng F1..F4 dan C1..C4 tidak saling menelan (menuntaskan masalah hilangnya F2 EURCAD).
+  - **Perlindungan Metadata & Fallback Guard**: Menyediakan metadata kuantitatif default (`touch_count: 0`, `freshness_label: '0x FRESH (Virgin)'`, `touch_nodes: []`) pada level fallback serta menerapkan *strict None checking* saat sinkronisasi metadata sentuhan.
+  - **Penyelarasan Tooltip Frontend**: Mempropagasikan `touch_count` ke `activeRenderedLevels` dan menyajikan label informatif `⚡ Touch Count: {tc}x ({freshness_label})` pada tooltip hover level benteng.
+- **Hasil Pengujian & Verifikasi**:
+  - Seluruh unit test suite: **365/365 tests PASSED (100% OK, 0 Failure)**.
+  - Verifikasi audit empiris pada EURCAD, USDJPY, GBPJPY, EURUSD: 100% level benteng memiliki touch count dan status freshness yang akurat.
+

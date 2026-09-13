@@ -733,9 +733,9 @@ html, body {
   color: var(--cyan);
 }
 .chip-btn.active-green {
-  background: rgba(56, 189, 248, 0.14);
-  border-color: #38bdf8;
-  color: #38bdf8;
+  background: rgba(16, 185, 129, 0.14);
+  border-color: #10b981;
+  color: #10b981;
 }
 .chip-btn.active-red {
   background: rgba(251, 191, 36, 0.14);
@@ -797,6 +797,11 @@ html, body {
   background: rgba(244, 63, 94, 0.15);
   color: var(--red);
   border: 1px solid var(--red);
+}
+.fp-dir-standby {
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
 }
 .fp-steps {
   display: flex;
@@ -1435,6 +1440,7 @@ html, body {
           <button class="chip-btn active-cyan" id="chip-pattern" data-chip="pattern" title="Toggle SMC Dealing Range & Order Flow"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">tune</span> SMC Range</button>
           <button class="chip-btn active-amber" id="chip-frvp" data-chip="frvp" title="Toggle Fixed Range Volume Profile (POC, VAH, VAL)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">bar_chart</span> FRVP</button>
           <button class="chip-btn active-cyan" id="chip-ema" data-chip="ema" title="Toggle Garis EMA (20, 50, 200)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">show_chart</span> EMA</button>
+          <button class="chip-btn active-green" id="chip-tp" data-chip="tp" title="Toggle Sequential Flight Path Target TP (TP1, TP2, TP3)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">flag</span> Target TP</button>
         </div>
       </div>
 
@@ -1545,6 +1551,7 @@ let filterShowRadar = true;
 let filterShowPatterns = true;
 let filterShowEMA = true;
 let filterShowFRVP = true;
+let filterShowTP = true;
 let filterChipF1C1 = true;
 let filterChipF2C2 = false;
 let filterChipEXT = false;
@@ -1557,6 +1564,8 @@ let priceLines = [];
 let activeRenderedLevels = [];
 let lastRenderedSymbol = null;
 let lastRenderedTF = null;
+let lastRenderedLadderKey = null;
+let lastRenderedCandleCount = 0;
 let shadingCanvas = null;
 let shadingCtx = null;
 
@@ -2008,116 +2017,6 @@ function renderVerticalShading() {
       }
     }
 
-    // 5a-2. Render Fixed Range Volume Profile (FRVP)
-    if (filterShowFRVP && cachedSymbolData && cachedSymbolData.frvp && cachedSymbolData.frvp.bins && candleSeries && chart) {
-      const frvp = cachedSymbolData.frvp;
-      const bins = frvp.bins;
-      const digits = cachedSymbolData.digits || 5;
-      const rightMargin = 45;
-      const maxBarW = Math.min(160, width * 0.20);
-
-      // Render each price bin histogram bar
-      for (let b = 0; b < bins.length; b++) {
-        const bin = bins[b];
-        const yTop = candleSeries.priceToCoordinate(bin.price_high);
-        const yBot = candleSeries.priceToCoordinate(bin.price_low);
-        if (yTop === null || yBot === null) continue;
-
-        const barH = Math.max(1.5, Math.abs(yBot - yTop));
-        const barY = Math.min(yTop, yBot);
-
-        const totalBarW = Math.max(2, bin.rel_pct * maxBarW);
-        const totVol = Math.max(1, bin.total_vol);
-        const buyFraction = bin.buy_vol / totVol;
-        const buyW = totalBarW * buyFraction;
-        const sellW = totalBarW - buyW;
-
-        const barStartX = (width - rightMargin) - totalBarW;
-
-        // Buy volume (soft emerald/teal)
-        shadingCtx.fillStyle = bin.in_va ? "rgba(16, 185, 129, 0.40)" : "rgba(16, 185, 129, 0.15)";
-        shadingCtx.fillRect(barStartX, barY, buyW, barH);
-
-        // Sell volume (soft ruby/coral)
-        shadingCtx.fillStyle = bin.in_va ? "rgba(244, 63, 94, 0.40)" : "rgba(244, 63, 94, 0.15)";
-        shadingCtx.fillRect(barStartX + buyW, barY, sellW, barH);
-
-        // Border outline for POC bar
-        if (bin.is_poc) {
-          shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.95)";
-          shadingCtx.lineWidth = 1.4;
-          shadingCtx.strokeRect(barStartX, barY, totalBarW, barH);
-        }
-      }
-
-      // Render VAH Line & Badge
-      if (frvp.vah_price) {
-        const yVah = candleSeries.priceToCoordinate(frvp.vah_price);
-        if (yVah !== null) {
-          shadingCtx.beginPath();
-          shadingCtx.setLineDash([3, 3]);
-          shadingCtx.lineWidth = 1.0;
-          shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
-          shadingCtx.moveTo(width - rightMargin - maxBarW - 40, yVah);
-          shadingCtx.lineTo(width - 25, yVah);
-          shadingCtx.stroke();
-
-          const vahTxt = `VAH ${frvp.vah_price.toFixed(digits)}`;
-          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-          const vahW = shadingCtx.measureText(vahTxt).width;
-          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
-          shadingCtx.fillRect(width - vahW - 35, yVah - 7, vahW + 8, 13);
-          shadingCtx.fillStyle = "#38bdf8";
-          shadingCtx.fillText(vahTxt, width - vahW - 31, yVah + 3);
-        }
-      }
-
-      // Render VAL Line & Badge
-      if (frvp.val_price) {
-        const yVal = candleSeries.priceToCoordinate(frvp.val_price);
-        if (yVal !== null) {
-          shadingCtx.beginPath();
-          shadingCtx.setLineDash([3, 3]);
-          shadingCtx.lineWidth = 1.0;
-          shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
-          shadingCtx.moveTo(width - rightMargin - maxBarW - 40, yVal);
-          shadingCtx.lineTo(width - 25, yVal);
-          shadingCtx.stroke();
-
-          const valTxt = `VAL ${frvp.val_price.toFixed(digits)}`;
-          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-          const valW = shadingCtx.measureText(valTxt).width;
-          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
-          shadingCtx.fillRect(width - valW - 35, yVal - 7, valW + 8, 13);
-          shadingCtx.fillStyle = "#38bdf8";
-          shadingCtx.fillText(valTxt, width - valW - 31, yVal + 3);
-        }
-      }
-
-      // Render POC Line & Glowing Badge
-      if (frvp.poc_price) {
-        const yPoc = candleSeries.priceToCoordinate(frvp.poc_price);
-        if (yPoc !== null) {
-          shadingCtx.beginPath();
-          shadingCtx.setLineDash([]);
-          shadingCtx.lineWidth = 1.8;
-          shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.95)";
-          shadingCtx.moveTo(width - rightMargin - maxBarW - 60, yPoc);
-          shadingCtx.lineTo(width - 25, yPoc);
-          shadingCtx.stroke();
-
-          const pocTxt = `POC ${frvp.poc_price.toFixed(digits)}`;
-          shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
-          const pocW = shadingCtx.measureText(pocTxt).width;
-          shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
-          shadingCtx.fillRect(width - pocW - 38, yPoc - 7, pocW + 12, 14);
-          shadingCtx.fillStyle = "#f59e0b";
-          shadingCtx.fillText(pocTxt, width - pocW - 32, yPoc + 3);
-        }
-      }
-      shadingCtx.setLineDash([]);
-    }
-
     // 5b. Render Structural Channel Envelope Rails (High-to-High Ceiling & Low-to-Low Floor)
     // Upper Rail (Plafon: High to High)
     const upperSegments = ss.all_upper_segments || [];
@@ -2251,6 +2150,116 @@ function renderVerticalShading() {
     });
 
     shadingCtx.restore();
+  }
+
+  // 5-FRVP. Render Fixed Range Volume Profile (FRVP) - Decoupled from SMC Range
+  if (filterShowFRVP && cachedSymbolData && cachedSymbolData.frvp && cachedSymbolData.frvp.bins && candleSeries && chart) {
+    const frvp = cachedSymbolData.frvp;
+    const bins = frvp.bins;
+    const digits = cachedSymbolData.digits || 5;
+    const rightMargin = 45;
+    const maxBarW = Math.min(160, width * 0.20);
+
+    // Render each price bin histogram bar
+    for (let b = 0; b < bins.length; b++) {
+      const bin = bins[b];
+      const yTop = candleSeries.priceToCoordinate(bin.price_high);
+      const yBot = candleSeries.priceToCoordinate(bin.price_low);
+      if (yTop === null || yBot === null) continue;
+
+      const barH = Math.max(1.5, Math.abs(yBot - yTop));
+      const barY = Math.min(yTop, yBot);
+
+      const totalBarW = Math.max(2, bin.rel_pct * maxBarW);
+      const totVol = Math.max(1, bin.total_vol);
+      const buyFraction = bin.buy_vol / totVol;
+      const buyW = totalBarW * buyFraction;
+      const sellW = totalBarW - buyW;
+
+      const barStartX = (width - rightMargin) - totalBarW;
+
+      // Buy volume (soft emerald/teal)
+      shadingCtx.fillStyle = bin.in_va ? "rgba(16, 185, 129, 0.40)" : "rgba(16, 185, 129, 0.15)";
+      shadingCtx.fillRect(barStartX, barY, buyW, barH);
+
+      // Sell volume (soft ruby/coral)
+      shadingCtx.fillStyle = bin.in_va ? "rgba(244, 63, 94, 0.40)" : "rgba(244, 63, 94, 0.15)";
+      shadingCtx.fillRect(barStartX + buyW, barY, sellW, barH);
+
+      // Border outline for POC bar
+      if (bin.is_poc) {
+        shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.95)";
+        shadingCtx.lineWidth = 1.4;
+        shadingCtx.strokeRect(barStartX, barY, totalBarW, barH);
+      }
+    }
+
+    // Render VAH Line & Badge
+    if (frvp.vah_price) {
+      const yVah = candleSeries.priceToCoordinate(frvp.vah_price);
+      if (yVah !== null) {
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([3, 3]);
+        shadingCtx.lineWidth = 1.0;
+        shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
+        shadingCtx.moveTo(width - rightMargin - maxBarW - 40, yVah);
+        shadingCtx.lineTo(width - 25, yVah);
+        shadingCtx.stroke();
+
+        const vahTxt = `VAH ${frvp.vah_price.toFixed(digits)}`;
+        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+        const vahW = shadingCtx.measureText(vahTxt).width;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
+        shadingCtx.fillRect(width - vahW - 35, yVah - 7, vahW + 8, 13);
+        shadingCtx.fillStyle = "#38bdf8";
+        shadingCtx.fillText(vahTxt, width - vahW - 31, yVah + 3);
+      }
+    }
+
+    // Render VAL Line & Badge
+    if (frvp.val_price) {
+      const yVal = candleSeries.priceToCoordinate(frvp.val_price);
+      if (yVal !== null) {
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([3, 3]);
+        shadingCtx.lineWidth = 1.0;
+        shadingCtx.strokeStyle = "rgba(56, 189, 248, 0.70)";
+        shadingCtx.moveTo(width - rightMargin - maxBarW - 40, yVal);
+        shadingCtx.lineTo(width - 25, yVal);
+        shadingCtx.stroke();
+
+        const valTxt = `VAL ${frvp.val_price.toFixed(digits)}`;
+        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+        const valW = shadingCtx.measureText(valTxt).width;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.88)";
+        shadingCtx.fillRect(width - valW - 35, yVal - 7, valW + 8, 13);
+        shadingCtx.fillStyle = "#38bdf8";
+        shadingCtx.fillText(valTxt, width - valW - 31, yVal + 3);
+      }
+    }
+
+    // Render POC Line & Glowing Badge
+    if (frvp.poc_price) {
+      const yPoc = candleSeries.priceToCoordinate(frvp.poc_price);
+      if (yPoc !== null) {
+        shadingCtx.beginPath();
+        shadingCtx.setLineDash([]);
+        shadingCtx.lineWidth = 1.8;
+        shadingCtx.strokeStyle = "rgba(245, 158, 11, 0.95)";
+        shadingCtx.moveTo(width - rightMargin - maxBarW - 60, yPoc);
+        shadingCtx.lineTo(width - 25, yPoc);
+        shadingCtx.stroke();
+
+        const pocTxt = `POC ${frvp.poc_price.toFixed(digits)}`;
+        shadingCtx.font = "bold 9px 'JetBrains Mono', monospace";
+        const pocW = shadingCtx.measureText(pocTxt).width;
+        shadingCtx.fillStyle = "rgba(15, 23, 42, 0.92)";
+        shadingCtx.fillRect(width - pocW - 38, yPoc - 7, pocW + 12, 14);
+        shadingCtx.fillStyle = "#f59e0b";
+        shadingCtx.fillText(pocTxt, width - pocW - 32, yPoc + 3);
+      }
+    }
+    shadingCtx.setLineDash([]);
   }
 
   // 6. Render Historical M1..M4 Strategy Audit Markers (Dealing Range Intersection)
@@ -2453,8 +2462,18 @@ function renderVerticalShading() {
           const pillX = xLive + 6 + (idx * 4);
           const pillY = y - pillH / 2;
 
-          // Save bounding box for mouse hover tooltip
-          st.box = { x: pillX, y: pillY, w: pillW, h: pillH, color: baseColor };
+          // Save comprehensive bounding box for mouse hover tooltip (covers entire horizontal zone corridor & badge)
+          st.box = {
+            x: zoneX1,
+            y: Math.min(zoneY, pillY),
+            w: zoneW,
+            h: Math.max(zoneH, pillH),
+            color: baseColor,
+            pillX: pillX,
+            pillY: pillY,
+            pillW: pillW,
+            pillH: pillH
+          };
 
           // Micro connector line connecting badge to candle center
           shadingCtx.beginPath();
@@ -2490,7 +2509,7 @@ function renderVerticalShading() {
   }
 
   // 8. Render Sequential Flight Path Target Badges on Right Margin (Minimal, Hoverable)
-  if (cachedSymbolData && cachedSymbolData.flight_path && cachedSymbolData.flight_path.tp1 && candleSeries && chart) {
+  if (filterShowTP && cachedSymbolData && cachedSymbolData.flight_path && cachedSymbolData.flight_path.tp1 && candleSeries && chart) {
     const fp = cachedSymbolData.flight_path;
     const dDigits = cachedSymbolData.digits || 5;
     const targets = [
@@ -2742,16 +2761,24 @@ function initChart() {
             <span class="zce-tt-tier" style="color:${hoveredWait.box.color};font-weight:bold;">${hoveredWait.setup_name}</span>
             <span class="badge" style="background:rgba(255,255,255,0.08);color:${dirCol};font-weight:bold;">${hoveredWait.direction}</span>
           </div>
-          <div class="zce-tt-confluences" style="margin:4px 0;color:var(--text-main);">${hoveredWait.trigger_condition}</div>
+          <div style="margin:5px 0 4px 0;background:rgba(15,23,42,0.7);border:1px solid rgba(255,255,255,0.08);border-radius:4px;padding:5px 7px;">
+            <div style="font-size:9.5px;font-weight:800;color:#fbbf24;margin-bottom:2px;letter-spacing:0.3px;">🎯 TRIGGER RULE (IF):</div>
+            <div style="font-size:10px;line-height:1.4;color:var(--text-main);">${hoveredWait.trigger_condition}</div>
+          </div>
           <div class="zce-tt-meta" style="margin-top:4px;">
-            <span>Target: <b>${hoveredWait.target_price.toFixed(dDigits)}</b></span>
+            <span>Target Level: <b>${hoveredWait.target_price.toFixed(dDigits)}</b></span>
             <span>Dist: <b>${hoveredWait.distance_pips > 0 ? '+' : ''}${hoveredWait.distance_pips}p (${hoveredWait.distance_atr}x ATR)</b></span>
-            <span>R:R <b>1:${hoveredWait.rr}</b></span>
+          </div>
+          <div class="zce-tt-meta" style="margin-top:3px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:3px;">
+            <span style="color:var(--red);">SL: <b>${hoveredWait.sl ? hoveredWait.sl.toFixed(dDigits) : '—'}</b></span>
+            <span style="color:var(--green);">TP: <b>${hoveredWait.tp ? hoveredWait.tp.toFixed(dDigits) : '—'} (1:${hoveredWait.rr})</b></span>
+            <span style="color:var(--cyan);">Status: <b>${hoveredWait.status}</b></span>
           </div>
         `;
         tooltipEl.style.display = "block";
-        tooltipEl.style.left = `${Math.min(rect.width - 290, Math.max(10, hoveredWait.box.x + hoveredWait.box.w + 10))}px`;
-        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 145, hoveredWait.box.y - 10))}px`;
+        const anchorX = (hoveredWait.box.pillX && mx < hoveredWait.box.pillX) ? hoveredWait.box.pillX : mx;
+        tooltipEl.style.left = `${Math.min(rect.width - 320, Math.max(10, anchorX + 15))}px`;
+        tooltipEl.style.top = `${Math.max(10, Math.min(rect.height - 180, my - 10))}px`;
         return;
       }
 
@@ -2827,7 +2854,9 @@ function initChart() {
           const diffPips = ((hoveredLevel.price - cachedSymbolData.bid) / pt).toFixed(1);
           pipsDiff = `${diffPips >= 0 ? '+' : ''}${diffPips}p from live`;
         }
-        const freshHtml = (hoveredLevel.freshness_label) ? `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:10px;color:#fbbf24;font-weight:700;"><span style="background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:3px;border:1px solid rgba(251,191,36,0.4);">⚡ Freshness: ${hoveredLevel.freshness_label}</span></div>` : '';
+        const tc = (typeof hoveredLevel.touch_count === "number") ? hoveredLevel.touch_count : (hoveredLevel.touch_nodes ? hoveredLevel.touch_nodes.length : 0);
+        const freshLbl = hoveredLevel.freshness_label || (tc === 0 ? "0x FRESH (Virgin)" : `${tc}x TESTED`);
+        const freshHtml = `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:10px;color:#fbbf24;font-weight:700;"><span style="background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:3px;border:1px solid rgba(251,191,36,0.4);">⚡ Touch Count: ${tc}x (${freshLbl})</span></div>`;
         const nodeAuditNote = hoveredZceNode ? `<div style="margin-bottom:4px;padding:2px 6px;background:rgba(255,255,255,0.08);border-radius:3px;font-size:9.5px;color:${hoveredZceNode.color};font-weight:bold;">Focus: Touch #${hoveredZceNode.touch_num} @ ${Number(hoveredZceNode.price).toFixed(cachedSymbolData ? cachedSymbolData.digits : 5)}${hoveredZceNode.is_sweep ? ' (Sweep Wick)' : (hoveredZceNode.is_breach ? ' (Breach)' : '')}</div>` : '';
 
         tooltipEl.innerHTML = `
@@ -2904,8 +2933,6 @@ function clearPriceLines() {
 
 // Render chart levels (ZCE Multi-Horizon Fortress Ladder + M1..M4 Reticles & Temporal Markers)
 function renderChartLevels(data) {
-  clearPriceLines();
-  activeRenderedLevels = [];
   if (!data || !candleSeries) return;
 
   const rawLadder = (data.zce_walls && data.zce_walls.length > 0) ? data.zce_walls : (data.zce_ladder || []);
@@ -2943,6 +2970,18 @@ function renderChartLevels(data) {
       return true;
     });
   }
+
+  const currentLadderKey = `${data.symbol || currentSymbol}_${currentTF}_${filterChipF1C1}_${filterChipF2C2}_${filterChipEXT}_${data.w1_slope_ceiling || 0}_` +
+    filteredLadder.map(w => `${w.tier}:${w.price}`).join("|");
+  const isScopeChanged = (lastRenderedSymbol !== (data.symbol || currentSymbol) || lastRenderedTF !== currentTF);
+
+  if (!isScopeChanged && lastRenderedLadderKey === currentLadderKey && priceLines.length > 0) {
+    renderVerticalShading();
+    return;
+  }
+  lastRenderedLadderKey = currentLadderKey;
+  clearPriceLines();
+  activeRenderedLevels = [];
 
   filteredLadder.forEach(w => {
     const isFloor = (w.type === "floor" || (w.tier && w.tier.startsWith("F")));
@@ -3042,6 +3081,7 @@ function renderChartLevels(data) {
       confluences: confStr,
       timeframes: tfsStr,
       sources_count: srcCount,
+      touch_count: (typeof w.touch_count === "number") ? w.touch_count : (Array.isArray(w.touch_nodes) ? w.touch_nodes.length : 0),
       freshness_label: w.freshness_label || "",
       freshness_state: w.freshness_state || "",
       compression_type: w.compression_type || "",
@@ -3525,19 +3565,31 @@ function setCompassPill(id, tfName, trend) {
 function renderFlightPathStrip(d) {
   const stripEl = document.getElementById("flight-path-strip");
   if (!stripEl) return;
-  const fp = d.flight_path;
-  if (!fp || !fp.direction || !fp.tp1) {
+  if (!filterShowTP) {
     stripEl.style.display = "none";
     return;
   }
   stripEl.style.display = "flex";
-  const isBuy = (fp.direction === "BUY");
+  const fp = d.flight_path;
   const dirBadge = document.getElementById("fp-dir-badge");
+  const stepsContainer = document.getElementById("fp-steps-container");
+
+  if (!fp || !fp.direction || !fp.tp1) {
+    if (dirBadge) {
+      dirBadge.textContent = "STANDBY";
+      dirBadge.className = "fp-dir-badge fp-dir-standby";
+    }
+    if (stepsContainer) {
+      stepsContainer.innerHTML = `<span style="font-size:10.5px;color:var(--text-dim);font-style:italic;padding-left:4px;">Awaiting Confirmed Setup Trigger (M1..M4 Station)...</span>`;
+    }
+    return;
+  }
+
+  const isBuy = (fp.direction === "BUY");
   if (dirBadge) {
     dirBadge.textContent = `${fp.direction} PATH`;
     dirBadge.className = `fp-dir-badge ${isBuy ? 'fp-dir-buy' : 'fp-dir-sell'}`;
   }
-  const stepsContainer = document.getElementById("fp-steps-container");
   if (stepsContainer) {
     const dDigits = d.digits || 5;
     stepsContainer.innerHTML = `
@@ -3572,12 +3624,9 @@ function renderFlightPathStrip(d) {
 function renderChartData(d) {
   if (!d.candles || d.candles.length === 0) return;
 
-  // 1. Bersihkan garis harga pair lama terlebih dahulu agar skala vertikal tidak tertarik/terjepit
-  clearPriceLines();
-
   const isScopeChanged = (lastRenderedSymbol !== d.symbol || lastRenderedTF !== currentTF);
 
-  // 2. Terapkan presisi desimal dinamis jika simbol berganti (3 digit JPY, 5 digit FX)
+  // 1. Terapkan presisi desimal dinamis jika simbol berganti (3 digit JPY, 5 digit FX)
   if (isScopeChanged) {
     const pPrecision = d.digits || 5;
     const pMinMove = 1 / Math.pow(10, pPrecision);
@@ -3603,11 +3652,18 @@ function renderChartData(d) {
     if (c.ema200) ema200Data.push({ time: t, value: c.ema200 });
   });
 
-  candleSeries.setData(candleData);
-
-  if (ema20Data.length > 0) ema20Series.setData(ema20Data);
-  if (ema50Data.length > 0) ema50Series.setData(ema50Data);
-  if (ema200Data.length > 0) ema200Series.setData(ema200Data);
+  if (isScopeChanged || lastRenderedCandleCount !== candleData.length) {
+    candleSeries.setData(candleData);
+    if (ema20Data.length > 0) ema20Series.setData(ema20Data);
+    if (ema50Data.length > 0) ema50Series.setData(ema50Data);
+    if (ema200Data.length > 0) ema200Series.setData(ema200Data);
+    lastRenderedCandleCount = candleData.length;
+  } else {
+    if (candleData.length > 0) candleSeries.update(candleData[candleData.length - 1]);
+    if (ema20Data.length > 0) ema20Series.update(ema20Data[ema20Data.length - 1]);
+    if (ema50Data.length > 0) ema50Series.update(ema50Data[ema50Data.length - 1]);
+    if (ema200Data.length > 0) ema200Series.update(ema200Data[ema200Data.length - 1]);
+  }
 
   ema20Series.applyOptions({ visible: filterShowEMA });
   ema50Series.applyOptions({ visible: filterShowEMA });
@@ -4111,6 +4167,19 @@ function setupEvents() {
     });
   }
 
+  const chipTP = document.getElementById("chip-tp");
+  if (chipTP) {
+    chipTP.addEventListener("click", () => {
+      filterShowTP = !filterShowTP;
+      chipTP.classList.toggle("active-green", filterShowTP);
+      try { localStorage.setItem("zce_tp", filterShowTP ? "1" : "0"); } catch(e) {}
+      if (cachedSymbolData) {
+        renderFlightPathStrip(cachedSymbolData);
+        renderVerticalShading();
+      }
+    });
+  }
+
   // Search input
   document.getElementById("pair-search").addEventListener("input", () => {
     if (cachedOverview) renderWatchlist(cachedOverview.pairs);
@@ -4337,6 +4406,11 @@ window.addEventListener("DOMContentLoaded", () => {
       filterShowEMA = false;
       const ce = document.getElementById("chip-ema");
       if (ce) ce.classList.remove("active-cyan");
+    }
+    if (localStorage.getItem("zce_tp") === "0") {
+      filterShowTP = false;
+      const ctp = document.getElementById("chip-tp");
+      if (ctp) ctp.classList.remove("active-green");
     }
   } catch(e) {}
 
