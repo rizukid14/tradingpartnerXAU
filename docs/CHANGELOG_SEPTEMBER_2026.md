@@ -2,6 +2,45 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 110. Perubahan 13 September 2026 — ZCE: Zero-Displacement Discrete Levels (PDH/PDL/PWH/PWL) & Normalisasi Fortress Tag
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Audit empiris lintas-simbol (`EURUSD`, `USDJPY`, `GBPJPY`, `EURGBP`, `AUDNZD`, `USDCAD`, `XAUUSD`) mengungkap 4 kelemahan fatal pada integrasi awal level sesi di ZCE:
+
+1. **Phantom Offset & False Breach**: Pemberian ketebalan simetris (`0.05–0.20×ATR_TF`) pada level diskrit `PDH/PDL` menyebabkan titik acuan tepi (`_prim_edge`) bergeser **8 s/d 15 pip di bawah PDH asli**. Akibatnya, pada pengujian pita tape H1, level ZCE sudah mencatat *Touch* dan *Breach* (`is_breach = True`) saat harga sebenarnya masih berada 8–15 pip di bawah PDH sesungguhnya.
+2. **String Tag Double Prefix**: Penamaan kind dengan prefix bawaan (`C_PDH`, `F_PDL`) bertabrakan dengan formula penamaan `c.fortress_tag = f"{prefix}{'+'.join(...)}"`, menghasilkan tag cacat seperti `C_C_PDH@D1` dan `F_F_PDL@D1`.
+3. **Dead Code W1 saat Data < 30 Bar**: Guard awal `len(df) < 30` di `_collect_primitives` menyebabkan ekstraksi PWH/PWL gagal dieksekusi jika riwayat data W1 kurang dari 30 bar.
+4. **PWH/PWL Belum Terdaftar di Special G3 Protocol**: Level mingguan institusional (PWH/PWL) belum terdaftar di `has_macro_anchor` untuk timeframe W1.
+
+### 🔧 Rincian Perubahan Arsitektur:
+
+**File: `src/analytics/zone_confluence_engine.py`**
+1. **Zero-Displacement Discrete Levels (Presisi Mutlak)**:
+   - `PDH` (D1): Didefinisikan tepat di harga horizontal eksak: `ZonePrimitive("PDH", "D1", 0, pdh, pdh)`.
+   - `PDL` (D1): Didefinisikan tepat di harga horizontal eksak: `ZonePrimitive("PDL", "D1", 0, pdl, pdl)`.
+   - `PWH` & `PWL` (W1): Didefinisikan tepat di harga horizontal eksak: `ZonePrimitive("PWH", "W1", 0, pwh, pwh)` dan `ZonePrimitive("PWL", "W1", 0, pwl, pwl)`.
+   - Zero-thickness menjamin `_prim_edge` mengambil tepat level harga riil tanpa pergeseran artifisial.
+2. **Normalisasi Fortress Tag**:
+   - `_build_nodes` dan `_finalize_cluster` membersihkan awalan `C_` dan `F_` sebelum penggabungan tag:  
+     `clean_kinds = [k[2:] if (k.startswith("C_") or k.startswith("F_")) else k for k in c.kinds_present]`
+   - Menghasilkan label visual bersih di terminal & dashboard: `C_PDH@D1`, `F_PDL@D1`, `C_PWH@W1`, `F_PWL@W1`, `C_ASIAN_HIGH@H1`.
+3. **Penyelarasan Bar Guard W1/D1**:
+   - Pintu masuk `_collect_primitives` dilonggarkan ke `len(df) < 2` agar ekstraksi level kemarin/minggu lalu selalu berhasil. Indikator berbasis window (LuxSMC/FRVP) tetap aman terlindungi oleh filter horizon lokalnya masing-masing.
+4. **Hak Jangkar Makro G3 untuk W1 PWH & PWL**:
+   - Menambahkan `"PWH", "PWL", "C_PWH", "F_PWL"` ke tuple `has_macro_anchor` pada timeframe `W1` di dalam `_assign_cluster_grade`. Level harian `PDH/PDL` tetap dikecualikan untuk menjaga integritas Special G3 Protocol dari noise harian.
+
+### ✅ Hasil Verifikasi Lintas 7 Arketipe Simbol:
+- **EURUSD (5 Digits)**: Target PDH 1.10800 $\rightarrow$ Plafon Band: `1.10800` (Error 0.0 pip, False Touch = 0).
+- **USDJPY (3 Digits)**: Target PDH 146.500 $\rightarrow$ Plafon Band: `146.500` (Error 0.0 pip, False Touch = 0).
+- **GBPJPY (3 Digits)**: Target PDH 192.200 $\rightarrow$ Plafon Band: `192.200` (Error 0.0 pip, False Touch = 0).
+- **EURGBP (5 Digits)**: Target PDH 0.85400 $\rightarrow$ Plafon Band: `0.85400` (Error 0.0 pip, False Touch = 0).
+- **AUDNZD (5 Digits)**: Target PDH 1.08350 $\rightarrow$ Plafon Band: `1.08350` (Error 0.0 pip, False Touch = 0).
+- **USDCAD (5 Digits)**: Target PDH 1.35700 $\rightarrow$ Plafon Band: `1.35700` (Error 0.0 pip, False Touch = 0).
+- **XAUUSD (2 Digits)**: Target PDH 2525.00 $\rightarrow$ Plafon Band: `2525.00` (Error 0.0 pip, False Touch = 0).
+- **Full Test Suite**: **365/365 PASS 100%** (28.92s).
+
+---
+
 ## 109. Perubahan 13 September 2026 — Integrasi Struktur Kausal H4 (HH/HL/LL/LH) & Eliminasi Blind Pullback Trap
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

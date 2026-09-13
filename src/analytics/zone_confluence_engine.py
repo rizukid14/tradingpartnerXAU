@@ -51,12 +51,14 @@ ZCE_W_KIND: Dict[str, float] = {
     "LAST_HIGH": 0.60, "LAST_LOW": 0.60, "PSYCH_MAJOR": 0.80, "PSYCH_SUB": 0.50,
     "EMA_BAND": 0.25,
     # Previous Day / Week session extremes (slot terdaftar di CEIL_KINDS/FLOOR_KINDS)
-    "C_PDH": 0.90, "F_PDL": 0.90,   # Previous Day High/Low — daily key level
-    "C_PWH": 1.05, "F_PWL": 1.05,   # Previous Week High/Low — weekly = lebih kuat
+    "PDH": 0.90, "PDL": 0.90,       # Previous Day High/Low — daily key level
+    "PWH": 1.05, "PWL": 1.05,       # Previous Week High/Low — weekly = lebih kuat
+    "C_PDH": 0.90, "F_PDL": 0.90,   # Backward-compatibility aliases
+    "C_PWH": 1.05, "F_PWL": 1.05,
 }
 
-CEIL_KINDS = {"SWING_HIGH", "EQH", "LAST_HIGH", "FRVP_VAH", "OB_BEAR", "FVG_BEAR", "C_ASIAN_HIGH", "C_PDH", "C_PWH"}
-FLOOR_KINDS = {"SWING_LOW", "EQL", "LAST_LOW", "FRVP_VAL", "OB_BULL", "FVG_BULL", "F_ASIAN_LOW", "F_PDL", "F_PWL"}
+CEIL_KINDS = {"SWING_HIGH", "EQH", "LAST_HIGH", "FRVP_VAH", "OB_BEAR", "FVG_BEAR", "C_ASIAN_HIGH", "PDH", "PWH", "C_PDH", "C_PWH"}
+FLOOR_KINDS = {"SWING_LOW", "EQL", "LAST_LOW", "FRVP_VAL", "OB_BULL", "FVG_BULL", "F_ASIAN_LOW", "PDL", "PWL", "F_PDL", "F_PWL"}
 ZCE_HORIZON_BOOST: List[tuple] = [
     (100,  1.00),   # < 100 bar  — tidak ada boost
     (150,  1.10),   # 100–149 bar
@@ -271,7 +273,7 @@ class ZoneConfluenceEngine:
         self, tf: str, df: pd.DataFrame, point_size: float
     ) -> List[ZonePrimitive]:
         out: List[ZonePrimitive] = []
-        if df is None or len(df) < 30:
+        if df is None or len(df) < 2:
             return out
         swing = self.swing_length.get(tf, 5)
         horizons = [h for h in self.grid.get(tf, []) if h <= len(df)]
@@ -428,16 +430,15 @@ class ZoneConfluenceEngine:
                 pass
 
         # Previous Day High/Low (D1) & Previous Week High/Low (W1)
-        # Horizon = 0 (non-window) agar tidak dapat horizon_boost — level ini berubah harian/mingguan,
-        # bukan struktur multi-horizon. Thickness = 10% daily/weekly range, diklem 0.05–0.20×ATR.
+        # Horizon = 0 (non-window). Zero-displacement exact horizontal price levels (same as PSYCH_MAJOR).
+        # Eliminates phantom 8-15 pip shifts and premature false breach errors on H1 tape testing.
         if tf == "D1" and len(df) >= 2:
             try:
                 bar_prev = df.iloc[-2]
                 pdh = float(bar_prev["high"])
                 pdl = float(bar_prev["low"])
-                thick = max(0.05 * atr_tf, min(0.20 * atr_tf, (pdh - pdl) * 0.10))
-                out.append(ZonePrimitive("C_PDH", "D1", 0, pdh + thick, pdh - thick))
-                out.append(ZonePrimitive("F_PDL", "D1", 0, pdl + thick, pdl - thick))
+                out.append(ZonePrimitive("PDH", "D1", 0, pdh, pdh))
+                out.append(ZonePrimitive("PDL", "D1", 0, pdl, pdl))
             except Exception:
                 pass
 
@@ -446,9 +447,8 @@ class ZoneConfluenceEngine:
                 bar_prev = df.iloc[-2]
                 pwh = float(bar_prev["high"])
                 pwl = float(bar_prev["low"])
-                thick = max(0.05 * atr_tf, min(0.20 * atr_tf, (pwh - pwl) * 0.10))
-                out.append(ZonePrimitive("C_PWH", "W1", 0, pwh + thick, pwh - thick))
-                out.append(ZonePrimitive("F_PWL", "W1", 0, pwl + thick, pwl - thick))
+                out.append(ZonePrimitive("PWH", "W1", 0, pwh, pwh))
+                out.append(ZonePrimitive("PWL", "W1", 0, pwl, pwl))
             except Exception:
                 pass
 
@@ -606,7 +606,8 @@ class ZoneConfluenceEngine:
                 inherent_role=role,
                 confluence=len(pairs),
             )
-            c.fortress_tag = f"{'C_' if role == 'CEILING' else 'F_'}{'+'.join(kinds_present)}@{tfmax}"
+            clean_kinds = [k[2:] if (k.startswith("C_") or k.startswith("F_")) else k for k in kinds_present]
+            c.fortress_tag = f"{'C_' if role == 'CEILING' else 'F_'}{'+'.join(clean_kinds)}@{tfmax}"
             # Special G3 Protocol: evaluasi seluruh primitif yang berkontribusi ke skor node
             active_prims = members + [p for p in prims if abs(self._prim_edge(p) - anchor) <= score_radius]
             c.grade = self._assign_cluster_grade(c, active_prims)
@@ -632,7 +633,11 @@ class ZoneConfluenceEngine:
             has_macro_anchor = any(
                 (
                     p.tf in ("D1", "W1", "MN1")
-                    and p.kind in ("LAST_LOW", "LAST_HIGH", "SWING_LOW", "SWING_HIGH", "EQL", "EQH", "OB_BULL", "OB_BEAR")
+                    and p.kind in (
+                        "LAST_LOW", "LAST_HIGH", "SWING_LOW", "SWING_HIGH",
+                        "EQL", "EQH", "OB_BULL", "OB_BEAR",
+                        "PWH", "PWL", "C_PWH", "F_PWL"
+                    )
                 )
                 or (
                     p.tf == "H4"
@@ -686,7 +691,8 @@ class ZoneConfluenceEngine:
         c.grade = self._assign_cluster_grade(c, members)
         tfmax = max((m.tf for m in members), key=lambda t: self.w_tf.get(t, 0))
         prefix = "C_" if ceil_w >= floor_w else "F_"
-        c.fortress_tag = f"{prefix}{'+'.join(c.kinds_present)}@{tfmax}"
+        clean_kinds = [k[2:] if (k.startswith("C_") or k.startswith("F_")) else k for k in c.kinds_present]
+        c.fortress_tag = f"{prefix}{'+'.join(clean_kinds)}@{tfmax}"
         c.inherent_role = "CEILING" if ceil_w >= floor_w else "FLOOR"
         c.confluence = len(pairs)
         return c
