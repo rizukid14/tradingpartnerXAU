@@ -13,6 +13,7 @@ import pandas as pd  # type: ignore
 
 import config
 from src.indicators.lux_smc import LuxSMCAnalyzer
+from src.analytics.pattern_engine import MacroEnvelopeEngine
 from src.indicators.candle_quality import classify_candle, classify_breakout_sequence
 from src.indicators.sweep_detector import detect as sweep_detect
 from src.indicators.wave_regime import evaluate_wave_regime, detect_dynamic_basing_box
@@ -2735,13 +2736,23 @@ class MarketScanner:
                             d1_is_bear = True
                             d1_trend_label = "D1_BEARISH_EXPANSION"
                     elif d1_c < d1_ema_short and d1_ema_short >= d1_ema_long:
-                        d1_is_bull = True
-                        d1_is_bear = False
-                        d1_trend_label = "D1_BULLISH_PULLBACK"
+                        if d1_smc_bias == "bearish":
+                            d1_is_bull = False
+                            d1_is_bear = True
+                            d1_trend_label = "D1_BEARISH_EXPANSION"
+                        else:
+                            d1_is_bull = True
+                            d1_is_bear = False
+                            d1_trend_label = "D1_BULLISH_PULLBACK"
                     elif d1_c > d1_ema_short and d1_ema_short <= d1_ema_long:
-                        d1_is_bull = False
-                        d1_is_bear = True
-                        d1_trend_label = "D1_BEARISH_PULLBACK"
+                        if d1_smc_bias == "bullish":
+                            d1_is_bull = True
+                            d1_is_bear = False
+                            d1_trend_label = "D1_BULLISH_EXPANSION"
+                        else:
+                            d1_is_bull = False
+                            d1_is_bear = True
+                            d1_trend_label = "D1_BEARISH_PULLBACK"
                     else:
                         d1_is_bull = False
                         d1_is_bear = False
@@ -2791,13 +2802,25 @@ class MarketScanner:
                     h4_bos_count = h4_smc.bos_count
 
                     h4_smc_bias = getattr(h4_smc, 'trend_bias', 'neutral')
-                    if is_h4_ranging or is_h4_flag_triangle:
+
+                    # Pattern Engine Causal Structural Trend & Pivot Integration (Anti-Lag)
+                    pip_size_h4 = pt * (100 if "JPY" in valid_sym else 10)
+                    env_h4 = MacroEnvelopeEngine().analyze(df_h4, symbol=valid_sym, point_size=pt, pip_size=pip_size_h4)
+                    h4_struct_trend = getattr(env_h4, 'structural_trend', 'RANGING')
+                    h4_last_peak = env_h4.confirmed_peaks[-1].get("label", "") if getattr(env_h4, 'confirmed_peaks', None) else ""
+                    h4_last_trough = env_h4.confirmed_troughs[-1].get("label", "") if getattr(env_h4, 'confirmed_troughs', None) else ""
+
+                    is_struct_bear = (h4_struct_trend == "BEARISH_EXPANSION") or (h4_smc_bias == "bearish")
+                    is_struct_bull = (h4_struct_trend == "BULLISH_EXPANSION") or (h4_smc_bias == "bullish")
+                    is_struct_compression = (h4_struct_trend == "COMPRESSION") or is_h4_ranging or is_h4_flag_triangle
+
+                    if is_struct_compression:
                         h4_is_bull = False
                         h4_is_bear = False
-                        h4_trend_label = "H4_RANGING_FLAG_BOX" if is_h4_flag_triangle else "H4_SIDEWAYS_RANGE"
+                        h4_trend_label = "H4_COMPRESSION_SQUEEZE" if h4_struct_trend == "COMPRESSION" else ("H4_RANGING_FLAG_BOX" if is_h4_flag_triangle else "H4_SIDEWAYS_RANGE")
                     else:
                         if (h4_c >= h4_ema20 and h4_c >= h4_ema50) and (h4_c > h4_swing_low):
-                            if h4_smc_bias == "bearish":
+                            if is_struct_bear:
                                 h4_is_bull = False
                                 h4_is_bear = True
                                 h4_trend_label = "H4_BEARISH_PULLBACK"
@@ -2806,7 +2829,7 @@ class MarketScanner:
                                 h4_is_bear = False
                                 h4_trend_label = "H4_BULLISH_EXPANSION"
                         elif (h4_c <= h4_ema20 and h4_c <= h4_ema50) and (h4_c < h4_swing_high):
-                            if h4_smc_bias == "bullish":
+                            if is_struct_bull:
                                 h4_is_bull = True
                                 h4_is_bear = False
                                 h4_trend_label = "H4_BULLISH_PULLBACK"
@@ -2815,13 +2838,27 @@ class MarketScanner:
                                 h4_is_bear = True
                                 h4_trend_label = "H4_BEARISH_EXPANSION"
                         elif h4_c < h4_ema20 and h4_ema20 >= h4_ema50:
-                            h4_is_bull = True
-                            h4_is_bear = False
-                            h4_trend_label = "H4_BULLISH_PULLBACK"
+                            # Harga jebol di bawah EMA20 tapi EMA20 belum cross EMA50
+                            if is_struct_bear or h4_last_peak == "LH":
+                                # Struktur nyata sudah runtuh / Lower High terkonfirmasi: VETO BULL
+                                h4_is_bull = False
+                                h4_is_bear = True
+                                h4_trend_label = "H4_STRUCTURAL_BREAKDOWN"
+                            else:
+                                h4_is_bull = True
+                                h4_is_bear = False
+                                h4_trend_label = "H4_BULLISH_PULLBACK"
                         elif h4_c > h4_ema20 and h4_ema20 <= h4_ema50:
-                            h4_is_bull = False
-                            h4_is_bear = True
-                            h4_trend_label = "H4_BEARISH_PULLBACK"
+                            # Harga tembus di atas EMA20 tapi EMA20 belum cross EMA50
+                            if is_struct_bull or h4_last_trough == "HL":
+                                # Struktur nyata sudah ekspansi / Higher Low terkonfirmasi: VETO BEAR
+                                h4_is_bull = True
+                                h4_is_bear = False
+                                h4_trend_label = "H4_STRUCTURAL_EXPANSION"
+                            else:
+                                h4_is_bull = False
+                                h4_is_bear = True
+                                h4_trend_label = "H4_BEARISH_PULLBACK"
                         else:
                             h4_is_bull = False
                             h4_is_bear = False

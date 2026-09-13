@@ -1443,6 +1443,43 @@ class TestMarketScanner(unittest.TestCase):
                     m2_buys = [c for c in candidates if c.symbol == "EURUSD-ECNc" and c.setup_type == "TREND_ALIGNED_PULLBACK"]
                     self.assertEqual(len(m2_buys), 0, "M2 BUY colliding into C1 ceiling at dr_pos 0.85 must be blocked!")
 
+    def test_h4_structural_trend_anti_lag(self):
+        """
+        Verify that when H4 forms a structural breakdown / Lower High (LH):
+        is_h4_bull is strictly False and is_h4_bear is True, even if EMA20 >= EMA50.
+        """
+        from tests.audit_structural_lag import simulate_reversal_scenario
+        mock_connector = MagicMock()
+        mock_connector.get_valid_trade_symbol.return_value = "EURUSD-ECNc"
+        
+        # 75 bars of H4 data simulating a top + breakdown
+        df_h4 = simulate_reversal_scenario(n_bars=75)
+        rates_h4 = df_h4.to_dict('records')
+        last_ts = int(df_h4['time'].iloc[-1].timestamp())
+            
+        rates_h1 = [{'time': last_ts - (100 - i) * 3600, 'open': 1.10, 'high': 1.11, 'low': 1.09, 'close': 1.10, 'tick_volume': 500} for i in range(100)]
+        rates_d1 = [{'time': last_ts - (50 - i) * 86400, 'open': 1.10, 'high': 1.12, 'low': 1.08, 'close': 1.10, 'tick_volume': 5000} for i in range(50)]
+        rates_w1 = [{'time': last_ts - (20 - i) * 604800, 'open': 1.10, 'high': 1.13, 'low': 1.07, 'close': 1.10, 'tick_volume': 20000} for i in range(20)]
+
+        def mock_closed_bars(sym, count=120, timeframe=None):
+            if timeframe == getattr(config.mt5, 'TIMEFRAME_H4', 16388):
+                return rates_h4
+            elif timeframe == getattr(config.mt5, 'TIMEFRAME_D1', 16408):
+                return rates_d1
+            elif timeframe == getattr(config.mt5, 'TIMEFRAME_W1', 32769):
+                return rates_w1
+            return rates_h1
+
+        mock_connector.get_closed_bars.side_effect = mock_closed_bars
+        
+        with patch.object(config, 'mt5', None):
+            res = self.scanner._build_single_macro_context("EURUSD-ECNc", mt5_connector=mock_connector)
+            self.assertIsNotNone(res)
+            _, ctx = res
+            self.assertFalse(ctx['is_h4_bull'], "H4 must NOT be Bullish after structural breakdown!")
+            self.assertTrue(ctx['is_h4_bear'], "H4 must be Bearish after structural breakdown!")
+            self.assertIn("BEARISH", ctx['h4_trend_label'])
+
 
 if __name__ == "__main__":
     unittest.main()

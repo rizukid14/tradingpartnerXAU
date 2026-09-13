@@ -2,6 +2,39 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 109. Perubahan 13 September 2026 — Integrasi Struktur Kausal H4 (HH/HL/LL/LH) & Eliminasi Blind Pullback Trap
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+Audit empiris dan benchmarking (`tests/audit_structural_lag.py`) membuktikan adanya celah keterlambatan (*lag window*) yang sangat berbahaya pada mesin arah tren H4 (`market_scanner.py:2817`):
+
+1. **Blind Pullback Trap**: Saat harga H4 turun menembus ke bawah EMA20 tetapi EMA20 masih berada di atas EMA50 (`h4_c < h4_ema20 and h4_ema20 >= h4_ema50`), scanner secara sepihak memaksakan `h4_is_bull = True` dengan label `"H4_BULLISH_PULLBACK"` tanpa memeriksa status struktur pasar sesungguhnya.
+2. **Keterlambatan Masif EMA Crossover (Bukti Empiris)**:
+   - Pattern Engine mendeteksi **Lower High (LH)** di **Bar 63** (hanya 8 bar / 32 jam pasca puncak).
+   - LuxSMC mendeteksi **CHoCH Breakdown** di **Bar 66** (11 bar / 44 jam pasca puncak).
+   - EMA20 x EMA50 Crossover baru terjadi di **Bar 83** (28 bar / 112 jam pasca puncak).
+   - **Jendela Buta Fatal (17 bar / 68 jam = 2.8 hari)**: Selama hampir 3 hari penuh saat pasar sedang terjun bebas dan struktur pasar sudah jelas bearish, scanner lama terus mengizinkan M2 BUY pullback hanya karena garis EMA belum sempat bersilangan.
+
+### 🔧 Rincian Perubahan Arsitektur:
+
+**File: `src/analytics/market_scanner.py`**
+1. **Import `MacroEnvelopeEngine`**: Menghubungkan modul causal quant `MacroEnvelopeEngine` langsung ke lapisan pemindai H4.
+2. **Integrasi Causal Swings & Structural Trend di H4**:
+   - Menghitung `h4_struct_trend` (`BULLISH_EXPANSION`, `BEARISH_EXPANSION`, `COMPRESSION`, `EXPANSION_BROADENING`, `RANGING`).
+   - Ekstraksi label pivot terkonfirmasi terakhir: `h4_last_peak` (`LH`/`HH`) dan `h4_last_trough` (`HL`/`LL`).
+3. **Penyelarasan Decision Tree H4**:
+   - Cabang L2817 (`h4_c < h4_ema20 and h4_ema20 >= h4_ema50`): Jika terdeteksi `BEARISH_EXPANSION`, `h4_smc_bias == "bearish"`, atau `h4_last_peak == "LH"`, bot **mematikan `h4_is_bull`** dan mengaktifkan `h4_is_bear = True` dengan label `"H4_STRUCTURAL_BREAKDOWN"`.
+   - Cabang L2821 (`h4_c > h4_ema20 and h4_ema20 <= h4_ema50`): Jika terdeteksi `BULLISH_EXPANSION`, `h4_smc_bias == "bullish"`, atau `h4_last_trough == "HL"`, bot mengaktifkan `h4_is_bull = True` dengan label `"H4_STRUCTURAL_EXPANSION"`.
+   - Kondisi `COMPRESSION` (LH + HL / Squeeze): Mematikan kedua arah tren (`h4_is_bull = False, h4_is_bear = False`) dengan label `"H4_COMPRESSION_SQUEEZE"` guna mencegah false pullback di zona terjepit.
+4. **Penyelarasan Simetris D1 (L2737–2745)**:
+   - Cabang D1 pullback kini memeriksa `d1_smc_bias` pada kedua arah sebelum menetapkan tren harian.
+
+### ✅ Verifikasi:
+- **Benchmark Kausalitas (`tests/audit_structural_lag.py`)**: PASS — Pattern Engine LH unggul 17 bar (68 jam) lebih cepat daripada EMA crossover.
+- **Unit Test Baru (`tests/test_market_scanner.py::test_h4_structural_trend_anti_lag`)**: PASS — memverifikasi bahwa saat terjadi breakdown struktural dengan EMA20 >= EMA50, `h4_is_bull` terkunci `False` dan `h4_is_bear` terkunci `True`.
+- **Full Test Suite**: **365/365 PASS 100%** (39.28s).
+
+---
+
 ## 108. Perubahan 13 September 2026 — ZCE: PDH/PDL/PWH/PWL sebagai Primitif + Horizon Boost Fallback Fix
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
