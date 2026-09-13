@@ -204,20 +204,24 @@ def _consolidate_zce_zones(
 ) -> List[Dict[str, Any]]:
     """
     Extracts all ZCE multi-horizon layers and performs Cluster Consolidation & Proximity Clamp.
-    Merges zones within <= max(0.20*ATR, 4 pips) to prevent chart overlap clutter.
+    Preserves all elected structural fortress walls (F1..F4, C1..C4) with 100% intact touch counts and nodes.
+    Merges surrounding raw clusters into the closest elected wall to enrich confluences without chain-swallowing.
     """
     if zm is None:
         return []
 
-    cands: List[Dict[str, Any]] = []
+    # 1. Elected floors & ceilings from ZoneMapResult (Sacrosanct Structural Fortress Walls)
+    elected_walls: List[Dict[str, Any]] = []
 
-    # 1. Elected floors & ceilings from ZoneMapResult (Preserve all elected structural walls)
     for fl in getattr(zm, "floors", []) or []:
         p = float(fl.get("price", 0.0))
         fl_sources = list(fl.get("sources", []))
         fl_tfs = list(fl.get("tfs_present", []))
         fl_kinds = list(fl.get("kinds_present", []))
-        cands.append({
+        tc = int(fl.get("touch_count", 0)) if fl.get("touch_count") is not None else len(fl.get("touch_nodes", []))
+        fresh_lbl = str(fl.get("freshness_label", "")) or (f"{tc}x TESTED" if tc > 0 else "0x FRESH (Virgin)")
+        fl_confl = max(int(fl.get("confluence", len(fl_sources))), len(fl_sources))
+        elected_walls.append({
             "price": p,
             "band_low": float(fl.get("band_low", p)),
             "band_high": float(fl.get("band_high", p)),
@@ -228,15 +232,16 @@ def _consolidate_zce_zones(
             "tfs": fl_tfs,
             "kinds": fl_kinds,
             "sources": fl_sources,
+            "num_sources": fl_confl,
             "is_cold": bool(fl.get("is_cold", False)),
             "is_vacuum": bool(fl.get("is_vacuum", False)),
-            "confluence": int(fl.get("confluence", len(fl_sources))),
+            "confluence": fl_confl,
             "tf_max": str(fl.get("tf_max", "")),
             "horizon_max": int(fl.get("horizon_max", 0)),
             "at_price": bool(fl.get("at_price", False)),
-            "touch_count": int(fl.get("touch_count", 0)),
-            "freshness_state": str(fl.get("freshness_state", "FRESH_VIRGIN")),
-            "freshness_label": str(fl.get("freshness_label", "0x FRESH (Virgin)")),
+            "touch_count": tc,
+            "freshness_state": str(fl.get("freshness_state", "FRESH_VIRGIN" if tc == 0 else "TESTED_VALID")),
+            "freshness_label": fresh_lbl,
             "compression_type": str(fl.get("compression_type", "NONE")),
             "touch_nodes": list(fl.get("touch_nodes", [])),
             "source": "elected",
@@ -248,7 +253,10 @@ def _consolidate_zce_zones(
         ce_sources = list(ce.get("sources", []))
         ce_tfs = list(ce.get("tfs_present", []))
         ce_kinds = list(ce.get("kinds_present", []))
-        cands.append({
+        tc = int(ce.get("touch_count", 0)) if ce.get("touch_count") is not None else len(ce.get("touch_nodes", []))
+        fresh_lbl = str(ce.get("freshness_label", "")) or (f"{tc}x TESTED" if tc > 0 else "0x FRESH (Virgin)")
+        ce_confl = max(int(ce.get("confluence", len(ce_sources))), len(ce_sources))
+        elected_walls.append({
             "price": p,
             "band_low": float(ce.get("band_low", p)),
             "band_high": float(ce.get("band_high", p)),
@@ -259,23 +267,29 @@ def _consolidate_zce_zones(
             "tfs": ce_tfs,
             "kinds": ce_kinds,
             "sources": ce_sources,
+            "num_sources": ce_confl,
             "is_cold": bool(ce.get("is_cold", False)),
             "is_vacuum": bool(ce.get("is_vacuum", False)),
-            "confluence": int(ce.get("confluence", len(ce_sources))),
+            "confluence": ce_confl,
             "tf_max": str(ce.get("tf_max", "")),
             "horizon_max": int(ce.get("horizon_max", 0)),
             "at_price": bool(ce.get("at_price", False)),
-            "touch_count": int(ce.get("touch_count", 0)),
-            "freshness_state": str(ce.get("freshness_state", "FRESH_VIRGIN")),
-            "freshness_label": str(ce.get("freshness_label", "0x FRESH (Virgin)")),
+            "touch_count": tc,
+            "freshness_state": str(ce.get("freshness_state", "FRESH_VIRGIN" if tc == 0 else "TESTED_VALID")),
+            "freshness_label": fresh_lbl,
             "compression_type": str(ce.get("compression_type", "NONE")),
             "touch_nodes": list(ce.get("touch_nodes", [])),
             "source": "elected",
             "type": "ceiling"
         })
 
-    # 2. Raw clusters from ZoneMapResult (Strict Physical Role-Aware Assignment)
-    probe_tol = float(getattr(config, "ZCE_CHAMBER_CLEARANCE_ATR_MULT", 0.30)) * atr_val
+    # 2. Raw clusters from ZoneMapResult (Enrich elected anchors or collect unmatched extension zones)
+    pip_thr = min(15.0 * pip_val, 0.75 * atr_val)
+    proximity_thr = max(0.35 * atr_val, pip_thr)
+    grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
+
+    unmatched_clusters: List[Dict[str, Any]] = []
+
     for cl in getattr(zm, "clusters", []) or []:
         role = getattr(cl, "inherent_role", "")
         if not role:
@@ -285,19 +299,12 @@ def _consolidate_zce_zones(
         b_hi = float(getattr(cl, "band_high", 0.0))
 
         if b_hi < cur_price:
-            if role == "CEILING" and cur_price < b_hi + probe_tol:
-                # Belum sah tembus bersih ke atas (belum sah RBS floor)
-                continue
             p = b_hi
             cl_type = "floor"
         elif b_lo > cur_price:
-            if role == "FLOOR" and cur_price > b_lo - probe_tol:
-                # Belum sah tembus bersih ke bawah (belum sah SBR ceiling)
-                continue
             p = b_lo
             cl_type = "ceiling"
         else:
-            # Harga live berada di dalam rentang band (b_lo <= cur_price <= b_hi)
             if role == "CEILING":
                 p = b_hi
                 cl_type = "ceiling"
@@ -308,14 +315,57 @@ def _consolidate_zce_zones(
                 p = b_hi if (b_hi - cur_price) < (cur_price - b_lo) else b_lo
                 cl_type = "ceiling" if p > cur_price else "floor"
 
-        if v_lo <= p <= v_hi:
-            cl_sources = []
-            for m in getattr(cl, "members", []) or []:
-                s_name = f"{m.kind} ({m.tf})" if getattr(m, "tf", None) else str(m.kind)
-                if s_name not in cl_sources:
-                    cl_sources.append(s_name)
+        if not (v_lo <= p <= v_hi):
+            continue
 
-            cands.append({
+        cl_sources = []
+        for m in getattr(cl, "members", []) or []:
+            s_name = f"{m.kind} ({m.tf})" if getattr(m, "tf", None) else str(m.kind)
+            if s_name not in cl_sources:
+                cl_sources.append(s_name)
+
+        cl_tc = int(getattr(cl, "touch_count", 0)) if getattr(cl, "touch_count", None) is not None else len(getattr(cl, "touch_nodes", []))
+        cl_fresh = str(getattr(cl, "freshness_label", "")) or (f"{cl_tc}x TESTED" if cl_tc > 0 else "0x FRESH (Virgin)")
+
+        # Find closest elected wall of the SAME type within proximity_thr
+        matched_elected = None
+        min_dist = 999999.0
+        for ew in elected_walls:
+            if ew["type"] == cl_type:
+                dist = abs(p - ew["price"])
+                if dist <= proximity_thr and dist < min_dist:
+                    min_dist = dist
+                    matched_elected = ew
+
+        if matched_elected:
+            # Enrich elected anchor
+            matched_elected["band_low"] = min(matched_elected["band_low"], b_lo)
+            matched_elected["band_high"] = max(matched_elected["band_high"], b_hi)
+            for s in cl_sources:
+                if s not in matched_elected["sources"]:
+                    matched_elected["sources"].append(s)
+            for t in getattr(cl, "tfs_present", []) or []:
+                if t not in matched_elected["tfs"]:
+                    matched_elected["tfs"].append(t)
+            for k in getattr(cl, "kinds_present", []) or []:
+                if k not in matched_elected["kinds"]:
+                    matched_elected["kinds"].append(k)
+            matched_elected["confluence"] = len(matched_elected["sources"])
+            matched_elected["num_sources"] = len(matched_elected["sources"])
+            cl_score = float(getattr(cl, "score_final", 1.0))
+            if cl_score > matched_elected["score"]:
+                matched_elected["score"] = cl_score
+            if getattr(cl, "grade", "") == "GRADE_3_MACRO":
+                matched_elected["grade"] = "GRADE_3_MACRO"
+            # Synchronize richer touch nodes if cluster has more touches
+            if cl_tc > matched_elected["touch_count"] or (matched_elected["touch_count"] == 0 and cl_tc > 0):
+                matched_elected["touch_count"] = cl_tc
+                matched_elected["freshness_state"] = str(getattr(cl, "freshness_state", "TESTED_VALID"))
+                matched_elected["freshness_label"] = cl_fresh
+                matched_elected["compression_type"] = str(getattr(cl, "compression_type", "NONE"))
+                matched_elected["touch_nodes"] = list(getattr(cl, "touch_nodes", []))
+        else:
+            unmatched_clusters.append({
                 "price": p,
                 "band_low": b_lo,
                 "band_high": b_hi,
@@ -332,110 +382,88 @@ def _consolidate_zce_zones(
                 "tf_max": (max(getattr(cl, "tfs_present", []), key=lambda t: ZCE_W_TF.get(t, 0.0)) if getattr(cl, "tfs_present", None) else ""),
                 "horizon_max": int(getattr(cl, "horizon_max", 0)),
                 "at_price": False,
-                "touch_count": int(getattr(cl, "touch_count", 0)),
-                "freshness_state": str(getattr(cl, "freshness_state", "FRESH_VIRGIN")),
-                "freshness_label": str(getattr(cl, "freshness_label", "0x FRESH (Virgin)")),
+                "touch_count": cl_tc,
+                "freshness_state": str(getattr(cl, "freshness_state", "FRESH_VIRGIN" if cl_tc == 0 else "TESTED_VALID")),
+                "freshness_label": cl_fresh,
                 "compression_type": str(getattr(cl, "compression_type", "NONE")),
                 "touch_nodes": list(getattr(cl, "touch_nodes", [])),
                 "source": "cluster",
                 "type": cl_type
             })
 
-    if not cands:
-        return []
+    # 3. Consolidate unmatched extension clusters among themselves
+    unmatched_clusters.sort(key=lambda x: x["price"])
+    merged_unmatched: List[Dict[str, Any]] = []
+    if unmatched_clusters:
+        u_groups: List[List[Dict[str, Any]]] = []
+        c_grp = [unmatched_clusters[0]]
+        for item in unmatched_clusters[1:]:
+            if abs(item["price"] - c_grp[-1]["price"]) <= proximity_thr:
+                c_grp.append(item)
+            else:
+                u_groups.append(c_grp)
+                c_grp = [item]
+        if c_grp:
+            u_groups.append(c_grp)
 
-    # Sort by price
-    cands.sort(key=lambda x: x["price"])
+        for grp in u_groups:
+            grp.sort(key=lambda x: (grade_rank.get(x["grade"], 1), x["score"]), reverse=True)
+            lead = grp[0]
+            all_tfs = sorted(list(set(tf for x in grp for tf in x.get("tfs", []))))
+            all_kinds = sorted(list(set(k for x in grp for k in x.get("kinds", []))))
+            all_sources = []
+            for x in grp:
+                for s in x.get("sources", []):
+                    if s not in all_sources:
+                        all_sources.append(s)
+            avg_price = sum(x["price"] for x in grp) / len(grp)
+            max_score = max(x["score"] for x in grp)
+            lead_tc = int(lead.get("touch_count", 0)) if lead.get("touch_count") is not None else 0
+            lead_fresh = str(lead.get("freshness_label", "")) or (f"{lead_tc}x TESTED" if lead_tc > 0 else "0x FRESH (Virgin)")
+            merged_unmatched.append({
+                "price": round(float(avg_price), digits),
+                "band_low": round(float(min(x["band_low"] for x in grp)), digits),
+                "band_high": round(float(max(x["band_high"] for x in grp)), digits),
+                "type": lead["type"],
+                "tier": "FLR" if lead["type"] == "floor" else "CEIL",
+                "grade": lead["grade"],
+                "score": round(float(max_score), 2),
+                "tfs": all_tfs,
+                "kinds": all_kinds,
+                "sources": all_sources,
+                "num_sources": max(len(all_sources), 1),
+                "confluences": " • ".join(all_sources[:4]) if all_sources else "Structural S/R Anchor",
+                "timeframes": "+".join(all_tfs) if all_tfs else "H1",
+                "tag": lead["tag"],
+                "label": f"{lead['type'].upper()} [{lead['grade'][:2]}] {avg_price:.{digits}f} • {lead_fresh}",
+                "is_cold": any(x["is_cold"] for x in grp),
+                "is_vacuum": any(x["is_vacuum"] for x in grp),
+                "confluence": max(len(all_sources), 1),
+                "tf_max": str(lead.get("tf_max", "")),
+                "horizon_max": int(lead.get("horizon_max", 0)),
+                "at_price": False,
+                "touch_count": lead_tc,
+                "freshness_state": str(lead.get("freshness_state", "FRESH_VIRGIN" if lead_tc == 0 else "TESTED_VALID")),
+                "freshness_label": lead_fresh,
+                "compression_type": str(lead.get("compression_type", "NONE")),
+                "touch_nodes": list(lead.get("touch_nodes", [])),
+            })
 
-    # Cluster consolidation by proximity threshold (pip-aware self-adaptive)
-    pip_thr = min(15.0 * pip_val, 0.75 * atr_val)
-    proximity_thr = max(0.35 * atr_val, pip_thr)
-    grade_rank = {"GRADE_3_MACRO": 3, "GRADE_2_INTERMEDIATE": 2, "GRADE_1_MICRO": 1}
-
-    merged_groups: List[List[Dict[str, Any]]] = []
-    curr_group: List[Dict[str, Any]] = [cands[0]]
-
-    for item in cands[1:]:
-        prev_price = curr_group[-1]["price"]
-        if abs(item["price"] - prev_price) <= proximity_thr:
-            curr_group.append(item)
-        else:
-            merged_groups.append(curr_group)
-            curr_group = [item]
-    if curr_group:
-        merged_groups.append(curr_group)
-
-    result = []
-    for grp in merged_groups:
-        grp.sort(key=lambda x: (
-            1 if x["source"] == "elected" else 0,
-            grade_rank.get(x["grade"], 1),
-            x["score"]
-        ), reverse=True)
-        lead = grp[0]
-
-        all_tfs = sorted(list(set(tf for x in grp for tf in x.get("tfs", []))))
-        all_kinds = sorted(list(set(k for x in grp for k in x.get("kinds", []))))
-        all_sources = []
-        for x in grp:
-            for s in x.get("sources", []):
-                if s not in all_sources:
-                    all_sources.append(s)
-
-        avg_price = sum(x["price"] for x in grp) / len(grp)
-        rep_price = lead["price"] if lead["source"] == "elected" else avg_price
-
-        min_lo = min(x["band_low"] for x in grp)
-        max_hi = max(x["band_high"] for x in grp)
-        max_score = max(x["score"] for x in grp)
-        max_confl = max(x.get("confluence", len(x.get("sources", []))) for x in grp)
-        effective_confl = max(max_confl, len(all_sources))
-        top_grade = lead["grade"]
-        top_tier = lead["tier"]
-        lead_type = lead.get("type") or ("floor" if rep_price < cur_price else "ceiling")
-        if top_tier == "ZONE":
-            top_tier = "FLR" if lead_type == "floor" else "CEIL"
-
-        g_short = "G3" if top_grade == "GRADE_3_MACRO" else ("G2" if top_grade == "GRADE_2_INTERMEDIATE" else "G1")
-        tf_str = "+".join(all_tfs[:3]) if all_tfs else "H1"
-        kind_str = "+".join(all_kinds[:2]) if all_kinds else "SMC"
-        confl_tag = f" • {effective_confl}src" if effective_confl > 0 else ""
-        at_tag = "~" if lead.get("at_price") else ""
-        fresh_lbl = lead.get("freshness_label")
+    # 4. Finalize labels for elected walls
+    for ew in elected_walls:
+        g_short = "G3" if ew["grade"] == "GRADE_3_MACRO" else ("G2" if ew["grade"] == "GRADE_2_INTERMEDIATE" else "G1")
+        tf_str = "+".join(ew["tfs"][:3]) if ew["tfs"] else "H1"
+        kind_str = "+".join(ew["kinds"][:2]) if ew["kinds"] else "SMC"
+        confl_tag = f" • {ew['num_sources']}src" if ew.get("num_sources", 0) > 0 else ""
+        at_tag = "~" if ew.get("at_price") else ""
+        fresh_lbl = ew.get("freshness_label", "")
         fresh_tag = f" • {fresh_lbl}" if fresh_lbl else ""
-        label = f"{at_tag}{top_tier} [{g_short}] {rep_price:.{digits}f}{fresh_tag} ({max_score:.1f} • {tf_str} • {kind_str}{confl_tag})"
+        ew["label"] = f"{at_tag}{ew['tier']} [{g_short}] {ew['price']:.{digits}f}{fresh_tag} ({ew['score']:.1f} • {tf_str} • {kind_str}{confl_tag})"
+        ew["confluences"] = " • ".join(ew["sources"][:4]) if ew["sources"] else (" + ".join(ew["kinds"][:3]) if ew["kinds"] else "Structural S/R Anchor")
+        ew["timeframes"] = "+".join(ew["tfs"]) if ew["tfs"] else "H1"
 
-        confluences_desc = " • ".join(all_sources[:4]) if all_sources else (" + ".join(all_kinds[:3]) if all_kinds else "Structural S/R Anchor")
-
-        result.append({
-            "price": round(float(rep_price), digits),
-            "band_low": round(float(min_lo), digits),
-            "band_high": round(float(max_hi), digits),
-            "type": lead_type,
-            "tier": top_tier,
-            "grade": top_grade,
-            "score": round(float(max_score), 2),
-            "tfs": all_tfs,
-            "kinds": all_kinds,
-            "sources": all_sources,
-            "num_sources": effective_confl,
-            "confluences": confluences_desc,
-            "timeframes": "+".join(all_tfs) if all_tfs else "H1",
-            "tag": lead["tag"],
-            "label": label,
-            "is_cold": any(x["is_cold"] for x in grp),
-            "is_vacuum": any(x["is_vacuum"] for x in grp),
-            "confluence": effective_confl,
-            "tf_max": str(lead.get("tf_max", "")),
-            "horizon_max": int(lead.get("horizon_max", 0)),
-            "at_price": bool(lead.get("at_price", False)),
-            "touch_count": int(lead.get("touch_count", 0)),
-            "freshness_state": str(lead.get("freshness_state", "FRESH_VIRGIN")),
-            "freshness_label": str(lead.get("freshness_label", "0x FRESH (Virgin)")),
-            "compression_type": str(lead.get("compression_type", "NONE")),
-            "touch_nodes": list(lead.get("touch_nodes", [])),
-        })
-
+    result = elected_walls + merged_unmatched
+    result.sort(key=lambda x: x["price"])
     return result
 
 
@@ -692,7 +720,9 @@ def detect_historical_triggers(
         eff_f1 = float(f1 or 0.0)
         ladder = zce_ladder or []
 
-        for i in range(15, n):
+        # Restrict to confirmed closed candles only (i < n - 1).
+        # Eliminates live unclosed candle (bar_age == 0) tick jitter and false breach toggles.
+        for i in range(15, n - 1):
             c_time = int(times[i])
 
             c_open = float(opens[i])
@@ -2296,44 +2326,55 @@ class CockpitDataEngine:
 
         # Collect candidate floors from ZCE ladder and MSE baseline
         raw_floors = [dict(w) for w in (zce_ladder or []) if w.get("type") == "floor" and w.get("price", 0.0) < mid]
-        if f1 and float(f1) < mid:
-            raw_floors.append({
-                "price": round(float(f1), digits),
-                "band_low": round(float(f1), digits),
-                "band_high": round(float(f1), digits),
-                "type": "floor",
-                "tier": "F1",
-                "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
-                "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
-                "score": 4.5,
-                "tfs": ["H1", "D1"],
-                "kinds": ["MSE_BASE", "MACRO_SWING"],
-                "sources": ["MSE Structural SBR/RBS (D1)", "Macro Swing Low (H1)"],
-                "confluences": "MSE Structural SBR/RBS (D1) • Macro Swing Low (H1)",
-                "timeframes": "H1+D1",
-                "confluence": 2,
-                "num_sources": 2,
-                "tag": "BASELINE_FLOOR"
-            })
-        if f2 and float(f2) < mid:
-            raw_floors.append({
-                "price": round(float(f2), digits),
-                "band_low": round(float(f2), digits),
-                "band_high": round(float(f2), digits),
-                "type": "floor",
-                "tier": "F2",
-                "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
-                "grade": "GRADE_2_INTERMEDIATE",
-                "score": 3.8,
-                "tfs": ["D1"],
-                "kinds": ["MSE_BASE"],
-                "sources": ["MSE Structural SBR/RBS (D1)"],
-                "confluences": "MSE Structural SBR/RBS (D1)",
-                "timeframes": "D1",
-                "confluence": 1,
-                "num_sources": 1,
-                "tag": "BASELINE_DEEP_FLOOR"
-            })
+        if not raw_floors:
+            if f1 and float(f1) < mid:
+                raw_floors.append({
+                    "price": round(float(f1), digits),
+                    "band_low": round(float(f1), digits),
+                    "band_high": round(float(f1), digits),
+                    "type": "floor",
+                    "tier": "F1",
+                    "label": f"F1 [MSE] {float(f1):.{digits}f} (Support Wall)",
+                    "grade": macro.get("f1_reaction_grade", "GRADE_2_INTERMEDIATE"),
+                    "score": 4.5,
+                    "tfs": ["H1", "D1"],
+                    "kinds": ["MSE_BASE", "MACRO_SWING"],
+                    "sources": ["MSE Structural SBR/RBS (D1)", "Macro Swing Low (H1)"],
+                    "confluences": "MSE Structural SBR/RBS (D1) • Macro Swing Low (H1)",
+                    "timeframes": "H1+D1",
+                    "confluence": 2,
+                    "num_sources": 2,
+                    "touch_count": 0,
+                    "freshness_state": "FRESH_VIRGIN",
+                    "freshness_label": "0x FRESH (Virgin)",
+                    "compression_type": "NONE",
+                    "touch_nodes": [],
+                    "tag": "BASELINE_FLOOR"
+                })
+            if f2 and float(f2) < mid:
+                raw_floors.append({
+                    "price": round(float(f2), digits),
+                    "band_low": round(float(f2), digits),
+                    "band_high": round(float(f2), digits),
+                    "type": "floor",
+                    "tier": "F2",
+                    "label": f"F2 [MSE] {float(f2):.{digits}f} (Deep Support)",
+                    "grade": "GRADE_2_INTERMEDIATE",
+                    "score": 3.8,
+                    "tfs": ["D1"],
+                    "kinds": ["MSE_BASE"],
+                    "sources": ["MSE Structural SBR/RBS (D1)"],
+                    "confluences": "MSE Structural SBR/RBS (D1)",
+                    "timeframes": "D1",
+                    "confluence": 1,
+                    "num_sources": 1,
+                    "touch_count": 0,
+                    "freshness_state": "FRESH_VIRGIN",
+                    "freshness_label": "0x FRESH (Virgin)",
+                    "compression_type": "NONE",
+                    "touch_nodes": [],
+                    "tag": "BASELINE_DEEP_FLOOR"
+                })
 
         tf_upper = timeframe_str.upper()
         tf_scale = 0.8 if tf_upper == "M30" else (0.4 if tf_upper == "M5" else 1.0)
@@ -2390,12 +2431,19 @@ class CockpitDataEngine:
                         mf["tf_max"] = fl.get("tf_max", mf.get("tf_max", ""))
                         mf["horizon_max"] = int(fl.get("horizon_max", mf.get("horizon_max", 0)))
                         mf["at_price"] = bool(fl.get("at_price", mf.get("at_price", False)))
-                    if fl.get("touch_nodes"):
-                        mf["touch_nodes"] = fl["touch_nodes"]
-                        mf["touch_count"] = fl.get("touch_count", len(fl["touch_nodes"]))
-                        mf["freshness_state"] = fl.get("freshness_state", "TESTED_VALID")
-                        mf["freshness_label"] = fl.get("freshness_label", "")
-                        mf["compression_type"] = fl.get("compression_type", "NONE")
+                    if "touch_count" in fl and fl["touch_count"] is not None:
+                        if mf.get("touch_count") is None or fl.get("touch_count", 0) > mf.get("touch_count", 0):
+                            mf["touch_count"] = int(fl["touch_count"])
+                            mf["freshness_state"] = fl.get("freshness_state", "TESTED_VALID" if fl["touch_count"] > 0 else "FRESH_VIRGIN")
+                            mf["freshness_label"] = fl.get("freshness_label") or (f"{fl['touch_count']}x TESTED" if fl['touch_count'] > 0 else "0x FRESH (Virgin)")
+                            mf["compression_type"] = fl.get("compression_type", "NONE")
+                            mf["touch_nodes"] = fl.get("touch_nodes", [])
+                    elif mf.get("touch_count") is None:
+                        mf["touch_count"] = 0
+                        mf["freshness_state"] = "FRESH_VIRGIN"
+                        mf["freshness_label"] = "0x FRESH (Virgin)"
+                        mf["compression_type"] = "NONE"
+                        mf["touch_nodes"] = []
                     break
             if not matched:
                 merged_floors.append(dict(fl))
@@ -2409,6 +2457,11 @@ class CockpitDataEngine:
             tier_name = f"F{idx + 1}"
             fl_copy = dict(fl)
             fl_copy["tier"] = tier_name
+            if fl_copy.get("touch_count") is None:
+                fl_copy["touch_count"] = len(fl_copy.get("touch_nodes", []))
+            if not fl_copy.get("freshness_label"):
+                tc_val = fl_copy["touch_count"]
+                fl_copy["freshness_label"] = f"{tc_val}x TESTED" if tc_val > 0 else "0x FRESH (Virgin)"
             orig_label = fl_copy.get("label", "")
             parts = orig_label.split(" ", 1)
             if len(parts) == 2 and (parts[0].startswith("F") or parts[0].startswith("FLR")):
@@ -2419,44 +2472,55 @@ class CockpitDataEngine:
 
         # Collect candidate ceilings from ZCE ladder and MSE baseline
         raw_ceils = [dict(w) for w in (zce_ladder or []) if w.get("type") == "ceiling" and w.get("price", 0.0) > mid]
-        if c1 and float(c1) > mid:
-            raw_ceils.append({
-                "price": round(float(c1), digits),
-                "band_low": round(float(c1), digits),
-                "band_high": round(float(c1), digits),
-                "type": "ceiling",
-                "tier": "C1",
-                "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
-                "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
-                "score": 4.5,
-                "tfs": ["H1", "D1"],
-                "kinds": ["MSE_BASE", "MACRO_SWING"],
-                "sources": ["MSE Structural SBR/RBS (D1)", "Macro Swing High (H1)"],
-                "confluences": "MSE Structural SBR/RBS (D1) • Macro Swing High (H1)",
-                "timeframes": "H1+D1",
-                "confluence": 2,
-                "num_sources": 2,
-                "tag": "BASELINE_CEIL"
-            })
-        if c2 and float(c2) > mid:
-            raw_ceils.append({
-                "price": round(float(c2), digits),
-                "band_low": round(float(c2), digits),
-                "band_high": round(float(c2), digits),
-                "type": "ceiling",
-                "tier": "C2",
-                "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
-                "grade": "GRADE_2_INTERMEDIATE",
-                "score": 3.8,
-                "tfs": ["D1"],
-                "kinds": ["MSE_BASE"],
-                "sources": ["MSE Structural SBR/RBS (D1)"],
-                "confluences": "MSE Structural SBR/RBS (D1)",
-                "timeframes": "D1",
-                "confluence": 1,
-                "num_sources": 1,
-                "tag": "BASELINE_DEEP_CEIL"
-            })
+        if not raw_ceils:
+            if c1 and float(c1) > mid:
+                raw_ceils.append({
+                    "price": round(float(c1), digits),
+                    "band_low": round(float(c1), digits),
+                    "band_high": round(float(c1), digits),
+                    "type": "ceiling",
+                    "tier": "C1",
+                    "label": f"C1 [MSE] {float(c1):.{digits}f} (Resistance Wall)",
+                    "grade": macro.get("c1_reaction_grade", "GRADE_2_INTERMEDIATE"),
+                    "score": 4.5,
+                    "tfs": ["H1", "D1"],
+                    "kinds": ["MSE_BASE", "MACRO_SWING"],
+                    "sources": ["MSE Structural SBR/RBS (D1)", "Macro Swing High (H1)"],
+                    "confluences": "MSE Structural SBR/RBS (D1) • Macro Swing High (H1)",
+                    "timeframes": "H1+D1",
+                    "confluence": 2,
+                    "num_sources": 2,
+                    "touch_count": 0,
+                    "freshness_state": "FRESH_VIRGIN",
+                    "freshness_label": "0x FRESH (Virgin)",
+                    "compression_type": "NONE",
+                    "touch_nodes": [],
+                    "tag": "BASELINE_CEIL"
+                })
+            if c2 and float(c2) > mid:
+                raw_ceils.append({
+                    "price": round(float(c2), digits),
+                    "band_low": round(float(c2), digits),
+                    "band_high": round(float(c2), digits),
+                    "type": "ceiling",
+                    "tier": "C2",
+                    "label": f"C2 [MSE] {float(c2):.{digits}f} (Deep Resistance)",
+                    "grade": "GRADE_2_INTERMEDIATE",
+                    "score": 3.8,
+                    "tfs": ["D1"],
+                    "kinds": ["MSE_BASE"],
+                    "sources": ["MSE Structural SBR/RBS (D1)"],
+                    "confluences": "MSE Structural SBR/RBS (D1)",
+                    "timeframes": "D1",
+                    "confluence": 1,
+                    "num_sources": 1,
+                    "touch_count": 0,
+                    "freshness_state": "FRESH_VIRGIN",
+                    "freshness_label": "0x FRESH (Virgin)",
+                    "compression_type": "NONE",
+                    "touch_nodes": [],
+                    "tag": "BASELINE_DEEP_CEIL"
+                })
 
         # Sort ceilings strictly ascending (lowest price first, i.e. closest to mid first)
         raw_ceils.sort(key=lambda x: x["price"])
@@ -2501,12 +2565,19 @@ class CockpitDataEngine:
                         mc["tf_max"] = ce.get("tf_max", mc.get("tf_max", ""))
                         mc["horizon_max"] = int(ce.get("horizon_max", mc.get("horizon_max", 0)))
                         mc["at_price"] = bool(ce.get("at_price", mc.get("at_price", False)))
-                    if ce.get("touch_nodes"):
-                        mc["touch_nodes"] = ce["touch_nodes"]
-                        mc["touch_count"] = ce.get("touch_count", len(ce["touch_nodes"]))
-                        mc["freshness_state"] = ce.get("freshness_state", "TESTED_VALID")
-                        mc["freshness_label"] = ce.get("freshness_label", "")
-                        mc["compression_type"] = ce.get("compression_type", "NONE")
+                    if "touch_count" in ce and ce["touch_count"] is not None:
+                        if mc.get("touch_count") is None or ce.get("touch_count", 0) > mc.get("touch_count", 0):
+                            mc["touch_count"] = int(ce["touch_count"])
+                            mc["freshness_state"] = ce.get("freshness_state", "TESTED_VALID" if ce["touch_count"] > 0 else "FRESH_VIRGIN")
+                            mc["freshness_label"] = ce.get("freshness_label") or (f"{ce['touch_count']}x TESTED" if ce['touch_count'] > 0 else "0x FRESH (Virgin)")
+                            mc["compression_type"] = ce.get("compression_type", "NONE")
+                            mc["touch_nodes"] = ce.get("touch_nodes", [])
+                    elif mc.get("touch_count") is None:
+                        mc["touch_count"] = 0
+                        mc["freshness_state"] = "FRESH_VIRGIN"
+                        mc["freshness_label"] = "0x FRESH (Virgin)"
+                        mc["compression_type"] = "NONE"
+                        mc["touch_nodes"] = []
                     break
             if not matched:
                 merged_ceils.append(dict(ce))
@@ -2520,6 +2591,11 @@ class CockpitDataEngine:
             tier_name = f"C{idx + 1}"
             ce_copy = dict(ce)
             ce_copy["tier"] = tier_name
+            if ce_copy.get("touch_count") is None:
+                ce_copy["touch_count"] = len(ce_copy.get("touch_nodes", []))
+            if not ce_copy.get("freshness_label"):
+                tc_val = ce_copy["touch_count"]
+                ce_copy["freshness_label"] = f"{tc_val}x TESTED" if tc_val > 0 else "0x FRESH (Virgin)"
             orig_label = ce_copy.get("label", "")
             parts = orig_label.split(" ", 1)
             if len(parts) == 2 and (parts[0].startswith("C") or parts[0].startswith("CEIL")):
