@@ -790,6 +790,10 @@ NIGHT_FREEZE_START_HOUR_WIB = _getenv_int("NIGHT_FREEZE_START_HOUR_WIB", 23)
 # --- NEWS VOLATILITY BLACKOUT WINDOW (9 Sep 2026) ---
 NEWS_BLACKOUT_MINUTES_BEFORE = _getenv_int("NEWS_BLACKOUT_MINUTES_BEFORE", 30)
 NEWS_BLACKOUT_MINUTES_AFTER  = _getenv_int("NEWS_BLACKOUT_MINUTES_AFTER", 30)
+# Jika True: HANYA berita US/Global (FOMC, NFP, CPI, PCE, Powell, Fed) yang memicu
+# lock order baru dan autocut posisi. Berita regional non-USD (GB/EU/NZ/AU/CA/JP/CH)
+# TIDAK memicu lock maupun autocut karena dampaknya bersifat lokal pair, bukan sistemik.
+NEWS_BLACKOUT_USD_ONLY       = _getenv_bool("NEWS_BLACKOUT_USD_ONLY", True)
 
 # --- CSM DYNAMIC FLOW BAILOUT (8/9 Sep 2026) ---
 ENABLE_CSM_DYNAMIC_BAILOUT         = _getenv_bool("ENABLE_CSM_DYNAMIC_BAILOUT", False)

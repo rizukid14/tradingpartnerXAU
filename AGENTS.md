@@ -113,7 +113,7 @@
    - Total friksi spread + komisi $\le 20\%$ dari jarak Stop Loss.
 5. **Basket Concurrency Cap**: Maksimal 2 posisi aktif per keranjang mata uang searah. Setup ke-3 diarahkan ke Virtual Paper Trade (`SKIPPED_CBSS_BASKET_CAP`).
 6. **Dead Zone & Sesi Operasional (WIB)**:
-   - Dead Zone 00:00–07:00 WIB (FX/Gold skip).
+   - Dead Zone 00:00–06:00 WIB (FX/Gold skip).
    - Night Freeze 23:00–07:00 WIB (pembukaan order baru dibekukan).
    - Pre-Rollover Shield 03:50–04:15 WIB (tutup bersih posisi dalam jarak bahaya SL jelang 04:00 WIB rollover).
    - Pre-News Emergency Shield ($\pm 30$ menit berita High-Impact US/konstituen).

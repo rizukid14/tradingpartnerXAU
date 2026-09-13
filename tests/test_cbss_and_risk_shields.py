@@ -199,11 +199,50 @@ def test_news_blackout_us_global_freezes_all_fx():
 
 
 def test_news_blackout_non_usd_pair_specific():
-    """Non-USD High-Impact event (e.g. BOE Rate Decision) freezes only GBP pairs."""
+    """NEWS_BLACKOUT_USD_ONLY=True (default): Non-USD High-Impact events (BOE/ECB/RBA etc.)
+    must NOT block ANY pair — lock and autocut are reserved exclusively for US/Global news."""
+    import unittest.mock as mock
     cal = EconomicCalendar()
     ref_time = datetime(2026, 9, 17, 17, 50, tzinfo=WIB)
     event_dt = datetime(2026, 9, 17, 18, 0, tzinfo=WIB)  # 10 minutes ahead
-    
+
+    mock_events = [
+        {
+            "name": "BOE Rate Decision",
+            "dt": event_dt,
+            "impact": "HIGH",
+            "country": "GB",
+            "currency": "GBP"
+        }
+    ]
+
+    # Default mode: NEWS_BLACKOUT_USD_ONLY=True -> non-USD events bypass completely
+    with patch.object(cal, "get_events", return_value=mock_events):
+        with mock.patch("src.analytics.economic_calendar.EconomicCalendar._cfg", return_value=(True, 6, ["US", "GB"], ())):
+            with mock.patch.dict("sys.modules", {}):
+                import config as _cfg_mod
+                orig = getattr(_cfg_mod, "NEWS_BLACKOUT_USD_ONLY", True)
+                try:
+                    _cfg_mod.NEWS_BLACKOUT_USD_ONLY = True
+                    # GBP pair must NOT be blocked (USD-only mode)
+                    is_blocked_gbp, reason_gbp = cal.is_in_news_blackout(symbol="GBPUSD", now_wib=ref_time)
+                    assert is_blocked_gbp is False, f"Expected no block for BOE in USD-only mode, got: {reason_gbp}"
+
+                    # Non-GBP pair also NOT blocked
+                    is_blocked_cad, _ = cal.is_in_news_blackout(symbol="AUDCAD", now_wib=ref_time)
+                    assert is_blocked_cad is False
+                finally:
+                    _cfg_mod.NEWS_BLACKOUT_USD_ONLY = orig
+
+
+def test_news_blackout_non_usd_pair_specific_opt_out():
+    """When NEWS_BLACKOUT_USD_ONLY=False, non-USD High-Impact events (BOE)
+    still block the relevant currency pair (GBP) but not unrelated pairs."""
+    import unittest.mock as mock
+    cal = EconomicCalendar()
+    ref_time = datetime(2026, 9, 17, 17, 50, tzinfo=WIB)
+    event_dt = datetime(2026, 9, 17, 18, 0, tzinfo=WIB)
+
     mock_events = [
         {
             "name": "BOE Rate Decision",
@@ -215,14 +254,21 @@ def test_news_blackout_non_usd_pair_specific():
     ]
 
     with patch.object(cal, "get_events", return_value=mock_events):
-        # GBP pair (GBPUSD) is blocked
-        is_blocked_gbp, reason_gbp = cal.is_in_news_blackout(symbol="GBPUSD", now_wib=ref_time)
-        assert is_blocked_gbp is True
-        assert "GBP" in reason_gbp
+        import config as _cfg_mod
+        orig = getattr(_cfg_mod, "NEWS_BLACKOUT_USD_ONLY", True)
+        try:
+            _cfg_mod.NEWS_BLACKOUT_USD_ONLY = False
+            # GBP pair IS blocked when opt-out
+            is_blocked_gbp, reason_gbp = cal.is_in_news_blackout(symbol="GBPUSD", now_wib=ref_time)
+            assert is_blocked_gbp is True
+            assert "GBP" in reason_gbp
 
-        # Non-GBP pair (AUDCAD) is NOT blocked
-        is_blocked_cad, _ = cal.is_in_news_blackout(symbol="AUDCAD", now_wib=ref_time)
-        assert is_blocked_cad is False
+            # Non-GBP pair (AUDCAD) is NOT blocked
+            is_blocked_cad, _ = cal.is_in_news_blackout(symbol="AUDCAD", now_wib=ref_time)
+            assert is_blocked_cad is False
+        finally:
+            _cfg_mod.NEWS_BLACKOUT_USD_ONLY = orig
+
 
 
 # =============================================================================

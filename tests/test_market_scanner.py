@@ -173,22 +173,29 @@ class TestMarketScanner(unittest.TestCase):
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 10))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURCHF-ECNc", 10))
         
-        # 1b. Early Tokyo Session / Tokyo Cash Open (07:00 WIB)
-        # Pairs containing JPY, AUD, or NZD must be ALLOWED at 07:00 WIB
+        # 1b. Early Tokyo Session / Tokyo Cash Open (06:00 WIB — NEW dead zone boundary)
+        # Asia session now starts at 06:00 WIB (ASIA_SESSION_START_HOUR_WIB=6)
+        # Pairs containing JPY, AUD, or NZD must be ALLOWED at 06:00 WIB
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 6))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDUSD-ECNc", 6))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("NZDUSD-ECNc", 6))
+        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPJPY-ECNc", 6))
+        # Pure Western pairs must be BLOCKED at 06:00 WIB (still Asia session only)
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 6))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 6))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDCAD", 6))
+        # Also valid at 07:00 WIB (mid Asia session)
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 7))
         self.assertTrue(MarketScanner.is_symbol_allowed_for_session("AUDUSD-ECNc", 7))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("NZDUSD-ECNc", 7))
-        self.assertTrue(MarketScanner.is_symbol_allowed_for_session("GBPJPY-ECNc", 7))
-        # Pure Western pairs must be BLOCKED at 07:00 WIB
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 7))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("GBPUSD-ECNc", 7))
         self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDCAD", 7))
 
-        # 1c. Dead Zone (06:00 WIB)
-        # All FX pairs must be BLOCKED during Dead Zone (00:00 - 07:00 WIB)
-        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 6))
-        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 6))
-        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 6))
+        # 1c. Dead Zone (05:00 WIB) — inside 00:00–06:00 WIB dead zone
+        # All FX pairs must be BLOCKED during Dead Zone (00:00 - 06:00 WIB)
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("USDJPY-ECNc", 5))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("EURUSD-ECNc", 5))
+        self.assertFalse(MarketScanner.is_symbol_allowed_for_session("AUDCAD-ECNc", 5))
 
         # 2. London Core Session (15:00 WIB)
         # ALL pairs should be ALLOWED in London core
