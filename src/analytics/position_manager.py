@@ -77,7 +77,8 @@ def record_trade_open_telemetry(ticket: int, symbol: str, direction: str, entry_
     cand_spr = int(meta.get("current_spread_pts", 0) or 0)
     comm_pts = 6
     now_h = datetime.now(WIB).hour
-    sess_win = meta.get("session_window") or ("Tokyo" if 7 <= now_h < 14 else ("London" if 14 <= now_h < 18 else ("NY" if 18 <= now_h < 24 else "DeadZone")))
+    asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
+    sess_win = meta.get("session_window") or ("Tokyo" if asia_start <= now_h < 14 else ("London" if 14 <= now_h < 18 else ("NY" if 18 <= now_h < 24 else "DeadZone")))
     sl_atr_r = meta.get("sl_atr_ratio") or (round(sl_eff / cand_atr, 2) if cand_atr > 0 and sl_eff > 0 else None)
     tp_pts = int(meta.get("tp_points", 0) or 0)
     tp_atr_r = meta.get("tp_atr_ratio") or (round(tp_pts / cand_atr, 2) if cand_atr > 0 and tp_pts > 0 else None)

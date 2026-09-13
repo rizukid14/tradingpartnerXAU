@@ -4122,7 +4122,7 @@ class MarketScanner:
                         return _ret("REDUCED_CONFIDENCE", f"MODERATE_NEUTRAL_MACRO ({bias_score:+.2f})")
 
                 # ── MECHANISM 1: UNIVERSAL LIQUIDITY SWEEP & STRUCTURAL SFP (H1 / M30) ──
-                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                if (asia_start <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     asian_h = macro.get('asian_high', 0.0)
                     asian_l = macro.get('asian_low', 0.0)
                     pdh_val = macro.get('pdh', 0.0)
@@ -4203,7 +4203,7 @@ class MarketScanner:
 
                             # 1. Asian Session Liquidity Filter for European Pairs (GBP, EUR, CHF)
                             is_euro_pair = any(k in clean_s for k in ("EUR", "GBP", "CHF"))
-                            is_asian_session = (8 <= h < 14)
+                            is_asian_session = (asia_start <= h < 14)
                             c1_struct = macro.get('immediate_ceiling_c1') or 0.0
                             c1_grade = macro.get('c1_reaction_grade', 'GRADE_1_MICRO')
                             wall_tol = max(getattr(config, 'SWEEP_WALL_MATCH_ATR_MULT', 0.35), 0.50) * atr_price_val
@@ -4390,7 +4390,7 @@ class MarketScanner:
 
                             # 1. Asian Session Liquidity Filter for European Pairs (GBP, EUR, CHF)
                             is_euro_pair = any(k in clean_s for k in ("EUR", "GBP", "CHF"))
-                            is_asian_session = (8 <= h < 14)
+                            is_asian_session = (asia_start <= h < 14)
                             f1_struct = macro.get('immediate_floor_f1') or 0.0
                             f1_grade = macro.get('f1_reaction_grade', 'GRADE_1_MICRO')
                             wall_tol_b = max(getattr(config, 'SWEEP_WALL_MATCH_ATR_MULT', 0.35), 0.50) * atr_price_val
@@ -4521,7 +4521,7 @@ class MarketScanner:
                                         ))
 
                 # ── MECHANISM 1B: TREND-ALIGNED INDUCED LIQUIDITY SWEEP (ZCE CONFLUENT) ──
-                if getattr(config, 'M1B_ENABLED', True) and (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                if getattr(config, 'M1B_ENABLED', True) and (asia_start <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     m1b_dirs = []
                     bias_sc = macro.get('macro_bias_score', 0.0)
                     if (macro.get('is_bear') or bias_sc <= -0.35) and (csm_delta_val <= -1.0 or not getattr(config, 'ENABLE_CSM_FLOW_FILTER', True)):
@@ -4709,7 +4709,7 @@ class MarketScanner:
                 is_h4_ranging = macro.get('is_h4_ranging', False)
                 is_h4_flag = macro.get('is_h4_flag_triangle', False)
 
-                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h) and not is_h4_ranging and not is_h4_flag:
+                if (asia_start <= h <= 23) and self.is_symbol_allowed_for_session(sym, h) and not is_h4_ranging and not is_h4_flag:
                     ema20 = macro.get('ema20', mid)
                     ema50 = macro.get('ema50', ema20)
                     pos_in_range = macro.get('dealing_range_pos', 0.5)
@@ -5007,7 +5007,7 @@ class MarketScanner:
                                 ))
 
                 # ── MECHANISM 3: MULTI-TOUCH CLUSTER BREAKOUT & DELAYED RETEST (H1/M30) ──
-                if (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                if (asia_start <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     c_res = macro.get('cluster_resistance', 0.0)
                     c_sup = macro.get('cluster_support', 0.0)
                     t_res = macro.get('touches_resistance', 0)
@@ -5501,7 +5501,7 @@ class MarketScanner:
                 # RBR (BUY): Impulsive H1 breakout > swing high -> 2-6 bar basing <= 0.35x ATR -> buy limit at basing ceiling.
                 # DBD (SELL): Impulsive H1 breakdown < swing low -> 2-6 bar basing <= 0.35x ATR -> sell limit at basing floor.
                 # ═══════════════════════════════════════════════════════════════
-                if config.M4_ENABLED and (8 <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
+                if config.M4_ENABLED and (asia_start <= h <= 23) and self.is_symbol_allowed_for_session(sym, h):
                     try:
                         atr_now = float(macro.get('current_atr', 0.0) or 0.0)
                         if atr_now <= 0:

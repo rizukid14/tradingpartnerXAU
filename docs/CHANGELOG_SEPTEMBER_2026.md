@@ -19,10 +19,11 @@ Meskipun variabel `ASIA_SESSION_START_HOUR_WIB` telah diuji, evaluasi runtime me
    - Menjadikan `end_hour` dinamis di `_check_night_freeze()` membaca `NIGHT_FREEZE_END_HOUR_WIB`. Jam 06:00–06:59 WIB kini diizinkan (PASS).
 3. **`main.py`**:
    - Banner terminal menggunakan `night_end_h` dinamis membaca `NIGHT_FREEZE_END_HOUR_WIB`.
-4. **`src/analytics/market_scanner.py`**:
-   - Menyelaraskan filter Gold dan fallback `asia_start` ke 6 secara dinamis.
-5. **`dashboard.py`**:
-   - Menyelaraskan `_get_session_info()`, Gate 1 `Session & Spread Filter`, dan tabel parameter `DEAD_ZONE_HOURS` dinamis mengikuti `ASIA_SESSION_START_HOUR_WIB`.
+5. **`src/analytics/market_scanner.py` (M1–M4 Activation)**:
+   - Menyelaraskan seluruh 5 mekanisme entry trigger (`M1`, `M1B`, `M2`, `M3`, `M4`) dari hardcode `8 <= h <= 23` menjadi dinamis membaca `(asia_start <= h <= 23)`.
+   - Menyelaraskan filter `is_asian_session` di M1 SELL dan BUY dari `8 <= h < 14` ke `asia_start <= h < 14`.
+6. **`position_manager.py` & `shadow_tracker.py`**:
+   - Sinkronisasi label session window Tokyo dari `7 <= now_h < 14` ke `asia_start <= now_h < 14`.
 
 ### ✅ Hasil Verifikasi:
 - **Unit Test Suite**: 81/81 test PASS (100%) mencakup `test_cbss_and_risk_shields.py`, `test_market_scanner.py`, `test_dashboard_shading.py`, `test_dashboard.py`.

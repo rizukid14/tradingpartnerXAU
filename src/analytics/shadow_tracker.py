@@ -403,7 +403,8 @@ class QuantShadowTracker:
             comm_pts = 6
             fric_r = round((cand_spr + comm_pts) / max(sl_eff, 1), 4) if sl_eff > 0 else None
             now_h = now_dt.hour
-            sess_win = "Tokyo" if 7 <= now_h < 14 else ("London" if 14 <= now_h < 18 else ("NY" if 18 <= now_h < 24 else "DeadZone"))
+            asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
+            sess_win = "Tokyo" if asia_start <= now_h < 14 else ("London" if 14 <= now_h < 18 else ("NY" if 18 <= now_h < 24 else "DeadZone"))
             inv_dist = c_meta.get("invalidation_dist") or getattr(candidate, "invalidation_dist", None)
             if inv_dist is None:
                 orig = c_meta.get("anchor_level") or (getattr(candidate, "key_support", None) if dir_str == "BUY" else getattr(candidate, "key_resistance", None))
