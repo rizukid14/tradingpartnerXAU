@@ -37,10 +37,10 @@ def calculate_m5_sl_tp(
 ) -> Dict[str, Any]:
     """
     Calculates precise M5 scalping Stop Loss and Take Profit anchored to Micro-ZCE Stations:
+    - Configurable from .env.demo (M5_SL_ATR_MULT, M5_DEFAULT_TP_RR, M5_MIN_SL_PIPS_*, M5_MAX_TP_PIPS_*).
     - Target hold time: 15 to 45 minutes (Fast In, Fast Out).
-    - SL: 1.5x M5 ATR (Standard FX: 8-10 pips, JPY/High-Beta: 12-16 pips).
-    - TP: Micro C1 (for BUY) or Micro F1 (for SELL) with front-running cushion,
-          or default 1.75R - 2.0R (15-25 pips).
+    - SL: 1.25x M5 ATR (Standard FX: 4-6 pips, JPY/High-Beta: 6-9 pips).
+    - TP: Micro C1 (for BUY) or Micro F1 (for SELL) with front-running pad, capped at M5_MAX_TP_PIPS.
     """
     clean_sym = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
     is_jpy = "JPY" in clean_sym
@@ -48,53 +48,69 @@ def calculate_m5_sl_tp(
     is_gold = "XAU" in clean_sym or "GOLD" in clean_sym
     is_crypto = config.is_crypto(clean_sym)
 
-    # Dynamic minimum SL floors for M5 (scaled down from H1)
+    # Multipliers and ratios from .env.demo (with safe fallbacks)
+    sl_atr_mult = float(os.getenv("M5_SL_ATR_MULT", "1.25"))
+    default_tp_r = float(os.getenv("M5_DEFAULT_TP_RR", "1.75"))
+
+    # Pip-to-points scaling factor (10 points = 1 pip for 5-digit FX & 3-digit JPY)
+    pip_factor = 10
+    if is_crypto or is_gold:
+        pip_factor = 100
+
+    # Dynamic minimum SL floors and max TP ceilings from .env.demo (converted to points)
     if is_crypto:
-        min_sl_pts = 10000 # $100 on BTC
-        default_tp_r = 2.0
+        min_sl_pts = int(os.getenv("M5_MIN_SL_CRYPTO_PTS", "10000"))  # $100 on BTC
+        max_tp_pts = int(os.getenv("M5_MAX_TP_CRYPTO_PTS", "30000"))  # $300 on BTC
     elif is_gold:
-        min_sl_pts = 200   # $2.00 on Gold
-        default_tp_r = 1.8
+        min_sl_pts = int(os.getenv("M5_MIN_SL_GOLD_PTS", "150"))      # $1.50 on Gold
+        max_tp_pts = int(os.getenv("M5_MAX_TP_GOLD_PTS", "400"))      # $4.00 on Gold
     elif is_jpy:
-        min_sl_pts = 120   # 12 pips on JPY crosses
-        default_tp_r = 1.75
+        min_sl_pips = float(os.getenv("M5_MIN_SL_PIPS_JPY", "6.0"))
+        max_tp_pips = float(os.getenv("M5_MAX_TP_PIPS_JPY", "13.5"))
+        min_sl_pts = int(round(min_sl_pips * pip_factor))
+        max_tp_pts = int(round(max_tp_pips * pip_factor))
     elif is_high_beta:
-        min_sl_pts = 140   # 14 pips on volatile crosses
-        default_tp_r = 1.75
+        min_sl_pips = float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "7.0"))
+        max_tp_pips = float(os.getenv("M5_MAX_TP_PIPS_HIGHBETA", "16.0"))
+        min_sl_pts = int(round(min_sl_pips * pip_factor))
+        max_tp_pts = int(round(max_tp_pips * pip_factor))
     else:
-        min_sl_pts = 80    # 8 pips on standard FX majors (EURUSD, GBPUSD, AUDUSD, USDCHF, USDCAD)
-        default_tp_r = 1.75
+        min_sl_pips = float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "4.0"))
+        max_tp_pips = float(os.getenv("M5_MAX_TP_PIPS_MAJOR", "9.5"))
+        min_sl_pts = int(round(min_sl_pips * pip_factor))
+        max_tp_pts = int(round(max_tp_pips * pip_factor))
 
     # Absorb broker spread friction (min 2x spread + 10 pts)
     fric_floor_pts = (spread_pts * 2) + 10
-    sl_pts = max(int(round((1.50 * atr_m5) / pt)), min_sl_pts, fric_floor_pts)
+    sl_pts = max(int(round((sl_atr_mult * atr_m5) / pt)), min_sl_pts, fric_floor_pts)
     sl_dist = sl_pts * pt
+    max_tp_dist = max_tp_pts * pt
 
     # Front-running pad: exit before touching exact wall
     front_pad = (spread_pts * pt) + (0.10 * atr_m5)
 
     if direction == 1:  # BUY
         sl = entry_price - sl_dist
-        # Micro C1 Target check
+        # Micro C1 Target check: use C1 if within reach (>= 1.25x SL and <= max_tp_dist * 1.15)
         if c1 and c1 > entry_price:
             raw_c1_dist = c1 - entry_price
-            if raw_c1_dist >= (1.20 * sl_dist):
-                tp = c1 - front_pad
+            if raw_c1_dist >= (1.25 * sl_dist) and raw_c1_dist <= (max_tp_dist * 1.15):
+                tp = min(c1 - front_pad, entry_price + max_tp_dist)
             else:
-                tp = entry_price + (default_tp_r * sl_dist)
+                tp = entry_price + min(default_tp_r * sl_dist, max_tp_dist)
         else:
-            tp = entry_price + (default_tp_r * sl_dist)
+            tp = entry_price + min(default_tp_r * sl_dist, max_tp_dist)
     else:  # SELL
         sl = entry_price + sl_dist
-        # Micro F1 Target check
+        # Micro F1 Target check: use F1 if within reach (>= 1.25x SL and <= max_tp_dist * 1.15)
         if f1 and f1 < entry_price:
             raw_f1_dist = entry_price - f1
-            if raw_f1_dist >= (1.20 * sl_dist):
-                tp = f1 + front_pad
+            if raw_f1_dist >= (1.25 * sl_dist) and raw_f1_dist <= (max_tp_dist * 1.15):
+                tp = max(f1 + front_pad, entry_price - max_tp_dist)
             else:
-                tp = entry_price - (default_tp_r * sl_dist)
+                tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
         else:
-            tp = entry_price - (default_tp_r * sl_dist)
+            tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
 
     tp_pts = int(round(abs(entry_price - tp) / pt))
     realized_rr = round(tp_pts / max(sl_pts, 1), 2)

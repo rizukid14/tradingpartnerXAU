@@ -23,9 +23,9 @@ class TestMarketScannerM5(unittest.TestCase):
         )
         self.assertLess(res["sl"], 1.10000)
         self.assertGreater(res["tp"], 1.10000)
-        self.assertGreaterEqual(res["sl_pts"], 75)
-        self.assertLessEqual(res["sl_pts"], 120)
-        self.assertGreaterEqual(res["risk_reward"], 1.5)
+        self.assertGreaterEqual(res["sl_pts"], 40)
+        self.assertLessEqual(res["sl_pts"], 100)
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
 
     def test_calculate_m5_sl_tp_sell(self):
         # GBPUSD SELL at 1.35000, M5 ATR = 0.00060 (6 pips), F1 at 1.34800 (20 pips)
@@ -41,8 +41,9 @@ class TestMarketScannerM5(unittest.TestCase):
         )
         self.assertGreater(res["sl"], 1.35000)
         self.assertLess(res["tp"], 1.35000)
-        self.assertGreaterEqual(res["sl_pts"], 80)
-        self.assertGreaterEqual(res["risk_reward"], 1.5)
+        self.assertGreaterEqual(res["sl_pts"], 40)
+        self.assertLessEqual(res["sl_pts"], 100)
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
 
     def test_scanner_m5_initialization(self):
         scanner = MarketScannerM5(symbols=["EURUSD-ECNc", "GBPUSD-ECNc"])
