@@ -852,7 +852,6 @@ def run_scanner_trading_cycle(cand, risk):
     old_sym = config.SYMBOL
     config.SYMBOL = sym
     try:
-        decisions = {}
         # PURE QUANT DIRECT EXECUTION (No-LLM Mode)
         if not getattr(config, "ENABLE_LLM_JURY", True):
             trade_signal = "BUY" if cand.direction == 1 else "SELL"
@@ -872,27 +871,12 @@ def run_scanner_trading_cycle(cand, risk):
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and trig_p > 0:
                 spread_pts = tick_live.get("spread", 0)
                 min_dist_pts = max(spread_pts * 2, 20)
-                s_tp = getattr(cand, "suggested_tp", 0.0)
                 if trade_signal == "BUY" and (ask - trig_p) >= (min_dist_pts * point):
-                    tp_dist = (s_tp - trig_p) if (s_tp > trig_p) else 0.0
-                    if tp_dist > 0 and (ask - trig_p) >= 0.50 * tp_dist:
-                        logger.info(f"[RADAR RUNAWAY GUARD] {sym} BUY limit @ {trig_p} skipped: ask {ask} already >=50% of TP {s_tp}")
-                        entry_type = "market" if (abs(ask - trig_p) <= (getattr(cand, 'current_atr_pts', 30) or 30) * 0.35 * point) else "skip"
-                    else:
-                        entry_type = "buy_limit"
-                        entry_price = trig_p
+                    entry_type = "buy_limit"
+                    entry_price = trig_p
                 elif trade_signal == "SELL" and (trig_p - bid) >= (min_dist_pts * point):
-                    tp_dist = (trig_p - s_tp) if (s_tp > 0 and trig_p > s_tp) else 0.0
-                    if tp_dist > 0 and (trig_p - bid) >= 0.50 * tp_dist:
-                        logger.info(f"[RADAR RUNAWAY GUARD] {sym} SELL limit @ {trig_p} skipped: bid {bid} already >=50% of TP {s_tp}")
-                        entry_type = "market" if (abs(trig_p - bid) <= (getattr(cand, 'current_atr_pts', 30) or 30) * 0.35 * point) else "skip"
-                    else:
-                        entry_type = "sell_limit"
-                        entry_price = trig_p
-
-            if entry_type == "skip":
-                print(f" {UI.YELLOW}[RUNAWAY TARGET] Trade {sym} {trade_signal} dilewati: Harga live sudah menempuh >=50% jarak TP dari anchor limit.{UI.RST}")
-                return False
+                    entry_type = "sell_limit"
+                    entry_price = trig_p
 
             ref_price = entry_price
             if getattr(cand, "suggested_sl", 0.0) > 0 and point > 0:
@@ -1115,19 +1099,12 @@ def run_scanner_trading_cycle(cand, risk):
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
             setup_grade_val = getattr(cand, "setup_grade", "GRADE_A")
-            is_m5_mode = (getattr(cand, "timeframe", "") == "M5" or getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5" or not getattr(config, "ENABLE_LLM_JURY", True))
-            if is_m5_mode:
-                # Pure Quant M5 Fast Scalp: Geometry already calibrated by calculate_m5_sl_tp
-                # Bypass H1 macro consensus SLTP rules (which enforce 250pt H1 JPY floors and reject M5 tight anchors)
-                sltp_ok = True
-                sltp_reason = "M5_SCALED_GEOMETRY"
-            else:
-                sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
-                    sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
-                )
-                # Re-read potentially adjusted action_tier and setup_grade (e.g. auto-transition to GRADE_B Wall Scalp)
-                action_tier_val = getattr(cand, "action_tier", action_tier_val)
-                setup_grade_val = getattr(cand, "setup_grade", setup_grade_val)
+            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
+                sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
+            )
+            # Re-read potentially adjusted action_tier and setup_grade (e.g. auto-transition to GRADE_B Wall Scalp)
+            action_tier_val = getattr(cand, "action_tier", action_tier_val)
+            setup_grade_val = getattr(cand, "setup_grade", setup_grade_val)
 
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")
@@ -1205,10 +1182,7 @@ def run_scanner_trading_cycle(cand, risk):
             _is_grade_b = (action_tier_val in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or setup_grade_val == "GRADE_B")
             num_positions = 2 if (not _m4_single and not _is_grade_b and is_split_tix and remaining_slots >= 2) else 1
             
-            eff_tier = None if is_m5_mode else action_tier_val
-            eff_grade = None if is_m5_mode else setup_grade_val
-            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=eff_tier, sizing_multiplier=sizing_mult, setup_grade=eff_grade)
-            base_lot = min(base_lot, getattr(config, "MAX_POSITION_LOT", 0.50))
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult, setup_grade=setup_grade_val)
             if num_positions == 2:
                 effective_lot = round(base_lot * 0.625, 2)
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
@@ -1538,17 +1512,11 @@ def main():
             total_symbols=len(config.get_scanner_symbols()),
             account_mode=getattr(config, "MT5_ACCOUNT_MODE", "live")
         ))
-        is_m5 = (
-            getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5"
-            or os.getenv("TIMEFRAME", "").upper() == "M5"
-        )
-        scan_sec = getattr(config, "RADAR_SCAN_INTERVAL_SECONDS", 15 if is_m5 else 60)
         if not getattr(config, "ENABLE_LLM_JURY", True):
-            tf_label = "M5" if is_m5 else "H1"
-            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.CYAN}PURE QUANT RADAR ({tf_label}){UI.RST} (Stage 1: Fast Radar {scan_sec}s | Stage 2: Direct Quant Execution / No-LLM | BEP 80% TP | Cooldown 10m)")
+            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.CYAN}PURE QUANT RADAR{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: Direct Quant Execution / No-LLM)")
         else:
-            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar {scan_sec}s | Stage 2: 3-LLM Jury)")
-        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (28 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
+            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
+        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (26 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
     else:
         print(render_banner(
             account_info=getattr(config, "MT5_LOGIN", None),
@@ -1624,18 +1592,9 @@ def main():
     _last_hourly_recap_hour = datetime.now(_WIB).hour
     if config.SCANNER_MODE:
         try:
-            is_m5 = (
-                getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5"
-                or os.getenv("TIMEFRAME", "").upper() == "M5"
-            )
+            scanner = MarketScanner()
             n_syms = len(config.get_scanner_symbols())
-            if is_m5:
-                from src.analytics.market_scanner_m5 import MarketScannerM5
-                scanner = MarketScannerM5()
-                print(f" {UI.CYAN}[M5 RADAR BOOT]{UI.RST} Memuat Micro-ZCE (M5/M15/H1) {n_syms} simbol universe... Mohon tunggu ~10 detik.")
-            else:
-                scanner = MarketScanner()
-                print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro {n_syms} simbol universe (H1/H4/D1/W1)... Mohon tunggu ~28 detik.")
+            print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro {n_syms} simbol universe (H1/H4/D1/W1)... Mohon tunggu ~28 detik.")
             scanner.update_macro_context(connector, force=True)
             acc_info = connector.get_account_info()
             open_pos = connector.get_all_open_positions()
