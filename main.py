@@ -1115,12 +1115,19 @@ def run_scanner_trading_cycle(cand, risk):
             
             action_tier_val = getattr(cand, "action_tier", "FULL_ALLOW")
             setup_grade_val = getattr(cand, "setup_grade", "GRADE_A")
-            sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
-                sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
-            )
-            # Re-read potentially adjusted action_tier and setup_grade (e.g. auto-transition to GRADE_B Wall Scalp)
-            action_tier_val = getattr(cand, "action_tier", action_tier_val)
-            setup_grade_val = getattr(cand, "setup_grade", setup_grade_val)
+            is_m5_mode = (getattr(cand, "timeframe", "") == "M5" or getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5" or not getattr(config, "ENABLE_LLM_JURY", True))
+            if is_m5_mode:
+                # Pure Quant M5 Fast Scalp: Geometry already calibrated by calculate_m5_sl_tp
+                # Bypass H1 macro consensus SLTP rules (which enforce 250pt H1 JPY floors and reject M5 tight anchors)
+                sltp_ok = True
+                sltp_reason = "M5_SCALED_GEOMETRY"
+            else:
+                sl_points, tp_points, sltp_ok, sltp_reason = consensus._apply_sltp_rules(
+                    sl_points, tp_points, symbol=sym, action_tier=action_tier_val, setup_grade=setup_grade_val, candidate=cand
+                )
+                # Re-read potentially adjusted action_tier and setup_grade (e.g. auto-transition to GRADE_B Wall Scalp)
+                action_tier_val = getattr(cand, "action_tier", action_tier_val)
+                setup_grade_val = getattr(cand, "setup_grade", setup_grade_val)
 
             if not sltp_ok:
                 print(f" {UI.RED}[!] Trade {sym} Dibatalkan (SL/TP Rules): {sltp_reason}{UI.RST}")

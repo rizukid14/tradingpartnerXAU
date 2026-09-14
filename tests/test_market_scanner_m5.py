@@ -73,6 +73,22 @@ class TestMarketScannerM5(unittest.TestCase):
         self.assertTrue(config.is_paper_only("BTCUSD.c"))
         self.assertFalse(config.is_paper_only("EURUSD-ECNc"))
         self.assertFalse(config.is_paper_only("GBPUSD-ECNc"))
+    def test_m5_sl_less_than_tp_and_thin_jpy(self):
+        # GBPJPY M5 scalping must have thin SL (not 250 pts H1 floor) and SL < TP (R:R >= 1.25)
+        pt = 0.001
+        atr_m5 = 0.077
+        res = calculate_m5_sl_tp(
+            symbol="GBPJPY-ECNc",
+            entry_price=208.551,
+            direction=1,
+            atr_m5=atr_m5,
+            spread_pts=11,
+            pt=pt
+        )
+        self.assertLess(res["sl_pts"], res["tp_pts"])
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
+        # Verify SL is thin (around 90-100 pts), NOT clamped to 250 pts H1 floor
+        self.assertLess(res["sl_pts"], 150)
 
 
 if __name__ == "__main__":
