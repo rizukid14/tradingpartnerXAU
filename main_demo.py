@@ -19,8 +19,8 @@ os.environ["ENV_FILE"] = ".env.demo"
 # 2. Force UTF-8 encoding for standard output on Windows
 if sys.platform == 'win32':
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+        sys.stderr.reconfigure(encoding='utf-8', line_buffering=True)
     except Exception:
         pass
 
@@ -130,7 +130,7 @@ def main():
     acc = connector.get_account_info()
     print(f" {UI.GREEN}[CONNECTED]{UI.RST} Akun Demo: #{acc.get('login')} ({acc.get('server')}) | Balance: ${acc.get('balance'):,.2f} | Equity: ${acc.get('equity'):,.2f}")
 
-    risk = RiskEngine(initial_capital=acc.get("balance", 15000.0))
+    risk = RiskEngine()
     scanner = MarketScannerM5()
 
     print(f" {UI.CYAN}[PREHEAT]{UI.RST} Memuat Micro-ZCE & Macro Context untuk {len(scanner.symbols)} simbol universe... Mohon tunggu ~20 detik.")

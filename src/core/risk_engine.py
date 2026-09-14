@@ -29,8 +29,8 @@ from src.core.cli_theme import UI
 
 
 WIB = ZoneInfo("Asia/Jakarta")
-
-STATE_FILE = os.path.join(config.DATA_DIR, "risk_state.json")
+_prefix = "_demo" if getattr(config, "MT5_ACCOUNT_MODE", "live").lower() == "demo" else ""
+STATE_FILE = os.path.join(config.DATA_DIR, f"risk_state{_prefix}.json")
 
 
 
