@@ -112,6 +112,15 @@ def calculate_m5_sl_tp(
         else:
             tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
 
+    # Hard Quant Floor: SL MUST NEVER BE GREATER THAN TP (Minimum R:R 1.25:1)
+    min_tp_dist = sl_dist * 1.25
+    if direction == 1:
+        if (tp - entry_price) < min_tp_dist:
+            tp = entry_price + min_tp_dist
+    else:
+        if (entry_price - tp) < min_tp_dist:
+            tp = entry_price - min_tp_dist
+
     tp_pts = int(round(abs(entry_price - tp) / pt))
     realized_rr = round(tp_pts / max(sl_pts, 1), 2)
 
