@@ -4,6 +4,7 @@ Provides ANSI colors, sleek box-drawing borders, badges, and progress bars.
 Fully compatible with Windows 10/11 Terminal & Linux/macOS.
 """
 
+import os
 import sys
 import shutil
 import unicodedata

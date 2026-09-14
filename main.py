@@ -872,12 +872,27 @@ def run_scanner_trading_cycle(cand, risk):
             if getattr(config, "PENDING_ORDERS_ENABLED", False) and trig_p > 0:
                 spread_pts = tick_live.get("spread", 0)
                 min_dist_pts = max(spread_pts * 2, 20)
+                s_tp = getattr(cand, "suggested_tp", 0.0)
                 if trade_signal == "BUY" and (ask - trig_p) >= (min_dist_pts * point):
-                    entry_type = "buy_limit"
-                    entry_price = trig_p
+                    tp_dist = (s_tp - trig_p) if (s_tp > trig_p) else 0.0
+                    if tp_dist > 0 and (ask - trig_p) >= 0.50 * tp_dist:
+                        logger.info(f"[RADAR RUNAWAY GUARD] {sym} BUY limit @ {trig_p} skipped: ask {ask} already >=50% of TP {s_tp}")
+                        entry_type = "market" if (abs(ask - trig_p) <= (getattr(cand, 'current_atr_pts', 30) or 30) * 0.35 * point) else "skip"
+                    else:
+                        entry_type = "buy_limit"
+                        entry_price = trig_p
                 elif trade_signal == "SELL" and (trig_p - bid) >= (min_dist_pts * point):
-                    entry_type = "sell_limit"
-                    entry_price = trig_p
+                    tp_dist = (trig_p - s_tp) if (s_tp > 0 and trig_p > s_tp) else 0.0
+                    if tp_dist > 0 and (trig_p - bid) >= 0.50 * tp_dist:
+                        logger.info(f"[RADAR RUNAWAY GUARD] {sym} SELL limit @ {trig_p} skipped: bid {bid} already >=50% of TP {s_tp}")
+                        entry_type = "market" if (abs(trig_p - bid) <= (getattr(cand, 'current_atr_pts', 30) or 30) * 0.35 * point) else "skip"
+                    else:
+                        entry_type = "sell_limit"
+                        entry_price = trig_p
+
+            if entry_type == "skip":
+                print(f" {UI.YELLOW}[RUNAWAY TARGET] Trade {sym} {trade_signal} dilewati: Harga live sudah menempuh >=50% jarak TP dari anchor limit.{UI.RST}")
+                return False
 
             ref_price = entry_price
             if getattr(cand, "suggested_sl", 0.0) > 0 and point > 0:

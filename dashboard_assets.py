@@ -1373,9 +1373,9 @@ html, body {
         <span class="pair-title-big" id="active-symbol">—</span>
         <div class="tf-group">
           <button class="tf-btn" data-tf="H4">H4 Pattern</button>
-          <button class="tf-btn active" data-tf="H1">H1 Structure</button>
+          <button class="tf-btn" data-tf="H1">H1 Structure</button>
           <button class="tf-btn" data-tf="M30">M30 Swing</button>
-          <button class="tf-btn" data-tf="M5">M5 Micro</button>
+          <button class="tf-btn active" data-tf="M5">M5 Micro</button>
         </div>
         <div class="header-alerts-inline" id="header-alerts-inline">
           <span id="chip-m4-shock" class="header-alert-chip chip-m4" style="display:none;" title="Systemic Flow Shock">
@@ -1545,7 +1545,7 @@ html, body {
 <script>
 // State Management
 let currentSymbol = "EURCAD-ECNc";
-let currentTF = "H1";
+let currentTF = "M5";
 let currentFilter = "all";
 let currentDrawerTab = "orders";
 let activeVerticalFilter = "regimes"; // "sessions", "regimes", "both", "off"

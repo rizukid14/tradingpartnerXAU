@@ -2305,7 +2305,7 @@ class CockpitDataEngine:
                 "shadow_radar": shadow_data
             }
 
-    def get_symbol_detail(self, symbol: str, timeframe_str: str = "H1") -> Dict[str, Any]:
+    def get_symbol_detail(self, symbol: str, timeframe_str: str = "M5") -> Dict[str, Any]:
         """Generates exhaustive payload for single pair (Candles, ZCE Walls, Standbys, 7-Gate)."""
         valid_sym = connector.get_valid_trade_symbol(symbol)
         clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
@@ -2333,8 +2333,8 @@ class CockpitDataEngine:
             "M30": config.mt5.TIMEFRAME_M30,
             "M5": config.mt5.TIMEFRAME_M5
         }
-        mt5_tf = tf_map.get(timeframe_str.upper(), config.mt5.TIMEFRAME_H1)
-        num_bars = 60 if timeframe_str.upper() == "M5" else (180 if timeframe_str.upper() == "M30" else (120 if timeframe_str.upper() == "H4" else 450))
+        mt5_tf = tf_map.get(timeframe_str.upper(), config.mt5.TIMEFRAME_M5 if getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5" else config.mt5.TIMEFRAME_H1)
+        num_bars = 250 if timeframe_str.upper() == "M5" else (180 if timeframe_str.upper() == "M30" else (120 if timeframe_str.upper() == "H4" else 450))
 
         rates = config.mt5.copy_rates_from_pos(valid_sym, mt5_tf, 0, num_bars + 50)
         candles = []
@@ -3552,7 +3552,8 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path.startswith("/api/symbol/"):
             path_part = self.path[len("/api/symbol/"):]
             sym = path_part.split("?")[0]
-            tf = "H1"
+            default_tf = getattr(config, "TIMEFRAME_STR", "M5").upper()
+            tf = default_tf
             if "?tf=" in path_part:
                 tf = path_part.split("?tf=")[1].split("&")[0]
 

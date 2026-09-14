@@ -184,6 +184,16 @@ class MarketScannerM5(MarketScanner):
                 ema20 = float(df_m5["close"].ewm(span=20, adjust=False).mean().iloc[-1]) if df_m5 is not None else cur_c
                 ema50 = float(df_m5["close"].ewm(span=50, adjust=False).mean().iloc[-1]) if df_m5 is not None else cur_c
 
+                # Calculate authentic M5 ATR (14 period)
+                atr_m5 = 50.0 * pt
+                if df_m5 is not None and len(df_m5) >= 14:
+                    h_arr = df_m5['high'].to_numpy()
+                    l_arr = df_m5['low'].to_numpy()
+                    c_arr = df_m5['close'].to_numpy()
+                    tr = np.maximum(h_arr[1:] - l_arr[1:], np.maximum(abs(h_arr[1:] - c_arr[:-1]), abs(l_arr[1:] - c_arr[:-1])))
+                    atr_m5 = float(np.mean(tr[-14:]))
+                atr_pts = int(round(atr_m5 / pt)) if pt > 0 else 50
+
                 # Dealing range bounds anchored to Micro-ZCE stations
                 f1_ref = f1 if f1 else (cur_c - (100 * pt))
                 c1_ref = c1 if c1 else (cur_c + (100 * pt))
@@ -200,6 +210,8 @@ class MarketScannerM5(MarketScanner):
                 self.macro_cache[valid_sym] = {
                     "symbol": valid_sym,
                     "point": pt,
+                    "current_atr": atr_m5,
+                    "atr_pts": atr_pts,
                     "immediate_ceiling_c1": c1,
                     "immediate_floor_f1": f1,
                     "ceiling_c1": c1,
