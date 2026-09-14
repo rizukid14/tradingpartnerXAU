@@ -1181,14 +1181,14 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
         getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5"
         or os.getenv("TIMEFRAME", "").upper() == "M5"
     )
-    if is_m5:
-        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.80)
-    elif "GRADE_S" in grade:
+    if "GRADE_S" in grade:
         bep_tp_ratio = 0.65
     elif is_m4:
         bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
     elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
         bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50)
+    elif is_m5:
+        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.80)
     else:
         bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 

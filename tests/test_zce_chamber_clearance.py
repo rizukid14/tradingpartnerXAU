@@ -11,6 +11,7 @@ Memverifikasi:
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -119,15 +120,16 @@ class TestZCEChamberClearance(unittest.TestCase):
         """
         Verifikasi bahwa JPY crosses telah 100% seragam di H1 dan segmented floor JPY diatur untuk H1.
         """
-        self.assertEqual(config.get_timeframe_str("USDJPY-ECNc"), "H1")
-        self.assertEqual(config.get_timeframe_str("EURJPY-ECNc"), "H1")
-        self.assertEqual(config.get_timeframe_str("GBPJPY-ECNc"), "H1")
-        self.assertEqual(config.get_timeframe_str("GBPUSD-ECNc"), "H1")
+        with patch.dict(os.environ, {"TIMEFRAME": "H1"}):
+            self.assertEqual(config.get_timeframe_str("USDJPY-ECNc"), "H1")
+            self.assertEqual(config.get_timeframe_str("EURJPY-ECNc"), "H1")
+            self.assertEqual(config.get_timeframe_str("GBPJPY-ECNc"), "H1")
+            self.assertEqual(config.get_timeframe_str("GBPUSD-ECNc"), "H1")
 
-        # Floor JPY H1: 250 pts fallback, multiplier 0.50x ATR
-        floor_pts = config.get_sl_floor_points("USDJPY-ECNc", spread_pts=15, atr_points=600)
-        # max(2*15 + 20 = 50, int(0.50 * 600) = 300, 250) -> 300 pts
-        self.assertEqual(floor_pts, 300)
+            # Floor JPY H1: 250 pts fallback, multiplier 0.50x ATR
+            floor_pts = config.get_sl_floor_points("USDJPY-ECNc", spread_pts=15, atr_points=600)
+            # max(2*15 + 20 = 50, int(0.50 * 600) = 300, 250) -> 300 pts
+            self.assertEqual(floor_pts, 300)
 
 
 if __name__ == "__main__":

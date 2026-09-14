@@ -53,84 +53,131 @@ def calculate_m5_sl_tp(
     # Multiplier: 1.10x ATR M5 for tight intraday scalping
     sl_atr_mult = float(os.getenv("M5_SL_ATR_MULT", "1.10"))
 
-    # Dynamic 3-Tier Clamping [min_sl_pts, max_sl_pts, tier_min_tp1_pts]
+    # Dynamic 3-Tier Clamping [min_sl_pts, max_sl_pts, tier_min_tp1_pts, max_tp1_pts]
     if is_crypto:
         min_sl_pts = int(os.getenv("M5_MIN_SL_CRYPTO_PTS", "10000"))
         max_sl_pts = int(os.getenv("M5_MAX_SL_CRYPTO_PTS", "25000"))
         tier_min_tp1 = int(os.getenv("M5_MIN_TP1_CRYPTO_PTS", "15000"))
+        max_tp1_pts = int(os.getenv("M5_MAX_TP1_CRYPTO_PTS", "35000"))
     elif is_gold:
         min_sl_pts = int(os.getenv("M5_MIN_SL_GOLD_PTS", "150"))
         max_sl_pts = int(os.getenv("M5_MAX_SL_GOLD_PTS", "350"))
         tier_min_tp1 = int(os.getenv("M5_MIN_TP1_GOLD_PTS", "250"))
+        max_tp1_pts = int(os.getenv("M5_MAX_TP1_GOLD_PTS", "400"))
     elif is_jpy:
-        # Tier 3: JPY Crosses (7.0 - 9.5 pips SL, min 12.0 pips TP1)
-        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_JPY", "7.0")) * 10))
-        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_JPY", "9.5")) * 10))
-        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_JPY", "12.0")) * 10))
+        # Tier 3: JPY Crosses (10.0 - 12.0 pips SL, min 14.0 pips TP1)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_JPY", "10.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_JPY", "12.0")) * 10))
+        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_JPY", "14.0")) * 10))
+        max_tp1_pts = max(int(round(float(os.getenv("M5_MAX_TP1_PIPS_JPY", "20.0")) * 10)), int(round(2.0 * atr_m5 / pt)) if pt > 0 else 200)
     elif is_high_beta:
-        # Tier 2: High-Beta Crosses (6.5 - 8.5 pips SL, min 11.0 pips TP1)
-        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "6.5")) * 10))
-        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_HIGHBETA", "8.5")) * 10))
-        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_HIGHBETA", "11.0")) * 10))
+        # Tier 2: High-Beta Crosses (12.0 - 14.0 pips SL, min 15.0 pips TP1)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "12.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_HIGHBETA", "14.0")) * 10))
+        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_HIGHBETA", "15.0")) * 10))
+        max_tp1_pts = max(int(round(float(os.getenv("M5_MAX_TP1_PIPS_HIGHBETA", "24.0")) * 10)), int(round(2.0 * atr_m5 / pt)) if pt > 0 else 240)
     else:
-        # Tier 1: Major FX Pairs (5.0 - 7.5 pips SL, min 8.0 pips TP1)
-        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "5.0")) * 10))
-        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_MAJOR", "7.5")) * 10))
-        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_MAJOR", "8.0")) * 10))
+        # Tier 1: Major FX Pairs (8.0 - 10.0 pips SL, min 10.0 pips TP1)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "8.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_MAJOR", "10.0")) * 10))
+        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_MAJOR", "10.0")) * 10))
+        max_tp1_pts = max(int(round(float(os.getenv("M5_MAX_TP1_PIPS_MAJOR", "18.0")) * 10)), int(round(2.0 * atr_m5 / pt)) if pt > 0 else 180)
 
-    # Spread friction floor (2x spread + 10 pts)
+    # Spread friction floor & commission padding
     fric_floor_pts = (spread_pts * 2) + 10
-    raw_sl_pts = int(round((sl_atr_mult * atr_m5) / pt)) if pt > 0 else 50
-    sl_pts = max(min(raw_sl_pts, max_sl_pts), min_sl_pts, fric_floor_pts)
-    sl_dist = sl_pts * pt
-
-    # Commission padding (approx 6 pts / 0.6 pips roundtrip ECN)
     comm_pts = int(os.getenv("M5_COMMISSION_PAD_PTS", "6"))
+    sl_buffer = (spread_pts * pt) + (comm_pts * pt) + (0.10 * atr_m5)
+    default_sl_dist = max(sl_atr_mult * atr_m5, min_sl_pts * pt)
+
+    # Elastic Structural Leeway: allows SL to stretch ~18% behind nearby C1/F1 to prevent front-running wall
+    leeway_ratio = float(os.getenv("M5_SL_STRETCH_LEEWAY_RATIO", "1.18"))
+    stretch_cap_pts = int(round(max_sl_pts * leeway_ratio))
+
+    # 1. Stop Loss Calculation (Anchored to Micro-ZCE Invalidation with Elastic Leeway)
+    if direction == 1:  # BUY: Invalidation below Micro Floor F1
+        if f1 and f1 < entry_price:
+            raw_sl_dist = (entry_price - f1) + sl_buffer
+        elif f2 and f2 < entry_price:
+            raw_sl_dist = (entry_price - f2) + sl_buffer
+        else:
+            raw_sl_dist = default_sl_dist
+
+        raw_sl_pts = int(round(raw_sl_dist / pt)) if pt > 0 else 80
+        effective_max = stretch_cap_pts if raw_sl_pts <= stretch_cap_pts else max_sl_pts
+        sl_pts = max(min(raw_sl_pts, effective_max), min_sl_pts, fric_floor_pts)
+        sl_dist = sl_pts * pt
+        sl = entry_price - sl_dist
+
+    else:  # SELL: Invalidation above Micro Ceiling C1
+        if c1 and c1 > entry_price:
+            raw_sl_dist = (c1 - entry_price) + sl_buffer
+        elif c2 and c2 > entry_price:
+            raw_sl_dist = (c2 - entry_price) + sl_buffer
+        else:
+            raw_sl_dist = default_sl_dist
+
+        raw_sl_pts = int(round(raw_sl_dist / pt)) if pt > 0 else 80
+        effective_max = stretch_cap_pts if raw_sl_pts <= stretch_cap_pts else max_sl_pts
+        sl_pts = max(min(raw_sl_pts, effective_max), min_sl_pts, fric_floor_pts)
+        sl_dist = sl_pts * pt
+        sl = entry_price + sl_dist
+
+    # Front-running pad for Take Profit (exit before hitting exact wall)
     front_pad = (spread_pts * pt) + (comm_pts * pt) + (0.05 * atr_m5)
 
-    # TP1 Calculation: minimum 1.50x SL distance or tier floor
-    min_tp1_dist = max(sl_dist * 1.50, tier_min_tp1 * pt)
-    default_tp1_dist = max(sl_dist * 1.60, tier_min_tp1 * pt)
+    # TP1 Calculation: minimum 1.25x SL distance or tier floor; capped dynamically by max_tp1_dist
+    min_tp1_dist = max(sl_dist * 1.25, tier_min_tp1 * pt)
+    default_tp1_dist = max(sl_dist * 1.50, tier_min_tp1 * pt)
+    max_tp1_dist = max(max_tp1_pts * pt, min_tp1_dist * 1.15)
 
     if direction == 1:  # BUY
-        sl = entry_price - sl_dist
         if c1 and c1 > entry_price:
             c1_net_tp = c1 - front_pad
-            if (c1_net_tp - entry_price) >= min_tp1_dist:
-                tp1 = c1_net_tp
+            raw_c1_dist = c1_net_tp - entry_price
+            if raw_c1_dist >= min_tp1_dist:
+                # Micro-ZCE C1 is Single Source of Truth, capped at max_tp1_dist
+                tp1 = min(c1_net_tp, entry_price + max_tp1_dist)
             else:
                 tp1 = entry_price + default_tp1_dist
         else:
             tp1 = entry_price + default_tp1_dist
     else:  # SELL
-        sl = entry_price + sl_dist
         if f1 and f1 < entry_price:
             f1_net_tp = f1 + front_pad
-            if (entry_price - f1_net_tp) >= min_tp1_dist:
-                tp1 = f1_net_tp
+            raw_f1_dist = entry_price - f1_net_tp
+            if raw_f1_dist >= min_tp1_dist:
+                # Micro-ZCE F1 is Single Source of Truth, capped at max_tp1_dist
+                tp1 = max(f1_net_tp, entry_price - max_tp1_dist)
             else:
                 tp1 = entry_price - default_tp1_dist
         else:
             tp1 = entry_price - default_tp1_dist
 
-    # Enforce hard quant floor for TP1
-    if direction == 1 and (tp1 - entry_price) < min_tp1_dist:
-        tp1 = entry_price + min_tp1_dist
-    elif direction == -1 and (entry_price - tp1) < min_tp1_dist:
-        tp1 = entry_price - min_tp1_dist
+    # Enforce hard quant floor and ceiling for TP1
+    if direction == 1:
+        if (tp1 - entry_price) < min_tp1_dist:
+            tp1 = entry_price + min_tp1_dist
+        elif (tp1 - entry_price) > max_tp1_dist:
+            tp1 = entry_price + max_tp1_dist
+    else:
+        if (entry_price - tp1) < min_tp1_dist:
+            tp1 = entry_price - min_tp1_dist
+        elif (entry_price - tp1) > max_tp1_dist:
+            tp1 = entry_price - max_tp1_dist
 
     tp1_pts = int(round(abs(entry_price - tp1) / pt)) if pt > 0 else 80
 
-    # TP2 Runner Calculation: anchored to C2/F2 or 1.50x TP1 pts
+    # TP2 Runner Calculation: anchored to Micro-ZCE C2/F2 (if within reach 1.35x-1.80x TP1) or 1.50x TP1 pts
     runner_ratio = float(os.getenv("M5_RUNNER_TP2_RATIO", "1.50"))
     default_tp2_dist = (tp1_pts * runner_ratio) * pt
+    max_tp2_dist = max_tp1_dist * 1.55
 
     if direction == 1:  # BUY
         if c2 and c2 > entry_price:
             c2_net_tp = c2 - front_pad
             c2_dist = c2_net_tp - entry_price
             if (1.35 * (tp1 - entry_price)) <= c2_dist <= (1.80 * (tp1 - entry_price)):
-                tp2 = c2_net_tp
+                tp2 = min(c2_net_tp, entry_price + max_tp2_dist)
             else:
                 tp2 = entry_price + default_tp2_dist
         else:
@@ -140,7 +187,7 @@ def calculate_m5_sl_tp(
             f2_net_tp = f2 + front_pad
             f2_dist = entry_price - f2_net_tp
             if (1.35 * (entry_price - tp1)) <= f2_dist <= (1.80 * (entry_price - tp1)):
-                tp2 = f2_net_tp
+                tp2 = max(f2_net_tp, entry_price - max_tp2_dist)
             else:
                 tp2 = entry_price - default_tp2_dist
         else:

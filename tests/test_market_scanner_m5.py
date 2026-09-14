@@ -10,7 +10,7 @@ from src.analytics.market_scanner_m5 import MarketScannerM5, calculate_m5_sl_tp
 class TestMarketScannerM5(unittest.TestCase):
 
     def test_calculate_m5_sl_tp_buy(self):
-        # EURUSD BUY at 1.10000, M5 ATR = 0.00050 (5 pips), C1 at 1.10200 (20 pips)
+        # EURUSD BUY at 1.10000, M5 ATR = 0.00050 (5 pips), C1 at 1.10200 (20 pips), F1 at 1.09800 (20 pips)
         res = calculate_m5_sl_tp(
             symbol="EURUSD-ECNc",
             entry_price=1.10000,
@@ -23,12 +23,12 @@ class TestMarketScannerM5(unittest.TestCase):
         )
         self.assertLess(res["sl"], 1.10000)
         self.assertGreater(res["tp"], 1.10000)
-        self.assertGreaterEqual(res["sl_pts"], 40)
-        self.assertLessEqual(res["sl_pts"], 100)
-        self.assertGreaterEqual(res["risk_reward"], 1.25)
+        self.assertGreaterEqual(res["sl_pts"], 80)
+        self.assertLessEqual(res["sl_pts"], 200)
+        self.assertGreaterEqual(res["risk_reward"], 1.0)
 
     def test_calculate_m5_sl_tp_sell(self):
-        # GBPUSD SELL at 1.35000, M5 ATR = 0.00060 (6 pips), F1 at 1.34800 (20 pips)
+        # GBPUSD SELL at 1.35000, M5 ATR = 0.00060 (6 pips), C1 at 1.35200 (20 pips), F1 at 1.34800 (20 pips)
         res = calculate_m5_sl_tp(
             symbol="GBPUSD-ECNc",
             entry_price=1.35000,
@@ -41,9 +41,9 @@ class TestMarketScannerM5(unittest.TestCase):
         )
         self.assertGreater(res["sl"], 1.35000)
         self.assertLess(res["tp"], 1.35000)
-        self.assertGreaterEqual(res["sl_pts"], 40)
-        self.assertLessEqual(res["sl_pts"], 100)
-        self.assertGreaterEqual(res["risk_reward"], 1.25)
+        self.assertGreaterEqual(res["sl_pts"], 80)
+        self.assertLessEqual(res["sl_pts"], 200)
+        self.assertGreaterEqual(res["risk_reward"], 1.0)
 
     def test_scanner_m5_initialization(self):
         scanner = MarketScannerM5(symbols=["EURUSD-ECNc", "GBPUSD-ECNc"])
@@ -99,6 +99,36 @@ class TestMarketScannerM5(unittest.TestCase):
         self.assertGreaterEqual(res["risk_reward"], 1.25)
         # Verify SL is thin (around 90-100 pts), NOT clamped to 250 pts H1 floor
         self.assertLess(res["sl_pts"], 150)
+
+    def test_elastic_structural_leeway(self):
+        # GBPJPY JPY tier: base max = 120 pts, leeway 1.18x = 142 pts
+        # Case A: C1 at 190.115 (11.5 pips away), raw dist with buffer is ~13.5 pips (135 pts)
+        # Should STRETCH to 135 pts behind C1, NOT get cut off at 120 pts
+        res_near = calculate_m5_sl_tp(
+            symbol="GBPJPY-ECNc",
+            entry_price=190.000,
+            direction=-1,
+            atr_m5=0.070,
+            c1=190.115,
+            spread_pts=12,
+            pt=0.001
+        )
+        self.assertGreater(res_near["sl_pts"], 120)
+        self.assertLessEqual(res_near["sl_pts"], 142)
+        self.assertGreater(res_near["sl"], 190.115)  # SL is safely above C1
+
+        # Case B: C1 is at 190.250 (25.0 pips away, far macro wall > stretch cap 142 pts)
+        # Should SNAP BACK to base max 120 pts
+        res_far = calculate_m5_sl_tp(
+            symbol="GBPJPY-ECNc",
+            entry_price=190.000,
+            direction=-1,
+            atr_m5=0.070,
+            c1=190.250,
+            spread_pts=12,
+            pt=0.001
+        )
+        self.assertEqual(res_far["sl_pts"], 120)
 
 
 if __name__ == "__main__":

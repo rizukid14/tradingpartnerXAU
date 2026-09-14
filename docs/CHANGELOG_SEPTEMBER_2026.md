@@ -2,6 +2,35 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 119. Perubahan 15 September 2026 — Kalibrasi Micro-ZCE Structural Stop Loss, Sweet Spot Demo Awal (8–10p FX, 10–12p JPY), Elastic Structural Leeway, dan Atomic Twin Rollback
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Pencegahan Stop Out Prematur pada JPY Crosses (Audit Live 15 September 2026)**:
+   - Audit posisi live MT5 Cent (`#27556325`) membuktikan arah sinyal JPY SELL (`GBPJPY`, `CADJPY`) 100% benar secara makro, tetapi terkena Stop Out prematur karena SL sebelumnya di-clamp terlalu tipis (7.7–8.1 pips).
+   - Pada `GBPJPY`, resistensi Micro-ZCE Ceiling $C_1$ berada di 208.500 (+17.7 pips), namun SL ditaruh di 208.404 (9.6 pips di bawah $C_1$), sehingga retracement wajar mematikan trade sebelum struktur berbalik.
+2. **Koreksi Distorsi Lot Sizing Seragam 0.50 Lot**:
+   - SL artifisial 5–8 pips menghasilkan kalkulasi `raw_lot` $\ge 1.0$, yang menyebabkan semua pair terpotong seragam di batas maksimal Cent `MAX_POSITION_LOT = 0.50`.
+   - Mengembalikan SL berbasis struktur pasar mengembalikan sizing yang proporsional terhadap jarak fisik pasar.
+3. **Penyelarasan ke Sweet Spot Demo Awal (`cf62567`) & Elastic Leeway**:
+   - Menghindari SL molor ke ranah makro H1/H4 (16–20 pips) dengan mengunci batas manis demo awal: Major FX 8.0–10.0 pips, JPY Crosses 10.0–12.0 pips.
+   - Menambahkan **Elastic Structural Leeway (~18% / stretch cap 14.2 pips pada JPY)** agar jika tembok $C_1/F_1$ berada sedikit di atas plafon normal (misal 12.5–13.5 pips), SL diizinkan melar ke balik tembok untuk mencegah tragedi stop out 1 pip sebelum pembalikan.
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **Kalkulator Geometri M5 Scalping (`src/analytics/market_scanner_m5.py`)**:
+   - Mengaitkan Stop Loss langsung ke Micro-ZCE: di bawah Floor $F_1 - \text{buffer}$ (BUY) atau di atas Ceiling $C_1 + \text{buffer}$ (SELL).
+   - Mengimplementasikan `M5_SL_STRETCH_LEEWAY_RATIO = 1.18` untuk toleransi elastis di balik tembok struktur terdekat.
+   - Tembok yang melebihi batas elastis ($> 14.2$ pips pada JPY / $> 11.8$ pips pada Major) otomatis dipotong kembali ke plafon dasar (10.0p Major, 12.0p JPY).
+2. **Execution Runner (`main_m5.py`)**:
+   - **Atomic Twin Rollback**: Jika salah satu tiket (T1 atau T2) gagal terpasang pada eksekusi broker (partial fill), tiket pasangan otomatis dibatalkan/ditutup saat itu juga demi integritas lot dan R:R.
+3. **Position Manager (`src/analytics/position_manager.py`)**:
+   - Penataan presedensi BEP multi-tier: Grade S / B / M4 diproses sebelum fallback M5 generic.
+4. **Konfigurasi (`.env`)**:
+   - Mengatur `M5_SL_ATR_MULT=1.35`, `M5_MIN_SL_PIPS_MAJOR=8.0`, `M5_MAX_SL_PIPS_MAJOR=10.0`, `M5_MIN_SL_PIPS_JPY=10.0`, `M5_MAX_SL_PIPS_JPY=12.0`, `M5_SL_STRETCH_LEEWAY_RATIO=1.18`.
+5. **Unit Tests Suite (`tests/`)**:
+   - Seluruh unit tests (391 test) diverifikasi 100% PASS (termasuk `test_elastic_structural_leeway`).
+
+---
+
 ## 118. Perubahan 15 September 2026 — Arsitektur Eksekusi Ganda Twin-Ticket M5, 3-Milestone State Machine, C2/F2 Runner Anchoring, Active Pending Runaway Watcher, dan Proteksi Otomatis Twin-SL Loss Shield
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

@@ -9,7 +9,7 @@ from src.analytics import position_manager
 
 
 def test_m5_sl_tp_geometry_major():
-    """Verify Major FX pairs get clamped SL [50-75 pts] and TP1 >= 1.50x SL."""
+    """Verify Major FX pairs get healthy structural SL [80-200 pts] and TP1 >= 1.25x SL."""
     geom = calculate_m5_sl_tp(
         symbol="EURUSD",
         entry_price=1.10000,
@@ -20,20 +20,20 @@ def test_m5_sl_tp_geometry_major():
         spread_pts=15,
         pt=0.00001
     )
-    # SL should be clamped between 50 and 75 pts
-    assert 50 <= geom["sl_pts"] <= 75
-    # TP1 should be >= 1.50x SL and >= 80 pts (tier min)
-    assert geom["tp1_pts"] >= int(round(geom["sl_pts"] * 1.50))
-    assert geom["tp1_pts"] >= 80
+    # SL should be within healthy structural bounds [80, 200]
+    assert 80 <= geom["sl_pts"] <= 200
+    # TP1 should be >= 1.25x SL and >= 100 pts (tier min)
+    assert geom["tp1_pts"] >= int(round(geom["sl_pts"] * 1.25))
+    assert geom["tp1_pts"] >= 100
     # TP2 Runner should be ~1.50x TP1 pts
     assert geom["tp2_pts"] >= int(round(geom["tp1_pts"] * 1.30))
     # Risk Reward
-    assert geom["risk_reward"] >= 1.50
-    assert geom["risk_reward_runner"] >= 2.00
+    assert geom["risk_reward"] >= 1.25
+    assert geom["risk_reward_runner"] >= 1.80
 
 
 def test_m5_sl_tp_geometry_jpy():
-    """Verify JPY pairs get clamped SL [70-95 pts] and TP1 >= 120 pts."""
+    """Verify JPY pairs get healthy structural SL [100-220 pts] and TP1 >= 140 pts."""
     geom = calculate_m5_sl_tp(
         symbol="GBPJPY",
         entry_price=190.000,
@@ -44,9 +44,9 @@ def test_m5_sl_tp_geometry_jpy():
         spread_pts=18,
         pt=0.001
     )
-    assert 70 <= geom["sl_pts"] <= 95
-    assert geom["tp1_pts"] >= 120
-    assert geom["tp2_pts"] >= int(round(geom["tp1_pts"] * 1.40))
+    assert 100 <= geom["sl_pts"] <= 220
+    assert geom["tp1_pts"] >= 140
+    assert geom["tp2_pts"] >= int(round(geom["tp1_pts"] * 1.30))
 
 
 def test_m5_sl_tp_zero_skip_guarantee():

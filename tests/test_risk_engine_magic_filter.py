@@ -112,9 +112,10 @@ class TestRiskEngineMagicFilter(unittest.TestCase):
         ]
         mock_positions_get.return_value = positions
 
-        allowed, msg = self.risk._check_max_positions("USDJPY-ECN")
-        self.assertFalse(allowed)
-        self.assertIn("batas absolut", msg)
+        with patch.object(config, "MAX_ABSOLUTE_OPEN_POSITIONS", 8):
+            allowed, msg = self.risk._check_max_positions("USDJPY-ECN")
+            self.assertFalse(allowed)
+            self.assertIn("batas absolut", msg)
 
 
 if __name__ == "__main__":

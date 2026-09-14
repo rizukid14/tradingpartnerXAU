@@ -193,7 +193,9 @@ class TestTimeDecayAndVolRegime(unittest.TestCase):
         dummy_res.retcode = config.mt5.TRADE_RETCODE_DONE
 
         # Evaluasi BEP terpadu: aktif di 60% TP (600 pts)
-        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send, \
+             patch.object(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60), \
+             patch.dict(os.environ, {"TIMEFRAME": "H1"}):
             # Profit 580 pts (< 600 pts) -> Belum BEP
             position_manager._check_break_even(pos, "GBPUSD-ECNc", 580.0, point, si)
             self.assertNotIn(4001, position_manager._break_even_tickets)
@@ -216,7 +218,9 @@ class TestTimeDecayAndVolRegime(unittest.TestCase):
         dummy_res.retcode = config.mt5.TRADE_RETCODE_DONE
 
         # Evaluasi BEP Grade B: aktif di 50% TP (500 pts)
-        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
+        with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send, \
+             patch.object(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50), \
+             patch.dict(os.environ, {"TIMEFRAME": "H1"}):
             # Profit 450 pts (< 500 pts) -> Belum BEP
             position_manager._check_break_even(pos, "GBPUSD-ECNc", 450.0, point, si)
             self.assertNotIn(4002, position_manager._break_even_tickets)

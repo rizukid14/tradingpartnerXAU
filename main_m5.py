@@ -227,10 +227,24 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
                 pass
             return True
         elif t1_ok or t2_ok:
-            success_ticket = res1.get("ticket") if t1_ok else res2.get("ticket")
-            print(f" {UI.YELLOW}[M5 PARTIAL SUCCESS]{UI.RST} Salah satu tiket terpasang #{success_ticket}, tiket kedua gagal.")
-            risk.record_trade_opened()
-            return True
+            # Atomic Twin Rollback: Never leave an orphaned half-position running without twin protection
+            if t1_ok:
+                orphaned_ticket = res1.get("ticket")
+                print(f" {UI.RED}[M5 TWIN ROLLBACK]{UI.RST} T2 gagal terpasang. Membatalkan T1 #{orphaned_ticket} demi integritas lot & R:R.")
+                logger.warning(f"[M5 TWIN ROLLBACK] T2 failed for {sym}. Cancelling orphaned T1 #{orphaned_ticket}.")
+                if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
+                    connector.cancel_pending_order(orphaned_ticket)
+                else:
+                    connector.close_position(orphaned_ticket)
+            else:
+                orphaned_ticket = res2.get("ticket")
+                print(f" {UI.RED}[M5 TWIN ROLLBACK]{UI.RST} T1 gagal terpasang. Membatalkan T2 #{orphaned_ticket} demi integritas lot & R:R.")
+                logger.warning(f"[M5 TWIN ROLLBACK] T1 failed for {sym}. Cancelling orphaned T2 #{orphaned_ticket}.")
+                if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
+                    connector.cancel_pending_order(orphaned_ticket)
+                else:
+                    connector.close_position(orphaned_ticket)
+            return False
         else:
             err1 = res1.get("comment", "") if isinstance(res1, dict) else str(res1)
             err2 = res2.get("comment", "") if isinstance(res2, dict) else str(res2)
