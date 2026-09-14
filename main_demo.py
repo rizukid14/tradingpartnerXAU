@@ -89,25 +89,33 @@ def run_demo_execution_cycle(cand, risk: RiskEngine) -> bool:
     print(f" {UI.GREEN}[DEMO ORDER DISPATCH]{UI.RST} Mengirim order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f}...")
 
     # Execute MT5 order
-    order_res = connector.send_order(
-        symbol=sym,
-        action=direction,
-        lot=lot_size,
-        sl=cand.suggested_sl,
-        tp=cand.suggested_tp,
-        entry_type=entry_type,
-        target_price=entry_price if entry_type != "market" else None,
-        comment=f"M5_{cand.setup_type[:6]}"
-    )
+    if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
+        order_res = connector.send_pending_order(
+            symbol=sym,
+            entry_type=entry_type,
+            entry_price=entry_price,
+            lot=lot_size,
+            sl_price=cand.suggested_sl,
+            tp_price=cand.suggested_tp,
+            comment=f"M5_{cand.setup_type[:6]}"
+        )
+    else:
+        order_res = connector.send_trade_order(
+            symbol=sym,
+            action=c_dir,
+            lot=lot_size,
+            sl_price=cand.suggested_sl,
+            tp_price=cand.suggested_tp,
+            comment=f"M5_{cand.setup_type[:6]}"
+        )
 
-    if order_res and getattr(order_res, "retcode", None) == mt5.TRADE_RETCODE_DONE:
-        ticket = getattr(order_res, "order", getattr(order_res, "deal", "OK"))
+    if order_res and order_res.get("status") == "SUCCESS":
+        ticket = order_res.get("ticket", "OK")
         print(f" {UI.GREEN}{UI.BOLD}[STAGE 2 DEMO SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
         return True
     else:
-        err_code = getattr(order_res, "retcode", "FAIL")
-        err_comment = getattr(order_res, "comment", "Unknown error")
-        print(f" {UI.RED}[STAGE 2 DEMO ERROR]{UI.RST} Gagal memasang order {sym}: {err_code} ({err_comment})\n")
+        err_msg = order_res.get("comment", "Unknown error") if isinstance(order_res, dict) else str(order_res)
+        print(f" {UI.RED}[STAGE 2 DEMO ERROR]{UI.RST} Gagal memasang order {sym}: {err_msg}\n")
         return False
 
 
@@ -162,7 +170,8 @@ def main():
                             run_demo_execution_cycle(cand, risk)
                     else:
                         open_cnt = len(connector.get_all_open_positions())
-                        print(f" {UI.DIM}[{t_str} M5 RADAR]{UI.RST} 28 pairs dipindai (M5): 0 trigger lolos filter | Posisi Aktif Demo: {open_cnt}/50")
+                        pending_cnt = len(config.mt5.orders_get() or []) if hasattr(config.mt5, "orders_get") else 0
+                        print(f" {UI.DIM}[{t_str} M5 RADAR]{UI.RST} 28 pairs dipindai (M5): 0 trigger baru | Posisi Aktif Demo: {open_cnt} | Pending: {pending_cnt}/50")
                 except Exception as e:
                     print(f" [M5 RADAR ERROR] {e}")
 

@@ -18,6 +18,7 @@ import pandas as pd
 import config
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 from src.analytics.zone_confluence_engine import ZoneConfluenceEngine
+from src.analytics.macro_strategic_engine import macro_strategic_engine
 from src.indicators.candle_quality import classify_candle
 
 logger = logging.getLogger("market_scanner_m5")
@@ -137,7 +138,8 @@ class MarketScannerM5(MarketScanner):
         """
         Fast dedicated Micro-ZCE preheat for M5 Demo Lab.
         Sequential, thread-safe, 0-token, ~6 seconds for all 28 symbols.
-        Bypasses slow 6-TF macro engines (MN1/W1/D1/H4) and economic news parsers.
+        Enriches macro_cache with Micro-ZCE (M5/M15/H1), authentic MacroStrategicDirective,
+        M5 bars DataFrame, EMA20/50, and dynamic M5 dealing range coordinates.
         """
         now = datetime.now(WIB)
         for sym in self.symbols:
@@ -146,23 +148,67 @@ class MarketScannerM5(MarketScanner):
                 if mt5_connector is not None and hasattr(mt5_connector, "get_valid_trade_symbol"):
                     valid_sym = mt5_connector.get_valid_trade_symbol(sym)
                 zm = self._zce_build_map(valid_sym, mt5_connector=mt5_connector)
-                if zm and hasattr(zm, "wall_override"):
-                    w = zm.wall_override
-                    c1 = w.get("imm_ceiling_c1")
-                    f1 = w.get("imm_floor_f1")
-                    c1_g = w.get("c1_grade", "GRADE_2_INTERMEDIATE")
-                    f1_g = w.get("f1_grade", "GRADE_2_INTERMEDIATE")
-                    self.macro_cache[valid_sym] = {
-                        "immediate_ceiling_c1": c1,
-                        "immediate_floor_f1": f1,
-                        "ceiling_c1": c1,
-                        "floor_f1": f1,
-                        "c1_reaction_grade": c1_g,
-                        "f1_reaction_grade": f1_g,
-                        "trend_label": "M5_MICRO_CONFLUENCE",
-                        "spread_pts": 15,
-                        "action_tier": "M5_DIRECT_DEMO"
-                    }
+                w = zm.wall_override if (zm and hasattr(zm, "wall_override")) else {}
+                c1 = w.get("imm_ceiling_c1")
+                f1 = w.get("imm_floor_f1")
+                c1_g = w.get("c1_grade", "GRADE_2_INTERMEDIATE")
+                f1_g = w.get("f1_grade", "GRADE_2_INTERMEDIATE")
+
+                pt = self._get_point(valid_sym)
+
+                # Fetch M5 rates for dynamic indicators & dealing range
+                rates_m5 = None
+                if hasattr(config.mt5, "copy_rates_from_pos"):
+                    rates_m5 = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_M5, 0, 60)
+
+                df_m5 = pd.DataFrame(rates_m5) if (rates_m5 is not None and len(rates_m5) > 0) else None
+                cur_c = float(df_m5["close"].iloc[-1]) if df_m5 is not None else 0.0
+                ema20 = float(df_m5["close"].ewm(span=20, adjust=False).mean().iloc[-1]) if df_m5 is not None else cur_c
+                ema50 = float(df_m5["close"].ewm(span=50, adjust=False).mean().iloc[-1]) if df_m5 is not None else cur_c
+
+                # Dealing range bounds anchored to Micro-ZCE stations
+                f1_ref = f1 if f1 else (cur_c - (100 * pt))
+                c1_ref = c1 if c1 else (cur_c + (100 * pt))
+                dr_span = max(c1_ref - f1_ref, 1e-5)
+                dr_pos = max(0.0, min(1.0, (cur_c - f1_ref) / dr_span)) if cur_c > 0 else 0.50
+
+                # Authentic Macro Strategic Directive (Pure Quant native sockets, ~0.02s)
+                strat_dir = None
+                try:
+                    strat_dir = macro_strategic_engine.get_directive(valid_sym, mt5_connector=mt5_connector, zce_walls=w)
+                except Exception as e_sd:
+                    logger.debug(f"[M5 PREHEAT] MSE directive error for {valid_sym}: {e_sd}")
+
+                self.macro_cache[valid_sym] = {
+                    "symbol": valid_sym,
+                    "point": pt,
+                    "immediate_ceiling_c1": c1,
+                    "immediate_floor_f1": f1,
+                    "ceiling_c1": c1,
+                    "floor_f1": f1,
+                    "c1_reaction_grade": c1_g,
+                    "f1_reaction_grade": f1_g,
+                    "trend_label": "M5_MICRO_CONFLUENCE",
+                    "spread_pts": 15,
+                    "action_tier": getattr(strat_dir, "action_tier", "FULL_ALLOW") if strat_dir else "FULL_ALLOW",
+                    "strat_dir": strat_dir,
+                    "macro_bias_score": getattr(strat_dir, "macro_bias_score", 0.0) if strat_dir else 0.0,
+                    "primary_execution_directive": getattr(strat_dir, "primary_execution_directive", "") if strat_dir else "",
+                    "fractal_regime": getattr(strat_dir, "fractal_regime", "CHAMBER_CONSOLIDATION") if strat_dir else "CHAMBER_CONSOLIDATION",
+                    "df": df_m5,
+                    "current_price": cur_c,
+                    "ema20": ema20,
+                    "ema50": ema50,
+                    "dealing_range_high": c1_ref,
+                    "dealing_range_low": f1_ref,
+                    "dealing_range_pos": dr_pos,
+                    "is_bull": cur_c > ema20,
+                    "is_bear": cur_c < ema20,
+                    "asian_high": float(df_m5["high"].max()) if df_m5 is not None else 0.0,
+                    "asian_low": float(df_m5["low"].min()) if df_m5 is not None else 0.0,
+                    "recent_ceiling_touch": False,
+                    "recent_floor_touch": False,
+                }
             except Exception as e:
                 logger.debug(f"[M5 PREHEAT] Error preheating {sym}: {e}")
         self.last_macro_update = now
@@ -219,6 +265,88 @@ class MarketScannerM5(MarketScanner):
     def _compute_zce_map_for(self, valid: str, mt5_connector=None, eng=None) -> Any:
         """Route ZCE map computation directly to micro timeframes (M5/M15/H1)."""
         return self._zce_build_map(valid, eng=eng, mt5_connector=mt5_connector)
+
+    def _evaluate_live_candle_quality(self, sym: str, mid: float, atr_pts: float, pt: float, mt5_connector=None) -> Dict[str, Any]:
+        """
+        Overrides candle quality evaluation to use M5 candles for M5 fast execution.
+        """
+        default_res = {
+            "body_ratio": 0.35,
+            "upper_wick_pct": 0.30,
+            "lower_wick_pct": 0.30,
+            "velocity_atr": 0.50,
+            "direction": "neutral",
+            "verdict": "INDECISION",
+            "sweep_side": None,
+            "max_lower_wick": 0.30,
+            "max_upper_wick": 0.30,
+            "is_bullish_engulf": False,
+            "is_bearish_engulf": False,
+            "live_high": mid,
+            "live_low": mid,
+            "max_high": mid,
+            "max_low": mid,
+        }
+
+        rates = None
+        tf = getattr(config.mt5, 'TIMEFRAME_M5', 5)
+        if hasattr(config.mt5, 'copy_rates_from_pos'):
+            rates = config.mt5.copy_rates_from_pos(sym, tf, 0, 5)
+        if (rates is None or len(rates) < 2) and mt5_connector is not None and hasattr(mt5_connector, 'get_closed_bars'):
+            rates = mt5_connector.get_closed_bars(sym, count=5, timeframe=tf)
+
+        if rates is None or len(rates) < 2:
+            return default_res
+
+        try:
+            cur_bar = rates[-1]
+            prev_bar = rates[-2]
+            atr_val = max(atr_pts * pt, 1e-6)
+
+            cur_o = float(cur_bar['open'])
+            cur_h = max(float(cur_bar['high']), mid)
+            cur_l = min(float(cur_bar['low']), mid)
+            cur_c = mid
+
+            prev_o = float(prev_bar['open'])
+            prev_h = float(prev_bar['high'])
+            prev_l = float(prev_bar['low'])
+            prev_c = float(prev_bar['close'])
+
+            live_qual = classify_candle(
+                cur_o, cur_h, cur_l, cur_c, atr_val,
+                prev_o=prev_o, prev_h=prev_h, prev_l=prev_l, prev_c=prev_c
+            )
+            prev_qual = classify_candle(
+                prev_o, prev_h, prev_l, prev_c, atr_val
+            )
+
+            max_lw = max(live_qual.get('lower_wick_pct', 0.0), prev_qual.get('lower_wick_pct', 0.0))
+            max_uw = max(live_qual.get('upper_wick_pct', 0.0), prev_qual.get('upper_wick_pct', 0.0))
+            max_h = max(cur_h, prev_h)
+            max_l = min(cur_l, prev_l)
+
+            return {
+                "body_ratio": live_qual.get('body_ratio', 0.35),
+                "upper_wick_pct": live_qual.get('upper_wick_pct', 0.30),
+                "lower_wick_pct": live_qual.get('lower_wick_pct', 0.30),
+                "velocity_atr": live_qual.get('velocity_atr', 0.50),
+                "direction": live_qual.get('direction', 'neutral'),
+                "verdict": live_qual.get('verdict', 'INDECISION'),
+                "sweep_side": live_qual.get('sweep_side'),
+                "max_lower_wick": max_lw,
+                "max_upper_wick": max_uw,
+                "is_bullish_engulf": live_qual.get('is_bullish_engulf', False),
+                "is_bearish_engulf": live_qual.get('is_bearish_engulf', False),
+                "prev_verdict": prev_qual.get('verdict', 'INDECISION'),
+                "prev_body_ratio": prev_qual.get('body_ratio', 0.35),
+                "live_high": cur_h,
+                "live_low": cur_l,
+                "max_high": max_h,
+                "max_low": max_l
+            }
+        except Exception:
+            return default_res
 
     def scan_fast_radar(self, mt5_connector=None) -> List[CandidateSetup]:
         """
