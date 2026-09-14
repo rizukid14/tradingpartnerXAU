@@ -1205,7 +1205,10 @@ def run_scanner_trading_cycle(cand, risk):
             _is_grade_b = (action_tier_val in ("TP1_ONLY_SCALP", "REDUCED_SCALP", "GRADE_B") or setup_grade_val == "GRADE_B")
             num_positions = 2 if (not _m4_single and not _is_grade_b and is_split_tix and remaining_slots >= 2) else 1
             
-            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=action_tier_val, sizing_multiplier=sizing_mult, setup_grade=setup_grade_val)
+            eff_tier = None if is_m5_mode else action_tier_val
+            eff_grade = None if is_m5_mode else setup_grade_val
+            base_lot = risk.get_effective_lot_size(sl_points, split_count=1, symbol=sym, action_tier=eff_tier, sizing_multiplier=sizing_mult, setup_grade=eff_grade)
+            base_lot = min(base_lot, getattr(config, "MAX_POSITION_LOT", 0.50))
             if num_positions == 2:
                 effective_lot = round(base_lot * 0.625, 2)
                 si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
