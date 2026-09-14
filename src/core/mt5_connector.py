@@ -826,26 +826,48 @@ def get_valid_trade_symbol(symbol):
     elif base in ("BTC", "BITCOIN"):
         base = "BTCUSD"
 
+    acct_mode = getattr(config, "MT5_ACCOUNT_MODE", "live").lower()
     # Candidates covering Demo (BTCUSD, EURUSD-ECN) and Live (BTCUSD.c, EURUSD-ECNc)
     if base == "BTCUSD" or "BTC" in base:
-        candidates = [
-            base,           # Demo: BTCUSD
-            base + ".c",    # Live: BTCUSD.c
-            base + "c",
-            base + "-ECN",
-            base + "-ECNc",
-            base + ".ecn",
-        ]
+        if acct_mode == "live":
+            candidates = [
+                base + ".c",    # Live: BTCUSD.c
+                base + "c",
+                base,           # Demo: BTCUSD
+                base + "-ECNc",
+                base + "-ECN",
+                base + ".ecn",
+            ]
+        else:
+            candidates = [
+                base,           # Demo: BTCUSD
+                base + ".c",    # Live: BTCUSD.c
+                base + "c",
+                base + "-ECN",
+                base + "-ECNc",
+                base + ".ecn",
+            ]
     else:
-        candidates = [
-            base + "-ECN",   # Demo: EURUSD-ECN
-            base + "-ECNc",  # Live: EURUSD-ECNc
-            base + ".c",
-            base + "c",
-            base,
-            base + ".ecn",
-            base + "c.ecn",
-        ]
+        if acct_mode == "live":
+            candidates = [
+                base + "-ECNc",  # Live Cent: EURUSD-ECNc
+                base + "-ECN",
+                base + ".c",
+                base + "c",
+                base,
+                base + ".ecn",
+                base + "c.ecn",
+            ]
+        else:
+            candidates = [
+                base + "-ECN",   # Demo: EURUSD-ECN
+                base,
+                base + "-ECNc",
+                base + ".c",
+                base + "c",
+                base + ".ecn",
+                base + "c.ecn",
+            ]
     for cand in candidates:
         cand_info = mt5.symbol_info(cand)
         if cand_info is not None and getattr(cand_info, "trade_mode", 0) in (getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4), 4):
