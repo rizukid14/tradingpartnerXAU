@@ -277,8 +277,8 @@ class MarketScanner:
         self.macro_cache: Dict[str, Dict[str, Any]] = {}
         self.last_macro_update: Optional[datetime] = None
         self.last_candidates: List[CandidateSetup] = []
-        self._last_radar_scan_time: float = 0.0
-        self._cooldown_file = os.path.join(config.DATA_DIR, "scanner_cooldowns.json")
+        _prefix = "_demo" if getattr(config, "MT5_ACCOUNT_MODE", "live").lower() == "demo" else ""
+        self._cooldown_file = os.path.join(config.DATA_DIR, f"scanner_cooldowns{_prefix}.json")
         self._symbol_last_eval: Dict[str, float] = {}
         self._mechanism_rejection_cooldowns: Dict[str, float] = {}
         self._symbol_last_trigger: Dict[str, float] = self._load_cooldowns()

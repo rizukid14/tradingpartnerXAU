@@ -157,7 +157,22 @@ def init_mt5():
     _valid_symbol_cache.clear()
 
     if hasattr(mt5, "initialize") and callable(mt5.initialize):
-        if not mt5.initialize():
+        init_kwargs = {}
+        term_path = getattr(config, "MT5_TERMINAL_PATH", "").strip()
+        if term_path:
+            init_kwargs["path"] = term_path
+        if getattr(config, "MT5_PORTABLE", False):
+            init_kwargs["portable"] = True
+        if config.MT5_LOGIN and config.MT5_PASSWORD:
+            init_kwargs["login"] = int(config.MT5_LOGIN)
+            init_kwargs["password"] = str(config.MT5_PASSWORD)
+            if config.MT5_SERVER:
+                init_kwargs["server"] = str(config.MT5_SERVER)
+        timeout = getattr(config, "MT5_TIMEOUT", None)
+        if timeout:
+            init_kwargs["timeout"] = int(timeout)
+
+        if not mt5.initialize(**init_kwargs):
             last_err = mt5.last_error() if hasattr(mt5, "last_error") else "Unknown"
             print(f"[MT5 ERROR] Could not initialize MetaTrader 5 terminal: {last_err}")
             return False

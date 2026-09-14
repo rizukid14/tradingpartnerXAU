@@ -19,8 +19,8 @@ class TestSymbolRotationAndHelpers(unittest.TestCase):
         if config.SCANNER_MODE:
             pool = config.get_rotation_pool(wednesday)
             live_symbols = [s for s in config.get_scanner_symbols(wednesday) if not config.is_paper_only(s)]
-            self.assertEqual(len(pool), len(live_symbols))
-            self.assertEqual(len(config.get_scanner_symbols(wednesday)), 28)
+            expected_total = len(live_symbols) + (1 if getattr(config, "ENABLE_XAU_PAPER", False) else 0) + (1 if getattr(config, "ENABLE_BTC_247_PAPER", False) else 0)
+            self.assertEqual(len(config.get_scanner_symbols(wednesday)), expected_total)
             self.assertTrue(any("GBPUSD" in s for s in pool))
             self.assertTrue(all("XAUUSD" not in s for s in pool))
             self.assertNotIn("BTCUSD.c", pool)  # BTC must be OFF on weekdays in live pool

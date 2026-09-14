@@ -1487,8 +1487,8 @@ def main():
         from logging.handlers import RotatingFileHandler
         _gate_logger = logging.getLogger("market_scanner")
         _gate_logger.setLevel(logging.DEBUG)
-        _gate_logger.propagate = False
-        _gh_path = os.path.join(config.DATA_DIR, "gate_debug.log")
+        _prefix = "_demo" if getattr(config, "MT5_ACCOUNT_MODE", "live").lower() == "demo" else ""
+        _gh_path = os.path.join(config.DATA_DIR, f"gate_debug{_prefix}.log")
         # Auto-rotate: max 10MB per file, simpan 2 file backup (.1 dan .2)
         _gh = RotatingFileHandler(_gh_path, maxBytes=10 * 1024 * 1024, backupCount=2, encoding="utf-8")
         _gh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))

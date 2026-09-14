@@ -1,5 +1,6 @@
 # --- SENSITIVE DATA (DO NOT COMMIT!) ---
 .env
+.env.*
 
 # --- BOT CACHE & STATE ---
 # data/ is fully runtime state (decision memory, dynamic rules, forecast cache,

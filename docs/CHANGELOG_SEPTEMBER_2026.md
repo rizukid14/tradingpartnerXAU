@@ -2,7 +2,43 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 114. Perubahan 14 September 2026 — Integrasi Universe 28 FX Pairs (CADCHF & NZDJPY), Dashboard UI/UX Cockpit Enhancements, dan Studi Kuantitatif Sistemik (PCA 8 Mata Uang, Random Walk Hypothesis Test, BEP Counterfactual Trajectory, & Session Efficiency)
+## 115. Perubahan 14 September 2026 — Arsitektur Dual MT5 Instance & Portable Isolation Environment (M5 Fast Scanner Testing)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Kebutuhan Pengujian Timeframe M5 Tanpa Mengganggu Akun Live**:
+   - Pengguna membutuhkan sarana pengujian strategi dan sinyal di timeframe M5 menggunakan akun Demo (`VTMarkets-Demo` #1157958).
+   - Secara default di Windows, pustaka MetaTrader5 Python API menghubungkan diri ke instance MT5 default yang sedang aktif (`VTMarkets-Live 3` #27556325) sehingga tidak memungkinkan menjalankan bot demo secara paralel tanpa risiko benturan IPC, login session hijacking, atau interupsi posisi live.
+2. **Isolasi State & File Persistensi**:
+   - Bot demo dan live tidak boleh berbagi log file (`trading_bot.log`), state debugger (`gate_debug.log`), status cooldown scanner (`scanner_cooldowns.json`), maupun riwayat shadow tracker (`quant_shadow_trades.jsonl`).
+   - Sesi long-polling Telegram Bot Listener berisiko bentrok (*getUpdates Conflict 409*) jika bot demo mencoba mengakses token bot yang sama.
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **Terminal Kloning Portabel**:
+   - Mengklon terminal MetaTrader 5 ke direktori terisolasi `C:\Users\Daffa\MT5_Demo` dan menjalankannya dengan flag `/portable`.
+2. **`src/core/mt5_connector.py`**:
+   - Mengintegrasikan parameter `path`, `portable=True`, `login`, `password`, `server`, dan `timeout` langsung ke pemanggilan `mt5.initialize(**init_kwargs)`. Hal ini menjamin koneksi IPC Python langsung mengaitkan diri ke named pipe instance portabel secara spesifik tanpa bentrok dengan instance Live yang sedang mengawal modal riil.
+3. **`config.py`**:
+   - Mendukung override dinamis file konfigurasi lingkungan melalui environment variable `ENV_FILE` (default: `.env`).
+   - Menambahkan parameter `MT5_TERMINAL_PATH`, `MT5_PORTABLE`, dan `MT5_TIMEOUT`.
+   - Menambahkan socket Multi-Timeframe `HIGHER_TIMEFRAMES_M5_ACTIVE = {"M15": mt5.TIMEFRAME_M15, "H1": mt5.TIMEFRAME_H1}` untuk mendukung analisis top-down saat timeframe aktif adalah M5.
+   - Mendukung override `LOG_FILE` via environment variable.
+4. **`.env.demo` & `main_demo.py`**:
+   - Membuat file `.env.demo` terisolasi dengan `MT5_ACCOUNT_MODE=demo`, login #1157958, server `VTMarkets-Demo`, `MAGIC_NUMBER=20260699`, `TIMEFRAME=M5`, `RADAR_SCAN_INTERVAL_SECONDS=15`, dan `TELEGRAM_ENABLED=false`.
+   - Membuat runner `main_demo.py` yang menetapkan `os.environ["ENV_FILE"] = ".env.demo"` sebelum memuat `main.main()`.
+5. **Isolasi State File Runtime**:
+   - `main.py`: Mengarahkan file debug gate ke `gate_debug_demo.log` saat akun demo aktif.
+   - `market_scanner.py`: Mengarahkan file cooldown ke `scanner_cooldowns_demo.json` saat akun demo aktif.
+   - `shadow_tracker.py`: Mengarahkan state paper trade ke `quant_shadow_state_demo.json` dan `quant_shadow_trades_demo.jsonl`.
+6. **`tests/test_symbol_rotation.py`**:
+   - Menyelaraskan asersi total simbol pemindai pada hari kerja dengan memperhitungkan kuota paper virtual (`ENABLE_XAU_PAPER` dan `ENABLE_BTC_247_PAPER`).
+
+### ✅ Hasil Verifikasi:
+- **Koneksi Dual Instance Simultan**: Berhasil terhubung ke akun Demo #1157958 ($15,491.49) via terminal portabel sementara bot Live (PID 20132) tetap aktif tanpa interupsi di akun Cent #27556325.
+- **MSE 6-TF Directive Execution**: `py -3 main_demo.py --macro GBPUSD` sukses membaca socket MN1..M30 dari feed terminal portabel dengan status exit 0.
+- **Unit Test Suite**: 100% PASS (40/40 core tests, 2/2 demo safety tests, 4/4 symbol rotation tests).
+
+---
+
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Universe FX Belum Genap 28 Major & Cross Pairs**:

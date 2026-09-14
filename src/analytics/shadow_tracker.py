@@ -23,8 +23,9 @@ import config
 logger = logging.getLogger("shadow_tracker")
 WIB = ZoneInfo("Asia/Jakarta")
 
-SHADOW_STATE_FILE = os.path.join(config.DATA_DIR, "quant_shadow_state.json")
-SHADOW_TRADES_LOG = os.path.join(config.DATA_DIR, "quant_shadow_trades.jsonl")
+_prefix = "_demo" if getattr(config, "MT5_ACCOUNT_MODE", "live").lower() == "demo" else ""
+SHADOW_STATE_FILE = os.path.join(config.DATA_DIR, f"quant_shadow_state{_prefix}.json")
+SHADOW_TRADES_LOG = os.path.join(config.DATA_DIR, f"quant_shadow_trades{_prefix}.jsonl")
 
 
 @dataclass

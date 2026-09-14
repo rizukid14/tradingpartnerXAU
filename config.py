@@ -26,8 +26,9 @@ for path in [BASE_DIR, os.path.join(BASE_DIR, "src"), os.path.join(BASE_DIR, "sr
     if path not in sys.path:
         sys.path.insert(0, path)
 
-# Load environmental variables from .env file
-load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+# Load environmental variables from .env file (or ENV_FILE override)
+_env_filename = os.getenv("ENV_FILE", ".env")
+load_dotenv(os.path.join(BASE_DIR, _env_filename), override=True)
 
 # --- ENV PARSING HELPERS ---
 def _getenv_bool(key: str, default: bool) -> bool:
@@ -1031,14 +1032,17 @@ MT5_LOGIN = ""
 MT5_PASSWORD = ""
 MT5_SERVER = ""
 MAGIC_NUMBER = _getenv_int("MAGIC_NUMBER", 20260625)
+MT5_TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "").strip()
+MT5_PORTABLE = _getenv_bool("MT5_PORTABLE", False)
+MT5_TIMEOUT = _getenv_int("MT5_TIMEOUT", 15000)
 
 def refresh_mt5_credentials():
     """Reloads MT5 login credentials from current MT5_ACCOUNT_MODE."""
     global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
     if MT5_ACCOUNT_MODE == "demo":
-        MT5_LOGIN = os.getenv("MT5_DEMO_LOGIN", "")
-        MT5_PASSWORD = os.getenv("MT5_DEMO_PASSWORD", "")
-        MT5_SERVER = os.getenv("MT5_DEMO_SERVER", "")
+        MT5_LOGIN = os.getenv("MT5_DEMO_LOGIN", os.getenv("MT5_LOGIN", ""))
+        MT5_PASSWORD = os.getenv("MT5_DEMO_PASSWORD", os.getenv("MT5_PASSWORD", ""))
+        MT5_SERVER = os.getenv("MT5_DEMO_SERVER", os.getenv("MT5_SERVER", ""))
     else:
         MT5_LOGIN = os.getenv("MT5_LIVE_LOGIN", os.getenv("MT5_LOGIN", ""))
         MT5_PASSWORD = os.getenv("MT5_LIVE_PASSWORD", os.getenv("MT5_PASSWORD", ""))
@@ -1062,6 +1066,10 @@ HIGHER_TIMEFRAMES_CRYPTO = {
     "H1": mt5.TIMEFRAME_H1,
     "H4": mt5.TIMEFRAME_H4
 }
+HIGHER_TIMEFRAMES_M5_ACTIVE = {
+    "M15": mt5.TIMEFRAME_M15,
+    "H1": mt5.TIMEFRAME_H1,
+}
 HIGHER_TIMEFRAMES_H1_ACTIVE = {
     "H4": mt5.TIMEFRAME_H4,
 }
@@ -1075,6 +1083,8 @@ def get_higher_timeframes(symbol):
     if is_crypto(symbol):
         return HIGHER_TIMEFRAMES_CRYPTO
     tf_str = get_timeframe_str(symbol)
+    if tf_str == "M5":
+        return HIGHER_TIMEFRAMES_M5_ACTIVE
     if tf_str == "H1":
         return HIGHER_TIMEFRAMES_H1_ACTIVE
     return HIGHER_TIMEFRAMES_M30_ACTIVE
@@ -1082,7 +1092,9 @@ def get_higher_timeframes(symbol):
 PRIMARY_ANALYSIS_MODEL = os.getenv("PRIMARY_ANALYSIS_MODEL", "o4-mini")
 
 # --- LOGGING SETTINGS ---
-LOG_FILE = os.path.join(DATA_DIR, "trading_bot.log")
+LOG_FILE = os.getenv("LOG_FILE", os.path.join(DATA_DIR, "trading_bot.log"))
+if not os.path.isabs(LOG_FILE):
+    LOG_FILE = os.path.join(BASE_DIR, LOG_FILE)
 
 
 # ============================================================================
