@@ -133,6 +133,41 @@ class MarketScannerM5(MarketScanner):
         self._zce_engine = ZoneConfluenceEngine(params=self._micro_zce_params)
         logger.info("[M5 SCANNER] MarketScannerM5 initialized with Micro-ZCE (M5/M15/H1).")
 
+    def update_macro_context(self, mt5_connector=None, force: bool = False) -> None:
+        """
+        Fast dedicated Micro-ZCE preheat for M5 Demo Lab.
+        Sequential, thread-safe, 0-token, ~6 seconds for all 28 symbols.
+        Bypasses slow 6-TF macro engines (MN1/W1/D1/H4) and economic news parsers.
+        """
+        now = datetime.now(WIB)
+        for sym in self.symbols:
+            try:
+                valid_sym = sym
+                if mt5_connector is not None and hasattr(mt5_connector, "get_valid_trade_symbol"):
+                    valid_sym = mt5_connector.get_valid_trade_symbol(sym)
+                zm = self._zce_build_map(valid_sym, mt5_connector=mt5_connector)
+                if zm and hasattr(zm, "wall_override"):
+                    w = zm.wall_override
+                    c1 = w.get("imm_ceiling_c1")
+                    f1 = w.get("imm_floor_f1")
+                    c1_g = w.get("c1_grade", "GRADE_2_INTERMEDIATE")
+                    f1_g = w.get("f1_grade", "GRADE_2_INTERMEDIATE")
+                    self.macro_cache[valid_sym] = {
+                        "immediate_ceiling_c1": c1,
+                        "immediate_floor_f1": f1,
+                        "ceiling_c1": c1,
+                        "floor_f1": f1,
+                        "c1_reaction_grade": c1_g,
+                        "f1_reaction_grade": f1_g,
+                        "trend_label": "M5_MICRO_CONFLUENCE",
+                        "spread_pts": 15,
+                        "action_tier": "M5_DIRECT_DEMO"
+                    }
+            except Exception as e:
+                logger.debug(f"[M5 PREHEAT] Error preheating {sym}: {e}")
+        self.last_macro_update = now
+        logger.info(f"✅ Micro-ZCE Context updated for {len(self.macro_cache)}/{len(self.symbols)} symbols.")
+
     def _zce_build_map(self, valid: str, eng: Optional[ZoneConfluenceEngine] = None, mt5_connector=None) -> Any:
         """
         Overrides ZCE map building to use Micro Timeframes (M5, M15, H1)
@@ -180,6 +215,10 @@ class MarketScannerM5(MarketScanner):
         except Exception as e:
             logger.debug(f"[M5 ZCE] Error building micro zone map for {valid}: {e}")
             return None
+
+    def _compute_zce_map_for(self, valid: str, mt5_connector=None, eng=None) -> Any:
+        """Route ZCE map computation directly to micro timeframes (M5/M15/H1)."""
+        return self._zce_build_map(valid, eng=eng, mt5_connector=mt5_connector)
 
     def scan_fast_radar(self, mt5_connector=None) -> List[CandidateSetup]:
         """
