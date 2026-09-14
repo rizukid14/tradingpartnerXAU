@@ -426,7 +426,10 @@ def _audit_winstreak_deals():
         new_deals = [d for d in out_deals if getattr(d, "ticket", 0) > _last_closed_deal_ticket]
         _last_closed_deal_ticket = max_ticket
 
-        target_streak = int(os.getenv("M5_WINSTREAK_COOLDOWN_COUNT", "10"))
+        target_streak = int(os.getenv("M5_WINSTREAK_COOLDOWN_COUNT", str(getattr(config, "M5_WINSTREAK_COOLDOWN_COUNT", 0))))
+        if target_streak <= 0:
+            return
+
         cooldown_mins = int(os.getenv("M5_WINSTREAK_COOLDOWN_MINUTES", "30"))
 
         for d in new_deals:
@@ -504,14 +507,16 @@ def main():
                 logger.error(f"[POSITION/PENDING MANAGER ERROR] {e}")
                 print(f" {UI.RED}[POSITION/PENDING MANAGER ERROR]{UI.RST} {e}")
 
-            # B. Check Winstreak Cooldown
-            _audit_winstreak_deals()
-            if now_epoch < _winstreak_cooldown_until:
-                rem_sec = int(_winstreak_cooldown_until - now_epoch)
-                t_str = time.strftime("%H:%M:%S")
-                print(f" \r{UI.YELLOW}[{t_str} WINSTREAK COOLING]{UI.RST} Pendingin sistem aktif: sisa {rem_sec // 60}m {rem_sec % 60}s... (posisi tetap dikawal)", end="", flush=True)
-                time.sleep(2)
-                continue
+            # B. Check Winstreak Cooldown (Bypassed if M5_WINSTREAK_COOLDOWN_COUNT <= 0)
+            target_streak = int(os.getenv("M5_WINSTREAK_COOLDOWN_COUNT", str(getattr(config, "M5_WINSTREAK_COOLDOWN_COUNT", 0))))
+            if target_streak > 0:
+                _audit_winstreak_deals()
+                if now_epoch < _winstreak_cooldown_until:
+                    rem_sec = int(_winstreak_cooldown_until - now_epoch)
+                    t_str = time.strftime("%H:%M:%S")
+                    print(f" \r{UI.YELLOW}[{t_str} WINSTREAK COOLING]{UI.RST} Pendingin sistem aktif: sisa {rem_sec // 60}m {rem_sec % 60}s... (posisi tetap dikawal)", end="", flush=True)
+                    time.sleep(2)
+                    continue
 
             # C. Check Night Freeze (22:00 - 06:00 WIB)
             now_wib = datetime.now(WIB)

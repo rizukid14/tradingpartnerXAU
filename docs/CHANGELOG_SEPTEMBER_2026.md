@@ -35,10 +35,10 @@
    - Lot Minimum Guard: Jika `lot_size < 2 * vol_min` $\rightarrow$ fallback otomatis ke tiket tunggal non-twin.
    - Dispatcher mengeksekusi T1 (`comment=f"M5_T1_{setup}_{tp1_pts}"`) dan T2 (`comment=f"M5_T2_{setup}_{tp1_pts}"`) dengan pembagian lot 50:50.
    - **Active Pending Runaway Watcher**: Menghitung live progress tick terhadap pending order. Jika harga live melaju $\ge 65\%$ menuju TP sebelum limit order terjemput, order seketika dibatalkan (`cancel_pending_order()`) dan cooldown 10 menit diaktifkan.
-   - **Winstreak Circuit Breaker**: Melacak closed deals sesi; jika tercapai 10 win beruntun, aktifkan pendingin sistem 30 menit.
+   - **Winstreak Circuit Breaker (Dinonaktifkan / Anti-Gambler's Fallacy)**: Disetel nonaktif (`M5_WINSTREAK_COOLDOWN_COUNT=0`) agar bot tidak mengorbankan momentum tren saat keranjang mata uang bergerak searah secara monolitik.
    - **Night Freeze 22:00–06:00 WIB**: Membekukan pembukaan order baru di jam likuiditas tipis, posisi tetap dikawal penuh.
 5. **Konfigurasi (`.env` & `config.py`)**:
-   - Menyelaraskan `NIGHT_FREEZE_START_HOUR_WIB=22`, `M5_TWIN_TICKET_ENABLED=true`, `M5_SL_ATR_MULT=1.10`, `M5_COMMISSION_PAD_PTS=6`, `M5_TP1_BEP_PCT=0.65`, `M5_RUNNER_TP2_RATIO=1.50`, `M5_PENDING_RUNAWAY_CANCEL_PCT=0.65`, `M5_WINSTREAK_COOLDOWN_COUNT=10`, `M5_WINSTREAK_COOLDOWN_MINUTES=30`.
+   - Menyelaraskan `NIGHT_FREEZE_START_HOUR_WIB=22`, `M5_TWIN_TICKET_ENABLED=true`, `M5_SL_ATR_MULT=1.10`, `M5_COMMISSION_PAD_PTS=6`, `M5_TP1_BEP_PCT=0.65`, `M5_RUNNER_TP2_RATIO=1.50`, `M5_PENDING_RUNAWAY_CANCEL_PCT=0.65`, `M5_WINSTREAK_COOLDOWN_COUNT=0`, `M5_WINSTREAK_COOLDOWN_MINUTES=30`.
 6. **Unit Tests (`tests/test_m5_twin_ticket_state_machine.py`)**:
    - 7/7 unit tests PASS (Major, JPY, zero-skip guarantee, C1 anchoring, registry rebuild, milestone state machine, dan twin loss protection).
 
