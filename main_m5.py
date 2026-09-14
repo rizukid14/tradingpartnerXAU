@@ -144,58 +144,133 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
             entry_type = "sell_limit"
             entry_price = trig_p
 
-    print(f" {UI.GREEN}[M5 ORDER DISPATCH]{UI.RST} Mengirim order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f}...")
+    # 7. Twin-Ticket or Single Ticket Dispatch
+    twin_enabled = getattr(config, "M5_TWIN_TICKET_ENABLED", True)
+    si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
+    vol_min = getattr(si, "volume_min", 0.01) or 0.01
+    vol_step = getattr(si, "volume_step", 0.01) or 0.01
 
-    # 7. Execute MT5 order
+    tp1_pts = int(cand.metadata.get("m5_tp1_pts", 0)) if cand.metadata else 0
+    if tp1_pts <= 0:
+        tp1_pts = int(round(abs(cand.suggested_tp - entry_price) / pt)) if pt > 0 else 80
+    tp2_pts = int(cand.metadata.get("m5_tp2_pts", 0)) if cand.metadata else int(round(tp1_pts * 1.5))
+    setup_tag = (cand.setup_type or "UNIV")[:4]
+
+    tp1_price = cand.suggested_tp
+    tp2_price = getattr(cand, "suggested_tp_runner", 0.0)
+    if tp2_price <= 0:
+        tp2_dist = tp2_pts * pt
+        tp2_price = entry_price + tp2_dist if direction == 1 else entry_price - tp2_dist
+
+    is_twin = twin_enabled and (lot_size >= (2 * vol_min))
     pending_exp = int(getattr(config, "M5_PENDING_EXPIRATION_MINUTES", 20))
-    if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
-        order_res = connector.send_pending_order(
-            symbol=sym,
-            entry_type=entry_type,
-            entry_price=entry_price,
-            lot=lot_size,
-            sl_price=cand.suggested_sl,
-            tp_price=cand.suggested_tp,
-            comment=f"M5_{cand.setup_type[:6]}",
-            expiration_minutes=pending_exp
-        )
-    else:
-        order_res = connector.send_trade_order(
-            symbol=sym,
-            action=c_dir,
-            lot=lot_size,
-            sl_price=cand.suggested_sl,
-            tp_price=cand.suggested_tp,
-            comment=f"M5_{cand.setup_type[:6]}"
-        )
 
-    if order_res and order_res.get("status") == "SUCCESS":
-        ticket = order_res.get("ticket", "OK")
-        print(f" {UI.GREEN}{UI.BOLD}[M5 LIVE SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
-        risk.record_trade_opened()
-        try:
-            tg.alert_trade_opened(
-                symbol=sym,
-                signal=c_dir,
-                lot=lot_size,
-                entry_price=entry_price,
-                sl_price=cand.suggested_sl,
-                tp_price=cand.suggested_tp,
-                sl_points=sl_pts,
-                tp_points=int(round(abs(cand.suggested_tp - entry_price) / pt)),
-                risk_usd=risk.equity * 0.01,
-                setup=f"{cand.setup_type} (M5 Scalp)",
-                models="Pure Quant Direct (M5 Micro-ZCE)",
-                confidence=0.88,
-                reason=f"M5 Micro-ZCE scalping execution, R:R {cand.risk_reward_ratio:.2f}:1"
+    if is_twin:
+        lot_t1 = round(lot_size / 2.0, 2)
+        lot_t2 = round(lot_size - lot_t1, 2)
+        if lot_t1 < vol_min or lot_t2 < vol_min:
+            is_twin = False
+
+    if is_twin:
+        comment_t1 = f"M5_T1_{setup_tag}_{tp1_pts}"
+        comment_t2 = f"M5_T2_{setup_tag}_{tp1_pts}"
+        print(f" {UI.GREEN}[M5 TWIN DISPATCH]{UI.RST} Mengirim TWIN {c_dir} ({entry_type.upper()} @ {entry_price:.5f}):\n"
+              f"   - T1: Lot {lot_t1} | SL: {cand.suggested_sl:.5f} | TP1: {tp1_price:.5f} ({tp1_pts}p)\n"
+              f"   - T2: Lot {lot_t2} | SL: {cand.suggested_sl:.5f} | TP2: {tp2_price:.5f} ({tp2_pts}p)...")
+
+        # Dispatch Ticket 1 & Ticket 2
+        if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
+            res1 = connector.send_pending_order(
+                symbol=sym, entry_type=entry_type, entry_price=entry_price,
+                lot=lot_t1, sl_price=cand.suggested_sl, tp_price=tp1_price,
+                comment=comment_t1, expiration_minutes=pending_exp
             )
-        except Exception:
-            pass
-        return True
+            res2 = connector.send_pending_order(
+                symbol=sym, entry_type=entry_type, entry_price=entry_price,
+                lot=lot_t2, sl_price=cand.suggested_sl, tp_price=tp2_price,
+                comment=comment_t2, expiration_minutes=pending_exp
+            )
+        else:
+            res1 = connector.send_trade_order(
+                symbol=sym, action=c_dir, lot=lot_t1,
+                sl_price=cand.suggested_sl, tp_price=tp1_price, comment=comment_t1
+            )
+            res2 = connector.send_trade_order(
+                symbol=sym, action=c_dir, lot=lot_t2,
+                sl_price=cand.suggested_sl, tp_price=tp2_price, comment=comment_t2
+            )
+
+        t1_ok = res1 and res1.get("status") == "SUCCESS"
+        t2_ok = res2 and res2.get("status") == "SUCCESS"
+
+        if t1_ok and t2_ok:
+            t1_ticket = res1.get("ticket", "OK")
+            t2_ticket = res2.get("ticket", "OK")
+            print(f" {UI.GREEN}{UI.BOLD}[M5 TWIN SUCCESS]{UI.RST} #{t1_ticket} (T1) & #{t2_ticket} (T2) terpasang untuk {sym}!")
+            risk.record_trade_opened()
+            # Register in position manager
+            if isinstance(t1_ticket, int) and isinstance(t2_ticket, int):
+                position_manager.register_m5_twin_pair(
+                    symbol=sym, direction=direction, t1_ticket=t1_ticket, t2_ticket=t2_ticket,
+                    entry_price=entry_price, tp1_pts=tp1_pts, tp2_pts=tp2_pts, setup_tag=setup_tag
+                )
+            try:
+                tg.alert_trade_opened(
+                    symbol=sym, signal=c_dir, lot=lot_size, entry_price=entry_price,
+                    sl_price=cand.suggested_sl, tp_price=tp1_price, sl_points=sl_pts,
+                    tp_points=tp1_pts, risk_usd=risk.equity * 0.01,
+                    setup=f"{cand.setup_type} (M5 Twin: T1 {tp1_pts}p / T2 {tp2_pts}p)",
+                    models="Pure Quant Direct (M5 Micro-ZCE)", confidence=0.88,
+                    reason=f"M5 Twin-Ticket scalping execution, Blended R:R ~1.95:1"
+                )
+            except Exception:
+                pass
+            return True
+        elif t1_ok or t2_ok:
+            success_ticket = res1.get("ticket") if t1_ok else res2.get("ticket")
+            print(f" {UI.YELLOW}[M5 PARTIAL SUCCESS]{UI.RST} Salah satu tiket terpasang #{success_ticket}, tiket kedua gagal.")
+            risk.record_trade_opened()
+            return True
+        else:
+            err1 = res1.get("comment", "") if isinstance(res1, dict) else str(res1)
+            err2 = res2.get("comment", "") if isinstance(res2, dict) else str(res2)
+            print(f" {UI.RED}[M5 LIVE ERROR]{UI.RST} Gagal memasang twin order {sym}: T1={err1} | T2={err2}\n")
+            return False
     else:
-        err_msg = order_res.get("comment", "Unknown error") if isinstance(order_res, dict) else str(order_res)
-        print(f" {UI.RED}[M5 LIVE ERROR]{UI.RST} Gagal memasang order {sym}: {err_msg}\n")
-        return False
+        # Fallback to single ticket (e.g. lot_size < 2 * vol_min)
+        comment_t1 = f"M5_T1_{setup_tag}_{tp1_pts}"
+        print(f" {UI.GREEN}[M5 ORDER DISPATCH]{UI.RST} Mengirim Single Order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f}...")
+        if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
+            order_res = connector.send_pending_order(
+                symbol=sym, entry_type=entry_type, entry_price=entry_price, lot=lot_size,
+                sl_price=cand.suggested_sl, tp_price=cand.suggested_tp,
+                comment=comment_t1, expiration_minutes=pending_exp
+            )
+        else:
+            order_res = connector.send_trade_order(
+                symbol=sym, action=c_dir, lot=lot_size,
+                sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, comment=comment_t1
+            )
+        if order_res and order_res.get("status") == "SUCCESS":
+            ticket = order_res.get("ticket", "OK")
+            print(f" {UI.GREEN}{UI.BOLD}[M5 LIVE SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
+            risk.record_trade_opened()
+            try:
+                tg.alert_trade_opened(
+                    symbol=sym, signal=c_dir, lot=lot_size, entry_price=entry_price,
+                    sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, sl_points=sl_pts,
+                    tp_points=tp1_pts, risk_usd=risk.equity * 0.01,
+                    setup=f"{cand.setup_type} (M5 Single Scalp)",
+                    models="Pure Quant Direct (M5 Micro-ZCE)", confidence=0.88,
+                    reason=f"M5 Micro-ZCE scalping execution, R:R {cand.risk_reward_ratio:.2f}:1"
+                )
+            except Exception:
+                pass
+            return True
+        else:
+            err_msg = order_res.get("comment", "Unknown error") if isinstance(order_res, dict) else str(order_res)
+            print(f" {UI.RED}[M5 LIVE ERROR]{UI.RST} Gagal memasang order {sym}: {err_msg}\n")
+            return False
 
 
 _known_pending_orders = {}
@@ -215,16 +290,50 @@ def _sync_pending_orders(scanner):
             return
         orders = mt.orders_get() or []
         cur_order_map = {}
+        cancel_threshold_pct = float(os.getenv("M5_PENDING_RUNAWAY_CANCEL_PCT", "0.65"))
+
         for o in orders:
             t = getattr(o, "ticket", None)
             if t is not None:
+                o_type = getattr(o, "type", 0)
+                o_price = getattr(o, "price_open", 0.0)
+                o_tp = getattr(o, "tp", 0.0)
+                o_sym = getattr(o, "symbol", "")
+
+                # Active Runaway Guard: Check if live price already traversed >=65% towards TP
+                if o_tp > 0 and o_price > 0 and o_sym:
+                    tick_sym = mt.symbol_info_tick(o_sym) if hasattr(mt, "symbol_info_tick") else None
+                    if tick_sym:
+                        # Buy Limit (type 2)
+                        if o_type in (2, getattr(mt, "ORDER_TYPE_BUY_LIMIT", 2)):
+                            tp_dist = o_tp - o_price
+                            curr_progress = tick_sym.ask - o_price
+                            if tp_dist > 0 and curr_progress >= (cancel_threshold_pct * tp_dist):
+                                print(f" {UI.YELLOW}[PENDING RUNAWAY]{UI.RST} Pending BUY_LIMIT #{t} {o_sym} @ {o_price} dilewati: ask {tick_sym.ask} sudah menempuh >={cancel_threshold_pct*100:.0f}% target TP {o_tp}. Membatalkan order...")
+                                logger.info(f"[PENDING RUNAWAY] BUY_LIMIT #{t} {o_sym} cancelled (progress >= {cancel_threshold_pct*100:.0f}% TP).")
+                                connector.cancel_pending_order(t)
+                                if scanner and hasattr(scanner, "mark_symbol_cancelled"):
+                                    scanner.mark_symbol_cancelled(o_sym, cooldown_seconds=600, reason="Runaway >=65% TP")
+                                continue
+                        # Sell Limit (type 3)
+                        elif o_type in (3, getattr(mt, "ORDER_TYPE_SELL_LIMIT", 3)):
+                            tp_dist = o_price - o_tp
+                            curr_progress = o_price - tick_sym.bid
+                            if tp_dist > 0 and curr_progress >= (cancel_threshold_pct * tp_dist):
+                                print(f" {UI.YELLOW}[PENDING RUNAWAY]{UI.RST} Pending SELL_LIMIT #{t} {o_sym} @ {o_price} dilewati: bid {tick_sym.bid} sudah menempuh >={cancel_threshold_pct*100:.0f}% target TP {o_tp}. Membatalkan order...")
+                                logger.info(f"[PENDING RUNAWAY] SELL_LIMIT #{t} {o_sym} cancelled (progress >= {cancel_threshold_pct*100:.0f}% TP).")
+                                connector.cancel_pending_order(t)
+                                if scanner and hasattr(scanner, "mark_symbol_cancelled"):
+                                    scanner.mark_symbol_cancelled(o_sym, cooldown_seconds=600, reason="Runaway >=65% TP")
+                                continue
+
                 cur_order_map[t] = {
                     "ticket": t,
-                    "symbol": getattr(o, "symbol", ""),
-                    "type": getattr(o, "type", 0),
-                    "price": getattr(o, "price_open", 0.0),
+                    "symbol": o_sym,
+                    "type": o_type,
+                    "price": o_price,
                     "sl": getattr(o, "sl", 0.0),
-                    "tp": getattr(o, "tp", 0.0),
+                    "tp": o_tp,
                 }
 
         # 1. Register newly observed pending orders
@@ -279,13 +388,76 @@ def _sync_pending_orders(scanner):
         logger.debug(f"[M5 PENDING SYNC ERROR] {e}")
 
 
+_session_consecutive_wins = 0
+_winstreak_cooldown_until = 0.0
+_last_closed_deal_ticket = 0
+
+
+def _audit_winstreak_deals():
+    """
+    Tracks consecutive closed wins in the live session.
+    If consecutive wins >= M5_WINSTREAK_COOLDOWN_COUNT (default 10),
+    triggers a cooldown for M5_WINSTREAK_COOLDOWN_MINUTES (default 30 mins).
+    """
+    global _session_consecutive_wins, _winstreak_cooldown_until, _last_closed_deal_ticket
+    mt = getattr(config, "mt5", None)
+    if mt is None:
+        return
+
+    try:
+        now_dt = datetime.now()
+        from_epoch = int((now_dt - timedelta(days=1)).timestamp())
+        to_epoch = int(now_dt.timestamp()) + 86400
+        deals = mt.history_deals_get(from_epoch, to_epoch) or []
+        out_deals = [d for d in deals if getattr(d, "entry", 0) == getattr(mt, "DEAL_ENTRY_OUT", 1)]
+        if not out_deals:
+            return
+
+        out_deals.sort(key=lambda d: getattr(d, "time_msc", getattr(d, "time", 0)))
+        max_ticket = max(getattr(d, "ticket", 0) for d in out_deals)
+
+        if _last_closed_deal_ticket == 0:
+            _last_closed_deal_ticket = max_ticket
+            return
+
+        if max_ticket <= _last_closed_deal_ticket:
+            return
+
+        new_deals = [d for d in out_deals if getattr(d, "ticket", 0) > _last_closed_deal_ticket]
+        _last_closed_deal_ticket = max_ticket
+
+        target_streak = int(os.getenv("M5_WINSTREAK_COOLDOWN_COUNT", "10"))
+        cooldown_mins = int(os.getenv("M5_WINSTREAK_COOLDOWN_MINUTES", "30"))
+
+        for d in new_deals:
+            pnl = getattr(d, "profit", 0.0) + getattr(d, "commission", 0.0) + getattr(d, "swap", 0.0)
+            if pnl > 0.01:
+                _session_consecutive_wins += 1
+                logger.info(f"[WINSTREAK AUDIT] Win (+${pnl:.2f}). Streak: {_session_consecutive_wins}/{target_streak}")
+                if _session_consecutive_wins >= target_streak:
+                    _winstreak_cooldown_until = time.time() + (cooldown_mins * 60)
+                    _session_consecutive_wins = 0
+                    print(f"\n {UI.YELLOW}{UI.BOLD}[WINSTREAK {target_streak}X REACHED]{UI.RST} Tercapai {target_streak} win beruntun! Mengaktifkan pendingin sistem selama {cooldown_mins} menit...\n")
+                    logger.warning(f"[WINSTREAK COOLING] {target_streak} consecutive wins hit. Cooling active for {cooldown_mins}m.")
+                    try:
+                        tg.send_message(f"🏆 *Winstreak Circuit Breaker*: Terdeteksi {target_streak} win beruntun! Mendinginkan sistem selama {cooldown_mins} menit untuk meredam mean-reversion risk.")
+                    except Exception:
+                        pass
+            elif pnl < -0.05:  # actual loss
+                if _session_consecutive_wins > 0:
+                    logger.info(f"[WINSTREAK AUDIT] Loss (${pnl:.2f}). Streak reset from {_session_consecutive_wins} to 0.")
+                _session_consecutive_wins = 0
+    except Exception as e:
+        logger.debug(f"[WINSTREAK ERROR] {e}")
+
+
 def main():
     print(f"""
 {UI.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
 ║        TRADING PARTNER — M5 PURE QUANT SCALPING RUNNER (LIVE CENT)           ║
 ║  Account  : Live Cent VTMarkets (#27556325) | Timeframe: M5 (10s Loop)       ║
-║  Strategy : Micro-ZCE (M5/M15/H1) | Scaled SL/TP: 4-8p SL / 8-16p TP (SL<TP)  ║
-║  Execution: Pure Quant Direct (0 Tokens) | BEP: 80% TP | Cent Plafon: 0.50   ║
+║  Strategy : Micro-ZCE (M5/M15/H1) | Twin-Ticket (TP1 Scalp + TP2 Runner)      ║
+║  Execution: Pure Quant Direct (0 Tokens) | State Machine BEP 65% | Cap: 0.50  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{UI.RST}
 """)
 
@@ -305,7 +477,7 @@ def main():
     config.MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "50"))
     config.MAX_ABSOLUTE_OPEN_POSITIONS = int(os.getenv("MAX_ABSOLUTE_OPEN_POSITIONS", "50"))
     config.MAX_POSITION_LOT = float(os.getenv("MAX_POSITION_LOT", "0.50"))
-    config.BREAK_EVEN_TRIGGER_TP_PCT = 0.80
+    config.M5_TWIN_TICKET_ENABLED = os.getenv("M5_TWIN_TICKET_ENABLED", "true").lower() == "true"
     config.BREAK_EVEN_ENABLED = True
     config.TRAILING_STOP_ENABLED = False
     config.PARTIAL_CLOSE_ENABLED = False
@@ -324,7 +496,7 @@ def main():
         while True:
             now_epoch = time.time()
 
-            # A. Manage Active Positions & Pending Order Lifecycle every 2 seconds (BEP 80% TP, Pre-Rollover Shield, Cancel Cooldown)
+            # A. Manage Active Positions & Pending Order Lifecycle every 2 seconds
             try:
                 position_manager.manage_all_positions()
                 _sync_pending_orders(scanner)
@@ -332,14 +504,34 @@ def main():
                 logger.error(f"[POSITION/PENDING MANAGER ERROR] {e}")
                 print(f" {UI.RED}[POSITION/PENDING MANAGER ERROR]{UI.RST} {e}")
 
-            # B. Fast Radar Scan every 10-15 seconds
+            # B. Check Winstreak Cooldown
+            _audit_winstreak_deals()
+            if now_epoch < _winstreak_cooldown_until:
+                rem_sec = int(_winstreak_cooldown_until - now_epoch)
+                t_str = time.strftime("%H:%M:%S")
+                print(f" \r{UI.YELLOW}[{t_str} WINSTREAK COOLING]{UI.RST} Pendingin sistem aktif: sisa {rem_sec // 60}m {rem_sec % 60}s... (posisi tetap dikawal)", end="", flush=True)
+                time.sleep(2)
+                continue
+
+            # C. Check Night Freeze (22:00 - 06:00 WIB)
+            now_wib = datetime.now(WIB)
+            freeze_start = int(os.getenv("NIGHT_FREEZE_START_HOUR_WIB", "22"))
+            freeze_end = int(os.getenv("NIGHT_FREEZE_END_HOUR_WIB", "6"))
+            is_frozen = (now_wib.hour >= freeze_start or now_wib.hour < freeze_end) if freeze_start > freeze_end else (freeze_start <= now_wib.hour < freeze_end)
+            if is_frozen:
+                t_str = time.strftime("%H:%M:%S")
+                print(f" \r{UI.YELLOW}[{t_str} NIGHT FREEZE]{UI.RST} Pembukaan order baru dibekukan ({freeze_start}:00 - {freeze_end:00} WIB). Posisi tetap dikawal.", end="", flush=True)
+                time.sleep(2)
+                continue
+
+            # D. Fast Radar Scan every 10-15 seconds
             if now_epoch - _last_radar_scan >= _scan_interval:
                 _last_radar_scan = now_epoch
                 t_str = time.strftime("%H:%M:%S")
                 try:
                     candidates = scanner.scan_all(connector)
                     if candidates:
-                        print(f" {UI.GREEN}[{t_str} M5 RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Mengeksekusi order riil ke MT5 Cent...")
+                        print(f"\n {UI.GREEN}[{t_str} M5 RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Mengeksekusi order riil ke MT5 Cent...")
                         for cand in candidates:
                             run_m5_execution_cycle(cand, risk)
                     else:

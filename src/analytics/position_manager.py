@@ -339,6 +339,277 @@ def _manage_twin_trades(positions):
     )
 
 
+# =============================================================================
+#  M5 TWIN-TICKET STATE MACHINE & SAFETY SHIELD
+# =============================================================================
+
+_m5_twin_registry: Dict[str, Dict[str, Any]] = {}
+
+
+def register_m5_twin_pair(
+    symbol: str,
+    direction: int,
+    t1_ticket: int,
+    t2_ticket: int,
+    entry_price: float,
+    tp1_pts: int,
+    tp2_pts: int,
+    setup_tag: str = "UNIV"
+) -> str:
+    """Registers an active M5 Twin-Ticket pair in memory."""
+    pair_key = f"{symbol}_{setup_tag}_{tp1_pts}_{t1_ticket}_{t2_ticket}"
+    _m5_twin_registry[pair_key] = {
+        "pair_key": pair_key,
+        "symbol": symbol,
+        "direction": direction,
+        "t1_ticket": int(t1_ticket),
+        "t2_ticket": int(t2_ticket),
+        "entry_price": float(entry_price),
+        "tp1_pts": int(tp1_pts),
+        "tp2_pts": int(tp2_pts),
+        "t1_bep_reached": False,
+        "t2_m1_reached": False,
+        "t2_m2_reached": False,
+        "t2_m3_reached": False,
+        "created_time": time.time()
+    }
+    logger.info(f"[M5 TWIN REGISTER] Pair {pair_key}: T1 #{t1_ticket} (TP1: {tp1_pts}p) + T2 #{t2_ticket} (TP2: {tp2_pts}p)")
+    return pair_key
+
+
+def _rebuild_m5_twin_registry_from_open_positions(positions):
+    """
+    Recovers M5 Twin-Ticket pairs from open positions if bot restarted.
+    Parses comment format: M5_T1_{setup[:4]}_{tp1_pts} and M5_T2_{setup[:4]}_{tp1_pts}.
+    """
+    if not positions:
+        return
+    known_tickets = set()
+    for rec in _m5_twin_registry.values():
+        if rec.get("t1_ticket"):
+            known_tickets.add(rec["t1_ticket"])
+        if rec.get("t2_ticket"):
+            known_tickets.add(rec["t2_ticket"])
+
+    t1_unpaired: Dict[Tuple[str, str, int], Any] = {}
+    t2_unpaired: Dict[Tuple[str, str, int], Any] = {}
+
+    for pos in positions:
+        if pos.ticket in known_tickets:
+            continue
+        c = getattr(pos, "comment", "") or ""
+        if not c.startswith("M5_T"):
+            continue
+        parts = c.split("_")
+        if len(parts) < 4:
+            continue
+        t_type = parts[1]  # "T1" or "T2"
+        setup_tag = parts[2]
+        try:
+            tp1_pts = int(parts[3])
+        except ValueError:
+            continue
+
+        key = (pos.symbol, setup_tag, tp1_pts)
+        if t_type == "T1":
+            t1_unpaired[key] = pos
+        elif t_type == "T2":
+            t2_unpaired[key] = pos
+
+    for key, pos1 in list(t1_unpaired.items()):
+        if key in t2_unpaired:
+            pos2 = t2_unpaired[key]
+            sym, setup_tag, tp1_pts = key
+            pt = getattr(mt5.symbol_info(sym), "point", 0.00001) or 0.00001
+            tp2_pts = int(round(abs(pos2.tp - pos2.price_open) / pt)) if pos2.tp else int(round(tp1_pts * 1.5))
+            direction = 1 if pos1.type == mt5.ORDER_TYPE_BUY else -1
+            register_m5_twin_pair(
+                symbol=sym,
+                direction=direction,
+                t1_ticket=pos1.ticket,
+                t2_ticket=pos2.ticket,
+                entry_price=pos1.price_open,
+                tp1_pts=tp1_pts,
+                tp2_pts=tp2_pts,
+                setup_tag=setup_tag
+            )
+
+
+def _send_twin_sl_modify(pos, new_sl, digits: int) -> bool:
+    """Helper to send MT5 SL modification request for twin positions."""
+    sl_val = round(float(new_sl), digits)
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "symbol": pos.symbol,
+        "position": pos.ticket,
+        "sl": sl_val,
+        "tp": pos.tp,
+        "magic": config.MAGIC_NUMBER,
+    }
+    res = mt5.order_send(req)
+    return is_order_success(res)
+
+
+def _manage_m5_twin_position(pos, symbol, profit_points, current_price, point, symbol_info):
+    """
+    Dedicated state machine managing M5 Twin Tickets:
+    - M5_T1: BEP at 65% TP1 (SL -> Entry + Spread + Commission + 1.0 pip pocket profit).
+    - M5_T2:
+        Milestone 1 (65% TP1): SL -> Entry + Spread + Commission + 10% TP2 pts.
+        Milestone 2 (100% TP1): SL -> Entry + 50% TP1 pts.
+        Milestone 3 (75% TP2): SL -> TP1 price level.
+    """
+    comment = getattr(pos, "comment", "") or ""
+    parts = comment.split("_")
+    t_type = parts[1] if len(parts) >= 2 else ""
+    try:
+        tp1_pts = int(parts[3]) if len(parts) >= 4 else 0
+    except ValueError:
+        tp1_pts = 0
+
+    if tp1_pts <= 0:
+        if pos.tp:
+            tp1_pts = int(round(abs(pos.tp - pos.price_open) / point))
+        else:
+            tp1_pts = 75
+
+    digits = symbol_info.digits
+    direction = 1 if pos.type == mt5.ORDER_TYPE_BUY else -1
+    spread_pts = 15
+    tick = mt5.symbol_info_tick(symbol)
+    if tick and tick.ask and tick.bid and point > 0:
+        spread_pts = max(1, int(round((tick.ask - tick.bid) / point)))
+    comm_pts = int(os.getenv("M5_COMMISSION_PAD_PTS", "6"))
+
+    # Find twin record in registry
+    twin_rec = None
+    for rec in _m5_twin_registry.values():
+        if rec.get("t1_ticket") == pos.ticket or rec.get("t2_ticket") == pos.ticket:
+            twin_rec = rec
+            break
+
+    # 1. Manage Ticket 1 (M5_T1)
+    if t_type == "T1":
+        if pos.ticket in _break_even_tickets or (twin_rec and twin_rec.get("t1_bep_reached")):
+            return
+
+        bep_threshold = 0.65 * tp1_pts
+        if profit_points >= bep_threshold:
+            pocket_pts = 10  # 1.0 pip guaranteed pocket profit
+            pad_pts = spread_pts + comm_pts + pocket_pts
+            pad_dist = pad_pts * point
+            new_sl = pos.price_open + pad_dist if direction == 1 else pos.price_open - pad_dist
+
+            should_mod = (direction == 1 and (pos.sl == 0 or new_sl > pos.sl)) or (direction == -1 and (pos.sl == 0 or new_sl < pos.sl))
+            if should_mod:
+                if _send_twin_sl_modify(pos, new_sl, digits):
+                    _break_even_tickets.add(pos.ticket)
+                    if twin_rec:
+                        twin_rec["t1_bep_reached"] = True
+                    print(f" {UI.GREEN}[M5 T1 BEP LOCKED]{UI.RST} Ticket #{pos.ticket} ({symbol}): profit {profit_points:.1f} >= 65% TP1 ({tp1_pts}p) -> SL moved to {new_sl} (+{pocket_pts} pts profit)")
+                    logger.info(f"[M5 T1 BEP LOCKED] Ticket #{pos.ticket} ({symbol}): SL locked to {new_sl}")
+                    try:
+                        tg.alert_break_even(pos.ticket, symbol, new_sl)
+                    except Exception:
+                        pass
+        return
+
+    # 2. Manage Ticket 2 (M5_T2 Runner)
+    if t_type == "T2":
+        tp2_pts = int(round(abs(pos.tp - pos.price_open) / point)) if pos.tp else int(round(tp1_pts * 1.5))
+        if twin_rec and twin_rec.get("tp2_pts"):
+            tp2_pts = twin_rec["tp2_pts"]
+
+        # Milestone 3: Profit >= 75% TP2 -> Lock SL at TP1 price level
+        if profit_points >= (0.75 * tp2_pts):
+            if not (twin_rec and twin_rec.get("t2_m3_reached")):
+                tp1_dist = tp1_pts * point
+                new_sl = pos.price_open + tp1_dist if direction == 1 else pos.price_open - tp1_dist
+                should_mod = (direction == 1 and (pos.sl == 0 or new_sl > pos.sl)) or (direction == -1 and (pos.sl == 0 or new_sl < pos.sl))
+                if should_mod and _send_twin_sl_modify(pos, new_sl, digits):
+                    if twin_rec:
+                        twin_rec["t2_m1_reached"] = True
+                        twin_rec["t2_m2_reached"] = True
+                        twin_rec["t2_m3_reached"] = True
+                    print(f" {UI.GREEN}{UI.BOLD}[M5 T2 MILESTONE 3]{UI.RST} Ticket #{pos.ticket} ({symbol}): profit {profit_points:.1f} >= 75% TP2 ({tp2_pts}p) -> SL locked at TP1 level {new_sl}!")
+                    logger.info(f"[M5 T2 MILESTONE 3] Ticket #{pos.ticket} ({symbol}): SL locked to TP1 level {new_sl}")
+                    return
+
+        # Milestone 2: Profit >= TP1 pts -> Lock SL at +50% TP1 pts
+        if profit_points >= (1.00 * tp1_pts):
+            if not (twin_rec and twin_rec.get("t2_m2_reached")):
+                half_tp1_dist = int(round(0.50 * tp1_pts)) * point
+                new_sl = pos.price_open + half_tp1_dist if direction == 1 else pos.price_open - half_tp1_dist
+                should_mod = (direction == 1 and (pos.sl == 0 or new_sl > pos.sl)) or (direction == -1 and (pos.sl == 0 or new_sl < pos.sl))
+                if should_mod and _send_twin_sl_modify(pos, new_sl, digits):
+                    if twin_rec:
+                        twin_rec["t2_m1_reached"] = True
+                        twin_rec["t2_m2_reached"] = True
+                    print(f" {UI.GREEN}[M5 T2 MILESTONE 2]{UI.RST} Ticket #{pos.ticket} ({symbol}): profit {profit_points:.1f} >= TP1 ({tp1_pts}p) -> SL locked at +50% TP1 {new_sl}")
+                    logger.info(f"[M5 T2 MILESTONE 2] Ticket #{pos.ticket} ({symbol}): SL locked to +50% TP1 {new_sl}")
+                    return
+
+        # Milestone 1: Profit >= 65% TP1 -> Lock SL at Entry + Spread + Commission + 10% TP2
+        if profit_points >= (0.65 * tp1_pts):
+            if not (twin_rec and twin_rec.get("t2_m1_reached")):
+                ten_pct_tp2 = int(round(0.10 * tp2_pts))
+                pad_pts = spread_pts + comm_pts + ten_pct_tp2
+                pad_dist = pad_pts * point
+                new_sl = pos.price_open + pad_dist if direction == 1 else pos.price_open - pad_dist
+                should_mod = (direction == 1 and (pos.sl == 0 or new_sl > pos.sl)) or (direction == -1 and (pos.sl == 0 or new_sl < pos.sl))
+                if should_mod and _send_twin_sl_modify(pos, new_sl, digits):
+                    if twin_rec:
+                        twin_rec["t2_m1_reached"] = True
+                    print(f" {UI.GREEN}[M5 T2 MILESTONE 1]{UI.RST} Ticket #{pos.ticket} ({symbol}): profit {profit_points:.1f} >= 65% TP1 -> SL locked at Entry+10% TP2 {new_sl}")
+                    logger.info(f"[M5 T2 MILESTONE 1] Ticket #{pos.ticket} ({symbol}): SL locked to Entry+10% TP2 {new_sl}")
+                    return
+
+
+def _audit_m5_twin_loss_protection(open_tickets: set):
+    """
+    CRITICAL SAFETY SHIELD:
+    If market reverses and one ticket of an M5 Twin pair hits initial Stop Loss (closed in loss),
+    immediately market-close the surviving partner ticket to prevent runaway loss.
+    """
+    from src.core import mt5_connector as connector
+    for pair_key, rec in list(_m5_twin_registry.items()):
+        t1 = rec.get("t1_ticket")
+        t2 = rec.get("t2_ticket")
+        sym = rec.get("symbol", "")
+
+        t1_open = t1 in open_tickets
+        t2_open = t2 in open_tickets
+
+        # Case 1: Both closed -> remove from registry
+        if not t1_open and not t2_open:
+            del _m5_twin_registry[pair_key]
+            continue
+
+        # Case 2: T1 stopped out before reaching Milestone 1 BEP, but T2 is still open!
+        if not t1_open and t2_open:
+            if not rec.get("t1_bep_reached"):
+                print(f" {UI.RED}{UI.BOLD}[M5 TWIN SL SHIELD]{UI.RST} T1 #{t1} ({sym}) terkena SL / closed at loss! Menutup paksa partner T2 #{t2} sekarang juga...")
+                logger.warning(f"[M5 TWIN SL SHIELD] T1 #{t1} ({sym}) closed at loss before BEP. Emergency auto-closing partner T2 #{t2}.")
+                try:
+                    connector.close_position(t2)
+                except Exception as e:
+                    logger.error(f"[M5 TWIN SL SHIELD ERROR] Failed to close T2 #{t2}: {e}")
+                del _m5_twin_registry[pair_key]
+                continue
+
+        # Case 3: T2 stopped out before reaching Milestone 1, but T1 is still open!
+        if not t2_open and t1_open:
+            if not rec.get("t2_m1_reached"):
+                print(f" {UI.RED}{UI.BOLD}[M5 TWIN SL SHIELD]{UI.RST} T2 #{t2} ({sym}) closed at loss before M1! Menutup paksa partner T1 #{t1} sekarang juga...")
+                logger.warning(f"[M5 TWIN SL SHIELD] T2 #{t2} ({sym}) closed at loss before M1. Emergency auto-closing partner T1 #{t1}.")
+                try:
+                    connector.close_position(t1)
+                except Exception as e:
+                    logger.error(f"[M5 TWIN SL SHIELD ERROR] Failed to close T1 #{t1}: {e}")
+                del _m5_twin_registry[pair_key]
+                continue
+
+
 def manage_all_positions(*args, **kwargs):
     """
     Iterates ALL open bot positions (any symbol - XAU or BTC) and applies:
@@ -355,7 +626,11 @@ def manage_all_positions(*args, **kwargs):
     positions = mt5.positions_get()
     if positions is None or len(positions) == 0:
         _manage_twin_trades([])
+        _audit_m5_twin_loss_protection(set())
         return
+
+    # 0A. Rebuild M5 Twin Registry from open positions if restarting / empty
+    _rebuild_m5_twin_registry_from_open_positions(positions)
 
     # 0. Twin-Order Cushion & Milestone Step-Lock Audit
     _manage_twin_trades(positions)
@@ -432,6 +707,14 @@ def manage_all_positions(*args, **kwargs):
         if twin_manager.get_twin_by_ticket(pos.ticket):
             continue
 
+        # M5 Twin-Ticket Architecture Guard:
+        # If position is managed by dedicated M5 Twin-Ticket State Machine,
+        # handle via _manage_m5_twin_position() and bypass generic BEP/trailing.
+        comment = getattr(pos, "comment", "") or ""
+        if "M5_T1" in comment or "M5_T2" in comment:
+            _manage_m5_twin_position(pos, symbol, profit_points, current_price, point, symbol_info)
+            continue
+
         # M4 (SYSTEMIC_FLOW_CONTINUATION): Momentum Shock Continuation
         # - Bypass Partial Close & Trailing Stop agar volume penuh menuju TP 1.1R dan tidak terkena cut noise wicking.
         # - Break-Even Check (BEP) AKTIF di 70% TP untuk mengamankan profit (+ komisi round-trip + pocket profit 1.5 pips).
@@ -452,8 +735,12 @@ def manage_all_positions(*args, **kwargs):
         if not is_m4 and config.TRAILING_STOP_ENABLED:
             _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info)
 
-    # Bersihkan state posisi yang sudah tidak open (biar dict/set gak numpuk)
     open_tickets = {p.ticket for p in positions}
+
+    # 5B. M5 Twin-SL Loss Protection (Auto-close partner if one ticket stopped out at loss)
+    _audit_m5_twin_loss_protection(open_tickets)
+
+    # Bersihkan state posisi yang sudah tidak open (biar dict/set gak numpuk)
     changed = False
     for k in list(_trailing_extremes):
         if k not in open_tickets:
@@ -485,6 +772,9 @@ def manage_all_positions(*args, **kwargs):
 
 def _check_partial_close(pos, symbol, profit_points, symbol_info):
     """Close a portion of the position at TP1 to lock in some profit."""
+    comment = getattr(pos, "comment", "") or ""
+    if "M5_T1" in comment or "M5_T2" in comment:
+        return
     if not getattr(config, "PARTIAL_CLOSE_ENABLED", False):
         return  # Bypassed: 100% lot capture (11 Sep 2026)
 
@@ -858,6 +1148,9 @@ def _get_entry_fill_price(pos, symbol):
 
 def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     """Move SL to entry price + padding once profit threshold is reached."""
+    comment = getattr(pos, "comment", "") or ""
+    if "M5_T1" in comment or "M5_T2" in comment:
+        return
     if pos.ticket in _break_even_tickets:
         return  # Already at break-even
 
@@ -1176,7 +1469,7 @@ def _get_atr_points_tf(symbol, timeframe, point):
         rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 20)
         if rates is not None and len(rates) >= 15:
             import pandas as pd
-            from ta.volatility import AverageTrueRange
+            from ta.volatility import AverageTrueRange  # type: ignore
             df = pd.DataFrame(rates)
             atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
             atr_val = atr_series.iloc[-1]
@@ -1197,12 +1490,10 @@ def _get_dynamic_atr_points(symbol, point):
 #  TRAILING STOP (2-Stage Dynamic: H1 Breathing vs M30 Terminal Lock)
 # =============================================================================
 def _check_trailing_stop(pos, symbol, profit_points, current_price, point, symbol_info):
-    """Trail stop loss behind price using 2-Stage Dynamic Distance:
-    - Stage 1 (Swing Breathing: 65% s/d < 90% TP): Jarak 0.75x ATR H1 (Floor FX 80 pts / 8 pips)
-      untuk memberikan ruang nafas luas agar trade tidak mudah ter-wick keluar menuju TP2.
-    - Stage 2 (Terminal Lock: >= 90% TP): Jarak 0.50x ATR M30 (Floor FX 30 pts / 3 pips)
-      untuk mengunci cuan 90% secara ketat di pucuk sebelum reversal mendadak.
-    """
+    """Trail stop loss behind price using 2-Stage Dynamic Distance:"""
+    comment = getattr(pos, "comment", "") or ""
+    if "M5_T1" in comment or "M5_T2" in comment:
+        return
     # Jarak target TP posisi (jika ada) untuk aktivasi % TP
     tp_points = 0
     if pos.tp:

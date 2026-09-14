@@ -180,6 +180,7 @@ class CandidateSetup:
     key_resistance: float = 0.0
     suggested_sl: float = 0.0
     suggested_tp: float = 0.0
+    suggested_tp_runner: float = 0.0
     risk_reward_ratio: float = 2.0
     strong_low: float = 0.0
     strong_high: float = 0.0
@@ -4210,7 +4211,7 @@ class MarketScanner:
                         return _ret("FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f}){flow_tag}")
                     elif is_counter:
                         # Forbid counter-trend scalp during runaway coherent cascade waterfall or extreme runaway CSM
-                        f_reg = str(macro.get('fractal_regime') or (getattr(strat_dir, 'fractal_regime', '') if strat_dir else ''))
+                        f_reg = str(macro.get('fractal_regime') or (getattr(strat_dir_sym, 'fractal_regime', '') if strat_dir_sym else ''))
                         is_waterfall_cascade = "CASCADE" in f_reg or (abs(csm_delta_val) >= 3.0 and is_csm_opposed)
                         if is_waterfall_cascade and "SWEEP" in setup_label.upper():
                             return _block(f"[COHERENT CASCADE VETO] Counter-trend knife catch forbidden ({f_reg})")

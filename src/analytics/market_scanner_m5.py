@@ -32,15 +32,17 @@ def calculate_m5_sl_tp(
     atr_m5: float,
     c1: Optional[float] = None,
     f1: Optional[float] = None,
+    c2: Optional[float] = None,
+    f2: Optional[float] = None,
     spread_pts: int = 15,
     pt: float = 0.00001
 ) -> Dict[str, Any]:
     """
     Calculates precise M5 scalping Stop Loss and Take Profit anchored to Micro-ZCE Stations:
-    - Configurable from .env.demo (M5_SL_ATR_MULT, M5_DEFAULT_TP_RR, M5_MIN_SL_PIPS_*, M5_MAX_TP_PIPS_*).
-    - Target hold time: 15 to 45 minutes (Fast In, Fast Out).
-    - SL: 1.25x M5 ATR (Standard FX: 4-6 pips, JPY/High-Beta: 6-9 pips).
-    - TP: Micro C1 (for BUY) or Micro F1 (for SELL) with front-running pad, capped at M5_MAX_TP_PIPS.
+    - 3-Tier Clamped SL (Major 5-7.5p, High-Beta 6.5-8.5p, JPY 7-9.5p).
+    - TP1 guaranteed >= 1.50x SL with commission padding (0.6 pips).
+    - TP2 Runner anchored to C2/F2 (if within 1.35x-1.80x TP1) or 1.50x TP1 pts.
+    - Zero Skip Trade: preserves currency basket natural hedging.
     """
     clean_sym = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
     is_jpy = "JPY" in clean_sym
@@ -48,88 +50,119 @@ def calculate_m5_sl_tp(
     is_gold = "XAU" in clean_sym or "GOLD" in clean_sym
     is_crypto = config.is_crypto(clean_sym)
 
-    # Multipliers and ratios from .env.demo (with safe fallbacks)
-    sl_atr_mult = float(os.getenv("M5_SL_ATR_MULT", "1.25"))
-    default_tp_r = float(os.getenv("M5_DEFAULT_TP_RR", "1.75"))
+    # Multiplier: 1.10x ATR M5 for tight intraday scalping
+    sl_atr_mult = float(os.getenv("M5_SL_ATR_MULT", "1.10"))
 
-    # Pip-to-points scaling factor (10 points = 1 pip for 5-digit FX & 3-digit JPY)
-    pip_factor = 10
-    if is_crypto or is_gold:
-        pip_factor = 100
-
-    # Dynamic minimum SL floors and max TP ceilings from .env.demo (converted to points)
+    # Dynamic 3-Tier Clamping [min_sl_pts, max_sl_pts, tier_min_tp1_pts]
     if is_crypto:
-        min_sl_pts = int(os.getenv("M5_MIN_SL_CRYPTO_PTS", "10000"))  # $100 on BTC
-        max_tp_pts = int(os.getenv("M5_MAX_TP_CRYPTO_PTS", "30000"))  # $300 on BTC
+        min_sl_pts = int(os.getenv("M5_MIN_SL_CRYPTO_PTS", "10000"))
+        max_sl_pts = int(os.getenv("M5_MAX_SL_CRYPTO_PTS", "25000"))
+        tier_min_tp1 = int(os.getenv("M5_MIN_TP1_CRYPTO_PTS", "15000"))
     elif is_gold:
-        min_sl_pts = int(os.getenv("M5_MIN_SL_GOLD_PTS", "150"))      # $1.50 on Gold
-        max_tp_pts = int(os.getenv("M5_MAX_TP_GOLD_PTS", "400"))      # $4.00 on Gold
+        min_sl_pts = int(os.getenv("M5_MIN_SL_GOLD_PTS", "150"))
+        max_sl_pts = int(os.getenv("M5_MAX_SL_GOLD_PTS", "350"))
+        tier_min_tp1 = int(os.getenv("M5_MIN_TP1_GOLD_PTS", "250"))
     elif is_jpy:
-        min_sl_pips = float(os.getenv("M5_MIN_SL_PIPS_JPY", "6.0"))
-        max_tp_pips = float(os.getenv("M5_MAX_TP_PIPS_JPY", "13.5"))
-        min_sl_pts = int(round(min_sl_pips * pip_factor))
-        max_tp_pts = int(round(max_tp_pips * pip_factor))
+        # Tier 3: JPY Crosses (7.0 - 9.5 pips SL, min 12.0 pips TP1)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_JPY", "7.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_JPY", "9.5")) * 10))
+        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_JPY", "12.0")) * 10))
     elif is_high_beta:
-        min_sl_pips = float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "7.0"))
-        max_tp_pips = float(os.getenv("M5_MAX_TP_PIPS_HIGHBETA", "16.0"))
-        min_sl_pts = int(round(min_sl_pips * pip_factor))
-        max_tp_pts = int(round(max_tp_pips * pip_factor))
+        # Tier 2: High-Beta Crosses (6.5 - 8.5 pips SL, min 11.0 pips TP1)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "6.5")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_HIGHBETA", "8.5")) * 10))
+        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_HIGHBETA", "11.0")) * 10))
     else:
-        min_sl_pips = float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "4.0"))
-        max_tp_pips = float(os.getenv("M5_MAX_TP_PIPS_MAJOR", "9.5"))
-        min_sl_pts = int(round(min_sl_pips * pip_factor))
-        max_tp_pts = int(round(max_tp_pips * pip_factor))
+        # Tier 1: Major FX Pairs (5.0 - 7.5 pips SL, min 8.0 pips TP1)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "5.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_MAJOR", "7.5")) * 10))
+        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_MAJOR", "8.0")) * 10))
 
-    # Absorb broker spread friction (min 2x spread + 10 pts)
+    # Spread friction floor (2x spread + 10 pts)
     fric_floor_pts = (spread_pts * 2) + 10
-    sl_pts = max(int(round((sl_atr_mult * atr_m5) / pt)), min_sl_pts, fric_floor_pts)
+    raw_sl_pts = int(round((sl_atr_mult * atr_m5) / pt)) if pt > 0 else 50
+    sl_pts = max(min(raw_sl_pts, max_sl_pts), min_sl_pts, fric_floor_pts)
     sl_dist = sl_pts * pt
-    max_tp_dist = max_tp_pts * pt
 
-    # Front-running pad: exit before touching exact wall
-    front_pad = (spread_pts * pt) + (0.10 * atr_m5)
+    # Commission padding (approx 6 pts / 0.6 pips roundtrip ECN)
+    comm_pts = int(os.getenv("M5_COMMISSION_PAD_PTS", "6"))
+    front_pad = (spread_pts * pt) + (comm_pts * pt) + (0.05 * atr_m5)
+
+    # TP1 Calculation: minimum 1.50x SL distance or tier floor
+    min_tp1_dist = max(sl_dist * 1.50, tier_min_tp1 * pt)
+    default_tp1_dist = max(sl_dist * 1.60, tier_min_tp1 * pt)
 
     if direction == 1:  # BUY
         sl = entry_price - sl_dist
-        # Micro C1 Target check: use C1 if within reach (>= 1.25x SL and <= max_tp_dist * 1.15)
         if c1 and c1 > entry_price:
-            raw_c1_dist = c1 - entry_price
-            if raw_c1_dist >= (1.25 * sl_dist) and raw_c1_dist <= (max_tp_dist * 1.15):
-                tp = min(c1 - front_pad, entry_price + max_tp_dist)
+            c1_net_tp = c1 - front_pad
+            if (c1_net_tp - entry_price) >= min_tp1_dist:
+                tp1 = c1_net_tp
             else:
-                tp = entry_price + min(default_tp_r * sl_dist, max_tp_dist)
+                tp1 = entry_price + default_tp1_dist
         else:
-            tp = entry_price + min(default_tp_r * sl_dist, max_tp_dist)
+            tp1 = entry_price + default_tp1_dist
     else:  # SELL
         sl = entry_price + sl_dist
-        # Micro F1 Target check: use F1 if within reach (>= 1.25x SL and <= max_tp_dist * 1.15)
         if f1 and f1 < entry_price:
-            raw_f1_dist = entry_price - f1
-            if raw_f1_dist >= (1.25 * sl_dist) and raw_f1_dist <= (max_tp_dist * 1.15):
-                tp = max(f1 + front_pad, entry_price - max_tp_dist)
+            f1_net_tp = f1 + front_pad
+            if (entry_price - f1_net_tp) >= min_tp1_dist:
+                tp1 = f1_net_tp
             else:
-                tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
+                tp1 = entry_price - default_tp1_dist
         else:
-            tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
+            tp1 = entry_price - default_tp1_dist
 
-    # Hard Quant Floor: SL MUST NEVER BE GREATER THAN TP (Minimum R:R 1.25:1)
-    min_tp_dist = sl_dist * 1.25
-    if direction == 1:
-        if (tp - entry_price) < min_tp_dist:
-            tp = entry_price + min_tp_dist
-    else:
-        if (entry_price - tp) < min_tp_dist:
-            tp = entry_price - min_tp_dist
+    # Enforce hard quant floor for TP1
+    if direction == 1 and (tp1 - entry_price) < min_tp1_dist:
+        tp1 = entry_price + min_tp1_dist
+    elif direction == -1 and (entry_price - tp1) < min_tp1_dist:
+        tp1 = entry_price - min_tp1_dist
 
-    tp_pts = int(round(abs(entry_price - tp) / pt))
-    realized_rr = round(tp_pts / max(sl_pts, 1), 2)
+    tp1_pts = int(round(abs(entry_price - tp1) / pt)) if pt > 0 else 80
 
+    # TP2 Runner Calculation: anchored to C2/F2 or 1.50x TP1 pts
+    runner_ratio = float(os.getenv("M5_RUNNER_TP2_RATIO", "1.50"))
+    default_tp2_dist = (tp1_pts * runner_ratio) * pt
+
+    if direction == 1:  # BUY
+        if c2 and c2 > entry_price:
+            c2_net_tp = c2 - front_pad
+            c2_dist = c2_net_tp - entry_price
+            if (1.35 * (tp1 - entry_price)) <= c2_dist <= (1.80 * (tp1 - entry_price)):
+                tp2 = c2_net_tp
+            else:
+                tp2 = entry_price + default_tp2_dist
+        else:
+            tp2 = entry_price + default_tp2_dist
+    else:  # SELL
+        if f2 and f2 < entry_price:
+            f2_net_tp = f2 + front_pad
+            f2_dist = entry_price - f2_net_tp
+            if (1.35 * (entry_price - tp1)) <= f2_dist <= (1.80 * (entry_price - tp1)):
+                tp2 = f2_net_tp
+            else:
+                tp2 = entry_price - default_tp2_dist
+        else:
+            tp2 = entry_price - default_tp2_dist
+
+    tp2_pts = int(round(abs(entry_price - tp2) / pt)) if pt > 0 else int(round(tp1_pts * 1.5))
+    min_tp2_pts = int(round(tp1_pts * 1.30))
+    if tp2_pts < min_tp2_pts:
+        tp2_pts = int(round(tp1_pts * 1.50))
+        tp2 = entry_price + (tp2_pts * pt) if direction == 1 else entry_price - (tp2_pts * pt)
+
+    digits = 5 if pt < 0.01 else (3 if is_jpy else 2)
     return {
-        "sl": round(sl, 5 if pt < 0.01 else 2),
-        "tp": round(tp, 5 if pt < 0.01 else 2),
+        "sl": round(sl, digits),
+        "tp": round(tp1, digits),
+        "tp_runner": round(tp2, digits),
         "sl_pts": sl_pts,
-        "tp_pts": tp_pts,
-        "risk_reward": realized_rr
+        "tp_pts": tp1_pts,
+        "tp1_pts": tp1_pts,
+        "tp2_pts": tp2_pts,
+        "risk_reward": round(tp1_pts / max(sl_pts, 1), 2),
+        "risk_reward_runner": round(tp2_pts / max(sl_pts, 1), 2)
     }
 
 
@@ -178,6 +211,8 @@ class MarketScannerM5(MarketScanner):
                 w = zm.wall_override if (zm and hasattr(zm, "wall_override")) else {}
                 c1 = w.get("imm_ceiling_c1")
                 f1 = w.get("imm_floor_f1")
+                c2 = w.get("deep_ceiling_c2")
+                f2 = w.get("deep_floor_f2")
                 c1_g = w.get("c1_grade", "GRADE_2_INTERMEDIATE")
                 f1_g = w.get("f1_grade", "GRADE_2_INTERMEDIATE")
 
@@ -225,6 +260,8 @@ class MarketScannerM5(MarketScanner):
                     "immediate_floor_f1": f1,
                     "ceiling_c1": c1,
                     "floor_f1": f1,
+                    "deep_ceiling_c2": c2,
+                    "deep_floor_f2": f2,
                     "c1_reaction_grade": c1_g,
                     "f1_reaction_grade": f1_g,
                     "trend_label": "M5_MICRO_CONFLUENCE",
@@ -419,6 +456,8 @@ class MarketScannerM5(MarketScanner):
 
             c1 = macro.get('immediate_ceiling_c1')
             f1 = macro.get('immediate_floor_f1')
+            c2 = macro.get('deep_ceiling_c2')
+            f2 = macro.get('deep_floor_f2')
 
             geom = calculate_m5_sl_tp(
                 symbol=sym,
@@ -427,6 +466,8 @@ class MarketScannerM5(MarketScanner):
                 atr_m5=atr_m5,
                 c1=c1,
                 f1=f1,
+                c2=c2,
+                f2=f2,
                 spread_pts=cand.current_spread_pts,
                 pt=pt
             )
@@ -435,6 +476,7 @@ class MarketScannerM5(MarketScanner):
             cand.timeframe = "M5"
             cand.suggested_sl = geom["sl"]
             cand.suggested_tp = geom["tp"]
+            cand.suggested_tp_runner = geom["tp_runner"]
             cand.risk_reward_ratio = geom["risk_reward"]
             cand.current_atr_pts = int(round(atr_m5 / pt)) if pt > 0 else 50
             cand.action_tier = "M5_DIRECT_DEMO"
@@ -445,6 +487,8 @@ class MarketScannerM5(MarketScanner):
             cand.metadata["is_m5_demo"] = True
             cand.metadata["m5_sl_pts"] = geom["sl_pts"]
             cand.metadata["m5_tp_pts"] = geom["tp_pts"]
+            cand.metadata["m5_tp1_pts"] = geom["tp1_pts"]
+            cand.metadata["m5_tp2_pts"] = geom["tp2_pts"]
 
             m5_candidates.append(cand)
 

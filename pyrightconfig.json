@@ -1,0 +1,14 @@
+{
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".git"
+  ],
+  "extraPaths": [
+    "C:\\Users\\RizqyDaffa\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages",
+    "."
+  ],
+  "reportMissingImports": false
+}

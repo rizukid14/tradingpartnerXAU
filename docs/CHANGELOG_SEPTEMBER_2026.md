@@ -2,6 +2,48 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 118. Perubahan 15 September 2026 — Arsitektur Eksekusi Ganda Twin-Ticket M5, 3-Milestone State Machine, C2/F2 Runner Anchoring, Active Pending Runaway Watcher, dan Proteksi Otomatis Twin-SL Loss Shield
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Friksi Komisi & Asimetri Risk-Reward (Audit 14–15 September 2026)**:
+   - Audit performa semalam pada akun Live Cent VTMarkets (`#27556325`) menunjukkan komisi memakan ~40% gross profit ($110 USC dari $281 USC).
+   - Rata-rata Win ($27.67 USC) berbanding Loss ($27.77 USC) menghasilkan rasio 1.00:1 (flat EV sebelum komisi).
+2. **Potensi Favorable Excursion (MFE) & Trailing Profit**:
+   - Analisis MFE membuktikan posisi yang berbalik arah umumnya mengalami retracement di area 66%–68% TP, sehingga BEP di 80% gagal menyelamatkan trade. Menggeser BEP ke 65% TP1 terbukti mampu menyelamatkan 3 trade loss (-75.23 USC).
+   - Winning trades melaju rata-rata +5.1 pips melampaui TP1, membuktikan potensi tiket kedua (Runner TP2) pada 1.50x TP1 pts.
+3. **Preservasi Natural Hedging Keranjang 28 Pairs (Zero Skip Trade)**:
+   - Pengguna menegaskan dilarang melakukan skip trade / veto radar demi menjaga keseimbangan *natural hedging* keranjang mata uang. Penyehatan murni dilakukan pada matematika Risk-Reward: TP1 dijamin minimal $\ge 1.50\times \text{SL}$ + komisi padding.
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **Core Dataclass (`src/analytics/market_scanner.py`)**:
+   - Menambahkan field `suggested_tp_runner: float = 0.0` pada dataclass `CandidateSetup` untuk mencegah `AttributeError` di runtime.
+2. **Kalkulator Geometri M5 Scalping (`src/analytics/market_scanner_m5.py`)**:
+   - Mengintegrasikan C2/F2 caching dari ZCE `wall_override` (`deep_ceiling_c2` & `deep_floor_f2`) ke dalam `macro_cache`.
+   - 3-Tier Clamped SL (1.10x ATR M5): Major FX `[50-75 pts]`, High-Beta `[65-85 pts]`, JPY Crosses `[70-95 pts]`.
+   - TP1 Anchoring ke C1/F1 dengan komisi padding (0.6 pips) dan jaminan target sehat $\max(\text{round}(1.60\times\text{SL}), \text{tier\_min\_tp1})$ tanpa skip trade.
+   - TP2 Runner Anchoring ke C2/F2 jika berada dalam rentang $1.35\times \text{ s/d } 1.80\times \text{TP}_1$, atau $1.50\times \text{TP}_1$ pts. Blended R:R kedua tiket mencapai $\sim \mathbf{1.95 : 1}$.
+3. **Dedicated M5 Twin-Ticket State Machine (`src/analytics/position_manager.py`)**:
+   - Menambahkan `_m5_twin_registry` in-memory dengan fungsi `register_m5_twin_pair` dan `_rebuild_m5_twin_registry_from_open_positions` untuk pemulihan instan saat restart bot.
+   - Bypass mutlak generic BEP (0.80 TP), trailing stop, dan partial close untuk posisi berlabel `M5_T1` dan `M5_T2`.
+   - State Machine T1: Di 65% TP1 $\rightarrow$ SL naik ke Entry + Spread + Komisi + 1.0 pip pocket profit.
+   - State Machine T2 (Runner):
+     - Milestone 1 (65% TP1): SL naik ke Entry + Spread + Komisi + 10% TP2 pts.
+     - Milestone 2 (100% TP1): SL naik ke Entry + 50% TP1 pts.
+     - Milestone 3 (75% TP2): SL dikunci tepat di level harga TP1.
+   - **Twin-SL Loss Protection Shield**: Jika salah satu tiket terkena SL awal (tutup rugi sebelum BEP), tiket pasangan otomatis ditutup saat itu juga di harga market via `connector.close_position()`.
+4. **Execution Runner (`main_m5.py`)**:
+   - Lot Minimum Guard: Jika `lot_size < 2 * vol_min` $\rightarrow$ fallback otomatis ke tiket tunggal non-twin.
+   - Dispatcher mengeksekusi T1 (`comment=f"M5_T1_{setup}_{tp1_pts}"`) dan T2 (`comment=f"M5_T2_{setup}_{tp1_pts}"`) dengan pembagian lot 50:50.
+   - **Active Pending Runaway Watcher**: Menghitung live progress tick terhadap pending order. Jika harga live melaju $\ge 65\%$ menuju TP sebelum limit order terjemput, order seketika dibatalkan (`cancel_pending_order()`) dan cooldown 10 menit diaktifkan.
+   - **Winstreak Circuit Breaker**: Melacak closed deals sesi; jika tercapai 10 win beruntun, aktifkan pendingin sistem 30 menit.
+   - **Night Freeze 22:00–06:00 WIB**: Membekukan pembukaan order baru di jam likuiditas tipis, posisi tetap dikawal penuh.
+5. **Konfigurasi (`.env` & `config.py`)**:
+   - Menyelaraskan `NIGHT_FREEZE_START_HOUR_WIB=22`, `M5_TWIN_TICKET_ENABLED=true`, `M5_SL_ATR_MULT=1.10`, `M5_COMMISSION_PAD_PTS=6`, `M5_TP1_BEP_PCT=0.65`, `M5_RUNNER_TP2_RATIO=1.50`, `M5_PENDING_RUNAWAY_CANCEL_PCT=0.65`, `M5_WINSTREAK_COOLDOWN_COUNT=10`, `M5_WINSTREAK_COOLDOWN_MINUTES=30`.
+6. **Unit Tests (`tests/test_m5_twin_ticket_state_machine.py`)**:
+   - 7/7 unit tests PASS (Major, JPY, zero-skip guarantee, C1 anchoring, registry rebuild, milestone state machine, dan twin loss protection).
+
+---
+
 ## 117. Perubahan 14 September 2026 — Migrasi Penuh `main.py` ke Mode M5 Pure Quant Direct Execution (Live Cent `#27556325`), BEP 80% TP, & Cooldown 10 Menit
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

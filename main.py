@@ -1803,6 +1803,7 @@ def main():
             profit_lock_str = f" {UI.BOLD}{UI.GREEN}[TARGET +7.0% LOCKED]{UI.RST}" if getattr(risk, "_daily_profit_locked", False) else ""
             night_end_h = int(getattr(config, "NIGHT_FREEZE_END_HOUR_WIB", getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)))
             night_start_h = int(getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 0))
+            now_wib_h = datetime.now(_WIB).hour
             if night_start_h > night_end_h:
                 is_night_freeze = getattr(config, "ENABLE_NIGHT_FREEZE", True) and (now_wib_h >= night_start_h or now_wib_h < night_end_h)
             else:

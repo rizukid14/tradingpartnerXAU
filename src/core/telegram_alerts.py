@@ -63,7 +63,7 @@ def send_message(text, reply_markup=None):
 
 def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, session_multiplier=1.0, symbol=None,
                        ticket=None, entry_price=None, sl_price=None, tp_price=None, models="", confidence=0.0,
-                       setup="", reason="", invalidation="", setup_grade=""):
+                       setup="", reason="", invalidation="", setup_grade="", risk_usd=None, **kwargs):
     """Send trade entry alert with full technical, fundamental grade, and AI context."""
     emoji = "🟢" if signal == "BUY" else "🔴"
     mode_tag = " RECOVERY" if recovery_mode else (" DRY RUN" if config.DRY_RUN else " LIVE")
@@ -98,6 +98,8 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
     if entry_price:
         lines.append(f"• *Entry Price*: `{entry_price}`")
     lines.append(f"• *Lot Size*: `{lot}` (session x{session_multiplier})")
+    if risk_usd is not None:
+        lines.append(f"• *Risk*: `${risk_usd:.2f}`")
     lines.append(f"• *Stop Loss*: {sl_str}")
     lines.append(f"• *Take Profit*: {tp_str}")
     if grade_line:
@@ -119,7 +121,8 @@ def alert_trade_opened(signal, lot, sl_points, tp_points, recovery_mode=False, s
 
 def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_points, tp_points,
                                sl_price=None, tp_price=None, models="", confidence=0.0,
-                               setup="", reason="", invalidation="", expiration_minutes=120, setup_grade=""):
+                               setup="", reason="", invalidation="", expiration_minutes=120, setup_grade="",
+                               risk_usd=None, **kwargs):
     """Send rich notification when a pending order (buy_stop, sell_stop, buy_limit, sell_limit) is placed."""
     emoji = "⏳"
     etype_upper = (entry_type or "pending").upper()
@@ -150,9 +153,11 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
         f"• *Ticket*: `#{ticket}`",
         f"• *Entry Price*: `{entry_price}`",
         f"• *Lot Size*: `{lot}`",
-        f"• *Stop Loss*: {sl_str}",
-        f"• *Take Profit*: {tp_str}",
     ]
+    if risk_usd is not None:
+        lines.append(f"• *Risk*: `${risk_usd:.2f}`")
+    lines.append(f"• *Stop Loss*: {sl_str}")
+    lines.append(f"• *Take Profit*: {tp_str}")
     if grade_line:
         lines.append(grade_line)
 
