@@ -4006,3 +4006,30 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
   - Seluruh unit test suite: **365/365 tests PASSED (100% OK, 0 Failure)**.
   - Verifikasi audit empiris pada EURCAD, USDJPY, GBPJPY, EURUSD: 100% level benteng memiliki touch count dan status freshness yang akurat.
 
+---
+
+## 107. 14 September 2026 (Pagi) — Nonaktifkan Directional Hysteresis, Anti-Revenge Post-Loss Cooldown, & Koreksi Presisi Hierarki Likuiditas M1A vs M1B/M2
+
+- **Nonaktifkan Directional Hysteresis (`config.py`, `.env`, `data/scanner_cooldowns.json`)**:
+  - Menyetel `ENABLE_DIRECTIONAL_HYSTERESIS = false` di `.env` dan `config.py` (default: False).
+  - Mengosongkan memori kaku `"symbol_directional_state": {}` pada `data/scanner_cooldowns.json` untuk menghapus penguncian arah statis 8 jam pada USDJPY, GBPJPY, dan pair lainnya.
+  - Membuka kebebasan bagi mesin radar kuantitatif untuk merespons pembalikan struktur pasar dan *breakdown* impulsif secara dinamis tanpa terblokir memori buatan.
+- **Anti-Revenge Whipsaw Guard: Post-Loss Symbol Cooldown (`config.py`, `.env`, `market_scanner.py`, `main.py`)**:
+  - Menambahkan konfigurasi `POST_LOSS_COOLDOWN_SECONDS = 3600` (60 menit jeda per-simbol pasca terkena Stop Loss).
+  - Mengintegrasikan `self._symbol_loss_cooldowns` dengan penyimpanan persisten di `scanner_cooldowns.json`.
+  - Di `main.py:1683`: saat `risk.sync_closed_positions()` mendeteksi deal tertutup dengan profit negatif ($P/L < -0.01$, SL hit), sistem otomatis memanggil `scanner.record_symbol_loss(d_symbol)`.
+  - Di `market_scanner.py`: pemindaian radar cepat maupun izin eksekusi (`_is_direction_allowed`) langsung memblokir entri baru pada simbol yang sedang dalam masa pendinginan pasca-SL (`[POST-LOSS COOLDOWN]`), menuntaskan kasus *double SL* beruntun seperti `AUDNZD`.
+- **Koreksi Presisi Hierarki Likuiditas M1A vs M1B vs M2 (`dashboard.py` & `market_scanner.py`)**:
+  - **Audit Masalah USDJPY M1A di 61.8%**:
+    * Sesuai prinsip baku SMC & *Hard Execution Gate 2*, M1A adalah *Macro Boundary Sweep* / likuiditas eksternal (`PDL`/`PDH`, `Asian Low`/`High`, `PWL`/`PWH`, `EQL`/`EQH`) di area ekstrim Dealing Range ($DR \le 0.382$ atau $\ge 0.618$).
+    * Level 153.72 pada USDJPY adalah area retracement Fib 61.8% / *mid-chamber* (domain M2 Pullback atau M1B Internal Inducement), bukan sapuan batas makro M1A.
+    * Di `dashboard.py:calculate_predictive_matrix()`, batas Dealing Range sebelumnya keliru didefinisikan sebagai $C_1 - F_1$, sehingga $F_1$ selalu terhitung $0\%$ $DR$ secara semu, dan kondisi `sw_price == f1` memicu tautologi `M1A`.
+  - **Perbaikan Kuantitatif di `dashboard.py`**:
+    * Menggunakan Dealing Range H1 sejati dari `macro` (`dealing_range_high` / `adr_high` dan `dealing_range_low` / `adr_low`).
+    * Station Sweep kini menyeleksi likuiditas eksternal sejati di bawah/atas harga aktif (`asian_low`/`high`, `pdl`/`pdh`, `pwl`/`pwh`, `strong_low`/`high`).
+    * Evaluasi Subtype Kuantitatif: Jika target berada di $0.382 < DR < 0.618$ (seperti level 153.72), stasiun otomatis diklasifikasikan sebagai **`WAIT M1B` (Internal Inducement)** atau **`WAIT M2` (Pullback)**, dan murni menjadi **`WAIT M1A`** bila berada di batas likuiditas eksternal makro ($DR \le 0.382$ / $\ge 0.618$).
+  - **Penyelarasan di `market_scanner.py:get_radar_standbys()`**:
+    * Menghapus bypass naif `top_price == c1_val` dan `bot_price == f1_val`, mewajibkan M1A menyentuh level likuiditas eksternal terbukti (`asian_h/l`, `pdh/pdl`, `pwh/pwl`) atau berada pada $DR$ ekstrim.
+- **Hasil Verifikasi Komprehensif**:
+  - Seluruh unit test suite: **366/366 tests PASSED (100% OK, 0 Failure)** dalam 44.85 detik.
+

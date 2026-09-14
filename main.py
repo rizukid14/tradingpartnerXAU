@@ -1690,6 +1690,18 @@ def main():
                         d_desc = f"{d_reason} [{d_comment}]" if (d_comment and d_comment != d_reason) else (d_reason or 'unknown')
                         print(f"[CLOSE DETECTED] #{d_ticket} {d_symbol} {d_type} "
                               f"ditutup (P/L: {d_profit:+.2f}, reason: {d_desc})")
+                        # Anti-Revenge Whipsaw Guard: Aktifkan cooldown per-simbol jika posisi ditutup rugi (SL)
+                        if float(d_profit or 0.0) < -0.01:
+                            try:
+                                if scanner is not None and hasattr(scanner, "record_symbol_loss"):
+                                    scanner.record_symbol_loss(d_symbol)
+                                else:
+                                    from src.analytics.market_scanner import MarketScanner
+                                    sc_inst = getattr(MarketScanner, "_instance", None)
+                                    if sc_inst and hasattr(sc_inst, "record_symbol_loss"):
+                                        sc_inst.record_symbol_loss(d_symbol)
+                            except Exception as e_loss:
+                                logger.error(f"[POST-LOSS COOLDOWN ERROR] {e_loss}")
                         try:
                             from src.analytics.currency_strength import get_csm_delta_for_symbol
                             csm_close_val = get_csm_delta_for_symbol(d_symbol)

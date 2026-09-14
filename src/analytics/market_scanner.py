@@ -296,6 +296,7 @@ class MarketScanner:
         self._last_snapshot_ts: float = 0.0                    # wall-clock snapshot 5-menit ke gate_debug.log
         self._retest_rejected_levels: Dict[str, Dict[str, Any]] = {} # sym -> {level, rejected_at, entry_atr} (1 Episode Retest Debounce)
         self._symbol_directional_state: Dict[str, Dict[str, Any]] = {} # sym -> {dir: 1|-1, locked_at: float, reason: str}
+        self._symbol_loss_cooldowns: Dict[str, float] = {}             # sym -> post-loss cooldown expiry epoch
         MarketScanner._instance = self
 
     def _load_cooldowns(self) -> Dict[str, float]:
@@ -320,6 +321,13 @@ class MarketScanner:
                                 k: v for k, v in data["symbol_directional_state"].items()
                                 if isinstance(v, dict) and (now_ts - float(v.get("locked_at", 0))) < lock_dur
                             }
+
+                        # Anti-Revenge Post-Loss Cooldown persistence
+                        if "symbol_loss_cooldowns" in data and isinstance(data["symbol_loss_cooldowns"], dict):
+                            self._symbol_loss_cooldowns = {
+                                k: float(v) for k, v in data["symbol_loss_cooldowns"].items()
+                                if float(v) > now_ts
+                            }
         except Exception:
             pass
         return legacy_triggers
@@ -335,6 +343,10 @@ class MarketScanner:
                 "symbol_directional_state": {
                     k: v for k, v in getattr(self, "_symbol_directional_state", {}).items()
                     if isinstance(v, dict) and (now_ts - float(v.get("locked_at", 0))) < lock_dur
+                },
+                "symbol_loss_cooldowns": {
+                    k: v for k, v in getattr(self, "_symbol_loss_cooldowns", {}).items()
+                    if v > now_ts
                 }
             }
             with open(self._cooldown_file, "w", encoding="utf-8") as f:
@@ -416,6 +428,30 @@ class MarketScanner:
         self._symbol_last_trigger[clean_sym] = now_ts + dur_breathing
         self._save_cooldowns()
         logger.info(f"⏳ [SOFT TIMING HOLD] {clean_sym} dijeda bernapas {dur_breathing // 60:.0f}m (tanpa granular mechanism lockout).")
+
+    def record_symbol_loss(self, symbol: str, cooldown_seconds: Optional[int] = None):
+        """
+        Applies a post-loss cooldown to a symbol when a trade hits Stop Loss.
+        Prevents immediate revenge re-entry / whipsaw on the same pair (14 Sep 2026).
+        """
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        now_ts = time.time()
+        cd_secs = float(cooldown_seconds if cooldown_seconds is not None else getattr(config, "POST_LOSS_COOLDOWN_SECONDS", 3600))
+        if not hasattr(self, "_symbol_loss_cooldowns"):
+            self._symbol_loss_cooldowns = {}
+        self._symbol_loss_cooldowns[clean_sym] = now_ts + cd_secs
+        self._save_cooldowns()
+        logger.info(f"🛡️ [ANTI-REVENGE GUARD] Post-loss cooldown {cd_secs // 60:.0f}m diaktifkan untuk {clean_sym}.")
+
+    def is_symbol_loss_locked(self, symbol: str) -> Tuple[bool, str]:
+        """Checks if symbol is in post-loss cooldown."""
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        now_ts = time.time()
+        loss_until = getattr(self, "_symbol_loss_cooldowns", {}).get(clean_sym, 0.0)
+        if now_ts < loss_until:
+            rem_mins = max(1, int(round((loss_until - now_ts) / 60.0)))
+            return True, f"[POST-LOSS COOLDOWN] {clean_sym} sedang cooldown {rem_mins}m pasca-SL (Anti-Revenge Guard)."
+        return False, ""
 
     def is_mechanism_locked(self, symbol: str, setup_type: str, direction: int = 0) -> Tuple[bool, str]:
         """
@@ -1894,7 +1930,7 @@ class MarketScanner:
         valid_tops = [v for v in [asian_h, pdh_val, pwh_val, c1_val] if v > 0 and v >= mid - 0.50 * atr_val]
         top_price = min(valid_tops) if valid_tops else (c1_val or asian_h or (mid + 0.5 * atr_val))
         top_tag = "Asian High" if top_price == asian_h else ("PDH" if top_price == pdh_val else ("PWH" if top_price == pwh_val else "Macro Wall C1"))
-        top_sub = "M1A" if (top_price == c1_val or top_price == pwh_val or dr_pos >= 0.618) else "M1B"
+        top_sub = "M1A" if ((top_price in [asian_h, pdh_val, pwh_val] and top_price > 0) or dr_pos >= 0.618) else "M1B"
         top_lbl = f"{top_sub} Bearish Sweep Resistance [{top_tag}] ({'Macro SFP' if top_sub == 'M1A' else 'Internal Inducement'})"
         top_event_time = 0
         top_bar_age = 999
@@ -1911,7 +1947,7 @@ class MarketScanner:
         valid_bots = [v for v in [asian_l, pdl_val, pwl_val, f1_val] if v > 0 and v <= mid + 0.50 * atr_val]
         bot_price = max(valid_bots) if valid_bots else (f1_val or asian_l or (mid - 0.5 * atr_val))
         bot_tag = "Asian Low" if bot_price == asian_l else ("PDL" if bot_price == pdl_val else ("PWL" if bot_price == pwl_val else "Macro Wall F1"))
-        bot_sub = "M1A" if (bot_price == f1_val or bot_price == pwl_val or dr_pos <= 0.382) else "M1B"
+        bot_sub = "M1A" if ((bot_price in [asian_l, pdl_val, pwl_val] and bot_price > 0) or dr_pos <= 0.382) else "M1B"
         bot_lbl = f"{bot_sub} Bullish Sweep Support [{bot_tag}] ({'Macro SFP' if bot_sub == 'M1A' else 'Internal Inducement'})"
         bot_event_time = 0
         bot_bar_age = 999
@@ -3756,6 +3792,12 @@ class MarketScanner:
                 logger.debug(f"[RADAR] {sym} SKIP: {breath_reason}")
                 continue
 
+            # Anti-Revenge Whipsaw Guard: Post-loss cooldown (default 60 menit) pasca-SL
+            is_loss_locked, loss_reason = self.is_symbol_loss_locked(clean_sym)
+            if is_loss_locked:
+                logger.debug(f"[RADAR] {sym} SKIP: {loss_reason}")
+                continue
+
             # ── SESSION-AWARE PAIR ROUTER (Asia Pacific Focus & NY Pacific Cross Lock - Opsi 2) ──
             if getattr(config, "SESSION_AWARE_ROUTING_ENABLED", True):
                 if not self.is_symbol_allowed_for_session(sym, h):
@@ -3853,6 +3895,11 @@ class MarketScanner:
                     Returns: (allowed: bool, action_tier: str, reason: str)
                     """
                     clean_s = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+                    # Anti-Revenge Whipsaw Guard: Post-loss cooldown (14 Sep 2026)
+                    is_loss_locked, loss_reason = self.is_symbol_loss_locked(clean_s)
+                    if is_loss_locked:
+                        return False, "HARD_BLOCK", loss_reason
+
                     # 0. SFR Systemic Flow Catalyst Hard Directional Lock & Supreme Precedence
                     if sfr_catalyst == "BEARISH_FLOW" and target_dir == 1:
                         return False, "HARD_BLOCK", f"[SFR VETO] BUY blocked: Systemic Bearish Flow active ({sfr_age}b <= 48b)"

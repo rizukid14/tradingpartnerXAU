@@ -1306,8 +1306,11 @@ def calculate_predictive_matrix(
     ema50 = float(candles[-1].get("ema50", mid)) if candles else mid
 
     dr_pos_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
-    dr_hi = c1 if c1 > 0 else (mid + 1.5 * atr_val)
-    dr_lo = f1 if (f1 > 0 and f1 < dr_hi) else (mid - 1.5 * atr_val)
+    dr_hi = float(macro.get("dealing_range_high") or macro.get("adr_high") or macro.get("pwh") or 0.0)
+    dr_lo = float(macro.get("dealing_range_low") or macro.get("adr_low") or macro.get("pwl") or 0.0)
+    if dr_hi <= dr_lo or dr_hi <= 0 or dr_lo <= 0:
+        dr_hi = c1 if c1 > mid else (mid + 1.5 * atr_val)
+        dr_lo = f1 if (f1 > 0 and f1 < mid) else (mid - 1.5 * atr_val)
     dr_span = max(dr_hi - dr_lo, 1e-6)
 
     def _calc_dr_pos(p: float) -> float:
@@ -1445,13 +1448,27 @@ def calculate_predictive_matrix(
 
     # 2. STATION SWEEP: M1A / M1B LIQUIDITY SWEEP
     if is_bear:
-        sw_price = f1 if (f1 > 0 and f1 < mid) else (mid - 1.2 * atr_val)
+        pdl = float(macro.get("pdl", 0.0) or 0.0)
+        asian_l = float(macro.get("asian_low", 0.0) or 0.0)
+        pwl = float(macro.get("pwl", 0.0) or 0.0)
+        strong_l = float(macro.get("strong_low", 0.0) or macro.get("equal_low", 0.0) or 0.0)
+
+        # Check macro boundary vs internal mid-chamber levels
+        ext_lows = [p for p in [asian_l, pdl, pwl, strong_l, f2] if 0 < p < mid]
+        if f1 > 0 and f1 < mid:
+            # If f1 is at deep discount (<= 0.382 DR), it is a macro boundary
+            if _calc_dr_pos(f1) <= 0.382 or not ext_lows:
+                ext_lows.append(f1)
+
+        sw_price = max(ext_lows) if ext_lows else (f1 if (f1 > 0 and f1 < mid) else (mid - 1.2 * atr_val))
         sw_pips = round((mid - sw_price) / max(pip_val, 1e-6), 1)
         sw_sl = sw_price - max(0.60 * atr_val, 15.0 * point)
         sw_tp = mid + 1.2 * atr_val
         sw_rr = round(abs(sw_tp - sw_price) / max(abs(sw_price - sw_sl), 1e-5), 2)
         sw_dr = _calc_dr_pos(sw_price)
-        sw_subtype = "M1A" if (sw_dr <= 0.382 or (f1 > 0 and abs(sw_price - f1) <= 0.25 * atr_val)) else "M1B"
+
+        is_ext = (sw_dr <= 0.382) or any(abs(sw_price - p) <= 0.15 * atr_val for p in [pdl, asian_l, pwl, strong_l] if p > 0)
+        sw_subtype = "M1A" if is_ext else "M1B"
         sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
         sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
@@ -1461,7 +1478,7 @@ def calculate_predictive_matrix(
         sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
         if sw_is_coil:
             sw_status = "VETOED_COIL"
-            sw_trigger_cond = f"Level F1 ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Lower Highs squeeze'}). VETO FADE BUY — antisipasi breakdown M4 / retest M3."
+            sw_trigger_cond = f"Level Sweep ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Lower Highs squeeze'}). VETO FADE BUY — antisipasi breakdown M4 / retest M3."
         else:
             sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
             sw_trigger_cond = f"Tunggu harga menusuk bawah {sw_price:.{digits}f} ({sw_td}) sapu SSL, lalu reclaim dengan lower wick >= 30%."
@@ -1488,13 +1505,27 @@ def calculate_predictive_matrix(
             "status": sw_status
         })
     else:
-        sw_price = c1 if (c1 > mid) else (mid + 1.2 * atr_val)
+        pdh = float(macro.get("pdh", 0.0) or 0.0)
+        asian_h = float(macro.get("asian_high", 0.0) or 0.0)
+        pwh = float(macro.get("pwh", 0.0) or 0.0)
+        strong_h = float(macro.get("strong_high", 0.0) or macro.get("equal_high", 0.0) or 0.0)
+
+        # Check macro boundary vs internal mid-chamber levels
+        ext_highs = [p for p in [asian_h, pdh, pwh, strong_h, c2] if p > mid]
+        if c1 > mid:
+            # If c1 is at deep premium (>= 0.618 DR), it is a macro boundary
+            if _calc_dr_pos(c1) >= 0.618 or not ext_highs:
+                ext_highs.append(c1)
+
+        sw_price = min(ext_highs) if ext_highs else (c1 if (c1 > mid) else (mid + 1.2 * atr_val))
         sw_pips = round((sw_price - mid) / max(pip_val, 1e-6), 1)
         sw_sl = sw_price + max(0.60 * atr_val, 15.0 * point)
         sw_tp = mid - 1.2 * atr_val
         sw_rr = round(abs(sw_price - sw_tp) / max(abs(sw_sl - sw_price), 1e-5), 2)
         sw_dr = _calc_dr_pos(sw_price)
-        sw_subtype = "M1A" if (sw_dr >= 0.618 or (c1 > 0 and abs(sw_price - c1) <= 0.25 * atr_val)) else "M1B"
+
+        is_ext = (sw_dr >= 0.618) or any(abs(sw_price - p) <= 0.15 * atr_val for p in [pdh, asian_h, pwh, strong_h] if p > 0)
+        sw_subtype = "M1A" if is_ext else "M1B"
         sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
         sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
@@ -1504,7 +1535,7 @@ def calculate_predictive_matrix(
         sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
         if sw_is_coil:
             sw_status = "VETOED_COIL"
-            sw_trigger_cond = f"Level C1 ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Higher Lows accumulation'}). VETO FADE SELL — antisipasi breakout M4 / retest M3."
+            sw_trigger_cond = f"Level Sweep ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Higher Lows accumulation'}). VETO FADE SELL — antisipasi breakout M4 / retest M3."
         else:
             sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
             sw_trigger_cond = f"Tunggu harga menusuk atas {sw_price:.{digits}f} ({sw_td}) sapu BSL, lalu reclaim dengan upper wick >= 30%."
