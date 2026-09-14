@@ -17,7 +17,7 @@ Pengujian isolated di `main_demo.py` telah membuktikan efektivitas pemindaian be
 4. Mengunci lot maksimal per posisi secara simetris pada `MAX_POSITION_LOT=0.50` Cent.
 5. Mempertahankan aturan keras **Session Gating** (Tokyo, London, NY session allowed pairs), **Night Freeze**, dan **Dead Zone**.
 6. Memangkas durasi cooldown rejection dan post-loss menjadi **10 menit (600 detik)**.
-7. Menonaktifkan Trailing Stop dan Break-Even (`TRAILING_STOP_ENABLED=false`, `BREAK_EVEN_ENABLED=false`), membiarkan trade menyentuh target TP atau SL penuh (binary outcome).
+7. Mengaktifkan Break-Even pada 80% jarak TP (`BREAK_EVEN_ENABLED=true`, `BREAK_EVEN_TRIGGER_TP_PCT=0.80`), serta menonaktifkan Trailing Stop dan Partial Close (`TRAILING_STOP_ENABLED=false`, `PARTIAL_CLOSE_ENABLED=false`).
 
 ---
 
@@ -60,7 +60,9 @@ graph TD
   - `POST_LOSS_COOLDOWN_SECONDS=600`
   - `SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS=120`
   - `TRAILING_STOP_ENABLED=false`
-  - `BREAK_EVEN_ENABLED=false`
+  - `PARTIAL_CLOSE_ENABLED=false`
+  - `BREAK_EVEN_ENABLED=true`
+  - `BREAK_EVEN_TRIGGER_TP_PCT=0.80`
   - `M5_PENDING_EXPIRATION_MINUTES=20`
   - `MT5_ACCOUNT_MODE=live`
 - `config.py`:
@@ -92,7 +94,8 @@ graph TD
   - Membaca kapasitas 50 slot posisi tanpa membatasi via CBSS jika dinonaktifkan.
   - Menjaga plafon per-posisi pada `MAX_POSITION_LOT=0.50`.
 - `position_manager.py`:
-  - Menghormati flag `TRAILING_STOP_ENABLED=false` dan `BREAK_EVEN_ENABLED=false` sehingga order M5 tidak digeser SL-nya, murni menyentuh TP ZCE atau SL ATR.
+  - Menghormati flag `TRAILING_STOP_ENABLED=false` dan `PARTIAL_CLOSE_ENABLED=false`.
+  - Mengunci BEP ke level entry begitu floating profit mencapai 80% jarak TP (`BREAK_EVEN_TRIGGER_TP_PCT=0.80`).
   - Tetap menjalankan `Pre-Rollover Shield` (03:50–04:15 WIB) untuk menutup order berbahaya jelang rollover harian.
 
 ### 3.7. `tests/test_*.py`
