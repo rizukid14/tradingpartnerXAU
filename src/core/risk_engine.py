@@ -637,10 +637,15 @@ class RiskEngine:
             return True, ""
 
         now = now_wib or datetime.now(WIB)
-        start_hour = int(getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23))
+        start_hour = int(getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 0))
         end_hour = int(getattr(config, "NIGHT_FREEZE_END_HOUR_WIB", getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)))
         # start_hour s/d end_hour WIB
-        if now.hour >= start_hour or now.hour < end_hour:
+        if start_hour > end_hour:
+            is_frozen = (now.hour >= start_hour or now.hour < end_hour)
+        else:
+            is_frozen = (start_hour <= now.hour < end_hour)
+
+        if is_frozen:
             return False, f" [RISK] Night Freeze ({now.strftime('%H:%M')} WIB). Pembukaan order FX baru dibekukan ({start_hour:02d}:00–{end_hour:02d}:00 WIB)."
 
         return True, ""

@@ -339,7 +339,7 @@ def _manage_twin_trades(positions):
     )
 
 
-def manage_all_positions():
+def manage_all_positions(*args, **kwargs):
     """
     Iterates ALL open bot positions (any symbol - XAU or BTC) and applies:
     1. Partial close at TP1 (close 50% of position at first target)
@@ -1510,6 +1510,17 @@ def audit_pending_orders_thesis():
                 if is_order_success(res):
                     print(f"\n{UI.RED}[THESIS FAILURE CANCEL]{UI.RST} Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
                     logger.info(f"[THESIS FAILURE CANCEL] Pending Order #{ord_item.ticket} ({sym}) Dibatalkan: {cancel_reason}")
+                    # Apply dedicated cancel cooldown (default 10m / 600s)
+                    cd_sec = int(getattr(config, "PENDING_ORDER_CANCEL_COOLDOWN_SECONDS", 600))
+                    try:
+                        from src.analytics.market_scanner import MarketScanner
+                        inst = getattr(MarketScanner, '_instance', None)
+                        if inst and hasattr(inst, 'mark_symbol_cancelled'):
+                            inst.mark_symbol_cancelled(sym, cooldown_seconds=cd_sec, reason=f"Thesis Invalidation ({cancel_reason[:30]})")
+                            logger.info(f"[THESIS CANCEL LOCK] {sym} dikunci cooldown {cd_sec}s di scanner.")
+                    except Exception as e_cd:
+                        logger.debug(f"[THESIS CANCEL LOCK ERROR] {sym}: {e_cd}")
+
                     try:
                         tg.alert_trade_aborted(
                             symbol=sym,

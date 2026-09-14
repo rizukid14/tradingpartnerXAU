@@ -276,11 +276,11 @@ def test_news_blackout_non_usd_pair_specific_opt_out():
 # =============================================================================
 
 def test_night_freeze_blocks_fx_allows_btc():
-    """Night freeze blocks new FX orders between 23:00 and 07:00 WIB; BTC allowed 24/7."""
+    """Night freeze blocks new FX orders between 00:00 and 06:00 WIB; BTC allowed 24/7."""
     risk = RiskEngine()
     
-    # 23:30 WIB -> Night freeze active
-    time_night = datetime(2026, 9, 9, 23, 30, tzinfo=WIB)
+    # 02:30 WIB -> Night freeze active (00:00 - 06:00 WIB)
+    time_night = datetime(2026, 9, 9, 2, 30, tzinfo=WIB)
     
     # FX blocked
     ok_fx, msg_fx = risk._check_night_freeze(symbol="EURUSD", now_wib=time_night)

@@ -76,3 +76,61 @@
 4. **Full Test Discover Across Entire Repository**:
    - Perintah: `python -m unittest discover -s tests -p "test_*.py"`
    - Hasil: **230+ tests OK (Exit Code 0)**.
+
+---
+
+## 4. Post-Mortem Insiden: M5 Runner BEP Position Manager Mismatch (14 Sep 2026)
+
+### A. Deskripsi Masalah
+- **Gejala**: Posisi `GBPUSD-ECNc` SELL mencapai >88% jarak TP, tetapi SL tidak digeser ke BEP secara otomatis oleh bot, sehingga pengguna harus menggeser SL manual.
+- **Root Cause**: `main_m5.py` memanggil `position_manager.manage_all_positions(connector, risk)` dengan 2 argumen, padahal definisi di `position_manager.py` hanya menerima 0 argumen (`def manage_all_positions():`). Hal ini menyebabkan `TypeError` di setiap iterasi loop 2 detik yang tertelan secara diam-diam oleh `logger.debug`, sehingga seluruh siklus manajemen posisi (BEP 80% TP, trailing stop, pre-rollover shield) tidak pernah dieksekusi.
+
+### B. Solusi yang Diterapkan
+1. **`main_m5.py`**: Memperbaiki pemanggilan menjadi `position_manager.manage_all_positions()` (tanpa argumen) serta mengganti penanganan error menjadi `logger.error` dan `print` agar kegagalan langsung terlihat di konsol.
+2. **`src/analytics/position_manager.py`**: Menambahkan parameter fleksibel `*args, **kwargs` pada definisi `def manage_all_positions(*args, **kwargs):` sebagai proteksi *defensive programming*.
+3. **Verifikasi**: Uji coba langsung fungsi `manage_all_positions()` pada 7 posisi terbuka live di akun Cent MT5 berjalan sukses tanpa error. Bot direstart dan kini mengelola posisi secara aktif.
+
+---
+
+## 5. Penyempurnaan Cockpit Dashboard: Toggle Micro-ZCE vs Macro-ZCE & SFC Basket Telemetry (14 Sep 2026)
+
+### A. Fitur Baru yang Diimplementasikan
+1. **Toggle Interaktif `[ 🎯 Micro-ZCE | 🏛️ Macro-ZCE ]`**:
+   - Ditambahkan di toolbar filter strip chart ([`dashboard_assets.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/dashboard_assets.py)).
+   - Pengguna dapat beralih secara instan antara stasiun Micro-ZCE (M5/M15/H1 rapat 8–18 pips yang diincar bot M5) dan benteng Macro-ZCE (H1/D1/W1).
+2. **Sinkronisasi Timeframe Otomatis**:
+   - Memilih tombol `M5 Micro` secara otomatis mengaktifkan mode `Micro-ZCE` dan memberi prefix `µ` pada stasiun di chart (misal `µC1 [G2] 0.71190` pada AUDUSD).
+   - Memilih `H1 Structure` atau `H4 Pattern` secara otomatis mengaktifkan mode `Macro-ZCE` (misal `C1 [G3] 0.71500`).
+3. **M5 Background Radar Integration**:
+   - [`dashboard.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/dashboard.py) menginisialisasi `MarketScannerM5` saat konfigurasi `TIMEFRAME=M5`, sehingga daftar pair di watchlist dan radar proximity 100% konsisten dengan bot eksekusi live.
+4. **Live Currency Basket SFC Telemetry**:
+   - Di header atas dashboard, ditambahkan badge telemetri **`Basket SFC`** yang menghitung eksposur agregat posisi aktif secara real-time (misal `USD +4 • JPY +2 • CHF -3`).
+
+### B. Hasil Verifikasi Live
+- Uji endpoint API `/api/overview` berhasil mengembalikan data akun, 7 posisi live, dan matriks eksposur keranjang SFC.
+- Uji endpoint `/api/symbol/AUDUSD-ECNc?tf=M5&zce_mode=micro` mengembalikan 7 stasiun Micro-ZCE presisi (`C1 = 0.71190` persis di area entry order sell bot).
+- Uji endpoint `/api/symbol/AUDUSD-ECNc?tf=H1&zce_mode=macro` mengembalikan 8 level benteng makro institusional.
+- Dashboard server (Port 8765) direstart dan beroperasi mulus.
+
+---
+
+## 6. Cooldown 10 Menit Pasca Pembatalan Pending Order (Manual & 75% TP Runaway) & Shift Night Freeze ke 00:00 WIB
+
+### A. Fitur Baru yang Diimplementasikan
+1. **Cooldown 10 Menit (`PENDING_ORDER_CANCEL_COOLDOWN_SECONDS = 600`)**:
+   - Ditambahkan di [`.env`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/.env) dan [`config.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/config.py).
+   - Menyimpan status cooldown di `self._symbol_cancel_cooldowns` dan file persisten `scanner_cooldowns_m5.json`.
+2. **Auto-Cooldown saat Target Proximity 75% TP Terlewati**:
+   - Di [`position_manager.py:audit_pending_orders_thesis()`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/src/analytics/position_manager.py): saat order dicabut karena harga sudah menempuh $\ge 75\%$ jarak TP tanpa ter-fill, sistem langsung mendaftarkan cooldown 10 menit ke instance scanner aktif.
+3. **Pending Order Watcher di `main_m5.py`**:
+   - Ditambahkan fungsi `_sync_pending_orders(scanner)` pada loop 2 detik: mendeteksi tiket pending order yang dibatalkan manual oleh pengguna di MT5, mengunci pair selama 10 menit, dan mengirim notifikasi pembatalan ke Telegram.
+4. **Night Freeze Dimulai Jam 00:00 WIB**:
+   - `NIGHT_FREEZE_START_HOUR_WIB = 0` (WIB) disinkronkan di [`.env`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/.env) dan [`config.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/config.py).
+   - Memperbaiki bug perbandingan jam di [`risk_engine.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/src/core/risk_engine.py), [`market_scanner.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/src/analytics/market_scanner.py), dan [`main.py`](file:///c:/Data%20(D)/Vibecoding/tradingpartnerXAU/main.py) dengan logic boundary yang aman untuk rentang `0 <= now.hour < 6`.
+
+### B. Hasil Verifikasi Otomatis & Live
+- **Unit Test**: 60/60 tests PASSED (100% OK) di `test_market_scanner_m5.py`, `test_cbss_and_risk_shields.py`, `test_audit_pending_orders_thesis.py`, dan `test_market_scanner.py`.
+- **Live Execution**: Bot `main_m5.py` dijalankan ulang secara bersih dan langsung memindai 28 pairs serta berhasil mengeksekusi order riil di akun Cent.
+
+
+

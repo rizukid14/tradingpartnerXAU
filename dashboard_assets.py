@@ -1334,6 +1334,10 @@ html, body {
       <span class="stat-label">Timing:</span>
       <span class="stat-val" id="timing-phase-val" style="color:var(--green);font-size:10.5px;font-weight:700;">EXPANSION</span>
     </div>
+    <div class="account-stat" id="basket-exposure-stat" style="display:none;" title="SFC & Currency Basket Exposure">
+      <span class="stat-label">Basket SFC:</span>
+      <span class="stat-val" id="basket-exposure-val" style="color:var(--amber);font-size:10.5px;font-weight:700;">—</span>
+    </div>
     <div class="clock-text" id="live-clock">--:--:-- WIB</div>
   </div>
 </div>
@@ -1434,6 +1438,7 @@ html, body {
         <span class="filter-strip-title">Filter 1-1:</span>
         <div class="chip-toggle-group" id="zce-chips-group">
           <button class="chip-btn active-purple" id="chip-radar" data-chip="radar" title="Toggle Garis Putus-Putus & Marker M1..M4 Radar"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">radar</span> M1-M4</button>
+          <button class="chip-btn active-amber" id="chip-zce-mode" data-zce-mode="micro" title="Toggle Mode ZCE: Micro-ZCE (M5/M15 Stasiun Cuan Rapat) vs Macro-ZCE (H1/D1 Benteng Makro)"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:-1px;">layers</span> <span id="zce-mode-text">Micro-ZCE</span></button>
           <button class="chip-btn active" id="chip-f1c1" data-chip="f1c1" title="Toggle Level F1 & C1 (Primary Support & Resistance)">F1/C1</button>
           <button class="chip-btn" id="chip-f2c2" data-chip="f2c2" title="Toggle Level F2 & C2 (Secondary Support & Resistance)">F2/C2</button>
           <button class="chip-btn" id="chip-ext" data-chip="ext" title="Toggle Level Extension di atas F2 & C2 (F3+, C3+)">EXT</button>
@@ -1546,6 +1551,7 @@ html, body {
 // State Management
 let currentSymbol = "EURCAD-ECNc";
 let currentTF = "M5";
+let currentZceMode = "micro"; // "micro" (M5/M15 stations) or "macro" (H1/D1 fortresses)
 let currentFilter = "all";
 let currentDrawerTab = "orders";
 let activeVerticalFilter = "regimes"; // "sessions", "regimes", "both", "off"
@@ -2979,7 +2985,8 @@ function renderChartLevels(data) {
     });
   }
 
-  const currentLadderKey = `${data.symbol || currentSymbol}_${currentTF}_${filterChipF1C1}_${filterChipF2C2}_${filterChipEXT}_${data.w1_slope_ceiling || 0}_` +
+  const activeModeTag = data.zce_mode || currentZceMode;
+  const currentLadderKey = `${data.symbol || currentSymbol}_${currentTF}_${activeModeTag}_${filterChipF1C1}_${filterChipF2C2}_${filterChipEXT}_${data.w1_slope_ceiling || 0}_` +
     filteredLadder.map(w => `${w.tier}:${w.price}`).join("|");
   const isScopeChanged = (lastRenderedSymbol !== (data.symbol || currentSymbol) || lastRenderedTF !== currentTF);
 
@@ -3044,7 +3051,8 @@ function renderChartLevels(data) {
     if (w.freshness_label && typeof w.freshness_label === "string" && w.freshness_label.trim().length > 0) {
       freshSuffix = ` • ${w.freshness_label}`;
     }
-    const shortLabel = `${w.tier} [${gStr}] ${w.price.toFixed(data.digits || 5)}${freshSuffix}`;
+    const zPrefix = (activeModeTag === "micro") ? "µ" : "";
+    const shortLabel = `${zPrefix}${w.tier} [${gStr}] ${w.price.toFixed(data.digits || 5)}${freshSuffix}`;
 
     // Build confluences string for hover tooltip
     let confStr = "";
@@ -3171,10 +3179,20 @@ async function fetchOverview() {
 // Fetch Symbol Detailed Data
 async function fetchSymbolData() {
   try {
-    const res = await fetch(`/api/symbol/${encodeURIComponent(currentSymbol)}?tf=${currentTF}`);
+    const res = await fetch(`/api/symbol/${encodeURIComponent(currentSymbol)}?tf=${currentTF}&zce_mode=${currentZceMode}`);
     if (!res.ok) return;
     const data = await res.json();
     cachedSymbolData = data;
+    if (data.zce_mode) {
+      currentZceMode = data.zce_mode;
+      const chipZceMode = document.getElementById("chip-zce-mode");
+      const textEl = document.getElementById("zce-mode-text");
+      if (textEl) textEl.textContent = (currentZceMode === "micro") ? "Micro-ZCE" : "Macro-ZCE";
+      if (chipZceMode) {
+        chipZceMode.classList.toggle("active-amber", currentZceMode === "micro");
+        chipZceMode.classList.toggle("active-cyan", currentZceMode === "macro");
+      }
+    }
     renderSymbolHeader(data);
     renderChartData(data);
     renderGates(data.gates);
@@ -3185,7 +3203,7 @@ async function fetchSymbolData() {
 }
 
 // Render Top Header
-function renderHeader(acc, clock, shadowRadar, timing) {
+function renderHeader(acc, clock, shadowRadar, timing, currencyExposure) {
   if (!acc) return;
   document.getElementById("acc-login").textContent = acc.login || "Live MT5";
   document.getElementById("acc-balance").textContent = `$${(acc.balance || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
@@ -3215,18 +3233,35 @@ function renderHeader(acc, clock, shadowRadar, timing) {
     const phase = timing.timing_phase || "--";
     const mode = timing.target_mode || "--";
     let shortPhase = phase;
-    if (phase.includes("DEAD")) shortPhase = "DEAD ZONE";
-    else if (phase.includes("LULL")) shortPhase = "MIDDAY LULL";
-    else if (phase.includes("EXPANSION")) shortPhase = "EXPANSION";
+    if (phase.includes("SWEEP")) shortPhase = "SWEEP LIQUIDITY";
+    else if (phase.includes("EXPANSION")) shortPhase = "SESSION EXPANSION";
+    else if (phase.includes("STAGNATION")) shortPhase = "FIBER ROTATION";
+    else if (phase.includes("DEAD")) shortPhase = "DEAD ZONE";
     tmEl.textContent = shortPhase;
-    tmEl.title = `${phase} (${mode})`;
-    if (phase.includes("LULL")) {
+    tmEl.title = `Macro Timing Phase: ${phase}\nExecution Target Mode: ${mode}`;
+    if (phase.includes("DEAD") || phase.includes("STAGNATION")) {
       tmEl.style.color = "var(--amber)";
-    } else if (phase.includes("DEAD")) {
-      tmEl.style.color = "var(--red)";
     } else {
       tmEl.style.color = "var(--green)";
     }
+  }
+
+  const expBox = document.getElementById("basket-exposure-stat");
+  const expVal = document.getElementById("basket-exposure-val");
+  if (currencyExposure && Object.keys(currencyExposure).length > 0) {
+    if (expBox) expBox.style.display = "flex";
+    const parts = [];
+    for (const [curr, net] of Object.entries(currencyExposure)) {
+      if (net > 0) parts.push(`${curr} +${net}`);
+      else if (net < 0) parts.push(`${curr} ${net}`);
+    }
+    if (expVal) {
+      expVal.textContent = parts.slice(0, 3).join(" • ") || "FLAT";
+      expVal.title = `Currency Basket Aggregate Exposures:\n${parts.join("\n") || "Neutral / Flat"}`;
+      expVal.style.color = parts.some(p => p.includes("USD +") || p.includes("JPY +")) ? "var(--green)" : "var(--amber)";
+    }
+  } else if (expBox) {
+    expBox.style.display = "none";
   }
 
   const shEl = document.getElementById("shadow-stat-val");
@@ -4106,6 +4141,20 @@ function setupEvents() {
       document.querySelectorAll(".tf-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       currentTF = btn.getAttribute("data-tf");
+      // Auto-sync ZCE mode with Timeframe
+      if (currentTF === "M5") {
+        currentZceMode = "micro";
+      } else if (currentTF === "H1" || currentTF === "H4") {
+        currentZceMode = "macro";
+      }
+      const chipZceMode = document.getElementById("chip-zce-mode");
+      const textEl = document.getElementById("zce-mode-text");
+      if (textEl) textEl.textContent = (currentZceMode === "micro") ? "Micro-ZCE" : "Macro-ZCE";
+      if (chipZceMode) {
+        chipZceMode.classList.toggle("active-amber", currentZceMode === "micro");
+        chipZceMode.classList.toggle("active-cyan", currentZceMode === "macro");
+      }
+      lastRenderedLadderKey = null; // Force level re-render
       fetchSymbolData();
     });
   });
@@ -4145,6 +4194,20 @@ function setupEvents() {
         localStorage.setItem("zce_radar", filterShowRadar ? "1" : "0");
       } catch(e) {}
       if (cachedSymbolData) renderChartLevels(cachedSymbolData);
+    });
+  }
+
+  // Dynamic Micro-ZCE vs Macro-ZCE Mode Toggle
+  const chipZceMode = document.getElementById("chip-zce-mode");
+  if (chipZceMode) {
+    chipZceMode.addEventListener("click", () => {
+      currentZceMode = (currentZceMode === "micro") ? "macro" : "micro";
+      const textEl = document.getElementById("zce-mode-text");
+      if (textEl) textEl.textContent = (currentZceMode === "micro") ? "Micro-ZCE" : "Macro-ZCE";
+      chipZceMode.classList.toggle("active-amber", currentZceMode === "micro");
+      chipZceMode.classList.toggle("active-cyan", currentZceMode === "macro");
+      lastRenderedLadderKey = null; // Force level re-render
+      fetchSymbolData();
     });
   }
 

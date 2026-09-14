@@ -13,7 +13,7 @@ import os
 import sys
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # 1. Force UTF-8 encoding for standard output on Windows
@@ -198,6 +198,87 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
         return False
 
 
+_known_pending_orders = {}
+
+
+def _sync_pending_orders(scanner):
+    """
+    Tracks pending orders lifecycle in M5 bot:
+    - If a pending order is filled into an active position -> send alert_pending_order_filled.
+    - If a pending order disappears without becoming an open position (cancelled manually by user or expired) ->
+      apply 10-minute cancel cooldown on the symbol in scanner and send Telegram notification.
+    """
+    global _known_pending_orders
+    try:
+        mt = getattr(config, "mt5", None)
+        if mt is None:
+            return
+        orders = mt.orders_get() or []
+        cur_order_map = {}
+        for o in orders:
+            t = getattr(o, "ticket", None)
+            if t is not None:
+                cur_order_map[t] = {
+                    "ticket": t,
+                    "symbol": getattr(o, "symbol", ""),
+                    "type": getattr(o, "type", 0),
+                    "price": getattr(o, "price_open", 0.0),
+                    "sl": getattr(o, "sl", 0.0),
+                    "tp": getattr(o, "tp", 0.0),
+                }
+
+        # 1. Register newly observed pending orders
+        for t, o in cur_order_map.items():
+            if t not in _known_pending_orders:
+                _known_pending_orders[t] = o
+
+        # 2. Detect disappearing orders
+        disappeared = [t for t in _known_pending_orders if t not in cur_order_map]
+        if not disappeared:
+            return
+
+        open_positions = connector.get_all_open_positions() if hasattr(connector, 'get_all_open_positions') else []
+        open_tickets = {p.get("ticket") for p in open_positions}
+
+        deal_order_to_pos = {}
+        try:
+            now_dt = datetime.now()
+            from_epoch = int((now_dt - timedelta(days=2)).timestamp())
+            to_epoch = int(now_dt.timestamp()) + 86400
+            deals = mt.history_deals_get(from_epoch, to_epoch) or []
+            for d in deals:
+                if getattr(d, "entry", None) == getattr(mt, "DEAL_ENTRY_IN", 0) and getattr(d, "order", 0):
+                    deal_order_to_pos.setdefault(d.order, getattr(d, "position_id", d.order))
+        except Exception as ed:
+            logger.debug(f"[M5 PENDING DEAL LOOKUP] {ed}")
+
+        cd_sec = int(getattr(config, "PENDING_ORDER_CANCEL_COOLDOWN_SECONDS", 600))
+        for t in disappeared:
+            info = _known_pending_orders.pop(t, {})
+            sym = info.get("symbol", "")
+            price = info.get("price", 0.0)
+            ptype = "BUY_LIMIT" if info.get("type") in (2, getattr(mt, "ORDER_TYPE_BUY_LIMIT", 2)) else "SELL_LIMIT"
+            pos_id = deal_order_to_pos.get(t)
+
+            if pos_id or t in open_tickets:
+                res_pos = pos_id or t
+                print(f" {UI.GREEN}[PENDING FILLED]{UI.RST} Pending #{t} {sym} ter-fill menjadi posisi aktif #{res_pos}!")
+                try:
+                    tg.alert_pending_order_filled(t, sym, ptype, price, pos_id=res_pos, sl_price=info.get("sl"), tp_price=info.get("tp"))
+                except Exception:
+                    pass
+            else:
+                print(f" {UI.YELLOW}[PENDING CANCELLED/EXPIRED]{UI.RST} Pending #{t} {sym} ({ptype}) dibatalkan / expired. Mengaktifkan cooldown {cd_sec // 60}m.")
+                if scanner and hasattr(scanner, "mark_symbol_cancelled"):
+                    scanner.mark_symbol_cancelled(sym, cooldown_seconds=cd_sec, reason="Cancelled / Expired")
+                try:
+                    tg.alert_pending_order_cancelled(t, sym, ptype, price, reason=f"Dibatalkan User / Expired (Cooldown {cd_sec // 60}m Aktif)")
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"[M5 PENDING SYNC ERROR] {e}")
+
+
 def main():
     print(f"""
 {UI.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
@@ -243,11 +324,13 @@ def main():
         while True:
             now_epoch = time.time()
 
-            # A. Manage Active Positions every 2 seconds (BEP 80% TP, Pre-Rollover Shield)
+            # A. Manage Active Positions & Pending Order Lifecycle every 2 seconds (BEP 80% TP, Pre-Rollover Shield, Cancel Cooldown)
             try:
-                position_manager.manage_all_positions(connector, risk)
+                position_manager.manage_all_positions()
+                _sync_pending_orders(scanner)
             except Exception as e:
-                logger.debug(f"[POSITION MANAGER] {e}")
+                logger.error(f"[POSITION/PENDING MANAGER ERROR] {e}")
+                print(f" {UI.RED}[POSITION/PENDING MANAGER ERROR]{UI.RST} {e}")
 
             # B. Fast Radar Scan every 10-15 seconds
             if now_epoch - _last_radar_scan >= _scan_interval:

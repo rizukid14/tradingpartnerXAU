@@ -66,6 +66,16 @@ class TestMarketScannerM5(unittest.TestCase):
     def test_m5_cooldowns(self):
         self.assertEqual(getattr(config, "POST_LOSS_COOLDOWN_SECONDS", 0), 600)
         self.assertEqual(getattr(config, "SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 0), 600)
+        self.assertEqual(getattr(config, "PENDING_ORDER_CANCEL_COOLDOWN_SECONDS", 0), 600)
+
+    def test_m5_pending_cancel_cooldown_lock(self):
+        scanner = MarketScannerM5(symbols=["EURUSD-ECNc"])
+        sym = "EURUSD-ECNc"
+        scanner.mark_symbol_cancelled(sym, cooldown_seconds=600, reason="Test 75% TP Runaway")
+        is_locked, msg = scanner.is_symbol_cancel_locked(sym)
+        self.assertTrue(is_locked)
+        self.assertIn("10m", msg)
+
 
     def test_xau_btc_quarantined_to_paper_trade(self):
         # XAUUSD and BTCUSD must strictly be paper trade only (quarantined from MT5 live execution)

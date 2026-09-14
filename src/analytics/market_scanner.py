@@ -297,6 +297,7 @@ class MarketScanner:
         self._retest_rejected_levels: Dict[str, Dict[str, Any]] = {} # sym -> {level, rejected_at, entry_atr} (1 Episode Retest Debounce)
         self._symbol_directional_state: Dict[str, Dict[str, Any]] = {} # sym -> {dir: 1|-1, locked_at: float, reason: str}
         self._symbol_loss_cooldowns: Dict[str, float] = {}             # sym -> post-loss cooldown expiry epoch
+        self._symbol_cancel_cooldowns: Dict[str, float] = {}           # sym -> pending cancel cooldown expiry epoch
         MarketScanner._instance = self
 
     def _load_cooldowns(self) -> Dict[str, float]:
@@ -328,6 +329,13 @@ class MarketScanner:
                                 k: float(v) for k, v in data["symbol_loss_cooldowns"].items()
                                 if float(v) > now_ts
                             }
+
+                        # Pending Order Cancellation Cooldown persistence
+                        if "symbol_cancel_cooldowns" in data and isinstance(data["symbol_cancel_cooldowns"], dict):
+                            self._symbol_cancel_cooldowns = {
+                                k: float(v) for k, v in data["symbol_cancel_cooldowns"].items()
+                                if float(v) > now_ts
+                            }
         except Exception:
             pass
         return legacy_triggers
@@ -347,6 +355,10 @@ class MarketScanner:
                 "symbol_loss_cooldowns": {
                     k: v for k, v in getattr(self, "_symbol_loss_cooldowns", {}).items()
                     if v > now_ts
+                },
+                "symbol_cancel_cooldowns": {
+                    k: v for k, v in getattr(self, "_symbol_cancel_cooldowns", {}).items()
+                    if v > now_ts
                 }
             }
             with open(self._cooldown_file, "w", encoding="utf-8") as f:
@@ -354,14 +366,28 @@ class MarketScanner:
         except Exception:
             pass
 
-    def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: int = 1800):
-        """Applies a cooldown when a pending order is cancelled or expired."""
+    def mark_symbol_cancelled(self, symbol: str, cooldown_seconds: Optional[int] = None, reason: str = "Pending Cancelled/Expired"):
+        """Applies a dedicated cooldown when a pending order is cancelled or expired."""
         clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
         now_ts = time.time()
-        self._symbol_last_trigger[clean_sym] = now_ts + max(0, cooldown_seconds - 900)
-        self._symbol_last_eval[clean_sym] = now_ts + min(float(cooldown_seconds), float(getattr(config, "SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS", 180)))
+        cd_secs = float(cooldown_seconds if cooldown_seconds is not None else getattr(config, "PENDING_ORDER_CANCEL_COOLDOWN_SECONDS", 600))
+        if not hasattr(self, "_symbol_cancel_cooldowns"):
+            self._symbol_cancel_cooldowns = {}
+        self._symbol_cancel_cooldowns[clean_sym] = now_ts + cd_secs
+        self._symbol_last_eval[clean_sym] = max(self._symbol_last_eval.get(clean_sym, 0.0), now_ts + cd_secs)
+        self._symbol_last_trigger[clean_sym] = now_ts + max(0, cd_secs - 900) if cd_secs > 900 else now_ts + cd_secs
         self._save_cooldowns()
-        logger.info(f"⏳ Cooldown {cooldown_seconds // 60}m diaktifkan untuk {clean_sym} (Pending Cancelled/Expired).")
+        logger.info(f"⏳ Cooldown {int(cd_secs // 60)}m diaktifkan untuk {clean_sym} ({reason}).")
+
+    def is_symbol_cancel_locked(self, symbol: str) -> Tuple[bool, str]:
+        """Checks if symbol is in post-cancellation cooldown (default 10m)."""
+        clean_sym = symbol.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
+        now_ts = time.time()
+        cancel_until = getattr(self, "_symbol_cancel_cooldowns", {}).get(clean_sym, 0.0)
+        if now_ts < cancel_until:
+            rem_mins = max(1, int(round((cancel_until - now_ts) / 60.0)))
+            return True, f"[CANCEL COOLDOWN] {clean_sym} sedang cooldown {rem_mins}m pasca-cancel order."
+        return False, ""
 
     def record_setup_rejection(
         self,
@@ -3780,9 +3806,17 @@ class MarketScanner:
             sym_is_gold = config.is_gold(sym)
             if not sym_is_crypto and dow in (5, 6):
                 continue
+            is_night_frozen = False
+            if getattr(config, "ENABLE_NIGHT_FREEZE", True):
+                nf_start = int(getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 0))
+                nf_end = int(getattr(config, "NIGHT_FREEZE_END_HOUR_WIB", asia_start))
+                if nf_start > nf_end:
+                    is_night_frozen = (h >= nf_start or h < nf_end)
+                else:
+                    is_night_frozen = (nf_start <= h < nf_end)
+
             if not sym_is_crypto and not sym_is_gold and (
-                (0 <= h < asia_start)
-                or (getattr(config, "ENABLE_NIGHT_FREEZE", True) and h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23))
+                (0 <= h < asia_start) or is_night_frozen
             ):
                 continue
             if sym_is_gold and (0 <= h < asia_start):
@@ -3804,6 +3838,12 @@ class MarketScanner:
             is_loss_locked, loss_reason = self.is_symbol_loss_locked(clean_sym)
             if is_loss_locked:
                 logger.debug(f"[RADAR] {sym} SKIP: {loss_reason}")
+                continue
+
+            # Post-Cancellation Guard: Cooldown pasca pending cancel / 75% TP runaway (default 10 menit)
+            is_cancel_locked, cancel_reason = self.is_symbol_cancel_locked(clean_sym)
+            if is_cancel_locked:
+                logger.debug(f"[RADAR] {sym} SKIP: {cancel_reason}")
                 continue
 
             # ── SESSION-AWARE PAIR ROUTER (Asia Pacific Focus & NY Pacific Cross Lock - Opsi 2) ──

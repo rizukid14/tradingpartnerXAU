@@ -1885,7 +1885,15 @@ class CockpitDataEngine:
             dash_symbols.append(btc_cand)
         if "XAUUSD" not in clean_list:
             dash_symbols.append(gold_cand)
-        self.scanner = MarketScanner(symbols=dash_symbols)
+
+        is_m5 = getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5" or os.getenv("TIMEFRAME", "").upper() == "M5"
+        if is_m5:
+            from src.analytics.market_scanner_m5 import MarketScannerM5
+            self.scanner = MarketScannerM5(symbols=dash_symbols)
+            print(f"[Cockpit Engine] Initialized MarketScannerM5 (Micro-ZCE M5/M15/H1).")
+        else:
+            self.scanner = MarketScanner(symbols=dash_symbols)
+            print(f"[Cockpit Engine] Initialized MarketScanner (Macro-ZCE H1/H4/D1).")
         self._is_running = True
         t = threading.Thread(target=self._background_loop, daemon=True)
         t.start()
@@ -1933,6 +1941,21 @@ class CockpitDataEngine:
         floating_pnl = sum(float(p.get("profit", 0.0)) for p in open_pos)
         closed_today = connector.get_closed_positions_today() or []
         daily_closed_pnl = sum(float(d.get("profit", 0.0)) for d in closed_today)
+
+        # Currency Basket Aggregate Exposure (SFC Flow / Hedging breakdown)
+        currency_exposure = {}
+        for p in open_pos:
+            sym_clean = p.get("symbol", "").replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
+            if len(sym_clean) == 6 and not any(k in sym_clean for k in ("BTC", "XAU", "GOLD")):
+                base = sym_clean[:3]
+                quote = sym_clean[3:]
+                p_type = p.get("direction") or p.get("type")
+                if p_type == "BUY":
+                    currency_exposure[base] = currency_exposure.get(base, 0) + 1
+                    currency_exposure[quote] = currency_exposure.get(quote, 0) - 1
+                elif p_type == "SELL":
+                    currency_exposure[base] = currency_exposure.get(base, 0) - 1
+                    currency_exposure[quote] = currency_exposure.get(quote, 0) + 1
 
         open_symbols = set(p.get("symbol") for p in open_pos)
 
@@ -2302,10 +2325,12 @@ class CockpitDataEngine:
                 "confluence_timing": timing_info,
                 "pairs": pairs_data,
                 "cbss_matrix": cbss_matrix,
-                "shadow_radar": shadow_data
+                "shadow_radar": shadow_data,
+                "open_positions": open_pos,
+                "currency_exposure": currency_exposure
             }
 
-    def get_symbol_detail(self, symbol: str, timeframe_str: str = "M5") -> Dict[str, Any]:
+    def get_symbol_detail(self, symbol: str, timeframe_str: str = "M5", zce_mode: Optional[str] = None) -> Dict[str, Any]:
         """Generates exhaustive payload for single pair (Candles, ZCE Walls, Standbys, 7-Gate)."""
         valid_sym = connector.get_valid_trade_symbol(symbol)
         clean_sym = symbol.replace("-ECNc", "").replace(".c", "").replace("-ECN", "").upper()
@@ -2395,12 +2420,75 @@ class CockpitDataEngine:
                 })
 
         # 2. Multi-Horizon ZCE Fortress Ladder (Consolidated & Proximity-Clamped)
-        zm = getattr(self.scanner, "_zce_maps", {}).get(valid_sym)
-        if zm is None and hasattr(self.scanner, "_compute_zce_map_for"):
-            try:
-                zm = self.scanner._compute_zce_map_for(valid_sym, mt5_connector=connector)
-            except Exception:
-                zm = None
+        is_m5_env = getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5" or os.getenv("TIMEFRAME", "").upper() == "M5"
+        effective_zce_mode = (zce_mode or ("micro" if (timeframe_str.upper() == "M5" or is_m5_env) else "macro")).lower()
+
+        zm = None
+        if effective_zce_mode == "micro":
+            if hasattr(self.scanner, "_micro_zce_params"):
+                zm = getattr(self.scanner, "_zce_maps", {}).get(valid_sym)
+                if zm is None and hasattr(self.scanner, "_zce_build_map"):
+                    try:
+                        zm = self.scanner._zce_build_map(valid_sym, mt5_connector=connector)
+                    except Exception:
+                        zm = None
+            else:
+                try:
+                    from src.analytics.zone_confluence_engine import ZoneConfluenceEngine
+                    micro_params = {
+                        "atr_multiplier": 0.40,
+                        "min_touches": 2,
+                        "max_zone_width_atr": 0.30,
+                        "clustering_eps_atr": 0.25,
+                        "merge_distance_atr": 0.35,
+                        "timeframe_weights": {"H1": 1.5, "M15": 1.2, "M5": 1.0}
+                    }
+                    micro_eng = ZoneConfluenceEngine(params=micro_params)
+                    tf_cfg = [
+                        ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 250),
+                        ("M15", getattr(config.mt5, "TIMEFRAME_M15", 16386), 250),
+                        ("M5", getattr(config.mt5, "TIMEFRAME_M5", 5), 250)
+                    ]
+                    dfs = {}
+                    for name, tfid, cnt in tf_cfg:
+                        rr = config.mt5.copy_rates_from_pos(valid_sym, tfid, 0, cnt)
+                        if rr is not None and len(rr) > 0:
+                            dfs[name] = pd.DataFrame(rr)
+                    if dfs.get("M5") is not None and len(dfs["M5"]) >= 30:
+                        zm = micro_eng.compute_zone_map(valid_sym, dfs, point_size=pt, digits=digits)
+                except Exception as e:
+                    logger.debug(f"[MICRO ZCE FAIL] {e}")
+                    zm = None
+        else:
+            # Macro ZCE
+            if hasattr(self.scanner, "_micro_zce_params"):
+                try:
+                    from src.analytics.zone_confluence_engine import ZoneConfluenceEngine
+                    macro_eng = ZoneConfluenceEngine()
+                    tf_cfg = [
+                        ("MN1", getattr(config.mt5, "TIMEFRAME_MN1", 49153), 100),
+                        ("W1", getattr(config.mt5, "TIMEFRAME_W1", 32769), 150),
+                        ("D1", getattr(config.mt5, "TIMEFRAME_D1", 16408), 250),
+                        ("H4", getattr(config.mt5, "TIMEFRAME_H4", 16388), 250),
+                        ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 250)
+                    ]
+                    dfs = {}
+                    for name, tfid, cnt in tf_cfg:
+                        rr = config.mt5.copy_rates_from_pos(valid_sym, tfid, 0, cnt)
+                        if rr is not None and len(rr) > 0:
+                            dfs[name] = pd.DataFrame(rr)
+                    if dfs.get("H1") is not None and len(dfs["H1"]) >= 50:
+                        zm = macro_eng.compute_zone_map(valid_sym, dfs, point_size=pt, digits=digits)
+                except Exception as e:
+                    logger.debug(f"[MACRO ZCE FAIL] {e}")
+                    zm = None
+            else:
+                zm = getattr(self.scanner, "_zce_maps", {}).get(valid_sym)
+                if zm is None and hasattr(self.scanner, "_compute_zce_map_for"):
+                    try:
+                        zm = self.scanner._compute_zce_map_for(valid_sym, mt5_connector=connector)
+                    except Exception:
+                        zm = None
 
         if candles:
             c_min_lo = min(c["low"] for c in candles)
@@ -3198,6 +3286,7 @@ class CockpitDataEngine:
             "macro_envelope": (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
             "zce_walls": zce_walls,
             "zce_ladder": zce_ladder,
+            "zce_mode": effective_zce_mode,
             "intel": intel,
             "m_standbys": m_standbys,
             "primary_setup": {
@@ -3554,10 +3643,15 @@ class CockpitHTTPHandler(http.server.SimpleHTTPRequestHandler):
             sym = path_part.split("?")[0]
             default_tf = getattr(config, "TIMEFRAME_STR", "M5").upper()
             tf = default_tf
-            if "?tf=" in path_part:
-                tf = path_part.split("?tf=")[1].split("&")[0]
+            zce_mode = None
+            if "?" in path_part:
+                import urllib.parse
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                tf = qs.get("tf", [default_tf])[0]
+                zce_mode = qs.get("zce_mode", [None])[0]
 
-            data = cockpit_engine.get_symbol_detail(sym, tf)
+            data = cockpit_engine.get_symbol_detail(sym, tf, zce_mode=zce_mode)
             payload = json.dumps(data).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

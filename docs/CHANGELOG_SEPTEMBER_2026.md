@@ -4171,3 +4171,20 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 - **Hasil Verifikasi Komprehensif**:
   - Seluruh unit test suite: **366/366 tests PASSED (100% OK, 0 Failure)** dalam 44.85 detik.
 
+---
+
+## 108. 14 September 2026 (Malam) — Dedicated 10-Minute Pending Order Cancel Cooldown (Manual & 75% TP Runaway) & Night Freeze Window Shift to 00:00 WIB
+
+- **Pending Order Cancellation & Runaway 75% TP Cooldown (`main_m5.py`, `position_manager.py`, `market_scanner.py`, `config.py`, `.env`)**:
+  - Menetapkan `PENDING_ORDER_CANCEL_COOLDOWN_SECONDS = 600` (10 menit) di `.env` dan `config.py`.
+  - Mengintegrasikan `self._symbol_cancel_cooldowns` persisten pada `MarketScanner` / `MarketScannerM5` lengkap dengan gate `is_symbol_cancel_locked()` di radar loop.
+  - Pada `position_manager.py:audit_pending_orders_thesis()`, ketika pending order dibatalkan karena pasar sudah menempuh $\ge 75\%$ jarak TP (*target proximity expiration*), sistem otomatis mendaftarkan cooldown 10 menit ke `MarketScanner._instance` agar radar tidak langsung memasang limit order baru pada setup yang momentumnya sudah lari (*runaway*).
+  - Pada `main_m5.py`, menambahkan watcher `_sync_pending_orders(scanner)` pada loop 2 detik: mendeteksi tiket pending order yang dibatalkan manual oleh pengguna di MT5 atau expired, lalu otomatis mengunci simbol selama 10 menit dan mengirim alert Telegram.
+- **Night Freeze Window Shift to 00:00 WIB & 24-Hour Wrap Fix (`risk_engine.py`, `market_scanner.py`, `main.py`, `config.py`, `.env`)**:
+  - Menggeser jam mulai Night Freeze dari `23:00` ke `00:00` WIB (`NIGHT_FREEZE_START_HOUR_WIB = 0`, `NIGHT_FREEZE_END_HOUR_WIB = 6`).
+  - Memperbaiki bug perbandingan jam di `risk_engine.py:_check_night_freeze()`, `market_scanner.py`, dan status banner `main.py`: saat `start_hour <= end_hour` (misal 0 s/d 6 WIB), evaluasi menggunakan `start_hour <= now.hour < end_hour` untuk mencegah jebakan evaluasi `now.hour >= 0` yang memblokir trading seharian penuh.
+- **Hasil Verifikasi & Status Pengujian**:
+  - Seluruh unit test suite relevan (`test_market_scanner_m5.py`, `test_cbss_and_risk_shields.py`, `test_audit_pending_orders_thesis.py`, `test_market_scanner.py`): **60/60 tests PASSED (100% OK)**.
+  - Bot `main_m5.py` dijalankan ulang secara bersih dan langsung memindai serta mengeksekusi order riil di akun Cent.
+
+

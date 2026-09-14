@@ -1801,9 +1801,12 @@ def main():
             remaining_pause = risk.get_remaining_pause()
             pause_str = f" {UI.RED}[PAUSED: {remaining_pause}s]{UI.RST}" if remaining_pause > 0 else ""
             profit_lock_str = f" {UI.BOLD}{UI.GREEN}[TARGET +7.0% LOCKED]{UI.RST}" if getattr(risk, "_daily_profit_locked", False) else ""
-            now_wib_h = datetime.now(WIB).hour
             night_end_h = int(getattr(config, "NIGHT_FREEZE_END_HOUR_WIB", getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)))
-            is_night_freeze = getattr(config, "ENABLE_NIGHT_FREEZE", True) and (now_wib_h >= getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 23) or now_wib_h < night_end_h)
+            night_start_h = int(getattr(config, "NIGHT_FREEZE_START_HOUR_WIB", 0))
+            if night_start_h > night_end_h:
+                is_night_freeze = getattr(config, "ENABLE_NIGHT_FREEZE", True) and (now_wib_h >= night_start_h or now_wib_h < night_end_h)
+            else:
+                is_night_freeze = getattr(config, "ENABLE_NIGHT_FREEZE", True) and (night_start_h <= now_wib_h < night_end_h)
             freeze_str = f" {UI.CYAN}[NIGHT FREEZE]{UI.RST}" if is_night_freeze else ""
             daily_pnl = risk.get_daily_pnl()
             pnl_str = UI.badge_pnl(daily_pnl)
