@@ -134,7 +134,9 @@ class MarketScannerM5(MarketScanner):
 
     def __init__(self, symbols: Optional[List[str]] = None):
         super().__init__(symbols=symbols)
-        self._cooldown_file = os.path.join(config.DATA_DIR, "scanner_cooldowns_m5.json")
+        _prefix = "_demo" if getattr(config, "MT5_ACCOUNT_MODE", "live").lower() == "demo" else ""
+        self._cooldown_file = os.path.join(config.DATA_DIR, f"scanner_cooldowns_m5{_prefix}.json")
+        self._symbol_last_trigger = self._load_cooldowns()
         self._micro_zce_params = {
             "grid": {
                 "M5": [30, 60, 120],

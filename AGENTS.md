@@ -62,19 +62,21 @@
 
 ## OPERATIONAL QUICK CHEAT SHEET
 
-- **Trading Mode**: `TRADING_MODE = "scanner"` (Default). Universe 28 simbol FX dipindai paralel tiap 60 detik di timeframe H1.
+- **Trading Mode**: `TRADING_MODE = "scanner"` (Default). Universe 28 simbol FX dipindai paralel tiap 15 detik di timeframe M5 menggunakan Micro-ZCE (M5/M15/H1).
 - **Akun Broker**: **LIVE Cent** `VTMarkets-Live 3` (login `27556325`), magic `20260625`, Waktu WIB (GMT+7).
-- **Risk & Lot**: Risk per trade 1.0%, Plafon lot maksimal `MAX_POSITION_LOT = 0.50` (kunci mutlak akun Cent).
-- **Mode AI**: `AI_MODE_POLICY = "fixed"`, `AI_FIXED_MODE = "triple"` (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4-Flash).
+- **Risk & Lot**: Risk per trade 1.0%, Plafon lot maksimal `MAX_POSITION_LOT = 0.50` (kunci mutlak akun Cent), Kapasitas terbuka `MAX_OPEN_POSITIONS = 50`.
+- **Mode Eksekusi**: `ENABLE_LLM_JURY = false` (Pure Quant Direct Execution, 0 Tokens, latensi < 100ms).
+- **Proteksi Posisi**: Break-Even (BEP) aktif di 80% jarak TP (`BREAK_EVEN_TRIGGER_TP_PCT = 0.80`), Trailing Stop & Partial Close NONAKTIF.
+- **Cooldown**: 10 menit (600 detik) untuk rejection dan post-loss anti-revenge.
 - **Cara Menjalankan**:
   ```bash
-  # Bot Trading
+  # Bot Trading M5 Pure Quant
   py -3 main.py
 
   # Cockpit Dashboard (Port 8765)
   py -3 dashboard.py
   ```
-- **Dry Run Flag**: `config.DRY_RUN = False` $ightarrow$ LIVE trading (order riil dikirim). Dilarang ubah tanpa izin pengguna.
+- **Dry Run Flag**: `config.DRY_RUN = False` $\rightarrow$ LIVE trading (order riil dikirim ke Cent). Dilarang ubah tanpa izin pengguna.
 - **LuxAlgo MCP**: Terdaftar di `~/.gemini/config/mcp_config.json` (`https://mcp.luxalgo.com/mcp`). 42 tools kuantitatif instan. Source code resmi Pine Script v6 di [`src/indicators/lux_smc_official.pine`](src/indicators/lux_smc_official.pine).
 
 ---

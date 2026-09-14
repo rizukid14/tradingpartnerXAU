@@ -980,15 +980,19 @@ PENDING_ORDERS_ENABLED = _getenv_bool("PENDING_ORDERS_ENABLED", True)
 PENDING_ORDER_EXPIRY_MINUTES = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES", 60)
 PENDING_ORDER_EXPIRY_MINUTES_ASIA = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES_ASIA", 120)  # Sesi Tokyo / Asia (08:00–14:00 WIB)
 PENDING_ORDER_EXPIRY_MINUTES_LDN_NY = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES_LDN_NY", 60) # Sesi London / NY (14:00–00:00 WIB)
+M5_PENDING_EXPIRATION_MINUTES = _getenv_int("M5_PENDING_EXPIRATION_MINUTES", 20)
 PENDING_ORDER_MAX_ACTIVE = _getenv_int("PENDING_ORDER_MAX_ACTIVE", 4)
 
 
 def get_pending_order_expiry_minutes(now=None):
     """Expiry pending order adaptif sesi:
+    - M5 Timeframe: 20 Menit (4 bar candle)
     - Sesi Tokyo / Asia (08:00 - 14:00 WIB): 120 Menit (2 jam)
     - Sesi London / NY (14:00 - 00:00 WIB): 60 Menit (1 jam)
     - Di luar jam di atas / Late NY: 60 Menit
     """
+    if os.getenv("TIMEFRAME", "").upper() == "M5" or TIMEFRAME_STR == "M5":
+        return M5_PENDING_EXPIRATION_MINUTES
     from datetime import datetime
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")

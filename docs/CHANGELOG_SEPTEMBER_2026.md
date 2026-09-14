@@ -2,6 +2,38 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 117. Perubahan 14 September 2026 — Migrasi Penuh `main.py` ke Mode M5 Pure Quant Direct Execution (Live Cent `#27556325`), BEP 80% TP, & Cooldown 10 Menit
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Penyelarasan Fungsionalitas Demo ke Mesin Produksi Live Cent**:
+   - Setelah validasi arsitektur di `main_demo.py`, pengguna menginginkan `main.py` beroperasi penuh pada timeframe M5 dengan eksekusi instan Pure Quant (<100ms, 0 Token) di akun Live Cent (`VTMarkets-Live 3` #27556325).
+2. **Kapasitas Eksekusi & Geometri SL/TP Simetris**:
+   - Menghapus pembatasan keranjang mata uang (`ENABLE_CBSS=false`, `ENABLE_ANTI_INTERNAL_HEDGE=false`) dan membuka kapasitas hingga 50 slot (`MAX_OPEN_POSITIONS=50`), dengan lot per posisi tetap terkunci simetris pada `MAX_POSITION_LOT=0.50` Cent.
+3. **Preservasi Hard Gating Sesi & Pemangkasan Cooldown**:
+   - Seluruh filter jam sesi (Tokyo, London, NY session allowed pairs), Night Freeze, dan Dead Zone tetap dipertahankan.
+   - Durasi cooldown rejection dan post-loss anti-revenge dipangkas dari 45m/60m menjadi 10 menit (600 detik).
+4. **Kebijakan Proteksi Posisi (Binary Outcome + Late BEP)**:
+   - Trailing Stop dan Partial Close dinonaktifkan (`TRAILING_STOP_ENABLED=false`, `PARTIAL_CLOSE_ENABLED=false`).
+   - Break-Even (BEP) dikunci secara selektif saat floating profit mencapai 80% dari target TP (`BREAK_EVEN_TRIGGER_TP_PCT=0.80`).
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **`.env` & `config.py`**:
+   - Mengaktifkan `TIMEFRAME=M5`, `RADAR_SCAN_INTERVAL_SECONDS=15`, `ENABLE_LLM_JURY=false`, `MAX_OPEN_POSITIONS=50`, `MAX_ABSOLUTE_OPEN_POSITIONS=50`.
+   - Mengatur `SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS=600`, `POST_LOSS_COOLDOWN_SECONDS=600`, `SCANNER_SYMBOL_BREATHING_COOLDOWN_SECONDS=120`.
+   - Mengatur `BREAK_EVEN_ENABLED=true`, `BREAK_EVEN_TRIGGER_TP_PCT=0.80`, `TRAILING_STOP_ENABLED=false`, `PARTIAL_CLOSE_ENABLED=false`.
+   - Menambahkan `M5_PENDING_EXPIRATION_MINUTES=20` (4 candle M5) pada pending limit orders di `config.py`.
+2. **`main.py`**:
+   - Inisialisasi modular: Memuat otomatis `MarketScannerM5` (Micro-ZCE M5/M15/H1) jika timeframe aktif adalah M5.
+   - Menginisialisasi `decisions = {}` secara preventif untuk memastikan zero `NameError` saat mode Pure Quant aktif.
+   - Banner terminal dan status line diselaraskan ke `PURE QUANT RADAR (M5)`.
+3. **`src/analytics/market_scanner_m5.py` & `position_manager.py`**:
+   - `market_scanner_m5.py`: Menyimpan file cooldown terpisah `scanner_cooldowns_m5.json` (atau suffix `_demo.json` untuk akun demo).
+   - `position_manager.py`: Menetapkan rasio BEP 80% langsung untuk posisi M5 tanpa teroverride oleh Grade S/B ratio.
+4. **Unit Tests**:
+   - Memperbarui `tests/test_market_scanner_m5.py` dengan pengujian pending order expiration 20m, BEP 80%, dan cooldown 10m. Seluruh test suite lolos 100% PASS.
+
+---
+
 ## 116. Perubahan 14 September 2026 — Implementasi Modul Terisolasi MarketScannerM5 (Micro-ZCE M5/M15/H1, Scaled Intraday Geometry, & Zero If-Else Pollution)
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

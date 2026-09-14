@@ -278,15 +278,17 @@ def render_scanner_banner(account_info=None, is_live=True, total_symbols=26, acc
     zce_mode = str(getattr(config, "ZCE_MODE", "shadow")).upper() if zce_enabled else "OFF"
     zce_color = UI.GREEN if zce_mode in ("FULL", "LEGACY") else (UI.YELLOW if zce_mode == "SHADOW" else UI.GRAY)
     
-    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & MULTI-LLM JURY{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
-    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs (H1+D1){UI.RST} | ZCE: {zce_color}{zce_mode}{UI.RST} | Mode: {UI.CYAN}2-STAGE FUNNEL{UI.RST}"
+    tf_label = "M5+H1" if os.getenv("TIMEFRAME", "").upper() == "M5" or getattr(config, "TIMEFRAME_STR", "H1") == "M5" else "H1+D1"
+    funnel_label = "PURE QUANT RADAR M5" if not getattr(config, "ENABLE_LLM_JURY", True) else "2-STAGE FUNNEL"
+    title_line = f"{UI.BOLD}{UI.WHITE}RIZUKID QUANT FUNNEL & FAST EXECUTION{UI.RST} {UI.PURPLE}[{total_symbols}-PAIR PRO]{UI.RST}"
+    status_line = f"Status: {badge_mode} | Account: {UI.WHITE}{acc_text}{UI.RST} | Universe: {UI.YELLOW}{total_symbols} Pairs ({tf_label}){UI.RST} | ZCE: {zce_color}{zce_mode}{UI.RST} | Mode: {UI.CYAN}{funnel_label}{UI.RST}"
     
     items = [
         title_line,
         "---",
         status_line
     ]
-    return UI.make_box("2-STAGE QUANT FUNNEL TERMINAL", items, width=76, border_color=UI.CYAN)
+    return UI.make_box("PURE QUANT RADAR TERMINAL" if not getattr(config, "ENABLE_LLM_JURY", True) else "2-STAGE QUANT FUNNEL TERMINAL", items, width=76, border_color=UI.CYAN)
 
 
 def render_candidate_alert_box(candidate):

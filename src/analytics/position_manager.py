@@ -884,7 +884,13 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     # Deteksi apakah target TP terdorong jauh ke area kehampaan (Vacuum / Stretched TP > 2.0R)
     is_vacuum_or_stretched = bool(tp_points > 0 and init_sl_pts > 0 and round(tp_points / init_sl_pts, 2) > 2.0)
 
-    if "GRADE_S" in grade:
+    is_m5 = (
+        getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5"
+        or os.getenv("TIMEFRAME", "").upper() == "M5"
+    )
+    if is_m5:
+        bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.80)
+    elif "GRADE_S" in grade:
         bep_tp_ratio = 0.65
     elif is_m4:
         bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)

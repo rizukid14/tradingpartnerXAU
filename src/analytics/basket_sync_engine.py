@@ -279,7 +279,7 @@ def is_symbol_allowed_for_session(symbol: str, hour_wib: int) -> bool:
     if "BTC" in csym:
         return True
 
-    asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 7)
+    asia_start = getattr(config, "ASIA_SESSION_START_HOUR_WIB", 6)
     asia_end = getattr(config, "ASIA_SESSION_END_HOUR_WIB", 14)
     ny_start = getattr(config, "NY_SESSION_START_HOUR_WIB", 19)
     lock_pacific_cross = getattr(config, "NY_LOCK_PACIFIC_CROSSES", True)

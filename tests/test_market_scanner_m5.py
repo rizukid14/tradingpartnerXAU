@@ -52,6 +52,21 @@ class TestMarketScannerM5(unittest.TestCase):
         self.assertIn("M15", scanner._micro_zce_params["grid"])
         self.assertIn("H1", scanner._micro_zce_params["grid"])
 
+    def test_m5_pending_expiration_and_bep(self):
+        # M5 Pending order expiration must be 20 minutes
+        with patch.object(config, "TIMEFRAME_STR", "M5"):
+            exp_mins = config.get_pending_order_expiry_minutes()
+            self.assertEqual(exp_mins, 20)
+
+        # BEP trigger ratio must be 0.80 for M5
+        self.assertEqual(getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.0), 0.80)
+        self.assertFalse(getattr(config, "TRAILING_STOP_ENABLED", True))
+        self.assertFalse(getattr(config, "PARTIAL_CLOSE_ENABLED", True))
+
+    def test_m5_cooldowns(self):
+        self.assertEqual(getattr(config, "POST_LOSS_COOLDOWN_SECONDS", 0), 600)
+        self.assertEqual(getattr(config, "SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 0), 600)
+
 
 if __name__ == "__main__":
     unittest.main()

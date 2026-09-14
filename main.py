@@ -852,6 +852,7 @@ def run_scanner_trading_cycle(cand, risk):
     old_sym = config.SYMBOL
     config.SYMBOL = sym
     try:
+        decisions = {}
         # PURE QUANT DIRECT EXECUTION (No-LLM Mode)
         if not getattr(config, "ENABLE_LLM_JURY", True):
             trade_signal = "BUY" if cand.direction == 1 else "SELL"
@@ -1512,11 +1513,17 @@ def main():
             total_symbols=len(config.get_scanner_symbols()),
             account_mode=getattr(config, "MT5_ACCOUNT_MODE", "live")
         ))
+        is_m5 = (
+            getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5"
+            or os.getenv("TIMEFRAME", "").upper() == "M5"
+        )
+        scan_sec = getattr(config, "RADAR_SCAN_INTERVAL_SECONDS", 15 if is_m5 else 60)
         if not getattr(config, "ENABLE_LLM_JURY", True):
-            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.CYAN}PURE QUANT RADAR{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: Direct Quant Execution / No-LLM)")
+            tf_label = "M5" if is_m5 else "H1"
+            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.CYAN}PURE QUANT RADAR ({tf_label}){UI.RST} (Stage 1: Fast Radar {scan_sec}s | Stage 2: Direct Quant Execution / No-LLM | BEP 80% TP | Cooldown 10m)")
         else:
-            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar 60s | Stage 2: 3-LLM Jury)")
-        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (26 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
+            print(f"  {UI.BOLD}Architecture:{UI.RST} {UI.PURPLE}2-STAGE QUANT FUNNEL{UI.RST} (Stage 1: Fast Radar {scan_sec}s | Stage 2: 3-LLM Jury)")
+        print(f"  {UI.BOLD}Universe    :{UI.RST} {UI.CYAN}{len(config.get_scanner_symbols())} Simbol (28 Pasangan FX Terkurasi | Weekend: BTCUSD H1 {config.RISK_PERCENT_BTC}% Risk){UI.RST}")
     else:
         print(render_banner(
             account_info=getattr(config, "MT5_LOGIN", None),
@@ -1592,9 +1599,18 @@ def main():
     _last_hourly_recap_hour = datetime.now(_WIB).hour
     if config.SCANNER_MODE:
         try:
-            scanner = MarketScanner()
+            is_m5 = (
+                getattr(config, "TIMEFRAME_STR", "H1").upper() == "M5"
+                or os.getenv("TIMEFRAME", "").upper() == "M5"
+            )
             n_syms = len(config.get_scanner_symbols())
-            print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro {n_syms} simbol universe (H1/H4/D1/W1)... Mohon tunggu ~28 detik.")
+            if is_m5:
+                from src.analytics.market_scanner_m5 import MarketScannerM5
+                scanner = MarketScannerM5()
+                print(f" {UI.CYAN}[M5 RADAR BOOT]{UI.RST} Memuat Micro-ZCE (M5/M15/H1) {n_syms} simbol universe... Mohon tunggu ~10 detik.")
+            else:
+                scanner = MarketScanner()
+                print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro {n_syms} simbol universe (H1/H4/D1/W1)... Mohon tunggu ~28 detik.")
             scanner.update_macro_context(connector, force=True)
             acc_info = connector.get_account_info()
             open_pos = connector.get_all_open_positions()
