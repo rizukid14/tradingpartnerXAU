@@ -67,6 +67,13 @@ class TestMarketScannerM5(unittest.TestCase):
         self.assertEqual(getattr(config, "POST_LOSS_COOLDOWN_SECONDS", 0), 600)
         self.assertEqual(getattr(config, "SCANNER_MECHANISM_REJECTION_COOLDOWN_SECONDS", 0), 600)
 
+    def test_xau_btc_quarantined_to_paper_trade(self):
+        # XAUUSD and BTCUSD must strictly be paper trade only (quarantined from MT5 live execution)
+        self.assertTrue(config.is_paper_only("XAUUSD-ECNc"))
+        self.assertTrue(config.is_paper_only("BTCUSD.c"))
+        self.assertFalse(config.is_paper_only("EURUSD-ECNc"))
+        self.assertFalse(config.is_paper_only("GBPUSD-ECNc"))
+
 
 if __name__ == "__main__":
     unittest.main()
