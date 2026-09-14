@@ -125,7 +125,7 @@ def main():
 ║        TRADING PARTNER — M5 FAST-IN FAST-OUT DEMO LAB (ISOLATED)             ║
 ║  Terminal : C:/Users/Daffa/MT5_Demo/terminal64.exe (/portable)               ║
 ║  Account  : VTMarkets-Demo (#1157958) | Timeframe: M5 (Scan Loop: 10s)       ║
-║  Strategy : Micro-ZCE (M5/M15/H1) | Scaled SL/TP: 8-16p SL / 15-28p TP       ║
+║  Strategy : Micro-ZCE (M5/M15/H1) | Scaled SL/TP: 4-8p SL / 7-14p TP         ║
 ║  Execution: Pure Quant Direct (0 Tokens) | Unconstrained (Max Pos: 50)       ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{UI.RST}
 """)
@@ -137,6 +137,10 @@ def main():
 
     acc = connector.get_account_info()
     print(f" {UI.GREEN}[CONNECTED]{UI.RST} Akun Demo: #{acc.get('login')} ({acc.get('server')}) | Balance: ${acc.get('balance'):,.2f} | Equity: ${acc.get('equity'):,.2f}")
+
+    # Explicitly enforce unconstrained 50-slot capacity for Demo Lab
+    config.MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "50"))
+    config.MAX_ABSOLUTE_OPEN_POSITIONS = int(os.getenv("MAX_ABSOLUTE_OPEN_POSITIONS", "50"))
 
     risk = RiskEngine()
     scanner = MarketScannerM5()
