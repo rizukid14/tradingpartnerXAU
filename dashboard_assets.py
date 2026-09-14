@@ -559,7 +559,7 @@ html, body {
 .tier-go { background: var(--green); color: #000; }
 .tier-arm { background: var(--amber); color: #000; }
 .tier-watch { background: #38bdf8; color: #000; }
-.tier-lock { background: var(--red); color: #fff; }
+.tier-lock, .tier-veto { background: var(--red); color: #fff; }
 
 .csm-text {
   font-family: var(--font-mono);
@@ -1474,11 +1474,14 @@ html, body {
           <div class="hud-capsule">
             <span class="hud-capsule-sym" id="hud-sym-tag">EURUSD H1</span>
             <div class="compass-pills" id="compass-pills">
+              <span class="compass-pill pill-side" id="pill-mn1">MN: —</span>
               <span class="compass-pill pill-side" id="pill-w1">W1: —</span>
               <span class="compass-pill pill-side" id="pill-d1">D1: —</span>
               <span class="compass-pill pill-side" id="pill-h4">H4: —</span>
               <span class="compass-pill pill-side" id="pill-h1">H1: —</span>
             </div>
+            <span class="hud-capsule-sep">•</span>
+            <span class="hud-capsule-badge" id="hud-fractal-regime" style="background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);font-size:9.5px;letter-spacing:0.5px;font-weight:700;">CHAMBER</span>
             <span class="hud-capsule-sep">•</span>
             <span class="hud-capsule-item" id="hud-session">LONDON</span>
             <span class="hud-capsule-sep">•</span>
@@ -2412,6 +2415,11 @@ function renderVerticalShading() {
                 cleanLabel = isBuy ? "▲ WAIT M1A" : "▼ WAIT M1A";
               }
             }
+          } else if (st.type === "RETEST" || st.subtype === "M3") {
+            const isBuy = (st.direction === "BUY");
+            baseColor = isBuy ? "#3b82f6" : "#ec4899";
+            zoneBg = isBuy ? "rgba(59, 130, 246, 0.14)" : "rgba(236, 72, 153, 0.14)";
+            cleanLabel = isBuy ? "▲ WAIT M3" : "▼ WAIT M3";
           } else if (st.type === "PULLBACK") {
             const isBuy = (st.direction === "BUY");
             const isM2S = (st.subtype === "M2S" || (st.label && st.label.includes("M2S")));
@@ -3272,9 +3280,11 @@ function renderWatchlist(pairs) {
     }
 
     let tierClass = "tier-watch";
-    if (p.tier === "FULL_ALLOW") tierClass = "tier-go";
-    else if (p.tier === "REDUCED_CONFIDENCE" || p.tier === "TP1_ONLY_SCALP") tierClass = "tier-arm";
-    else if (p.tier === "HARD_BLOCK") tierClass = "tier-lock";
+    const pState = (p.perm_label || "").toUpperCase();
+    if (pState === "GO") tierClass = "tier-go";
+    else if (pState === "ARM") tierClass = "tier-arm";
+    else if (pState === "VETO" || pState === "LOCK") tierClass = "tier-veto";
+    else tierClass = "tier-watch";
 
     const csmClass = p.csm_delta >= 0 ? "csm-pos" : "csm-neg";
     const csmText = `${p.csm_delta >= 0 ? '+' : ''}${p.csm_delta.toFixed(1)}`;
@@ -3312,20 +3322,33 @@ function renderWatchlist(pairs) {
       ? `<span class="w1-conflict-pill" title="W1 Slope Conflict: Price testing descending slope barrier @ ${p.w1_slope_ceiling ? p.w1_slope_ceiling.toFixed(p.digits || 5) : ''} (BUY Blocked)"><span class="material-symbols-outlined" style="font-size:10px;line-height:1;">trending_down</span> W1 SLOPE</span>`
       : '';
 
+    const tfs = p.timeframe_trends || {};
+    const tfIcons = `${tfs.MN1==='BULL'?'▲':(tfs.MN1==='BEAR'?'▼':'—')}${tfs.W1==='BULL'?'▲':(tfs.W1==='BEAR'?'▼':'—')}${tfs.D1==='BULL'?'▲':(tfs.D1==='BEAR'?'▼':'—')}${tfs.H4==='BULL'?'▲':(tfs.H4==='BEAR'?'▼':'—')}${tfs.H1==='BULL'?'▲':(tfs.H1==='BEAR'?'▼':'—')}`;
+    const fRegime = p.fractal_regime || "";
+    let displayBias = p.bias;
+    if (fRegime.includes("APEX_BUY")) displayBias = "RE-ALIGN ▲";
+    else if (fRegime.includes("APEX_SELL")) displayBias = "RE-ALIGN ▼";
+    else if (fRegime.includes("CASCADE_BULL")) displayBias = "CASCADE ▲";
+    else if (fRegime.includes("CASCADE_BEAR")) displayBias = "CASCADE ▼";
+    else if (fRegime.includes("RETRACEMENT_BULL")) displayBias = "RETRACE ▲";
+    else if (fRegime.includes("RETRACEMENT_BEAR")) displayBias = "RETRACE ▼";
+
     html += `
       <div class="pair-row ${isSelected} ${m4RowClass}" onclick="selectSymbol('${p.symbol}')">
-        <!-- Line 1: Symbol, CSM, Tier Badge -->
+        <!-- Line 1: Symbol, 5-TF Matrix, CSM, Tier Badge -->
         <div class="pair-row-line">
-          <div class="pair-col-left">
+          <div class="pair-col-left" style="display:flex;align-items:center;gap:4px;">
             <span class="pair-symbol">${cleanSym}</span>
             <span class="csm-text ${csmClass}">${csmText}</span>
           </div>
-          <div class="pair-col-mid"></div>
+          <div class="pair-col-mid" style="display:flex;justify-content:center;">
+            <span style="font-size:8px;letter-spacing:1px;font-family:var(--font-mono);font-weight:700;color:#94a3b8;" title="5-TF Matrix (MN1 W1 D1 H4 H1): ${JSON.stringify(tfs)}">[${tfIcons}]</span>
+          </div>
           <div class="pair-col-right">
-            <span class="tier-badge ${tierClass}">${p.perm_label}</span>
+            <span class="tier-badge ${tierClass}" title="${p.tactical_desc || p.perm_label}">${p.perm_label}</span>
           </div>
         </div>
-        <!-- Line 2: Setup Pill, C1 Wall (Top), HTF Bias -->
+        <!-- Line 2: Setup Pill, C1 Wall (Top), HMS-MRA Directive -->
         <div class="pair-row-line">
           <div class="pair-col-left">
             <span class="pair-setup-pill ${setupPillClass}">${cleanSetup}</span>
@@ -3335,7 +3358,7 @@ function renderWatchlist(pairs) {
             <span style="color:#fbbf24;font-size:8.5px;font-family:var(--font-mono);font-weight:600;" title="Ceiling Wall C1 Distance">${c1Text}</span>
           </div>
           <div class="pair-col-right">
-            <span class="htf-bias-tag ${biasTagClass}">${p.bias}</span>
+            <span class="htf-bias-tag ${biasTagClass}" title="${fRegime} • Directive: ${p.macro_directive || ''}">${displayBias}</span>
           </div>
         </div>
         <!-- Line 3: Trigger Distance, F1 Floor (Bottom), Basing Box, W1 Slope & M4 Shock Badge -->
@@ -3391,10 +3414,32 @@ function renderSymbolHeader(d) {
   }
   if (d.intel) {
     const it = d.intel;
+    setCompassPill("pill-mn1", "MN", it.mn1_trend);
     setCompassPill("pill-w1", "W1", it.w1_trend);
     setCompassPill("pill-d1", "D1", it.d1_trend);
     setCompassPill("pill-h4", "H4", it.h4_trend);
     setCompassPill("pill-h1", "H1", it.h1_trend);
+
+    const fRegEl = document.getElementById("hud-fractal-regime");
+    if (fRegEl) {
+      const reg = it.fractal_regime || "CHAMBER_CONSOLIDATION";
+      const cleanReg = reg.replace("STRUCTURAL_", "").replace("_APEX", "");
+      fRegEl.textContent = cleanReg;
+      fRegEl.title = `Fractal: ${reg} • Directive: ${it.macro_directive || 'NONE'} • Bias: ${it.daily_macro_bias || 'NONE'}`;
+      if (reg.includes("BUY") || reg.includes("BULL")) {
+        fRegEl.style.background = "rgba(34,197,94,0.15)";
+        fRegEl.style.color = "#22c55e";
+        fRegEl.style.borderColor = "rgba(34,197,94,0.3)";
+      } else if (reg.includes("SELL") || reg.includes("BEAR")) {
+        fRegEl.style.background = "rgba(239,68,68,0.15)";
+        fRegEl.style.color = "#ef4444";
+        fRegEl.style.borderColor = "rgba(239,68,68,0.3)";
+      } else {
+        fRegEl.style.background = "rgba(148,163,184,0.15)";
+        fRegEl.style.color = "#94a3b8";
+        fRegEl.style.borderColor = "rgba(148,163,184,0.3)";
+      }
+    }
 
     document.getElementById("hud-adx").textContent = `${it.adx}`;
 
@@ -4005,6 +4050,8 @@ function renderDrawer() {
       let tagBg = (st.direction === "BUY") ? "rgba(16,185,129,0.15)" : "rgba(244,63,94,0.15)";
       if (st.type === "PULLBACK") {
         cardBorder = (st.subtype === "M2S") ? "#06b6d4" : ((st.direction === "BUY") ? "#10b981" : "#f43f5e");
+      } else if (st.type === "RETEST" || st.subtype === "M3") {
+        cardBorder = (st.direction === "BUY") ? "#3b82f6" : "#ec4899";
       } else if (st.type === "SWEEP") {
         cardBorder = (st.subtype === "M1B" || st.subtype === "M1S") ? "#f59e0b" : ((st.direction === "BUY") ? "#10b981" : "#f43f5e");
       } else if (st.type === "EXPANSION") {

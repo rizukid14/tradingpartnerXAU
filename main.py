@@ -1593,7 +1593,8 @@ def main():
     if config.SCANNER_MODE:
         try:
             scanner = MarketScanner()
-            print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro 26 simbol universe (H1/H4/D1/W1)... Mohon tunggu ~25 detik.")
+            n_syms = len(config.get_scanner_symbols())
+            print(f" {UI.CYAN}[RADAR BOOT]{UI.RST} Memuat konteks makro {n_syms} simbol universe (H1/H4/D1/W1)... Mohon tunggu ~28 detik.")
             scanner.update_macro_context(connector, force=True)
             acc_info = connector.get_account_info()
             open_pos = connector.get_all_open_positions()
@@ -1696,7 +1697,6 @@ def main():
                                 if scanner is not None and hasattr(scanner, "record_symbol_loss"):
                                     scanner.record_symbol_loss(d_symbol)
                                 else:
-                                    from src.analytics.market_scanner import MarketScanner
                                     sc_inst = getattr(MarketScanner, "_instance", None)
                                     if sc_inst and hasattr(sc_inst, "record_symbol_loss"):
                                         sc_inst.record_symbol_loss(d_symbol)
@@ -1750,14 +1750,14 @@ def main():
                         if scanner.macro_cache:
                             _go_s = [s.replace("-ECNc", "").replace(".c", "") for s, m in scanner.macro_cache.items() if m.get('permission_state') == 'GO']
                             _arm_s = [(s.replace("-ECNc", "").replace(".c", ""), m.get('dealing_range_pos', 0.5)) for s, m in scanner.macro_cache.items() if m.get('permission_state') == 'ARM']
-                            _lock_cnt = sum(1 for m in scanner.macro_cache.values() if m.get('permission_state') == 'LOCK')
+                            _veto_cnt = sum(1 for m in scanner.macro_cache.values() if m.get('permission_state') in ('VETO', 'LOCK'))
                             _watch_cnt = sum(1 for m in scanner.macro_cache.values() if m.get('permission_state') in ('WATCH', 'WAIT'))
 
                             _arm_s.sort(key=lambda x: min(x[1], 1.0 - x[1]))
                             _top_siaga = [f"{s}({int(dr*100)}%)" for s, dr in _arm_s[:4]]
                             _siaga_str = f" │ Top Siaga: {', '.join(_top_siaga)}" if _top_siaga else ""
 
-                            _curr_signature = f"{len(_go_s)}_{len(_arm_s)}_{_watch_cnt}_{_lock_cnt}_{','.join(_top_siaga)}"
+                            _curr_signature = f"{len(_go_s)}_{len(_arm_s)}_{_watch_cnt}_{_veto_cnt}_{','.join(_top_siaga)}"
                             _state_changed = (_curr_signature != _last_radar_state_signature)
                             _time_for_heartbeat = (now_epoch - _last_radar_log_time >= _RADAR_LOG_HEARTBEAT_SEC)
 
@@ -1768,7 +1768,7 @@ def main():
                                 _last_radar_log_time = now_epoch
                                 _last_radar_state_signature = _curr_signature
                             elif _state_changed or _time_for_heartbeat:
-                                print(f" {UI.DIM}[{t_now_str} RADAR]{UI.RST} 26 pairs dipindai: 0 setup lolos filter ({UI.GREEN}{len(_go_s)} GO{UI.RST}, {UI.CYAN}{len(_arm_s)} ARM{UI.RST}, {UI.YELLOW}{_watch_cnt} WATCH{UI.RST}, {UI.RED}{_lock_cnt} LOCK{UI.RST}){_siaga_str}")
+                                print(f" {UI.DIM}[{t_now_str} RADAR]{UI.RST} 26 pairs dipindai: 0 setup lolos filter ({UI.GREEN}{len(_go_s)} GO{UI.RST}, {UI.CYAN}{len(_arm_s)} ARM{UI.RST}, {UI.RED}{_veto_cnt} VETO{UI.RST}, {UI.YELLOW}{_watch_cnt} WATCH{UI.RST}){_siaga_str}")
                                 _last_radar_log_time = now_epoch
                                 _last_radar_state_signature = _curr_signature
                     except Exception as e:
@@ -1851,7 +1851,7 @@ def main():
             if config.SCANNER_MODE and scanner and scanner.macro_cache:
                 _go_cnt = 0
                 _arm_list = []
-                _lock_cnt = 0
+                _veto_cnt = 0
                 _watch_cnt = 0
                 _disc_list = []
                 _prem_list = []
@@ -1865,22 +1865,23 @@ def main():
                         _go_cnt += 1
                     elif perm == "ARM":
                         _arm_list.append((clean_k, dr_val))
-                    elif perm == "LOCK":
-                        _lock_cnt += 1
+                    elif perm in ("VETO", "LOCK"):
+                        _veto_cnt += 1
                     else:
                         _watch_cnt += 1
 
-                    if dr_val <= 0.30:
-                        _disc_list.append((clean_k, dr_val))
-                    elif dr_val >= 0.70:
-                        _prem_list.append((clean_k, dr_val))
+                    if perm in ("ARM", "GO"):
+                        if dr_val <= 0.30:
+                            _disc_list.append((clean_k, dr_val))
+                        elif dr_val >= 0.70:
+                            _prem_list.append((clean_k, dr_val))
 
                 radar_state_line = (
                     f"  ├─ {UI.GRAY}Status Radar:{UI.RST} "
                     f"{UI.GREEN}● {_go_cnt} GO{UI.RST} │ "
                     f"{UI.CYAN}◆ {len(_arm_list)} ARM{UI.RST} │ "
-                    f"{UI.YELLOW}▲ {_watch_cnt} WATCH{UI.RST} │ "
-                    f"{UI.RED}■ {_lock_cnt} LOCK{UI.RST} "
+                    f"{UI.RED}■ {_veto_cnt} VETO{UI.RST} │ "
+                    f"{UI.YELLOW}▲ {_watch_cnt} WATCH{UI.RST} "
                     f"{UI.DIM}(Stage 1 Quant Funnel){UI.RST}"
                 )
 

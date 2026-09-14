@@ -1301,6 +1301,33 @@ def calculate_predictive_matrix(
     elif "BULL" in h1_trend or "UP" in h1_trend:
         is_bull = True
 
+    strat_dir = macro.get("strat_dir")
+    fractal_regime = str(macro.get("fractal_regime") or getattr(strat_dir, "fractal_regime", "") or "").upper()
+
+    has_explicit_constraints = (
+        strat_dir is not None
+        or "max_allowed_buy_price" in macro
+        or "max_allowed_buy" in macro
+        or "min_allowed_sell_price" in macro
+        or "min_allowed_sell" in macro
+        or bool(fractal_regime)
+    )
+
+    if has_explicit_constraints:
+        max_buy = float(macro.get("max_allowed_buy_price", macro.get("max_allowed_buy", getattr(strat_dir, "max_allowed_buy_price", getattr(strat_dir, "max_allowed_buy", 999999.0)) if strat_dir else 999999.0)))
+        min_sell = float(macro.get("min_allowed_sell_price", macro.get("min_allowed_sell", getattr(strat_dir, "min_allowed_sell_price", getattr(strat_dir, "min_allowed_sell", 0.0)) if strat_dir else 0.0)))
+        allow_buy = (max_buy > 0.0)
+        allow_sell = (min_sell > 0.0 or (min_sell == 0.0 and max_buy == 0.0))
+        if "CASCADE_BEAR" in fractal_regime or ("BEAR" in fractal_regime and max_buy == 0.0):
+            allow_buy = False
+            allow_sell = True
+        elif "CASCADE_BULL" in fractal_regime or ("BULL" in fractal_regime and min_sell == 0.0):
+            allow_buy = True
+            allow_sell = False
+    else:
+        allow_buy = True
+        allow_sell = True
+
     # Current EMA20 and EMA50 from last candle
     ema20 = float(candles[-1].get("ema20", mid)) if candles else mid
     ema50 = float(candles[-1].get("ema50", mid)) if candles else mid
@@ -1338,24 +1365,22 @@ def calculate_predictive_matrix(
             glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
             touch_tags = []
             for tn in t_nodes:
-                num = int(tn.get("touch_num", 1))
+                c_idx = tn.get("candle_idx", -1)
+                num = tn.get("touch_num", len(touch_tags) + 1)
                 g = glyphs[min(num - 1, len(glyphs) - 1)]
-                touch_tags.append({"num": num, "glyph": g, "time": int(tn.get("time", 0))})
-            fresh_lbl = matched_wall.get("freshness_label", "")
-            desc = f"{fresh_lbl} ({', '.join(t['glyph'] for t in touch_tags)})" if fresh_lbl else f"Tested {len(t_nodes)}x ({', '.join(t['glyph'] for t in touch_tags)})"
-            return len(t_nodes), touch_tags, desc
+                c_time = candles[c_idx]["time"] if (0 <= c_idx < len(candles)) else ""
+                touch_tags.append({"num": num, "glyph": g, "time": c_time})
+            desc = f"Tested {len(touch_tags)}x ({', '.join(t['glyph'] for t in touch_tags)})"
+            return len(touch_tags), touch_tags, desc
 
-        if not candles:
-            return 0, [], "Fresh Level (0x)"
-        lb_touch = int(getattr(config, "ZCE_TOUCH_LOOKBACK_BARS", 120))
-        c_highs = [float(c.get("high", c.get("close", 0))) for c in candles[-lb_touch:]]
-        c_lows = [float(c.get("low", c.get("close", 0))) for c in candles[-lb_touch:]]
-        c_times = [int(c.get("time", 0)) for c in candles[-lb_touch:]]
+        c_highs = [c.get("high", 0.0) for c in candles]
+        c_lows = [c.get("low", 0.0) for c in candles]
+        c_times = [c.get("time", "") for c in candles]
         t_bars = []
+        glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
         touch_tags = []
-        glyphs = ["①", "②", "③", "④", "⑤"]
         fb_state = "DEPARTED"
-        fb_dep_dist = max(0.50 * atr_val, 6.0 * pip_val)
+        fb_dep_dist = 0.35 * atr_val
 
         for k in range(len(c_highs)):
             h_k = c_highs[k]
@@ -1383,7 +1408,7 @@ def calculate_predictive_matrix(
     stations = []
 
     # 1. STATION PULLBACK: M2S / M2D EMA & SBR/RBS RETEST
-    if is_bear:
+    if is_bear and allow_sell:
         pb_candidates = [p for p in [ema20, ema50, c1] if p > mid]
         pb_price = min(pb_candidates) if pb_candidates else (mid + 0.8 * atr_val)
         pb_pips = round((pb_price - mid) / max(pip_val, 1e-6), 1)
@@ -1414,7 +1439,7 @@ def calculate_predictive_matrix(
             "trigger_condition": f"Tunggu rally ke area {pb_price:.{digits}f} ({pb_td}), konfirmasi bearish rejection wick >= 20% di koridor EMA20/50 ({pb_subtype}).",
             "status": "ARMED_WAITING" if pb_pips > 0 else "TESTING"
         })
-    else:
+    elif not is_bear and allow_buy:
         pb_candidates = [p for p in [ema20, ema50, f1] if 0 < p < mid]
         pb_price = max(pb_candidates) if pb_candidates else (mid - 0.8 * atr_val)
         pb_pips = round((mid - pb_price) / max(pip_val, 1e-6), 1)
@@ -1446,124 +1471,182 @@ def calculate_predictive_matrix(
             "status": "ARMED_WAITING" if pb_pips > 0 else "TESTING"
         })
 
-    # 2. STATION SWEEP: M1A / M1B LIQUIDITY SWEEP
+    # 2. STATION SWEEP / RETEST:
     if is_bear:
-        pdl = float(macro.get("pdl", 0.0) or 0.0)
-        asian_l = float(macro.get("asian_low", 0.0) or 0.0)
-        pwl = float(macro.get("pwl", 0.0) or 0.0)
-        strong_l = float(macro.get("strong_low", 0.0) or macro.get("equal_low", 0.0) or 0.0)
+        if allow_buy:
+            pdl = float(macro.get("pdl", 0.0) or 0.0)
+            asian_l = float(macro.get("asian_low", 0.0) or 0.0)
+            pwl = float(macro.get("pwl", 0.0) or 0.0)
+            strong_l = float(macro.get("strong_low", 0.0) or macro.get("equal_low", 0.0) or 0.0)
 
-        # Check macro boundary vs internal mid-chamber levels
-        ext_lows = [p for p in [asian_l, pdl, pwl, strong_l, f2] if 0 < p < mid]
-        if f1 > 0 and f1 < mid:
-            # If f1 is at deep discount (<= 0.382 DR), it is a macro boundary
-            if _calc_dr_pos(f1) <= 0.382 or not ext_lows:
-                ext_lows.append(f1)
+            # Check macro boundary vs internal mid-chamber levels
+            ext_lows = [p for p in [asian_l, pdl, pwl, strong_l, f2] if 0 < p < mid]
+            if f1 > 0 and f1 < mid:
+                if _calc_dr_pos(f1) <= 0.382 or not ext_lows:
+                    ext_lows.append(f1)
 
-        sw_price = max(ext_lows) if ext_lows else (f1 if (f1 > 0 and f1 < mid) else (mid - 1.2 * atr_val))
-        sw_pips = round((mid - sw_price) / max(pip_val, 1e-6), 1)
-        sw_sl = sw_price - max(0.60 * atr_val, 15.0 * point)
-        sw_tp = mid + 1.2 * atr_val
-        sw_rr = round(abs(sw_tp - sw_price) / max(abs(sw_price - sw_sl), 1e-5), 2)
-        sw_dr = _calc_dr_pos(sw_price)
+            sw_price = max(ext_lows) if ext_lows else (f1 if (f1 > 0 and f1 < mid) else (mid - 1.2 * atr_val))
+            sw_pips = round((mid - sw_price) / max(pip_val, 1e-6), 1)
+            sw_sl = sw_price - max(0.60 * atr_val, 15.0 * point)
+            sw_tp = mid + 1.2 * atr_val
+            sw_rr = round(abs(sw_tp - sw_price) / max(abs(sw_price - sw_sl), 1e-5), 2)
+            sw_dr = _calc_dr_pos(sw_price)
 
-        is_ext = (sw_dr <= 0.382) or any(abs(sw_price - p) <= 0.15 * atr_val for p in [pdl, asian_l, pwl, strong_l] if p > 0)
-        sw_subtype = "M1A" if is_ext else "M1B"
-        sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
-        sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
+            is_ext = (sw_dr <= 0.382) or any(abs(sw_price - p) <= 0.15 * atr_val for p in [pdl, asian_l, pwl, strong_l] if p > 0)
+            sw_subtype = "M1A" if is_ext else "M1B"
+            sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
+            sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
-        sw_wall = _find_matching_zce_wall(sw_price)
-        sw_freshness = sw_wall.get("freshness_state") if sw_wall else macro.get("f1_freshness_state", "FRESH_VIRGIN")
-        sw_fresh_lbl = sw_wall.get("freshness_label") if sw_wall else macro.get("f1_freshness_label", "")
-        sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
-        if sw_is_coil:
-            sw_status = "VETOED_COIL"
-            sw_trigger_cond = f"Level Sweep ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Lower Highs squeeze'}). VETO FADE BUY — antisipasi breakdown M4 / retest M3."
+            sw_wall = _find_matching_zce_wall(sw_price)
+            sw_freshness = sw_wall.get("freshness_state") if sw_wall else macro.get("f1_freshness_state", "FRESH_VIRGIN")
+            sw_fresh_lbl = sw_wall.get("freshness_label") if sw_wall else macro.get("f1_freshness_label", "")
+            sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
+            if sw_is_coil:
+                sw_status = "VETOED_COIL"
+                sw_trigger_cond = f"Level Sweep ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Lower Highs squeeze'}). VETO FADE BUY — antisipasi breakdown M4 / retest M3."
+            else:
+                sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+                sw_trigger_cond = f"Tunggu harga menusuk bawah {sw_price:.{digits}f} ({sw_td}) sapu SSL, lalu reclaim dengan lower wick >= 30%."
+
+            stations.append({
+                "id": "station_sweep",
+                "type": "SWEEP",
+                "subtype": sw_subtype,
+                "label": f"WAIT {sw_subtype}",
+                "setup_name": sw_title,
+                "direction": "BUY",
+                "target_price": round(sw_price, digits),
+                "distance_pips": sw_pips,
+                "distance_atr": round((mid - sw_price) / max(atr_val, 1e-5), 2),
+                "sl": round(sw_sl, digits),
+                "tp": round(sw_tp, digits),
+                "rr": sw_rr,
+                "touch_count": sw_tc,
+                "touch_tags": sw_tt,
+                "touch_desc": sw_td,
+                "freshness_state": sw_freshness,
+                "is_coil": sw_is_coil,
+                "trigger_condition": sw_trigger_cond,
+                "status": sw_status
+            })
         else:
-            sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
-            sw_trigger_cond = f"Tunggu harga menusuk bawah {sw_price:.{digits}f} ({sw_td}) sapu SSL, lalu reclaim dengan lower wick >= 30%."
-
-        stations.append({
-            "id": "station_sweep",
-            "type": "SWEEP",
-            "subtype": sw_subtype,
-            "label": f"WAIT {sw_subtype}",
-            "setup_name": sw_title,
-            "direction": "BUY",
-            "target_price": round(sw_price, digits),
-            "distance_pips": sw_pips,
-            "distance_atr": round((mid - sw_price) / max(atr_val, 1e-5), 2),
-            "sl": round(sw_sl, digits),
-            "tp": round(sw_tp, digits),
-            "rr": sw_rr,
-            "touch_count": sw_tc,
-            "touch_tags": sw_tt,
-            "touch_desc": sw_td,
-            "freshness_state": sw_freshness,
-            "is_coil": sw_is_coil,
-            "trigger_condition": sw_trigger_cond,
-            "status": sw_status
-        })
+            # Pro-trend Bearish Retest (M3 SBR) — BUY M1A dihilangkan pada Cascade Bear
+            sbr_cands = [p for p in [c1, ema20, ema50] if p > mid]
+            retest_p = min(sbr_cands) if sbr_cands else (mid + 0.6 * atr_val)
+            retest_sl = retest_p + max(0.60 * atr_val, 15.0 * point)
+            retest_tp = f1 if (f1 > 0 and f1 < mid) else (mid - 1.5 * atr_val)
+            retest_rr = round(abs(retest_tp - retest_p) / max(abs(retest_sl - retest_p), 1e-5), 2)
+            retest_tc, retest_tt, retest_td = _count_level_touches(retest_p)
+            stations.append({
+                "id": "station_sweep",
+                "type": "RETEST",
+                "subtype": "M3",
+                "label": "WAIT M3",
+                "setup_name": "M3 SBR Retest (Pro-Trend Continuation)",
+                "direction": "SELL",
+                "target_price": round(retest_p, digits),
+                "distance_pips": round((retest_p - mid) / max(pip_val, 1e-6), 1),
+                "distance_atr": round((retest_p - mid) / max(atr_val, 1e-5), 2),
+                "sl": round(retest_sl, digits),
+                "tp": round(retest_tp, digits),
+                "rr": retest_rr,
+                "touch_count": retest_tc,
+                "touch_tags": retest_tt,
+                "touch_desc": retest_td,
+                "freshness_state": "FRESH_VIRGIN",
+                "is_coil": False,
+                "trigger_condition": f"Rezim Cascade: Tunggu retest ke SBR ceiling {retest_p:.{digits}f} ({retest_td}) untuk eksekusi M3 breakdown sell continuation.",
+                "status": "ARMED_WAITING"
+            })
     else:
-        pdh = float(macro.get("pdh", 0.0) or 0.0)
-        asian_h = float(macro.get("asian_high", 0.0) or 0.0)
-        pwh = float(macro.get("pwh", 0.0) or 0.0)
-        strong_h = float(macro.get("strong_high", 0.0) or macro.get("equal_high", 0.0) or 0.0)
+        if allow_sell:
+            pdh = float(macro.get("pdh", 0.0) or 0.0)
+            asian_h = float(macro.get("asian_high", 0.0) or 0.0)
+            pwh = float(macro.get("pwh", 0.0) or 0.0)
+            strong_h = float(macro.get("strong_high", 0.0) or macro.get("equal_high", 0.0) or 0.0)
 
-        # Check macro boundary vs internal mid-chamber levels
-        ext_highs = [p for p in [asian_h, pdh, pwh, strong_h, c2] if p > mid]
-        if c1 > mid:
-            # If c1 is at deep premium (>= 0.618 DR), it is a macro boundary
-            if _calc_dr_pos(c1) >= 0.618 or not ext_highs:
-                ext_highs.append(c1)
+            # Check macro boundary vs internal mid-chamber levels
+            ext_highs = [p for p in [asian_h, pdh, pwh, strong_h, c2] if p > mid]
+            if c1 > mid:
+                if _calc_dr_pos(c1) >= 0.618 or not ext_highs:
+                    ext_highs.append(c1)
 
-        sw_price = min(ext_highs) if ext_highs else (c1 if (c1 > mid) else (mid + 1.2 * atr_val))
-        sw_pips = round((sw_price - mid) / max(pip_val, 1e-6), 1)
-        sw_sl = sw_price + max(0.60 * atr_val, 15.0 * point)
-        sw_tp = mid - 1.2 * atr_val
-        sw_rr = round(abs(sw_price - sw_tp) / max(abs(sw_sl - sw_price), 1e-5), 2)
-        sw_dr = _calc_dr_pos(sw_price)
+            sw_price = min(ext_highs) if ext_highs else (c1 if (c1 > mid) else (mid + 1.2 * atr_val))
+            sw_pips = round((sw_price - mid) / max(pip_val, 1e-6), 1)
+            sw_sl = sw_price + max(0.60 * atr_val, 15.0 * point)
+            sw_tp = mid - 1.2 * atr_val
+            sw_rr = round(abs(sw_price - sw_tp) / max(abs(sw_sl - sw_price), 1e-5), 2)
+            sw_dr = _calc_dr_pos(sw_price)
 
-        is_ext = (sw_dr >= 0.618) or any(abs(sw_price - p) <= 0.15 * atr_val for p in [pdh, asian_h, pwh, strong_h] if p > 0)
-        sw_subtype = "M1A" if is_ext else "M1B"
-        sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
-        sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
+            is_ext = (sw_dr >= 0.618) or any(abs(sw_price - p) <= 0.15 * atr_val for p in [pdh, asian_h, pwh, strong_h] if p > 0)
+            sw_subtype = "M1A" if is_ext else "M1B"
+            sw_title = f"{sw_subtype} {'Macro Boundary' if sw_subtype == 'M1A' else 'Internal Inducement'} Sweep (SFP)"
+            sw_tc, sw_tt, sw_td = _count_level_touches(sw_price)
 
-        sw_wall = _find_matching_zce_wall(sw_price)
-        sw_freshness = sw_wall.get("freshness_state") if sw_wall else macro.get("c1_freshness_state", "FRESH_VIRGIN")
-        sw_fresh_lbl = sw_wall.get("freshness_label") if sw_wall else macro.get("c1_freshness_label", "")
-        sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
-        if sw_is_coil:
-            sw_status = "VETOED_COIL"
-            sw_trigger_cond = f"Level Sweep ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Higher Lows accumulation'}). VETO FADE SELL — antisipasi breakout M4 / retest M3."
+            sw_wall = _find_matching_zce_wall(sw_price)
+            sw_freshness = sw_wall.get("freshness_state") if sw_wall else macro.get("c1_freshness_state", "FRESH_VIRGIN")
+            sw_fresh_lbl = sw_wall.get("freshness_label") if sw_wall else macro.get("c1_freshness_label", "")
+            sw_is_coil = (sw_freshness == "ABSORPTION_COIL")
+            if sw_is_coil:
+                sw_status = "VETOED_COIL"
+                sw_trigger_cond = f"Level Sweep ({sw_price:.{digits}f}) sedang mengalami ABSORPTION COIL ({sw_fresh_lbl or 'Higher Lows accumulation'}). VETO FADE SELL — antisipasi breakout M4 / retest M3."
+            else:
+                sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
+                sw_trigger_cond = f"Tunggu harga menusuk atas {sw_price:.{digits}f} ({sw_td}) sapu BSL, lalu reclaim dengan upper wick >= 30%."
+
+            stations.append({
+                "id": "station_sweep",
+                "type": "SWEEP",
+                "subtype": sw_subtype,
+                "label": f"WAIT {sw_subtype}",
+                "setup_name": sw_title,
+                "direction": "SELL",
+                "target_price": round(sw_price, digits),
+                "distance_pips": sw_pips,
+                "distance_atr": round((sw_price - mid) / max(atr_val, 1e-5), 2),
+                "sl": round(sw_sl, digits),
+                "tp": round(sw_tp, digits),
+                "rr": sw_rr,
+                "touch_count": sw_tc,
+                "touch_tags": sw_tt,
+                "touch_desc": sw_td,
+                "freshness_state": sw_freshness,
+                "is_coil": sw_is_coil,
+                "trigger_condition": sw_trigger_cond,
+                "status": sw_status
+            })
         else:
-            sw_status = "ARMED_WAITING" if sw_pips > 3.0 else "IN_SWEEP_ZONE"
-            sw_trigger_cond = f"Tunggu harga menusuk atas {sw_price:.{digits}f} ({sw_td}) sapu BSL, lalu reclaim dengan upper wick >= 30%."
-
-        stations.append({
-            "id": "station_sweep",
-            "type": "SWEEP",
-            "subtype": sw_subtype,
-            "label": f"WAIT {sw_subtype}",
-            "setup_name": sw_title,
-            "direction": "SELL",
-            "target_price": round(sw_price, digits),
-            "distance_pips": sw_pips,
-            "distance_atr": round((sw_price - mid) / max(atr_val, 1e-5), 2),
-            "sl": round(sw_sl, digits),
-            "tp": round(sw_tp, digits),
-            "rr": sw_rr,
-            "touch_count": sw_tc,
-            "touch_tags": sw_tt,
-            "touch_desc": sw_td,
-            "freshness_state": sw_freshness,
-            "is_coil": sw_is_coil,
-            "trigger_condition": sw_trigger_cond,
-            "status": sw_status
-        })
+            # Pro-trend Bullish Retest (M3 RBS Floor) — SELL M1A dihilangkan pada Cascade/Realignment Bull
+            rbs_cands = [p for p in [f1, ema20, ema50] if 0 < p < mid]
+            retest_p = max(rbs_cands) if rbs_cands else (mid - 0.6 * atr_val)
+            retest_sl = retest_p - max(0.60 * atr_val, 15.0 * point)
+            retest_tp = c1 if (c1 > mid) else (mid + 1.5 * atr_val)
+            retest_rr = round(abs(retest_tp - retest_p) / max(abs(retest_p - retest_sl), 1e-5), 2)
+            retest_tc, retest_tt, retest_td = _count_level_touches(retest_p)
+            stations.append({
+                "id": "station_sweep",
+                "type": "RETEST",
+                "subtype": "M3",
+                "label": "WAIT M3",
+                "setup_name": "M3 RBS Retest (Pro-Trend Expansion)",
+                "direction": "BUY",
+                "target_price": round(retest_p, digits),
+                "distance_pips": round((mid - retest_p) / max(pip_val, 1e-6), 1),
+                "distance_atr": round((mid - retest_p) / max(atr_val, 1e-5), 2),
+                "sl": round(retest_sl, digits),
+                "tp": round(retest_tp, digits),
+                "rr": retest_rr,
+                "touch_count": retest_tc,
+                "touch_tags": retest_tt,
+                "touch_desc": retest_td,
+                "freshness_state": "FRESH_VIRGIN",
+                "is_coil": False,
+                "trigger_condition": f"Rezim Expansion: Tunggu retest ke RBS floor {retest_p:.{digits}f} ({retest_td}) untuk eksekusi M3 retest buy expansion.",
+                "status": "ARMED_WAITING"
+            })
 
     # 3. STATION EXPANSION: M4 BREAKDOWN / BREAKOUT CONTINUATION
-    if is_bear:
+    if is_bear and allow_sell:
         exp_trigger_p = f1 if (f1 > 0) else (mid - 0.5 * atr_val)
         exp_target_p = f2 if (f2 > 0 and f2 < exp_trigger_p) else (exp_trigger_p - 1.8 * atr_val)
         exp_pips = round((mid - exp_trigger_p) / max(pip_val, 1e-6), 1)
@@ -1571,6 +1654,8 @@ def calculate_predictive_matrix(
         stations.append({
             "id": "station_expansion",
             "type": "EXPANSION",
+            "subtype": "M4",
+            "label": "WAIT M4",
             "setup_name": "M4 Breakdown Expansion",
             "direction": "SELL",
             "target_price": round(exp_trigger_p, digits),
@@ -1583,7 +1668,7 @@ def calculate_predictive_matrix(
             "trigger_condition": f"Tunggu H1 physical breach tutup bersih di bawah {exp_trigger_p:.{digits}f} dengan range >= 1.4x ATR dan body ratio >= 65%.",
             "status": "ARMED_WAITING"
         })
-    else:
+    elif not is_bear and allow_buy:
         exp_trigger_p = c1 if (c1 > 0) else (mid + 0.5 * atr_val)
         exp_target_p = c2 if (c2 > 0 and c2 > exp_trigger_p) else (exp_trigger_p + 1.8 * atr_val)
         exp_pips = round((exp_trigger_p - mid) / max(pip_val, 1e-6), 1)
@@ -1591,6 +1676,8 @@ def calculate_predictive_matrix(
         stations.append({
             "id": "station_expansion",
             "type": "EXPANSION",
+            "subtype": "M4",
+            "label": "WAIT M4",
             "setup_name": "M4 Breakout Expansion",
             "direction": "BUY",
             "target_price": round(exp_trigger_p, digits),
@@ -1901,7 +1988,7 @@ class CockpitDataEngine:
             tactical_tag = str(macro.get("tactical_desc") or "")
             csm_delta = float(macro.get("csm_delta", 0.0) or 0.0)
             tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
-            perm_label = macro.get("permission_state", "GO")
+            perm_label = macro.get("permission_state", "WATCH")
 
             # 1:1 Radar Standbys directly from MarketScanner
             standbys = self.scanner.get_radar_standbys(sym, mid, macro, pt, atr_val)
@@ -1953,43 +2040,29 @@ class CockpitDataEngine:
             runway_badge = "RW: —"
             runway_text = "RW: —"
 
-            if mid > 0 and pip_val > 0 and atr_val > 0:
-                is_bull_orient = ("BULL" in bias) or (closest_name and ("BUY" in closest_name or "BULL" in closest_name))
-                is_bear_orient = ("BEAR" in bias) or (closest_name and ("SELL" in closest_name or "BEAR" in closest_name))
-
-                if is_bull_orient and not is_bear_orient:
-                    target_wall = c2_p if ("ASCENDING_ABSORPTION" in struct_stage or (c1_p > 0 and mid >= c1_p and c2_p > c1_p)) else c1_p
-                    wall_lbl = "C2" if target_wall == c2_p and c2_p > 0 else "C1"
-                    if target_wall > 0:
-                        runway_pips = (target_wall - mid) / pip_val
-                        runway_atr = (target_wall - mid) / atr_val
-                        runway_station = wall_lbl
-                        runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
-                        runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
-                elif is_bear_orient and not is_bull_orient:
-                    target_wall = f2_p if ("DESCENDING_ABSORPTION" in struct_stage or (f1_p > 0 and mid <= f1_p and f2_p > 0 and f2_p < f1_p)) else f1_p
-                    wall_lbl = "F2" if target_wall == f2_p and f2_p > 0 else "F1"
-                    if target_wall > 0:
-                        runway_pips = (mid - target_wall) / pip_val
-                        runway_atr = (mid - target_wall) / atr_val
-                        runway_station = wall_lbl
-                        runway_badge = f"→{wall_lbl}: {runway_pips:+.0f}p"
-                        runway_text = f"→{wall_lbl} {runway_pips:+.1f}p ({runway_atr:.2f}x ATR)"
+            # Auto-detect target runway towards elected setup
+            primary_target = elected.get("target")
+            if primary_target and primary_target > 0:
+                rw_delta = abs(primary_target - mid)
+                runway_pips = round(rw_delta / pip_val, 1)
+                runway_atr = round(rw_delta / atr_val, 2) if atr_val > 0 else 0.0
+                t_lbl = "C1" if (c1_p > 0 and abs(primary_target - c1_p) <= 2 * pt) else ("F1" if (f1_p > 0 and abs(primary_target - f1_p) <= 2 * pt) else ("C2" if (c2_p > 0 and abs(primary_target - c2_p) <= 2 * pt) else ("F2" if (f2_p > 0 and abs(primary_target - f2_p) <= 2 * pt) else "TGT")))
+                runway_station = t_lbl
+                runway_badge = f"RW: {t_lbl} {runway_pips:.0f}p"
+                runway_text = f"{t_lbl}: {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+            elif c1_dist_pips is not None and f1_dist_pips is not None:
+                if c1_dist_pips < f1_dist_pips:
+                    runway_station = "C1"
+                    runway_pips = float(c1_dist_pips)
+                    runway_atr = round((c1_p - mid) / atr_val, 2) if atr_val > 0 else 0.0
+                    runway_badge = f"RW: C1 {c1_dist_pips}p"
+                    runway_text = f"C1: {c1_dist_pips}p ({runway_atr:.2f}x ATR)"
                 else:
-                    dist_to_c1 = (c1_p - mid) if c1_p > 0 else 99999
-                    dist_to_f1 = (mid - f1_p) if f1_p > 0 else 99999
-                    if dist_to_c1 < dist_to_f1 and c1_p > 0:
-                        runway_pips = dist_to_c1 / pip_val
-                        runway_atr = dist_to_c1 / atr_val
-                        runway_station = "C1"
-                        runway_badge = f"C1: {runway_pips:.0f}p"
-                        runway_text = f"C1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
-                    elif f1_p > 0:
-                        runway_pips = dist_to_f1 / pip_val
-                        runway_atr = dist_to_f1 / atr_val
-                        runway_station = "F1"
-                        runway_badge = f"F1: {runway_pips:.0f}p"
-                        runway_text = f"F1 {runway_pips:.1f}p ({runway_atr:.2f}x ATR)"
+                    runway_station = "F1"
+                    runway_pips = float(f1_dist_pips)
+                    runway_atr = round((mid - f1_p) / atr_val, 2) if atr_val > 0 else 0.0
+                    runway_badge = f"RW: F1 {f1_dist_pips}p"
+                    runway_text = f"F1: {f1_dist_pips}p ({runway_atr:.2f}x ATR)"
 
             # M4 Systemic Flow Shock & Dealing Range Extraction
             dr_pct = float(macro.get("dealing_range_pos", macro.get("dr_pos", 0.5)) or 0.5) * 100.0
@@ -2034,6 +2107,7 @@ class CockpitDataEngine:
                 "is_near": is_near,
                 "bias": bias,
                 "tactical_tag": tactical_tag,
+                "tactical_desc": tactical_tag,
                 "csm_delta": round(csm_delta, 2),
                 "tier": tier,
                 "perm_label": perm_label,
@@ -2070,7 +2144,11 @@ class CockpitDataEngine:
                 "w1_secular_regime": getattr(macro.get("strat_dir"), "w1_secular_regime", "SECULAR_RANGE"),
                 "w1_intermediate_regime": getattr(macro.get("strat_dir"), "w1_intermediate_regime", "NEUTRAL_OSCILLATION"),
                 "w1_horizon_conflict": getattr(macro.get("strat_dir"), "htf_horizon_conflict", False),
-                "w1_lower_highs": getattr(macro.get("strat_dir"), "w1_lower_highs", [])
+                "w1_lower_highs": getattr(macro.get("strat_dir"), "w1_lower_highs", []),
+                "timeframe_trends": getattr(strat, "timeframe_trends", macro.get("timeframe_trends", {})),
+                "fractal_regime": getattr(strat, "fractal_regime", macro.get("fractal_regime", "CHAMBER_CONSOLIDATION")),
+                "macro_directive": getattr(strat, "primary_execution_directive", macro.get("primary_execution_directive", "")),
+                "daily_macro_bias": getattr(strat, "daily_macro_bias", macro.get("daily_macro_bias", ""))
             })
 
         # Stable sorting by Base Currency Group: EUR, GBP, AUD, USD, CHF, CAD, NZD
@@ -2963,11 +3041,16 @@ class CockpitDataEngine:
 
         now_session_info = _get_session_info(now_wib, symbol)
         last_candle = candles[-1] if candles else {}
+        tf_trends = getattr(strat, "timeframe_trends", macro.get("timeframe_trends", {}))
         intel = {
-            "w1_trend": w1_trend,
-            "d1_trend": d1_trend,
-            "h4_trend": h4_trend,
-            "h1_trend": h1_trend,
+            "mn1_trend": tf_trends.get("MN1", "FLAT"),
+            "w1_trend": tf_trends.get("W1", w1_trend),
+            "d1_trend": tf_trends.get("D1", d1_trend),
+            "h4_trend": tf_trends.get("H4", h4_trend),
+            "h1_trend": tf_trends.get("H1", h1_trend),
+            "fractal_regime": getattr(strat, "fractal_regime", macro.get("fractal_regime", "CHAMBER_CONSOLIDATION")),
+            "macro_directive": getattr(strat, "primary_execution_directive", macro.get("primary_execution_directive", "")),
+            "daily_macro_bias": getattr(strat, "daily_macro_bias", macro.get("daily_macro_bias", "")),
             "adx": round(adx_val, 1),
             "mse_state": mse_state,
             "operational_phase": operational_phase,
@@ -3092,7 +3175,7 @@ class CockpitDataEngine:
             "m4_dir": m4_flow_dir,
             "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0),
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
-            "perm_label": macro.get("permission_state", "GO"),
+            "perm_label": macro.get("permission_state", "WATCH"),
             "tactical_state": macro.get("tactical_state", "BALANCED_FLOW"),
             "tactical_desc": macro.get("tactical_desc", ""),
             "f1": round(float(f1), digits) if f1 else None,
@@ -3302,24 +3385,49 @@ class CockpitDataEngine:
                     g3 = {"id": 3, "title": "Systemic Basket & CBSS Guard", "status": "PASS", "desc": f"CBSS Cleared (Runway {r_atr:.2f}x ATR){pen_note}", "reason": f"Aliran basket {base_c}/{quote_c} stabil (<35 bps). Bebas tabrakan benteng G3 lawan & runway memadai ({r_atr:.2f}x ATR)."}
         gates.append(g3)
 
-        # Gate 4: MSE Chamber & Forbidden Traps + Directional Hysteresis
+        # Gate 4: MSE Chamber & Directional Lock (HMS-MRA Enhanced)
         tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
+        fractal_regime = getattr(strat, "fractal_regime", macro.get("fractal_regime", ""))
+        macro_bias = getattr(strat, "daily_macro_bias", macro.get("daily_macro_bias", ""))
+        primary_dir = getattr(strat, "primary_execution_directive", macro.get("macro_directive", ""))
+        max_buy = getattr(strat, "max_allowed_buy_price", getattr(strat, "max_allowed_buy", macro.get("max_allowed_buy_price", macro.get("max_allowed_buy", 999999.0))))
+        min_sell = getattr(strat, "min_allowed_sell_price", getattr(strat, "min_allowed_sell", macro.get("min_allowed_sell_price", macro.get("min_allowed_sell", 0.0))))
         traps = getattr(strat, "forbidden_traps", []) or []
         trap_reason = traps[0] if traps else ""
         f1_lvl = float(macro.get("immediate_floor_f1", 0.0) or 0.0)
         c1_lvl = float(macro.get("immediate_ceiling_c1", 0.0) or 0.0)
         digits = 3 if ("JPY" in clean_s) else (2 if (is_crypto or is_gold) else 5)
 
-        if tier == "HARD_BLOCK":
-            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "BLOCK", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
+        # Cek Ceiling / Floor Breach
+        is_buy_blocked_by_regime = (target_dir == 1 and max_buy == 0.0)
+        is_sell_blocked_by_regime = (target_dir == -1 and min_sell == 0.0)
+        regime_label = fractal_regime if fractal_regime else tier
+        g4_desc = f"Regime: {regime_label}{dir_desc}"
+
+        if is_buy_blocked_by_regime:
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "BLOCK",
+                  "desc": g4_desc,
+                  "reason": f"[REGIME CEILING VETO] BUY dilarang total pada {regime_label} (Max Buy: 0.0). Directive: {primary_dir}."}
+        elif is_sell_blocked_by_regime:
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "BLOCK",
+                  "desc": g4_desc,
+                  "reason": f"[REGIME FLOOR VETO] SELL dilarang total pada {regime_label} (Min Sell: 0.0). Directive: {primary_dir}."}
+        elif tier == "HARD_BLOCK":
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "BLOCK",
+                  "desc": g4_desc,
+                  "reason": f"[MSE HARD BLOCK] {trap_reason or 'Hard Lock past invalidation'}"}
         elif tier == "WATCH_ONLY":
-            ch_desc = trap_reason if trap_reason else (f"Konsolidasi Kamar: Menunggu pendekatan benteng Floor F1 ({f1_lvl:.{digits}f}) atau Ceiling C1 ({c1_lvl:.{digits}f}). Setup limit & sweep tetap aktif dipindai." if (f1_lvl > 0 and c1_lvl > 0) else "Konsolidasi Kamar: Menunggu konfirmasi structural breakout.")
-            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "WAIT", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"[MSE WATCH ONLY] {ch_desc}"}
+            ch_desc = trap_reason if trap_reason else (f"Konsolidasi Kamar: Menunggu pendekatan benteng Floor F1 ({f1_lvl:.{digits}f}) atau Ceiling C1 ({c1_lvl:.{digits}f})." if (f1_lvl > 0 and c1_lvl > 0) else f"Rezim {regime_label}: Menunggu konfirmasi struktural.")
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "WAIT",
+                  "desc": g4_desc,
+                  "reason": f"[MSE WATCH ONLY] {ch_desc} | Directive: {primary_dir}"}
         else:
-            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "PASS", "desc": f"Chamber Gating & Hysteresis{dir_desc}", "reason": f"Action Tier: {tier} (Kamar terbuka untuk retest/expansion){dir_desc}."}
+            g4 = {"id": 4, "title": "MSE Chamber & Directional Lock", "status": "PASS",
+                  "desc": g4_desc,
+                  "reason": f"Action Tier: {tier} ({regime_label} aktif | Bias: {macro_bias} | Directive: {primary_dir}){dir_desc}."}
         gates.append(g4)
 
-        # Gate 5: Boitoki CSM Flow Alignment
+        # Gate 5: Boitoki CSM Flow Alignment (Conditional Matrix)
         if is_crypto or is_gold:
             g5 = {"id": 5, "title": "Boitoki CSM Flow Alignment", "status": "PASS", "desc": "Relative Net Currency Delta Flow Check", "reason": f"Aset non-fiat ({clean_s}) independen dari arus fiat CSM (Net Delta N/A)."}
         else:
@@ -3330,25 +3438,51 @@ class CockpitDataEngine:
             dir_label_g5 = "BUY" if target_dir == 1 else "SELL"
             m4_tag = " [M4 Dir]" if m4_dir_override is not None else (" [Lock Dir]" if dir_val != 0 else "")
 
-            if is_csm_opposed and csm_filter_enabled:
+            # Cek apakah ini Reversal Benteng Kunci (Grade 3 Wall atau STRUCTURAL_RE_ALIGNMENT_APEX)
+            is_reversal_regime = "REALIGNMENT" in fractal_regime.upper() or "RE_ALIGN" in fractal_regime.upper() or "APEX" in fractal_regime.upper()
+
+            if is_csm_opposed and is_reversal_regime:
+                # Kedaulatan Struktur: CSM lagging tidak boleh mem-BLOCK reversal benteng HTF
+                g5 = {"id": 5, "title": "Boitoki CSM Flow — SCALED LOT (0.5x)", "status": "OBSERVE",
+                      "desc": "Lagging CSM Allowed at Fortress Wall",
+                      "reason": f"[REVERSAL CONFLUENCE] CSM Delta ({csm_d:+.2f}) masih lagging melawan {dir_label_g5}, namun diizinkan pada Reversal Benteng HTF ({regime_label}). Lot diskalakan 0.5x."}
+            elif is_csm_opposed and csm_filter_enabled:
                 g5 = {"id": 5, "title": "Boitoki CSM Flow Opposition", "status": "BLOCK",
                       "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label_g5}{m4_tag})."}
+                      "reason": f"[CSM OPPOSED] Net Delta ({csm_d:+.2f}) berlawanan arah dengan setup ({dir_label_g5}{m4_tag}) dalam rezim {regime_label}."}
             elif is_csm_opposed and not csm_filter_enabled:
                 g5 = {"id": 5, "title": "Boitoki CSM Flow — OBSERVE MODE", "status": "OBSERVE",
                       "desc": "Relative Net Currency Delta Flow Check (Filter Dinonaktifkan)",
                       "reason": f"[FORWARD TEST] CSM Net Delta ({csm_d:+.2f}) berlawanan {dir_label_g5}{m4_tag} — dicatat sebagai telemetri, tidak memblokir eksekusi (ENABLE_CSM_FLOW_FILTER=false)."}
             else:
+                csm_boost = " (+15 Alpha Boost)" if abs(csm_d) >= 1.5 else ""
                 g5 = {"id": 5, "title": "Boitoki CSM Flow Alignment", "status": "PASS",
-                      "desc": "Relative Net Currency Delta Flow Check",
-                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label_g5}{m4_tag} momentum arah."}
+                      "desc": f"Relative Net Currency Delta Flow Check{csm_boost}",
+                      "reason": f"Net Delta {csm_d:+.2f} selaras atau netral dengan {dir_label_g5}{m4_tag} momentum arah{csm_boost}."}
         gates.append(g5)
 
-        # Gate 6: M1A/M1B..M4 Setup Prerequisites
+        # Gate 6: M1A/M1B..M4 Setup Prerequisites (Context-Aware)
+        is_cascade = "CASCADE" in fractal_regime.upper()
         if getattr(strat, "action_tier", "") in ("FULL_ALLOW", "REDUCED_CONFIDENCE") and macro.get("permission_state") == "GO":
-            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "PASS", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Kriteria kuantitatif terpenuhi. Menunggu harga menyentuh pending level."}
+            tactic_info = "M2 Pullback / M4 Expansion" if is_cascade else "M3 Retest / M1A Sweep"
+            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "PASS",
+                  "desc": f"Taktik Rezim: {tactic_info}",
+                  "reason": f"Kriteria kuantitatif {regime_label} terpenuhi. Menunggu harga menyentuh pending level ({tactic_info})."}
+        elif macro.get("permission_state") in ("VETO", "LOCK"):
+            tactical_msg = macro.get("tactical_desc") or "Tactical Gate Veto Active"
+            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Gate Veto", "status": "BLOCK",
+                  "desc": "Stage 1 Tactical Gate Veto",
+                  "reason": tactical_msg}
         else:
-            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT", "desc": "Mechanism Criteria & Trigger Penetration", "reason": "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / breakout basing M4."}
+            if is_cascade:
+                req_desc = f"Menunggu konfirmasi M2 Pullback (OTE/EMA) atau M4 Breakdown (DBD) untuk {dir_label_g5} continuation. (Counter-trend M1A Sweep dinonaktifkan)."
+            elif "REALIGN" in fractal_regime.upper() or "APEX" in fractal_regime.upper():
+                req_desc = f"Menunggu konfirmasi M3 RBS Retest atau M1A Rejection Sweep di lantai benteng kunci."
+            else:
+                req_desc = "Menunggu konfirmasi wick rejection M1A / trend sweep M1B / pullback Fib M2 / breakdown M3 / breakout basing M4."
+            g6 = {"id": 6, "title": "M1A/M1B..M4 Radar Prerequisites", "status": "WAIT",
+                  "desc": "Mechanism Criteria & Trigger Penetration",
+                  "reason": req_desc}
         gates.append(g6)
 
         # Gate 7: Stage 2 3-AI Consensus Jury & CRO

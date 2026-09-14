@@ -446,13 +446,13 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                     mse_tier_str = str(raw_tier).replace('MSE_', '')
                     w_pm = v.get('permission_state', 'ARM')
                     if w_pm == "GO":
-                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Full Allow){UI.RST}"
+                        w_perm_str = f"{UI.GREEN}● GO (Pelatuk Aktif / Stage 1 Ready){UI.RST}"
                     elif w_pm == "ARM":
-                        w_perm_str = f"{UI.CYAN}◆ ARMED (Standby Reload / Scalp Only){UI.RST}"
-                    elif w_pm == "WAIT":
-                        w_perm_str = f"{UI.GRAY}○ WAIT (Mid-Chamber / Inaction Zone){UI.RST}"
-                    elif w_pm == "LOCK":
-                        w_perm_str = f"{UI.RED}■ LOCK (Hard Block / Extreme Trap){UI.RST}"
+                        w_perm_str = f"{UI.CYAN}◆ ARMED (Standby Reload / Near Boundary){UI.RST}"
+                    elif w_pm in ("VETO", "LOCK"):
+                        w_perm_str = f"{UI.RED}■ VETO (Gate Block / Protection Active){UI.RST}"
+                    else:
+                        w_perm_str = f"{UI.GRAY}○ WATCH (Mid-Chamber / Inaction Zone){UI.RST}"
                     break
 
         t3_lines = [
@@ -475,14 +475,14 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                         is_bull = v.get('is_bull', False)
                         is_bear = v.get('is_bear', False)
                         action_tier = v.get('action_tier', 'FULL_ALLOW')
-                        perm_st = v.get('permission_state', 'WAIT')
+                        perm_st = v.get('permission_state', 'WATCH')
                         
-                        if perm_st == "GO" or (action_tier == "FULL_ALLOW" and (pos <= 0.20 or pos >= 0.80)):
+                        if perm_st == "GO":
                             badge = f"{UI.GREEN}●{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ●")
-                        elif action_tier == "HARD_BLOCK" or perm_st == "LOCK":
+                        elif perm_st in ("VETO", "LOCK") or action_tier == "HARD_BLOCK":
                             badge = f"{UI.RED}■{UI.RST}"
-                        elif perm_st == "ARM" or action_tier in ("FULL_ALLOW", "TP1_ONLY_SCALP", "REDUCED_CONFIDENCE"):
+                        elif perm_st == "ARM":
                             badge = f"{UI.CYAN}◆{UI.RST}"
                             in_zone_pairs.append(f"{sym_prefix} ◆")
                         else:
@@ -516,8 +516,8 @@ def render_hacker_bento_hud(macro_cache=None, account_info=None, daily_pnl=0.0, 
                 f"{UI.CYAN}0%FL{UI.RST}~{UI.YELLOW}100%CE{UI.RST}",
                 f"{UI.GREEN}●GO{UI.RST}",
                 f"{UI.CYAN}◆ARM{UI.RST}",
-                f"{UI.YELLOW}▲WATCH{UI.RST}",
-                f"{UI.RED}■LOCK{UI.RST}"
+                f"{UI.RED}■VETO{UI.RST}",
+                f"{UI.YELLOW}▲WATCH{UI.RST}"
             ]
             t1_lines.append(" " + f" {UI.DIM}│{UI.RST} ".join(legend_parts))
         else:

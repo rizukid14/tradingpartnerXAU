@@ -62,7 +62,7 @@
 
 ## OPERATIONAL QUICK CHEAT SHEET
 
-- **Trading Mode**: `TRADING_MODE = "scanner"` (Default). Universe 26 simbol FX dipindai paralel tiap 60 detik di timeframe H1.
+- **Trading Mode**: `TRADING_MODE = "scanner"` (Default). Universe 28 simbol FX dipindai paralel tiap 60 detik di timeframe H1.
 - **Akun Broker**: **LIVE Cent** `VTMarkets-Live 3` (login `27556325`), magic `20260625`, Waktu WIB (GMT+7).
 - **Risk & Lot**: Risk per trade 1.0%, Plafon lot maksimal `MAX_POSITION_LOT = 0.50` (kunci mutlak akun Cent).
 - **Mode AI**: `AI_MODE_POLICY = "fixed"`, `AI_FIXED_MODE = "triple"` (OpenAI o4-mini + Gemini 3.1-Flash + DeepSeek V4-Flash).
@@ -74,7 +74,7 @@
   # Cockpit Dashboard (Port 8765)
   py -3 dashboard.py
   ```
-- **Dry Run Flag**: `config.DRY_RUN = False` $ightarrow$ LIVE trading (order riil dikirim). Dilarang ubah tanpa izin pengguna.
+- **Dry Run Flag**: `config.DRY_RUN = False` $ightarrow$ LIVE trading (order riil dikirim). Dilarang ubah tanpa izin pengguna.
 - **LuxAlgo MCP**: Terdaftar di `~/.gemini/config/mcp_config.json` (`https://mcp.luxalgo.com/mcp`). 42 tools kuantitatif instan. Source code resmi Pine Script v6 di [`src/indicators/lux_smc_official.pine`](src/indicators/lux_smc_official.pine).
 
 ---
@@ -84,7 +84,7 @@
 | File | Peran & Tanggung Jawab Utama |
 |---|---|
 | `main.py` | Event loop: Stage 1 radar (60s) + Stage 2 LLM saat ada sinyal A+ + position manager (3s) |
-| `config.py` & `.env` | Parameter konfigurasi global, sizing, timeframe helpers, dan universe 26 pairs |
+| `config.py` & `.env` | Parameter konfigurasi global, sizing, timeframe helpers, dan universe 28 pairs |
 | `src/analytics/market_scanner.py` | **Stage 1 Fast Radar**: Mekanisme M1..M4, filter permission MSE, directional gating |
 | `src/analytics/pattern_engine.py` | **SMC Active Dealing Range**: Origin impulse anchor, dynamic envelope, hierarchical swing labeling |
 | `src/indicators/lux_smc.py` | Porting Python LuxAlgo SMC (OB, FVG, EQH/EQL, Liquidity levels) |

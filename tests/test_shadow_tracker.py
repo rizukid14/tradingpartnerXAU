@@ -388,8 +388,8 @@ class TestQuantShadowTracker(unittest.TestCase):
         summary = self.tracker.get_performance_summary()
         self.assertEqual(summary["cumulative_net_r"], 1.60)
 
-    def test_grade_b_bep_accelerated_to_35_percent_tp(self):
-        """Verify that GRADE_B setup triggers BEP at 35% TP rather than standard 60% TP."""
+    def test_grade_b_bep_accelerated_to_50_percent_tp(self):
+        """Verify that GRADE_B setup triggers BEP at 50% TP rather than standard 60% TP."""
         cand = self._make_candidate(direction=1)
         cand.setup_grade = "GRADE_B"
         # BUY: entry 1.10000, sl 1.09800 (risk 200 pts), tp 1.10400 (400 pts)
@@ -403,14 +403,17 @@ class TestQuantShadowTracker(unittest.TestCase):
             tp_points=400,
         )
         mock_connector = MagicMock()
-        # Price reaches 38% TP (+152 pts, price 1.10152):
-        # Grade B (35% threshold) MUST trigger BEP!
-        # Standard Grade A (60% threshold) would NOT trigger BEP.
+        # Price reaches 38% TP (+152 pts, price 1.10152): Grade B (50% threshold) does NOT trigger yet
         mock_connector.get_current_tick.return_value = {"ask": 1.10155, "bid": 1.10150, "point": 0.00001, "digits": 5}
         self.tracker.update_shadow_orders(mock_connector)
-
         trade = self.tracker.active_trades[0]
-        self.assertTrue(trade.bep_activated, "Expected BEP to be activated at 38% TP for GRADE_B (threshold 35%)")
+        self.assertFalse(trade.bep_activated, "BEP should not trigger at 38% TP for 50% threshold")
+
+        # Price reaches 52% TP (+208 pts, price 1.10208):
+        # Grade B (50% threshold) MUST trigger BEP! Standard Grade A (60% threshold) would NOT trigger BEP.
+        mock_connector.get_current_tick.return_value = {"ask": 1.10210, "bid": 1.10208, "point": 0.00001, "digits": 5}
+        self.tracker.update_shadow_orders(mock_connector)
+        self.assertTrue(trade.bep_activated, "Expected BEP to be activated at 52% TP for GRADE_B (threshold 50%)")
         self.assertEqual(trade.current_sl, 1.10015)  # Entry + 15 pts
 
     def test_record_resolved_idempotency(self):

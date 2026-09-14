@@ -3095,18 +3095,21 @@ class MarketScanner:
             elif recent_floor_touch and cur_close > cur_ema20:
                 htf_delivery = "BULLISH_DELIVERY_FROM_FLOOR"
 
-            # Direct MSE 6-TF Action Tier mapping to Permission State
+            # Direct MSE 6-TF Action Tier mapping to Initial Permission State (No False GO)
             mse_tier = getattr(strat_dir, 'action_tier', 'FULL_ALLOW') if strat_dir else 'FULL_ALLOW'
-            if mse_tier == "FULL_ALLOW":
-                derived_perm = "GO" if (pos_in_range <= 0.20 or pos_in_range >= 0.80) else "ARM"
-            elif mse_tier in ("TP1_ONLY_SCALP", "REDUCED_CONFIDENCE"):
-                derived_perm = "ARM"
+            f_reg_init = getattr(strat_dir, 'fractal_regime', 'CHAMBER_CONSOLIDATION') if strat_dir else 'CHAMBER_CONSOLIDATION'
+            if mse_tier == "HARD_BLOCK":
+                derived_perm = "VETO"
+                tactical_desc_init = f"VETO: [MSE HARD BLOCK] {getattr(strat_dir, 'forbidden_traps', ['Hard Lock'])[0] if getattr(strat_dir, 'forbidden_traps', []) else 'Hard Lock'}"
             elif mse_tier == "WATCH_ONLY":
                 derived_perm = "WATCH"
-            elif mse_tier == "HARD_BLOCK":
-                derived_perm = "LOCK"
+                tactical_desc_init = f"WATCH: Rezim {f_reg_init} (Menunggu batas dinding)"
+            elif pos_in_range <= 0.20 or pos_in_range >= 0.80:
+                derived_perm = "ARM"
+                tactical_desc_init = f"ARM: Di zona batas ekstrim kamar (DR: {pos_in_range*100:.0f}%)"
             else:
                 derived_perm = "WATCH"
+                tactical_desc_init = f"WATCH: Mid-Chamber (DR: {pos_in_range*100:.0f}%)"
 
             # Pure Structural Trend from D1 and H4 (do not let tactical floor tests hijack structural trend)
             is_d1_bull = d1_is_bull and not d1_is_bear
@@ -3114,34 +3117,35 @@ class MarketScanner:
             is_h4_bull = h4_is_bull and not h4_is_bear
             is_h4_bear = h4_is_bear and not h4_is_bull
 
-            if is_d1_bear and is_h4_bear:
-                combined_is_bear = True
-                combined_is_bull = False
-            elif is_d1_bull and is_h4_bull:
-                combined_is_bull = True
-                combined_is_bear = False
-            elif is_h4_bear:
-                combined_is_bear = True
-                combined_is_bull = False
-            elif is_h4_bull:
-                combined_is_bull = True
-                combined_is_bear = False
-            else:
-                combined_is_bull = is_d1_bull
-                combined_is_bear = is_d1_bear
-
-            # MSE 6-TF Macro Strategic Directive Harmony
+            # HMS-MRA Macro Strategic Directive Alignment (Zero D1 Hijack)
             if strat_dir is not None:
+                f_regime = getattr(strat_dir, 'fractal_regime', '')
                 mse_bias = getattr(strat_dir, 'daily_macro_bias', '')
-                mse_directive = getattr(strat_dir, 'primary_execution_directive', '')
-                if mse_bias == "BEARISH_PULLBACK" or "HUNT_SELL" in mse_directive:
-                    if is_h4_bear or not is_d1_bull:
-                        combined_is_bear = True
-                        combined_is_bull = False
-                elif mse_bias == "BULLISH_PULLBACK" or "HUNT_BUY" in mse_directive:
-                    if is_h4_bull or not is_d1_bear:
-                        combined_is_bull = True
-                        combined_is_bear = False
+                if "BULL" in mse_bias or f_regime.endswith("_BUY"):
+                    combined_is_bull = True
+                    combined_is_bear = False
+                elif "BEAR" in mse_bias or f_regime.endswith("_SELL"):
+                    combined_is_bear = True
+                    combined_is_bull = False
+                else:
+                    combined_is_bull = False
+                    combined_is_bear = False
+            else:
+                if is_d1_bull and is_h4_bull:
+                    combined_is_bull = True
+                    combined_is_bear = False
+                elif is_d1_bear and is_h4_bear:
+                    combined_is_bear = True
+                    combined_is_bull = False
+                elif is_d1_bull and not is_d1_bear:
+                    combined_is_bull = True
+                    combined_is_bear = False
+                elif is_d1_bear and not is_d1_bull:
+                    combined_is_bear = True
+                    combined_is_bull = False
+                else:
+                    combined_is_bull = is_d1_bull
+                    combined_is_bear = is_d1_bear
 
             combined_trend_label = f"{d1_trend_label} | {h4_trend_label}"
 
@@ -3273,7 +3277,11 @@ class MarketScanner:
                 'is_ceiling_rejected': recent_ceiling_touch,
                 'is_floor_rejected': recent_floor_touch,
                 # Macro Strategic Directive Fields
+                'tactical_desc': tactical_desc_init,
                 'strat_dir': strat_dir,
+                'timeframe_trends': getattr(strat_dir, 'timeframe_trends', {}) if strat_dir else {},
+                'fractal_regime': getattr(strat_dir, 'fractal_regime', 'CHAMBER_CONSOLIDATION') if strat_dir else 'CHAMBER_CONSOLIDATION',
+                'harmonic_tensor': getattr(strat_dir, 'harmonic_tensor', []) if strat_dir else [],
                 'daily_macro_bias': getattr(strat_dir, 'daily_macro_bias', 'RANGE_BOUND') if strat_dir else 'RANGE_BOUND',
                 'macro_bias_score': getattr(strat_dir, 'macro_bias_score', 0.0) if strat_dir else 0.0,
                 'regime_stability': getattr(strat_dir, 'regime_stability', 'STABLE') if strat_dir else 'STABLE',
@@ -3887,6 +3895,7 @@ class MarketScanner:
                 m4_age = sfr_age  # Backward-compatible alias
                 atr_val = atr_pts * pt
                 sym_candidates: List[CandidateSetup] = []
+                sym_veto_reasons: List[str] = []
 
                 # ── DIRECTIONAL 5-TIER OPERATIONAL ACTION MATRIX & CIRCUIT BREAKER ──
                 def _is_direction_allowed(target_dir: int, setup_label: str, entry_price: Optional[float] = None) -> tuple:
@@ -3894,17 +3903,22 @@ class MarketScanner:
                     Resolves the 5-Tier Operational Action Matrix:
                     Returns: (allowed: bool, action_tier: str, reason: str)
                     """
+                    def _block(reason_str: str) -> tuple:
+                        if reason_str not in sym_veto_reasons:
+                            sym_veto_reasons.append(reason_str)
+                        return False, "HARD_BLOCK", reason_str
+
                     clean_s = sym.replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").replace("_", "").upper()
                     # Anti-Revenge Whipsaw Guard: Post-loss cooldown (14 Sep 2026)
                     is_loss_locked, loss_reason = self.is_symbol_loss_locked(clean_s)
                     if is_loss_locked:
-                        return False, "HARD_BLOCK", loss_reason
+                        return _block(loss_reason)
 
                     # 0. SFR Systemic Flow Catalyst Hard Directional Lock & Supreme Precedence
                     if sfr_catalyst == "BEARISH_FLOW" and target_dir == 1:
-                        return False, "HARD_BLOCK", f"[SFR VETO] BUY blocked: Systemic Bearish Flow active ({sfr_age}b <= 48b)"
+                        return _block(f"[SFR VETO] BUY blocked: Systemic Bearish Flow active ({sfr_age}b <= 48b)")
                     if sfr_catalyst == "BULLISH_FLOW" and target_dir == -1:
-                        return False, "HARD_BLOCK", f"[SFR VETO] SELL blocked: Systemic Bullish Flow active ({sfr_age}b <= 48b)"
+                        return _block(f"[SFR VETO] SELL blocked: Systemic Bullish Flow active ({sfr_age}b <= 48b)")
 
                     is_sfr_pro = (target_dir == -1 and sfr_catalyst == "BEARISH_FLOW") or (target_dir == 1 and sfr_catalyst == "BULLISH_FLOW")
                     is_m4_pro = is_sfr_pro
@@ -3912,7 +3926,7 @@ class MarketScanner:
                     # 1. Systemic Currency Basket Lock (M15 + H1 Global Flows)
                     is_basket_locked, basket_reason, _ = evaluate_systemic_basket_lock(sym, target_dir)
                     if is_basket_locked:
-                        return False, "HARD_BLOCK", f"[SYSTEMIC BASKET LOCK] {basket_reason}"
+                        return _block(f"[SYSTEMIC BASKET LOCK] {basket_reason}")
 
                     # 1B. CBSS Currency Basket Structural Synchronization (9 Sep 2026)
                     is_cbss_cap_saturated = False
@@ -3925,7 +3939,7 @@ class MarketScanner:
                         # Block continuation trades ONLY on the specific pair hitting the G3 wall
                         is_g3_blocked, g3_reason = is_pair_blocked_by_g3_wall(sym, target_dir, self.macro_cache)
                         if is_g3_blocked and is_continuation:
-                            return False, "HARD_BLOCK", g3_reason
+                            return _block(g3_reason)
 
                         # (b) Basket Concurrency Cap (Max 2 trades per currency basket in same direction)
                         # NOTE: Jika kuota basket penuh, setup tidak di-hard block di Stage 1 radar agar
@@ -3943,7 +3957,7 @@ class MarketScanner:
                             if getattr(config, "ENABLE_ANTI_INTERNAL_HEDGE", True):
                                 conflict_ok, conflict_msg = check_basket_directional_conflict(sym, target_dir, raw_pos, raw_ord)
                                 if not conflict_ok:
-                                    return False, "HARD_BLOCK", conflict_msg
+                                    return _block(conflict_msg)
                         except Exception as e:
                             logger.debug(f"[CBSS CHECK ERR] {e}")
 
@@ -3954,18 +3968,18 @@ class MarketScanner:
                         min_runway = float(getattr(config, "CBSS_MIN_RUNWAY_ATR", 1.20)) if is_m4_flow else float(getattr(config, "CBSS_MIN_CHAMBER_RUNWAY_ATR", 0.60))
                         if r_atr < min_runway and is_continuation:
                             flow_tag = "M4 Systemic Flow" if is_m4_flow else "Chamber Setup"
-                            return False, "HARD_BLOCK", f"[CBSS RUNWAY] Insufficient Runway ({r_atr:.2f}x ATR < {min_runway:.2f}x ATR) to opposing barrier ({flow_tag})"
+                            return _block(f"[CBSS RUNWAY] Insufficient Runway ({r_atr:.2f}x ATR < {min_runway:.2f}x ATR) to opposing barrier ({flow_tag})")
 
                         # (d) Basket Structural Saturation Index (BSSI >= 70% Climax Warning)
                         base_c, quote_c = get_pair_currencies(clean_s)
                         if base_c:
                             b_ratio, b_col, b_tot = calculate_basket_saturation_index(base_c, target_dir, self.macro_cache)
                             if b_ratio >= getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70) and is_continuation:
-                                return False, "HARD_BLOCK", f"[CBSS SATURATION] Basket {base_c} is saturated ({b_col}/{b_tot} pairs at opposing walls, BSSI {b_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP."
+                                return _block(f"[CBSS SATURATION] Basket {base_c} is saturated ({b_col}/{b_tot} pairs at opposing walls, BSSI {b_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP.")
                         if quote_c:
                             q_ratio, q_col, q_tot = calculate_basket_saturation_index(quote_c, -target_dir, self.macro_cache)
                             if q_ratio >= getattr(config, "CBSS_SATURATION_THRESHOLD", 0.70) and is_continuation:
-                                return False, "HARD_BLOCK", f"[CBSS SATURATION] Basket {quote_c} is saturated ({q_col}/{q_tot} pairs at opposing walls, BSSI {q_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP."
+                                return _block(f"[CBSS SATURATION] Basket {quote_c} is saturated ({q_col}/{q_tot} pairs at opposing walls, BSSI {q_ratio*100:.0f}% >= 70%). Continuation blocked; wait for M1 SFP.")
 
                     # 1C. Tokyo Midday Lull Retracement Freeze (10:30 - 13:00 WIB, Dynamic ATR Scaling)
                     now_wib = datetime.now(WIB)
@@ -3977,7 +3991,7 @@ class MarketScanner:
                         atr_pips = (atr_val / pt / 10.0) if ('JPY' not in clean_s) else (atr_val / pt) if pt > 0 else 30.0
                         lull_min_pips = max(0.40 * atr_pips, 12.0)
                         if m_pips < lull_min_pips:
-                            return False, "HARD_BLOCK", f"[TOKYO MIDDAY LULL] Continuation frozen at {now_wib.strftime('%H:%M')} WIB (Morning range {m_pips:.1f}p < {lull_min_pips:.1f}p: 80% retracement probability)."
+                            return _block(f"[TOKYO MIDDAY LULL] Continuation frozen at {now_wib.strftime('%H:%M')} WIB (Morning range {m_pips:.1f}p < {lull_min_pips:.1f}p: 80% retracement probability).")
 
                     # 1D. London Open Defensive Window (15:00 - 17:59 WIB, Pilar 5)
                     # Data: SELL WR 18.2%, kerugian terkonsentrasi di false pullback/retest awal London
@@ -3985,7 +3999,7 @@ class MarketScanner:
                         if target_dir == -1 and 15 <= now_wib.hour < 18:
                             is_sweep = any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM"))
                             if not is_sweep:
-                                return False, "HARD_BLOCK", f"[LDN15-17 DEFENSIVE] Passive sell_limit dilarang di jendela London Open ({now_wib.strftime('%H:%M')} WIB)"
+                                return _block(f"[LDN15-17 DEFENSIVE] Passive sell_limit dilarang di jendela London Open ({now_wib.strftime('%H:%M')} WIB)")
 
                     def _ret(tier: str, reason_str: str) -> tuple:
                         if is_cbss_cap_saturated:
@@ -3998,14 +4012,14 @@ class MarketScanner:
 
                     strat_dir_sym = macro.get('strat_dir')
                     if strat_dir_sym is None:
-                        return False, "HARD_BLOCK", "[MSE GATING] Missing MSE Directive -> Defensive WATCH_ONLY"
+                        return _block("[MSE GATING] Missing MSE Directive -> Defensive WATCH_ONLY")
 
                     strat_tier = getattr(strat_dir_sym, 'action_tier', 'FULL_ALLOW')
                     is_limit_retest = any(k in setup_label.upper() for k in ("PULLBACK", "SYSTEMIC", "BREAKOUT", "RETEST", "SWEEP"))
                     if strat_tier in ("INACTION_ZONE", "CHAMBER_MID_BLOCK") and not is_limit_retest:
-                        return False, "HARD_BLOCK", f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})"
+                        return _block(f"[MSE GATING] Inaction Zone / Mid-Chamber ({strat_tier})")
                     if strat_tier == "HARD_LOCK":
-                        return False, "HARD_BLOCK", f"[MSE GATING] Hard Lock ({strat_tier})"
+                        return _block(f"[MSE GATING] Hard Lock ({strat_tier})")
 
                     # 1E. Absorption Coil Veto for M1 Sweep Fade (Higher Lows into Resistance / Lower Highs into Support)
                     c1_fresh = macro.get("c1_freshness_state") or getattr(strat_dir_sym, "c1_freshness_state", "FRESH_VIRGIN")
@@ -4014,9 +4028,9 @@ class MarketScanner:
 
                     if is_sweep_candidate:
                         if target_dir == -1 and c1_fresh == "ABSORPTION_COIL":
-                            return False, "HARD_BLOCK", f"[M1 SWEEP VETO] C1 is in ABSORPTION_COIL (Higher Lows into ceiling). Veto counter-trend fade short."
+                            return _block(f"[M1 SWEEP VETO] C1 is in ABSORPTION_COIL (Higher Lows into ceiling). Veto counter-trend fade short.")
                         if target_dir == 1 and f1_fresh == "ABSORPTION_COIL":
-                            return False, "HARD_BLOCK", f"[M1 SWEEP VETO] F1 is in ABSORPTION_COIL (Lower Highs into floor). Veto counter-trend bounce long."
+                            return _block(f"[M1 SWEEP VETO] F1 is in ABSORPTION_COIL (Lower Highs into floor). Veto counter-trend bounce long.")
                         if target_dir == -1 and c1_fresh == "EXHAUSTED" and strat_tier == "FULL_ALLOW":
                             strat_tier = "TP1_ONLY_SCALP"
                         if target_dir == 1 and f1_fresh == "EXHAUSTED" and strat_tier == "FULL_ALLOW":
@@ -4028,9 +4042,9 @@ class MarketScanner:
                     # 2. Hard Circuit Breaker Collision Check (Extreme Traps & Invalidation)
                     if circuit_breaker:
                         if target_dir == 1 and bias_score < -0.40:
-                            return False, "HARD_BLOCK", f"[MSE CIRCUIT BREAKER] BUY blocked at ceiling trap / past invalidation"
+                            return _block(f"[MSE CIRCUIT BREAKER] BUY blocked at ceiling trap / past invalidation")
                         if target_dir == -1 and bias_score > 0.40:
-                            return False, "HARD_BLOCK", f"[MSE CIRCUIT BREAKER] SELL blocked at floor trap / past invalidation"
+                            return _block(f"[MSE CIRCUIT BREAKER] SELL blocked at floor trap / past invalidation")
 
                     if strat_dir_sym.forbidden_traps:
                         is_limit_setup = is_limit_retest
@@ -4051,19 +4065,19 @@ class MarketScanner:
                                         continue
                                     elif target_dir == 1 and f1_lvl > 0.0 and entry_price <= (f1_lvl + 0.25 * atr_val):
                                         continue
-                                return False, "HARD_BLOCK", f"[MSE MID-CHAMBER FREEZE] Entry {entry_price if entry_price is not None else 0.0:.5f} forbidden in transit zone: {trap}"
+                                return _block(f"[MSE MID-CHAMBER FREEZE] Entry {entry_price if entry_price is not None else 0.0:.5f} forbidden in transit zone: {trap}")
 
                             if target_dir == 1 and ("DO NOT BUY" in trap_u or "DON'T BUY" in trap_u or "CEILING_TRAP" in trap_u):
                                 # Contextual Limit Awareness: Jika Buy Limit berada cukup jauh di bawah plafon C1 (C1 adalah target TP, bukan harga entri)
                                 if is_limit_setup and entry_price is not None and c1_lvl > 0.0 and entry_price <= (c1_lvl - 0.40 * atr_val):
                                     continue
-                                return False, "HARD_BLOCK", f"[MSE TRAP VETO] BUY forbidden: {trap}"
+                                return _block(f"[MSE TRAP VETO] BUY forbidden: {trap}")
 
                             if target_dir == -1 and ("DO NOT SELL" in trap_u or "DO NOT SHORT" in trap_u or "DON'T SELL" in trap_u or "FLOOR_TRAP" in trap_u):
                                 # Contextual Limit Awareness: Jika Sell Limit berada cukup jauh di atas lantai F1 (F1 adalah target TP, bukan harga entri)
                                 if is_limit_setup and entry_price is not None and f1_lvl > 0.0 and entry_price >= (f1_lvl + 0.40 * atr_val):
                                     continue
-                                return False, "HARD_BLOCK", f"[MSE TRAP VETO] SELL forbidden: {trap}"
+                                return _block(f"[MSE TRAP VETO] SELL forbidden: {trap}")
 
                     # 3. CSM Flow Opposition Check (Systemic Currency Pressure)
                     csm_opp_thresh = float(getattr(config, "CSM_FLOW_OPPOSED_THRESHOLD", 1.50))
@@ -4123,7 +4137,7 @@ class MarketScanner:
                                     if not (zce_breached or macro_inverted or sweep_reversal):
                                         locked_label = "BUY" if locked_dir == 1 else "SELL"
                                         opp_label = "SELL" if target_dir == -1 else "BUY"
-                                        return False, "HARD_BLOCK", (
+                                        return _block(
                                             f"[DIRECTIONAL HYSTERESIS] {opp_label} blocked: {clean_s} locked to {locked_label} "
                                             f"({(now_ts - locked_time)/3600.0:.1f}h ago). Reversal requires ZCE breach, Macro flip, or M1A sweep."
                                         )
@@ -4149,12 +4163,18 @@ class MarketScanner:
                     if getattr(config, "ENABLE_CSM_FLOW_FILTER", False):
                         is_sweep_setup = any(k in setup_label.upper() for k in ("SWEEP", "SFP", "RECLAIM"))
                         if is_csm_opposed and not is_sfr_pro and not is_sweep_setup:
-                            return False, "HARD_BLOCK", f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction"
+                            return _block(f"[CSM OPPOSED] Net Delta ({csm_delta_val:+.2f}) opposes direction")
 
                     if is_aligned or is_sfr_pro:
                         flow_tag = f" [SFR_CATALYST: {sfr_catalyst}]" if is_sfr_pro else ""
                         return _ret("FULL_ALLOW", f"ALIGNED_MACRO_EXPANSION ({bias_score:+.2f}){flow_tag}")
                     elif is_counter:
+                        # Forbid counter-trend scalp during runaway coherent cascade waterfall or extreme runaway CSM
+                        f_reg = str(macro.get('fractal_regime') or (getattr(strat_dir, 'fractal_regime', '') if strat_dir else ''))
+                        is_waterfall_cascade = "CASCADE" in f_reg or (abs(csm_delta_val) >= 3.0 and is_csm_opposed)
+                        if is_waterfall_cascade and "SWEEP" in setup_label.upper():
+                            return _block(f"[COHERENT CASCADE VETO] Counter-trend knife catch forbidden ({f_reg})")
+
                         # Counter-trend allows high quality M1 liquidity sweep / SFP with TP1 cap, M4 breakout basing continuation, or M3 Basing Box Breakdown
                         is_basing_mean_rev = ("BASING" in setup_label.upper() or "BREAKOUT" in setup_label.upper() or "DBD" in setup_label.upper() or "RBR" in setup_label.upper()) and (
                             (target_dir == -1 and csm_delta_val <= -getattr(config, "M3_MEAN_REVERSION_MIN_CSM_DELTA", 1.50)) or
@@ -4163,7 +4183,7 @@ class MarketScanner:
                         if "SWEEP" in setup_label.upper() or "RECLAIM" in setup_label.upper() or "SYSTEMIC" in setup_label.upper() or "DBD" in setup_label.upper() or "RBR" in setup_label.upper() or is_basing_mean_rev:
                             return _ret("TP1_ONLY_SCALP", f"COUNTER_TREND_SCALP_PERMITTED ({bias_score:+.2f})")
                         else:
-                            return False, "HARD_BLOCK", f"[COUNTER TREND BLOCK] Non-sweep setup rejected against macro ({bias_score:+.2f})"
+                            return _block(f"[COUNTER TREND BLOCK] Non-sweep setup rejected against macro ({bias_score:+.2f})")
                     else:
                         # Neutral / Transition Macro
                         return _ret("REDUCED_CONFIDENCE", f"MODERATE_NEUTRAL_MACRO ({bias_score:+.2f})")
@@ -4786,6 +4806,8 @@ class MarketScanner:
                     elif not allowed_m2_b:
                         logger.debug(f"[PULLBACK BUY GATE] {sym} SKIP ({action_tier_m2_b}): {reason_m2_b}")
                     elif can_buy_m2 and is_valid_pullback_range_b and is_c1_collision_b:
+                        _c1_msg = f"[PULLBACK BUY CEILING COLLISION] dr_pos {pos_in_range:.2f} >= 0.80 and runway to C1 {c1_ceiling - mid:.5f} < 0.40x ATR"
+                        if _c1_msg not in sym_veto_reasons: sym_veto_reasons.append(_c1_msg)
                         logger.debug(f"[PULLBACK BUY CEILING COLLISION] {sym} SKIP: dr_pos {pos_in_range:.2f} >= 0.80 and runway to C1 {c1_ceiling - mid:.5f} < 0.40x ATR")
                     elif can_buy_m2 and is_valid_pullback_range_b and not is_ema_pullback_valid_b:
                         logger.debug(f"[PULLBACK BUY EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema50 - 0.45*atr_val:.5f} <= mid <= {ema20 + 0.45*atr_val:.5f}]")
@@ -4931,6 +4953,8 @@ class MarketScanner:
                     elif not allowed_m2_s:
                         logger.debug(f"[PULLBACK SELL GATE] {sym} SKIP ({action_tier_m2_s}): {reason_m2_s}")
                     elif can_sell_m2 and is_valid_pullback_range_s and is_f1_collision_s:
+                        _f1_msg = f"[PULLBACK SELL FLOOR COLLISION] dr_pos {pos_in_range:.2f} <= 0.20 and runway to F1 {mid - f1_floor_val:.5f} < 0.40x ATR"
+                        if _f1_msg not in sym_veto_reasons: sym_veto_reasons.append(_f1_msg)
                         logger.debug(f"[PULLBACK SELL FLOOR COLLISION] {sym} SKIP: dr_pos {pos_in_range:.2f} <= 0.20 and runway to F1 {mid - f1_floor_val:.5f} < 0.40x ATR")
                     elif can_sell_m2 and is_valid_pullback_range_s and not is_ema_pullback_valid_s:
                         logger.debug(f"[PULLBACK SELL EMA GUARD] {sym} SKIP: mid {mid:.5f} outside healthy EMA zone [{ema20 - 0.45*atr_val:.5f} <= mid <= {ema50 + 0.45*atr_val:.5f}]")
@@ -5732,6 +5756,35 @@ class MarketScanner:
                     )
                     if best_cand is not None:
                         candidates.append(best_cand)
+                    macro['permission_state'] = "GO"
+                    macro['tactical_desc'] = f"GO: {best_cand.setup_type if best_cand else sym_candidates[0].setup_type} (Siap Eksekusi)"
+                elif sym_veto_reasons:
+                    macro['permission_state'] = "VETO"
+                    macro['tactical_desc'] = f"VETO: {sym_veto_reasons[0]}"
+                else:
+                    try:
+                        sb_list = self.get_radar_standbys(sym, mid, macro, pt, atr_val)
+                        if sb_list:
+                            closest_sb = min(sb_list, key=lambda s: abs(mid - s.get("price", mid)))
+                            closest_dist = abs(mid - closest_sb.get("price", mid))
+                            closest_atr = closest_dist / max(atr_val, 1e-6)
+                            pip_factor = pt * 10.0 if "JPY" not in clean_s else pt
+                            closest_pips = closest_dist / max(pip_factor, 1e-6)
+                            if closest_atr <= 1.0:
+                                macro['permission_state'] = "ARM"
+                                macro['tactical_desc'] = f"ARM: Menunggu {closest_sb.get('label', closest_sb.get('type', 'Standby'))} ({closest_pips:.1f}p / {closest_atr:.2f}x ATR)"
+                            else:
+                                dr_pct_v = float(macro.get('dealing_range_pos', 0.5) or 0.5) * 100.0
+                                macro['permission_state'] = "WATCH"
+                                macro['tactical_desc'] = f"WATCH: Mid-Chamber ({dr_pct_v:.0f}%) • Inaction Zone"
+                        else:
+                            dr_pct_v = float(macro.get('dealing_range_pos', 0.5) or 0.5) * 100.0
+                            macro['permission_state'] = "WATCH"
+                            macro['tactical_desc'] = f"WATCH: Mid-Chamber ({dr_pct_v:.0f}%) • Inaction Zone"
+                    except Exception:
+                        dr_pct_v = float(macro.get('dealing_range_pos', 0.5) or 0.5) * 100.0
+                        macro['permission_state'] = "WATCH"
+                        macro['tactical_desc'] = f"WATCH: Mid-Chamber ({dr_pct_v:.0f}%)"
 
             except Exception as e:
                 logger.debug(f"Radar check error on {sym}: {e}")

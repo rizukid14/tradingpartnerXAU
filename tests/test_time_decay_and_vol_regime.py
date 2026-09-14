@@ -205,7 +205,7 @@ class TestTimeDecayAndVolRegime(unittest.TestCase):
         # Reset state
         position_manager._break_even_tickets.discard(4001)
 
-    def test_grade_b_break_even_accelerated_35_percent(self):
+    def test_grade_b_break_even_accelerated_50_percent(self):
         point = 0.00001
         si = DummySymbolInfo(point=point)
         position_manager._break_even_tickets.discard(4002)
@@ -215,13 +215,13 @@ class TestTimeDecayAndVolRegime(unittest.TestCase):
         dummy_res = MagicMock()
         dummy_res.retcode = config.mt5.TRADE_RETCODE_DONE
 
-        # Evaluasi BEP Grade B: aktif di 35% TP (350 pts)
+        # Evaluasi BEP Grade B: aktif di 50% TP (500 pts)
         with patch("src.analytics.position_manager.mt5.order_send", return_value=dummy_res) as mock_send:
-            # Profit 320 pts (< 350 pts) -> Belum BEP
-            position_manager._check_break_even(pos, "GBPUSD-ECNc", 320.0, point, si)
+            # Profit 450 pts (< 500 pts) -> Belum BEP
+            position_manager._check_break_even(pos, "GBPUSD-ECNc", 450.0, point, si)
             self.assertNotIn(4002, position_manager._break_even_tickets)
-            # Profit 360 pts (>= 350 pts) -> BEP aktif di 35% TP!
-            position_manager._check_break_even(pos, "GBPUSD-ECNc", 360.0, point, si)
+            # Profit 520 pts (>= 500 pts) -> BEP aktif di 50% TP!
+            position_manager._check_break_even(pos, "GBPUSD-ECNc", 520.0, point, si)
             self.assertIn(4002, position_manager._break_even_tickets)
             self.assertTrue(mock_send.called)
 

@@ -2,6 +2,39 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 114. Perubahan 14 September 2026 — Integrasi Universe 28 FX Pairs (CADCHF & NZDJPY), Dashboard UI/UX Cockpit Enhancements, dan Studi Kuantitatif Sistemik (PCA 8 Mata Uang, Random Walk Hypothesis Test, BEP Counterfactual Trajectory, & Session Efficiency)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Universe FX Belum Genap 28 Major & Cross Pairs**:
+   - Pasangan mata uang `CADCHF-ECNc` dan `NZDJPY-ECNc` sebelumnya belum terdaftar dalam daftar pemindaian scanner (`ALL_SCANNER_SYMBOLS` & `SCANNER_SYMBOLS`), menyisakan universe 26 pair.
+   - Startup terminal di `main.py` memiliki hardcode string `"26 Pairs FX | Weekend BTC H1"`, tidak mencerminkan universe riil yang dimuat dari konfigurasi.
+2. **Dashboard Cockpit UI/UX Refinements**:
+   - Indikator badge `.tier-veto` memiliki background merah namun warna teks masih default sehingga kontras kurang optimal.
+   - Tooltip hover pada tabel monitoring pasangan mata uang membutuhkan format data densitas tinggi.
+   - Layout CSM delta card berpotensi terpotong jika nilai desimal melebar.
+   - Evaluasi status Gate 6 (Execution Engine) perlu dipastikan tersinkronisasi dengan status runtime `ENABLE_LLM_JURY=False` (Pure Quant Mode).
+3. **Studi Ekonometrika & Dilema Eksekusi**:
+   - Evaluasi keseragaman bentuk chart JPY vs EUR/GBP memerlukan kalkulasi korelasi log-returns dan PCA.
+   - Klaim bahwa pasar saat ini berada dalam "Random Walk" perlu diuji dengan *Lo-MacKinlay Variance Ratio Test* dan *Hurst Exponent*.
+   - Evaluasi dampak Stop Loss Break-Even (BEP): apakah membunuh potensi cuan (*runner*) atau menyelamatkan modal (*capital preservation*).
+
+### 🔧 Rincian Perubahan Arsitektur & Riset:
+1. **`config.py` & `.env`**:
+   - Menambahkan `CADCHF-ECNc` dan `NZDJPY-ECNc` ke dalam `ALL_SCANNER_SYMBOLS` (`config.py:220`) dan `SCANNER_SYMBOLS` (`.env:46`), melengkapi rotasi 28 FX Universe institusional secara penuh.
+2. **`main.py`**:
+   - Memperbarui banner startup terminal agar menampilkan jumlah universe pair secara dinamis via `len(config.get_scanner_symbols())`.
+3. **`dashboard.py` & `dashboard_assets.py`**:
+   - Memperbaiki CSS badge `.tier-veto` dengan background red-dim (`rgba(248, 81, 73, 0.15)`), border merah pekat, dan teks `#ff7b72` berbobot tebal.
+   - Memperbaiki tata letak card CSM delta agar tidak terpotong (*unclipped container*).
+   - Memastikan sinkronisasi Gate 6 merefleksikan mode *Pure Quant Direct Execution (No-LLM)* saat `ENABLE_LLM_JURY=False`.
+4. **Riset & Audit Kuantitatif**:
+   - **PCA & Korelasi 8 Mata Uang**: Mengonfirmasi Yen (JPY) memiliki dominasi sistemik tertinggi (PC1 = **86.3%**, $\bar{\rho} = 0.846$), membuktikan bahwa short multi-pair JPY merupakan taruhan leverage terakumulasi (*Single Point of Failure*), sehingga `BASKET_CONCURRENCY_CAP = 2` wajib dipertahankan.
+   - **Uji Random Walk**: Uji Lo-MacKinlay membuktikan EURJPY ($Z = -2.49$) dan AUDNZD ($H = 0.274$) **menolak hipotesis Random Walk** ($p < 0.05$) dan berada dalam rezim *Mean-Reverting / Compression*, sementara AUDCHF dan EURAUD berada dalam rezim Brownian motion konsolidasi sesi Asia.
+   - **Audit 72 Trade BEP MT5**: Membuktikan BEP menyelamatkan 44.4% trade dari Full SL, namun membunuh 55.6% potensi winner.
+   - **Rancangan ZCE-Aware Partial Close**: Didokumentasikan di `implementation_plan.md` untuk menutup 50% lot di dinding terdekat $C_1/F_1$ dengan fallback ke 50% TP distance di zona vacuum.
+
+---
+
 ## 113. Perubahan 14 September 2026 — Sinkronisasi Gate 3 Dashboard dengan Status Nonaktif Modul CBSS (ENABLE_CBSS=False)
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

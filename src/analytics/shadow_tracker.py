@@ -823,7 +823,7 @@ class QuantShadowTracker:
                             elif "M4" in str(trade.setup_type):
                                 bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
                             elif "GRADE_B" in sg or "REDUCED" in sg:
-                                bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)
+                                bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50)
                             else:
                                 bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 
@@ -911,7 +911,7 @@ class QuantShadowTracker:
                             elif "M4" in str(trade.setup_type):
                                 bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
                             elif "GRADE_B" in sg or "REDUCED" in sg:
-                                bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)
+                                bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50)
                             else:
                                 bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 

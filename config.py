@@ -216,15 +216,15 @@ SYMBOL = _normalize_symbol_for_account(os.getenv("SYMBOL", WEEKDAY_SYMBOL))
 TRADING_MODE = os.getenv("TRADING_MODE", "scanner").strip().lower()
 SCANNER_MODE = _getenv_bool("SCANNER_MODE", True)
 
-# Universe 26 Simbol Terkurasi (Murni 26 Pasangan FX Tanpa Gold)
+# Universe 28 Simbol Terkurasi (Murni 28 Pasangan FX Lengkap 8 Currency Tanpa Gold)
 ALL_SCANNER_SYMBOLS = [
     _normalize_symbol_for_account(s) for s in [
         "EURUSD-ECNc", "GBPUSD-ECNc", "USDJPY-ECNc", "USDCHF-ECNc", "USDCAD-ECNc", "AUDUSD-ECNc",
         "EURGBP-ECNc", "EURJPY-ECNc", "EURCHF-ECNc", "EURAUD-ECNc", "EURCAD-ECNc",
         "GBPJPY-ECNc", "GBPCHF-ECNc", "GBPAUD-ECNc", "GBPCAD-ECNc",
         "AUDJPY-ECNc", "AUDCHF-ECNc", "AUDCAD-ECNc",
-        "CADJPY-ECNc", "CHFJPY-ECNc", "NZDCAD-ECNc",
-        "NZDCHF-ECNc", "NZDUSD-ECNc", "GBPNZD-ECNc", "AUDNZD-ECNc", "EURNZD-ECNc"
+        "CADJPY-ECNc", "CHFJPY-ECNc", "CADCHF-ECNc", "NZDCAD-ECNc",
+        "NZDCHF-ECNc", "NZDJPY-ECNc", "NZDUSD-ECNc", "GBPNZD-ECNc", "AUDNZD-ECNc", "EURNZD-ECNc"
     ]
 ]
 
@@ -609,7 +609,7 @@ TRAILING_DISTANCE_ATR_MULT_FX = _getenv_float("TRAILING_DISTANCE_ATR_MULT_FX", 0
 # Konstanta SL_MULT di bawah = FALLBACK untuk posisi tanpa TP.
 BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT", 0.60)  # BEP aktif saat profit >= 60% TP (padding komisi tetap dipertahankan)
 BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY = _getenv_float("BREAK_EVEN_TRIGGER_TP_PCT_LONDON_NY", 0.60)  # Sesi London-NY: 60% TP
-GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)  # BEP dipercepat ke 35% TP untuk Grade B / Defensive
+GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT = _getenv_float("GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50)  # BEP dipercepat ke 50% TP untuk Grade B / Defensive
 TRAILING_ACTIVATION_TP_PCT = _getenv_float("TRAILING_ACTIVATION_TP_PCT", 0.75)  # trailing Tier 1 aktif saat profit >= 75% TP
 TRAILING_ACTIVATION_TP_PCT_LONDON_NY = _getenv_float("TRAILING_ACTIVATION_TP_PCT_LONDON_NY", 0.75)
 TRAILING_TERMINAL_TP_PCT = _getenv_float("TRAILING_TERMINAL_TP_PCT", 0.90)

@@ -241,6 +241,12 @@ class MacroStrategicDirective:
     f1_touch_count: int = 0
     f1_compression_type: str = "NONE"
     raw_payload: Dict[str, Any] = field(default_factory=dict)
+    timeframe_trends: Dict[str, str] = field(default_factory=dict)
+    fractal_regime: str = "CHAMBER_CONSOLIDATION"
+    harmonic_tensor: List[int] = field(default_factory=list)
+    macro_polarity: int = 0
+    meso_polarity: int = 0
+    micro_polarity: int = 0
 
 
 
@@ -391,6 +397,80 @@ class MacroStrategicEngine:
             (df['low'] - df['close'].shift(1)).abs()
         ], axis=1).max(axis=1)
         return float(tr.ewm(span=span).mean().iloc[-1])
+
+    @staticmethod
+    def _evaluate_scale_tensor(df: pd.DataFrame, tf_name: str, pt: float, cur_atr: float) -> Dict[str, Any]:
+        """
+        Pure Quant Causal Scale Evaluator (HMS-MRA):
+        Extracts structural polarity tau (-1, 0, +1), dealing range position phi (0..1),
+        confirmed pivots (HH/HL vs LH/LL), and structural regime string.
+        """
+        if df.empty or len(df) < 5:
+            return {
+                "tau": 0,
+                "label": "FLAT",
+                "phi": 0.5,
+                "regime": "RANGING",
+                "trend_str": "RANGING",
+                "last_close": 0.0
+            }
+        
+        highs = df['high'].to_numpy(dtype=float)
+        lows = df['low'].to_numpy(dtype=float)
+        closes = df['close'].to_numpy(dtype=float)
+        last_close = float(closes[-1])
+        n = len(highs)
+
+        # 1. Causal pivots from PatternEngine
+        n_conf = 3 if tf_name in ("H1", "M30", "H4") else 2
+        from src.analytics.pattern_engine import extract_causal_pivots, classify_structural_trend
+        peaks, troughs, _ = extract_causal_pivots(highs, lows, n_confirm=n_conf, cur_atr=cur_atr)
+        trend_str = classify_structural_trend(peaks, troughs)
+
+        # 2. Dealing range phi
+        span_high = float(np.max(highs[-min(n, 60):]))
+        span_low = float(np.min(lows[-min(n, 60):]))
+        rng = max(span_high - span_low, 1e-6)
+        phi = float(np.clip((last_close - span_low) / rng, 0.0, 1.0))
+
+        # 3. Structural Polarity Tau
+        e20 = float(df['close'].ewm(span=min(20, n), adjust=False).mean().iloc[-1]) if n >= 5 else last_close
+        e50 = float(df['close'].ewm(span=min(50, n), adjust=False).mean().iloc[-1]) if n >= 15 else e20
+
+        if trend_str == "BULLISH_EXPANSION":
+            tau = +1
+            label = "BULL"
+        elif trend_str == "BEARISH_EXPANSION":
+            tau = -1
+            label = "BEAR"
+        else:
+            # Fallback based on confirmed swing boundary or EMA alignment
+            if len(peaks) >= 1 and len(troughs) >= 1:
+                p_last = peaks[-1]["price"]
+                t_last = troughs[-1]["price"]
+                if last_close > p_last or (e20 > e50 and last_close > t_last):
+                    tau = +1
+                    label = "BULL"
+                elif last_close < t_last or (e20 < e50 and last_close < p_last):
+                    tau = -1
+                    label = "BEAR"
+                else:
+                    tau = +1 if e20 >= e50 else -1
+                    label = "BULL" if tau == 1 else "BEAR"
+            else:
+                tau = +1 if e20 >= e50 else -1
+                label = "BULL" if tau == 1 else "BEAR"
+
+        return {
+            "tau": tau,
+            "label": label,
+            "phi": phi,
+            "regime": trend_str,
+            "trend_str": trend_str,
+            "last_close": last_close,
+            "e20": e20,
+            "e50": e50
+        }
 
     @staticmethod
     def _find_swings(df: pd.DataFrame, n_lookback: int = 60, window: int = 2) -> Tuple[List[Tuple[Any, float]], List[Tuple[Any, float]]]:
@@ -1480,13 +1560,82 @@ class MacroStrategicEngine:
                         interaction_seq.append(tag)
             interaction_seq = interaction_seq[-8:]
 
-        # ── 3. FACTORIZED PRIMITIVE STATE MACHINE (LOCATION × EVENT × TRAJECTORY) ──
+        # ── 3. HIERARCHICAL MULTI-SCALE FRACTAL FIELD & REGIME AUTOMATON (HMS-MRA) ──
+        st_mn1 = self._evaluate_scale_tensor(df_mn1, "MN1", pt, atr_d1)
+        st_w1  = self._evaluate_scale_tensor(df_w1, "W1", pt, atr_w1)
+        st_d1  = self._evaluate_scale_tensor(df_d1, "D1", pt, atr_d1)
+        st_h4  = self._evaluate_scale_tensor(df_h4, "H4", pt, atr_h4)
+        st_h1  = self._evaluate_scale_tensor(df_h1, "H1", pt, atr_h1)
+        st_m30 = self._evaluate_scale_tensor(df_m30, "M30", pt, atr_m30)
+
+        tf_trends = {
+            "MN1": st_mn1["label"],
+            "W1": st_w1["label"],
+            "D1": st_d1["label"],
+            "H4": st_h4["label"],
+            "H1": st_h1["label"]
+        }
+
+        # 3 Canonical Strata Formulation
+        macro_score = (0.30 * st_mn1["tau"]) + (0.30 * st_w1["tau"]) + (0.40 * st_d1["tau"])
+        tau_macro = 1 if macro_score > 0.15 else (-1 if macro_score < -0.15 else (st_d1["tau"] if st_d1["tau"] != 0 else (1 if st_d1.get("e20", 0) >= st_d1.get("e50", 0) else -1)))
+        tau_meso = st_h4["tau"] if st_h4["tau"] != 0 else (1 if st_h4.get("e20", 0) >= st_h4.get("e50", 0) else -1)
+        tau_micro = st_h1["tau"] if st_h1["tau"] != 0 else (1 if st_h1.get("e20", 0) >= st_h1.get("e50", 0) else -1)
+
+        # Harmonic Coupling Tensor: H = [h_mw, h_wr, h_mr]
+        h_mw = int(tau_macro * tau_meso)
+        h_wr = int(tau_meso * tau_micro)
+        h_mr = int(tau_macro * tau_micro)
+        harmonic_tensor = [h_mw, h_wr, h_mr]
+
+        # Multi-timeframe structural booleans (100% Causal Structural Grounding)
+        is_h1_bull = (tau_micro == 1)
+        is_h1_bear = (tau_micro == -1)
+        is_h4_bull = (tau_meso == 1)
+        is_h4_bear = (tau_meso == -1)
+        last_d1_bull = (tau_macro == 1)
+        last_d1_bear = (tau_macro == -1)
+        last_h1_bull = not df_h1.empty and (df_h1['close'].iloc[-1] > df_h1['open'].iloc[-1])
+        last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
+
         h4_hl = len(h4_sl) >= 2 and (h4_sl[-1][1] > h4_sl[-2][1])
         h4_lh = len(h4_sh) >= 2 and (h4_sh[-1][1] < h4_sh[-2][1])
-        last_h1_bear = not df_h1.empty and (df_h1['close'].iloc[-1] < df_h1['open'].iloc[-1])
-        last_h1_bull = not df_h1.empty and (df_h1['close'].iloc[-1] > df_h1['open'].iloc[-1])
-        last_d1_bull = not df_d1.empty and (df_d1['close'].iloc[-1] > df_d1['open'].iloc[-1])
-        last_d1_bear = not df_d1.empty and (df_d1['close'].iloc[-1] < df_d1['open'].iloc[-1])
+
+        # Distance to barriers normalized by ATR D1
+        dist_to_c1_atr = dist_to_c1 / max(atr_d1, 1e-6)
+        dist_to_f1_atr = dist_to_f1 / max(atr_d1, 1e-6)
+
+        # Autonomous Fractal Regime Classification
+        if tau_macro == 1 and tau_meso == 1 and tau_micro == 1:
+            fractal_regime = "COHERENT_CASCADE_BULL"
+        elif tau_macro == -1 and tau_meso == -1 and tau_micro == -1:
+            fractal_regime = "COHERENT_CASCADE_BEAR"
+        elif tau_macro == 1 and tau_meso == -1 and tau_micro == 1:
+            fractal_regime = "STRUCTURAL_RE_ALIGNMENT_APEX_BUY"
+        elif tau_macro == -1 and tau_meso == 1 and tau_micro == -1:
+            fractal_regime = "STRUCTURAL_RE_ALIGNMENT_APEX_SELL"
+        elif tau_macro == -1 and tau_meso == 1 and tau_micro == 1:
+            if dist_to_c1_atr <= 0.35 or chamber_pos >= 0.75:
+                fractal_regime = "MACRO_RETREAT_AT_SUPPLY"
+            else:
+                fractal_regime = "MACRO_SECONDARY_RETRACEMENT_BULL"
+        elif tau_macro == 1 and tau_meso == -1 and tau_micro == -1:
+            if dist_to_f1_atr <= 0.35 or chamber_pos <= 0.25:
+                fractal_regime = "MACRO_RETREAT_AT_DEMAND"
+            else:
+                fractal_regime = "MACRO_SECONDARY_RETRACEMENT_BEAR"
+        elif tau_macro == -1 and tau_meso == -1 and tau_micro == 1:
+            if chamber_pos <= 0.25 and (imm_ceiling_c1 - curr_mid) >= 2.0 * atr_h1:
+                fractal_regime = "COUNTER_TREND_RELIEF_RIPPLE"
+            else:
+                fractal_regime = "INTERNAL_INDUCEMENT_TRAP"
+        elif tau_macro == 1 and tau_meso == 1 and tau_micro == -1:
+            if chamber_pos >= 0.75 and (curr_mid - imm_floor_f1) >= 2.0 * atr_h1:
+                fractal_regime = "COUNTER_TREND_RELIEF_RIPPLE"
+            else:
+                fractal_regime = "INTERNAL_INDUCEMENT_TRAP"
+        else:
+            fractal_regime = "CHAMBER_CONSOLIDATION"
 
         # Boundary threshold: in outer 25% of chamber OR (within 0.15 ATR H1 of barrier AND in outer 35% of chamber)
         at_extreme_ceiling = (chamber_pos >= 0.75) or (dist_to_c1 <= 0.15 * atr_h1 and chamber_pos >= 0.65)
@@ -1503,23 +1652,6 @@ class MacroStrategicEngine:
             location = Location.FLOOR
         else:
             location = Location.MID
-
-        # Multi-timeframe EMA alignment (H1 & H4)
-        is_h1_bull = False
-        is_h1_bear = False
-        if not df_h1.empty and len(df_h1) >= 20:
-            e20_h1 = float(df_h1['close'].ewm(span=20, adjust=False).mean().iloc[-1])
-            e50_h1 = float(df_h1['close'].ewm(span=min(50, len(df_h1)), adjust=False).mean().iloc[-1])
-            is_h1_bull = e20_h1 > e50_h1
-            is_h1_bear = e20_h1 < e50_h1
-
-        is_h4_bull = False
-        is_h4_bear = False
-        if not df_h4.empty and len(df_h4) >= 20:
-            e20_h4 = float(df_h4['close'].ewm(span=20, adjust=False).mean().iloc[-1])
-            e50_h4 = float(df_h4['close'].ewm(span=min(50, len(df_h4)), adjust=False).mean().iloc[-1])
-            is_h4_bull = e20_h4 > e50_h4
-            is_h4_bear = e20_h4 < e50_h4
 
         # Check Structural Runway (Space to expand to next macro station/barrier)
         min_runway = max(0.80 * atr_h1, 0.35 * psych_step_macro, 10 * pt * pip_div)
@@ -1946,6 +2078,67 @@ class MacroStrategicEngine:
             macro_invalidation = round(deep_floor_f2 - (0.20 * atr_d1), digits)
             target_station_final = ceiling_station
 
+        # ── 4a. HMS-MRA FRACTAL REGIME ALIGNMENT OVERRIDE ──
+        if fractal_regime == "STRUCTURAL_RE_ALIGNMENT_APEX_BUY":
+            macro_bias = "BULLISH_EXPANSION"
+            primary_directive = "HUNT_BUY_AT_RBS"
+            macro_bias_score = +0.88
+            entry_anchor = round(imm_floor_f1, digits)
+            entry_zone_proximal = round(entry_anchor + reload_width, digits)
+            intraday_sl = round(imm_floor_f1 - anti_wick_buffer, digits)
+            target_station_final = deep_ceiling_c2
+            action_tier = "FULL_ALLOW"
+            max_allowed_buy = round(deep_ceiling_c2, digits)
+            min_allowed_sell = 0.0
+            stage_label = f"RE_ALIGNMENT_BUY_AT_{imm_floor_f1:.{digits}f}"
+            thesis = f"{symbol} in STRUCTURAL RE-ALIGNMENT APEX BUY: H4 pullback exhausted; H1 re-aligns with D1 macro bull trend at support {imm_floor_f1:.{digits}f}."
+            confidence_score = 88
+            forbidden_traps = [f"Do NOT short into confirmed RBS support at {imm_floor_f1:.{digits}f}"]
+
+        elif fractal_regime == "STRUCTURAL_RE_ALIGNMENT_APEX_SELL":
+            macro_bias = "BEARISH_EXPANSION"
+            primary_directive = "HUNT_SELL_AT_SBR"
+            macro_bias_score = -0.88
+            entry_anchor = round(imm_ceiling_c1, digits)
+            entry_zone_proximal = round(entry_anchor - reload_width, digits)
+            intraday_sl = round(imm_ceiling_c1 + anti_wick_buffer, digits)
+            target_station_final = deep_floor_f2
+            action_tier = "FULL_ALLOW"
+            max_allowed_buy = 0.0
+            min_allowed_sell = round(deep_floor_f2, digits)
+            stage_label = f"RE_ALIGNMENT_SELL_AT_{imm_ceiling_c1:.{digits}f}"
+            thesis = f"{symbol} in STRUCTURAL RE-ALIGNMENT APEX SELL: H4 rally exhausted; H1 re-aligns with D1 macro bear trend at resistance {imm_ceiling_c1:.{digits}f}."
+            confidence_score = 88
+            forbidden_traps = [f"Do NOT buy into confirmed SBR resistance at {imm_ceiling_c1:.{digits}f}"]
+
+        elif fractal_regime == "COHERENT_CASCADE_BEAR":
+            macro_bias = "BEARISH_EXPANSION"
+            primary_directive = "HUNT_SELL_CONTINUATION"
+            macro_bias_score = -0.90
+            action_tier = "FULL_ALLOW"
+            max_allowed_buy = 0.0
+            if "Do NOT buy into confirmed waterfall cascade" not in forbidden_traps:
+                forbidden_traps.insert(0, "Do NOT buy into confirmed waterfall cascade")
+
+        elif fractal_regime == "COHERENT_CASCADE_BULL":
+            macro_bias = "BULLISH_EXPANSION"
+            primary_directive = "HUNT_BUY_CONTINUATION"
+            macro_bias_score = +0.90
+            action_tier = "FULL_ALLOW"
+            min_allowed_sell = 0.0
+            if "Do NOT short into confirmed bull cascade" not in forbidden_traps:
+                forbidden_traps.insert(0, "Do NOT short into confirmed bull cascade")
+
+        elif fractal_regime == "MACRO_RETREAT_AT_SUPPLY":
+            max_allowed_buy = 0.0
+            if "Do NOT buy into macro supply fortress" not in forbidden_traps:
+                forbidden_traps.insert(0, "Do NOT buy into macro supply fortress")
+
+        elif fractal_regime == "MACRO_RETREAT_AT_DEMAND":
+            min_allowed_sell = 0.0
+            if "Do NOT short into macro demand fortress" not in forbidden_traps:
+                forbidden_traps.insert(0, "Do NOT short into macro demand fortress")
+
         # ── 4b. ANTI-FAKE EXPANSION GATE (HTF Lower High Ceiling Conflict) ──
         if dual_w1.get("horizon_conflict") and dual_w1.get("slope_ceiling"):
             if "BULLISH" in str(macro_bias).upper():
@@ -2115,6 +2308,12 @@ class MacroStrategicEngine:
             f1_freshness_label=f1_freshness_label,
             f1_touch_count=f1_touch_count,
             f1_compression_type=f1_compression_type,
+            timeframe_trends=tf_trends,
+            fractal_regime=fractal_regime,
+            harmonic_tensor=harmonic_tensor,
+            macro_polarity=tau_macro,
+            meso_polarity=tau_meso,
+            micro_polarity=tau_micro,
             raw_payload={
                 "market_state": market_state,
                 "macro_envelope": envelope_res.to_dict() if envelope_res else {},

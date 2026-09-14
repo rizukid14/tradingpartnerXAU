@@ -889,7 +889,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     elif is_m4:
         bep_tp_ratio = getattr(config, "M4_BREAK_EVEN_TRIGGER_TP_PCT", 0.70)
     elif "GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched:
-        bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.35)
+        bep_tp_ratio = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50)
     else:
         bep_tp_ratio = getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.60)
 
@@ -898,7 +898,7 @@ def _check_break_even(pos, symbol, profit_points, point, symbol_info):
     else:
         sl_points = init_sl_pts
         if sl_points > 0:
-            be_mult = 0.35 if ("GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched) else config.BREAK_EVEN_TRIGGER_SL_MULT
+            be_mult = getattr(config, "GRADE_B_BREAK_EVEN_TRIGGER_TP_PCT", 0.50) if ("GRADE_B" in grade or "REDUCED" in grade or is_vacuum_or_stretched) else config.BREAK_EVEN_TRIGGER_SL_MULT
             be_trigger = max(int(sl_points * be_mult), min_trigger)
         else:
             be_trigger = config.break_even_trigger_for(symbol)
