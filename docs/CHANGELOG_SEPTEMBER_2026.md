@@ -2,7 +2,44 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
-## 115. Perubahan 14 September 2026 — Arsitektur Dual MT5 Instance & Portable Isolation Environment (M5 Fast Scanner Testing)
+## 116. Perubahan 14 September 2026 — Implementasi Modul Terisolasi MarketScannerM5 (Micro-ZCE M5/M15/H1, Scaled Intraday Geometry, & Zero If-Else Pollution)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Dilema Skalabilitas Timeframe M5 vs File Produksi Inti**:
+   - Pengujian timeframe M5 memerlukan resolusi target dan stop loss yang jauh lebih rapat (8–16 pips SL, 15–28 pips TP) dibanding timeframe H1 (20–30 pips SL, 40–60 pips TP).
+   - Menaburkan percabangan kondisi `if is_demo:` atau `if tf == 'M5':` di dalam file produksi inti (`main.py`, `market_scanner.py`, `atlas_dna.py`) merupakan anti-pattern yang mengotori basis kode (*code pollution*) dan berisiko menciptakan regresi pada bot live.
+2. **Kebutuhan Stasiun ZCE Mikro (Micro-ZCE)**:
+   - Dinding stasiun ZCE normal bersumber dari socket makro (MN1/W1/D1/H4/H1) dengan jarak $C_1 \leftrightarrow F_1$ mencapai 30–80 pips, membuat posisi M5 tertahan berjam-jam (*unintended swing*).
+   - Diperlukan perutean native ke `ZoneConfluenceEngine` dengan horizon mikro (M5, M15, H1) agar menghasilkan dinding stasiun berjarak 10–25 pips (*Fast In, Fast Out*).
+3. **Pengumpulan Data Tanpa Batas (Unconstrained Demo Data Harvesting)**:
+   - Akun demo memerlukan eksekusi order langsung ke MT5 Demo tanpa dialihkan ke Shadow Paper Trade dan tanpa batasan slot sempit (`MAX_POSITIONS_TOTAL=50`).
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **Modul Spesialisasi Baru `src/analytics/market_scanner_m5.py`**:
+   - Mewarisi (*subclasses*) `MarketScanner` tanpa mengubah satu baris pun kode produksi di `src/analytics/market_scanner.py`.
+   - Meng-override `_zce_build_map()` untuk mengonfigurasi `ZoneConfluenceEngine` dengan horizon mikro:
+     - Grid: `{"M5": [30, 60, 120], "M15": [30, 60, 120], "H1": [50, 100, 200]}`.
+     - Primitif OB, FVG, dan swing wick dikumpulkan murni dari data M5, M15, dan H1 live MT5.
+   - Mengintegrasikan kalkulator geometri `calculate_m5_sl_tp()`:
+     - SL: 1.5x M5 ATR (8–10 pips untuk Standard FX, 12–16 pips untuk JPY/Exotics).
+     - TP: Ditambatkan ke stasiun $C_1/F_1$ mikro dengan front-running cushion, atau fallback ke 1.75R–2.0R (15–25 pips).
+     - Durasi rata-rata posisi: 15–45 menit (*Fast In, Fast Out*).
+2. **Runner Khusus `main_demo.py`**:
+   - Menjalankan event loop mandiri dengan interval pemindaian 10 detik.
+   - Menghubungkan diri ke MT5 Demo terminal portabel (`VTMarkets-Demo` #1157958).
+   - Mengeksekusi order riil langsung ke MT5 Demo (Limit Order atau Market Order) dengan bypass total terhadap Shadow Paper Trade.
+3. **Konfigurasi `.env.demo`**:
+   - `MAX_POSITIONS_TOTAL=50`, `ENABLE_CBSS=false`, `ENABLE_SHADOW_TRACKER=false`, `ENABLE_LLM_JURY=false` (Pure Quant Direct Execution 0ms, 0 Token), `PENDING_ORDERS_ENABLED=true`.
+4. **Unit Test Baru `tests/test_market_scanner_m5.py`**:
+   - Memverifikasi kepatuhan SL/TP M5 (BUY & SELL) dan inisialisasi Micro-ZCE.
+
+### ✅ Hasil Verifikasi:
+- **Unit Test Suite**: 49/49 Tests PASS (100%).
+- **Micro-ZCE Preheat**: Terverifikasi sukses menghasilkan stasiun mikro untuk simbol universe live MT5 Demo.
+- **Integritas Bot Live**: Bot live (PID 20132) tetap aktif berjalan 100% tanpa gangguan.
+
+---
+
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
 1. **Kebutuhan Pengujian Timeframe M5 Tanpa Mengganggu Akun Live**:
