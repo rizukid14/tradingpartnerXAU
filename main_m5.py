@@ -137,40 +137,29 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
     entry_type = "market"
     entry_price = mkt_ref
 
-    # 6. Check for Limit Order condition if enabled
-    if getattr(config, "PENDING_ORDERS_ENABLED", True) and trig_p > 0:
+    # 6. Mechanism-Aware Execution: M1 Sweep -> Instant Market, M2/M3 -> Delayed Limit at ZCE Anchor
+    setup_type = getattr(cand, "setup_type", "")
+    is_sweep_m1 = "UNIVERSAL" in setup_type or "SWEEP" in setup_type
+
+    if is_sweep_m1:
+        # M1 Universal Liquidity Sweep: Rejection wick confirmed, execute Market Order directly
+        entry_type = "market"
+        entry_price = mkt_ref
+    elif getattr(config, "PENDING_ORDERS_ENABLED", True) and trig_p > 0:
+        # M2 Pullback / M3 Retest: Delayed Limit Retest unless price is already at the station (< min_dist_pts)
         spread_pts = tick_live.get("spread", 0)
         min_dist_pts = max(spread_pts * 2, 15)
-        s_tp = getattr(cand, "suggested_tp", 0.0)
 
-        is_reanchored = bool(getattr(cand, "metadata", {}).get("is_reanchored_limit", False))
-        runaway_pct = float(getattr(config, "M5_PENDING_RUNAWAY_CANCEL_PCT", 0.70))
-
-        # Runaway Target Guard: Do not place a limit order if market already traversed >= runaway_pct towards TP
         if direction == 1 and (ask - trig_p) >= (min_dist_pts * pt):
-            if is_reanchored:
-                if bid >= s_tp:
-                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dibatalkan: live bid {bid} sudah mencapai/melewati TP {s_tp}.{UI.RST}")
-                    return False
-            else:
-                tp_dist = (s_tp - trig_p) if (s_tp > trig_p) else 0.0
-                if tp_dist > 0 and (ask - trig_p) >= runaway_pct * tp_dist:
-                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dilewati: ask {ask} sudah menempuh >={runaway_pct*100:.0f}% TP {s_tp}.{UI.RST}")
-                    return False
             entry_type = "buy_limit"
             entry_price = trig_p
         elif direction == -1 and (trig_p - bid) >= (min_dist_pts * pt):
-            if is_reanchored:
-                if ask <= s_tp:
-                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dibatalkan: live ask {ask} sudah mencapai/melewati TP {s_tp}.{UI.RST}")
-                    return False
-            else:
-                tp_dist = (trig_p - s_tp) if (s_tp > 0 and trig_p > s_tp) else 0.0
-                if tp_dist > 0 and (trig_p - bid) >= runaway_pct * tp_dist:
-                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dilewati: bid {bid} sudah menempuh >={runaway_pct*100:.0f}% TP {s_tp}.{UI.RST}")
-                    return False
             entry_type = "sell_limit"
             entry_price = trig_p
+        else:
+            # Price is already right at ZCE station (< min_dist_pts): execute Market Order directly
+            entry_type = "market"
+            entry_price = mkt_ref
 
     # Slippage Protection for Market Order execution: ensure minimum TP distance is maintained from live fill
     if entry_type == "market":
@@ -186,7 +175,7 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
     # 7. Single Ticket Scalp Order Dispatch (Fast-In Fast-Out)
     setup_tag = (cand.setup_type or "UNIV")[:6]
     comment_s1 = f"{m_code}_{setup_tag}"
-    pending_exp = int(getattr(config, "M5_PENDING_EXPIRATION_MINUTES", 20))
+    pending_exp = int(getattr(config, "M5_PENDING_EXPIRATION_MINUTES", 30))
     tp_pts = int(round(abs(cand.suggested_tp - entry_price) / pt)) if pt > 0 else 80
 
     actual_sl_dist = abs(entry_price - cand.suggested_sl)
@@ -251,50 +240,17 @@ def _sync_pending_orders(scanner):
             return
         orders = mt.orders_get() or []
         cur_order_map = {}
-        cancel_threshold_pct = float(getattr(config, "M5_PENDING_RUNAWAY_CANCEL_PCT", 0.70))
 
         for o in orders:
             t = getattr(o, "ticket", None)
             if t is not None:
-                o_type = getattr(o, "type", 0)
-                o_price = getattr(o, "price_open", 0.0)
-                o_tp = getattr(o, "tp", 0.0)
-                o_sym = getattr(o, "symbol", "")
-
-                # Active Runaway Guard: Check if live price already traversed >=65% towards TP
-                if o_tp > 0 and o_price > 0 and o_sym:
-                    tick_sym = mt.symbol_info_tick(o_sym) if hasattr(mt, "symbol_info_tick") else None
-                    if tick_sym:
-                        # Buy Limit (type 2)
-                        if o_type in (2, getattr(mt, "ORDER_TYPE_BUY_LIMIT", 2)):
-                            tp_dist = o_tp - o_price
-                            curr_progress = tick_sym.ask - o_price
-                            if tp_dist > 0 and curr_progress >= (cancel_threshold_pct * tp_dist):
-                                print(f" {UI.YELLOW}[PENDING RUNAWAY]{UI.RST} Pending BUY_LIMIT #{t} {o_sym} @ {o_price} dilewati: ask {tick_sym.ask} sudah menempuh >={cancel_threshold_pct*100:.0f}% target TP {o_tp}. Membatalkan order...")
-                                logger.info(f"[PENDING RUNAWAY] BUY_LIMIT #{t} {o_sym} cancelled (progress >= {cancel_threshold_pct*100:.0f}% TP).")
-                                connector.cancel_pending_order(t)
-                                if scanner and hasattr(scanner, "mark_symbol_cancelled"):
-                                    scanner.mark_symbol_cancelled(o_sym, cooldown_seconds=600, reason="Runaway >=65% TP")
-                                continue
-                        # Sell Limit (type 3)
-                        elif o_type in (3, getattr(mt, "ORDER_TYPE_SELL_LIMIT", 3)):
-                            tp_dist = o_price - o_tp
-                            curr_progress = o_price - tick_sym.bid
-                            if tp_dist > 0 and curr_progress >= (cancel_threshold_pct * tp_dist):
-                                print(f" {UI.YELLOW}[PENDING RUNAWAY]{UI.RST} Pending SELL_LIMIT #{t} {o_sym} @ {o_price} dilewati: bid {tick_sym.bid} sudah menempuh >={cancel_threshold_pct*100:.0f}% target TP {o_tp}. Membatalkan order...")
-                                logger.info(f"[PENDING RUNAWAY] SELL_LIMIT #{t} {o_sym} cancelled (progress >= {cancel_threshold_pct*100:.0f}% TP).")
-                                connector.cancel_pending_order(t)
-                                if scanner and hasattr(scanner, "mark_symbol_cancelled"):
-                                    scanner.mark_symbol_cancelled(o_sym, cooldown_seconds=600, reason="Runaway >=65% TP")
-                                continue
-
                 cur_order_map[t] = {
                     "ticket": t,
-                    "symbol": o_sym,
-                    "type": o_type,
-                    "price": o_price,
+                    "symbol": getattr(o, "symbol", ""),
+                    "type": getattr(o, "type", 0),
+                    "price": getattr(o, "price_open", 0.0),
                     "sl": getattr(o, "sl", 0.0),
-                    "tp": o_tp,
+                    "tp": getattr(o, "tp", 0.0),
                 }
 
         # 1. Register newly observed pending orders
@@ -313,7 +269,7 @@ def _sync_pending_orders(scanner):
         deal_order_to_pos = {}
         try:
             now_dt = datetime.now()
-            from_epoch = int((now_dt - timedelta(days=2)).timestamp())
+            from_epoch = int((now_dt - timedelta(hours=2)).timestamp())
             to_epoch = int(now_dt.timestamp()) + 86400
             deals = mt.history_deals_get(from_epoch, to_epoch) or []
             for d in deals:

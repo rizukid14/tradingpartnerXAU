@@ -54,10 +54,10 @@ class TestMarketScannerM5(unittest.TestCase):
         self.assertIn("H1", scanner._micro_zce_params["grid"])
 
     def test_m5_pending_expiration_and_bep(self):
-        # M5 Pending order expiration must be 20 minutes
+        # M5 Pending order expiration must be 30 minutes
         with patch.object(config, "TIMEFRAME_STR", "M5"):
             exp_mins = config.get_pending_order_expiry_minutes()
-            self.assertEqual(exp_mins, 20)
+            self.assertEqual(exp_mins, 30)
 
         # BEP trigger ratio must be 0.80 for M5
         self.assertEqual(getattr(config, "BREAK_EVEN_TRIGGER_TP_PCT", 0.0), 0.80)

@@ -325,7 +325,7 @@ def render_candidate_alert_box(candidate):
         (f"• Strategy Mech: ", f"{UI.BOLD}{UI.WHITE}[{mech_code}] {candidate.setup_type}{UI.RST}"),
         (f"• Timeframe    : ", f"{UI.CYAN}{tf_str}{UI.RST}"),
         (f"• Proposed Entry: ", f"{entry_label}"),
-        (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
+        (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{(getattr(candidate, 'scan_mid', 0.0) or candidate.trigger_price):.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
         (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (M15 {wick_side} {candidate.rejection_wick_ratio*100:.0f}%)"),
         (f"• Proposed SLTP: ", f"SL: {UI.RED}{candidate.suggested_sl}{UI.RST} | TP: {UI.GREEN}{candidate.suggested_tp}{UI.RST} (R:R {candidate.risk_reward_ratio:.2f}:1)"),
     ]

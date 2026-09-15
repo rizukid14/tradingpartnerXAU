@@ -2010,6 +2010,11 @@ class CockpitDataEngine:
 
             tactical_tag = str(macro.get("tactical_desc") or "")
             csm_delta = float(macro.get("csm_delta", 0.0) or 0.0)
+            if csm_delta == 0.0 and not config.is_crypto(sym):
+                try:
+                    csm_delta = float(get_csm_delta_for_symbol(sym) or 0.0)
+                except Exception:
+                    pass
             tier = getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW"))
             perm_label = macro.get("permission_state", "WATCH")
 
@@ -3015,7 +3020,6 @@ class CockpitDataEngine:
                 # Dynamic CSM shift telemetry for bailout audit
                 csm_status = "—"
                 try:
-                    from src.analytics.currency_strength import get_csm_delta_for_symbol
                     from src.analytics.position_manager import _load_telemetry
                     csm_curr = get_csm_delta_for_symbol(symbol)
                     t_data = _load_telemetry()
@@ -3410,7 +3414,7 @@ class CockpitDataEngine:
             "m4_flow_state": m4_flow_state,
             "m4_z": round(m4_dominant_z, 2),
             "m4_dir": m4_flow_dir,
-            "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0),
+            "csm_delta": float(macro.get("csm_delta", 0.0) or 0.0) or (float(get_csm_delta_for_symbol(symbol) or 0.0) if not config.is_crypto(symbol) else 0.0),
             "action_tier": getattr(strat, "action_tier", macro.get("action_tier", "FULL_ALLOW")),
             "perm_label": macro.get("permission_state", "WATCH"),
             "tactical_state": macro.get("tactical_state", "BALANCED_FLOW"),

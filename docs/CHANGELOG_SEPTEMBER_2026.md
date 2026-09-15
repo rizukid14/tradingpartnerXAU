@@ -2,6 +2,50 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 125. Perubahan 15 September 2026 (Siang IV) — Penyederhanaan Arsitektur Pending M5, Eliminasi Runaway Guard Over-Filtering & Penerapan Expiration 30 Menit Murni
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Deadlock Matematis & Over-Filtering pada Runaway Pre-Dispatch 30%**:
+   - Pengecekan runaway pre-filter 30% di `market_scanner_m5.py` dan pre-dispatch `main_m5.py` memicu benturan matematis dengan `min_dist_pts` ($2\times\text{spread}$):
+     * Pada pair Major FX (misal EURUSD) dengan TP 75 pts (7.5 pips), batas runaway 30% bernilai 22.5 pts, sedangkan batas minimum jarak limit adalah 24 pts.
+     * Ini menutup celah pemasangan Limit Order hingga bernilai negatif, memaksa seluruh setup menjadi Market Order instan atau dibuang sebagai "Runaway Veto".
+2. **Beban IPC Polling Berlebihan pada Loop Pending Sync**:
+   - Pemanggilan `mt.history_deals_get` dengan rentang 48 jam dan `mt.symbol_info_tick` di setiap putaran loop 2 detik membebani thread komunikasi MT5 secara tidak perlu.
+3. **Instruksi Penyederhanaan Kuantitatif Pengguna**:
+   - Pengguna menginstruksikan untuk meniadakan seluruh aturan pembatalan paksa berbasis persentase TP (tidak perlu 70% atau 80% TP runaway cancel), dan mengalihkan seluruh siklus hidup pending order ke masa kedaluwarsa alami broker (**30 menit expiration**).
+
+---
+
+### 🔧 Rincian Perubahan Arsitektur & Implementasi:
+1. **Eliminasi Runaway Pre-Filter di Scanner (`src/analytics/market_scanner_m5.py`)**:
+   - Menghapus pengecekan `curr_travel > max_pre_pct * tp_dist` dan pemanggilan `mt5_connector.get_current_tick()` di dalam perulangan radar scanner.
+   - Scanner kembali beroperasi secara murni, cepat, dan deterministik berbasis bar/candle dan ZCE tanpa overhead IPC.
+2. **Penyederhanaan Eksekusi Stasiun & Pending Expiration 30 Menit (`main_m5.py`)**:
+   - Menyederhanakan logika `run_m5_execution_cycle`:
+     * BUY: Jika `ask - trig_p >= min_dist_pts * pt` $\rightarrow$ `buy_limit` di `trig_p`.
+     * SELL: Jika `trig_p - bid >= min_dist_pts * pt` $\rightarrow$ `sell_limit` di `trig_p`.
+     * Jarak $< \text{min\_dist\_pts}$ $\rightarrow$ `market` order instan.
+   - Menetapkan masa kedaluwarsa pending order MT5 menjadi **30 menit** (`pending_exp = 30`).
+   - Pada `_sync_pending_orders`:
+     * Menghapus loop runaway cancel aktif (`M5_PENDING_RUNAWAY_CANCEL_PCT`), membiarkan broker MT5 meng-expire limit order secara otomatis pada 30 menit jika tidak terjemput.
+     * Mengoptimalkan rentang lookback riwayat deal dari 48 jam menjadi **2 jam** (`timedelta(hours=2)`).
+3. **Penyelarasan Konfigurasi (`config.py` & `.env`)**:
+   - Memperbarui `M5_PENDING_EXPIRATION_MINUTES = 30` di `config.py` dan `.env`.
+   - Mengeliminasi parameter usang `M5_PENDING_MAX_PRE_DISPATCH_PCT` dan `M5_PENDING_RUNAWAY_CANCEL_PCT`.
+4. **Pembaruan Test Suite (`tests/test_market_scanner_m5.py`)**:
+   - Memperbarui asersi masa kedaluwarsa pending order M5 menjadi 30 menit.
+5. **Integrasi Real-Time CSM Delta ke Micro-ZCE & Dashboard (`market_scanner_m5.py` & `dashboard.py`)**:
+   - Menyambungkan `get_csm_delta_for_symbol(valid_sym)` ke dalam `MarketScannerM5.update_macro_context()` sehingga kamus `macro_cache` terisi continuous CSM delta untuk seluruh 28 simbol universe.
+   - Menambahkan fallback dinamis di `dashboard.py` dan mengeliminasi import lokal berbayang (*shadowed local import*) yang berisiko memicu `UnboundLocalError`.
+
+---
+
+### 🧪 Hasil Verifikasi & Validasi:
+- **Unit Test Suite**: 398 / 398 PASSED (100%).
+- **Integritas Arsitektur**: Menghilangkan deadlock matematis limit order, memangkas overhead IPC MT5, memulihkan telemetri CSM Delta di Dashboard secara real-time, dan menjaga eksekusi M5 tetap lincah, terukur, dan bersih.
+
+---
+
 ## 124. Perubahan 15 September 2026 (Siang III) — Pemulihan Arsitektur Murni Demo Lab M5, Eliminasi Distorsi Dealing Range, dan Penegakan Hard Floor R:R >= 1.20:1 Net (Resolusi Anomali AUDNZD)
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

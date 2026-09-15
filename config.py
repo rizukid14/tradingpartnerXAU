@@ -799,7 +799,6 @@ M5_DEFAULT_TP_RR                      = _getenv_float("M5_DEFAULT_TP_RR", 1.75)
 M5_COMMISSION_PAD_PTS                 = _getenv_int("M5_COMMISSION_PAD_PTS", 6)
 M5_TP1_BEP_PCT                        = _getenv_float("M5_TP1_BEP_PCT", 0.80)
 M5_RUNNER_TP2_RATIO                   = _getenv_float("M5_RUNNER_TP2_RATIO", 1.50)
-M5_PENDING_RUNAWAY_CANCEL_PCT         = _getenv_float("M5_PENDING_RUNAWAY_CANCEL_PCT", 0.70)
 M5_WINSTREAK_COOLDOWN_COUNT           = _getenv_int("M5_WINSTREAK_COOLDOWN_COUNT", 0)
 M5_WINSTREAK_COOLDOWN_MINUTES         = _getenv_int("M5_WINSTREAK_COOLDOWN_MINUTES", 30)
 
@@ -1010,13 +1009,13 @@ PENDING_ORDERS_ENABLED = _getenv_bool("PENDING_ORDERS_ENABLED", True)
 PENDING_ORDER_EXPIRY_MINUTES = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES", 60)
 PENDING_ORDER_EXPIRY_MINUTES_ASIA = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES_ASIA", 120)  # Sesi Tokyo / Asia (08:00–14:00 WIB)
 PENDING_ORDER_EXPIRY_MINUTES_LDN_NY = _getenv_int("PENDING_ORDER_EXPIRY_MINUTES_LDN_NY", 60) # Sesi London / NY (14:00–00:00 WIB)
-M5_PENDING_EXPIRATION_MINUTES = _getenv_int("M5_PENDING_EXPIRATION_MINUTES", 20)
+M5_PENDING_EXPIRATION_MINUTES = _getenv_int("M5_PENDING_EXPIRATION_MINUTES", 30)
 PENDING_ORDER_MAX_ACTIVE = _getenv_int("PENDING_ORDER_MAX_ACTIVE", 4)
 
 
 def get_pending_order_expiry_minutes(now=None):
     """Expiry pending order adaptif sesi:
-    - M5 Timeframe: 20 Menit (4 bar candle)
+    - M5 Timeframe: 30 Menit (6 bar candle)
     - Sesi Tokyo / Asia (08:00 - 14:00 WIB): 120 Menit (2 jam)
     - Sesi London / NY (14:00 - 00:00 WIB): 60 Menit (1 jam)
     - Di luar jam di atas / Late NY: 60 Menit

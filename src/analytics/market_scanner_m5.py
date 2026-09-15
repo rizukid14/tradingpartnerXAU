@@ -19,6 +19,7 @@ import config
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 from src.analytics.zone_confluence_engine import ZoneConfluenceEngine
 from src.analytics.macro_strategic_engine import macro_strategic_engine
+from src.analytics.currency_strength import get_csm_delta_for_symbol
 from src.indicators.candle_quality import classify_candle
 
 logger = logging.getLogger("market_scanner_m5")
@@ -205,9 +206,17 @@ class MarketScannerM5(MarketScanner):
                 except Exception as e_sd:
                     logger.debug(f"[M5 PREHEAT] MSE directive error for {valid_sym}: {e_sd}")
 
+                # Real-time continuous CSM delta (cached 30s)
+                csm_delta_val = 0.0
+                try:
+                    csm_delta_val = get_csm_delta_for_symbol(valid_sym)
+                except Exception as e_csm:
+                    logger.debug(f"[M5 PREHEAT] CSM error for {valid_sym}: {e_csm}")
+
                 self.macro_cache[valid_sym] = {
                     "symbol": valid_sym,
                     "point": pt,
+                    "csm_delta": csm_delta_val,
                     "immediate_ceiling_c1": c1,
                     "immediate_floor_f1": f1,
                     "ceiling_c1": c1,
@@ -442,7 +451,8 @@ class MarketScannerM5(MarketScanner):
             cand.metadata["m5_tp1_pts"] = geom.get("tp_pts")
             cand.metadata["m5_tp2_pts"] = geom.get("tp_pts")
             cand.metadata["entry_price"] = cand.trigger_price
-            cand.metadata["entry_type"] = getattr(cand, "order_type", "market")
+            is_m1_sweep = "UNIVERSAL" in cand.setup_type or "SWEEP" in cand.setup_type
+            cand.metadata["entry_type"] = "market" if is_m1_sweep else "limit"
 
             m5_candidates.append(cand)
 
