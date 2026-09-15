@@ -1890,7 +1890,7 @@ class CockpitDataEngine:
         if is_m5:
             from src.analytics.market_scanner_m5 import MarketScannerM5
             self.scanner = MarketScannerM5(symbols=dash_symbols)
-            print(f"[Cockpit Engine] Initialized MarketScannerM5 (Micro-ZCE 4-TF M5/M15/M30/H1).")
+            print(f"[Cockpit Engine] Initialized MarketScannerM5 (Micro-ZCE 3-TF M5/M15/H1).")
         else:
             self.scanner = MarketScanner(symbols=dash_symbols)
             print(f"[Cockpit Engine] Initialized MarketScanner (Macro-ZCE H1/H4/D1).")

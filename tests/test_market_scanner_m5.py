@@ -180,14 +180,14 @@ class TestMarketScannerM5(unittest.TestCase):
         self.assertEqual(res["tp_runner"], res["tp"])
         self.assertGreaterEqual(res["risk_reward"], 1.25)
 
-    def test_micro_zce_4tf_grid(self):
+    def test_micro_zce_3tf_grid(self):
         scanner = MarketScannerM5(symbols=["EURUSD-ECNc"])
         grid = scanner._micro_zce_params["grid"]
         self.assertIn("M5", grid)
         self.assertIn("M15", grid)
-        self.assertIn("M30", grid)
+        self.assertNotIn("M30", grid)
         self.assertIn("H1", grid)
-        self.assertEqual(grid["H1"], [50, 100, 250, 500])
+        self.assertEqual(grid["H1"], [50, 100, 200])
 
     def test_m5_dealing_range_and_metadata_sync(self):
         scanner = MarketScannerM5(symbols=["GBPAUD-ECNc"])

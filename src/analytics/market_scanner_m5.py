@@ -149,17 +149,16 @@ class MarketScannerM5(MarketScanner):
             "grid": {
                 "M5": [30, 60, 120],
                 "M15": [30, 60, 120],
-                "M30": [30, 60, 120],
-                "H1": [50, 100, 250, 500]
+                "H1": [50, 100, 200]
             },
-            "w_tf": {"M5": 1.0, "M15": 1.20, "M30": 1.35, "H1": 1.60},
+            "w_tf": {"M5": 1.0, "M15": 1.25, "H1": 1.50},
             "merge_atr_mult": 0.20,
             "max_imm_atr": 3.0,
             "grade_g2": 4.0,
             "grade_g3": 7.0,
         }
         self._zce_engine = ZoneConfluenceEngine(params=self._micro_zce_params)
-        logger.info("[M5 SCANNER] MarketScannerM5 initialized with Micro-ZCE 4-TF (M5/M15/M30/H1).")
+        logger.info("[M5 SCANNER] MarketScannerM5 initialized with Micro-ZCE (M5/M15/H1).")
 
     def update_macro_context(self, mt5_connector=None, force: bool = False) -> None:
         """
@@ -259,10 +258,9 @@ class MarketScannerM5(MarketScanner):
             except Exception:
                 pass
 
-            # Micro-Timeframe Configuration for ZCE
+            # Micro-Timeframe Configuration for ZCE (Exact Demo 3-TF: H1, M15, M5)
             tf_cfg = [
                 ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 250),
-                ("M30", getattr(config.mt5, "TIMEFRAME_M30", 30), 250),
                 ("M15", getattr(config.mt5, "TIMEFRAME_M15", 16386), 250),
                 ("M5", getattr(config.mt5, "TIMEFRAME_M5", 5), 250)
             ]
