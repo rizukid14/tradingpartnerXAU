@@ -195,6 +195,14 @@ class MarketScannerM5(MarketScanner):
                 except Exception as e_sd:
                     logger.debug(f"[M5 PREHEAT] MSE directive error for {valid_sym}: {e_sd}")
 
+                # CSM Net Delta for Cockpit Telemetry
+                csm_delta_val = 0.0
+                try:
+                    from src.analytics.currency_strength import get_csm_delta_for_symbol
+                    csm_delta_val = float(get_csm_delta_for_symbol(valid_sym))
+                except Exception:
+                    pass
+
                 self.macro_cache[valid_sym] = {
                     "symbol": valid_sym,
                     "point": pt,
@@ -215,6 +223,7 @@ class MarketScannerM5(MarketScanner):
                     "current_price": cur_c,
                     "ema20": ema20,
                     "ema50": ema50,
+                    "csm_delta": csm_delta_val,
                     "dealing_range_high": c1_ref,
                     "dealing_range_low": f1_ref,
                     "dealing_range_pos": dr_pos,
@@ -251,7 +260,7 @@ class MarketScannerM5(MarketScanner):
             # Micro-Timeframe Configuration for ZCE
             tf_cfg = [
                 ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 250),
-                ("M15", getattr(config.mt5, "TIMEFRAME_M15", 16386), 250),
+                ("M15", getattr(config.mt5, "TIMEFRAME_M15", 15), 250),
                 ("M5", getattr(config.mt5, "TIMEFRAME_M5", 5), 250)
             ]
             dfs = {}
