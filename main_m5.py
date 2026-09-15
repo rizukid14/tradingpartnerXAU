@@ -98,6 +98,12 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
         print(f" {UI.YELLOW}[RISK GATE] {sym} [{cand.timeframe}] ditolak: {risk_msg}{UI.RST}")
         return False
 
+    # 3b. Hard R:R Floor Gate: Absolute minimum 1.20:1 net R:R
+    rr = getattr(cand, "risk_reward_ratio", 0.0)
+    if rr < 1.20:
+        print(f" {UI.RED}[R:R HARD GATE] {sym} [{cand.timeframe}] dibatalkan: Net R:R {rr:.2f}:1 < 1.20:1 minimum floor.{UI.RST}")
+        return False
+
     print("\n" + render_candidate_alert_box(cand))
     print(f" {UI.CYAN}[M5 LIVE RADAR]{UI.RST} {sym} [{cand.setup_type}] | Entry: {cand.trigger_price} | SL: {cand.suggested_sl} | TP: {cand.suggested_tp} (R:R {cand.risk_reward_ratio:.2f}:1)")
 
@@ -173,7 +179,16 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
     pending_exp = int(getattr(config, "M5_PENDING_EXPIRATION_MINUTES", 20))
     tp_pts = int(round(abs(cand.suggested_tp - entry_price) / pt)) if pt > 0 else 80
 
-    print(f" {UI.GREEN}[M5 ORDER DISPATCH]{UI.RST} Mengirim Single Order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f}...")
+    actual_sl_dist = abs(entry_price - cand.suggested_sl)
+    actual_tp_dist = abs(cand.suggested_tp - entry_price)
+    if actual_sl_dist > 0:
+        actual_rr = round(actual_tp_dist / actual_sl_dist, 2)
+        cand.risk_reward_ratio = actual_rr
+        if actual_rr < 1.20:
+            print(f" {UI.RED}[R:R HARD GATE] {sym} dibatalkan: Live fill R:R {actual_rr:.2f}:1 < 1.20:1.{UI.RST}")
+            return False
+
+    print(f" {UI.GREEN}[M5 ORDER DISPATCH]{UI.RST} Mengirim Single Order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f} (R:R {cand.risk_reward_ratio:.2f}:1)...")
 
     if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
         order_res = connector.send_pending_order(

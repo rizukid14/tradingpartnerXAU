@@ -2,6 +2,57 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 124. Perubahan 15 September 2026 (Siang III) — Pemulihan Arsitektur Murni Demo Lab M5, Eliminasi Distorsi Dealing Range, dan Penegakan Hard Floor R:R >= 1.20:1 Net (Resolusi Anomali AUDNZD)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Anomali Geometri Terbalik pada Posisi Live AUDNZD-ECNc**:
+   - Bot membuka order live AUDNZD-ECNc (`#1295732705`) dengan Stop Loss 51 pts (5.1 pips) dan Take Profit hanya 48 pts (4.8 pips), menghasilkan rasio $R:R = 0.94:1$ (< 1:1, inverted geometry).
+   - Posisi tersebut ditutup secara manual oleh pengguna karena target TP yang cacat dan tidak masuk akal.
+2. **Ketiadaan Trigger di Akun Demo Lab (`quant-trade-m5demolab`)**:
+   - Di akun demo, trade AUDNZD tersebut **sama sekali tidak terpancing / tidak terbuka**.
+   - Investigasi menunjukkan perbedaan fundamental antara live branch dan demo lab:
+     a. **Distorsi Dealing Range 100-bar di Live**: Live branch menginjeksi perhitungan dealing range buatan 100-bar (`MacroEnvelopeEngine` / ATH synthetic stations override) yang memanipulasi `dr_pos` AUDNZD menjadi 0.613, sehingga meloloskan filter M2 Trend Pullback. Di demo lab murni, `dr_pos` dihitung murni dari bilik stasiun Micro-ZCE: $(cur\_c - F_1) / (C_1 - F_1) = 0.10$ (Deep Discount Floor), sehingga BUY M2 di dekat atap ditolak secara alami.
+     b. **Misklasifikasi Volatilitas AUDNZD**: Live branch mengklasifikasikan AUDNZD ke Low-Beta ($min\_sl = 3.0$ pips / 30 pts), sehingga kalkulasi ATR menghasilkan SL terlalu tipis (51 pts). Di demo lab, AUDNZD masuk High-Beta ($min\_sl = 7.0$ pips / 70 pts).
+     c. **Cacat Perhitungan Headroom Stasiun $C_1$ vs Front-Running Pad**:
+        - Formula lama memeriksa: `raw_c1_dist >= 1.25 * sl_dist`. Ketika $C_1$ berjarak 79 pts dan SL 51 pts, kondisi `79 >= 63.75` lolos!
+        - Namun, sistem kemudian mengurangkan `front_pad` (31 pts) dari $C_1$, sehingga jarak riil ke TP menyusut menjadi $79 - 31 = 48$ pts.
+        - Ini menyebabkan TP terkikis drastis dan menghasilkan R:R 0.94:1 tanpa ada gate pengaman yang membatalkannya.
+
+---
+
+### 🔧 Rincian Perubahan Arsitektur & Implementasi:
+1. **Pemulihan Kode Murni Demo Lab (`src/analytics/market_scanner_m5.py`)**:
+   - Mengembalikan arsitektur `market_scanner_m5.py` ke fondasi demo lab yang bersih, cepat, dan terbukti stabil:
+     * Menghapus kalkulasi dealing range artifisial 100-bar dan override ATH/ATL sintesis yang mendistorsi posisi bilik harga.
+     * Mengembalikan klasifikasi AUDNZD ke kategori High-Beta (`is_high_beta`, $min\_sl = 7.0$ pips / 70 pts).
+2. **Kalkulasi Headroom Net Bersih Stasiun ZCE (`calculate_m5_sl_tp`)**:
+   - Memperbaiki formula validasi penargetan $C_1$ (BUY) dan $F_1$ (SELL) agar mengevaluasi jarak NET setelah dikurangi front-running pad:
+     * BUY: `((c1 - front_pad) - entry_price) >= (1.20 * sl_dist)`
+     * SELL: `(entry_price - (f1 + front_pad)) >= (1.20 * sl_dist)`
+   - Jika jarak net ke dinding ZCE kurang dari $1.20 \times \text{SL}$, sistem otomatis beralih ke Fallback TP sehat berbasis multiplier $1.75 \times \text{SL}$ (atau cap tier), sehingga TP tidak pernah terjepit di dalam dinding.
+3. **Penyelarasan Kompatibilitas Metadata & Grid 4-TF Micro-ZCE**:
+   - Mempertahankan kompatibilitas menyeluruh pada dictionary return (`tp1_pts`, `tp2_pts`, `tp_runner`, `has_runner`, `is_reanchored_limit`, `limit_entry_price`, `risk_reward_runner`, serta parameter opsional `c2, f2`).
+   - Mempertahankan grid 4-TF Micro-ZCE (`M5`, `M15`, `M30`, `H1`) untuk akurasi konfluensi multi-timeframe.
+4. **Hard R:R Floor Gate Ganda ($\ge 1.20:1$) (`market_scanner_m5.py` & `main_m5.py`)**:
+   - **Gate 1 (Scanner Radar)**: `if geom.get("risk_reward", 0.0) < 1.20: continue` — Kandidat dengan proyeksi R:R < 1.20:1 langsung didiskualifikasi di tahap radar.
+   - **Gate 2 (Pre-Dispatch)**: Di `main_m5.py`, kandidat dicek kembali: `if getattr(cand, "risk_reward_ratio", 0.0) < 1.20: return False`.
+   - **Gate 3 (Final Execution Verification)**: Tepat sebelum order dikirim ke MT5, jarak live fill $SL$ dan $TP$ dihitung ulang terhadap live quote. Jika $actual\_rr < 1.20$, pengiriman order dibatalkan seketika.
+
+---
+
+### 🧪 Hasil Verifikasi & Validasi:
+- **Unit Test Suite (100% PASS)**:
+  * `tests/test_market_scanner_m5.py`: **14 / 14 PASSED**.
+  * `tests/test_m5_twin_ticket_state_machine.py`: **7 / 7 PASSED**.
+  * `tests/test_pattern_engine.py`: **13 / 13 PASSED**.
+  * `tests/test_dashboard.py`: **23 / 23 PASSED**.
+  * **Total 57 / 57 PASSED (100%)**.
+- **Simulasi Uji AUDNZD**:
+  * Input: `entry = 1.23766`, `C1 = 1.23845` (79 pts), `ATR = 0.00041`.
+  * Hasil Baru: `sl_pts = 70` (High-Beta floor), `tp_pts = 123` (1.75x fallback karena net headroom C1 hanya 48 pts < 84 pts), $R:R = 1.76:1$. Anomali terbalik $0.94:1$ telah dieliminasi secara matematis.
+
+---
+
 ## 123. Perubahan 15 September 2026 (Siang II) — Koreksi False-SL Assumption pada Twin Loss Shield dan Perlindungan Runner T2 Berbasis Deal History MT5 Riil
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
