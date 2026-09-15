@@ -96,8 +96,10 @@ def calculate_dual_grid_stations(symbol: str, current_price: float) -> dict:
     macro_stations = calculate_dynamic_stations(symbol, current_price)
     digits = 2 if 'XAU' in symbol else (3 if 'JPY' in symbol else 5)
     
-    # Micro Sub-Station Step (50 pips for JPY/FX, $25 for Gold)
-    micro_step = 0.500 if 'JPY' in symbol else (25.0 if 'XAU' in symbol else 0.0050)
+    step = macro_stations["step"]
+    # Micro Sub-Station Step (Half-step calibrated from symbol's ATLAS DNA)
+    # E.g., 25 pips for EURUSD (step 50), 12.5 pips for NZDCHF (step 25), 50 pips for USDJPY (step 100)
+    micro_step = round(step * 0.50, digits)
     micro_base = round(round(current_price / micro_step) * micro_step, digits)
     
     if current_price >= micro_base:

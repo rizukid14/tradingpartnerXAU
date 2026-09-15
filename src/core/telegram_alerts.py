@@ -124,6 +124,8 @@ def alert_pending_order_placed(symbol, entry_type, ticket, entry_price, lot, sl_
                                setup="", reason="", invalidation="", expiration_minutes=120, setup_grade="",
                                risk_usd=None, **kwargs):
     """Send rich notification when a pending order (buy_stop, sell_stop, buy_limit, sell_limit) is placed."""
+    if not getattr(config, "TELEGRAM_NOTIFY_PENDING_PLACED", False):
+        return False
     emoji = "⏳"
     etype_upper = (entry_type or "pending").upper()
     sym = symbol or config.SYMBOL
@@ -195,6 +197,8 @@ def alert_pending_order_filled(ticket, symbol, pos_type, price, pos_id=None, sl_
 
 def alert_pending_order_cancelled(ticket, symbol, pos_type, price, reason="Expired / Sinyal Berlawanan"):
     """Send notification when a pending order is cancelled or expired."""
+    if not getattr(config, "TELEGRAM_NOTIFY_PENDING_CANCELLED", False):
+        return False
     sym = symbol or config.SYMBOL
     ptype_upper = str(pos_type or "").upper()
     lines = [
@@ -439,6 +443,8 @@ def alert_trailing_stop(ticket, symbol, new_sl, profit_points, distance_pts=0):
 
 def alert_break_even(ticket, symbol, be_price):
     """Send notification when Break-Even moves SL to entry."""
+    if not getattr(config, "TELEGRAM_NOTIFY_BEP", False):
+        return False
     text = (
         f"🛡️ *Break-Even Activated*\n"
         f"- Symbol: `{symbol}`\n"

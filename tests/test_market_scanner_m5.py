@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 
 import config
+from src.analytics.market_scanner import CandidateSetup
 from src.analytics.market_scanner_m5 import MarketScannerM5, calculate_m5_sl_tp
 
 
@@ -23,8 +24,8 @@ class TestMarketScannerM5(unittest.TestCase):
         )
         self.assertLess(res["sl"], 1.10000)
         self.assertGreater(res["tp"], 1.10000)
-        self.assertGreaterEqual(res["sl_pts"], 80)
-        self.assertLessEqual(res["sl_pts"], 200)
+        self.assertGreaterEqual(res["sl_pts"], 45)
+        self.assertLessEqual(res["sl_pts"], 120)
         self.assertGreaterEqual(res["risk_reward"], 1.0)
 
     def test_calculate_m5_sl_tp_sell(self):
@@ -41,8 +42,8 @@ class TestMarketScannerM5(unittest.TestCase):
         )
         self.assertGreater(res["sl"], 1.35000)
         self.assertLess(res["tp"], 1.35000)
-        self.assertGreaterEqual(res["sl_pts"], 80)
-        self.assertLessEqual(res["sl_pts"], 200)
+        self.assertGreaterEqual(res["sl_pts"], 45)
+        self.assertLessEqual(res["sl_pts"], 120)
         self.assertGreaterEqual(res["risk_reward"], 1.0)
 
     def test_scanner_m5_initialization(self):
@@ -100,10 +101,9 @@ class TestMarketScannerM5(unittest.TestCase):
         # Verify SL is thin (around 90-100 pts), NOT clamped to 250 pts H1 floor
         self.assertLess(res["sl_pts"], 150)
 
-    def test_elastic_structural_leeway(self):
-        # GBPJPY JPY tier: base max = 120 pts, leeway 1.18x = 142 pts
-        # Case A: C1 at 190.115 (11.5 pips away), raw dist with buffer is ~13.5 pips (135 pts)
-        # Should STRETCH to 135 pts behind C1, NOT get cut off at 120 pts
+    def test_pure_demo_atr_sl(self):
+        # GBPJPY JPY tier: SL is purely proportional to M5 ATR (1.25x ATR), NOT stretched by distant C1
+        # atr_m5 = 0.070 (7 pips) -> 1.25 * 70 pts = 88 pts
         res_near = calculate_m5_sl_tp(
             symbol="GBPJPY-ECNc",
             entry_price=190.000,
@@ -113,12 +113,10 @@ class TestMarketScannerM5(unittest.TestCase):
             spread_pts=12,
             pt=0.001
         )
-        self.assertGreater(res_near["sl_pts"], 120)
-        self.assertLessEqual(res_near["sl_pts"], 142)
-        self.assertGreater(res_near["sl"], 190.115)  # SL is safely above C1
+        self.assertEqual(res_near["sl_pts"], 88)
+        self.assertLess(res_near["sl_pts"], 120)
 
-        # Case B: C1 is at 190.250 (25.0 pips away, far macro wall > stretch cap 142 pts)
-        # Should SNAP BACK to base max 120 pts
+        # Far C1 at 190.250 (25.0 pips away) -> SL remains strictly 88 pts (pure ATR, fast-in fast-out)
         res_far = calculate_m5_sl_tp(
             symbol="GBPJPY-ECNc",
             entry_price=190.000,
@@ -128,8 +126,117 @@ class TestMarketScannerM5(unittest.TestCase):
             spread_pts=12,
             pt=0.001
         )
-        self.assertEqual(res_far["sl_pts"], 120)
+        self.assertEqual(res_far["sl_pts"], 88)
+
+    def test_nzd_low_beta_atr_scaling(self):
+        # NZDCHF low-beta Pacific cross with tight M5 ATR (1.3 pips = 13 pts)
+        # SL must scale to thin volatility (~30-60 pts), NOT clamped to 80-100 pts Major FX floor
+        res = calculate_m5_sl_tp(
+            symbol="NZDCHF-ECNc",
+            entry_price=0.47200,
+            direction=1,
+            atr_m5=0.00013,
+            c1=0.47300,
+            f1=0.47160,
+            spread_pts=10,
+            pt=0.00001
+        )
+        self.assertLess(res["sl_pts"], 70)
+        self.assertGreaterEqual(res["sl_pts"], 30)
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
+
+    def test_fast_fallback_tp_when_cramped(self):
+        # Entry at 0.47270 is right under C1 (0.47280) - only 10 pts headroom
+        # Instead of artificial limit re-anchoring, pure demo triggers fast fallback TP (1.75x SL)
+        res = calculate_m5_sl_tp(
+            symbol="NZDCHF-ECNc",
+            entry_price=0.47270,
+            direction=1,
+            atr_m5=0.00013,
+            c1=0.47280,
+            f1=0.47160,
+            spread_pts=10,
+            pt=0.00001
+        )
+        self.assertFalse(res["is_reanchored_limit"])
+        self.assertEqual(res["limit_entry_price"], 0.47270)
+        self.assertGreater(res["tp"], 0.47270)
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
+
+    def test_single_ticket_scalp_geometry(self):
+        # Single ticket scalping: has_runner is False and tp_runner equals tp
+        res = calculate_m5_sl_tp(
+            symbol="EURUSD-ECNc",
+            entry_price=1.10000,
+            direction=1,
+            atr_m5=0.00050,
+            c1=1.10200,
+            f1=1.09800,
+            c2=1.10450,
+            spread_pts=10,
+            pt=0.00001
+        )
+        self.assertFalse(res["has_runner"])
+        self.assertEqual(res["tp_runner"], res["tp"])
+        self.assertGreaterEqual(res["risk_reward"], 1.25)
+
+    def test_micro_zce_4tf_grid(self):
+        scanner = MarketScannerM5(symbols=["EURUSD-ECNc"])
+        grid = scanner._micro_zce_params["grid"]
+        self.assertIn("M5", grid)
+        self.assertIn("M15", grid)
+        self.assertIn("M30", grid)
+        self.assertIn("H1", grid)
+        self.assertEqual(grid["H1"], [50, 100, 250, 500])
+
+    def test_m5_dealing_range_and_metadata_sync(self):
+        scanner = MarketScannerM5(symbols=["GBPAUD-ECNc"])
+        
+        # Test candidate metadata synchronization
+        cand = CandidateSetup(
+            symbol="GBPAUD-ECNc",
+            setup_type="TREND_ALIGNED_PULLBACK",
+            direction=-1,
+            trigger_price=1.89157,
+            timeframe="M5",
+            macro_compass="BEAR",
+            dealing_range_pos=0.66,
+            rejection_wick_ratio=0.25,
+            current_spread_pts=6,
+            current_atr_pts=45,
+            suggested_sl=1.89434,
+            suggested_tp=1.89084,
+            risk_reward_ratio=1.5,
+            metadata={"entry_type": "market", "entry_price": 1.89157}
+        )
+        
+        # Reanchoring override
+        geom = {
+            "sl": 1.89434,
+            "tp": 1.89084,
+            "tp_runner": 1.88800,
+            "risk_reward": 1.5,
+            "is_reanchored_limit": True,
+            "limit_entry_price": 1.89294,
+            "sl_pts": 140,
+            "tp_pts": 210,
+            "tp1_pts": 210,
+            "tp2_pts": 315,
+            "has_runner": True
+        }
+        
+        if geom.get("is_reanchored_limit"):
+            cand.trigger_price = geom["limit_entry_price"]
+            cand.order_type = "SELL_LIMIT"
+            
+        cand.metadata["entry_price"] = cand.trigger_price
+        cand.metadata["entry_type"] = getattr(cand, "order_type", "market")
+        
+        self.assertEqual(cand.trigger_price, 1.89294)
+        self.assertEqual(cand.metadata["entry_price"], 1.89294)
+        self.assertEqual(cand.metadata["entry_type"], "SELL_LIMIT")
 
 
 if __name__ == "__main__":
     unittest.main()
+

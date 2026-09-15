@@ -2,6 +2,157 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 122. Perubahan 15 September 2026 (Siang) — Implementasi Clean Mode Notifikasi Telegram M5 (Peredaman Spam Sinyal Pending & BEP) dan Audit Gate 3 Anti-Knife Guard terhadap Demo Lab
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Banjir Notifikasi Telegram Akibat High-Frequency M5**:
+   - Pemindaian paralel universe 28 pair pada timeframe M5 menghasilkan puluhan notifikasi per jam ke Telegram.
+   - Pemicu utama spam adalah:
+     * `alert_pending_order_placed`: Mengirim pesan setiap kali order limit dipasang.
+     * `alert_pending_order_cancelled`: Mengirim pesan setiap kali order limit dibatalkan karena runaway guard atau expiry 20 menit.
+     * `alert_break_even`: Mengirim pesan setiap kali fluktuasi harga M5 menyentuh 80% TP.
+     * `alert_hold_recap`: Mengirim pesan recap hold setiap siklus scan karena `TELEGRAM_NOTIFY_HOLD=true` di `.env`.
+2. **Pertanyaan Pengguna Mengenai Status Pembukaan Posisi & Validasi Demo Lab**:
+   - Pengguna menanyakan penyebab bot belum membuka posisi baru di siang hari serta memvalidasi apakah **Gate 3: Filter Validasi Sumbu Pantulan Candle (Anti-Knife Guard `req_wick >= 0.25`)** memang ada di branch demo (`quant-trade-m5demolab`).
+
+---
+
+### 🔧 Rincian Perubahan Arsitektur & Implementasi:
+1. **Implementasi Clean Mode Telegram (`src/core/telegram_alerts.py`, `config.py`, `.env`)**:
+   - Di `src/core/telegram_alerts.py`:
+     * `alert_pending_order_placed`: Ditambahkan pengecekan `if not getattr(config, "TELEGRAM_NOTIFY_PENDING_PLACED", False): return False`.
+     * `alert_pending_order_cancelled`: Ditambahkan pengecekan `if not getattr(config, "TELEGRAM_NOTIFY_PENDING_CANCELLED", False): return False`.
+     * `alert_break_even`: Ditambahkan pengecekan `if not getattr(config, "TELEGRAM_NOTIFY_BEP", False): return False`.
+   - Di `config.py`:
+     * Menambahkan konfigurasi `TELEGRAM_NOTIFY_BEP`, `TELEGRAM_NOTIFY_PENDING_PLACED`, dan `TELEGRAM_NOTIFY_PENDING_CANCELLED` menggunakan `_getenv_bool(..., default=False)`.
+   - Di `.env`:
+     * Mengubah `TELEGRAM_NOTIFY_HOLD=false`.
+     * Menambahkan `TELEGRAM_NOTIFY_BEP=false`, `TELEGRAM_NOTIFY_PENDING_PLACED=false`, `TELEGRAM_NOTIFY_PENDING_CANCELLED=false`.
+   - **Notifikasi Esensial Tetap 100% Aktif**:
+     * `alert_trade_opened` (Pembukaan posisi riil di market).
+     * `alert_pending_order_filled` (Order pending yang ter-fill menjadi posisi aktif).
+     * `alert_trade_closed` (Penutupan trade dengan hasil realized P/L, TP/SL, dan komisi).
+     * Alert proteksi darurat modal (Daily Loss Halt, Rollover Shield, Emergency Stop).
+     * Ringkasan harian / shutdown recap.
+
+2. **Audit Kuantitatif Gate 3 Anti-Knife Guard vs Demo Lab**:
+   - Audit branch `quant-trade-m5demolab:src/analytics/market_scanner.py` membuktikan Gate 3 (`req_wick = 0.25` untuk Asian session, `0.333` untuk non-Asian) **ADA dan 100% IDENTIK di demo**.
+   - Faktor pembeda frekuensi trade antara Demo Lab dan Live Cent:
+     * **Session Aware Routing**: Di Demo Lab (`.env.demo`), `SESSION_AWARE_ROUTING_ENABLED = false` (seluruh 28 pair discan 24 jam). Di Live Cent (`.env`), bernilai `true` sehingga 10 pair non-Asia di-freeze saat sesi Asia (07:00–14:00 WIB).
+     * **Posisi Aktif (Anti-Duplicate)**: Akun Cent saat ini sudah memiliki 7 tiket aktif di 4 pair (`AUDCHF`, `AUDCAD`, `AUDUSD`, `EURAUD`).
+     * **Sifat Candle M5 Siang Ini**: Pair JPY yang aktif bergerak siang ini sedang trending solid (body 72%–85%, ekor < 15%). Gate 3 secara cerdas mencegah catching falling knife hingga muncul bar pembalikan dengan sumbu $\ge 25\%$.
+
+---
+
+### 🧪 Hasil Verifikasi & Validasi:
+- **Unit Test Suites (100% PASS)**:
+  * `tests/test_market_scanner_m5.py`: **14 / 14 PASSED**.
+  * `tests/test_pattern_engine.py`: **13 / 13 PASSED**.
+  * `tests/test_macro_strategic_engine.py`: **11 / 11 PASSED**.
+  * `tests/test_dashboard.py`: **23 / 23 PASSED**.
+  * **Total: 61 / 61 PASSED (100%)**.
+- **Sanity Check Telegram Alert Suppression**:
+  * Panggilan `alert_pending_order_placed`, `alert_pending_order_cancelled`, dan `alert_break_even` mengembalikan `False` secara instan tanpa melakukan HTTP call ke Telegram API.
+
+---
+
+## 121. Perubahan 15 September 2026 (Pagi II) — Native M5 Dealing Range Viewport, Penguncian Sacrosanct ZCE Fortress Walls (C1/F1), Eliminasi False-Abort Runaway Guard, dan Kalibrasi SL/TP M5 Fast-In Fast-Out Scalping (Basket NZD & Pacific Crosses)
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Lompatan dan Pembalikan Label Benteng ZCE C1/F1 pada Noise M5 (`dashboard.py`)**:
+   - `_elect_display_ladder` di `dashboard.py` sebelumnya mengurutkan semua klaster berdasarkan jarak ke harga live dan secara membabi-buta menamai indeks 0 sebagai `C1` (jika di atas live price) atau `F1` (jika di bawah live price).
+   - Pada `GBPAUD`, terdapat klaster mikro intermediate di `1.89165` di dalam chamber. Ketika harga live bergerak tipis melintasi level tersebut (dari `1.89152` ke `1.89170`), klaster tersebut berganti-ganti nama dari `C1` menjadi `F1` secara instan, menggusur benteng struktural asli ($C_1: 1.89489$ dan $F_1: 1.89070$) ke C2/F2 atau menghilangkannya dari viewport.
+2. **Dealing Range Skala H4 Membentang pada Chart M5 Dashboard**:
+   - `get_symbol_detail` membaca `strat.macro_envelope` (skala H4). Kotak abu-abu Dealing Range, garis kuning Equilibrium 50%, dan FRVP membentang puluhan hari ke belakang, bukan ayunan 100 bar M5 lokal (~8 jam terakhir).
+3. **False-Abort 100% pada Runaway Guard Order Limit Re-Anchored (`main_m5.py`)**:
+   - Ketika *Dynamic Limit Re-Anchoring* sengaja menempatkan order limit di atas/bawah harga pasar untuk menjemput pullback (misal `SELL_LIMIT` 14 pip di atas live bid agar R:R $\ge 1.50:1$), formula `(trig_p - bid) >= 0.50 * tp_dist` mengira harga pasar sudah "kabur mendekati TP", langsung membatalkan order secara instan ($100\%$ false abort).
+4. **Distorsi Jarak SL/TP pada Pair-Pair NZD / Pasifik**:
+   - Audit ATR M5 membuktikan pair NZD memiliki volatilitas tipis di pagi hari (`NZDUSD` 2.10p, `NZDJPY` 2.72p, `NZDCHF` 1.37p, `AUDNZD` 3.74p).
+   - Namun karena batas minimum SL di `.env` terlalu besar (Major 8.0p, JPY 10.0p, HighBeta 12.0p), `AUDNZD` dan `NZDUSD` salah dikelompokkan ke HighBeta/Major, dan SL menarik benteng makro H1 yang berjarak 15 pips, target TP1 terdorong ke 15–24 pips (menghilangkan filosofi *Fast-In Fast-Out*).
+
+---
+
+### 🔧 Rincian Perubahan Arsitektur & Komponen:
+1. **`dashboard.py` (Native M5 Dealing Range Viewport & Sacrosanct Fortress Anchoring)**:
+   - Jika `timeframe_str.upper() in ("M5", "M15", "M30")`: Memanggil `MacroEnvelopeEngine(window_bars=100).analyze(tail_df)` sehingga kotak Dealing Range, garis EQ 50%, dan FRVP di dashboard mengunci pada ayunan 100 bar M5 lokal.
+   - Mengunci `target_c1` dan `target_f1` pada benteng resmi dari `zm.immediate_ceiling_c1` / `macro["immediate_ceiling_c1"]`.
+   - Klaster intermediate di dalam chamber (antara harga live dan benteng utama) diberi tier `"M5 ZONE"` / `"ZONE"` dan dilarang membajak label `C1` / `F1`.
+2. **`dashboard.html` (Styling & Parsing Level Intermediate ZONE)**:
+   - Deteksi tierNum disetel ke `0` jika `w.tier` tidak memiliki indeks C/F angka.
+   - Level `ZONE` / `M5 ZONE` dirender dengan garis putus-putus (*Dashed*) warna abu-abu netral (*Slate* `rgba(148, 163, 184, 0.7)`), membedakannya secara tegas dari garis *Solid* tebal benteng utama `C1` / `F1`.
+3. **`main_m5.py` (Penyelarasan Runaway Guard pada Re-Anchored Limits)**:
+   - Menambahkan pembacaan `is_reanchored = cand.metadata.get("is_reanchored_limit", False)`.
+   - Jika `is_reanchored == True`, jarak pullback awal tidak lagi memicu abort. Order limit pullback hanya dibatalkan jika harga live pasar riil telah menembus target take profit (`bid >= s_tp` untuk BUY, atau `ask <= s_tp` untuk SELL).
+4. **`src/analytics/market_scanner_m5.py` & `.env` / `config.py` (Kalibrasi Fast-In Fast-Out M5 Scalping)**:
+   - Memindahkan `AUDNZD` dan `NZDUSD` ke grup **Low-Beta / Pacific**.
+   - Menambahkan tier khusus **Pacific-JPY** (`NZDJPY`, `AUDJPY`) dengan batas SL 4.5–7.5 pips dan TP1 7.0–13.0 pips.
+   - Mengkalibrasikan batas `.env` dan `config.py`:
+     * Low-Beta: SL 3.0–5.5p, TP1 4.5–9.0p.
+     * Major: SL 4.5–7.5p, TP1 7.0–13.0p.
+     * Standard JPY: SL 7.0–12.0p, TP1 10.0–18.0p.
+     * High-Beta: SL 8.0–14.0p, TP1 11.0–20.0p.
+   - Penjagaan invalidasi ZCE: Jika jarak ke benteng $C_1/F_1$ melebihi benteng mikro lokal, SL dibatasi pada ayunan M5 lokal sehingga durasi trading kembali lincah (15–45 menit).
+
+---
+
+### 🧪 Hasil Verifikasi & Validasi:
+- **Unit Test Suites (100% PASS)**:
+  * `tests/test_zone_confluence_engine.py`: **13 / 13 PASSED**.
+  * `tests/test_market_scanner_m5.py`: **14 / 14 PASSED**.
+  * `tests/test_dashboard.py`: **23 / 23 PASSED**.
+  * `tests/test_m5_twin_ticket_state_machine.py`: **7 / 7 PASSED**.
+  * **Total: 57 / 57 PASSED (100%)**.
+- **Hasil Sanity Check Geometri Live**:
+  * `NZDUSD-ECNc`: SL = 6.3p, TP1 = 7.5p, TP2 = 10.5p.
+  * `NZDJPY-ECNc`: SL = 7.5p, TP1 = 8.1p, TP2 = 13.3p (terpangkas dari 20.3p).
+  * `AUDNZD-ECNc`: SL = 5.5p, TP1 = 6.0p, TP2 = 10.1p (terpangkas dari 15–24p).
+  * `GBPAUD-ECNc`: SL = 8.5p, TP1 = 11.8p, TP2 = 17.7p.
+
+---
+
+## 120. Perubahan 15 September 2026 — Peningkatan Arsitektur Micro-ZCE 4-TF Native Sockets (M5/M15/M30/H1-720), Conditional ATH/ATL Station Fallback, Dynamic Limit Re-Anchoring, Kalibrasi Low-Beta Pacific Crosses, dan Eksekusi Selektif Twin-Ticket
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **Anomali R:R Terbalik pada Pair Pasifik / Low-Volatility (Audit NZDCHF 0.69:1)**:
+   - Audit posisi live MT5 Cent (`#27556325`) menemukan posisi BUY `NZDCHF` memiliki SL 100 poin (10.0 pip) dan TP 69 poin (6.9 pip), menghasilkan rasio R:R terbalik **0.69 : 1**.
+   - **Root Cause**: `calculate_m5_sl_tp` memaksakan minimum SL clamp 8.0–10.0 pip untuk seluruh pair Major/Cross non-JPY. Padahal ATR M5 `NZDCHF` hanya 1.3 pip (13 poin)! SL 10 pip setara $7.7\times \text{ATR}$, sementara rentang dealing range $F_1$ ke $C_1$ hanya 12.4 pip.
+   - Selain itu, entry BUY terjadi di harga 0.47220 (hanya 22 poin di bawah resistance ceiling $C_1$ 0.47242). Membeli di pucuk ruangan menjamin asimetri buruk.
+2. **Ketiadaan Level Struktur pada Rekor Tertinggi 4 Tahun (AUDNZD di 1.23705)**:
+   - `AUDNZD` menembus level tertinggi sejak 2022. Pada horizon 250 bar H1 (~10 hari), tidak ada candle historis di atas harga live di sebelah kiri, menghasilkan `C1 = None`.
+3. **Distorsi Hardcoded Micro-Step pada Dual Grid Stations (`atlas_dna.py`)**:
+   - `calculate_dual_grid_stations` sebelumnya melakukan hardcode `micro_step = 0.0050` (50 pips) untuk semua pair FX non-JPY. Pada pair ber-step 25 pip seperti `NZDCHF` dan `NZDCAD`, micro step menjadi 2x lipat macro step, merusak resolusi sub-stasiun.
+4. **Instruksi Eksekusi Selektif Twin-Ticket**:
+   - Pengguna meminta agar bot tidak memaksakan tiket ganda (T1 + T2) pada seluruh trade, melainkan hanya saat terbukti memiliki ruang runner ($C_2/F_2$) minimal $1.30\times$ jarak TP1.
+
+### 🔧 Rincian Perubahan Arsitektur:
+1. **Ekspansi 4-TF Native Sockets & Horizon H1 720 Bar (`src/analytics/market_scanner_m5.py`)**:
+   - Menambahkan socket **M30 (300 bar)** ke dalam `_micro_zce_params` dengan bobot `1.35` untuk menghapus *blind spot* antara M15 dan H1.
+   - Memperluas horizon H1 dari 250 bar (~10 hari bursa) menjadi **720 bar (~30 hari bursa / 1 bulan penuh)** dengan lookback grid `[50, 100, 250, 500]`.
+2. **Conditional ATH / ATL Station Fallback (`src/analytics/market_scanner_m5.py`)**:
+   - Jika kluster historis tidak memiliki ceiling (`C1 is None`) karena breakout multi-tahun (seperti AUDNZD), sistem secara kondisional mensintesis stasiun matematis autentik dari `calculate_dual_grid_stations` (`sub_ceiling_50` atau `macro_ceiling`), berlabel `[ATLAS_STN]`.
+3. **Koreksi Kalibrasi Micro-Step ATLAS DNA (`src/indicators/atlas_dna.py`)**:
+   - Mengganti hardcoded `0.0050` dengan `micro_step = round(step * 0.50, digits)`. Untuk pair Pacific ber-step 25 pip (`NZDCHF`, `NZDCAD`, `AUDCHF`), micro step otomatis menjadi 12.5 pip.
+4. **Tier Khusus Low-Beta Crosses & ATR-Relative SL (`src/analytics/market_scanner_m5.py`)**:
+   - Menambahkan `Tier 0: Low-Beta / Pacific Crosses`: SL 3.0–5.5 pip (`min_sl_pts = 30-35`, `max_sl_pts = 55-60`), TP1 4.5–12.0 pip.
+   - Untuk NZDCHF, SL turun menjadi 30–45 poin dan target $C_1$ (60–75 poin) menghasilkan R:R sehat $\ge 1.50 : 1$.
+5. **Dynamic Limit Re-Anchoring (Bukan Tolak Trade, Geser Titik Jemput)**:
+   - Jika jarak entry ke $C_1$ (BUY) atau $F_1$ (SELL) terlalu sempit ($< \text{min\_tp1\_dist}$), scanner **tidak memveto trade** dan tidak membeli di pucuk.
+   - Scanner menggeser titik jemput menjadi limit order (`BUY_LIMIT` di lantai diskon atau `SELL_LIMIT` di atap premium) sehingga jika terisi, target ke $C_1/F_1$ memberikan R:R $\ge 1.50:1$.
+6. **Selektivitas Eksekusi Single vs Twin Ticket (`src/analytics/market_scanner_m5.py` & `main_m5.py`)**:
+   - `calculate_m5_sl_tp` menandai `has_runner = True` HANYA jika valid $C_2/F_2$ ada dan jaraknya $\ge 1.30\times \text{TP}_1$.
+   - Di `main_m5.py`, jika `has_runner == False`, bot mengeksekusi **Single Ticket (100% lot dialokasikan ke TP1)** dengan tag komentar `M5_S1`.
+7. **Slippage Protection pada Market Execution (`main_m5.py`)**:
+   - Memastikan jarak TP1 selalu dihitung ulang dari harga pengisian riil broker (`ask`/`bid`), mencegah friksi spread mengikis R:R di bawah batas minimum 1.20:1.
+8. **Sinkronisasi Konfigurasi (`.env`)**:
+   - Menambahkan parameter `M5_MIN_SL_PIPS_LOWBETA=3.0`, `M5_MAX_SL_PIPS_LOWBETA=5.5`, `M5_MIN_TP1_PIPS_LOWBETA=4.5`, `M5_MAX_TP1_PIPS_LOWBETA=12.0`.
+9. **Verifikasi Suite Test (`tests/test_market_scanner_m5.py` & `test_m5_twin_ticket_state_machine.py`)**:
+   - 13 test di `test_market_scanner_m5.py` PASS 100%.
+   - 7 test di `test_m5_twin_ticket_state_machine.py` PASS 100%.
+   - 53 test di `test_pattern_engine.py` & `test_market_scanner.py` PASS 100%.
+   - 11 test di `test_macro_strategic_engine.py` PASS 100%.
+
+---
+
 ## 119. Perubahan 15 September 2026 — Kalibrasi Micro-ZCE Structural Stop Loss, Sweet Spot Demo Awal (8–10p FX, 10–12p JPY), Elastic Structural Leeway, dan Atomic Twin Rollback
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:
@@ -4257,5 +4408,40 @@ Pola baru: **C1 melompat jauh saat ZCE tidak punya zona konfluensi dekat di sisi
 - **Hasil Verifikasi & Status Pengujian**:
   - Seluruh unit test suite relevan (`test_market_scanner_m5.py`, `test_cbss_and_risk_shields.py`, `test_audit_pending_orders_thesis.py`, `test_market_scanner.py`): **60/60 tests PASSED (100% OK)**.
   - Bot `main_m5.py` dijalankan ulang secara bersih dan langsung memindai serta mengeksekusi order riil di akun Cent.
+
+---
+
+## 109. 15 September 2026 (Pagi) — Restorasi Penuh Single Ticket M5 Scalping (0.8% Risk, 0.50 Lot Cent Cap), Native M5 Dealing Range Viewport, & Engine Live Tick Sync
+
+- **Dismantling Twin-Ticket Architecture & Pemulihan Single Ticket Scalping (`main_m5.py`, `config.py`, `.env`)**:
+  - Menyetel `M5_TWIN_TICKET_ENABLED = false` di `.env` dan `config.py`.
+  - Mengubah parameter risiko `RISK_PERCENT_FX = 0.8` dan `RISK_PERCENT_XAU = 0.8` dengan plafon Cent tetap `MAX_POSITION_LOT = 0.50`.
+  - Mengeliminasi percabangan pembagian tiket 0.25 lot kembar di `main_m5.py`. Single order kini dikirim utuh hingga plafon 0.50 lot Cent dengan target TP1 fast-in fast-out yang lincah.
+- **Resolusi Native M5 Dealing Range Viewport pada Cockpit Dashboard (`dashboard.py`)**:
+  - Pada request timeframe M5/M15/M30, meng-override `envelope_visual` dan `macro_envelope` secara native dengan payload 100-bar M5 (`m5_visual_payload`), mengeliminasi tampilan ayunan Dealing Range H4 yang membentang berminggu-minggu di chart M5.
+  - Menghitung `dr_pos` dan `dr_label` secara dinamis dari harga live tick terhadap batas High dan Low M5 lokal.
+- **Sinkronisasi Real-Time Live Tick Dealing Range pada Engine Radar (`market_scanner_m5.py`)**:
+  - Menghitung ulang `dr_pos = (live_mid - dr_lo) / (dr_hi - dr_lo)` pada setiap siklus pemindaian 10–15 detik, mengeliminasi anomali dealing range beku dari fase preheat.
+- **Hasil Verifikasi Live**:
+  - Unit Test Suite: 50/50 PASSED (100% OK, 0 regresi).
+  - Eksekusi Akun Cent Live VTMarkets: BUY USDJPY-ECNc 0.50 lot (Ticket #1295609416, SL: 154.705, TP: 154.955) terpasang sempurna.
+
+---
+
+## 110. 15 September 2026 (Pagi II) — Penyelarasan Formula SL/TP M5 ke Model Pure Demo Lab (1.25x ATR M5 SL, Fast Fallback TP, & Eliminasi Limit Re-Anchoring)
+
+- **Restorasi SL Murni Berbasis ATR M5 (`src/analytics/market_scanner_m5.py`)**:
+  - Mengeliminasi pencarian stasiun ZCE di belakang dan elastic leeway ratio. SL dihitung murni $1.25\times\text{ATR}_{\text{M5}}$ dari titik entri ZCE dengan batas tier (Low-Beta 3.0–5.5p, Major 4.0–7.5p, JPY 6.0–12.0p, High-Beta 7.0–14.0p).
+- **Restorasi TP Realistis & Fast Fallback R:R (`src/analytics/market_scanner_m5.py`)**:
+  - TP mengincar dinding ZCE seberang hanya jika dalam jangkauan M5 ($\ge 1.25\times\text{SL}$ dan $\le \text{max\_tp\_dist} \times 1.15$).
+  - Jika dinding seberang kejauhan, otomatis mengunci fallback scalping $1.75\times\text{SL}$ dengan hard-cap ketat (Major maks 9.5p, Low-Beta maks 8.5p, JPY maks 13.5p, High-Beta maks 16.0p).
+  - Mengeliminasi Dynamic Limit Re-Anchoring (`is_reanchored_limit = False`).
+- **Penyelarasan Penuh `.env` & `config.py`**:
+  - Menyelaraskan seluruh konstanta M5 (`M5_SL_ATR_MULT = 1.25`, `M5_DEFAULT_TP_RR = 1.75`, tier min/max pips) persis dengan file konfigurasi Demo Lab.
+- **Hasil Verifikasi**:
+  - Unit Test Suite: 37/37 tests M5/ZCE/Dashboard PASSED (100% OK), seluruh suite proyek lolos tanpa regresi.
+  - Sanity check data riil: NZDUSD SL 3.0p / TP 5.3p (1.73R), AUDNZD SL 3.5p / TP 6.1p (1.74R), USDJPY SL 6.0p / TP 10.5p (1.75R).
+
+
 
 

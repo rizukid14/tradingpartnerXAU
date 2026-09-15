@@ -387,8 +387,9 @@ LOT_SIZE_XAU = _getenv_float("LOT_SIZE_XAU", LOT_SIZE)
 LOT_SIZE_BTC = _getenv_float("LOT_SIZE_BTC", 0.01)
 
 RISK_PERCENT_BTC = _getenv_float("RISK_PERCENT_BTC", 0.50)
-RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 1.0)
-RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 1.0)
+RISK_PERCENT_XAU = _getenv_float("RISK_PERCENT_XAU", 0.8)
+RISK_PERCENT_FX = _getenv_float("RISK_PERCENT_FX", 0.8)
+M5_TWIN_TICKET_ENABLED = _getenv_bool("M5_TWIN_TICKET_ENABLED", False)
 DEVIATION = _getenv_int("DEVIATION", 30)
 DEVIATION_XAU = _getenv_int("DEVIATION_XAU", 60)  # 60 pts ($0.60) - sweet spot 50-75 pts
 DEVIATION_BTC = _getenv_int("DEVIATION_BTC", 1000)
@@ -791,15 +792,33 @@ NIGHT_FREEZE_START_HOUR_WIB           = _getenv_int("NIGHT_FREEZE_START_HOUR_WIB
 NIGHT_FREEZE_END_HOUR_WIB             = _getenv_int("NIGHT_FREEZE_END_HOUR_WIB", ASIA_SESSION_START_HOUR_WIB)
 PENDING_ORDER_CANCEL_COOLDOWN_SECONDS = _getenv_int("PENDING_ORDER_CANCEL_COOLDOWN_SECONDS", 600)
 
-# --- M5 TWIN-TICKET ARCHITECTURE (15 Sep 2026) ---
-M5_TWIN_TICKET_ENABLED                = _getenv_bool("M5_TWIN_TICKET_ENABLED", True)
-M5_SL_ATR_MULT                        = _getenv_float("M5_SL_ATR_MULT", 1.10)
+# --- M5 SINGLE-TICKET SCALPING ARCHITECTURE (15 Sep 2026) ---
+M5_TWIN_TICKET_ENABLED                = _getenv_bool("M5_TWIN_TICKET_ENABLED", False)
+M5_SL_ATR_MULT                        = _getenv_float("M5_SL_ATR_MULT", 1.25)
+M5_DEFAULT_TP_RR                      = _getenv_float("M5_DEFAULT_TP_RR", 1.75)
 M5_COMMISSION_PAD_PTS                 = _getenv_int("M5_COMMISSION_PAD_PTS", 6)
-M5_TP1_BEP_PCT                        = _getenv_float("M5_TP1_BEP_PCT", 0.65)
+M5_TP1_BEP_PCT                        = _getenv_float("M5_TP1_BEP_PCT", 0.80)
 M5_RUNNER_TP2_RATIO                   = _getenv_float("M5_RUNNER_TP2_RATIO", 1.50)
 M5_PENDING_RUNAWAY_CANCEL_PCT         = _getenv_float("M5_PENDING_RUNAWAY_CANCEL_PCT", 0.65)
 M5_WINSTREAK_COOLDOWN_COUNT           = _getenv_int("M5_WINSTREAK_COOLDOWN_COUNT", 0)
 M5_WINSTREAK_COOLDOWN_MINUTES         = _getenv_int("M5_WINSTREAK_COOLDOWN_MINUTES", 30)
+
+# --- M5 SL/TP SCALPING CALIBRATION (15 Sep 2026) ---
+M5_MIN_SL_PIPS_MAJOR                   = _getenv_float("M5_MIN_SL_PIPS_MAJOR", 4.0)
+M5_MAX_SL_PIPS_MAJOR                   = _getenv_float("M5_MAX_SL_PIPS_MAJOR", 7.5)
+M5_MAX_TP_PIPS_MAJOR                   = _getenv_float("M5_MAX_TP_PIPS_MAJOR", 9.5)
+M5_MIN_SL_PIPS_HIGHBETA                = _getenv_float("M5_MIN_SL_PIPS_HIGHBETA", 7.0)
+M5_MAX_SL_PIPS_HIGHBETA                = _getenv_float("M5_MAX_SL_PIPS_HIGHBETA", 14.0)
+M5_MAX_TP_PIPS_HIGHBETA                = _getenv_float("M5_MAX_TP_PIPS_HIGHBETA", 16.0)
+M5_MIN_SL_PIPS_JPY                     = _getenv_float("M5_MIN_SL_PIPS_JPY", 6.0)
+M5_MAX_SL_PIPS_JPY                     = _getenv_float("M5_MAX_SL_PIPS_JPY", 12.0)
+M5_MAX_TP_PIPS_JPY                     = _getenv_float("M5_MAX_TP_PIPS_JPY", 13.5)
+M5_MIN_SL_PIPS_PACIFIC_JPY             = _getenv_float("M5_MIN_SL_PIPS_PACIFIC_JPY", 4.5)
+M5_MAX_SL_PIPS_PACIFIC_JPY             = _getenv_float("M5_MAX_SL_PIPS_PACIFIC_JPY", 7.5)
+M5_MAX_TP_PIPS_PACIFIC_JPY             = _getenv_float("M5_MAX_TP_PIPS_PACIFIC_JPY", 13.0)
+M5_MIN_SL_PIPS_LOWBETA                 = _getenv_float("M5_MIN_SL_PIPS_LOWBETA", 3.0)
+M5_MAX_SL_PIPS_LOWBETA                 = _getenv_float("M5_MAX_SL_PIPS_LOWBETA", 5.5)
+M5_MAX_TP_PIPS_LOWBETA                 = _getenv_float("M5_MAX_TP_PIPS_LOWBETA", 8.5)
 
 # --- NEWS VOLATILITY BLACKOUT WINDOW (9 Sep 2026) ---
 NEWS_BLACKOUT_MINUTES_BEFORE = _getenv_int("NEWS_BLACKOUT_MINUTES_BEFORE", 30)
@@ -1041,6 +1060,9 @@ FRIDAY_CUTOFF_HOUR_WIB = _getenv_int("FRIDAY_CUTOFF_HOUR_WIB", 23)
 
 # --- TELEGRAM ALERTS ---
 TELEGRAM_NOTIFY_HOLD = _getenv_bool("TELEGRAM_NOTIFY_HOLD", False)
+TELEGRAM_NOTIFY_BEP = _getenv_bool("TELEGRAM_NOTIFY_BEP", False)
+TELEGRAM_NOTIFY_PENDING_PLACED = _getenv_bool("TELEGRAM_NOTIFY_PENDING_PLACED", False)
+TELEGRAM_NOTIFY_PENDING_CANCELLED = _getenv_bool("TELEGRAM_NOTIFY_PENDING_CANCELLED", False)
 
 # --- MT5 CONNECTION ---
 MT5_ACCOUNT_MODE = os.getenv("MT5_ACCOUNT_MODE", "live").lower()  # "live" | "demo"

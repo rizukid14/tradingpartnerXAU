@@ -1890,7 +1890,7 @@ class CockpitDataEngine:
         if is_m5:
             from src.analytics.market_scanner_m5 import MarketScannerM5
             self.scanner = MarketScannerM5(symbols=dash_symbols)
-            print(f"[Cockpit Engine] Initialized MarketScannerM5 (Micro-ZCE M5/M15/H1).")
+            print(f"[Cockpit Engine] Initialized MarketScannerM5 (Micro-ZCE 4-TF M5/M15/M30/H1).")
         else:
             self.scanner = MarketScanner(symbols=dash_symbols)
             print(f"[Cockpit Engine] Initialized MarketScanner (Macro-ZCE H1/H4/D1).")
@@ -2646,27 +2646,106 @@ class CockpitDataEngine:
             if not matched:
                 merged_floors.append(dict(fl))
 
-        merged_floors.sort(key=lambda x: -x["price"])
+        # Target Fortress Anchors (Sacrosanct Structural Walls)
+        target_f1 = None
+        if zm is not None:
+            target_f1 = getattr(zm, "immediate_floor_f1", None)
+            if not target_f1 and hasattr(zm, "wall_override"):
+                target_f1 = zm.wall_override.get("imm_floor_f1")
+        if not target_f1:
+            target_f1 = macro.get("immediate_floor_f1") or macro.get("floor_f1") or f1
+        try:
+            target_f1 = float(target_f1) if target_f1 else None
+        except (ValueError, TypeError):
+            target_f1 = None
 
-        # Monotonically assign tiers F1, F2, F3... by distance to mid with macro reservation
-        selected_floors = _elect_display_ladder(merged_floors, is_ceil=False, limit=4)
+        target_c1 = None
+        if zm is not None:
+            target_c1 = getattr(zm, "immediate_ceiling_c1", None)
+            if not target_c1 and hasattr(zm, "wall_override"):
+                target_c1 = zm.wall_override.get("imm_ceiling_c1")
+        if not target_c1:
+            target_c1 = macro.get("immediate_ceiling_c1") or macro.get("ceiling_c1") or c1
+        try:
+            target_c1 = float(target_c1) if target_c1 else None
+        except (ValueError, TypeError):
+            target_c1 = None
+
+        zone_tag = "M5 ZONE" if effective_zce_mode == "micro" else "ZONE"
+
+        # Sort floors strictly descending and anchor F1 to sacrosanct fortress
+        merged_floors.sort(key=lambda x: -x["price"])
+        if target_f1 and target_f1 < mid:
+            matched_f1 = any(abs(mf["price"] - target_f1) <= proximity_thr for mf in merged_floors)
+            if not matched_f1:
+                merged_floors.append({
+                    "price": round(target_f1, digits),
+                    "band_low": round(target_f1, digits),
+                    "band_high": round(target_f1, digits),
+                    "type": "floor",
+                    "tier": "F1",
+                    "label": f"F1 [MSE] {target_f1:.{digits}f} (Support Wall)",
+                    "grade": macro.get("f1_reaction_grade", "GRADE_3_MACRO"),
+                    "score": 5.0,
+                    "tfs": ["H1", "D1"],
+                    "kinds": ["MSE_BASE"],
+                    "sources": ["MSE Structural SBR/RBS (D1)"],
+                    "confluences": "MSE Structural SBR/RBS (D1)",
+                    "timeframes": "H1+D1",
+                    "confluence": 2,
+                    "num_sources": 2,
+                    "touch_count": 0,
+                    "freshness_state": "FRESH_VIRGIN",
+                    "freshness_label": "0x FRESH (Virgin)",
+                    "compression_type": "NONE",
+                    "touch_nodes": [],
+                    "tag": "SACROSANCT_F1"
+                })
+                merged_floors.sort(key=lambda x: -x["price"])
+
+        f1_idx = None
+        if target_f1 and target_f1 < mid:
+            for idx, fl in enumerate(merged_floors):
+                if abs(fl["price"] - target_f1) <= proximity_thr:
+                    f1_idx = idx
+                    break
+
         zce_floors = []
-        for idx, fl in enumerate(selected_floors):
-            tier_name = f"F{idx + 1}"
+        c_floor_num = 1
+        for idx, fl in enumerate(merged_floors):
             fl_copy = dict(fl)
+            if f1_idx is not None and idx < f1_idx:
+                tier_name = zone_tag
+            elif f1_idx is not None and idx == f1_idx:
+                tier_name = "F1"
+                c_floor_num = 2
+            elif f1_idx is not None:
+                tier_name = f"F{c_floor_num}"
+                c_floor_num += 1
+            else:
+                tier_name = f"F{idx + 1}"
+
             fl_copy["tier"] = tier_name
             if fl_copy.get("touch_count") is None:
                 fl_copy["touch_count"] = len(fl_copy.get("touch_nodes", []))
             if not fl_copy.get("freshness_label"):
                 tc_val = fl_copy["touch_count"]
                 fl_copy["freshness_label"] = f"{tc_val}x TESTED" if tc_val > 0 else "0x FRESH (Virgin)"
+
             orig_label = fl_copy.get("label", "")
-            parts = orig_label.split(" ", 1)
-            if len(parts) == 2 and (parts[0].startswith("F") or parts[0].startswith("FLR")):
-                fl_copy["label"] = f"{tier_name} {parts[1]}"
-            elif not orig_label:
-                fl_copy["label"] = f"{tier_name} {fl_copy['price']:.{digits}f}"
+            if tier_name.endswith("ZONE"):
+                tc_val = fl_copy["touch_count"]
+                fresh_str = f" • {tc_val}x TESTED" if tc_val > 0 else ""
+                fl_copy["label"] = f"{tier_name} {fl_copy['price']:.{digits}f}{fresh_str}"
+            else:
+                parts = orig_label.split(" ", 1)
+                if len(parts) == 2 and (parts[0].startswith("F") or parts[0].startswith("FLR")):
+                    fl_copy["label"] = f"{tier_name} {parts[1]}"
+                elif not orig_label:
+                    fl_copy["label"] = f"{tier_name} {fl_copy['price']:.{digits}f}"
             zce_floors.append(fl_copy)
+            if c_floor_num > 5:
+                break
 
         # Collect candidate ceilings from ZCE ladder and MSE baseline
         raw_ceils = [dict(w) for w in (zce_ladder or []) if w.get("type") == "ceiling" and w.get("price", 0.0) > mid]
@@ -2780,27 +2859,79 @@ class CockpitDataEngine:
             if not matched:
                 merged_ceils.append(dict(ce))
 
+        # Sort ceilings strictly ascending and anchor C1 to sacrosanct fortress
         merged_ceils.sort(key=lambda x: x["price"])
+        if target_c1 and target_c1 > mid:
+            matched_c1 = any(abs(mc["price"] - target_c1) <= proximity_thr for mc in merged_ceils)
+            if not matched_c1:
+                merged_ceils.append({
+                    "price": round(target_c1, digits),
+                    "band_low": round(target_c1, digits),
+                    "band_high": round(target_c1, digits),
+                    "type": "ceiling",
+                    "tier": "C1",
+                    "label": f"C1 [MSE] {target_c1:.{digits}f} (Resistance Wall)",
+                    "grade": macro.get("c1_reaction_grade", "GRADE_3_MACRO"),
+                    "score": 5.0,
+                    "tfs": ["H1", "D1"],
+                    "kinds": ["MSE_BASE"],
+                    "sources": ["MSE Structural SBR/RBS (D1)"],
+                    "confluences": "MSE Structural SBR/RBS (D1)",
+                    "timeframes": "H1+D1",
+                    "confluence": 2,
+                    "num_sources": 2,
+                    "touch_count": 0,
+                    "freshness_state": "FRESH_VIRGIN",
+                    "freshness_label": "0x FRESH (Virgin)",
+                    "compression_type": "NONE",
+                    "touch_nodes": [],
+                    "tag": "SACROSANCT_C1"
+                })
+                merged_ceils.sort(key=lambda x: x["price"])
 
-        # Monotonically assign tiers C1, C2, C3... by distance to mid with macro reservation
-        selected_ceils = _elect_display_ladder(merged_ceils, is_ceil=True, limit=4)
+        c1_idx = None
+        if target_c1 and target_c1 > mid:
+            for idx, ce in enumerate(merged_ceils):
+                if abs(ce["price"] - target_c1) <= proximity_thr:
+                    c1_idx = idx
+                    break
+
         zce_ceils = []
-        for idx, ce in enumerate(selected_ceils):
-            tier_name = f"C{idx + 1}"
+        c_ceil_num = 1
+        for idx, ce in enumerate(merged_ceils):
             ce_copy = dict(ce)
+            if c1_idx is not None and idx < c1_idx:
+                tier_name = zone_tag
+            elif c1_idx is not None and idx == c1_idx:
+                tier_name = "C1"
+                c_ceil_num = 2
+            elif c1_idx is not None:
+                tier_name = f"C{c_ceil_num}"
+                c_ceil_num += 1
+            else:
+                tier_name = f"C{idx + 1}"
+
             ce_copy["tier"] = tier_name
             if ce_copy.get("touch_count") is None:
                 ce_copy["touch_count"] = len(ce_copy.get("touch_nodes", []))
             if not ce_copy.get("freshness_label"):
                 tc_val = ce_copy["touch_count"]
                 ce_copy["freshness_label"] = f"{tc_val}x TESTED" if tc_val > 0 else "0x FRESH (Virgin)"
+
             orig_label = ce_copy.get("label", "")
-            parts = orig_label.split(" ", 1)
-            if len(parts) == 2 and (parts[0].startswith("C") or parts[0].startswith("CEIL")):
-                ce_copy["label"] = f"{tier_name} {parts[1]}"
-            elif not orig_label:
-                ce_copy["label"] = f"{tier_name} {ce_copy['price']:.{digits}f}"
+            if tier_name.endswith("ZONE"):
+                tc_val = ce_copy["touch_count"]
+                fresh_str = f" • {tc_val}x TESTED" if tc_val > 0 else ""
+                ce_copy["label"] = f"{tier_name} {ce_copy['price']:.{digits}f}{fresh_str}"
+            else:
+                parts = orig_label.split(" ", 1)
+                if len(parts) == 2 and (parts[0].startswith("C") or parts[0].startswith("CEIL")):
+                    ce_copy["label"] = f"{tier_name} {parts[1]}"
+                elif not orig_label:
+                    ce_copy["label"] = f"{tier_name} {ce_copy['price']:.{digits}f}"
             zce_ceils.append(ce_copy)
+            if c_ceil_num > 5:
+                break
 
         zce_walls = zce_floors + zce_ceils
         zce_walls.sort(key=lambda x: x["price"])
@@ -3191,15 +3322,33 @@ class CockpitDataEngine:
         frvp_data = {}
         dr_payload = {}
         ss_payload = {}
+        m5_visual_payload = None
         try:
             macro_env = getattr(strat, "macro_envelope", {}) or {}
             raw_vis = (getattr(strat, "raw_payload", {}) or {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}
             dr_payload = macro_env.get("dealing_range") or raw_vis.get("dealing_range") or {}
             ss_payload = macro_env.get("swing_structure") or raw_vis.get("swing_structure") or {}
 
+            # Native M5/M15/M30 Dealing Range calculation for chart viewport
+            if timeframe_str.upper() in ("M5", "M15", "M30") and not tail_df.empty:
+                try:
+                    m_env = MacroEnvelopeEngine(window_bars=100).analyze(
+                        tail_df, symbol=valid_sym, point_size=pt, pip_size=pip_val
+                    )
+                    if m_env and hasattr(m_env, "visual_payload"):
+                        m5_visual_payload = m_env.visual_payload
+                        dr_payload = m_env.visual_payload.get("dealing_range", {}) or dr_payload
+                        ss_payload = m_env.visual_payload.get("swing_structure", {}) or ss_payload
+                except Exception as e_dr:
+                    logger.debug(f"[DASHBOARD DR] Gagal analisis local {timeframe_str} envelope: {e_dr}")
+
             dr_hi = float(dr_payload.get("range_high") or (float(c1) if c1 else 0.0))
             dr_lo = float(dr_payload.get("range_low") or (float(f1) if f1 else 0.0))
             dr_st = int(dr_payload.get("start_time") or 0)
+            if timeframe_str.upper() in ("M5", "M15", "M30") and dr_hi > dr_lo:
+                dr_val = round(((mid - dr_lo) / (dr_hi - dr_lo)) * 100.0, 1)
+                dr_lbl = "DEEP DISCOUNT" if dr_val <= 38.0 else ("EXTREME PREMIUM" if dr_val >= 62.0 else "EQUILIBRIUM")
+
             if not tail_df.empty:
                 frvp_data = calculate_fixed_range_volume_profile(
                     df=tail_df,
@@ -3282,8 +3431,8 @@ class CockpitDataEngine:
             "predictive_matrix": predictive_matrix,
             "flight_path": flight_path,
             "frvp": frvp_data,
-            "envelope_visual": (getattr(strat, "macro_envelope", {}) or {}).get("visual_payload") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}),
-            "macro_envelope": (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
+            "envelope_visual": m5_visual_payload or (getattr(strat, "macro_envelope", {}) or {}).get("visual_payload") or (getattr(strat, "raw_payload", {}).get("envelope_visual", {}) if hasattr(strat, "raw_payload") else {}),
+            "macro_envelope": m5_visual_payload or (getattr(strat, "macro_envelope", None) or (getattr(strat, "raw_payload", {}).get("macro_envelope") if hasattr(strat, "raw_payload") else None)),
             "zce_walls": zce_walls,
             "zce_ladder": zce_ladder,
             "zce_mode": effective_zce_mode,

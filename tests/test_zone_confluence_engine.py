@@ -254,3 +254,28 @@ class TestEndToEnd:
         df = synth_ohlc(np.linspace(1.10, 1.12, 120))
         a = atr_from_df(df)
         assert a > 0
+
+    def test_micro_m5_freshness_resolution(self):
+        n = 560
+        rng = np.random.default_rng(3)
+        prices = 1.10 + np.cumsum(rng.normal(0, 0.0008, n))
+        dfs = synth_map_dfs(prices)
+        
+        # Add M5 dataframe with 5-minute timestamps
+        m5_times = [2000000 + i * 300 for i in range(120)]
+        m5_prices = np.linspace(float(prices[-1]) - 0.0010, float(prices[-1]), 120)
+        df_m5 = synth_ohlc(m5_prices)
+        df_m5["time"] = m5_times
+        dfs["M5"] = df_m5
+
+        eng = ZoneConfluenceEngine()
+        res = eng.compute_zone_map("GBPUSD", dfs, point_size=0.00001, digits=5, permission="GO")
+        assert res.symbol == "GBPUSD"
+        
+        # If any cluster has touch nodes, their timestamps must match M5 timestamps
+        for c in res.clusters:
+            for tn in getattr(c, "touch_nodes", []):
+                t_val = tn.get("time")
+                if t_val:
+                    assert t_val in m5_times
+

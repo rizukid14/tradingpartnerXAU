@@ -128,163 +128,85 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
         min_dist_pts = max(spread_pts * 2, 15)
         s_tp = getattr(cand, "suggested_tp", 0.0)
 
+        is_reanchored = bool(getattr(cand, "metadata", {}).get("is_reanchored_limit", False))
+
         # Runaway Target Guard: Do not place a limit order if market already traversed >= 50% towards TP
         if direction == 1 and (ask - trig_p) >= (min_dist_pts * pt):
-            tp_dist = (s_tp - trig_p) if (s_tp > trig_p) else 0.0
-            if tp_dist > 0 and (ask - trig_p) >= 0.50 * tp_dist:
-                print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dilewati: ask {ask} sudah menempuh >=50% TP {s_tp}.{UI.RST}")
-                return False
+            if is_reanchored:
+                if bid >= s_tp:
+                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dibatalkan: live bid {bid} sudah mencapai/melewati TP {s_tp}.{UI.RST}")
+                    return False
+            else:
+                tp_dist = (s_tp - trig_p) if (s_tp > trig_p) else 0.0
+                if tp_dist > 0 and (ask - trig_p) >= 0.50 * tp_dist:
+                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dilewati: ask {ask} sudah menempuh >=50% TP {s_tp}.{UI.RST}")
+                    return False
             entry_type = "buy_limit"
             entry_price = trig_p
         elif direction == -1 and (trig_p - bid) >= (min_dist_pts * pt):
-            tp_dist = (trig_p - s_tp) if (s_tp > 0 and trig_p > s_tp) else 0.0
-            if tp_dist > 0 and (trig_p - bid) >= 0.50 * tp_dist:
-                print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dilewati: bid {bid} sudah menempuh >=50% TP {s_tp}.{UI.RST}")
-                return False
+            if is_reanchored:
+                if ask <= s_tp:
+                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dibatalkan: live ask {ask} sudah mencapai/melewati TP {s_tp}.{UI.RST}")
+                    return False
+            else:
+                tp_dist = (trig_p - s_tp) if (s_tp > 0 and trig_p > s_tp) else 0.0
+                if tp_dist > 0 and (trig_p - bid) >= 0.50 * tp_dist:
+                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dilewati: bid {bid} sudah menempuh >=50% TP {s_tp}.{UI.RST}")
+                    return False
             entry_type = "sell_limit"
             entry_price = trig_p
 
-    # 7. Twin-Ticket or Single Ticket Dispatch
-    twin_enabled = getattr(config, "M5_TWIN_TICKET_ENABLED", True)
-    si = config.mt5.symbol_info(sym) if hasattr(config.mt5, "symbol_info") else None
-    vol_min = getattr(si, "volume_min", 0.01) or 0.01
-    vol_step = getattr(si, "volume_step", 0.01) or 0.01
+    # Slippage Protection for Market Order execution: ensure minimum TP distance is maintained from live fill
+    if entry_type == "market":
+        min_tp_dist = sl_pts * pt * 1.20
+        digits = 5 if pt < 0.01 else (3 if "JPY" in sym.upper() else 2)
+        if direction == 1 and (cand.suggested_tp - entry_price) < min_tp_dist:
+            cand.suggested_tp = round(entry_price + min_tp_dist, digits)
+            tp1_pts = int(round(abs(cand.suggested_tp - entry_price) / pt))
+        elif direction == -1 and (entry_price - cand.suggested_tp) < min_tp_dist:
+            cand.suggested_tp = round(entry_price - min_tp_dist, digits)
+            tp1_pts = int(round(abs(cand.suggested_tp - entry_price) / pt))
 
-    tp1_pts = int(cand.metadata.get("m5_tp1_pts", 0)) if cand.metadata else 0
-    if tp1_pts <= 0:
-        tp1_pts = int(round(abs(cand.suggested_tp - entry_price) / pt)) if pt > 0 else 80
-    tp2_pts = int(cand.metadata.get("m5_tp2_pts", 0)) if cand.metadata else int(round(tp1_pts * 1.5))
-    setup_tag = (cand.setup_type or "UNIV")[:4]
-
-    tp1_price = cand.suggested_tp
-    tp2_price = getattr(cand, "suggested_tp_runner", 0.0)
-    if tp2_price <= 0:
-        tp2_dist = tp2_pts * pt
-        tp2_price = entry_price + tp2_dist if direction == 1 else entry_price - tp2_dist
-
-    is_twin = twin_enabled and (lot_size >= (2 * vol_min))
+    # 7. Single Ticket Scalp Order Dispatch (Fast-In Fast-Out)
+    setup_tag = (cand.setup_type or "UNIV")[:6]
+    comment_s1 = f"M5_{setup_tag}"
     pending_exp = int(getattr(config, "M5_PENDING_EXPIRATION_MINUTES", 20))
+    tp_pts = int(round(abs(cand.suggested_tp - entry_price) / pt)) if pt > 0 else 80
 
-    if is_twin:
-        lot_t1 = round(lot_size / 2.0, 2)
-        lot_t2 = round(lot_size - lot_t1, 2)
-        if lot_t1 < vol_min or lot_t2 < vol_min:
-            is_twin = False
+    print(f" {UI.GREEN}[M5 ORDER DISPATCH]{UI.RST} Mengirim Single Order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f}...")
 
-    if is_twin:
-        comment_t1 = f"M5_T1_{setup_tag}_{tp1_pts}"
-        comment_t2 = f"M5_T2_{setup_tag}_{tp1_pts}"
-        print(f" {UI.GREEN}[M5 TWIN DISPATCH]{UI.RST} Mengirim TWIN {c_dir} ({entry_type.upper()} @ {entry_price:.5f}):\n"
-              f"   - T1: Lot {lot_t1} | SL: {cand.suggested_sl:.5f} | TP1: {tp1_price:.5f} ({tp1_pts}p)\n"
-              f"   - T2: Lot {lot_t2} | SL: {cand.suggested_sl:.5f} | TP2: {tp2_price:.5f} ({tp2_pts}p)...")
-
-        # Dispatch Ticket 1 & Ticket 2
-        if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
-            res1 = connector.send_pending_order(
-                symbol=sym, entry_type=entry_type, entry_price=entry_price,
-                lot=lot_t1, sl_price=cand.suggested_sl, tp_price=tp1_price,
-                comment=comment_t1, expiration_minutes=pending_exp
-            )
-            res2 = connector.send_pending_order(
-                symbol=sym, entry_type=entry_type, entry_price=entry_price,
-                lot=lot_t2, sl_price=cand.suggested_sl, tp_price=tp2_price,
-                comment=comment_t2, expiration_minutes=pending_exp
-            )
-        else:
-            res1 = connector.send_trade_order(
-                symbol=sym, action=c_dir, lot=lot_t1,
-                sl_price=cand.suggested_sl, tp_price=tp1_price, comment=comment_t1
-            )
-            res2 = connector.send_trade_order(
-                symbol=sym, action=c_dir, lot=lot_t2,
-                sl_price=cand.suggested_sl, tp_price=tp2_price, comment=comment_t2
-            )
-
-        t1_ok = res1 and res1.get("status") == "SUCCESS"
-        t2_ok = res2 and res2.get("status") == "SUCCESS"
-
-        if t1_ok and t2_ok:
-            t1_ticket = res1.get("ticket", "OK")
-            t2_ticket = res2.get("ticket", "OK")
-            print(f" {UI.GREEN}{UI.BOLD}[M5 TWIN SUCCESS]{UI.RST} #{t1_ticket} (T1) & #{t2_ticket} (T2) terpasang untuk {sym}!")
-            risk.record_trade_opened()
-            # Register in position manager
-            if isinstance(t1_ticket, int) and isinstance(t2_ticket, int):
-                position_manager.register_m5_twin_pair(
-                    symbol=sym, direction=direction, t1_ticket=t1_ticket, t2_ticket=t2_ticket,
-                    entry_price=entry_price, tp1_pts=tp1_pts, tp2_pts=tp2_pts, setup_tag=setup_tag
-                )
-            try:
-                tg.alert_trade_opened(
-                    symbol=sym, signal=c_dir, lot=lot_size, entry_price=entry_price,
-                    sl_price=cand.suggested_sl, tp_price=tp1_price, sl_points=sl_pts,
-                    tp_points=tp1_pts, risk_usd=risk.equity * 0.01,
-                    setup=f"{cand.setup_type} (M5 Twin: T1 {tp1_pts}p / T2 {tp2_pts}p)",
-                    models="Pure Quant Direct (M5 Micro-ZCE)", confidence=0.88,
-                    reason=f"M5 Twin-Ticket scalping execution, Blended R:R ~1.95:1"
-                )
-            except Exception:
-                pass
-            return True
-        elif t1_ok or t2_ok:
-            # Atomic Twin Rollback: Never leave an orphaned half-position running without twin protection
-            if t1_ok:
-                orphaned_ticket = res1.get("ticket")
-                print(f" {UI.RED}[M5 TWIN ROLLBACK]{UI.RST} T2 gagal terpasang. Membatalkan T1 #{orphaned_ticket} demi integritas lot & R:R.")
-                logger.warning(f"[M5 TWIN ROLLBACK] T2 failed for {sym}. Cancelling orphaned T1 #{orphaned_ticket}.")
-                if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
-                    connector.cancel_pending_order(orphaned_ticket)
-                else:
-                    connector.close_position(orphaned_ticket)
-            else:
-                orphaned_ticket = res2.get("ticket")
-                print(f" {UI.RED}[M5 TWIN ROLLBACK]{UI.RST} T1 gagal terpasang. Membatalkan T2 #{orphaned_ticket} demi integritas lot & R:R.")
-                logger.warning(f"[M5 TWIN ROLLBACK] T1 failed for {sym}. Cancelling orphaned T2 #{orphaned_ticket}.")
-                if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
-                    connector.cancel_pending_order(orphaned_ticket)
-                else:
-                    connector.close_position(orphaned_ticket)
-            return False
-        else:
-            err1 = res1.get("comment", "") if isinstance(res1, dict) else str(res1)
-            err2 = res2.get("comment", "") if isinstance(res2, dict) else str(res2)
-            print(f" {UI.RED}[M5 LIVE ERROR]{UI.RST} Gagal memasang twin order {sym}: T1={err1} | T2={err2}\n")
-            return False
+    if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
+        order_res = connector.send_pending_order(
+            symbol=sym, entry_type=entry_type, entry_price=entry_price, lot=lot_size,
+            sl_price=cand.suggested_sl, tp_price=cand.suggested_tp,
+            comment=comment_s1, expiration_minutes=pending_exp
+        )
     else:
-        # Fallback to single ticket (e.g. lot_size < 2 * vol_min)
-        comment_t1 = f"M5_T1_{setup_tag}_{tp1_pts}"
-        print(f" {UI.GREEN}[M5 ORDER DISPATCH]{UI.RST} Mengirim Single Order {c_dir} ({entry_type.upper()} @ {entry_price:.5f}) Lot: {lot_size} | SL: {cand.suggested_sl:.5f} | TP: {cand.suggested_tp:.5f}...")
-        if entry_type in ("buy_limit", "sell_limit", "buy_stop", "sell_stop"):
-            order_res = connector.send_pending_order(
-                symbol=sym, entry_type=entry_type, entry_price=entry_price, lot=lot_size,
-                sl_price=cand.suggested_sl, tp_price=cand.suggested_tp,
-                comment=comment_t1, expiration_minutes=pending_exp
+        order_res = connector.send_trade_order(
+            symbol=sym, action=c_dir, lot=lot_size,
+            sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, comment=comment_s1
+        )
+
+    if order_res and order_res.get("status") == "SUCCESS":
+        ticket = order_res.get("ticket", "OK")
+        print(f" {UI.GREEN}{UI.BOLD}[M5 LIVE SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
+        risk.record_trade_opened()
+        try:
+            tg.alert_trade_opened(
+                symbol=sym, signal=c_dir, lot=lot_size, entry_price=entry_price,
+                sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, sl_points=sl_pts,
+                tp_points=tp_pts, risk_usd=risk.equity * (config.risk_percent_for(sym) / 100.0),
+                setup=f"{cand.setup_type} (M5 Single Scalp)",
+                models="Pure Quant Direct (M5 Micro-ZCE)", confidence=0.88,
+                reason=f"M5 Micro-ZCE scalping execution, R:R {cand.risk_reward_ratio:.2f}:1"
             )
-        else:
-            order_res = connector.send_trade_order(
-                symbol=sym, action=c_dir, lot=lot_size,
-                sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, comment=comment_t1
-            )
-        if order_res and order_res.get("status") == "SUCCESS":
-            ticket = order_res.get("ticket", "OK")
-            print(f" {UI.GREEN}{UI.BOLD}[M5 LIVE SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
-            risk.record_trade_opened()
-            try:
-                tg.alert_trade_opened(
-                    symbol=sym, signal=c_dir, lot=lot_size, entry_price=entry_price,
-                    sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, sl_points=sl_pts,
-                    tp_points=tp1_pts, risk_usd=risk.equity * 0.01,
-                    setup=f"{cand.setup_type} (M5 Single Scalp)",
-                    models="Pure Quant Direct (M5 Micro-ZCE)", confidence=0.88,
-                    reason=f"M5 Micro-ZCE scalping execution, R:R {cand.risk_reward_ratio:.2f}:1"
-                )
-            except Exception:
-                pass
-            return True
-        else:
-            err_msg = order_res.get("comment", "Unknown error") if isinstance(order_res, dict) else str(order_res)
-            print(f" {UI.RED}[M5 LIVE ERROR]{UI.RST} Gagal memasang order {sym}: {err_msg}\n")
-            return False
+        except Exception:
+            pass
+        return True
+    else:
+        err_msg = order_res.get("comment", "Unknown error") if isinstance(order_res, dict) else str(order_res)
+        print(f" {UI.RED}[M5 LIVE ERROR]{UI.RST} Gagal memasang order {sym}: {err_msg}\n")
+        return False
 
 
 _known_pending_orders = {}
@@ -473,8 +395,8 @@ def main():
 {UI.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
 ║        TRADING PARTNER — M5 PURE QUANT SCALPING RUNNER (LIVE CENT)           ║
 ║  Account  : Live Cent VTMarkets (#27556325) | Timeframe: M5 (10s Loop)       ║
-║  Strategy : Micro-ZCE (M5/M15/H1) | Twin-Ticket (TP1 Scalp + TP2 Runner)      ║
-║  Execution: Pure Quant Direct (0 Tokens) | State Machine BEP 65% | Cap: 0.50  ║
+║  Strategy : Micro-ZCE (M5/M15/H1) | Single Ticket Scalp (SL < TP, R:R >=1.25)║
+║  Execution: Pure Quant Direct (0 Tokens) | Single Scalp | BEP 80% | Cap: 0.50 ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{UI.RST}
 """)
 
@@ -494,7 +416,8 @@ def main():
     config.MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "50"))
     config.MAX_ABSOLUTE_OPEN_POSITIONS = int(os.getenv("MAX_ABSOLUTE_OPEN_POSITIONS", "50"))
     config.MAX_POSITION_LOT = float(os.getenv("MAX_POSITION_LOT", "0.50"))
-    config.M5_TWIN_TICKET_ENABLED = os.getenv("M5_TWIN_TICKET_ENABLED", "true").lower() == "true"
+    config.M5_TWIN_TICKET_ENABLED = False
+    config.BREAK_EVEN_TRIGGER_TP_PCT = 0.80
     config.BREAK_EVEN_ENABLED = True
     config.TRAILING_STOP_ENABLED = False
     config.PARTIAL_CLOSE_ENABLED = False

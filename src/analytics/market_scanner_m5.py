@@ -19,7 +19,9 @@ import config
 from src.analytics.market_scanner import MarketScanner, CandidateSetup
 from src.analytics.zone_confluence_engine import ZoneConfluenceEngine
 from src.analytics.macro_strategic_engine import macro_strategic_engine
+from src.analytics.pattern_engine import MacroEnvelopeEngine
 from src.indicators.candle_quality import classify_candle
+from src.indicators.atlas_dna import calculate_dual_grid_stations
 
 logger = logging.getLogger("market_scanner_m5")
 WIB = ZoneInfo("Asia/Jakarta")
@@ -38,178 +40,116 @@ def calculate_m5_sl_tp(
     pt: float = 0.00001
 ) -> Dict[str, Any]:
     """
-    Calculates precise M5 scalping Stop Loss and Take Profit anchored to Micro-ZCE Stations:
-    - 3-Tier Clamped SL (Major 5-7.5p, High-Beta 6.5-8.5p, JPY 7-9.5p).
-    - TP1 guaranteed >= 1.50x SL with commission padding (0.6 pips).
-    - TP2 Runner anchored to C2/F2 (if within 1.35x-1.80x TP1) or 1.50x TP1 pts.
-    - Zero Skip Trade: preserves currency basket natural hedging.
+    Calculates precise M5 scalping Stop Loss and Take Profit (Pure Demo Model):
+    - Fast In, Fast Out intraday scalping.
+    - SL: 1.25x M5 ATR (bounded by tier min/max floors & spread friction). Pure ATR based, no backward search.
+    - TP: Micro C1 (for BUY) or Micro F1 (for SELL) with front-running pad if within reach (>= 1.25x SL and <= max_tp_dist * 1.15).
+          Otherwise, fast fallback TP: entry + min(1.75 * sl_dist, max_tp_dist).
+    - Single ticket execution (no artificial limit re-anchoring, no runner split).
     """
     clean_sym = (symbol or "").replace("-ECNc", "").replace("-ECN", "").replace(".c", "").replace("m", "").upper()
     is_jpy = "JPY" in clean_sym
-    is_high_beta = any(k in clean_sym for k in ("GBPAUD", "GBPNZD", "EURNZD", "GBPCHF", "GBPCAD", "AUDNZD"))
+    is_pacific_jpy = clean_sym in ("NZDJPY", "AUDJPY")
+    is_high_beta = any(k in clean_sym for k in ("GBPAUD", "GBPNZD", "EURNZD", "GBPCHF", "GBPCAD"))
     is_gold = "XAU" in clean_sym or "GOLD" in clean_sym
     is_crypto = config.is_crypto(clean_sym)
+    is_low_beta = any(k in clean_sym for k in ["NZDCHF", "NZDCAD", "AUDCHF", "CADCHF", "EURCHF", "EURGBP", "AUDCAD", "AUDNZD", "NZDUSD"])
+    atr_pts = int(round(atr_m5 / pt)) if pt > 0 else 50
 
-    # Multiplier: 1.10x ATR M5 for tight intraday scalping
-    sl_atr_mult = float(os.getenv("M5_SL_ATR_MULT", "1.10"))
-
-    # Dynamic 3-Tier Clamping [min_sl_pts, max_sl_pts, tier_min_tp1_pts, max_tp1_pts]
-    if is_crypto:
-        min_sl_pts = int(os.getenv("M5_MIN_SL_CRYPTO_PTS", "10000"))
-        max_sl_pts = int(os.getenv("M5_MAX_SL_CRYPTO_PTS", "25000"))
-        tier_min_tp1 = int(os.getenv("M5_MIN_TP1_CRYPTO_PTS", "15000"))
-        max_tp1_pts = int(os.getenv("M5_MAX_TP1_CRYPTO_PTS", "35000"))
-    elif is_gold:
-        min_sl_pts = int(os.getenv("M5_MIN_SL_GOLD_PTS", "150"))
-        max_sl_pts = int(os.getenv("M5_MAX_SL_GOLD_PTS", "350"))
-        tier_min_tp1 = int(os.getenv("M5_MIN_TP1_GOLD_PTS", "250"))
-        max_tp1_pts = int(os.getenv("M5_MAX_TP1_GOLD_PTS", "400"))
-    elif is_jpy:
-        # Tier 3: JPY Crosses (10.0 - 12.0 pips SL, min 14.0 pips TP1)
-        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_JPY", "10.0")) * 10))
-        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_JPY", "12.0")) * 10))
-        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_JPY", "14.0")) * 10))
-        max_tp1_pts = max(int(round(float(os.getenv("M5_MAX_TP1_PIPS_JPY", "20.0")) * 10)), int(round(2.0 * atr_m5 / pt)) if pt > 0 else 200)
-    elif is_high_beta:
-        # Tier 2: High-Beta Crosses (12.0 - 14.0 pips SL, min 15.0 pips TP1)
-        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "12.0")) * 10))
-        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_HIGHBETA", "14.0")) * 10))
-        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_HIGHBETA", "15.0")) * 10))
-        max_tp1_pts = max(int(round(float(os.getenv("M5_MAX_TP1_PIPS_HIGHBETA", "24.0")) * 10)), int(round(2.0 * atr_m5 / pt)) if pt > 0 else 240)
-    else:
-        # Tier 1: Major FX Pairs (8.0 - 10.0 pips SL, min 10.0 pips TP1)
-        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "8.0")) * 10))
-        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_MAJOR", "10.0")) * 10))
-        tier_min_tp1 = int(round(float(os.getenv("M5_MIN_TP1_PIPS_MAJOR", "10.0")) * 10))
-        max_tp1_pts = max(int(round(float(os.getenv("M5_MAX_TP1_PIPS_MAJOR", "18.0")) * 10)), int(round(2.0 * atr_m5 / pt)) if pt > 0 else 180)
+    # Multipliers and ratios from environment (with safe Demo fallbacks)
+    sl_atr_mult = float(os.getenv("M5_SL_ATR_MULT", "1.25"))
+    default_tp_r = float(os.getenv("M5_DEFAULT_TP_RR", "1.75"))
 
     # Spread friction floor & commission padding
     fric_floor_pts = (spread_pts * 2) + 10
     comm_pts = int(os.getenv("M5_COMMISSION_PAD_PTS", "6"))
-    sl_buffer = (spread_pts * pt) + (comm_pts * pt) + (0.10 * atr_m5)
-    default_sl_dist = max(sl_atr_mult * atr_m5, min_sl_pts * pt)
+    digits = 5 if pt < 0.01 else (3 if is_jpy else 2)
 
-    # Elastic Structural Leeway: allows SL to stretch ~18% behind nearby C1/F1 to prevent front-running wall
-    leeway_ratio = float(os.getenv("M5_SL_STRETCH_LEEWAY_RATIO", "1.18"))
-    stretch_cap_pts = int(round(max_sl_pts * leeway_ratio))
+    # Dynamic 5-Tier Clamping [min_sl_pts, max_sl_pts, max_tp_pts]
+    if is_crypto:
+        min_sl_pts = int(os.getenv("M5_MIN_SL_CRYPTO_PTS", "10000"))
+        max_sl_pts = int(os.getenv("M5_MAX_SL_CRYPTO_PTS", "25000"))
+        max_tp_pts = int(os.getenv("M5_MAX_TP_CRYPTO_PTS", "30000"))
+    elif is_gold:
+        min_sl_pts = int(os.getenv("M5_MIN_SL_GOLD_PTS", "150"))
+        max_sl_pts = int(os.getenv("M5_MAX_SL_GOLD_PTS", "350"))
+        max_tp_pts = int(os.getenv("M5_MAX_TP_GOLD_PTS", "400"))
+    elif is_pacific_jpy:
+        # Pacific JPY Crosses (NZDJPY, AUDJPY) - scaled to lower Pacific ATR
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_PACIFIC_JPY", "4.5")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_PACIFIC_JPY", "7.5")) * 10))
+        max_tp_pts = int(round(float(os.getenv("M5_MAX_TP1_PIPS_PACIFIC_JPY", "13.0")) * 10))
+    elif is_jpy:
+        # Standard JPY Crosses (USDJPY, EURJPY, GBPJPY...)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_JPY", "6.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_JPY", "12.0")) * 10))
+        max_tp_pts = int(round(float(os.getenv("M5_MAX_TP_PIPS_JPY", "13.5")) * 10))
+    elif is_high_beta:
+        # High-Beta Crosses (GBPAUD, GBPNZD, EURNZD, GBPCHF, GBPCAD)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_HIGHBETA", "7.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_HIGHBETA", "14.0")) * 10))
+        max_tp_pts = int(round(float(os.getenv("M5_MAX_TP_PIPS_HIGHBETA", "16.0")) * 10))
+    elif is_low_beta or (atr_pts < 25):
+        # Low-Beta / Pacific Crosses (NZDCHF, NZDCAD, NZDUSD, AUDNZD, AUDCAD, EURGBP...)
+        min_sl_pts = max(int(round(float(os.getenv("M5_MIN_SL_PIPS_LOWBETA", "3.0")) * 10)), fric_floor_pts)
+        max_sl_pts = max(int(round(float(os.getenv("M5_MAX_SL_PIPS_LOWBETA", "5.5")) * 10)), min_sl_pts + 10)
+        max_tp_pts = int(round(float(os.getenv("M5_MAX_TP_PIPS_LOWBETA", "8.5")) * 10))
+    else:
+        # Major FX Pairs (EURUSD, GBPUSD, AUDUSD, USDCAD, USDCHF)
+        min_sl_pts = int(round(float(os.getenv("M5_MIN_SL_PIPS_MAJOR", "4.0")) * 10))
+        max_sl_pts = int(round(float(os.getenv("M5_MAX_SL_PIPS_MAJOR", "7.5")) * 10))
+        max_tp_pts = int(round(float(os.getenv("M5_MAX_TP_PIPS_MAJOR", "9.5")) * 10))
 
-    # 1. Stop Loss Calculation (Anchored to Micro-ZCE Invalidation with Elastic Leeway)
-    if direction == 1:  # BUY: Invalidation below Micro Floor F1
-        if f1 and f1 < entry_price:
-            raw_sl_dist = (entry_price - f1) + sl_buffer
-        elif f2 and f2 < entry_price:
-            raw_sl_dist = (entry_price - f2) + sl_buffer
-        else:
-            raw_sl_dist = default_sl_dist
+    # 1. Stop Loss: 1.25x ATR M5 directly from entry (Pure Demo Formula)
+    raw_sl_pts = int(round((sl_atr_mult * atr_m5) / pt)) if pt > 0 else 50
+    sl_pts = max(min(raw_sl_pts, max_sl_pts), min_sl_pts, fric_floor_pts)
+    sl_dist = sl_pts * pt
 
-        raw_sl_pts = int(round(raw_sl_dist / pt)) if pt > 0 else 80
-        effective_max = stretch_cap_pts if raw_sl_pts <= stretch_cap_pts else max_sl_pts
-        sl_pts = max(min(raw_sl_pts, effective_max), min_sl_pts, fric_floor_pts)
-        sl_dist = sl_pts * pt
+    if direction == 1:
         sl = entry_price - sl_dist
-
-    else:  # SELL: Invalidation above Micro Ceiling C1
-        if c1 and c1 > entry_price:
-            raw_sl_dist = (c1 - entry_price) + sl_buffer
-        elif c2 and c2 > entry_price:
-            raw_sl_dist = (c2 - entry_price) + sl_buffer
-        else:
-            raw_sl_dist = default_sl_dist
-
-        raw_sl_pts = int(round(raw_sl_dist / pt)) if pt > 0 else 80
-        effective_max = stretch_cap_pts if raw_sl_pts <= stretch_cap_pts else max_sl_pts
-        sl_pts = max(min(raw_sl_pts, effective_max), min_sl_pts, fric_floor_pts)
-        sl_dist = sl_pts * pt
+    else:
         sl = entry_price + sl_dist
 
-    # Front-running pad for Take Profit (exit before hitting exact wall)
-    front_pad = (spread_pts * pt) + (comm_pts * pt) + (0.05 * atr_m5)
-
-    # TP1 Calculation: minimum 1.25x SL distance or tier floor; capped dynamically by max_tp1_dist
-    min_tp1_dist = max(sl_dist * 1.25, tier_min_tp1 * pt)
-    default_tp1_dist = max(sl_dist * 1.50, tier_min_tp1 * pt)
-    max_tp1_dist = max(max_tp1_pts * pt, min_tp1_dist * 1.15)
+    # 2. Take Profit: Target opposite ZCE wall if within reach (>= 1.25x SL and <= max_tp_dist * 1.15)
+    # Otherwise fallback to fast scalping target: entry ± min(default_tp_r * sl_dist, max_tp_dist)
+    max_tp_dist = max_tp_pts * pt
+    front_pad = (spread_pts * pt) + (comm_pts * pt) + (0.10 * atr_m5)
 
     if direction == 1:  # BUY
         if c1 and c1 > entry_price:
-            c1_net_tp = c1 - front_pad
-            raw_c1_dist = c1_net_tp - entry_price
-            if raw_c1_dist >= min_tp1_dist:
-                # Micro-ZCE C1 is Single Source of Truth, capped at max_tp1_dist
-                tp1 = min(c1_net_tp, entry_price + max_tp1_dist)
+            raw_c1_dist = c1 - entry_price
+            if raw_c1_dist >= (1.25 * sl_dist) and raw_c1_dist <= (max_tp_dist * 1.15):
+                tp = min(c1 - front_pad, entry_price + max_tp_dist)
             else:
-                tp1 = entry_price + default_tp1_dist
+                tp = entry_price + min(default_tp_r * sl_dist, max_tp_dist)
         else:
-            tp1 = entry_price + default_tp1_dist
+            tp = entry_price + min(default_tp_r * sl_dist, max_tp_dist)
     else:  # SELL
         if f1 and f1 < entry_price:
-            f1_net_tp = f1 + front_pad
-            raw_f1_dist = entry_price - f1_net_tp
-            if raw_f1_dist >= min_tp1_dist:
-                # Micro-ZCE F1 is Single Source of Truth, capped at max_tp1_dist
-                tp1 = max(f1_net_tp, entry_price - max_tp1_dist)
+            raw_f1_dist = entry_price - f1
+            if raw_f1_dist >= (1.25 * sl_dist) and raw_f1_dist <= (max_tp_dist * 1.15):
+                tp = max(f1 + front_pad, entry_price - max_tp_dist)
             else:
-                tp1 = entry_price - default_tp1_dist
+                tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
         else:
-            tp1 = entry_price - default_tp1_dist
+            tp = entry_price - min(default_tp_r * sl_dist, max_tp_dist)
 
-    # Enforce hard quant floor and ceiling for TP1
-    if direction == 1:
-        if (tp1 - entry_price) < min_tp1_dist:
-            tp1 = entry_price + min_tp1_dist
-        elif (tp1 - entry_price) > max_tp1_dist:
-            tp1 = entry_price + max_tp1_dist
-    else:
-        if (entry_price - tp1) < min_tp1_dist:
-            tp1 = entry_price - min_tp1_dist
-        elif (entry_price - tp1) > max_tp1_dist:
-            tp1 = entry_price - max_tp1_dist
+    tp_pts = int(round(abs(entry_price - tp) / pt)) if pt > 0 else 80
+    realized_rr = round(tp_pts / max(sl_pts, 1), 2)
 
-    tp1_pts = int(round(abs(entry_price - tp1) / pt)) if pt > 0 else 80
-
-    # TP2 Runner Calculation: anchored to Micro-ZCE C2/F2 (if within reach 1.35x-1.80x TP1) or 1.50x TP1 pts
-    runner_ratio = float(os.getenv("M5_RUNNER_TP2_RATIO", "1.50"))
-    default_tp2_dist = (tp1_pts * runner_ratio) * pt
-    max_tp2_dist = max_tp1_dist * 1.55
-
-    if direction == 1:  # BUY
-        if c2 and c2 > entry_price:
-            c2_net_tp = c2 - front_pad
-            c2_dist = c2_net_tp - entry_price
-            if (1.35 * (tp1 - entry_price)) <= c2_dist <= (1.80 * (tp1 - entry_price)):
-                tp2 = min(c2_net_tp, entry_price + max_tp2_dist)
-            else:
-                tp2 = entry_price + default_tp2_dist
-        else:
-            tp2 = entry_price + default_tp2_dist
-    else:  # SELL
-        if f2 and f2 < entry_price:
-            f2_net_tp = f2 + front_pad
-            f2_dist = entry_price - f2_net_tp
-            if (1.35 * (entry_price - tp1)) <= f2_dist <= (1.80 * (entry_price - tp1)):
-                tp2 = max(f2_net_tp, entry_price - max_tp2_dist)
-            else:
-                tp2 = entry_price - default_tp2_dist
-        else:
-            tp2 = entry_price - default_tp2_dist
-
-    tp2_pts = int(round(abs(entry_price - tp2) / pt)) if pt > 0 else int(round(tp1_pts * 1.5))
-    min_tp2_pts = int(round(tp1_pts * 1.30))
-    if tp2_pts < min_tp2_pts:
-        tp2_pts = int(round(tp1_pts * 1.50))
-        tp2 = entry_price + (tp2_pts * pt) if direction == 1 else entry_price - (tp2_pts * pt)
-
-    digits = 5 if pt < 0.01 else (3 if is_jpy else 2)
     return {
         "sl": round(sl, digits),
-        "tp": round(tp1, digits),
-        "tp_runner": round(tp2, digits),
+        "tp": round(tp, digits),
+        "tp_runner": round(tp, digits),
         "sl_pts": sl_pts,
-        "tp_pts": tp1_pts,
-        "tp1_pts": tp1_pts,
-        "tp2_pts": tp2_pts,
-        "risk_reward": round(tp1_pts / max(sl_pts, 1), 2),
-        "risk_reward_runner": round(tp2_pts / max(sl_pts, 1), 2)
+        "tp_pts": tp_pts,
+        "tp1_pts": tp_pts,
+        "tp2_pts": tp_pts,
+        "risk_reward": realized_rr,
+        "risk_reward_runner": realized_rr,
+        "has_runner": False,
+        "is_reanchored_limit": False,
+        "limit_entry_price": entry_price
     }
 
 
@@ -230,16 +170,17 @@ class MarketScannerM5(MarketScanner):
             "grid": {
                 "M5": [30, 60, 120],
                 "M15": [30, 60, 120],
-                "H1": [50, 100, 200]
+                "M30": [30, 60, 120],
+                "H1": [50, 100, 250, 500]
             },
-            "w_tf": {"M5": 1.0, "M15": 1.25, "H1": 1.50},
+            "w_tf": {"M5": 1.0, "M15": 1.20, "M30": 1.35, "H1": 1.60},
             "merge_atr_mult": 0.20,
             "max_imm_atr": 3.0,
             "grade_g2": 4.0,
             "grade_g3": 7.0,
         }
         self._zce_engine = ZoneConfluenceEngine(params=self._micro_zce_params)
-        logger.info("[M5 SCANNER] MarketScannerM5 initialized with Micro-ZCE (M5/M15/H1).")
+        logger.info("[M5 SCANNER] MarketScannerM5 initialized with Micro-ZCE 4-TF (M5/M15/M30/H1).")
 
     def update_macro_context(self, mt5_connector=None, force: bool = False) -> None:
         """
@@ -265,10 +206,10 @@ class MarketScannerM5(MarketScanner):
 
                 pt = self._get_point(valid_sym)
 
-                # Fetch M5 rates for dynamic indicators & dealing range
+                # Fetch M5 rates for dynamic indicators & authentic M5 dealing range
                 rates_m5 = None
                 if hasattr(config.mt5, "copy_rates_from_pos"):
-                    rates_m5 = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_M5, 0, 60)
+                    rates_m5 = config.mt5.copy_rates_from_pos(valid_sym, config.mt5.TIMEFRAME_M5, 0, 100)
 
                 df_m5 = pd.DataFrame(rates_m5) if (rates_m5 is not None and len(rates_m5) > 0) else None
                 cur_c = float(df_m5["close"].iloc[-1]) if df_m5 is not None else 0.0
@@ -285,11 +226,31 @@ class MarketScannerM5(MarketScanner):
                     atr_m5 = float(np.mean(tr[-14:]))
                 atr_pts = int(round(atr_m5 / pt)) if pt > 0 else 50
 
-                # Dealing range bounds anchored to Micro-ZCE stations
+                # ZCE Fortress Chamber bounds
                 f1_ref = f1 if f1 else (cur_c - (100 * pt))
                 c1_ref = c1 if c1 else (cur_c + (100 * pt))
-                dr_span = max(c1_ref - f1_ref, 1e-5)
-                dr_pos = max(0.0, min(1.0, (cur_c - f1_ref) / dr_span)) if cur_c > 0 else 0.50
+                chamber_span = max(c1_ref - f1_ref, 1e-5)
+                chamber_pos = max(0.0, min(1.0, (cur_c - f1_ref) / chamber_span)) if cur_c > 0 else 0.50
+
+                # Authentic M5 SMC Dealing Range via MacroEnvelopeEngine
+                pip_val = pt * 10 if pt < 0.01 else pt
+                m5_dr = {}
+                dr_hi = c1_ref
+                dr_lo = f1_ref
+                dr_pos = chamber_pos
+                dr_zone = "EQUILIBRIUM"
+                if df_m5 is not None and len(df_m5) >= 25:
+                    try:
+                        m5_env = MacroEnvelopeEngine(window_bars=100).analyze(df_m5, symbol=valid_sym, point_size=pt, pip_size=pip_val)
+                        if m5_env and hasattr(m5_env, "visual_payload"):
+                            m5_dr = m5_env.visual_payload.get("dealing_range", {})
+                            if m5_dr:
+                                dr_hi = float(m5_dr.get("range_high") or dr_hi)
+                                dr_lo = float(m5_dr.get("range_low") or dr_lo)
+                                dr_pos = float(m5_dr.get("dr_position_pct", 50.0)) / 100.0
+                                dr_zone = str(m5_dr.get("zone_status", "EQUILIBRIUM"))
+                    except Exception as e_m5_dr:
+                        logger.debug(f"[M5 DR] Error computing M5 dealing range for {valid_sym}: {e_m5_dr}")
 
                 # Authentic Macro Strategic Directive (Pure Quant native sockets, ~0.02s)
                 strat_dir = None
@@ -322,9 +283,12 @@ class MarketScannerM5(MarketScanner):
                     "current_price": cur_c,
                     "ema20": ema20,
                     "ema50": ema50,
-                    "dealing_range_high": c1_ref,
-                    "dealing_range_low": f1_ref,
+                    "dealing_range_high": dr_hi,
+                    "dealing_range_low": dr_lo,
                     "dealing_range_pos": dr_pos,
+                    "dealing_range_zone": dr_zone,
+                    "dealing_range": m5_dr,
+                    "chamber_pos": chamber_pos,
                     "is_bull": cur_c > ema20,
                     "is_bear": cur_c < ema20,
                     "asian_high": float(df_m5["high"].max()) if df_m5 is not None else 0.0,
@@ -355,9 +319,10 @@ class MarketScannerM5(MarketScanner):
             except Exception:
                 pass
 
-            # Micro-Timeframe Configuration for ZCE
+            # Micro-Timeframe Configuration for ZCE (4-TF Native Sockets)
             tf_cfg = [
-                ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 250),
+                ("H1", getattr(config.mt5, "TIMEFRAME_H1", 16385), 720),
+                ("M30", getattr(config.mt5, "TIMEFRAME_M30", 30), 300),
                 ("M15", getattr(config.mt5, "TIMEFRAME_M15", 16386), 250),
                 ("M5", getattr(config.mt5, "TIMEFRAME_M5", 5), 250)
             ]
@@ -377,6 +342,49 @@ class MarketScannerM5(MarketScanner):
 
             # Compute micro zone map
             zm = eng.compute_zone_map(valid, dfs, point_size=pt, digits=digits)
+
+            # Conditional ATH / ATL Station Fallback
+            # If historical swing data in lookback horizon has no ceiling (e.g. 4-year ATH in AUDNZD)
+            # or no floor (ATL), synthesise authentic mathematical stations from ATLAS DNA & ATR.
+            if zm is not None:
+                cur_p = float(zm.cur_price) if getattr(zm, "cur_price", None) else (float(dfs["M5"]["close"].iloc[-1]) if "M5" in dfs and not dfs["M5"].empty else 0.0)
+                st = calculate_dual_grid_stations(valid, cur_p)
+                w = getattr(zm, "wall_override", {}) or {}
+
+                if zm.immediate_ceiling_c1 is None:
+                    sub_c = st.get("sub_ceiling_50")
+                    macro_c = st.get("macro_ceiling")
+                    fb_c1 = sub_c if (sub_c and sub_c > cur_p) else macro_c
+                    if fb_c1 is None or fb_c1 <= cur_p:
+                        fb_c1 = round(cur_p + max(2.5 * zm.atr_h1, 0.0050 if "JPY" not in valid else 0.50), digits)
+                    zm.immediate_ceiling_c1 = fb_c1
+                    zm.immediate_ceiling_c1_grade = "GRADE_1_PROJECTION [ATLAS_STN]"
+                    w["imm_ceiling_c1"] = fb_c1
+                    w["c1_grade"] = "GRADE_1_PROJECTION [ATLAS_STN]"
+                    w["imm_ceiling_c1_grade"] = "GRADE_1_PROJECTION [ATLAS_STN]"
+                    if zm.deep_ceiling_c2 is None:
+                        zm.deep_ceiling_c2 = round(fb_c1 + max(1.5 * zm.atr_h1, st.get("micro_step_50", 0.0025)), digits)
+                        w["deep_ceiling_c2"] = zm.deep_ceiling_c2
+                        w["deep_ceiling_c2_grade"] = "GRADE_1_PROJECTION [ATLAS_STN]"
+
+                if zm.immediate_floor_f1 is None:
+                    sub_f = st.get("sub_floor_50")
+                    macro_f = st.get("macro_floor")
+                    fb_f1 = sub_f if (sub_f and sub_f < cur_p) else macro_f
+                    if fb_f1 is None or fb_f1 >= cur_p:
+                        fb_f1 = round(cur_p - max(2.5 * zm.atr_h1, 0.0050 if "JPY" not in valid else 0.50), digits)
+                    zm.immediate_floor_f1 = fb_f1
+                    zm.immediate_floor_f1_grade = "GRADE_1_PROJECTION [ATLAS_STN]"
+                    w["imm_floor_f1"] = fb_f1
+                    w["f1_grade"] = "GRADE_1_PROJECTION [ATLAS_STN]"
+                    w["imm_floor_f1_grade"] = "GRADE_1_PROJECTION [ATLAS_STN]"
+                    if zm.deep_floor_f2 is None:
+                        zm.deep_floor_f2 = round(fb_f1 - max(1.5 * zm.atr_h1, st.get("micro_step_50", 0.0025)), digits)
+                        w["deep_floor_f2"] = zm.deep_floor_f2
+                        w["deep_floor_f2_grade"] = "GRADE_1_PROJECTION [ATLAS_STN]"
+
+                zm.wall_override = w
+
             maps = getattr(self, "_zce_maps", {})
             maps[valid] = zm
             self._zce_maps = maps
@@ -476,6 +484,21 @@ class MarketScannerM5(MarketScanner):
         Executes fast M5 radar scan. Bypasses macro day/session freeze filters and routes
         all qualifying candidates with calibrated M5 SL/TP directly to MT5 execution.
         """
+        # Dynamically synchronize live tick price into M5 dealing range position for real-time gating
+        for sym in self.symbols:
+            macro = self.macro_cache.get(sym)
+            if not macro:
+                continue
+            dr_hi = float(macro.get("dealing_range_high", 0.0) or 0.0)
+            dr_lo = float(macro.get("dealing_range_low", 0.0) or 0.0)
+            if dr_hi > dr_lo:
+                tick = config.mt5.symbol_info_tick(sym) if hasattr(config.mt5, "symbol_info_tick") else None
+                if tick and (tick.ask > 0 or tick.bid > 0):
+                    live_mid = (tick.ask + tick.bid) / 2.0 if (tick.ask > 0 and tick.bid > 0) else (tick.ask or tick.bid)
+                    dr_pos_live = max(0.0, min(1.0, (live_mid - dr_lo) / (dr_hi - dr_lo)))
+                    macro["dealing_range_pos"] = dr_pos_live
+                    macro["dr_pos"] = dr_pos_live
+
         # Call base scan_fast_radar
         candidates = super().scan_fast_radar(mt5_connector=mt5_connector)
 
@@ -484,10 +507,15 @@ class MarketScannerM5(MarketScanner):
 
         # Post-process candidates with M5 Geometry
         m5_candidates = []
+        twin_enabled = getattr(config, "M5_TWIN_TICKET_ENABLED", False)
         for cand in candidates:
             sym = cand.symbol
             pt = self._get_point(sym)
             macro = self.macro_cache.get(sym, {})
+
+            # Ensure candidate dealing range position reflects live tick price
+            if "dealing_range_pos" in macro:
+                cand.dealing_range_pos = macro["dealing_range_pos"]
 
             # Calculate M5 ATR from live rates
             rates_m5 = config.mt5.copy_rates_from_pos(sym, config.mt5.TIMEFRAME_M5, 0, 20)
@@ -528,14 +556,23 @@ class MarketScannerM5(MarketScanner):
             cand.current_atr_pts = int(round(atr_m5 / pt)) if pt > 0 else 50
             cand.action_tier = "M5_DIRECT_DEMO"
 
-            # Set metadata to bypass shadow paper trade
+            # Dynamic Limit Re-Anchoring: If cramped against ceiling/floor, re-anchor trigger to discount/premium limit
+            if geom.get("is_reanchored_limit"):
+                cand.trigger_price = geom["limit_entry_price"]
+                cand.order_type = "BUY_LIMIT" if cand.direction == 1 else "SELL_LIMIT"
+
+            # Set metadata to bypass shadow paper trade & guide single ticket execution
             if not cand.metadata:
                 cand.metadata = {}
             cand.metadata["is_m5_demo"] = True
+            cand.metadata["has_runner"] = False if not twin_enabled else geom.get("has_runner", False)
+            cand.metadata["is_reanchored_limit"] = geom.get("is_reanchored_limit", False)
             cand.metadata["m5_sl_pts"] = geom["sl_pts"]
             cand.metadata["m5_tp_pts"] = geom["tp_pts"]
             cand.metadata["m5_tp1_pts"] = geom["tp1_pts"]
             cand.metadata["m5_tp2_pts"] = geom["tp2_pts"]
+            cand.metadata["entry_price"] = cand.trigger_price
+            cand.metadata["entry_type"] = getattr(cand, "order_type", "market")
 
             m5_candidates.append(cand)
 

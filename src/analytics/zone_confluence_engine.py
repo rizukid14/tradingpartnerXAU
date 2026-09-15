@@ -701,28 +701,41 @@ class ZoneConfluenceEngine:
     # 3. Freshness: sentuhan terakhir dari tape H1 & Analisis Kompresi
     # ------------------------------------------------------------------ #
     def _stamp_freshness(
-        self, clusters: List[ZoneCluster], h1_df: pd.DataFrame, cur_price: float, atr_h1: float, digits: int = 5
+        self,
+        clusters: List[ZoneCluster],
+        eval_df: pd.DataFrame,
+        cur_price: float,
+        atr_eval: Optional[float] = None,
+        digits: int = 5,
+        h1_df: Optional[pd.DataFrame] = None,
+        atr_h1: Optional[float] = None,
     ) -> None:
-        if h1_df is None or len(h1_df) < 2:
+        if eval_df is None or len(eval_df) < 2:
             return
 
+        eff_atr = atr_eval if atr_eval is not None else (atr_h1 if atr_h1 is not None else 0.0015)
+        ref_h1 = h1_df if (h1_df is not None and len(h1_df) >= 2) else eval_df
         lookback_bars = int(getattr(config, "ZCE_TOUCH_LOOKBACK_BARS", 120))
-        eval_df = h1_df.tail(lookback_bars).reset_index(drop=True)
-        highs = eval_df["high"].to_numpy(dtype=float)
-        lows = eval_df["low"].to_numpy(dtype=float)
-        closes = eval_df["close"].to_numpy(dtype=float)
-        times = eval_df["time"].to_numpy() if "time" in eval_df.columns else np.arange(len(eval_df))
-        n_eval = len(eval_df)
-        n_total = len(h1_df)
+        active_df = eval_df.tail(lookback_bars).reset_index(drop=True)
+        highs = active_df["high"].to_numpy(dtype=float)
+        lows = active_df["low"].to_numpy(dtype=float)
+        closes = active_df["close"].to_numpy(dtype=float)
+        times = active_df["time"].to_numpy() if "time" in active_df.columns else np.arange(len(active_df))
+        n_eval = len(active_df)
+        n_total = len(ref_h1)
 
         bars_cold = max(1, int(self.cold_days * 24))
         bars_vac = max(1, int(self.vacuum_days * 24))
 
-        touch_tol = 0.25 * atr_h1
-        penetration_max = 0.45 * atr_h1
+        touch_tol = 0.25 * eff_atr
+        penetration_max = 0.40 * eff_atr
 
-        all_low = h1_df["low"].to_numpy(dtype=float)
-        all_high = h1_df["high"].to_numpy(dtype=float)
+        all_low = ref_h1["low"].to_numpy(dtype=float)
+        all_high = ref_h1["high"].to_numpy(dtype=float)
+
+        pip_unit = (10 ** (-digits) * 10 if digits in (3, 5) else 10 ** (-digits))
+        min_dep_pips = 3.0 * pip_unit if (eff_atr < 0.0020 or len(eval_df) >= 200) else 6.0 * pip_unit
+        dep_dist = max(0.50 * eff_atr, min_dep_pips)
 
         for c in clusters:
             # Anchor level_price to the physical barrier edge that price interacts with:
@@ -733,8 +746,6 @@ class ZoneConfluenceEngine:
             touch_nodes: List[Dict[str, Any]] = []
             t_indices: List[int] = []
             state = "DEPARTED"
-            min_dep_pips = 6.0 * (10 ** (-digits) * 10 if digits in (3, 5) else 10 ** (-digits))
-            dep_dist = max(0.50 * atr_h1, min_dep_pips)
 
             for k in range(n_eval):
                 h_k = highs[k]
@@ -754,7 +765,7 @@ class ZoneConfluenceEngine:
                 if is_high_closer:
                     # Ujung atas (high wick) paling dekat ke level ZCE (pengujian dari bawah atau tusukan ke atas)
                     touch_price = h_k
-                    if (level_price - touch_tol <= h_k <= level_price + penetration_max) and (l_k <= level_price + 0.15 * atr_h1):
+                    if (level_price - touch_tol <= h_k <= level_price + penetration_max) and (l_k <= level_price + 0.15 * eff_atr):
                         is_touch = True
                         if h_k >= level_price and c_k < level_price:
                             is_sweep = True
@@ -763,7 +774,7 @@ class ZoneConfluenceEngine:
                 else:
                     # Ujung bawah (low wick) paling dekat ke level ZCE (pengujian dari atas atau tusukan ke bawah)
                     touch_price = l_k
-                    if (level_price - penetration_max <= l_k <= level_price + touch_tol) and (h_k >= level_price - 0.15 * atr_h1):
+                    if (level_price - penetration_max <= l_k <= level_price + touch_tol) and (h_k >= level_price - 0.15 * eff_atr):
                         is_touch = True
                         if l_k <= level_price and c_k > level_price:
                             is_sweep = True
@@ -829,7 +840,7 @@ class ZoneConfluenceEngine:
             c.is_vacuum = (
                 c.is_cold
                 and c.last_touch_h1_bars_ago >= min(bars_vac, max(1, int(n_total * 0.88)))
-                and abs(c.mid - cur_price) > 1.0 * atr_h1
+                and abs(c.mid - cur_price) > 1.0 * eff_atr
             )
 
             # Freshness State & Compression
@@ -851,9 +862,9 @@ class ZoneConfluenceEngine:
                         if e_i > s_i + 1:
                             troughs.append(float(np.min(lows[s_i + 1:e_i])))
                     is_hl = False
-                    if len(troughs) >= 2 and (troughs[-1] > troughs[0] + 0.08 * atr_h1):
+                    if len(troughs) >= 2 and (troughs[-1] > troughs[0] + 0.08 * eff_atr):
                         is_hl = True
-                    elif len(troughs) == 1 and (lows[t_indices[-1]] > troughs[0] + 0.08 * atr_h1):
+                    elif len(troughs) == 1 and (lows[t_indices[-1]] > troughs[0] + 0.08 * eff_atr):
                         is_hl = True
 
                     if is_hl:
@@ -872,9 +883,9 @@ class ZoneConfluenceEngine:
                         if e_i > s_i + 1:
                             peaks.append(float(np.max(highs[s_i + 1:e_i])))
                     is_lh = False
-                    if len(peaks) >= 2 and (peaks[-1] < peaks[0] - 0.08 * atr_h1):
+                    if len(peaks) >= 2 and (peaks[-1] < peaks[0] - 0.08 * eff_atr):
                         is_lh = True
-                    elif len(peaks) == 1 and (highs[t_indices[-1]] < peaks[0] - 0.08 * atr_h1):
+                    elif len(peaks) == 1 and (highs[t_indices[-1]] < peaks[0] - 0.08 * eff_atr):
                         is_lh = True
 
                     if is_lh:
@@ -1272,7 +1283,17 @@ class ZoneConfluenceEngine:
             clusters = self._build_nodes(prims, atr_h1, point_size)
         else:
             clusters = self._merge_primitives(prims, atr_h1, point_size)
-        self._stamp_freshness(clusters, h1, cur_price, atr_h1, digits=digits)
+
+        # Multi-Resolution Freshness Evaluation (M5 native tape if micro mode)
+        is_micro = "M5" in dfs and len(dfs["M5"]) >= 30
+        if is_micro:
+            eval_df = dfs["M5"]
+            eval_atr = atr_from_df(eval_df)
+        else:
+            eval_df = h1
+            eval_atr = atr_h1
+
+        self._stamp_freshness(clusters, eval_df, cur_price, eval_atr, digits=digits, h1_df=h1)
         clusters.sort(key=lambda c: -c.score_final)
 
         walls = self._elect_walls(clusters, cur_price, atr_h1, digits)
