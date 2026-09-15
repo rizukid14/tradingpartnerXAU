@@ -144,8 +144,9 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
         s_tp = getattr(cand, "suggested_tp", 0.0)
 
         is_reanchored = bool(getattr(cand, "metadata", {}).get("is_reanchored_limit", False))
+        runaway_pct = float(getattr(config, "M5_PENDING_RUNAWAY_CANCEL_PCT", 0.70))
 
-        # Runaway Target Guard: Do not place a limit order if market already traversed >= 50% towards TP
+        # Runaway Target Guard: Do not place a limit order if market already traversed >= runaway_pct towards TP
         if direction == 1 and (ask - trig_p) >= (min_dist_pts * pt):
             if is_reanchored:
                 if bid >= s_tp:
@@ -153,8 +154,8 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
                     return False
             else:
                 tp_dist = (s_tp - trig_p) if (s_tp > trig_p) else 0.0
-                if tp_dist > 0 and (ask - trig_p) >= 0.50 * tp_dist:
-                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dilewati: ask {ask} sudah menempuh >=50% TP {s_tp}.{UI.RST}")
+                if tp_dist > 0 and (ask - trig_p) >= runaway_pct * tp_dist:
+                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} BUY limit @ {trig_p} dilewati: ask {ask} sudah menempuh >={runaway_pct*100:.0f}% TP {s_tp}.{UI.RST}")
                     return False
             entry_type = "buy_limit"
             entry_price = trig_p
@@ -165,8 +166,8 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
                     return False
             else:
                 tp_dist = (trig_p - s_tp) if (s_tp > 0 and trig_p > s_tp) else 0.0
-                if tp_dist > 0 and (trig_p - bid) >= 0.50 * tp_dist:
-                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dilewati: bid {bid} sudah menempuh >=50% TP {s_tp}.{UI.RST}")
+                if tp_dist > 0 and (trig_p - bid) >= runaway_pct * tp_dist:
+                    print(f" {UI.YELLOW}[RUNAWAY GUARD] {sym} SELL limit @ {trig_p} dilewati: bid {bid} sudah menempuh >={runaway_pct*100:.0f}% TP {s_tp}.{UI.RST}")
                     return False
             entry_type = "sell_limit"
             entry_price = trig_p
@@ -250,7 +251,7 @@ def _sync_pending_orders(scanner):
             return
         orders = mt.orders_get() or []
         cur_order_map = {}
-        cancel_threshold_pct = float(os.getenv("M5_PENDING_RUNAWAY_CANCEL_PCT", "0.65"))
+        cancel_threshold_pct = float(getattr(config, "M5_PENDING_RUNAWAY_CANCEL_PCT", 0.70))
 
         for o in orders:
             t = getattr(o, "ticket", None)

@@ -799,7 +799,7 @@ M5_DEFAULT_TP_RR                      = _getenv_float("M5_DEFAULT_TP_RR", 1.75)
 M5_COMMISSION_PAD_PTS                 = _getenv_int("M5_COMMISSION_PAD_PTS", 6)
 M5_TP1_BEP_PCT                        = _getenv_float("M5_TP1_BEP_PCT", 0.80)
 M5_RUNNER_TP2_RATIO                   = _getenv_float("M5_RUNNER_TP2_RATIO", 1.50)
-M5_PENDING_RUNAWAY_CANCEL_PCT         = _getenv_float("M5_PENDING_RUNAWAY_CANCEL_PCT", 0.65)
+M5_PENDING_RUNAWAY_CANCEL_PCT         = _getenv_float("M5_PENDING_RUNAWAY_CANCEL_PCT", 0.70)
 M5_WINSTREAK_COOLDOWN_COUNT           = _getenv_int("M5_WINSTREAK_COOLDOWN_COUNT", 0)
 M5_WINSTREAK_COOLDOWN_MINUTES         = _getenv_int("M5_WINSTREAK_COOLDOWN_MINUTES", 30)
 
