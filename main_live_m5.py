@@ -184,13 +184,15 @@ def sync_pending_orders(scanner: MarketScannerM5):
 
 def run_live_execution_cycle(cand, risk: RiskEngine, scanner: MarketScannerM5 = None) -> bool:
     """
-    Direct MT5 Live Cent Execution Cycle:
-    - Checks Pre-Rollover Shield (03:50 - 04:15 WIB).
-    - Enforces Paper Quarantine for XAU/BTC.
-    - Rejects setup if live market price already touched/passed target TP.
-    - Capped at MAX_POSITION_LOT (0.50 lot for Cent Account).
-    - Uses native MT5 15-minute pending order expiration.
-    - Logs complete parameter snapshot to terminal and trading_bot_m5.log.
+    Direct MT5 Live Cent Execution Cycle — 9-Engine Sniper Brain:
+    - Gate 0: Pre-Rollover Shield (03:50 - 04:15 WIB).
+    - Gate 0b: Quarantine Guard (XAU/BTC ke Paper).
+    - Gate 0c: Risk Engine capacity check.
+    - Gate 0d: Live tick + Target Reach Guard.
+    - Mechanism-aware order type:
+        M1 Universal Sweep → Market Order (eksekusi instan).
+        M2 Pullback / M3 Retest → Limit Order di ZCE/OB anchor jika jarak >= min_dist.
+    - Enhanced Telegram telemetry: SL anchor, Net R:R, OB levels, Wave Regime, 9-engine gates.
     """
     global _active_pending_orders
     sym = cand.symbol
@@ -295,19 +297,60 @@ def run_live_execution_cycle(cand, risk: RiskEngine, scanner: MarketScannerM5 = 
                 "direction": direction
             }
 
-        # Comprehensive Parameter Snapshot for Forensic Logging
-        macro = scanner.macro_cache.get(sym, {}) if scanner else {}
-        c1 = macro.get("ceiling_c1")
-        f1 = macro.get("floor_f1")
+        # Comprehensive Parameter Snapshot — 9-Engine Forensic Log
+        macro  = scanner.macro_cache.get(sym, {}) if scanner else {}
+        meta   = cand.metadata or {}
+        c1     = macro.get("ceiling_c1")
+        f1     = macro.get("floor_f1")
         dr_pos = macro.get("dealing_range_pos", 0.5)
-        csm_d = macro.get("csm_delta", 0.0)
+        csm_d  = macro.get("csm_delta", 0.0)
+        net_rr = meta.get("m5_net_rr", cand.risk_reward_ratio)
+        anchor = meta.get("m5_structural_anchor")
+        ob_top = meta.get("m5_ob_top")
+        ob_bot = meta.get("m5_ob_bottom")
+        eqh    = meta.get("m5_eqh")
+        eql    = meta.get("m5_eql")
+        regime = meta.get("m5_wave_regime", macro.get("wave_regime", "?"))
+        gates  = meta.get("m5_gates_passed", "?")
         c1_str = f"{c1:.5f}" if c1 else "None"
         f1_str = f"{f1:.5f}" if f1 else "None"
+        anchor_str = f"{anchor:.5f}" if anchor else "ATR_FALLBACK"
+        ob_str = f"{ob_bot:.5f}-{ob_top:.5f}" if ob_top and ob_bot else "None"
+        liq_str = f"EQH={eqh:.5f}" if eqh else (f"EQL={eql:.5f}" if eql else "None")
         tp_dist_pts = int(round(abs(entry_price - cand.suggested_tp) / pt)) if pt > 0 else 0
         t_iso = now_wib.strftime("%Y-%m-%d %H:%M:%S WIB")
 
-        print(f" {UI.CYAN}[M5 TRADE SNAPSHOT]{UI.RST} [{t_iso}] Ticket #{ticket} | {sym} {c_dir} | Type: {entry_type.upper()} | Lot: {lot_size} | Entry: {entry_price:.5f} | SL: {cand.suggested_sl:.5f} ({sl_pts} pts) | TP: {cand.suggested_tp:.5f} ({tp_dist_pts} pts) | RR: {cand.risk_reward_ratio:.2f} | ATR: {cand.current_atr_pts} pts | Spread: {tick_live.get('spread', 0)} pts | CSM: {csm_d:+.2f} | C1: {c1_str} | F1: {f1_str} | DR Pos: {dr_pos*100:.0f}% | Setup: {cand.setup_type}")
+        print(
+            f" {UI.CYAN}[M5 SNIPER SNAPSHOT]{UI.RST} [{t_iso}] #{ticket} | {sym} {c_dir} | "
+            f"{entry_type.upper()} @ {entry_price:.5f} | Lot: {lot_size} | "
+            f"SL: {cand.suggested_sl:.5f} ({sl_pts}pts / Anchor: {anchor_str}) | "
+            f"TP: {cand.suggested_tp:.5f} ({tp_dist_pts}pts) | Net R:R: {net_rr:.2f} | "
+            f"OB: {ob_str} | Liq: {liq_str} | Regime: {regime} | "
+            f"DR: {dr_pos*100:.0f}% | C1: {c1_str} | F1: {f1_str} | "
+            f"CSM: {csm_d:+.2f} | Gates: {gates} | Setup: {cand.setup_type}"
+        )
         print(f" {UI.GREEN}{UI.BOLD}[STAGE 2 LIVE SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
+
+        # Telegram Alert — 9-Engine Telemetry Card
+        try:
+            from src.core.telegram_alerts import alert_trade_opened
+            alert_trade_opened(
+                signal    = c_dir,
+                lot       = lot_size,
+                sl_points = sl_pts,
+                tp_points = tp_dist_pts,
+                symbol    = sym,
+                ticket    = ticket,
+                entry_price = entry_price,
+                sl_price  = cand.suggested_sl,
+                tp_price  = cand.suggested_tp,
+                setup     = cand.setup_type,
+                reason    = f"NetRR={net_rr:.2f} | Anchor={anchor_str} | OB={ob_str} | Regime={regime} | Gates={gates}",
+                setup_grade = f"M5_SNIPER DR={dr_pos*100:.0f}%"
+            )
+        except Exception:
+            pass
+
         return True
     else:
         err_msg = order_res.get("comment", "Unknown error") if isinstance(order_res, dict) else str(order_res)

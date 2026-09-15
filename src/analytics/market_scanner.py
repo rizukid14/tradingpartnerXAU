@@ -1329,10 +1329,11 @@ class MarketScanner:
         marubozu_max_wick = getattr(config, "M2_MARUBOZU_MAX_WICK_RATIO", 0.20)
         g1_min_wick = getattr(config, "M2_G1_MIN_WICK_RATIO", 0.25)
         g1_prox_atr = getattr(config, "M2_G1_PROXIMITY_ATR", 0.35)
+        m2_min_rejection_wick = getattr(config, "M2_MIN_REJECTION_WICK", 0.20)  # configurable: 0.35 for M5 sniper
 
         if direction == 1:  # BUY into floor
             has_h1_rejection = (
-                (c_qual.get('max_lower_wick', 0.0) >= 0.20)
+                (c_qual.get('max_lower_wick', 0.0) >= m2_min_rejection_wick)
                 or (c_qual.get('sweep_side') == 'bottom')
                 or c_qual.get('is_bullish_engulf', False)
             )
@@ -1349,7 +1350,7 @@ class MarketScanner:
             target_freshness = f1_fresh
         else:  # SELL into ceiling
             has_h1_rejection = (
-                (c_qual.get('max_upper_wick', 0.0) >= 0.20)
+                (c_qual.get('max_upper_wick', 0.0) >= m2_min_rejection_wick)
                 or (c_qual.get('sweep_side') == 'top')
                 or c_qual.get('is_bearish_engulf', False)
             )
