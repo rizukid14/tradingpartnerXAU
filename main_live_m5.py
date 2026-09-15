@@ -8,6 +8,8 @@ Features: Single Ticket, Native 15m MT5 Expiration, BEP 80% TP, Pre-Rollover Shi
 import os
 import sys
 import time
+import re
+import threading
 import logging
 from typing import Dict, Any
 from datetime import datetime
@@ -34,6 +36,59 @@ from src.analytics.market_scanner_m5 import MarketScannerM5
 
 WIB = ZoneInfo("Asia/Jakarta")
 logger = logging.getLogger("main_live_m5")
+
+_ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+class TeeLogger:
+    """Mencatat seluruh output terminal ke file trading_bot_m5.log secara permanen."""
+    def __init__(self, filename, max_bytes=10 * 1024 * 1024, backup_count=2):
+        self.terminal = sys.stdout
+        self.filename = filename
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self._lock = threading.Lock()
+        self._open_file()
+
+    def _open_file(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.filename)), exist_ok=True)
+        self.log_file = open(self.filename, "a", encoding="utf-8", buffering=1)
+
+    def _rotate_if_needed(self):
+        try:
+            if os.path.exists(self.filename) and os.path.getsize(self.filename) >= self.max_bytes:
+                self.log_file.close()
+                for i in range(self.backup_count - 1, 0, -1):
+                    sfn = f"{self.filename}.{i}"
+                    dfn = f"{self.filename}.{i + 1}"
+                    if os.path.exists(sfn):
+                        if os.path.exists(dfn):
+                            os.remove(dfn)
+                        os.rename(sfn, dfn)
+                dfn = f"{self.filename}.1"
+                if os.path.exists(dfn):
+                    os.remove(dfn)
+                os.rename(self.filename, dfn)
+                self._open_file()
+        except Exception:
+            pass
+
+    def write(self, message):
+        self.terminal.write(message)
+        try:
+            clean_msg = _ANSI_RE.sub("", message)
+            with self._lock:
+                self._rotate_if_needed()
+                self.log_file.write(clean_msg)
+        except Exception:
+            pass
+
+    def flush(self):
+        self.terminal.flush()
+        try:
+            with self._lock:
+                self.log_file.flush()
+        except Exception:
+            pass
 
 # Track active pending orders for lifecycle management & 15m cancel cooldown
 _active_pending_orders: Dict[int, Dict[str, Any]] = {}
@@ -127,7 +182,7 @@ def sync_pending_orders(scanner: MarketScannerM5):
         logger.debug(f"[PENDING SYNC ERROR] {e}")
 
 
-def run_live_execution_cycle(cand, risk: RiskEngine) -> bool:
+def run_live_execution_cycle(cand, risk: RiskEngine, scanner: MarketScannerM5 = None) -> bool:
     """
     Direct MT5 Live Cent Execution Cycle:
     - Checks Pre-Rollover Shield (03:50 - 04:15 WIB).
@@ -135,6 +190,7 @@ def run_live_execution_cycle(cand, risk: RiskEngine) -> bool:
     - Rejects setup if live market price already touched/passed target TP.
     - Capped at MAX_POSITION_LOT (0.50 lot for Cent Account).
     - Uses native MT5 15-minute pending order expiration.
+    - Logs complete parameter snapshot to terminal and trading_bot_m5.log.
     """
     global _active_pending_orders
     sym = cand.symbol
@@ -238,6 +294,19 @@ def run_live_execution_cycle(cand, risk: RiskEngine) -> bool:
                 "tp": cand.suggested_tp,
                 "direction": direction
             }
+
+        # Comprehensive Parameter Snapshot for Forensic Logging
+        macro = scanner.macro_cache.get(sym, {}) if scanner else {}
+        c1 = macro.get("ceiling_c1")
+        f1 = macro.get("floor_f1")
+        dr_pos = macro.get("dealing_range_pos", 0.5)
+        csm_d = macro.get("csm_delta", 0.0)
+        c1_str = f"{c1:.5f}" if c1 else "None"
+        f1_str = f"{f1:.5f}" if f1 else "None"
+        tp_dist_pts = int(round(abs(entry_price - cand.suggested_tp) / pt)) if pt > 0 else 0
+        t_iso = now_wib.strftime("%Y-%m-%d %H:%M:%S WIB")
+
+        print(f" {UI.CYAN}[M5 TRADE SNAPSHOT]{UI.RST} [{t_iso}] Ticket #{ticket} | {sym} {c_dir} | Type: {entry_type.upper()} | Lot: {lot_size} | Entry: {entry_price:.5f} | SL: {cand.suggested_sl:.5f} ({sl_pts} pts) | TP: {cand.suggested_tp:.5f} ({tp_dist_pts} pts) | RR: {cand.risk_reward_ratio:.2f} | ATR: {cand.current_atr_pts} pts | Spread: {tick_live.get('spread', 0)} pts | CSM: {csm_d:+.2f} | C1: {c1_str} | F1: {f1_str} | DR Pos: {dr_pos*100:.0f}% | Setup: {cand.setup_type}")
         print(f" {UI.GREEN}{UI.BOLD}[STAGE 2 LIVE SUCCESS]{UI.RST} Order {entry_type.upper()} {c_dir} #{ticket} terpasang untuk {sym} (Lot {lot_size})!\n")
         return True
     else:
@@ -247,12 +316,19 @@ def run_live_execution_cycle(cand, risk: RiskEngine) -> bool:
 
 
 def main():
+    # Setup TeeLogger to write all terminal output to data/trading_bot_m5.log
+    log_path = os.path.join(config.DATA_DIR, "trading_bot_m5.log")
+    tee = TeeLogger(log_path)
+    sys.stdout = tee
+    sys.stderr = tee
+
     print(f"""
 {UI.GREEN}╔══════════════════════════════════════════════════════════════════════════════╗
 ║        TRADING PARTNER — M5 FAST-IN FAST-OUT LIVE CENT                       ║
 ║  Account  : VTMarkets-Live 3 (#27556325) | Timeframe: M5 (Scan Loop: 15s)   ║
 ║  Strategy : Micro-ZCE (M5/M15/H1) | Pure Quant (0 Token API)                 ║
 ║  Safety   : Hard Lot Cap <= 0.50 | Native MT5 Expiry: 15m | BEP 80% TP       ║
+║  Logging  : data/trading_bot_m5.log (Full Terminal & Parameter Snapshot)     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{UI.RST}
 """)
 
@@ -299,7 +375,7 @@ def main():
                     if candidates:
                         print(f" {UI.GREEN}[{t_str} M5 RADAR]{UI.RST} {len(candidates)} SETUP TERDETEKSI! Mengeksekusi order riil ke MT5 Live...")
                         for cand in candidates:
-                            run_live_execution_cycle(cand, risk)
+                            run_live_execution_cycle(cand, risk, scanner)
                     else:
                         open_cnt = len(connector.get_all_open_positions())
                         pending_cnt = len(config.mt5.orders_get() or []) if hasattr(config.mt5, "orders_get") else 0
