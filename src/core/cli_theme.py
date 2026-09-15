@@ -309,12 +309,21 @@ def render_candidate_alert_box(candidate):
     entry_label = f"{UI.YELLOW}{prop_type} @ {prop_price}{UI.RST}" if "LIMIT" in prop_type or "STOP" in prop_type else f"{UI.GREEN}INSTANT MARKET ORDER{UI.RST}"
 
     wick_side = "Upper Wick" if candidate.direction == -1 else "Lower Wick"
-    
+    _st_mech_map = {
+        "UNIVERSAL_LIQUIDITY_SWEEP": "M1",
+        "TREND_ALIGNED_PULLBACK": "M2",
+        "MULTI_TOUCH_BREAKOUT_RETEST": "M3",
+        "SYSTEMIC_FLOW_CONTINUATION": "M4",
+        "DBD_RBR_BREAKOUT_CONTINUATION": "M4",
+    }
+    mech_code = _st_mech_map.get(candidate.setup_type, "M?")
+
     items = [
         f"{UI.BOLD}{direction_color}[RADAR TRIGGER] {candidate.symbol} [{dir_str}] [{tf_str}]{UI.RST}",
         "---",
         (f"• Trigger Time : ", f"{UI.CYAN}{t_wib}{UI.RST}"),
-        (f"• Setup Type   : ", f"{UI.WHITE}{candidate.setup_type} ({tf_str}){UI.RST}"),
+        (f"• Strategy Mech: ", f"{UI.BOLD}{UI.WHITE}[{mech_code}] {candidate.setup_type}{UI.RST}"),
+        (f"• Timeframe    : ", f"{UI.CYAN}{tf_str}{UI.RST}"),
         (f"• Proposed Entry: ", f"{entry_label}"),
         (f"• Live Price   : ", f"{UI.BOLD}{UI.WHITE}{candidate.trigger_price:.5f}{UI.RST} | Macro: {UI.CYAN}{candidate.macro_compass}{UI.RST}"),
         (f"• SMC Location : ", f"{UI.YELLOW}{candidate.dealing_range_pos*100:.1f}% Range ({zone_name}){UI.RST} (M15 {wick_side} {candidate.rejection_wick_ratio*100:.0f}%)"),

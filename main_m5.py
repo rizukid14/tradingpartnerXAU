@@ -104,8 +104,17 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
         print(f" {UI.RED}[R:R HARD GATE] {sym} [{cand.timeframe}] dibatalkan: Net R:R {rr:.2f}:1 < 1.20:1 minimum floor.{UI.RST}")
         return False
 
+    _st_mech_map = {
+        "UNIVERSAL_LIQUIDITY_SWEEP": "M1",
+        "TREND_ALIGNED_PULLBACK": "M2",
+        "MULTI_TOUCH_BREAKOUT_RETEST": "M3",
+        "SYSTEMIC_FLOW_CONTINUATION": "M4",
+        "DBD_RBR_BREAKOUT_CONTINUATION": "M4",
+    }
+    m_code = _st_mech_map.get(cand.setup_type, "M?")
+
     print("\n" + render_candidate_alert_box(cand))
-    print(f" {UI.CYAN}[M5 LIVE RADAR]{UI.RST} {sym} [{cand.setup_type}] | Entry: {cand.trigger_price} | SL: {cand.suggested_sl} | TP: {cand.suggested_tp} (R:R {cand.risk_reward_ratio:.2f}:1)")
+    print(f" {UI.CYAN}[M5 LIVE RADAR]{UI.RST} {sym} [[{m_code}] {cand.setup_type}] | Entry: {cand.trigger_price} | SL: {cand.suggested_sl} | TP: {cand.suggested_tp} (R:R {cand.risk_reward_ratio:.2f}:1)")
 
     # 4. Fetch live tick for execution
     tick_live = connector.get_current_tick(sym)
@@ -175,7 +184,7 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
 
     # 7. Single Ticket Scalp Order Dispatch (Fast-In Fast-Out)
     setup_tag = (cand.setup_type or "UNIV")[:6]
-    comment_s1 = f"M5_{setup_tag}"
+    comment_s1 = f"{m_code}_{setup_tag}"
     pending_exp = int(getattr(config, "M5_PENDING_EXPIRATION_MINUTES", 20))
     tp_pts = int(round(abs(cand.suggested_tp - entry_price) / pt)) if pt > 0 else 80
 
@@ -211,7 +220,7 @@ def run_m5_execution_cycle(cand, risk: RiskEngine) -> bool:
                 symbol=sym, signal=c_dir, lot=lot_size, entry_price=entry_price,
                 sl_price=cand.suggested_sl, tp_price=cand.suggested_tp, sl_points=sl_pts,
                 tp_points=tp_pts, risk_usd=risk.equity * (config.risk_percent_for(sym) / 100.0),
-                setup=f"{cand.setup_type} (M5 Single Scalp)",
+                setup=f"[{m_code}] {cand.setup_type} (M5 Scalp)",
                 models="Pure Quant Direct (M5 Micro-ZCE)", confidence=0.88,
                 reason=f"M5 Micro-ZCE scalping execution, R:R {cand.risk_reward_ratio:.2f}:1"
             )
