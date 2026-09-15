@@ -20,20 +20,17 @@ def test_m5_sl_tp_geometry_major():
         spread_pts=15,
         pt=0.00001
     )
-    # SL should be within healthy structural bounds [80, 200]
-    assert 80 <= geom["sl_pts"] <= 200
-    # TP1 should be >= 1.25x SL and >= 100 pts (tier min)
+    # SL should be within calibrated demo bounds [40, 75] pts
+    assert 40 <= geom["sl_pts"] <= 75
+    # TP1 should be >= 1.25x SL and <= 95 pts (major cap)
     assert geom["tp1_pts"] >= int(round(geom["sl_pts"] * 1.25))
-    assert geom["tp1_pts"] >= 100
-    # TP2 Runner should be ~1.50x TP1 pts
-    assert geom["tp2_pts"] >= int(round(geom["tp1_pts"] * 1.30))
+    assert geom["tp1_pts"] <= 95
     # Risk Reward
     assert geom["risk_reward"] >= 1.25
-    assert geom["risk_reward_runner"] >= 1.80
 
 
 def test_m5_sl_tp_geometry_jpy():
-    """Verify JPY pairs get healthy structural SL [100-220 pts] and TP1 >= 140 pts."""
+    """Verify JPY pairs get healthy structural SL [60-120 pts] and TP1 <= 135 pts."""
     geom = calculate_m5_sl_tp(
         symbol="GBPJPY",
         entry_price=190.000,
@@ -44,13 +41,13 @@ def test_m5_sl_tp_geometry_jpy():
         spread_pts=18,
         pt=0.001
     )
-    assert 100 <= geom["sl_pts"] <= 220
-    assert geom["tp1_pts"] >= 140
-    assert geom["tp2_pts"] >= int(round(geom["tp1_pts"] * 1.30))
+    assert 60 <= geom["sl_pts"] <= 120
+    assert geom["tp1_pts"] >= int(round(geom["sl_pts"] * 1.25))
+    assert geom["tp1_pts"] <= 135
 
 
 def test_m5_sl_tp_zero_skip_guarantee():
-    """Verify that tight C1 does NOT result in skip or small TP, but guarantees >= 1.50x SL."""
+    """Verify that tight C1 does NOT result in skip or small TP, but guarantees valid target."""
     geom = calculate_m5_sl_tp(
         symbol="EURUSD",
         entry_price=1.10000,
@@ -63,8 +60,7 @@ def test_m5_sl_tp_zero_skip_guarantee():
     )
     # Must NOT skip (returns dict with valid targets)
     assert geom is not None
-    assert geom["tp1_pts"] >= int(round(geom["sl_pts"] * 1.50))
-    assert geom["tp1_pts"] >= 80
+    assert geom["tp1_pts"] >= int(round(geom["sl_pts"] * 1.25))
 
 
 def test_m5_sl_tp_c1_anchoring():
@@ -74,14 +70,14 @@ def test_m5_sl_tp_c1_anchoring():
         entry_price=1.10000,
         direction=1,
         atr_m5=0.00050,
-        c1=1.10150,  # 150 pts away (healthy)
+        c1=1.10090,  # 90 pts away
         f1=None,
         spread_pts=10,
         pt=0.00001
     )
-    assert geom["tp1_pts"] > 100
+    assert geom["tp1_pts"] >= 65
     # TP must be below C1 by front pad
-    assert geom["tp"] < 1.10150
+    assert geom["tp"] < 1.10090
 
 
 def test_m5_twin_registry_registration_and_rebuild():

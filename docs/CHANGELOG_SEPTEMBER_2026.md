@@ -2,6 +2,54 @@
 
 > Dokumen ini mencatat seluruh perubahan arsitektur, fitur baru, dan riset kuantitatif sistem bot trading MetaTrader 5 periode September 2026.
 
+## 123. Perubahan 15 September 2026 (Siang II) — Koreksi False-SL Assumption pada Twin Loss Shield dan Perlindungan Runner T2 Berbasis Deal History MT5 Riil
+
+### 🎯 Latar Belakang & Identifikasi Masalah:
+1. **False-SL Assumption pada Penutupan Take Profit T1 (`position_manager.py`)**:
+   - Tiket T1 AUDUSD-ECNc (`#1295232848`) sukses menyentuh Take Profit di `0.71224` (MT5 Deal Reason: `DEAL_REASON_TP` (5), P/L: `+32.25 USC`).
+   - Namun sistem meluncurkan log darurat: `[M5 TWIN SL SHIELD] T1 #1295232848 (AUDUSD-ECNc) terkena SL / closed at loss! Menutup paksa partner T2 #1295232883 sekarang juga...` dan melikuidasi tiket runner T2 (`#1295232883`) di pasar.
+2. **Akar Masalah (Root Cause)**:
+   - `_audit_m5_twin_loss_protection` sebelumnya tidak memeriksa riwayat deal MT5 untuk mengonfirmasi penyebab keluar (exit reason).
+   - Logika kode hanya mengecek flag memori lokal `if not rec.get("t1_bep_reached")`.
+   - Ketika bot direstart oleh pengguna atau ketika harga meluncur langsung menabrak TP 100% tanpa sempat melewati fase BEP, flag tersebut bernilai `False`. Akibatnya, setiap penutupan posisi T1 secara keliru divonis sebagai kekalahan Stop Loss, dan partner runner T2 dibunuh secara prematur.
+
+---
+
+### 🔧 Rincian Perubahan Arsitektur & Implementasi:
+1. **Verifikasi Deal History MT5 Riil (`src/analytics/position_manager.py`)**:
+   - Pada `_audit_m5_twin_loss_protection`:
+     * Mengambil detail deal riil dari MT5 via `d_info = connector.get_trade_details(t1)` (atau `t2`).
+     * Mengevaluasi kondisi kemenangan: `is_tp_or_win = reason == "TP" or "[tp" in comment or profit > 0 or rec.get("t1_bep_reached")`.
+     * **Jika Terbukti Take Profit / Win**:
+       - Partner T2 **DILARANG ditutup paksa**.
+       - Dicatat log positif: `[M5 TWIN RUNNER ACTIVE] T1 #{t1} ({sym}) sukses Take Profit / Win (+${profit:.2f})! T2 #{t2} dibiarkan berlari sebagai runner.`
+       - Menandai `rec["t1_bep_reached"] = True` dan `rec["t1_tp_announced"] = True`.
+     * **HANYA Jika Terbukti Loss Riil**:
+       - Jika `profit <= 0` dan terbukti terkena Stop Loss, barulah partner T2 ditutup secara darurat demi proteksi modal anti-runaway loss.
+2. **Auto-Detection SL Profit Pasca-Restart (`position_manager.py`)**:
+   - Pada `_rebuild_m5_twin_registry_from_open_positions`:
+     * Memeriksa apakah `pos1.sl` dan `pos2.sl` sudah berada di area profit terhadap `price_open`.
+     * Jika ya, otomatis mengaktifkan `t1_bep_reached = True` dan `t2_m1_reached = True` saat inisialisasi pemulihan registry memori, mencegah distorsi status pasca-restart.
+3. **Penyelarasan Unit Test (`tests/test_m5_twin_ticket_state_machine.py`)**:
+   - Memperbarui batas asersi test SL/TP M5 agar selaras dengan kalibrasi batas demo fast scalping (Major SL 40–75 pts, max TP 95 pts; JPY SL 60–120 pts, max TP 135 pts).
+
+---
+
+### 🧪 Hasil Verifikasi & Validasi:
+- **Unit Test Suites (100% PASS)**:
+  * `tests/test_m5_twin_ticket_state_machine.py`: **7 / 7 PASSED**.
+  * `tests/test_market_scanner_m5.py`: **14 / 14 PASSED**.
+  * `tests/test_zone_confluence_engine.py`: **13 / 13 PASSED**.
+  * `tests/test_pattern_engine.py`: **13 / 13 PASSED**.
+  * `tests/test_macro_strategic_engine.py`: **11 / 11 PASSED**.
+  * `tests/test_dashboard.py`: **23 / 23 PASSED**.
+  * **Total: 81 / 81 PASSED (100%)**.
+- **Live MT5 Status**:
+  * Pasangan legacy `AUDCHF-ECNc` (`#1294968245` & `#1294968258`) terlindungi dengan aman: jika T1 menyentuh TP di `0.58245`, T2 tidak akan dibunuh secara keliru.
+  * Order baru `NZDJPY-ECNc` (`#1295724130`) dan `AUDNZD-ECNc` (`#1295732705`) beroperasi bersih dengan Single Ticket 0.50 lot.
+
+---
+
 ## 122. Perubahan 15 September 2026 (Siang) — Implementasi Clean Mode Notifikasi Telegram M5 (Peredaman Spam Sinyal Pending & BEP) dan Audit Gate 3 Anti-Knife Guard terhadap Demo Lab
 
 ### 🎯 Latar Belakang & Identifikasi Masalah:

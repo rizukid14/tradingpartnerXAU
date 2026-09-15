@@ -423,7 +423,7 @@ def _rebuild_m5_twin_registry_from_open_positions(positions):
             pt = getattr(mt5.symbol_info(sym), "point", 0.00001) or 0.00001
             tp2_pts = int(round(abs(pos2.tp - pos2.price_open) / pt)) if pos2.tp else int(round(tp1_pts * 1.5))
             direction = 1 if pos1.type == mt5.ORDER_TYPE_BUY else -1
-            register_m5_twin_pair(
+            pair_key = register_m5_twin_pair(
                 symbol=sym,
                 direction=direction,
                 t1_ticket=pos1.ticket,
@@ -433,6 +433,20 @@ def _rebuild_m5_twin_registry_from_open_positions(positions):
                 tp2_pts=tp2_pts,
                 setup_tag=setup_tag
             )
+            # Detect if positions already have SL locked in profit (BEP)
+            is_buy = direction == 1
+            sl1 = getattr(pos1, "sl", 0.0)
+            po1 = getattr(pos1, "price_open", 0.0)
+            if isinstance(sl1, (int, float)) and isinstance(po1, (int, float)) and sl1 > 0:
+                if (is_buy and sl1 >= po1) or (not is_buy and sl1 <= po1):
+                    if pair_key in _m5_twin_registry:
+                        _m5_twin_registry[pair_key]["t1_bep_reached"] = True
+                    _break_even_tickets.add(pos1.ticket)
+            sl2 = getattr(pos2, "sl", 0.0)
+            if isinstance(sl2, (int, float)) and isinstance(po1, (int, float)) and sl2 > 0:
+                if (is_buy and sl2 >= po1) or (not is_buy and sl2 <= po1):
+                    if pair_key in _m5_twin_registry:
+                        _m5_twin_registry[pair_key]["t2_m1_reached"] = True
 
 
 def _send_twin_sl_modify(pos, new_sl, digits: int) -> bool:
@@ -587,27 +601,63 @@ def _audit_m5_twin_loss_protection(open_tickets: set):
 
         # Case 2: T1 stopped out before reaching Milestone 1 BEP, but T2 is still open!
         if not t1_open and t2_open:
-            if not rec.get("t1_bep_reached"):
-                print(f" {UI.RED}{UI.BOLD}[M5 TWIN SL SHIELD]{UI.RST} T1 #{t1} ({sym}) terkena SL / closed at loss! Menutup paksa partner T2 #{t2} sekarang juga...")
-                logger.warning(f"[M5 TWIN SL SHIELD] T1 #{t1} ({sym}) closed at loss before BEP. Emergency auto-closing partner T2 #{t2}.")
-                try:
-                    connector.close_position(t2)
-                except Exception as e:
-                    logger.error(f"[M5 TWIN SL SHIELD ERROR] Failed to close T2 #{t2}: {e}")
-                del _m5_twin_registry[pair_key]
+            # Verify via MT5 deal history if T1 closed in profit / TP
+            d_info = connector.get_trade_details(t1)
+            is_tp_or_win = False
+            profit_val = 0.0
+            if d_info:
+                profit_val = d_info.get("profit", 0.0)
+                reason = str(d_info.get("reason", "")).upper()
+                comment = str(d_info.get("comment", "")).lower()
+                if reason == "TP" or "[tp" in comment or profit_val > 0:
+                    is_tp_or_win = True
+
+            if is_tp_or_win or rec.get("t1_bep_reached"):
+                if not rec.get("t1_tp_announced"):
+                    rec["t1_tp_announced"] = True
+                    rec["t1_bep_reached"] = True
+                    print(f" {UI.GREEN}{UI.BOLD}[M5 TWIN RUNNER ACTIVE]{UI.RST} T1 #{t1} ({sym}) sukses Take Profit / Win (+${profit_val:.2f})! T2 #{t2} dibiarkan berlari sebagai runner.")
+                    logger.info(f"[M5 TWIN RUNNER] T1 #{t1} ({sym}) closed in profit (+${profit_val:.2f}). T2 #{t2} remains active.")
                 continue
+
+            # Otherwise, T1 truly closed at loss before reaching BEP
+            print(f" {UI.RED}{UI.BOLD}[M5 TWIN SL SHIELD]{UI.RST} T1 #{t1} ({sym}) terkena SL / closed at loss! Menutup paksa partner T2 #{t2} sekarang juga...")
+            logger.warning(f"[M5 TWIN SL SHIELD] T1 #{t1} ({sym}) closed at loss before BEP. Emergency auto-closing partner T2 #{t2}.")
+            try:
+                connector.close_position(t2)
+            except Exception as e:
+                logger.error(f"[M5 TWIN SL SHIELD ERROR] Failed to close T2 #{t2}: {e}")
+            del _m5_twin_registry[pair_key]
+            continue
 
         # Case 3: T2 stopped out before reaching Milestone 1, but T1 is still open!
         if not t2_open and t1_open:
-            if not rec.get("t2_m1_reached"):
-                print(f" {UI.RED}{UI.BOLD}[M5 TWIN SL SHIELD]{UI.RST} T2 #{t2} ({sym}) closed at loss before M1! Menutup paksa partner T1 #{t1} sekarang juga...")
-                logger.warning(f"[M5 TWIN SL SHIELD] T2 #{t2} ({sym}) closed at loss before M1. Emergency auto-closing partner T1 #{t1}.")
-                try:
-                    connector.close_position(t1)
-                except Exception as e:
-                    logger.error(f"[M5 TWIN SL SHIELD ERROR] Failed to close T1 #{t1}: {e}")
-                del _m5_twin_registry[pair_key]
+            d_info = connector.get_trade_details(t2)
+            is_tp_or_win = False
+            profit_val = 0.0
+            if d_info:
+                profit_val = d_info.get("profit", 0.0)
+                reason = str(d_info.get("reason", "")).upper()
+                comment = str(d_info.get("comment", "")).lower()
+                if reason == "TP" or "[tp" in comment or profit_val > 0:
+                    is_tp_or_win = True
+
+            if is_tp_or_win or rec.get("t2_m1_reached"):
+                if not rec.get("t2_tp_announced"):
+                    rec["t2_tp_announced"] = True
+                    rec["t2_m1_reached"] = True
+                    print(f" {UI.GREEN}{UI.BOLD}[M5 TWIN RUNNER ACTIVE]{UI.RST} T2 #{t2} ({sym}) sukses Win (+${profit_val:.2f})! T1 #{t1} tetap aktif.")
+                    logger.info(f"[M5 TWIN RUNNER] T2 #{t2} ({sym}) closed in profit (+${profit_val:.2f}). T1 #{t1} remains active.")
                 continue
+
+            print(f" {UI.RED}{UI.BOLD}[M5 TWIN SL SHIELD]{UI.RST} T2 #{t2} ({sym}) closed at loss before M1! Menutup paksa partner T1 #{t1} sekarang juga...")
+            logger.warning(f"[M5 TWIN SL SHIELD] T2 #{t2} ({sym}) closed at loss before M1. Emergency auto-closing partner T1 #{t1}.")
+            try:
+                connector.close_position(t1)
+            except Exception as e:
+                logger.error(f"[M5 TWIN SL SHIELD ERROR] Failed to close T1 #{t1}: {e}")
+            del _m5_twin_registry[pair_key]
+            continue
 
 
 def manage_all_positions(*args, **kwargs):
